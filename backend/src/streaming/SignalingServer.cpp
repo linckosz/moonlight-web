@@ -258,6 +258,7 @@ void SignalingServer::onNewWsConnection()
     m_NonceHost.clear();
     m_LocalFingerprint.clear();
     m_PendingOffer.clear();
+    m_PendingCandidates.clear();
 
     // Where the client really is. NOT the WebSocket peer address: this server
     // sits behind the local HTTP proxy, so that address is 127.0.0.1 for every
@@ -314,9 +315,10 @@ void SignalingServer::onNewWsConnection()
     if (!m_UpnpPublicIP.isEmpty() && m_UpnpMappedPort > 0) {
         m_Relay->setPublicAddress(m_UpnpPublicIP.toStdString(), m_UpnpMappedPort);
         m_Relay->setForceHostCandidatePublic(true);
-        // Suppress IPv6 candidates so ICE is forced to use the IPv4 UPnP path.
-        // Residential IPv6 often has firewall rules that block unsolicited
-        // inbound traffic, causing DTLS/SCTP to fail silently.
+        // Withhold non-global IPv6 candidates (ULA / mesh VPN / link-local) —
+        // same no-leak rule as the private IPv4 host candidate. A global IPv6
+        // address is still advertised: it costs nothing to offer and spares a
+        // same-LAN peer the router hairpin. See RelayBase::emitLocalCandidate().
         m_Relay->setSuppressIPv6Candidates(true);
         // For a same-LAN client (incl. one on the public URL, hairpinned), also
         // let the relay advertise the private host candidate for a direct path
@@ -937,6 +939,18 @@ void SignalingServer::sendSignedOffer()
     QJsonDocument doc(msg);
     m_WsClient->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
     m_PendingOffer.clear();
+
+    // Now the candidates that were gathered behind it. ICE gathering does not
+    // wait for the MW-BIND hello, so on a fast link every host candidate is
+    // ready before the offer is allowed out.
+    if (!m_PendingCandidates.empty()) {
+        qInfo() << "[SignalingServer] Flushing" << m_PendingCandidates.size()
+                << "ICE candidate(s) held behind the offer";
+        auto held = std::move(m_PendingCandidates);
+        m_PendingCandidates.clear();
+        for (const auto& [candidate, mid] : held)
+            sendIceCandidate(candidate, mid);
+    }
 }
 
 void SignalingServer::onLocalSdp(const std::string& sdp)
@@ -975,6 +989,24 @@ void SignalingServer::onLocalSdp(const std::string& sdp)
 }
 
 void SignalingServer::onLocalIceCandidate(const std::string& candidate, const std::string& mid)
+{
+    if (!m_WsClient || !m_WsClient->isValid()) return;
+
+    // The offer is still waiting for the browser's hello (see onLocalSdp). A
+    // candidate sent now reaches a PeerConnection with no remote description,
+    // where addIceCandidate() throws and the browser drops it — permanently.
+    // That cost every session its host candidates (2026-08-30: five rejected
+    // per stream, leaving the browser to rediscover our address peer-reflexively
+    // and, on the DataChannel transport, to settle for the router's hairpin).
+    if (!m_PendingOffer.empty()) {
+        m_PendingCandidates.emplace_back(candidate, mid);
+        return;
+    }
+
+    sendIceCandidate(candidate, mid);
+}
+
+void SignalingServer::sendIceCandidate(const std::string& candidate, const std::string& mid)
 {
     if (!m_WsClient || !m_WsClient->isValid()) return;
 
