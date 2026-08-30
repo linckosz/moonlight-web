@@ -74,13 +74,19 @@ import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 
-// Input that lands nowhere — see StreamView._sendToHost. Long enough that a
-// held key or a pause between two gestures never trips it, and demanding
-// enough movement that only real, sustained interaction counts. Two frames of
-// slack absorbs a picture that happens to refresh on its own.
-const INPUT_IGNORED_WINDOW_MS = 6000;
-const INPUT_IGNORED_MIN_EVENTS = 40;
-const INPUT_IGNORED_MAX_FRAMES = 2;
+// Which MultiSeat hosts have already had their input notice this page, by uuid.
+//
+// Module-level on purpose: a quality change builds a *new* StreamView and
+// retires the old one, and the notice is about the host, not about the view
+// showing it. Per-instance, every degradation would re-pop it.
+//
+// Keyed rather than a single flag because the rights it talks about are granted
+// per seat: having dismissed it on one MultiSeat machine says nothing about the
+// next one, whose seats hand out their own permissions.
+const multiSeatNoticeShown = new Set();
+
+/** localStorage flag muting the MultiSeat input notice for one host. */
+const multiSeatMuteKey = (uuid) => `mw_multiseat_input_notice:${uuid}`;
 
 /**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
@@ -486,12 +492,6 @@ export class StreamView {
         // because `received` counts only what the pipeline actually got.
         this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0, networkLost: 0 };
         this._firstFrameId = -1;
-
-        // Watching for input the host is throwing away — see _sendToHost.
-        this._inputWatchSince = 0;
-        this._inputWatchFrames = 0;
-        this._inputWatchEvents = 0;
-        this._inputIgnoredWarned = false;
 
         // Overlay stats
         this._overlayEl = null;
@@ -2660,6 +2660,7 @@ export class StreamView {
             this._revealStreamControls();
             // Show keyboard shortcuts slide (5s auto-hide)
             this._showShortcutsSlide();
+            if (first) this._maybeShowMultiSeatInputNotice();
         }
         if (first && typeof this.onFirstFrame === 'function') {
             try {
@@ -4561,22 +4562,83 @@ export class StreamView {
             if (localStorage.getItem('mw_awdl_notice') === 'off') return;
         } catch (e) {}
         this._stallNoticeShown = true;
-        this._showPeriodicStallPopin(stall);
+        this._showNoticePopin({
+            title: t('stream.periodicStallTitle'),
+            body: t('stream.periodicStallWarning', { period: Math.round(stall.periodMs) }),
+            muteKey: 'mw_awdl_notice',
+        });
     }
 
     /**
-     * Surface the AWDL advice as a modal popin, not a toast. The notice fires
-     * autonomously mid-game, where a toast is unreachable: gaming mode holds a
-     * pointer lock on the canvas, so the OS cursor is captured and can never
-     * land on the toast's button. The share popin is clickable during a stream
-     * for a different reason — it only ever opens from a header click, i.e. from
-     * an already-unlocked state — so we reuse its overlay AND release the lock
+     * A seat on a MultiSeat host hands input rights out per device, and gives
+     * them to the first device that pairs — every one after that gets the
+     * picture and nothing else, silently. There is no way to ask the seat which
+     * side of that line this device is on, so say it once, up front, and let
+     * the user silence it for good.
+     */
+    async _maybeShowMultiSeatInputNotice() {
+        if (this._standby || this.host?.backendType !== 'multiseat') return;
+        const uuid = this.host.uuid || '';
+        if (multiSeatNoticeShown.has(uuid)) return;
+        const muteKey = multiSeatMuteKey(uuid);
+        try {
+            if (localStorage.getItem(muteKey) === 'off') return;
+        } catch (e) {}
+        // Latch before the await below: a quality change can render its own
+        // first frame while the seat list is still in flight.
+        multiSeatNoticeShown.add(uuid);
+
+        const urls = await this._seatWebUiUrls();
+        this._showNoticePopin({
+            title: t('stream.multiSeatInputTitle'),
+            body: t('stream.multiSeatInputBody'),
+            note: urls.length
+                ? t('stream.multiSeatInputWhere', { url: urls.join(', ') })
+                : t('stream.multiSeatInputWhereUnknown'),
+            muteKey,
+        });
+    }
+
+    /**
+     * Where to go and grant those rights: a seat's Apollo web interface, which
+     * listens on the seat's stream port plus one, over https.
+     *
+     * Narrowed to the seat that is streaming when exactly one is — that one is
+     * this session. Otherwise every seat is listed, because naming the wrong
+     * seat is worse than naming them all. Empty if the host cannot say, and the
+     * notice then describes the address rather than printing it.
+     */
+    async _seatWebUiUrls() {
+        try {
+            const { seats } = await BackendClient.getHostSeats(this.host.uuid);
+            let list = (seats || []).filter((s) => s.address && s.httpPort);
+            const busy = list.filter((s) => s.busy);
+            if (busy.length === 1) list = busy;
+            return list.map((s) => `https://${s.address}:${s.httpPort + 1}`);
+        } catch (e) {
+            console.warn('[StreamView] no seat list for the input notice:', e.message);
+            return [];
+        }
+    }
+
+    /**
+     * Surface advice as a modal popin, not a toast. These notices can fire
+     * mid-game, where a toast is unreachable: gaming mode holds a pointer lock
+     * on the canvas, so the OS cursor is captured and can never land on the
+     * toast's button. The share popin is clickable during a stream for a
+     * different reason — it only ever opens from a header click, i.e. from an
+     * already-unlocked state — so we reuse its overlay AND release the lock
      * ourselves here, which is the one thing the share flow gets for free.
      *
      * `.share-popin-overlay` also earns keyboard handling: isLocalKeyboardTarget
      * matches it, so Escape and any typing go to the page, not the host.
+     *
+     * `muteKey` is the localStorage flag the "don't show again" button sets;
+     * checking it is the caller's job, since only the caller knows whether the
+     * notice is worth computing at all. `note` is an optional second paragraph,
+     * for the part of the advice that depends on what the host answered.
      */
-    _showPeriodicStallPopin(stall) {
+    _showNoticePopin({ title, body, note, muteKey }) {
         if (this._stallPopinOverlay) return;
         // Free the cursor so the dialog is actually reachable (see above).
         if (document.pointerLockElement) document.exitPointerLock();
@@ -4585,8 +4647,9 @@ export class StreamView {
         overlay.className = 'share-popin-overlay';
         overlay.innerHTML = `
             <div class="share-popin" role="dialog" aria-modal="true">
-                <h3>${escapeHtml(t('stream.periodicStallTitle'))}</h3>
-                <p class="share-exit-body">${escapeHtml(t('stream.periodicStallWarning', { period: Math.round(stall.periodMs) }))}</p>
+                <h3>${escapeHtml(title)}</h3>
+                <p class="share-exit-body">${escapeHtml(body)}</p>
+                ${note ? `<p class="share-exit-body">${escapeHtml(note)}</p>` : ''}
                 <div class="share-popin-actions share-popin-actions-split">
                     <button class="btn btn-secondary share-stall-mute" type="button">${escapeHtml(t('stream.periodicStallDismiss'))}</button>
                     <button class="btn share-stall-ok" type="button">${escapeHtml(t('stream.periodicStallOk'))}</button>
@@ -4617,7 +4680,7 @@ export class StreamView {
         overlay.querySelector('.share-stall-ok').addEventListener('click', close);
         overlay.querySelector('.share-stall-mute').addEventListener('click', () => {
             try {
-                localStorage.setItem('mw_awdl_notice', 'off');
+                localStorage.setItem(muteKey, 'off');
             } catch (e) {}
             close();
         });
@@ -6027,44 +6090,9 @@ export class StreamView {
         });
     }
 
-    /**
-     * Send something the user did, and watch for it going nowhere.
-     *
-     * A host can pair a device and still refuse it the right to type or move
-     * the mouse — Apollo grants that only to the first device that pairs with
-     * it, and says nothing to the ones after. Nothing in the stream reports the
-     * refusal, so the only evidence is its shape: someone working the controls
-     * while the picture stays still. Moving a mouse redraws a cursor, so frames
-     * that never arrive while input keeps going is a fair sign it is being
-     * dropped at the other end.
-     *
-     * Deliberately a hint, not a verdict: it says where to look, once.
-     */
+    /** Ship an input message to the host. */
     _sendToHost(msg) {
         this.webrtc.send(msg);
-
-        if (this._inputIgnoredWarned || !this._firstFrameRendered) return;
-
-        const now = performance.now();
-        if (!this._inputWatchSince) {
-            this._inputWatchSince = now;
-            this._inputWatchFrames = this.frameCount;
-            this._inputWatchEvents = 0;
-        }
-        this._inputWatchEvents++;
-
-        if (now - this._inputWatchSince < INPUT_IGNORED_WINDOW_MS) return;
-
-        const framesMoved = this.frameCount - this._inputWatchFrames;
-        if (
-            this._inputWatchEvents >= INPUT_IGNORED_MIN_EVENTS &&
-            framesMoved <= INPUT_IGNORED_MAX_FRAMES
-        ) {
-            this._inputIgnoredWarned = true;
-            Toast.warning(t('stream.inputIgnored'));
-        }
-        // Either way, judge the next stretch on its own.
-        this._inputWatchSince = 0;
     }
 
     // =========================================================================

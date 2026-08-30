@@ -455,7 +455,6 @@
     },
     "stream": {
         "stop": "Stop",
-        "inputIgnored": "Your keyboard and mouse are reaching this host, but it is ignoring them. Hosts that grant rights per device usually give the first one paired everything and later ones only the picture — check this device's permissions in the host's own settings.",
         "stopStreaming": "Stop Streaming",
         "connecting": "Connecting...",
         "startingVideo": "Starting video stream...",
@@ -511,6 +510,10 @@
         "periodicStallDismiss": "Don't show again",
         "periodicStallTitle": "Stutter detected",
         "periodicStallOk": "Got it",
+        "multiSeatInputTitle": "MultiSeat seat",
+        "multiSeatInputBody": "If the keyboard and mouse do nothing, the seat is only sending the picture. It hands control out device by device, so this one has to be allowed by hand in the Apollo interface.",
+        "multiSeatInputWhere": "Open {{url}}, sign in, find this device in the list of paired clients and turn its input permissions on.",
+        "multiSeatInputWhereUnknown": "That interface is at the same address as the host, on the seat's stream port plus one, over https. Sign in there, find this device in the list of paired clients and turn its input permissions on.",
         "statLegRender": "Render",
         "enhancerOff": "Off",
         "iosFullscreenHint": "For true fullscreen: Share → Add to Home Screen, then launch Moonlight from the icon.",
