@@ -589,7 +589,7 @@
       </div>
       <div class="card cyb reveal"><div class="ico">🔎</div><h3 data-i18n="card6.h3">Zero‑config discovery</h3><p data-i18n="card6.p">Sunshine hosts appear automatically via mDNS. PIN pairing, multi‑host, persistent sessions.</p></div>
       <div class="card cyb reveal"><div class="ico">🌍</div><h3 data-i18n="card7.h3">Peer‑to‑peer by design</h3><p data-i18n="card7.p">Streams go straight from your PC to your browser — no cloud in the middle. A remote entry link reaches your PC from anywhere without exposing a single web port.</p></div>
-      <div class="card cyb reveal"><div class="ico">🛟</div><h3 data-i18n="card8.h3">Never drops you</h3><p data-i18n="card8.p">Transport auto‑fallback (UDP → TCP → WSS) rides through hostile networks and strict firewalls.</p></div>
+      <div class="card cyb reveal"><div class="ico">🛟</div><h3 data-i18n="card8.h3">Never drops you</h3><p data-i18n="card8.p">Transport auto‑fallback (UDP → TCP) rides through hostile networks and strict firewalls.</p></div>
       <div class="card cyb reveal"><div class="ico">👥</div><h3 data-i18n="card9.h3">Up to 4‑player co‑op</h3><p data-i18n="card9.p">Invite up to three friends into the game already running on your PC — four players in one session. One save, one screen each: they play from their own device, with their own gamepad, as if they were sitting next to you.</p></div>
     </div>
   </div>
@@ -730,7 +730,7 @@
     <p class="muted reveal" style="text-align:center; max-width:760px; margin:3rem auto 0" data-i18n-html="how.under">
       Under the hood: a C++/Qt backend embeds <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>,
       speaks GameStream (RTSP/RTP/ENet) to Sunshine, and relays video, audio and input to the browser over WebRTC —
-      with automatic WSS fallback. Decoding happens in WebCodecs, rendering in WebGPU, audio in an AudioWorklet.
+      with automatic UDP-to-TCP fallback. Decoding happens in WebCodecs, rendering in WebGPU, audio in an AudioWorklet.
     </p>
     <div class="chips reveal">
       <span class="chip">C++17 · Qt 6</span><span class="chip">WebRTC</span><span class="chip">WebCodecs</span>
@@ -1059,7 +1059,7 @@
     'card7.h3':'Pair‑à‑pair par conception',
     'card7.p':'Le flux va droit de votre PC à votre navigateur — aucun cloud au milieu. Un lien d’accès distant rejoint votre PC de n’importe où, sans exposer le moindre port web.',
     'card8.h3':'Ne vous lâche jamais',
-    'card8.p':'Bascule de transport automatique (UDP → TCP → WSS) qui traverse les réseaux hostiles et les pare‑feux stricts.',
+    'card8.p':'Bascule de transport automatique (UDP → TCP) qui traverse les réseaux hostiles et les pare‑feux stricts.',
     'card9.h3':'Le multi jusqu’à 4 joueurs',
     'card9.p':'Invitez jusqu’à trois amis dans le jeu qui tourne déjà sur votre PC — quatre joueurs dans une seule session. Une seule sauvegarde, un écran chacun : ils jouent depuis leur appareil, avec leur manette, comme s’ils étaient assis à côté de vous.',
 
@@ -1106,7 +1106,7 @@
     'step3.p':'Vos hôtes sont déjà listés. Saisissez le PIN affiché par Sunshine — et c’est réglé pour de bon.',
     'step4.h3':'Appuyez sur play',
     'step4.p':'Choisissez un jeu ou le bureau complet. Plein écran, manette en main, c’est parti.',
-    'how.under':'Sous le capot : un backend C++/Qt embarque <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>, dialogue en GameStream (RTSP/RTP/ENet) avec Sunshine, et relaie vidéo, audio et entrées vers le navigateur via WebRTC — avec bascule WSS automatique. Le décodage se fait en WebCodecs, le rendu en WebGPU, l’audio dans un AudioWorklet.',
+    'how.under':'Sous le capot : un backend C++/Qt embarque <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>, dialogue en GameStream (RTSP/RTP/ENet) avec Sunshine, et relaie vidéo, audio et entrées vers le navigateur via WebRTC — avec bascule UDP vers TCP automatique. Le décodage se fait en WebCodecs, le rendu en WebGPU, l’audio dans un AudioWorklet.',
 
     'dl.kicker':'Télécharger', 'dl.h2':'Récupérez le serveur. Amenez les jeux.',
     'dl.p':'Un seul téléchargement, sur le PC gamer uniquement. Tous les autres appareils ouvrent juste un navigateur.',
@@ -1155,7 +1155,7 @@
     'card7.h3':'天生点对点',
     'card7.p':'串流从你的 PC 直达浏览器——中间没有任何云。远程接入链接让你从任何地方连到自己的 PC，无需暴露任何 Web 端口。',
     'card8.h3':'从不掉线',
-    'card8.p':'传输自动回退（UDP → TCP → WSS），穿越恶劣网络和严格防火墙。',
+    'card8.p':'传输自动回退（UDP → TCP），穿越恶劣网络和严格防火墙。',
     'card9.h3':'最多 4 人同乐',
     'card9.p':'邀请最多三位好友加入你电脑上正在运行的游戏 —— 一局游戏，四名玩家。同一个存档，各自一块屏幕：他们用自己的设备和手柄游玩，就像就坐在你身边。',
 
@@ -1202,7 +1202,7 @@
     'step3.p':'你的主机已列出。输入 Sunshine 显示的 PIN 码——从此一劳永逸。',
     'step4.h3':'按下开始',
     'step4.p':'选择一款游戏或完整桌面。全屏、手柄在手，开玩。',
-    'how.under':'底层原理：一个 C++/Qt 后端内嵌 <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>，用 GameStream（RTSP/RTP/ENet）与 Sunshine 通信，并通过 WebRTC 将视频、音频和输入转发到浏览器——并自动回退到 WSS。解码在 WebCodecs 中完成，渲染在 WebGPU 中，音频在 AudioWorklet 中。',
+    'how.under':'底层原理：一个 C++/Qt 后端内嵌 <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>，用 GameStream（RTSP/RTP/ENet）与 Sunshine 通信，并通过 WebRTC 将视频、音频和输入转发到浏览器——并在 UDP 不可用时自动回退到 TCP。解码在 WebCodecs 中完成，渲染在 WebGPU 中，音频在 AudioWorklet 中。',
 
     'dl.kicker':'下载', 'dl.h2':'装好服务器，带上你的游戏。',
     'dl.p':'仅在游戏 PC 上下载一次。其他所有设备只需打开浏览器。',
