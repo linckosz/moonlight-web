@@ -502,10 +502,9 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     s_ActiveUniqueIds.insert(effectiveUniqueId());
 
     // ── Media engine selection ───────────────────────────────────────────────
-    // The single place a transport is chosen. Adding one (punktfunk's QUIC
-    // protocol is the expected next) means a case here plus a sibling of
-    // MoonlightShim — the relays below speak to the engine's signals, never to
-    // GameStream, so nothing downstream has to change.
+    // The single place a media engine is chosen. Adding one means a case here
+    // plus an IMediaEngine implementation — the relays below speak to the
+    // interface's signals, never to GameStream, so nothing downstream changes.
     MoonlightShim::InitParams params;
     switch (media.type) {
     case MediaType::GameStreamRtsp:
@@ -517,6 +516,23 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         params.aesKey = media.gameStream.aesKey;
         params.rikeyid = media.gameStream.rikeyid;
         break;
+
+    case MediaType::NativeHost:
+        // NativeMediaEngine lands in phase 1 of the native-capture work. Until
+        // it does, refuse here rather than falling through: a NativeHost
+        // descriptor carries no RTSP URL and no key, so continuing would build
+        // a GameStream connection to nowhere and surface as a mystery timeout.
+        //
+        // NativeHostBackend only ever produces this descriptor on a machine
+        // whose engine probe said yes, so reaching this line means the build
+        // has no backend for this platform yet.
+        qWarning() << "[Session] Native host media requested but the native engine is not "
+                      "built into this binary";
+        m_Respond(HttpResponse::error(
+            501, QStringLiteral("Native streaming is not available on this machine.")));
+        emit sessionFailed(QStringLiteral("native engine unavailable"));
+        deleteLater();
+        return;
     }
 
     // Session-level settings below are transport-agnostic: they describe what
@@ -759,7 +775,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         });
 
         // Provide MoonlightShim reference for WS fallback (ICE timeout → WS data transport)
-        signaling->setMoonlightShim(m_Shim);
+        signaling->setMediaEngine(m_Shim);
 
         // Move the relay graph onto a dedicated per-session thread: video/audio
         // fragmentation + dc->send and the WS-fallback path all run off the main

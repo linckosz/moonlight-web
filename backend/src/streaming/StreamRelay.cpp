@@ -18,7 +18,7 @@
 #include "StreamRelay.h"
 #include "ClipboardBridge.h"
 #include "InputMessageCodec.h"
-#include "MoonlightShim.h"
+#include "IMediaEngine.h"
 
 #include <QCoreApplication>
 #include <QThread>
@@ -32,23 +32,23 @@
 #include <QVector>
 #include <chrono>
 
-StreamRelay::StreamRelay(MoonlightShim* shim, quint16 wsPort, const QSslConfiguration& sslConfig,
+StreamRelay::StreamRelay(IMediaEngine* engine, quint16 wsPort, const QSslConfiguration& sslConfig,
                          QObject* parent)
     : QObject(parent)
-    , m_Shim(shim)
+    , m_Shim(engine)
     , m_WsPort(wsPort)
 {
     qInfo() << "[StreamRelay] Created, wsPort=" << wsPort;
 
-    connect(m_Shim, &MoonlightShim::videoFrameReady, this, &StreamRelay::onVideoFrame);
-    connect(m_Shim, &MoonlightShim::audioSampleReady, this, &StreamRelay::onAudioSample);
-    connect(m_Shim, &MoonlightShim::connectionStarted, this, &StreamRelay::onShimConnectionStarted);
-    connect(m_Shim, &MoonlightShim::connectionFailed, this, &StreamRelay::onShimConnectionFailed);
-    connect(m_Shim, &MoonlightShim::connectionTerminated, this,
+    connect(m_Shim, &IMediaEngine::videoFrameReady, this, &StreamRelay::onVideoFrame);
+    connect(m_Shim, &IMediaEngine::audioSampleReady, this, &StreamRelay::onAudioSample);
+    connect(m_Shim, &IMediaEngine::connectionStarted, this, &StreamRelay::onShimConnectionStarted);
+    connect(m_Shim, &IMediaEngine::connectionFailed, this, &StreamRelay::onShimConnectionFailed);
+    connect(m_Shim, &IMediaEngine::connectionTerminated, this,
             &StreamRelay::onShimConnectionTerminated);
 
     // Forward host rumble requests to the browser over the WebSocket.
-    connect(m_Shim, &MoonlightShim::rumble, this, [this](int controller, int low, int high) {
+    connect(m_Shim, &IMediaEngine::rumble, this, [this](int controller, int low, int high) {
         if (!m_WsClient || m_WsClient->state() != QAbstractSocket::ConnectedState) return;
         QJsonObject m;
         m["type"] = "rumble";
@@ -566,7 +566,7 @@ void StreamRelay::onWsTextMessage(const QString& message)
     }
 
     // Any message at all proves the input link is alive — feeds the shim's
-    // dead-man switch (see MoonlightShim's input-watchdog section).
+    // dead-man switch (see IMediaEngine's input-watchdog contract).
     if (m_Shim) m_Shim->noteClientAlive();
 
     // An invited player only gets what the owner ticked. Dropped in silence.
@@ -583,7 +583,7 @@ void StreamRelay::onWsTextMessage(const QString& message)
                              msg["hold"].toBool(false));
     } else if (type == "inputstate") {
         // Client heartbeat of its held-input state — full contract in
-        // MoonlightShim's input-watchdog section.
+        // IMediaEngine's input-watchdog contract.
         m_Shim->syncHeldInputs(InputMsg::parseHeldKeys(msg),
                                static_cast<quint32>(msg["buttons"].toInt(0)),
                                msg["buttonsHold"].toBool(false));

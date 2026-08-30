@@ -1,0 +1,104 @@
+/*
+ * MoonlightWeb — native capture & encoding engine.
+ * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#pragma once
+
+#include "Capabilities.h"
+
+#include <cstdint>
+#include <vector>
+
+namespace mw::native {
+
+/// What one streaming session asks for. Deliberately small: every knob Sunshine
+/// exposes (GOP, B-frames, preset, tuning, lookahead, VBV, QP) is decided by the
+/// engine and is absent here on purpose (§28 of the mission).
+///
+/// The fields that ARE here all come from choices the user already makes today,
+/// in the stream settings shared by every host — plus the display they clicked.
+struct SessionConfig
+{
+    /// Which display to stream — DisplayInfo::id. The one and only technical
+    /// choice a user makes.
+    int displayId = -1;
+
+    /// Requested output size. Zero means "native resolution of the display",
+    /// which is the default. When smaller, the scale happens in the same GPU
+    /// pass as the colour conversion, so it costs nothing extra.
+    int width = 0;
+    int height = 0;
+
+    /// Requested frame rate. Zero means "the display's own refresh rate".
+    int fps = 0;
+
+    int bitrateKbps = 20000;
+
+    /// Codecs the BROWSER accepts, best first. The engine intersects this with
+    /// what the display's GPU can encode and picks the first survivor — which
+    /// is why no codec question is ever asked (§27).
+    ///
+    /// Empty is a programming error, not a default: an empty list would leave
+    /// the engine guessing what the client can decode.
+    std::vector<Codec> clientCodecs;
+
+    /// Ask for HDR. Honoured only when the display is actually in an HDR mode
+    /// AND the chosen encoder does 10-bit; otherwise the session runs SDR and
+    /// says so in SessionInfo, rather than failing.
+    bool hdr = false;
+
+    /// Draw the mouse cursor into the captured frame. On by default: the remote
+    /// user needs to see where they are pointing.
+    bool captureCursor = true;
+
+    /// The client's display refresh, in millihertz, when the browser reported
+    /// one. Lets the engine align capture phase with the client's vsync and
+    /// shave up to a frame of beat (§9.4). Zero means "unknown, free-run".
+    int clientRefreshMilliHz = 0;
+};
+
+/// What the engine settled on once a session started. Mirrored into the stats
+/// overlay so the user can see the GPU and encoder actually in use — the only
+/// technical information the UI shows (§28).
+struct SessionInfo
+{
+    int displayId = -1;
+    int width = 0;
+    int height = 0;
+    int fps = 0;
+
+    Codec codec = Codec::H264;
+    EncoderApi encoder = EncoderApi::None;
+    CaptureApi capture = CaptureApi::None;
+
+    /// e.g. "NVIDIA GeForce RTX 4070"
+    std::string gpuName;
+
+    /// True when the session really is 10-bit HDR. May be false even though
+    /// SessionConfig::hdr was true — see that field.
+    bool hdr = false;
+
+    /// Memory copies between capture and the wire, counted rather than
+    /// estimated. Logged at session start and compared in the benchmarks (§16);
+    /// if this number ever grows, a zero-copy path silently broke.
+    int copiesPerFrame = 0;
+
+    /// True when the frame has to cross from the display's GPU to a different
+    /// GPU to be encoded (§6). Costly and rare — always worth a log line.
+    bool crossGpuCopy = false;
+};
+
+} // namespace mw::native

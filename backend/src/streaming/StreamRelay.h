@@ -26,14 +26,14 @@
 #include <QElapsedTimer>
 #include <QTimer>
 
-class MoonlightShim;
+class IMediaEngine;
 
 class StreamRelay : public QObject
 {
     Q_OBJECT
 
 public:
-    StreamRelay(MoonlightShim* shim, quint16 wsPort, const QSslConfiguration& sslConfig = {},
+    StreamRelay(IMediaEngine* engine, quint16 wsPort, const QSslConfiguration& sslConfig = {},
                 QObject* parent = nullptr);
     ~StreamRelay() override;
 
@@ -71,8 +71,9 @@ public:
     /// StreamRelay therefore means a live stream, used for take-over detection.
     bool isClientConnected() const { return m_WsClient != nullptr; }
 
-    /// Access the MoonlightShim for explicit stopConnection() before cleanup.
-    MoonlightShim* moonlightShim() const { return m_Shim; }
+    /// The engine producing this session's media, for an explicit
+    /// stopConnection() before cleanup.
+    IMediaEngine* mediaEngine() const { return m_Shim; }
 
     /// Enable bidirectional text clipboard sync. Only called with true when
     /// the streamed host is this machine (the backend clipboard IS the host
@@ -124,7 +125,7 @@ private:
     /// over the WS as text JSON, so the latency overlay works in WSS mode.
     void sendStats();
 
-    MoonlightShim* m_Shim;
+    IMediaEngine* m_Shim;
     QTimer* m_StatsTimer = nullptr;   // Periodic stats to the browser (500ms)
     QElapsedTimer m_IdrCooldownTimer; // Throttle browser IDR requests (300ms)
     QWebSocketServer* m_WsServer = nullptr;

@@ -24,14 +24,19 @@
 // media engine needs to attach to that session, and nothing about *how* the
 // backend got there.
 //
-// This is a tagged union. Today there is exactly one transport (GameStream
-// RTSP, driven by moonlight-common-c through MoonlightShim), but the tag is
-// what lets a future transport — e.g. punktfunk's QUIC protocol — land without
+// This is a tagged union. The tag is what lets a new media source land without
 // touching IStreamBackend or any provider. StreamSession switches on `type` in
 // a single place; see the media-engine branch point in streaming/Session.cpp.
 enum class MediaType
 {
     GameStreamRtsp,
+
+    /// This machine's own screen, captured and encoded in-process by
+    /// backend/native-host/. There is no host to dial, no session to negotiate
+    /// and no key to exchange — which is exactly the point: everything a remote
+    /// host needs (RTSP, RTP, FEC, a second layer of AES) is what the native
+    /// engine exists to remove.
+    NativeHost,
 };
 
 // Valid when MediaDescriptor::type == MediaType::GameStreamRtsp.
@@ -48,8 +53,31 @@ struct GameStreamMedia
     int rikeyid = 0;                // rikeyid — IV prefix
 };
 
+// Valid when MediaDescriptor::type == MediaType::NativeHost.
+//
+// Strikingly smaller than GameStreamMedia, and that is the whole story: no
+// address, no session URL, no version quirks, no AES key. What is left is what
+// the user actually chose (a display) plus what the browser can decode.
+struct NativeHostMedia
+{
+    /// Which display to capture — DisplayInfo::id from the native engine's
+    /// probe. This is the one and only technical choice a user makes.
+    int displayId = -1;
+
+    /// Codecs the browser accepts, best first, as a VIDEO_FORMAT_* bitmask.
+    /// The engine intersects it with what the display's GPU can encode; no
+    /// codec question is ever put to the user.
+    int clientVideoFormats = 0;
+
+    /// True when the client asked for HDR. Honoured only if the display is
+    /// really in an HDR mode and the encoder has a 10-bit path — otherwise the
+    /// session runs SDR and says so, rather than failing.
+    bool hdrRequested = false;
+};
+
 struct MediaDescriptor
 {
     MediaType type = MediaType::GameStreamRtsp;
     GameStreamMedia gameStream;
+    NativeHostMedia nativeHost;
 };

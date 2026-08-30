@@ -18,7 +18,7 @@
 #include "DataChannelRelay.h"
 #include "ClipboardBridge.h"
 #include "InputMessageCodec.h"
-#include "MoonlightShim.h"
+#include "IMediaEngine.h"
 #include "ExitNotice.h"
 
 extern "C" {
@@ -440,24 +440,24 @@ static bool patchHevcKeyframe(QByteArray& data)
 
 // ============================================================================
 
-DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
+DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     : RelayBase(parent)
-    , m_Shim(shim)
+    , m_Shim(engine)
 {
     qInfo() << "[DataChannelRelay] Created";
 
     // Dedicated sender thread: fragmentation + dc->send() run off the main thread.
     m_Sender = std::make_unique<FrameSender>();
 
-    connect(m_Shim, &MoonlightShim::videoFrameReady, this, &DataChannelRelay::onVideoFrame);
-    connect(m_Shim, &MoonlightShim::audioSampleReady, this, &DataChannelRelay::onAudioSample);
-    connect(m_Shim, &MoonlightShim::connectionTerminated, this,
+    connect(m_Shim, &IMediaEngine::videoFrameReady, this, &DataChannelRelay::onVideoFrame);
+    connect(m_Shim, &IMediaEngine::audioSampleReady, this, &DataChannelRelay::onAudioSample);
+    connect(m_Shim, &IMediaEngine::connectionTerminated, this,
             &DataChannelRelay::onShimConnectionTerminated);
 
     // Forward host rumble requests to the browser over the input DC.
     // 'this' as context → runs on the relay thread (signal is emitted from the
     // moonlight worker thread).
-    connect(m_Shim, &MoonlightShim::rumble, this, [this](int controller, int low, int high) {
+    connect(m_Shim, &IMediaEngine::rumble, this, [this](int controller, int low, int high) {
         if (m_Stopping.load() || !m_InputDc) return;
         QJsonObject m;
         m["type"] = "rumble";
@@ -780,7 +780,7 @@ void DataChannelRelay::createDataChannels()
     qInfo() << "[DataChannelRelay] Channels created (video=DC#0, audio=RTP, input=DC#2)";
 }
 
-// --- Video/Audio forwarding (from MoonlightShim signals, on main thread) ---
+// --- Video/Audio forwarding (from media engine signals, on main thread) ---
 
 void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /*frameNumber*/,
                                     qint64 presentationTimeUs)
@@ -1016,7 +1016,7 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         // Client heartbeat: its authoritative held-input state, sent while (and
         // only while) something is held. Re-presses whatever the watchdog
         // released during a stall but the user is genuinely still holding.
-        QVector<MoonlightShim::HeldKey> held = InputMsg::parseHeldKeys(msg);
+        QVector<IMediaEngine::HeldKey> held = InputMsg::parseHeldKeys(msg);
         quint32 buttons = static_cast<quint32>(msg["buttons"].toInt(0));
         InputMsg::filterHeldState(m_InputPolicy, held, buttons);
         m_Shim->syncHeldInputs(held, buttons, msg["buttonsHold"].toBool(false));
@@ -1121,7 +1121,7 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     if (data.isEmpty()) return;
 
     // Track decode pipeline latency: time from frameSubmitUs (set in
-    // MoonlightShim::drSubmitDecodeUnit) to actual send over WebRTC.
+    // the media engine's frame callback) to actual send over WebRTC.
     // This captures buffer concatenation + signal queuing + fragmentation overhead.
     if (m_Shim) {
         int64_t submitTs = m_Shim->frameSubmitTimeUs();
@@ -1454,7 +1454,7 @@ void DataChannelRelay::sendIdrRequestThrottled()
     m_IdrOutstanding = true;
 
     m_IdrCooldownTimer.restart();
-    qInfo() << "[DataChannelRelay] IDR request → MoonlightShim (cooldown" << m_IdrCooldownMs
+    qInfo() << "[DataChannelRelay] IDR request → media engine (cooldown" << m_IdrCooldownMs
             << "ms)";
     m_Shim->requestIdrFrame();
 }
