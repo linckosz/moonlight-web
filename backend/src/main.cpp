@@ -3824,17 +3824,21 @@ int main(int argc, char* argv[])
     //
     // Some of them make an exception, and only when the internet way in has been
     // consented to AND answers when asked: both tray entries that lead into the
-    // app — Open and Server Settings — and the admin page opened at launch. They
-    // lead to pages whose worth is in being readable without an interstitial,
-    // and the rendezvous carries them under a certificate the browser trusts.
+    // app — Open and Server Settings — the admin page opened at launch, and the
+    // installer's "open the admin page" on its Finish page. They lead to pages
+    // whose worth is in being readable without an interstitial, and the
+    // rendezvous carries them under a certificate the browser trusts.
     //
     // What separates those from the rest is not which page they lead to, it is
     // WHEN the address is decided. They are resolved at the click, so the answer
     // can be "the internet, right now, and here is a key spent on this one
-    // visit". The shortcut, the tooltip and the post-install page are written
-    // down ahead of any click: a file on disk cannot hold a single-use key, and
-    // an address that is sometimes right is worse than one that is always plain.
-    // They stay on loopback.
+    // visit". The installer counts as one of them even though a [Run] entry is
+    // declared long before it fires: it asks GET /api/server/remote-link over
+    // loopback while its last progress page is still on screen, seconds before
+    // the click it is preparing for. The shortcut and the tooltip are the ones
+    // written down ahead of any click: a file on disk cannot hold a single-use
+    // key, and an address that is sometimes right is worse than one that is
+    // always plain. They stay on loopback.
     //
     // It used to prefer the public sub-domain whenever one was published,
     // trusted and reflected back to the LAN, on the reasoning that the host
