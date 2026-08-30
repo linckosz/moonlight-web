@@ -45,6 +45,7 @@ describe('HostListView app grid', () => {
     afterEach(() => {
         if (view) view.destroy();
         view = null;
+        vi.useRealTimers();
     });
 
     const mount = () => {
@@ -154,6 +155,64 @@ describe('HostListView app grid', () => {
 
         expect(grid(container).querySelector('.host-apps-loading')).not.toBeNull();
         expect(grid(container).querySelector('.host-apps-error')).toBeNull();
+        err.mockRestore();
+    });
+
+    // A host that is simply down does not fail fast: the backend hangs on it
+    // until its own deadline and answers 504 "App list request timed out". A
+    // flat retry cadence therefore keeps one stalled request per dead host
+    // permanently in flight, which is what filled the console with 504s. Each
+    // consecutive failure must buy the next attempt more room.
+    it('backs off exponentially while a host keeps timing out', async () => {
+        vi.useFakeTimers();
+        const rejection = Object.assign(new Error('App list request timed out'), {
+            statusCode: 504,
+        });
+        BackendClient.getAppList.mockRejectedValue(rejection);
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        mount();
+        view._active = true; // start() is what normally arms the retry path
+        await settle();
+        expect(BackendClient.getAppList).toHaveBeenCalledTimes(1);
+
+        // First retry lands at the base delay.
+        await vi.advanceTimersByTimeAsync(HostListView.APP_LIST_RETRY_MS);
+        await settle();
+        expect(BackendClient.getAppList).toHaveBeenCalledTimes(2);
+
+        // The second one must NOT: the window has doubled.
+        await vi.advanceTimersByTimeAsync(HostListView.APP_LIST_RETRY_MS);
+        await settle();
+        expect(BackendClient.getAppList).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(HostListView.APP_LIST_RETRY_MS);
+        await settle();
+        expect(BackendClient.getAppList).toHaveBeenCalledTimes(3);
+
+        err.mockRestore();
+    });
+
+    // The host poll re-renders the list on its own cadence, and that path also
+    // asks for app lists. It must respect the backoff, otherwise the ladder
+    // above is dead code and the dead host is re-asked every few seconds.
+    it('does not let a re-render jump the backoff', async () => {
+        vi.useFakeTimers();
+        const rejection = Object.assign(new Error('App list request timed out'), {
+            statusCode: 504,
+        });
+        BackendClient.getAppList.mockRejectedValue(rejection);
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        mount();
+        await settle();
+        expect(BackendClient.getAppList).toHaveBeenCalledTimes(1);
+
+        view.renderList();
+        view.renderList();
+        await settle();
+
+        expect(BackendClient.getAppList).toHaveBeenCalledTimes(1);
         err.mockRestore();
     });
 
