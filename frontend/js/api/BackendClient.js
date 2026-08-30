@@ -109,13 +109,16 @@ export class BackendClient {
         // session-gated endpoint and every first visit reloaded once because of
         // it. Any screen that runs before authentication can trip this, so the
         // condition belongs here rather than in a list of exempt paths.
+        //
+        // A 401 that explains itself is not a lost session. Some routes answer
+        // 401 about the *host* rather than the caller — "no longer paired" is
+        // one — and reloading over that throws the page away instead of showing
+        // the reason. The session gate always names itself, so trust the name,
+        // and keep the bare-401 fallback for an answer that carries no body.
         const isAuthEndpoint =
             path.startsWith('/api/auth/') || path.startsWith('/api/share/player/');
-        if (
-            this._hadSession &&
-            !isAuthEndpoint &&
-            (resp.status === 401 || msg === 'authentication_required')
-        ) {
+        const isSessionLost = msg === 'authentication_required' || (resp.status === 401 && !msg);
+        if (this._hadSession && !isAuthEndpoint && isSessionLost) {
             if (!sessionStorage.getItem('mw_auth_reload')) {
                 sessionStorage.setItem('mw_auth_reload', '1');
                 console.warn('[MW] Authentication required — reloading page');

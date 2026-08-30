@@ -1113,8 +1113,17 @@ export class HostListView {
                 // remote path warms up and the backend poll re-confirms the
                 // active address). Keep it transient and schedule an auto-retry
                 // so the card self-heals without a manual page reload.
+                //
+                // A 4xx is the opposite: the backend looked and gave a verdict —
+                // not paired, not found, no address. Retrying returns the same
+                // answer forever, and the spinner below would never come down,
+                // so show what it said instead.
                 console.error('[MW] Failed to load app list:', err);
-                return /** @type {AppsEntry} */ ({ error: err.message });
+                const verdict = err.statusCode >= 400 && err.statusCode < 500;
+                return /** @type {AppsEntry} */ ({
+                    error: err.message,
+                    sticky: verdict || undefined,
+                });
             })
             .then((result) => {
                 if (this._destroyed) return result;
@@ -1217,7 +1226,13 @@ export class HostListView {
         cont.dataset.loaded = '1';
         cont.dataset.appsSig = entry && entry.apps ? appsSignature(entry.apps) : '';
         if (!entry || entry.error) {
-            cont.innerHTML = `<div class="host-apps-msg host-apps-error">${t('apps.loadFailed')}</div>`;
+            // Prefer what the backend actually said — "no longer paired" tells
+            // the user what to do next, where the generic line leaves them
+            // guessing. Only a verdict carries a message worth showing; a
+            // transient failure falls back to the generic wording.
+            const reason =
+                entry && entry.sticky && entry.error ? entry.error : t('apps.loadFailed');
+            cont.innerHTML = `<div class="host-apps-msg host-apps-error">${escapeHtml(reason)}</div>`;
             return;
         }
         const apps = entry.apps || [];

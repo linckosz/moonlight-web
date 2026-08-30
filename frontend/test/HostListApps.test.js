@@ -123,6 +123,40 @@ describe('HostListView app grid', () => {
         err.mockRestore();
     });
 
+    // A host that answers 4xx has given a verdict, not hit a hiccup. Retrying
+    // returns the same answer for ever, so the spinner must come down and say
+    // what the host said — the symptom this pins is a card stuck on "Loading
+    // applications..." because a dropped pairing was reported as a 5xx.
+    it('shows the reason when the host rejects the request, and stops retrying', async () => {
+        const rejection = Object.assign(new Error('Host is no longer paired. Please pair again.'), {
+            statusCode: 401,
+        });
+        BackendClient.getAppList.mockRejectedValue(rejection);
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        mount();
+        await settle();
+
+        expect(grid(container).querySelector('.host-apps-loading')).toBeNull();
+        expect(grid(container).querySelector('.host-apps-error').textContent).toBe(
+            'Host is no longer paired. Please pair again.',
+        );
+        err.mockRestore();
+    });
+
+    it('keeps retrying behind the spinner when the failure is transient', async () => {
+        const rejection = Object.assign(new Error('gateway'), { statusCode: 502 });
+        BackendClient.getAppList.mockRejectedValue(rejection);
+        const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        mount();
+        await settle();
+
+        expect(grid(container).querySelector('.host-apps-loading')).not.toBeNull();
+        expect(grid(container).querySelector('.host-apps-error')).toBeNull();
+        err.mockRestore();
+    });
+
     it('shows the spinner for a host it has never seen, then its apps', async () => {
         BackendClient.getAppList.mockResolvedValue(ok([{ id: 1, name: 'Desktop' }]));
 
