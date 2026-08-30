@@ -70,9 +70,16 @@ const UPDATE_PHASES = {
 };
 
 export class HostListView {
-    // Backoff before re-attempting an app-list fetch that failed transiently
-    // (host momentarily unreachable — e.g. remote path warming up post-reboot).
+    // First backoff before re-attempting an app-list fetch that failed
+    // transiently (host momentarily unreachable — e.g. remote path warming up
+    // post-reboot). Each consecutive failure doubles it, up to _MAX_MS.
+    //
+    // The doubling is what keeps a host that is simply DOWN from being asked
+    // forever at a fixed cadence: its fetch does not fail fast, it hangs until
+    // the backend gives up and answers 504 ("App list request timed out"), so a
+    // flat retry means one stalled request per host permanently in flight.
     static APP_LIST_RETRY_MS = 4000;
+    static APP_LIST_RETRY_MAX_MS = 60000;
 
     // How long a refused launch keeps its orange marker before it has faded
     // back to neutral. Must match the CSS animation on .app-card--launch-failed.
@@ -103,6 +110,12 @@ export class HostListView {
         this.appsByHost = {};
         // Pending one-shot app-list retry timers, keyed by host uuid.
         this._appRetryTimers = {};
+        // Backoff state for those retries, keyed by host uuid: the delay the
+        // NEXT retry will use, and the timestamp before which no automatic
+        // caller may re-ask. The deadline is what stops the host poll from
+        // jumping the queue — the timer alone only paces _scheduleAppsRetry.
+        this._appRetryDelay = {};
+        this._appRetryAt = {};
         // Cards currently fading from "launch refused" orange back to neutral,
         // each with the timer that will strip the class.
         this._launchFailTimers = new Map();
@@ -694,6 +707,8 @@ export class HostListView {
             clearTimeout(this._appRetryTimers[uuid]);
         }
         this._appRetryTimers = {};
+        this._appRetryDelay = {};
+        this._appRetryAt = {};
     }
 
     destroy() {
@@ -1043,6 +1058,12 @@ export class HostListView {
 
         let entry = this.appsByHost[uuid];
 
+        // A transient failure is already on a backoff timer. This path runs on
+        // every re-render of the list, so without this gate the host poll
+        // re-asks a host that is down every few seconds regardless of the
+        // backoff, and the ladder in _scheduleAppsRetry never bites.
+        const backoff = this._appRetryAt[uuid] > Date.now();
+
         // First sight of this host in this session: adopt what the last visit
         // saw so there is something to draw right now.
         if (!entry) {
@@ -1064,14 +1085,14 @@ export class HostListView {
             // A remembered list is shown on trust, never kept on trust: confirm
             // it against the host once, with no spinner over the grid that is
             // already there.
-            if (entry.apps && entry.fromCache) this._refreshApps(uuid);
+            if (entry.apps && entry.fromCache && !backoff) this._refreshApps(uuid);
             return;
         }
         if (entry && entry.pending) return; // request in flight, placeholder shown
 
         cont.innerHTML = `<div class="host-apps-loading">${t('apps.loading')}</div>`;
         cont.dataset.loaded = '';
-        this._refreshApps(uuid);
+        if (!backoff) this._refreshApps(uuid);
     }
 
     /**
@@ -1098,6 +1119,9 @@ export class HostListView {
                 if (data && data.status === 'ok') {
                     const raw = data.apps || [];
                     saveCachedApps(uuid, raw);
+                    // The host answered: the next failure starts the ladder over.
+                    delete this._appRetryDelay[uuid];
+                    delete this._appRetryAt[uuid];
                     return /** @type {AppsEntry} */ ({ apps: raw.map((a) => new App(a, uuid)) });
                 }
                 // The backend answered with a definitive rejection (host not
@@ -1201,6 +1225,9 @@ export class HostListView {
     // the host changes; one pending retry per host.
     _scheduleAppsRetry(uuid) {
         if (this._appRetryTimers[uuid]) return;
+        const delay = this._appRetryDelay[uuid] || HostListView.APP_LIST_RETRY_MS;
+        this._appRetryDelay[uuid] = Math.min(delay * 2, HostListView.APP_LIST_RETRY_MAX_MS);
+        this._appRetryAt[uuid] = Date.now() + delay;
         this._appRetryTimers[uuid] = setTimeout(() => {
             delete this._appRetryTimers[uuid];
             if (this._destroyed || !this._active) return;
@@ -1216,7 +1243,7 @@ export class HostListView {
                 delete this.appsByHost[uuid]; // clear transient error → re-fetch
                 this._ensureAppsLoaded(host);
             }
-        }, HostListView.APP_LIST_RETRY_MS);
+        }, delay);
     }
 
     // Paints the grid AND records what is on screen: `loaded` says the container
