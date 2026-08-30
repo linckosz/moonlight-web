@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QCryptographicHash>
 #include <QDirIterator>
 #include <algorithm>
 #include <QDateTime>
@@ -104,6 +105,21 @@ QStringList StaticFileHandler::listFiles() const
     }
     paths.sort();
     return paths;
+}
+
+QString StaticFileHandler::contentTag() const
+{
+    // Same set as listFiles(), by construction — it IS listFiles(), so the
+    // fingerprint can never come to describe a different set than the manifest
+    // it is stamped on.
+    QCryptographicHash hash(QCryptographicHash::Md5);
+    for (const QString& path : listFiles()) {
+        const QFileInfo info(m_RootDir + path.mid(1));
+        hash.addData(path.toUtf8());
+        hash.addData(QByteArray::number(info.lastModified().toUTC().toSecsSinceEpoch()));
+        hash.addData(QByteArray::number(info.size()));
+    }
+    return QString::fromLatin1(hash.result().toHex().left(12));
 }
 
 HttpResponse StaticFileHandler::serveFile(const QString& requestPath,

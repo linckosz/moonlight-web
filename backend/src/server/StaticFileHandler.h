@@ -45,6 +45,18 @@ public:
     /// which is most of them.
     QStringList listFiles() const;
 
+    /// Fingerprint of the bytes listFiles() would serve (mtime + size of each,
+    /// folded into a short hash).
+    ///
+    /// The bootstrap keeps the whole application in a Cache Storage shelf and
+    /// only refetches it when the manifest version changes. Keyed on the app
+    /// version alone, an edited frontend served by the same build is invisible:
+    /// the browser keeps handing the old file to the page for ever, and no
+    /// reload helps because the service worker never revalidates. Folding the
+    /// content in makes any change to the served set invalidate that shelf on
+    /// its own.
+    QString contentTag() const;
+
 private:
     QString mimeType(const QString& path) const;
     static QMap<QString, QString> s_MimeTypes;
