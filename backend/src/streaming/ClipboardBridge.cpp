@@ -16,7 +16,7 @@
  */
 
 #include "ClipboardBridge.h"
-#include "MoonlightShim.h"
+#include "IMediaEngine.h"
 
 #include <QClipboard>
 #include <QCoreApplication>
@@ -71,12 +71,12 @@ bool ClipboardBridge::isSelfAddress(const QString& address)
     return false;
 }
 
-void ClipboardBridge::pasteFromClient(MoonlightShim* shim, const QString& text, bool wrapCtrl)
+void ClipboardBridge::pasteFromClient(IMediaEngine* engine, const QString& text, bool wrapCtrl)
 {
     // The shim is Qt-parented to its relay and dies on the relay thread; the
     // lambda runs on the main thread — guard with a QPointer so a teardown
     // racing this queued call degrades to a no-op instead of a dangling call.
-    QPointer<MoonlightShim> shimGuard(shim);
+    QPointer<IMediaEngine> shimGuard(engine);
     QMetaObject::invokeMethod(
         this,
         [this, shimGuard, text, wrapCtrl]() {
@@ -88,7 +88,7 @@ void ClipboardBridge::pasteFromClient(MoonlightShim* shim, const QString& text, 
             // Inject the chord only AFTER the clipboard is committed — same
             // main-thread hop, so ordering is structural. Li input calls are
             // thread-safe (guarded by the shim's connected atomic).
-            MoonlightShim* s = shimGuard.data();
+            IMediaEngine* s = shimGuard.data();
             if (!s) return;
             if (wrapCtrl) s->sendKeyEvent(kVkControl, true, kModCtrl, 0);
             s->sendKeyEvent(kVkV, true, kModCtrl, 0);

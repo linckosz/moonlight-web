@@ -107,6 +107,23 @@ set(CMAKE_AUTOMOC ON)
 # ── Threads (pthread on Unix) ──────────────────────────────────────────────
 find_package(Threads REQUIRED)
 
+# Declared here rather than next to the test targets below: native-host/ is
+# added before them and gates its own test executable on this option.
+# enable_testing() has to precede any add_test() in a subdirectory, hence here
+# too — calling it again next to the security tests is harmless.
+option(MW_BUILD_TESTS "Build cross-platform unit tests" ON)
+if(MW_BUILD_TESTS)
+    enable_testing()
+endif()
+
+# ── Native capture & encoding engine ───────────────────────────────────────
+# MoonlightWeb's own capture/encode engine, for streaming THIS machine without
+# Sunshine. Deliberately isolated: it links no Qt and no GPL dependency, so it
+# stays relicensable on its own (backend/native-host/LICENSE.md), and a build
+# step enforces that boundary. External hosts (Sunshine/Apollo/Wolf) keep the
+# GameStream path and are untouched by it.
+add_subdirectory(native-host)
+
 # ── Native dependencies (static, built from submodules) ────────────────────
 
 # moonlight-common-c (+ bundled ENet, nanors FEC). Its CMakeLists picks the
@@ -211,8 +228,13 @@ add_executable(mw-server
     src/backend/streambackend/GameStreamBackend.cpp
     src/backend/streambackend/WolfBackend.cpp
     src/backend/streambackend/MultiSeatBackend.cpp
+    src/backend/streambackend/NativeHostBackend.cpp
     src/backend/streambackend/StreamBackendSetup.cpp
     src/backend/SunshineInstaller.cpp
+    # Listed as a source although it is a header: it declares a Q_OBJECT with no
+    # .cpp of its own (it is the pure media-engine interface), and AUTOMOC only
+    # moc's a header it can see in the target.
+    src/streaming/IMediaEngine.h
     src/streaming/RelayBase.cpp
     src/streaming/StreamConfig.cpp
     src/streaming/Session.cpp
@@ -297,6 +319,7 @@ endforeach()
 
 target_link_libraries(mw-server PRIVATE
     Qt6::Core Qt6::Network Qt6::WebSockets Qt6::Widgets
+    mw-native-host
     moonlight-common-c
     LibDataChannel::LibDataChannel
     libminiupnpc-static
@@ -362,7 +385,8 @@ endif()
 # no Windows APIs — so the SAME security logic is verified on Linux, macOS and
 # Windows, enforcing parity across platforms. The full Windows-only TNR suite
 # (OpenCppCoverage, OpenSSL-dependent units) still lives in tests/tests.pro.
-option(MW_BUILD_TESTS "Build cross-platform unit tests" ON)
+# MW_BUILD_TESTS itself is declared near the top: native-host/ is added before
+# this point and gates its own test executable on the same option.
 if(MW_BUILD_TESTS)
     enable_testing()
     add_executable(mw-security-tests

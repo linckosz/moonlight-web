@@ -33,7 +33,7 @@ struct Configuration;
 
 class RelayBase;
 class UPNPClient;
-class MoonlightShim;
+class IMediaEngine;
 
 // Minimal WebSocket server for WebRTC signaling only.
 // Exchanges SDP offer/answer and ICE candidates between the browser
@@ -73,10 +73,10 @@ public:
     /// The browser will connect to this URL instead of the local ws://... one.
     void setOverrideWsUrl(const QString& url) { m_OverrideWsUrl = url; }
 
-    /// Set the MoonlightShim instance for WS fallback mode.
+    /// Set the media engine used by WS fallback mode.
     /// When ICE times out, video/audio data is sent over the signaling WebSocket
     /// instead of WebRTC DataChannels, using the same fragmentation format.
-    void setMoonlightShim(MoonlightShim* shim) { m_Shim = shim; }
+    void setMediaEngine(IMediaEngine* engine) { m_Shim = engine; }
 
     /// Set the STUN server URL to use for ICE configuration.
     /// Default: "stun:stream.{MW_DOMAIN}:3478" (AppSettings::stunServer).
@@ -128,7 +128,7 @@ private:
     // path through restrictive networks.
 
     /// Start WS fallback — triggered by DataChannelRelay::iceTimedOut().
-    /// Sends {type:"fallback-ws"} to the browser, then routes MoonlightShim
+    /// Sends {type:"fallback-ws"} to the browser, then routes media engine
     /// video/audio signals through the signaling WebSocket as binary frames.
     void startWsFallback();
 
@@ -148,22 +148,22 @@ private:
     /// These are input commands (keydown, mousemove, etc.) from the browser.
     void handleWsFallbackInput(const QString& message);
 
-    /// Forward a MoonlightShim video frame to the browser as a binary WS frame.
+    /// Forward a media engine video frame to the browser as a binary WS frame.
     /// Uses the same fragmentation format as DataChannelRelay, with a 1-byte
     /// channel prefix (0x01=video, 0x02=audio) before the frag header.
     void forwardVideoViaWs(const QByteArray& data, int frameType, int frameNumber);
 
-    /// Forward a MoonlightShim audio sample to the browser as a binary WS frame.
+    /// Forward a media engine audio sample to the browser as a binary WS frame.
     void forwardAudioViaWs(const QByteArray& data);
 
     bool m_WsFallbackActive = false;
     bool m_AllowWsFallback = true; ///< Default: WS fallback allowed. Auto mode sets false.
-    bool m_ShimConnected = false;  ///< MoonlightShim signals connected for fallback
+    bool m_ShimConnected = false;  ///< media engine signals connected for fallback
 
     /// ── Members ─────────────────────────────────────────────────────────────
 
     RelayBase* m_Relay;
-    MoonlightShim* m_Shim = nullptr;
+    IMediaEngine* m_Shim = nullptr;
 
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;

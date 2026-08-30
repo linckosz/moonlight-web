@@ -41,7 +41,7 @@ extern "C" {
 std::atomic<MoonlightShim*> MoonlightShim::s_Instance{nullptr};
 
 MoonlightShim::MoonlightShim(QObject* parent)
-    : QObject(parent)
+    : IMediaEngine(parent)
 {}
 
 MoonlightShim::~MoonlightShim()

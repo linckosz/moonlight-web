@@ -25,7 +25,7 @@
 #include "../MediaTrackRelay.h"
 #include "../StreamRelay.h"
 #include "../SignalingServer.h"
-#include "../MoonlightShim.h"
+#include "../IMediaEngine.h"
 #include "../../backend/NvComputer.h"
 #include "../../backend/NvHTTP.h"
 #include "../../backend/IdentityManager.h"
@@ -94,15 +94,15 @@ void applyPolicyToLiveGraph(const InputMsg::Policy& policy)
             relay,
             [relay, policy]() {
                 relay->setInputPolicy(policy);
-                MoonlightShim* shim = relay->moonlightShim();
-                if (!shim) return;
-                shim->setWakeNudgeAllowed(policy.keyboardMouse);
+                IMediaEngine* engine = relay->mediaEngine();
+                if (!engine) return;
+                engine->setWakeNudgeAllowed(policy.keyboardMouse);
                 // Release everything, then let the client's next heartbeat put
                 // back whatever it still holds *and* is still allowed to hold.
                 // Anything else leaves a key down on the host that nobody can
                 // lift: the guest can no longer send the key-up, and the owner
                 // never pressed it.
-                shim->releaseHeldInputs(true);
+                engine->releaseHeldInputs(true);
             },
             Qt::QueuedConnection);
     };
@@ -126,7 +126,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &DataChannelRelay::sessionEnded, nullptr, nullptr);
-        if (r->moonlightShim()) r->moonlightShim()->stopConnection();
+        if (r->mediaEngine()) r->mediaEngine()->stopConnection();
         r->stop();
         r->deleteLater();
     }
@@ -137,7 +137,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &MediaTrackRelay::sessionEnded, nullptr, nullptr);
-        if (r->moonlightShim()) r->moonlightShim()->stopConnection();
+        if (r->mediaEngine()) r->mediaEngine()->stopConnection();
         r->stop();
         r->deleteLater();
     }
@@ -148,7 +148,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &StreamRelay::sessionEnded, nullptr, nullptr);
-        if (r->moonlightShim()) r->moonlightShim()->stopConnection();
+        if (r->mediaEngine()) r->mediaEngine()->stopConnection();
         r->stop();
         r->deleteLater();
     }

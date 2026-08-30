@@ -30,7 +30,7 @@ class PeerConnection;
 struct Configuration;
 } // namespace rtc
 
-class MoonlightShim;
+class IMediaEngine;
 
 /// Abstract base class for DataChannelRelay and MediaTrackRelay.
 ///
@@ -122,8 +122,11 @@ public:
 
     virtual bool isConnected() const = 0;
 
-    /// Access the MoonlightShim for explicit stopConnection() before cleanup.
-    virtual MoonlightShim* moonlightShim() const = 0;
+    /// The engine producing this session's media, for an explicit
+    /// stopConnection() before cleanup. A relay only ever sees the interface:
+    /// whether the frames come from a remote GameStream host or from this
+    /// machine's own screen is not its concern.
+    virtual IMediaEngine* mediaEngine() const = 0;
 
 signals:
     /// Local SDP description (offer) ready to send to the browser.

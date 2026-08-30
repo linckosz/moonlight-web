@@ -20,6 +20,7 @@
 #include "../../common/Logger.h"
 #include "GameStreamBackend.h"
 #include "MultiSeatBackend.h"
+#include "NativeHostBackend.h"
 #include "StreamBackendRegistry.h"
 #include "WolfBackend.h"
 
@@ -45,6 +46,14 @@ QString requireUuid(const QJsonObject& config, const char* type)
 void registerAll(NvHTTP* http, QNetworkAccessManager* nam, HostLookup lookup, PairingCommit commit)
 {
     StreamBackendRegistry& registry = StreamBackendRegistry::instance();
+
+    // This machine's own screen, captured in-process. Unlike every other
+    // factory it needs no host uuid, no address and no credential: there is
+    // nothing to dial and nobody to authenticate to.
+    registry.registerFactory(NativeHostBackend::typeName(),
+                             [](const QJsonObject&) -> std::unique_ptr<IStreamBackend> {
+                                 return std::make_unique<NativeHostBackend>();
+                             });
 
     registry.registerFactory(
         QStringLiteral("gamestream"),

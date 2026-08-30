@@ -25,7 +25,7 @@
 // heartbeat is read — live here rather than in three copies that drift.
 
 #include "InputPolicy.h"
-#include "MoonlightShim.h"
+#include "IMediaEngine.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -40,8 +40,7 @@ namespace InputMsg {
 
 /// Strip from an 'inputstate' heartbeat whatever @p p forbids, so a viewer's
 /// heartbeat cannot re-press keys the policy just dropped.
-inline void filterHeldState(const Policy& p, QVector<MoonlightShim::HeldKey>& keys,
-                            quint32& buttons)
+inline void filterHeldState(const Policy& p, QVector<IMediaEngine::HeldKey>& keys, quint32& buttons)
 {
     if (!p.keyboardMouse) {
         keys.clear();
@@ -80,15 +79,15 @@ inline char modifierMask(const QJsonObject& msg)
 }
 
 /// Read an 'inputstate' heartbeat's key list — the client's authoritative set
-/// of keys it is still holding (see MoonlightShim's input watchdog).
-inline QVector<MoonlightShim::HeldKey> parseHeldKeys(const QJsonObject& msg)
+/// of keys it is still holding (see the media engine's input watchdog).
+inline QVector<IMediaEngine::HeldKey> parseHeldKeys(const QJsonObject& msg)
 {
-    QVector<MoonlightShim::HeldKey> keys;
+    QVector<IMediaEngine::HeldKey> keys;
     const QJsonArray arr = msg["keys"].toArray();
     keys.reserve(arr.size());
     for (const QJsonValue& v : arr) {
         const QJsonObject k = v.toObject();
-        MoonlightShim::HeldKey held;
+        IMediaEngine::HeldKey held;
         resolveHostKey(k["keyCode"].toInt(0), k["code"].toString(), held.keyCode, held.flags);
         held.modifiers = modifierMask(k);
         held.hold = k["hold"].toBool(false);
