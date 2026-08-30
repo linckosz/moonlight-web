@@ -22,12 +22,21 @@ add_library(mw-native-host STATIC
 )
 
 # ── Platform backend selection ──────────────────────────────────────────────
-# Phase 1 lands the Windows backend here (DXGI + D3D11 + NVENC); Linux and
-# macOS follow in phases 6 and 7. Until a platform's backend exists, it uses
-# the honest stub — never a fake "available".
-set(MW_NATIVE_PLATFORM "none")
-
-if(MW_NATIVE_PLATFORM STREQUAL "none")
+# Exactly one backend is compiled. Where a platform has none yet it uses the
+# honest stub, which answers "not available here" — never a fake "available".
+if(WIN32)
+    set(MW_NATIVE_PLATFORM "windows")
+    target_sources(mw-native-host PRIVATE
+        src/platform/windows/WindowsProbe.cpp
+        src/platform/windows/WindowsEncoderProbe.cpp
+        src/platform/windows/WindowsSession.cpp
+    )
+    # DXGI enumerates the adapters and their outputs (the display→GPU
+    # association everything else depends on); user32/gdi32 supply the exact
+    # refresh rate and the primary-monitor flag.
+    target_link_libraries(mw-native-host PRIVATE dxgi user32 gdi32)
+else()
+    set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
 endif()
 

@@ -63,13 +63,18 @@ Capabilities probe()
         return caps;
     }
 
-    // An encoder anywhere is enough to be available. Which one a given display
-    // gets — and whether reaching it costs a cross-GPU copy — is decided per
-    // session by the Selector, not here: a machine with one encoder-less
+    // One usable encoder anywhere is enough to be available. Which one a given
+    // display gets — and whether reaching it costs a cross-GPU copy — is decided
+    // per session by the Selector, not here: a machine with one encoder-less
     // display and one perfectly good one must not be declared unusable.
+    //
+    // "Usable" means an encoder AND at least one codec it can actually produce.
+    // An encoder that can encode nothing we can send is no encoder at all, and
+    // counting it here would offer the user a host that fails the moment they
+    // click it — worse than offering none.
     bool anyEncoder = false;
     for (const GpuInfo& gpu : caps.gpus) {
-        if (!gpu.encoders.empty()) {
+        if (!gpu.encoders.empty() && !gpu.codecs.empty()) {
             anyEncoder = true;
             break;
         }
