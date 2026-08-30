@@ -494,9 +494,18 @@ export class Tunnel {
         if (this.onclosed) this.onclosed(why);
     }
 
+    /// Returns false when the frame could not be handed to the channel, so a
+    /// caller that is waiting for an answer can give up now rather than sit out
+    /// the request timeout for a message that was never sent.
     _sendFrame(kind, id, payload) {
-        if (this._dc?.readyState !== 'open') return;
-        this._dc.send(encodeFrame(kind, id, payload));
+        if (this._dc?.readyState !== 'open') return false;
+        try {
+            this._dc.send(encodeFrame(kind, id, payload));
+            return true;
+        } catch (e) {
+            console.warn('[tunnel] send failed:', e && e.message);
+            return false;
+        }
     }
 
     _onChannelMessage(bytes) {
@@ -620,7 +629,16 @@ export class Tunnel {
                 reject(new Error('the host did not answer'));
             }, REQUEST_TIMEOUT_MS);
             this._pending.set(id, { resolve, reject, timer, head: null, chunks: [] });
-            this._sendFrame(FRAME_REQUEST, id, payload);
+            // A channel that is not open swallows the frame. Without this the
+            // request would wait out the full timeout for an answer to a
+            // question nobody was asked — which is what the page's first render
+            // did whenever it landed while a tunnel session was being replaced:
+            // every app list came back "timed out" thirty seconds later.
+            if (!this._sendFrame(FRAME_REQUEST, id, payload)) {
+                clearTimeout(timer);
+                this._pending.delete(id);
+                reject(new Error('the connection to your machine is not open'));
+            }
         });
     }
 
