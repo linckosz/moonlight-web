@@ -42,6 +42,9 @@ extern "C" {
 MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
     : RelayBase(parent)
     , m_Shim(shim)
+    // The gate starts closed, so the first episode runs from here to the first
+    // keyframe on the track — that duration is the session's startup delay.
+    , m_GateClosedAt(std::chrono::steady_clock::now())
 {
     qInfo() << "[MediaTrackRelay] Created";
 
@@ -188,6 +191,7 @@ void MediaTrackRelay::setupPeerConnection(const rtc::Configuration& config)
         qInfo() << "[MediaTrackRelay] PC state changed to" << static_cast<int>(state);
         if (state == rtc::PeerConnection::State::Connected) {
             qInfo() << "[MediaTrackRelay] PeerConnection connected";
+            logSelectedCandidatePair(*m_Pc, "[MediaTrackRelay]");
             // This callback runs on a libdatachannel thread; QTimer must be
             // stopped from its owning (relay) thread.
             QMetaObject::invokeMethod(
@@ -230,26 +234,63 @@ void MediaTrackRelay::createTracksAndChannels()
         auto videoDesc = rtc::Description::Video("video", rtc::Description::Direction::SendOnly);
         videoDesc.addH264Codec(96); // Uses default profile: 42e01f, packetization-mode=1
 
+        // The SSRC has to be DECLARED in the media description, and before
+        // addTrack() — the description is what the PeerConnection turns into
+        // its ssrc→track routing table (updateTrackSsrcCache, built from the
+        // local description). An SSRC known only to the packetizer produces a
+        // stream the browser plays perfectly and whose RTCP feedback comes back
+        // to an address nobody claims: libdatachannel finds no track for it and
+        // drops it, silently, in both directions of usefulness.
+        //
+        // That is what made every NACK and every PLI a no-op here (2026-08-30:
+        // 63 NACKs and 6 PLIs from the receiver over one minute, not one of
+        // them reaching the RtcpNackResponder or the PliHandler chained below).
+        // With no retransmission and no keyframe on demand, a single lost
+        // packet froze the picture until the browser's own 2 s watchdog asked
+        // for an IDR over the DataChannel — the 2-4 s freezes, every 10-15 s.
+        std::random_device rd;
+        const uint32_t ssrc = static_cast<uint32_t>(rd());
+        videoDesc.addSSRC(ssrc, "video");
+
         m_VideoTrack = m_Pc->addTrack(videoDesc);
         if (m_VideoTrack) {
-            // Generate a random SSRC
-            std::random_device rd;
-            uint32_t ssrc = static_cast<uint32_t>(rd());
-
             auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
                 ssrc, "video", 96, rtc::H264RtpPacketizer::ClockRate);
             auto packetizer = std::make_shared<rtc::H264RtpPacketizer>(
                 rtc::H264RtpPacketizer::Separator::LongStartSequence, rtpConfig);
             // Chain: packetizer → RtcpNackResponder → PliHandler
-            // RtcpNackResponder retransmits RTP packets on NACK with a 128-packet buffer.
-            auto nackResponder = std::make_shared<rtc::RtcpNackResponder>(128);
+            //
+            // The NACK history is the only thing standing between a lost RTP
+            // packet and a multi-second freeze: unlike the DataChannel path
+            // (SCTP retransmits and reorders for us), a gap the receiver cannot
+            // repair costs it every frame until the next keyframe.
+            //
+            // 128 packets was far too short. At 1080p60 / 20 Mbps the track
+            // pushes ~2000 packets per second, so the history covered ~60 ms —
+            // less than the receiver's own NACK batching delay plus the round
+            // trip, and nothing at all next to a Wi-Fi stall (a Mac whose radio
+            // is taken over by AWDL loses hundreds of packets and sees its RTT
+            // go 28→74 ms). Every such NACK arrived after the packet had been
+            // evicted, leaving the PLI/keyframe path as the only recovery.
+            //
+            // kVideoNackHistory covers ~0.5 s at that bitrate for ~1.2 MB per
+            // session, which is what libwebrtc's own send history is sized for.
+            static constexpr size_t kVideoNackHistory = 1024;
+            auto nackResponder = std::make_shared<rtc::RtcpNackResponder>(kVideoNackHistory);
             packetizer->addToChain(nackResponder);
             // PLI handler requests a keyframe from Sunshine on decoder PLI.
             // Throttled with backoff: PLI storms during sustained loss must not
             // flood Sunshine with IDR requests (each IDR inflates the bitrate).
             auto pliHandler = std::make_shared<rtc::PliHandler>([this]() {
                 if (m_Shim && !m_Stopping.load()) {
-                    sendIdrRequestThrottled();
+                    // A PLI is the receiver's decoder reporting it has nothing
+                    // to show. Until now this path logged nothing at all, so it
+                    // was impossible to tell a PLI that never arrived from one
+                    // the cooldown swallowed.
+                    if (++m_PliCount % 10 == 1)
+                        qInfo() << "[MediaTrackRelay] PLI from receiver — decoder lost its"
+                                << "reference (count:" << m_PliCount << ")";
+                    sendIdrRequestThrottled(true);
                 }
             });
             nackResponder->addToChain(pliHandler);
@@ -281,11 +322,14 @@ void MediaTrackRelay::createTracksAndChannels()
         auto audioDesc = rtc::Description::Audio("audio", rtc::Description::Direction::SendOnly);
         audioDesc.addOpusCodec(111, "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1");
 
+        // Declared before addTrack for the same reason as the video SSRC above:
+        // without it the audio NACK responder below never sees a NACK either.
+        std::random_device rd;
+        const uint32_t ssrc = static_cast<uint32_t>(rd());
+        audioDesc.addSSRC(ssrc, "audio");
+
         m_AudioTrack = m_Pc->addTrack(audioDesc);
         if (m_AudioTrack) {
-            std::random_device rd;
-            uint32_t ssrc = static_cast<uint32_t>(rd());
-
             auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
                 ssrc, "audio", 111, rtc::OpusRtpPacketizer::DefaultClockRate);
             auto packetizer = std::make_shared<rtc::OpusRtpPacketizer>(rtpConfig);
@@ -359,6 +403,31 @@ void MediaTrackRelay::createTracksAndChannels()
 
 // ── Video forwarding (via RTP media track) ──────────────────────────────────────
 
+void MediaTrackRelay::closeDeltaGate(const char* reason)
+{
+    // Record the reason even when an episode is already running: the newest
+    // cause is the one that still holds the gate shut, and it is what the OPEN
+    // line should name.
+    m_GateCloseReason = reason;
+    if (!m_SentKeyframeOnTrack) return; // episode already running
+    m_SentKeyframeOnTrack = false;
+    m_GateClosedAt = std::chrono::steady_clock::now();
+    m_GatedFrameCount = 0;
+    qInfo() << "[MediaTrackRelay] Delta gate CLOSED —" << reason
+            << "— video is frozen until a fresh keyframe lands";
+}
+
+void MediaTrackRelay::openDeltaGate()
+{
+    if (m_SentKeyframeOnTrack) return;
+    m_SentKeyframeOnTrack = true;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - m_GateClosedAt)
+                        .count();
+    qInfo() << "[MediaTrackRelay] Delta gate OPEN — episode lasted" << ms << "ms,"
+            << m_GatedFrameCount << "deltas discarded (closed by:" << m_GateCloseReason << ")";
+}
+
 void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
 {
     // Balance the worker→main pending counter (incremented before each emit).
@@ -389,7 +458,7 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     if (m_Stopping.load()) return;
 
     if (workerDroppedDelta && !isKeyframe) {
-        m_SentKeyframeOnTrack = false;
+        closeDeltaGate("worker dropped a delta — reference chain broken");
     }
 
     // Buffer keyframes arriving before the Video Track is ready
@@ -419,9 +488,9 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     // The throttled IDR request retries on every gated delta until Sunshine
     // delivers a keyframe.
     if (!isKeyframe && !m_SentKeyframeOnTrack) {
-        static int gatedCount = 0;
-        if (++gatedCount <= 5)
-            qInfo() << "[MediaTrackRelay] Delta gated — waiting for a fresh keyframe";
+        // Counted, not logged: the CLOSED/OPEN pair around the episode carries
+        // the story, and one line per gated frame would be 60 per second.
+        m_GatedFrameCount++;
         sendIdrRequestThrottled();
         return;
     }
@@ -454,7 +523,7 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
         // backoff (recovery completed). Any still-buffered keyframe is older
         // than this one — drop it so a queued sendBufferedKeyframe() cannot
         // send it out of order behind us.
-        m_SentKeyframeOnTrack = true;
+        openDeltaGate();
         m_BufferedKeyframe.clear();
         m_HaveBufferedKeyframe = false;
         m_DeltaAfterBufferedKeyframe = false;
@@ -516,11 +585,12 @@ void MediaTrackRelay::sendBufferedKeyframe()
         if (staleReferences) {
             // Recovery still pending: a fresh IDR must land before any delta
             // may flow (the gate keeps re-requesting on every gated delta).
+            closeDeltaGate("buffered keyframe had stale references");
             sendIdrRequestThrottled();
         } else {
             // Keyframe sent: open the delta gate, reset the IDR request
             // backoff.
-            m_SentKeyframeOnTrack = true;
+            openDeltaGate();
             m_IdrOutstanding.store(false, std::memory_order_release);
             m_IdrCooldownMs.store(kIdrCooldownBaseMs, std::memory_order_release);
         }
@@ -655,10 +725,29 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         }
     } else if (type == "request_idr") {
         qInfo() << "[MediaTrackRelay] Requesting IDR frame via DataChannel (browser)";
-        sendIdrRequestThrottled();
+        sendIdrRequestThrottled(true);
     } else if (type == "requestidr") {
         qInfo() << "[MediaTrackRelay] Requesting IDR frame from Sunshine (browser request)";
-        sendIdrRequestThrottled();
+        sendIdrRequestThrottled(true);
+    } else if (type == "clientstats") {
+        // Receiver-side RTP counters, logged only when one moves. On the media
+        // transport the host's own counters can be spotless while the viewer
+        // watches a frozen picture — the loss is on the wire and only the
+        // browser sees it (2026-08-30: 3523 frames sent, zero drops, three
+        // decoder stalls). This is that half of the picture, in the same file.
+        const int lost = msg["packetsLost"].toInt(0);
+        const int freezes = msg["freezeCount"].toInt(0);
+        const int nacks = msg["nackCount"].toInt(0);
+        const int plis = msg["pliCount"].toInt(0);
+        const qint64 snapshot = lost + freezes + nacks + plis;
+        if (snapshot != m_LastClientStatsSnapshot) {
+            m_LastClientStatsSnapshot = snapshot;
+            qInfo() << "[MediaTrackRelay] Client RTP — packetsLost:" << lost << "nacks:" << nacks
+                    << "plis:" << plis << "freezes:" << freezes
+                    << "frozenMs:" << qRound(msg["totalFreezesDuration"].toDouble(0) * 1000)
+                    << "jitterMs:" << QString::number(msg["jitterMs"].toDouble(0), 'f', 1)
+                    << "decodedFps:" << msg["fps"].toInt(0);
+        }
     } else if (type == "ping") {
         // Respond with pong (mirror the browser's timestamp for RTT calculation).
         int seq = msg["seq"].toInt(0);
@@ -709,6 +798,22 @@ void MediaTrackRelay::onStatsTimerTick()
     double hostRttMs = 0.0;
     if (m_Shim) {
         hostRttMs = m_Shim->hostRttMs();
+    }
+
+    // Drop-source counters, logged only when one moves. Until now this tick
+    // wrote nothing at all to the log, so a media session left no server-side
+    // trace of why the browser kept asking for IDRs.
+    {
+        const qint64 workerDrops = m_Shim ? m_Shim->workerDropCount() : 0;
+        const qint64 snapshot = workerDrops + m_GatedFrameCount;
+        if (snapshot != m_LastDropSnapshot) {
+            m_LastDropSnapshot = snapshot;
+            qInfo() << "[MediaTrackRelay] Drop counters — worker:" << workerDrops
+                    << "gatedDelta:" << m_GatedFrameCount
+                    << "gate:" << (m_SentKeyframeOnTrack ? "open" : "CLOSED")
+                    << "framesSent:" << m_FrameCount
+                    << "pendingVideoFrames:" << (m_Shim ? m_Shim->pendingVideoFrames() : 0);
+        }
     }
 
     QJsonObject stats;
@@ -878,7 +983,7 @@ void MediaTrackRelay::requestIdrFrame()
     sendIdrRequestThrottled();
 }
 
-void MediaTrackRelay::sendIdrRequestThrottled()
+void MediaTrackRelay::sendIdrRequestThrottled(bool receiverStalled)
 {
     if (m_Stopping.load() || !m_Shim) return;
 
@@ -886,9 +991,24 @@ void MediaTrackRelay::sendIdrRequestThrottled()
     const int64_t nowMs =
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
     int64_t last = m_LastIdrRequestMs.load(std::memory_order_acquire);
+    // Every source shares the adaptive curve, PLIs included. Exempting them
+    // was tried on 2026-08-30 and made the stream far worse: with a 250 ms
+    // floor a receiver in trouble asks four times a second, each request costs
+    // a full keyframe, and the bitrate spike causes the loss that causes the
+    // next PLI. The original comment on kIdrCooldownMaxMs had it right — an IDR
+    // flood feeds the congestion it is trying to fix. `receiverStalled` is kept
+    // for the log line below, so a swallowed PLI is at least visible.
     const int64_t cooldown = m_IdrCooldownMs.load(std::memory_order_acquire);
     if (last != 0 && nowMs - last < cooldown) {
-        return; // Absorbed — cooldown not elapsed yet
+        // Absorbed. Logged (rate-limited) because a swallowed request is
+        // invisible otherwise, and a swallowed one is what turns a decoder
+        // stall into a multi-second freeze.
+        if (++m_IdrAbsorbedCount % 20 == 1) {
+            qInfo() << "[MediaTrackRelay] IDR request absorbed by cooldown (" << cooldown
+                    << "ms, receiverStalled=" << receiverStalled
+                    << ") — absorbed so far:" << m_IdrAbsorbedCount;
+        }
+        return;
     }
     // CAS claims the send slot; a concurrent caller (PLI thread vs main thread)
     // that loses the race is absorbed like a throttled request.

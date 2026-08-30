@@ -589,6 +589,7 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
         qInfo() << "[DataChannelRelay] PC state changed to" << static_cast<int>(state);
         if (state == rtc::PeerConnection::State::Connected) {
             qInfo() << "[DataChannelRelay] PeerConnection connected — canceling ICE timeout";
+            logSelectedCandidatePair(*m_Pc, "[DataChannelRelay]");
             QMetaObject::invokeMethod(
                 this,
                 [this]() {
@@ -654,11 +655,17 @@ void DataChannelRelay::createDataChannels()
         auto audioDesc = rtc::Description::Audio("audio", rtc::Description::Direction::SendOnly);
         audioDesc.addOpusCodec(111, "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1");
 
+        // Declared in the description, before addTrack: the PeerConnection
+        // routes incoming RTCP by the SSRCs it finds there, so an SSRC known
+        // only to the packetizer leaves the NACK responder below deaf. See the
+        // long note in MediaTrackRelay, where the same omission was costing the
+        // video track every retransmission and every keyframe request.
+        std::random_device rd;
+        const uint32_t ssrc = static_cast<uint32_t>(rd());
+        audioDesc.addSSRC(ssrc, "audio");
+
         m_AudioTrack = m_Pc->addTrack(audioDesc);
         if (m_AudioTrack) {
-            std::random_device rd;
-            uint32_t ssrc = static_cast<uint32_t>(rd());
-
             auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
                 ssrc, "audio", 111, rtc::OpusRtpPacketizer::DefaultClockRate);
             auto packetizer = std::make_shared<rtc::OpusRtpPacketizer>(rtpConfig);
@@ -854,6 +861,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
 
     // Awaiting IDR: drop all deltas until a keyframe resets the decoder reference.
     if (m_AwaitingIdr && !isKeyframe) {
+        m_AwaitingIdrDropCount++;
         sendIdrRequestThrottled(); // Throttle absorbs bursts; keeps requesting until IDR arrives
         return;
     }
@@ -1227,14 +1235,21 @@ void DataChannelRelay::onStatsTimerTick()
     {
         const qint64 workerDrops = m_Shim ? m_Shim->workerDropCount() : 0;
         const qint64 senderDrops = m_Sender ? static_cast<qint64>(m_Sender->queueDropCount()) : 0;
-        const qint64 snapshot =
-            workerDrops + senderDrops + m_DeltaDroppedCount + m_KeyframeBackpressureWarnings;
+        const qint64 snapshot = workerDrops + senderDrops + m_DeltaDroppedCount +
+                                m_KeyframeBackpressureWarnings + m_AwaitingIdrDropCount;
         if (snapshot != m_LastDropSnapshot) {
             m_LastDropSnapshot = snapshot;
+            // bufferedAmount rides along: it is what decides every sctp* drop
+            // below, and until now it only appeared inside the drop lines
+            // themselves — so the run-up to a stall was invisible, and a buffer
+            // pinned just above the watermark read like a healthy one.
             qInfo() << "[DataChannelRelay] Drop counters — worker:" << workerDrops
                     << "senderQueue:" << senderDrops << "sctpDelta:" << m_DeltaDroppedCount
                     << "sctpKeyframe:" << m_KeyframeBackpressureWarnings
-                    << "pendingVideoFrames:" << (m_Shim ? m_Shim->pendingVideoFrames() : 0);
+                    << "gatedDelta:" << m_AwaitingIdrDropCount
+                    << "pendingVideoFrames:" << (m_Shim ? m_Shim->pendingVideoFrames() : 0)
+                    << "bufferedAmount:"
+                    << (m_VideoDc ? static_cast<qint64>(m_VideoDc->bufferedAmount()) : -1);
         }
     }
 
@@ -1249,7 +1264,8 @@ void DataChannelRelay::onStatsTimerTick()
     // The frontend cannot see these drops (dropped frames never get a frameId),
     // so this is its only signal that the link is saturated backend-side. It
     // drives the frontend's congestion monitor (automatic bitrate degradation).
-    stats["bpDrops"] = m_DeltaDroppedCount + m_KeyframeBackpressureWarnings;
+    stats["bpDrops"] =
+        m_DeltaDroppedCount + m_KeyframeBackpressureWarnings + m_AwaitingIdrDropCount;
 
     QByteArray statsJson = QJsonDocument(stats).toJson(QJsonDocument::Compact);
 
@@ -1325,6 +1341,7 @@ void DataChannelRelay::stop()
     m_DeltaDroppedCount = 0;
     m_KeyframeBackpressureWarnings = 0;
     m_BackpressureDropCount = 0;
+    m_AwaitingIdrDropCount = 0;
     m_LastDecodeLatencyUs.store(0, std::memory_order_release);
     m_AwaitingIdr = false;
     m_IdrCooldownTimer.invalidate(); // Reset throttle state
