@@ -58,6 +58,10 @@ docs/application/
 # Local dev config (committed once, then ignored)
 .moonlightweb-dev
 
+# Tool state that lands in the working directory rather than in HOME — the gh
+# CLI puts a per-machine device id here. Machine identity, not project content.
+.local/
+
 # Private key embedding (never committed)
 .env
 
