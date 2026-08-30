@@ -37,17 +37,17 @@ class DataChannel;
 class Track;
 } // namespace rtc
 
-class MoonlightShim;
+class IMediaEngine;
 
 // WebRTC DataChannel relay that replaces StreamRelay.
-// Forwards video/audio from MoonlightShim + input from the browser over a
+// Forwards video/audio from the media engine + input from the browser over a
 // hybrid PeerConnection:
 //   - video: DataChannel (SCTP, negotiated id=0, ordered, maxRetransmits=3)
 //   - audio: rtc::Track (Opus over RTP) — not a DataChannel, despite the name
 //   - input: DataChannel (SCTP, negotiated id=2, reliable + ordered)
 //
 // Thread safety:
-// - MoonlightShim signals arrive on Qt main thread (AutoConnection).
+// - media engine signals arrive on Qt main thread (AutoConnection).
 //   sendMessage() is called from the main thread -> libdatachannel's DC send
 //   is internally thread-safe.
 // - libdatachannel callbacks (onMessage for input) fire from internal threads.
@@ -57,7 +57,7 @@ class DataChannelRelay : public RelayBase
     Q_OBJECT
 
 public:
-    explicit DataChannelRelay(MoonlightShim* shim, QObject* parent = nullptr);
+    explicit DataChannelRelay(IMediaEngine* engine, QObject* parent = nullptr);
     ~DataChannelRelay() override;
 
     // PeerConnection access (not part of RelayBase interface)
@@ -96,7 +96,7 @@ public:
 
     bool isConnected() const override { return m_Connected; }
 
-    MoonlightShim* moonlightShim() const override { return m_Shim; }
+    IMediaEngine* mediaEngine() const override { return m_Shim; }
 
     /// Enable bidirectional text clipboard sync. Only called with true when
     /// the streamed host is this machine (the backend clipboard IS the host
@@ -158,7 +158,7 @@ private:
     // effective request are absorbed to prevent LiRequestIdrFrame flooding.
     void sendIdrRequestThrottled();
 
-    MoonlightShim* m_Shim;
+    IMediaEngine* m_Shim;
 
     // Dedicated thread for DataChannel fragmentation + send (keeps the per-frame
     // memcpy + dc->send off the Qt main thread / HTTP event loop).

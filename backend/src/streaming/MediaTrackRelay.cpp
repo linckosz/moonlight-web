@@ -18,7 +18,7 @@
 #include "MediaTrackRelay.h"
 #include "ClipboardBridge.h"
 #include "InputMessageCodec.h"
-#include "MoonlightShim.h"
+#include "IMediaEngine.h"
 #include "ExitNotice.h"
 
 extern "C" {
@@ -39,9 +39,9 @@ extern "C" {
 #include <random>
 #include <chrono>
 
-MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
+MediaTrackRelay::MediaTrackRelay(IMediaEngine* engine, QObject* parent)
     : RelayBase(parent)
-    , m_Shim(shim)
+    , m_Shim(engine)
     // The gate starts closed, so the first episode runs from here to the first
     // keyframe on the track — that duration is the session's startup delay.
     , m_GateClosedAt(std::chrono::steady_clock::now())
@@ -58,16 +58,16 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
     m_DirectVideoSend = !queuedVideo;
     qInfo() << "[MediaTrackRelay] Video send mode:"
             << (m_DirectVideoSend ? "direct (capture thread)" : "queued (main thread)");
-    connect(m_Shim, &MoonlightShim::videoFrameReady, this, &MediaTrackRelay::onVideoFrame,
+    connect(m_Shim, &IMediaEngine::videoFrameReady, this, &MediaTrackRelay::onVideoFrame,
             m_DirectVideoSend ? Qt::DirectConnection : Qt::QueuedConnection);
-    connect(m_Shim, &MoonlightShim::audioSampleReady, this, &MediaTrackRelay::onAudioSample);
-    connect(m_Shim, &MoonlightShim::connectionTerminated, this,
+    connect(m_Shim, &IMediaEngine::audioSampleReady, this, &MediaTrackRelay::onAudioSample);
+    connect(m_Shim, &IMediaEngine::connectionTerminated, this,
             &MediaTrackRelay::onShimConnectionTerminated);
 
     // Forward host rumble requests to the browser over the input DC.
     // 'this' as context → runs on the relay thread (signal is emitted from the
     // moonlight worker thread).
-    connect(m_Shim, &MoonlightShim::rumble, this, [this](int controller, int low, int high) {
+    connect(m_Shim, &IMediaEngine::rumble, this, [this](int controller, int low, int high) {
         if (m_Stopping.load() || !m_InputDc) return;
         QJsonObject m;
         m["type"] = "rumble";
@@ -660,7 +660,7 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     QString type = msg["type"].toString();
 
     // Any message at all proves the input link is alive — feeds the shim's
-    // dead-man switch (see MoonlightShim's input-watchdog section).
+    // dead-man switch (see IMediaEngine's input-watchdog contract).
     if (m_Shim) m_Shim->noteClientAlive();
 
     // An invited player only gets what the owner ticked. Dropped in silence.
@@ -979,7 +979,7 @@ void MediaTrackRelay::stop()
 void MediaTrackRelay::requestIdrFrame()
 {
     if (m_Stopping.load() || !m_Shim) return;
-    qInfo() << "[MediaTrackRelay] requestIdrFrame: forwarding to MoonlightShim";
+    qInfo() << "[MediaTrackRelay] requestIdrFrame: forwarding to the media engine";
     sendIdrRequestThrottled();
 }
 

@@ -20,7 +20,7 @@
 #include <QObject>
 #include <QString>
 
-class MoonlightShim;
+class IMediaEngine;
 
 /// Bidirectional text clipboard bridge between the browser client and the
 /// host machine, active only when the streamed Sunshine host IS this machine
@@ -66,7 +66,7 @@ public:
     /// clipboard, then inject the paste chord (V down/up) through the shim.
     /// wrapCtrl adds Ctrl down/up around the V for clients whose paste
     /// modifier doesn't map to Ctrl on the host (macOS Cmd arrives as Win).
-    void pasteFromClient(MoonlightShim* shim, const QString& text, bool wrapCtrl);
+    void pasteFromClient(IMediaEngine* engine, const QString& text, bool wrapCtrl);
 
     /// Thread-safe. Re-emit the current host clipboard text (initial sync
     /// when a client connects), even if unchanged since the last emission.
