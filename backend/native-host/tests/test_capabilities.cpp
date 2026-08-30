@@ -122,6 +122,37 @@ void run_capabilities_tests()
             CHECK(std::string(toString(u)) != "unknown");
     }
 
+    SECTION("Capabilities — what this machine actually reports");
+
+    {
+        // Not an assertion: an inventory. A suite that says "12 checks passed"
+        // without saying what hardware it ran against is much harder to read
+        // when a failure only happens on one bench, and this is the cheapest
+        // possible way to have every run carry that context.
+        const Capabilities caps = NativeHost::probe();
+        std::fprintf(stderr, "  engine: %s (%s)\n", caps.available ? "available" : "unavailable",
+                     caps.diagnostic.empty() ? toString(caps.reason) : caps.diagnostic.c_str());
+        std::fprintf(stderr, "  capture: %s\n", toString(caps.capture));
+        for (const GpuInfo& gpu : caps.gpus) {
+            std::fprintf(stderr, "  gpu %d: %s [%04x:%04x] luid=%016llx encoders=%zu codecs=%zu\n",
+                         gpu.id, gpu.name.c_str(), gpu.vendorId, gpu.deviceId,
+                         static_cast<unsigned long long>(gpu.nativeHandle), gpu.encoders.size(),
+                         gpu.codecs.size());
+            for (EncoderApi e : gpu.encoders)
+                std::fprintf(stderr, "        encoder: %s\n", toString(e));
+        }
+        for (const DisplayInfo& d : caps.displays) {
+            std::fprintf(stderr, "  display %d: %s -> gpu %d%s%s\n", d.id, d.label.c_str(), d.gpuId,
+                         d.hdrActive ? " [HDR]" : "", d.primary ? " [primary]" : "");
+        }
+
+        // Whatever the hardware, the association must hold: every display names
+        // a GPU that exists. A display pointing at nothing would send the
+        // Selector down the cross-GPU path on a machine that does not need it.
+        for (const DisplayInfo& d : caps.displays)
+            CHECK(caps.gpuFor(d) != nullptr);
+    }
+
     SECTION("Capabilities — the log sink is optional");
 
     {
