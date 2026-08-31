@@ -32,6 +32,8 @@ if(WIN32)
         src/platform/windows/WindowsSession.cpp
         src/capture/windows/DxgiDuplication.cpp
         src/convert/windows/ColorConvert.cpp
+        src/encode/windows/NvencApi.cpp
+        src/encode/windows/NvencCapabilities.cpp
     )
     # DXGI enumerates the adapters and their outputs (the display→GPU
     # association everything else depends on) and drives Desktop Duplication;
@@ -50,6 +52,10 @@ message(STATUS "mw-native-host: platform backend = ${MW_NATIVE_PLATFORM}")
 target_include_directories(mw-native-host
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+    # NVENC's API header only. The encoder itself lives in the display driver's
+    # nvEncodeAPI64.dll and is resolved at runtime, so nothing here is linked
+    # and nothing from NVIDIA's SDK is redistributed.
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvenc-headers
 )
 
 target_compile_features(mw-native-host PUBLIC cxx_std_17)

@@ -114,6 +114,32 @@ void run_selector_tests()
         CHECK(sel.crossGpuCopy);  // and the copy is declared, not hidden
     }
 
+    // ── An encoder with no codec is not an encoder ───────────────────────────
+    //
+    // Found on the bench: the AMD iGPU reports the AMF runtime but an empty
+    // codec list, because AMF's own capability query is not written yet.
+    // Falling back to it would buy a cross-GPU copy AND then fail codec
+    // negotiation, abandoning the RTX that could have done the job.
+    {
+        Capabilities caps = hybridMachine();
+        caps.gpus[0].encoders.clear();
+        caps.gpus[0].codecs.clear();
+        // A third GPU that advertises an API but can encode nothing, placed
+        // ahead of the good one so a naive scan would pick it.
+        caps.gpus.insert(caps.gpus.begin(),
+                         makeGpu(2, "Runtime but no codecs", {EncoderApi::Amf}, {}, false));
+
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.clientCodecs = {Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.encoder, EncoderApi::Nvenc); // the RTX, not the empty one
+        CHECK(sel.crossGpuCopy);
+    }
+
     // ── No encoder anywhere is a refusal, not a silent software fallback ─────
     // Software encoding is only ever chosen by the probe, which measures it.
     // The selector must not invent it.
