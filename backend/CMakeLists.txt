@@ -239,6 +239,7 @@ add_executable(mw-server
     src/streaming/StreamConfig.cpp
     src/streaming/Session.cpp
     src/streaming/MoonlightShim.cpp
+    src/streaming/NativeMediaEngine.cpp
     src/streaming/ClipboardBridge.cpp
     src/streaming/HostAudioSink.cpp
     src/streaming/StreamRelay.cpp
@@ -276,6 +277,9 @@ endif()
 
 target_include_directories(mw-server PRIVATE
     src
+    # The native engine's public API. Only NativeMediaEngine includes it; the
+    # library itself links nothing from here (see native-host/LICENSE.md).
+    native-host/include
     third_party/qmdnsengine/qmdnsengine/src/include
     third_party/qmdnsengine
     third_party/moonlight-common-c/src
