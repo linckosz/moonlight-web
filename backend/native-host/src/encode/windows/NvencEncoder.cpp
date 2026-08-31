@@ -18,6 +18,7 @@
 #include "NvencEncoder.h"
 
 #include "../../core/Log.h"
+#include "../RateControl.h"
 
 #include <cstring>
 
@@ -132,10 +133,11 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     m_Config.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
     m_Config.rcParams.averageBitRate = static_cast<uint32_t>(bitrateKbps) * 1000u;
     m_Config.rcParams.maxBitRate = m_Config.rcParams.averageBitRate;
-    // A VBV of one frame's worth is what actually enforces low latency: it caps
-    // how far ahead the encoder may spend, so no single frame can be so large
-    // that it takes several frame times to transmit.
-    m_Config.rcParams.vbvBufferSize = m_Config.rcParams.averageBitRate / static_cast<uint32_t>(fps);
+    // The VBV is what actually enforces low latency: it caps how far ahead the
+    // encoder may spend, so no single frame can be so large that it takes
+    // several frame times to transmit. See RateControl.h for why it has a
+    // floor rather than being one frame at any refresh rate.
+    m_Config.rcParams.vbvBufferSize = vbvBitsPerFrame(m_Config.rcParams.averageBitRate, fps);
     m_Config.rcParams.vbvInitialDelay = m_Config.rcParams.vbvBufferSize;
 
     // ── Codec-specific: parameter sets and intra-refresh ────────────────────
@@ -357,8 +359,8 @@ bool NvencEncoder::setBitrate(int bitrateKbps, std::string& error)
     m_Config.rcParams.averageBitRate = static_cast<uint32_t>(bitrateKbps) * 1000u;
     m_Config.rcParams.maxBitRate = m_Config.rcParams.averageBitRate;
     if (m_InitParams.frameRateNum > 0) {
-        m_Config.rcParams.vbvBufferSize =
-            m_Config.rcParams.averageBitRate / m_InitParams.frameRateNum;
+        m_Config.rcParams.vbvBufferSize = vbvBitsPerFrame(
+            m_Config.rcParams.averageBitRate, static_cast<int>(m_InitParams.frameRateNum));
         m_Config.rcParams.vbvInitialDelay = m_Config.rcParams.vbvBufferSize;
     }
     reconfigure.reInitEncodeParams = m_InitParams;
