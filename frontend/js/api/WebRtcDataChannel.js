@@ -872,7 +872,8 @@ export class WebRtcDataChannel {
                         msg.type === 'pong' ||
                         msg.type === 'rumble' ||
                         msg.type === 'clipboard' ||
-                        msg.type === 'clipboardcaps'
+                        msg.type === 'clipboardcaps' ||
+                        msg.type === 'cursor'
                     ) {
                         if (this.onStats) this.onStats(msg);
                     } else if (msg.type === 'takeover') {
