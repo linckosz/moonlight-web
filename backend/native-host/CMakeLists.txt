@@ -30,11 +30,13 @@ if(WIN32)
         src/platform/windows/WindowsProbe.cpp
         src/platform/windows/WindowsEncoderProbe.cpp
         src/platform/windows/WindowsSession.cpp
+        src/capture/windows/DxgiDuplication.cpp
     )
     # DXGI enumerates the adapters and their outputs (the display→GPU
-    # association everything else depends on); user32/gdi32 supply the exact
+    # association everything else depends on) and drives Desktop Duplication;
+    # d3d11 owns the textures frames live in; user32/gdi32 supply the exact
     # refresh rate and the primary-monitor flag.
-    target_link_libraries(mw-native-host PRIVATE dxgi user32 gdi32)
+    target_link_libraries(mw-native-host PRIVATE dxgi d3d11 user32 gdi32)
 else()
     set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
@@ -90,6 +92,7 @@ if(MW_BUILD_TESTS)
         tests/native_main.cpp
         tests/test_selector.cpp
         tests/test_capabilities.cpp
+        tests/test_capture.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)

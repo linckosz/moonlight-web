@@ -55,15 +55,31 @@ std::string narrow(const wchar_t* wide)
     return out;
 }
 
-/// Exact refresh rate per GDI device name ("\\\\.\\DISPLAY1"), in millihertz.
-///
-/// EnumDisplaySettings would be one call, but it reports a rounded integer:
-/// a 143.98 Hz panel comes back as 143, and capture paced at 143 against a
-/// display running 143.98 beats visibly. QueryDisplayConfig carries the true
-/// rational, so it is worth the extra work.
-std::unordered_map<std::string, int> exactRefreshRates()
+/// A display's real mode: pixels and refresh, neither rounded nor scaled.
+struct DisplayMode
 {
-    std::unordered_map<std::string, int> byDevice;
+    int width = 0;
+    int height = 0;
+    int refreshMilliHz = 0;
+};
+
+/// The true mode of each output, keyed by GDI device name ("\\\\.\\DISPLAY1").
+///
+/// Two things make this worth a second enumeration on top of DXGI's:
+///
+///  - **Size.** DXGI_OUTPUT_DESC::DesktopCoordinates is expressed in virtual
+///    desktop coordinates, which Windows SCALES for a process that is not
+///    per-monitor DPI aware. Measured here: a 2560×1440 panel at 125 % scaling
+///    reports 2048×1152 — and MoonlightWeb must not declare itself DPI aware
+///    from inside a library, because that setting is process-wide and belongs
+///    to the host application's own UI. QueryDisplayConfig is unaffected.
+///
+///  - **Refresh.** EnumDisplaySettings rounds to an integer, so a 143.98 Hz
+///    panel comes back as 143, and capture paced at 143 against a display
+///    running 143.98 beats visibly. QueryDisplayConfig carries the rational.
+std::unordered_map<std::string, DisplayMode> realDisplayModes()
+{
+    std::unordered_map<std::string, DisplayMode> byDevice;
 
     UINT32 pathCount = 0;
     UINT32 modeCount = 0;
@@ -77,11 +93,9 @@ std::unordered_map<std::string, int> exactRefreshRates()
                              modes.data(), nullptr) != ERROR_SUCCESS)
         return byDevice;
     paths.resize(pathCount);
+    modes.resize(modeCount);
 
     for (const DISPLAYCONFIG_PATH_INFO& path : paths) {
-        const DISPLAYCONFIG_RATIONAL& rate = path.targetInfo.refreshRate;
-        if (rate.Denominator == 0) continue;
-
         // The source's GDI name is what DXGI's DXGI_OUTPUT_DESC::DeviceName
         // also reports, which is what lets these two enumerations be joined.
         DISPLAYCONFIG_SOURCE_DEVICE_NAME source = {};
@@ -91,20 +105,47 @@ std::unordered_map<std::string, int> exactRefreshRates()
         source.header.id = path.sourceInfo.id;
         if (::DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS) continue;
 
-        const long long milliHz = (static_cast<long long>(rate.Numerator) * 1000LL) /
-                                  static_cast<long long>(rate.Denominator);
-        byDevice[narrow(source.viewGdiDeviceName)] = static_cast<int>(milliHz);
+        DisplayMode mode;
+
+        const DISPLAYCONFIG_RATIONAL& rate = path.targetInfo.refreshRate;
+        if (rate.Denominator != 0) {
+            mode.refreshMilliHz =
+                static_cast<int>((static_cast<long long>(rate.Numerator) * 1000LL) /
+                                 static_cast<long long>(rate.Denominator));
+        }
+
+        // The SOURCE mode is the desktop framebuffer — which is exactly what
+        // Desktop Duplication hands back, so it is the size the pipeline will
+        // really carry. The target's signal size can differ from it when the
+        // display is scaling internally.
+        const UINT32 sourceIdx = path.sourceInfo.modeInfoIdx;
+        if (sourceIdx != DISPLAYCONFIG_PATH_MODE_IDX_INVALID && sourceIdx < modes.size() &&
+            modes[sourceIdx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE) {
+            mode.width = static_cast<int>(modes[sourceIdx].sourceMode.width);
+            mode.height = static_cast<int>(modes[sourceIdx].sourceMode.height);
+        }
+
+        byDevice[narrow(source.viewGdiDeviceName)] = mode;
     }
     return byDevice;
 }
 
 /// Fallback when QueryDisplayConfig said nothing about this output.
-int refreshFromGdi(const wchar_t* deviceName)
+///
+/// EnumDisplaySettings reports the graphics mode rather than a DPI-virtualized
+/// rectangle, so its pixel size is trustworthy even though its refresh is
+/// rounded.
+DisplayMode modeFromGdi(const wchar_t* deviceName)
 {
-    DEVMODEW mode = {};
-    mode.dmSize = sizeof(mode);
-    if (!::EnumDisplaySettingsW(deviceName, ENUM_CURRENT_SETTINGS, &mode)) return 0;
-    return static_cast<int>(mode.dmDisplayFrequency) * 1000;
+    DEVMODEW dev = {};
+    dev.dmSize = sizeof(dev);
+    if (!::EnumDisplaySettingsW(deviceName, ENUM_CURRENT_SETTINGS, &dev)) return {};
+
+    DisplayMode mode;
+    mode.width = static_cast<int>(dev.dmPelsWidth);
+    mode.height = static_cast<int>(dev.dmPelsHeight);
+    mode.refreshMilliHz = static_cast<int>(dev.dmDisplayFrequency) * 1000;
+    return mode;
 }
 
 bool isPrimary(HMONITOR monitor)
@@ -200,7 +241,7 @@ Unavailability enumerate(Capabilities& caps)
         return Unavailability::NoCaptureApi;
     }
 
-    const std::unordered_map<std::string, int> refreshRates = exactRefreshRates();
+    const std::unordered_map<std::string, DisplayMode> displayModes = realDisplayModes();
 
     int nextGpuId = 0;
     int nextDisplayId = 0;
@@ -244,15 +285,37 @@ Unavailability enumerate(Capabilities& caps)
             // That is the association §12 is about, stated by the OS rather
             // than inferred.
             display.gpuId = gpu.id;
-            display.width =
-                outputDesc.DesktopCoordinates.right - outputDesc.DesktopCoordinates.left;
-            display.height =
-                outputDesc.DesktopCoordinates.bottom - outputDesc.DesktopCoordinates.top;
 
+            // Deliberately NOT from outputDesc.DesktopCoordinates: those are
+            // DPI-scaled for a process that is not per-monitor DPI aware (a
+            // 2560x1440 panel at 125 % reads as 2048x1152), and streaming the
+            // scaled size would silently throw away a quarter of the pixels.
             const std::string deviceName = narrow(outputDesc.DeviceName);
-            const auto found = refreshRates.find(deviceName);
-            display.refreshMilliHz =
-                found != refreshRates.end() ? found->second : refreshFromGdi(outputDesc.DeviceName);
+            const auto found = displayModes.find(deviceName);
+            DisplayMode mode = found != displayModes.end() ? found->second : DisplayMode{};
+            if (mode.width <= 0 || mode.height <= 0 || mode.refreshMilliHz <= 0) {
+                const DisplayMode fallback = modeFromGdi(outputDesc.DeviceName);
+                if (mode.width <= 0 || mode.height <= 0) {
+                    mode.width = fallback.width;
+                    mode.height = fallback.height;
+                }
+                if (mode.refreshMilliHz <= 0) mode.refreshMilliHz = fallback.refreshMilliHz;
+            }
+
+            // Last resort only. The scaled rectangle is wrong whenever DPI
+            // scaling is on, but a wrong size still beats a zero one.
+            if (mode.width <= 0 || mode.height <= 0) {
+                mode.width =
+                    outputDesc.DesktopCoordinates.right - outputDesc.DesktopCoordinates.left;
+                mode.height =
+                    outputDesc.DesktopCoordinates.bottom - outputDesc.DesktopCoordinates.top;
+                log::warning("[native] " + deviceName +
+                             ": falling back to DPI-scaled desktop coordinates");
+            }
+
+            display.width = mode.width;
+            display.height = mode.height;
+            display.refreshMilliHz = mode.refreshMilliHz;
 
             display.hdrActive = isHdrActive(output.Get());
             display.primary = isPrimary(outputDesc.Monitor);
