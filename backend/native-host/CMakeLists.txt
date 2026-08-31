@@ -34,6 +34,7 @@ if(WIN32)
         src/convert/windows/ColorConvert.cpp
         src/encode/windows/NvencApi.cpp
         src/encode/windows/NvencCapabilities.cpp
+        src/encode/windows/NvencEncoder.cpp
     )
     # DXGI enumerates the adapters and their outputs (the display→GPU
     # association everything else depends on) and drives Desktop Duplication;
@@ -108,6 +109,10 @@ if(MW_BUILD_TESTS)
     target_include_directories(mw-native-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        # The tests drive the platform classes directly — that is the point, it
+        # is where the real hardware gets exercised — so they need the same
+        # vendor headers the implementation does.
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvenc-headers
     )
     add_test(NAME native-host COMMAND mw-native-tests)
 
