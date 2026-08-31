@@ -49,6 +49,14 @@
   #endif
 #endif
 
+; ViGEmBus — the virtual gamepad bus driver the native host needs to present a
+; controller to Windows. One asset covers x64, x86 and ARM64. Installed silently
+; and best-effort: a machine without it streams fine, just without a gamepad, so
+; nothing here may ever fail the installation.
+#ifndef VigemBusUrl
+  #define VigemBusUrl "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe"
+#endif
+
 #define MyAppName "MoonlightWeb"
 #define MyAppExe "MoonlightWeb.exe"
 ; Provisional admin URL written before first launch. The server rewrites this
@@ -1082,6 +1090,50 @@ begin
 end;
 
 // --- Silent Sunshine install (download + /S + set credentials) ------------
+// --- ViGEmBus: the virtual gamepad bus ------------------------------------
+//
+// Keyboard and mouse can be injected with a plain API call; a gamepad cannot.
+// Games do not read input events, they enumerate HID devices, so a real device
+// has to exist and only a kernel driver can create one.
+//
+// Everything here is best-effort by design. A failure to download, a failure to
+// install, an offline machine — none of them may block the installation, and
+// none of them is even reported to the user: what they lose is controller
+// support on a product whose main use is a desktop. It is retried on the next
+// update, since the check runs every time.
+
+function VigemBusInstalled(): Boolean;
+begin
+  // The driver registers a service under its own name. Cheaper and more
+  // reliable than hunting for the device interface, and true as soon as the
+  // driver is staged even if no pad has ever been plugged in.
+  Result := RegKeyExists(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Services\ViGEmBus');
+end;
+
+procedure InstallVigemBus();
+var
+  tmp: String;
+  rc: Integer;
+begin
+  if VigemBusInstalled() then Exit;
+
+  // Swallowed on purpose: no network, a moved asset, a proxy in the way. None
+  // of those is worth a word to someone installing a screen-sharing tool.
+  try
+    DownloadTemporaryFile('{#VigemBusUrl}', 'vigembus-setup.exe', '', nil);
+  except
+    Exit;
+  end;
+
+  tmp := ExpandConstant('{tmp}\vigembus-setup.exe');
+  if not FileExists(tmp) then Exit;
+
+  // The setup is a WiX bundle: /quiet /norestart is its unattended form. A
+  // driver install can legitimately want a reboot; we never ask for one, and
+  // the pad simply appears after the user's next restart.
+  Exec(tmp, '/quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, rc);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   DownloadPage: TDownloadWizardPage;
@@ -1089,6 +1141,11 @@ var
   rc: Integer;
 begin
   Result := '';
+
+  // Before the Sunshine branch, and outside every one of its early exits: the
+  // gamepad driver is wanted on an update and on a machine that declined
+  // Sunshine just as much as on a fresh install.
+  InstallVigemBus();
   // Skip the download when Sunshine is already present (the box is ticked but
   // disabled purely as an "already installed" indicator), when the user clicked
   // Skip, when they declined it, or on an update (the Sunshine page never ran).

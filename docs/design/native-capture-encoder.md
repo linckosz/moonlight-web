@@ -382,7 +382,10 @@ Sur la page Hosts, ce message n'apparaît **que** si aucun host n'est visible
 |---|---|---|---|
 | nv-codec-headers (NVENC) | MIT (notice NVIDIA sur l'en-tête) | OK | rien du SDK n'est redistribué ; `nvEncodeAPI64.dll` vient du pilote |
 | SDK Windows (DXGI, D3D11, WASAPI) | licence SDK | OK | — |
-| libopus, OpenH264, AMF, oneVPL, libva, PipeWire, ViGEmClient | BSD/MIT | OK | à venir |
+| AMF, oneVPL | MIT | OK | en-têtes seulement, les runtimes viennent des pilotes |
+| **ViGEmClient** (manette) | **MIT** | OK | ⚠️ noté BSD-3 dans le plan d'origine — c'est faux, l'amont livre du MIT. Vendoré tel quel en v1.16.18.0, jamais modifié |
+| ViGEmBus (le pilote) | BSD-3 | OK | **pas redistribué** : installé par l'installeur depuis l'amont |
+| libopus, OpenH264, libva, PipeWire | BSD/MIT | OK | à venir |
 | ❌ FFmpeg / libavcodec | LGPL/GPL | **écarté** | Sunshine l'utilise (156 appels `av_*`) ; nous non |
 | ❌ x264 / x265 | GPL-2.0 | **interdit** | — |
 | ❌ moonlight-common-c | GPL-3.0 | **jamais lié au module** | — |
@@ -397,23 +400,37 @@ libre de redevance)**. D'où la préférence AV1 quand les deux bouts suivent.
 
 | Livré et mesuré | Reste |
 |---|---|
-| Module isolé + garde de licence | Audio (WASAPI loopback → Opus) |
-| `IMediaEngine`, relais découplés | Input (`SendInput`, ViGEm) |
-| Sonde displays/GPU + association | HDR (P010 + PQ) |
-| Capture DXGI (0,06 ms) | AMF, oneVPL, WGC en repli |
-| Conversion NV12 + AYUV 4:4:4 | Lanceur de session console (service Windows) |
-| NVENC : capacités réelles, encodage (3,46 ms) | UI (grille d'écrans, ligne GPU/encodeur) |
-| Boucle de session (1 thread, 0 file) | Installeurs, retrait de Sunshine |
-| `NativeMediaEngine` + branche `Session.cpp` | Linux, macOS |
-| Host « `<hostname>` — MoonlightWeb Host » dans la liste | Benchmarks vs Sunshine |
-| 123 assertions, ctest 3/3 | |
+| Module isolé + garde de licence | **Audio (WASAPI loopback → Opus)** |
+| `IMediaEngine`, relais découplés | HDR (P010 + PQ) |
+| Sonde displays/GPU + association | WGC en repli |
+| Capture DXGI (0,06 ms) | Lanceur de session console (service Windows) |
+| Conversion NV12 + AYUV 4:4:4 | UI (grille d'écrans, ligne GPU/encodeur) |
+| NVENC (3,46 ms), AMF (3,70 ms), oneVPL (écrit, non exécuté) | Retrait de Sunshine de l'installeur |
+| Intra-refresh sur les trois encodeurs + ride-out client | Linux, macOS |
+| Curseur composé, plancher de 500 ms sur écran immobile | Benchmarks vs Sunshine |
+| Clavier/souris (`SendInput`), manette (ViGEm) + rumble | |
+| Installeur : ViGEmBus en silencieux | |
 
-**Le chemin est complet côté serveur** : le host natif apparaît, sans pairing,
-et un clic sur un écran construit un `NativeMediaEngine` qui alimente le relais
-WebRTC existant. Le chemin Sunshine/Wolf/MultiSeat est intact.
+**Le chemin est complet côté serveur**, et jouable : le host natif apparaît sans
+pairing, un clic sur un écran construit un `NativeMediaEngine` qui alimente le
+relais WebRTC existant, et clavier/souris/manette reviennent par le
+DataChannel d'entrée. Le chemin Sunshine/Wolf/MultiSeat est intact.
 
-Ce qui manque pour une expérience finie : l'audio et l'input (un stream vidéo
-seul n'est pas jouable), puis l'UI et les installeurs.
+**Ce qui manque vraiment** : l'audio. Un stream muet reste utilisable, mais ce
+n'est pas fini.
+
+### Input — ce qui a été tranché
+
+| Point | Décision |
+|---|---|
+| Clavier | **Scancodes**, pas codes virtuels : jeux et DirectInput ne voient que ça. VK direct sur `NON_NORMALIZED` |
+| Souris absolue | Mappée sur l'écran capturé puis sur le bureau **virtuel** (0..65535), avec le rectangle DPI-virtualisé — l'inverse du correctif de §6.1, et c'est voulu |
+| Souris relative | Passe par l'accélération du pointeur de l'hôte, comme une vraie souris |
+| Manette | **Xbox 360 via ViGEmBus**. Les bits étendus Sunshine (paddles, touchpad, Share) sont jetés : un pad X360 n'a pas ces boutons |
+| Bitmask de modificateurs | **Ignoré** : le navigateur envoie déjà un vrai keydown/keyup pour Maj/Ctrl/Alt/Meta |
+| Fin de session | Tout ce qui est encore enfoncé est relâché, et les pads débranchés |
+| Pilote absent | Dégradation silencieuse : clavier/souris intacts, pas de manette |
+| Saut de thread | ⚠️ **Toujours présent** : le relais marshale vers le thread Qt (`DataChannelRelay.cpp:764`) parce que le même handler pilote presse-papier, politique et stats. Le sink est prêt, le relais non |
 
 ### ✅ Vérifié de bout en bout (31/08/2026)
 
