@@ -54,8 +54,8 @@ Unavailability enumerate(Capabilities& caps)
 
 namespace mw::native::detail {
 
-std::unique_ptr<Session> createPlatformSession(const SessionConfig&, const SessionCallbacks&,
-                                               std::string& error)
+std::unique_ptr<Session> createPlatformSession(const SessionConfig&, const ResolvedTarget&,
+                                               const SessionCallbacks&, std::string& error)
 {
     error = "the native engine has no backend for this platform in this build";
     return nullptr;
