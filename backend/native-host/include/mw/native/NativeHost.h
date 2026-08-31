@@ -58,6 +58,45 @@ using AudioCallback = std::function<void(const AudioPacket& packet)>;
 /// The host asked to rumble the client's gamepad.
 using RumbleCallback = std::function<void(const RumbleEvent& rumble)>;
 
+/// The mouse pointer, when the engine is NOT drawing it into the picture.
+///
+/// ── Why a client would want this ────────────────────────────────────────────
+///
+/// A composited cursor moves at the speed of the video. On a still desktop that
+/// is 2 frames a second, and it feels exactly as bad as it sounds. Handed to the
+/// client instead, the pointer is drawn by the viewer's own compositor at the
+/// viewer's own refresh rate, and its motion stops depending on the stream at
+/// all — nothing is captured, converted, encoded or sent when only the mouse
+/// moved.
+///
+/// The engine still tracks it; it just reports the shape rather than burning it
+/// in. Sent only when something changes, which for a pointer being moved around
+/// is never: one shape lasts thousands of frames.
+struct CursorUpdate
+{
+    /// False means "draw no pointer at all" — a game that hid it, or a pointer
+    /// that left this display.
+    bool visible = false;
+
+    int width = 0;
+    int height = 0;
+    /// The point inside the image that IS the pointer position. An arrow's tip,
+    /// a crosshair's centre. Ignoring it offsets every cursor by its own shape.
+    int hotspotX = 0;
+    int hotspotY = 0;
+
+    /// width × height × 4, BGRA. Valid for the duration of the call only.
+    ///
+    /// Already flattened: a monochrome cursor's inverting pixels are resolved to
+    /// black. Inversion cannot be expressed to a client that composites with the
+    /// OS, and black is what the shapes that use it — the text I-beam above all
+    /// — are meant to look like. Their own opaque white outline is what keeps
+    /// them visible against a dark background.
+    const uint8_t* pixels = nullptr;
+};
+
+using CursorCallback = std::function<void(const CursorUpdate& cursor)>;
+
 /// The session ended on its own — the display went away, the encoder died, the
 /// user logged out. `reason` is English, for logs. A session that ends this way
 /// never calls stop() on itself; the owner still must.
@@ -101,6 +140,19 @@ public:
     /// Inject one input event into the OS, on the calling thread (§8).
     /// Ignored — not queued — when the session is not running.
     virtual void sendInput(const InputEvent& event) = 0;
+
+    /// Whether to draw the mouse pointer into the encoded picture.
+    ///
+    /// True — the default — burns it in, which is what a client that cannot
+    /// draw its own needs, and what an immersive session wants: there the
+    /// viewer's real pointer is captured away by pointer lock, so the only
+    /// pointer that exists is the one in the frame.
+    ///
+    /// False reports the shape through the CursorCallback instead and leaves the
+    /// picture clean. Runtime-settable because the viewer can switch modes
+    /// mid-session, and re-launching the whole pipeline over a pointer would be
+    /// absurd. The next frame reflects the change.
+    virtual void setCompositeCursor(bool composite) = 0;
 
     /// Force the next frame to be a keyframe.
     ///
@@ -146,7 +198,7 @@ public:
     /// Does NOT start it — see Session::start().
     static std::unique_ptr<Session> createSession(const SessionConfig& config,
                                                   VideoCallback onVideo, AudioCallback onAudio,
-                                                  RumbleCallback onRumble,
+                                                  RumbleCallback onRumble, CursorCallback onCursor,
                                                   SessionEndedCallback onEnded, std::string& error);
 
     /// Route this module's own logging into the host application's logger.

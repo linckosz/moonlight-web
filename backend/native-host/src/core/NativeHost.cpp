@@ -35,7 +35,7 @@ Capabilities NativeHost::probe()
 
 std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
                                                    VideoCallback onVideo, AudioCallback onAudio,
-                                                   RumbleCallback onRumble,
+                                                   RumbleCallback onRumble, CursorCallback onCursor,
                                                    SessionEndedCallback onEnded, std::string& error)
 {
     if (!onVideo) {
@@ -112,6 +112,7 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     callbacks.onVideo = std::move(onVideo);
     callbacks.onAudio = std::move(onAudio);
     callbacks.onRumble = std::move(onRumble);
+    callbacks.onCursor = std::move(onCursor);
     callbacks.onEnded = std::move(onEnded);
 
     return detail::createPlatformSession(resolved, target, callbacks, error);
