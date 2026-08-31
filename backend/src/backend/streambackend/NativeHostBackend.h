@@ -71,6 +71,19 @@ public:
     /// gets the single fallback sentence instead. Empty when available.
     static QString unavailableReason();
 
+    /// What the native engine can encode, expressed as GameStream's own
+    /// ServerCodecModeSupport bits (SCM_*).
+    ///
+    /// The host list, the codec auto-selection and the transport filter all
+    /// read `NvComputer::serverCodecModeSupport`, and they read it for every
+    /// host. Leaving it zero on the native host made that logic conclude the
+    /// host "supports NO video codec" — it happened to stream anyway, on a
+    /// path that never consulted the answer, which is exactly the kind of luck
+    /// that stops holding.
+    ///
+    /// Zero when the engine is unavailable, which is then the truth.
+    static int codecModeSupport();
+
     /// "<hostname> — MoonlightWeb Host".
     static QString hostDisplayName();
 
