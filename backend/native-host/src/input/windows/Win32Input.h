@@ -73,7 +73,11 @@ private:
     void injectText(const std::string& utf8);
     void injectMouseMove(int deltaX, int deltaY);
     void injectMousePosition(const InputEvent& event);
+    /// Applies the press if — and only if — it changes the button's state.
     void injectMouseButton(int button, bool down);
+    /// Sends it regardless. For the release-everything path, which has already
+    /// decided what is down.
+    void sendMouseButton(int button, bool down);
     void injectScroll(int amount, bool horizontal);
     void syncLockKeys(const InputEvent& event);
 
