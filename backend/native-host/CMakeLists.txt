@@ -38,6 +38,10 @@ if(WIN32)
         src/encode/windows/AmfApi.cpp
         src/encode/windows/AmfCapabilities.cpp
         src/encode/windows/AmfEncoder.cpp
+        src/encode/windows/VplApi.cpp
+        src/encode/windows/VplSession.cpp
+        src/encode/windows/VplCapabilities.cpp
+        src/encode/windows/VplEncoder.cpp
     )
     # DXGI enumerates the adapters and their outputs (the display→GPU
     # association everything else depends on) and drives Desktop Duplication;
@@ -56,13 +60,22 @@ message(STATUS "mw-native-host: platform backend = ${MW_NATIVE_PLATFORM}")
 target_include_directories(mw-native-host
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
-    # NVENC's API header only. The encoder itself lives in the display driver's
-    # nvEncodeAPI64.dll and is resolved at runtime, so nothing here is linked
-    # and nothing from NVIDIA's SDK is redistributed.
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvenc-headers
-    # AMD's AMF public headers. Same arrangement: the runtime is amfrt64.dll
-    # from the Radeon driver, loaded at run time; nothing is linked.
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/amf-headers
+)
+
+# The three vendor SDKs, as SYSTEM includes.
+#
+# SYSTEM because their warnings are not ours to fix: oneVPL's headers use
+# nameless unions, which /W4 objects to, and this module compiles at /W4 with a
+# deliberately clean slate. Silencing them per-warning would hide the same
+# warning in OUR code; scoping the exemption to the vendor trees does not.
+#
+# Only headers, for all three: every runtime — nvEncodeAPI64.dll, amfrt64.dll,
+# libvpl.dll — ships with its vendor's driver and is resolved at run time, so
+# nothing here is linked and nothing of any SDK is redistributed.
+target_include_directories(mw-native-host SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvenc-headers
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/amf-headers
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpl-headers
 )
 
 target_compile_features(mw-native-host PUBLIC cxx_std_17)
@@ -109,17 +122,21 @@ if(MW_BUILD_TESTS)
         tests/test_selector.cpp
         tests/test_capabilities.cpp
         tests/test_capture.cpp
+        tests/test_vpl_params.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)
     target_include_directories(mw-native-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
-        # The tests drive the platform classes directly — that is the point, it
-        # is where the real hardware gets exercised — so they need the same
-        # vendor headers the implementation does.
+    )
+    # The tests drive the platform classes directly — that is the point, it is
+    # where the real hardware gets exercised — so they need the same vendor
+    # headers the implementation does, on the same terms.
+    target_include_directories(mw-native-tests SYSTEM PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvenc-headers
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/amf-headers
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpl-headers
     )
     add_test(NAME native-host COMMAND mw-native-tests)
 
