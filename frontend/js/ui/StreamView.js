@@ -95,13 +95,19 @@ import { StreamViewFullscreen } from './StreamViewFullscreen.js';
  * text, a resize arrow on a window edge.
  *
  * The limit is real: an application's custom cursor has no name, so it falls
- * back to the host's bitmap when there is one and to a plain arrow otherwise.
+ * back to the host's bitmap when there is one and to a plain arrow otherwise —
+ * except during a drag, which keeps the pointer it started with rather than
+ * changing hands halfway (see _pictureCursor).
+ *
+ * The bitmap path, in either mode, is resized to the scale the picture is drawn
+ * at (see _scaledCursorCss). A system pointer cannot be: its size belongs to the
+ * viewer's OS, which is rather the point of this mode.
  *
  * Neither is obviously right, which is why this is a switch and not a default.
  * Both are sent on every update, so flipping it needs only a page reload — the
  * host is never told which one the client picked.
  */
-const CURSOR_USES_CLIENT_STYLE = false;
+const CURSOR_USES_CLIENT_STYLE = true;
 
 // Which MultiSeat hosts have already had their input notice this page, by uuid.
 //
@@ -488,6 +494,11 @@ export class StreamView {
         // Whether there IS a pointer on the streamed display right now. Separate
         // from the image: see _pictureCursor.
         this._hostCursorVisible = false;
+        // The pointer latched for the duration of a drag, and the bitmap
+        // rebuilt at the picture's scale. See _pictureCursor and _scaledCursor.
+        this._dragCursor = null;
+        this._scaledCursor = null;
+        this._scaledCursorPending = null;
         /** Gaming mode focus state: true when pointer lock is active (cursor captured).
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
@@ -5300,6 +5311,21 @@ export class StreamView {
         // Only when the host could NAME the shape: an application's own artwork
         // has no keyword, and there the bitmap below is the only faithful
         // answer. See CURSOR_USES_CLIENT_STYLE.
+        // A drag keeps the pointer it started with.
+        //
+        // Dragging is exactly where the host is least likely to have a name for
+        // what it shows: dropping a file, pulling a selection, resizing inside a
+        // canvas — the application draws its own artwork, `kind` comes back
+        // empty, and the bitmap below would take over. The pointer would swap to
+        // the host's foreign arrow at the moment the viewer is aiming with it,
+        // then swap back on release. Whatever was showing when the button went
+        // down stays until it comes back up.
+        //
+        // Only in client-style mode: with the host's bitmap the shape changing
+        // mid-drag is the host telling the truth, and worth seeing.
+        if (CURSOR_USES_CLIENT_STYLE && this._dragCursor && this._heldMouseButtons.size)
+            return this._dragCursor;
+
         if (CURSOR_USES_CLIENT_STYLE && this._hostCursorKind) return this._hostCursorKind;
 
         // There is one, but Desktop Duplication has not shown us its shape yet
@@ -5308,8 +5334,111 @@ export class StreamView {
         // ordinary arrow is right far more often than nothing at all, and the
         // real shape replaces it the moment the host sees one.
         if (!this._hostCursorPng) return 'default';
+        return this._scaledCursorCss();
+    }
+
+    /**
+     * The host's pointer bitmap as a CSS cursor, sized to match the picture.
+     *
+     * A 1440p desktop shown in a 1080p window is drawn at two thirds — every
+     * window, every letter and every icon on it. The pointer is the one thing
+     * that would not be: it arrives as a bitmap in HOST pixels and the browser
+     * draws it at that size, so it comes out half again too big for what it is
+     * pointing at, and the gap grows with the mismatch.
+     *
+     * So it is rebuilt at the same ratio the picture is drawn at, hotspot
+     * included — the hotspot is in pixels of the image it belongs to, so a
+     * resized bitmap with the original hotspot would aim off-centre.
+     *
+     * Only the bitmap can be resized. In client-style mode the browser draws the
+     * viewer's own system pointer, whose size belongs to the viewer's OS and
+     * their accessibility settings; CSS has no way to scale it, and overriding
+     * it would be the wrong answer even if it did.
+     */
+    _scaledCursorCss() {
+        const png = this._hostCursorPng;
         const [hx, hy] = this._hostCursorHotspot;
-        return `url(data:image/png;base64,${this._hostCursorPng}) ${hx} ${hy}, default`;
+        const raw = `url(data:image/png;base64,${png}) ${hx} ${hy}, default`;
+
+        const scale = this._pictureScale();
+        const built = this._scaledCursor;
+        if (built && built.png === png && built.scale === scale) return built.css;
+
+        // Building decodes the image, which is asynchronous. Until it lands,
+        // anything already built for this same bitmap is closer than nothing —
+        // a slightly stale size beats the pointer jumping to full size on every
+        // window resize.
+        this._buildScaledCursor(png, hx, hy, scale);
+        return built && built.png === png ? built.css : raw;
+    }
+
+    /** How much smaller (or larger) than the host's own pixels the picture is
+     *  drawn. Rounded to 5% steps so a drag-resize does not rebuild the bitmap
+     *  on every frame. */
+    _pictureScale() {
+        const iw = this._videoIsDisplay()
+            ? (this.videoEl && this.videoEl.videoWidth) || 0
+            : (this.canvas && this.canvas.width) || 0;
+        if (!iw) return 1;
+        const rect = this._mediaRect();
+        if (!rect || !(rect.width > 0)) return 1;
+        const scale = rect.width / iw;
+        if (!isFinite(scale) || !(scale > 0)) return 1;
+        return Math.max(0.25, Math.min(4, Math.round(scale * 20) / 20));
+    }
+
+    /** Redraw the host's pointer at `scale` and keep the result. Asynchronous:
+     *  decoding is, and the caller has already returned something usable. */
+    _buildScaledCursor(png, hx, hy, scale) {
+        const key = png + '@' + scale;
+        if (this._scaledCursorPending === key) return;
+        this._scaledCursorPending = key;
+
+        const img = new Image();
+        img.onload = () => {
+            if (this._scaledCursorPending !== key) return; // a newer shape won
+            this._scaledCursorPending = null;
+            this._scaledCursor = { png, scale, css: this._drawCursor(img, png, hx, hy, scale) };
+            this._applyHostCursor();
+        };
+        img.onerror = () => {
+            if (this._scaledCursorPending === key) this._scaledCursorPending = null;
+        };
+        img.src = `data:image/png;base64,${png}`;
+    }
+
+    /** The canvas half of _buildScaledCursor. Returns a CSS cursor value, and
+     *  falls back to the untouched bitmap whenever resizing cannot help. */
+    _drawCursor(img, png, hx, hy, scale) {
+        const raw = `url(data:image/png;base64,${png}) ${hx} ${hy}, default`;
+        const iw = img.width,
+            ih = img.height;
+        if (!(iw > 0) || !(ih > 0)) return raw;
+
+        // Browsers refuse a cursor larger than 128 px and silently draw nothing
+        // — worse than a slightly oversized pointer.
+        const MAX = 128;
+        const capped = Math.min(scale, MAX / Math.max(iw, ih));
+        const w = Math.round(iw * capped),
+            h = Math.round(ih * capped);
+        if (!(w > 0) || !(h > 0) || (w === iw && h === ih)) return raw;
+
+        try {
+            const c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, w, h);
+            // Clamped inside the image: a hotspot on or past the edge makes the
+            // browser drop the cursor entirely.
+            const sx = Math.max(0, Math.min(w - 1, Math.round(hx * capped)));
+            const sy = Math.max(0, Math.min(h - 1, Math.round(hy * capped)));
+            return `url(${c.toDataURL('image/png')}) ${sx} ${sy}, default`;
+        } catch {
+            return raw;
+        }
     }
 
     /**
@@ -5347,6 +5476,9 @@ export class StreamView {
             this._hostCursorPng = null;
             this._hostCursorKind = '';
             this._hostCursorHotspot = [0, 0];
+            this._dragCursor = null;
+            this._scaledCursor = null;
+            this._scaledCursorPending = null;
         }
     }
 
@@ -6039,6 +6171,7 @@ export class StreamView {
                 this.webrtc.send({ type: 'mouseup', button });
             }
             this._heldMouseButtons.clear();
+            this._dragCursor = null; // the drag it was latched for is over
         }
     }
 
@@ -6206,8 +6339,15 @@ export class StreamView {
     /** Send a mouse button event and keep _heldMouseButtons in sync (same
      *  reason as _sendKeyEvent). `button` is 1-based, as the host expects. */
     _sendMouseButton(button, down) {
+        // Latch the pointer as the drag opens, read while it lasts — see
+        // _pictureCursor. Taken BEFORE the set changes, so it is the shape the
+        // viewer was actually looking at when they pressed.
+        if (down && this._heldMouseButtons.size === 0) this._dragCursor = this._pictureCursor();
+
         if (down) this._heldMouseButtons.add(button);
         else this._heldMouseButtons.delete(button);
+
+        if (this._heldMouseButtons.size === 0) this._dragCursor = null;
         this.webrtc.send({
             type: down ? 'mousedown' : 'mouseup',
             button,
