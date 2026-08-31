@@ -479,13 +479,14 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     // Rare by construction — one message per shape change, never per frame —
     // so the base64 of a small PNG on the input channel costs nothing.
     connect(m_Shim, &IMediaEngine::cursorShapeChanged, this,
-            [this](QByteArray png, int hotspotX, int hotspotY) {
+            [this](QByteArray png, int hotspotX, int hotspotY, bool visible) {
                 if (m_Stopping.load() || !m_InputDc) return;
                 QJsonObject m;
                 m["type"] = "cursor";
-                // An empty image is how "draw nothing" travels: a game hid the
-                // pointer, or it left this display.
-                m["visible"] = !png.isEmpty();
+                // Visible with no image means "there is a pointer, we have not
+                // been shown it yet" — the browser draws its ordinary arrow.
+                // Not visible means draw nothing.
+                m["visible"] = visible;
                 m["hotspotX"] = hotspotX;
                 m["hotspotY"] = hotspotY;
                 if (!png.isEmpty()) m["png"] = QString::fromLatin1(png.toBase64());
