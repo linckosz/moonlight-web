@@ -18,6 +18,7 @@
 #include "WindowsEncoderProbe.h"
 
 #include "../../core/Log.h"
+#include "../../encode/windows/AmfCapabilities.h"
 #include "../../encode/windows/NvencCapabilities.h"
 
 #include <windows.h>
@@ -65,12 +66,19 @@ void probeEncoders(GpuInfo& gpu)
         break;
     }
 
-    case kVendorAmd:
-        // AMF's own capability query lands with the AMF encoder. Until then the
-        // runtime check stands alone, so no codec is claimed and the adapter
-        // stays unusable rather than promising something unverified.
-        if (runtimePresent(L"amfrt64.dll", "AMFInit")) gpu.encoders.push_back(EncoderApi::Amf);
+    case kVendorAmd: {
+        // Same real question as NVIDIA's: create an AMF context on THIS adapter
+        // and try each encoder component. That is what separates an RX 7600
+        // (which does AV1) from an older Radeon on the same driver.
+        const encode::AmfCaps caps = encode::queryAmfCapabilities(gpu.nativeHandle);
+        if (caps.usable) {
+            gpu.encoders.push_back(EncoderApi::Amf);
+            gpu.codecs = caps.codecs;
+            gpu.supports10Bit = caps.supports10Bit;
+            gpu.supports444 = caps.supports444;
+        }
         break;
+    }
 
     case kVendorIntel:
         // Same reasoning as AMD: the oneVPL dispatcher, else the legacy Media

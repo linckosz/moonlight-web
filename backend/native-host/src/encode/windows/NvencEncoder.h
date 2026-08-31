@@ -17,27 +17,17 @@
 
 #pragma once
 
+#include "IVideoEncoder.h"
 #include "NvencApi.h"
-#include "mw/native/Capabilities.h"
-
-#include <d3d11.h>
 
 #include <cstdint>
 #include <string>
 
 namespace mw::native::encode {
 
-/// One encoded frame, pointing into the encoder's locked bitstream.
-///
-/// Valid only until the next call on this encoder: the buffer is unlocked as
-/// soon as the caller is done with it, which is what keeps the GPU→CPU copy at
-/// exactly one per frame instead of one plus an allocation.
-struct NvencOutput
-{
-    const uint8_t* data = nullptr;
-    size_t size = 0;
-    bool keyframe = false;
-};
+/// Kept as the name this file has always used; the shape now lives in
+/// IVideoEncoder.h so both vendor paths hand back the same thing.
+using NvencOutput = EncoderOutput;
 
 /// NVENC, configured for a screen-sharing stream rather than for a file.
 ///
@@ -58,14 +48,11 @@ struct NvencOutput
 ///  - **SPS/PPS on every keyframe.** The browser's decoder configures itself
 ///    from the parameter sets. A client that joins late, or loses the first
 ///    keyframe, must be able to start from the next one.
-class NvencEncoder
+class NvencEncoder final : public IVideoEncoder
 {
 public:
     NvencEncoder() = default;
-    ~NvencEncoder();
-
-    NvencEncoder(const NvencEncoder&) = delete;
-    NvencEncoder& operator=(const NvencEncoder&) = delete;
+    ~NvencEncoder() override;
 
     /// @param device the D3D11 device the NV12 frames live on. Must be the
     ///               adapter that captured them, or every frame costs a
@@ -75,22 +62,23 @@ public:
     ///               otherwise, which is a clearer failure than a silent
     ///               downgrade but still a failure.
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, std::string& error);
+              bool yuv444, std::string& error) override;
 
     /// Encode one NV12 texture. Blocking: returns with the bitstream ready.
-    bool encode(ID3D11Texture2D* nv12, bool forceKeyframe, NvencOutput& out, std::string& error);
+    bool encode(ID3D11Texture2D* nv12, bool forceKeyframe, EncoderOutput& out,
+                std::string& error) override;
 
     /// Release the bitstream handed out by the last encode(). Must be called
     /// before the next encode().
-    void releaseOutput();
+    void releaseOutput() override;
 
-    void stop();
+    void stop() override;
 
     /// Move the target bitrate without restarting the session (§9.3 — driven
     /// live from what the client reports). Applied from the next frame.
-    bool setBitrate(int bitrateKbps, std::string& error);
+    bool setBitrate(int bitrateKbps, std::string& error) override;
 
-    bool intraRefreshEnabled() const { return m_IntraRefresh; }
+    bool intraRefreshEnabled() const override { return m_IntraRefresh; }
 
 private:
     bool registerInput(ID3D11Texture2D* texture, std::string& error);

@@ -35,6 +35,9 @@ if(WIN32)
         src/encode/windows/NvencApi.cpp
         src/encode/windows/NvencCapabilities.cpp
         src/encode/windows/NvencEncoder.cpp
+        src/encode/windows/AmfApi.cpp
+        src/encode/windows/AmfCapabilities.cpp
+        src/encode/windows/AmfEncoder.cpp
     )
     # DXGI enumerates the adapters and their outputs (the display→GPU
     # association everything else depends on) and drives Desktop Duplication;
@@ -57,6 +60,9 @@ target_include_directories(mw-native-host
     # nvEncodeAPI64.dll and is resolved at runtime, so nothing here is linked
     # and nothing from NVIDIA's SDK is redistributed.
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvenc-headers
+    # AMD's AMF public headers. Same arrangement: the runtime is amfrt64.dll
+    # from the Radeon driver, loaded at run time; nothing is linked.
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/amf-headers
 )
 
 target_compile_features(mw-native-host PUBLIC cxx_std_17)
@@ -113,6 +119,7 @@ if(MW_BUILD_TESTS)
         # is where the real hardware gets exercised — so they need the same
         # vendor headers the implementation does.
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvenc-headers
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/amf-headers
     )
     add_test(NAME native-host COMMAND mw-native-tests)
 

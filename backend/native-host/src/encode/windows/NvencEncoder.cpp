@@ -267,7 +267,7 @@ bool NvencEncoder::registerInput(ID3D11Texture2D* texture, std::string& error)
     return true;
 }
 
-bool NvencEncoder::encode(ID3D11Texture2D* nv12, bool forceKeyframe, NvencOutput& out,
+bool NvencEncoder::encode(ID3D11Texture2D* nv12, bool forceKeyframe, EncoderOutput& out,
                           std::string& error)
 {
     if (!m_Encoder || !m_Bitstream) {
