@@ -11,6 +11,7 @@
 #include "VplSession.h"
 
 #include "../../core/Log.h"
+#include "../RateControl.h"
 
 #include <cstring>
 
@@ -145,10 +146,11 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
     params.mfx.TargetKbps = static_cast<mfxU16>(bitrateKbps / multiplier);
     params.mfx.MaxKbps = params.mfx.TargetKbps;
 
-    // One frame's worth of buffer, in KB, which is what actually enforces the
-    // latency: no single frame may be so large that it takes several frame
-    // times to transmit.
-    const int frameKb = (bitrateKbps / fps) / 8;
+    // The buffer, in KB, which is what actually enforces the latency: no single
+    // frame may be so large that it takes several frame times to transmit. See
+    // RateControl.h for why it has a frame-rate floor.
+    const int frameKb =
+        static_cast<int>(vbvBitsPerFrame(static_cast<uint32_t>(bitrateKbps), fps)) / 8;
     const int bufferKb = frameKb > 0 ? frameKb : 1;
     params.mfx.BufferSizeInKB =
         static_cast<mfxU16>((bufferKb / multiplier) > 0 ? (bufferKb / multiplier) : 1);

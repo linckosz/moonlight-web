@@ -11,6 +11,7 @@
 #include "AmfEncoder.h"
 
 #include "../../core/Log.h"
+#include "../RateControl.h"
 
 #include <components/VideoEncoderAV1.h>
 #include <components/VideoEncoderHEVC.h>
@@ -196,14 +197,16 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     // parameter set, so anything set before it is overwritten.
     m_Encoder->SetProperty(props.usage, props.usageUltraLowLatency);
 
-    // CBR with a one-frame VBV. The VBV is what actually enforces low latency:
-    // it caps how far ahead the encoder may spend, so no single frame can be so
-    // large that it takes several frame times to transmit.
+    // CBR. The VBV is what actually enforces low latency: it caps how far ahead
+    // the encoder may spend, so no single frame can be so large that it takes
+    // several frame times to transmit. See RateControl.h for why it has a floor
+    // rather than being one frame at any refresh rate.
     const amf_int64 bitsPerSecond = static_cast<amf_int64>(bitrateKbps) * 1000;
     m_Encoder->SetProperty(props.rateControl, props.rateControlCbr);
     m_Encoder->SetProperty(props.targetBitrate, bitsPerSecond);
     m_Encoder->SetProperty(props.peakBitrate, bitsPerSecond);
-    m_Encoder->SetProperty(props.vbvBufferSize, bitsPerSecond / m_Fps);
+    m_Encoder->SetProperty(props.vbvBufferSize, static_cast<amf_int64>(vbvBitsPerFrame(
+                                                    static_cast<uint32_t>(bitsPerSecond), m_Fps)));
 
     m_Encoder->SetProperty(props.frameSize, ::AMFConstructSize(width, height));
     m_Encoder->SetProperty(props.frameRate, ::AMFConstructRate(m_Fps, 1));
