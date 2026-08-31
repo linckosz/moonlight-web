@@ -34,29 +34,30 @@ namespace mw::native::platform {
 ///    the same DLL and differ on AV1. Guessing from the device id would be a
 ///    table to maintain forever and wrong on the day a new chip ships.
 ///
-/// So codecs stay empty until the encoder backend that can genuinely ask lands.
-/// An empty codec list makes the engine report itself unavailable, which is the
-/// truthful answer: it cannot encode anything yet. Offering a host that fails
-/// on click would be worse than offering none.
+/// So a codec list is only ever filled by the vendor API answering. NVIDIA is
+/// asked for real (NvencCapabilities opens a session); AMD and Intel are not
+/// yet, so they report a runtime but no codec — which leaves them unusable by
+/// the availability rule in core/Probe.cpp. That is the intended behaviour:
+/// offering a host that fails the moment it is clicked is worse than offering
+/// none.
 ///
-/// ── Why the vendor test is not enough, measured on a real machine ──────────
+/// ── What the bench taught, and what it corrected ───────────────────────────
 ///
-/// A bench here reports THREE physical GPUs (two RTX 5060 Ti and an AMD iGPU)
+/// A machine here reports THREE physical GPUs (two RTX 5060 Ti and an AMD iGPU)
 /// but FIVE DXGI adapters. The extra two are indirect-display adapters — a
-/// Parsec Virtual Display and a Virtual Display Driver — and they present
-/// NVIDIA's own name and device id (10de:2d04) under a LUID of their own.
+/// Parsec Virtual Display and a Virtual Display Driver — presenting NVIDIA's
+/// own name and device id (10de:2d04) under a LUID of their own.
 ///
-/// They therefore pass the vendor test and get NVENC credited to them, while
-/// no NVENC session can be created on them at all. There is no DXGI flag that
-/// separates them (DXGI_ADAPTER_FLAG_SOFTWARE is not set), and picking them
-/// apart by VRAM or by name would be a heuristic that is wrong the day a new
-/// virtual display driver ships.
+/// The guess was that they would refuse an encode session and disqualify
+/// themselves. They do not: being backed by a real NVIDIA GPU, they open a
+/// session and report the same codecs. Which is the correct outcome — a display
+/// on such an adapter should be captured AND encoded there, since DXGI routes
+/// both to the same silicon.
 ///
-/// The fix is not a better guess: it is to stop guessing. When the encoder
-/// backend lands it opens a session against each adapter, and an adapter that
-/// cannot host one gets an empty codec list and is excluded by the availability
-/// rule in core/Probe.cpp. Until then, what this function reports is a hint for
-/// the log — never a decision.
+/// The lesson is narrower than "filter the fakes": it is that the vendor id
+/// picks WHICH API to ask, and only the API's own answer says what a codec list
+/// contains. NVIDIA does that now. AMD and Intel do not yet, so they claim no
+/// codec at all and stay unusable rather than promising something unverified.
 void probeEncoders(GpuInfo& gpu);
 
 } // namespace mw::native::platform
