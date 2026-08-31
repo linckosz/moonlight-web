@@ -36,8 +36,21 @@ namespace {
 // vertex buffer, no input layout, nothing to bind. A triangle rather than a
 // quad because a quad's diagonal makes the GPU shade the seam twice.
 constexpr char kShaderSource[] = R"HLSL(
-Texture2D<float4> Source : register(t0);
-SamplerState      Linear : register(s0);
+Texture2D<float4> Source       : register(t0);
+Texture2D<float4> CursorPixels : register(t1);
+Texture2D<float>  CursorInvert : register(t2);
+SamplerState      Linear       : register(s0);
+SamplerState      Nearest      : register(s1);
+
+// xy: the cursor's top-left in source UV. zw: its size in source UV.
+// Enabled is 0 or 1 rather than a branch on the size, so a zero-size shape
+// cannot divide by zero on its way to being invisible.
+cbuffer Overlay : register(b0)
+{
+    float4 CursorRect;
+    float  CursorEnabled;
+    float3 OverlayPad;
+};
 
 struct VsOut
 {
@@ -55,6 +68,34 @@ VsOut VsMain(uint id : SV_VertexID)
     return o;
 }
 
+// The desktop with the mouse pointer drawn on it.
+//
+// Windows composites the cursor at scan-out, so the duplicated frame never
+// contains it and we have to put it back. Doing that HERE rather than in a
+// second pass costs one texture fetch on the pixels the cursor covers and
+// nothing at all anywhere else — a separate overlay pass would mean another
+// full-frame render target and another round trip through VRAM.
+//
+// Colour is sampled linearly so a cursor scaled down with the picture keeps its
+// antialiased edges; the invert mask is sampled nearest, because a half-inverted
+// pixel is not a thing and interpolating the flag would fringe the I-beam.
+float3 Scene(float2 uv)
+{
+    float3 rgb = Source.Sample(Linear, uv).rgb;
+    if (CursorEnabled < 0.5) return rgb;
+
+    float2 c = (uv - CursorRect.xy) / CursorRect.zw;
+    if (c.x < 0.0 || c.y < 0.0 || c.x > 1.0 || c.y > 1.0) return rgb;
+
+    // Monochrome cursors carry no colour of their own: they are defined as
+    // inverting the background, which is what keeps a text I-beam visible over
+    // black text and over white paper alike.
+    if (CursorInvert.SampleLevel(Nearest, c, 0) > 0.5) return 1.0 - rgb;
+
+    float4 cursor = CursorPixels.SampleLevel(Linear, c, 0);
+    return lerp(rgb, cursor.rgb, cursor.a);
+}
+
 // BT.709 luma weights.
 static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
 
@@ -67,7 +108,7 @@ static const float kChromaBias = 128.0 / 255.0;
 
 float PsLuma(VsOut i) : SV_TARGET
 {
-    float3 rgb = Source.Sample(Linear, i.uv).rgb;
+    float3 rgb = Scene(i.uv);
     return dot(rgb, kLuma) * kLumaScale + kLumaBias;
 }
 
@@ -80,7 +121,7 @@ float PsLuma(VsOut i) : SV_TARGET
 // spelled out here.
 float4 PsPacked444(VsOut i) : SV_TARGET
 {
-    float3 rgb = Source.Sample(Linear, i.uv).rgb;
+    float3 rgb = Scene(i.uv);
     float  y   = dot(rgb, kLuma);
 
     float cb = (rgb.b - y) / 1.8556;
@@ -96,7 +137,7 @@ float2 PsChroma(VsOut i) : SV_TARGET
 {
     // Sampling once at the chroma texel's centre lets the sampler average the
     // 2x2 luma neighbourhood for us, which is what 4:2:0 wants anyway.
-    float3 rgb = Source.Sample(Linear, i.uv).rgb;
+    float3 rgb = Scene(i.uv);
     float  y   = dot(rgb, kLuma);
 
     // The BT.709 denominators: 2*(1-Kb) and 2*(1-Kr).
@@ -202,6 +243,76 @@ bool ColorConvert::createShaders(std::string& error)
         error = "could not create the sampler";
         return false;
     }
+
+    sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    if (FAILED(m_Device->CreateSamplerState(&sampler, m_NearestSampler.ReleaseAndGetAddressOf()))) {
+        error = "could not create the point sampler";
+        return false;
+    }
+
+    // Where to draw the cursor, rewritten every frame. DYNAMIC because that is
+    // exactly the access pattern: written by the CPU once per frame, read by
+    // the GPU immediately after.
+    D3D11_BUFFER_DESC overlay = {};
+    overlay.ByteWidth = sizeof(float) * 8; // float4 + float + float3 padding
+    overlay.Usage = D3D11_USAGE_DYNAMIC;
+    overlay.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    overlay.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    if (FAILED(
+            m_Device->CreateBuffer(&overlay, nullptr, m_OverlayBuffer.ReleaseAndGetAddressOf()))) {
+        error = "could not create the cursor constant buffer";
+        return false;
+    }
+    return true;
+}
+
+bool ColorConvert::updateCursorResources(const capture::CursorState& cursor, std::string& error)
+{
+    if (cursor.width <= 0 || cursor.height <= 0) return true;
+    if (m_CursorPixels && m_CursorShapeVersion == cursor.shapeVersion) return true;
+
+    const UINT width = static_cast<UINT>(cursor.width);
+    const UINT height = static_cast<UINT>(cursor.height);
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    // IMMUTABLE and recreated per shape rather than DYNAMIC and rewritten: a
+    // shape change is rare (the pointer keeps one for thousands of frames) and
+    // the sizes differ between shapes anyway, so there is nothing to reuse.
+    D3D11_SUBRESOURCE_DATA seed = {};
+    seed.pSysMem = cursor.pixels.data();
+    seed.SysMemPitch = width * 4;
+
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    if (FAILED(m_Device->CreateTexture2D(&desc, &seed, m_CursorPixels.ReleaseAndGetAddressOf()))) {
+        error = "could not upload the cursor image";
+        return false;
+    }
+
+    seed.pSysMem = cursor.invert.data();
+    seed.SysMemPitch = width;
+    desc.Format = DXGI_FORMAT_R8_UNORM;
+    if (FAILED(m_Device->CreateTexture2D(&desc, &seed, m_CursorInvert.ReleaseAndGetAddressOf()))) {
+        error = "could not upload the cursor mask";
+        return false;
+    }
+
+    if (FAILED(m_Device->CreateShaderResourceView(m_CursorPixels.Get(), nullptr,
+                                                  m_CursorPixelsView.ReleaseAndGetAddressOf())) ||
+        FAILED(m_Device->CreateShaderResourceView(m_CursorInvert.Get(), nullptr,
+                                                  m_CursorInvertView.ReleaseAndGetAddressOf()))) {
+        error = "could not view the cursor textures";
+        return false;
+    }
+
+    m_CursorShapeVersion = cursor.shapeVersion;
     return true;
 }
 
@@ -260,12 +371,15 @@ bool ColorConvert::createOutput(std::string& error)
     return true;
 }
 
-bool ColorConvert::convert(ID3D11Texture2D* source, std::string& error)
+bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& cursor,
+                           std::string& error)
 {
     if (!source || !m_Context || !m_Output) {
         error = "colour conversion is not initialized";
         return false;
     }
+
+    if (!updateCursorResources(cursor, error)) return false;
 
     // Desktop Duplication does not promise the same texture object twice, and a
     // view left pointing at the previous one would sample a frozen image
@@ -283,14 +397,38 @@ bool ColorConvert::convert(ID3D11Texture2D* source, std::string& error)
         m_SourceViewFor = source;
     }
 
-    ID3D11ShaderResourceView* views[] = {m_SourceView.Get()};
-    ID3D11SamplerState* samplers[] = {m_Sampler.Get()};
+    // The cursor rectangle, expressed in SOURCE uv because that is the space the
+    // shader samples in. Drawing in output space instead would misplace the
+    // pointer by the scale factor on any stream that is not native resolution.
+    const bool drawCursor = cursor.visible && m_CursorPixelsView && cursor.width > 0 &&
+                            cursor.height > 0 && m_SourceWidth > 0 && m_SourceHeight > 0;
+    {
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        if (FAILED(m_Context->Map(m_OverlayBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+            error = "could not update the cursor position";
+            return false;
+        }
+        float* p = static_cast<float*>(mapped.pData);
+        p[0] = static_cast<float>(cursor.x) / static_cast<float>(m_SourceWidth);
+        p[1] = static_cast<float>(cursor.y) / static_cast<float>(m_SourceHeight);
+        p[2] = static_cast<float>(cursor.width) / static_cast<float>(m_SourceWidth);
+        p[3] = static_cast<float>(cursor.height) / static_cast<float>(m_SourceHeight);
+        p[4] = drawCursor ? 1.0f : 0.0f;
+        p[5] = p[6] = p[7] = 0.0f;
+        m_Context->Unmap(m_OverlayBuffer.Get(), 0);
+    }
+
+    ID3D11ShaderResourceView* views[] = {m_SourceView.Get(), m_CursorPixelsView.Get(),
+                                         m_CursorInvertView.Get()};
+    ID3D11SamplerState* samplers[] = {m_Sampler.Get(), m_NearestSampler.Get()};
+    ID3D11Buffer* constants[] = {m_OverlayBuffer.Get()};
 
     m_Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     m_Context->IASetInputLayout(nullptr);
     m_Context->VSSetShader(m_VertexShader.Get(), nullptr, 0);
-    m_Context->PSSetShaderResources(0, 1, views);
-    m_Context->PSSetSamplers(0, 1, samplers);
+    m_Context->PSSetShaderResources(0, 3, views);
+    m_Context->PSSetSamplers(0, 2, samplers);
+    m_Context->PSSetConstantBuffers(0, 1, constants);
 
     D3D11_VIEWPORT viewport = {};
     viewport.Width = static_cast<float>(m_OutputWidth);
@@ -327,8 +465,8 @@ bool ColorConvert::convert(ID3D11Texture2D* source, std::string& error)
     // Unbind the source before returning: capture is about to release the
     // texture, and leaving it bound to the pipeline would keep it alive and
     // trip the next AcquireNextFrame.
-    ID3D11ShaderResourceView* none[] = {nullptr};
-    m_Context->PSSetShaderResources(0, 1, none);
+    ID3D11ShaderResourceView* none[] = {nullptr, nullptr, nullptr};
+    m_Context->PSSetShaderResources(0, 3, none);
     m_Context->OMSetRenderTargets(0, nullptr, nullptr);
     return true;
 }

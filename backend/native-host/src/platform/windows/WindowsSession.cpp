@@ -208,6 +208,7 @@ public:
 
         m_Encoder.reset();
         m_Converter.reset();
+        m_DesktopCopy.Reset();
         m_Capture.reset();
     }
 
@@ -267,8 +268,23 @@ private:
         // stop() promptly, long enough that an idle desktop costs nothing.
         constexpr int kAcquireTimeoutMs = 100;
 
+        // How long a perfectly still desktop may go without sending anything.
+        //
+        // Desktop Duplication delivers frames on damage, so a screen where
+        // nothing moves produces nothing at all — which is efficient and, to
+        // the receiver, indistinguishable from a broken stream. The browser
+        // declares starvation after 1000 ms and asks for a keyframe; that
+        // request storm is then read as congestion and walks the quality ladder
+        // all the way down, on a session that was never in trouble.
+        //
+        // So: a floor, comfortably inside that window. What goes out is the
+        // frame already converted and unchanged, which an encoder turns into
+        // almost nothing — a few hundred bytes of "everything is the same".
+        constexpr int64_t kIdleFloorUs = 500 * 1000;
+
         uint32_t frameNumber = 0;
         std::string error;
+        int64_t lastSentUs = steadyNowUs();
 
         while (m_Running.load()) {
             if (const int kbps = m_PendingBitrate.exchange(0); kbps > 0) {
@@ -279,7 +295,31 @@ private:
             capture::CapturedFrame frame;
             const capture::AcquireStatus status = m_Capture->acquire(kAcquireTimeoutMs, frame);
 
-            if (status == capture::AcquireStatus::Timeout) continue;
+            if (status == capture::AcquireStatus::Timeout) {
+                // Nothing moved. Hold the floor open so the receiver can tell a
+                // quiet screen from a dead one — re-encoding what is already
+                // converted, so this costs an encode and not a capture.
+                if (steadyNowUs() - lastSentUs < kIdleFloorUs) continue;
+                if (!m_Converter->outputWidth()) continue;
+                if (!emit(frameNumber, steadyNowUs(), error)) return;
+                lastSentUs = steadyNowUs();
+                continue;
+            }
+
+            // Only the pointer moved. The desktop is untouched, so there is no
+            // new texture — but we draw the cursor ourselves, so the picture
+            // HAS changed and has to be re-sent. Re-converted from our own copy
+            // of the last desktop, with the cursor at its new place.
+            if (status == capture::AcquireStatus::PointerOnly) {
+                if (!m_DesktopCopy) continue;
+                if (!m_Converter->convert(m_DesktopCopy.Get(), m_Capture->cursor(), error)) {
+                    finish("colour conversion failed: " + error);
+                    return;
+                }
+                if (!emit(frameNumber, steadyNowUs(), error)) return;
+                lastSentUs = steadyNowUs();
+                continue;
+            }
 
             if (status == capture::AcquireStatus::Lost) {
                 // A mode change, a resolution change, a desktop switch. The
@@ -301,42 +341,95 @@ private:
 
             const int64_t submittedUs = steadyNowUs();
 
-            if (!m_Converter->convert(frame.texture, error)) {
+            if (!m_Converter->convert(frame.texture, m_Capture->cursor(), error)) {
                 m_Capture->release();
                 finish("colour conversion failed: " + error);
                 return;
             }
+
+            // Keep a copy of the desktop for the pointer-only path above — and
+            // ONLY when the pointer is on this display. When it is hidden or on
+            // another screen (a fullscreen game, the usual latency-critical
+            // case) no pointer-only frame can ever need it, so the copy is
+            // skipped entirely and the frame path stays exactly as it was.
+            if (m_Capture->cursor().visible && !retainDesktop(frame.texture, error))
+                log::warning("[native] could not keep a desktop copy: " + error);
 
             // Released before encoding: Desktop Duplication refuses the next
             // acquire while a frame is held, and the conversion has already
             // copied what it needs into the NV12 texture.
             m_Capture->release();
 
-            const bool forceKeyframe = m_ForceKeyframe.exchange(false);
-            encode::EncoderOutput encoded;
-            if (!m_Encoder->encode(m_Converter->output(), forceKeyframe, encoded, error)) {
-                finish("encode failed: " + error);
-                return;
-            }
-
-            if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo) {
-                EncodedFrame out;
-                out.data = encoded.data;
-                out.size = encoded.size;
-                out.keyframe = encoded.keyframe;
-                out.frameNumber = frameNumber++;
-                out.presentUs = frame.presentUs;
-                out.capturedUs = frame.capturedUs;
-                out.submittedUs = submittedUs;
-                out.encodedUs = steadyNowUs();
-
-                // Delivered on this thread, and the consumer sends it before
-                // returning. The buffer is unlocked immediately after, which is
-                // what keeps the GPU→CPU copy at exactly one per frame.
-                m_Callbacks.onVideo(out);
-            }
-            m_Encoder->releaseOutput();
+            if (!emit(frameNumber, submittedUs, error, &frame)) return;
+            lastSentUs = steadyNowUs();
         }
+    }
+
+    /// Encode whatever the converter currently holds and hand it to the
+    /// consumer. @p frame is the capture it came from, or null when this is a
+    /// re-send (idle floor, pointer-only) with no new present to report.
+    ///
+    /// Returns false when the session must end; the reason has been reported.
+    bool emit(uint32_t& frameNumber, int64_t submittedUs, std::string& error,
+              const capture::CapturedFrame* frame = nullptr)
+    {
+        const bool forceKeyframe = m_ForceKeyframe.exchange(false);
+        encode::EncoderOutput encoded;
+        if (!m_Encoder->encode(m_Converter->output(), forceKeyframe, encoded, error)) {
+            finish("encode failed: " + error);
+            return false;
+        }
+
+        if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo) {
+            EncodedFrame out;
+            out.data = encoded.data;
+            out.size = encoded.size;
+            out.keyframe = encoded.keyframe;
+            out.frameNumber = frameNumber++;
+            // A re-send has no present of its own. Reporting "now" for both
+            // keeps the latency figures honest — it measures zero capture
+            // latency because there was no capture, rather than inheriting a
+            // stale present time and claiming half a second of delay.
+            out.presentUs = frame ? frame->presentUs : submittedUs;
+            out.capturedUs = frame ? frame->capturedUs : submittedUs;
+            out.submittedUs = submittedUs;
+            out.encodedUs = steadyNowUs();
+
+            // Delivered on this thread, and the consumer sends it before
+            // returning. The buffer is unlocked immediately after, which is
+            // what keeps the GPU→CPU copy at exactly one per frame.
+            m_Callbacks.onVideo(out);
+        }
+        m_Encoder->releaseOutput();
+        return true;
+    }
+
+    /// Keep a private copy of the captured desktop, so a later frame that only
+    /// moved the cursor can be rebuilt without a fresh capture.
+    bool retainDesktop(ID3D11Texture2D* source, std::string& error)
+    {
+        if (!source) return false;
+
+        if (!m_DesktopCopy) {
+            D3D11_TEXTURE2D_DESC desc = {};
+            source->GetDesc(&desc);
+            desc.Usage = D3D11_USAGE_DEFAULT;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            desc.CPUAccessFlags = 0;
+            desc.MiscFlags = 0;
+            if (FAILED(m_Capture->device()->CreateTexture2D(&desc, nullptr,
+                                                            m_DesktopCopy.GetAddressOf()))) {
+                error = "the GPU refused a scratch copy of the desktop";
+                return false;
+            }
+        }
+
+        // GPU to GPU, no system memory involved. It is a real cost — roughly a
+        // tenth of a millisecond at 1440p — paid only while the pointer is on
+        // this screen, and it is what buys a cursor that moves on a still
+        // desktop.
+        m_Capture->context()->CopyResource(m_DesktopCopy.Get(), source);
+        return true;
     }
 
     /// Report an unrecoverable end once, from the loop thread.
@@ -362,6 +455,9 @@ private:
 
     std::unique_ptr<capture::DxgiDuplication> m_Capture;
     std::unique_ptr<convert::ColorConvert> m_Converter;
+    /// The last captured desktop, kept only while the pointer is on this
+    /// screen — see retainDesktop().
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_DesktopCopy;
     /// Held by interface: which vendor path this is was decided by the
     /// Selector, and the loop below neither knows nor needs to.
     std::unique_ptr<encode::IVideoEncoder> m_Encoder;
