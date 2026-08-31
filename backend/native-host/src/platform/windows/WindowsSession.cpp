@@ -22,6 +22,7 @@
 #include "../../core/Session.h"
 #include "../../encode/windows/AmfEncoder.h"
 #include "../../encode/windows/NvencEncoder.h"
+#include "../../encode/windows/VplEncoder.h"
 
 #include <atomic>
 #include <chrono>
@@ -127,6 +128,7 @@ public:
         switch (m_Target.encoder) {
         case EncoderApi::Nvenc: m_Encoder = std::make_unique<encode::NvencEncoder>(); break;
         case EncoderApi::Amf: m_Encoder = std::make_unique<encode::AmfEncoder>(); break;
+        case EncoderApi::Vpl: m_Encoder = std::make_unique<encode::VplEncoder>(); break;
         default:
             error =
                 std::string("no encoder implementation for ") + toString(m_Target.encoder) + " yet";

@@ -19,6 +19,7 @@ NativeTestStats g_nativeStats;
 void run_selector_tests();
 void run_capabilities_tests();
 void run_capture_tests();
+void run_vpl_params_tests();
 
 int main()
 {
@@ -34,6 +35,7 @@ int main()
 
     run_capabilities_tests();
     run_selector_tests();
+    run_vpl_params_tests();
     run_capture_tests();
 
     const int total = g_nativeStats.passed + g_nativeStats.failed;
