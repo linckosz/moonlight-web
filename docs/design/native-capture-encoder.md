@@ -203,6 +203,26 @@ capturé **et** encodé là, DXGI routant les deux vers le même silicium. Il n'
 donc rien à filtrer : l'identité d'adaptateur vient de DXGI, et la requête de
 capacités sert seulement à connaître les codecs.
 
+### 6.5 Un host sans adresse a fait déborder la pile
+
+Le premier `/apps` sur le host natif tuait le processus — `0xc0000005` dans
+`ntdll.dll`, sans une ligne de log (une pile épuisée ne peut pas se dérouler
+pour écrire).
+
+Le préchargement des jaquettes marque une app en attente, appelle
+`startBoxArtFetch` qui ne trouve **aucune adresse** — le host natif EST ce
+processus — et conclut l'échec *immédiatement* ; le gestionnaire de complétion
+retire le marqueur puis rappelle le préchargement, qui rechoisit la même app.
+
+Ce qui espace normalement les tentatives, c'est l'attente d'une réponse réseau.
+Sans réseau, rien ne casse la boucle. Le code existant supposait, sans le dire,
+que tout host de la liste a une adresse — invariant que le host natif a brisé.
+
+Corrigé aux deux niveaux : un host sans adresse ne précharge rien, et une app
+dont la jaquette a échoué n'est plus rechoisie dans la même passe (sans quoi un
+échec réseau sur un host réel bouclait aussi — en requêtes plutôt qu'en pile,
+donc invisible mais bien présent).
+
 ### 6.4 « Un encodeur » ne veut pas dire « peut encoder »
 
 L'iGPU AMD du banc annonce le runtime AMF avec une **liste de codecs vide** (la
@@ -365,12 +385,25 @@ WebRTC existant. Le chemin Sunshine/Wolf/MultiSeat est intact.
 Ce qui manque pour une expérience finie : l'audio et l'input (un stream vidéo
 seul n'est pas jouable), puis l'UI et les installeurs.
 
-### Vérifications non faites
+### ✅ Vérifié de bout en bout (31/08/2026)
 
-1. **Un stream Sunshine et un stream Wolf réels**, de bout en bout. Le refactor
-   `IMediaEngine` est purement typologique — aucun corps de méthode modifié —
-   mais il touche les trois relais, et cela demande un banc réel.
-2. **Une image native dans un navigateur.** Chaque étage est vérifié
-   séparément (la capture produit des pixels, l'encodeur un Annex-B conforme,
-   le host apparaît), mais l'assemblage complet jusqu'au décodeur du navigateur
-   n'a pas encore été observé.
+Une **image réelle du bureau, dans un navigateur**, par le moteur natif :
+
+- host `DualRTX — MoonlightWeb Host` **READY**, aucun pairing demandé ;
+- une seule carte d'app, `Display 1 — 2560×1440 · 60 Hz` — la grille d'apps
+  existante EST le sélecteur d'écran, comme prévu ;
+- un clic → stream ; côté navigateur :
+  `First video frame: isKeyframe=true size=39946 codec=hevc`, rendu en 1920×1080 ;
+- côté worker : duplication 2560×1440 → conversion + mise à l'échelle 1920×1080
+  → NVENC HEVC intra-refresh ;
+- arrêt propre au bouton.
+
+Trois bugs ont été trouvés en poussant ce test, et aucun n'était visible en
+test unitaire : le crash du préchargement de jaquettes (§6.5), la validation
+d'URL RTSP appliquée au natif, et `serverCodecModeSupport` à zéro.
+
+### Vérification restante
+
+**Un stream Sunshine et un stream Wolf réels.** Le refactor `IMediaEngine` est
+purement typologique — aucun corps de méthode modifié — mais il touche les
+trois relais, et cela demande un banc réel.
