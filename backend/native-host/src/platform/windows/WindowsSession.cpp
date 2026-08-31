@@ -20,10 +20,12 @@
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
 #include "../../core/Session.h"
+#include "../../encode/windows/AmfEncoder.h"
 #include "../../encode/windows/NvencEncoder.h"
 
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -60,8 +62,10 @@ int64_t steadyNowUs()
 class WindowsSession final : public Session
 {
 public:
-    WindowsSession(const SessionConfig& config, const SessionCallbacks& callbacks)
+    WindowsSession(const SessionConfig& config, const ResolvedTarget& target,
+                   const SessionCallbacks& callbacks)
         : m_Config(config)
+        , m_Target(target)
         , m_Callbacks(callbacks)
     {}
 
@@ -71,12 +75,15 @@ public:
     {
         if (m_Running.load()) return true;
 
-        // Re-probe rather than trust the caller: a display can be unplugged
-        // between the launch request and this call.
+        // Confirm the display is still there — it can be unplugged between the
+        // launch request and this call. What is NOT re-decided here is which
+        // GPU encodes: the Selector already worked that out, and re-deriving it
+        // from the display is exactly the bug that made an AMD-driven monitor
+        // try to open NVENC.
         const Capabilities caps = probe();
         const DisplayInfo* display = nullptr;
         for (const DisplayInfo& d : caps.displays) {
-            if (d.id == m_Config.displayId) {
+            if (d.id == m_Target.displayId) {
                 display = &d;
                 break;
             }
@@ -86,28 +93,25 @@ public:
             return false;
         }
 
-        const GpuInfo* gpu = caps.gpuFor(*display);
-        if (!gpu) {
-            error = "could not identify the GPU driving that display";
+        // Encoding on an adapter other than the one scanning the display out
+        // needs the frame copied between GPUs, which is not written yet. Say so
+        // plainly: the alternative is the encoder failing with a vendor error
+        // that says nothing about the real cause.
+        if (m_Target.crossGpuCopy) {
+            error = "this display is driven by a GPU that cannot encode, and copying the "
+                    "frame to another GPU is not supported yet";
             return false;
         }
 
-        // DXGI wants the output's index WITHIN its adapter, which on a
-        // multi-GPU machine is not the global display id.
-        unsigned outputIndex = 0;
-        for (const DisplayInfo& d : caps.displays) {
-            if (d.id == display->id) break;
-            if (d.gpuId == display->gpuId) ++outputIndex;
-        }
-
-        m_Capture = std::make_unique<capture::DxgiDuplication>(gpu->nativeHandle, outputIndex);
+        m_Capture = std::make_unique<capture::DxgiDuplication>(m_Target.captureAdapterHandle,
+                                                               m_Target.outputIndex);
         if (!m_Capture->start(error)) return false;
 
         // 4:4:4 only when the client asked AND the encoder can. Silently
         // downgrading would be worse than saying so: the whole reason to ask
         // for it is text and UI legibility, and a stream that quietly returns
         // 4:2:0 looks like the setting does nothing.
-        const bool yuv444 = m_Config.yuv444 && gpu->supports444;
+        const bool yuv444 = m_Target.yuv444;
         if (m_Config.yuv444 && !yuv444)
             log::info("[native] 4:4:4 requested but this encoder cannot — streaming 4:2:0");
 
@@ -119,9 +123,17 @@ public:
                                error))
             return false;
 
-        const Codec codec = m_Config.clientCodecs.empty() ? Codec::H264 : m_Config.clientCodecs[0];
-        m_Encoder = std::make_unique<encode::NvencEncoder>();
-        if (!m_Encoder->init(m_Capture->device(), codec, m_Converter->outputWidth(),
+        // The encoder the Selector chose, not one guessed from the display.
+        switch (m_Target.encoder) {
+        case EncoderApi::Nvenc: m_Encoder = std::make_unique<encode::NvencEncoder>(); break;
+        case EncoderApi::Amf: m_Encoder = std::make_unique<encode::AmfEncoder>(); break;
+        default:
+            error =
+                std::string("no encoder implementation for ") + toString(m_Target.encoder) + " yet";
+            return false;
+        }
+
+        if (!m_Encoder->init(m_Capture->device(), m_Target.codec, m_Converter->outputWidth(),
                              m_Converter->outputHeight(), m_Config.fps, m_Config.bitrateKbps,
                              yuv444, error))
             return false;
@@ -131,16 +143,16 @@ public:
         m_Info.width = m_Converter->outputWidth();
         m_Info.height = m_Converter->outputHeight();
         m_Info.fps = m_Config.fps;
-        m_Info.codec = codec;
-        m_Info.encoder = gpu->encoders.empty() ? EncoderApi::None : gpu->encoders.front();
+        m_Info.codec = m_Target.codec;
+        m_Info.encoder = m_Target.encoder;
         m_Info.capture = caps.capture;
-        m_Info.gpuName = gpu->name;
-        m_Info.hdr = m_Config.hdr;
+        m_Info.gpuName = m_Target.encodeGpuName;
+        m_Info.hdr = m_Target.hdr;
         m_Info.yuv444 = yuv444;
         // Counted, not estimated: one GPU→CPU read of the bitstream. Everything
         // upstream of it stays in VRAM on the capturing adapter.
         m_Info.copiesPerFrame = 1;
-        m_Info.crossGpuCopy = false;
+        m_Info.crossGpuCopy = m_Target.crossGpuCopy;
 
         // The first frame must be a keyframe — a client has nothing to decode
         // against otherwise.
@@ -192,7 +204,25 @@ public:
     void setTargetBitrate(int kbps) override { m_PendingBitrate.store(kbps); }
 
 private:
-    void run()
+    /// The thread entry point. Nothing may escape it.
+    ///
+    /// An exception leaving a std::thread calls std::terminate, which aborts
+    /// the whole worker PROCESS with no usable dump — 0xC0000409 raised from
+    /// inside ucrtbase, past any handler. That is how a single bad frame took
+    /// down a session and left nothing to read. Whatever goes wrong, it is
+    /// turned into an ended session with a reason.
+    void run() noexcept
+    {
+        try {
+            runLoop();
+        } catch (const std::exception& e) {
+            finish(std::string("the capture loop threw: ") + e.what());
+        } catch (...) {
+            finish("the capture loop threw an unknown exception");
+        }
+    }
+
+    void runLoop()
     {
         // The capture timeout only bounds how long the loop sleeps when nothing
         // is presented; it is not a frame deadline. Short enough to notice a
@@ -245,7 +275,7 @@ private:
             m_Capture->release();
 
             const bool forceKeyframe = m_ForceKeyframe.exchange(false);
-            encode::NvencOutput encoded;
+            encode::EncoderOutput encoded;
             if (!m_Encoder->encode(m_Converter->output(), forceKeyframe, encoded, error)) {
                 finish("encode failed: " + error);
                 return;
@@ -272,20 +302,31 @@ private:
     }
 
     /// Report an unrecoverable end once, from the loop thread.
-    void finish(const std::string& reason)
+    ///
+    /// noexcept because it is called from run()'s catch block: a throw here
+    /// would re-enter termination with the original cause already lost.
+    void finish(const std::string& reason) noexcept
     {
-        log::warning("[native] session ended: " + reason);
         m_Running.store(false);
-        if (m_Callbacks.onEnded) m_Callbacks.onEnded(reason);
+        try {
+            log::warning("[native] session ended: " + reason);
+            if (m_Callbacks.onEnded) m_Callbacks.onEnded(reason);
+        } catch (...) {
+            // Nothing left to report it to.
+        }
     }
 
     SessionConfig m_Config;
+    /// The Selector's decision. Read, never re-derived.
+    ResolvedTarget m_Target;
     SessionCallbacks m_Callbacks;
     SessionInfo m_Info;
 
     std::unique_ptr<capture::DxgiDuplication> m_Capture;
     std::unique_ptr<convert::ColorConvert> m_Converter;
-    std::unique_ptr<encode::NvencEncoder> m_Encoder;
+    /// Held by interface: which vendor path this is was decided by the
+    /// Selector, and the loop below neither knows nor needs to.
+    std::unique_ptr<encode::IVideoEncoder> m_Encoder;
 
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};
@@ -299,18 +340,17 @@ private:
 namespace detail {
 
 std::unique_ptr<Session> createPlatformSession(const SessionConfig& config,
+                                               const ResolvedTarget& target,
                                                const SessionCallbacks& callbacks,
                                                std::string& error)
 {
-    // Only NVENC is wired in so far. AMD and Intel adapters report no codec
-    // (their capability queries are not written), so the Selector never routes
-    // a session to them — reaching here with one would be a bug, not a
-    // configuration the user could produce.
     if (!callbacks.onVideo) {
         error = "a session without a video callback would encode into nothing";
         return nullptr;
     }
-    return std::make_unique<WindowsSession>(config, callbacks);
+    // Which encoder to build is decided in start(), from target.encoder — the
+    // Selector's choice, not a guess made here.
+    return std::make_unique<WindowsSession>(config, target, callbacks);
 }
 
 } // namespace detail
