@@ -255,6 +255,36 @@ la passe de conversion, sur le même adaptateur.
 `setBitrate()` reconfigure sans redémarrer la session — la base du rate-control
 piloté par le retour réel du client.
 
+### L'intra-refresh ne sert à rien sans un récepteur qui l'accompagne
+
+L'intra-refresh est implémenté sur les **trois** encodeurs (NVENC, AMF, oneVPL).
+Mais il ne gagne rien tant que le navigateur continue de réclamer une keyframe
+au premier trou : on paierait le coût de la vague de rafraîchissement **et** le
+pic de la keyframe. Le gain n'est pas en régime établi, il est dans la
+**récupération de congestion** — aujourd'hui un trou fait jeter les deltas des
+deux côtés et exige la plus grosse frame possible sur un lien qui vient de
+prouver qu'il saturait.
+
+D'où un contrat en trois temps, chacun capable de dire non :
+
+| Étape | Qui décide | Ce qui circule |
+|---|---|---|
+| Demande | le navigateur | `ride_out_loss` dans `/start` (constante `RIDE_OUT_LOSS` dans `BackendClient.js`, un booléen prévu pour les A/B) |
+| Octroi | l'encodeur | `SessionInfo::intraRefresh` — ce qui a été **accordé**, pas ce qui a été demandé |
+| Application | les deux extrémités | `intra_refresh` dans la réponse `/start` |
+
+La direction compte : le serveur renvoie ce que le flux **fait**. Un récepteur
+qui suppresserait ses demandes de keyframe face à un flux sans vague de
+rafraîchissement resterait indéfiniment sur une image corrompue. Côté backend,
+`DataChannelRelay::ridingOutLoss()` exige donc **et** l'opt-in du client **et**
+`IMediaEngine::intraRefreshActive()`, et ne débraye que les deux portes de perte
+— jamais celles du démarrage de session, où il n'y a aucune référence à
+rattraper. Côté navigateur, la suppression est bornée par un chien de garde de
+2,5 s : passé ce délai sans trame contiguë, on redemande une keyframe.
+
+Le flag traverse le processus worker (`cfg["rideOutLoss"]`) : le moteur média
+vit dans l'enfant, le poser sur la session du parent ne l'atteindrait jamais.
+
 ---
 
 ## 8. Conversion couleur — et le 4:4:4
@@ -452,10 +482,11 @@ Choix assumés, notés pour qui reprendra :
 | Implémentation | filtrée sur HARDWARE — sinon oneVPL sert son repli logiciel en silence |
 | Choix du GPU | par `MFX_HANDLE_D3D11_DEVICE` sur NOTRE device, comme AMF, plutôt qu'en appariant à la main les énumérations Intel et DXGI |
 | 4:4:4 | non revendiqué : la passe de conversion produit de l'AYUV, qu'oneVPL ne prend pas en entrée d'encodeur |
-| Intra-refresh | non revendiqué : disponible seulement via un buffer d'extension dont le support varie par génération |
+| Intra-refresh | demandé par `mfxExtCodingOption2` (`IntRefType = VERTICAL`), avec repli explicite sur les keyframes si `EncodeInit` le refuse — le refus est journalisé, jamais avalé |
 
 ### Vérification restante
 
-**Un stream Sunshine et un stream Wolf réels.** Le refactor `IMediaEngine` est
-purement typologique — aucun corps de méthode modifié — mais il touche les
-trois relais, et cela demande un banc réel.
+**Un stream Wolf réel.** Le refactor `IMediaEngine` est purement typologique —
+aucun corps de méthode modifié — mais il touche les trois relais. Sunshine a
+été revérifié le 31/08 après le chantier intra-refresh (HEVC, 132 fps, 9,9 ms,
+aucun changement de comportement) ; Wolf reste à repasser.

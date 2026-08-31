@@ -58,8 +58,13 @@ public:
     ///               that captured them.
     /// @param yuv444 encode 4:4:4 rather than 4:2:0. The caller must have
     ///               checked GpuInfo::supports444 first.
+    /// @param intraRefresh encode with a moving band of intra blocks instead of
+    ///                     relying on keyframes for recovery. Only ask when the
+    ///                     receiver will decode through the damage; an encoder
+    ///                     that cannot do it reports so from
+    ///                     intraRefreshEnabled() rather than failing.
     virtual bool init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, std::string& error) = 0;
+                      int bitrateKbps, bool yuv444, bool intraRefresh, std::string& error) = 0;
 
     /// Encode one texture. Blocking: returns with the bitstream ready.
     virtual bool encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,

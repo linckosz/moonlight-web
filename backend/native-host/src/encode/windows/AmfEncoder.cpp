@@ -118,6 +118,13 @@ const CodecProperties& propertiesFor(Codec codec)
 /// emitted only on demand, when a client says it cannot go on.
 constexpr amf_int64 kEffectivelyInfiniteGop = 1 << 20;
 
+/// Frames for one full intra-refresh sweep. Two seconds at 60 fps — long
+/// enough that the per-frame cost stays small, short enough that a receiver
+/// riding out a loss is whole again before anyone reads it as a fault.
+/// Deliberately the same figure the NVENC path uses, so the two vendors behave
+/// alike from the receiver's side.
+constexpr amf_int64 kIntraRefreshPeriodFrames = 120;
+
 /// How long QueryOutput may block waiting for a frame, in milliseconds.
 ///
 /// A deadline, not a schedule: encoding takes a few milliseconds, and reaching
@@ -133,7 +140,7 @@ AmfEncoder::~AmfEncoder()
 }
 
 bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, std::string& error)
+                      int bitrateKbps, bool yuv444, bool intraRefresh, std::string& error)
 {
     stop();
 
@@ -218,6 +225,45 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     // exposes the knob; the other two emit none under ultra-low-latency.
     if (codec == Codec::H264) m_Encoder->SetProperty(AMF_VIDEO_ENCODER_B_PIC_PATTERN, amf_int64(0));
 
+    // ── Intra-refresh, where asked ──────────────────────────────────────────
+    //
+    // AMD expresses the wave as "how much of the picture to refresh per frame"
+    // rather than as a period, so the count is derived from the frame size: a
+    // full sweep in kIntraRefreshPeriodFrames frames.
+    m_IntraRefresh = false;
+    if (intraRefresh) {
+        switch (codec) {
+        case Codec::H264: {
+            // 16×16 macroblocks.
+            const amf_int64 total = ((width + 15) / 16) * ((height + 15) / 16);
+            const amf_int64 perSlot = total / kIntraRefreshPeriodFrames;
+            m_Encoder->SetProperty(AMF_VIDEO_ENCODER_INTRA_REFRESH_NUM_MBS_PER_SLOT,
+                                   perSlot > 0 ? perSlot : 1);
+            m_IntraRefresh = true;
+            break;
+        }
+        case Codec::Hevc: {
+            // 64×64 coding tree blocks.
+            const amf_int64 total = ((width + 63) / 64) * ((height + 63) / 64);
+            const amf_int64 perSlot = total / kIntraRefreshPeriodFrames;
+            m_Encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_INTRA_REFRESH_NUM_CTBS_PER_SLOT,
+                                   perSlot > 0 ? perSlot : 1);
+            m_IntraRefresh = true;
+            break;
+        }
+        case Codec::Av1: {
+            m_Encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INTRA_REFRESH_MODE,
+                                   amf_int64(AMF_VIDEO_ENCODER_AV1_INTRA_REFRESH_MODE__CONTINUOUS));
+            // AV1 counts stripes rather than blocks: one stripe per frame of
+            // the cycle sweeps the picture over the same period.
+            m_Encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INTRAREFRESH_STRIPES,
+                                   amf_int64(kIntraRefreshPeriodFrames));
+            m_IntraRefresh = true;
+            break;
+        }
+        }
+    }
+
     // AV1 has an explicit latency mode, and the fastest one is the point here.
     if (codec == Codec::Av1)
         m_Encoder->SetProperty(
@@ -234,7 +280,8 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
 
     log::info("[native] AMF ready: " + std::to_string(width) + "x" + std::to_string(height) + "@" +
               std::to_string(m_Fps) + " " + toString(codec) + " 4:2:0 CBR " +
-              std::to_string(bitrateKbps) + " kbps, keyframes on demand");
+              std::to_string(bitrateKbps) + " kbps" +
+              (m_IntraRefresh ? ", intra-refresh" : ", keyframes on demand"));
     return true;
 }
 

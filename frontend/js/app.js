@@ -1871,6 +1871,12 @@ const MoonlightApp = {
         // Audio time-stretch (WSOLA) — server kill switch (env MW_AUDIO_TIME_STRETCH).
         // Read fresh from the launch result; defaults to on when unspecified.
         const audioTimeStretch = result.audio_time_stretch !== false;
+        // Loss recovery: the backend answers whether the stream really encodes
+        // with intra-refresh (native host only, and only if the encoder granted
+        // it). When it does, a gap repairs itself within a couple of frames and
+        // the client stops asking for keyframes — see RIDE_OUT_LOSS in
+        // BackendClient. Read from the reply, never from what we asked for.
+        const opts = { ...viewOpts, intraRefresh: result.intra_refresh === true };
 
         return new StreamView(
             document.getElementById('app'),
@@ -1893,7 +1899,7 @@ const MoonlightApp = {
             hdrEnabled,
             touchScreen,
             audioTimeStretch,
-            viewOpts,
+            opts,
         );
     },
 

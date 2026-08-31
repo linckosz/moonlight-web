@@ -269,6 +269,8 @@ int runStreamWorker(QCoreApplication& app)
     session->setEnableIceTcp(cfg["iceTcp"].toBool());
     session->setLowAudio(cfg["lowAudio"].toBool());
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));
+    // Absent (an older parent) → off, which is exactly today's behaviour.
+    session->setRideOutLoss(cfg["rideOutLoss"].toBool(false));
     session->setBackend(backend);
     session->setClientUniqueId(cfg["clientUniqueId"].toString());
     session->setPreferResume(cfg["preferResume"].toBool(false));

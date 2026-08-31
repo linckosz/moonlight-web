@@ -58,7 +58,7 @@ NvencEncoder::~NvencEncoder()
 }
 
 bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                        int bitrateKbps, bool yuv444, std::string& error)
+                        int bitrateKbps, bool yuv444, bool intraRefresh, std::string& error)
 {
     stop();
 
@@ -150,17 +150,21 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
                                                     : NV_ENC_H264_PROFILE_HIGH_444_GUID;
     }
 
-    m_IntraRefresh = false;
+    // Intra-refresh only when the caller asked for it. Enabling it unasked
+    // costs slightly larger P-frames at a fixed CBR budget for a benefit only a
+    // receiver that decodes through damage can collect — see SessionConfig.
+    m_IntraRefresh = intraRefresh;
+    const uint32_t refreshEnabled = intraRefresh ? 1u : 0u;
+
     switch (codec) {
     case Codec::H264: {
         NV_ENC_CONFIG_H264& h264 = m_Config.encodeCodecConfig.h264Config;
         h264.chromaFormatIDC = yuv444 ? 3 : 1;
         h264.repeatSPSPPS = 1;
         h264.idrPeriod = NVENC_INFINITE_GOPLENGTH;
-        h264.enableIntraRefresh = 1;
+        h264.enableIntraRefresh = refreshEnabled;
         h264.intraRefreshPeriod = kIntraRefreshPeriodFrames;
         h264.intraRefreshCnt = kIntraRefreshCountFrames;
-        m_IntraRefresh = true;
         break;
     }
     case Codec::Hevc: {
@@ -168,19 +172,17 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         hevc.chromaFormatIDC = yuv444 ? 3 : 1;
         hevc.repeatSPSPPS = 1;
         hevc.idrPeriod = NVENC_INFINITE_GOPLENGTH;
-        hevc.enableIntraRefresh = 1;
+        hevc.enableIntraRefresh = refreshEnabled;
         hevc.intraRefreshPeriod = kIntraRefreshPeriodFrames;
         hevc.intraRefreshCnt = kIntraRefreshCountFrames;
-        m_IntraRefresh = true;
         break;
     }
     case Codec::Av1: {
         NV_ENC_CONFIG_AV1& av1 = m_Config.encodeCodecConfig.av1Config;
         av1.idrPeriod = NVENC_INFINITE_GOPLENGTH;
-        av1.enableIntraRefresh = 1;
+        av1.enableIntraRefresh = refreshEnabled;
         av1.intraRefreshPeriod = kIntraRefreshPeriodFrames;
         av1.intraRefreshCnt = kIntraRefreshCountFrames;
-        m_IntraRefresh = true;
         break;
     }
     }

@@ -427,6 +427,16 @@ export class StreamView {
         // MoonlightApp can relaunch with the next transport (no in-session WS
         // reroute). WebRtcMedia ignores this flag (no in-session WS fallback).
         this.webrtc._chainFallback = true;
+
+        // Ride out a gap rather than demand a keyframe — only when the HOST
+        // confirmed its encoder is really intra-refreshing (opts.intraRefresh
+        // comes from the /start reply). Suppressing keyframe requests against a
+        // stream with no refresh wave would leave the picture corrupt for good,
+        // so the client's own wish is never enough on its own.
+        if (opts.intraRefresh === true && 'rideOutLoss' in this.webrtc) {
+            this.webrtc.rideOutLoss = true;
+            console.log('[StreamView] Loss recovery: riding out the refresh wave');
+        }
         this.pointerLocked = false;
         /** Gaming mode focus state: true when pointer lock is active (cursor captured).
          *  false initially (cursor visible, absolute mouse tracking).
