@@ -402,6 +402,29 @@ Trois bugs ont été trouvés en poussant ce test, et aucun n'était visible en
 test unitaire : le crash du préchargement de jaquettes (§6.5), la validation
 d'URL RTSP appliquée au natif, et `serverCodecModeSupport` à zéro.
 
+### ✅ Multi-GPU vérifié (31/08/2026)
+
+Deux cartes dédiées dans la même machine — RTX 5060 Ti et RX 7600 — avec un
+écran sur l'AMD et un dummy HDMI sur la NVIDIA. C'est le scénario que §5
+(association display → GPU) existe pour couvrir.
+
+DXGI attribue chaque sortie sans ambiguïté, y compris entre constructeurs :
+
+| Display | GPU | Encodeur retenu |
+|---|---|---|
+| Display 1 — 2560×1440 · 60 Hz | AMD RX 7600 | **AMF** |
+| Display 2 — 800×600 · 30 Hz | AMD RX 7600 | *(écran virtuel Parsec/VDD)* |
+| Display 3 — 1920×1080 · 60 Hz | NVIDIA RTX 5060 Ti | **NVENC** |
+
+Chaque display encode donc sur **le GPU qui le scanne**, en zéro-copie, sans la
+moindre table de correspondance à maintenir. Les capacités le confirment aussi
+par adaptateur : la RX 7600 rapporte AV1/HEVC/H.264, l'iGPU AMD du même pilote
+seulement HEVC/H.264.
+
+**Limite constatée, et voulue** : deux sessions propriétaires simultanées ne
+coexistent pas — la seconde démolit la première. C'est le take-over délibéré du
+`/start` existant, pas une propriété du moteur natif.
+
 ### Vérification restante
 
 **Un stream Sunshine et un stream Wolf réels.** Le refactor `IMediaEngine` est
