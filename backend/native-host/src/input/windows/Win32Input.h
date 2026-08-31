@@ -19,8 +19,10 @@
 
 #include "../../capture/windows/IWindowsCapture.h"
 #include "../IInputSink.h"
+#include "VigemGamepad.h"
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <set>
 
@@ -56,7 +58,10 @@ public:
     ///                     relative to THAT display, not to the whole desktop:
     ///                     the client is looking at one screen and its top-left
     ///                     is not the desktop's.
-    explicit Win32Input(const capture::DesktopRect& displayRect);
+    /// @param onRumble     where a game's vibration request goes. Optional: with
+    ///                     no sink the pad still works, it just does not shake.
+    explicit Win32Input(const capture::DesktopRect& displayRect,
+                        VigemGamepad::RumbleSink onRumble = {});
     ~Win32Input() override;
 
     bool start(std::string& error) override;
@@ -76,6 +81,11 @@ private:
     void releaseAll();
 
     const capture::DesktopRect m_DisplayRect;
+
+    /// Null when ViGEmBus is absent — the overwhelmingly common case, and not a
+    /// failure. Keyboard and mouse are unaffected.
+    std::unique_ptr<VigemGamepad> m_Gamepad;
+    VigemGamepad::RumbleSink m_OnRumble;
 
     /// What we have pressed and not yet released, so a session that ends
     /// mid-keypress does not leave the host holding a key down forever. Guarded
