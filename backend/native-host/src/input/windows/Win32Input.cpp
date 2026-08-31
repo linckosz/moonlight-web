@@ -255,8 +255,11 @@ void Win32Input::releaseAll()
         INPUT input = makeKeyInput(vk, false, false);
         sendOne(input);
     }
+    // Straight to the raw sender: the tracking sets were just emptied, so the
+    // deduplicating path would look at them, decide these buttons are already
+    // up, and release nothing at all.
     for (int button : buttons)
-        injectMouseButton(button, false);
+        sendMouseButton(button, false);
 
     log::info("[native] input: released " + std::to_string(keys.size()) + " key(s) and " +
               std::to_string(buttons.size()) + " button(s) at session end");
@@ -313,18 +316,26 @@ void Win32Input::injectKey(const InputEvent& event, bool down)
     const int vk = event.keyCode;
     if (vk <= 0 || vk > 0xFF) return;
 
+    {
+        std::lock_guard<std::mutex> lock(m_HeldMutex);
+        // A heartbeat re-press of a key we never let go of would be an extra
+        // character. A real repeat from the browser is NOT filtered here: the
+        // user holding a key genuinely wants typematic, and only the resync
+        // path is suppressed.
+        if (down && event.resync && m_HeldKeys.count(vk)) return;
+
+        if (down)
+            m_HeldKeys.insert(vk);
+        else
+            m_HeldKeys.erase(vk);
+    }
+
     // The modifier mask that rides along is NOT applied. The browser sends a
     // real keydown/keyup for Shift, Ctrl, Alt and Meta like any other key, so
     // pressing them again from the mask would double them — and the session's
     // input watchdog already owns reconciling what is still held.
     INPUT input = makeKeyInput(vk, down, (event.keyFlags & kFlagNonNormalized) != 0);
     sendOne(input);
-
-    std::lock_guard<std::mutex> lock(m_HeldMutex);
-    if (down)
-        m_HeldKeys.insert(vk);
-    else
-        m_HeldKeys.erase(vk);
 }
 
 void Win32Input::injectText(const std::string& utf8)
@@ -396,6 +407,32 @@ void Win32Input::injectMousePosition(const InputEvent& event)
 
 void Win32Input::injectMouseButton(int button, bool down)
 {
+    if (button < 1 || button > 5) return;
+
+    std::lock_guard<std::mutex> lock(m_HeldMutex);
+
+    // A mouse button cannot be pressed twice without being released — no real
+    // mouse can do it, and no application expects it. Windows reads a second
+    // press at the same spot as a DOUBLE CLICK, which is exactly how a single
+    // tap on a trackpad arrived here as one: the client's held-state heartbeat
+    // beats every 100 ms, a tap outlives that, and the re-assertion landed as a
+    // second press.
+    //
+    // Filtered unconditionally, not just on the resync path: whatever the
+    // source — a duplicated event, two overlapping sessions — pressing an
+    // already-pressed button is wrong.
+    if (down == (m_HeldButtons.count(button) != 0)) return;
+
+    if (down)
+        m_HeldButtons.insert(button);
+    else
+        m_HeldButtons.erase(button);
+
+    sendMouseButton(button, down);
+}
+
+void Win32Input::sendMouseButton(int button, bool down)
+{
     INPUT input = {};
     input.type = INPUT_MOUSE;
 
@@ -415,12 +452,6 @@ void Win32Input::injectMouseButton(int button, bool down)
     }
 
     sendOne(input);
-
-    std::lock_guard<std::mutex> lock(m_HeldMutex);
-    if (down)
-        m_HeldButtons.insert(button);
-    else
-        m_HeldButtons.erase(button);
 }
 
 void Win32Input::injectScroll(int amount, bool horizontal)
