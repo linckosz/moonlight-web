@@ -66,6 +66,20 @@ struct SessionConfig
     /// Honoured only when the encoder supports it — see SessionInfo::yuv444.
     bool yuv444 = false;
 
+    /// Encode with intra-refresh instead of relying on keyframes for recovery.
+    ///
+    /// Each frame then carries a moving band of intra blocks, so a receiver
+    /// that has lost data repairs itself within one refresh cycle rather than
+    /// waiting for a fresh keyframe.
+    ///
+    /// **Only worth asking for when the receiver rides it out.** MoonlightWeb's
+    /// default recovery discards deltas and demands an IDR on any gap, which
+    /// collects none of that benefit while still paying for it in slightly
+    /// larger P-frames. So this is off unless the client says it will keep
+    /// decoding through the damage — see SessionInfo::intraRefresh for what was
+    /// actually granted.
+    bool intraRefresh = false;
+
     /// Draw the mouse cursor into the captured frame. On by default: the remote
     /// user needs to see where they are pointing.
     bool captureCursor = true;
@@ -100,6 +114,11 @@ struct SessionInfo
     /// True when the session really is 4:4:4. Same contract as `hdr`: asked for
     /// is not granted, and the stats overlay is where the difference shows.
     bool yuv444 = false;
+
+    /// True when the stream really refreshes by intra-refresh rather than by
+    /// keyframes. Same contract again — an encoder that cannot do it says so
+    /// here, and the receiver must then keep its usual keyframe recovery.
+    bool intraRefresh = false;
 
     /// Memory copies between capture and the wire, counted rather than
     /// estimated. Logged at session start and compared in the benchmarks (§16);

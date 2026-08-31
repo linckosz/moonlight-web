@@ -20,6 +20,38 @@
  */
 
 /**
+ * Ride out a gap instead of asking the host for a keyframe. **The A/B switch.**
+ *
+ * ── What it changes ─────────────────────────────────────────────────────────
+ *
+ * Today, any gap in the video stream — a frame dropped by backpressure, an
+ * incomplete frame — makes both ends fall back on the same recovery: throw
+ * away deltas and demand a fresh keyframe. That freezes the picture until the
+ * keyframe arrives, and a keyframe is the largest frame there is, sent at the
+ * exact moment the link proved it was struggling.
+ *
+ * With this on, the MoonlightWeb native host encodes with intra-refresh — every
+ * frame carries a moving band of intra blocks — and the browser keeps decoding
+ * through the damage. The picture is briefly imperfect where data was lost, and
+ * repairs itself within one refresh cycle (~2 s), with no freeze and no spike.
+ *
+ * ── Scope ───────────────────────────────────────────────────────────────────
+ *
+ * Sent on every launch, but it only ever takes effect on the MoonlightWeb
+ * native host, and only if that machine's encoder actually honours the request.
+ * A Sunshine, Apollo or Wolf host is completely unaffected: nothing here can
+ * change how a remote host's encoder recovers.
+ *
+ * ── Why it is a switch and not just a default ───────────────────────────────
+ *
+ * Because which one looks better is a judgement, not a fact. Frozen-then-clean
+ * may beat moving-but-briefly-imperfect for reading text; the reverse is very
+ * likely true while playing. Set it to false to get exactly today's behaviour
+ * back — no rebuild needed, a page reload is enough.
+ */
+const RIDE_OUT_LOSS = true;
+
+/**
  * An `Error` decorated with the HTTP context of a failed request. Thrown by
  * every `BackendClient` method; `LoginView`, `PairDialog` and `MoonlightApp`
  * branch on these fields.
@@ -320,6 +352,7 @@ export class BackendClient {
             {
                 appId,
                 client_uniqueid: this.clientUniqueId(),
+                ride_out_loss: RIDE_OUT_LOSS,
                 ...streamingSettings,
             },
             // Fail fast if the backend hangs/crashes instead of waiting for the

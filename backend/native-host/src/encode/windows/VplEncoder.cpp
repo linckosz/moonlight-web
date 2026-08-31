@@ -41,7 +41,7 @@ VplEncoder::~VplEncoder()
 }
 
 bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, std::string& error)
+                      int bitrateKbps, bool yuv444, bool intraRefresh, std::string& error)
 {
     stop();
 
@@ -70,8 +70,12 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         return false;
     }
 
-    // Let the runtime correct what it must before Init. A warning here means it
-    // adjusted something and can proceed; only a hard error is fatal.
+    // Query the BASE parameters, before any extension buffer is attached.
+    //
+    // Query's output block would otherwise need an extension chain of its own:
+    // copying m_Params wholesale hands it our buffer as both input and output,
+    // which some runtimes accept and others do not. Validating the plain
+    // parameters and letting Init judge the extension is unambiguous.
     mfxVideoParam corrected = m_Params;
     const mfxStatus queried =
         m_Session.api()->EncodeQuery(m_Session.handle(), &m_Params, &corrected);
@@ -85,9 +89,31 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         return false;
     }
 
-    const mfxStatus started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
-    if (started != MFX_ERR_NONE && started != MFX_WRN_INCOMPATIBLE_VIDEO_PARAM &&
-        started != MFX_WRN_VIDEO_PARAM_CHANGED) {
+    auto initSucceeded = [](mfxStatus s) {
+        return s == MFX_ERR_NONE || s == MFX_WRN_INCOMPATIBLE_VIDEO_PARAM ||
+               s == MFX_WRN_VIDEO_PARAM_CHANGED;
+    };
+
+    m_IntraRefresh = false;
+    if (intraRefresh) attachIntraRefresh(m_Params, m_CodingOption2, m_ExtBuffers);
+
+    mfxStatus started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
+
+    if (intraRefresh && initSucceeded(started)) {
+        m_IntraRefresh = true;
+    } else if (intraRefresh) {
+        // Intra-refresh is an optimisation, not a requirement. A generation
+        // that refuses it must still stream — falling back to keyframes costs
+        // the receiver its self-repair, not its picture.
+        log::warning(std::string("[native] oneVPL declined intra-refresh (") +
+                     VplApi::statusToString(started) + ") — falling back to keyframes");
+        m_ExtBuffers.clear();
+        m_Params.ExtParam = nullptr;
+        m_Params.NumExtParam = 0;
+        started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
+    }
+
+    if (!initSucceeded(started)) {
         error = std::string("could not initialize the Intel encoder: ") +
                 VplApi::statusToString(started);
         stop();
@@ -115,9 +141,9 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
 
     log::info("[native] oneVPL ready: " + std::to_string(width) + "x" + std::to_string(height) +
               "@" + std::to_string(m_Fps) + " " + toString(codec) + " 4:2:0 CBR " +
-              std::to_string(bitrateKbps) +
-              " kbps, keyframes on demand (UNVERIFIED — no Intel "
-              "hardware has run this path yet)");
+              std::to_string(bitrateKbps) + " kbps" +
+              (m_IntraRefresh ? ", intra-refresh" : ", keyframes on demand") +
+              " (UNVERIFIED — no Intel hardware has run this path yet)");
     return true;
 }
 

@@ -95,6 +95,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.clientCodecs = codecsFromMask(params.clientVideoFormats);
     config.hdr = params.hdr;
     config.yuv444 = params.yuv444;
+    config.intraRefresh = params.intraRefresh;
 
     std::string error;
     m_Session = mw::native::NativeHost::createSession(
@@ -249,6 +250,11 @@ int64_t NativeMediaEngine::firstFrameArrivalSteadyMs() const
     return m_FirstFrameArrivalUs.load(std::memory_order_acquire) / 1000;
 }
 
+bool NativeMediaEngine::intraRefreshActive() const
+{
+    return m_Session && m_Session->info().intraRefresh;
+}
+
 QString NativeMediaEngine::describeSession() const
 {
     if (!m_Session) return {};
@@ -259,6 +265,7 @@ QString NativeMediaEngine::describeSession() const
                    QString::fromUtf8(mw::native::toString(info.codec));
     if (info.yuv444) text += QStringLiteral(" 4:4:4");
     if (info.hdr) text += QStringLiteral(" HDR");
+    if (info.intraRefresh) text += QStringLiteral(" intra-refresh");
     if (info.crossGpuCopy) text += QStringLiteral(" [cross-GPU copy]");
     return text;
 }

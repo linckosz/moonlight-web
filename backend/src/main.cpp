@@ -2749,6 +2749,11 @@ int main(int argc, char* argv[])
             s->setLowAudio(reqLowAudio);
             s->setMuteHostAudio(reqMuteHost);
             s->setClientUniqueId(reqClientUniqueId);
+            // The browser opts in: it decodes through a gap rather than asking
+            // for a keyframe, which is what makes intra-refresh worth its cost.
+            // Absent means today's behaviour, so an older cached frontend — and
+            // every non-native host — is unaffected.
+            s->setRideOutLoss(body["ride_out_loss"].toBool(false));
             s->setClientKind(clientKind);
             // Which provider drives this host: plain GameStream unless it was
             // registered as a Wolf or MultiSeat backend.
@@ -2858,6 +2863,11 @@ int main(int argc, char* argv[])
             cfg["iceTcp"] = enableIceTcp;
             cfg["lowAudio"] = reqLowAudio;
             cfg["muteHostAudio"] = reqMuteHost;
+            // The browser's opt-in to decode through a gap instead of demanding
+            // a keyframe. The worker owns the media engine, so the flag has to
+            // travel with the config — setting it on the in-process session
+            // alone would never reach the encoder.
+            cfg["rideOutLoss"] = body["ride_out_loss"].toBool(false);
             cfg["clientUniqueId"] = reqClientUniqueId;
             cfg["clientKind"] = NetClassify::toString(clientKind);
             cfg["autoMode"] = true;

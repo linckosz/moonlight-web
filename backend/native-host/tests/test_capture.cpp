@@ -160,7 +160,8 @@ void run_capture_tests()
                              "no frame to measure\n");
     }
 
-    // ── Capture → colour conversion, and real pixels at the end of it ────────
+    // ── Capture → colour conversion, and real pixels at the end of it
+    // ────────
     //
     // The only way to know the conversion works is to look at what it produced.
     // A shader that compiles, binds and draws nothing at all would pass every
@@ -241,7 +242,8 @@ void run_capture_tests()
                     }
                 }
 
-                // ── …and through the encoder ─────────────────────────────────
+                // ── …and through the encoder
+                // ─────────────────────────────────
                 //
                 // The end of the pipeline. What matters is not that the encoder
                 // returns success but that what it returns is a bitstream the
@@ -268,7 +270,8 @@ void run_capture_tests()
                     std::fprintf(stderr, "  encoder: %s\n", toString(gpu->encoders.front()));
                     std::string encodeError;
                     if (!encoder.init(duplication.device(), Codec::H264, converter.outputWidth(),
-                                      converter.outputHeight(), 60, 20000, false, encodeError)) {
+                                      converter.outputHeight(), 60, 20000, false, false,
+                                      encodeError)) {
                         std::fprintf(stderr, "  encode skipped: %s\n", encodeError.c_str());
                     } else {
                         encode::EncoderOutput encoded;
@@ -323,7 +326,8 @@ void run_capture_tests()
                             encoder.releaseOutput();
                         }
 
-                        // ── Encode latency ───────────────────────────────────
+                        // ── Encode latency
+                        // ───────────────────────────────────
                         //
                         // The number the whole project is judged on, measured
                         // rather than assumed. Static content, so this is the
@@ -363,7 +367,8 @@ void run_capture_tests()
                             CHECK(totalUs / encodedCount < 16000);
                         }
 
-                        // ── The real cycle: capture → convert → encode ───────
+                        // ── The real cycle: capture → convert → encode
+                        // ───────
                         //
                         // What a session actually does, and what encoding the
                         // same already-converted texture thirty times does NOT
@@ -426,7 +431,8 @@ void run_capture_tests()
                     }
                 }
 
-                // ── 4:4:4 ────────────────────────────────────────────────────
+                // ── 4:4:4
+                // ────────────────────────────────────────────────────
                 //
                 // MoonlightWeb offers this choice for external hosts, so the
                 // native engine has to be able to honour it. Verified rather
@@ -449,7 +455,7 @@ void run_capture_tests()
                         encode::NvencEncoder encoder444;
                         if (!encoder444.init(
                                 duplication.device(), Codec::H264, converter444.outputWidth(),
-                                converter444.outputHeight(), 60, 20000, true, error444)) {
+                                converter444.outputHeight(), 60, 20000, true, false, error444)) {
                             std::fprintf(stderr, "  4:4:4 encode unavailable: %s\n",
                                          error444.c_str());
                         } else {

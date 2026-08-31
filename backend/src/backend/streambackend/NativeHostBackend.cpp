@@ -249,6 +249,7 @@ void NativeHostBackend::launch(const QString& seatId, const LaunchRequest& req,
     media.type = MediaType::NativeHost;
     media.nativeHost.displayId = displayId;
     media.nativeHost.hdrRequested = req.hdrEnabled;
+    media.nativeHost.rideOutLoss = req.rideOutLoss;
     cb(true, BackendError{}, media);
 }
 

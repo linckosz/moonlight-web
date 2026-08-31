@@ -372,7 +372,8 @@ static bool patchHevcKeyframe(QByteArray& data)
 
     bool patched = false;
 
-    // ── VPS: rebuild with max_sub_layers=0 ─────────────────────────────────
+    // ── VPS: rebuild with max_sub_layers=0
+    // ─────────────────────────────────
     if (vpsIdx >= 0) {
         NalLocation& vpsLoc = nals[vpsIdx];
         QByteArray vpsNal = data.mid(vpsLoc.nalOffset, vpsLoc.nalLen);
@@ -394,7 +395,8 @@ static bool patchHevcKeyframe(QByteArray& data)
         qWarning() << "[HEVC-PATCH] VPS NOT FOUND in keyframe — NAL type 32 missing!";
     }
 
-    // ── SPS: rebuild with max_sub_layers=0 + cap level_idc ────────────────
+    // ── SPS: rebuild with max_sub_layers=0 + cap level_idc
+    // ────────────────
     if (spsIdx >= 0) {
         NalLocation& spsLoc = nals[spsIdx];
         QByteArray spsNal = data.mid(spsLoc.nalOffset, spsLoc.nalLen);
@@ -780,6 +782,11 @@ void DataChannelRelay::createDataChannels()
     qInfo() << "[DataChannelRelay] Channels created (video=DC#0, audio=RTP, input=DC#2)";
 }
 
+bool DataChannelRelay::ridingOutLoss() const
+{
+    return m_RideOutLoss && m_Shim && m_Shim->intraRefreshActive();
+}
+
 // --- Video/Audio forwarding (from media engine signals, on main thread) ---
 
 void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /*frameNumber*/,
@@ -792,7 +799,13 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
         m_Shim->videoFrameDelivered();
         // Worker dropped deltas due to main-thread backlog — enter awaiting-IDR
         // recovery (guards inside are no-ops when stopping).
-        if (m_Shim->takeWorkerDroppedDelta()) {
+        //
+        // …unless the stream refreshes by intra-refresh AND the client said it
+        // will decode through the damage. Then the picture repairs itself over
+        // one refresh cycle, and the keyframe this would ask for is exactly the
+        // wrong thing to send: the drop happened because the link was already
+        // saturated, and an IDR is the largest frame there is.
+        if (m_Shim->takeWorkerDroppedDelta() && !ridingOutLoss()) {
             m_AwaitingIdr = true;
             sendIdrRequestThrottled();
         }
@@ -1148,8 +1161,19 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
             m_BackpressureDropCount++;
 
             // Set sticky awaiting state and request IDR (throttled — absorbs bursts).
-            m_AwaitingIdr = true;
-            sendIdrRequestThrottled();
+            //
+            // Skipped entirely when the stream refreshes by intra-refresh and
+            // the client rides out damage. This is the single place the two
+            // strategies differ most: the buffer is full BECAUSE the link is
+            // saturated, and the classic answer to that is to ask for the
+            // largest frame the encoder can make. MediaTrackRelay documents
+            // where that leads — "every stall became an IDR storm […] the
+            // stream collapsed outright". Riding out drops one delta and lets
+            // the refresh wave repair the picture instead.
+            if (!ridingOutLoss()) {
+                m_AwaitingIdr = true;
+                sendIdrRequestThrottled();
+            }
 
             if (m_DeltaDroppedCount <= 3 || m_DeltaDroppedCount % 120 == 0) {
                 qInfo() << "[DataChannelRelay] Dropped delta frame (SCTP full)"
@@ -1194,7 +1218,8 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     // a DataChannel), so this always uses the video frameId sequence.
     uint32_t frameId = m_FrameId++;
 
-    // ── End-to-end latency timestamp ───────────────────────────────────────
+    // ── End-to-end latency timestamp
+    // ───────────────────────────────────────
     // Send the frame's capture time in steady_clock domain (monotonic ms).
     //   captureSteadyMs = (firstFrameArrivalTimeUs + presentationTimeUs) / 1000
     // The frontend estimates current steady_clock time from periodic stats

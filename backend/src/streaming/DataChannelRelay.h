@@ -104,6 +104,27 @@ public:
     /// moved to its dedicated thread (Session does, right after creation).
     void setClipboardEnabled(bool enabled);
 
+    /// Stop answering every gap with a keyframe request, and let the picture
+    /// repair itself instead.
+    ///
+    /// Only ever true when BOTH hold: the encoder really is intra-refreshing
+    /// (so there is a repair to wait for), and the client said it will keep
+    /// decoding through the damage (so the repair is allowed to happen). Either
+    /// missing and this stays false, which is exactly today's behaviour.
+    ///
+    /// Set once before the relay moves to its own thread, like the flags above.
+    void setRideOutLoss(bool enabled) { m_RideOutLoss = enabled; }
+
+private:
+    /// Both halves of the bargain, asked at the moment a gap happens.
+    ///
+    /// The engine's half has to be a live question: the relay is built before
+    /// the engine starts, so anything cached at construction would answer "no
+    /// intra-refresh" for the whole session. Defined in the .cpp because the
+    /// engine is only forward-declared here.
+    bool ridingOutLoss() const;
+
+public:
     // Signals inherited from RelayBase: signalingSdpReady, signalingIceCandidate,
     // dataChannelsOpen, sessionEnded.
 
@@ -183,6 +204,9 @@ private:
     // machine). Written once on the main thread before the relay moves to its
     // dedicated thread, read from relay/libdatachannel threads afterwards.
     bool m_ClipboardEnabled = false;
+    /// See setRideOutLoss. Written once before the thread move, read on the
+    /// relay thread afterwards.
+    bool m_RideOutLoss = false;
     int m_FrameCount = 0;
     uint32_t m_FrameId = 0;      // Monotonic counter for VIDEO fragmentation headers
     uint32_t m_AudioFrameId = 0; // Separate counter for audio — audio must not

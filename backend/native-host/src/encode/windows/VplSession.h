@@ -16,6 +16,7 @@
 #include <d3d11.h>
 
 #include <string>
+#include <vector>
 
 namespace mw::native::encode {
 
@@ -77,5 +78,19 @@ private:
 /// the enum can grow).
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,
                       int bitrateKbps);
+
+/// Frames for one full intra-refresh sweep — the same figure the NVENC and AMF
+/// paths use, so the three vendors behave alike from the receiver's side.
+constexpr int kIntraRefreshPeriodFrames = 120;
+
+/// Attach intra-refresh to @p params.
+///
+/// oneVPL carries it in `mfxExtCodingOption2` (IntRefType / IntRefCycleSize),
+/// which has to be chained onto the parameter block — hence @p option and
+/// @p buffers, which the CALLER must keep alive for as long as @p params is in
+/// use. Taking them by reference rather than allocating here is what makes that
+/// ownership impossible to get wrong: the storage lives with the encoder.
+void attachIntraRefresh(mfxVideoParam& params, mfxExtCodingOption2& option,
+                        std::vector<mfxExtBuffer*>& buffers);
 
 } // namespace mw::native::encode

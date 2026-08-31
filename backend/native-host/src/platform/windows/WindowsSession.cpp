@@ -137,7 +137,7 @@ public:
 
         if (!m_Encoder->init(m_Capture->device(), m_Target.codec, m_Converter->outputWidth(),
                              m_Converter->outputHeight(), m_Config.fps, m_Config.bitrateKbps,
-                             yuv444, error))
+                             yuv444, m_Config.intraRefresh, error))
             return false;
 
         m_Info = SessionInfo{};
@@ -151,6 +151,11 @@ public:
         m_Info.gpuName = m_Target.encodeGpuName;
         m_Info.hdr = m_Target.hdr;
         m_Info.yuv444 = yuv444;
+        // Reported, not requested: an encoder that declined it says so, and the
+        // receiver must then keep its usual keyframe recovery.
+        m_Info.intraRefresh = m_Encoder->intraRefreshEnabled();
+        if (m_Config.intraRefresh && !m_Info.intraRefresh)
+            log::info("[native] intra-refresh requested but this encoder declined it");
         // Counted, not estimated: one GPU→CPU read of the bitstream. Everything
         // upstream of it stays in VRAM on the capturing adapter.
         m_Info.copiesPerFrame = 1;
