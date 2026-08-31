@@ -2130,17 +2130,32 @@ int main(int argc, char* argv[])
         // untouched: the frontend relies on it for quality switches and
         // transport fallback.
         bool backendIsMultiUser = false;
+        bool backendConcurrentApps = false;
         QString backendType;
         if (auto probe = computerManager.backendForHost(uuid)) {
             backendIsMultiUser = probe->capabilities().multiUser;
+            backendConcurrentApps = probe->capabilities().concurrentApps;
             backendType = probe->type();
         }
         // The pool stores the raw request value, so compare against the same.
         const QString reqDevice = body["client_uniqueid"].toString();
+        const int reqAppId = body["appId"].toInt(0);
         auto slotHeldByAnotherDevice = [&](int i) {
             return backendIsMultiUser && g_Pool.live(i) && g_Pool.at(i).hostUuid == uuid &&
                    !g_Pool.at(i).clientUniqueId.isEmpty() &&
                    g_Pool.at(i).clientUniqueId != reqDevice;
+        };
+        // A live slot on THIS host that streams a DIFFERENT app, on a backend
+        // where apps genuinely run side by side.
+        //
+        // This is what lets one browser stream two displays of the native host
+        // from two tabs. Both tabs send the same client_uniqueid — it lives in
+        // localStorage, so it is per-browser, not per-tab — and the app is what
+        // tells the two streams apart. Everywhere else this stays false and the
+        // take-over below is unchanged.
+        auto slotStreamsAnotherApp = [&](int i) {
+            return backendConcurrentApps && g_Pool.live(i) && g_Pool.at(i).hostUuid == uuid &&
+                   g_Pool.at(i).appId != 0 && g_Pool.at(i).appId != reqAppId;
         };
 
         // How many devices this host already carries, counted by device rather
@@ -2149,44 +2164,71 @@ int main(int argc, char* argv[])
         // as a newcomer. A standby launch is skipped entirely — it belongs to a
         // device that is already counted.
         if (!standby && workerMode) {
-            QSet<QString> devicesOnHost;
+            // Counted by device, except where one device may legitimately hold
+            // several streams of the same host: there the unit is the STREAM
+            // (device + app), or a browser opening tab after tab would never
+            // reach the cap and would exhaust the slot pool instead.
+            QSet<QString> streamsOnHost;
+            auto streamKey = [&](const QString& device, int app, int slot) {
+                // A slot still setting up has no device id yet; give it a key of
+                // its own so it cannot be waved through.
+                const QString dev = device.isEmpty() ? QStringLiteral("#%1").arg(slot) : device;
+                return backendConcurrentApps ? QStringLiteral("%1/%2").arg(dev).arg(app) : dev;
+            };
             for (int i = 0; i < g_Pool.size(); ++i) {
                 if (!g_Pool.live(i) || g_Pool.at(i).hostUuid != uuid) continue;
-                const QString dev = g_Pool.at(i).clientUniqueId;
-                // A slot still setting up has no device id yet; count it as one
-                // of its own so it cannot be waved through.
-                devicesOnHost.insert(dev.isEmpty() ? QStringLiteral("#%1").arg(i) : dev);
+                streamsOnHost.insert(streamKey(g_Pool.at(i).clientUniqueId, g_Pool.at(i).appId, i));
             }
-            devicesOnHost.insert(reqDevice.isEmpty() ? QStringLiteral("#new") : reqDevice);
+            streamsOnHost.insert(
+                streamKey(reqDevice.isEmpty() ? QStringLiteral("#new") : reqDevice, reqAppId, -1));
 
             const int cap = concurrentSessionCap(backendType);
-            if (devicesOnHost.size() > cap) {
+            if (streamsOnHost.size() > cap) {
                 qWarning() << "[Session] Host" << uuid << "already serves"
-                           << (devicesOnHost.size() - 1) << "devices — cap for backend"
+                           << (streamsOnHost.size() - 1)
+                           << (backendConcurrentApps ? "streams" : "devices") << "— cap for backend"
                            << backendType << "is" << cap;
                 respond(HttpResponse::error(
-                    503, QStringLiteral("This host already streams to %1 devices, which is all it "
-                                        "is set up to serve at once — stop one first")
-                             .arg(cap)));
+                    503, backendConcurrentApps
+                             ? QStringLiteral("This host already runs %1 streams, which is all it "
+                                              "is set up to serve at once — stop one first")
+                                   .arg(cap)
+                             : QStringLiteral("This host already streams to %1 devices, which is "
+                                              "all it is set up to serve at once — stop one first")
+                                   .arg(cap)));
                 return;
             }
 
             const bool slot0Busy = (g_Pool.live(0) && !g_Pool.at(0).hostUuid.isEmpty() &&
                                     g_Pool.at(0).hostUuid != uuid) ||
-                                   slotHeldByAnotherDevice(0);
+                                   slotHeldByAnotherDevice(0) || slotStreamsAnotherApp(0);
             if (slot0Busy) {
                 // Already streaming this host from this browser? Reuse that slot
                 // rather than opening a second one for the same viewer.
+                //
+                // "Already streaming" means the same APP too where apps run side
+                // by side: a second tab on another display is a new stream, not
+                // the same viewer coming back, and reusing the slot would end
+                // the first one.
                 int mine = g_Pool.indexOfClientUniqueId(body["client_uniqueid"].toString());
                 if (mine < 0 || g_Pool.at(mine).hostUuid != uuid) mine = -1;
+                if (mine >= 0 && slotStreamsAnotherApp(mine)) mine = -1;
                 reqSlot = mine >= 0 ? mine : g_Pool.acquire();
                 if (reqSlot < 0) {
                     respond(HttpResponse::error(
                         503, "All stream slots are busy — stop a running session first"));
                     return;
                 }
-                qInfo() << "[Session] Host" << uuid << "differs from slot 0 ("
-                        << g_Pool.at(0).hostUuid << ") — using slot" << reqSlot;
+                // Two reasons to be here now, and they read very differently in
+                // a log: another host holds slot 0, or the same host is already
+                // streaming a different app of its own.
+                if (slotStreamsAnotherApp(0))
+                    qInfo() << "[Session] Host" << uuid << "already streams app"
+                            << g_Pool.at(0).appId << "in slot 0 — app" << reqAppId << "gets slot"
+                            << reqSlot;
+                else
+                    qInfo() << "[Session] Host" << uuid << "differs from slot 0 ("
+                            << g_Pool.at(0).hostUuid << ") — using slot" << reqSlot;
             }
         }
 
@@ -2235,6 +2277,11 @@ int main(int argc, char* argv[])
                 // a separate session upstream, so tearing it down would be taking
                 // over a stranger's stream rather than reclaiming our own.
                 if (slotHeldByAnotherDevice(i)) continue;
+                // Same host, same device, but a different app on a backend where
+                // apps run side by side — a second display of the native host.
+                // Reclaiming it would end a stream the user is still watching in
+                // another tab, which is exactly what the take-over must not do.
+                if (slotStreamsAnotherApp(i)) continue;
                 StreamWorkerHost* w = detachWorkerSlot(i, true);
                 // Serialize the new worker behind whichever child still holds
                 // the ports for the slot we are about to use.
@@ -2280,7 +2327,7 @@ int main(int argc, char* argv[])
             g_ActiveHostUuid.clear();
         }
 
-        int appId = body["appId"].toInt(0);
+        int appId = reqAppId;
         if (appId <= 0) {
             respond(HttpResponse::error(400, "Missing or invalid appId"));
             return;
