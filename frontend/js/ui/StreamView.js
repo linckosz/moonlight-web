@@ -74,6 +74,35 @@ import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 
+/**
+ * Whose mouse pointer the viewer sees, when the host hands the pointer over
+ * instead of drawing it into the picture (native host, desktop mode).
+ *
+ * ── false: the host's exact bitmap ──────────────────────────────────────────
+ *
+ * Pixel-for-pixel what someone sitting at that machine sees. Faithful, and it
+ * covers every pointer an application can invent — a paint program's brush, a
+ * game's crosshair. The cost is that it looks foreign: a Windows arrow on a Mac
+ * is visibly not the Mac's arrow, and it does not follow the viewer's own
+ * accessibility settings (size, colour, contrast).
+ *
+ * ── true: the viewer's own pointer, restyled ────────────────────────────────
+ *
+ * The host also names the pointer when it is one of the standard system shapes
+ * — arrow, I-beam, resize, hand — and this mode maps that name to the matching
+ * CSS keyword. The viewer keeps their native pointer, at their own size and
+ * theme, and it still changes shape with whatever is under it: an I-beam over
+ * text, a resize arrow on a window edge.
+ *
+ * The limit is real: an application's custom cursor has no name, so it falls
+ * back to the host's bitmap when there is one and to a plain arrow otherwise.
+ *
+ * Neither is obviously right, which is why this is a switch and not a default.
+ * Both are sent on every update, so flipping it needs only a page reload — the
+ * host is never told which one the client picked.
+ */
+const CURSOR_USES_CLIENT_STYLE = false;
+
 // Which MultiSeat hosts have already had their input notice this page, by uuid.
 //
 // Module-level on purpose: a quality change builds a *new* StreamView and
@@ -449,6 +478,9 @@ export class StreamView {
         // one drawing (immersive) or the pointer is hidden.
         this._hostCursorPng = null;
         this._hostCursorHotspot = [0, 0];
+        // The host's name for a standard pointer, as a CSS keyword. Empty for
+        // an application's own artwork — see CURSOR_USES_CLIENT_STYLE.
+        this._hostCursorKind = '';
         // Whether the host has handed the pointer over at all. Until it says so
         // the picture cursor stays hidden, which is what every non-native host
         // needs: they burn their pointer into the frame.
@@ -4447,6 +4479,7 @@ export class StreamView {
             this._hostDrawsCursor = true;
             this._hostCursorVisible = msg.visible === true;
             this._hostCursorPng = msg.png || null;
+            this._hostCursorKind = typeof msg.kind === 'string' ? msg.kind : '';
             this._hostCursorHotspot = [msg.hotspotX | 0, msg.hotspotY | 0];
             // Once, on the first shape: the counterpart of the host's own line,
             // so "the pointer is missing" can be told from "the pointer never
@@ -5263,6 +5296,12 @@ export class StreamView {
         if (!this._hostDrawsCursor) return 'none';
         // The host says there is no pointer on that display, or a game hid it.
         if (!this._hostCursorVisible) return 'none';
+        // The viewer's own pointer, restyled to match what the host is showing.
+        // Only when the host could NAME the shape: an application's own artwork
+        // has no keyword, and there the bitmap below is the only faithful
+        // answer. See CURSOR_USES_CLIENT_STYLE.
+        if (CURSOR_USES_CLIENT_STYLE && this._hostCursorKind) return this._hostCursorKind;
+
         // There is one, but Desktop Duplication has not shown us its shape yet
         // — it only hands one over when the shape CHANGES, so a session can
         // start knowing the pointer is there and not what it looks like. An
@@ -5306,6 +5345,7 @@ export class StreamView {
             this._hostDrawsCursor = false;
             this._hostCursorVisible = false;
             this._hostCursorPng = null;
+            this._hostCursorKind = '';
             this._hostCursorHotspot = [0, 0];
         }
     }
@@ -5351,11 +5391,17 @@ export class StreamView {
             const rawX = e.clientX - rect.left;
             const rawY = e.clientY - rect.top;
 
-            // Hide the local cursor only when it is over the actual picture;
-            // show it over the surrounding black bars.
+            // Over the picture the cursor is whatever the host decided we should
+            // draw — its own bitmap, or nothing when the host draws its own.
+            // Over the surrounding black bars it is the ordinary arrow.
+            //
+            // Not hardcoded to 'none': this runs on EVERY mousemove, so writing
+            // a literal here overwrites the host's bitmap a few milliseconds
+            // after it is applied — which looked exactly like the cursor
+            // flashing once and vanishing.
             const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
             if (!IS_TOUCH_DEVICE) {
-                this.inputEl.style.cursor = inside ? 'none' : 'default';
+                this.inputEl.style.cursor = inside ? this._pictureCursor() : 'default';
             }
 
             // Over the letterbox bars (outside the picture): leave the host cursor
