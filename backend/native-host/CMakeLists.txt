@@ -31,12 +31,15 @@ if(WIN32)
         src/platform/windows/WindowsEncoderProbe.cpp
         src/platform/windows/WindowsSession.cpp
         src/capture/windows/DxgiDuplication.cpp
+        src/convert/windows/ColorConvert.cpp
     )
     # DXGI enumerates the adapters and their outputs (the display→GPU
     # association everything else depends on) and drives Desktop Duplication;
     # d3d11 owns the textures frames live in; user32/gdi32 supply the exact
     # refresh rate and the primary-monitor flag.
-    target_link_libraries(mw-native-host PRIVATE dxgi d3d11 user32 gdi32)
+    # d3dcompiler builds the colour-conversion shaders at session start (~1 ms,
+    # once) — precompiling them would add fxc to the build for no runtime gain.
+    target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32)
 else()
     set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)

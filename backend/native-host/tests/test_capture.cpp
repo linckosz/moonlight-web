@@ -8,6 +8,8 @@
 
 #if defined(_WIN32)
 #include "capture/windows/DxgiDuplication.h"
+#include "convert/windows/ColorConvert.h"
+#include <wrl/client.h>
 #endif
 
 #include <chrono>
@@ -153,6 +155,91 @@ void run_capture_tests()
     } else {
         std::fprintf(stderr, "  note: the screen never changed during the test — "
                              "no frame to measure\n");
+    }
+
+    // ── Capture → colour conversion, and real pixels at the end of it ────────
+    //
+    // The only way to know the conversion works is to look at what it produced.
+    // A shader that compiles, binds and draws nothing at all would pass every
+    // structural check and hand the encoder a black screen.
+    if (captured > 0) {
+        convert::ColorConvert converter;
+        std::string convertError;
+        if (!converter.init(duplication.device(), duplication.format(), duplication.width(),
+                            duplication.height(), duplication.width(), duplication.height(),
+                            convertError)) {
+            std::fprintf(stderr, "  conversion skipped: %s\n", convertError.c_str());
+        } else {
+            // Grab one more frame to convert. The screen may be still, so allow
+            // a generous window rather than failing on a quiet desktop.
+            capture::CapturedFrame frame;
+            bool haveFrame = false;
+            for (int attempt = 0; attempt < 40 && !haveFrame; ++attempt) {
+                if (duplication.acquire(100, frame) == capture::AcquireStatus::Ok) haveFrame = true;
+            }
+
+            if (!haveFrame) {
+                std::fprintf(stderr, "  conversion not exercised: the screen stayed still\n");
+            } else {
+                CHECK(converter.convert(frame.texture, convertError));
+                CHECK(converter.output() != nullptr);
+                CHECK_EQ(converter.outputWidth(), duplication.width());
+                CHECK_EQ(converter.outputHeight(), duplication.height());
+
+                // Read the luma plane back and look at it. Not a pixel-accuracy
+                // test — that belongs to a reference image — but enough to
+                // catch the failure that matters: an output that is uniformly
+                // one value is a black (or blank) screen, whatever the shader
+                // claimed to do.
+                Microsoft::WRL::ComPtr<ID3D11Device> device = duplication.device();
+                Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+                device->GetImmediateContext(&context);
+
+                D3D11_TEXTURE2D_DESC desc = {};
+                converter.output()->GetDesc(&desc);
+                desc.Usage = D3D11_USAGE_STAGING;
+                desc.BindFlags = 0;
+                desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                desc.MiscFlags = 0;
+
+                Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+                if (SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &staging))) {
+                    context->CopyResource(staging.Get(), converter.output());
+
+                    D3D11_MAPPED_SUBRESOURCE mapped = {};
+                    if (SUCCEEDED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+                        const auto* rows = static_cast<const uint8_t*>(mapped.pData);
+                        uint8_t minLuma = 255;
+                        uint8_t maxLuma = 0;
+                        // Sample a grid rather than every pixel: enough to prove
+                        // the image is not uniform, cheap enough to stay in a
+                        // unit test.
+                        for (int y = 0; y < converter.outputHeight(); y += 16) {
+                            const uint8_t* row = rows + static_cast<size_t>(y) * mapped.RowPitch;
+                            for (int x = 0; x < converter.outputWidth(); x += 16) {
+                                minLuma = (row[x] < minLuma) ? row[x] : minLuma;
+                                maxLuma = (row[x] > maxLuma) ? row[x] : maxLuma;
+                            }
+                        }
+                        context->Unmap(staging.Get(), 0);
+
+                        std::fprintf(stderr, "  NV12 luma range: %u..%u\n", minLuma, maxLuma);
+
+                        // BT.709 limited range puts black at 16 and white at
+                        // 235. A desktop always contains more than one shade,
+                        // so a flat image means the conversion produced nothing.
+                        CHECK(maxLuma > minLuma);
+                        // And it must sit inside the legal range: values below
+                        // 16 or above 235 mean the limited-range scaling was
+                        // skipped, which shows up as crushed blacks on the
+                        // client.
+                        CHECK(minLuma >= 16);
+                        CHECK(maxLuma <= 235);
+                    }
+                }
+                duplication.release();
+            }
+        }
     }
 
     duplication.stop();
