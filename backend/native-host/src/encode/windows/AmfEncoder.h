@@ -25,11 +25,24 @@ namespace mw::native::encode {
 ///
 /// ── Where it differs from NVENC, and why ────────────────────────────────────
 ///
-/// **No intra-refresh.** AMF exposes it far less uniformly across codecs and
-/// driver versions than NVENC does, so this path refreshes by keyframe on
-/// demand instead. `intraRefreshEnabled()` therefore reports false — the
-/// interface asks what the encoder DOES, not what was wished for, and the
-/// relay's keyframe throttling is what keeps that affordable.
+/// **No intra-refresh — and NOT because AMF lacks it.** All three codecs expose
+/// it: `IntraRefreshMBsNumberPerSlot` (H.264),
+/// `HevcIntraRefreshCTBsNumberPerSlot`, and `Av1IntraRefreshMode` with a
+/// CONTINUOUS mode. It is unimplemented here for a reason that has nothing to
+/// do with AMD.
+///
+/// The benefit of intra-refresh is that a client which loses data heals itself
+/// within one refresh cycle. MoonlightWeb never collects that: on any gap
+/// DataChannelRelay sets `m_AwaitingIdr`, discards deltas and asks for a real
+/// keyframe. The flat-bitrate half of the benefit is already had from the
+/// infinite GOP above, which costs nothing.
+///
+/// So intra-refresh is currently paid for (slightly larger P-frames at a fixed
+/// CBR budget) and never cashed in. NVENC has it because its API put it in
+/// three plain fields; writing it a second and third time would duplicate a
+/// no-op. Worth revisiting the day the receiver is taught to ride out a refresh
+/// window instead of gating — that is the change that would make it earn its
+/// keep, on all three vendors at once.
 ///
 /// **Property names are per codec.** AMF has no shared namespace: the same
 /// concept is `TargetBitrate`, `HevcTargetBitrate` or `Av1TargetBitrate`. They
