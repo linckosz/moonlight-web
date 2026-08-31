@@ -286,8 +286,8 @@ void NativeMediaEngine::onCursor(const mw::native::CursorUpdate& cursor)
 
     QMetaObject::invokeMethod(
         this,
-        [this, png, x = cursor.hotspotX, y = cursor.hotspotY]() {
-            emit cursorShapeChanged(png, x, y);
+        [this, png, x = cursor.hotspotX, y = cursor.hotspotY, visible = cursor.visible]() {
+            emit cursorShapeChanged(png, x, y, visible);
         },
         Qt::QueuedConnection);
 }
