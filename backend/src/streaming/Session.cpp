@@ -23,6 +23,7 @@
 #include "SignalingServer.h"
 #include "StreamRelay.h"
 #include "MoonlightShim.h"
+#include "NativeMediaEngine.h"
 #include "../backend/NvHTTP.h"
 #include "../backend/NvComputer.h"
 #include "../backend/IdentityManager.h"
@@ -270,10 +271,10 @@ void StreamSession::doLaunchApp()
 
 void StreamSession::quit()
 {
-    qInfo() << "[Session::quit] ENTER, m_Shim=" << m_Shim << "m_Relay=" << m_Relay
+    qInfo() << "[Session::quit] ENTER, m_Engine=" << m_Engine << "m_Relay=" << m_Relay
             << "m_MediaTrackRelay=" << m_MediaTrackRelay << "m_Signaling=" << m_Signaling
             << "m_StreamRelay=" << m_StreamRelay
-            << "m_Connected=" << (m_Shim ? m_Shim->isConnected() : false)
+            << "m_Connected=" << (m_Engine ? m_Engine->isConnected() : false)
             << "transport=" << m_Transport;
 
     // Forget this uniqueid: the session is being torn down (a /cancel to Sunshine
@@ -329,12 +330,12 @@ void StreamSession::quit()
     }
 
     // Stop MoonlightShim last (calls LiStopConnection)
-    if (m_Shim) {
-        qInfo() << "[Session::quit] Calling m_Shim->stopConnection() ...";
-        m_Shim->stopConnection();
-        qInfo() << "[Session::quit] m_Shim->stopConnection() returned";
+    if (m_Engine) {
+        qInfo() << "[Session::quit] Calling m_Engine->stopConnection() ...";
+        m_Engine->stopConnection();
+        qInfo() << "[Session::quit] m_Engine->stopConnection() returned";
     } else {
-        qInfo() << "[Session::quit] No m_Shim to stop";
+        qInfo() << "[Session::quit] No m_Engine to stop";
     }
 
     // Delete the relay graph now that the shim's LiStopConnection has been
@@ -360,7 +361,7 @@ void StreamSession::quit()
         m_Relay = nullptr;
     }
     m_Signaling = nullptr; // child of the relay — deleted with it
-    m_Shim = nullptr;      // child of the relay — deleted with it
+    m_Engine = nullptr;    // child of the relay — deleted with it
 
     qInfo() << "[Session::quit] EXIT";
 }
@@ -518,21 +519,11 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         break;
 
     case MediaType::NativeHost:
-        // NativeMediaEngine lands in phase 1 of the native-capture work. Until
-        // it does, refuse here rather than falling through: a NativeHost
-        // descriptor carries no RTSP URL and no key, so continuing would build
-        // a GameStream connection to nowhere and surface as a mystery timeout.
-        //
-        // NativeHostBackend only ever produces this descriptor on a machine
-        // whose engine probe said yes, so reaching this line means the build
-        // has no backend for this platform yet.
-        qWarning() << "[Session] Native host media requested but the native engine is not "
-                      "built into this binary";
-        m_Respond(HttpResponse::error(
-            501, QStringLiteral("Native streaming is not available on this machine.")));
-        emit sessionFailed(QStringLiteral("native engine unavailable"));
-        deleteLater();
-        return;
+        // Nothing to fill in: a native descriptor carries no address, no
+        // session URL and no key, because there is nothing to dial. What it
+        // does carry — the display, the codec mask, the HDR request — is read
+        // where the engine is built, a few lines below.
+        break;
     }
 
     // Session-level settings below are transport-agnostic: they describe what
@@ -558,9 +549,37 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     params.fps = m_StreamFps;
     params.bitrateKbps = m_StreamBitrateKbps;
 
-    // Create MoonlightShim BEFORE starting LiStartConnection. The relay must
-    // be connected to all signals before frames arrive.
-    m_Shim = new MoonlightShim(this);
+    // Create the engine BEFORE starting it. The relays must be connected to all
+    // of its signals before frames start arriving.
+    //
+    // `startEngine` is how the transport branches below start it without
+    // knowing which one they got: starting takes engine-specific parameters
+    // (an RTSP URL and an AES key for GameStream, a display for native), and
+    // this is the one place that knows them.
+    std::function<void()> startEngine;
+
+    if (media.type == MediaType::NativeHost) {
+        auto* native = new NativeMediaEngine(this);
+        m_Engine = native;
+
+        NativeMediaEngine::StartParams nativeParams;
+        nativeParams.displayId = media.nativeHost.displayId;
+        nativeParams.width = m_StreamWidth;
+        nativeParams.height = m_StreamHeight;
+        nativeParams.fps = m_StreamFps;
+        nativeParams.bitrateKbps = m_StreamBitrateKbps;
+        // The same codec bitmask the GameStream path negotiates with, so the
+        // browser's decoder expectations are identical either way.
+        nativeParams.clientVideoFormats = params.supportedVideoFormats;
+        nativeParams.hdr = media.nativeHost.hdrRequested;
+        nativeParams.yuv444 = m_Config.chroma == ChromaSampling::C444;
+
+        startEngine = [native, nativeParams]() { native->startCapture(nativeParams); };
+    } else {
+        auto* shim = new MoonlightShim(this);
+        m_Engine = shim;
+        startEngine = [shim, params]() { shim->startConnection(params); };
+    }
 
     // Clipboard sync is only possible when the streamed host is this machine
     // (standard installer deployment: backend runs next to Sunshine) — the
@@ -578,7 +597,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // Same gate for toggle-lock sync: when the streamed host is this machine,
     // snapshot its real NumLock/CapsLock/ScrollLock state so the browser's
     // 'locksync' aligns instead of assuming the host starts with locks off.
-    m_Shim->captureHostLockState(hostIsSelf);
+    m_Engine->captureHostLockState(hostIsSelf);
 
     // Same gate again: Sunshine loopback-captures its virtual sink POST-volume,
     // and that sink is the host's default output during the stream — volume
@@ -598,37 +617,37 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     {
         const HostOsProbe::HostOs os = m_Host->hostOs();
         const bool quantize = !HostOsProbe::keepsSubNotchScroll(os);
-        m_Shim->setScrollQuantization(quantize);
+        m_Engine->setScrollQuantization(quantize);
         qInfo() << "[Session] Host OS" << HostOsProbe::toString(os) << "- scroll"
                 << (quantize ? "quantized to whole notches" : "sent at full resolution");
     }
 
     // Concurrent sessions each start their controller numbering at 0, which on
     // the host collapses every player's gamepad onto the same virtual pad.
-    m_Shim->setControllerOffset(m_GamepadOffset);
+    m_Engine->setControllerOffset(m_GamepadOffset);
     // A guest who was not given keyboard/mouse must not move the host pointer,
     // not even the 1px the encoder wake-up uses to unstick a still screen.
-    m_Shim->setWakeNudgeAllowed(m_InputPolicy.keyboardMouse);
+    m_Engine->setWakeNudgeAllowed(m_InputPolicy.keyboardMouse);
 
     // Branch: WSS (legacy StreamRelay) or WebRTC (DataChannelRelay + SignalingServer)
     if (m_Transport == "wss") {
         // ── Legacy WSS mode: uses plain WebSocket StreamRelay ──────────────
         qInfo() << "[Session] Transport=wss — using legacy StreamRelay";
 
-        auto* streamRelay = new StreamRelay(m_Shim, m_StreamRelayPort, {}, nullptr);
+        auto* streamRelay = new StreamRelay(m_Engine, m_StreamRelayPort, {}, nullptr);
         streamRelay->setServerHost(m_ServerHost);
         streamRelay->setHttpsPort(m_HttpsPort);
         streamRelay->setWsPath(m_WsPath);
         streamRelay->setClipboardEnabled(clipboardLocal);
         streamRelay->setInputPolicy(m_InputPolicy);
 
-        connect(m_Shim, &MoonlightShim::connectionStarted, this,
+        connect(m_Engine, &IMediaEngine::connectionStarted, this,
                 &StreamSession::onShimConnectionStarted);
-        connect(m_Shim, &MoonlightShim::connectionFailed, this,
+        connect(m_Engine, &IMediaEngine::connectionFailed, this,
                 &StreamSession::onShimConnectionFailed);
 
         // The shim migrates to the relay's dedicated thread with it (child).
-        m_Shim->setParent(streamRelay);
+        m_Engine->setParent(streamRelay);
 
         connect(streamRelay, &StreamRelay::sessionEnded, this, [this]() {
             quit();
@@ -646,7 +665,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
             streamRelay, [&]() { started = streamRelay->start(); }, Qt::BlockingQueuedConnection);
         if (!started) {
             streamRelay->deleteLater(); // also deletes the shim (its child)
-            m_Shim = nullptr;
+            m_Engine = nullptr;
             m_Respond(HttpResponse::error(500, "Failed to start StreamRelay"));
             emit sessionFailed("StreamRelay failed to start");
             deleteLater();
@@ -656,17 +675,15 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         m_StreamRelay = streamRelay;
         emit streamRelayCreated(streamRelay);
 
-        qDebug() << "[Session] StreamRelay created, starting LiStartConnection...";
-        MoonlightShim* shim = m_Shim;
-        QMetaObject::invokeMethod(
-            shim, [shim, params]() { shim->startConnection(params); }, Qt::QueuedConnection);
+        qDebug() << "[Session] StreamRelay created, starting the media engine...";
+        QMetaObject::invokeMethod(m_Engine, startEngine, Qt::QueuedConnection);
     } else if (m_Transport == "webrtc-media") {
         // ── WebRTC Media Track mode: MediaTrackRelay + SignalingServer ─────────
         qInfo() << "[Session] Transport=webrtc-media — using MediaTrackRelay";
 
         // MediaTrackRelay: owns the libdatachannel PeerConnection + video track + audio/input DCs.
         // No QObject parent: it is moved onto a dedicated thread below.
-        auto* relay = new MediaTrackRelay(m_Shim, nullptr);
+        auto* relay = new MediaTrackRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
         relay->setInputPolicy(m_InputPolicy);
 
@@ -689,14 +706,14 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         }
 
         // Connect session-level handlers
-        connect(m_Shim, &MoonlightShim::connectionStarted, this,
+        connect(m_Engine, &IMediaEngine::connectionStarted, this,
                 &StreamSession::onShimConnectionStarted);
-        connect(m_Shim, &MoonlightShim::connectionFailed, this,
+        connect(m_Engine, &IMediaEngine::connectionFailed, this,
                 &StreamSession::onShimConnectionFailed);
 
         // signaling + shim migrate to the relay's dedicated thread (children).
         signaling->setParent(relay);
-        m_Shim->setParent(relay);
+        m_Engine->setParent(relay);
 
         // Clean up when relay session ends (media track disconnect, error, etc.)
         connect(relay, &MediaTrackRelay::sessionEnded, this, [this]() {
@@ -714,7 +731,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
             signaling, [&]() { started = signaling->start(); }, Qt::BlockingQueuedConnection);
         if (!started) {
             relay->deleteLater(); // also deletes signaling + shim (its children)
-            m_Shim = nullptr;
+            m_Engine = nullptr;
             m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
             emit sessionFailed("Signaling server failed to start");
             deleteLater();
@@ -726,16 +743,14 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         emit mediaTrackRelayCreated(relay);
 
         qDebug() << "[Session] MediaTrackRelay + Signaling created, starting LiStartConnection...";
-        MoonlightShim* shim = m_Shim;
-        QMetaObject::invokeMethod(
-            shim, [shim, params]() { shim->startConnection(params); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(m_Engine, startEngine, Qt::QueuedConnection);
     } else {
         // ── WebRTC mode: DataChannelRelay + SignalingServer (default) ─────
         qInfo() << "[Session] Transport=webrtc — using DataChannelRelay";
 
         // DataChannelRelay: owns the libdatachannel PeerConnection + DataChannels.
         // No QObject parent: it is moved onto a dedicated thread below.
-        auto* relay = new DataChannelRelay(m_Shim, nullptr);
+        auto* relay = new DataChannelRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
         relay->setInputPolicy(m_InputPolicy);
 
@@ -759,14 +774,14 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         }
 
         // Connect the session-level handlers
-        connect(m_Shim, &MoonlightShim::connectionStarted, this,
+        connect(m_Engine, &IMediaEngine::connectionStarted, this,
                 &StreamSession::onShimConnectionStarted);
-        connect(m_Shim, &MoonlightShim::connectionFailed, this,
+        connect(m_Engine, &IMediaEngine::connectionFailed, this,
                 &StreamSession::onShimConnectionFailed);
 
         // signaling + shim migrate to the relay's dedicated thread (children).
         signaling->setParent(relay); // Signaling is a child of relay
-        m_Shim->setParent(relay);
+        m_Engine->setParent(relay);
 
         // Clean up when relay session ends (DataChannel disconnect, error, etc.)
         connect(relay, &DataChannelRelay::sessionEnded, this, [this]() {
@@ -775,7 +790,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         });
 
         // Provide MoonlightShim reference for WS fallback (ICE timeout → WS data transport)
-        signaling->setMediaEngine(m_Shim);
+        signaling->setMediaEngine(m_Engine);
 
         // Move the relay graph onto a dedicated per-session thread: video/audio
         // fragmentation + dc->send and the WS-fallback path all run off the main
@@ -789,7 +804,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
             signaling, [&]() { started = signaling->start(); }, Qt::BlockingQueuedConnection);
         if (!started) {
             relay->deleteLater(); // also deletes signaling + shim (its children)
-            m_Shim = nullptr;
+            m_Engine = nullptr;
             m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
             emit sessionFailed("Signaling server failed to start");
             deleteLater();
@@ -801,9 +816,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         emit relayCreated(relay);
 
         qDebug() << "[Session] Relay + Signaling created, starting LiStartConnection...";
-        MoonlightShim* shim = m_Shim;
-        QMetaObject::invokeMethod(
-            shim, [shim, params]() { shim->startConnection(params); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(m_Engine, startEngine, Qt::QueuedConnection);
     }
 }
 
@@ -825,7 +838,7 @@ void StreamSession::applyInputPolicy(const InputMsg::Policy& policy)
     push(m_MediaTrackRelay);
     push(m_StreamRelay);
 
-    if (MoonlightShim* shim = m_Shim) {
+    if (IMediaEngine* shim = m_Engine) {
         QMetaObject::invokeMethod(
             shim,
             [shim, policy]() {
@@ -855,9 +868,9 @@ void StreamSession::applyInputPolicy(const InputMsg::Policy& policy)
 // at 0 forever, and the safe default already covers that.
 void StreamSession::sampleHostIpTtl()
 {
-    if (!m_Shim) return;
+    if (!m_Engine) return;
 
-    const int ttl = m_Shim->hostIpTtl();
+    const int ttl = m_Engine->hostIpTtl();
     if (ttl == 0) {
         if (--m_TtlSamplesLeft > 0) QTimer::singleShot(250, this, &StreamSession::sampleHostIpTtl);
         return;
@@ -881,7 +894,7 @@ void StreamSession::sampleHostIpTtl()
 
     const bool quantize = !HostOsProbe::keepsSubNotchScroll(os);
     m_Host->observedIpTtl = ttl;
-    m_Shim->setScrollQuantization(quantize);
+    m_Engine->setScrollQuantization(quantize);
     qInfo() << "[Session] Host IP TTL" << ttl << "- host is" << HostOsProbe::toString(os)
             << "- scroll now" << (quantize ? "quantized to whole notches" : "at full resolution");
 }
@@ -900,7 +913,7 @@ void StreamSession::onShimConnectionStarted()
     // Read the negotiated video format set by drSetup during LiStartConnection.
     // This is the codec Sunshine actually selected, NOT the user preference.
     // (VIDEO_FORMAT_* macros come from moonlight-common-c's Limelight.h)
-    m_NegotiatedVideoFormat = m_Shim ? m_Shim->negotiatedVideoFormat() : 0;
+    m_NegotiatedVideoFormat = m_Engine ? m_Engine->negotiatedVideoFormat() : 0;
     if (m_NegotiatedVideoFormat == 0) {
         // Fallback: if drSetup hasn't fired yet (shouldn't happen), use config
         m_NegotiatedVideoFormat = (m_Config.codec == VideoCodec::AV1)    ? VIDEO_FORMAT_AV1_MAIN8
