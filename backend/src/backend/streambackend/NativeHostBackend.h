@@ -52,6 +52,14 @@ public:
     /// The backend type name, as registered and as stored on NvComputer.
     static QString typeName() { return QStringLiteral("native"); }
 
+    /// The uuid the synthetic native host carries in the host list.
+    ///
+    /// Stable across restarts and distinct from any real host's: a GameStream
+    /// host's uuid comes from its own serverinfo, so a fixed literal here can
+    /// never collide, and stability is what lets the browser remember which
+    /// host it was streaming.
+    static QString hostUuid() { return QStringLiteral("moonlightweb-native-host"); }
+
     /// The single seat this backend has: the machine itself.
     static QString seatId() { return QStringLiteral("self"); }
 

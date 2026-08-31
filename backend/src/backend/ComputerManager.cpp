@@ -24,6 +24,7 @@
 #include "NvPairingManager.h"
 #include "PairingChain.h"
 #include "WolfApiClient.h"
+#include "streambackend/NativeHostBackend.h"
 #include "streambackend/StreamBackendSetup.h"
 #include "IdentityManager.h"
 #include "SunshineInstaller.h"
@@ -64,10 +65,8 @@
 // Declared locally to avoid winsock2/windows.h include-ordering conflicts with
 // Qt headers. Links against iphlpapi (already in LIBS). IPAddr/DWORD/ULONG are
 // all unsigned long.
-extern "C"
-    __declspec(dllimport) unsigned long __stdcall SendARP(unsigned long DestIP, unsigned long SrcIP,
-                                                          void* pMacAddr,
-                                                          unsigned long* PhysAddrLen);
+extern "C" __declspec(dllimport) unsigned long __stdcall
+SendARP(unsigned long DestIP, unsigned long SrcIP, void* pMacAddr, unsigned long* PhysAddrLen);
 #endif
 
 #define SER_HOSTS "hosts"
@@ -214,6 +213,7 @@ ComputerManager::~ComputerManager()
 void ComputerManager::init()
 {
     loadHosts();
+    refreshNativeHost();
     startPolling();
 
     // Single-shot timer that closes each mDNS discovery window and frees 5353.
@@ -245,6 +245,50 @@ void ComputerManager::init()
 }
 
 // --- Persistence -----------------------------------------------------------
+
+void ComputerManager::refreshNativeHost()
+{
+    // This machine's own screen, offered as a host. Recomputed at startup
+    // rather than remembered: whether it can stream depends on the display
+    // layout, the GPU and the driver, all of which change under us.
+    const QString uuid = NativeHostBackend::hostUuid();
+    const bool available = NativeHostBackend::isAvailable();
+
+    NvComputer* existing = findHostByUuid(uuid);
+
+    if (!available) {
+        if (existing) {
+            m_Hosts.remove(uuid);
+            delete existing;
+            emit hostsChanged();
+        }
+        // Logged at info, not warning: most machines will never have a usable
+        // native engine, and that is the normal path to Sunshine.
+        Logger::info(
+            QString("Native host unavailable: %1").arg(NativeHostBackend::unavailableReason()));
+        return;
+    }
+
+    NvComputer* host = existing;
+    if (!host) {
+        host = new NvComputer();
+        host->uuid = uuid;
+        m_Hosts.insert(uuid, host);
+    }
+
+    host->name = NativeHostBackend::hostDisplayName();
+    host->backendType = NativeHostBackend::typeName();
+    // Paired and online by construction. There is no second party to
+    // authenticate and no network to be offline on — MoonlightWeb is asking
+    // itself. Anything else would put a "pair me" button on a host that has
+    // nothing to pair with.
+    host->pairState = NvComputer::PS_PAIRED;
+    host->state = NvComputer::CS_ONLINE;
+    host->reachable = true;
+
+    Logger::info(QString("Native host available: %1").arg(host->name));
+    emit hostsChanged();
+}
 
 void ComputerManager::loadHosts()
 {
@@ -304,8 +348,13 @@ void ComputerManager::saveHosts(bool allowEmpty)
     settings.beginWriteArray(SER_HOSTS);
 
     int i = 0;
-    for (auto it = m_Hosts.cbegin(); it != m_Hosts.cend(); ++it, ++i) {
-        settings.setArrayIndex(i);
+    for (auto it = m_Hosts.cbegin(); it != m_Hosts.cend(); ++it) {
+        // The native host is derived from the machine, not stored on it: it is
+        // rebuilt at every startup from what the hardware can currently do.
+        // Persisting it would resurrect a host whose display, GPU or driver may
+        // be gone, and offer a stream that cannot start.
+        if (it.value()->isNativeEngine()) continue;
+        settings.setArrayIndex(i++);
         it.value()->serialize(settings);
     }
 
@@ -369,6 +418,10 @@ void ComputerManager::onPollTick()
     for (auto it = m_Hosts.begin(); it != m_Hosts.end(); ++it) {
         const QString& uuid = it.key();
         NvComputer* host = it.value();
+
+        // The native host has no address: it IS this process. Polling it would
+        // mean asking ourselves over the network whether we are running.
+        if (host->isNativeEngine()) continue;
 
         // Verify pairing via /applist for hosts claiming to be paired
         if (host->pairState == NvComputer::PS_PAIRED && !host->serverCertPem.isEmpty() &&

@@ -190,6 +190,11 @@ private slots:
 
 private:
     void loadHosts();
+
+    /// Add, refresh or remove the synthetic host backed by this machine's own
+    /// capture engine. Called at startup; safe to call again when the display
+    /// layout changes.
+    void refreshNativeHost();
     // The address the next poll of this host should use — see m_PollAddrIndex.
     NvAddress pollAddressFor(const NvComputer* host) const;
     // allowEmpty guards the one destructive case: writing an empty array wipes
