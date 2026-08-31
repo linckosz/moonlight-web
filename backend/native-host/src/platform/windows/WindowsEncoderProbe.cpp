@@ -60,6 +60,7 @@ void probeEncoders(GpuInfo& gpu)
             gpu.encoders.push_back(EncoderApi::Nvenc);
             gpu.codecs = caps.codecs;
             gpu.supports10Bit = caps.supports10Bit;
+            gpu.supports444 = caps.supports444;
         }
         break;
     }
@@ -103,7 +104,8 @@ void probeEncoders(GpuInfo& gpu)
         codecs += toString(c);
     }
     log::info("[native] " + gpu.name + ": " + toString(gpu.encoders.front()) + " confirmed — " +
-              codecs + (gpu.supports10Bit ? " (10-bit)" : ""));
+              codecs + (gpu.supports10Bit ? " (10-bit)" : "") +
+              (gpu.supports444 ? " (4:4:4)" : ""));
 }
 
 } // namespace mw::native::platform

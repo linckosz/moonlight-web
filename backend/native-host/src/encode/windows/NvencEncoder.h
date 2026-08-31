@@ -70,8 +70,12 @@ public:
     /// @param device the D3D11 device the NV12 frames live on. Must be the
     ///               adapter that captured them, or every frame costs a
     ///               cross-GPU copy.
+    /// @param yuv444 encode 4:4:4 instead of 4:2:0. The caller must have checked
+    ///               GpuInfo::supports444 first — NVENC refuses the session
+    ///               otherwise, which is a clearer failure than a silent
+    ///               downgrade but still a failure.
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              std::string& error);
+              bool yuv444, std::string& error);
 
     /// Encode one NV12 texture. Blocking: returns with the bitstream ready.
     bool encode(ID3D11Texture2D* nv12, bool forceKeyframe, NvencOutput& out, std::string& error);
@@ -107,6 +111,9 @@ private:
     bool m_OutputLocked = false;
 
     Codec m_Codec = Codec::H264;
+    /// The input format registered with NVENC, and the profile the stream is
+    /// encoded at. Kept together because they must agree.
+    NV_ENC_BUFFER_FORMAT m_BufferFormat = NV_ENC_BUFFER_FORMAT_NV12;
     int m_Width = 0;
     int m_Height = 0;
     bool m_IntraRefresh = false;
