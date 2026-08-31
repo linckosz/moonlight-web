@@ -255,6 +255,12 @@ export class WebRtcDataChannel {
         // decoder that handles damage badly, or loss faster than the refresh.
         // The worst case is then exactly today's behaviour, one beat later.
         this.RIDE_OUT_MAX_MS = 2500;
+        // Set when a ride-out ran its full course without the stream resuming.
+        // Until the stream proves itself again — two frames in a row — recovery
+        // goes back to plain keyframe requests. Without this, the very next loss
+        // opens a fresh 2.5 s window and the watchdog's verdict is thrown away
+        // the moment it is reached.
+        this._rideOutFailed = false;
     }
 
     /**
@@ -1226,6 +1232,10 @@ export class WebRtcDataChannel {
         this.stats.framesAssembled++;
         this.stats.framesReceived++;
 
+        // Read BEFORE the id advances: the contiguity test further down needs the
+        // previous frame's id, and taking it afterwards compares a frame against
+        // itself.
+        const previousFrameId = this._lastAssembledFrameId;
         if (frameId > this._lastAssembledFrameId) this._lastAssembledFrameId = frameId;
 
         // Track last assembled frame time for starvation detection.
@@ -1245,8 +1255,14 @@ export class WebRtcDataChannel {
         // keyframe, so close the ride-out window. Leaving it open would let the
         // watchdog fire on a stream that had already recovered, and put back
         // the very IDR this exists to avoid.
-        if (this._rideOutSince && frameId === this._lastAssembledFrameId + 1) {
+        //
+        // Two frames in a row is the criterion, not one: the first frame after a
+        // gap is by definition NOT contiguous with what came before it, so it
+        // proves only that something arrived. The one after it proves the stream
+        // is running in order again.
+        if (frameId === previousFrameId + 1) {
             this._rideOutSince = 0;
+            this._rideOutFailed = false;
         }
 
         // Emit video frame with backend timestamp for latency calculations
@@ -1362,7 +1378,7 @@ export class WebRtcDataChannel {
         // The watchdog is what makes this safe to try: if the picture is still
         // not right after one cycle plus a margin, the wave is not doing its
         // job and we fall back to exactly today's recovery.
-        if (this.rideOutLoss) {
+        if (this.rideOutLoss && !this._rideOutFailed) {
             if (!this._rideOutSince) {
                 this._rideOutSince = now;
                 console.log('[WebRTC] Riding out a gap (' + reason + ') — no IDR requested');
@@ -1375,6 +1391,7 @@ export class WebRtcDataChannel {
                     ' ms — falling back to an IDR request',
             );
             this._rideOutSince = 0;
+            this._rideOutFailed = true;
         }
 
         if (now - this._lastIdrRequestTime < this._idrBackoffMs) {
