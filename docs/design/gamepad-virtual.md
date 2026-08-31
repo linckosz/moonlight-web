@@ -204,6 +204,54 @@ ViGEmBus (§2). Installé silencieusement par l'installeur (déjà fait, commit
 9a62329). Son absence dégrade proprement : clavier et souris intacts, pas de
 manette, une ligne dans le log.
 
+#### 9.1 Rattraper une installation manquée — l'encart d'installation
+
+L'installeur pose ViGEmBus, mais il peut avoir échoué (réseau coupé pendant le
+téléchargement), avoir été contourné (build lancé depuis les sources), ou le
+pilote peut avoir été désinstallé depuis. Dans ces cas la manette ne marche pas
+et **rien ne le dit** : le log le sait, l'utilisateur non.
+
+D'où un encart — un message discret dans la page, pas une fenêtre modale —
+proposant de poser le pilote en un clic, sur la **page principale** et la **page
+admin**.
+
+**La garde, qui est le vrai sujet.** Le pilote s'installerait sur la machine du
+**service**, pas sur celle du navigateur. Afficher ce bouton à quelqu'un qui
+regarde depuis un autre PC, c'est lui proposer de modifier une machine qui n'est
+pas devant lui — et il n'aurait aucune raison de le deviner.
+
+La condition est donc **strictement `NetClassify::Kind::Loopback`**
+(`backend/src/server/NetClassify.h`), et surtout **pas** `isPrivateOrLoopback()`
+ni le drapeau LAN : un autre PC du même réseau est classé `Private` et n'est pas
+la bonne machine. Un accès par le rendez-vous ressort en `Tunnel`/`Public`, donc
+masqué lui aussi, sans règle supplémentaire à écrire.
+
+Deux corollaires :
+
+- le verdict est **calculé côté serveur** et envoyé comme un booléen déjà
+  tranché. Le navigateur ne le déduit pas de son URL — `localhost` dans la barre
+  d'adresse ne prouve rien, un tunnel SSH suffit à le fabriquer ;
+- la route d'installation **revérifie la même condition** au lieu de faire
+  confiance au fait que le bouton n'était pas censé s'afficher.
+
+**Sonder la présence.** La seule réponse fiable est celle du pilote lui-même :
+`vigem_connect()` renvoie `VIGEM_ERROR_BUS_NOT_FOUND` quand le bus est absent.
+Pas de lecture de registre, pas de recherche de fichier — l'un et l'autre
+mentent après une désinstallation partielle. La sonde tourne une fois au
+démarrage, et à nouveau après une tentative d'installation.
+
+**Élévation.** En service (SYSTEM), l'installation silencieuse passe directement.
+Hors service — instance `--dev`, exécution depuis les sources — le processus
+n'est pas élevé : dans ce cas l'encart ne prétend pas installer, il donne le lien
+amont. Une invite UAC qui échoue sans explication serait pire que pas de bouton.
+
+**Ce que l'encart n'est pas.** Ni bloquant, ni répété : une manette absente reste
+une dégradation propre (§9), pas une erreur. Il se ferme, et il disparaît de
+lui-même dès que la sonde voit le bus.
+
+Chaînes en i18n (`frontend/locales/{en,fr,zh}.json`), `data-i18n` ⇒
+`textContent`, donc `&` brut jamais `&amp;`.
+
 ### Linux
 
 `uinput`, standard et libre. Règle udev à l'installation pour éviter root en
@@ -299,7 +347,7 @@ un pilote signé — et mettait XInput en phase 2. C'est l'inverse.
 | Phase | Contenu | État |
 |---|---|---|
 | **1** | `GamepadState`, protocole, `GamepadManager`, **XInput** de bout en bout | ⚡ **partiellement fait** (9a62329) |
-| **2** | Multi-manettes, cycle de vie, validation, tests | à faire |
+| **2** | Multi-manettes, cycle de vie, validation, tests, **encart ViGEmBus (§9.1)** | à faire |
 | **3** | DualShock 4 (ViGEm sait le faire) | à faire |
 | **4** | Linux / uinput | à faire |
 | **5** | macOS — après la vérification de §9 | bloqué |
@@ -364,6 +412,8 @@ Réalisables :
 - [x] un périphérique virtuel est créé, boutons/sticks/gâchettes fonctionnent
 - [x] rumble de bout en bout
 - [ ] plusieurs contrôleurs simultanément
+- [ ] ViGEmBus absent : encart proposé **uniquement** en `Loopback`, invisible
+      depuis un autre PC du LAN et depuis le rendez-vous (§9.1)
 - [ ] la déconnexion détruit les périphériques
 - [ ] XInput validé par une application XInput réelle
 - [ ] DualShock 4
