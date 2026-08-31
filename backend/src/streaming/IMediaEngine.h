@@ -234,8 +234,13 @@ signals:
     /// The mouse pointer's SHAPE changed, and the browser is the one drawing it.
     ///
     /// Native host only, and only in desktop mode — see setCompositeCursor.
-    /// `png` is empty when the pointer should not be drawn at all. Carries no
-    /// position: the browser already knows where its own pointer is, sooner and
-    /// more accurately than this could say.
-    void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY);
+    /// Carries no position: the browser already knows where its own pointer is,
+    /// sooner and more accurately than this could say.
+    ///
+    /// `visible` and `png` are separate on purpose. Desktop Duplication only
+    /// hands over a shape when it CHANGES, so a session can legitimately know
+    /// that a pointer is on the display without ever having been shown what it
+    /// looks like. `visible` with an empty `png` means exactly that — draw
+    /// something ordinary — while `visible == false` means draw nothing at all.
+    void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY, bool visible);
 };

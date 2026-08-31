@@ -449,6 +449,13 @@ export class StreamView {
         // one drawing (immersive) or the pointer is hidden.
         this._hostCursorPng = null;
         this._hostCursorHotspot = [0, 0];
+        // Whether the host has handed the pointer over at all. Until it says so
+        // the picture cursor stays hidden, which is what every non-native host
+        // needs: they burn their pointer into the frame.
+        this._hostDrawsCursor = false;
+        // Whether there IS a pointer on the streamed display right now. Separate
+        // from the image: see _pictureCursor.
+        this._hostCursorVisible = false;
         /** Gaming mode focus state: true when pointer lock is active (cursor captured).
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
@@ -4435,8 +4442,11 @@ export class StreamView {
             return;
         }
         if (msg.type === 'cursor') {
-            // The host's pointer shape, for us to draw. See _applyHostCursor.
-            this._hostCursorPng = msg.visible && msg.png ? msg.png : null;
+            // The host's pointer, for us to draw. See _pictureCursor: visible
+            // with no image is a real state, not a missing one.
+            this._hostDrawsCursor = true;
+            this._hostCursorVisible = msg.visible === true;
+            this._hostCursorPng = msg.png || null;
             this._hostCursorHotspot = [msg.hotspotX | 0, msg.hotspotY | 0];
             // Once, on the first shape: the counterpart of the host's own line,
             // so "the pointer is missing" can be told from "the pointer never
@@ -5248,20 +5258,32 @@ export class StreamView {
      * double cursor from coming back.
      */
     _pictureCursor() {
-        if (!this._hostCursorPng) return 'none';
+        // The host is drawing it into the frame — showing ours too would be a
+        // double cursor.
+        if (!this._hostDrawsCursor) return 'none';
+        // The host says there is no pointer on that display, or a game hid it.
+        if (!this._hostCursorVisible) return 'none';
+        // There is one, but Desktop Duplication has not shown us its shape yet
+        // — it only hands one over when the shape CHANGES, so a session can
+        // start knowing the pointer is there and not what it looks like. An
+        // ordinary arrow is right far more often than nothing at all, and the
+        // real shape replaces it the moment the host sees one.
+        if (!this._hostCursorPng) return 'default';
         const [hx, hy] = this._hostCursorHotspot;
-        return `url(data:image/png;base64,${this._hostCursorPng}) ${hx} ${hy}, none`;
+        return `url(data:image/png;base64,${this._hostCursorPng}) ${hx} ${hy}, default`;
     }
 
-    /** Re-apply the picture cursor after the host sent a new shape. */
+    /**
+     * Re-apply the picture cursor after the host sent a new shape.
+     *
+     * Only where the cursor is ours to set: over the picture. The letterbox
+     * bars keep the ordinary arrow, and a locked pointer has no visible cursor
+     * at all — so the last known pointer position decides, exactly as it does
+     * for the show/hide rule itself.
+     */
     _applyHostCursor() {
-        if (IS_TOUCH_DEVICE || !this.inputEl) return;
-        // Only touch it where it is already ours to set: over the picture. The
-        // letterbox bars keep the ordinary arrow, and a locked pointer has no
-        // visible cursor at all.
-        if (this.pointerLocked) return;
-        if (this.inputEl.style.cursor === 'default') return;
-        this.inputEl.style.cursor = this._pictureCursor();
+        if (IS_TOUCH_DEVICE || !this.inputEl || this.pointerLocked) return;
+        this._updateLocalCursor(this._lastMouseClientX, this._lastMouseClientY);
     }
 
     /**
@@ -5281,6 +5303,8 @@ export class StreamView {
         this._sendToHost({ type: 'cursormode', composite });
         // Whatever the host was showing is about to stop being true.
         if (composite) {
+            this._hostDrawsCursor = false;
+            this._hostCursorVisible = false;
             this._hostCursorPng = null;
             this._hostCursorHotspot = [0, 0];
         }
