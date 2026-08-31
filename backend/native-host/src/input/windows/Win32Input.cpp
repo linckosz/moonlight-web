@@ -183,8 +183,9 @@ bool toAbsolute(const capture::DesktopRect& rect, int x, int y, int refW, int re
 
 } // namespace
 
-Win32Input::Win32Input(const capture::DesktopRect& displayRect)
+Win32Input::Win32Input(const capture::DesktopRect& displayRect, VigemGamepad::RumbleSink onRumble)
     : m_DisplayRect(displayRect)
+    , m_OnRumble(std::move(onRumble))
 {}
 
 Win32Input::~Win32Input()
@@ -196,10 +197,25 @@ bool Win32Input::start(std::string& error)
 {
     if (m_Started) return true;
 
-    // Nothing to open, nothing to allocate: SendInput needs no handle and no
-    // setup. Whether there IS a desktop to inject into was already settled by
-    // the probe (hasInteractiveSession), which refuses the whole engine in
-    // session 0 rather than letting a session start and feel dead.
+    // Nothing to open, nothing to allocate for keyboard and mouse: SendInput
+    // needs no handle and no setup. Whether there IS a desktop to inject into
+    // was already settled by the probe (hasInteractiveSession), which refuses
+    // the whole engine in session 0 rather than letting a session start and
+    // feel dead.
+    //
+    // The gamepad is the one part that CAN be missing, because it needs a
+    // kernel driver. Its absence is reported once and then forgotten: a desktop
+    // stream does not need a controller, and refusing the session over it would
+    // be wildly out of proportion.
+    {
+        auto pads = std::make_unique<VigemGamepad>(m_OnRumble);
+        std::string gamepadError;
+        if (pads->start(gamepadError))
+            m_Gamepad = std::move(pads);
+        else
+            log::info("[native] no virtual gamepad: " + gamepadError);
+    }
+
     m_Started = true;
     log::info("[native] input: SendInput on the display at " + std::to_string(m_DisplayRect.left) +
               "," + std::to_string(m_DisplayRect.top) + " " +
@@ -212,6 +228,10 @@ void Win32Input::stop()
 {
     if (!m_Started) return;
     releaseAll();
+    // Unplugged before anything else: a virtual pad that outlived its session
+    // would sit in the Windows game controller list forever, and the next game
+    // to start would see a controller nobody is holding.
+    m_Gamepad.reset();
     log::info("[native] input: " + std::to_string(m_Injected.load(std::memory_order_relaxed)) +
               " event(s) injected this session");
     m_Started = false;
@@ -274,12 +294,16 @@ void Win32Input::inject(const InputEvent& event)
     case InputEvent::Type::MouseScrollHorizontal: injectScroll(event.scrollAmount, true); break;
     case InputEvent::Type::LockKeySync: syncLockKeys(event); break;
 
+    // Ignored when ViGEmBus is absent, never approximated: mapping a stick onto
+    // the mouse would be a surprise, not a feature.
     case InputEvent::Type::ControllerArrival:
+        if (m_Gamepad) m_Gamepad->arrive(event);
+        break;
     case InputEvent::Type::ControllerState:
+        if (m_Gamepad) m_Gamepad->update(event);
+        break;
     case InputEvent::Type::ControllerRemoval:
-        // Gamepad injection needs a virtual HID device (ViGEmBus). Ignored
-        // rather than approximated: mapping a stick onto the mouse would be a
-        // surprise, not a feature.
+        if (m_Gamepad) m_Gamepad->remove(event);
         break;
     }
 }

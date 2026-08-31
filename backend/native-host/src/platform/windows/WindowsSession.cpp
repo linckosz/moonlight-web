@@ -167,7 +167,15 @@ public:
         // start because of input gives the user nothing at all. The log says
         // which one they got.
         {
-            auto sink = std::make_unique<input::Win32Input>(m_Capture->desktopRect());
+            // Rumble travels the opposite way from every other input: the game
+            // asks the pad to shake, and that has to reach the browser. Handed
+            // straight to the session callback — it arrives on a ViGEm thread,
+            // and the consumer is the one that knows how to marshal it.
+            auto sink = std::make_unique<input::Win32Input>(m_Capture->desktopRect(),
+                                                            [this](const RumbleEvent& event) {
+                                                                if (m_Callbacks.onRumble)
+                                                                    m_Callbacks.onRumble(event);
+                                                            });
             std::string inputError;
             if (sink->start(inputError)) {
                 std::lock_guard<std::mutex> lock(m_InputMutex);
