@@ -20,6 +20,7 @@
 #include "../../core/Log.h"
 #include "../../encode/windows/AmfCapabilities.h"
 #include "../../encode/windows/NvencCapabilities.h"
+#include "../../encode/windows/VplCapabilities.h"
 
 #include <windows.h>
 
@@ -80,13 +81,19 @@ void probeEncoders(GpuInfo& gpu)
         break;
     }
 
-    case kVendorIntel:
-        // Same reasoning as AMD: the oneVPL dispatcher, else the legacy Media
-        // SDK runtime that older drivers still install.
-        if (runtimePresent(L"libvpl.dll", "MFXLoad") ||
-            runtimePresent(L"libmfxhw64.dll", "MFXInit"))
+    case kVendorIntel: {
+        // Same real question as the other two: open a oneVPL session on THIS
+        // adapter and ask the encoder itself. That is what separates an Arc
+        // card from a UHD iGPU on the same dispatcher — they differ on AV1.
+        const encode::VplCaps caps = encode::queryVplCapabilities(gpu.nativeHandle);
+        if (caps.usable) {
             gpu.encoders.push_back(EncoderApi::Vpl);
+            gpu.codecs = caps.codecs;
+            gpu.supports10Bit = caps.supports10Bit;
+            gpu.supports444 = caps.supports444;
+        }
         break;
+    }
 
     default: break;
     }
