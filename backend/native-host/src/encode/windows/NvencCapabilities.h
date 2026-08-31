@@ -30,6 +30,7 @@ struct NvencCaps
     bool usable = false;
     std::vector<Codec> codecs; ///< best first, as the Selector expects
     bool supports10Bit = false;
+    bool supports444 = false;
     bool supportsIntraRefresh = false;
     bool supportsReferenceInvalidation = false;
 };

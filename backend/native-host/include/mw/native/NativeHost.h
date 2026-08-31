@@ -76,6 +76,13 @@ public:
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
+protected:
+    // Declaring the copy operations above suppresses the implicit default
+    // constructor, which subclasses need. Protected rather than public: a bare
+    // Session is not a thing anyone should be able to make.
+    Session() = default;
+
+public:
     /// Begin capturing and encoding. Callbacks start firing before this
     /// returns is NOT guaranteed — the first frame arrives when the display
     /// next presents, which on a still screen can be a while.

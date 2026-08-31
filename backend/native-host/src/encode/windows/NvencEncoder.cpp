@@ -58,7 +58,7 @@ NvencEncoder::~NvencEncoder()
 }
 
 bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                        int bitrateKbps, std::string& error)
+                        int bitrateKbps, bool yuv444, std::string& error)
 {
     stop();
 
@@ -73,6 +73,8 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     }
 
     m_Codec = codec;
+    // AYUV is what the 4:4:4 conversion pass produces; NV12 the 4:2:0 one.
+    m_BufferFormat = yuv444 ? NV_ENC_BUFFER_FORMAT_AYUV : NV_ENC_BUFFER_FORMAT_NV12;
     m_Width = width;
     m_Height = height;
     if (fps <= 0) fps = 60;
@@ -140,10 +142,19 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     // repeatSPSPPS matters for the browser: its decoder configures itself from
     // the parameter sets, so a client that joins late or loses the first
     // keyframe must be able to start from the next one.
+    // The profile has to agree with the input format. Without this NVENC
+    // accepts 4:4:4 input and encodes 4:2:0 from it — the extra chroma is
+    // silently discarded, which looks exactly like the feature not working.
+    if (yuv444) {
+        m_Config.profileGUID = codec == Codec::Hevc ? NV_ENC_HEVC_PROFILE_FREXT_GUID
+                                                    : NV_ENC_H264_PROFILE_HIGH_444_GUID;
+    }
+
     m_IntraRefresh = false;
     switch (codec) {
     case Codec::H264: {
         NV_ENC_CONFIG_H264& h264 = m_Config.encodeCodecConfig.h264Config;
+        h264.chromaFormatIDC = yuv444 ? 3 : 1;
         h264.repeatSPSPPS = 1;
         h264.idrPeriod = NVENC_INFINITE_GOPLENGTH;
         h264.enableIntraRefresh = 1;
@@ -154,6 +165,7 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     }
     case Codec::Hevc: {
         NV_ENC_CONFIG_HEVC& hevc = m_Config.encodeCodecConfig.hevcConfig;
+        hevc.chromaFormatIDC = yuv444 ? 3 : 1;
         hevc.repeatSPSPPS = 1;
         hevc.idrPeriod = NVENC_INFINITE_GOPLENGTH;
         hevc.enableIntraRefresh = 1;
@@ -237,7 +249,7 @@ bool NvencEncoder::registerInput(ID3D11Texture2D* texture, std::string& error)
     resource.width = static_cast<uint32_t>(m_Width);
     resource.height = static_cast<uint32_t>(m_Height);
     resource.resourceToRegister = texture;
-    resource.bufferFormat = NV_ENC_BUFFER_FORMAT_NV12;
+    resource.bufferFormat = m_BufferFormat;
     resource.bufferUsage = NV_ENC_INPUT_IMAGE;
 
     // This is the zero-copy step: NVENC takes the D3D11 texture the conversion

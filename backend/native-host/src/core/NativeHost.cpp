@@ -18,6 +18,7 @@
 #include "mw/native/NativeHost.h"
 
 #include "Log.h"
+#include "Probe.h"
 #include "Selector.h"
 #include "Session.h"
 
@@ -26,9 +27,6 @@
 #endif
 
 namespace mw::native {
-
-// Declared in Probe.cpp — the free function the facade forwards to.
-Capabilities probe();
 
 Capabilities NativeHost::probe()
 {

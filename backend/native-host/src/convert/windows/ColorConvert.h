@@ -45,6 +45,22 @@ namespace mw::native::convert {
 class ColorConvert
 {
 public:
+    /// Which chroma sampling the encoder should receive.
+    ///
+    /// MoonlightWeb already offers this choice for external hosts, and it is
+    /// not cosmetic on a desktop: 4:2:0 keeps a quarter of the colour
+    /// resolution, which is invisible on video and very visible on text, thin
+    /// UI lines and coloured code.
+    enum class Chroma
+    {
+        /// NV12 — two planes, chroma at half resolution in both axes.
+        C420,
+        /// AYUV — one packed plane at full resolution. Simpler to produce than
+        /// NV12 (a single draw, no plane views) and roughly twice the bytes for
+        /// the encoder to read.
+        C444,
+    };
+
     ColorConvert() = default;
     ~ColorConvert();
 
@@ -52,20 +68,24 @@ public:
     ColorConvert& operator=(const ColorConvert&) = delete;
 
     /// Prepare the pipeline for @p sourceFormat frames of @p sourceWidth ×
-    /// @p sourceHeight, producing NV12 at @p outputWidth × @p outputHeight.
+    /// @p sourceHeight, producing @p chroma at @p outputWidth × @p outputHeight.
     ///
-    /// Output dimensions are rounded down to even numbers: NV12 chroma is
-    /// half-resolution in both axes, so an odd size has no representation.
+    /// For 4:2:0 the output dimensions are rounded down to even numbers: NV12
+    /// chroma is half-resolution in both axes, so an odd size has no
+    /// representation. 4:4:4 has no such constraint but is rounded the same way
+    /// to keep one code path and to stay friendly to every encoder.
     bool init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sourceWidth, int sourceHeight,
-              int outputWidth, int outputHeight, std::string& error);
+              int outputWidth, int outputHeight, Chroma chroma, std::string& error);
+
+    Chroma chroma() const { return m_Chroma; }
 
     /// Convert one frame. @p source is the texture from capture; the result is
     /// in output(), ready for the encoder to register.
     bool convert(ID3D11Texture2D* source, std::string& error);
 
-    /// The NV12 texture the last convert() wrote. Owned here and reused every
-    /// frame — allocating one per frame would be a VRAM allocation on the hot
-    /// path for no reason.
+    /// The texture the last convert() wrote — NV12 or AYUV per chroma().
+    /// Owned here and reused every frame: allocating one per frame would be a
+    /// VRAM allocation on the hot path for no reason.
     ID3D11Texture2D* output() const { return m_Output.Get(); }
 
     int outputWidth() const { return m_OutputWidth; }
@@ -81,11 +101,15 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_VertexShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_LumaShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ChromaShader;
+    /// 4:4:4 needs only this one: a single draw writes all three components.
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> m_PackedShader;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> m_Sampler;
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_Output;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_LumaTarget;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_ChromaTarget;
+    /// The single target of the 4:4:4 path.
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_PackedTarget;
 
     /// A shader-resource view of the CAPTURED texture. Rebuilt whenever the
     /// texture changes identity: Desktop Duplication may hand back a different
@@ -94,6 +118,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_SourceView;
     ID3D11Texture2D* m_SourceViewFor = nullptr;
 
+    Chroma m_Chroma = Chroma::C420;
     DXGI_FORMAT m_SourceFormat = DXGI_FORMAT_UNKNOWN;
     int m_SourceWidth = 0;
     int m_SourceHeight = 0;
