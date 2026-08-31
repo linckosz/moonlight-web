@@ -60,6 +60,12 @@ struct SessionConfig
     /// says so in SessionInfo, rather than failing.
     bool hdr = false;
 
+    /// Ask for 4:4:4 chroma. MoonlightWeb already offers this for external
+    /// hosts, and it matters on a desktop rather than on video: 4:2:0 keeps a
+    /// quarter of the colour resolution, which shows on text and thin UI lines.
+    /// Honoured only when the encoder supports it — see SessionInfo::yuv444.
+    bool yuv444 = false;
+
     /// Draw the mouse cursor into the captured frame. On by default: the remote
     /// user needs to see where they are pointing.
     bool captureCursor = true;
@@ -90,6 +96,10 @@ struct SessionInfo
     /// True when the session really is 10-bit HDR. May be false even though
     /// SessionConfig::hdr was true — see that field.
     bool hdr = false;
+
+    /// True when the session really is 4:4:4. Same contract as `hdr`: asked for
+    /// is not granted, and the stats overlay is where the difference shows.
+    bool yuv444 = false;
 
     /// Memory copies between capture and the wire, counted rather than
     /// estimated. Logged at session start and compared in the benchmarks (§16);

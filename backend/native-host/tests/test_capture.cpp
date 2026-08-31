@@ -168,7 +168,7 @@ void run_capture_tests()
         std::string convertError;
         if (!converter.init(duplication.device(), duplication.format(), duplication.width(),
                             duplication.height(), duplication.width(), duplication.height(),
-                            convertError)) {
+                            convert::ColorConvert::Chroma::C420, convertError)) {
             std::fprintf(stderr, "  conversion skipped: %s\n", convertError.c_str());
         } else {
             // Grab one more frame to convert. The screen may be still, so allow
@@ -249,7 +249,7 @@ void run_capture_tests()
                     encode::NvencEncoder encoder;
                     std::string encodeError;
                     if (!encoder.init(duplication.device(), Codec::H264, converter.outputWidth(),
-                                      converter.outputHeight(), 60, 20000, encodeError)) {
+                                      converter.outputHeight(), 60, 20000, false, encodeError)) {
                         std::fprintf(stderr, "  encode skipped: %s\n", encodeError.c_str());
                     } else {
                         encode::NvencOutput encoded;
@@ -347,6 +347,46 @@ void run_capture_tests()
                         CHECK(encoder.setBitrate(10000, encodeError));
                         encoder.stop();
                     }
+                }
+
+                // ── 4:4:4 ────────────────────────────────────────────────────
+                //
+                // MoonlightWeb offers this choice for external hosts, so the
+                // native engine has to be able to honour it. Verified rather
+                // than assumed: the AYUV byte order is easy to get wrong, and
+                // getting it wrong swaps the colours instead of failing.
+                if (gpu->supports444) {
+                    convert::ColorConvert converter444;
+                    std::string error444;
+                    if (!converter444.init(duplication.device(), duplication.format(),
+                                           duplication.width(), duplication.height(),
+                                           duplication.width(), duplication.height(),
+                                           convert::ColorConvert::Chroma::C444, error444)) {
+                        std::fprintf(stderr, "  4:4:4 conversion unavailable: %s\n",
+                                     error444.c_str());
+                    } else if (!converter444.convert(frame.texture, error444)) {
+                        std::fprintf(stderr, "  4:4:4 conversion failed: %s\n", error444.c_str());
+                    } else {
+                        encode::NvencEncoder encoder444;
+                        if (!encoder444.init(
+                                duplication.device(), Codec::H264, converter444.outputWidth(),
+                                converter444.outputHeight(), 60, 20000, true, error444)) {
+                            std::fprintf(stderr, "  4:4:4 encode unavailable: %s\n",
+                                         error444.c_str());
+                        } else {
+                            encode::NvencOutput out444;
+                            CHECK(encoder444.encode(converter444.output(), true, out444, error444));
+                            if (out444.data) {
+                                std::fprintf(stderr, "  4:4:4 keyframe: %zu bytes\n", out444.size);
+                                CHECK(out444.size > 0);
+                                CHECK(out444.keyframe);
+                                encoder444.releaseOutput();
+                            }
+                            encoder444.stop();
+                        }
+                    }
+                } else {
+                    std::fprintf(stderr, "  4:4:4 not supported by this encoder\n");
                 }
 
                 duplication.release();

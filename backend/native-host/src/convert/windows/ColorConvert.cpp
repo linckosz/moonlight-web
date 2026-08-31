@@ -71,6 +71,27 @@ float PsLuma(VsOut i) : SV_TARGET
     return dot(rgb, kLuma) * kLumaScale + kLumaBias;
 }
 
+// 4:4:4, written as packed AYUV in one draw.
+//
+// NVENC's AYUV is a 32-bit word with V in the lowest byte, then U, then Y, then
+// A — so in memory the bytes are [V][U][Y][A], and an R8G8B8A8 render-target
+// view lands them as R=V, G=U, B=Y, A=A. Getting that order wrong produces a
+// picture with the colours swapped rather than an error, which is why it is
+// spelled out here.
+float4 PsPacked444(VsOut i) : SV_TARGET
+{
+    float3 rgb = Source.Sample(Linear, i.uv).rgb;
+    float  y   = dot(rgb, kLuma);
+
+    float cb = (rgb.b - y) / 1.8556;
+    float cr = (rgb.r - y) / 1.5748;
+
+    return float4(cr * kChromaScale + kChromaBias,  // R <- V
+                  cb * kChromaScale + kChromaBias,  // G <- U
+                  y  * kLumaScale   + kLumaBias,    // B <- Y
+                  1.0);
+}
+
 float2 PsChroma(VsOut i) : SV_TARGET
 {
     // Sampling once at the chroma texel's centre lets the sampler average the
@@ -106,7 +127,8 @@ bool compile(const char* entryPoint, const char* target, ComPtr<ID3DBlob>& blob,
 ColorConvert::~ColorConvert() = default;
 
 bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sourceWidth,
-                        int sourceHeight, int outputWidth, int outputHeight, std::string& error)
+                        int sourceHeight, int outputWidth, int outputHeight, Chroma chroma,
+                        std::string& error)
 {
     if (!device) {
         error = "no D3D11 device";
@@ -123,6 +145,7 @@ bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sour
 
     m_Device = device;
     m_Device->GetImmediateContext(m_Context.ReleaseAndGetAddressOf());
+    m_Chroma = chroma;
     m_SourceFormat = sourceFormat;
     m_SourceWidth = sourceWidth;
     m_SourceHeight = sourceHeight;
@@ -142,23 +165,27 @@ bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sour
 
     log::info("[native] colour conversion: " + std::to_string(m_SourceWidth) + "x" +
               std::to_string(m_SourceHeight) + " BGRA -> " + std::to_string(m_OutputWidth) + "x" +
-              std::to_string(m_OutputHeight) + " NV12 (BT.709 limited)");
+              std::to_string(m_OutputHeight) +
+              (m_Chroma == Chroma::C444 ? " AYUV 4:4:4" : " NV12 4:2:0") + " (BT.709 limited)");
     return true;
 }
 
 bool ColorConvert::createShaders(std::string& error)
 {
-    ComPtr<ID3DBlob> vs, luma, chroma;
+    ComPtr<ID3DBlob> vs, luma, chroma, packed;
     if (!compile("VsMain", "vs_5_0", vs, error)) return false;
     if (!compile("PsLuma", "ps_5_0", luma, error)) return false;
     if (!compile("PsChroma", "ps_5_0", chroma, error)) return false;
+    if (!compile("PsPacked444", "ps_5_0", packed, error)) return false;
 
     if (FAILED(m_Device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr,
                                             m_VertexShader.ReleaseAndGetAddressOf())) ||
         FAILED(m_Device->CreatePixelShader(luma->GetBufferPointer(), luma->GetBufferSize(), nullptr,
                                            m_LumaShader.ReleaseAndGetAddressOf())) ||
         FAILED(m_Device->CreatePixelShader(chroma->GetBufferPointer(), chroma->GetBufferSize(),
-                                           nullptr, m_ChromaShader.ReleaseAndGetAddressOf()))) {
+                                           nullptr, m_ChromaShader.ReleaseAndGetAddressOf())) ||
+        FAILED(m_Device->CreatePixelShader(packed->GetBufferPointer(), packed->GetBufferSize(),
+                                           nullptr, m_PackedShader.ReleaseAndGetAddressOf()))) {
         error = "could not create the conversion shaders";
         return false;
     }
@@ -185,23 +212,38 @@ bool ColorConvert::createOutput(std::string& error)
     desc.Height = static_cast<UINT>(m_OutputHeight);
     desc.MipLevels = 1;
     desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_NV12;
+    desc.Format = m_Chroma == Chroma::C444 ? DXGI_FORMAT_AYUV : DXGI_FORMAT_NV12;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
-    // RENDER_TARGET so the two plane views can be written; SHADER_RESOURCE
-    // because the encoder registers it as an input surface.
+    // RENDER_TARGET so the plane (or packed) views can be written;
+    // SHADER_RESOURCE because the encoder registers it as an input surface.
     desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 
     if (FAILED(m_Device->CreateTexture2D(&desc, nullptr, m_Output.ReleaseAndGetAddressOf()))) {
-        error = "this GPU cannot render into an NV12 texture";
+        error = m_Chroma == Chroma::C444
+                    ? "this GPU cannot render into an AYUV texture (4:4:4 unavailable)"
+                    : "this GPU cannot render into an NV12 texture";
         return false;
+    }
+
+    D3D11_RENDER_TARGET_VIEW_DESC view = {};
+    view.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+
+    if (m_Chroma == Chroma::C444) {
+        // One packed plane: an R8G8B8A8 view writes all four bytes of each
+        // AYUV word at once, so 4:4:4 needs a single draw where 4:2:0 needs
+        // two. See PsPacked444 for the byte order.
+        view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        if (FAILED(m_Device->CreateRenderTargetView(m_Output.Get(), &view,
+                                                    m_PackedTarget.ReleaseAndGetAddressOf()))) {
+            error = "could not view the AYUV surface";
+            return false;
+        }
+        return true;
     }
 
     // The plane is selected by the view's FORMAT, which is the whole trick:
     // R8 addresses luma, R8G8 addresses the interleaved chroma at half size.
-    D3D11_RENDER_TARGET_VIEW_DESC view = {};
-    view.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-
     view.Format = DXGI_FORMAT_R8_UNORM;
     if (FAILED(m_Device->CreateRenderTargetView(m_Output.Get(), &view,
                                                 m_LumaTarget.ReleaseAndGetAddressOf()))) {
@@ -250,27 +292,37 @@ bool ColorConvert::convert(ID3D11Texture2D* source, std::string& error)
     m_Context->PSSetShaderResources(0, 1, views);
     m_Context->PSSetSamplers(0, 1, samplers);
 
-    // Luma: full resolution.
     D3D11_VIEWPORT viewport = {};
     viewport.Width = static_cast<float>(m_OutputWidth);
     viewport.Height = static_cast<float>(m_OutputHeight);
     viewport.MaxDepth = 1.0f;
 
-    ID3D11RenderTargetView* lumaTarget[] = {m_LumaTarget.Get()};
-    m_Context->OMSetRenderTargets(1, lumaTarget, nullptr);
-    m_Context->RSSetViewports(1, &viewport);
-    m_Context->PSSetShader(m_LumaShader.Get(), nullptr, 0);
-    m_Context->Draw(3, 0);
+    if (m_Chroma == Chroma::C444) {
+        // One draw: luma and both chroma components go out together at full
+        // resolution.
+        ID3D11RenderTargetView* packedTarget[] = {m_PackedTarget.Get()};
+        m_Context->OMSetRenderTargets(1, packedTarget, nullptr);
+        m_Context->RSSetViewports(1, &viewport);
+        m_Context->PSSetShader(m_PackedShader.Get(), nullptr, 0);
+        m_Context->Draw(3, 0);
+    } else {
+        // Luma: full resolution.
+        ID3D11RenderTargetView* lumaTarget[] = {m_LumaTarget.Get()};
+        m_Context->OMSetRenderTargets(1, lumaTarget, nullptr);
+        m_Context->RSSetViewports(1, &viewport);
+        m_Context->PSSetShader(m_LumaShader.Get(), nullptr, 0);
+        m_Context->Draw(3, 0);
 
-    // Chroma: half resolution, which is what makes this 4:2:0.
-    viewport.Width = static_cast<float>(m_OutputWidth / 2);
-    viewport.Height = static_cast<float>(m_OutputHeight / 2);
+        // Chroma: half resolution, which is what makes this 4:2:0.
+        viewport.Width = static_cast<float>(m_OutputWidth / 2);
+        viewport.Height = static_cast<float>(m_OutputHeight / 2);
 
-    ID3D11RenderTargetView* chromaTarget[] = {m_ChromaTarget.Get()};
-    m_Context->OMSetRenderTargets(1, chromaTarget, nullptr);
-    m_Context->RSSetViewports(1, &viewport);
-    m_Context->PSSetShader(m_ChromaShader.Get(), nullptr, 0);
-    m_Context->Draw(3, 0);
+        ID3D11RenderTargetView* chromaTarget[] = {m_ChromaTarget.Get()};
+        m_Context->OMSetRenderTargets(1, chromaTarget, nullptr);
+        m_Context->RSSetViewports(1, &viewport);
+        m_Context->PSSetShader(m_ChromaShader.Get(), nullptr, 0);
+        m_Context->Draw(3, 0);
+    }
 
     // Unbind the source before returning: capture is about to release the
     // texture, and leaving it bound to the pipeline would keep it alive and

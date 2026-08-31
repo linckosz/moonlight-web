@@ -147,6 +147,8 @@ NvencCaps queryUncached(uint64_t adapterLuid)
                     // will re-check for itself.
                     if (queryCap(api->fn(), encoder, supported, NV_ENC_CAPS_SUPPORT_10BIT_ENCODE))
                         caps.supports10Bit = true;
+                    if (queryCap(api->fn(), encoder, supported, NV_ENC_CAPS_SUPPORT_YUV444_ENCODE))
+                        caps.supports444 = true;
                     if (queryCap(api->fn(), encoder, supported, NV_ENC_CAPS_SUPPORT_INTRA_REFRESH))
                         caps.supportsIntraRefresh = true;
                     if (queryCap(api->fn(), encoder, supported,
