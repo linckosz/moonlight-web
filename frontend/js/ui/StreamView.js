@@ -107,7 +107,7 @@ import { StreamViewFullscreen } from './StreamViewFullscreen.js';
  * Both are sent on every update, so flipping it needs only a page reload — the
  * host is never told which one the client picked.
  */
-const CURSOR_USES_CLIENT_STYLE = true;
+const CURSOR_USES_CLIENT_STYLE = false;
 
 // Which MultiSeat hosts have already had their input notice this page, by uuid.
 //
