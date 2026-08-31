@@ -426,6 +426,16 @@ private:
             return false;
         }
 
+        // The size of the first keyframe, once. It is the number that says
+        // whether a still picture will look right: nothing follows it to refine
+        // it, so on a static screen it IS the picture. Cheap, and it turns "it
+        // looks soft" into a figure that can be compared across settings.
+        if (encoded.keyframe && !m_LoggedFirstKeyframe) {
+            m_LoggedFirstKeyframe = true;
+            log::info("[native] first keyframe: " + std::to_string(encoded.size / 1024) + " KB (" +
+                      std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + ")");
+        }
+
         if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo) {
             EncodedFrame out;
             out.data = encoded.data;
@@ -577,6 +587,7 @@ private:
     /// re-sent on every frame.
     uint64_t m_ReportedShape = 0;
     bool m_ReportedVisible = false;
+    bool m_LoggedFirstKeyframe = false;
     /// The flattened image handed to the client. Reused so a shape change does
     /// not allocate on the capture thread.
     std::vector<uint8_t> m_CursorScratch;
