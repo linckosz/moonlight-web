@@ -25,6 +25,9 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <climits>
+#include <cstdlib>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -55,12 +58,16 @@ std::string narrow(const wchar_t* wide)
     return out;
 }
 
-/// A display's real mode: pixels and refresh, neither rounded nor scaled.
+/// A display's real mode: pixels and refresh, neither rounded nor scaled, plus
+/// the monitor's own name when it has one.
 struct DisplayMode
 {
     int width = 0;
     int height = 0;
     int refreshMilliHz = 0;
+    /// The name the monitor reports in its EDID — "M27Q", "LINDY32115_V3".
+    /// Empty for a virtual display, which has no EDID to report one.
+    std::string monitorName;
 };
 
 /// The true mode of each output, keyed by GDI device name ("\\\\.\\DISPLAY1").
@@ -114,6 +121,19 @@ std::unordered_map<std::string, DisplayMode> realDisplayModes()
                                  static_cast<long long>(rate.Denominator));
         }
 
+        // The monitor's own name, straight from its EDID. This is what makes a
+        // display identifiable without a number: "M27Q" is the label on the
+        // bezel, and it does not change when Windows renumbers its list.
+        DISPLAYCONFIG_TARGET_DEVICE_NAME targetName = {};
+        targetName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+        targetName.header.size = sizeof(targetName);
+        targetName.header.adapterId = path.targetInfo.adapterId;
+        targetName.header.id = path.targetInfo.id;
+        if (::DisplayConfigGetDeviceInfo(&targetName.header) == ERROR_SUCCESS &&
+            targetName.flags.friendlyNameFromEdid) {
+            mode.monitorName = narrow(targetName.monitorFriendlyDeviceName);
+        }
+
         // The SOURCE mode is the desktop framebuffer — which is exactly what
         // Desktop Duplication hands back, so it is the size the pipeline will
         // really carry. The target's signal size can differ from it when the
@@ -148,6 +168,60 @@ DisplayMode modeFromGdi(const wchar_t* deviceName)
     return mode;
 }
 
+/// The number Windows Settings puts on each display, keyed by GDI device name.
+///
+/// Not derivable from anything already at hand, which is why this needs its own
+/// enumeration:
+///
+///  - our own index is just the order DXGI happened to enumerate adapters in;
+///  - the GDI name is NOT the number — this machine reports `\\.\DISPLAY29`,
+///    `\\.\DISPLAY27` and `\\.\DISPLAY2` for its three screens, because those
+///    names persist across every monitor ever plugged in;
+///  - `DISPLAYCONFIG_PATH_SOURCE_INFO::id` is 0 on all three (one source per
+///    adapter), and `targetInfo.id` is a hardware id in the thousands.
+///
+/// What Settings shows is the RANK of the display's GDI index among the
+/// attached ones, counting from 1. The names themselves are not the numbers —
+/// they persist across every monitor ever plugged in, so this machine's three
+/// screens are `\\.\DISPLAY2`, `\\.\DISPLAY27` and `\\.\DISPLAY29`, which
+/// Settings presents as 1, 2 and 3 in that order.
+///
+/// Deliberately paired with the monitor's EDID name in the label rather than
+/// trusted on its own: this rule matches what was observed on this machine, but
+/// the numbering is not documented by Microsoft, and a name from the monitor
+/// itself cannot be wrong.
+std::unordered_map<std::string, int> windowsDisplayNumbers()
+{
+    // GDI index → device name, sorted by the map itself.
+    std::map<unsigned long, std::string> attached;
+
+    DISPLAY_DEVICEW device = {};
+    device.cb = sizeof(device);
+
+    for (DWORD index = 0; ::EnumDisplayDevicesW(nullptr, index, &device, 0); ++index) {
+        device.cb = sizeof(device);
+        // Mirrors are not displays anyone streams, and a device not on the
+        // desktop has no number in Settings either.
+        if ((device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) == 0) continue;
+        if (device.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER) continue;
+
+        const std::string name = narrow(device.DeviceName);
+        // "\\.\DISPLAY27" → 27. A name that does not parse keeps its place at
+        // the end rather than colliding with a real index at 0.
+        const size_t digits = name.find_last_not_of("0123456789");
+        unsigned long gdiIndex = ULONG_MAX;
+        if (digits != std::string::npos && digits + 1 < name.size())
+            gdiIndex = std::strtoul(name.c_str() + digits + 1, nullptr, 10);
+        attached[gdiIndex] = name;
+    }
+
+    std::unordered_map<std::string, int> byDevice;
+    int number = 0;
+    for (const auto& entry : attached)
+        byDevice[entry.second] = ++number;
+    return byDevice;
+}
+
 bool isPrimary(HMONITOR monitor)
 {
     MONITORINFO info = {};
@@ -171,11 +245,25 @@ bool isHdrActive(IDXGIOutput* output)
     return desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
 }
 
-/// "Display 1 — 2560×1440 · 144 Hz" — the only technical string a user sees.
-std::string makeLabel(int index, int width, int height, int refreshMilliHz)
+/// The one technical string a user sees, e.g.
+/// "Display 3 · M27Q — 2560×1440 · 165 Hz".
+///
+/// Carries BOTH identifiers on purpose, because neither alone is enough:
+///
+///  - the NUMBER is what Windows' own display settings show, so the user can
+///    line the two lists up — but Windows renumbers it when monitors are
+///    plugged or unplugged;
+///  - the NAME comes from the monitor's EDID and is the label on its bezel. It
+///    survives renumbering, and it is what actually tells two screens apart.
+///
+/// A display with no EDID name — a virtual display — shows the number alone.
+std::string makeLabel(int number, const std::string& monitorName, int width, int height,
+                      int refreshMilliHz)
 {
-    std::string label = "Display " + std::to_string(index) + " — " + std::to_string(width) +
-                        "\xC3\x97" + std::to_string(height); // U+00D7 MULTIPLICATION SIGN
+    std::string label = "Display " + std::to_string(number);
+    if (!monitorName.empty()) label += " \xC2\xB7 " + monitorName;
+    label += " — " + std::to_string(width) + "\xC3\x97" +
+             std::to_string(height); // U+00D7 MULTIPLICATION SIGN
     if (refreshMilliHz > 0) {
         label += " \xC2\xB7 " + std::to_string((refreshMilliHz + 500) / 1000) + " Hz";
     }
@@ -242,6 +330,7 @@ Unavailability enumerate(Capabilities& caps)
     }
 
     const std::unordered_map<std::string, DisplayMode> displayModes = realDisplayModes();
+    const std::unordered_map<std::string, int> displayNumbers = windowsDisplayNumbers();
 
     int nextGpuId = 0;
     int nextDisplayId = 0;
@@ -319,8 +408,21 @@ Unavailability enumerate(Capabilities& caps)
 
             display.hdrActive = isHdrActive(output.Get());
             display.primary = isPrimary(outputDesc.Monitor);
-            display.label =
-                makeLabel(display.id + 1, display.width, display.height, display.refreshMilliHz);
+
+            // The number Windows Settings shows, so the two lists agree. Falls
+            // back to our own position only if the lookup fails, which would
+            // leave the user with a number that matches nothing — better than
+            // no number at all, and logged so it is not silent.
+            const auto numberIt = displayNumbers.find(deviceName);
+            int number = display.id + 1;
+            if (numberIt != displayNumbers.end()) {
+                number = numberIt->second;
+            } else {
+                log::warning("[native] " + deviceName +
+                             ": no Windows display number — labelling by position");
+            }
+            display.label = makeLabel(number, mode.monitorName, display.width, display.height,
+                                      display.refreshMilliHz);
 
             caps.displays.push_back(std::move(display));
             adapterDrivesADisplay = true;
