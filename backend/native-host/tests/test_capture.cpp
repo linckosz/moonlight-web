@@ -106,6 +106,7 @@ void run_capture_tests()
     // spontaneous damage would be flaky by design.
     int captured = 0;
     int timeouts = 0;
+    int pointerOnly = 0;
     int64_t worstLatencyUs = 0;
     int64_t totalLatencyUs = 0;
 
@@ -115,6 +116,21 @@ void run_capture_tests()
 
         if (status == capture::AcquireStatus::Timeout) {
             ++timeouts;
+            continue;
+        }
+        if (status == capture::AcquireStatus::PointerOnly) {
+            // The mouse moved and the desktop did not. No texture comes with
+            // this, but the cursor state must be usable: it is what the
+            // conversion pass draws from, and a shape with no pixels would
+            // silently produce an invisible pointer.
+            ++pointerOnly;
+            const capture::CursorState& c = duplication.cursor();
+            if (c.visible && c.width > 0) {
+                CHECK(c.height > 0);
+                CHECK_EQ(c.pixels.size(), static_cast<size_t>(c.width) * c.height * 4);
+                CHECK_EQ(c.invert.size(), static_cast<size_t>(c.width) * c.height);
+                CHECK(c.shapeVersion > 0);
+            }
             continue;
         }
         if (status == capture::AcquireStatus::Lost) {
@@ -145,7 +161,8 @@ void run_capture_tests()
         duplication.release();
     }
 
-    std::fprintf(stderr, "  frames=%d timeouts=%d\n", captured, timeouts);
+    std::fprintf(stderr, "  frames=%d timeouts=%d pointer-only=%d\n", captured, timeouts,
+                 pointerOnly);
     if (captured > 0) {
         std::fprintf(stderr, "  capture latency: mean %.2f ms, worst %.2f ms\n",
                      static_cast<double>(totalLatencyUs) / captured / 1000.0,
@@ -160,8 +177,7 @@ void run_capture_tests()
                              "no frame to measure\n");
     }
 
-    // ── Capture → colour conversion, and real pixels at the end of it
-    // ────────
+    // ── Capture → conversion, and real pixels at the end of it ──────────
     //
     // The only way to know the conversion works is to look at what it produced.
     // A shader that compiles, binds and draws nothing at all would pass every
@@ -185,7 +201,7 @@ void run_capture_tests()
             if (!haveFrame) {
                 std::fprintf(stderr, "  conversion not exercised: the screen stayed still\n");
             } else {
-                CHECK(converter.convert(frame.texture, convertError));
+                CHECK(converter.convert(frame.texture, duplication.cursor(), convertError));
                 CHECK(converter.output() != nullptr);
                 CHECK_EQ(converter.outputWidth(), duplication.width());
                 CHECK_EQ(converter.outputHeight(), duplication.height());
@@ -396,7 +412,8 @@ void run_capture_tests()
                                 }
                                 if (st != capture::AcquireStatus::Ok) break;
 
-                                const bool converted = converter.convert(live.texture, encodeError);
+                                const bool converted = converter.convert(
+                                    live.texture, duplication.cursor(), encodeError);
                                 duplication.release();
                                 if (!converted) {
                                     std::fprintf(stderr, "  cycle: conversion failed: %s\n",
@@ -447,7 +464,8 @@ void run_capture_tests()
                                            convert::ColorConvert::Chroma::C444, error444)) {
                         std::fprintf(stderr, "  4:4:4 conversion unavailable: %s\n",
                                      error444.c_str());
-                    } else if (!converter444.convert(frame.texture, error444)) {
+                    } else if (!converter444.convert(frame.texture, duplication.cursor(),
+                                                     error444)) {
                         std::fprintf(stderr, "  4:4:4 conversion failed: %s\n", error444.c_str());
                     } else {
                         // 4:4:4 is only claimed by NVENC so far, and the

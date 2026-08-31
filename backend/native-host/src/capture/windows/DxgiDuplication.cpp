@@ -195,6 +195,127 @@ bool DxgiDuplication::start(std::string& error)
     return true;
 }
 
+void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, const uint8_t* data,
+                                  size_t size)
+{
+    const int pitch = static_cast<int>(shape.Pitch);
+    const int width = static_cast<int>(shape.Width);
+    // A monochrome cursor packs two 1-bit masks into one image: the AND mask on
+    // top, the XOR mask below. Its real height is half what DXGI reports.
+    const bool monochrome = shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
+    const int height = static_cast<int>(shape.Height) / (monochrome ? 2 : 1);
+
+    if (width <= 0 || height <= 0 || pitch <= 0) return;
+
+    m_Cursor.width = width;
+    m_Cursor.height = height;
+    m_Cursor.pixels.assign(static_cast<size_t>(width) * height * 4, 0);
+    m_Cursor.invert.assign(static_cast<size_t>(width) * height, 0);
+    ++m_Cursor.shapeVersion;
+
+    m_CursorHotspotX = static_cast<int>(shape.HotSpot.x);
+    m_CursorHotspotY = static_cast<int>(shape.HotSpot.y);
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const size_t out = (static_cast<size_t>(y) * width + x);
+            uint8_t* px = &m_Cursor.pixels[out * 4];
+
+            if (monochrome) {
+                // Bit per pixel, most significant bit first. The AND mask
+                // selects between "the XOR bit is a colour" and "the XOR bit
+                // says whether to invert".
+                const size_t andOffset = static_cast<size_t>(y) * pitch + (x / 8);
+                const size_t xorOffset = static_cast<size_t>(y + height) * pitch + (x / 8);
+                if (xorOffset >= size) continue;
+                const uint8_t mask = static_cast<uint8_t>(0x80 >> (x % 8));
+                const bool andBit = (data[andOffset] & mask) != 0;
+                const bool xorBit = (data[xorOffset] & mask) != 0;
+
+                if (!andBit) {
+                    // Opaque: black where the XOR bit is clear, white where set.
+                    const uint8_t v = xorBit ? 0xFF : 0x00;
+                    px[0] = px[1] = px[2] = v;
+                    px[3] = 0xFF;
+                } else if (xorBit) {
+                    m_Cursor.invert[out] = 0xFF;
+                    px[3] = 0xFF;
+                }
+                // andBit && !xorBit → transparent, already zeroed.
+                continue;
+            }
+
+            const size_t in = static_cast<size_t>(y) * pitch + static_cast<size_t>(x) * 4;
+            if (in + 3 >= size) continue;
+
+            if (shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR) {
+                // Here the alpha byte is not coverage but a mask: 0 means "use
+                // this colour", 0xFF means "invert the background and ignore
+                // the colour".
+                if (data[in + 3] == 0xFF) {
+                    m_Cursor.invert[out] = 0xFF;
+                    px[3] = 0xFF;
+                } else {
+                    px[0] = data[in + 0];
+                    px[1] = data[in + 1];
+                    px[2] = data[in + 2];
+                    px[3] = 0xFF;
+                }
+                continue;
+            }
+
+            // Plain colour: BGRA with real coverage in alpha.
+            px[0] = data[in + 0];
+            px[1] = data[in + 1];
+            px[2] = data[in + 2];
+            px[3] = data[in + 3];
+        }
+    }
+}
+
+bool DxgiDuplication::updateCursor(const DXGI_OUTDUPL_FRAME_INFO& info)
+{
+    bool changed = false;
+
+    // A shape only arrives when it actually changed, so this is rare — a cursor
+    // keeps one shape for thousands of frames.
+    if (info.PointerShapeBufferSize > 0) {
+        if (m_ShapeBuffer.size() < info.PointerShapeBufferSize)
+            m_ShapeBuffer.resize(info.PointerShapeBufferSize);
+
+        DXGI_OUTDUPL_POINTER_SHAPE_INFO shape = {};
+        UINT required = 0;
+        const HRESULT hr = m_Duplication->GetFramePointerShape(
+            static_cast<UINT>(m_ShapeBuffer.size()), m_ShapeBuffer.data(), &required, &shape);
+        if (SUCCEEDED(hr)) {
+            decodeShape(shape, m_ShapeBuffer.data(), m_ShapeBuffer.size());
+            changed = true;
+        } else {
+            log::warning("[native] could not read the cursor shape: " + hresultToString(hr));
+        }
+    }
+
+    // LastMouseUpdateTime is zero when this frame carries no pointer news at
+    // all, and the previous position stands.
+    if (info.LastMouseUpdateTime.QuadPart != 0) {
+        const bool wasVisible = m_Cursor.visible;
+        const int oldX = m_Cursor.x;
+        const int oldY = m_Cursor.y;
+
+        m_Cursor.visible = info.PointerPosition.Visible != FALSE;
+        // Position is given for the hotspot; the image starts above and left of
+        // it. Drawing at the hotspot would offset every cursor by its own
+        // shape — an arrow would look right and a crosshair would not.
+        m_Cursor.x = info.PointerPosition.Position.x - m_CursorHotspotX;
+        m_Cursor.y = info.PointerPosition.Position.y - m_CursorHotspotY;
+
+        changed = changed || m_Cursor.visible != wasVisible ||
+                  (m_Cursor.visible && (m_Cursor.x != oldX || m_Cursor.y != oldY));
+    }
+
+    return changed;
+}
+
 AcquireStatus DxgiDuplication::acquire(int timeoutMs, CapturedFrame& frame)
 {
     if (!m_Duplication) return AcquireStatus::Failed;
@@ -224,12 +345,19 @@ AcquireStatus DxgiDuplication::acquire(int timeoutMs, CapturedFrame& frame)
 
     m_FrameHeld = true;
 
-    // A present time of zero means DXGI woke us for a pointer change only: the
-    // desktop image is unchanged, so there is nothing to encode. Treating it as
-    // a frame would send a duplicate and, worse, stamp it with a bogus time.
+    const bool cursorMoved = updateCursor(info);
+
+    // A present time of zero means DXGI woke us for a pointer change only: not
+    // one desktop pixel moved, so there is no new texture to encode and no
+    // honest present time to stamp on it.
+    //
+    // It is still not nothing. We composite the cursor ourselves, so the frame
+    // the viewer sees HAS changed — and reporting this as a plain timeout is
+    // exactly what left the cursor frozen on a quiet screen. The caller is told
+    // which of the two it is and re-encodes from its own copy.
     if (info.LastPresentTime.QuadPart == 0) {
         release();
-        return AcquireStatus::Timeout;
+        return cursorMoved ? AcquireStatus::PointerOnly : AcquireStatus::Timeout;
     }
 
     if (FAILED(resource.As(&m_AcquiredTexture))) {

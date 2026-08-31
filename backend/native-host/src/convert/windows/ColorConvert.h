@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "../../capture/windows/IWindowsCapture.h"
+
 #include <d3d11.h>
 #include <wrl/client.h>
 
@@ -81,7 +83,12 @@ public:
 
     /// Convert one frame. @p source is the texture from capture; the result is
     /// in output(), ready for the encoder to register.
-    bool convert(ID3D11Texture2D* source, std::string& error);
+    ///
+    /// @p cursor is drawn into the picture on the way through. Pass a state with
+    /// `visible == false` for none. The shape is re-uploaded only when its
+    /// `shapeVersion` changes, so a cursor that merely moves costs nothing but
+    /// a constant-buffer write.
+    bool convert(ID3D11Texture2D* source, const capture::CursorState& cursor, std::string& error);
 
     /// The texture the last convert() wrote — NV12 or AYUV per chroma().
     /// Owned here and reused every frame: allocating one per frame would be a
@@ -95,6 +102,10 @@ private:
     bool createShaders(std::string& error);
     bool createOutput(std::string& error);
 
+    /// Re-upload the cursor's small textures, and tell the shader where to put
+    /// them. Cheap on every frame but the ones where the shape changed.
+    bool updateCursorResources(const capture::CursorState& cursor, std::string& error);
+
     Microsoft::WRL::ComPtr<ID3D11Device> m_Device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_Context;
 
@@ -104,6 +115,19 @@ private:
     /// 4:4:4 needs only this one: a single draw writes all three components.
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_PackedShader;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> m_Sampler;
+    /// Point sampling for the cursor's invert mask: a half-inverted pixel is
+    /// not a thing, and interpolating the flag fringes the I-beam.
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> m_NearestSampler;
+
+    /// The cursor, as two small textures plus where to draw them. Recreated
+    /// only when the shape changes — which, for a cursor being moved around, is
+    /// approximately never.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_CursorPixels;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_CursorPixelsView;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_CursorInvert;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_CursorInvertView;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> m_OverlayBuffer;
+    uint64_t m_CursorShapeVersion = 0;
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_Output;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_LumaTarget;

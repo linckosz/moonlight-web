@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace mw::native::capture {
 
@@ -58,15 +59,26 @@ public:
     void stop() override;
 
     ID3D11Device* device() const override { return m_Device.Get(); }
+    ID3D11DeviceContext* context() const override { return m_Context.Get(); }
     int width() const override { return m_Width; }
     int height() const override { return m_Height; }
     DXGI_FORMAT format() const override { return m_Format; }
     DesktopRect desktopRect() const override { return m_DesktopRect; }
+    const CursorState& cursor() const override { return m_Cursor; }
 
 private:
     /// Find the adapter whose LUID matches, and its requested output.
     bool openAdapterAndOutput(Microsoft::WRL::ComPtr<IDXGIAdapter1>& adapter,
                               Microsoft::WRL::ComPtr<IDXGIOutput>& output, std::string& error);
+
+    /// Fold this frame's pointer information into m_Cursor. Returns true when
+    /// anything the consumer can see changed (position, visibility or shape).
+    bool updateCursor(const DXGI_OUTDUPL_FRAME_INFO& info);
+
+    /// Turn DXGI's shape encoding — monochrome, colour, or masked colour — into
+    /// the single RGBA + invert-mask form CursorState carries.
+    void decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, const uint8_t* data,
+                     size_t size);
 
     /// Convert a QPC tick count to microseconds on the engine's steady clock.
     ///
@@ -95,6 +107,16 @@ private:
     int m_Height = 0;
     DXGI_FORMAT m_Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     DesktopRect m_DesktopRect;
+
+    CursorState m_Cursor;
+    /// The hotspot of the current shape, subtracted from DXGI's position to get
+    /// the image's top-left. Kept apart from CursorState because the consumer
+    /// never needs it — it only wants to know where to draw.
+    int m_CursorHotspotX = 0;
+    int m_CursorHotspotY = 0;
+    /// Scratch for GetFramePointerShape, reused so a moving cursor does not
+    /// allocate. DXGI tells us the size it needs before it fills it.
+    std::vector<uint8_t> m_ShapeBuffer;
 
     /// Calibration for qpcToMicroseconds: ticks per second, plus one sample of
     /// both clocks taken at the same instant in start().
