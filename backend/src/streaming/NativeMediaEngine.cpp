@@ -414,6 +414,11 @@ void NativeMediaEngine::syncHeldInputs(const QVector<HeldKey>& keys, quint32 but
 
     // Re-press what the watchdog released but the client still holds. The
     // watchdog itself is shared session logic and lives above this class.
+    //
+    // Marked `resync` so the input backend can tell this apart from the user
+    // acting: this beats every 100 ms for as long as anything is held, and
+    // re-applying a press that never went away is an extra character on the
+    // keyboard and a second click on the mouse.
     for (const HeldKey& key : keys) {
         mw::native::InputEvent event;
         event.type = mw::native::InputEvent::Type::KeyDown;
@@ -421,6 +426,7 @@ void NativeMediaEngine::syncHeldInputs(const QVector<HeldKey>& keys, quint32 but
         event.modifiers = static_cast<uint8_t>(key.modifiers);
         event.keyFlags = static_cast<uint8_t>(key.flags);
         event.hold = key.hold;
+        event.resync = true;
         m_Session->sendInput(event);
     }
 
@@ -430,6 +436,7 @@ void NativeMediaEngine::syncHeldInputs(const QVector<HeldKey>& keys, quint32 but
         event.type = mw::native::InputEvent::Type::MouseButtonDown;
         event.button = button;
         event.hold = buttonsHold;
+        event.resync = true;
         m_Session->sendInput(event);
     }
 }

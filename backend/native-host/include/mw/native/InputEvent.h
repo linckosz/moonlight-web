@@ -103,6 +103,18 @@ struct InputEvent
     /// nothing with it — the shared InputWatchdog above this module does — but
     /// it rides along so the two paths stay symmetrical.
     bool hold = false;
+
+    /// True when this press comes from the client's held-state heartbeat rather
+    /// than from the user doing something.
+    ///
+    /// The distinction is not cosmetic. That heartbeat beats every 100 ms while
+    /// anything is held, and its job is to restore what the host's watchdog
+    /// released during a stall. Applied blindly it does the opposite: pressing a
+    /// key that is ALREADY down is an extra character, and pressing a mouse
+    /// button that is already down is a second click — which is how a plain tap
+    /// on a trackpad arrived on the host as a double-click. A resync press is
+    /// therefore applied only when it actually changes something.
+    bool resync = false;
 };
 
 /// Rumble the host asked to send back to the client's gamepad. Travels the
