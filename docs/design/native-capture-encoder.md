@@ -425,6 +425,35 @@ seulement HEVC/H.264.
 coexistent pas — la seconde démolit la première. C'est le take-over délibéré du
 `/start` existant, pas une propriété du moteur natif.
 
+### ⚠️ Intel (oneVPL) — écrit, jamais exécuté
+
+Le chemin Intel est implémenté (sonde de capacités + encodeur) mais **aucun GPU
+Intel ne l'a jamais exécuté**. Tous les autres encodeurs de cet arbre ont été
+mesurés sur la machine qu'ils visent ; celui-ci non. À considérer comme non
+prouvé jusqu'à ce qu'il encode une frame sur du vrai matériel.
+
+Ce qui EST vérifié, sans matériel :
+
+- **le calcul des paramètres**, qui est la partie la plus facile à se tromper
+  en silence. `TargetKbps` est un `mfxU16` : au-delà de 65535 kbps il faut
+  `BRCParamMultiplier`, sans quoi une demande à 100 Mbps se replierait sur une
+  fraction d'elle-même et ressemblerait à un réglage de débit ignoré. Testé :
+  150000 kbps → 50000 × 3 ;
+- **l'alignement** : surface 16-alignée, crop à la taille réelle (1080 → 1088
+  de surface). Se tromper donne quelques pixels de rebut au bord ;
+- **l'absence du runtime**, qui doit répondre proprement — c'est le cas sur ce
+  banc, sans GPU Intel.
+
+Choix assumés, notés pour qui reprendra :
+
+| Point | Décision |
+|---|---|
+| Runtime | oneVPL 2.x (`libvpl.dll`) seulement, pas le Media SDK historique |
+| Implémentation | filtrée sur HARDWARE — sinon oneVPL sert son repli logiciel en silence |
+| Choix du GPU | par `MFX_HANDLE_D3D11_DEVICE` sur NOTRE device, comme AMF, plutôt qu'en appariant à la main les énumérations Intel et DXGI |
+| 4:4:4 | non revendiqué : la passe de conversion produit de l'AYUV, qu'oneVPL ne prend pas en entrée d'encodeur |
+| Intra-refresh | non revendiqué : disponible seulement via un buffer d'extension dont le support varie par génération |
+
 ### Vérification restante
 
 **Un stream Sunshine et un stream Wolf réels.** Le refactor `IMediaEngine` est
