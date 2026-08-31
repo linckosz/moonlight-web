@@ -9,7 +9,9 @@
 #if defined(_WIN32)
 #include "capture/windows/DxgiDuplication.h"
 #include "convert/windows/ColorConvert.h"
+#include "encode/windows/AmfEncoder.h"
 #include "encode/windows/NvencEncoder.h"
+#include <memory>
 #include <wrl/client.h>
 #endif
 
@@ -245,14 +247,31 @@ void run_capture_tests()
                 // returns success but that what it returns is a bitstream the
                 // browser could actually decode — so the Annex-B structure is
                 // inspected rather than trusted.
-                if (!gpu->codecs.empty() && gpu->encoders.front() == EncoderApi::Nvenc) {
-                    encode::NvencEncoder encoder;
+                // Whichever vendor drives this display — the point is that the
+                // pipeline works on the GPU the machine actually has, not on
+                // the one the test was written against.
+                std::unique_ptr<encode::IVideoEncoder> encoderPtr;
+                if (!gpu->codecs.empty()) {
+                    switch (gpu->encoders.front()) {
+                    case EncoderApi::Nvenc:
+                        encoderPtr = std::make_unique<encode::NvencEncoder>();
+                        break;
+                    case EncoderApi::Amf:
+                        encoderPtr = std::make_unique<encode::AmfEncoder>();
+                        break;
+                    default: break;
+                    }
+                }
+
+                if (encoderPtr) {
+                    encode::IVideoEncoder& encoder = *encoderPtr;
+                    std::fprintf(stderr, "  encoder: %s\n", toString(gpu->encoders.front()));
                     std::string encodeError;
                     if (!encoder.init(duplication.device(), Codec::H264, converter.outputWidth(),
                                       converter.outputHeight(), 60, 20000, false, encodeError)) {
                         std::fprintf(stderr, "  encode skipped: %s\n", encodeError.c_str());
                     } else {
-                        encode::NvencOutput encoded;
+                        encode::EncoderOutput encoded;
                         // The first frame must be a keyframe: a client has
                         // nothing to decode against otherwise.
                         CHECK(encoder.encode(converter.output(), true, encoded, encodeError));
@@ -315,9 +334,12 @@ void run_capture_tests()
                         int encodedCount = 0;
                         for (int i = 0; i < 30; ++i) {
                             const auto before = std::chrono::steady_clock::now();
-                            encode::NvencOutput delta;
-                            if (!encoder.encode(converter.output(), false, delta, encodeError))
+                            encode::EncoderOutput delta;
+                            if (!encoder.encode(converter.output(), false, delta, encodeError)) {
+                                std::fprintf(stderr, "  encode stopped at frame %d: %s\n", i,
+                                             encodeError.c_str());
                                 break;
+                            }
                             const auto after = std::chrono::steady_clock::now();
                             encoder.releaseOutput();
 
@@ -340,6 +362,61 @@ void run_capture_tests()
                             // means something is badly misconfigured.
                             CHECK(totalUs / encodedCount < 16000);
                         }
+
+                        // ── The real cycle: capture → convert → encode ───────
+                        //
+                        // What a session actually does, and what encoding the
+                        // same already-converted texture thirty times does NOT
+                        // exercise: the converter rewrites the encoder's input
+                        // between frames. An encoder that tolerates a static
+                        // buffer but stalls when its input changes underneath it
+                        // passes the loop above and dies in the field — which is
+                        // exactly what happened on the AMD path, one frame in.
+                        //
+                        // Run on a thread OTHER than the one that built the
+                        // encoder, because that is what a session does — start()
+                        // on the caller's thread, the loop on its own. An
+                        // encoder that only works where it was created passes
+                        // every single-threaded test and takes the worker
+                        // process down on the second frame.
+                        int cycled = 0;
+                        int cycleTimeouts = 0;
+                        std::thread cycleThread([&] {
+                            for (int attempt = 0; attempt < 120 && cycled < 20; ++attempt) {
+                                capture::CapturedFrame live;
+                                const capture::AcquireStatus st = duplication.acquire(50, live);
+                                if (st == capture::AcquireStatus::Timeout) {
+                                    ++cycleTimeouts;
+                                    continue;
+                                }
+                                if (st != capture::AcquireStatus::Ok) break;
+
+                                const bool converted = converter.convert(live.texture, encodeError);
+                                duplication.release();
+                                if (!converted) {
+                                    std::fprintf(stderr, "  cycle: conversion failed: %s\n",
+                                                 encodeError.c_str());
+                                    break;
+                                }
+
+                                encode::EncoderOutput liveEncoded;
+                                if (!encoder.encode(converter.output(), false, liveEncoded,
+                                                    encodeError)) {
+                                    std::fprintf(stderr, "  cycle stopped after %d frames: %s\n",
+                                                 cycled, encodeError.c_str());
+                                    break;
+                                }
+                                encoder.releaseOutput();
+                                ++cycled;
+                            }
+                        });
+                        cycleThread.join();
+                        std::fprintf(stderr,
+                                     "  capture->convert->encode cycles: %d (timeouts %d)\n",
+                                     cycled, cycleTimeouts);
+                        // One frame proves nothing: the failure being guarded
+                        // against produced exactly one and then stopped.
+                        if (cycleTimeouts < 100) CHECK(cycled > 1);
 
                         // Changing bitrate mid-session must not need a restart:
                         // it is what lets the encoder follow the client's real
@@ -367,6 +444,8 @@ void run_capture_tests()
                     } else if (!converter444.convert(frame.texture, error444)) {
                         std::fprintf(stderr, "  4:4:4 conversion failed: %s\n", error444.c_str());
                     } else {
+                        // 4:4:4 is only claimed by NVENC so far, and the
+                        // capability query above is what gates this block.
                         encode::NvencEncoder encoder444;
                         if (!encoder444.init(
                                 duplication.device(), Codec::H264, converter444.outputWidth(),
@@ -374,7 +453,7 @@ void run_capture_tests()
                             std::fprintf(stderr, "  4:4:4 encode unavailable: %s\n",
                                          error444.c_str());
                         } else {
-                            encode::NvencOutput out444;
+                            encode::EncoderOutput out444;
                             CHECK(encoder444.encode(converter444.output(), true, out444, error444));
                             if (out444.data) {
                                 std::fprintf(stderr, "  4:4:4 keyframe: %zu bytes\n", out444.size);

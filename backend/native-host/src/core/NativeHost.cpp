@@ -72,13 +72,46 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
               (selection.hdr ? " (HDR)" : "") +
               (selection.crossGpuCopy ? " [cross-GPU copy]" : ""));
 
+    // Hand the decision down rather than let the backend take it again. The
+    // backend's simpler answer — "encode on the GPU that drives the display" —
+    // is wrong exactly when the Selector was needed, so leaving it to guess
+    // undoes the work above.
+    ResolvedTarget target;
+    target.displayId = selection.display->id;
+    target.encodeGpuName = selection.gpu->name;
+    target.encoder = selection.encoder;
+    target.codec = selection.codec;
+    target.crossGpuCopy = selection.crossGpuCopy;
+    target.hdr = selection.hdr;
+    target.yuv444 = resolved.yuv444;
+    target.encodeAdapterHandle = selection.gpu->nativeHandle;
+
+    // Capture always happens on the adapter that scans the display out; only
+    // the encoder may sit elsewhere.
+    if (const GpuInfo* displayGpu = caps.gpuFor(*selection.display)) {
+        target.captureAdapterHandle = displayGpu->nativeHandle;
+    } else {
+        // No association: capture where we encode and accept whatever DXGI
+        // gives us. Rare enough to be worth saying out loud.
+        target.captureAdapterHandle = selection.gpu->nativeHandle;
+        log::warning("[native] display names no GPU — capturing on the encoder's adapter");
+    }
+
+    // DXGI wants the output's index within ITS OWN adapter.
+    unsigned outputIndex = 0;
+    for (const DisplayInfo& display : caps.displays) {
+        if (display.id == selection.display->id) break;
+        if (display.gpuId == selection.display->gpuId) ++outputIndex;
+    }
+    target.outputIndex = outputIndex;
+
     SessionCallbacks callbacks;
     callbacks.onVideo = std::move(onVideo);
     callbacks.onAudio = std::move(onAudio);
     callbacks.onRumble = std::move(onRumble);
     callbacks.onEnded = std::move(onEnded);
 
-    return detail::createPlatformSession(resolved, callbacks, error);
+    return detail::createPlatformSession(resolved, target, callbacks, error);
 }
 
 void NativeHost::setLogSink(std::function<void(int level, const std::string& message)> sink)
