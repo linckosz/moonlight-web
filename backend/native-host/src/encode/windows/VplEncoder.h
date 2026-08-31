@@ -59,9 +59,14 @@ public:
     void stop() override;
     bool setBitrate(int bitrateKbps, std::string& error) override;
 
-    /// oneVPL exposes intra-refresh only through a codec-specific extension
-    /// buffer whose support varies by generation, and claiming it unverified
-    /// would misreport what the stream actually does. Keyframes on demand.
+    /// No intra-refresh — and NOT because oneVPL lacks it: `IntRefType`,
+    /// `IntRefCycleSize` and `IntRefQPDelta` sit in `mfxExtCodingOption2`,
+    /// which would have to be attached to the parameter chain.
+    ///
+    /// Left out for the same reason as on the AMD path: the recovery half of
+    /// the benefit is never collected, because the relay answers every gap with
+    /// an IDR request rather than riding out a refresh window. See the note in
+    /// AmfEncoder.h.
     bool intraRefreshEnabled() const override { return false; }
 
 private:
