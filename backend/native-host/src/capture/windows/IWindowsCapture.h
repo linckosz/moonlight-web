@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Screen capture on Windows.
 //
@@ -54,6 +55,15 @@ enum class AcquireStatus
     /// caller must NOT treat this as a dropped frame.
     Timeout,
 
+    /// Only the mouse moved or changed shape — the desktop image is untouched,
+    /// so DXGI hands back no usable texture and release() has already happened.
+    ///
+    /// Worth its own status rather than being folded into Timeout: the cursor is
+    /// composited by us, so a pointer move IS a visible change even though not
+    /// one pixel of the desktop moved. Reporting it as "nothing happened" is
+    /// what made the cursor sit still on a quiet screen.
+    PointerOnly,
+
     /// The duplication became invalid — a mode change, a resolution change, a
     /// desktop switch (UAC / lock screen), or the GPU being reset. Recoverable:
     /// the caller re-runs start() and carries on.
@@ -81,6 +91,48 @@ struct CapturedFrame
     /// When acquire() returned. `capturedUs - presentUs` is the capture
     /// latency, and it is the first number worth watching.
     int64_t capturedUs = 0;
+};
+
+/// The mouse pointer, as Desktop Duplication reports it.
+///
+/// ── Why we have to draw it ourselves ────────────────────────────────────────
+///
+/// The duplicated desktop image does NOT contain the cursor. Windows composites
+/// the pointer at scan-out, so a captured frame is the desktop with a hole where
+/// the user is looking. DXGI hands the pointer over separately — a position, and
+/// a shape that changes only when the cursor does — and compositing the two is
+/// the caller's job.
+///
+/// The shape arrives in three encodings, and all three are reduced here to one:
+/// an RGBA image plus a per-pixel invert flag. Monochrome cursors (the text
+/// I-beam, most resize arrows) are the reason the flag exists — they carry no
+/// colour of their own and are defined as inverting whatever is behind them,
+/// which is what keeps an I-beam visible on both black and white text areas.
+struct CursorState
+{
+    /// Whether the pointer is on THIS display right now.
+    bool visible = false;
+
+    /// Top-left of the cursor image in captured-frame pixels — the hotspot has
+    /// already been subtracted, so this is where the image goes.
+    int x = 0;
+    int y = 0;
+
+    int width = 0;
+    int height = 0;
+
+    /// width × height × 4, BGRA order as D3D11 wants it. Alpha is real coverage:
+    /// colour cursors antialias their edges.
+    std::vector<uint8_t> pixels;
+
+    /// width × height, 255 where the pixel inverts the background instead of
+    /// replacing it. Zero everywhere for an ordinary colour cursor.
+    std::vector<uint8_t> invert;
+
+    /// Bumped every time `pixels`/`invert` change. Lets the consumer re-upload
+    /// the small textures only when the shape actually changed — a moving
+    /// cursor keeps the same shape for thousands of frames.
+    uint64_t shapeVersion = 0;
 };
 
 /// Where a display sits on the Windows desktop.
@@ -137,6 +189,11 @@ public:
     /// the captured display, so the encoder can attach to it with no copy.
     virtual ID3D11Device* device() const = 0;
 
+    /// That device's immediate context. Exposed so the caller can issue GPU
+    /// work against the captured textures — a copy, most usefully — without
+    /// making a second context that would need its own synchronisation.
+    virtual ID3D11DeviceContext* context() const = 0;
+
     virtual int width() const = 0;
     virtual int height() const = 0;
 
@@ -148,6 +205,10 @@ public:
     /// Where the captured display sits on the desktop, for aiming absolute
     /// mouse input at it. Valid only once start() has succeeded.
     virtual DesktopRect desktopRect() const = 0;
+
+    /// The pointer as of the last acquire(), whatever that acquire returned.
+    /// Updated on Ok and on PointerOnly alike.
+    virtual const CursorState& cursor() const = 0;
 
 protected:
     IWindowsCapture() = default;
