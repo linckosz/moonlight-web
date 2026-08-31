@@ -19,6 +19,10 @@
 
 #include "../../common/Logger.h"
 
+extern "C" {
+#include "Limelight.h"
+}
+
 #include "mw/native/NativeHost.h"
 
 #include <QHostInfo>
@@ -61,6 +65,46 @@ QString NativeHostBackend::unavailableReason()
     if (caps.available) return QString();
     return caps.diagnostic.empty() ? QString::fromUtf8(mw::native::toString(caps.reason))
                                    : QString::fromStdString(caps.diagnostic);
+}
+
+int NativeHostBackend::codecModeSupport()
+{
+    const mw::native::Capabilities caps = probeEngine();
+    if (!caps.available) return 0;
+
+    // The union across GPUs. Which one a session actually gets is decided per
+    // display by the engine's own Selector; this answers the broader question
+    // the host list asks — "can this machine encode X at all".
+    bool h264 = false, hevc = false, av1 = false, tenBit = false, yuv444 = false;
+    for (const mw::native::GpuInfo& gpu : caps.gpus) {
+        if (gpu.codecs.empty()) continue; // an API with no codec is no encoder
+        for (mw::native::Codec codec : gpu.codecs) {
+            switch (codec) {
+            case mw::native::Codec::H264: h264 = true; break;
+            case mw::native::Codec::Hevc: hevc = true; break;
+            case mw::native::Codec::Av1: av1 = true; break;
+            }
+        }
+        if (gpu.supports10Bit) tenBit = true;
+        if (gpu.supports444) yuv444 = true;
+    }
+
+    int mask = 0;
+    if (h264) mask |= SCM_H264;
+    if (hevc) mask |= SCM_HEVC;
+    if (av1) mask |= SCM_AV1_MAIN8;
+    if (tenBit) {
+        if (hevc) mask |= SCM_HEVC_MAIN10;
+        if (av1) mask |= SCM_AV1_MAIN10;
+    }
+    if (yuv444) {
+        if (h264) mask |= SCM_H264_HIGH8_444;
+        if (hevc) mask |= SCM_HEVC_REXT8_444;
+        if (hevc && tenBit) mask |= SCM_HEVC_REXT10_444;
+        if (av1) mask |= SCM_AV1_HIGH8_444;
+        if (av1 && tenBit) mask |= SCM_AV1_HIGH10_444;
+    }
+    return mask;
 }
 
 QString NativeHostBackend::hostDisplayName()
