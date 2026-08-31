@@ -210,6 +210,13 @@ public:
     /// Updated on Ok and on PointerOnly alike.
     virtual const CursorState& cursor() const = 0;
 
+    /// The point inside the shape that IS the pointer position. Already
+    /// subtracted from CursorState::x/y, so compositing does not need it — but a
+    /// client drawing its own pointer does, to place the image against its
+    /// cursor rather than against its top-left corner.
+    virtual int cursorHotspotX() const = 0;
+    virtual int cursorHotspotY() const = 0;
+
 protected:
     IWindowsCapture() = default;
 };
