@@ -83,6 +83,29 @@ struct CapturedFrame
     int64_t capturedUs = 0;
 };
 
+/// Where a display sits on the Windows desktop.
+///
+/// ── This is the DPI-VIRTUALIZED rectangle, on purpose ───────────────────────
+///
+/// DXGI reports desktop coordinates through the same DPI virtualization that
+/// made a 2560×1440 monitor at 125% measure 2048×1152 — the bug that sent the
+/// probe to QueryDisplayConfig for the real mode. Do not "fix" this one the
+/// same way. SendInput's absolute coordinates are expressed against
+/// SM_XVIRTUALSCREEN/SM_CXVIRTUALSCREEN, which are virtualized identically, so
+/// the two agree exactly. Substituting the true pixel size here would put the
+/// cursor in the wrong place on every scaled display.
+struct DesktopRect
+{
+    int left = 0;
+    int top = 0;
+    int right = 0;
+    int bottom = 0;
+
+    int width() const { return right - left; }
+    int height() const { return bottom - top; }
+    bool valid() const { return right > left && bottom > top; }
+};
+
 class IWindowsCapture
 {
 public:
@@ -121,6 +144,10 @@ public:
     /// R16G16B16A16_FLOAT when the output is scanning out HDR. The colour
     /// conversion stage keys off this rather than off what was requested.
     virtual DXGI_FORMAT format() const = 0;
+
+    /// Where the captured display sits on the desktop, for aiming absolute
+    /// mouse input at it. Valid only once start() has succeeded.
+    virtual DesktopRect desktopRect() const = 0;
 
 protected:
     IWindowsCapture() = default;

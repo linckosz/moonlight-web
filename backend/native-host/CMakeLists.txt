@@ -32,6 +32,7 @@ if(WIN32)
         src/platform/windows/WindowsSession.cpp
         src/capture/windows/DxgiDuplication.cpp
         src/convert/windows/ColorConvert.cpp
+        src/input/windows/Win32Input.cpp
         src/encode/windows/NvencApi.cpp
         src/encode/windows/NvencCapabilities.cpp
         src/encode/windows/NvencEncoder.cpp

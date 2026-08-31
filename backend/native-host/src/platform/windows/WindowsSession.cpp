@@ -23,6 +23,7 @@
 #include "../../encode/windows/AmfEncoder.h"
 #include "../../encode/windows/NvencEncoder.h"
 #include "../../encode/windows/VplEncoder.h"
+#include "../../input/windows/Win32Input.h"
 
 #include <atomic>
 #include <chrono>
@@ -161,6 +162,21 @@ public:
         m_Info.copiesPerFrame = 1;
         m_Info.crossGpuCopy = m_Target.crossGpuCopy;
 
+        // Input comes up last, and its failure is NOT fatal. A session that
+        // streams but cannot inject is degraded; a session that refuses to
+        // start because of input gives the user nothing at all. The log says
+        // which one they got.
+        {
+            auto sink = std::make_unique<input::Win32Input>(m_Capture->desktopRect());
+            std::string inputError;
+            if (sink->start(inputError)) {
+                std::lock_guard<std::mutex> lock(m_InputMutex);
+                m_Input = std::move(sink);
+            } else {
+                log::warning("[native] input unavailable, streaming view-only: " + inputError);
+            }
+        }
+
         // The first frame must be a keyframe — a client has nothing to decode
         // against otherwise.
         m_ForceKeyframe.store(true);
@@ -180,6 +196,14 @@ public:
             else
                 m_Thread.join();
         }
+        // Torn down before the capture, and under the lock, because inject()
+        // runs on the network thread and may be in flight right now. Dropping
+        // the sink releases whatever the user was still holding.
+        {
+            std::lock_guard<std::mutex> lock(m_InputMutex);
+            m_Input.reset();
+        }
+
         if (!wasRunning && !m_Encoder && !m_Capture) return;
 
         m_Encoder.reset();
@@ -189,11 +213,18 @@ public:
 
     const SessionInfo& info() const override { return m_Info; }
 
-    void sendInput(const InputEvent&) override
+    void sendInput(const InputEvent& event) override
     {
-        // Input injection lands with the input backend. Silently ignored rather
-        // than queued: a queue would deliver a burst of stale events the moment
-        // it arrived, which is worse than having dropped them.
+        // Injected HERE, on the caller's thread, never handed to the capture
+        // thread: SendInput costs microseconds, and queueing it behind a frame
+        // being encoded would add a whole frame time to the one path where
+        // delay is felt directly.
+        //
+        // The lock only guards the sink's lifetime against stop(); it is
+        // uncontended in steady state, since the capture thread never touches
+        // input at all.
+        std::lock_guard<std::mutex> lock(m_InputMutex);
+        if (m_Input) m_Input->inject(event);
     }
 
     void requestKeyframe() override { m_ForceKeyframe.store(true); }
@@ -334,6 +365,12 @@ private:
     /// Held by interface: which vendor path this is was decided by the
     /// Selector, and the loop below neither knows nor needs to.
     std::unique_ptr<encode::IVideoEncoder> m_Encoder;
+
+    /// Optional: a session with no input sink still streams, view-only. Guarded
+    /// because it is created and destroyed on the session's thread but used on
+    /// the network thread.
+    std::mutex m_InputMutex;
+    std::unique_ptr<input::IInputSink> m_Input;
 
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};
