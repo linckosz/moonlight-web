@@ -50,7 +50,7 @@ public:
     ~VplEncoder() override;
 
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, std::string& error) override;
+              bool yuv444, bool intraRefresh, std::string& error) override;
 
     bool encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,
                 std::string& error) override;
@@ -59,19 +59,19 @@ public:
     void stop() override;
     bool setBitrate(int bitrateKbps, std::string& error) override;
 
-    /// No intra-refresh — and NOT because oneVPL lacks it: `IntRefType`,
-    /// `IntRefCycleSize` and `IntRefQPDelta` sit in `mfxExtCodingOption2`,
-    /// which would have to be attached to the parameter chain.
-    ///
-    /// Left out for the same reason as on the AMD path: the recovery half of
-    /// the benefit is never collected, because the relay answers every gap with
-    /// an IDR request rather than riding out a refresh window. See the note in
-    /// AmfEncoder.h.
-    bool intraRefreshEnabled() const override { return false; }
+    bool intraRefreshEnabled() const override { return m_IntraRefresh; }
 
 private:
     VplSession m_Session;
     mfxVideoParam m_Params = {};
+
+    /// Storage for the intra-refresh extension buffer and the chain that points
+    /// at it. Members rather than locals because oneVPL keeps the pointers: the
+    /// parameter block is read again on Reset, and a dangling extension buffer
+    /// there is a use-after-free the runtime cannot warn about.
+    mfxExtCodingOption2 m_CodingOption2 = {};
+    std::vector<mfxExtBuffer*> m_ExtBuffers;
+    bool m_IntraRefresh = false;
 
     /// The output bitstream, reused every frame. Sized from what the encoder
     /// itself asks for, never guessed.

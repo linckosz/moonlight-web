@@ -64,6 +64,9 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     resolved.fps = selection.fps;
     resolved.hdr = selection.hdr;
     resolved.clientCodecs = {selection.codec};
+    // Carried through unchanged: whether the encoder can honour it is its own
+    // answer, reported back in SessionInfo::intraRefresh.
+    resolved.intraRefresh = config.intraRefresh;
 
     log::info(std::string("[native] session: display ") + std::to_string(resolved.displayId) + " " +
               std::to_string(resolved.width) + "x" + std::to_string(resolved.height) + "@" +
