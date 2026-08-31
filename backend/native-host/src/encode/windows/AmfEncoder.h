@@ -23,26 +23,17 @@ namespace mw::native::encode {
 /// defaults: ultra-low-latency usage, no B-frames, CBR with a one-frame VBV,
 /// and a GOP long enough that no periodic keyframe is ever emitted.
 ///
-/// ── Where it differs from NVENC, and why ────────────────────────────────────
+/// ── Intra-refresh ───────────────────────────────────────────────────────────
 ///
-/// **No intra-refresh — and NOT because AMF lacks it.** All three codecs expose
-/// it: `IntraRefreshMBsNumberPerSlot` (H.264),
-/// `HevcIntraRefreshCTBsNumberPerSlot`, and `Av1IntraRefreshMode` with a
-/// CONTINUOUS mode. It is unimplemented here for a reason that has nothing to
-/// do with AMD.
+/// Supported here, on all three codecs, through the property AMD gives each:
+/// `IntraRefreshMBsNumberPerSlot` (H.264, in 16×16 macroblocks),
+/// `HevcIntraRefreshCTBsNumberPerSlot` (in 64×64 CTBs), and
+/// `Av1IntraRefreshMode` set to CONTINUOUS with a stripe count.
 ///
-/// The benefit of intra-refresh is that a client which loses data heals itself
-/// within one refresh cycle. MoonlightWeb never collects that: on any gap
-/// DataChannelRelay sets `m_AwaitingIdr`, discards deltas and asks for a real
-/// keyframe. The flat-bitrate half of the benefit is already had from the
-/// infinite GOP above, which costs nothing.
-///
-/// So intra-refresh is currently paid for (slightly larger P-frames at a fixed
-/// CBR budget) and never cashed in. NVENC has it because its API put it in
-/// three plain fields; writing it a second and third time would duplicate a
-/// no-op. Worth revisiting the day the receiver is taught to ride out a refresh
-/// window instead of gating — that is the change that would make it earn its
-/// keep, on all three vendors at once.
+/// Enabled only when the caller asks, because the benefit belongs to the
+/// receiver: a client that decodes through the damage repairs itself within one
+/// cycle, while one that discards deltas and demands an IDR — MoonlightWeb's
+/// default — collects nothing and still pays in slightly larger P-frames.
 ///
 /// **Property names are per codec.** AMF has no shared namespace: the same
 /// concept is `TargetBitrate`, `HevcTargetBitrate` or `Av1TargetBitrate`. They
@@ -55,7 +46,7 @@ public:
     ~AmfEncoder() override;
 
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, std::string& error) override;
+              bool yuv444, bool intraRefresh, std::string& error) override;
 
     bool encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,
                 std::string& error) override;
@@ -63,7 +54,7 @@ public:
     void releaseOutput() override;
     void stop() override;
     bool setBitrate(int bitrateKbps, std::string& error) override;
-    bool intraRefreshEnabled() const override { return false; }
+    bool intraRefreshEnabled() const override { return m_IntraRefresh; }
 
 private:
     const AmfApi* m_Api = nullptr;
@@ -79,6 +70,8 @@ private:
     int m_Width = 0;
     int m_Height = 0;
     int m_Fps = 60;
+    /// What the encoder was actually configured with — reported, not wished for.
+    bool m_IntraRefresh = false;
 };
 
 } // namespace mw::native::encode

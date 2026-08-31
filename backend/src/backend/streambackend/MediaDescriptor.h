@@ -73,6 +73,12 @@ struct NativeHostMedia
     /// really in an HDR mode and the encoder has a 10-bit path — otherwise the
     /// session runs SDR and says so, rather than failing.
     bool hdrRequested = false;
+
+    /// True when the client says it will decode through a gap rather than
+    /// demand a keyframe — which is the only thing that makes intra-refresh
+    /// worth its cost. Asked for by the browser, never assumed: the receiver
+    /// is the party that pays if it turns out to handle damage badly.
+    bool rideOutLoss = false;
 };
 
 struct MediaDescriptor

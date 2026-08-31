@@ -203,6 +203,7 @@ LaunchRequest StreamSession::buildLaunchRequest() const
     req.bitrateKbps = m_StreamBitrateKbps;
     req.hdrEnabled = m_Config.hdrEnabled;
     req.muteHostAudio = m_Config.muteHostAudio;
+    req.rideOutLoss = m_RideOutLoss;
     req.rikey = m_Config.rikey;
     req.rikeyid = m_Config.rikeyid;
     // Empty means "the provider's default identity"; effectiveUniqueId() would
@@ -577,6 +578,9 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         nativeParams.clientVideoFormats = params.supportedVideoFormats;
         nativeParams.hdr = media.nativeHost.hdrRequested;
         nativeParams.yuv444 = m_Config.chroma == ChromaSampling::C444;
+        // Intra-refresh is only worth its cost when the client will decode
+        // through the damage, so the client's word is what turns it on.
+        nativeParams.intraRefresh = media.nativeHost.rideOutLoss;
 
         startEngine = [native, nativeParams]() { native->startCapture(nativeParams); };
     } else {
@@ -757,6 +761,12 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         auto* relay = new DataChannelRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
         relay->setInputPolicy(m_InputPolicy);
+
+        // The client's half of the bargain: it says it will decode through the
+        // damage. The engine's half — whether the stream really refreshes — is
+        // asked at the moment a gap happens, because the engine has not started
+        // yet at this point and would answer no to anything asked now.
+        relay->setRideOutLoss(media.type == MediaType::NativeHost && media.nativeHost.rideOutLoss);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
         // NonSecure mode: external tunnel or Cloudflare provides TLS termination.
@@ -984,6 +994,14 @@ void StreamSession::onShimConnectionStarted()
     // Report whether YUV 4:4:4 chroma was actually negotiated (vs the default
     // 4:2:0), so the frontend can surface it in the stats overlay.
     result["yuv444"] = (m_NegotiatedVideoFormat & VIDEO_FORMAT_MASK_YUV444) != 0;
+
+    // Whether the stream really repairs itself by intra-refresh — asked for by
+    // the browser, GRANTED by the encoder, and reported here so the browser can
+    // stop demanding keyframes on a gap. Sent as what the stream does, never as
+    // what was requested: a receiver that suppressed its keyframe requests
+    // against a stream that has no refresh wave would sit on a corrupt picture
+    // indefinitely.
+    result["intra_refresh"] = m_Engine && m_Engine->intraRefreshActive();
 
     // Audio time-stretch (WSOLA) — file-only setting (settings.json), default
     // false. Read fresh per session so a file edit applies on the next launch.

@@ -238,6 +238,23 @@ export class WebRtcDataChannel {
         this.onIdrRequested = null;
 
         this._lastAssembledFrameId = -1;
+
+        // ── Riding out a gap instead of demanding a keyframe ─────────────────
+        //
+        // Set from the /start reply, and ONLY when the host confirmed its
+        // encoder really is intra-refreshing (see `intra_refresh`). Requesting
+        // nothing against a stream with no refresh wave would leave the picture
+        // corrupt for good, so this is never assumed from the client's wish
+        // alone.
+        this.rideOutLoss = false;
+        // When the current ride-out started, or 0 when not riding one out.
+        this._rideOutSince = 0;
+        // How long to let the refresh wave work before giving up and asking for
+        // a keyframe after all. One cycle is ~2 s at 60 fps; a little more than
+        // that means the wave is genuinely not repairing the picture — a
+        // decoder that handles damage badly, or loss faster than the refresh.
+        // The worst case is then exactly today's behaviour, one beat later.
+        this.RIDE_OUT_MAX_MS = 2500;
     }
 
     /**
@@ -1222,6 +1239,15 @@ export class WebRtcDataChannel {
             this._idrBackoffMs = this.IDR_THROTTLE_MS;
         }
 
+        // A contiguous frame means the gap is behind us: whatever damage there
+        // was is now being repaired by the refresh wave rather than by a
+        // keyframe, so close the ride-out window. Leaving it open would let the
+        // watchdog fire on a stream that had already recovered, and put back
+        // the very IDR this exists to avoid.
+        if (this._rideOutSince && frameId === this._lastAssembledFrameId + 1) {
+            this._rideOutSince = 0;
+        }
+
         // Emit video frame with backend timestamp for latency calculations
         if (this.onVideo) {
             this.onVideo(assembled, entry.keyframe, entry.backendTs, frameId);
@@ -1326,6 +1352,30 @@ export class WebRtcDataChannel {
      *  throttles server-side. */
     _requestIdrFrame(reason) {
         const now = performance.now();
+
+        // Riding it out: the stream carries a moving band of intra blocks, so
+        // the picture repairs itself over one cycle. Asking for a keyframe here
+        // would undo that AND send the largest frame there is down a link that
+        // just proved it was struggling — the drop is what brought us here.
+        //
+        // The watchdog is what makes this safe to try: if the picture is still
+        // not right after one cycle plus a margin, the wave is not doing its
+        // job and we fall back to exactly today's recovery.
+        if (this.rideOutLoss) {
+            if (!this._rideOutSince) {
+                this._rideOutSince = now;
+                console.log('[WebRTC] Riding out a gap (' + reason + ') — no IDR requested');
+                return;
+            }
+            if (now - this._rideOutSince < this.RIDE_OUT_MAX_MS) return;
+            console.warn(
+                '[WebRTC] Ride-out did not recover after ' +
+                    Math.round(now - this._rideOutSince) +
+                    ' ms — falling back to an IDR request',
+            );
+            this._rideOutSince = 0;
+        }
+
         if (now - this._lastIdrRequestTime < this._idrBackoffMs) {
             return; // Throttled — too soon since last request
         }

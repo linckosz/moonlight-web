@@ -71,6 +71,9 @@ public:
         int clientVideoFormats = 0;
         bool hdr = false;
         bool yuv444 = false;
+        /// Encode with intra-refresh. Only worth asking when the receiver will
+        /// decode through a gap — see rideOutLoss in MediaDescriptor.h.
+        bool intraRefresh = false;
     };
 
     explicit NativeMediaEngine(QObject* parent = nullptr);
@@ -129,6 +132,14 @@ public:
     /// stats overlay: "NVIDIA GeForce RTX 4070 · NVENC HEVC 4:4:4". Empty until
     /// the session has started.
     QString describeSession() const;
+
+    /// Whether the running stream really refreshes by intra-refresh.
+    ///
+    /// The relay reads this to decide whether it may ride out a gap instead of
+    /// discarding deltas and demanding a keyframe. False until a session has
+    /// started, and false whenever the encoder declined — so the answer is
+    /// always what the stream DOES, never what was asked for.
+    bool intraRefreshActive() const override;
 
 private:
     void onEncodedFrame(const void* data, size_t size, bool keyframe, uint32_t frameNumber,

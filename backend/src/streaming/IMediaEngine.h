@@ -203,6 +203,16 @@ public:
     /// screen. Off for a guest who was not given keyboard/mouse.
     virtual void setWakeNudgeAllowed(bool allowed) { Q_UNUSED(allowed); }
 
+    /// Whether the stream repairs itself by intra-refresh rather than by
+    /// keyframes.
+    ///
+    /// False for GameStream, and truthfully so: what a remote host's encoder
+    /// does is not ours to know, so the relay keeps its keyframe recovery.
+    /// Only the native engine can answer this, and only once its encoder has
+    /// accepted the request — which is why it is a live question rather than a
+    /// flag set at construction.
+    virtual bool intraRefreshActive() const { return false; }
+
 signals:
     /// presentationTimeUs travels WITH the frame through the queued connection:
     /// relays must not re-read a "latest frame" atomic at drain time, or a

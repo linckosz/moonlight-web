@@ -62,7 +62,7 @@ public:
     ///               otherwise, which is a clearer failure than a silent
     ///               downgrade but still a failure.
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, std::string& error) override;
+              bool yuv444, bool intraRefresh, std::string& error) override;
 
     /// Encode one NV12 texture. Blocking: returns with the bitstream ready.
     bool encode(ID3D11Texture2D* nv12, bool forceKeyframe, EncoderOutput& out,

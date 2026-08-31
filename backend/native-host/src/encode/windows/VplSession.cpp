@@ -177,4 +177,27 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
     return true;
 }
 
+void attachIntraRefresh(mfxVideoParam& params, mfxExtCodingOption2& option,
+                        std::vector<mfxExtBuffer*>& buffers)
+{
+    std::memset(&option, 0, sizeof(option));
+    option.Header.BufferId = MFX_EXTBUFF_CODING_OPTION2;
+    option.Header.BufferSz = sizeof(option);
+
+    // Vertical: the wave sweeps by columns of macroblocks. Either axis works;
+    // vertical is the conventional choice and matches what the other two
+    // vendors do by default.
+    option.IntRefType = MFX_REFRESH_VERTICAL;
+    option.IntRefCycleSize = static_cast<mfxU16>(kIntraRefreshPeriodFrames);
+    // Leave the refreshed blocks at the frame's own quality: a positive delta
+    // would make the healing band visibly coarser than what surrounds it, which
+    // is precisely the artefact this is meant to avoid.
+    option.IntRefQPDelta = 0;
+
+    buffers.clear();
+    buffers.push_back(reinterpret_cast<mfxExtBuffer*>(&option));
+    params.ExtParam = buffers.data();
+    params.NumExtParam = static_cast<mfxU16>(buffers.size());
+}
+
 } // namespace mw::native::encode

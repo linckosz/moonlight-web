@@ -43,6 +43,10 @@ struct LaunchRequest
     int bitrateKbps = 0;
     bool hdrEnabled = false;
     bool muteHostAudio = true;
+    /// The client will decode through a gap instead of demanding a keyframe.
+    /// Only the native engine acts on it — a GameStream host has no say in how
+    /// its encoder recovers.
+    bool rideOutLoss = false;
     QByteArray rikey;
     int rikeyid = 0;
     QString clientUniqueId;

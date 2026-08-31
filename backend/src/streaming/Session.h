@@ -132,6 +132,13 @@ public:
     /// over / cancel another's session. Empty → shared IdentityManager id.
     void setClientUniqueId(const QString& id) { m_ClientUniqueId = id; }
 
+    /// The browser will decode through a gap instead of asking for a keyframe.
+    ///
+    /// Its half of the intra-refresh bargain: the encoder pays for the moving
+    /// refresh band, and only a receiver that keeps decoding collects the
+    /// benefit. Ignored by every path except the native engine.
+    void setRideOutLoss(bool enabled) { m_RideOutLoss = enabled; }
+
     /// The provider this session launches through. Required: set it before
     /// start(). It is what decides which host/seat is dialled and, for a
     /// multi-seat backend, which identity is presented.
@@ -341,6 +348,11 @@ private:
     /// Written by drSetup on the worker thread, read on the main thread during
     /// onShimConnectionStarted(). The atomic in MoonlightShim guarantees up-to-date reads.
     int m_NegotiatedVideoFormat = 0;
+
+    /// The browser said it will decode through a gap rather than demand a
+    /// keyframe. Set from the /start request; only the native engine acts on
+    /// it, and only if its encoder really honours intra-refresh.
+    bool m_RideOutLoss = false;
 
     /// The engine producing this session's media: MoonlightShim for a
     /// GameStream host, NativeMediaEngine for this machine's own screen.
