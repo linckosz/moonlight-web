@@ -118,10 +118,17 @@ QString NativeHostBackend::hostDisplayName()
 
 BackendCapabilities NativeHostBackend::capabilities() const
 {
-    // Everything false in v1. One physical screen cannot be handed to two
-    // players independently, so multiUser stays false until a virtual display
-    // exists; provisioning and lobbies have no meaning here at all.
-    return BackendCapabilities{};
+    BackendCapabilities caps;
+    // One physical screen cannot be handed to two players independently, so
+    // multiUser stays false until a virtual display exists; provisioning and
+    // lobbies have no meaning here at all.
+    //
+    // What IS true, and true only here: several displays stream at once. Each
+    // has its own duplication and its own encoder session, so a second stream
+    // takes nothing away from the first — unlike a GameStream host, which runs
+    // one app at a time and would quit the first to start the second.
+    caps.concurrentApps = true;
+    return caps;
 }
 
 void NativeHostBackend::ensurePaired(BackendVoidCallback cb)
