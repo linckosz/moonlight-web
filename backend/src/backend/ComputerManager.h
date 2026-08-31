@@ -285,6 +285,11 @@ private:
     // In-flight box art requests: uuid -> (appId -> list of pending callbacks)
     QMap<QString, QMap<int, QList<ResponseCallback>>> m_PendingBoxArtCallbacks;
 
+    // Apps whose box art could not be fetched, per host. Consulted by the
+    // background prefetch so it never picks the same failing app forever;
+    // cleared when a fresh app list arrives.
+    QMap<QString, QSet<int>> m_BoxArtFailed;
+
     // Serialize HTTPS box art fetches per host (only one at a time)
     QSet<QString> m_ActiveBoxArtFetches;          // hosts with an active fetch
     QMap<QString, QList<int>> m_BoxArtFetchQueue; // per-host queue of appIds

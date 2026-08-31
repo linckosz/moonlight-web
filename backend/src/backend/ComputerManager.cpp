@@ -285,6 +285,10 @@ void ComputerManager::refreshNativeHost()
     host->pairState = NvComputer::PS_PAIRED;
     host->state = NvComputer::CS_ONLINE;
     host->reachable = true;
+    // What this machine can really encode, in the same terms every other host
+    // reports. Without it the codec auto-selection and the transport filter —
+    // which read this field for every host — conclude that it supports nothing.
+    host->serverCodecModeSupport = NativeHostBackend::codecModeSupport();
 
     Logger::info(QString("Native host available: %1").arg(host->name));
     emit hostsChanged();
@@ -2034,6 +2038,13 @@ void ComputerManager::onBoxArtFetchComplete(const QString& uuid, int appId, bool
         }
     }
 
+    // Remember the failure. Background prefetch walks the app list looking for
+    // work, so without this an app that cannot be fetched is chosen again the
+    // moment its pending marker clears — an endless retry of the one thing that
+    // does not work. Cleared when a fresh app list arrives, so a transient
+    // failure is retried on the next refresh rather than in a tight loop.
+    if (!ok) m_BoxArtFailed[uuid].insert(appId);
+
     // Process next queued appId for this host
     auto it = m_BoxArtFetchQueue.find(uuid);
     if (it != m_BoxArtFetchQueue.end() && !it->isEmpty()) {
@@ -2051,13 +2062,27 @@ void ComputerManager::fetchNextBoxArtInBackground(const QString& uuid)
     NvComputer* host = findHostByUuid(uuid);
     if (!host) return;
 
-    const QVector<NvApp>& apps = host->appList;
+    // A host with no address has nothing to fetch FROM, and saying so here is
+    // what keeps this machinery out of an unbreakable loop.
+    //
+    // Without it: startBoxArtFetch finds no address and completes the fetch
+    // synchronously as a failure, the completion handler clears the pending
+    // marker and calls straight back into this function, which picks the same
+    // app again. Every other failure path waits on a network reply, which is
+    // what normally paces the retry — this one does not, so it recurses until
+    // the stack runs out. Observed as an immediate 0xc0000005 on the first
+    // /apps call for the native host (which is, by design, address-less).
+    if (host->uniqueAddresses().isEmpty()) return;
 
-    // Find first uncached, not-pending app
-    for (const auto& app : apps) {
+    // By value, not operator[]: the latter would insert an empty entry for
+    // every host that has never failed, growing the map on a read path.
+    const QSet<int> failed = m_BoxArtFailed.value(uuid);
+
+    // Find first uncached, not-pending, not-already-failed app
+    for (const auto& app : host->appList) {
         int appId = app.id();
         if (!m_BoxArtCache.value(uuid).contains(appId) &&
-            !m_PendingBoxArtCallbacks.value(uuid).contains(appId)) {
+            !m_PendingBoxArtCallbacks.value(uuid).contains(appId) && !failed.contains(appId)) {
             // Mark as pending (empty callbacks → background fetch, no HTTP consumer)
             m_PendingBoxArtCallbacks[uuid][appId];
             enqueueBoxArtFetch(uuid, appId);
@@ -2179,6 +2204,10 @@ void ComputerManager::handleGetAppList(const QString& uuid, const QString& devic
             }
 
             host->appList = apps;
+
+            // A new app list is a new chance: box art that failed before may
+            // now exist (the host restarted, the app was reinstalled).
+            m_BoxArtFailed.remove(uuid);
 
             // Start background box art pre-fetching
             if (!apps.isEmpty()) fetchNextBoxArtInBackground(uuid);

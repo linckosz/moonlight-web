@@ -487,16 +487,20 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         return;
     }
 
-    const QString sessionUrl = media.gameStream.rtspSessionUrl;
-    QUrl rtspUrl(sessionUrl);
-    if (!rtspUrl.isValid()) {
-        m_Respond(HttpResponse::error(502, "Invalid RTSP URL: " + sessionUrl));
-        emit sessionFailed("Invalid RTSP URL");
-        deleteLater();
-        return;
+    // Only GameStream has an RTSP session to validate. A native descriptor
+    // names a display and carries no URL at all, so validating one would
+    // reject every native launch — which is exactly what it did until this
+    // check was scoped to the media type it belongs to.
+    if (media.type == MediaType::GameStreamRtsp) {
+        const QString sessionUrl = media.gameStream.rtspSessionUrl;
+        if (!QUrl(sessionUrl).isValid()) {
+            m_Respond(HttpResponse::error(502, "Invalid RTSP URL: " + sessionUrl));
+            emit sessionFailed("Invalid RTSP URL");
+            deleteLater();
+            return;
+        }
+        m_SessionUrl = sessionUrl;
     }
-
-    m_SessionUrl = sessionUrl;
 
     // Session is now live on the host for this uniqueid: remember it so a later
     // reconnect (reload) resumes instead of relaunching. Cleared in quit().
