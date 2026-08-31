@@ -25,6 +25,15 @@
 // are asked in and the rules for combining their answers, so the "why is the
 // engine unavailable" logic exists exactly once instead of three times.
 
+namespace mw::native {
+
+/// The full capability probe: asks the platform seam below in a fixed order and
+/// combines the answers. NativeHost::probe() forwards to this; platform code
+/// calls it directly when it needs a fresh view of the machine.
+Capabilities probe();
+
+} // namespace mw::native
+
 namespace mw::native::platform {
 
 /// Whether this process can reach an interactive desktop at all.
