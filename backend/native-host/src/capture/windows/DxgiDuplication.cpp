@@ -171,6 +171,17 @@ bool DxgiDuplication::start(std::string& error)
     m_Height = static_cast<int>(duplDesc.ModeDesc.Height);
     m_Format = duplDesc.ModeDesc.Format;
 
+    // Where this display sits on the desktop, for aiming absolute mouse input.
+    // Kept exactly as DXGI reports it — see DesktopRect on why the DPI
+    // virtualization is wanted here and nowhere else.
+    DXGI_OUTPUT_DESC outputDesc = {};
+    if (SUCCEEDED(output->GetDesc(&outputDesc))) {
+        m_DesktopRect.left = static_cast<int>(outputDesc.DesktopCoordinates.left);
+        m_DesktopRect.top = static_cast<int>(outputDesc.DesktopCoordinates.top);
+        m_DesktopRect.right = static_cast<int>(outputDesc.DesktopCoordinates.right);
+        m_DesktopRect.bottom = static_cast<int>(outputDesc.DesktopCoordinates.bottom);
+    }
+
     // Calibrate the two clocks against each other, as close together as
     // possible — see qpcToMicroseconds.
     LARGE_INTEGER qpcNow = {};

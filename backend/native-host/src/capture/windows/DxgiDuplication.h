@@ -61,6 +61,7 @@ public:
     int width() const override { return m_Width; }
     int height() const override { return m_Height; }
     DXGI_FORMAT format() const override { return m_Format; }
+    DesktopRect desktopRect() const override { return m_DesktopRect; }
 
 private:
     /// Find the adapter whose LUID matches, and its requested output.
@@ -93,6 +94,7 @@ private:
     int m_Width = 0;
     int m_Height = 0;
     DXGI_FORMAT m_Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    DesktopRect m_DesktopRect;
 
     /// Calibration for qpcToMicroseconds: ticks per second, plus one sample of
     /// both clocks taken at the same instant in start().
