@@ -691,22 +691,68 @@ private:
         update.hotspotX = m_Capture->cursorHotspotX();
         update.hotspotY = m_Capture->cursorHotspotY();
 
-        // Inverting pixels are flattened to black here rather than in the
-        // capture, because the composited path genuinely inverts and must keep
-        // the information. See CursorUpdate::pixels on why black is right.
+        // Inverting pixels are flattened here rather than in the capture,
+        // because the composited path genuinely inverts and must keep the
+        // information. See CursorUpdate::pixels for why white-on-black.
         if (!cursor.pixels.empty() && cursor.width > 0 && cursor.height > 0) {
             m_CursorScratch = cursor.pixels;
-            for (size_t i = 0; i < cursor.invert.size(); ++i) {
-                if (!cursor.invert[i]) continue;
-                m_CursorScratch[i * 4 + 0] = 0;
-                m_CursorScratch[i * 4 + 1] = 0;
-                m_CursorScratch[i * 4 + 2] = 0;
-                m_CursorScratch[i * 4 + 3] = 0xFF;
-            }
+            flattenInvert(cursor);
             update.pixels = m_CursorScratch.data();
         }
 
         m_Callbacks.onCursor(update);
+    }
+
+    /// Turn the inverting pixels in m_CursorScratch into something a client can
+    /// draw: white fill, black outline.
+    ///
+    /// An inverting pixel says "show the opposite of whatever is behind me",
+    /// which is how one bare stroke stays legible on a white page and on a dark
+    /// text field. No image format can say that, so it has to be resolved to
+    /// fixed colours — and a single colour cannot work on both backgrounds,
+    /// which is what made a black I-beam disappear into a dark input.
+    ///
+    /// The outline is traced only into pixels the cursor left fully transparent,
+    /// so an ordinary coloured cursor that happens to carry a few inverting
+    /// pixels keeps its own artwork intact. Nothing is written outside the
+    /// bitmap: an outline pixel that would fall off the edge is simply not
+    /// drawn, which costs a sliver of a shape that already reaches the border.
+    void flattenInvert(const capture::CursorState& cursor)
+    {
+        const int w = cursor.width;
+        const int h = cursor.height;
+        if (cursor.invert.size() != static_cast<size_t>(w) * static_cast<size_t>(h)) return;
+
+        auto paint = [this](size_t i, uint8_t v) {
+            m_CursorScratch[i * 4 + 0] = v;
+            m_CursorScratch[i * 4 + 1] = v;
+            m_CursorScratch[i * 4 + 2] = v;
+            m_CursorScratch[i * 4 + 3] = 0xFF;
+        };
+
+        // The outline reads the ORIGINAL alpha, so it must be traced before the
+        // fill overwrites it — hence two passes over the same buffer rather than
+        // one that would outline the pixels it just painted.
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const size_t i = static_cast<size_t>(y) * w + x;
+                if (cursor.invert[i]) continue;
+                if (m_CursorScratch[i * 4 + 3] != 0) continue; // the cursor's own pixel
+
+                bool touches = false;
+                for (int dy = -1; dy <= 1 && !touches; ++dy) {
+                    for (int dx = -1; dx <= 1 && !touches; ++dx) {
+                        const int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                        touches = cursor.invert[static_cast<size_t>(ny) * w + nx] != 0;
+                    }
+                }
+                if (touches) paint(i, 0x00);
+            }
+        }
+
+        for (size_t i = 0; i < cursor.invert.size(); ++i)
+            if (cursor.invert[i]) paint(i, 0xFF);
     }
 
     /// Keep a private copy of the captured desktop, so a later frame that only

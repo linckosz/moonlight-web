@@ -102,10 +102,20 @@ struct CursorUpdate
     /// width × height × 4, BGRA. Valid for the duration of the call only.
     ///
     /// Already flattened: a monochrome cursor's inverting pixels are resolved to
-    /// black. Inversion cannot be expressed to a client that composites with the
-    /// OS, and black is what the shapes that use it — the text I-beam above all
-    /// — are meant to look like. Their own opaque white outline is what keeps
-    /// them visible against a dark background.
+    /// WHITE, with a black outline traced around them.
+    ///
+    /// Inversion cannot be expressed to a client that composites with the OS —
+    /// no image format has a "flip what is behind me" pixel — so a choice has to
+    /// be made, and it has to work on both backgrounds. Resolving to black alone
+    /// does not: it is right on a white page and invisible on a dark one, which
+    /// is the failure the inversion existed to prevent. The shapes that use it
+    /// carry no outline of their own to fall back on; the text I-beam is a bare
+    /// inverting stroke, which is exactly why it vanishes into a dark text field.
+    ///
+    /// White on black is the same trick every OS uses for the same reason (the
+    /// macOS I-beam is drawn this way natively): the fill answers the dark
+    /// background, the outline answers the light one, and the shape reads on
+    /// anything in between.
     const uint8_t* pixels = nullptr;
 };
 
