@@ -236,6 +236,22 @@ public:
         if (m_Input) m_Input->inject(event);
     }
 
+    void setCompositeCursor(bool composite) override
+    {
+        // Read by the capture thread each frame. A change takes effect on the
+        // next one, which is the whole point of it being runtime-settable.
+        if (m_CompositeCursor.exchange(composite) == composite) return;
+        log::info(composite ? "[native] cursor: drawn into the picture (immersive)"
+                            : "[native] cursor: handed to the client to draw (desktop)");
+        // The client that just took over drawing has never seen a shape, and
+        // the shape only arrives from DXGI when it CHANGES — which, for a
+        // pointer sitting still, may be never. Force one report.
+        m_ResendCursor.store(true);
+        // Going back to compositing means the picture must show the pointer
+        // again, and the last frame the client has does not.
+        if (composite) m_ForceKeyframe.store(true);
+    }
+
     void requestKeyframe() override { m_ForceKeyframe.store(true); }
 
     void invalidateReference(uint32_t frameNumber) override
@@ -303,6 +319,13 @@ private:
             capture::CapturedFrame frame;
             const capture::AcquireStatus status = m_Capture->acquire(kAcquireTimeoutMs, frame);
 
+            // Before the status is acted on, and on EVERY status. A client that
+            // has just taken over drawing needs to be told what the pointer
+            // looks like — including "there is none here" — and on a still
+            // screen with the mouse on another display every single wake-up is
+            // a timeout, so anything gated behind a frame would never run.
+            reportCursor();
+
             if (status == capture::AcquireStatus::Timeout) {
                 // Nothing moved. Hold the floor open so the receiver can tell a
                 // quiet screen from a dead one — re-encoding what is already
@@ -315,10 +338,19 @@ private:
             }
 
             // Only the pointer moved. The desktop is untouched, so there is no
-            // new texture — but we draw the cursor ourselves, so the picture
-            // HAS changed and has to be re-sent. Re-converted from our own copy
-            // of the last desktop, with the cursor at its new place.
+            // new texture.
+            //
+            // When the CLIENT draws the pointer there is nothing to do at all:
+            // report the shape if it changed, and send not one byte of video.
+            // That is the whole win of the out-of-band cursor — moving the mouse
+            // over a still screen costs nothing, and the pointer moves at the
+            // viewer's refresh rate instead of the stream's.
+            //
+            // When we composite, the picture HAS changed even though the desktop
+            // did not, so it is re-converted from our own copy with the cursor
+            // at its new place.
             if (status == capture::AcquireStatus::PointerOnly) {
+                if (!m_CompositeCursor.load()) continue;
                 if (!m_DesktopCopy) continue;
                 if (!m_Converter->convert(m_DesktopCopy.Get(), m_Capture->cursor(), error)) {
                     finish("colour conversion failed: " + error);
@@ -349,18 +381,24 @@ private:
 
             const int64_t submittedUs = steadyNowUs();
 
-            if (!m_Converter->convert(frame.texture, m_Capture->cursor(), error)) {
+            // An empty state draws nothing: that is how the client-drawn mode
+            // keeps the picture clean.
+            static const capture::CursorState kNoCursor;
+            const bool composite = m_CompositeCursor.load();
+            if (!m_Converter->convert(frame.texture, composite ? m_Capture->cursor() : kNoCursor,
+                                      error)) {
                 m_Capture->release();
                 finish("colour conversion failed: " + error);
                 return;
             }
 
-            // Keep a copy of the desktop for the pointer-only path above — and
-            // ONLY when the pointer is on this display. When it is hidden or on
+            // Keep a copy of the desktop for the pointer-only path above — only
+            // when compositing, and only when the pointer is on this display.
+            // When the client draws its own, or the pointer is hidden or on
             // another screen (a fullscreen game, the usual latency-critical
-            // case) no pointer-only frame can ever need it, so the copy is
-            // skipped entirely and the frame path stays exactly as it was.
-            if (m_Capture->cursor().visible && !retainDesktop(frame.texture, error))
+            // case), no pointer-only frame can ever need it: the copy is skipped
+            // entirely and the frame path is exactly what it was before.
+            if (composite && m_Capture->cursor().visible && !retainDesktop(frame.texture, error))
                 log::warning("[native] could not keep a desktop copy: " + error);
 
             // Released before encoding: Desktop Duplication refuses the next
@@ -410,6 +448,57 @@ private:
         }
         m_Encoder->releaseOutput();
         return true;
+    }
+
+    /// Tell the client what the pointer looks like, when the client is the one
+    /// drawing it.
+    ///
+    /// Sent on change only — shape, or appearing/disappearing. A pointer being
+    /// moved around keeps one shape for thousands of frames, so in the case
+    /// this feature exists for, this sends nothing at all.
+    ///
+    /// Position is deliberately NOT sent. The client knows where its own pointer
+    /// is, better and sooner than we could tell it; sending ours would only give
+    /// it something to disagree with.
+    void reportCursor()
+    {
+        if (!m_Callbacks.onCursor || m_CompositeCursor.load()) return;
+
+        const capture::CursorState& cursor = m_Capture->cursor();
+        const bool forced = m_ResendCursor.exchange(false);
+        if (!forced && cursor.shapeVersion == m_ReportedShape &&
+            cursor.visible == m_ReportedVisible)
+            return;
+
+        m_ReportedShape = cursor.shapeVersion;
+        m_ReportedVisible = cursor.visible;
+
+        CursorUpdate update;
+        update.visible = cursor.visible;
+        update.width = cursor.width;
+        update.height = cursor.height;
+        // The capture stores the image's top-left, having already subtracted
+        // the hotspot; the client needs the offset itself to place the image
+        // against its own pointer.
+        update.hotspotX = m_Capture->cursorHotspotX();
+        update.hotspotY = m_Capture->cursorHotspotY();
+
+        // Inverting pixels are flattened to black here rather than in the
+        // capture, because the composited path genuinely inverts and must keep
+        // the information. See CursorUpdate::pixels on why black is right.
+        if (!cursor.pixels.empty() && cursor.width > 0 && cursor.height > 0) {
+            m_CursorScratch = cursor.pixels;
+            for (size_t i = 0; i < cursor.invert.size(); ++i) {
+                if (!cursor.invert[i]) continue;
+                m_CursorScratch[i * 4 + 0] = 0;
+                m_CursorScratch[i * 4 + 1] = 0;
+                m_CursorScratch[i * 4 + 2] = 0;
+                m_CursorScratch[i * 4 + 3] = 0xFF;
+            }
+            update.pixels = m_CursorScratch.data();
+        }
+
+        m_Callbacks.onCursor(update);
     }
 
     /// Keep a private copy of the captured desktop, so a later frame that only
@@ -479,6 +568,18 @@ private:
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};
     std::atomic<bool> m_ForceKeyframe{true};
+    /// True — the default — draws the pointer into the picture. False reports
+    /// its shape to the client, which draws it itself at its own refresh rate.
+    std::atomic<bool> m_CompositeCursor{true};
+    /// Forces one cursor report even though DXGI says the shape is unchanged.
+    std::atomic<bool> m_ResendCursor{false};
+    /// The shape the client has been told about, so an unchanged pointer is not
+    /// re-sent on every frame.
+    uint64_t m_ReportedShape = 0;
+    bool m_ReportedVisible = false;
+    /// The flattened image handed to the client. Reused so a shape change does
+    /// not allocate on the capture thread.
+    std::vector<uint8_t> m_CursorScratch;
     /// Zero means "no change pending". Exchanged by the loop each iteration.
     std::atomic<int> m_PendingBitrate{0};
 };
