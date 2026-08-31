@@ -353,9 +353,56 @@ private:
         // almost nothing — a few hundred bytes of "everything is the same".
         constexpr int64_t kIdleFloorUs = 500 * 1000;
 
+        // ── Refining a picture that stopped moving ──────────────────────────
+        //
+        // The rate control is constant-bitrate and its budget is PER FRAME: a
+        // frame may spend one VBV and no more. That bound is right while frames
+        // keep coming, because the next one refines what this one could only
+        // approximate — nobody ever sees the intermediate state.
+        //
+        // On a desktop that stops moving, nothing follows. The single frame that
+        // carried the change IS the picture, quantized to fit one frame's
+        // budget, and it stays that way on screen for as long as the user reads
+        // it. That is the softness: not a wrong setting, a refinement that never
+        // happened because the scene had no next frame to carry it.
+        //
+        // So the next frames are supplied. The converted texture is re-encoded
+        // at the stream's cadence for a short while after the last real capture;
+        // the encoder codes the residual against its own reconstruction, so each
+        // pass spends its budget on the detail the previous one had to drop, and
+        // the picture converges to what a moving scene would have reached
+        // anyway. Latency is untouched — every frame is still bounded by the
+        // same VBV, and the burst only ever happens when nothing is moving.
+        //
+        // Two ways out, whichever comes first: the window below, and
+        // convergence. A pass that codes almost nothing means the encoder has
+        // nothing left to add, and two in a row end the burst — which is what
+        // keeps the cost near zero on the frames (a mouse trail, a blinking
+        // caret) where there was never anything to refine.
+        constexpr int64_t kRefineWindowUs = 1000 * 1000;
+        constexpr int kRefineMaxFps = 60;
+        constexpr size_t kRefineDoneBytes = 512;
+        constexpr int kRefineQuietPasses = 2;
+
+        const int refineFps =
+            (m_Config.fps > 0 && m_Config.fps < kRefineMaxFps) ? m_Config.fps : kRefineMaxFps;
+        const int64_t refineIntervalUs = 1000000 / refineFps;
+        // The acquire timeout is also the loop's sleep, so it has to be short
+        // enough to let a refinement pass be due on time. Outside the window it
+        // stays long: an idle desktop must not cost a wake-up every 16 ms.
+        const int refineTimeoutMs = static_cast<int>(refineIntervalUs / 1000);
+
         uint32_t frameNumber = 0;
         std::string error;
         int64_t lastSentUs = steadyNowUs();
+        // The last frame that came from an actual capture — what the refinement
+        // window is measured from.
+        int64_t lastRealUs = lastSentUs;
+        int refineQuiet = 0;
+        int refinePasses = 0;
+        size_t refineBytes = 0;
+        size_t refineFirstBytes = 0;
+        bool refineLogged = false;
 
         while (m_Running.load()) {
             if (const int kbps = m_PendingBitrate.exchange(0); kbps > 0) {
@@ -363,8 +410,15 @@ private:
                     log::warning("[native] bitrate change refused: " + error);
             }
 
+            // Decided before the acquire because it also chooses how long the
+            // acquire may sleep.
+            const bool refining = (steadyNowUs() - lastRealUs) < kRefineWindowUs &&
+                                  refineQuiet < kRefineQuietPasses &&
+                                  m_Converter->outputWidth() != 0;
+
             capture::CapturedFrame frame;
-            const capture::AcquireStatus status = m_Capture->acquire(kAcquireTimeoutMs, frame);
+            const capture::AcquireStatus status =
+                m_Capture->acquire(refining ? refineTimeoutMs : kAcquireTimeoutMs, frame);
 
             // Before the status is acted on, and on EVERY status. A client that
             // has just taken over drawing needs to be told what the pointer
@@ -374,13 +428,31 @@ private:
             reportCursor();
 
             if (status == capture::AcquireStatus::Timeout) {
-                // Nothing moved. Hold the floor open so the receiver can tell a
-                // quiet screen from a dead one — re-encoding what is already
-                // converted, so this costs an encode and not a capture.
-                if (steadyNowUs() - lastSentUs < kIdleFloorUs) continue;
+                // Nothing moved. Two reasons to send anyway: the refinement
+                // passes above, and — once those are done — the floor that lets
+                // the receiver tell a quiet screen from a dead one. Both
+                // re-encode what is already converted, so this costs an encode
+                // and not a capture.
                 if (!m_Converter->outputWidth()) continue;
+                if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : kIdleFloorUs))
+                    continue;
                 if (!emit(frameNumber, steadyNowUs(), error)) return;
                 lastSentUs = steadyNowUs();
+
+                if (!refining) continue;
+                refinePasses++;
+                refineBytes += m_LastEmitBytes;
+                refineQuiet = (m_LastEmitBytes <= kRefineDoneBytes) ? refineQuiet + 1 : 0;
+                // Once, when the first burst settles. The pair of numbers is the
+                // whole argument for this loop existing: what one frame's budget
+                // bought, against what the picture actually converged to.
+                if (!refineLogged && refineQuiet >= kRefineQuietPasses) {
+                    refineLogged = true;
+                    log::info("[native] still picture refined: " +
+                              std::to_string(refineFirstBytes / 1024) + " KB + " +
+                              std::to_string(refineBytes / 1024) + " KB over " +
+                              std::to_string(refinePasses) + " passes");
+                }
                 continue;
             }
 
@@ -405,6 +477,14 @@ private:
                 }
                 if (!emit(frameNumber, steadyNowUs(), error)) return;
                 lastSentUs = steadyNowUs();
+                // The picture changed, so a new refinement window opens: a
+                // pointer that stops moving leaves a composited frame that
+                // deserves sharpening exactly like any other.
+                lastRealUs = lastSentUs;
+                refineQuiet = 0;
+                refinePasses = 0;
+                refineBytes = 0;
+                refineFirstBytes = m_LastEmitBytes;
                 continue;
             }
 
@@ -455,6 +535,11 @@ private:
 
             if (!emit(frameNumber, submittedUs, error, &frame)) return;
             lastSentUs = steadyNowUs();
+            lastRealUs = lastSentUs;
+            refineQuiet = 0;
+            refinePasses = 0;
+            refineBytes = 0;
+            refineFirstBytes = m_LastEmitBytes;
         }
     }
 
@@ -482,6 +567,8 @@ private:
             log::info("[native] first keyframe: " + std::to_string(encoded.size / 1024) + " KB (" +
                       std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + ")");
         }
+
+        m_LastEmitBytes = encoded.size;
 
         if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo) {
             EncodedFrame out;
@@ -644,6 +731,9 @@ private:
     bool m_ReportedVisible = false;
     std::string m_ReportedKind;
     bool m_LoggedFirstKeyframe = false;
+    /// Bytes the last emit() produced. The refinement loop reads it to know
+    /// when a still picture has stopped improving.
+    size_t m_LastEmitBytes = 0;
     /// The flattened image handed to the client. Reused so a shape change does
     /// not allocate on the capture thread.
     std::vector<uint8_t> m_CursorScratch;
