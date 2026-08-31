@@ -347,21 +347,30 @@ libre de redevance)**. D'où la préférence AV1 quand les deux bouts suivent.
 
 | Livré et mesuré | Reste |
 |---|---|
-| Module isolé + garde de licence | `NativeMediaEngine` (adaptateur Qt) |
-| `IMediaEngine`, relais découplés | Branche `MediaType::NativeHost` dans `Session.cpp` |
-| Sonde displays/GPU + association | Audio (WASAPI loopback → Opus) |
-| Capture DXGI (0,06 ms) | Input (`SendInput`, ViGEm) |
-| Conversion NV12 + AYUV 4:4:4 | HDR (P010 + PQ) |
-| NVENC : capacités réelles, encodage (3,46 ms) | AMF, oneVPL, WGC en repli |
-| Boucle de session | UI, installeurs, retrait de Sunshine |
-| 123 assertions, ctest 3/3 | Linux, macOS |
+| Module isolé + garde de licence | Audio (WASAPI loopback → Opus) |
+| `IMediaEngine`, relais découplés | Input (`SendInput`, ViGEm) |
+| Sonde displays/GPU + association | HDR (P010 + PQ) |
+| Capture DXGI (0,06 ms) | AMF, oneVPL, WGC en repli |
+| Conversion NV12 + AYUV 4:4:4 | Lanceur de session console (service Windows) |
+| NVENC : capacités réelles, encodage (3,46 ms) | UI (grille d'écrans, ligne GPU/encodeur) |
+| Boucle de session (1 thread, 0 file) | Installeurs, retrait de Sunshine |
+| `NativeMediaEngine` + branche `Session.cpp` | Linux, macOS |
+| Host « `<hostname>` — MoonlightWeb Host » dans la liste | Benchmarks vs Sunshine |
+| 123 assertions, ctest 3/3 | |
 
-**Rien n'est visible côté utilisateur** : le moteur produit des frames, il reste
-à les brancher sur le relais WebRTC. Le chemin Sunshine/Wolf/MultiSeat est
-intact.
+**Le chemin est complet côté serveur** : le host natif apparaît, sans pairing,
+et un clic sur un écran construit un `NativeMediaEngine` qui alimente le relais
+WebRTC existant. Le chemin Sunshine/Wolf/MultiSeat est intact.
 
-### Vérification non faite
+Ce qui manque pour une expérience finie : l'audio et l'input (un stream vidéo
+seul n'est pas jouable), puis l'UI et les installeurs.
 
-Un stream Sunshine et un stream Wolf réels, de bout en bout. Le refactor
-`IMediaEngine` est purement typologique — aucun corps de méthode modifié — mais
-il touche les trois relais, et cela demande un banc réel.
+### Vérifications non faites
+
+1. **Un stream Sunshine et un stream Wolf réels**, de bout en bout. Le refactor
+   `IMediaEngine` est purement typologique — aucun corps de méthode modifié —
+   mais il touche les trois relais, et cela demande un banc réel.
+2. **Une image native dans un navigateur.** Chaque étage est vérifié
+   séparément (la capture produit des pixels, l'encodeur un Annex-B conforme,
+   le host apparaît), mais l'assemblage complet jusqu'au décodeur du navigateur
+   n'a pas encore été observé.

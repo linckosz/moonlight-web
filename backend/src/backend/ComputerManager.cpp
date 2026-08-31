@@ -1909,6 +1909,14 @@ void ComputerManager::handleGetBoxArt(const QString& uuid, int appId, const QStr
 
     // Validate host
     NvComputer* host = findHostByUuid(uuid);
+    if (host && host->isNativeEngine()) {
+        // The native host's "apps" are displays, which have no box art to
+        // fetch. Answered accurately rather than falling into the pairing
+        // check below, whose "not paired" would be a puzzling thing to read
+        // about a host that cannot be paired at all.
+        respond(HttpResponse::error(404, "This host has no box art"));
+        return;
+    }
     if (!host || host->pairState != NvComputer::PS_PAIRED || host->serverCertPem.isEmpty()) {
         respond(HttpResponse::error(404, "Host not found or not paired"));
         return;
