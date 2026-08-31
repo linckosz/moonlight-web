@@ -9,6 +9,7 @@
 #if defined(_WIN32)
 #include "capture/windows/DxgiDuplication.h"
 #include "convert/windows/ColorConvert.h"
+#include "encode/windows/NvencEncoder.h"
 #include <wrl/client.h>
 #endif
 
@@ -237,6 +238,117 @@ void run_capture_tests()
                         CHECK(maxLuma <= 235);
                     }
                 }
+
+                // ── …and through the encoder ─────────────────────────────────
+                //
+                // The end of the pipeline. What matters is not that the encoder
+                // returns success but that what it returns is a bitstream the
+                // browser could actually decode — so the Annex-B structure is
+                // inspected rather than trusted.
+                if (!gpu->codecs.empty() && gpu->encoders.front() == EncoderApi::Nvenc) {
+                    encode::NvencEncoder encoder;
+                    std::string encodeError;
+                    if (!encoder.init(duplication.device(), Codec::H264, converter.outputWidth(),
+                                      converter.outputHeight(), 60, 20000, encodeError)) {
+                        std::fprintf(stderr, "  encode skipped: %s\n", encodeError.c_str());
+                    } else {
+                        encode::NvencOutput encoded;
+                        // The first frame must be a keyframe: a client has
+                        // nothing to decode against otherwise.
+                        CHECK(encoder.encode(converter.output(), true, encoded, encodeError));
+                        if (encoded.data) {
+                            std::fprintf(
+                                stderr, "  encoded keyframe: %zu bytes, intra-refresh %s\n",
+                                encoded.size, encoder.intraRefreshEnabled() ? "on" : "off");
+
+                            CHECK(encoded.size > 0);
+                            CHECK(encoded.keyframe);
+
+                            // Annex-B: the stream must open with a start code,
+                            // or the browser's NAL parser never finds its first
+                            // unit and the picture stays black.
+                            CHECK(encoded.size > 4);
+                            const bool startsWithStartCode =
+                                encoded.data[0] == 0 && encoded.data[1] == 0 &&
+                                ((encoded.data[2] == 1) ||
+                                 (encoded.data[2] == 0 && encoded.data[3] == 1));
+                            CHECK(startsWithStartCode);
+
+                            // And it must carry SPS (NAL type 7) and PPS (8)
+                            // ahead of the picture: that is what the decoder
+                            // configures itself from, and why repeatSPSPPS is
+                            // set. Without them a client that joins mid-stream
+                            // can never start.
+                            bool haveSps = false;
+                            bool havePps = false;
+                            for (size_t i = 0; i + 4 < encoded.size; ++i) {
+                                if (encoded.data[i] != 0 || encoded.data[i + 1] != 0) continue;
+                                size_t nal = 0;
+                                if (encoded.data[i + 2] == 1)
+                                    nal = i + 3;
+                                else if (encoded.data[i + 2] == 0 && encoded.data[i + 3] == 1)
+                                    nal = i + 4;
+                                else
+                                    continue;
+                                if (nal >= encoded.size) break;
+                                const uint8_t type = encoded.data[nal] & 0x1F;
+                                if (type == 7) haveSps = true;
+                                if (type == 8) havePps = true;
+                            }
+                            std::fprintf(stderr, "  SPS %s, PPS %s\n",
+                                         haveSps ? "present" : "MISSING",
+                                         havePps ? "present" : "MISSING");
+                            CHECK(haveSps);
+                            CHECK(havePps);
+
+                            encoder.releaseOutput();
+                        }
+
+                        // ── Encode latency ───────────────────────────────────
+                        //
+                        // The number the whole project is judged on, measured
+                        // rather than assumed. Static content, so this is the
+                        // encoder's own round trip with no motion to search —
+                        // a floor, not a typical-load figure.
+                        int64_t worstUs = 0;
+                        int64_t totalUs = 0;
+                        int encodedCount = 0;
+                        for (int i = 0; i < 30; ++i) {
+                            const auto before = std::chrono::steady_clock::now();
+                            encode::NvencOutput delta;
+                            if (!encoder.encode(converter.output(), false, delta, encodeError))
+                                break;
+                            const auto after = std::chrono::steady_clock::now();
+                            encoder.releaseOutput();
+
+                            const int64_t us =
+                                std::chrono::duration_cast<std::chrono::microseconds>(after -
+                                                                                      before)
+                                    .count();
+                            totalUs += us;
+                            if (us > worstUs) worstUs = us;
+                            ++encodedCount;
+                        }
+                        if (encodedCount > 0) {
+                            std::fprintf(stderr,
+                                         "  encode latency (static): mean %.2f ms, worst %.2f ms "
+                                         "over %d frames\n",
+                                         static_cast<double>(totalUs) / encodedCount / 1000.0,
+                                         static_cast<double>(worstUs) / 1000.0, encodedCount);
+                            // A frame that takes longer than a 60 Hz frame
+                            // interval cannot keep up at all; well past that
+                            // means something is badly misconfigured.
+                            CHECK(totalUs / encodedCount < 16000);
+                        }
+
+                        // Changing bitrate mid-session must not need a restart:
+                        // it is what lets the encoder follow the client's real
+                        // feedback frame by frame.
+                        CHECK(encoder.setBitrate(10000, encodeError));
+                        encoder.stop();
+                    }
+                }
+
                 duplication.release();
             }
         }
