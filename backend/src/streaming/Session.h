@@ -39,7 +39,7 @@ class DataChannelRelay;
 class MediaTrackRelay;
 class SignalingServer;
 class StreamRelay;
-class MoonlightShim;
+class IMediaEngine;
 
 class StreamSession : public QObject
 {
@@ -342,7 +342,10 @@ private:
     /// onShimConnectionStarted(). The atomic in MoonlightShim guarantees up-to-date reads.
     int m_NegotiatedVideoFormat = 0;
 
-    MoonlightShim* m_Shim = nullptr;
+    /// The engine producing this session's media: MoonlightShim for a
+    /// GameStream host, NativeMediaEngine for this machine's own screen.
+    /// Chosen once, in the media-engine branch of onLaunchResult().
+    IMediaEngine* m_Engine = nullptr;
     DataChannelRelay* m_Relay = nullptr;
     MediaTrackRelay* m_MediaTrackRelay = nullptr;
     SignalingServer* m_Signaling = nullptr;
