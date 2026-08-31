@@ -71,6 +71,14 @@ public:
     // frontend can warn about streaming your own PC ("Inception" loop).
     bool isLocalMachine() const;
 
+    // True for the synthetic host backed by MoonlightWeb's own capture engine.
+    //
+    // It is unlike every other entry in the list: it has no address, nothing to
+    // poll, no pairing, and it is recomputed at each startup from what the
+    // machine can actually do — so it must never be persisted, or a stale one
+    // would offer a display that has since been unplugged.
+    bool isNativeEngine() const { return backendType == QLatin1String("native"); }
+
     // State management
     static PairState pairStateFromString(const QString& s);
     static QString pairStateToString(PairState ps);
