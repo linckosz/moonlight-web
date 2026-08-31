@@ -65,7 +65,7 @@ void run_capabilities_tests()
 
         std::string error;
         auto session = NativeHost::createSession(
-            cfg, [](const EncodedFrame&) {}, nullptr, nullptr, nullptr, error);
+            cfg, [](const EncodedFrame&) {}, nullptr, nullptr, nullptr, nullptr, error);
 
         // Either it built (a machine with a real backend) or it refused with an
         // explanation. A null session with an empty error would leave the
@@ -81,7 +81,8 @@ void run_capabilities_tests()
         cfg.clientCodecs = {Codec::H264};
 
         std::string error;
-        auto session = NativeHost::createSession(cfg, nullptr, nullptr, nullptr, nullptr, error);
+        auto session =
+            NativeHost::createSession(cfg, nullptr, nullptr, nullptr, nullptr, nullptr, error);
         CHECK(session == nullptr);
         CHECK(!error.empty());
     }

@@ -19,7 +19,9 @@
 
 #include "mw/native/NativeHost.h"
 
+#include <QBuffer>
 #include <QDebug>
+#include <QImage>
 
 namespace {
 
@@ -120,6 +122,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
                 },
                 Qt::QueuedConnection);
         },
+        [this](const mw::native::CursorUpdate& cursor) { onCursor(cursor); },
         [this](const std::string& reason) {
             m_Connected.store(false, std::memory_order_release);
             // connectionTerminated is what the relays already watch for, so an
@@ -261,6 +264,37 @@ int64_t NativeMediaEngine::framePresentationTimeUs() const
 int64_t NativeMediaEngine::firstFrameArrivalSteadyMs() const
 {
     return m_FirstFrameArrivalUs.load(std::memory_order_acquire) / 1000;
+}
+
+void NativeMediaEngine::onCursor(const mw::native::CursorUpdate& cursor)
+{
+    // Encoded HERE, on the capture thread, because the pixels are borrowed and
+    // stop being valid the moment this returns. A PNG of a 32×32 cursor is a
+    // couple of hundred bytes and this runs only when the shape changes, so the
+    // cost is invisible next to a frame.
+    QByteArray png;
+    if (cursor.visible && cursor.pixels && cursor.width > 0 && cursor.height > 0) {
+        // Format_ARGB32 is BGRA in memory on a little-endian machine, which is
+        // exactly what the engine hands over. The copy() is not optional: the
+        // QImage would otherwise keep pointing at a buffer we do not own.
+        const QImage image(cursor.pixels, cursor.width, cursor.height, cursor.width * 4,
+                           QImage::Format_ARGB32);
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        image.copy().save(&buffer, "PNG");
+    }
+
+    QMetaObject::invokeMethod(
+        this,
+        [this, png, x = cursor.hotspotX, y = cursor.hotspotY]() {
+            emit cursorShapeChanged(png, x, y);
+        },
+        Qt::QueuedConnection);
+}
+
+void NativeMediaEngine::setCompositeCursor(bool composite)
+{
+    if (m_Session) m_Session->setCompositeCursor(composite);
 }
 
 bool NativeMediaEngine::intraRefreshActive() const

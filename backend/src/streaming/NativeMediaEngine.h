@@ -24,7 +24,8 @@
 
 namespace mw::native {
 class Session;
-}
+struct CursorUpdate;
+} // namespace mw::native
 
 /**
  * @brief The media engine backed by this machine's own screen.
@@ -128,6 +129,10 @@ public:
     int64_t framePresentationTimeUs() const override;
     int64_t firstFrameArrivalSteadyMs() const override;
 
+    /// Whether the engine draws the mouse pointer into the picture (immersive)
+    /// or reports its shape for the browser to draw (desktop). Safe at any time.
+    void setCompositeCursor(bool composite);
+
     /// A human-readable description of what the session settled on, for the
     /// stats overlay: "NVIDIA GeForce RTX 4070 · NVENC HEVC 4:4:4". Empty until
     /// the session has started.
@@ -144,6 +149,10 @@ public:
 private:
     void onEncodedFrame(const void* data, size_t size, bool keyframe, uint32_t frameNumber,
                         int64_t presentUs, int64_t submittedUs, int64_t encodedUs);
+
+    /// Turn a borrowed cursor image into a PNG and emit it. Runs on the capture
+    /// thread — the pixels do not outlive the call.
+    void onCursor(const mw::native::CursorUpdate& cursor);
 
     std::unique_ptr<mw::native::Session> m_Session;
 

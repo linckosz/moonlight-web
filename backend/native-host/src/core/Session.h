@@ -31,6 +31,7 @@ struct SessionCallbacks
     VideoCallback onVideo;
     AudioCallback onAudio;
     RumbleCallback onRumble;
+    CursorCallback onCursor;
     SessionEndedCallback onEnded;
 };
 

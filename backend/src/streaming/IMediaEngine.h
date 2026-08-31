@@ -230,4 +230,12 @@ signals:
 
     /// The host asked to rumble a controller (forwarded to the browser).
     void rumble(int controllerNumber, int lowFreqMotor, int highFreqMotor);
+
+    /// The mouse pointer's SHAPE changed, and the browser is the one drawing it.
+    ///
+    /// Native host only, and only in desktop mode — see setCompositeCursor.
+    /// `png` is empty when the pointer should not be drawn at all. Carries no
+    /// position: the browser already knows where its own pointer is, sooner and
+    /// more accurately than this could say.
+    void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY);
 };

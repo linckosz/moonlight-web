@@ -20,6 +20,9 @@
 #include "InputMessageCodec.h"
 #include "IMediaEngine.h"
 #include "ExitNotice.h"
+// Only for the cursor-mode message, which is meaningless to any other engine:
+// no remote GameStream host can be told to stop drawing its own pointer.
+#include "NativeMediaEngine.h"
 
 extern "C" {
 #include "Limelight.h"
@@ -471,6 +474,26 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
             m_InputDc->send(std::string(j.constData(), j.size()));
         } catch (const std::exception&) {}
     });
+
+    // Forward the mouse pointer's shape when the browser is the one drawing it.
+    // Rare by construction — one message per shape change, never per frame —
+    // so the base64 of a small PNG on the input channel costs nothing.
+    connect(m_Shim, &IMediaEngine::cursorShapeChanged, this,
+            [this](QByteArray png, int hotspotX, int hotspotY) {
+                if (m_Stopping.load() || !m_InputDc) return;
+                QJsonObject m;
+                m["type"] = "cursor";
+                // An empty image is how "draw nothing" travels: a game hid the
+                // pointer, or it left this display.
+                m["visible"] = !png.isEmpty();
+                m["hotspotX"] = hotspotX;
+                m["hotspotY"] = hotspotY;
+                if (!png.isEmpty()) m["png"] = QString::fromLatin1(png.toBase64());
+                QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+                try {
+                    m_InputDc->send(std::string(j.constData(), j.size()));
+                } catch (const std::exception&) {}
+            });
 
     // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
     // Connected within m_IceTimeoutMs after setRemoteDescription().
@@ -1015,6 +1038,20 @@ void DataChannelRelay::onInputMessage(const std::string& message)
 
     // An invited player only gets what the owner ticked. Dropped in silence.
     if (!InputMsg::allowed(type, m_InputPolicy)) return;
+
+    if (type == "cursormode") {
+        // Who draws the mouse pointer. In desktop mode the browser draws its
+        // own — at its own refresh rate, independent of the stream — and the
+        // host leaves the picture clean. In immersive mode pointer lock takes
+        // the viewer's real pointer away, so the only one that can exist is the
+        // one burned into the frame.
+        //
+        // Native host only; every other backend ignores it, since no remote
+        // GameStream host can be told to stop drawing its cursor.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
+            native->setCompositeCursor(msg["composite"].toBool(true));
+        return;
+    }
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");

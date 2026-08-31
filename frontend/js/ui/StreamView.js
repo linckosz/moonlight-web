@@ -438,6 +438,17 @@ export class StreamView {
             console.log('[StreamView] Loss recovery: riding out the refresh wave');
         }
         this.pointerLocked = false;
+        // ── Host pointer, drawn by US ──────────────────────────────────────
+        // The native host can hand over the pointer's shape instead of burning
+        // it into the picture. Drawn as the CSS cursor of the video element,
+        // which means the viewer's own compositor draws it, at the viewer's own
+        // refresh rate — so the pointer stays perfectly smooth even when the
+        // stream is at 2 fps because nothing on screen is moving.
+        //
+        // Base64 PNG as it arrived, plus its hotspot. Null when the host is the
+        // one drawing (immersive) or the pointer is hidden.
+        this._hostCursorPng = null;
+        this._hostCursorHotspot = [0, 0];
         /** Gaming mode focus state: true when pointer lock is active (cursor captured).
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
@@ -3404,6 +3415,11 @@ export class StreamView {
             // capability handshake that arms the host-side watchdog.
             if (this._inputStateInterval) clearInterval(this._inputStateInterval);
             this._sendInputState(true);
+            // Claim the pointer as soon as the channel is usable. Forced past
+            // the "unchanged" check because the host has heard nothing yet and
+            // its default is to composite.
+            this._sentCursorComposite = null;
+            this._sendCursorMode();
             this._inputStateInterval = setInterval(() => {
                 if (this._quitting) return;
                 this._sendInputState();
@@ -4418,6 +4434,20 @@ export class StreamView {
             if (this._gamepadManager) this._gamepadManager.rumble(msg.index, msg.low, msg.high);
             return;
         }
+        if (msg.type === 'cursor') {
+            // The host's pointer shape, for us to draw. See _applyHostCursor.
+            this._hostCursorPng = msg.visible && msg.png ? msg.png : null;
+            this._hostCursorHotspot = [msg.hotspotX | 0, msg.hotspotY | 0];
+            // Once, on the first shape: the counterpart of the host's own line,
+            // so "the pointer is missing" can be told from "the pointer never
+            // arrived" without instrumenting anything.
+            if (!this._hostCursorSeen) {
+                this._hostCursorSeen = true;
+                console.log('[StreamView] Host cursor: drawing it here, not in the frame');
+            }
+            this._applyHostCursor();
+            return;
+        }
         if (msg.type === 'clipboardcaps') {
             // Backend advertises clipboard sync (streamed host == backend
             // machine). Until this arrives, Ctrl+V is forwarded as a plain
@@ -5139,7 +5169,7 @@ export class StreamView {
                 // Keep the arrow over the surrounding letterbox bars.
                 const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
                 if (!IS_TOUCH_DEVICE) {
-                    this.inputEl.style.cursor = inside ? 'none' : 'default';
+                    this.inputEl.style.cursor = inside ? this._pictureCursor() : 'default';
                 }
                 // Outside the picture (letterbox bars) → don't move the host cursor.
                 if (!inside) return;
@@ -5201,7 +5231,59 @@ export class StreamView {
         const rawX = clientX - rect.left;
         const rawY = clientY - rect.top;
         const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
-        this.inputEl.style.cursor = inside ? 'none' : 'default';
+        this.inputEl.style.cursor = inside ? this._pictureCursor() : 'default';
+    }
+
+    /**
+     * What the cursor should look like over the streamed picture.
+     *
+     * Two possible worlds. When the host burns the pointer into the frame — a
+     * remote GameStream host, or an immersive session — showing ours too would
+     * be a double cursor, so ours is hidden. When the host hands us the shape
+     * instead, we draw it: the OS composites it at the display's refresh rate,
+     * so it never stutters with the video and costs the stream nothing.
+     *
+     * The `none` fallback after the url() matters: if the image ever fails to
+     * decode, the browser falls back to the next entry, and `none` keeps the
+     * double cursor from coming back.
+     */
+    _pictureCursor() {
+        if (!this._hostCursorPng) return 'none';
+        const [hx, hy] = this._hostCursorHotspot;
+        return `url(data:image/png;base64,${this._hostCursorPng}) ${hx} ${hy}, none`;
+    }
+
+    /** Re-apply the picture cursor after the host sent a new shape. */
+    _applyHostCursor() {
+        if (IS_TOUCH_DEVICE || !this.inputEl) return;
+        // Only touch it where it is already ours to set: over the picture. The
+        // letterbox bars keep the ordinary arrow, and a locked pointer has no
+        // visible cursor at all.
+        if (this.pointerLocked) return;
+        if (this.inputEl.style.cursor === 'default') return;
+        this.inputEl.style.cursor = this._pictureCursor();
+    }
+
+    /**
+     * Tell the host who draws the mouse pointer.
+     *
+     * The test is pointer lock, not the configured mode, because pointer lock is
+     * the thing that actually decides: while it holds, the browser has taken the
+     * viewer's real pointer away and no CSS cursor can be shown, so the only
+     * pointer that can exist is one the host drew into the frame. Everywhere
+     * else — desktop mode, and gaming mode before the first click — we can draw
+     * it ourselves and should.
+     */
+    _sendCursorMode() {
+        const composite = !!this.pointerLocked;
+        if (composite === this._sentCursorComposite) return;
+        this._sentCursorComposite = composite;
+        this._sendToHost({ type: 'cursormode', composite });
+        // Whatever the host was showing is about to stop being true.
+        if (composite) {
+            this._hostCursorPng = null;
+            this._hostCursorHotspot = [0, 0];
+        }
     }
 
     /** When the tab/window regains focus, the pointer may already sit over the
@@ -6334,6 +6416,9 @@ export class StreamView {
         // the immersive exit-reminder overlay.
         this._syncKeyboardLock();
         this._updateImmersiveOverlay();
+        // …and who draws the mouse pointer. Under pointer lock the browser has
+        // taken the real one away, so only the host can draw one.
+        this._sendCursorMode();
     }
 
     // =========================================================================

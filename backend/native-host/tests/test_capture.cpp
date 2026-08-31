@@ -406,7 +406,13 @@ void run_capture_tests()
                             for (int attempt = 0; attempt < 120 && cycled < 20; ++attempt) {
                                 capture::CapturedFrame live;
                                 const capture::AcquireStatus st = duplication.acquire(50, live);
-                                if (st == capture::AcquireStatus::Timeout) {
+                                // A pointer-only wake-up carries no texture, so
+                                // it is nothing to this loop — counted with the
+                                // timeouts rather than treated as the end of the
+                                // stream, which is what stopped it after one
+                                // frame and made this look like a GPU fault.
+                                if (st == capture::AcquireStatus::Timeout ||
+                                    st == capture::AcquireStatus::PointerOnly) {
                                     ++cycleTimeouts;
                                     continue;
                                 }

@@ -65,6 +65,8 @@ public:
     DXGI_FORMAT format() const override { return m_Format; }
     DesktopRect desktopRect() const override { return m_DesktopRect; }
     const CursorState& cursor() const override { return m_Cursor; }
+    int cursorHotspotX() const override { return m_CursorHotspotX; }
+    int cursorHotspotY() const override { return m_CursorHotspotY; }
 
 private:
     /// Find the adapter whose LUID matches, and its requested output.
