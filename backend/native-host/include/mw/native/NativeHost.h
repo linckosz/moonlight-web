@@ -85,6 +85,20 @@ struct CursorUpdate
     int hotspotX = 0;
     int hotspotY = 0;
 
+    /// Which of the standard system pointers this is, as a CSS cursor keyword —
+    /// "default", "text", "pointer", "ew-resize"… Empty when the application
+    /// uses a cursor of its own, which no name can describe.
+    ///
+    /// Deliberately a NAME and not just the bitmap. A client that draws the
+    /// host's exact image gets a pointer that looks foreign on its own desktop —
+    /// a Windows arrow on a Mac — while a client given the name can show its own
+    /// native pointer and still change shape with the content underneath. Both
+    /// are legitimate; the client chooses, and the host is the only place the
+    /// name can be worked out.
+    ///
+    /// Points into static storage: valid indefinitely, unlike `pixels`.
+    const char* kind = "";
+
     /// width × height × 4, BGRA. Valid for the duration of the call only.
     ///
     /// Already flattened: a monochrome cursor's inverting pixels are resolved to

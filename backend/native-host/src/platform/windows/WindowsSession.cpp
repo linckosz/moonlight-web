@@ -25,8 +25,12 @@
 #include "../../encode/windows/VplEncoder.h"
 #include "../../input/windows/Win32Input.h"
 
+// GetCursorInfo/LoadCursorW, for naming the pointer — see currentCursorKind().
+#include <windows.h>
+
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -41,6 +45,49 @@ int64_t steadyNowUs()
     return std::chrono::duration_cast<std::chrono::microseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+/// Name the pointer currently on screen, as a CSS cursor keyword.
+///
+/// Windows hands out the SAME handle for a standard cursor to every process, so
+/// comparing what is on screen against the system set identifies it exactly —
+/// no image matching, no heuristics. An application with a cursor of its own
+/// matches nothing and gets "", which is the honest answer: there is no keyword
+/// for someone's custom artwork.
+///
+/// This is a different source from the DXGI shape — user32 rather than the
+/// duplication — and that is why it lives here rather than in the capture.
+const char* currentCursorKind()
+{
+    struct Known
+    {
+        // LPCTSTR, not an explicit wide string: the IDC_* macros follow the
+        // project's character set, and naming a width here would only compile
+        // for one of them.
+        LPCTSTR id;
+        const char* css;
+    };
+    // Ordered as the Win32 headers list them. IDC_UPARROW and IDC_SIZE have no
+    // CSS equivalent worth inventing, so they fall through to "".
+    static const Known kKnown[] = {
+        {IDC_ARROW, "default"},    {IDC_IBEAM, "text"},           {IDC_WAIT, "wait"},
+        {IDC_CROSS, "crosshair"},  {IDC_SIZENWSE, "nwse-resize"}, {IDC_SIZENESW, "nesw-resize"},
+        {IDC_SIZEWE, "ew-resize"}, {IDC_SIZENS, "ns-resize"},     {IDC_SIZEALL, "move"},
+        {IDC_NO, "not-allowed"},   {IDC_HAND, "pointer"},         {IDC_APPSTARTING, "progress"},
+        {IDC_HELP, "help"},
+    };
+
+    CURSORINFO info = {};
+    info.cbSize = sizeof(info);
+    if (!::GetCursorInfo(&info) || !info.hCursor) return "";
+
+    for (const Known& known : kKnown) {
+        // LoadCursor on a system cursor returns a shared handle and does not
+        // need freeing; it is cheap enough to call per report and avoids
+        // caching handles that a theme change could invalidate.
+        if (info.hCursor == ::LoadCursor(nullptr, known.id)) return known.css;
+    }
+    return "";
 }
 
 /// The Windows capture → encode → deliver pipeline.
@@ -476,15 +523,23 @@ private:
 
         const capture::CursorState& cursor = m_Capture->cursor();
         const bool forced = m_ResendCursor.exchange(false);
-        if (!forced && cursor.shapeVersion == m_ReportedShape &&
+        // The KIND is checked too, not just the shape version. An application
+        // can swap between two standard cursors without DXGI ever handing over
+        // a new bitmap — it caches shapes it has already sent — so a client
+        // following the name alone would never see the change.
+        const char* kind = currentCursorKind();
+        const bool kindChanged = std::strcmp(kind, m_ReportedKind.c_str()) != 0;
+        if (!forced && !kindChanged && cursor.shapeVersion == m_ReportedShape &&
             cursor.visible == m_ReportedVisible)
             return;
 
         m_ReportedShape = cursor.shapeVersion;
         m_ReportedVisible = cursor.visible;
+        m_ReportedKind = kind;
 
         CursorUpdate update;
         update.visible = cursor.visible;
+        update.kind = kind;
         update.width = cursor.width;
         update.height = cursor.height;
         // The capture stores the image's top-left, having already subtracted
@@ -587,6 +642,7 @@ private:
     /// re-sent on every frame.
     uint64_t m_ReportedShape = 0;
     bool m_ReportedVisible = false;
+    std::string m_ReportedKind;
     bool m_LoggedFirstKeyframe = false;
     /// The flattened image handed to the client. Reused so a shape change does
     /// not allocate on the capture thread.

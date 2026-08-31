@@ -242,5 +242,10 @@ signals:
     /// that a pointer is on the display without ever having been shown what it
     /// looks like. `visible` with an empty `png` means exactly that — draw
     /// something ordinary — while `visible == false` means draw nothing at all.
-    void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY, bool visible);
+    ///
+    /// `kind` names the pointer as a CSS cursor keyword when it is one of the
+    /// system's standard shapes, and is empty for an application's own artwork.
+    /// It lets a client show ITS native pointer, changing with the content,
+    /// instead of the host's foreign-looking bitmap — see CursorUpdate::kind.
+    void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY, bool visible, QString kind);
 };
