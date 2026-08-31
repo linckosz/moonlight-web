@@ -20,6 +20,7 @@
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
 #include "../../core/Session.h"
+#include "../../encode/RateControl.h"
 #include "../../encode/windows/AmfEncoder.h"
 #include "../../encode/windows/NvencEncoder.h"
 #include "../../encode/windows/VplEncoder.h"
@@ -366,23 +367,40 @@ private:
         // it. That is the softness: not a wrong setting, a refinement that never
         // happened because the scene had no next frame to carry it.
         //
-        // So the next frames are supplied. The converted texture is re-encoded
-        // at the stream's cadence for a short while after the last real capture;
-        // the encoder codes the residual against its own reconstruction, so each
-        // pass spends its budget on the detail the previous one had to drop, and
-        // the picture converges to what a moving scene would have reached
-        // anyway. Latency is untouched — every frame is still bounded by the
-        // same VBV, and the burst only ever happens when nothing is moving.
+        // So the next frames are supplied, AND they are given something to spend.
+        // Two halves, and the first alone does nothing:
         //
-        // Two ways out, whichever comes first: the window below, and
-        // convergence. A pass that codes almost nothing means the encoder has
-        // nothing left to add, and two in a row end the burst — which is what
-        // keeps the cost near zero on the frames (a mouse trail, a blinking
-        // caret) where there was never anything to refine.
+        //  - more frames. The converted texture is re-encoded at the stream's
+        //    cadence for a short while after the last real capture, so the
+        //    encoder codes the residual against its own reconstruction and each
+        //    pass adds the detail the previous one had to drop;
+        //  - a bigger budget, for exactly as long as that lasts. The measurement
+        //    that mattered: after the VBV floor, a 1080p keyframe came out at
+        //    112 KB against a 114 KB cap. Pinned, again. Handing the same
+        //    ceiling to sixty more frames would have produced sixty more frames
+        //    of the same softness — the encoder was never short of chances, it
+        //    was short of bits. See encode/RateControl.h.
+        //
+        // Latency is untouched. A VBV bounds how long a frame occupies the link,
+        // which protects the frame AFTER it — and while the screen is still,
+        // there is none. The moment something moves the ordinary budget is
+        // restored BEFORE that frame is encoded, so motion never pays for this.
+        //
+        // Three ways out, whichever comes first: the window, convergence, and
+        // anything at all happening on screen.
         constexpr int64_t kRefineWindowUs = 1000 * 1000;
+        // How still the screen must be before any of this starts. Without it,
+        // the pause between two keystrokes counts as a still screen and the
+        // budget is reconfigured twice per character typed. Short enough that a
+        // screen someone is actually reading has settled long before they look.
+        constexpr int64_t kRefineDelayUs = 150 * 1000;
         constexpr int kRefineMaxFps = 60;
-        constexpr size_t kRefineDoneBytes = 512;
+        // "The encoder had nothing left to add." Judged against the boosted
+        // budget, not the stream's, and only after enough passes to be sure the
+        // burst had really started.
+        constexpr size_t kRefineDoneBytes = 2048;
         constexpr int kRefineQuietPasses = 2;
+        constexpr int kRefineMinPasses = 4;
 
         const int refineFps =
             (m_Config.fps > 0 && m_Config.fps < kRefineMaxFps) ? m_Config.fps : kRefineMaxFps;
@@ -402,23 +420,48 @@ private:
         int refinePasses = 0;
         size_t refineBytes = 0;
         size_t refineFirstBytes = 0;
-        bool refineLogged = false;
+        int refineLogged = 0;
+
+        // The stream's own bitrate, which the quality ladder may move under us,
+        // and whether the still-screen budget is currently in its place.
+        int baseKbps = m_Config.bitrateKbps;
+        bool boosted = false;
+        auto applyBitrate = [&](int kbps) {
+            if (kbps > 0 && !m_Encoder->setBitrate(kbps, error))
+                log::warning("[native] bitrate change refused: " + error);
+        };
 
         while (m_Running.load()) {
             if (const int kbps = m_PendingBitrate.exchange(0); kbps > 0) {
-                if (!m_Encoder->setBitrate(kbps, error))
-                    log::warning("[native] bitrate change refused: " + error);
+                // The ladder moves the stream's rate, not the still-screen one.
+                // Applying it while boosted would drop the burst back to normal
+                // mid-refinement; the boost is recomputed from the new base
+                // instead, and the base takes over when the burst ends.
+                baseKbps = kbps;
+                applyBitrate(boosted ? encode::stillBitrateKbps(baseKbps) : baseKbps);
             }
 
             // Decided before the acquire because it also chooses how long the
-            // acquire may sleep.
-            const bool refining = (steadyNowUs() - lastRealUs) < kRefineWindowUs &&
-                                  refineQuiet < kRefineQuietPasses &&
-                                  m_Converter->outputWidth() != 0;
+            // acquire may sleep. `refineSoon` keeps the loop responsive through
+            // the settling delay as well, so a pass is not up to 100 ms late.
+            const int64_t sinceRealUs = steadyNowUs() - lastRealUs;
+            const bool refineSoon = sinceRealUs < (kRefineDelayUs + kRefineWindowUs) &&
+                                    refineQuiet < kRefineQuietPasses &&
+                                    m_Converter->outputWidth() != 0;
+            const bool refining = refineSoon && sinceRealUs >= kRefineDelayUs;
 
             capture::CapturedFrame frame;
             const capture::AcquireStatus status =
-                m_Capture->acquire(refining ? refineTimeoutMs : kAcquireTimeoutMs, frame);
+                m_Capture->acquire(refineSoon ? refineTimeoutMs : kAcquireTimeoutMs, frame);
+
+            // Anything but a timeout means the screen is alive again, and the
+            // frame about to be encoded is a moving one. Restore the ordinary
+            // budget BEFORE it is encoded, never after: that ordering is the
+            // whole reason the boost costs no latency.
+            if (status != capture::AcquireStatus::Timeout && boosted) {
+                boosted = false;
+                applyBitrate(baseKbps);
+            }
 
             // Before the status is acted on, and on EVERY status. A client that
             // has just taken over drawing needs to be told what the pointer
@@ -436,18 +479,31 @@ private:
                 if (!m_Converter->outputWidth()) continue;
                 if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : kIdleFloorUs))
                     continue;
+
+                // The budget goes up before the first pass, not after it: the
+                // whole point is that this frame is the one that gets to spend.
+                if (refining && !boosted) {
+                    boosted = true;
+                    applyBitrate(encode::stillBitrateKbps(baseKbps));
+                }
+
                 if (!emit(frameNumber, steadyNowUs(), error)) return;
                 lastSentUs = steadyNowUs();
 
                 if (!refining) continue;
                 refinePasses++;
                 refineBytes += m_LastEmitBytes;
-                refineQuiet = (m_LastEmitBytes <= kRefineDoneBytes) ? refineQuiet + 1 : 0;
-                // Once, when the first burst settles. The pair of numbers is the
-                // whole argument for this loop existing: what one frame's budget
-                // bought, against what the picture actually converged to.
-                if (!refineLogged && refineQuiet >= kRefineQuietPasses) {
-                    refineLogged = true;
+                refineQuiet =
+                    (refinePasses >= kRefineMinPasses && m_LastEmitBytes <= kRefineDoneBytes)
+                        ? refineQuiet + 1
+                        : 0;
+                // The first few bursts, then silence. These are the numbers that
+                // say whether any of this worked: what one frame's budget bought,
+                // against what the picture actually converged to. More than a
+                // handful would be noise — bursts happen every time the screen
+                // settles.
+                if (refineLogged < 3 && refineQuiet >= kRefineQuietPasses) {
+                    refineLogged++;
                     log::info("[native] still picture refined: " +
                               std::to_string(refineFirstBytes / 1024) + " KB + " +
                               std::to_string(refineBytes / 1024) + " KB over " +
