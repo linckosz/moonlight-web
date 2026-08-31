@@ -46,12 +46,18 @@ bool gpuHasCodec(const GpuInfo& gpu, Codec codec)
     return std::find(gpu.codecs.begin(), gpu.codecs.end(), codec) != gpu.codecs.end();
 }
 
-/// The first GPU with any encoder at all. Only reached when the display's own
-/// GPU has none — see Selection::crossGpuCopy.
+/// The first GPU that can genuinely encode. Only reached when the display's own
+/// GPU cannot — see Selection::crossGpuCopy.
+///
+/// "Can encode" requires a codec, not merely an encoder API. The distinction is
+/// not academic: this bench has an AMD iGPU that reports the AMF runtime with an
+/// empty codec list (AMF's own capability query is not written yet). Falling
+/// back to it would pay for a cross-GPU copy and then fail codec negotiation
+/// anyway — abandoning a GPU that could actually have done the job.
 const GpuInfo* firstEncodingGpu(const Capabilities& caps)
 {
     for (const GpuInfo& gpu : caps.gpus) {
-        if (!gpu.encoders.empty()) return &gpu;
+        if (!gpu.encoders.empty() && !gpu.codecs.empty()) return &gpu;
     }
     return nullptr;
 }
@@ -84,7 +90,10 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     out.gpu = caps.gpuFor(*out.display);
     out.crossGpuCopy = false;
 
-    if (!out.gpu || out.gpu->encoders.empty()) {
+    // Same rule as the fallback below: an encoder with no codec cannot encode,
+    // so a display whose GPU is in that state must look elsewhere rather than
+    // fail codec negotiation a few lines later.
+    if (!out.gpu || out.gpu->encoders.empty() || out.gpu->codecs.empty()) {
         const GpuInfo* fallback = firstEncodingGpu(caps);
         if (!fallback) {
             error = "no GPU on this machine has a usable encoder";
