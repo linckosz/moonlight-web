@@ -104,9 +104,22 @@ void NativeMediaEngine::startCapture(const StartParams& params)
             onEncodedFrame(frame.data, frame.size, frame.keyframe, frame.frameNumber,
                            frame.presentUs, frame.submittedUs, frame.encodedUs);
         },
-        // Audio and rumble land with their own backends; a null callback is the
-        // engine's documented way of saying "not wanted".
-        nullptr, nullptr,
+        // Audio lands with its own backend; a null callback is the engine's
+        // documented way of saying "not wanted".
+        nullptr,
+        // Rumble is the only signal that travels host → browser. It arrives on
+        // a ViGEm callback thread, so it is emitted as a queued signal rather
+        // than touched directly: the relay that forwards it lives on another
+        // thread and owns a DataChannel that is not thread-safe.
+        [this](const mw::native::RumbleEvent& event) {
+            QMetaObject::invokeMethod(
+                this,
+                [this, event]() {
+                    emit rumble(event.controllerNumber, event.lowFrequencyMotor,
+                                event.highFrequencyMotor);
+                },
+                Qt::QueuedConnection);
+        },
         [this](const std::string& reason) {
             m_Connected.store(false, std::memory_order_release);
             // connectionTerminated is what the relays already watch for, so an

@@ -33,6 +33,8 @@ if(WIN32)
         src/capture/windows/DxgiDuplication.cpp
         src/convert/windows/ColorConvert.cpp
         src/input/windows/Win32Input.cpp
+        src/input/windows/VigemGamepad.cpp
+        third_party/vigem-client/src/ViGEmClient.cpp
         src/encode/windows/NvencApi.cpp
         src/encode/windows/NvencCapabilities.cpp
         src/encode/windows/NvencEncoder.cpp
@@ -50,7 +52,8 @@ if(WIN32)
     # refresh rate and the primary-monitor flag.
     # d3dcompiler builds the colour-conversion shaders at session start (~1 ms,
     # once) — precompiling them would add fxc to the build for no runtime gain.
-    target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32)
+    # setupapi is ViGEmClient's: it finds the virtual bus by device interface.
+    target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32 setupapi)
 else()
     set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
@@ -77,6 +80,7 @@ target_include_directories(mw-native-host SYSTEM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvenc-headers
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/amf-headers
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpl-headers
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vigem-client/include
 )
 
 target_compile_features(mw-native-host PUBLIC cxx_std_17)
