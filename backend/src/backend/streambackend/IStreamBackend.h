@@ -87,6 +87,16 @@ struct BackendCapabilities
     bool multiUser = false;    // independent concurrent seats/sessions
     bool provisioning = false; // seats can be created/destroyed on demand
     bool lobbies = false;      // native co-op (Wolf) — otherwise ShareManager
+    // One device may stream SEVERAL of this host's apps at the same time.
+    //
+    // False everywhere GameStream is involved, and that is not a limitation of
+    // MoonlightWeb: Sunshine and its forks run one app at a time, so launching
+    // a second would quit the first on the host itself and leave us relaying a
+    // stream that no longer exists. The take-over is what keeps that honest.
+    //
+    // True for the native engine, where each display has its own capture and
+    // its own encoder session and genuinely runs alongside the others.
+    bool concurrentApps = false;
     // The control API can bounce the host's streaming service on its own. Only
     // true where that costs no new credential: MoonlightWeb refuses to hold a
     // Sunshine web-UI password, so a plain GameStream host — whose only restart
