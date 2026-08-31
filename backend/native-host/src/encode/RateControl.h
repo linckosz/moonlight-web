@@ -64,4 +64,44 @@ inline uint32_t vbvBitsPerFrame(uint32_t bitsPerSecond, int fps)
     return bitsPerSecond / static_cast<uint32_t>(rate);
 }
 
+/// The budget a frame gets while the screen is not moving, as a multiple of the
+/// stream's own.
+///
+/// ── Why the floor above was not enough ──────────────────────────────────────
+///
+/// The floor lifted the first 1080p keyframe from 41 KB to 112 KB. The cap it
+/// was measured against is 55 Mbps / 60 / 8 = 114 KB — so the keyframe came out
+/// pinned to the new ceiling exactly as it had been pinned to the old one. The
+/// encoder is not choosing 112 KB, it is being cut off there, and a still 1080p
+/// desktop needs three to five times that to render text without softening it.
+///
+/// ── Why raising it is free, here and only here ──────────────────────────────
+///
+/// A VBV bounds how long one frame occupies the link. That bound protects the
+/// NEXT frame — and while the screen is still, there is no next frame. The link
+/// is carrying nothing, so a frame that takes several frame intervals to
+/// transmit delays nothing at all. The moment something moves, the ordinary
+/// budget is restored before that frame is encoded, so motion never pays for it.
+///
+/// ── Why it is expressed as a bitrate ────────────────────────────────────────
+///
+/// Constant bitrate aims each frame at rate/fps bits and the VBV caps it. Both
+/// have to rise together: a bigger cap alone changes nothing when the aim stays
+/// where it was. Multiplying the configured bitrate for the duration moves the
+/// pair, through the setBitrate() path every encoder already implements —
+/// no new vendor code, no second rate-control mode to keep in step.
+///
+/// Six, and a ceiling. Six covers the three-to-five a sharp desktop wants with a
+/// margin; the ceiling keeps a burst on a very high bitrate stream from turning
+/// into a frame no link can move in reasonable time.
+constexpr int kStillBoost = 6;
+constexpr int kStillMaxKbps = 500000;
+
+inline int stillBitrateKbps(int streamKbps)
+{
+    if (streamKbps <= 0) return streamKbps;
+    const int64_t boosted = static_cast<int64_t>(streamKbps) * kStillBoost;
+    return static_cast<int>(boosted > kStillMaxKbps ? kStillMaxKbps : boosted);
+}
+
 } // namespace mw::native::encode
