@@ -3327,6 +3327,12 @@ export class StreamView {
             // so drop it before apply()'s unchanged-size early return.
             this._invalidateMediaRect();
             apply();
+            // The host's pointer is drawn at the picture's scale, and the
+            // picture just changed size. Every mousemove recomputes it anyway,
+            // but a pointer sitting still through a resize would otherwise keep
+            // its old size until the viewer moved it — which reads as the
+            // resize not having worked.
+            this._applyHostCursor();
         });
         this._resizeObserver.observe(this.canvasArea);
         apply(); // initial measure
@@ -5372,13 +5378,42 @@ export class StreamView {
         return built && built.png === png ? built.css : raw;
     }
 
+    /**
+     * The picture's own width, in the host's pixels.
+     *
+     * NOT `canvas.width`. The WebGPU renderer sizes its backing store to the
+     * OUTPUT box — the CSS area × devicePixelRatio × the zoom step — so that
+     * field follows the window, not the host. Measuring the window against
+     * itself gives a constant (1 on an ordinary screen, ½ on a Retina one),
+     * which is why the pointer used to keep whatever size it was born at
+     * however the window was resized, and why changing the host's resolution
+     * did nothing either.
+     *
+     * `_resolution` is the decoded frame's own size, maintained on every
+     * transport (worker stats, video element, inbound-rtp), so it says what the
+     * host actually sent. The element's intrinsic size comes first where the
+     * element IS the picture — it is the same number, without the parse — and
+     * `canvas.width` stays as a last resort for the Canvas2D renderer, which
+     * does size its backing to the frame.
+     */
+    _pictureWidth() {
+        if (this._videoIsDisplay()) {
+            const vw = (this.videoEl && this.videoEl.videoWidth) || 0;
+            if (vw > 0) return vw;
+        }
+        const m = /^(\d+)×/.exec(this._resolution || '');
+        if (m) {
+            const w = parseInt(m[1], 10);
+            if (w > 0) return w;
+        }
+        return (this.canvas && this.canvas.width) || 0;
+    }
+
     /** How much smaller (or larger) than the host's own pixels the picture is
      *  drawn. Rounded to 5% steps so a drag-resize does not rebuild the bitmap
      *  on every frame. */
     _pictureScale() {
-        const iw = this._videoIsDisplay()
-            ? (this.videoEl && this.videoEl.videoWidth) || 0
-            : (this.canvas && this.canvas.width) || 0;
+        const iw = this._pictureWidth();
         if (!iw) return 1;
         const rect = this._mediaRect();
         if (!rect || !(rect.width > 0)) return 1;
