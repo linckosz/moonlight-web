@@ -73,6 +73,7 @@ add_executable(run_tests
     test_wolf_coop.cpp
     test_multiseat.cpp
     test_session_metrics.cpp
+    test_us_scancode.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
     ${_src}/src/streaming/StreamConfig.cpp
@@ -113,6 +114,10 @@ target_include_directories(run_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     # Limelight.h (header-only macros used by StreamConfig).
     ${_src}/third_party/moonlight-common-c/src
+    # The native host's US keyboard table. Header-only and free of windows.h,
+    # so the layout the injector converts through can be checked on any
+    # platform — the rest of that engine cannot come along for the ride.
+    ${_src}/native-host/src
 )
 
 # Silence production qDebug() noise; keep qInfo()/qCritical() (test output).
