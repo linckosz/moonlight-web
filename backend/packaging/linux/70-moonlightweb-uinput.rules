@@ -1,0 +1,28 @@
+# MoonlightWeb — access to /dev/uinput, for the virtual gamepad.
+#
+# A gamepad is the one input that cannot be injected with an API call: games do
+# not read input events, they enumerate devices, so a real device has to exist.
+# On Linux the kernel provides that through /dev/uinput — no driver to install
+# and nothing to sign, unlike Windows — but the node is root-only by default.
+#
+# Without this rule MoonlightWeb would have to run as root for a controller to
+# work, which is a wildly disproportionate price for one feature. With it, the
+# server runs as an ordinary user and the pad still appears.
+#
+# What each part does:
+#
+#   static_node=uinput  creates the node with these permissions BEFORE the
+#                       uinput module is loaded, so the very first session does
+#                       not have to wait for a modprobe to have happened.
+#   TAG+="uaccess"      hands access to whoever is logged in at the seat, which
+#                       is how a desktop install runs (as that user). This is
+#                       systemd-logind's own mechanism, and the same one Steam
+#                       and Sunshine rely on for exactly this device.
+#   GROUP="input"       covers the headless install instead, where the server
+#                       runs as a system user with no seat: add that user to the
+#                       `input` group and the pad works there too.
+#
+# Nothing here grants anything to a remote visitor. It is the SERVER process on
+# this machine that gains the right to create a pad; what a remote client can
+# do with it is decided by MoonlightWeb's own input policy, unchanged.
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess", MODE="0660", GROUP="input"

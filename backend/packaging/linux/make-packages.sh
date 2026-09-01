@@ -54,6 +54,19 @@ mkdir -p "$PKG/usr/lib/systemd/system"
 cp "$(dirname "$0")/../systemd/moonlightweb.service" \
    "$PKG/usr/lib/systemd/system/moonlightweb.service"
 
+# /dev/uinput, for the virtual gamepad. Vendor directories again, for the same
+# reason as the unit above: /etc stays free for an admin to override either file
+# by shadowing it, and upgrades refresh ours like any other packaged file.
+#
+# Both are inert on a machine that never streams a gamepad — the rule only sets
+# permissions on a device node, and the module is one the majority of desktop
+# distributions already load for Steam.
+mkdir -p "$PKG/usr/lib/udev/rules.d" "$PKG/usr/lib/modules-load.d"
+cp "$(dirname "$0")/70-moonlightweb-uinput.rules" \
+   "$PKG/usr/lib/udev/rules.d/70-moonlightweb-uinput.rules"
+cp "$(dirname "$0")/moonlightweb-uinput.conf" \
+   "$PKG/usr/lib/modules-load.d/moonlightweb-uinput.conf"
+
 cp "$APPDIR/MoonlightWeb.png" \
    "$PKG/usr/share/icons/hicolor/512x512/apps/moonlightweb.png"
 
@@ -95,6 +108,14 @@ cat > "$ROOT/postinst.sh" <<'EOF'
 #!/bin/sh
 update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
+
+# Apply the uinput rule now rather than at the next boot, and load the module so
+# the first stream after an install already has a gamepad. Best-effort, like
+# everything else here: a container has no udev, and a machine that never plugs
+# in a controller loses nothing by either failing.
+udevadm control --reload-rules >/dev/null 2>&1 || true
+udevadm trigger --subsystem-match=misc --sysname-match=uinput >/dev/null 2>&1 || true
+modprobe uinput >/dev/null 2>&1 || true
 
 # Open the server ports in the system firewall (best-effort). Unlike Windows /
 # macOS, Linux netfilter firewalls are port-based (no per-program rule), and this
