@@ -310,10 +310,14 @@ async function main() {
     try {
         await tunnel.connect();
     } catch (e) {
+        // The failure names its own explanation when it has a better one than
+        // "your machine is off" — a connection that was refused by the network
+        // rather than never answered has nothing to do with the machine.
         fail(
             e.message,
-            'If your machine is switched off or has no internet access, nothing here ' +
-                'can reach it. That is by design, not a fault.',
+            e.hint ||
+                'If your machine is switched off or has no internet access, nothing here ' +
+                    'can reach it. That is by design, not a fault.',
         );
         return;
     }
