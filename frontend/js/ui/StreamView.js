@@ -506,7 +506,7 @@ export class StreamView {
         // stream is at 2 fps because nothing on screen is moving.
         //
         // Base64 PNG as it arrived, plus its hotspot. Null when the host is the
-        // one drawing (immersive) or the pointer is hidden.
+        // one drawing (gaming mode) or the pointer is hidden.
         this._hostCursorPng = null;
         this._hostCursorHotspot = [0, 0];
         // The host's name for a standard pointer, as a CSS keyword. Empty for
@@ -540,9 +540,9 @@ export class StreamView {
         this._lastMouseClientX = undefined;
         this._lastMouseClientY = undefined;
         // Per-session "closed" flags: the user can dismiss the stats and the
-        // immersive exit overlay with their × button; they stay hidden after.
+        // gaming-mode exit overlay with their × button; they stay hidden after.
         this._statsClosed = false;
-        this._immersiveClosed = false;
+        this._gamingClosed = false;
 
         // Audio transport: on WebRTC transports (webrtc / webrtc-media) audio is a
         // native RTP Opus track decoded by the browser (jitter buffer + in-band
@@ -603,8 +603,8 @@ export class StreamView {
         // Latency breakdown: hidden until the card is hovered (mouse) or
         // tapped (touch).
         this._latencyDetail = false;
-        // Immersive-mode exit reminder (discreet, draggable, top-center).
-        this._immersiveOverlay = null;
+        // Mouse-gaming-mode exit reminder (discreet, draggable, top-center).
+        this._gamingOverlay = null;
         this._resolution = ''; // "1920x1080" — set once on first frame
         this._codec = this.videoCodec; // Same as videoCodec
         this._transport = transport; // "webrtc" or "wss"
@@ -1400,24 +1400,24 @@ export class StreamView {
         });
         this._bindLatencyDetailReveal(this._overlayEl);
 
-        // ── Immersive-mode exit reminder (top-center, draggable) ───────────
-        // Discreet card that only appears once immersive mode has captured the
+        // ── Mouse-gaming-mode exit reminder (top-center, draggable) ────────
+        // Discreet card that only appears once gaming mode has captured the
         // mouse. It reminds the single combo that frees the cursor, releases
         // the full keyboard lock and leaves fullscreen. Touch devices never
-        // use immersive mode, so it is never built there.
+        // use gaming mode, so it is never built there.
         if (!IS_TOUCH_DEVICE) {
-            this._immersiveOverlay = document.createElement('div');
-            this._immersiveOverlay.id = 'stream-immersive-overlay';
-            this._immersiveOverlay.className = 'stream-immersive-overlay';
-            this._buildImmersiveOverlayContent();
-            this._rootEl.appendChild(this._immersiveOverlay);
-            this._makeStatsDraggable(this._immersiveOverlay);
+            this._gamingOverlay = document.createElement('div');
+            this._gamingOverlay.id = 'stream-gaming-overlay';
+            this._gamingOverlay.className = 'stream-gaming-overlay';
+            this._buildGamingOverlayContent();
+            this._rootEl.appendChild(this._gamingOverlay);
+            this._makeStatsDraggable(this._gamingOverlay);
             // × hides the reminder for the rest of the session.
-            this._immersiveOverlay.addEventListener('click', (e) => {
+            this._gamingOverlay.addEventListener('click', (e) => {
                 if (!(/** @type {Element} */ (e.target).closest('.overlay-close-btn'))) return;
                 e.stopPropagation();
                 e.preventDefault();
-                this._closeOverlayEl(this._immersiveOverlay);
+                this._closeOverlayEl(this._gamingOverlay);
             });
         }
 
@@ -1496,8 +1496,8 @@ export class StreamView {
         this._mobileFsBtn = document.createElement('button');
         this._mobileFsBtn.id = 'btn-stream-fs';
         this._mobileFsBtn.className = 'btn-stream-fs';
-        // In immersive (gaming) mode, advertise the fullscreen toggle combo right
-        // on the button — mirrors the immersive exit reminder (Z combo). The
+        // In mouse gaming mode, advertise the fullscreen toggle combo right
+        // on the button — mirrors the gaming-mode exit reminder (Z combo). The
         // button is only ever shown out of fullscreen, where the header is visible.
         this._mobileFsBtn.innerHTML =
             Icons.fullscreen +
@@ -2912,7 +2912,7 @@ export class StreamView {
             panY: this._panY,
             kbdVisible: this._kbdVisible === true,
             statsClosed: this._statsClosed === true,
-            immersiveClosed: this._immersiveClosed === true,
+            gamingClosed: this._gamingClosed === true,
         };
     }
 
@@ -2936,15 +2936,15 @@ export class StreamView {
         this._applyViewState(state);
     }
 
-    /** Carry the × dismissals of the stats / immersive cards to this view. */
+    /** Carry the × dismissals of the stats / gaming-mode cards to this view. */
     _adoptOverlayDismissals(s) {
         if (s.statsClosed) {
             this._statsClosed = true;
             if (this._overlayEl) this._overlayEl.style.display = 'none';
         }
-        if (s.immersiveClosed) {
-            this._immersiveClosed = true;
-            this._updateImmersiveOverlay();
+        if (s.gamingClosed) {
+            this._gamingClosed = true;
+            this._updateGamingOverlay();
         }
     }
 
@@ -3955,7 +3955,7 @@ export class StreamView {
             el.style.left = Math.min(maxLeft, Math.max(0, startLeft + dx)) + 'px';
             el.style.top = Math.min(maxTop, Math.max(0, startTop + dy)) + 'px';
             el.style.right = 'auto';
-            // Drop any CSS centering transform (immersive overlay) so the px
+            // Drop any CSS centering transform (gaming overlay) so the px
             // left/top above is the real visual position, not offset by -50%.
             el.style.transform = 'none';
             // Mark as manually placed: auto-positioning must not override it.
@@ -4023,17 +4023,17 @@ export class StreamView {
         if (el === this._overlayEl) {
             this._statsClosed = true;
             if (this._overlayEl) this._overlayEl.style.display = 'none';
-        } else if (el === this._immersiveOverlay) {
-            this._immersiveClosed = true;
-            this._updateImmersiveOverlay();
+        } else if (el === this._gamingOverlay) {
+            this._gamingClosed = true;
+            this._updateGamingOverlay();
         }
     }
 
-    // ── Immersive-mode exit reminder ─────────────────────────────────────
+    // ── Mouse-gaming-mode exit reminder ──────────────────────────────────
 
     /**
      * Platform-correct fullscreen-toggle combo (…+X) as <kbd> chips, shown on
-     * the header Fullscreen button in immersive mode. Same modifiers as the
+     * the header Fullscreen button in gaming mode. Same modifiers as the
      * exit reminder, ending in X (toggle fullscreen) instead of Z (release).
      */
     _fsComboKeysHtml() {
@@ -4052,54 +4052,54 @@ export class StreamView {
     }
 
     /**
-     * Build the immersive overlay content: the platform-correct exit combo
+     * Build the gaming-mode overlay content: the platform-correct exit combo
      * plus a one-line reminder of what it does (free the mouse + leave
      * fullscreen). Built once — the combo never changes during a session.
      */
-    _buildImmersiveOverlayContent() {
-        if (!this._immersiveOverlay) return;
+    _buildGamingOverlayContent() {
+        if (!this._gamingOverlay) return;
         const isMac = /Mac/.test(navigator.platform);
         const modA = isMac ? 'Cmd' : 'Ctrl';
         const modB = isMac ? 'Option' : 'Alt';
         const modC = isMac ? 'Ctrl' : 'Shift';
         // Win order: Shift + Ctrl + Alt + Z — Mac: Ctrl + Option + Cmd + Z
         const keys = isMac ? [modC, modB, modA, 'Z'] : [modC, modA, modB, 'Z'];
-        let html = '<span class="imm-keys">';
+        let html = '<span class="gm-keys">';
         for (let i = 0; i < keys.length; i++) {
-            if (i > 0) html += '<span class="imm-plus">+</span>';
+            if (i > 0) html += '<span class="gm-plus">+</span>';
             html += '<kbd>' + keys[i] + '</kbd>';
         }
         html += '</span>';
-        html += '<span class="imm-text">' + t('stream.immersiveExitTitle') + '</span>';
-        this._immersiveOverlay.innerHTML = html;
-        this._immersiveOverlay.appendChild(this._makeOverlayCloseBtn());
-        this._immersiveOverlay.title = t('stream.immersiveExitTitle');
+        html += '<span class="gm-text">' + t('stream.gamingExitTitle') + '</span>';
+        this._gamingOverlay.innerHTML = html;
+        this._gamingOverlay.appendChild(this._makeOverlayCloseBtn());
+        this._gamingOverlay.title = t('stream.gamingExitTitle');
     }
 
     /**
-     * Show the immersive overlay only while immersive mode actually holds the
+     * Show the gaming-mode overlay only while gaming mode actually holds the
      * mouse (pointer locked). Hidden otherwise so it never clutters the view.
      */
-    _updateImmersiveOverlay() {
-        if (!this._immersiveOverlay) return;
-        // Visible whenever immersive mode is on (after the first frame), NOT only
+    _updateGamingOverlay() {
+        if (!this._gamingOverlay) return;
+        // Visible whenever gaming mode is on (after the first frame), NOT only
         // while the mouse is captured: a captured (pointer-locked) cursor cannot
         // be moved onto the card to drag it, so it must be reachable pre-capture.
-        const show = this._gamingMode && this._firstFrameRendered && !this._immersiveClosed;
-        this._immersiveOverlay.classList.toggle('visible', show);
-        if (show) this._positionImmersiveOverlay();
+        const show = this._gamingMode && this._firstFrameRendered && !this._gamingClosed;
+        this._gamingOverlay.classList.toggle('visible', show);
+        if (show) this._positionGamingOverlay();
     }
 
     /**
-     * Place the immersive reminder.
+     * Place the gaming-mode reminder.
      *  - Non-fullscreen (Fullscreen button visible): dock it in the header just
      *    right of the centered Fullscreen button — outside the streamed image,
      *    so it never covers the game (and the fade effect stays off there).
      *  - Fullscreen (button hidden): back to the CSS default (top-center).
      * No-op once the user has dragged the card (manual position wins).
      */
-    _positionImmersiveOverlay() {
-        const el = this._immersiveOverlay;
+    _positionGamingOverlay() {
+        const el = this._gamingOverlay;
         if (!el) return;
         const fsBtn = this._mobileFsBtn;
         // Default: button back to its CSS-centered position (cleared each pass so
@@ -4135,9 +4135,9 @@ export class StreamView {
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────
 
     _updateOverlay() {
-        // Refresh the immersive exit reminder on the same 500ms tick so it
+        // Refresh the gaming-mode exit reminder on the same 500ms tick so it
         // appears once streaming starts, independent of the perf-stats setting.
-        this._updateImmersiveOverlay();
+        this._updateGamingOverlay();
 
         if (!this._overlayEl) return;
 
@@ -5344,7 +5344,7 @@ export class StreamView {
      * What the cursor should look like over the streamed picture.
      *
      * Two possible worlds. When the host burns the pointer into the frame — a
-     * remote GameStream host, or an immersive session — showing ours too would
+     * remote GameStream host, or a gaming-mode session — showing ours too would
      * be a double cursor, so ours is hidden. When the host hands us the shape
      * instead, we draw it: the OS composites it at the display's refresh rate,
      * so it never stutters with the video and costs the stream nothing.
@@ -6185,12 +6185,12 @@ export class StreamView {
                 this.toggleFullscreen();
                 return;
             }
-            // Exit immersive: Ctrl+Alt+Shift+Z (Win) / Cmd+Option+Ctrl+Z (Mac)
+            // Exit gaming mode: Ctrl+Alt+Shift+Z (Win) / Cmd+Option+Ctrl+Z (Mac)
             // Frees the mouse, releases the full keyboard lock and leaves
             // fullscreen — the single combo advertised by the overlay.
             if (chk('z', 'KeyZ')) {
                 e.preventDefault();
-                this._exitImmersive();
+                this._exitGamingMode();
                 return;
             }
             // Mouse mode toggle: Ctrl+Alt+Shift+M (Win) / Cmd+Option+Ctrl+M (Mac)
@@ -6790,9 +6790,9 @@ export class StreamView {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }
         // Capturing/releasing the mouse drives both the full keyboard lock and
-        // the immersive exit-reminder overlay.
+        // the gaming-mode exit-reminder overlay.
         this._syncKeyboardLock();
-        this._updateImmersiveOverlay();
+        this._updateGamingOverlay();
         // …and who draws the mouse pointer. Under pointer lock the browser has
         // taken the real one away, so only the host can draw one.
         this._sendCursorMode();
@@ -6869,14 +6869,14 @@ export class StreamView {
             if (this.hintEl) this.hintEl.style.display = 'none';
         }
 
-        // Leaving immersive mode hides the exit reminder and drops the full
+        // Leaving gaming mode hides the exit reminder and drops the full
         // keyboard lock; entering it keeps the overlay hidden until capture.
-        this._updateImmersiveOverlay();
+        this._updateGamingOverlay();
         this._syncKeyboardLock();
 
         console.log(
             '[StreamView] Mouse mode toggled: ' +
-                (this._gamingMode ? 'immersive (relative+lock)' : 'desktop (absolute)'),
+                (this._gamingMode ? 'gaming (relative+lock)' : 'desktop (absolute)'),
         );
 
         Toast.info(
