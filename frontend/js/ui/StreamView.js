@@ -487,6 +487,11 @@ export class StreamView {
         // The host's name for a standard pointer, as a CSS keyword. Empty for
         // an application's own artwork — see CURSOR_USES_CLIENT_STYLE.
         this._hostCursorKind = '';
+        // What the bitmap must be multiplied by to be in the FRAME's pixels
+        // rather than the host desktop's — see _pictureScale. 1 until the host
+        // says otherwise, which is also the right answer for a host that never
+        // sends it.
+        this._hostCursorScale = 1;
         // Whether the host has handed the pointer over at all. Until it says so
         // the picture cursor stays hidden, which is what every non-native host
         // needs: they burn their pointer into the frame.
@@ -4498,6 +4503,9 @@ export class StreamView {
             this._hostCursorPng = msg.png || null;
             this._hostCursorKind = typeof msg.kind === 'string' ? msg.kind : '';
             this._hostCursorHotspot = [msg.hotspotX | 0, msg.hotspotY | 0];
+            // Desktop pixels to frame pixels — see _pictureScale. Absent on a
+            // host that predates the field, where the two were assumed equal.
+            this._hostCursorScale = msg.scale > 0 ? msg.scale : 1;
             // Once, on the first shape: the counterpart of the host's own line,
             // so "the pointer is missing" can be told from "the pointer never
             // arrived" without instrumenting anything.
@@ -5409,15 +5417,34 @@ export class StreamView {
         return (this.canvas && this.canvas.width) || 0;
     }
 
-    /** How much smaller (or larger) than the host's own pixels the picture is
-     *  drawn. Rounded to 5% steps so a drag-resize does not rebuild the bitmap
-     *  on every frame. */
+    /**
+     * How much smaller (or larger) than the host's own pixels the pointer must
+     * be drawn.
+     *
+     * Two ratios, not one, because there are two scalings between the desktop
+     * the pointer was captured on and the pixels it ends up occupying:
+     *
+     *   desktop → frame   the host's converter, when the client asked for a
+     *                     resolution the host is not running at. The bitmap
+     *                     arrives in DESKTOP pixels, so this one is invisible
+     *                     from here and the host has to say it (`scale` on the
+     *                     cursor message). It also moves mid-session: changing
+     *                     the host's display mode resizes the desktop while the
+     *                     frame stays where it was negotiated, which is exactly
+     *                     the case where the pointer looked stuck at its old
+     *                     size while everything around it rescaled.
+     *   frame → window    object-fit, measured here.
+     *
+     * Rounded to 5% steps so a drag-resize does not rebuild the bitmap on every
+     * frame.
+     */
     _pictureScale() {
         const iw = this._pictureWidth();
         if (!iw) return 1;
         const rect = this._mediaRect();
         if (!rect || !(rect.width > 0)) return 1;
-        const scale = rect.width / iw;
+        const host = this._hostCursorScale > 0 ? this._hostCursorScale : 1;
+        const scale = (rect.width / iw) * host;
         if (!isFinite(scale) || !(scale > 0)) return 1;
         return Math.max(0.25, Math.min(4, Math.round(scale * 20) / 20));
     }
@@ -5511,6 +5538,7 @@ export class StreamView {
             this._hostCursorPng = null;
             this._hostCursorKind = '';
             this._hostCursorHotspot = [0, 0];
+            this._hostCursorScale = 1;
             this._dragCursor = null;
             this._scaledCursor = null;
             this._scaledCursorPending = null;

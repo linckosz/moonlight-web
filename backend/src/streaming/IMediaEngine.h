@@ -247,5 +247,11 @@ signals:
     /// system's standard shapes, and is empty for an application's own artwork.
     /// It lets a client show ITS native pointer, changing with the content,
     /// instead of the host's foreign-looking bitmap — see CursorUpdate::kind.
-    void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY, bool visible, QString kind);
+    ///
+    /// `scale` brings the bitmap and its hotspot from the host desktop's pixels
+    /// into the streamed frame's, which differ whenever the client asked for a
+    /// resolution the host is not running at — see CursorUpdate::scale. It moves
+    /// under a running session, so an update is emitted when it changes alone.
+    void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY, bool visible, QString kind,
+                            double scale);
 };
