@@ -780,9 +780,10 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
                                       static_cast<uint8_t>(msg["ctype"].toInt(0)),
                                       msg["rumble"].toBool(false));
     } else if (type == "gamepaddisconnect") {
-        // Empty state with this controller's mask bit cleared = removal.
-        m_Shim->sendControllerState(static_cast<short>(msg["index"].toInt(0)),
-                                    static_cast<short>(msg["mask"].toInt(0)), 0, 0, 0, 0, 0, 0, 0);
+        // The pad is gone — see DataChannelRelay for why this is its own call
+        // and not an empty state.
+        m_Shim->sendControllerRemoval(static_cast<uint8_t>(msg["index"].toInt(0)),
+                                      static_cast<uint16_t>(msg["mask"].toInt(0)));
     } else {
         qWarning() << "[MediaTrackRelay] Unknown input type:" << type;
     }

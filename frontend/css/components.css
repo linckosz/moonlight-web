@@ -718,6 +718,78 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     }
 }
 
+/* ── Gamepad driver notice ───────────────────────────────────────────────
+   Shown at the top of the hosts page and of the admin page, and only on the
+   host machine itself — the server decides that, not this stylesheet.
+
+   Deliberately the quiet in-page kind rather than the fixed bar above: a
+   missing gamepad driver is a clean degradation (keyboard, mouse and the
+   stream are untouched), so it has to read as information and never as an
+   alert, and it must not cover anything. */
+.gamepad-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-5);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    background-color: var(--surface-2);
+    border: 1px solid var(--border-1);
+    border-radius: var(--radius-md);
+}
+.gamepad-notice-icon {
+    font-size: 1.25rem;
+    line-height: 1.4;
+}
+.gamepad-notice-body {
+    flex: 1;
+    min-width: 0;
+    line-height: 1.5;
+}
+.gamepad-notice-title {
+    display: block;
+    margin-bottom: var(--space-1);
+    font-size: var(--fs-md);
+    font-weight: 600;
+    color: var(--text-1);
+}
+.gamepad-notice-text,
+.gamepad-notice-hint {
+    display: block;
+}
+.gamepad-notice-hint {
+    margin-top: var(--space-1);
+    color: var(--text-3);
+}
+.gamepad-notice-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--space-2);
+    align-items: center;
+}
+.gamepad-notice-close {
+    padding: 2px 8px;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-3);
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+.gamepad-notice-close:hover {
+    color: var(--text-1);
+}
+@media (max-width: 700px) {
+    .gamepad-notice {
+        flex-wrap: wrap;
+    }
+    .gamepad-notice-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+}
+
 /* ════════════════════════════════════════════════════════════════════════
    Dialog (pairing + future modal dialogs)
    ════════════════════════════════════════════════════════════════════════ */

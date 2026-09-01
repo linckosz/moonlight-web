@@ -17,6 +17,7 @@
 
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
+#include "../../input/windows/VigemGamepad.h"
 #include "WindowsEncoderProbe.h"
 
 #include <windows.h>
@@ -457,6 +458,17 @@ Unavailability enumerate(Capabilities& caps)
     }
 
     return Unavailability::None;
+}
+
+VirtualGamepad probeVirtualGamepad()
+{
+    VirtualGamepad result;
+    // Windows has a backend, whatever the driver answers. That distinction is
+    // the whole point: "supported but absent" is the one case where installing
+    // something would help, and the only one worth telling a user about.
+    result.supported = true;
+    result.present = input::VigemGamepad::busPresent(result.diagnostic);
+    return result;
 }
 
 } // namespace mw::native::platform

@@ -33,6 +33,15 @@ Capabilities NativeHost::probe()
     return mw::native::probe();
 }
 
+VirtualGamepad NativeHost::probeVirtualGamepad()
+{
+    const VirtualGamepad result = platform::probeVirtualGamepad();
+    log::info(std::string("[native] virtual gamepad: ") +
+              (result.present ? "available" : "unavailable") +
+              (result.diagnostic.empty() ? "" : " — " + result.diagnostic));
+    return result;
+}
+
 std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
                                                    VideoCallback onVideo, AudioCallback onAudio,
                                                    RumbleCallback onRumble, CursorCallback onCursor,

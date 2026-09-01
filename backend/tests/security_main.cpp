@@ -20,6 +20,7 @@ void run_request_guard_tests();
 void run_api_csrf_tests();
 void run_share_manager_tests();
 void run_pairing_binding_tests();
+void run_gamepad_driver_tests();
 
 int main(int argc, char** argv)
 {
@@ -34,6 +35,7 @@ int main(int argc, char** argv)
     run_api_csrf_tests();
     run_share_manager_tests();
     run_pairing_binding_tests();
+    run_gamepad_driver_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");

@@ -59,4 +59,12 @@ bool isOsSupported();
 /// failure, or Unavailability::None on success. Must not throw.
 Unavailability enumerate(Capabilities& caps);
 
+/// Whether a virtual gamepad can be created on this machine right now, asked of
+/// the driver rather than of the registry (see VirtualGamepad).
+///
+/// Part of the platform seam and not of enumerate(): a platform with no backend
+/// answers `supported = false` here without that being a capture failure. Must
+/// not throw.
+VirtualGamepad probeVirtualGamepad();
+
 } // namespace mw::native::platform

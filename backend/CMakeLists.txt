@@ -231,6 +231,7 @@ add_executable(mw-server
     src/backend/streambackend/NativeHostBackend.cpp
     src/backend/streambackend/StreamBackendSetup.cpp
     src/backend/SunshineInstaller.cpp
+    src/backend/GamepadDriver.cpp
     # Listed as a source although it is a header: it declares a Q_OBJECT with no
     # .cpp of its own (it is the pure media-engine interface), and AUTOMOC only
     # moc's a header it can see in the target.
@@ -399,6 +400,9 @@ if(MW_BUILD_TESTS)
         tests/test_request_guard.cpp
         tests/test_api_csrf.cpp
         tests/test_share_manager.cpp
+        # The guard on the ViGEmBus install notice: header-only pure logic, so
+        # it verifies here without a driver, a network or the native module.
+        tests/test_gamepad_driver.cpp
         src/server/ConnectionGuard.cpp
         src/server/HttpParser.cpp
         src/server/RequestGuard.cpp

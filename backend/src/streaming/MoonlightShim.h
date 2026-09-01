@@ -145,6 +145,10 @@ public:
                              unsigned char leftTrigger, unsigned char rightTrigger,
                              short leftStickX, short leftStickY, short rightStickX,
                              short rightStickY) override;
+    // A pad that went away. On the wire this IS the empty state above with the
+    // mask bit cleared — GameStream has no separate removal message — so this
+    // is the same call under the name the relays now use.
+    void sendControllerRemoval(uint8_t controllerNumber, uint16_t activeGamepadMask) override;
     /// Shift this session's controller numbering (see applyControllerOffset).
     /// Zero — the owner's own sessions — keeps the browser's numbering. Set
     /// once before the connection starts.
