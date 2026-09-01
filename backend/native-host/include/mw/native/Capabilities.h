@@ -114,9 +114,14 @@ struct DisplayInfo
     /// above this module, used as the app id the browser launches.
     int id = -1;
 
-    /// What the user sees, already formatted by the platform layer:
-    /// "Display 1 — 2560×1440 · 144 Hz".
+    /// What the user sees, already formatted by the platform layer: the OS's
+    /// own number and nothing else, e.g. "Display 1".
     std::string label;
+
+    /// The same display spelled out for the log — monitor name and mode, e.g.
+    /// "M27Q — 2560×1440 · 165 Hz". Never shown to the user; it is what the
+    /// label used to carry before it became a card title.
+    std::string detail;
 
     int width = 0;
     int height = 0;

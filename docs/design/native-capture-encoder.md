@@ -375,9 +375,11 @@ relais après.
   parties à authentifier.
 - **Aucun appel réseau** au lancement : `launch()` renvoie un descripteur
   nommant un display.
-- **Les displays SONT la liste d'apps** : une carte par écran
-  (`Display 1 — 2560×1440 · 144 Hz`). La grille existante devient le sélecteur,
-  zéro nouvelle UI, et avec un seul écran c'est une carte et un clic.
+- **Les displays SONT la liste d'apps** : une carte par écran, titrée du seul
+  numéro que montrent les réglages Windows (`Display 1`) — le modèle du moniteur
+  et le mode restent dans le log de sonde, pas sur la carte. La grille existante
+  devient le sélecteur, zéro nouvelle UI, et avec un seul écran c'est une carte
+  et un clic.
 - Host nommé `<hostname> — MoonlightWeb Host`, non persisté (recalculé au
   démarrage d'après ce que la machine sait faire).
 
