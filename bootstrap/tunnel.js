@@ -59,6 +59,26 @@ const CONNECT_TIMEOUT_MS = 25000;
 /** How many of the host's candidates to hold before its offer arrives. */
 const MAX_EARLY_CANDIDATES = 64;
 
+/**
+ * The failure where the machine answered and the network did not carry it.
+ *
+ * Kept apart from the deadline's own wording because the two are different
+ * accusations. "Your machine did not answer" sends someone home to restart a
+ * machine that is running perfectly; once its signed offer has been verified,
+ * the machine has answered, and everything after that is the network between
+ * the two ends. Company networks and public Wi-Fi are where this happens: the
+ * WebSocket above them is TCP 443 and goes through any proxy, while the
+ * connection itself needs the two ends to reach each other directly, and there
+ * is no relay to fall back on.
+ */
+function noRouteError() {
+    const err = new Error('Your machine answered, but no direct connection could be opened.');
+    err.hint =
+        'This network is not letting the two ends reach each other. Company networks and ' +
+        'public Wi-Fi often block what that takes. A phone hotspot is the quickest way to tell.';
+    return err;
+}
+
 export function encodeFrame(kind, id, payload) {
     const body = payload ?? new Uint8Array(0);
     const out = new Uint8Array(5 + body.length);
@@ -248,6 +268,11 @@ export class Tunnel {
         // Candidates the host sent before there was anywhere to put them. See
         // _onRemoteCandidate: nearly all of them arrive that early.
         this._earlyCandidates = [];
+        // Kinds of local address this browser found (host, srflx). Reported if
+        // the connection fails, where it is the difference between "this
+        // network blocks everything" and "it found its public address and the
+        // checks still went nowhere".
+        this._localTypes = new Set();
 
         this._nextId = 1;
         this._pending = new Map(); // request id → { resolve, reject, head, chunks }
@@ -283,10 +308,7 @@ export class Tunnel {
 
         this._status('calling');
         await new Promise((resolve, reject) => {
-            const deadline = setTimeout(
-                () => reject(new Error('Your machine did not answer in time.')),
-                CONNECT_TIMEOUT_MS,
-            );
+            const deadline = setTimeout(() => reject(this._deadlineError()), CONNECT_TIMEOUT_MS);
             const settle = (err) => {
                 clearTimeout(deadline);
                 if (err) reject(err);
@@ -317,6 +339,18 @@ export class Tunnel {
             };
             this._onChannelOpen = settle;
         });
+    }
+
+    /**
+     * What to say when the connect deadline expires.
+     *
+     * Past the offer there is a peer connection, and there is one only because
+     * the host's offer arrived and its signature checked out — so the machine
+     * answered, whatever happened afterwards. Before that, nothing has been
+     * heard from it and the plain reading is the right one.
+     */
+    _deadlineError() {
+        return this._pc ? noRouteError() : new Error('Your machine did not answer in time.');
     }
 
     _sendSignal(payload) {
@@ -379,17 +413,34 @@ export class Tunnel {
             iceServers: [{ urls: `stun:${location.hostname}:3478` }],
         });
         this._pc.onicecandidate = (ev) => {
-            if (ev.candidate)
+            if (ev.candidate) {
+                // Kept for the failure log below: which kinds of address this
+                // browser managed to find is most of the diagnosis, and it is
+                // otherwise only visible in chrome://webrtc-internals.
+                if (ev.candidate.type) this._localTypes.add(ev.candidate.type);
                 this._sendSignal({
                     type: 'ice',
                     candidate: ev.candidate.candidate,
                     mid: ev.candidate.sdpMid,
                 });
+            }
         };
         this._pc.ondatachannel = (ev) => this._adoptChannel(ev.channel);
         this._pc.onconnectionstatechange = () => {
             const state = this._pc.connectionState;
-            if (state === 'failed' || state === 'closed') this._teardown('the connection ended');
+            if (state !== 'failed' && state !== 'closed') return;
+            // A verdict, not a symptom: before the channel has ever opened this
+            // IS the outcome of the attempt, and sitting on it until the
+            // deadline only spends another twenty seconds to end up saying
+            // something less true.
+            if (!this.connected && this._onChannelOpen) {
+                console.warn(
+                    `[MW] No route to the host: ice=${this._pc.iceConnectionState} ` +
+                        `local candidates=${[...this._localTypes].join(',') || 'none'}`,
+                );
+                this._onChannelOpen(noRouteError());
+            }
+            this._teardown('the connection ended');
         };
 
         await this._pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
@@ -482,6 +533,10 @@ export class Tunnel {
             // between renegotiations, and the server already knows this browser
             // is connected — it is the party that introduced them.
             if (this._onChannelOpen) this._onChannelOpen(null);
+            // Dropped once used: it is what tells a later failure that there is
+            // still a connect() waiting on a verdict, and a tunnel that dies an
+            // hour from now must not be reported as one that never came up.
+            this._onChannelOpen = null;
         };
         if (this._dc.readyState === 'open') this._dc.onopen();
     }
