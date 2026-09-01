@@ -25,6 +25,7 @@
 #include "network/InternetAccessManager.h"
 #include "network/UPNPClient.h"
 #include "backend/ComputerManager.h"
+#include "backend/GamepadDriver.h"
 #include "backend/SunshineInstaller.h"
 #include "backend/SunshineRestClient.h"
 #include "Autostart.h"
@@ -547,6 +548,78 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["status"] = ok ? "started" : "failed";
         return HttpResponse::json(obj);
     });
+
+    // GET /api/system/gamepad-driver — is the virtual gamepad bus there, and may
+    // this caller be offered the one-click install.
+    //
+    // Answered for everyone, because "no gamepad on this host" is a fact a remote
+    // viewer is entitled to (it explains why their pad does nothing). What is NOT
+    // answered for everyone is `offer_install`: the driver would land on THIS
+    // machine, so only a caller sitting at it may be shown the button. The verdict
+    // is computed here and sent already decided — a browser must never derive it
+    // from its own URL, which an SSH tunnel forges in one command.
+    server.router()->get("/api/system/gamepad-driver", [](const HttpRequest& req) {
+        const GamepadDriver::Status st = GamepadDriver::status();
+        const NetClassify::Kind kind = NetClassify::classify(req.clientAddress);
+
+        QJsonObject obj;
+        obj["supported"] = st.supported;
+        obj["installed"] = st.present;
+        obj["offer_install"] = GamepadDriver::mayOffer(kind, req.viaTunnel, st);
+        // False means the notice offers the upstream link rather than a button:
+        // an unelevated instance would raise a UAC prompt on a desktop nobody is
+        // necessarily looking at, and a prompt that fails in silence is worse
+        // than no button at all.
+        obj["can_install"] = GamepadDriver::canInstall();
+        obj["download_url"] = GamepadDriver::downloadUrl();
+        // Diagnostics name the machine's driver state; keep them for the machine.
+        if (kind == NetClassify::Kind::Loopback && !req.viaTunnel && !st.diagnostic.isEmpty())
+            obj["diagnostic"] = st.diagnostic;
+        return HttpResponse::json(obj);
+    });
+
+    // POST /api/system/gamepad-driver/install — fetch and install ViGEmBus.
+    //
+    // Re-checks the same condition the notice was gated on rather than trusting
+    // that the button could not have been shown: the button not being displayed
+    // is a UI fact, and UI facts are not access control.
+    server.router()->postAsync(
+        "/api/system/gamepad-driver/install", [](const HttpRequest& req, ResponseCallback respond) {
+            const GamepadDriver::Status st = GamepadDriver::status();
+            const NetClassify::Kind kind = NetClassify::classify(req.clientAddress);
+            if (!GamepadDriver::mayOffer(kind, req.viaTunnel, st)) {
+                respond(HttpResponse::error(403, "Only available from the host machine itself"));
+                return;
+            }
+            if (!GamepadDriver::canInstall()) {
+                respond(HttpResponse::error(
+                    400, "This instance is not elevated — install the driver manually"));
+                return;
+            }
+
+            GamepadDriver::install([respond](GamepadDriver::Result result, QString error) {
+                QJsonObject obj;
+                switch (result) {
+                case GamepadDriver::Result::Installed:
+                    obj["status"] = "installed";
+                    obj["installed"] = true;
+                    break;
+                case GamepadDriver::Result::RestartRequired:
+                    // Not a failure: the driver is down, the bus comes up with
+                    // the next boot. Its own answer so the page can say that
+                    // rather than send someone chasing a solved problem.
+                    obj["status"] = "restart_required";
+                    obj["installed"] = false;
+                    break;
+                case GamepadDriver::Result::Failed:
+                    obj["status"] = "failed";
+                    obj["installed"] = false;
+                    obj["error"] = error;
+                    break;
+                }
+                respond(HttpResponse::json(obj));
+            });
+        });
 
     // POST /api/system/restart — restart this MoonlightWeb process. Localhost-only.
     //

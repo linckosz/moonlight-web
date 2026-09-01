@@ -163,6 +163,17 @@
         "playerStatsOn": "The computer you are joining reports anonymous statistics about the session it runs for you. It is its owner’s choice, not yours to make — but here is exactly what it covers.",
         "playerStatsOff": "The computer you are joining reports nothing at all about this session."
     },
+    "gamepad": {
+        "noticeTitle": "Controllers need a driver",
+        "noticeBody": "Windows needs the ViGEmBus driver before a gamepad connected to your browser can reach your games. Everything else — keyboard, mouse, the stream itself — works without it.",
+        "install": "Install it",
+        "installing": "Installing…",
+        "installed": "Controllers are ready.",
+        "restartRequired": "Driver installed. Restart this PC to activate it.",
+        "installFailed": "The driver could not be installed.",
+        "download": "Download the driver",
+        "manualHint": "MoonlightWeb is not running here with the rights to install it."
+    },
     "securing": {
         "working": "Securing the communication…",
         "done": "Secured"
@@ -238,6 +249,11 @@
         "hdrNoWebgpu": "Unavailable: this browser/device has no WebGPU, the stream stays SDR.",
         "chroma444": "4:4:4 Chroma",
         "chroma444Desc": "Full-resolution color (4:4:4) instead of 4:2:0. Requires both the host AND client GPU to support 4:4:4 for the chosen codec. Needs significantly higher bandwidth.",
+        "gamepadProfile": "Controller presented to games (debug)",
+        "gamepadProfileDesc": "Which virtual controller the host plugs in for your pad. Automatic follows the controller you are holding; forcing one is for telling a detection problem from a mapping problem.",
+        "gamepadProfileAuto": "Automatic",
+        "gamepadProfileX360": "Always Xbox 360",
+        "gamepadProfileDs4": "Always DualShock 4",
         "tearing": "Allow tearing",
         "tearingDesc": "Disables VSync for slightly lower latency; may cause image tearing.",
         "muteHost": "Mute host audio",

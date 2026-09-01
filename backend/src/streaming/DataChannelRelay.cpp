@@ -1163,9 +1163,12 @@ void DataChannelRelay::onInputMessage(const std::string& message)
                                       static_cast<uint8_t>(msg["ctype"].toInt(0)),
                                       msg["rumble"].toBool(false));
     } else if (type == "gamepaddisconnect") {
-        // Empty state with this controller's mask bit cleared = removal.
-        m_Shim->sendControllerState(static_cast<short>(msg["index"].toInt(0)),
-                                    static_cast<short>(msg["mask"].toInt(0)), 0, 0, 0, 0, 0, 0, 0);
+        // The pad is gone. What that means depends on the engine — a cleared
+        // mask bit for a GameStream host, an actual unplug for the native one,
+        // which owns the virtual device — so the intent is sent, not one
+        // engine's encoding of it.
+        m_Shim->sendControllerRemoval(static_cast<uint8_t>(msg["index"].toInt(0)),
+                                      static_cast<uint16_t>(msg["mask"].toInt(0)));
     } else {
         qWarning() << "[DataChannelRelay] Unknown input type:" << type;
     }

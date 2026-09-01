@@ -178,4 +178,24 @@ struct Capabilities
     const GpuInfo* gpuFor(const DisplayInfo& display) const;
 };
 
+/// Whether a gamepad can be presented to the OS right now.
+///
+/// Deliberately NOT a field of Capabilities: a missing gamepad bus never makes
+/// the engine unavailable — it is a clean degradation, keyboard and mouse
+/// intact — and probe() runs on every host-list refresh, which is no place to
+/// open and close a driver handle.
+struct VirtualGamepad
+{
+    /// False on a platform with no virtual-pad backend at all. Nothing the user
+    /// installs would change that, so nothing must be offered to them.
+    bool supported = false;
+
+    /// The driver answered. This is the only trustworthy form of the question:
+    /// a registry key or a file on disk survives a partial uninstall and lies.
+    bool present = false;
+
+    /// English, for the log line. Never shown to a user.
+    std::string diagnostic;
+};
+
 } // namespace mw::native

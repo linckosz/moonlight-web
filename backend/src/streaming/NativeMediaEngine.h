@@ -117,6 +117,7 @@ public:
                              unsigned char leftTrigger, unsigned char rightTrigger,
                              short leftStickX, short leftStickY, short rightStickX,
                              short rightStickY) override;
+    void sendControllerRemoval(uint8_t controllerNumber, uint16_t activeGamepadMask) override;
     void setControllerOffset(int offset) override { m_ControllerOffset = offset; }
     void syncLockKeys(bool numLock, bool capsLock, bool scrollLock) override;
     void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,

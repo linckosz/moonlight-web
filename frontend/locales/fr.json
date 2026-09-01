@@ -163,6 +163,17 @@
         "playerStatsOn": "L’ordinateur que vous rejoignez envoie des statistiques anonymes sur la session qu’il exécute pour vous. C’est le choix de son propriétaire, pas le vôtre — mais voici exactement ce que cela couvre.",
         "playerStatsOff": "L’ordinateur que vous rejoignez n’envoie rien du tout au sujet de cette session."
     },
+    "gamepad": {
+        "noticeTitle": "Les manettes ont besoin d’un pilote",
+        "noticeBody": "Windows a besoin du pilote ViGEmBus pour qu’une manette branchée à votre navigateur arrive jusqu’à vos jeux. Tout le reste — clavier, souris, le flux lui-même — fonctionne sans lui.",
+        "install": "Installer",
+        "installing": "Installation…",
+        "installed": "Les manettes sont prêtes.",
+        "restartRequired": "Pilote installé. Redémarrez ce PC pour l’activer.",
+        "installFailed": "Le pilote n’a pas pu être installé.",
+        "download": "Télécharger le pilote",
+        "manualHint": "MoonlightWeb ne tourne pas ici avec les droits nécessaires pour l’installer."
+    },
     "securing": {
         "working": "Sécurisation de la communication…",
         "done": "Sécurisé"
@@ -238,6 +249,11 @@
         "hdrNoWebgpu": "Indisponible : ce navigateur/appareil n'a pas WebGPU, le flux reste en SDR.",
         "chroma444": "Chroma 4:4:4",
         "chroma444Desc": "Couleur à pleine résolution (4:4:4) au lieu de 4:2:0. Nécessite que le GPU de l'hôte ET du client prennent en charge le 4:4:4 pour le codec choisi. Demande une bande passante nettement supérieure.",
+        "gamepadProfile": "Manette présentée aux jeux (debug)",
+        "gamepadProfileDesc": "La manette virtuelle que l'hôte branche pour la vôtre. Automatique suit celle que vous tenez ; forcer un profil sert à distinguer un problème de détection d'un problème de correspondance des boutons.",
+        "gamepadProfileAuto": "Automatique",
+        "gamepadProfileX360": "Toujours Xbox 360",
+        "gamepadProfileDs4": "Toujours DualShock 4",
         "tearing": "Autoriser le tearing",
         "tearingDesc": "Désactive la VSync pour une latence légèrement réduite ; peut provoquer un déchirement de l'image.",
         "muteHost": "Couper le son de l'hôte",

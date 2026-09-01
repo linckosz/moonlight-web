@@ -493,6 +493,10 @@ export class StreamView {
             this.webrtc.rideOutLoss = true;
             console.log('[StreamView] Loss recovery: riding out the refresh wave');
         }
+        // Debug builds only: force the virtual pad the host presents instead of
+        // letting it follow the controller we detect. 'auto' everywhere else —
+        // see the gamepad profile note in SettingsView.
+        this._gamepadProfile = opts.gamepadProfile || 'auto';
         this.pointerLocked = false;
         // ── Host pointer, drawn by US ──────────────────────────────────────
         // The native host can hand over the pointer's shape instead of burning
@@ -3520,9 +3524,12 @@ export class StreamView {
             // Start polling connected gamepads (Xbox/PlayStation). Sends a
             // controller snapshot over the input transport only on change.
             if (!this._gamepadManager && navigator.getGamepads) {
-                this._gamepadManager = new GamepadManager((msg) => {
-                    if (!this._quitting) this.webrtc.send(msg);
-                });
+                this._gamepadManager = new GamepadManager(
+                    (msg) => {
+                        if (!this._quitting) this.webrtc.send(msg);
+                    },
+                    { profile: this._gamepadProfile },
+                );
             }
             // Standby: created but not polling — started in activate().
             if (this._gamepadManager && !this._standby) this._gamepadManager.start();

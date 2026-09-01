@@ -887,6 +887,16 @@ void MoonlightShim::sendControllerState(short controllerNumber, short activeGame
                                rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
 }
 
+void MoonlightShim::sendControllerRemoval(uint8_t controllerNumber, uint16_t activeGamepadMask)
+{
+    // GameStream has no removal message: an empty state whose mask bit is
+    // cleared is the removal, and the host reads it as one. Deliberately the
+    // same call the relays used to make directly — the interface gained a name
+    // for the intent, this end did not change what goes on the wire.
+    sendControllerState(static_cast<short>(controllerNumber),
+                        static_cast<short>(activeGamepadMask), 0, 0, 0, 0, 0, 0, 0);
+}
+
 // --- Input watchdog --------------------------------------------------------
 // Contract and rationale: see the input-watchdog section of MoonlightShim.h.
 
