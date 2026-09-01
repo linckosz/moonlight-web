@@ -196,17 +196,35 @@
     animation: seal-spin 3.2s linear infinite;
   }
   @keyframes seal-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  /* Until the connection is made this is an app card and nothing more: the
+     same cyan sheen over the same glass the application's tiles use, painted
+     over an opaque ground so the rim's green cannot tint it. The green belongs
+     to the result, so it is withheld until there is one. */
   .seal-face {
     position: absolute;
     inset: 2px;
     display: grid;
     place-items: center;
-    background: linear-gradient(rgba(42, 212, 160, .12), rgba(42, 212, 160, .12)), var(--surface-2);
-    box-shadow: inset 0 0 0 1px rgba(42, 212, 160, .30), inset 0 1px 0 rgba(0, 229, 255, .08);
+    background:
+      linear-gradient(150deg, rgba(0, 229, 255, .06), rgba(0, 229, 255, 0) 60%),
+      linear-gradient(rgba(10, 16, 22, .58), rgba(10, 16, 22, .58)),
+      linear-gradient(var(--surface-0), var(--surface-0));
+    box-shadow: inset 0 0 0 1px var(--border-2), inset 0 1px 0 rgba(0, 229, 255, .08);
     clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
-    transition: background .3s ease;
+    transition: box-shadow .16s ease;
   }
-  .seal-face svg { width: 30px; height: 30px; color: var(--seal); }
+  /* The green wash on its own layer: a multi-layer background cannot be
+     transitioned, and this has to arrive as a quick fade at the very end. */
+  .seal-face::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(rgba(42, 212, 160, .2), rgba(42, 212, 160, .2)), var(--surface-2);
+    opacity: 0;
+    transition: opacity .16s ease;
+    pointer-events: none;
+  }
+  .seal-face svg { position: relative; z-index: 1; width: 30px; height: 30px; color: var(--seal); }
   /* The shackle breathes while the connection is being made, and stops when it
      is made. It is the only moving light on the padlock itself, so it carries
      the difference between "closing" and "closed" without a word. */
@@ -218,8 +236,9 @@
   body[data-state="secured"] .seal::before { opacity: 0; transition: opacity .3s ease; }
   body[data-state="secured"] .shackle { animation: none; filter: none; }
   body[data-state="secured"] .seal-face {
-    background: linear-gradient(rgba(42, 212, 160, .2), rgba(42, 212, 160, .2)), var(--surface-2);
+    box-shadow: inset 0 0 0 1px rgba(42, 212, 160, .30), inset 0 1px 0 rgba(0, 229, 255, .08);
   }
+  body[data-state="secured"] .seal-face::after { opacity: 1; }
 
   .track {
     height: 3px;
