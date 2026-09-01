@@ -41,9 +41,22 @@
 namespace mw::native {
 namespace {
 
-/// The most a composited pointer may be blown up past its real size. It is a
-/// 32-pixel bitmap; stretched much further it stops reading as a pointer.
-constexpr float kMaxCursorMagnify = 4.0f;
+/// The most a composited pointer may be blown up past its real size.
+///
+/// Two reasons, and the second is the one that set the number. It is a 32-pixel
+/// bitmap, so stretched far enough it stops reading as a pointer. And the client
+/// asks for a size on the GLASS, which is constant by design — the same 18
+/// pixels in portrait as in landscape — while the picture behind it is not: a
+/// phone held upright shows a 16:9 desktop in a band a fifth of the screen tall,
+/// and a pointer that keeps its screen size there eats a twelfth of the picture
+/// it is supposed to be pointing into.
+///
+/// The cap is what says "not on a picture this small". It only ever binds when
+/// the picture is displayed far smaller than it was encoded, which is exactly
+/// that case: at 2.5 a phone in portrait draws a visible pointer that is no
+/// longer out of scale with what is under it, and every larger picture — a
+/// phone turned sideways, any zoom at all — is already below it and untouched.
+constexpr float kMaxCursorMagnify = 2.5f;
 
 int64_t steadyNowUs()
 {
