@@ -63,6 +63,19 @@ if(WIN32)
 else()
     set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # The virtual gamepad, ahead of the rest of the Linux backend.
+        #
+        # Compiled but NOT yet reachable: there is no Linux session to route
+        # input from (no capture, no encoder), so nothing constructs it and
+        # probeVirtualGamepad() still answers "no backend on this platform" —
+        # which is the truth a user can act on today. Building it here is what
+        # keeps it honest: it compiles at -Wall -Wextra on every Linux CI run,
+        # so it cannot rot into the sort of "ready" code that has never once
+        # been through a compiler.
+        target_sources(mw-native-host PRIVATE src/input/linux/UinputGamepad.cpp)
+    endif()
 endif()
 
 message(STATUS "mw-native-host: platform backend = ${MW_NATIVE_PLATFORM}")
