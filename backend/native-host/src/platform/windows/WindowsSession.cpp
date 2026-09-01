@@ -165,29 +165,9 @@ public:
         if (m_Config.yuv444 && !yuv444)
             log::info("[native] 4:4:4 requested but this encoder cannot — streaming 4:2:0");
 
-        m_Converter = std::make_unique<convert::ColorConvert>();
-        if (!m_Converter->init(m_Capture->device(), m_Capture->format(), m_Capture->width(),
-                               m_Capture->height(), m_Config.width, m_Config.height,
-                               yuv444 ? convert::ColorConvert::Chroma::C444
-                                      : convert::ColorConvert::Chroma::C420,
-                               error))
-            return false;
-
-        // The encoder the Selector chose, not one guessed from the display.
-        switch (m_Target.encoder) {
-        case EncoderApi::Nvenc: m_Encoder = std::make_unique<encode::NvencEncoder>(); break;
-        case EncoderApi::Amf: m_Encoder = std::make_unique<encode::AmfEncoder>(); break;
-        case EncoderApi::Vpl: m_Encoder = std::make_unique<encode::VplEncoder>(); break;
-        default:
-            error =
-                std::string("no encoder implementation for ") + toString(m_Target.encoder) + " yet";
-            return false;
-        }
-
-        if (!m_Encoder->init(m_Capture->device(), m_Target.codec, m_Converter->outputWidth(),
-                             m_Converter->outputHeight(), m_Config.fps, m_Config.bitrateKbps,
-                             yuv444, m_Config.intraRefresh, error))
-            return false;
+        // The client's own frame size is whatever it asked for, or the desktop
+        // when it asked for nothing.
+        if (!buildPipeline(m_Config.width, m_Config.height, error)) return false;
 
         m_Info = SessionInfo{};
         m_Info.displayId = display->id;
@@ -315,6 +295,114 @@ public:
     void setTargetBitrate(int kbps) override { m_PendingBitrate.store(kbps); }
 
 private:
+    /// Build the converter and the encoder against whatever the capture is
+    /// handing out RIGHT NOW — its device, its size, its format.
+    ///
+    /// @p outputWidth / @p outputHeight is the size the client decodes at; zero
+    /// means "follow the desktop", which is what a session start passes when the
+    /// client asked for no particular resolution. A rebuild passes the size back
+    /// in, so the host changing its own mode does not change the client's
+    /// geometry underneath a decoder that is already configured.
+    bool buildPipeline(int outputWidth, int outputHeight, std::string& error)
+    {
+        // Released before the replacements are built, not after. Both hold a
+        // reference to the D3D device they were made on, and an encoder holds a
+        // hardware session — of which a consumer GPU has famously few. Building
+        // the new one while the old is still open is how a rebuild fails with a
+        // vendor error that says nothing about the real cause.
+        m_DesktopCopy.Reset();
+        m_Encoder.reset();
+        m_Converter.reset();
+
+        m_Converter = std::make_unique<convert::ColorConvert>();
+        if (!m_Converter->init(m_Capture->device(), m_Capture->format(), m_Capture->width(),
+                               m_Capture->height(), outputWidth, outputHeight,
+                               m_Target.yuv444 ? convert::ColorConvert::Chroma::C444
+                                               : convert::ColorConvert::Chroma::C420,
+                               error))
+            return false;
+
+        // The encoder the Selector chose, not one guessed from the display.
+        switch (m_Target.encoder) {
+        case EncoderApi::Nvenc: m_Encoder = std::make_unique<encode::NvencEncoder>(); break;
+        case EncoderApi::Amf: m_Encoder = std::make_unique<encode::AmfEncoder>(); break;
+        case EncoderApi::Vpl: m_Encoder = std::make_unique<encode::VplEncoder>(); break;
+        default:
+            error =
+                std::string("no encoder implementation for ") + toString(m_Target.encoder) + " yet";
+            return false;
+        }
+
+        return m_Encoder->init(m_Capture->device(), m_Target.codec, m_Converter->outputWidth(),
+                               m_Converter->outputHeight(), m_Config.fps, m_Config.bitrateKbps,
+                               m_Target.yuv444, m_Config.intraRefresh, error);
+    }
+
+    /// The duplication was lost — a resolution change, a mode set, a desktop
+    /// switch, a driver restart. Open it again and rebuild everything behind it.
+    ///
+    /// Everything, because DxgiDuplication::start() creates a NEW D3D11 device.
+    /// The converter and the encoder were built on the old one, and their
+    /// textures belong to a device the capture no longer uses: kept across the
+    /// restart they convert nothing and encode nothing, which is precisely how
+    /// changing the host's resolution mid-stream turned the picture black and
+    /// then, a few seconds later, killed the session outright.
+    ///
+    /// What deliberately does NOT change is the size the client decodes at. The
+    /// host's desktop may have gone from 1440p to 1080p; the stream stays at the
+    /// resolution that was negotiated, and the converter — which scales anyway —
+    /// absorbs the difference. A decoder reconfiguring mid-stream is a second
+    /// black screen, and the viewer asked for neither.
+    ///
+    /// And it retries. During a mode set the output is genuinely absent for a
+    /// moment, so the first attempt failing is the normal case, not an error.
+    /// Giving up there is what left the viewer staring at a dead stream with the
+    /// host showing a "Keep these display settings?" dialog they could no longer
+    /// reach — the one thing that has to keep working through a mode change is
+    /// the ability to click Revert.
+    bool restartCapture(std::string& error)
+    {
+        constexpr int64_t kRestartWindowUs = 10 * 1000 * 1000;
+        constexpr int kRestartSleepMs = 100;
+
+        // Before the capture is reopened, not after. The old encoder holds a
+        // hardware session — a consumer GPU has famously few — and both it and
+        // the converter hold a reference to the outgoing D3D device, which would
+        // otherwise stay alive right through the retry loop below.
+        m_DesktopCopy.Reset();
+        m_Encoder.reset();
+        m_Converter.reset();
+
+        const int64_t deadlineUs = steadyNowUs() + kRestartWindowUs;
+        for (int attempt = 1;; ++attempt) {
+            if (!m_Running.load()) {
+                error = "the session was stopped while the display was reconfiguring";
+                return false;
+            }
+            if (m_Capture->start(error)) break;
+            if (steadyNowUs() >= deadlineUs) return false;
+            if (attempt == 1)
+                log::info("[native] display is reconfiguring, waiting for it: " + error);
+            std::this_thread::sleep_for(std::chrono::milliseconds(kRestartSleepMs));
+        }
+
+        if (!buildPipeline(m_Info.width, m_Info.height, error)) return false;
+
+        // Absolute mouse input is aimed at the display's rectangle on the
+        // virtual desktop, and a resolution change is exactly what moves it.
+        // Under the lock that guards inject(), which runs on the network thread.
+        {
+            const capture::DesktopRect& rect = m_Capture->desktopRect();
+            std::lock_guard<std::mutex> lock(m_InputMutex);
+            if (m_Input) m_Input->setDisplayRect(rect.left, rect.top, rect.right, rect.bottom);
+        }
+
+        log::info("[native] capture restarted at " + std::to_string(m_Capture->width()) + "x" +
+                  std::to_string(m_Capture->height()) + ", streaming " +
+                  std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height));
+        return true;
+    }
+
     /// The thread entry point. Nothing may escape it.
     ///
     /// An exception leaving a std::thread calls std::terminate, which aborts
@@ -545,15 +633,29 @@ private:
             }
 
             if (status == capture::AcquireStatus::Lost) {
-                // A mode change, a resolution change, a desktop switch. The
-                // duplication is rebuilt; the encoder is left alone because the
-                // frame size has not necessarily changed.
-                if (!m_Capture->start(error)) {
+                // A mode change, a resolution change, a desktop switch: the
+                // whole chain behind the duplication goes with it (see
+                // restartCapture).
+                if (!restartCapture(error)) {
                     finish("capture could not be restarted: " + error);
                     return;
                 }
-                // Whatever the client had is now stale.
+                // Whatever the client had is now stale: the encoder is a new one
+                // and has no reference frames, and the picture it is about to
+                // send is a different desktop.
                 m_ForceKeyframe.store(true);
+                // The bitrate lives in the encoder that was just replaced, so
+                // the ladder's last word has to be said again — and the still
+                // boost, if it was in place, went with the old encoder.
+                boosted = false;
+                applyBitrate(baseKbps);
+                // A new picture deserves its own refinement window rather than
+                // whatever the old one had reached.
+                lastRealUs = steadyNowUs();
+                refineQuiet = 0;
+                refinePasses = 0;
+                refineBytes = 0;
+                refineFirstBytes = 0;
                 continue;
             }
 

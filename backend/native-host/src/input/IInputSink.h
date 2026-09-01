@@ -56,6 +56,24 @@ public:
 
     /// Apply one event. Never blocks; unsupported events are ignored.
     virtual void inject(const InputEvent& event) = 0;
+
+    /// The captured display's rectangle on the virtual desktop has moved — a
+    /// resolution change, a monitor rearranged behind our back. Absolute pointer
+    /// positions are aimed at that rectangle, so a sink that maps them needs the
+    /// new one; a sink that only sends relative motion ignores this.
+    ///
+    /// Plain integers rather than a capture type on purpose: the input layer has
+    /// no business including the capture headers to hear about a rectangle.
+    ///
+    /// The caller serialises this against inject(), so an implementation may
+    /// simply store it.
+    virtual void setDisplayRect(int left, int top, int right, int bottom)
+    {
+        (void)left;
+        (void)top;
+        (void)right;
+        (void)bottom;
+    }
 };
 
 } // namespace mw::native::input
