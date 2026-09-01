@@ -43,13 +43,15 @@ function loadPrefs() {
     try {
         const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
         return {
-            // Immersive captures the mouse and the whole keyboard; that is a lot
-            // to do to a guest without asking, so it is opt-in.
-            immersive: raw.immersive === true,
+            // Gaming mode captures the mouse and the whole keyboard; that is a
+            // lot to do to a guest without asking, so it is opt-in. `immersive`
+            // is what this field was called before the mode was renamed — read
+            // it so a returning guest keeps the choice they already made.
+            gaming: raw.gaming === true || raw.immersive === true,
             touchScreen: raw.touchScreen === true,
         };
     } catch (_) {
-        return { immersive: false, touchScreen: false };
+        return { gaming: false, touchScreen: false };
     }
 }
 
@@ -65,7 +67,7 @@ export class PlayerJoinView {
     /**
      * @param {HTMLElement} container
      * @param {string} token the share token from the URL
-     * @param {(info: {height: number, immersive: boolean, touchScreen: boolean}) => Promise<void>} onJoin
+     * @param {(info: {height: number, gaming: boolean, touchScreen: boolean}) => Promise<void>} onJoin
      */
     constructor(container, token, onJoin) {
         this.container = container;
@@ -256,7 +258,7 @@ export class PlayerJoinView {
         const level = this.info.access_level;
         if (level !== 'full' && level !== 'desktop') return '';
 
-        // The buttons carry the answer, not the question: "Seamless | Immersive"
+        // The buttons carry the answer, not the question: "Desktop | Gaming"
         // reads as two unrelated words until something above them says they are
         // both mouse modes. `hints` is optional and only worth passing where
         // hovering exists — a guest has no settings page to go read.
@@ -283,14 +285,14 @@ export class PlayerJoinView {
                     IS_MOBILE_OR_TABLET
                         ? ''
                         : row(
-                              'immersive',
+                              'gaming',
                               'player.mouseMode',
-                              'player.seamless',
-                              'player.immersive',
-                              this._prefs.immersive,
+                              'player.desktop',
+                              'player.gaming',
+                              this._prefs.gaming,
                               {
-                                  off: 'player.seamlessHint',
-                                  on: 'player.immersiveHint',
+                                  off: 'player.desktopHint',
+                                  on: 'player.gamingHint',
                               },
                           )
                 }
@@ -409,7 +411,7 @@ export class PlayerJoinView {
                     // No aspect: a guest cannot know the host's format, and its
                     // own monitor is irrelevant — the backend hands it the ratio
                     // the owner's session already settled on for that host.
-                    immersive: this._prefs.immersive,
+                    gaming: this._prefs.gaming,
                     touchScreen: this._prefs.touchScreen,
                 });
             } catch (ex) {

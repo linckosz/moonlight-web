@@ -130,7 +130,7 @@ public:
     int64_t framePresentationTimeUs() const override;
     int64_t firstFrameArrivalSteadyMs() const override;
 
-    /// Whether the engine draws the mouse pointer into the picture (immersive,
+    /// Whether the engine draws the mouse pointer into the picture (gaming mode,
     /// and every touch screen) or reports its shape for the browser to draw
     /// (desktop). @p cursorFramePx is how wide the drawn pointer should be, in
     /// frame pixels, or 0 for its natural size — see Session. Safe at any time.

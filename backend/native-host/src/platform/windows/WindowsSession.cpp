@@ -280,7 +280,7 @@ public:
             m_CursorDirty.store(true);
         }
         if (m_CompositeCursor.exchange(composite) == composite) return;
-        log::info(composite ? "[native] cursor: drawn into the picture (immersive)"
+        log::info(composite ? "[native] cursor: drawn into the picture (gaming)"
                             : "[native] cursor: handed to the client to draw (desktop)");
         // The client that just took over drawing has never seen a shape, and
         // the shape only arrives from DXGI when it CHANGES — which, for a

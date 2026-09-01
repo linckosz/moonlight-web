@@ -188,7 +188,7 @@ public:
     /// Whether to draw the mouse pointer into the encoded picture.
     ///
     /// True — the default — burns it in, which is what a client that cannot
-    /// draw its own needs, and what an immersive session wants: there the
+    /// draw its own needs, and what a gaming-mode session wants: there the
     /// viewer's real pointer is captured away by pointer lock, so the only
     /// pointer that exists is the one in the frame.
     ///
