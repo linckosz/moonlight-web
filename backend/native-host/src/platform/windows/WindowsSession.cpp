@@ -58,6 +58,13 @@ namespace {
 /// phone turned sideways, any zoom at all — is already below it and untouched.
 constexpr float kMaxCursorMagnify = 2.5f;
 
+/// The fastest still-screen floor a client may ask for.
+///
+/// The real limit is the stream's own frame rate and the loop applies it; this
+/// one exists because the request arrives as a number from a browser and the
+/// loop divides by it. High enough to be no limit at all in practice.
+constexpr int kMaxFloorFps = 480;
+
 int64_t steadyNowUs()
 {
     return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -304,6 +311,19 @@ public:
         if (composite) m_ForceKeyframe.store(true);
     }
 
+    void setFrameFloorFps(int fps) override
+    {
+        // Bounded here rather than trusted: the number crosses the network from
+        // a page, and the loop divides by it. The stream's own rate is the other
+        // half of the clamp and lives in the loop, which is where the two are
+        // compared — see floorIntervalUs().
+        if (fps < 0) fps = 0;
+        if (fps > kMaxFloorFps) fps = kMaxFloorFps;
+        if (m_FloorFps.exchange(fps) == fps) return;
+        log::info("[native] still-screen floor: " +
+                  (fps > 0 ? std::to_string(fps) + " fps" : std::string("the engine's own")));
+    }
+
     void requestKeyframe() override { m_ForceKeyframe.store(true); }
 
     void invalidateReference(uint32_t frameNumber) override
@@ -458,7 +478,8 @@ private:
         // stop() promptly, long enough that an idle desktop costs nothing.
         constexpr int kAcquireTimeoutMs = 100;
 
-        // How long a perfectly still desktop may go without sending anything.
+        // How long a perfectly still desktop may go without sending anything,
+        // when the client has asked for nothing in particular.
         //
         // Desktop Duplication delivers frames on damage, so a screen where
         // nothing moves produces nothing at all — which is efficient and, to
@@ -470,6 +491,11 @@ private:
         // So: a floor, comfortably inside that window. What goes out is the
         // frame already converted and unchanged, which an encoder turns into
         // almost nothing — a few hundred bytes of "everything is the same".
+        //
+        // This one only answers "is the stream alive", which is the least a
+        // floor can be for. A client that wants a still screen to keep settling
+        // — a desktop being worked on, a game paused with the pointer locked —
+        // asks for a faster one; see setFrameFloorFps.
         constexpr int64_t kIdleFloorUs = 500 * 1000;
 
         // ── Refining a picture that stopped moving ──────────────────────────
@@ -540,6 +566,25 @@ private:
         size_t refineFirstBytes = 0;
         int refineLogged = 0;
 
+        // The client's floor, as an interval, clamped by the stream's own rate.
+        //
+        // Recomputed every iteration rather than cached: it changes when the
+        // viewer switches mouse mode, and that arrives on another thread.
+        //
+        // The clamp is the important half. A client asking for 30 fps on a
+        // stream the viewer set to 20 must get 20 — the setting is the user's
+        // own words about what their link can carry, and a floor is a request
+        // from a page. Only a lower interval than the liveness floor is ever
+        // taken, so a client cannot ask to be sent LESS than the receiver needs
+        // to tell this stream from a dead one.
+        auto floorIntervalUs = [this, kIdleFloorUs]() -> int64_t {
+            int fps = m_FloorFps.load(std::memory_order_relaxed);
+            if (fps <= 0) return kIdleFloorUs;
+            if (m_Config.fps > 0 && fps > m_Config.fps) fps = m_Config.fps;
+            const int64_t interval = 1000000 / fps;
+            return interval < kIdleFloorUs ? interval : kIdleFloorUs;
+        };
+
         // The stream's own bitrate, which the quality ladder may move under us,
         // and whether the still-screen budget is currently in its place.
         int baseKbps = m_Config.bitrateKbps;
@@ -568,9 +613,19 @@ private:
                                     m_Converter->outputWidth() != 0;
             const bool refining = refineSoon && sinceRealUs >= kRefineDelayUs;
 
+            // The acquire timeout is the loop's sleep, so a floor faster than
+            // it would simply never be met: at 15 fps the frame is due every
+            // 66 ms and a 100 ms sleep delivers 10. It only ever shortens the
+            // wait — a client that asked for nothing still sleeps the full
+            // 100 ms on an idle desktop.
+            const int64_t idleIntervalUs = floorIntervalUs();
+            const int idleTimeoutMs = static_cast<int>(idleIntervalUs / 1000) < kAcquireTimeoutMs
+                                          ? static_cast<int>(idleIntervalUs / 1000)
+                                          : kAcquireTimeoutMs;
+
             capture::CapturedFrame frame;
             const capture::AcquireStatus status =
-                m_Capture->acquire(refineSoon ? refineTimeoutMs : kAcquireTimeoutMs, frame);
+                m_Capture->acquire(refineSoon ? refineTimeoutMs : idleTimeoutMs, frame);
 
             // Anything but a timeout means the screen is alive again, and the
             // frame about to be encoded is a moving one. Restore the ordinary
@@ -611,12 +666,12 @@ private:
                 }
 
                 // Nothing moved. Two reasons to send anyway: the refinement
-                // passes above, and — once those are done — the floor that lets
-                // the receiver tell a quiet screen from a dead one. Both
-                // re-encode what is already converted, so this costs an encode
-                // and not a capture.
+                // passes above, and — once those are done — the floor, which is
+                // either "prove the stream is alive" or whatever faster rate the
+                // client asked to keep settling at. Both re-encode what is
+                // already converted, so this costs an encode and not a capture.
                 if (!m_Converter->outputWidth()) continue;
-                if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : kIdleFloorUs))
+                if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : idleIntervalUs))
                     continue;
 
                 // The budget goes up before the first pass, not after it: the
@@ -1046,6 +1101,9 @@ private:
     /// How wide the client wants the composited pointer, in frame pixels; 0 for
     /// the size it has on the desktop. See Session::setCompositeCursor.
     std::atomic<int> m_CursorFramePx{0};
+    /// The rate the client wants kept up on a screen that is not moving, in
+    /// fps; 0 for the loop's own liveness floor. See setFrameFloorFps.
+    std::atomic<int> m_FloorFps{0};
     /// The composited pointer must be redrawn although nothing on the desktop
     /// moved — its requested size changed under a still screen.
     std::atomic<bool> m_CursorDirty{false};

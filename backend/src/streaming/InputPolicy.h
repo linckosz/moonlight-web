@@ -44,14 +44,18 @@ struct Policy
 ///
 /// Refused messages are dropped in silence — answering "forbidden" would tell a
 /// probing client exactly which permissions it has. Channel housekeeping (ping,
-/// keyframe requests) is never input and always passes. The 'inputstate'
-/// heartbeat carries both worlds, so it passes here and is filtered field by
-/// field (see InputMessageCodec.h's filterHeldState).
+/// keyframe requests) is never input and always passes, and so does
+/// 'framefloor': it says how often a still picture should be re-sent to the
+/// player watching, which is about their own view and not about acting on the
+/// host — a view-only guest reading a document is precisely who needs it. The
+/// 'inputstate' heartbeat carries both worlds, so it passes here and is
+/// filtered field by field (see InputMessageCodec.h's filterHeldState).
 inline bool allowed(const QString& type, const Policy& p)
 {
     if (type.startsWith(QLatin1String("gamepad"))) return p.gamepad;
     if (type == QLatin1String("ping") || type == QLatin1String("requestidr") ||
-        type == QLatin1String("request_idr") || type == QLatin1String("clientstats"))
+        type == QLatin1String("request_idr") || type == QLatin1String("clientstats") ||
+        type == QLatin1String("framefloor"))
         return true;
     if (type == QLatin1String("inputstate")) return true;
     return p.keyboardMouse; // key*, mouse*, wheel, textinput, locksync, clipboard

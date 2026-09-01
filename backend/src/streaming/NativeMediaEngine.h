@@ -136,6 +136,16 @@ public:
     /// frame pixels, or 0 for its natural size — see Session. Safe at any time.
     void setCompositeCursor(bool composite, int cursorFramePx);
 
+    /// How fast the client wants frames to keep coming while nothing on the
+    /// host's screen moves — see Session::setFrameFloorFps. 0 leaves the engine
+    /// its own liveness floor.
+    ///
+    /// Remembered as well as forwarded: the input channel opens before the
+    /// capture does, so the client's first word on the subject usually arrives
+    /// with no session to tell. It is deduplicated on the client, which would
+    /// then never say it again. Safe at any time.
+    void setFrameFloorFps(int fps);
+
     /// A human-readable description of what the session settled on, for the
     /// stats overlay: "NVIDIA GeForce RTX 4070 · NVENC HEVC 4:4:4". Empty until
     /// the session has started.
@@ -184,4 +194,8 @@ private:
     /// VIDEO_FORMAT_* of what the encoder actually produces, so the browser
     /// configures the right decoder.
     std::atomic<int> m_NegotiatedVideoFormat{0};
+
+    /// The client's last word on the still-screen frame floor, replayed onto a
+    /// session that starts after it was said. See setFrameFloorFps.
+    std::atomic<int> m_FrameFloorFps{0};
 };
