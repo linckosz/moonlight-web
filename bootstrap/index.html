@@ -152,6 +152,13 @@
   #detail { font-family: var(--font-mono); font-size: .82rem; color: var(--text-3); min-height: 1.4em; }
   #note { margin-top: 1.4rem; font-size: .85rem; color: var(--text-3); }
   #note a { color: var(--neon-cyan); }
+  /* Both are empty while this works, and an empty paragraph still holds its
+     margin. That margin is inside the box being centred, so the seal ends up
+     about a dozen pixels higher here than in the application's own copy of it —
+     and the handover, which is meant to be invisible, starts with a jump. The
+     unused slots leave the box until there is something to put in them. */
+  #detail:empty,
+  #note:empty { display: none; }
   code {
     font-family: var(--font-mono);
     color: var(--neon-cyan);
