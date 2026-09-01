@@ -2743,6 +2743,9 @@ int main(int argc, char* argv[])
                 effectiveUpnpEnabled, internal, stunServer, reqHeight, reqWidth, reqFps, reqBitrate,
                 reqYuv444, reqHdr);
             s->setHttpsPort(server.activeHttpsPort());
+            // Set from the request, never guessed: this machine's port means
+            // nothing to a browser that reached us through the rendezvous.
+            s->setTunnelArrival(req.viaTunnel);
             s->setStreamRelayPort(signalingPort + 1);
             s->setTransportMode(transportMode); // Full mode for response
             s->setEnableIceTcp(iceTcp);
