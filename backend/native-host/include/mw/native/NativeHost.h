@@ -85,6 +85,26 @@ struct CursorUpdate
     int hotspotX = 0;
     int hotspotY = 0;
 
+    /// What to multiply this bitmap — and its hotspot — by, to bring it into the
+    /// pixels of the FRAME being streamed.
+    ///
+    /// The two are not the same. The pointer is captured in the host desktop's
+    /// own pixels, while the frame is whatever resolution the client negotiated,
+    /// and the converter scales the desktop into it. A 1440p desktop streamed at
+    /// 1080p arrives three quarters the size it was captured at — every window,
+    /// every letter, every icon — and a pointer drawn at its captured size would
+    /// be the one thing on screen that is a third too big.
+    ///
+    /// It is 1 whenever the two agree, which is the common case, and it changes
+    /// under a running session: the host switching its own display mode moves
+    /// the desktop's size without touching the frame's. An update is therefore
+    /// sent whenever it changes, even if the shape did not.
+    ///
+    /// A ratio and not a resized bitmap: the client is already resampling — it
+    /// has its own window-scale to apply on top of this one — and resizing here
+    /// would cost a resample that the second one then throws away.
+    float scale = 1.0f;
+
     /// Which of the standard system pointers this is, as a CSS cursor keyword —
     /// "default", "text", "pointer", "ew-resize"… Empty when the application
     /// uses a cursor of its own, which no name can describe.
