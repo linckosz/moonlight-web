@@ -336,6 +336,37 @@ Un seul thread, aucune file d'attente. Ni l'un ni l'autre ne se justifierait :
 La boucle bloque dans `AcquireNextFrame` : elle est cadencée par l'écran, pas
 par un minuteur choisi, et un bureau immobile ne coûte rien.
 
+### 9.1 Le plancher sur écran immobile, choisi par le client
+
+La capture livre **sur dommage** : un écran où rien ne bouge ne produit rien, ce
+qui est indiscernable d'un stream mort. D'où un plancher — une frame toutes les
+500 ms, la dernière image ré-encodée, quelques centaines d'octets.
+
+Ce plancher-là ne répond qu'à « le stream est-il vivant ». Or une image ne
+s'affine que quand une frame la porte : à 2 fps, une fenêtre qu'on vient de
+faire défiler arrive floue et le reste une demi-seconde. C'est le flou qui
+revient lentement.
+
+Le bon débit dépend de qui regarde, ce que l'hôte ne peut pas savoir. **C'est
+donc le client qui le nomme**, par un message `framefloor` (les trois relais le
+transmettent), et l'hôte se contente de borner :
+
+| Situation du client | Plancher |
+|---|---|
+| Bureau, pointeur libre | **15 fps** — le réglage devient invisible |
+| Mode jeu, pointeur capturé | **30 fps** — écran figé ≠ session inactive (pause, menu, chargement) |
+| Téléphone, tablette | plancher de l'hôte — lien mesuré et batterie priment |
+
+Deux bornes, côté hôte : jamais plus vite que le fps du stream (le réglage de
+l'utilisateur passe avant une demande venue d'une page), jamais plus lentement
+que les 500 ms. Le timeout d'`AcquireNextFrame` suit le plancher, sinon une
+frame due à 66 ms serait livrée à 100.
+
+À ne pas confondre avec la **rafale de raffinement** (§ boucle, `kRefineWindow`)
+qui suit chaque changement : elle, ré-encode pendant 1 s à la cadence du stream
+avec un budget multiplié, et s'arrête sur convergence. Le plancher prend le
+relais après.
+
 ---
 
 ## 10. Host natif dans l'UI
@@ -407,7 +438,7 @@ libre de redevance)**. D'où la préférence AV1 quand les deux bouts suivent.
 | Conversion NV12 + AYUV 4:4:4 | UI (grille d'écrans, ligne GPU/encodeur) |
 | NVENC (3,46 ms), AMF (3,70 ms), oneVPL (écrit, non exécuté) | Retrait de Sunshine de l'installeur |
 | Intra-refresh sur les trois encodeurs + ride-out client | Linux, macOS |
-| Curseur composé, plancher de 500 ms sur écran immobile | Benchmarks vs Sunshine |
+| Curseur composé, plancher sur écran immobile choisi par le client (§9.1) | Benchmarks vs Sunshine |
 | Clavier/souris (`SendInput`), manette (ViGEm) + rumble | |
 | Installeur : ViGEmBus en silencieux | |
 
