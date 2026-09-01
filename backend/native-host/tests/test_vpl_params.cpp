@@ -12,7 +12,12 @@
 #include <cstdio>
 #include <string>
 
+// Only the Windows headers above declare the namespace: elsewhere the body of
+// this file is a single "skipped" line, and opening mw::native would not
+// compile.
+#if defined(_WIN32)
 using namespace mw::native;
+#endif
 
 // The Intel encoder cannot be exercised without Intel hardware, and there is
 // none on the bench it was written on. What CAN be checked here is the part
