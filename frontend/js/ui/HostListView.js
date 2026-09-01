@@ -42,6 +42,7 @@ import {
     forgetCachedApps,
     appsSignature,
 } from '../util/appCache.js';
+import { noteHostUse, forgetHostUse, hostUsageRanker } from '../util/hostUsage.js';
 
 /**
  * Update progress is driven by a local animation, not by the poll samples.
@@ -331,6 +332,7 @@ export class HostListView {
                         this.hosts = this.hosts.filter((h) => h.uuid !== uuid);
                         delete this.appsByHost[uuid];
                         forgetCachedApps(uuid);
+                        forgetHostUse(uuid);
                         this.renderList();
                     })
                     .catch((err) => {
@@ -354,6 +356,11 @@ export class HostListView {
                 const appId = parseInt(appCard.dataset.appId, 10);
                 const app = entry && entry.apps && entry.apps.find((a) => a.id === appId);
                 if (host && app && this.onLaunchApp) {
+                    // Counted here, on the click, rather than on the session
+                    // actually coming up: the view is torn down by the launch,
+                    // and a refused launch is still a statement of intent about
+                    // which machine this browser cares about.
+                    noteHostUse(host.uuid);
                     this.setLaunching(appCard);
                     this.stop(); // pause polling so a refresh can't wipe the launching card
                     this.onLaunchApp(host, app);
@@ -855,8 +862,16 @@ export class HostListView {
         const empty = list.querySelector('.hosts-empty');
         if (empty) empty.remove();
 
-        // Paired hosts first — stable sort keeps discovery order within groups.
-        this.hosts.sort((a, b) => Number(b.isPaired) - Number(a.isPaired));
+        // Paired hosts first, then the ones this browser actually streams from —
+        // discovery order is the network's opinion, and it puts the machine
+        // played on every evening under three boxes seen once. The score only
+        // moves on a launch, so the list does not reshuffle under the cursor;
+        // hosts never launched all score 0 and the stable sort leaves them in
+        // discovery order behind the rest.
+        const usage = hostUsageRanker();
+        this.hosts.sort(
+            (a, b) => Number(b.isPaired) - Number(a.isPaired) || usage(b.uuid) - usage(a.uuid),
+        );
 
         const currentUuids = new Set(this.hosts.map((h) => h.uuid));
 
