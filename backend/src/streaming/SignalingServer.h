@@ -63,6 +63,9 @@ public:
     /// for the second concurrent stream slot). Must match HttpServer's
     /// path->port routing.
     void setWsPath(const QString& path) { m_WsPath = path; }
+    /// The path alone, for a browser that has no route to this machine and must
+    /// resolve it against its own origin (see StreamSession::setTunnelArrival).
+    QString wsPath() const { return m_WsPath; }
     quint16 port() const { return m_WsPort; }
 
     /// Returns the WebSocket URL for browser connections.

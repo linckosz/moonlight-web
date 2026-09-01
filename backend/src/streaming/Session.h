@@ -157,6 +157,16 @@ public:
     /// the browser when sharing the unified port.
     void setHttpsPort(quint16 port) { m_HttpsPort = port; }
 
+    /// This browser reached us through the rendezvous tunnel, so it has no HTTP
+    /// route here at all. The signalling URL then has to be a PATH: the host's
+    /// own address and port describe a door that browser cannot open, and
+    /// naming one is how "wss://stream.moonlightweb.top:8443/ws" ended up in a
+    /// launch response — the rendezvous's name with this machine's local port
+    /// bolted on, an address that answers nowhere. The page resolves a path
+    /// against its own origin, which is the only authority that means anything
+    /// on this path.
+    void setTunnelArrival(bool viaTunnel) { m_TunnelArrival = viaTunnel; }
+
     /// Set the port for the legacy WSS StreamRelay (separate from signaling WS port).
     void setStreamRelayPort(quint16 port) { m_StreamRelayPort = port; }
 
@@ -330,6 +340,9 @@ private:
 
     /// The HTTPS port HttpServer is actually listening on (may be != 443).
     quint16 m_HttpsPort = 443;
+
+    /// Whether the launch request came down the tunnel (see setTunnelArrival).
+    bool m_TunnelArrival = false;
 
     /// Port for legacy WSS StreamRelay (separate from m_WsPort used for signaling).
     quint16 m_StreamRelayPort = 48002;
