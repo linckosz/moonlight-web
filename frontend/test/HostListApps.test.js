@@ -54,10 +54,10 @@ describe('HostListView app grid', () => {
         view.renderList();
     };
 
-    const remember = (apps) =>
+    const remember = (apps, art) =>
         localStorage.setItem(
             'mw-host-apps',
-            JSON.stringify({ 'host-a': { ts: Date.now(), apps } }),
+            JSON.stringify({ 'host-a': { ts: Date.now(), apps, ...(art ? { art } : {}) } }),
         );
 
     it('paints a remembered list synchronously, with no spinner in between', () => {
@@ -233,8 +233,81 @@ describe('HostListView app grid', () => {
         await settle();
 
         expect(JSON.parse(localStorage.getItem('mw-host-apps'))['host-a'].apps).toEqual([
-            { id: 1, name: 'Desktop', hdrSupported: false },
+            { id: 1, name: 'Desktop', hdrSupported: false, boxArt: true },
         ]);
+    });
+
+    /**
+     * A cover is an HTTPS round trip to the host, serialized behind all the
+     * others: a host that is busy, or a backend that was just restarted with an
+     * empty art cache, answers 502 for art it holds perfectly well. Since
+     * nothing repaints a grid whose app list has not changed, taking that as the
+     * final word left the card generic for the whole visit.
+     */
+    describe('box art that does not arrive', () => {
+        const art = () => grid(container).querySelector('.app-card-image img');
+        const pad = () => grid(container).querySelector('.app-card-image .app-icon');
+
+        beforeEach(() => {
+            BackendClient.getAppList.mockReturnValue(new Promise(() => {})); // stays quiet
+        });
+
+        it('remembers a cover that made it to the screen', () => {
+            remember([{ id: 1, name: 'Desktop' }]);
+            mount();
+
+            art().dispatchEvent(new Event('load'));
+
+            expect(JSON.parse(localStorage.getItem('mw-host-apps'))['host-a'].art).toEqual([1]);
+        });
+
+        it('falls back to the pad for a cover never seen — that host simply has none', () => {
+            remember([{ id: 1, name: 'Desktop' }]);
+            mount();
+
+            art().dispatchEvent(new Event('error'));
+
+            expect(art()).toBeNull();
+            expect(pad()).not.toBeNull();
+        });
+
+        it('retries a cover already seen, and puts it back when it arrives', () => {
+            vi.useFakeTimers();
+            remember([{ id: 1, name: 'Desktop' }], [1]);
+            mount();
+            const img = art();
+            const src = img.getAttribute('src');
+
+            img.dispatchEvent(new Event('error'));
+
+            // The pad only fills the frame; the image stays, ready to come back.
+            expect(art()).toBe(img);
+            expect(img.hidden).toBe(true);
+            expect(pad()).not.toBeNull();
+
+            vi.advanceTimersByTime(2000);
+            expect(img.getAttribute('src')).not.toBe(src);
+
+            img.dispatchEvent(new Event('load'));
+            expect(img.hidden).toBe(false);
+            expect(pad()).toBeNull();
+        });
+
+        it('gives up once the ladder is spent — a host that is gone is gone', () => {
+            vi.useFakeTimers();
+            remember([{ id: 1, name: 'Desktop' }], [1]);
+            mount();
+            const img = art();
+
+            for (const delay of HostListView.BOX_ART_RETRY_MS) {
+                img.dispatchEvent(new Event('error'));
+                vi.advanceTimersByTime(delay);
+            }
+            img.dispatchEvent(new Event('error'));
+
+            expect(art()).toBeNull();
+            expect(grid(container).querySelectorAll('.app-card-image .app-icon')).toHaveLength(1);
+        });
     });
 
     describe('an app that no longer exists on the host', () => {

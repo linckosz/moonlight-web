@@ -41,6 +41,8 @@ import {
     saveCachedApps,
     forgetCachedApps,
     appsSignature,
+    boxArtWasSeen,
+    noteBoxArtSeen,
 } from '../util/appCache.js';
 import { noteHostUse, forgetHostUse, hostUsageRanker } from '../util/hostUsage.js';
 
@@ -81,6 +83,12 @@ export class HostListView {
     // flat retry means one stalled request per host permanently in flight.
     static APP_LIST_RETRY_MS = 4000;
     static APP_LIST_RETRY_MAX_MS = 60000;
+
+    // Retry ladder for a cover this browser has already seen once. Short enough
+    // that a host busy for a moment fills its grid back in while the user is
+    // still looking at it, few enough that a host which is really gone costs
+    // three requests, not a stream of them.
+    static BOX_ART_RETRY_MS = [2000, 5000, 15000];
 
     // How long a refused launch keeps its orange marker before it has faded
     // back to neutral. Must match the CSS animation on .app-card--launch-failed.
@@ -1095,7 +1103,7 @@ export class HostListView {
         // red banner until a manual reload.
         if (entry && (entry.apps || entry.sticky)) {
             if (cont.dataset.loaded !== '1') {
-                this._paintApps(cont, entry);
+                this._paintApps(cont, entry, uuid);
             }
             // A remembered list is shown on trust, never kept on trust: confirm
             // it against the host once, with no spinner over the grid that is
@@ -1200,7 +1208,7 @@ export class HostListView {
                 const sig = result.apps ? appsSignature(result.apps) : '';
                 const unchanged = cont.dataset.loaded === '1' && cont.dataset.appsSig === sig;
                 if (!unchanged && !cont.querySelector('.app-card--launching')) {
-                    this._paintApps(cont, result);
+                    this._paintApps(cont, result, uuid);
                 }
                 return result;
             });
@@ -1264,7 +1272,7 @@ export class HostListView {
     // Paints the grid AND records what is on screen: `loaded` says the container
     // holds a definitive result, `appsSig` says which one, so a later refresh can
     // tell "same list" from "the host changed something".
-    _paintApps(cont, entry) {
+    _paintApps(cont, entry, uuid) {
         cont.dataset.loaded = '1';
         cont.dataset.appsSig = entry && entry.apps ? appsSignature(entry.apps) : '';
         if (!entry || entry.error) {
@@ -1283,14 +1291,75 @@ export class HostListView {
             return;
         }
         cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a)).join('')}</div>`;
-        // Box-art fallback: the CSP (script-src 'self') blocks inline onerror
-        // attributes, so the broken-image swap has to be wired up here.
+        this._wireBoxArt(cont, uuid);
+    }
+
+    /**
+     * Wire what happens to a cover that does not arrive. The CSP (script-src
+     * 'self') blocks inline onerror attributes, so this cannot live in the
+     * markup.
+     *
+     * A cover that reached the screen once is never given up on. /appasset is
+     * an HTTPS round trip to the host, serialized behind every other cover with
+     * a five-second timeout, so a busy host — or one whose backend was just
+     * restarted, emptying its art cache — answers 502 for art it holds
+     * perfectly well. The old swap took that as the final word and replaced the
+     * cover with the generic pad, permanently: nothing repaints a grid whose
+     * app list has not changed, so the card stayed generic for the rest of the
+     * visit. Now the pad is only what fills the frame while the request is
+     * retried, and the cover comes back on its own.
+     *
+     * Art never seen still falls back for good — for an app whose host has no
+     * cover for it, the pad IS the answer, and retrying would only cost
+     * requests through the tunnel to be told the same thing three more times.
+     */
+    _wireBoxArt(cont, uuid) {
         cont.querySelectorAll('.app-card-image img').forEach((img) => {
-            const showFallback = () => {
-                img.outerHTML = `<span class="app-icon">\u{1F3AE}</span>`;
+            const card = img.closest('.app-card');
+            const appId = card ? Number(card.dataset.appId) : 0;
+            const src = img.getAttribute('src');
+            let attempt = 0;
+
+            const placeholder = () => {
+                const prev = img.previousElementSibling;
+                if (prev && prev.classList.contains('app-icon')) return prev;
+                img.insertAdjacentHTML('beforebegin', `<span class="app-icon">\u{1F3AE}</span>`);
+                return img.previousElementSibling;
             };
-            if (img.complete && img.naturalWidth === 0) showFallback();
-            else img.addEventListener('error', showFallback, { once: true });
+
+            const onError = () => {
+                const ladder = HostListView.BOX_ART_RETRY_MS;
+                if (!boxArtWasSeen(uuid, appId) || attempt >= ladder.length) {
+                    // Never seen, or the host has stopped answering: the pad
+                    // stands in for the cover for good, and the <img> goes away.
+                    // Reusing the placeholder when there is one — two pads in
+                    // one frame is a frame with a second, smaller frame in it.
+                    placeholder();
+                    img.remove();
+                    return;
+                }
+                img.hidden = true;
+                placeholder();
+                const delay = ladder[attempt];
+                attempt++;
+                setTimeout(() => {
+                    // A distinct URL per attempt: the failed response may itself
+                    // be what the HTTP cache would hand back.
+                    if (!this._destroyed && img.isConnected) img.src = `${src}&retry=${attempt}`;
+                }, delay);
+            };
+
+            const onLoad = () => {
+                img.hidden = false;
+                const prev = img.previousElementSibling;
+                if (prev && prev.classList.contains('app-icon')) prev.remove();
+                noteBoxArtSeen(uuid, appId);
+            };
+
+            img.addEventListener('load', onLoad);
+            img.addEventListener('error', onError);
+            // Already settled before the listeners were attached (HTTP cache).
+            if (img.complete && src) (img.naturalWidth === 0 ? onError : onLoad)();
         });
     }
 
