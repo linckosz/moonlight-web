@@ -246,29 +246,33 @@ bool isHdrActive(IDXGIOutput* output)
     return desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
 }
 
-/// The one technical string a user sees, e.g.
-/// "Display 3 · M27Q — 2560×1440 · 165 Hz".
+/// The one technical string a user sees: "Display 3", nothing more.
 ///
-/// Carries BOTH identifiers on purpose, because neither alone is enough:
-///
-///  - the NUMBER is what Windows' own display settings show, so the user can
-///    line the two lists up — but Windows renumbers it when monitors are
-///    plugged or unplugged;
-///  - the NAME comes from the monitor's EDID and is the label on its bezel. It
-///    survives renumbering, and it is what actually tells two screens apart.
-///
-/// A display with no EDID name — a virtual display — shows the number alone.
-std::string makeLabel(int number, const std::string& monitorName, int width, int height,
-                      int refreshMilliHz)
+/// The NUMBER is what Windows' own display settings show, so the user can line
+/// the two lists up. Windows renumbers it when monitors are plugged or
+/// unplugged, and the EDID name would survive that — but a card title is read
+/// at a glance, and the mode and the monitor's model spelled out in it only
+/// made it unreadable. Both stay available: the mode in DisplayInfo's own
+/// fields, and everything else in the probe log below.
+std::string makeLabel(int number)
 {
-    std::string label = "Display " + std::to_string(number);
-    if (!monitorName.empty()) label += " \xC2\xB7 " + monitorName;
-    label += " — " + std::to_string(width) + "\xC3\x97" +
-             std::to_string(height); // U+00D7 MULTIPLICATION SIGN
+    return "Display " + std::to_string(number);
+}
+
+/// What the label no longer says, for the log: the monitor's own name straight
+/// from its EDID (the one on the bezel, and the only thing that tells two
+/// identical screens apart) and the mode. Falls back to the GDI device name
+/// for a display with no EDID name, e.g. a virtual one.
+std::string describe(const std::string& deviceName, const std::string& monitorName, int width,
+                     int height, int refreshMilliHz)
+{
+    std::string detail = monitorName.empty() ? deviceName : monitorName;
+    detail += " — " + std::to_string(width) + "\xC3\x97" +
+              std::to_string(height); // U+00D7 MULTIPLICATION SIGN
     if (refreshMilliHz > 0) {
-        label += " \xC2\xB7 " + std::to_string((refreshMilliHz + 500) / 1000) + " Hz";
+        detail += " \xC2\xB7 " + std::to_string((refreshMilliHz + 500) / 1000) + " Hz";
     }
-    return label;
+    return detail;
 }
 
 } // namespace
@@ -422,7 +426,8 @@ Unavailability enumerate(Capabilities& caps)
                 log::warning("[native] " + deviceName +
                              ": no Windows display number — labelling by position");
             }
-            display.label = makeLabel(number, mode.monitorName, display.width, display.height,
+            display.label = makeLabel(number);
+            display.detail = describe(deviceName, mode.monitorName, display.width, display.height,
                                       display.refreshMilliHz);
 
             caps.displays.push_back(std::move(display));
@@ -452,8 +457,9 @@ Unavailability enumerate(Capabilities& caps)
     if (log::enabled(log::Info)) {
         for (const DisplayInfo& display : caps.displays) {
             const GpuInfo* gpu = caps.gpuFor(display);
-            log::info("[native] " + display.label + " on " + (gpu ? gpu->name : "unknown GPU") +
-                      (display.hdrActive ? " [HDR]" : "") + (display.primary ? " [primary]" : ""));
+            log::info("[native] " + display.label + " \xC2\xB7 " + display.detail + " on " +
+                      (gpu ? gpu->name : "unknown GPU") + (display.hdrActive ? " [HDR]" : "") +
+                      (display.primary ? " [primary]" : ""));
         }
     }
 
