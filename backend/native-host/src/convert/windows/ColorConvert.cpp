@@ -372,7 +372,7 @@ bool ColorConvert::createOutput(std::string& error)
 }
 
 bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& cursor,
-                           std::string& error)
+                           const CursorDraw& draw, std::string& error)
 {
     if (!source || !m_Context || !m_Output) {
         error = "colour conversion is not initialized";
@@ -408,11 +408,22 @@ bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& 
             error = "could not update the cursor position";
             return false;
         }
+        // Magnified around the hotspot, not around the top-left: the pointer has
+        // to keep aiming at the same pixel while it grows, or a bigger cursor
+        // would also be a cursor that clicks somewhere else.
+        const float magnify = draw.magnify > 1.0f ? draw.magnify : 1.0f;
+        const float width = static_cast<float>(cursor.width) * magnify;
+        const float height = static_cast<float>(cursor.height) * magnify;
+        const float left = static_cast<float>(cursor.x + draw.hotspotX) -
+                           static_cast<float>(draw.hotspotX) * magnify;
+        const float top = static_cast<float>(cursor.y + draw.hotspotY) -
+                          static_cast<float>(draw.hotspotY) * magnify;
+
         float* p = static_cast<float*>(mapped.pData);
-        p[0] = static_cast<float>(cursor.x) / static_cast<float>(m_SourceWidth);
-        p[1] = static_cast<float>(cursor.y) / static_cast<float>(m_SourceHeight);
-        p[2] = static_cast<float>(cursor.width) / static_cast<float>(m_SourceWidth);
-        p[3] = static_cast<float>(cursor.height) / static_cast<float>(m_SourceHeight);
+        p[0] = left / static_cast<float>(m_SourceWidth);
+        p[1] = top / static_cast<float>(m_SourceHeight);
+        p[2] = width / static_cast<float>(m_SourceWidth);
+        p[3] = height / static_cast<float>(m_SourceHeight);
         p[4] = drawCursor ? 1.0f : 0.0f;
         p[5] = p[6] = p[7] = 0.0f;
         m_Context->Unmap(m_OverlayBuffer.Get(), 0);
