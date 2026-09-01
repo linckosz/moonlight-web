@@ -2763,6 +2763,11 @@ export class StreamView {
             this._showShortcutsSlide();
             if (first) this._maybeShowMultiSeatInputNotice();
         }
+        // The picture's real size is only known now, and the host's pointer is
+        // drawn at its scale. A shape that arrived before this frame was sized
+        // against an unknown picture (see _pictureWidth); rebuild it, or a
+        // pointer nobody has moved keeps that size until the viewer moves it.
+        if (first) this._applyHostCursor();
         if (first && typeof this.onFirstFrame === 'function') {
             try {
                 this.onFirstFrame();
@@ -5441,6 +5446,16 @@ export class StreamView {
      * element IS the picture — it is the same number, without the parse — and
      * `canvas.width` stays as a last resort for the Canvas2D renderer, which
      * does size its backing to the frame.
+     *
+     * Before the first frame there is no answer, and 0 says so. The canvas is
+     * NOT a fallback there: its control has been handed to the worker, so until
+     * the worker commits a frame the element still reports the 300×150 every
+     * canvas is born with. Measured against a full-width window that reads as a
+     * picture drawn five times its own size — and the pointer, the one thing
+     * sized from this ratio, came out at the browser's 128 px ceiling. The host
+     * sends its shape as soon as the session opens, which is exactly this
+     * window: a stream started without touching the mouse showed a giant
+     * pointer until the first move rebuilt it.
      */
     _pictureWidth() {
         if (this._videoIsDisplay()) {
@@ -5452,6 +5467,7 @@ export class StreamView {
             const w = parseInt(m[1], 10);
             if (w > 0) return w;
         }
+        if (!this._firstFrameRendered) return 0;
         return (this.canvas && this.canvas.width) || 0;
     }
 
