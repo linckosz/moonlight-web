@@ -1055,10 +1055,16 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         // the viewer's real pointer away, so the only one that can exist is the
         // one burned into the frame.
         //
+        // A touch screen is always composited: CSS `cursor` draws nothing at all
+        // where there is no pointer device, so a client-drawn pointer there
+        // would be no pointer. `cursorPx` is how wide it should end up in frame
+        // pixels — the phone case, where a pointer at its desktop size is a few
+        // screen pixels across.
+        //
         // Native host only; every other backend ignores it, since no remote
         // GameStream host can be told to stop drawing its cursor.
         if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
-            native->setCompositeCursor(msg["composite"].toBool(true));
+            native->setCompositeCursor(msg["composite"].toBool(true), msg["cursorPx"].toInt(0));
         return;
     }
 

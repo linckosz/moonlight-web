@@ -201,7 +201,8 @@ void run_capture_tests()
             if (!haveFrame) {
                 std::fprintf(stderr, "  conversion not exercised: the screen stayed still\n");
             } else {
-                CHECK(converter.convert(frame.texture, duplication.cursor(), convertError));
+                CHECK(converter.convert(frame.texture, duplication.cursor(), convert::CursorDraw{},
+                                        convertError));
                 CHECK(converter.output() != nullptr);
                 CHECK_EQ(converter.outputWidth(), duplication.width());
                 CHECK_EQ(converter.outputHeight(), duplication.height());
@@ -418,8 +419,9 @@ void run_capture_tests()
                                 }
                                 if (st != capture::AcquireStatus::Ok) break;
 
-                                const bool converted = converter.convert(
-                                    live.texture, duplication.cursor(), encodeError);
+                                const bool converted =
+                                    converter.convert(live.texture, duplication.cursor(),
+                                                      convert::CursorDraw{}, encodeError);
                                 duplication.release();
                                 if (!converted) {
                                     std::fprintf(stderr, "  cycle: conversion failed: %s\n",
@@ -471,7 +473,7 @@ void run_capture_tests()
                         std::fprintf(stderr, "  4:4:4 conversion unavailable: %s\n",
                                      error444.c_str());
                     } else if (!converter444.convert(frame.texture, duplication.cursor(),
-                                                     error444)) {
+                                                     convert::CursorDraw{}, error444)) {
                         std::fprintf(stderr, "  4:4:4 conversion failed: %s\n", error444.c_str());
                     } else {
                         // 4:4:4 is only claimed by NVENC so far, and the

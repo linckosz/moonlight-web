@@ -296,9 +296,9 @@ void NativeMediaEngine::onCursor(const mw::native::CursorUpdate& cursor)
         Qt::QueuedConnection);
 }
 
-void NativeMediaEngine::setCompositeCursor(bool composite)
+void NativeMediaEngine::setCompositeCursor(bool composite, int cursorFramePx)
 {
-    if (m_Session) m_Session->setCompositeCursor(composite);
+    if (m_Session) m_Session->setCompositeCursor(composite, cursorFramePx);
 }
 
 bool NativeMediaEngine::intraRefreshActive() const

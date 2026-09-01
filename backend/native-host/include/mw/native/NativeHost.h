@@ -196,7 +196,17 @@ public:
     /// picture clean. Runtime-settable because the viewer can switch modes
     /// mid-session, and re-launching the whole pipeline over a pointer would be
     /// absurd. The next frame reflects the change.
-    virtual void setCompositeCursor(bool composite) = 0;
+    ///
+    /// @p cursorFramePx is how WIDE the composited pointer should end up, in
+    /// pixels of the frame being encoded; 0 means the size it has on the desktop.
+    /// It exists for the small screen: a 32-pixel arrow inside a 1920-wide
+    /// picture shown on a phone is four screen pixels across, which is not a
+    /// pointer, it is a speck. The client is the only side that knows how large
+    /// the picture ends up in front of a viewer — its window, its zoom, its
+    /// orientation — so it asks in the one unit both sides share, and the engine
+    /// works out the magnification from the shape it actually has. Ignored while
+    /// the client draws its own pointer: it can size that one itself.
+    virtual void setCompositeCursor(bool composite, int cursorFramePx) = 0;
 
     /// Force the next frame to be a keyframe.
     ///

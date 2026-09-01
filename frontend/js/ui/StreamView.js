@@ -55,6 +55,7 @@ import {
 
 import {
     IS_TOUCH_DEVICE,
+    IS_MOBILE,
     IS_MOBILE_OR_TABLET,
     IS_APPLE,
     SUPPORTS_CANVAS_TEARING,
@@ -108,6 +109,26 @@ import { StreamViewFullscreen } from './StreamViewFullscreen.js';
  * host is never told which one the client picked.
  */
 const CURSOR_USES_CLIENT_STYLE = false;
+
+/**
+ * How wide the host's pointer should end up on a phone, in CSS pixels.
+ *
+ * A touch screen has no pointer of its own, so there the host draws the pointer
+ * into the picture — and a picture 1920 pixels wide shown across a 390-pixel
+ * phone shrinks a 32-pixel arrow to six. Six pixels is not a pointer, it is a
+ * speck, and finding it is the oldest complaint about streaming to a phone.
+ *
+ * So the phone asks for a size instead of accepting the one it gets. This is
+ * that size: a little under a fingertip, big enough to spot on a moving picture
+ * and small enough not to cover what it is pointing at. It is a target and not a
+ * floor — the host will not shrink a pointer that is already bigger, so zooming
+ * in walks the magnification back down to 1 on its own, and past that the
+ * pointer is simply its real size again.
+ *
+ * Phones only. A tablet's picture is large enough that the real pointer reads
+ * fine, and blowing it up there would look like a bug.
+ */
+const PHONE_CURSOR_CSS_PX = 28;
 
 // Which MultiSeat hosts have already had their input notice this page, by uuid.
 //
@@ -3480,10 +3501,20 @@ export class StreamView {
             // the "unchanged" check because the host has heard nothing yet and
             // its default is to composite.
             this._sentCursorComposite = null;
+            this._sentCursorPx = null;
             this._sendCursorMode();
             this._inputStateInterval = setInterval(() => {
                 if (this._quitting) return;
                 this._sendInputState();
+                // The size a composited pointer must be drawn at follows the
+                // picture's size on the glass, and everything moves it: the
+                // window, the pinch zoom, a rotation, the soft keyboard, the
+                // stream changing resolution under a quality step. None of them
+                // has one event worth wiring, and all of them are slow next to
+                // this beat. Deduplicated inside, so it sends nothing at all
+                // until the answer actually changes — which on a desktop, where
+                // it is always 0, is never.
+                this._sendCursorMode();
             }, 100);
 
             // Start polling connected gamepads (Xbox/PlayStation). Sends a
@@ -5449,6 +5480,39 @@ export class StreamView {
         return Math.max(0.25, Math.min(4, Math.round(scale * 20) / 20));
     }
 
+    /**
+     * How wide the host should draw its pointer, in FRAME pixels — 0 for "the
+     * size it has on the desktop".
+     *
+     * Frame pixels because that is the only unit the two sides share. We are the
+     * only one who knows how large the picture ends up in front of the viewer:
+     * the window, the pinch zoom, the orientation, the soft keyboard eating half
+     * the screen. The host is the only one who knows how many pixels its pointer
+     * actually covers — which is not 32 on a scaled display, and not 32 for a
+     * viewer who set a large cursor. So we convert the size we want on the glass
+     * into the frame's own pixels, and the host works out the rest (see
+     * Session::setCompositeCursor).
+     *
+     * Zoom falls out of this for free, which is what makes it worth doing here
+     * rather than picking a magnification: as the picture is zoomed in, the same
+     * CSS target buys fewer and fewer frame pixels, the request drops below what
+     * the pointer already measures, and the host stops magnifying. The pointer
+     * grows back to its true size as the viewer gets closer, without a step.
+     *
+     * Quantized: a pinch would otherwise send a message per frame, each one
+     * asking the host to redraw a picture that has not otherwise changed.
+     */
+    _compositeCursorPx() {
+        if (!IS_MOBILE) return 0;
+        const frameW = this._pictureWidth();
+        if (!frameW) return 0;
+        const rect = this._mediaRect();
+        if (!rect || !(rect.width > 0)) return 0;
+        const px = (PHONE_CURSOR_CSS_PX * frameW) / rect.width;
+        if (!isFinite(px) || !(px > 0)) return 0;
+        return Math.round(px / 4) * 4;
+    }
+
     /** Redraw the host's pointer at `scale` and keep the result. Asynchronous:
      *  decoding is, and the caller has already returned something usable. */
     _buildScaledCursor(png, hx, hy, scale) {
@@ -5517,22 +5581,36 @@ export class StreamView {
     }
 
     /**
-     * Tell the host who draws the mouse pointer.
+     * Tell the host who draws the mouse pointer, and how big.
      *
-     * The test is pointer lock, not the configured mode, because pointer lock is
-     * the thing that actually decides: while it holds, the browser has taken the
-     * viewer's real pointer away and no CSS cursor can be shown, so the only
-     * pointer that can exist is one the host drew into the frame. Everywhere
-     * else — desktop mode, and gaming mode before the first click — we can draw
-     * it ourselves and should.
+     * Two things force the host to draw it. Pointer lock, because while it holds
+     * the browser has taken the viewer's real pointer away and no CSS cursor can
+     * be shown — so the only pointer that can exist is one burned into the
+     * frame. And a touch screen, for the same reason arrived at from the other
+     * end: there is no pointer device, `cursor` styles nothing, and a
+     * client-drawn pointer is simply no pointer at all. That is why the phone
+     * and the tablet had none.
+     *
+     * Not IS_TOUCH_DEVICE: a touchscreen laptop has a real mouse and a real
+     * pointer, and handing its cursor back to the host would trade a pointer
+     * that moves at the viewer's refresh rate for one that moves at the
+     * stream's.
+     *
+     * Everywhere else — desktop mode, and gaming mode before the first click —
+     * we draw it ourselves and should.
      */
     _sendCursorMode() {
-        const composite = !!this.pointerLocked;
-        if (composite === this._sentCursorComposite) return;
+        const composite = !!this.pointerLocked || IS_MOBILE_OR_TABLET;
+        const cursorPx = composite ? this._compositeCursorPx() : 0;
+        if (composite === this._sentCursorComposite && cursorPx === this._sentCursorPx) return;
+        // Only the transition into compositing invalidates what we hold; a size
+        // change is the same host drawing the same pointer.
+        const taken = composite && this._sentCursorComposite !== true;
         this._sentCursorComposite = composite;
-        this._sendToHost({ type: 'cursormode', composite });
+        this._sentCursorPx = cursorPx;
+        this._sendToHost({ type: 'cursormode', composite, cursorPx });
         // Whatever the host was showing is about to stop being true.
-        if (composite) {
+        if (taken) {
             this._hostDrawsCursor = false;
             this._hostCursorVisible = false;
             this._hostCursorPng = null;
