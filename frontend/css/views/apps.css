@@ -98,6 +98,12 @@
     object-fit: cover;
     display: block;
 }
+/* A cover being re-fetched after a failed request: the frame shows the generic
+   pad meanwhile, and the image stays in the DOM to come back into. Needed
+   because the rule above outranks the browser's own [hidden] handling. */
+.app-card-image img[hidden] {
+    display: none;
+}
 .app-card-image .app-icon {
     display: flex;
     align-items: center;

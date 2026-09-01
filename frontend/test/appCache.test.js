@@ -8,6 +8,8 @@ import {
     saveCachedApps,
     forgetCachedApps,
     appsSignature,
+    boxArtWasSeen,
+    noteBoxArtSeen,
 } from '../js/util/appCache.js';
 
 // The per-host app-list memory that lets a host card paint its grid the moment
@@ -20,7 +22,14 @@ describe('app-list memory', () => {
 
     it('gives back what a host last answered', () => {
         saveCachedApps('host-a', [{ id: 7, name: 'Desktop', hdrSupported: true }]);
-        expect(loadCachedApps('host-a')).toEqual([{ id: 7, name: 'Desktop', hdrSupported: true }]);
+        expect(loadCachedApps('host-a')).toEqual([
+            { id: 7, name: 'Desktop', hdrSupported: true, boxArt: true },
+        ]);
+    });
+
+    it('carries the box-art flag, so a grid painted from memory asks for nothing extra', () => {
+        saveCachedApps('host-native', [{ id: 3, name: 'DISPLAY1', boxArt: false }]);
+        expect(loadCachedApps('host-native')[0].boxArt).toBe(false);
     });
 
     it('keeps each host apart', () => {
@@ -92,6 +101,48 @@ describe('app-list memory', () => {
             JSON.stringify({ 'host-a': { ts: Date.now(), apps: [{ id: 0 }, { name: 42 }] } }),
         );
         expect(loadCachedApps('host-a')).toBeNull();
+    });
+
+    // Which covers were actually seen: the difference between "this host has no
+    // art for that app" and "the request failed just now", which is what lets
+    // the grid retry instead of settling for the generic pad.
+    describe('covers already seen', () => {
+        it('knows nothing until a cover has actually reached the screen', () => {
+            saveCachedApps('host-a', [{ id: 1, name: 'A' }]);
+            expect(boxArtWasSeen('host-a', 1)).toBe(false);
+            noteBoxArtSeen('host-a', 1);
+            expect(boxArtWasSeen('host-a', 1)).toBe(true);
+            expect(boxArtWasSeen('host-a', 2)).toBe(false);
+            expect(boxArtWasSeen('host-b', 1)).toBe(false);
+        });
+
+        it('keeps what it knows when the host adds a game', () => {
+            saveCachedApps('host-a', [{ id: 1, name: 'A' }]);
+            noteBoxArtSeen('host-a', 1);
+            saveCachedApps('host-a', [
+                { id: 1, name: 'A' },
+                { id: 2, name: 'B' },
+            ]);
+            expect(boxArtWasSeen('host-a', 1)).toBe(true);
+        });
+
+        it('drops it with the app it belonged to', () => {
+            saveCachedApps('host-a', [
+                { id: 1, name: 'A' },
+                { id: 2, name: 'B' },
+            ]);
+            noteBoxArtSeen('host-a', 2);
+            saveCachedApps('host-a', [{ id: 1, name: 'A' }]);
+            expect(boxArtWasSeen('host-a', 2)).toBe(false);
+            expect(JSON.parse(localStorage.getItem('mw-host-apps'))['host-a'].art).toBeUndefined();
+        });
+
+        it('forgets it with the host', () => {
+            saveCachedApps('host-a', [{ id: 1, name: 'A' }]);
+            noteBoxArtSeen('host-a', 1);
+            forgetCachedApps('host-a');
+            expect(boxArtWasSeen('host-a', 1)).toBe(false);
+        });
     });
 
     it('signs a list by ids, names and order — the three things the grid draws', () => {
