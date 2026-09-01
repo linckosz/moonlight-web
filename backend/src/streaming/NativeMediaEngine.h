@@ -129,9 +129,11 @@ public:
     int64_t framePresentationTimeUs() const override;
     int64_t firstFrameArrivalSteadyMs() const override;
 
-    /// Whether the engine draws the mouse pointer into the picture (immersive)
-    /// or reports its shape for the browser to draw (desktop). Safe at any time.
-    void setCompositeCursor(bool composite);
+    /// Whether the engine draws the mouse pointer into the picture (immersive,
+    /// and every touch screen) or reports its shape for the browser to draw
+    /// (desktop). @p cursorFramePx is how wide the drawn pointer should be, in
+    /// frame pixels, or 0 for its natural size — see Session. Safe at any time.
+    void setCompositeCursor(bool composite, int cursorFramePx);
 
     /// A human-readable description of what the session settled on, for the
     /// stats overlay: "NVIDIA GeForce RTX 4070 · NVENC HEVC 4:4:4". Empty until

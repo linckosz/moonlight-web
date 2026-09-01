@@ -41,6 +41,10 @@
 namespace mw::native {
 namespace {
 
+/// The most a composited pointer may be blown up past its real size. It is a
+/// 32-pixel bitmap; stretched much further it stops reading as a pointer.
+constexpr float kMaxCursorMagnify = 4.0f;
+
 int64_t steadyNowUs()
 {
     return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -264,10 +268,17 @@ public:
         if (m_Input) m_Input->inject(event);
     }
 
-    void setCompositeCursor(bool composite) override
+    void setCompositeCursor(bool composite, int cursorFramePx) override
     {
         // Read by the capture thread each frame. A change takes effect on the
         // next one, which is the whole point of it being runtime-settable.
+        const int wanted = cursorFramePx > 0 ? cursorFramePx : 0;
+        if (m_CursorFramePx.exchange(wanted) != wanted && composite) {
+            // The pointer is about to be drawn at a different size on a screen
+            // that may not be moving at all — a viewer pinch-zooming a still
+            // desktop. Nothing else in the loop would ever notice.
+            m_CursorDirty.store(true);
+        }
         if (m_CompositeCursor.exchange(composite) == composite) return;
         log::info(composite ? "[native] cursor: drawn into the picture (immersive)"
                             : "[native] cursor: handed to the client to draw (desktop)");
@@ -565,6 +576,27 @@ private:
             reportCursor();
 
             if (status == capture::AcquireStatus::Timeout) {
+                // Nothing moved on the desktop — but the pointer we draw onto it
+                // is about to be drawn at a different size, and nothing else in
+                // this loop would ever notice. A viewer pinch-zooming a still
+                // screen is exactly that: no present, no pointer motion, and a
+                // cursor that has to resize anyway.
+                if (m_CursorDirty.exchange(false) && m_CompositeCursor.load() && m_DesktopCopy) {
+                    if (!m_Converter->convert(m_DesktopCopy.Get(), m_Capture->cursor(),
+                                              cursorDraw(), error)) {
+                        finish("colour conversion failed: " + error);
+                        return;
+                    }
+                    if (!emit(frameNumber, steadyNowUs(), error)) return;
+                    lastSentUs = steadyNowUs();
+                    lastRealUs = lastSentUs;
+                    refineQuiet = 0;
+                    refinePasses = 0;
+                    refineBytes = 0;
+                    refineFirstBytes = m_LastEmitBytes;
+                    continue;
+                }
+
                 // Nothing moved. Two reasons to send anyway: the refinement
                 // passes above, and — once those are done — the floor that lets
                 // the receiver tell a quiet screen from a dead one. Both
@@ -621,7 +653,9 @@ private:
             if (status == capture::AcquireStatus::PointerOnly) {
                 if (!m_CompositeCursor.load()) continue;
                 if (!m_DesktopCopy) continue;
-                if (!m_Converter->convert(m_DesktopCopy.Get(), m_Capture->cursor(), error)) {
+                m_CursorDirty.store(false);
+                if (!m_Converter->convert(m_DesktopCopy.Get(), m_Capture->cursor(), cursorDraw(),
+                                          error)) {
                     finish("colour conversion failed: " + error);
                     return;
                 }
@@ -676,8 +710,9 @@ private:
             // keeps the picture clean.
             static const capture::CursorState kNoCursor;
             const bool composite = m_CompositeCursor.load();
+            m_CursorDirty.store(false);
             if (!m_Converter->convert(frame.texture, composite ? m_Capture->cursor() : kNoCursor,
-                                      error)) {
+                                      cursorDraw(), error)) {
                 m_Capture->release();
                 finish("colour conversion failed: " + error);
                 return;
@@ -834,6 +869,45 @@ private:
         return static_cast<float>(framed) / static_cast<float>(captured);
     }
 
+    /// How much bigger than life to draw the composited pointer, so it comes out
+    /// the width the client asked for.
+    ///
+    /// The client asks in frame pixels because that is the only unit both sides
+    /// can compute — it knows how many of them fit across the viewer's screen,
+    /// we know how many of them the pointer currently covers. Nobody has to
+    /// agree on a cursor size, a DPI or a phone.
+    ///
+    /// Never below 1: the request exists to make a pointer visible on a small
+    /// screen, and a viewer zoomed in far enough that the natural size already
+    /// exceeds the target wants the natural size, not a shrunken one. Capped
+    /// because this is a 32-pixel bitmap being stretched — past 4× it stops
+    /// looking like a pointer and starts looking like a bug.
+    float cursorMagnification() const
+    {
+        const int wanted = m_CursorFramePx.load();
+        if (wanted <= 0 || !m_Capture) return 1.0f;
+        const int shapeWidth = m_Capture->cursor().width;
+        if (shapeWidth <= 0) return 1.0f;
+        const float natural = static_cast<float>(shapeWidth) * cursorScale();
+        if (!(natural > 0.0f)) return 1.0f;
+        const float magnify = static_cast<float>(wanted) / natural;
+        if (!(magnify > 1.0f)) return 1.0f;
+        return magnify > kMaxCursorMagnify ? kMaxCursorMagnify : magnify;
+    }
+
+    /// Everything the converter needs about the pointer that the capture does
+    /// not already tell it.
+    convert::CursorDraw cursorDraw() const
+    {
+        convert::CursorDraw draw;
+        draw.magnify = cursorMagnification();
+        if (m_Capture) {
+            draw.hotspotX = m_Capture->cursorHotspotX();
+            draw.hotspotY = m_Capture->cursorHotspotY();
+        }
+        return draw;
+    }
+
     /// Turn the inverting pixels in m_CursorScratch into something a client can
     /// draw: white fill, black outline.
     ///
@@ -956,6 +1030,12 @@ private:
     /// True — the default — draws the pointer into the picture. False reports
     /// its shape to the client, which draws it itself at its own refresh rate.
     std::atomic<bool> m_CompositeCursor{true};
+    /// How wide the client wants the composited pointer, in frame pixels; 0 for
+    /// the size it has on the desktop. See Session::setCompositeCursor.
+    std::atomic<int> m_CursorFramePx{0};
+    /// The composited pointer must be redrawn although nothing on the desktop
+    /// moved — its requested size changed under a still screen.
+    std::atomic<bool> m_CursorDirty{false};
     /// Forces one cursor report even though DXGI says the shape is unchanged.
     std::atomic<bool> m_ResendCursor{false};
     /// The shape the client has been told about, so an unchanged pointer is not
