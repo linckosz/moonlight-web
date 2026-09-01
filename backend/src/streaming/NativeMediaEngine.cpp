@@ -83,7 +83,9 @@ NativeMediaEngine::NativeMediaEngine(QObject* parent)
 
 NativeMediaEngine::~NativeMediaEngine()
 {
-    stopConnection();
+    // Qualified: during destruction the vtable is already ours, so the call is
+    // never dispatched to an override — say so rather than let it read as one.
+    NativeMediaEngine::stopConnection();
 }
 
 void NativeMediaEngine::startCapture(const StartParams& params)
