@@ -397,6 +397,12 @@ private:
             if (m_Input) m_Input->setDisplayRect(rect.left, rect.top, rect.right, rect.bottom);
         }
 
+        // The desktop changed size while the frame did not, so the pointer's
+        // scale just moved (see CursorUpdate::scale) — and DXGI will not mention
+        // the pointer again until its SHAPE changes, which for a cursor sitting
+        // still may be never.
+        m_ResendCursor.store(true);
+
         log::info("[native] capture restarted at " + std::to_string(m_Capture->width()) + "x" +
                   std::to_string(m_Capture->height()) + ", streaming " +
                   std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height));
@@ -774,19 +780,26 @@ private:
         // following the name alone would never see the change.
         const char* kind = currentCursorKind();
         const bool kindChanged = std::strcmp(kind, m_ReportedKind.c_str()) != 0;
-        if (!forced && !kindChanged && cursor.shapeVersion == m_ReportedShape &&
+        // And the scale, which changes without the shape doing anything at all:
+        // the host switching display mode resizes the desktop under a pointer
+        // that keeps its bitmap. See CursorUpdate::scale.
+        const float scale = cursorScale();
+        const bool scaleChanged = scale != m_ReportedScale;
+        if (!forced && !kindChanged && !scaleChanged && cursor.shapeVersion == m_ReportedShape &&
             cursor.visible == m_ReportedVisible)
             return;
 
         m_ReportedShape = cursor.shapeVersion;
         m_ReportedVisible = cursor.visible;
         m_ReportedKind = kind;
+        m_ReportedScale = scale;
 
         CursorUpdate update;
         update.visible = cursor.visible;
         update.kind = kind;
         update.width = cursor.width;
         update.height = cursor.height;
+        update.scale = scale;
         // The capture stores the image's top-left, having already subtracted
         // the hotspot; the client needs the offset itself to place the image
         // against its own pointer.
@@ -803,6 +816,22 @@ private:
         }
 
         m_Callbacks.onCursor(update);
+    }
+
+    /// How much the converter shrinks (or stretches) the desktop on its way into
+    /// the frame — which is exactly what the pointer bitmap must be multiplied
+    /// by. See CursorUpdate::scale.
+    ///
+    /// Width only, matching the client's own convention: the two rectangles
+    /// share an aspect ratio in every case a client can ask for, and taking one
+    /// axis avoids a pointer that is a different shape from the one the host is
+    /// showing.
+    float cursorScale() const
+    {
+        const int captured = m_Capture ? m_Capture->width() : 0;
+        const int framed = m_Converter ? m_Converter->outputWidth() : 0;
+        if (captured <= 0 || framed <= 0) return 1.0f;
+        return static_cast<float>(framed) / static_cast<float>(captured);
     }
 
     /// Turn the inverting pixels in m_CursorScratch into something a client can
@@ -934,6 +963,9 @@ private:
     uint64_t m_ReportedShape = 0;
     bool m_ReportedVisible = false;
     std::string m_ReportedKind;
+    /// Deliberately not 1: the first report must go out whatever the scale is,
+    /// and a sentinel that no ratio can equal is what guarantees it.
+    float m_ReportedScale = 0.0f;
     bool m_LoggedFirstKeyframe = false;
     /// Bytes the last emit() produced. The refinement loop reads it to know
     /// when a still picture has stopped improving.

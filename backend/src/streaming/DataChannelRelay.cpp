@@ -479,7 +479,8 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     // Rare by construction — one message per shape change, never per frame —
     // so the base64 of a small PNG on the input channel costs nothing.
     connect(m_Shim, &IMediaEngine::cursorShapeChanged, this,
-            [this](QByteArray png, int hotspotX, int hotspotY, bool visible, QString kind) {
+            [this](QByteArray png, int hotspotX, int hotspotY, bool visible, QString kind,
+                   double scale) {
                 if (m_Stopping.load() || !m_InputDc) return;
                 QJsonObject m;
                 m["type"] = "cursor";
@@ -489,6 +490,10 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
                 m["visible"] = visible;
                 m["hotspotX"] = hotspotX;
                 m["hotspotY"] = hotspotY;
+                // Desktop pixels to frame pixels. Sent even at 1 so a client
+                // that had a different one is corrected rather than left to
+                // remember it.
+                m["scale"] = scale;
                 // Both are sent every time: the client picks which one to use,
                 // and can be reconfigured without the host being told.
                 if (!kind.isEmpty()) m["kind"] = kind;
