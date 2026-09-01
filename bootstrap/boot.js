@@ -313,7 +313,7 @@ async function main() {
         fail(
             e.message,
             'If your machine is switched off or has no internet access, nothing here ' +
-                'can reach it — that is by design, not a fault.',
+                'can reach it. That is by design, not a fault.',
         );
         return;
     }
