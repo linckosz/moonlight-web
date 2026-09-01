@@ -201,8 +201,11 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
             const mw::native::GpuInfo* gpu = caps.gpuFor(display);
             return gpu && gpu->supports10Bit;
         }();
-        apps.append(
-            NvApp(displayIdToAppId(display.id), QString::fromStdString(display.label), hdrCapable));
+        NvApp app(displayIdToAppId(display.id), QString::fromStdString(display.label), hdrCapable);
+        // A monitor has no cover art, and there is no library here to look it up
+        // in. Saying so spares the grid one 404 per display, on every render.
+        app.setHasBoxArt(false);
+        apps.append(app);
     }
     cb(true, BackendError{}, apps);
 }

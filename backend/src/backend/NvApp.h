@@ -45,12 +45,23 @@ public:
     QString name() const { return m_Name; }
     bool hdrSupported() const { return m_HdrSupported; }
 
+    /// Whether asking this host for cover art is worth a request.
+    ///
+    /// True everywhere a host keeps a library: the art may still be missing for
+    /// one app, and the grid falls back to an icon when the image does not
+    /// load. False says there is none to have, ever — the native host's "apps"
+    /// are monitors — and it exists so that case costs no request at all
+    /// instead of one 404 per display on every render.
+    bool hasBoxArt() const { return m_HasBoxArt; }
+    void setHasBoxArt(bool has) { m_HasBoxArt = has; }
+
     QJsonObject toJson() const
     {
         QJsonObject obj;
         obj["id"] = m_Id;
         obj["name"] = m_Name;
         obj["hdrSupported"] = m_HdrSupported;
+        obj["boxArt"] = m_HasBoxArt;
         return obj;
     }
 
@@ -73,4 +84,7 @@ private:
     int m_Id = 0;
     QString m_Name;
     bool m_HdrSupported = false;
+    /// Default true: every GameStream host serves /appasset, and only a backend
+    /// that knows there is nothing behind it says otherwise.
+    bool m_HasBoxArt = true;
 };
