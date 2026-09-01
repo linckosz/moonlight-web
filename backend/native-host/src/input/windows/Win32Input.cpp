@@ -18,6 +18,7 @@
 #include "Win32Input.h"
 
 #include "../../core/Log.h"
+#include "UsScanCode.h"
 
 #include <windows.h>
 
@@ -122,16 +123,26 @@ const char* describe(InputEvent::Type type)
 ///
 /// Scancode by default so Raw Input and DirectInput see it (see the class
 /// comment); virtual key when the browser said the code is not normalized, or
-/// when the key has no scancode on this layout — a dead mapping injected as
-/// scancode 0 would land as a keypress nobody asked for.
+/// when the key has no scancode at all — a dead mapping injected as scancode 0
+/// would land as a keypress nobody asked for.
+///
+/// The scancode comes from the US layout (usScanCode), never from the host's:
+/// the browser normalized the key's POSITION into a US virtual key, so only the
+/// US layout leads back to that position. Asking Windows instead — its
+/// MapVirtualKeyW answers with the calling thread's layout — made a French host
+/// type every AZERTY key at its QWERTY position. Windows is still asked for the
+/// keys no layout names (media, browser, Pause), which are layout-independent.
 INPUT makeKeyInput(int vk, bool down, bool nonNormalized)
 {
     INPUT input = {};
     input.type = INPUT_KEYBOARD;
     input.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
 
-    const UINT mapped =
-        nonNormalized ? 0u : ::MapVirtualKeyW(static_cast<UINT>(vk), MAPVK_VK_TO_VSC_EX);
+    UINT mapped = 0;
+    if (!nonNormalized) {
+        mapped = usScanCode(vk);
+        if (mapped == 0) mapped = ::MapVirtualKeyW(static_cast<UINT>(vk), MAPVK_VK_TO_VSC_EX);
+    }
     const UINT prefix = (mapped >> 8) & 0xFF;
     const UINT scan = mapped & 0xFF;
 
