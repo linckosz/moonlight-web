@@ -90,9 +90,6 @@
   html, body { height: 100%; }
   body {
     margin: 0;
-    display: grid;
-    place-items: center;
-    padding: max(2rem, env(safe-area-inset-top)) 1.5rem;
     background: var(--surface-0);
     color: var(--text-1);
     font-family: var(--font-ui);
@@ -115,11 +112,28 @@
     mask-image: radial-gradient(90% 70% at 50% 45%, #000 30%, transparent 100%);
     -webkit-mask-image: radial-gradient(90% 70% at 50% 45%, #000 30%, transparent 100%);
   }
-  /* No panel. The seal, the bar and one line sit straight on the grid, which is
-     the only background this page has and the one the application opens onto —
-     a slab of flat surface colour under them would be a second scene to leave.
-     The notched panel belonged to a page with more to hold. */
+  /* Its own layer holding one child, exactly like the application's .securing —
+     and for a reason worth stating, because centring on <body> is the obvious
+     way to do this and it is wrong. <body> is not ours alone: a browser
+     extension that appends a node to it becomes a second row of that grid, the
+     window is split in two and the seal ends up centred in the top half. That
+     is not hypothetical; it is what this page did, mid-load, the moment an
+     extension's content script arrived. A fixed layer with a single child has
+     nothing to share and cannot be moved by what lands beside it.
+
+     No panel inside it. The seal, the bar and one line sit straight on the
+     grid, which is the only background this page has and the one the
+     application opens onto — a slab of flat surface colour under them would be
+     a second scene to leave. The notched panel belonged to a page with more to
+     hold. */
   main {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: max(2rem, env(safe-area-inset-top)) 1.5rem;
+  }
+  .inner {
     position: relative;
     width: 100%;
     max-width: 30rem;
@@ -294,22 +308,24 @@
 <body data-state="working">
 <script src="/frame-guard.js"></script>
 <main>
-  <p class="brand">MoonlightWeb</p>
-  <h1 id="stage">Starting…</h1>
-  <div class="seal" aria-hidden="true">
-    <div class="seal-face">
-      <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2"
-           stroke-linecap="round" stroke-linejoin="round">
-        <rect x="7" y="14" width="18" height="13" rx="1.5"/>
-        <path class="shackle" d="M11 14v-3.2a5 5 0 0 1 10 0V14"/>
-        <path d="M16 19v3.4"/>
-      </svg>
+  <div class="inner">
+    <p class="brand">MoonlightWeb</p>
+    <h1 id="stage">Starting…</h1>
+    <div class="seal" aria-hidden="true">
+      <div class="seal-face">
+        <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="7" y="14" width="18" height="13" rx="1.5"/>
+          <path class="shackle" d="M11 14v-3.2a5 5 0 0 1 10 0V14"/>
+          <path d="M16 19v3.4"/>
+        </svg>
+      </div>
     </div>
+    <div class="track"><div id="bar"></div></div>
+    <p id="status">Securing the communication…</p>
+    <p id="detail"></p>
+    <p id="note"></p>
   </div>
-  <div class="track"><div id="bar"></div></div>
-  <p id="status">Securing the communication…</p>
-  <p id="detail"></p>
-  <p id="note"></p>
 </main>
 <script type="module" src="/boot.js"></script>
 </body>
