@@ -193,6 +193,18 @@ Win32Input::~Win32Input()
     stop();
 }
 
+void Win32Input::setDisplayRect(int left, int top, int right, int bottom)
+{
+    const capture::DesktopRect rect{left, top, right, bottom};
+    if (rect.left == m_DisplayRect.left && rect.top == m_DisplayRect.top &&
+        rect.right == m_DisplayRect.right && rect.bottom == m_DisplayRect.bottom)
+        return;
+    m_DisplayRect = rect;
+    log::info("[native] input: display now at " + std::to_string(m_DisplayRect.left) + "," +
+              std::to_string(m_DisplayRect.top) + " " + std::to_string(m_DisplayRect.width()) +
+              "x" + std::to_string(m_DisplayRect.height()));
+}
+
 bool Win32Input::start(std::string& error)
 {
     if (m_Started) return true;
