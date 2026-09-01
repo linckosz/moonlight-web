@@ -23,6 +23,10 @@ export class App {
         this.id = data.id || 0;
         this.name = data.name || 'Unknown App';
         this.hdrSupported = data.hdrSupported || false;
+        // Absent means yes: every GameStream host serves cover art, and only a
+        // host that knows it has none — the native host, whose "apps" are
+        // monitors — says so. An older host that says nothing keeps asking.
+        this.hasBoxArt = data.boxArt !== false;
         this.hostUuid = hostUuid;
     }
 
@@ -31,7 +35,7 @@ export class App {
     }
 
     get boxArtUrl() {
-        if (!this.hostUuid || !this.id) return null;
+        if (!this.hostUuid || !this.id || !this.hasBoxArt) return null;
         return `/api/hosts/${encodeURIComponent(this.hostUuid)}/appasset?appid=${this.id}`;
     }
 }
