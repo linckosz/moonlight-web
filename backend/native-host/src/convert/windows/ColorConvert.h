@@ -26,6 +26,27 @@
 
 namespace mw::native::convert {
 
+/// How the pointer is placed on the picture, beyond the position and shape the
+/// capture already reports.
+///
+/// Separate from CursorState because none of it comes from the capture: the
+/// magnification is a client request, and the hotspot — which CursorState has
+/// already subtracted out of its position — has to come back for the pointer to
+/// grow around the point it aims with rather than around its top-left corner.
+struct CursorDraw
+{
+    /// Multiplier on the drawn size. 1 is the size the pointer has on the
+    /// desktop, which is what everything but a small screen wants.
+    float magnify = 1.0f;
+
+    /// The point inside the shape that IS the pointer position, in cursor
+    /// pixels. Only consulted when magnifying: it is the fixed point of the
+    /// growth, so the tip of an enlarged arrow stays exactly where the real one
+    /// was.
+    int hotspotX = 0;
+    int hotspotY = 0;
+};
+
 /// Turns a captured desktop texture into the format the encoder wants, on the
 /// GPU, without ever touching system memory.
 ///
@@ -87,8 +108,10 @@ public:
     /// @p cursor is drawn into the picture on the way through. Pass a state with
     /// `visible == false` for none. The shape is re-uploaded only when its
     /// `shapeVersion` changes, so a cursor that merely moves costs nothing but
-    /// a constant-buffer write.
-    bool convert(ID3D11Texture2D* source, const capture::CursorState& cursor, std::string& error);
+    /// a constant-buffer write — and @p draw, which only moves the rectangle the
+    /// shader samples over, costs nothing at all.
+    bool convert(ID3D11Texture2D* source, const capture::CursorState& cursor,
+                 const CursorDraw& draw, std::string& error);
 
     /// The texture the last convert() wrote — NV12 or AYUV per chroma().
     /// Owned here and reused every frame: allocating one per frame would be a
