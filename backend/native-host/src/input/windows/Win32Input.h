@@ -67,6 +67,7 @@ public:
     bool start(std::string& error) override;
     void stop() override;
     void inject(const InputEvent& event) override;
+    void setDisplayRect(int left, int top, int right, int bottom) override;
 
 private:
     void injectKey(const InputEvent& event, bool down);
@@ -84,7 +85,9 @@ private:
     /// Release everything still recorded as held. Called by stop().
     void releaseAll();
 
-    const capture::DesktopRect m_DisplayRect;
+    /// Not const: the display can be re-resolved under a running session (see
+    /// setDisplayRect). Written and read under the caller's own serialisation.
+    capture::DesktopRect m_DisplayRect;
 
     /// Null when ViGEmBus is absent — the overwhelmingly common case, and not a
     /// failure. Keyboard and mouse are unaffected.
