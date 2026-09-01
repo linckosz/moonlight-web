@@ -136,6 +136,18 @@ Une manette inconnue ne doit jamais bloquer la connexion : elle est présentée 
 X360, avec ses boutons supplémentaires perdus. C'est une dégradation, pas un
 refus.
 
+> **DualShock 4 livré.** `VigemGamepad::profileFor()` suit le `ctype` que le
+> client envoie déjà (`LI_CTYPE_PS` → DS4, tout le reste → X360), et le rapport
+> est construit par `src/input/Ds4Mapping.{h,cpp}` — pur, sans Windows, compilé
+> partout, couvert bouton par bouton par `tests/test_ds4_mapping.cpp`.
+>
+> ⚠️ **Le compromis, à savoir avant de tester** : un jeu qui ne parle que XInput
+> ne voit pas de DS4 du tout. Une manette PlayStation qui marchait partout en
+> X360 gagne les bons prompts et peut perdre les jeux XInput-only. C'est le
+> comportement que §7 décrit (« deviner juste » = présenter la manette que le
+> joueur tient) et celui de Sunshine en `gamepad = auto`, mais il se renverse en
+> une ligne dans `profileFor()` si l'essai dit le contraire.
+
 ### 6.1 Ce que XInput ne peut pas porter
 
 Paddles, clic de touchpad, bouton Share/Capture, gyro, gâchettes adaptatives.
@@ -162,6 +174,11 @@ Raison : en production le bon comportement est de deviner juste, et un réglage
 visible transforme un défaut de détection en question posée à l'utilisateur.
 En debug il est indispensable pour isoler « la détection s'est trompée » de
 « le profil est mal implémenté ».
+
+> **Livré.** Réglages → Avancé, visible uniquement si `debug_build` :
+> Automatique / Toujours Xbox 360 / Toujours DualShock 4. Le choix ne crée pas
+> un nouveau champ de protocole — il remplace le `ctype` annoncé, donc l'hôte n'a
+> qu'une seule chose à lire et ignore qu'il y a eu un forçage.
 
 ---
 
@@ -205,6 +222,13 @@ ViGEmBus (§2). Installé silencieusement par l'installeur (déjà fait, commit
 manette, une ligne dans le log.
 
 #### 9.1 Rattraper une installation manquée — l'encart d'installation
+
+> **Livré.** Sonde et garde dans `backend/src/backend/GamepadDriver.{h,cpp}`
+> (`mayOffer()` est inline et pur, couvert par `tests/test_gamepad_driver.cpp`),
+> routes `GET`/`POST /api/system/gamepad-driver[/install]`, encart dans
+> `frontend/js/ui/GamepadDriverNotice.js` (page principale et page admin).
+> La sonde elle-même est `NativeHost::probeVirtualGamepad()`, qui demande au
+> pilote et à rien d'autre.
 
 L'installeur pose ViGEmBus, mais il peut avoir échoué (réseau coupé pendant le
 téléchargement), avoir été contourné (build lancé depuis les sources), ou le
@@ -260,16 +284,61 @@ nativement ce que Windows demande un pilote signé pour faire, y compris des
 descripteurs HID arbitraires — donc les volants (§2.3) y seraient possibles
 alors qu'ils ne le sont pas sous Windows.
 
+> **Écrit, compilé, pas encore atteignable.**
+> `src/input/linux/UinputGamepad.{h,cpp}` : même forme que son homologue
+> Windows (arrive/update/remove, quatre slots, deux profils), le D-pad en hat
+> ABS_HAT0X/Y et non en quatre boutons, et le retour de force complet — c'est
+> uinput qui nous demande d'accepter l'effet par ioctl, donc il y a un thread
+> qui répond. Les amplitudes y sont déjà en 16 bits : contrairement à XUSB, rien
+> à remettre à l'échelle.
+>
+> Sur evdev les deux profils déclarent **les mêmes** codes de boutons et d'axes ;
+> ce qui change est l'identité (nom + ids USB), et c'est elle que SDL lit pour
+> choisir « A » ou « ✕ ». Il n'y a donc pas de rapport à re-mapper, et
+> `Ds4Mapping` n'est délibérément pas utilisé ici.
+>
+> ⚠️ **Rien ne le construit aujourd'hui** : le moteur natif n'a pas de session
+> Linux (ni capture, ni encodeur), donc `probeVirtualGamepad()` répond toujours
+> « pas de backend sur cette plateforme » — ce qui est la vérité utile pour un
+> utilisateur. Le fichier est compilé à `-Wall -Wextra` sur chaque CI Linux pour
+> qu'il ne pourrisse pas en code « prêt » jamais passé par un compilateur.
+>
+> Packaging : `70-moonlightweb-uinput.rules` (`uaccess` pour le siège,
+> `GROUP="input"` pour l'installation headless) et `modules-load.d` pour charger
+> le module, tous deux posés par `make-packages.sh` et rechargés par `postinst`.
+> Ils sont inertes tant que personne ne branche de manette — mais ils accordent
+> l'accès à `/dev/uinput` dès maintenant, pour un backend encore inatteignable :
+> une ligne à retirer de `make-packages.sh` si ce n'est pas voulu si tôt.
+
 ### macOS
 
-⚠️ **À vérifier avant de s'engager.** macOS a fermé les extensions noyau au
-profit de DriverKit, qui exige un *entitlement* accordé par Apple et un compte
-développeur payant. Le statut exact d'un HID virtuel gratuit sous macOS 15+ n'a
-pas été vérifié pour ce document.
+~~⚠️ **À vérifier avant de s'engager.**~~ **Vérifié le 01/09/2026 — et la
+réponse est non.** Les deux seules voies vers un HID virtuel sous macOS
+moderne demandent la même chose :
 
-Tant que ce n'est pas tranché : macOS **client** fonctionne (c'est un
-navigateur, il envoie des états), macOS **host** peut n'avoir aucune manette.
-Documenter la limite plutôt qu'introduire une dépendance propriétaire.
+- **CoreHID** (macOS 15+) exige l'entitlement `com.apple.developer.hid.virtual.device`,
+  qu'Apple accorde au cas par cas ;
+- **DriverKit / HIDDriverKit** exige un entitlement accordé par Apple **et** un
+  compte développeur payant, et le *dext* doit être livré à l'intérieur d'une
+  application signée et notarisée.
+
+Les contournements historiques ne sont pas des contournements : `foohid` est une
+extension noyau, non maintenue, et les kexts sont de fait morts sur Apple
+Silicon. Les projets récents qui ont l'air « user-space » (OpenJoystickDriver,
+JoyCon2Mac) retombent tous sur l'un des deux entitlements ci-dessus dès qu'il
+s'agit de *publier* un périphérique.
+
+**Conséquence : macOS host rejoint §2.2.** Ce n'est plus « à vérifier », c'est
+la même catégorie que DualSense et Switch Pro — une décision d'investissement
+(compte payant + demande d'entitlement à Apple), pas une tâche à planifier. Et
+le compte payant heurte frontalement la contrainte fondamentale de §1.
+
+macOS **client** fonctionne et continuera de fonctionner : c'est un navigateur,
+il envoie des états. macOS **host** n'a pas de manette, et c'est documenté comme
+une limite plutôt que réglé par une dépendance propriétaire.
+
+> Recherche documentaire, pas un essai sur un Mac : personne n'a tenté de créer
+> le périphérique ici. Ce qui est vérifié, c'est que les deux API l'exigent.
 
 ---
 
@@ -306,6 +375,17 @@ Aucun périphérique orphelin ne doit survivre à une session : il resterait dan
 la liste des manettes de Windows et le jeu suivant verrait un contrôleur que
 personne ne tient. À la reconnexion, tout est recréé — aucun état HID obsolète
 n'est conservé entre deux sessions.
+
+> **Livré, et le piège était là.** Le retrait d'une manette voyageait comme
+> « un état vide dont le bit de masque est effacé » — ce qui *est* le retrait en
+> GameStream, mais qui ne fait que recentrer un périphérique virtuel dont nous
+> sommes propriétaires : la manette restait branchée jusqu'à la fin de la
+> session. D'où `IMediaEngine::sendControllerRemoval()`, l'intention plutôt que
+> l'encodage de l'un des deux moteurs : `MoonlightShim` renvoie exactement le
+> même message qu'avant, `NativeMediaEngine` débranche pour de bon. Le
+> périphérique est remis à zéro avant d'être retiré (`VigemGamepad::remove`),
+> sinon le jeu garde le dernier rapport — une gâchette enfoncée sans plus aucun
+> périphérique pour la relâcher.
 
 ---
 
@@ -347,10 +427,10 @@ un pilote signé — et mettait XInput en phase 2. C'est l'inverse.
 | Phase | Contenu | État |
 |---|---|---|
 | **1** | `GamepadState`, protocole, `GamepadManager`, **XInput** de bout en bout | ⚡ **partiellement fait** (9a62329) |
-| **2** | Multi-manettes, cycle de vie, validation, tests, **encart ViGEmBus (§9.1)** | à faire |
-| **3** | DualShock 4 (ViGEm sait le faire) | à faire |
-| **4** | Linux / uinput | à faire |
-| **5** | macOS — après la vérification de §9 | bloqué |
+| **2** | Multi-manettes, cycle de vie, validation, tests, **encart ViGEmBus (§9.1)** | ⚡ **encart et cycle de vie livrés** ; reste l'essai à deux manettes réelles |
+| **3** | DualShock 4 (ViGEm sait le faire) | ✅ **livré** (mapping testé, essai matériel à faire) |
+| **4** | Linux / uinput | ⚡ **backend écrit et compilé**, sans session Linux pour l'appeler (§9) |
+| **5** | macOS | ❌ **tranché : abandonné** — entitlement accordé par Apple + compte payant (§9) |
 | **6** | DualSense, Switch Pro, Generic HID | **bloqué sur un pilote signé** |
 | **7** | Gyro, touchpad, gâchettes adaptatives | bloqué par phase 6 |
 
@@ -374,8 +454,16 @@ Linux → périphérique visible dans le sous-système input. Multi-manettes →
 
 ## 17. Licences
 
-Documenter dans `docs/gamepad-dependencies.md` : dépendance, version, licence,
-usage, dépendance runtime, redistribution autorisée, dépendance commerciale.
+Documenter dans `docs/design/gamepad-dependencies.md` : dépendance, version,
+licence, usage, dépendance runtime, redistribution autorisée, dépendance
+commerciale.
+
+> **Écrit.** Ce qui est utilisé, ce qui a été évalué et écarté avec sa raison, et
+> pourquoi ViGEmBus n'est pas redistribué.
+>
+> ⚠️ Sous `docs/design/` et non `docs/`, contrairement à ce que le plan écrivait :
+> `.gitignore` ne suit que `docs/{wiki,design,screenshots,upstream}`, et un
+> relevé de licences qui n'est pas dans le dépôt n'est pas un relevé.
 
 État actuel :
 
@@ -411,13 +499,17 @@ Réalisables :
 - [x] transmise par le DataChannel WebRTC, reçue par le host
 - [x] un périphérique virtuel est créé, boutons/sticks/gâchettes fonctionnent
 - [x] rumble de bout en bout
-- [ ] plusieurs contrôleurs simultanément
-- [ ] ViGEmBus absent : encart proposé **uniquement** en `Loopback`, invisible
+- [ ] plusieurs contrôleurs simultanément — chemin complet (4 slots, un
+      `controllerNumber` par manette de bout en bout), jamais essayé à deux
+      manettes réelles
+- [x] ViGEmBus absent : encart proposé **uniquement** en `Loopback`, invisible
       depuis un autre PC du LAN et depuis le rendez-vous (§9.1)
-- [ ] la déconnexion détruit les périphériques
+- [x] la déconnexion détruit les périphériques
 - [ ] XInput validé par une application XInput réelle
-- [ ] DualShock 4
-- [ ] Linux / uinput
+- [x] DualShock 4 — profil complet, mapping vérifié bouton par bouton sans
+      matériel ; reste à tenir une vraie manette PlayStation (§6)
+- [ ] Linux / uinput — backend écrit et compilé, mais aucune session Linux ne
+      l'appelle encore (§9)
 - [x] aucun composant commercial, aucune licence payante
 - [x] dépendances documentées et compatibles
 - [x] aucun serveur gamepad supplémentaire
@@ -427,4 +519,5 @@ Réalisables :
 - ~~Generic HID~~ — exige un pilote UMDF2 signé (§2.2)
 - ~~DualSense, Switch Pro~~ — idem
 - ~~volants et palonniers~~ — descripteur HID sur mesure (§2.3)
-- ~~macOS host~~ — statut DriverKit à vérifier (§9)
+- ~~macOS host~~ — **vérifié** : CoreHID et DriverKit exigent tous deux un
+  entitlement accordé par Apple, et DriverKit un compte payant avec (§9)
