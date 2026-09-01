@@ -27,12 +27,16 @@
 #include <QPointer>
 #include <QString>
 
+#include <cstdint>
 #include <memory>
+#include <string>
 
 class AppSettings;
 class AuthManager;
 class HttpServer;
 class RendezvousClient;
+class UPNPClient;
+class QTimer;
 class QWebSocket;
 
 namespace rtc {
@@ -130,6 +134,15 @@ private:
         std::shared_ptr<rtc::PeerConnection> pc;
         std::shared_ptr<rtc::DataChannel> dc;
 
+        /// The router hole this connection listens behind, or 0 when there is
+        /// none and ICE is left to an ephemeral port. See takeTunnelPort().
+        uint16_t port = 0;
+        /// The public host candidate is one address, and this machine has as
+        /// many local ones as it has adapters — a laptop with Hyper-V and WSL
+        /// easily reaches eight. Rewriting each of them would send the browser
+        /// eight identical candidates to check in turn.
+        bool publicCandidateSent = false;
+
         // ── MW-BIND-v1, per connection ──────────────────────────────────────
         bool helloSeen = false;
         bool answerVerified = false;
@@ -180,10 +193,50 @@ private:
                       const QString& hostHeader);
     void drain(Peer& p);
 
+    // ── The router holes this tunnel connects through ───────────────────────
+    //
+    // Why the tunnel needs its own, when the stream path already has one: they
+    // are two different peer connections on two different sockets. The stream's
+    // is bound to a UPnP-mapped port and advertised as a public host candidate;
+    // this one used to take an ephemeral port and offer nothing but a server
+    // reflexive address, which only works where the router forwards packets
+    // from a peer it has never sent one to. Plenty of routers do not, and then
+    // the browser's checks vanished and the tunnel never came up — while a
+    // stream to the same machine, over the mapped port, connected fine.
+
+    /// Open the holes and learn the public address. Called once, on the first
+    /// moment the rendezvous line comes up: a machine that never announces
+    /// itself has nothing to be reached for, and asks nothing of the router.
+    void setupUpnp();
+    /// Re-add the mappings; routers drop leases and forget them across reboots.
+    void renewUpnp();
+    void teardownUpnp();
+
+    /// A mapped port for one connection, or 0 when none is free — in which case
+    /// the connection falls back to an ephemeral port and its reflexive
+    /// candidate, exactly as it behaved before any of this existed.
+    uint16_t takeTunnelPort();
+    void releaseTunnelPort(uint16_t port);
+
     HttpServer* m_Http = nullptr;
     AuthManager* m_Auth = nullptr;
     AppSettings* m_Settings = nullptr;
     RendezvousClient* m_Rendezvous = nullptr;
+
+    UPNPClient* m_Upnp = nullptr;
+    QTimer* m_UpnpRenew = nullptr;
+    /// This machine's address as the router reports it, for the host candidate
+    /// rewrite. Empty when there is no IGD, which disables the rewrite.
+    std::string m_PublicIP;
+    /// Mapped and idle, and mapped in total. The second is what renewal and
+    /// shutdown work from, so a port in use is still renewed and still removed.
+    QList<uint16_t> m_FreePorts;
+    QList<uint16_t> m_MappedPorts;
+    /// Latched to 0 (permanent) when the router refuses a leased mapping or
+    /// renewal keeps failing — the same concession SignalingServer makes.
+    uint32_t m_UpnpLeaseSec = 3600;
+    int m_UpnpRenewFailures = 0;
+    bool m_UpnpTried = false;
 
     /// Peers are held behind pointers so a reference into one stays valid while
     /// another connects: Qt 6's QHash moves its values when it grows.
