@@ -434,6 +434,19 @@ void NativeMediaEngine::sendControllerState(short controllerNumber, short active
     m_Session->sendInput(event);
 }
 
+void NativeMediaEngine::sendControllerRemoval(uint8_t controllerNumber, uint16_t activeGamepadMask)
+{
+    if (!m_Session) return;
+    // Just the removal: the engine zeroes the pad on its way out (see
+    // VigemGamepad::remove), so sending a neutral state first would only plug in
+    // a pad that was never there in order to unplug it.
+    mw::native::InputEvent event;
+    event.type = mw::native::InputEvent::Type::ControllerRemoval;
+    event.controllerNumber = static_cast<uint8_t>(controllerNumber + m_ControllerOffset);
+    event.activeGamepadMask = activeGamepadMask;
+    m_Session->sendInput(event);
+}
+
 void NativeMediaEngine::syncLockKeys(bool numLock, bool capsLock, bool scrollLock)
 {
     if (!m_Session) return;

@@ -144,6 +144,17 @@ public:
                                      unsigned char rightTrigger, short leftStickX, short leftStickY,
                                      short rightStickX, short rightStickY) = 0;
 
+    /// The client says this pad is gone — unplugged, or the page closing.
+    ///
+    /// Its own call rather than "an empty state with the mask bit cleared",
+    /// because the two engines need genuinely different things from it. A
+    /// GameStream host reads the cleared mask bit and that IS the removal, so
+    /// nothing changes there. The native engine owns a virtual device it
+    /// created: an all-zero state only centres it, and the pad stays plugged
+    /// in — a controller nobody is holding, left in the Windows game controller
+    /// list for the rest of the session and visible to the next game launched.
+    virtual void sendControllerRemoval(uint8_t controllerNumber, uint16_t activeGamepadMask) = 0;
+
     /// Shift this session's controller numbering so concurrent sessions do not
     /// collapse onto the host's controller 0. Zero keeps the browser's own.
     virtual void setControllerOffset(int offset) = 0;

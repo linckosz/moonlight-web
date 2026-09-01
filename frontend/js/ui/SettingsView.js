@@ -79,6 +79,11 @@ export class SettingsView {
         this._videoEnhancement = 'off';
         this._videoEnhancementAlgo = 'auto';
         this._debugBuild = false;
+        // Which virtual controller the host presents: 'auto' follows the pad we
+        // detect, 'x360'/'ds4' force one. Shown only in debug builds — in
+        // production the right behaviour is to guess correctly, and a visible
+        // switch turns a detection bug into a question asked of the user.
+        this._gamepadProfile = 'auto';
 
         // Power Saving mode (mobile only): forces the lightest pipeline.
         // _powerSaveBackup holds the values present before enabling, so unchecking
@@ -290,6 +295,8 @@ export class SettingsView {
         this._videoWorker =
             vw === true || vw === 'on' ? 'on' : vw === false || vw === 'off' ? 'off' : 'auto';
         this._videoEnhancement = data.video_enhancement === 'on' ? 'on' : 'off';
+        const profile = data.gamepad_profile;
+        this._gamepadProfile = profile === 'x360' || profile === 'ds4' ? profile : 'auto';
         const algo = data.video_enhancement_algo;
         this._videoEnhancementAlgo =
             algo === 'sgsr' || algo === 'fsr1' || algo === 'force2d' ? algo : 'auto';
@@ -365,6 +372,7 @@ export class SettingsView {
             // Per-device only (server ignores these unknown fields).
             power_save: this._powerSave,
             power_save_backup: this._powerSaveBackup,
+            gamepad_profile: this._gamepadProfile,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -548,6 +556,10 @@ export class SettingsView {
             // Algo dropdown is always available; defaults to 'auto'.
             const veAlgoEl = this.container.querySelector('#settings-video-enhancement-algo');
             const videoEnhancementAlgo = veAlgoEl ? veAlgoEl.value : this._videoEnhancementAlgo;
+            // Absent outside debug builds, where it keeps whatever it had —
+            // which is 'auto' unless someone once ran a debug build here.
+            const gpProfileEl = this.container.querySelector('#settings-gamepad-profile');
+            const gamepadProfile = gpProfileEl ? gpProfileEl.value : this._gamepadProfile;
 
             // Update internal state
             this._videoCodec = codec;
@@ -565,6 +577,7 @@ export class SettingsView {
             this._videoWorker = videoWorker;
             this._videoEnhancement = videoEnhancement;
             this._videoEnhancementAlgo = videoEnhancementAlgo;
+            this._gamepadProfile = gamepadProfile;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
@@ -802,6 +815,32 @@ export class SettingsView {
                     `<option value="${a.value}" ${a.value === this._videoEnhancementAlgo ? 'selected' : ''}${a.disabled ? ' disabled' : ''}>${this.esc(a.label)}</option>`,
             )
             .join('');
+
+        // Gamepad profile — debug builds only. In production the auto-detection
+        // IS the behaviour: a visible switch would turn "we guessed your pad
+        // wrong" into a question the user has no way to answer. In debug it is
+        // the only way to tell a detection bug from a mapping bug.
+        const gamepadProfileHtml = this._debugBuild
+            ? `
+                    <div class="settings-field">
+                        <label class="settings-label" for="settings-gamepad-profile">
+                            ${t('settings.gamepadProfile')}
+                        </label>
+                        <span class="setting-desc">${t('settings.gamepadProfileDesc')}</span>
+                        <select id="settings-gamepad-profile" class="settings-select">
+                            ${[
+                                { value: 'auto', label: t('settings.gamepadProfileAuto') },
+                                { value: 'x360', label: t('settings.gamepadProfileX360') },
+                                { value: 'ds4', label: t('settings.gamepadProfileDs4') },
+                            ]
+                                .map(
+                                    (p) =>
+                                        `<option value="${p.value}" ${p.value === this._gamepadProfile ? 'selected' : ''}>${this.esc(p.label)}</option>`,
+                                )
+                                .join('')}
+                        </select>
+                    </div>`
+            : '';
         const veNote = webgpuUnavailable
             ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
             : '';
@@ -954,6 +993,7 @@ export class SettingsView {
                         </label>
                         <span class="setting-desc">${t('settings.chroma444Desc')}</span>
                     </div>
+                    ${gamepadProfileHtml}
 
                     ${
                         IS_TOUCH_DEVICE

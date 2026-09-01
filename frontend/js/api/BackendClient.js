@@ -725,6 +725,29 @@ export class BackendClient {
         return this.post('/api/metrics/consent', { granted, message, source });
     }
 
+    // ── Virtual gamepad driver (ViGEmBus) ────────────────────────────────────────
+
+    /**
+     * {supported, installed, offer_install, can_install, download_url}.
+     *
+     * `offer_install` is the server's verdict on whether THIS caller may be
+     * shown the install button, decided from the socket peer — never from the
+     * page's own URL, which a tunnel forges. Take it as given.
+     */
+    static async getGamepadDriver() {
+        return this.get('/api/system/gamepad-driver');
+    }
+    /**
+     * Download and install ViGEmBus on the host machine. Deliberately without a
+     * client timeout: it downloads a driver bundle and runs a Windows installer,
+     * which takes as long as it takes.
+     *
+     * {status: 'installed' | 'restart_required' | 'failed', installed, error?}.
+     */
+    static async installGamepadDriver() {
+        return this.post('/api/system/gamepad-driver/install');
+    }
+
     // ── Internet Access (PowerDNS) ───────────────────────────────────────────────────────
 
     static async getInternetStatus() {

@@ -92,9 +92,18 @@ function axisToShort(v) {
 }
 
 export class GamepadManager {
-    /** @param {(msg:object)=>void} sendFn — sends a JSON input message. */
-    constructor(sendFn) {
+    /**
+     * @param {(msg:object)=>void} sendFn — sends a JSON input message.
+     * @param {{ profile?: 'auto'|'x360'|'ds4' }} [options] — `profile` forces
+     *   the pad the host presents instead of following what we detect. It is
+     *   offered in debug builds only (see SettingsView): in production the right
+     *   behaviour is to guess correctly, and a visible switch would turn a
+     *   detection bug into a question the user cannot answer. In debug it is
+     *   what separates "the detection was wrong" from "the profile is wrong".
+     */
+    constructor(sendFn, options = {}) {
         this._send = sendFn;
+        this._profile = options.profile || 'auto';
         this._running = false;
         this._rafId = null;
         // index → { last: {buttons,lt,rt,lx,ly,rx,ry}, hasRumble:boolean }
@@ -127,6 +136,20 @@ export class GamepadManager {
         this._pads.clear();
     }
 
+    /**
+     * What to tell the host this pad is — which decides the virtual controller
+     * it presents to the game (Xbox 360, or DualShock 4 for a PlayStation pad).
+     *
+     * The forced values come from the debug-only setting and are stated as the
+     * same LI_CTYPE_* the detection produces, so the host has one thing to read
+     * and no idea that anything was overridden.
+     */
+    _controllerType(gp) {
+        if (this._profile === 'x360') return CTYPE.XBOX;
+        if (this._profile === 'ds4') return CTYPE.PS;
+        return detectType(gp.id);
+    }
+
     /** Active controllers as a bitmask (one bit per index). */
     _mask() {
         let m = 0;
@@ -143,7 +166,7 @@ export class GamepadManager {
             type: 'gamepadconnect',
             index: gp.index,
             mask: this._mask(),
-            ctype: detectType(gp.id),
+            ctype: this._controllerType(gp),
             rumble: hasRumble,
         });
     }

@@ -83,7 +83,18 @@ struct InputEvent
     // ── Controller ───────────────────────────────────────────────────────────
     uint8_t controllerNumber = 0;
     uint16_t activeGamepadMask = 0;
+
+    /// What the client says it is holding, as GameStream's LI_CTYPE_*: 0
+    /// unknown, 1 Xbox, 2 PlayStation, 3 Nintendo. It decides which virtual pad
+    /// the engine presents, and it is a HINT — the browser works it out from a
+    /// device name string that varies by OS, driver and connection, so an
+    /// unrecognised pad arrives as 0 and gets the profile that works everywhere.
     uint8_t controllerType = 0;
+    static constexpr uint8_t kControllerUnknown = 0;
+    static constexpr uint8_t kControllerXbox = 1;
+    static constexpr uint8_t kControllerPlayStation = 2;
+    static constexpr uint8_t kControllerNintendo = 3;
+
     bool hasRumble = false;
     int32_t buttonFlags = 0;
     uint8_t leftTrigger = 0;

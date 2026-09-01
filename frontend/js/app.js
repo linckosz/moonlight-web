@@ -55,6 +55,7 @@ import { PlayerJoinView } from './ui/PlayerJoinView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { ConsentBar } from './ui/ConsentBar.js';
+import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
 import { VersionGuard } from './util/VersionGuard.js';
 import { IS_MOBILE_OR_TABLET, resolveTearing } from './util/BrowserDetect.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
@@ -548,6 +549,13 @@ const MoonlightApp = {
 
         // On https://localhost, tell the user how OTHER PCs reach this server.
         this._maybeShowRemoteAccessBanner();
+
+        // And, on the host machine only, say so when a controller has no driver
+        // to reach the games through. The server decides who may be offered the
+        // install; the check here only spares everyone else a pointless request.
+        if (this._isHostMachine()) {
+            GamepadDriverNotice.mount(document.getElementById('view-hosts'));
+        }
     },
 
     /**
@@ -1876,7 +1884,16 @@ const MoonlightApp = {
         // it). When it does, a gap repairs itself within a couple of frames and
         // the client stops asking for keyframes — see RIDE_OUT_LOSS in
         // BackendClient. Read from the reply, never from what we asked for.
-        const opts = { ...viewOpts, intraRefresh: result.intra_refresh === true };
+        // Gamepad profile: 'auto' in production, where the right behaviour is to
+        // guess correctly and a visible setting would turn a detection bug into a
+        // question asked of the user. The forced values exist only in debug
+        // builds, to tell "the detection was wrong" from "the profile is wrong".
+        const gamepadProfile = streamingSettings.gamepad_profile || 'auto';
+        const opts = {
+            ...viewOpts,
+            intraRefresh: result.intra_refresh === true,
+            gamepadProfile,
+        };
 
         return new StreamView(
             document.getElementById('app'),

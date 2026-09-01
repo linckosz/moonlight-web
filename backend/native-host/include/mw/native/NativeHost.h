@@ -245,6 +245,14 @@ public:
     /// here, not a fault.
     static Capabilities probe();
 
+    /// Ask whether a virtual gamepad can be created here, by asking the driver
+    /// itself — see VirtualGamepad.
+    ///
+    /// Separate from probe() because the answer changes only when someone
+    /// installs or removes a driver: call it at startup, and again after an
+    /// install attempt. Opens no pad and creates no device.
+    static VirtualGamepad probeVirtualGamepad();
+
     /// Build a session for `config`. Returns nullptr and fills `error` when the
     /// configuration cannot be honoured at all (unknown display, no codec in
     /// common with the client).
