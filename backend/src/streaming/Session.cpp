@@ -968,9 +968,16 @@ void StreamSession::onShimConnectionStarted()
         // WSS mode: provide the StreamRelay WS URL directly
         result["wsUrl"] = m_StreamRelay ? m_StreamRelay->wsUrl() : QString();
         result["signalingUrl"] = QString();
+    } else if (m_Signaling) {
+        // WebRTC mode: provide the signaling WS URL for SDP/ICE exchange.
+        //
+        // A path when the browser came down the tunnel. It has no HTTP route
+        // here, so an absolute URL could only name the rendezvous under this
+        // machine's local port — a door that answers nowhere. The page resolves
+        // the path against its own origin, and the tunnel carries the socket.
+        result["signalingUrl"] = m_TunnelArrival ? m_Signaling->wsPath() : m_Signaling->wsUrl();
     } else {
-        // WebRTC mode: provide the signaling WS URL for SDP/ICE exchange
-        result["signalingUrl"] = m_Signaling ? m_Signaling->wsUrl() : QString();
+        result["signalingUrl"] = QString();
     }
 
     // Pass gaming mode preference to the frontend
