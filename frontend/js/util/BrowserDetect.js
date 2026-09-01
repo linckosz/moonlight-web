@@ -32,10 +32,21 @@ export function detectPlatform() {
 
     // --- Tablet detection (must come before mobile) ---
 
-    // iPad: "iPad" in UA, OR (Mac + touch support) for iPadOS 13+
+    // Phones are decided FIRST, even though tablets are matched first, because
+    // the iPad test below cannot tell an iPhone from a Mac on its own.
+    const isIphone = /iphone|ipod/i.test(ua);
+
+    // iPad: "iPad" in UA, OR (Mac + touch support) for iPadOS 13+, which reports
+    // a Mac's user agent and can only be told apart by the touch points.
+    //
+    // The iPhone has to be excluded explicitly: every iOS user agent says "like
+    // Mac OS X", so /mac/ matches an iPhone as readily as a Mac, and an iPhone
+    // has touch — the whole heuristic fired, and every iPhone was classified as
+    // a tablet. Invisible for a long time because nothing distinguished the two,
+    // until the pointer size started asking for phones only.
     const isIpad =
         /ipad/i.test(ua) ||
-        (/mac/i.test(ua) && 'ontouchend' in document && navigator.maxTouchPoints > 1);
+        (!isIphone && /mac/i.test(ua) && 'ontouchend' in document && navigator.maxTouchPoints > 1);
 
     // Android tablet: "Android" + no "Mobile" in UA
     const isAndroidTablet = /android/.test(low) && !/mobile/.test(low);
@@ -55,7 +66,6 @@ export function detectPlatform() {
 
     // --- Mobile detection ---
 
-    const isIphone = /iphone|ipod/i.test(ua);
     const isAndroidPhone = /android/.test(low) && /mobile/.test(low);
     const isWindowsPhone = /windows phone|iemobile/i.test(ua);
     const isBlackberry = /blackberry|bb10/i.test(ua);
