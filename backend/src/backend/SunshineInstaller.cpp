@@ -88,12 +88,45 @@ QString sunshineUnit()
     const QString sc = systemctlPath();
     if (sc.isEmpty()) return QString();
     // `systemctl --user cat` exits non-zero on an unknown unit. Canonical name
-    // first, then the alias the unit itself declares.
-    for (const QString& u : {QStringLiteral("app-dev.lizardbyte.app.Sunshine.service"),
-                             QStringLiteral("sunshine.service")}) {
+    // first, then the alias the unit itself declares, then the names `brew
+    // services` gives the Homebrew formula (Bazzite's portal installs Sunshine
+    // that way).
+    for (const QString& u :
+         {QStringLiteral("app-dev.lizardbyte.app.Sunshine.service"),
+          QStringLiteral("sunshine.service"), QStringLiteral("homebrew.sunshine.service"),
+          QStringLiteral("homebrew.sunshine-beta.service")}) {
         if (run(sc, {QStringLiteral("--user"), QStringLiteral("cat"), u}, 10000) == 0) return u;
     }
     return QString();
+}
+
+// Command line the installed user unit actually runs, split into program + args
+// ("" when there is no unit). Last-resort locator: it finds Sunshine whatever
+// prefix it was installed under — Homebrew, a Flatpak wrapper, a hand-built
+// tree — none of which is on our PATH or under /usr.
+QStringList sunshineUnitExec()
+{
+    const QString unit = sunshineUnit();
+    if (unit.isEmpty()) return {};
+    QString out;
+    if (run(systemctlPath(), {QStringLiteral("--user"), QStringLiteral("cat"), unit}, 10000,
+            &out) != 0)
+        return {};
+    for (const QString& line : out.split('\n')) {
+        const QString t = line.trimmed();
+        static const QString kKey = QStringLiteral("ExecStart=");
+        if (!t.startsWith(kKey)) continue;
+        QString cmd = t.mid(kKey.size());
+        // systemd allows `-`, `@`, `+`, `!` prefixes on the program; and an
+        // empty ExecStart= (a drop-in resetting the list) carries no command.
+        while (!cmd.isEmpty() && QStringLiteral("-@+!:").contains(cmd.at(0)))
+            cmd.remove(0, 1);
+        if (cmd.isEmpty()) continue;
+        const QStringList parts = QProcess::splitCommand(cmd);
+        if (parts.isEmpty() || !QFileInfo::exists(parts.first())) continue;
+        return parts;
+    }
+    return {};
 }
 #endif
 
@@ -122,8 +155,26 @@ DetectResult detect()
         return r;
     }
 #else
-    for (const QString& p :
-         {QStringLiteral("/usr/bin/sunshine"), QStringLiteral("/usr/local/bin/sunshine")}) {
+    // Distro packages first, then the prefixes the distro's PATH does not carry:
+    // Homebrew (how Bazzite's portal installs Sunshine — the brew prefix is only
+    // on an interactive shell's PATH, never on a desktop session's) and the
+    // Flatpak export wrapper, which forwards our arguments into the sandbox.
+    QStringList paths{
+        QStringLiteral("/usr/bin/sunshine"),
+        QStringLiteral("/usr/local/bin/sunshine"),
+        QStringLiteral("/home/linuxbrew/.linuxbrew/bin/sunshine"),
+        QStringLiteral("/home/linuxbrew/.linuxbrew/opt/sunshine/bin/sunshine"),
+        QStringLiteral("/home/linuxbrew/.linuxbrew/opt/sunshine-beta/bin/sunshine"),
+    };
+    const QString home = QDir::homePath();
+    if (!home.isEmpty())
+        paths << home + QStringLiteral("/.linuxbrew/bin/sunshine")
+              << home + QStringLiteral("/.local/bin/sunshine");
+    paths << QStringLiteral("/var/lib/flatpak/exports/bin/dev.lizardbyte.app.Sunshine");
+    if (!home.isEmpty())
+        paths << home + QStringLiteral(
+                            "/.local/share/flatpak/exports/bin/dev.lizardbyte.app.Sunshine");
+    for (const QString& p : std::as_const(paths)) {
         if (QFileInfo::exists(p)) {
             r.installed = true;
             r.exePath = p;
@@ -136,7 +187,19 @@ DetectResult detect()
     if (!onPath.isEmpty()) {
         r.installed = true;
         r.exePath = onPath;
+        return r;
     }
+
+#if defined(Q_OS_LINUX)
+    // Nothing in a known prefix and nothing on PATH: believe the systemd user
+    // unit an installed Sunshine leaves behind, whatever it points at.
+    const QStringList exec = sunshineUnitExec();
+    if (!exec.isEmpty()) {
+        r.installed = true;
+        r.exePath = exec.first();
+        r.exeArgs = exec.mid(1);
+    }
+#endif
     return r;
 }
 
@@ -408,6 +471,13 @@ bool canAutoInstall()
     // it captures a display and encodes on a GPU, neither of which exists.
     if (!mw::hasDesktopSession()) return false;
 
+    // Image-based distros (Bazzite, Silverblue/Kinoite, Bluefin…): /usr is a
+    // read-only ostree deployment and the dnf shim refuses `install` outright,
+    // so a package install cannot work here no matter what family we map them
+    // to. They ship their own Sunshine channel (Bazzite's portal installs it
+    // through Homebrew) — offering our installer would only fail loudly.
+    if (QFileInfo::exists(QStringLiteral("/run/ostree-booted"))) return false;
+
     // No network here (called by every /api/setup/status poll): family + tools
     // presence only; the exact release asset is resolved at install time.
     const DistroInfo d = detectDistro();
@@ -525,8 +595,9 @@ bool setCredentials(const QString& user, const QString& pass)
     DetectResult r = detect();
     if (!r.installed) return false;
     // `sunshine --creds <user> <pass>` sets the web-UI Basic-Auth credentials and
-    // exits without starting the server.
-    return run(r.exePath, {"--creds", user, pass}, 30000) == 0;
+    // exits without starting the server. exeArgs is the wrapper prefix (Flatpak)
+    // when Sunshine is not reached through a plain binary.
+    return run(r.exePath, r.exeArgs + QStringList{"--creds", user, pass}, 30000) == 0;
 }
 
 bool launch()
@@ -552,9 +623,9 @@ bool launch()
                            "to the binary")
                 .arg(unit));
     }
-    return QProcess::startDetached(r.exePath, {});
+    return QProcess::startDetached(r.exePath, r.exeArgs);
 #else
-    return QProcess::startDetached(r.exePath, {});
+    return QProcess::startDetached(r.exePath, r.exeArgs);
 #endif
 }
 

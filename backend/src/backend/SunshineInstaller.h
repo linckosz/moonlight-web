@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 
 /**
  * @brief Detects and (on macOS/Linux) installs the Sunshine streaming server.
@@ -42,16 +43,18 @@ namespace SunshineInstaller {
 struct DetectResult
 {
     bool installed = false;
-    QString exePath; ///< Full path to the sunshine binary when installed.
-    QString version; ///< Best-effort version string ("" if unknown).
+    QString exePath;     ///< Full path to the sunshine binary when installed.
+    QStringList exeArgs; ///< Wrapper args preceding Sunshine's own (Flatpak); usually empty.
+    QString version;     ///< Best-effort version string ("" if unknown).
 };
 
 /// Locate an existing Sunshine install (platform-specific well-known paths + PATH).
 DetectResult detect();
 
 /// Whether install() can work here: macOS always; Linux when a prebuilt .deb
-/// exists for this distro and pkexec + apt-get are available; Windows never
-/// (the Inno Setup installer owns the Sunshine install).
+/// exists for this distro and pkexec + apt-get are available — but never on an
+/// ostree deployment (Bazzite, Silverblue), whose /usr is read-only; Windows
+/// never (the Inno Setup installer owns the Sunshine install).
 bool canAutoInstall();
 
 /// Download + install the official Sunshine package for this platform, then
