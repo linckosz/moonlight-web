@@ -150,6 +150,13 @@ void NativeMediaEngine::startCapture(const StartParams& params)
         return;
     }
 
+    // Whatever the client asked for before there was a session to ask. It says
+    // it once, on a channel that opens ahead of the capture, and deduplicates
+    // after — so replaying it here is what makes the first minute of a session
+    // behave like every minute after it.
+    if (const int floor = m_FrameFloorFps.load(std::memory_order_acquire); floor > 0)
+        m_Session->setFrameFloorFps(floor);
+
     const mw::native::SessionInfo& info = m_Session->info();
     m_NegotiatedVideoFormat.store(maskFromCodec(info.codec), std::memory_order_release);
     m_Connected.store(true, std::memory_order_release);
@@ -299,6 +306,12 @@ void NativeMediaEngine::onCursor(const mw::native::CursorUpdate& cursor)
 void NativeMediaEngine::setCompositeCursor(bool composite, int cursorFramePx)
 {
     if (m_Session) m_Session->setCompositeCursor(composite, cursorFramePx);
+}
+
+void NativeMediaEngine::setFrameFloorFps(int fps)
+{
+    m_FrameFloorFps.store(fps, std::memory_order_release);
+    if (m_Session) m_Session->setFrameFloorFps(fps);
 }
 
 bool NativeMediaEngine::intraRefreshActive() const

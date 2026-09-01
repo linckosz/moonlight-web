@@ -131,6 +131,41 @@ const CURSOR_USES_CLIENT_STYLE = false;
  */
 const PHONE_CURSOR_CSS_PX = 18;
 
+/**
+ * How often the native host must keep sending frames while nothing at all moves
+ * on its screen — a floor in frames per second, and 0 for the host's own (one
+ * frame every 500 ms, which is only there so a receiver can tell a quiet stream
+ * from a dead one).
+ *
+ * The host cannot decide this, which is why it is here. It knows the screen is
+ * still; it does not know who is watching it, on what, or what they are doing.
+ *
+ * ── Desktop, pointer free ───────────────────────────────────────────────────
+ *
+ * The host captures on damage, and a picture only sharpens when a frame carries
+ * it. So a window that was just scrolled arrives soft and stays soft until the
+ * next frame — which, on a screen someone is reading, is half a second away.
+ * That is the blur that fades back in. 15 makes the settling too quick to
+ * watch, and costs a re-encode of an unchanged picture: a few hundred bytes
+ * each, on a link that is otherwise carrying nothing.
+ *
+ * ── Gaming, pointer locked ──────────────────────────────────────────────────
+ *
+ * A still screen here does not mean an idle session — it means a paused game, a
+ * menu, a loading screen, an inventory. A picture that only refreshes twice a
+ * second under a pointer that moves reads as a connection that dropped, so the
+ * floor is high enough for the stream to keep feeling alive. The host clamps it
+ * to the frame rate the viewer chose, so someone who set 20 fps still gets 20.
+ *
+ * ── Phone and tablet ────────────────────────────────────────────────────────
+ *
+ * They keep the host's own floor. The two costs a desktop shrugs off — a
+ * metered link and a battery — are the ones that decide there, and a picture
+ * settling half a second later is a far smaller thing on a phone than either.
+ */
+const FRAME_FLOOR_DESKTOP_FPS = 15;
+const FRAME_FLOOR_GAMING_FPS = 30;
+
 // Which MultiSeat hosts have already had their input notice this page, by uuid.
 //
 // Module-level on purpose: a quality change builds a *new* StreamView and
@@ -3513,6 +3548,10 @@ export class StreamView {
             this._sentCursorComposite = null;
             this._sentCursorPx = null;
             this._sendCursorMode();
+            // Same treatment, same reason: the host starts on its own floor and
+            // has heard nothing about ours.
+            this._sentFrameFloor = null;
+            this._sendFrameFloor();
             this._inputStateInterval = setInterval(() => {
                 if (this._quitting) return;
                 this._sendInputState();
@@ -3525,6 +3564,10 @@ export class StreamView {
                 // until the answer actually changes — which on a desktop, where
                 // it is always 0, is never.
                 this._sendCursorMode();
+                // Rides the same beat, and is deduplicated the same way. It
+                // catches the mouse-mode toggle even where nothing else would:
+                // a fullscreen shortcut, a share popin restoring a mode.
+                this._sendFrameFloor();
             }, 100);
 
             // Start polling connected gamepads (Xbox/PlayStation). Sends a
@@ -5647,6 +5690,33 @@ export class StreamView {
         }
     }
 
+    /**
+     * The still-screen frame floor this session should be asking for.
+     *
+     * Mouse mode is asked first because it is the one that moves: gaming mode is
+     * forced off on every touch device (see the constructor), so the device test
+     * below only ever answers for a viewer genuinely in desktop mode.
+     */
+    _frameFloorFps() {
+        if (this._gamingMode) return FRAME_FLOOR_GAMING_FPS;
+        return IS_MOBILE_OR_TABLET ? 0 : FRAME_FLOOR_DESKTOP_FPS;
+    }
+
+    /**
+     * Tell the host that floor, when it changes.
+     *
+     * Deduplicated like the cursor mode, and for the same reason: this rides the
+     * 100 ms input beat, and the answer only changes when the viewer switches
+     * mouse mode. Every host but the native one ignores it — a remote GameStream
+     * host paces its own capture and cannot be told otherwise.
+     */
+    _sendFrameFloor() {
+        const fps = this._frameFloorFps();
+        if (fps === this._sentFrameFloor) return;
+        this._sentFrameFloor = fps;
+        this._sendToHost({ type: 'framefloor', fps });
+    }
+
     /** When the tab/window regains focus, the pointer may already sit over the
      *  streamed picture without emitting a mousemove — the local arrow would
      *  then stay visible on top of the host cursor (double cursor). Re-apply the
@@ -6890,6 +6960,10 @@ export class StreamView {
         // keyboard lock; entering it keeps the overlay hidden until capture.
         this._updateGamingOverlay();
         this._syncKeyboardLock();
+        // What a still screen is worth changed with the mode. The input beat
+        // would carry it within 100 ms anyway; sending it here means the mode
+        // the viewer just chose is the mode the next frame is paced for.
+        this._sendFrameFloor();
 
         console.log(
             '[StreamView] Mouse mode toggled: ' +

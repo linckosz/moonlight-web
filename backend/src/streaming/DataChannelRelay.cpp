@@ -1068,6 +1068,22 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         return;
     }
 
+    if (type == "framefloor") {
+        // How fast the client wants frames to keep coming while nothing on the
+        // host's screen moves. It is the side that knows what its situation is
+        // worth: a desktop being worked on wants a still picture to keep
+        // settling, a phone on a metered link does not, and a locked pointer
+        // over a paused game wants the stream to keep feeling alive. The host
+        // clamps it to the frame rate the viewer chose — see
+        // Session::setFrameFloorFps.
+        //
+        // Native host only: no remote GameStream host can be told how to pace
+        // its own capture.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
+            native->setFrameFloorFps(msg["fps"].toInt(0));
+        return;
+    }
+
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
         short keyCode;

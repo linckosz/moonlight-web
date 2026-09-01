@@ -208,6 +208,27 @@ public:
     /// the client draws its own pointer: it can size that one itself.
     virtual void setCompositeCursor(bool composite, int cursorFramePx) = 0;
 
+    /// The lowest rate at which frames must keep arriving while nothing on the
+    /// screen moves at all, in frames per second. 0 asks for the engine's own.
+    ///
+    /// Desktop Duplication produces a frame on damage, so a still screen
+    /// produces none, and the engine re-sends the last picture just often
+    /// enough for a receiver to tell a quiet stream from a dead one. That rate
+    /// is right for a phone on a metered link and wrong for someone reading
+    /// text at a desk: a picture only sharpens when a frame carries it (see the
+    /// refinement burst in the loop), so how quickly a screen that just stopped
+    /// moving settles is exactly this number.
+    ///
+    /// Which is why the CLIENT names it. It is the side that knows whether the
+    /// viewer is on a phone or at a desk, whether they are working in a window
+    /// or playing with the pointer locked, and what any of that is worth to
+    /// them. The engine only clamps: never faster than the stream's own frame
+    /// rate, which the viewer chose and which outranks anything asked here.
+    ///
+    /// Runtime-settable, like the cursor mode and for the same reason — the
+    /// viewer switches modes mid-session. Takes effect on the next wake-up.
+    virtual void setFrameFloorFps(int fps) = 0;
+
     /// Force the next frame to be a keyframe.
     ///
     /// Prefer invalidateReference() when the client can name the frame it

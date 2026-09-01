@@ -19,6 +19,7 @@
 #include "ClipboardBridge.h"
 #include "InputMessageCodec.h"
 #include "IMediaEngine.h"
+#include "NativeMediaEngine.h"
 
 #include <QCoreApplication>
 #include <QThread>
@@ -629,6 +630,11 @@ void StreamRelay::onWsTextMessage(const QString& message)
             ClipboardBridge::instance()->pasteFromClient(m_Shim, msg["text"].toString(),
                                                          msg["injectCtrl"].toBool(false));
         }
+    } else if (type == "framefloor") {
+        // How fast the client wants frames while the host's screen is still —
+        // native host only, full reasoning in DataChannelRelay's handler.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
+            native->setFrameFloorFps(msg["fps"].toInt(0));
     } else if (type == "requestidr") {
         // Browser lost its reference picture — forward to Sunshine (throttled).
         // Without this, a single decode-queue overflow freezes the WSS stream
