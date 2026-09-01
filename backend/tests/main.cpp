@@ -34,6 +34,7 @@ void run_app_manifest_tests();
 void run_wolf_coop_tests();
 void run_multiseat_tests();
 void run_session_metrics_tests();
+void run_us_scancode_tests();
 
 int main(int argc, char** argv)
 {
@@ -64,6 +65,7 @@ int main(int argc, char** argv)
     run_wolf_coop_tests();
     run_multiseat_tests();
     run_session_metrics_tests();
+    run_us_scancode_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");
