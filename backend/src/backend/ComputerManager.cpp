@@ -65,8 +65,10 @@
 // Declared locally to avoid winsock2/windows.h include-ordering conflicts with
 // Qt headers. Links against iphlpapi (already in LIBS). IPAddr/DWORD/ULONG are
 // all unsigned long.
-extern "C" __declspec(dllimport) unsigned long __stdcall
-SendARP(unsigned long DestIP, unsigned long SrcIP, void* pMacAddr, unsigned long* PhysAddrLen);
+extern "C"
+    __declspec(dllimport) unsigned long __stdcall SendARP(unsigned long DestIP, unsigned long SrcIP,
+                                                          void* pMacAddr,
+                                                          unsigned long* PhysAddrLen);
 #endif
 
 #define SER_HOSTS "hosts"
