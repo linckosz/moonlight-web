@@ -36,9 +36,8 @@
  *    RTP, FEC, a second layer of AES on top of DTLS) is precisely what the
  *    native engine exists to remove.
  *  - **Displays are the app list.** getAppList() returns one entry per display
- *    ("Display 1 — 2560×1440 · 144 Hz"), so the existing app grid IS the
- *    display picker. No new screen, and with a single monitor it is one card
- *    and one click.
+ *    ("Display 1"), so the existing app grid IS the display picker. No new
+ *    screen, and with a single monitor it is one card and one click.
  *
  * Availability is never assumed: every call re-asks the engine, because a
  * display can be unplugged and a user can log out between two requests. When
