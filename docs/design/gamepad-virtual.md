@@ -164,6 +164,22 @@ Ne jamais dépendre du seul `gamepad.id` — il varie selon navigateur, OS, pilo
 USB/Bluetooth et version du système. Détection à plusieurs niveaux :
 `mapping` → heuristiques sur `id` → capacités observées.
 
+> ⚠️ **Seul le premier niveau existe.** `GamepadManager` ignore toute manette
+> dont `mapping !== 'standard'`, et le navigateur emploie cette valeur pour dire
+> « je ne sais pas quel bouton est lequel ». Constaté le 01/09/2026 : une 8BitDo
+> SN30 Pro en mode DirectInput n'est pas reconnue du tout — Chrome la rapporte
+> sans mapping, elle est écartée.
+>
+> Ce n'est pas le cas que couvre §6 (« une manette inconnue est présentée en
+> X360 ») : là il s'agit d'une *identité* inconnue, et une identité inconnue
+> reçoit bien X360. Ici c'est la *disposition* qui est inconnue, et la deviner
+> donnerait une manette dont chaque bouton peut être ailleurs — plus difficile à
+> diagnostiquer qu'une manette absente.
+>
+> Les deux niveaux suivants restent donc à écrire, et ils demandent une table de
+> correspondances par périphérique. À décider séparément : sur PC, une manette
+> qui propose un mode DirectInput propose presque toujours aussi XInput.
+
 ### 7.1 Sélection manuelle — debug uniquement
 
 L'auto-détection est le comportement de production. Un sélecteur manuel de
@@ -354,6 +370,23 @@ Jeu → manette virtuelle → host → GAMEPAD_RUMBLE → DataChannel → naviga
 Attention à l'échelle : le protocole porte des amplitudes 16 bits, XUSB en
 rapporte 8. Le facteur est **257** et non 256, pour que 0xFF donne 0xFFFF.
 
+> **Deux profils, deux façons d'entrer — et l'une ne voit pas l'autre.** Un jeu
+> fait vibrer une X360 par `XInputSetState` ; une DualShock 4, par un rapport
+> HID de sortie. XInput n'énumère que les périphériques XUSB, donc une DS4
+> virtuelle n'occupe **aucun slot XInput** et un outil XInput ne peut pas
+> l'atteindre du tout.
+>
+> C'est exactement ce qui a fait conclure « pas de rumble en mode DS4 » au
+> premier essai (01/09/2026) : le test n'atteignait pas le périphérique.
+> `scripts/test-rumble.ps1 -Ds4` passe par le rapport HID ; les deux DS4
+> virtuelles d'une session en cours l'acceptent, donc le maillon côté hôte est
+> joignable.
+>
+> Le dernier maillon échappe à tout script sur l'hôte : une manette dont
+> `vibrationActuator` est nul dans le navigateur ne rejouera rien, quoi que
+> l'hôte envoie. C'est le premier endroit à regarder si le rumble DS4 manque
+> encore.
+
 ---
 
 ## 11. Multi-manettes
@@ -499,15 +532,18 @@ Réalisables :
 - [x] transmise par le DataChannel WebRTC, reçue par le host
 - [x] un périphérique virtuel est créé, boutons/sticks/gâchettes fonctionnent
 - [x] rumble de bout en bout
-- [ ] plusieurs contrôleurs simultanément — chemin complet (4 slots, un
-      `controllerNumber` par manette de bout en bout), jamais essayé à deux
-      manettes réelles
+- [x] plusieurs contrôleurs simultanément — **essayé le 01/09/2026**, en X360
+      comme en DualShock 4 (8BitDo SN30 Pro, Chrome/macOS → hôte natif Windows)
 - [x] ViGEmBus absent : encart proposé **uniquement** en `Loopback`, invisible
       depuis un autre PC du LAN et depuis le rendez-vous (§9.1)
 - [x] la déconnexion détruit les périphériques
-- [ ] XInput validé par une application XInput réelle
+- [x] XInput validé par une application XInput réelle — `scripts/test-rumble.ps1`
+      appelle `XInputGetState`/`XInputSetState` comme un jeu : la manette
+      virtuelle occupe bien un slot, et le rumble revient jusqu'à la vraie
+      manette (01/09/2026)
 - [x] DualShock 4 — profil complet, mapping vérifié bouton par bouton sans
-      matériel ; reste à tenir une vraie manette PlayStation (§6)
+      matériel, et **boutons/axes essayés en vrai le 01/09/2026** ; le rumble
+      DS4 reste à confirmer (voir §10)
 - [ ] Linux / uinput — backend écrit et compilé, mais aucune session Linux ne
       l'appelle encore (§9)
 - [x] aucun composant commercial, aucune licence payante
