@@ -19,6 +19,12 @@
  *  before we consider it open (an accessory bar alone is smaller than this). */
 const KB_OPEN_THRESHOLD = 120;
 
+/** Typematic for the press-and-hold toolbar keys: how long a finger has to
+ *  stay down before the key starts repeating, and how fast it repeats then.
+ *  Roughly the Windows defaults, which is what the arrows should feel like. */
+const HOLD_REPEAT_DELAY = 400;
+const HOLD_REPEAT_INTERVAL = 40;
+
 /**
  * Publish the height of the bottom strip covered by the soft keyboard and the
  * special-keys bar as --kbd-inset on <html>. Bottom-anchored fixed UI (the
@@ -303,14 +309,24 @@ export class StreamViewKeyboard {
                 });
                 this._modBtns[id] = btn;
             } else if (HOLD_REPEAT_VKS.has(id)) {
-                // Press-and-hold: keydown while pressed, keyup on release. We send
-                // a single keydown and let the GUEST OS generate typematic repeat
-                // (one step, then continuous after ~1s) — exactly like a physical
-                // arrow/Del key. Sending down+up on tap would only ever move/delete
-                // one step.
+                // Press-and-hold: keydown while pressed, keyup on release, and a
+                // repeat of our own in between. Nothing on the host would produce
+                // that repeat otherwise — typematic comes from the keyboard
+                // controller, so an injected key gives one step however long it is
+                // held — and a held arrow that moves the caret once is not an
+                // arrow key. Sending down+up on tap would have the same flaw.
                 const flags = () => ({ keyCode: id, code: '', key: '', ...this._modFlags() });
+                let holdDelay = null;
+                let holdTick = null;
+                const stopRepeat = () => {
+                    clearTimeout(holdDelay);
+                    clearInterval(holdTick);
+                    holdDelay = null;
+                    holdTick = null;
+                };
                 const release = (e) => {
                     if (e) e.preventDefault();
+                    stopRepeat();
                     if (!btn._held) return;
                     btn._held = false;
                     this._sendKeyEvent({ type: 'keyup', ...flags() });
@@ -323,6 +339,16 @@ export class StreamViewKeyboard {
                     if (btn._held) return;
                     btn._held = true;
                     this._sendKeyEvent({ type: 'keydown', ...flags() });
+                    // The key stays in the held set throughout, so the repeat is a
+                    // plain re-press — the host reads it exactly as it reads the
+                    // browser's own auto-repeat on a physical keyboard.
+                    stopRepeat();
+                    holdDelay = setTimeout(() => {
+                        holdTick = setInterval(() => {
+                            if (!btn._held) return stopRepeat();
+                            this._sendKeyEvent({ type: 'keydown', ...flags() });
+                        }, HOLD_REPEAT_INTERVAL);
+                    }, HOLD_REPEAT_DELAY);
                     // Capture so we still get the release if the finger slides off.
                     try {
                         btn.setPointerCapture(e.pointerId);
