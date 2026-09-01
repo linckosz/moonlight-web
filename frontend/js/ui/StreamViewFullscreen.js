@@ -28,7 +28,7 @@ import { IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetec
 const ORIENTATION_SYNC_DELAYS = [60, 160, 320, 600];
 
 /**
- * Fullscreen / wake-lock / immersive-exit subsystem for StreamView.
+ * Fullscreen / wake-lock / gaming-mode-exit subsystem for StreamView.
  *
  * Covers the standard Fullscreen API, the iOS CSS fallback, the Screen Wake
  * Lock, mobile orientation handling and the transient on-screen hints.
@@ -340,14 +340,14 @@ export class StreamViewFullscreen {
         const kb = navigator.keyboard;
         if (!kb || typeof kb.lock !== 'function') return;
         if (this._gamingMode && this._mouseFocused) {
-            // Immersive mode with the mouse captured: grab EVERY system key
+            // Mouse gaming mode with the mouse captured: grab EVERY system key
             // (Meta/Windows, Alt+Tab, Escape…) so they reach the host. Only the
             // exit combo stays client-side. Effective in fullscreen (browser
             // limitation); a no-op call otherwise. lock() with no args = all keys.
             kb.lock().catch(() => {});
             this._keyboardLocked = true;
         } else if (document.fullscreenElement) {
-            // Plain fullscreen (non-immersive): only keep Escape inside the host.
+            // Plain fullscreen (no gaming mode): only keep Escape inside the host.
             kb.lock(['Escape']).catch(() => {});
             this._keyboardLocked = true;
         } else if (this._keyboardLocked) {
@@ -359,12 +359,12 @@ export class StreamViewFullscreen {
     }
 
     /**
-     * Single "give me back control" action bound to the immersive exit combo.
+     * Single "give me back control" action bound to the gaming-mode exit combo.
      * Releases the mouse pointer lock, drops the full keyboard lock and leaves
      * fullscreen (standard or CSS fallback) — whichever are currently active.
      * @this {StreamViewInstance}
      */
-    _exitImmersive() {
+    _exitGamingMode() {
         if (document.pointerLockElement === this.inputEl) {
             document.exitPointerLock();
         }
@@ -510,6 +510,6 @@ export class StreamViewFullscreen {
         }
 
         // Reposition the reminder (header vs top-center).
-        this._positionImmersiveOverlay();
+        this._positionGamingOverlay();
     }
 }
