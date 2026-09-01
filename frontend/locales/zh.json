@@ -163,6 +163,17 @@
         "playerStatsOn": "你要加入的那台电脑会上报关于本次会话的匿名统计。这是它主人的选择，不由你决定 — 但以下就是它涵盖的全部内容。",
         "playerStatsOff": "你要加入的那台电脑不会上报任何关于本次会话的信息。"
     },
+    "gamepad": {
+        "noticeTitle": "手柄需要一个驱动",
+        "noticeBody": "Windows 需要 ViGEmBus 驱动，浏览器上连接的手柄才能传到游戏里。其他一切——键盘、鼠标、串流本身——没有它也能正常使用。",
+        "install": "安装",
+        "installing": "正在安装…",
+        "installed": "手柄已就绪。",
+        "restartRequired": "驱动已安装。重启这台电脑即可生效。",
+        "installFailed": "无法安装该驱动。",
+        "download": "下载驱动",
+        "manualHint": "MoonlightWeb 在这里没有安装它所需的权限。"
+    },
     "securing": {
         "working": "正在建立安全连接…",
         "done": "已安全连接"
@@ -238,6 +249,11 @@
         "hdrNoWebgpu": "不可用：此浏览器/设备不支持 WebGPU，串流将保持 SDR。",
         "chroma444": "4:4:4 色度",
         "chroma444Desc": "全分辨率色彩（4:4:4）而非 4:2:0。需要主机和客户端 GPU 均支持所选编解码器的 4:4:4。需要显著更高的带宽。",
+        "gamepadProfile": "呈现给游戏的手柄（调试）",
+        "gamepadProfileDesc": "主机为你的手柄接入哪种虚拟手柄。自动会跟随你手上的那一只；强制指定用于区分是识别出了问题，还是按键映射出了问题。",
+        "gamepadProfileAuto": "自动",
+        "gamepadProfileX360": "始终 Xbox 360",
+        "gamepadProfileDs4": "始终 DualShock 4",
         "tearing": "允许画面撕裂",
         "tearingDesc": "关闭垂直同步以略微降低延迟；可能导致画面撕裂。",
         "muteHost": "静音主机音频",

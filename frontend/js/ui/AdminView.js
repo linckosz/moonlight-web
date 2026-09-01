@@ -32,6 +32,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { GamepadDriverNotice } from './GamepadDriverNotice.js';
 
 export class AdminView {
     // Backend statusJson "phase" values that mean activation is still running.
@@ -1500,6 +1501,14 @@ export class AdminView {
     }
 
     bindEvents() {
+        // "Your controller has no driver" — the other half of the notice the
+        // hosts page shows. Here too because this is the page someone opens
+        // when something on the host is not working, and it is where they will
+        // look for it. The server decides whether it may appear at all.
+        const adminRoot = this.container.querySelector('#view-admin');
+        const adminHeader = adminRoot && adminRoot.querySelector('.admin-header');
+        GamepadDriverNotice.mount(adminRoot, adminHeader ? adminHeader.nextElementSibling : null);
+
         // Admin unlock prompt (LAN machine that is not the host). Bound before
         // everything else because in that state it is the only control on the
         // page — the rest of bindEvents just finds nothing.

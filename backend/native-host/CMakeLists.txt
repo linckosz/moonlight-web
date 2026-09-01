@@ -19,6 +19,12 @@ add_library(mw-native-host STATIC
     src/core/Probe.cpp
     src/core/Selector.cpp
     src/core/NativeHost.cpp
+    # Platform-neutral on purpose, and compiled everywhere for that reason: the
+    # DualShock 4 report is pure arithmetic, and it is the part of the profile
+    # that can be wrong in an interesting way (an inverted axis, a D-pad
+    # diagonal). Building it on every platform is what lets the tests check it
+    # without a driver or a pad.
+    src/input/Ds4Mapping.cpp
 )
 
 # ── Platform backend selection ──────────────────────────────────────────────
@@ -128,6 +134,7 @@ if(MW_BUILD_TESTS)
         tests/test_capabilities.cpp
         tests/test_capture.cpp
         tests/test_vpl_params.cpp
+        tests/test_ds4_mapping.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)

@@ -50,6 +50,15 @@ Unavailability enumerate(Capabilities& caps)
     return Unavailability::ArchNotSupported;
 }
 
+VirtualGamepad probeVirtualGamepad()
+{
+    // supported = false, not "present = false": there is nothing to install
+    // here, so a caller must not offer to install anything.
+    VirtualGamepad result;
+    result.diagnostic = "no virtual gamepad backend for this platform in this build";
+    return result;
+}
+
 } // namespace mw::native::platform
 
 namespace mw::native::detail {
