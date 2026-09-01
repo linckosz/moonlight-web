@@ -61,7 +61,7 @@ Video decodes in **WebCodecs + WebGPU/canvas**, audio in **AudioWorklet**.
 
 From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (720p–2160p),\
 **FPS** (15–240), **codec** (auto / H.264 / HEVC / AV1, unsupported options greyed out),\
-**HDR**, **4:4:4 chroma**, **Immersive mode** (pointer‑lock), perf stats and aspect ratio.
+**HDR**, **4:4:4 chroma**, **Mouse Gaming Mode** (pointer‑lock), perf stats and aspect ratio.
 
 <div align="center">
 
@@ -144,8 +144,8 @@ usable, including by someone who had not opened their link yet: the game is
 still there to join, which is the whole point of leaving rather than stopping.
 
 Each guest picks their own resolution when they join, plus how they want to
-drive: immersive or not on a desktop, trackpad or direct touch on a phone. Their
-browser remembers the choice for next time.
+drive: the mouse in desktop or gaming mode on a computer, trackpad or direct
+touch on a phone. Their browser remembers the choice for next time.
 
 Ten wrong PINs destroy the invitation outright, so a leaked link can at worst
 cost you a re‑share. Wrong PINs and dead links also feed the same per‑IP abuse

@@ -368,7 +368,7 @@ const MoonlightApp = {
         const view = new PlayerJoinView(
             container,
             token,
-            async ({ height, immersive, touchScreen }) => {
+            async ({ height, gaming, touchScreen }) => {
                 const result = await BackendClient.playerJoin(token, height);
 
                 // StreamView renders (and connects) from its constructor, so the
@@ -380,7 +380,7 @@ const MoonlightApp = {
                 const streamView = this._createStreamView(
                     // The two comfort choices the join screen offered. Everything
                     // else about the pipeline was decided by the backend.
-                    { ...result, gamingMode: immersive === true },
+                    { ...result, gamingMode: gaming === true },
                     { uuid: '', name: view.info.machine_name, displayName: view.info.machine_name },
                     {
                         // A guest gets no say over the pipeline: the backend fixed

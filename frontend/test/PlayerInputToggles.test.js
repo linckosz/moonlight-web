@@ -35,7 +35,7 @@ describe('PlayerJoinView input toggles', () => {
     let view;
     let container;
 
-    const mouseRow = () => container.querySelector('.player-toggle[data-pref="immersive"]');
+    const mouseRow = () => container.querySelector('.player-toggle[data-pref="gaming"]');
 
     const render = async (accessLevel) => {
         BackendClient.playerInfo.mockResolvedValue({ ...BASE, access_level: accessLevel });
@@ -78,11 +78,11 @@ describe('PlayerJoinView input toggles', () => {
         expect(group.getAttribute('aria-labelledby')).toBe(label.id);
         expect(label.id).toBeTruthy();
 
-        // "Seamless" and "Immersive" do not say which one keeps the pointer in
-        // the frame; the hover hints are where that is spelled out.
+        // "Desktop" and "Gaming" do not say which one keeps the pointer in the
+        // frame; the hover hints are where that is spelled out.
         const [off, on] = mouseRow().querySelectorAll('.player-toggle-btn');
-        expect(off.getAttribute('title')).toBe('text:player.seamlessHint');
-        expect(on.getAttribute('title')).toBe('text:player.immersiveHint');
+        expect(off.getAttribute('title')).toBe('text:player.desktopHint');
+        expect(on.getAttribute('title')).toBe('text:player.gamingHint');
     });
 
     it('remembers the pick for the next visit', async () => {
@@ -90,6 +90,6 @@ describe('PlayerJoinView input toggles', () => {
         const [, on] = mouseRow().querySelectorAll('.player-toggle-btn');
         on.click();
         expect(on.classList.contains('is-selected')).toBe(true);
-        expect(JSON.parse(localStorage.getItem('mw_player_prefs')).immersive).toBe(true);
+        expect(JSON.parse(localStorage.getItem('mw_player_prefs')).gaming).toBe(true);
     });
 });

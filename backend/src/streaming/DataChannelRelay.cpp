@@ -1051,7 +1051,7 @@ void DataChannelRelay::onInputMessage(const std::string& message)
     if (type == "cursormode") {
         // Who draws the mouse pointer. In desktop mode the browser draws its
         // own — at its own refresh rate, independent of the stream — and the
-        // host leaves the picture clean. In immersive mode pointer lock takes
+        // host leaves the picture clean. In gaming mode pointer lock takes
         // the viewer's real pointer away, so the only one that can exist is the
         // one burned into the frame.
         //
