@@ -445,6 +445,14 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
                 if (!publicCand.empty() && !pp->publicCandidateSent) {
                     pp->publicCandidateSent = true;
                     send(publicCand);
+                    // Logged because this one line is the difference between a
+                    // browser out on the internet having a reachable address to
+                    // aim at and having none, and because the failure it fixes
+                    // is silent at both ends.
+                    Logger::info(QStringLiteral("[Tunnel] Session %1 offered %2:%3 as its public "
+                                                "address")
+                                     .arg(id.left(8), QString::fromStdString(m_PublicIP))
+                                     .arg(pp->port));
                 }
             },
             Qt::QueuedConnection);
