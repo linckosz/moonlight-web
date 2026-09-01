@@ -366,117 +366,143 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         return HttpResponse::json(result);
     });
 
-    // POST /api/setup/apply — run the wizard actions synchronously; the frontend
+    // POST /api/setup/apply — run the wizard actions, then answer; the frontend
     // polls /api/setup/status meanwhile to animate the checklist.
-    server.router()->post("/api/setup/apply", [&, onInternetAccessToggled,
-                                               rendezvousStatus](const HttpRequest& req) {
-        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
-
-        QJsonObject body = QJsonDocument::fromJson(req.body).object();
-        const bool internetAuth = body.value("internet_access_authorized").toBool(false);
-        const bool autostart = body.value("autostart").toBool(false);
-        const bool keepAwake = body.value("keep_display_awake").toBool(false);
-        const QJsonObject sun = body.value("sunshine").toObject();
-        const bool wantInstall = sun.value("install").toBool(false);
-        const QString user = sun.value("username").toString();
-        const QString pass = sun.value("password").toString();
-        const bool haveCreds = !user.isEmpty() && !pass.isEmpty();
-
-        SunshineInstaller::DetectResult det = SunshineInstaller::detect();
-
-        // Seed the checklist so the frontend renders the full task list up front.
-        Provisioning::setStepStatus("install",
-                                    (wantInstall && !det.installed) ? "running" : "skipped");
-        Provisioning::setStepStatus("pairing", haveCreds ? "pending" : "skipped");
-        Provisioning::setStepStatus("arecord", internetAuth ? "pending" : "skipped");
-
-        QJsonObject result;
-
-        // 1) Install Sunshine (macOS DMG / Linux .deb) when requested and not
-        //    already present.
-        if (wantInstall && !det.installed) {
-            const QString err = SunshineInstaller::install(user, pass);
-            if (err.isEmpty()) {
-                Provisioning::setStepStatus("install", "done");
-                det = SunshineInstaller::detect();
-                // Start Sunshine: on macOS this surfaces its Screen-Recording /
-                // Accessibility permission prompts (cannot be granted for it);
-                // everywhere it must be serving before the pairing below. Give
-                // the fresh process a moment to open its GameStream port.
-                if (SunshineInstaller::launch()) QThread::sleep(3);
-            } else {
-                Provisioning::setStepStatus("install", "failed");
-                result["sunshine_error"] = err;
-            }
-        } else if (det.installed && haveCreds) {
-            // Already installed: (re)apply the provided credentials so the REST
-            // PIN push during pairing authenticates.
-            SunshineInstaller::setCredentials(user, pass);
+    //
+    // Async, and deferred to a later event-loop turn, for one reason: the work
+    // below blocks for as long as the local Sunshine takes to pair (up to 65 s)
+    // and drives a *nested* event loop while it waits. Run straight from the
+    // request path, that nested loop let the server's own 30 s async timeout
+    // fire underneath the handler — the 504 went out, the client hung up, and
+    // the socket was destroyed while the frames owning it were still on the
+    // stack. That is a segfault, and it is not hypothetical: it takes down the
+    // backend on every host whose pairing does not complete (a Sunshine that
+    // never accepts the PIN is enough). Answering from a fresh turn leaves
+    // nothing of the request on the stack, and a response that arrives after
+    // the timeout is discarded by HttpServer's pending-socket check, which is
+    // already hardened for exactly that.
+    server.router()->postAsync("/api/setup/apply", [&, onInternetAccessToggled,
+                                                    rendezvousStatus](const HttpRequest& req,
+                                                                      ResponseCallback respond) {
+        if (!req.isLocal) {
+            respond(HttpResponse::error(403, "Only available from localhost"));
+            return;
         }
+        // Copied out of the request: nothing of `req` may be read from the
+        // deferred body — it is gone by the time that runs.
+        const QJsonObject requestBody = QJsonDocument::fromJson(req.body).object();
+        QTimer::singleShot(
+            0, &server,
+            [&, requestBody, onInternetAccessToggled, rendezvousStatus,
+             respond = std::move(respond)]() {
+                const QJsonObject& body = requestBody;
+                const bool internetAuth = body.value("internet_access_authorized").toBool(false);
+                const bool autostart = body.value("autostart").toBool(false);
+                const bool keepAwake = body.value("keep_display_awake").toBool(false);
+                const QJsonObject sun = body.value("sunshine").toObject();
+                const bool wantInstall = sun.value("install").toBool(false);
+                const QString user = sun.value("username").toString();
+                const QString pass = sun.value("password").toString();
+                const bool haveCreds = !user.isEmpty() && !pass.isEmpty();
 
-        // 2) Pair the local Sunshine over GameStream + its REST /api/pin.
-        if (haveCreds && det.installed) {
-            Provisioning::setStepStatus("pairing", "running");
-            const bool ok = Provisioning::pairSunshine(computerManager, user, pass);
-            Provisioning::setStepStatus("pairing", ok ? "done" : "failed");
-            result["paired"] = ok;
-        }
+                SunshineInstaller::DetectResult det = SunshineInstaller::detect();
 
-        // 3) Internet Access — flip the flag and bring the tunnel up.
-        if (internetAuth) {
-            Provisioning::setStepStatus("arecord", "running");
-            // Legal traceability: the wizard sends the exact agreement text shown.
-            // The wizard only runs on a fresh install, which never registers a
-            // subdomain — the consent is for the rendezvous-era behaviour.
-            appSettings.setInternetConsent(body.value("consent_message").toString(),
-                                           QStringLiteral("setup"), QStringLiteral("rendezvous"));
-            appSettings.setInternetAccessEnabled(true);
-            internetAccess.start();
-            // The rendezvous line follows the same switch, and nothing else
-            // throws it: /api/internet/enable calls this, the wizard did not, so
-            // a machine set up here stayed unreachable from the internet until
-            // the next restart brought the line up at boot.
-            if (onInternetAccessToggled) onInternetAccessToggled(true);
-            const bool active = internetAccess.isActive();
-            // start() returns once the A record resolves, but the ACME order for
-            // that domain is still in flight — and it cannot progress while this
-            // handler holds the event loop. So leave the step "running" and let
-            // the certificateChanged/error handlers in main.cpp close it once we
-            // return; the wizard keeps polling until then. Closing it here would
-            // send the user to a domain their browser still rejects, because it
-            // is served with the self-signed fallback until the order lands.
-            const bool certPending = active && internetAccess.certificateIssuing();
-            if (!certPending) Provisioning::setStepStatus("arecord", active ? "done" : "failed");
-            result["internet_active"] = active;
-            result["certificate_pending"] = certPending;
-            result["domain"] = internetAccess.domain();
-            // Usually empty right here: the claim is a round-trip that cannot
-            // run while this handler holds the event loop. The wizard picks the
-            // address up from /api/setup/status, which it is already polling.
-            if (rendezvousStatus) result["rendezvous"] = rendezvousStatus();
-        }
+                // Seed the checklist so the frontend renders the full task list up front.
+                Provisioning::setStepStatus("install", (wantInstall && !det.installed) ? "running"
+                                                                                       : "skipped");
+                Provisioning::setStepStatus("pairing", haveCreds ? "pending" : "skipped");
+                Provisioning::setStepStatus("arecord", internetAuth ? "pending" : "skipped");
 
-        // Mark setup done even if an optional step failed: the user retries from
-        // the admin page, and the wizard must not reappear on every launch.
-        appSettings.setSetupCompleted(true);
+                QJsonObject result;
 
-        // Start at login (macOS LaunchAgent / Linux XDG autostart — GUI session,
-        // keeps the tray icon). Mirrors the Windows installer's logon-task
-        // checkbox: only when the wizard's checkbox was ticked. Best-effort.
-        result["autostart"] = autostart ? Autostart::installLoginItem() : false;
+                // 1) Install Sunshine (macOS DMG / Linux .deb) when requested and not
+                //    already present.
+                if (wantInstall && !det.installed) {
+                    const QString err = SunshineInstaller::install(user, pass);
+                    if (err.isEmpty()) {
+                        Provisioning::setStepStatus("install", "done");
+                        det = SunshineInstaller::detect();
+                        // Start Sunshine: on macOS this surfaces its Screen-Recording /
+                        // Accessibility permission prompts (cannot be granted for it);
+                        // everywhere it must be serving before the pairing below. Give
+                        // the fresh process a moment to open its GameStream port.
+                        if (SunshineInstaller::launch()) QThread::sleep(3);
+                    } else {
+                        Provisioning::setStepStatus("install", "failed");
+                        result["sunshine_error"] = err;
+                    }
+                } else if (det.installed && haveCreds) {
+                    // Already installed: (re)apply the provided credentials so the REST
+                    // PIN push during pairing authenticates.
+                    SunshineInstaller::setCredentials(user, pass);
+                }
 
-        // Stop this desktop from blanking its screen, so Sunshine always has
-        // something to capture (a blanked output makes every /launch answer 503).
-        // Opt-in: it changes the user's own power settings, so only on an explicit
-        // tick. The reason travels back for the "done" screen to show.
-        if (keepAwake) {
-            const QString err = DisplaySleep::keepDisplayAwake();
-            result["display_kept_awake"] = err.isEmpty();
-            if (!err.isEmpty()) result["display_sleep_error"] = err;
-        }
+                // 2) Pair the local Sunshine over GameStream + its REST /api/pin.
+                if (haveCreds && det.installed) {
+                    Provisioning::setStepStatus("pairing", "running");
+                    const bool ok = Provisioning::pairSunshine(computerManager, user, pass);
+                    Provisioning::setStepStatus("pairing", ok ? "done" : "failed");
+                    result["paired"] = ok;
+                }
 
-        result["status"] = "completed";
-        return HttpResponse::json(result);
+                // 3) Internet Access — flip the flag and bring the tunnel up.
+                if (internetAuth) {
+                    Provisioning::setStepStatus("arecord", "running");
+                    // Legal traceability: the wizard sends the exact agreement text shown.
+                    // The wizard only runs on a fresh install, which never registers a
+                    // subdomain — the consent is for the rendezvous-era behaviour.
+                    appSettings.setInternetConsent(body.value("consent_message").toString(),
+                                                   QStringLiteral("setup"),
+                                                   QStringLiteral("rendezvous"));
+                    appSettings.setInternetAccessEnabled(true);
+                    internetAccess.start();
+                    // The rendezvous line follows the same switch, and nothing else
+                    // throws it: /api/internet/enable calls this, the wizard did not, so
+                    // a machine set up here stayed unreachable from the internet until
+                    // the next restart brought the line up at boot.
+                    if (onInternetAccessToggled) onInternetAccessToggled(true);
+                    const bool active = internetAccess.isActive();
+                    // start() returns once the A record resolves, but the ACME order for
+                    // that domain is still in flight — and it cannot progress while this
+                    // handler holds the event loop. So leave the step "running" and let
+                    // the certificateChanged/error handlers in main.cpp close it once we
+                    // return; the wizard keeps polling until then. Closing it here would
+                    // send the user to a domain their browser still rejects, because it
+                    // is served with the self-signed fallback until the order lands.
+                    const bool certPending = active && internetAccess.certificateIssuing();
+                    if (!certPending)
+                        Provisioning::setStepStatus("arecord", active ? "done" : "failed");
+                    result["internet_active"] = active;
+                    result["certificate_pending"] = certPending;
+                    result["domain"] = internetAccess.domain();
+                    // Usually empty right here: the claim is a round-trip that cannot
+                    // run while this handler holds the event loop. The wizard picks the
+                    // address up from /api/setup/status, which it is already polling.
+                    if (rendezvousStatus) result["rendezvous"] = rendezvousStatus();
+                }
+
+                // Mark setup done even if an optional step failed: the user retries from
+                // the admin page, and the wizard must not reappear on every launch.
+                appSettings.setSetupCompleted(true);
+
+                // Start at login (macOS LaunchAgent / Linux XDG autostart — GUI session,
+                // keeps the tray icon). Mirrors the Windows installer's logon-task
+                // checkbox: only when the wizard's checkbox was ticked. Best-effort.
+                result["autostart"] = autostart ? Autostart::installLoginItem() : false;
+
+                // Stop this desktop from blanking its screen, so Sunshine always has
+                // something to capture (a blanked output makes every /launch answer 503).
+                // Opt-in: it changes the user's own power settings, so only on an explicit
+                // tick. The reason travels back for the "done" screen to show.
+                if (keepAwake) {
+                    const QString err = DisplaySleep::keepDisplayAwake();
+                    result["display_kept_awake"] = err.isEmpty();
+                    if (!err.isEmpty()) result["display_sleep_error"] = err;
+                }
+
+                result["status"] = "completed";
+                respond(HttpResponse::json(result));
+            });
     });
 
     // POST /api/system/open-screen-recording — open macOS' Screen Recording
