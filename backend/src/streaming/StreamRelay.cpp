@@ -671,8 +671,12 @@ void StreamRelay::onWsTextMessage(const QString& message)
                                       static_cast<uint8_t>(msg["ctype"].toInt(0)),
                                       msg["rumble"].toBool(false));
     } else if (type == "gamepaddisconnect") {
-        m_Shim->sendControllerState(static_cast<short>(msg["index"].toInt(0)),
-                                    static_cast<short>(msg["mask"].toInt(0)), 0, 0, 0, 0, 0, 0, 0);
+        // The pad is gone — see DataChannelRelay for why this is its own call
+        // and not an empty state. Same rule on every transport: this one was
+        // missed when the other two were converted, and a pad removed over WSS
+        // stayed plugged into the native host until the session ended.
+        m_Shim->sendControllerRemoval(static_cast<uint8_t>(msg["index"].toInt(0)),
+                                      static_cast<uint16_t>(msg["mask"].toInt(0)));
     } else {
         qWarning() << "[StreamRelay] Unknown input type:" << type;
     }
