@@ -112,7 +112,7 @@ Repli prévu : Windows.Graphics.Capture, pour les cas où DDA répond
 `DXGI_ERROR_UNSUPPORTED` (sorties hybrides). Les deux rendent un
 `ID3D11Texture2D`, donc l'étage encodeur est identique.
 
-Deux points de justesse invisibles hors exécution :
+Trois points de justesse invisibles hors exécution :
 
 1. **Les horloges.** DXGI date en QPC, le reste du moteur en `steady_clock`.
    Même cadence, origines différentes : sans le couple de calibration pris au
@@ -121,6 +121,12 @@ Deux points de justesse invisibles hors exécution :
 2. **Un présent à zéro n'est pas une frame.** DXGI réveille aussi sur un simple
    mouvement de pointeur ; le compter comme une frame enverrait un doublon
    horodaté n'importe comment.
+3. **L'époque du relais.** Le moteur date en absolu ; le relais, lui, attend le
+   contrat du shim GameStream : un temps de présentation **relatif à la première
+   frame**, qu'il rajoute à l'époque pour retrouver l'horloge. `NativeMediaEngine`
+   fait la soustraction (époque = présent de la première frame). Livrer l'absolu
+   comptait l'horloge deux fois : le `backendTs` du client avançait à 2×, et
+   toute mesure de gigue en aval était fausse (bug B2, corrigé le 02/09/2026).
 
 ### Linux / macOS
 

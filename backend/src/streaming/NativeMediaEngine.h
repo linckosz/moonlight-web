@@ -198,8 +198,16 @@ private:
     std::atomic<int64_t> m_ProcWindowCount{0};
 
     std::atomic<int64_t> m_FrameSubmitTimeUs{0};
+
+    /// Presentation time of the latest frame, in µs SINCE THE FIRST FRAME — the
+    /// relay's contract (IMediaEngine::videoFrameReady), not the engine's
+    /// absolute stamp.
     std::atomic<int64_t> m_FramePresentationTimeUs{0};
-    std::atomic<int64_t> m_FirstFrameArrivalUs{0};
+
+    /// Absolute steady_clock present time of the first frame: the epoch of every
+    /// relative presentation time above, and what firstFrameArrivalSteadyMs()
+    /// reports. Zero until the first frame.
+    std::atomic<int64_t> m_FirstPresentUs{0};
 
     /// VIDEO_FORMAT_* of what the encoder actually produces, so the browser
     /// configures the right decoder.

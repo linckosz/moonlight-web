@@ -185,8 +185,20 @@ public:
     /// the one metric the native engine can state with certainty.
     virtual double takeHostProcessingLatencyMs() = 0;
 
+    /// steady_clock µs at which the latest frame entered this engine (absolute).
     virtual int64_t frameSubmitTimeUs() const = 0;
+
+    /// Presentation time of the latest frame, in µs SINCE THE FIRST FRAME of the
+    /// session. Same unit and epoch as the `presentationTimeUs` argument of
+    /// videoFrameReady. Never an absolute stamp: the relay reconstructs
+    /// steady-clock capture time as
+    ///   firstFrameArrivalSteadyMs() + presentationTimeUs / 1000
+    /// and an absolute value here would count the clock twice.
     virtual int64_t framePresentationTimeUs() const = 0;
+
+    /// steady_clock ms of the epoch the presentation times count from. For
+    /// GameStream that is when the first frame reached us; for the native engine
+    /// it is the first frame's display present.
     virtual int64_t firstFrameArrivalSteadyMs() const = 0;
 
     // ── GameStream-only, with truthful defaults ─────────────────────────────
@@ -229,6 +241,9 @@ signals:
     /// relays must not re-read a "latest frame" atomic at drain time, or a
     /// drained burst gets stamped with one shared timestamp and defeats the
     /// frontend's out-of-order frame filter on reordering links.
+    ///
+    /// It is RELATIVE: µs since the session's first frame, whose steady-clock
+    /// time is firstFrameArrivalSteadyMs(). See framePresentationTimeUs().
     void videoFrameReady(QByteArray data, int frameType, int frameNumber,
                          qint64 presentationTimeUs);
     void audioSampleReady(QByteArray data);
