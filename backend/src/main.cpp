@@ -84,6 +84,7 @@
 #include "Autostart.h"
 #include "streaming/Session.h"
 #include "streaming/IMediaEngine.h"
+#include "streaming/NativeBench.h"
 #include "Limelight.h" // SCM_* codec-support masks
 #include "streaming/DataChannelRelay.h"
 #include "streaming/MediaTrackRelay.h"
@@ -1383,6 +1384,18 @@ int main(int argc, char* argv[])
     QCommandLineOption yesOption("yes", "Accept the --enable-internet agreement non-interactively");
     parser.addOption(yesOption);
 
+    // The native engine's measuring instrument: capture + encode one display
+    // for a while into a sink, no network, one CSV row per frame. What the
+    // encoder benchmarks are judged on. See NativeBench.h for the keys.
+    QCommandLineOption nativeBenchOption(
+        "native-bench",
+        "Benchmark the native capture & encode engine on this machine, without a browser: "
+        "key=value list (display=<id>,seconds=10,codec=hevc|h264|av1,fps=0,bitrate=20000,"
+        "width=0,height=0,yuv444=0,intra=0,out=<csv>). Without display= the displays are "
+        "listed. Writes one CSV row per frame, prints a summary, then exits",
+        "spec");
+    parser.addOption(nativeBenchOption);
+
     // Development instance: isolated state (see the applicationName switch at
     // startup), no single-instance lock, and alternate default ports — so it can
     // run alongside an installed service without touching it. Never for production.
@@ -1394,6 +1407,11 @@ int main(int argc, char* argv[])
 
     // Configure logging
     if (parser.isSet(logOption)) Logger::instance()->setLogFile(parser.value(logOption));
+
+    // Bench: no server, no lock, no browser. It needs the interactive desktop
+    // (Desktop Duplication), so it is a terminal command, never a service one.
+    if (parser.isSet(nativeBenchOption))
+        return runNativeBenchCommand(parser.value(nativeBenchOption));
 
     // ── Stream-worker child process ─────────────────────────────────────────
     // Branch BEFORE the single-instance lock (the worker is a deliberate second

@@ -46,6 +46,10 @@ struct CodecProperties
     /// Makes QueryOutput block instead of returning AMF_REPEAT. Setting it is
     /// what turns the wait for a frame into an actual wait — see init().
     const wchar_t* queryTimeout;
+    /// Asks the encoder to attach its per-frame statistics to the output, and
+    /// the one statistic read back: the average quantizer (a q-index on AV1).
+    const wchar_t* statisticsFeedback;
+    const wchar_t* statisticAvgQp;
 };
 
 const CodecProperties& propertiesFor(Codec codec)
@@ -67,6 +71,8 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE,
         AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE_IDR,
         AMF_VIDEO_ENCODER_QUERY_TIMEOUT,
+        AMF_VIDEO_ENCODER_STATISTICS_FEEDBACK,
+        AMF_VIDEO_ENCODER_STATISTIC_AVERAGE_QP,
     };
     static const CodecProperties kHevc = {
         AMFVideoEncoder_HEVC,
@@ -85,6 +91,8 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE,
         AMF_VIDEO_ENCODER_HEVC_OUTPUT_DATA_TYPE_IDR,
         AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT,
+        AMF_VIDEO_ENCODER_HEVC_STATISTICS_FEEDBACK,
+        AMF_VIDEO_ENCODER_HEVC_STATISTIC_AVERAGE_QP,
     };
     static const CodecProperties kAv1 = {
         AMFVideoEncoder_AV1,
@@ -103,6 +111,8 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE,
         AMF_VIDEO_ENCODER_AV1_OUTPUT_FRAME_TYPE_KEY,
         AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT,
+        AMF_VIDEO_ENCODER_AV1_STATISTICS_FEEDBACK,
+        AMF_VIDEO_ENCODER_AV1_STATISTIC_AVERAGE_Q_INDEX,
     };
 
     switch (codec) {
@@ -222,6 +232,11 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     // resolution would fix the symptom while imposing a global side effect
     // from inside a library; letting AMF do the waiting fixes the cause.
     m_Encoder->SetProperty(props.queryTimeout, amf_int64(kQueryTimeoutMs));
+
+    // Per-frame statistics on the output buffer, for the average QP the
+    // benchmarks read as their quality proxy. A handful of integers per frame;
+    // the encoder computes them anyway.
+    m_Encoder->SetProperty(props.statisticsFeedback, true);
 
     // No B-frames: one would make the encoder hold a frame back to reference a
     // picture that has not been sent — a whole frame of latency. Only H.264
@@ -353,6 +368,10 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOut
     // keyframe that reported itself as a delta would close the relay's delta
     // gate and freeze the picture.
     out.keyframe = haveType ? (dataType == props.outputDataTypeIdr) : forceKeyframe;
+
+    amf_int64 avgQp = -1;
+    if (data->GetProperty(props.statisticAvgQp, &avgQp) == AMF_OK && avgQp >= 0)
+        out.avgQp = static_cast<int>(avgQp);
     return true;
 }
 

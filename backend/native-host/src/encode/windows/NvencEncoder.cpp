@@ -336,6 +336,7 @@ bool NvencEncoder::encode(ID3D11Texture2D* nv12, bool forceKeyframe, EncoderOutp
     out.data = static_cast<const uint8_t*>(lock.bitstreamBufferPtr);
     out.size = lock.bitstreamSizeInBytes;
     out.keyframe = lock.pictureType == NV_ENC_PIC_TYPE_IDR || lock.pictureType == NV_ENC_PIC_TYPE_I;
+    out.avgQp = static_cast<int>(lock.frameAvgQP);
     return true;
 }
 

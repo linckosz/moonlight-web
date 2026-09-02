@@ -36,6 +36,12 @@ struct EncoderOutput
     const uint8_t* data = nullptr;
     size_t size = 0;
     bool keyframe = false;
+
+    /// The average quantizer the encoder reports for this frame, or -1 when it
+    /// does not say. The objective proxy for quality in the benchmarks: at a
+    /// fixed bitrate, a lower QP is a sharper picture. H.264/HEVC report a QP
+    /// (0–51); AV1 reports a q-index (0–255) — same direction, other scale.
+    int avgQp = -1;
 };
 
 /// A hardware encoder taking D3D11 textures.
