@@ -16,6 +16,7 @@
  */
 
 #include "NativeMediaEngine.h"
+#include "InputWatchdog.h"
 
 #include "mw/native/NativeHost.h"
 
@@ -79,6 +80,36 @@ NativeMediaEngine::NativeMediaEngine(QObject* parent)
         default: qInfo().noquote() << text; break;
         }
     });
+
+    // What letting go means here: the same events the relays send, on the
+    // same path. A session that is already gone drops them, like every other
+    // input after stopConnection().
+    InputWatchdog::Sink sink;
+    sink.releaseKey = [this](const HeldKey& k) {
+        if (!m_Session) return;
+        mw::native::InputEvent event;
+        event.type = mw::native::InputEvent::Type::KeyUp;
+        event.keyCode = k.keyCode;
+        event.keyFlags = static_cast<uint8_t>(k.flags);
+        m_Session->sendInput(event);
+    };
+    sink.releaseButton = [this](int button) {
+        if (!m_Session) return;
+        mw::native::InputEvent event;
+        event.type = mw::native::InputEvent::Type::MouseButtonUp;
+        event.button = button;
+        m_Session->sendInput(event);
+    };
+    sink.neutralizePad = [this](short controller, short mask) {
+        if (!m_Session) return;
+        // Already shifted when it was noted: goes on the wire as it is.
+        mw::native::InputEvent event;
+        event.type = mw::native::InputEvent::Type::ControllerState;
+        event.controllerNumber = static_cast<uint8_t>(controller);
+        event.activeGamepadMask = static_cast<uint16_t>(mask);
+        m_Session->sendInput(event);
+    };
+    m_Watchdog = new InputWatchdog(std::move(sink), this);
 }
 
 NativeMediaEngine::~NativeMediaEngine()
@@ -350,6 +381,12 @@ void NativeMediaEngine::sendKeyEvent(short keyCode, bool down, char modifiers, c
     event.modifiers = static_cast<uint8_t>(modifiers);
     event.keyFlags = static_cast<uint8_t>(flags);
     event.hold = hold;
+    HeldKey k;
+    k.keyCode = keyCode;
+    k.modifiers = modifiers;
+    k.flags = flags;
+    k.hold = hold;
+    m_Watchdog->noteKey(k, down);
     m_Session->sendInput(event);
 }
 
@@ -393,6 +430,7 @@ void NativeMediaEngine::sendMouseButton(bool down, int button, bool hold)
                       : mw::native::InputEvent::Type::MouseButtonUp;
     event.button = button;
     event.hold = hold;
+    m_Watchdog->noteButton(button, down, hold);
     m_Session->sendInput(event);
 }
 
@@ -460,6 +498,12 @@ void NativeMediaEngine::sendControllerState(short controllerNumber, short active
     event.leftStickY = leftStickY;
     event.rightStickX = rightStickX;
     event.rightStickY = rightStickY;
+    // A pad only sends on change, so a stick pushed and left there goes
+    // silent exactly like a held key: tracked so the watchdog can centre it
+    // if the link dies mid-input.
+    m_Watchdog->notePad(static_cast<short>(event.controllerNumber), activeGamepadMask,
+                        InputWatchdog::padAtRest(buttonFlags, leftTrigger, rightTrigger, leftStickX,
+                                                 leftStickY, rightStickX, rightStickY));
     m_Session->sendInput(event);
 }
 
@@ -492,14 +536,22 @@ void NativeMediaEngine::syncHeldInputs(const QVector<HeldKey>& keys, quint32 but
 {
     if (!m_Session) return;
 
-    // Re-press what the watchdog released but the client still holds. The
-    // watchdog itself is shared session logic and lives above this class.
+    // Release what drifted, then re-press what the watchdog released but the
+    // client still holds: only the difference, as the watchdog works it out.
     //
-    // Marked `resync` so the input backend can tell this apart from the user
-    // acting: this beats every 100 ms for as long as anything is held, and
-    // re-applying a press that never went away is an extra character on the
-    // keyboard and a second click on the mouse.
-    for (const HeldKey& key : keys) {
+    // A resync press is still marked as such, so the input backend can tell
+    // it apart from the user acting: re-applying a press that never went away
+    // is an extra character on the keyboard and a second click on the mouse.
+    const InputWatchdog::SyncDiff diff = m_Watchdog->sync(keys, buttonMask, buttonsHold);
+
+    for (const HeldKey& key : diff.release) {
+        mw::native::InputEvent event;
+        event.type = mw::native::InputEvent::Type::KeyUp;
+        event.keyCode = key.keyCode;
+        event.keyFlags = static_cast<uint8_t>(key.flags);
+        m_Session->sendInput(event);
+    }
+    for (const HeldKey& key : diff.press) {
         mw::native::InputEvent event;
         event.type = mw::native::InputEvent::Type::KeyDown;
         event.keyCode = key.keyCode;
@@ -509,9 +561,13 @@ void NativeMediaEngine::syncHeldInputs(const QVector<HeldKey>& keys, quint32 but
         event.resync = true;
         m_Session->sendInput(event);
     }
-
-    for (int button = 1; button <= 5; ++button) {
-        if ((buttonMask & (1u << (button - 1))) == 0) continue;
+    for (int button : diff.buttonsUp) {
+        mw::native::InputEvent event;
+        event.type = mw::native::InputEvent::Type::MouseButtonUp;
+        event.button = button;
+        m_Session->sendInput(event);
+    }
+    for (int button : diff.buttonsDown) {
         mw::native::InputEvent event;
         event.type = mw::native::InputEvent::Type::MouseButtonDown;
         event.button = button;
@@ -519,16 +575,19 @@ void NativeMediaEngine::syncHeldInputs(const QVector<HeldKey>& keys, quint32 but
         event.resync = true;
         m_Session->sendInput(event);
     }
+
+    if (!diff.press.isEmpty() || !diff.buttonsDown.isEmpty()) {
+        qInfo() << "[NativeMediaEngine] Input resync: re-pressed" << diff.press.size()
+                << "key(s) and" << diff.buttonsDown.size() << "button(s) released during a stall";
+    }
 }
 
 void NativeMediaEngine::releaseHeldInputs(bool includeHold)
 {
-    Q_UNUSED(includeHold);
-    // The input backend tracks what it applied and lifts it. Nothing is held
-    // here, so there is nothing for this class to release on its own.
+    m_Watchdog->release(includeHold);
 }
 
 void NativeMediaEngine::noteClientAlive()
 {
-    // Liveness drives the shared watchdog, not this engine.
+    m_Watchdog->noteClientAlive();
 }

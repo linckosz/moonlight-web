@@ -27,6 +27,8 @@ class Session;
 struct CursorUpdate;
 } // namespace mw::native
 
+class InputWatchdog;
+
 /**
  * @brief The media engine backed by this machine's own screen.
  *
@@ -168,6 +170,14 @@ private:
     void onCursor(const mw::native::CursorUpdate& cursor);
 
     std::unique_ptr<mw::native::Session> m_Session;
+
+    /// The input dead-man switch (contract in InputWatchdog.h). Owned, on this
+    /// engine's thread. Fed with the SHIFTED controller numbers, so what it
+    /// neutralizes is the pad the host actually holds. Its sink speaks plain
+    /// InputEvents — a key up, a button up, a centred pad — so the engine
+    /// below needs no release message of its own: it already deduplicates,
+    /// and a pad update with everything at zero IS a neutralization.
+    InputWatchdog* m_Watchdog = nullptr;
 
     std::atomic<bool> m_Connected{false};
 
