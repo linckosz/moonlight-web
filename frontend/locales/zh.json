@@ -488,7 +488,7 @@
         "webcodecsUnsupported": "不支持 WebCodecs",
         "codecUnsupported": "浏览器不支持该编解码器",
         "streamDisconnected": "串流已断开",
-        "gamepadIgnored": "已忽略“{{name}}”：请切换到 XInput 模式后重新插入。",
+        "gamepadIgnored": "已忽略“{{name}}”：布局未知。如支持请切换到 XInput 模式，否则请使用按键映射工具。",
         "webrtcError": "WebRTC 连接错误",
         "degradeBitrate": "网络不稳定——码率已降至 {{mbps}} Mbps",
         "degradeBitrateFps": "网络不稳定——码率已降至 {{mbps}} Mbps，帧率限制为 60 fps",
