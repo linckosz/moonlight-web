@@ -213,8 +213,7 @@ void NativeMediaEngine::onEncodedFrame(const mw::native::EncodedFrame& encoded)
         std::lock_guard<std::mutex> lock(m_StageMutex);
         m_Stages.record(mw::native::Stage::Acquire, encoded.capturedUs - presentUs);
         m_Stages.record(mw::native::Stage::Convert, encoded.convertedUs - encoded.submittedUs);
-        m_Stages.record(mw::native::Stage::Hold, encoded.dueUs - encoded.convertedUs);
-        m_Stages.record(mw::native::Stage::Encode, encodedUs - encoded.dueUs);
+        m_Stages.record(mw::native::Stage::Encode, encodedUs - encoded.convertedUs);
         InFlight& slot = m_InFlight[frameNumber % kInFlightRing];
         slot.frameNumber = frameNumber;
         slot.valid = true;

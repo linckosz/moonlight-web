@@ -29,8 +29,6 @@
 
 // GetCursorInfo/LoadCursorW, for naming the pointer — see currentCursorKind().
 #include <windows.h>
-// timeBeginPeriod — see run().
-#include <timeapi.h>
 
 #include <atomic>
 #include <chrono>
@@ -77,9 +75,7 @@ int64_t steadyNowUs()
 }
 
 /// The stamps a picture carries from the capture to the encoder — t₀ to t₂ of
-/// EncodedFrame. Kept together because a picture may be HELD between the two
-/// (see FrameCadence), and then the stamps have to outlive the loop iteration
-/// that took them.
+/// EncodedFrame.
 struct FrameStamps
 {
     int64_t presentUs = 0;
@@ -246,17 +242,17 @@ public:
         // always a number here; the guard below is for a config that bypassed
         // it. The cadence gate exists only when the display is FASTER than the
         // stream: at the display's own rate every present is encoded as it
-        // comes, and a gate at that same rate would still hold a present that
-        // arrived a little early and then drop it for the next one.
+        // comes, and a gate at that same rate would skip a present that
+        // arrived a little early and wait a whole period for the next one.
         m_DisplayMilliHz = display->refreshMilliHz;
         const int displayHz = (display->refreshMilliHz + 500) / 1000;
         m_EncodeFps = m_Config.fps > 0 ? m_Config.fps : displayHz;
         if (m_EncodeFps <= 0) m_EncodeFps = 60;
-        m_Cadence = FrameCadence(m_EncodeFps < displayHz ? m_EncodeFps : 0);
+        m_Cadence = FrameCadence(m_EncodeFps < displayHz ? m_EncodeFps : 0, displayHz);
         if (m_Cadence.enabled())
             log::info("[native] cadence: " + std::to_string(m_EncodeFps) + " fps stream on a " +
                       hzString(m_DisplayMilliHz) +
-                      " Hz display — the last present of each interval is encoded");
+                      " Hz display — the first present of each interval is encoded, at once");
         else
             log::info("[native] cadence: " + std::to_string(m_EncodeFps) + " fps stream on a " +
                       hzString(m_DisplayMilliHz) + " Hz display — every present is encoded");
@@ -534,12 +530,6 @@ private:
     /// turned into an ended session with a reason.
     void run() noexcept
     {
-        // The loop waits for a held picture's due time with a millisecond
-        // timeout, and Windows honours that only when the scheduler period is
-        // 1 ms; at the default 15.6 ms a 5 ms wait wakes up 15 ms later, and
-        // every frame would be that late. Per process, for the session's
-        // lifetime — this process IS the session's worker.
-        ::timeBeginPeriod(1);
         try {
             runLoop();
             logCadence();
@@ -548,7 +538,6 @@ private:
         } catch (...) {
             finish("the capture loop threw an unknown exception");
         }
-        ::timeEndPeriod(1);
     }
 
     void runLoop()
@@ -695,27 +684,16 @@ private:
         // ── Holding the loop to the stream's rate ───────────────────────────
         //
         // The display presents at its own refresh rate and the stream has a
-        // rate of its own; when the display is faster, only the LAST present
-        // of each stream interval is encoded, when the interval falls due. The
-        // picture is converted at once — the converter's output texture is
-        // the holding place, and a newer present simply overwrites it — and
-        // the stamps travel alongside so the frame that finally goes out
-        // reports its own present time and the time it spent waiting. The
-        // reasoning, and why the last present rather than the first, is on
-        // FrameCadence.
-        FrameStamps held;
+        // rate of its own; when the display is faster, only the FIRST present
+        // at or after each tick of the stream's grid is encoded — the moment
+        // it arrives, never later. The others are converted all the same (the
+        // converter's output texture is what the still-screen paths re-send,
+        // so it has to be the freshest picture) but not encoded. Nothing ever
+        // waits on this thread for a tick: a picture held on the host is
+        // latency the viewer feels. The reasoning is on FrameCadence.
         auto emitPicture = [&](const FrameStamps& stamps) -> bool {
-            if (!m_Cadence.admit(stamps.convertedUs)) {
-                held = stamps;
-                return true;
-            }
+            if (!m_Cadence.admit(stamps.convertedUs)) return true;
             if (!emit(frameNumber, stamps, error)) return false;
-            noteReal();
-            return true;
-        };
-        auto emitHeld = [&]() -> bool {
-            m_Cadence.release(steadyNowUs());
-            if (!emit(frameNumber, held, error)) return false;
             noteReal();
             return true;
         };
@@ -749,22 +727,7 @@ private:
             const int idleTimeoutMs = static_cast<int>(idleIntervalUs / 1000) < kAcquireTimeoutMs
                                           ? static_cast<int>(idleIntervalUs / 1000)
                                           : kAcquireTimeoutMs;
-            int timeoutMs = refineSoon ? refineTimeoutMs : idleTimeoutMs;
-
-            // A held picture bounds the wait below everything else: the loop
-            // has to be awake when it falls due, and a present arriving
-            // earlier simply replaces it. Rounded up — the wait is in whole
-            // milliseconds, and waking a fraction late is better than waking
-            // a whole millisecond early to find nothing due.
-            if (m_Cadence.holding()) {
-                const int64_t waitUs = m_Cadence.waitUs(steadyNowUs());
-                if (waitUs <= 0) {
-                    if (!emitHeld()) return;
-                    continue;
-                }
-                const int waitMs = static_cast<int>((waitUs + 999) / 1000);
-                if (waitMs < timeoutMs) timeoutMs = waitMs;
-            }
+            const int timeoutMs = refineSoon ? refineTimeoutMs : idleTimeoutMs;
 
             capture::CapturedFrame frame;
             const capture::AcquireStatus status = m_Capture->acquire(timeoutMs, frame);
@@ -786,14 +749,6 @@ private:
             reportCursor();
 
             if (status == capture::AcquireStatus::Timeout) {
-                // A held picture goes out the moment it is due. While one is
-                // waiting nothing below applies — the screen is moving, this
-                // is not a still desktop to refine or keep alive.
-                if (m_Cadence.holding()) {
-                    if (m_Cadence.due(steadyNowUs()) && !emitHeld()) return;
-                    continue;
-                }
-
                 // Nothing moved on the desktop — but the pointer we draw onto it
                 // is about to be drawn at a different size, and nothing else in
                 // this loop would ever notice. A viewer pinch-zooming a still
@@ -875,7 +830,7 @@ private:
                 }
                 // No present of its own — the picture changed when the pointer
                 // did, so that is its t₀. A picture like any other from here:
-                // held for the cadence if one is running, and when it goes out
+                // gated by the cadence if one is running, and when it goes out
                 // a new refinement window opens, because a pointer that stops
                 // moving leaves a composited frame that deserves sharpening
                 // exactly like any other.
@@ -892,9 +847,6 @@ private:
                     finish("capture could not be restarted: " + error);
                     return;
                 }
-                // A picture held for the cadence lived in the old converter's
-                // texture, which went with the old device.
-                m_Cadence.drop();
                 // Whatever the client had is now stale: the encoder is a new one
                 // and has no reference frames, and the picture it is about to
                 // send is a different desktop.
@@ -964,10 +916,6 @@ private:
     /// Returns false when the session must end; the reason has been reported.
     bool emit(uint32_t& frameNumber, const FrameStamps& stamps, std::string& error)
     {
-        // t₂ᵇ: the encoder is about to be asked. Taken before the keyframe
-        // flag so the flag's exchange is inside the encode stage, where it
-        // belongs.
-        const int64_t dueUs = steadyNowUs();
         const bool forceKeyframe = m_ForceKeyframe.exchange(false);
         encode::EncoderOutput encoded;
         if (!m_Encoder->encode(m_Converter->output(), forceKeyframe, encoded, error)) {
@@ -998,7 +946,6 @@ private:
             out.capturedUs = stamps.capturedUs;
             out.submittedUs = stamps.submittedUs;
             out.convertedUs = stamps.convertedUs;
-            out.dueUs = dueUs;
             out.encodedUs = steadyNowUs();
 
             // Delivered on this thread, and the consumer sends it before
@@ -1222,7 +1169,7 @@ private:
                            std::to_string(m_EncodeFps) + " fps stream — " +
                            std::to_string(m_PresentsSeen) + " presents in " + span + " s";
         if (m_Cadence.enabled()) {
-            const int64_t skipped = m_Cadence.superseded();
+            const int64_t skipped = m_Cadence.skipped();
             const int perSecond =
                 seconds > 0 ? static_cast<int>(static_cast<double>(skipped) / seconds + 0.5) : 0;
             line += ", " + std::to_string(skipped) + " not carried (" + std::to_string(perSecond) +
