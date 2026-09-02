@@ -22,6 +22,7 @@
 #include "mw/native/NativeHost.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QNetworkAccessManager>
@@ -241,12 +242,19 @@ void install(std::function<void(Result, QString)> done)
         }
 
         const QByteArray payload = reply->readAll();
-        // An HTML error page saved as an installer is the failure this catches:
-        // the real bundle is megabytes.
-        if (payload.size() < 512 * 1024) {
+        // Verified BEFORE it is written anywhere, let alone run: this executes
+        // as SYSTEM. A mismatch is a mismatch — a replaced asset, a proxy that
+        // rewrote the download, an HTML error page saved as an installer — and
+        // none of those is something to "try anyway".
+        const QString digest = QString::fromLatin1(
+            QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+        if (digest != downloadSha256()) {
             finish(nam, Result::Failed,
-                   QStringLiteral("The downloaded driver installer looks truncated (%1 bytes)")
-                       .arg(payload.size()),
+                   QStringLiteral("The downloaded driver installer does not match the published "
+                                  "one (%1 bytes, sha256 %2…) — install it manually from %3")
+                       .arg(payload.size())
+                       .arg(digest.left(12))
+                       .arg(downloadUrl()),
                    done);
             return;
         }
