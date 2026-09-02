@@ -24,6 +24,7 @@ void run_ds4_mapping_tests();
 void run_stage_stats_tests();
 void run_frame_cadence_tests();
 void run_restart_backoff_tests();
+void run_rate_control_tests();
 
 int main()
 {
@@ -44,6 +45,7 @@ int main()
     run_stage_stats_tests();
     run_frame_cadence_tests();
     run_restart_backoff_tests();
+    run_rate_control_tests();
     run_capture_tests();
 
     const int total = g_nativeStats.passed + g_nativeStats.failed;

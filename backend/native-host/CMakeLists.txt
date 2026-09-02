@@ -157,6 +157,7 @@ if(MW_BUILD_TESTS)
         tests/test_stage_stats.cpp
         tests/test_frame_cadence.cpp
         tests/test_restart_backoff.cpp
+        tests/test_rate_control.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)

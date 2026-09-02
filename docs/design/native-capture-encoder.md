@@ -269,6 +269,15 @@ la passe de conversion, sur le même adaptateur.
 `setBitrate()` reconfigure sans redémarrer la session — la base du rate-control
 piloté par le retour réel du client.
 
+**Le VBV de `setBitrate()` passe par le même plancher que celui de l'init**
+(`vbvBitsPerFrame`, `RateControl.h`), sur les trois encodeurs. Jusqu'au
+02/09/2026 AMF divisait simplement par le fps : la rafale de raffinement (§9.1)
+appelle `setBitrate()` deux fois par transition figé/mouvement, et chaque retour
+au budget ordinaire laissait l'encodeur AMD avec un VBV 2,4× plus serré à 144 Hz
+que celui choisi à l'init — l'image molle que le plancher existe pour éviter,
+réintroduite par le chemin censé la rendre nette. Corrigé (audit B4) ; le test
+`test_rate_control.cpp` fixe l'égalité init/ré-application à tout fps.
+
 ### L'intra-refresh ne sert à rien sans un récepteur qui l'accompagne
 
 L'intra-refresh est implémenté sur les **trois** encodeurs (NVENC, AMF, oneVPL).
