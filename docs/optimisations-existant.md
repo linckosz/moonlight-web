@@ -1,0 +1,17 @@
+# Plan annexe — optimisations des autres pipelines (Sunshine, Apollo, Wolf, MultiSeat)
+
+> Le host natif est prioritaire : la grande majorité des utilisateurs passeront par
+> lui. Mais les hosts externes doivent rester pleinement servis. Ce fichier est donc
+> **un plan à part**, pas une liste d'oublis : tout ce que le chantier natif révèle
+> d'améliorable chez eux est consigné ici, avec l'endroit et l'effet attendu, et sera
+> **traité dans une session dédiée**, avec sa propre non-régression (quatre sessions
+> simultanées, co-op Wolf, MultiSeat). Rien d'ici ne s'applique pendant le chantier
+> natif. Les **bugs**, eux, se corrigent directement et ne figurent pas ici.
+
+| Date | Où | Constat | Effet attendu si appliqué |
+|---|---|---|---|
+| 02/09/2026 | `backend/src/streaming/FrameSender.h:87` | `kMaxQueued = 8` : jusqu'à huit frames en attente avant la première éviction, soit 133 ms de tampon à 60 fps, pour tous les moteurs | Profondeur 1 à 2 pour les deltas : la latence sous charge cesse de s'accumuler avant que la contre-pression agisse |
+| 02/09/2026 | `backend/src/streaming/DataChannelRelay.cpp:796` | Chaque message d'input est marshalé vers le thread principal Qt, qui traite aussi chaque frame vidéo en file et le scan NAL des keyframes | Parse et transmission sur le thread libdatachannel : l'input ne fait plus la queue derrière la vidéo |
+| 02/09/2026 | `backend/src/streaming/DataChannelRelay.cpp:457` | `videoFrameReady` connecté en `AutoConnection` : le relais DC paie une file Qt vers le thread principal puis une file vers `FrameSender`. `MediaTrackRelay` a déjà le mode direct (`m_DirectVideoSend`) | Un réveil de thread de moins par frame, thread principal hors du chemin chaud |
+| 02/09/2026 | `backend/src/streaming/DataChannelRelay.cpp` | Le relais DC ne lit pas `clientstats` ; seul `MediaTrackRelay` le fait | Retour du récepteur disponible pour un rate control ou un diagnostic sur le transport par défaut |
+| 02/09/2026 | `backend/src/streaming/DataChannelRelay.cpp:860` | Le patch VPS/SPS HEVC scanne les NAL de chaque keyframe jusqu'au premier succès, sur le thread qui envoie | Scan borné à la première keyframe, hors du chemin chaud |
