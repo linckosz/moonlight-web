@@ -136,17 +136,23 @@ Une manette inconnue ne doit jamais bloquer la connexion : elle est présentée 
 X360, avec ses boutons supplémentaires perdus. C'est une dégradation, pas un
 refus.
 
-> **DualShock 4 livré.** `VigemGamepad::profileFor()` suit le `ctype` que le
-> client envoie déjà (`LI_CTYPE_PS` → DS4, tout le reste → X360), et le rapport
-> est construit par `src/input/Ds4Mapping.{h,cpp}` — pur, sans Windows, compilé
-> partout, couvert bouton par bouton par `tests/test_ds4_mapping.cpp`.
+> **DualShock 4 livré, non sélectionné.** Le profil est complet : rapport
+> construit par `src/input/Ds4Mapping.{h,cpp}` — pur, sans Windows, compilé
+> partout, couvert bouton par bouton par `tests/test_ds4_mapping.cpp` — et
+> validé à la main le 02/09/2026, rumble compris (§10).
 >
-> ⚠️ **Le compromis, à savoir avant de tester** : un jeu qui ne parle que XInput
-> ne voit pas de DS4 du tout. Une manette PlayStation qui marchait partout en
-> X360 gagne les bons prompts et peut perdre les jeux XInput-only. C'est le
-> comportement que §7 décrit (« deviner juste » = présenter la manette que le
-> joueur tient) et celui de Sunshine en `gamepad = auto`, mais il se renverse en
-> une ligne dans `profileFor()` si l'essai dit le contraire.
+> **Tranché le 02/09/2026 : X360 pour toutes les manettes**, PlayStation
+> comprise. `VigemGamepad::profileFor()` (et son miroir uinput) répond X360 quel
+> que soit le `ctype` annoncé. La raison est le compromis constaté : un jeu qui
+> ne parle que XInput ne voit pas de DS4 du tout, et l'échec est silencieux,
+> jeu par jeu — une manette qui marche dans un titre et rien dans le suivant,
+> sans qu'un joueur puisse dire pourquoi. Le X360 marche partout ; son prix est
+> des prompts Xbox sur une manette PlayStation, ce qui se joue quand même.
+> Sunshine fait l'inverse en `gamepad = auto`, mais Sunshine a un réglage
+> visible pour le corriger ; nous n'en voulons pas en production (§7.1).
+>
+> Le profil reste entier pour que la décision se renverse en une ligne. Le
+> `ctype` continue d'être annoncé — il sert toujours à un hôte GameStream.
 
 ### 6.1 Ce que XInput ne peut pas porter
 
@@ -176,9 +182,15 @@ USB/Bluetooth et version du système. Détection à plusieurs niveaux :
 > donnerait une manette dont chaque bouton peut être ailleurs — plus difficile à
 > diagnostiquer qu'une manette absente.
 >
-> Les deux niveaux suivants restent donc à écrire, et ils demandent une table de
-> correspondances par périphérique. À décider séparément : sur PC, une manette
-> qui propose un mode DirectInput propose presque toujours aussi XInput.
+> **Tranché le 02/09/2026 : les deux niveaux suivants ne seront pas écrits.**
+> Ils demandent une table de correspondances par périphérique, et sur PC une
+> manette qui propose un mode DirectInput propose presque toujours aussi XInput
+> — le bon geste est sur la manette, pas dans une table. Ce qui manquait était
+> de le dire : `GamepadManager` signale la manette écartée (une fois par
+> périphérique, à la connexion ou au premier passage de la boucle pour une
+> manette branchée avant le début), et `StreamView` l'affiche en toast, dix
+> secondes, avec le nom rapporté par le navigateur et le conseil de passer en
+> XInput. Rebrancher la manette réarme le message.
 
 ### 7.1 Sélection manuelle — debug uniquement
 
@@ -195,22 +207,48 @@ En debug il est indispensable pour isoler « la détection s'est trompée » de
 > Automatique / Toujours Xbox 360 / Toujours DualShock 4. Le choix ne crée pas
 > un nouveau champ de protocole — il remplace le `ctype` annoncé, donc l'hôte n'a
 > qu'une seule chose à lire et ignore qu'il y a eu un forçage.
+>
+> ⚠️ Conséquence de la décision de §6 (02/09/2026) : sur l'hôte natif, « Toujours
+> DualShock 4 » est **inerte** — un DS4 forcé annonce le même `LI_CTYPE_PS`
+> qu'un DS4 détecté, et `profileFor()` répond X360 aux deux. Le choix garde son
+> effet sur un hôte GameStream (Sunshine suit le `ctype`). Rendre la DS4
+> atteignable en debug sur le natif demanderait le champ `profile` que §8
+> prévoyait, porté jusqu'à `InputEvent` ; ce n'est pas fait.
 
 ---
 
 ## 8. Protocole
 
-Le profil est annoncé à la création, jamais répété :
+Le type de manette est annoncé à la création, jamais répété. Ce qui circule
+réellement sur le DataChannel d'entrée (JSON, `GamepadManager.js` côté client,
+les trois relais côté serveur) :
 
 ```text
-GAMEPAD_CREATE  { controller_id, profile }
-GAMEPAD_STATE   { controller_id, buttons, dpad, lx, ly, rx, ry, lt, rt }
-GAMEPAD_DESTROY { controller_id }
-GAMEPAD_RUMBLE  { controller_id, low_frequency, high_frequency, duration }
+navigateur → serveur
+  { type: "gamepadconnect",    index, mask, ctype, rumble }
+  { type: "gamepad",           index, mask, buttons, lt, rt, lx, ly, rx, ry }
+  { type: "gamepaddisconnect", index, mask }
+serveur → navigateur
+  { type: "rumble", index, low, high }
 ```
 
-Versionné (`GAMEPAD_PROTOCOL_VERSION`) pour ajouter gyro/touchpad/gâchettes
-adaptatives sans casser les anciens clients.
+- `ctype` est un `LI_CTYPE_*` (inconnu / Xbox / PlayStation / Nintendo), le même
+  mot que GameStream — pas un nom de profil. Le sélecteur de debug (§7.1) le
+  remplace au lieu d'ajouter un champ.
+- `gamepaddisconnect` est un **retrait explicite** : le serveur le traduit en
+  `sendControllerRemoval` sur les trois relais, et l'hôte natif débranche le
+  périphérique (§12). Un état vide ne vaut pas retrait.
+- `rumble` est un **niveau**, pas une impulsion : pas de durée. Les moteurs
+  restent au niveau dit jusqu'au prochain message, comme sur XInput et sur la
+  DualShock ; c'est le client qui reconstruit une vibration tenue en tranches
+  (§10).
+- Pas de numéro de version. Un champ nouveau se lit comme absent par un serveur
+  plus ancien, et c'est assez pour gyro ou touchpad le jour où le navigateur
+  les expose.
+
+> Le plan initial prévoyait `GAMEPAD_CREATE { profile }` et un rumble avec
+> durée. Ni l'un ni l'autre n'existe ; ce bloc décrit le fil tel qu'il est
+> depuis la livraison (relevé le 02/09/2026).
 
 ### 8.1 ⚠️ Encodage binaire : évaluer l'existant d'abord
 
@@ -323,8 +361,10 @@ alors qu'ils ne le sont pas sous Windows.
 > `GROUP="input"` pour l'installation headless) et `modules-load.d` pour charger
 > le module, tous deux posés par `make-packages.sh` et rechargés par `postinst`.
 > Ils sont inertes tant que personne ne branche de manette — mais ils accordent
-> l'accès à `/dev/uinput` dès maintenant, pour un backend encore inatteignable :
-> une ligne à retirer de `make-packages.sh` si ce n'est pas voulu si tôt.
+> l'accès à `/dev/uinput` dès maintenant, pour un backend encore inatteignable.
+> **Tranché le 02/09/2026 : gardés.** La portée est celle que Steam et Sunshine
+> posent (le siège, et le groupe `input`), et un hôte Linux installé aujourd'hui
+> aura le droit prêt le jour où la session existe, sans réinstallation.
 
 ### macOS
 
@@ -402,12 +442,23 @@ Quatre au maximum sous Windows : XInput n'expose que quatre emplacements. Chaque
 manette a `controller_id`, `profile`, `state`, `virtual_device`. Le protocole ne
 suppose jamais une manette unique.
 
+> **Sessions partagées.** Chaque invité décale ses numéros de manette (un cran
+> par siège) pour ne pas retomber sur la manette 0 du propriétaire. Au-delà du
+> quatrième emplacement, les deux moteurs répondent pareil depuis le
+> 02/09/2026 : la manette est **refusée et dite une fois** à l'annonce, dans le
+> journal de l'hôte (`VigemGamepad::arrive`, `MoonlightShim::sendControllerArrival`).
+> Le chemin GameStream ramenait auparavant ce numéro sur le 3, ce qui posait deux
+> joueurs sur la même manette — la collision que le décalage existe pour éviter.
+> Le fil GameStream sait aller jusqu'à 16 (masque sur seize bits, Sunshine et
+> Apollo suivent) ; le plafond y est une constante, alignée sur XInput par
+> symétrie avec l'hôte natif.
+
 ---
 
 ## 12. Cycle de vie
 
 ```text
-GAMEPAD_CREATE → périphérique créé → GAMEPAD_STATE × N → GAMEPAD_DESTROY
+gamepadconnect → périphérique créé → gamepad × N → gamepaddisconnect
 DataChannel perdu → détruire TOUS les périphériques virtuels
 ```
 
@@ -550,7 +601,8 @@ Réalisables :
       manette (01/09/2026)
 - [x] DualShock 4 — profil complet, mapping vérifié bouton par bouton sans
       matériel, **boutons/axes essayés en vrai le 01/09/2026**, et **rumble DS4
-      validé le 02/09/2026** en même temps qu'une X360 dans la même session (§10)
+      validé le 02/09/2026** en même temps qu'une X360 dans la même session (§10).
+      **Non sélectionné** depuis le même jour : X360 pour toutes les manettes (§6)
 - [ ] Linux / uinput — backend écrit et compilé, mais aucune session Linux ne
       l'appelle encore (§9)
 - [x] aucun composant commercial, aucune licence payante
