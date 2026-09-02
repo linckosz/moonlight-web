@@ -392,9 +392,16 @@ bool AmfEncoder::setBitrate(int bitrateKbps, std::string& error)
 
     // Applied live, with no restart — the basis for following the client's real
     // feedback frame by frame.
+    //
+    // The VBV goes through the same floor as init(): the still-screen burst
+    // calls this twice per still/motion transition, and a plain division by
+    // the frame rate would leave the encoder with a budget 2.4× tighter at
+    // 144 Hz than the one it started with — the soft first frame RateControl.h
+    // exists to prevent, reintroduced on AMD by the very path meant to sharpen it.
     m_Encoder->SetProperty(props.targetBitrate, bitsPerSecond);
     m_Encoder->SetProperty(props.peakBitrate, bitsPerSecond);
-    m_Encoder->SetProperty(props.vbvBufferSize, bitsPerSecond / m_Fps);
+    m_Encoder->SetProperty(props.vbvBufferSize, static_cast<amf_int64>(vbvBitsPerFrame(
+                                                    static_cast<uint32_t>(bitsPerSecond), m_Fps)));
     return true;
 }
 
