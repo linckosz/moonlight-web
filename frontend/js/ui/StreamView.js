@@ -689,6 +689,10 @@ export class StreamView {
         // host that stamps its frames sends them; kept a few seconds then aged out.
         this._hostStages = null;
         this._hostStagesAt = 0;
+        // The native host's present → last byte, as ONE leg. It replaces the
+        // Sunshine + server pair in the total: those two overlap on the native
+        // path (both contain the encode), and summing them counted it twice.
+        this._hostTotalStats = new SlidingStats(5000);
         this._chunkSubmitTimes = new Map(); // chunk timestamp (µs) → { perf, backendTs }
         this._pingSeq = 0;
         this._pingInterval = null;
@@ -4417,10 +4421,20 @@ export class StreamView {
             // "counts" marks a leg whose presence is what makes the total
             // meaningful — the host-side legs alone are not an end-to-end
             // latency.
-            const legs = [
-                { key: 'statLegHost', stats: this._hostProcStats },
-                { key: 'statLegHostNet', stats: this._hostRttStats },
-            ];
+            // Native host only: where the host's own time went, stage by stage.
+            // Aged out a few seconds after the last stats message carried them.
+            const hostStages =
+                this._hostStages && now - this._hostStagesAt < 6000 ? this._hostStages : null;
+            // A host that stamps its frames gives one leg, present → last byte,
+            // in place of the two GameStream legs (capture→encode as reported by
+            // the host, then our own submit→send): on the native path both of
+            // those contain the encode, and their sum counted it twice.
+            const legs = hostStages
+                ? [{ key: 'statStageTotal', stats: this._hostTotalStats }]
+                : [
+                      { key: 'statLegHost', stats: this._hostProcStats },
+                      { key: 'statLegHostNet', stats: this._hostRttStats },
+                  ];
             if (isMedia) {
                 // Native media track: no WebCodecs pipeline to time, so the
                 // browser-side stages come from getStats deltas instead. The
@@ -4429,7 +4443,8 @@ export class StreamView {
                 legs.push({ key: 'statLegJitter', stats: this._mediaJitterStats, counts: true });
                 legs.push({ key: 'statLegDecode', stats: this._mediaDecodeStats, counts: true });
             } else {
-                legs.push({ key: 'statLegServer', stats: this._decodeLatencyStats });
+                if (!hostStages)
+                    legs.push({ key: 'statLegServer', stats: this._decodeLatencyStats });
                 legs.push({
                     key: 'statLegNet',
                     stats: this._browserRttStats,
@@ -4481,11 +4496,8 @@ export class StreamView {
                 }
                 rows.push(legRow(label, value));
             }
-            // Native host only: where the host's own time went. Shown, not
-            // added — the host leg above already covers present → encoded, and
-            // the server leg the rest; these say WHICH stage moved.
-            const hostStages =
-                this._hostStages && now - this._hostStagesAt < 6000 ? this._hostStages : null;
+            // The host's stages, shown but not added: the total leg above
+            // already holds their sum. These say WHICH stage moved.
             if (hostStages) {
                 const named = {
                     acquire: 'statStageAcquire',
@@ -4493,7 +4505,6 @@ export class StreamView {
                     encode: 'statStageEncode',
                     queue: 'statStageQueue',
                     send: 'statStageSend',
-                    total: 'statStageTotal',
                 };
                 for (const stage of Object.keys(named)) {
                     const s = hostStages[stage];
@@ -4805,6 +4816,10 @@ export class StreamView {
             if (msg.stages && typeof msg.stages === 'object') {
                 this._hostStages = msg.stages;
                 this._hostStagesAt = performance.now();
+                const total = msg.stages.total;
+                if (total && total.n > 0 && total.avg > 0) {
+                    this._hostTotalStats.addSample(total.avg / 1000);
+                }
             }
             // Backend SCTP backpressure drops (cumulative). Frames dropped
             // backend-side never get a frameId, so this is the only signal the
