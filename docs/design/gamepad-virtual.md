@@ -377,15 +377,22 @@ rapporte 8. Le facteur est **257** et non 256, pour que 0xFF donne 0xFFFF.
 > l'atteindre du tout.
 >
 > C'est exactement ce qui a fait conclure « pas de rumble en mode DS4 » au
-> premier essai (01/09/2026) : le test n'atteignait pas le périphérique.
-> `scripts/test-rumble.ps1 -Ds4` passe par le rapport HID ; les deux DS4
-> virtuelles d'une session en cours l'acceptent, donc le maillon côté hôte est
-> joignable.
+> premier essai (01/09/2026) : le test n'atteignait pas le périphérique. Le
+> second piège était dans le script lui-même : `HidD_SetOutputReport` part en
+> transfert de contrôle SET_REPORT, que ViGEmBus accepte puis **jette** ; seul
+> `WriteFile` (transfert interrupt OUT) atteint le rapport que le bus relit.
+> `scripts/test-rumble.ps1 -Ds4` n'utilise plus que `WriteFile`.
 >
-> Le dernier maillon échappe à tout script sur l'hôte : une manette dont
-> `vibrationActuator` est nul dans le navigateur ne rejouera rien, quoi que
-> l'hôte envoie. C'est le premier endroit à regarder si le rumble DS4 manque
-> encore.
+> **Validé à la main le 02/09/2026** : une session native avec une manette en
+> X360 et une en DualShock 4 (8BitDo SN30 Pro ×2, Chrome/macOS → hôte natif
+> Windows 11) ; `test-rumble.ps1 -Seconds 3` puis `-Ds4 -Seconds 3` depuis
+> l'hôte, les deux manettes ont vibré. Le re-armement par tranches de la
+> vibration côté navigateur (§10, `GamepadManager`) est validé du même coup.
+>
+> Si le rumble manque chez quelqu'un d'autre, le dernier maillon échappe à tout
+> script sur l'hôte : une manette dont `vibrationActuator` est nul dans le
+> navigateur ne rejouera rien, quoi que l'hôte envoie. C'est le premier
+> endroit à regarder.
 
 ---
 
@@ -542,8 +549,8 @@ Réalisables :
       virtuelle occupe bien un slot, et le rumble revient jusqu'à la vraie
       manette (01/09/2026)
 - [x] DualShock 4 — profil complet, mapping vérifié bouton par bouton sans
-      matériel, et **boutons/axes essayés en vrai le 01/09/2026** ; le rumble
-      DS4 reste à confirmer (voir §10)
+      matériel, **boutons/axes essayés en vrai le 01/09/2026**, et **rumble DS4
+      validé le 02/09/2026** en même temps qu'une X360 dans la même session (§10)
 - [ ] Linux / uinput — backend écrit et compilé, mais aucune session Linux ne
       l'appelle encore (§9)
 - [x] aucun composant commercial, aucune licence payante
