@@ -733,10 +733,19 @@ private:
         //    of the same softness — the encoder was never short of chances, it
         //    was short of bits. See encode/RateControl.h.
         //
-        // Latency is untouched. A VBV bounds how long a frame occupies the link,
-        // which protects the frame AFTER it — and while the screen is still,
-        // there is none. The moment something moves the ordinary budget is
-        // restored BEFORE that frame is encoded, so motion never pays for this.
+        // Latency is bounded, not untouched. A VBV bounds how long a frame
+        // occupies the link, which protects the frame AFTER it — and while the
+        // screen is still, there is none. The moment something moves the
+        // ordinary budget is restored BEFORE that frame is encoded. But the
+        // passes already handed to the link are still in front of that frame,
+        // and a burst sent as fast as the encoder produces it puts the WHOLE
+        // burst there: a few hundred kilobytes, which on a 20 Mbps link is a
+        // quarter of a second before the first frame of the movement arrives.
+        // So a pass goes out only once the link has drained the previous one,
+        // by the stream's own rate (LinkOccupancy) — the burst never runs more
+        // than one pass ahead, and the boost is sized so that one pass is
+        // 50 ms of link at most (kStillBoost). That is the price a badly timed
+        // mouse pays, once.
         //
         // Three ways out, whichever comes first: the window, convergence, and
         // anything at all happening on screen.
@@ -747,12 +756,9 @@ private:
         // screen someone is actually reading has settled long before they look.
         constexpr int64_t kRefineDelayUs = 150 * 1000;
         constexpr int kRefineMaxFps = 60;
-        // "The encoder had nothing left to add." Judged against the boosted
-        // budget, not the stream's, and only after enough passes to be sure the
-        // burst had really started.
-        constexpr size_t kRefineDoneBytes = 2048;
-        constexpr int kRefineQuietPasses = 2;
-        constexpr int kRefineMinPasses = 4;
+        // "The encoder had nothing left to add" is decided by
+        // encode::RefineConvergence — a tiny pass, a QP that stopped falling,
+        // or the ceiling on passes — see there for why size alone was wrong.
 
         const int refineFps =
             (m_Config.fps > 0 && m_Config.fps < kRefineMaxFps) ? m_Config.fps : kRefineMaxFps;
@@ -768,8 +774,16 @@ private:
         // The last frame that came from an actual capture — what the refinement
         // window is measured from.
         int64_t lastRealUs = lastSentUs;
-        int refineQuiet = 0;
+        encode::RefineConvergence refineConv;
+        bool refineDone = false;
+        // The QP the picture started the burst at, for the log: first → last
+        // is the sharpening the burst bought, in the encoder's own unit.
+        int refineFirstQp = -1;
         int refinePasses = 0;
+        // Wake-ups at which a pass was due but the link had not drained the
+        // previous one. In the log next to the passes: the pair says whether
+        // the burst was shaped by convergence or by the link.
+        int refineHeld = 0;
         size_t refineBytes = 0;
         size_t refineFirstBytes = 0;
         int refineLogged = 0;
@@ -796,21 +810,60 @@ private:
         // The stream's own bitrate, which the quality ladder may move under us,
         // and whether the still-screen budget is currently in its place.
         int baseKbps = m_Config.bitrateKbps;
+        m_LinkKbps = baseKbps;
         bool boosted = false;
         auto applyBitrate = [&](int kbps) {
             if (kbps > 0 && !m_Encoder->setBitrate(kbps, error))
                 log::warning("[native] bitrate change refused: " + error);
         };
 
+        // The first few bursts, then silence. These are the numbers that say
+        // whether any of this worked: what one frame's budget bought, against
+        // what the picture actually converged to, and how often the link — not
+        // the encoder — set the pace. More than a handful would be noise:
+        // bursts happen every time the screen settles.
+        //
+        // Every way out is logged, not only convergence. A burst that ran to
+        // the end of its window without ever going quiet used to leave no
+        // trace at all — which is how a 55 Mbps stream spent 3 MB on every
+        // pause of the mouse for weeks without anyone knowing — and a log that
+        // only reports success is not a log of what happened.
+        auto closeBurst = [&](const char* how) {
+            if (refinePasses == 0) return;
+            if (refineLogged < 3) {
+                refineLogged++;
+                std::string qp;
+                if (refineFirstQp >= 0 && m_LastEmitQp >= 0)
+                    qp = ", QP " + std::to_string(refineFirstQp) + " -> " +
+                         std::to_string(m_LastEmitQp);
+                log::info(
+                    "[native] still picture refined: " + std::to_string(refineFirstBytes / 1024) +
+                    " KB + " + std::to_string(refineBytes / 1024) + " KB over " +
+                    std::to_string(refinePasses) + " passes, " + std::to_string(refineHeld) +
+                    " held for the link" + qp + " (" + how + ")");
+            }
+            refinePasses = 0;
+        };
+
+        // A new picture is on the wire: whatever burst was running is over, and
+        // the next one starts from this picture's own figures.
+        auto resetBurst = [&]() {
+            refineConv.reset();
+            refineDone = false;
+            refinePasses = 0;
+            refineHeld = 0;
+            refineBytes = 0;
+            refineFirstBytes = m_LastEmitBytes;
+            refineFirstQp = m_LastEmitQp;
+        };
+
         // A picture changed — a present, or the pointer moving over a still
         // desktop — and went out. The refinement window is measured from here.
         auto noteReal = [&]() {
+            closeBurst("screen moved");
             lastSentUs = steadyNowUs();
             lastRealUs = lastSentUs;
-            refineQuiet = 0;
-            refinePasses = 0;
-            refineBytes = 0;
-            refineFirstBytes = m_LastEmitBytes;
+            resetBurst();
         };
 
         // ── Holding the loop to the stream's rate ───────────────────────────
@@ -838,6 +891,7 @@ private:
                 // mid-refinement; the boost is recomputed from the new base
                 // instead, and the base takes over when the burst ends.
                 baseKbps = kbps;
+                m_LinkKbps = baseKbps;
                 applyBitrate(boosted ? encode::stillBitrateKbps(baseKbps) : baseKbps);
             }
 
@@ -846,9 +900,10 @@ private:
             // the settling delay as well, so a pass is not up to 100 ms late.
             const int64_t sinceRealUs = steadyNowUs() - lastRealUs;
             const bool refineSoon = sinceRealUs < (kRefineDelayUs + kRefineWindowUs) &&
-                                    refineQuiet < kRefineQuietPasses &&
-                                    m_Converter->outputWidth() != 0;
+                                    !refineDone && m_Converter->outputWidth() != 0;
             const bool refining = refineSoon && sinceRealUs >= kRefineDelayUs;
+            // The window ran out on a burst still going: say so, once.
+            if (!refineSoon && !refineDone) closeBurst("window closed");
 
             // The acquire timeout is the loop's sleep, so a floor faster than
             // it would simply never be met: at 15 fps the frame is due every
@@ -906,6 +961,19 @@ private:
                 if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : idleIntervalUs))
                     continue;
 
+                // A pass waits for the link, never the other way round: the
+                // previous pass — or the last frames of the movement that just
+                // ended — must have left before another few hundred kilobytes
+                // are put behind them. Held, not skipped: the window keeps
+                // running and the next wake-up asks again. The liveness floor
+                // is not gated (a still frame at the ordinary budget is a few
+                // hundred bytes), and a boosted pass is at most 50 ms of link,
+                // so the hold can never reach the floor's 500 ms.
+                if (refining && !m_Link.drainedAt(steadyNowUs())) {
+                    refineHeld++;
+                    continue;
+                }
+
                 // The budget goes up before the first pass, not after it: the
                 // whole point is that this frame is the one that gets to spend.
                 if (refining && !boosted) {
@@ -919,21 +987,16 @@ private:
                 if (!refining) continue;
                 refinePasses++;
                 refineBytes += m_LastEmitBytes;
-                refineQuiet =
-                    (refinePasses >= kRefineMinPasses && m_LastEmitBytes <= kRefineDoneBytes)
-                        ? refineQuiet + 1
-                        : 0;
-                // The first few bursts, then silence. These are the numbers that
-                // say whether any of this worked: what one frame's budget bought,
-                // against what the picture actually converged to. More than a
-                // handful would be noise — bursts happen every time the screen
-                // settles.
-                if (refineLogged < 3 && refineQuiet >= kRefineQuietPasses) {
-                    refineLogged++;
-                    log::info("[native] still picture refined: " +
-                              std::to_string(refineFirstBytes / 1024) + " KB + " +
-                              std::to_string(refineBytes / 1024) + " KB over " +
-                              std::to_string(refinePasses) + " passes");
+                switch (refineConv.notePass(m_LastEmitBytes, m_LastEmitQp)) {
+                case encode::RefineConvergence::Verdict::Continue: break;
+                case encode::RefineConvergence::Verdict::Converged:
+                    refineDone = true;
+                    closeBurst("converged");
+                    break;
+                case encode::RefineConvergence::Verdict::Capped:
+                    refineDone = true;
+                    closeBurst("pass cap");
+                    break;
                 }
                 continue;
             }
@@ -995,11 +1058,9 @@ private:
                 applyBitrate(baseKbps);
                 // A new picture deserves its own refinement window rather than
                 // whatever the old one had reached.
+                closeBurst("display lost");
                 lastRealUs = steadyNowUs();
-                refineQuiet = 0;
-                refinePasses = 0;
-                refineBytes = 0;
-                refineFirstBytes = 0;
+                resetBurst();
                 continue;
             }
 
@@ -1071,6 +1132,8 @@ private:
         }
 
         m_LastEmitBytes = encoded.size;
+        m_LastEmitQp = encoded.avgQp;
+        m_Link.sent(steadyNowUs(), encoded.size, m_LinkKbps);
 
         if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo) {
             EncodedFrame out;
@@ -1389,11 +1452,21 @@ private:
     /// Bytes the last emit() produced. The refinement loop reads it to know
     /// when a still picture has stopped improving.
     size_t m_LastEmitBytes = 0;
+    /// The average QP the encoder reported for the last emit(), -1 when it
+    /// reports none. The refinement loop's second witness of convergence.
+    int m_LastEmitQp = -1;
     /// The flattened image handed to the client. Reused so a shape change does
     /// not allocate on the capture thread.
     std::vector<uint8_t> m_CursorScratch;
     /// Zero means "no change pending". Exchanged by the loop each iteration.
     std::atomic<int> m_PendingBitrate{0};
+    /// What the link is still carrying, by the stream's own rate. Fed by every
+    /// emit(); read by the refinement burst, which does not send a pass into a
+    /// link that has not finished with the previous one. See RateControl.h.
+    encode::LinkOccupancy m_Link;
+    /// The rate the link is modelled at: the stream's bitrate, never the
+    /// still-screen boost — that one is what is being paced, not the pipe.
+    int m_LinkKbps = 0;
 };
 
 } // namespace
