@@ -107,16 +107,23 @@ function axisToShort(v) {
 export class GamepadManager {
     /**
      * @param {(msg:object)=>void} sendFn — sends a JSON input message.
-     * @param {{ profile?: 'auto'|'x360'|'ds4' }} [options] — `profile` forces
-     *   the pad the host presents instead of following what we detect. It is
-     *   offered in debug builds only (see SettingsView): in production the right
-     *   behaviour is to guess correctly, and a visible switch would turn a
-     *   detection bug into a question the user cannot answer. In debug it is
-     *   what separates "the detection was wrong" from "the profile is wrong".
+     * @param {{ profile?: 'auto'|'x360'|'ds4', onIgnored?: (gp: Gamepad) => void }} [options]
+     *   `profile` forces the pad the host presents instead of following what we
+     *   detect. It is offered in debug builds only (see SettingsView): in
+     *   production the right behaviour is to guess correctly, and a visible
+     *   switch would turn a detection bug into a question the user cannot
+     *   answer. In debug it is what separates "the detection was wrong" from
+     *   "the profile is wrong".
+     *   `onIgnored` is told, once per pad, about a controller this manager will
+     *   not forward (no standard mapping) — the caller decides how to say it.
      */
     constructor(sendFn, options = {}) {
         this._send = sendFn;
         this._profile = options.profile || 'auto';
+        this._onIgnored = typeof options.onIgnored === 'function' ? options.onIgnored : null;
+        // Indexes already reported as ignored; a pad is announced once, not
+        // once per frame of the poll that keeps seeing it.
+        this._ignored = new Set();
         this._running = false;
         this._rafId = null;
         // index → { last: {buttons,lt,rt,lx,ly,rx,ry}, hasRumble:boolean }
@@ -152,6 +159,7 @@ export class GamepadManager {
             this._send({ type: 'gamepaddisconnect', index, mask: 0 });
         }
         this._pads.clear();
+        this._ignored.clear();
     }
 
     /**
@@ -175,8 +183,26 @@ export class GamepadManager {
         return m;
     }
 
+    /**
+     * A pad the browser reports without a standard mapping: it does not know
+     * which button is which, and neither do we. Forwarding it anyway would give
+     * a pad whose every button may be somewhere else — harder to diagnose than
+     * a pad that is not there. Decided out of scope on 2026-09-02 (design §7):
+     * on PC a controller offering DirectInput almost always offers XInput too,
+     * so the fix is a switch on the pad, and the user has to be told that.
+     */
+    _noteIgnored(gp) {
+        if (this._ignored.has(gp.index)) return;
+        this._ignored.add(gp.index);
+        if (this._onIgnored) this._onIgnored(gp);
+    }
+
     _handleConnect(gp) {
-        if (!gp || gp.mapping !== 'standard') return; // wheels/HOTAS: phase 2
+        if (!gp) return;
+        if (gp.mapping !== 'standard') {
+            this._noteIgnored(gp);
+            return;
+        }
         if (this._pads.has(gp.index)) return;
         const hasRumble = !!gp.vibrationActuator;
         this._pads.set(gp.index, { last: null, hasRumble });
@@ -190,7 +216,11 @@ export class GamepadManager {
     }
 
     _handleDisconnect(gp) {
-        if (!gp || !this._pads.has(gp.index)) return;
+        if (!gp) return;
+        // Unplugged and plugged back in still the wrong mode deserves the
+        // message again; the same index may also be a different pad by then.
+        this._ignored.delete(gp.index);
+        if (!this._pads.has(gp.index)) return;
         this._stopRumble(gp.index);
         this._pads.delete(gp.index);
         this._send({ type: 'gamepaddisconnect', index: gp.index, mask: this._mask() });
@@ -205,7 +235,13 @@ export class GamepadManager {
     _poll() {
         const pads = navigator.getGamepads ? navigator.getGamepads() : [];
         for (const gp of pads) {
-            if (!gp || gp.mapping !== 'standard') continue;
+            if (!gp) continue;
+            if (gp.mapping !== 'standard') {
+                // Also seen here, not only on the connect event: a pad plugged
+                // in before start() never fires one.
+                this._noteIgnored(gp);
+                continue;
+            }
             // Late-arriving pad (no connect event yet).
             if (!this._pads.has(gp.index)) this._handleConnect(gp);
 
