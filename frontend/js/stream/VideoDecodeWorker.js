@@ -105,6 +105,10 @@ const S = {
     // no cross-clock offset involved. Split into its three stages so the
     // overlay breakdown can name where the browser time goes.
     _chunkSubmitTimes: new Map(), // chunk timestamp (µs) → { perf, backendTs } at decode()
+    // Last fragment on the main thread → decode() submit here: the postMessage
+    // hop plus whatever queued in front of the frame. Measured on the absolute
+    // clock (timeOrigin + now), the one both contexts share.
+    _arriveSamples: [], // [{ time, value }]
     _decodeSamples: [], // [{ time, value }] decode() submit → decoder output
     _queueSamples: [], // [{ time, value }] decoder output → draw start
     _renderSamples: [], // [{ time, value }] draw start → draw done
@@ -197,6 +201,25 @@ function stageAvg(samples) {
     return n === 0 ? 0 : sum / n;
 }
 
+// Mean AND tail of a stage over the same 2s window. The mean is what the
+// overlay adds up; the p99 is the frame the viewer felt. A window holds a few
+// hundred samples at most, so a sort every half second costs nothing.
+function stageStats(samples) {
+    const avg = stageAvg(samples); // prunes
+    const n = samples.length;
+    if (n === 0) return { n: 0, avg: 0, p95: 0, p99: 0, max: 0 };
+    const values = samples.map((s) => s.value).sort((a, b) => a - b);
+    const at = (p) => values[Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1))];
+    return { n, avg, p95: at(0.95), p99: at(0.99), max: values[n - 1] };
+}
+
+// The clock the main thread stamps arrivals on: performance.now() is relative
+// to each context's own time origin, so only the sum is comparable across the
+// postMessage boundary.
+function nowAbs() {
+    return performance.timeOrigin + performance.now();
+}
+
 function post(msg, transfer) {
     self.postMessage(msg, transfer || []);
 }
@@ -229,6 +252,13 @@ function postCounters(force) {
         clientDecodeMs: stageAvg(S._decodeSamples),
         clientQueueMs: stageAvg(S._queueSamples),
         clientRenderMs: stageAvg(S._renderSamples),
+        // The same stages with their tail, plus the hop from the main thread.
+        clientStages: {
+            arrive: stageStats(S._arriveSamples),
+            decode: stageStats(S._decodeSamples),
+            queue: stageStats(S._queueSamples),
+            render: stageStats(S._renderSamples),
+        },
         resolution: S._lastResolution || '',
         pacer: S.pacer ? S.pacer.stats : null,
         diag,
@@ -576,13 +606,14 @@ function flushPendingFrames() {
     }
     while (S.pendingFrames.length > 0) {
         const entry = S.pendingFrames.shift();
-        decodeFrame(entry.data, entry.isKeyframe, entry.backendTs);
+        decodeFrame(entry.data, entry.isKeyframe, entry.backendTs, entry.arrivalAbs);
     }
 }
 
-function decodeFrame(data, isKeyframe, backendTs) {
+function decodeFrame(data, isKeyframe, backendTs, arrivalAbs) {
     if (!S.decoderConfigured) {
-        if (S.pendingFrames.length < 120) S.pendingFrames.push({ data, isKeyframe, backendTs });
+        if (S.pendingFrames.length < 120)
+            S.pendingFrames.push({ data, isKeyframe, backendTs, arrivalAbs });
         return;
     }
     if (!S.decoder) return;
@@ -633,6 +664,7 @@ function decodeFrame(data, isKeyframe, backendTs) {
     try {
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: avccData });
         trackChunkSubmit(timestamp, backendTs);
+        if (arrivalAbs > 0) addStageSample(S._arriveSamples, nowAbs() - arrivalAbs);
         S.decoder.decode(chunk);
         S.stats.received++;
         if (isKeyframe) {
@@ -648,7 +680,7 @@ function decodeFrame(data, isKeyframe, backendTs) {
 
 // ── AV1 pipeline ─────────────────────────────────────────────────────────────
 
-function handleAv1Frame(data, isKeyframe) {
+function handleAv1Frame(data, isKeyframe, arrivalAbs) {
     if (!S.decoderConfigured && !S.decoderConfiguring) {
         if (isKeyframe) {
             if (S.pendingFrames.length > 0) S.pendingFrames = [];
@@ -656,14 +688,15 @@ function handleAv1Frame(data, isKeyframe) {
             const seqHeader = findSequenceHeader(data);
             configureAv1Decoder(seqHeader || undefined);
         } else {
-            if (S.pendingFrames.length < 120) S.pendingFrames.push({ data, isKeyframe });
+            if (S.pendingFrames.length < 120)
+                S.pendingFrames.push({ data, isKeyframe, arrivalAbs });
             if (S.pendingFrames.length > 30 && S.pendingFrames.length % 30 === 0) {
                 requestIdr('AV1 no keyframe while buffering');
             }
             return;
         }
     }
-    decodeAv1Frame(data, isKeyframe);
+    decodeAv1Frame(data, isKeyframe, arrivalAbs);
 }
 
 function configureAv1Decoder(seqHeaderObu) {
@@ -706,9 +739,9 @@ function configureAv1Decoder(seqHeaderObu) {
     tryCodecs(0);
 }
 
-function decodeAv1Frame(data, isKeyframe) {
+function decodeAv1Frame(data, isKeyframe, arrivalAbs) {
     if (!S.decoderConfigured) {
-        if (S.pendingFrames.length < 120) S.pendingFrames.push({ data, isKeyframe });
+        if (S.pendingFrames.length < 120) S.pendingFrames.push({ data, isKeyframe, arrivalAbs });
         return;
     }
     if (!S.decoder) return;
@@ -723,6 +756,7 @@ function decodeAv1Frame(data, isKeyframe) {
         // sees 0 and leaves this path on the present-on-decode behavior.
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: obuData });
         trackChunkSubmit(timestamp, 0);
+        if (arrivalAbs > 0) addStageSample(S._arriveSamples, nowAbs() - arrivalAbs);
         S.decoder.decode(chunk);
         S.stats.received++;
     } catch (err) {
@@ -853,7 +887,7 @@ async function drawFrame(frame) {
 
 // Core frame entry (mirrors StreamView._processVideoFrame from the AV1 dispatch
 // onward; stale/gap/stats/overlay stay on the main thread before this point).
-function processFrame(data, isKeyframe, backendTs) {
+function processFrame(data, isKeyframe, backendTs, arrivalAbs) {
     if (S.stopped || S._fatalDecodeError) return;
 
     // Arrival cadence + encoded size at the pipeline entry: distinguishes "the
@@ -862,7 +896,7 @@ function processFrame(data, isKeyframe, backendTs) {
     S.diag.noteArrival(data.length);
 
     if (S.videoCodec === CODEC_AV1) {
-        handleAv1Frame(data, isKeyframe);
+        handleAv1Frame(data, isKeyframe, arrivalAbs);
         return;
     }
 
@@ -883,7 +917,7 @@ function processFrame(data, isKeyframe, backendTs) {
     }
     if (!S.decoderConfigured && S.nalParser.isReady()) configureDecoder();
 
-    decodeFrame(data, isKeyframe, backendTs);
+    decodeFrame(data, isKeyframe, backendTs, arrivalAbs);
 }
 
 self.onmessage = (e) => {
@@ -935,7 +969,7 @@ self.onmessage = (e) => {
             break;
         case 'frame': {
             const data = new Uint8Array(m.data);
-            processFrame(data, m.isKeyframe, m.backendTs);
+            processFrame(data, m.isKeyframe, m.backendTs, m.arrivalAbs || 0);
             break;
         }
         case 'frameloss':

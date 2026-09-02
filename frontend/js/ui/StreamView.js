@@ -258,6 +258,19 @@ class SlidingStats {
         return sum / this._samples.length;
     }
 
+    /**
+     * Value below which a fraction `p` of the window's samples fall — the p99
+     * is the frame the viewer felt, which the average hides. A few hundred
+     * samples at most, so the sort is nothing.
+     */
+    percentile(p) {
+        this._prune();
+        const n = this._samples.length;
+        if (n === 0) return 0;
+        const values = this._samples.map((s) => s.value).sort((a, b) => a - b);
+        return values[Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1))];
+    }
+
     _prune() {
         const cutoff = performance.now() - this._windowMs;
         this._samples = this._samples.filter((s) => s.time > cutoff);
@@ -663,9 +676,19 @@ export class StreamView {
         // Browser-side pipeline, split into its three stages so the breakdown
         // says *where* the client time goes (a slow GPU draw and a saturated
         // decode queue are the same number otherwise).
+        this._clientArriveStats = new SlidingStats(2000); // last fragment → decode() submit
         this._clientDecodeStats = new SlidingStats(2000); // decode() submit → decoder output
         this._clientQueueStats = new SlidingStats(2000); // decoder output → draw start
         this._clientRenderStats = new SlidingStats(2000); // draw start → draw done
+        // The same client stages with their tail (p95/p99), as the worker posts
+        // them with its counters; null on the main-thread path, whose windows
+        // above answer percentile() directly.
+        this._clientStages = null;
+        // Host-side stages of the native engine (present → acquire → convert →
+        // encode → queue → send), µs, from the backend's stats message. Only a
+        // host that stamps its frames sends them; kept a few seconds then aged out.
+        this._hostStages = null;
+        this._hostStagesAt = 0;
         this._chunkSubmitTimes = new Map(); // chunk timestamp (µs) → { perf, backendTs }
         this._pingSeq = 0;
         this._pingInterval = null;
@@ -1762,6 +1785,12 @@ export class StreamView {
                 if (m.clientDecodeMs > 0) this._clientDecodeStats.addSample(m.clientDecodeMs);
                 if (m.clientQueueMs > 0) this._clientQueueStats.addSample(m.clientQueueMs);
                 if (m.clientRenderMs > 0) this._clientRenderStats.addSample(m.clientRenderMs);
+                // …and their tails, plus the main→worker hop, for the breakdown.
+                if (m.clientStages) {
+                    this._clientStages = m.clientStages;
+                    const arrive = m.clientStages.arrive;
+                    if (arrive && arrive.n > 0) this._clientArriveStats.addSample(arrive.avg);
+                }
                 // Worker-side pipeline observations (queues, draw split, drop
                 // causes) — the overlay/console read the last snapshot posted.
                 if (m.diag) this._workerDiag = m.diag;
@@ -2512,15 +2541,15 @@ export class StreamView {
         }
         while (this.pendingFrames.length > 0) {
             const entry = this.pendingFrames.shift();
-            this.decodeFrame(entry.data, entry.isKeyframe, entry.backendTs);
+            this.decodeFrame(entry.data, entry.isKeyframe, entry.backendTs, entry.arrivalAbs);
         }
     }
 
-    decodeFrame(data, isKeyframe, backendTs) {
+    decodeFrame(data, isKeyframe, backendTs, arrivalAbs = 0) {
         if (!this.decoderConfigured) {
             // Buffer until decoder is ready (limit to avoid OOM)
             if (this.pendingFrames.length < 120) {
-                this.pendingFrames.push({ data, isKeyframe, backendTs });
+                this.pendingFrames.push({ data, isKeyframe, backendTs, arrivalAbs });
             }
             return;
         }
@@ -2633,6 +2662,10 @@ export class StreamView {
                 data: avccData,
             });
             this._trackChunkSubmit(timestamp, backendTs);
+            if (arrivalAbs > 0) {
+                const arriveMs = performance.timeOrigin + performance.now() - arrivalAbs;
+                if (arriveMs >= 0 && arriveMs < 5000) this._clientArriveStats.addSample(arriveMs);
+            }
             this.decoder.decode(chunk);
             this.stats.received++;
             // Keyframe successfully submitted: reference is valid again.
@@ -4403,13 +4436,40 @@ export class StreamView {
                     scale: 0.5,
                     counts: true,
                 });
-                legs.push({ key: 'statLegDecode', stats: this._clientDecodeStats, counts: true });
-                legs.push({ key: 'statLegQueue', stats: this._clientQueueStats });
-                legs.push({ key: 'statLegRender', stats: this._clientRenderStats });
+                // The client stages carry their tail too ("stage" names the
+                // worker's snapshot entry): the p99 is the frame that was felt,
+                // and a mean that hides it is how a stutter reads as healthy.
+                legs.push({
+                    key: 'statLegArrive',
+                    stats: this._clientArriveStats,
+                    stage: 'arrive',
+                });
+                legs.push({
+                    key: 'statLegDecode',
+                    stats: this._clientDecodeStats,
+                    counts: true,
+                    stage: 'decode',
+                });
+                legs.push({ key: 'statLegQueue', stats: this._clientQueueStats, stage: 'queue' });
+                legs.push({
+                    key: 'statLegRender',
+                    stats: this._clientRenderStats,
+                    stage: 'render',
+                });
             }
             let latency = 0;
             let haveLatency = false;
             const rows = [];
+            const legRow = (label, value) =>
+                '<div class="stats-leg-row">' +
+                '<span class="stats-label">' +
+                label +
+                '</span>' +
+                '<span class="stats-value">' +
+                value +
+                '</span>' +
+                '</div>';
+            if (!isMedia) rows.push(legRow('', escapeHtml(t('stream.statLegHeader'))));
             for (const leg of legs) {
                 const label = escapeHtml(t('stream.' + leg.key));
                 let value = '–';
@@ -4417,18 +4477,34 @@ export class StreamView {
                     const ms = leg.stats.avg * (leg.scale || 1);
                     latency += ms;
                     if (leg.counts) haveLatency = true;
-                    value = ms.toFixed(1) + 'ms';
+                    value = ms.toFixed(1) + this._legTailSuffix(leg) + 'ms';
                 }
-                rows.push(
-                    '<div class="stats-leg-row">' +
-                        '<span class="stats-label">' +
-                        label +
-                        '</span>' +
-                        '<span class="stats-value">' +
-                        value +
-                        '</span>' +
-                        '</div>',
-                );
+                rows.push(legRow(label, value));
+            }
+            // Native host only: where the host's own time went. Shown, not
+            // added — the host leg above already covers present → encoded, and
+            // the server leg the rest; these say WHICH stage moved.
+            const hostStages =
+                this._hostStages && now - this._hostStagesAt < 6000 ? this._hostStages : null;
+            if (hostStages) {
+                const named = {
+                    acquire: 'statStageAcquire',
+                    convert: 'statStageConvert',
+                    encode: 'statStageEncode',
+                    queue: 'statStageQueue',
+                    send: 'statStageSend',
+                    total: 'statStageTotal',
+                };
+                for (const stage of Object.keys(named)) {
+                    const s = hostStages[stage];
+                    if (!s || !(s.n > 0)) continue;
+                    rows.push(
+                        legRow(
+                            escapeHtml(t('stream.' + named[stage])),
+                            (s.avg / 1000).toFixed(2) + ' / ' + (s.p99 / 1000).toFixed(2) + 'ms',
+                        ),
+                    );
+                }
             }
             // Reserve currently held by the pacer. Not added to the total — the
             // hold already lands in the render-queue leg above (decoder output →
@@ -4534,11 +4610,15 @@ export class StreamView {
             // Runs whether or not the diagnostics are displayed.
             if (!this._useWorker) this._applyEnhancerGovernor(diagSnap, now);
             if (this._perfDiag) {
-                const diagLine = formatDiag(diagSnap, {
+                let diagLine = formatDiag(diagSnap, {
                     decodedFps: fps,
                     presentedFps: this._presentedFps,
                     dropsPerSec: this._dropsPerSec,
                 });
+                // The tails, so a session's log says which stage had the frame
+                // that was felt — the averages above cannot.
+                const tails = this._formatStageTails(now);
+                if (tails) diagLine += ' · ' + tails;
                 if (showDetail) {
                     html += '<div class="stats-diag">' + escapeHtml(diagLine) + '</div>';
                 }
@@ -4552,6 +4632,70 @@ export class StreamView {
         html += '</div>';
 
         this._statsBodyEl.innerHTML = html;
+    }
+
+    /**
+     * " / p99" for a client leg's value, or "" when no tail is known. Worker
+     * mode reads the worker's own snapshot (its clock); the main-thread path
+     * asks the leg's window directly.
+     */
+    _legTailSuffix(leg) {
+        if (!leg.stage) return '';
+        let p99 = -1;
+        if (this._useWorker) {
+            const s = this._clientStages ? this._clientStages[leg.stage] : null;
+            if (s && s.n > 0) p99 = s.p99;
+        } else if (leg.stats.count > 0) {
+            p99 = leg.stats.percentile(0.99);
+        }
+        return p99 >= 0 ? ' / ' + p99.toFixed(1) : '';
+    }
+
+    /**
+     * One compact fragment of p99s for the console trace: the client stages
+     * (handoff / decode / queue / render), and the host's when it stamps its
+     * frames. Empty when nothing is known yet.
+     */
+    _formatStageTails(now) {
+        const parts = [];
+        const n1 = (v) => (v || 0).toFixed(1);
+        const client = [];
+        for (const stage of ['arrive', 'decode', 'queue', 'render']) {
+            let p99 = -1;
+            if (this._useWorker) {
+                const s = this._clientStages ? this._clientStages[stage] : null;
+                if (s && s.n > 0) p99 = s.p99;
+            } else {
+                const stats = {
+                    arrive: this._clientArriveStats,
+                    decode: this._clientDecodeStats,
+                    queue: this._clientQueueStats,
+                    render: this._clientRenderStats,
+                }[stage];
+                if (stats.count > 0) p99 = stats.percentile(0.99);
+            }
+            client.push(p99 >= 0 ? n1(p99) : '–');
+        }
+        if (client.some((v) => v !== '–')) {
+            parts.push('p99 client handoff/decode/queue/render ' + client.join('/') + 'ms');
+        }
+        const host = this._hostStages && now - this._hostStagesAt < 6000 ? this._hostStages : null;
+        if (host) {
+            const n2 = (s) => (s && s.n > 0 ? (s.p99 / 1000).toFixed(2) : '–');
+            parts.push(
+                'p99 host acquire/convert/encode/queue/send/total ' +
+                    [
+                        n2(host.acquire),
+                        n2(host.convert),
+                        n2(host.encode),
+                        n2(host.queue),
+                        n2(host.send),
+                        n2(host.total),
+                    ].join('/') +
+                    'ms',
+            );
+        }
+        return parts.join(' · ');
     }
 
     /**
@@ -4656,6 +4800,12 @@ export class StreamView {
             if (msg.hostProcMs !== undefined && msg.hostProcMs > 0) {
                 this._hostProcStats.addSample(msg.hostProcMs);
             }
+            // Native host: where the host's time went, stage by stage, mean and
+            // tail over the backend's window. Absent from every other host.
+            if (msg.stages && typeof msg.stages === 'object') {
+                this._hostStages = msg.stages;
+                this._hostStagesAt = performance.now();
+            }
             // Backend SCTP backpressure drops (cumulative). Frames dropped
             // backend-side never get a frameId, so this is the only signal the
             // frontend has of the "keyframe slideshow" congestion regime.
@@ -4671,6 +4821,10 @@ export class StreamView {
     }
 
     handleVideoFrame(data, isKeyframe, backendTs, frameId = 0) {
+        // The frame is whole: this is where the network's time ends and the
+        // browser's begins. Stamped on the absolute clock so the decode worker,
+        // which has its own time origin, can measure the hop to decode().
+        const arrivalAbs = performance.timeOrigin + performance.now();
         // Stop processing frames once quit() has started.  The DC may still
         // deliver queued messages during the async HTTP /quit call.
         if (this._quitting) return;
@@ -4766,7 +4920,7 @@ export class StreamView {
         if (stall) this._notePeriodicStall(stall);
 
         // Direct frame processing — no reordering.
-        this._processVideoFrame(data, isKeyframe, backendTs);
+        this._processVideoFrame(data, isKeyframe, backendTs, arrivalAbs);
     }
 
     /**
@@ -4921,7 +5075,7 @@ export class StreamView {
      * Process a single video frame (deliver to NAL parser / decoder).
      * Called in monotonically-increasing frameId order.
      */
-    _processVideoFrame(data, isKeyframe, backendTs) {
+    _processVideoFrame(data, isKeyframe, backendTs, arrivalAbs = 0) {
         if (!this._firstFrameProcessed) {
             this._firstFrameProcessed = true;
             console.log(
@@ -4945,9 +5099,10 @@ export class StreamView {
                 } else {
                     buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
                 }
-                this._videoWorker.postMessage({ type: 'frame', data: buf, isKeyframe, backendTs }, [
-                    buf,
-                ]);
+                this._videoWorker.postMessage(
+                    { type: 'frame', data: buf, isKeyframe, backendTs, arrivalAbs },
+                    [buf],
+                );
             }
             return;
         }
@@ -5012,7 +5167,7 @@ export class StreamView {
         }
 
         // Submit frame to decoder
-        this.decodeFrame(data, isKeyframe, backendTs);
+        this.decodeFrame(data, isKeyframe, backendTs, arrivalAbs);
     }
 
     // --- AV1 pipeline ---
