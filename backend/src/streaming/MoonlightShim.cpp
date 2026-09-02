@@ -827,19 +827,33 @@ static constexpr int kStandardGamepadButtons =
     A_FLAG | B_FLAG | X_FLAG | Y_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG | LB_FLAG |
     RB_FLAG | PLAY_FLAG | BACK_FLAG | LS_CLK_FLAG | RS_CLK_FLAG | SPECIAL_FLAG;
 
+// How many pads a shifted session may address. Four, like the native host's
+// XInput ceiling, so a guest gets the same answer whichever host they land on.
+// The wire itself goes further — moonlight-common-c numbers pads 0..15 and the
+// mask has sixteen bits, which Sunshine and Apollo honour — so this is one
+// constant to raise if a fifth player ever matters more than that symmetry.
+static constexpr int kMaxShiftedGamepads = 4;
+
 // Shift a client's controller number (and its mask bit) into this session's own
 // range. Concurrent sessions each number their pads from 0, so without the
 // offset every invited player's gamepad lands on the host's controller 0 and
-// they fight over one virtual pad. Clamped to the four pads Limelight exposes.
-void MoonlightShim::applyControllerOffset(short& controllerNumber, short& activeGamepadMask) const
+// they fight over one virtual pad.
+//
+// Past the ceiling the number used to be clamped to the last pad, which put two
+// players on one controller — the very collision the offset exists to prevent.
+// Now the pad is refused (false), and the caller says so once, at the arrival,
+// exactly as VigemGamepad::arrive does past its four slots.
+bool MoonlightShim::applyControllerOffset(short& controllerNumber, short& activeGamepadMask) const
 {
-    if (m_ControllerOffset <= 0) return;
-    const int shifted = qBound(0, controllerNumber + m_ControllerOffset, 3);
+    if (m_ControllerOffset <= 0) return true;
+    const int shifted = controllerNumber + m_ControllerOffset;
+    if (shifted < 0 || shifted >= kMaxShiftedGamepads) return false;
     controllerNumber = static_cast<short>(shifted);
     // The mask says which pads exist; move this session's bits with the number.
     activeGamepadMask =
         static_cast<short>((static_cast<int>(activeGamepadMask) & 0xF) << m_ControllerOffset);
     activeGamepadMask = static_cast<short>(activeGamepadMask | (1 << shifted));
+    return true;
 }
 
 void MoonlightShim::sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask,
@@ -848,7 +862,15 @@ void MoonlightShim::sendControllerArrival(uint8_t controllerNumber, uint16_t act
     if (!m_Connected.load(std::memory_order_acquire)) return;
     short num = static_cast<short>(controllerNumber);
     short mask = static_cast<short>(activeGamepadMask);
-    applyControllerOffset(num, mask);
+    if (!applyControllerOffset(num, mask)) {
+        // Said here, where the client announces the pad, and not on every
+        // state update that follows. A pad that silently does nothing is the
+        // worst way for a guest to learn there was no slot for it.
+        qWarning() << "[MoonlightShim] gamepad" << (controllerNumber + m_ControllerOffset)
+                   << "has no slot on this host —" << kMaxShiftedGamepads
+                   << "at most for shifted sessions; it is ignored";
+        return;
+    }
     // Browser triggers are always analog; rumble depends on the gamepad's
     // vibrationActuator (reported by the client). Gyro/touchpad/LED are not
     // reachable via the Gamepad API, so they are not advertised.
@@ -864,7 +886,8 @@ void MoonlightShim::sendControllerState(short controllerNumber, short activeGame
                                         short leftStickY, short rightStickX, short rightStickY)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    applyControllerOffset(controllerNumber, activeGamepadMask);
+    // Refused at the arrival, already logged there: nothing to send for it.
+    if (!applyControllerOffset(controllerNumber, activeGamepadMask)) return;
     // A pad only sends on change, so a stick pushed and left there goes silent
     // exactly like a held key. Track "not at rest" so the watchdog can zero it
     // out if the link dies mid-input (a removal — empty state with the mask bit

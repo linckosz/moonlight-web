@@ -393,7 +393,9 @@ private:
     /// Offset applied to every controller number this session sends, so
     /// concurrent sessions do not collapse onto the host's controller 0.
     int m_ControllerOffset = 0;
-    void applyControllerOffset(short& controllerNumber, short& activeGamepadMask) const;
+    /// False when the shifted number has no pad on the host: the caller drops
+    /// the event instead of sending it under a number another player owns.
+    bool applyControllerOffset(short& controllerNumber, short& activeGamepadMask) const;
     bool m_ShortStaleFired = false; // don't re-log/re-release each tick
     bool m_LongStaleFired = false;
     // The watchdog only arms once the client has proved it heartbeats its held
