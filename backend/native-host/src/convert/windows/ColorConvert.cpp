@@ -178,8 +178,10 @@ bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sour
 
     // HDR arrives as FP16 in scRGB and needs a PQ transfer plus a P010 target,
     // not this matrix. Refusing outright beats converting it as if it were SDR,
-    // which would look washed out and wrong rather than obviously broken.
-    if (sourceFormat != DXGI_FORMAT_B8G8R8A8_UNORM && sourceFormat != DXGI_FORMAT_R8G8B8A8_UNORM) {
+    // which would look washed out and wrong rather than obviously broken. The
+    // session asks supportsSource() first and opens the capture in 8-bit when
+    // the answer is no, so reaching this line means a format nobody asked for.
+    if (!supportsSource(sourceFormat)) {
         error = "this build converts 8-bit SDR frames only (HDR capture needs the P010 path)";
         return false;
     }

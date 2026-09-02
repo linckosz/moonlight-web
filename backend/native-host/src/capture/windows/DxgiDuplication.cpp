@@ -42,9 +42,10 @@ std::string hresultToString(HRESULT hr)
 
 } // namespace
 
-DxgiDuplication::DxgiDuplication(uint64_t adapterLuid, unsigned outputIndex)
+DxgiDuplication::DxgiDuplication(uint64_t adapterLuid, unsigned outputIndex, bool hdr)
     : m_AdapterLuid(adapterLuid)
     , m_OutputIndex(outputIndex)
+    , m_Hdr(hdr)
 {}
 
 DxgiDuplication::~DxgiDuplication()
@@ -132,15 +133,25 @@ bool DxgiDuplication::start(std::string& error)
         return false;
     }
 
-    // Ask for HDR first. DuplicateOutput1 lets the formats be named, and
-    // listing the float format ahead of the 8-bit one is what keeps an HDR
-    // desktop from being flattened to SDR before we ever see it. Machines and
-    // drivers without Output5 fall back to the plain path.
+    // DuplicateOutput1 lets the formats be named, and the list decides what an
+    // HDR desktop becomes. Listing the float format ahead of the 8-bit one
+    // keeps it as it is, FP16 scRGB, for a consumer that will render HDR.
+    // Naming 8-bit alone makes DXGI hand it over already tone-mapped to SDR —
+    // exactly the picture an SDR stream should carry, and the only one the SDR
+    // converter accepts. Which list is used follows what the session consumes,
+    // not what the display happens to be doing: the previous "ask for HDR
+    // first, always" got FP16 on every machine with Windows HDR on, and the
+    // converter then refused it, so the session failed at the click. Machines
+    // and drivers without Output5 fall back to the plain path.
     ComPtr<IDXGIOutput5> output5;
     if (SUCCEEDED(output.As(&output5))) {
-        const DXGI_FORMAT formats[] = {DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_B8G8R8A8_UNORM};
-        hr = output5->DuplicateOutput1(m_Device.Get(), 0, static_cast<UINT>(std::size(formats)),
-                                       formats, m_Duplication.ReleaseAndGetAddressOf());
+        const DXGI_FORMAT hdrFormats[] = {DXGI_FORMAT_R16G16B16A16_FLOAT,
+                                          DXGI_FORMAT_B8G8R8A8_UNORM};
+        const DXGI_FORMAT sdrFormats[] = {DXGI_FORMAT_B8G8R8A8_UNORM};
+        const DXGI_FORMAT* formats = m_Hdr ? hdrFormats : sdrFormats;
+        const UINT count = static_cast<UINT>(m_Hdr ? std::size(hdrFormats) : std::size(sdrFormats));
+        hr = output5->DuplicateOutput1(m_Device.Get(), 0, count, formats,
+                                       m_Duplication.ReleaseAndGetAddressOf());
     } else {
         hr = E_NOINTERFACE;
     }
@@ -191,7 +202,10 @@ bool DxgiDuplication::start(std::string& error)
 
     log::info("[native] duplication started: " + std::to_string(m_Width) + "x" +
               std::to_string(m_Height) +
-              (m_Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? " (HDR, FP16)" : " (SDR, BGRA8)"));
+              (m_Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? " (HDR, FP16)"
+               : m_Format == DXGI_FORMAT_B8G8R8A8_UNORM
+                   ? " (SDR, BGRA8)"
+                   : " (format " + std::to_string(static_cast<int>(m_Format)) + ")"));
     return true;
 }
 

@@ -90,6 +90,18 @@ public:
     ColorConvert(const ColorConvert&) = delete;
     ColorConvert& operator=(const ColorConvert&) = delete;
 
+    /// Whether init() will accept frames in @p format.
+    ///
+    /// Asked BEFORE the capture is opened, because the answer decides what the
+    /// capture is asked for: a session that will render SDR must not receive
+    /// FP16 from an HDR desktop, it must receive the desktop tone-mapped to
+    /// 8-bit by DXGI — and this build converts 8-bit only. FP16 scRGB needs a
+    /// PQ transfer and a P010 target, neither of which is written yet.
+    static bool supportsSource(DXGI_FORMAT format)
+    {
+        return format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
+
     /// Prepare the pipeline for @p sourceFormat frames of @p sourceWidth ×
     /// @p sourceHeight, producing @p chroma at @p outputWidth × @p outputHeight.
     ///

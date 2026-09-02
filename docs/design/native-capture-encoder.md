@@ -335,6 +335,20 @@ Le HDR est **refusé explicitement** plutôt que converti comme du SDR : le FP16
 scRGB demande une transfert PQ et une cible P010. Le traiter avec la matrice SDR
 donnerait une image délavée — faux d'une façon qui ne se voit pas.
 
+**Corrigé le 02/09/2026 (B1).** Ce refus était atteint sur toute machine avec le
+HDR Windows actif : la duplication demandait FP16 *en premier* quel que soit le
+stream, DXGI livrait donc le bureau en FP16, et le convertisseur refusait → le
+host natif échouait au clic. Désormais le format demandé suit **ce que la session
+consomme**, pas ce que l'écran fait : `DxgiDuplication` reçoit `hdr` et ne nomme
+`R16G16B16A16_FLOAT` que si la session rend du HDR ; sinon `B8G8R8A8_UNORM` seul,
+et DXGI livre un bureau HDR **déjà ramené en SDR** (tone-mapping système), qui est
+exactement l'image qu'un stream SDR doit porter. La session demande d'abord au
+convertisseur (`ColorConvert::supportsSource`) s'il sait traiter FP16 ; tant que le
+chemin P010 n'existe pas, un HDR négocié par le Selector est **rabattu en SDR avec
+une trace** (« HDR negotiated but this build converts SDR only ») plutôt que
+d'échouer. Vérifié sur écran SDR (comportement identique, `(SDR, BGRA8)` dans le
+log) ; le cas HDR actif reste à confirmer à la main sur un écran en HDR.
+
 ---
 
 ## 9. Boucle de session
