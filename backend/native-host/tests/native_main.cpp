@@ -22,6 +22,7 @@ void run_capture_tests();
 void run_vpl_params_tests();
 void run_ds4_mapping_tests();
 void run_stage_stats_tests();
+void run_frame_cadence_tests();
 
 int main()
 {
@@ -40,6 +41,7 @@ int main()
     run_vpl_params_tests();
     run_ds4_mapping_tests();
     run_stage_stats_tests();
+    run_frame_cadence_tests();
     run_capture_tests();
 
     const int total = g_nativeStats.passed + g_nativeStats.failed;

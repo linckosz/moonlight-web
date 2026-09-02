@@ -17,6 +17,7 @@
 
 #include "../../capture/windows/DxgiDuplication.h"
 #include "../../convert/windows/ColorConvert.h"
+#include "../../core/FrameCadence.h"
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
 #include "../../core/Session.h"
@@ -28,9 +29,12 @@
 
 // GetCursorInfo/LoadCursorW, for naming the pointer — see currentCursorKind().
 #include <windows.h>
+// timeBeginPeriod — see run().
+#include <timeapi.h>
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -70,6 +74,33 @@ int64_t steadyNowUs()
     return std::chrono::duration_cast<std::chrono::microseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+/// The stamps a picture carries from the capture to the encoder — t₀ to t₂ of
+/// EncodedFrame. Kept together because a picture may be HELD between the two
+/// (see FrameCadence), and then the stamps have to outlive the loop iteration
+/// that took them.
+struct FrameStamps
+{
+    int64_t presentUs = 0;
+    int64_t capturedUs = 0;
+    int64_t submittedUs = 0;
+    int64_t convertedUs = 0;
+};
+
+/// A re-send has no present of its own. Reporting "now" for everything keeps
+/// the latency figures honest — it measures zero capture latency because there
+/// was no capture, rather than inheriting a stale present time and claiming
+/// half a second of delay.
+FrameStamps resendStamps(int64_t nowUs)
+{
+    return FrameStamps{nowUs, nowUs, nowUs, nowUs};
+}
+
+/// "165", "144", "60" — the refresh rate as a person would say it.
+std::string hzString(int milliHz)
+{
+    return std::to_string((milliHz + 500) / 1000);
 }
 
 /// Name the pointer currently on screen, as a CSS cursor keyword.
@@ -188,6 +219,27 @@ public:
         const bool yuv444 = m_Target.yuv444;
         if (m_Config.yuv444 && !yuv444)
             log::info("[native] 4:4:4 requested but this encoder cannot — streaming 4:2:0");
+
+        // The rate the encoder's budget is dimensioned for, and whether the
+        // loop has to be held to it. The Selector has already resolved "0, the
+        // display's own" to the display's rounded refresh, so the setting is
+        // always a number here; the guard below is for a config that bypassed
+        // it. The cadence gate exists only when the display is FASTER than the
+        // stream: at the display's own rate every present is encoded as it
+        // comes, and a gate at that same rate would still hold a present that
+        // arrived a little early and then drop it for the next one.
+        m_DisplayMilliHz = display->refreshMilliHz;
+        const int displayHz = (display->refreshMilliHz + 500) / 1000;
+        m_EncodeFps = m_Config.fps > 0 ? m_Config.fps : displayHz;
+        if (m_EncodeFps <= 0) m_EncodeFps = 60;
+        m_Cadence = FrameCadence(m_EncodeFps < displayHz ? m_EncodeFps : 0);
+        if (m_Cadence.enabled())
+            log::info("[native] cadence: " + std::to_string(m_EncodeFps) + " fps stream on a " +
+                      hzString(m_DisplayMilliHz) +
+                      " Hz display — the last present of each interval is encoded");
+        else
+            log::info("[native] cadence: " + std::to_string(m_EncodeFps) + " fps stream on a " +
+                      hzString(m_DisplayMilliHz) + " Hz display — every present is encoded");
 
         // The client's own frame size is whatever it asked for, or the desktop
         // when it asked for nothing.
@@ -378,7 +430,7 @@ private:
         }
 
         return m_Encoder->init(m_Capture->device(), m_Target.codec, m_Converter->outputWidth(),
-                               m_Converter->outputHeight(), m_Config.fps, m_Config.bitrateKbps,
+                               m_Converter->outputHeight(), m_EncodeFps, m_Config.bitrateKbps,
                                m_Target.yuv444, m_Config.intraRefresh, error);
     }
 
@@ -462,13 +514,21 @@ private:
     /// turned into an ended session with a reason.
     void run() noexcept
     {
+        // The loop waits for a held picture's due time with a millisecond
+        // timeout, and Windows honours that only when the scheduler period is
+        // 1 ms; at the default 15.6 ms a 5 ms wait wakes up 15 ms later, and
+        // every frame would be that late. Per process, for the session's
+        // lifetime — this process IS the session's worker.
+        ::timeBeginPeriod(1);
         try {
             runLoop();
+            logCadence();
         } catch (const std::exception& e) {
             finish(std::string("the capture loop threw: ") + e.what());
         } catch (...) {
             finish("the capture loop threw an unknown exception");
         }
+        ::timeEndPeriod(1);
     }
 
     void runLoop()
@@ -601,6 +661,46 @@ private:
                 log::warning("[native] bitrate change refused: " + error);
         };
 
+        // A picture changed — a present, or the pointer moving over a still
+        // desktop — and went out. The refinement window is measured from here.
+        auto noteReal = [&]() {
+            lastSentUs = steadyNowUs();
+            lastRealUs = lastSentUs;
+            refineQuiet = 0;
+            refinePasses = 0;
+            refineBytes = 0;
+            refineFirstBytes = m_LastEmitBytes;
+        };
+
+        // ── Holding the loop to the stream's rate ───────────────────────────
+        //
+        // The display presents at its own refresh rate and the stream has a
+        // rate of its own; when the display is faster, only the LAST present
+        // of each stream interval is encoded, when the interval falls due. The
+        // picture is converted at once — the converter's output texture is
+        // the holding place, and a newer present simply overwrites it — and
+        // the stamps travel alongside so the frame that finally goes out
+        // reports its own present time and the time it spent waiting. The
+        // reasoning, and why the last present rather than the first, is on
+        // FrameCadence.
+        FrameStamps held;
+        auto emitPicture = [&](const FrameStamps& stamps) -> bool {
+            if (!m_Cadence.admit(stamps.convertedUs)) {
+                held = stamps;
+                return true;
+            }
+            if (!emit(frameNumber, stamps, error)) return false;
+            noteReal();
+            return true;
+        };
+        auto emitHeld = [&]() -> bool {
+            m_Cadence.release(steadyNowUs());
+            if (!emit(frameNumber, held, error)) return false;
+            noteReal();
+            return true;
+        };
+
+        m_LoopStartUs = steadyNowUs();
         while (m_Running.load()) {
             if (const int kbps = m_PendingBitrate.exchange(0); kbps > 0) {
                 // The ladder moves the stream's rate, not the still-screen one.
@@ -629,10 +729,25 @@ private:
             const int idleTimeoutMs = static_cast<int>(idleIntervalUs / 1000) < kAcquireTimeoutMs
                                           ? static_cast<int>(idleIntervalUs / 1000)
                                           : kAcquireTimeoutMs;
+            int timeoutMs = refineSoon ? refineTimeoutMs : idleTimeoutMs;
+
+            // A held picture bounds the wait below everything else: the loop
+            // has to be awake when it falls due, and a present arriving
+            // earlier simply replaces it. Rounded up — the wait is in whole
+            // milliseconds, and waking a fraction late is better than waking
+            // a whole millisecond early to find nothing due.
+            if (m_Cadence.holding()) {
+                const int64_t waitUs = m_Cadence.waitUs(steadyNowUs());
+                if (waitUs <= 0) {
+                    if (!emitHeld()) return;
+                    continue;
+                }
+                const int waitMs = static_cast<int>((waitUs + 999) / 1000);
+                if (waitMs < timeoutMs) timeoutMs = waitMs;
+            }
 
             capture::CapturedFrame frame;
-            const capture::AcquireStatus status =
-                m_Capture->acquire(refineSoon ? refineTimeoutMs : idleTimeoutMs, frame);
+            const capture::AcquireStatus status = m_Capture->acquire(timeoutMs, frame);
 
             // Anything but a timeout means the screen is alive again, and the
             // frame about to be encoded is a moving one. Restore the ordinary
@@ -651,6 +766,14 @@ private:
             reportCursor();
 
             if (status == capture::AcquireStatus::Timeout) {
+                // A held picture goes out the moment it is due. While one is
+                // waiting nothing below applies — the screen is moving, this
+                // is not a still desktop to refine or keep alive.
+                if (m_Cadence.holding()) {
+                    if (m_Cadence.due(steadyNowUs()) && !emitHeld()) return;
+                    continue;
+                }
+
                 // Nothing moved on the desktop — but the pointer we draw onto it
                 // is about to be drawn at a different size, and nothing else in
                 // this loop would ever notice. A viewer pinch-zooming a still
@@ -662,13 +785,8 @@ private:
                         finish("colour conversion failed: " + error);
                         return;
                     }
-                    if (!emit(frameNumber, steadyNowUs(), error)) return;
-                    lastSentUs = steadyNowUs();
-                    lastRealUs = lastSentUs;
-                    refineQuiet = 0;
-                    refinePasses = 0;
-                    refineBytes = 0;
-                    refineFirstBytes = m_LastEmitBytes;
+                    if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
+                    noteReal();
                     continue;
                 }
 
@@ -688,7 +806,7 @@ private:
                     applyBitrate(encode::stillBitrateKbps(baseKbps));
                 }
 
-                if (!emit(frameNumber, steadyNowUs(), error)) return;
+                if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
                 lastSentUs = steadyNowUs();
 
                 if (!refining) continue;
@@ -729,21 +847,20 @@ private:
                 if (!m_CompositeCursor.load()) continue;
                 if (!m_DesktopCopy) continue;
                 m_CursorDirty.store(false);
+                const int64_t submittedUs = steadyNowUs();
                 if (!m_Converter->convert(m_DesktopCopy.Get(), m_Capture->cursor(), cursorDraw(),
                                           error)) {
                     finish("colour conversion failed: " + error);
                     return;
                 }
-                if (!emit(frameNumber, steadyNowUs(), error)) return;
-                lastSentUs = steadyNowUs();
-                // The picture changed, so a new refinement window opens: a
-                // pointer that stops moving leaves a composited frame that
-                // deserves sharpening exactly like any other.
-                lastRealUs = lastSentUs;
-                refineQuiet = 0;
-                refinePasses = 0;
-                refineBytes = 0;
-                refineFirstBytes = m_LastEmitBytes;
+                // No present of its own — the picture changed when the pointer
+                // did, so that is its t₀. A picture like any other from here:
+                // held for the cadence if one is running, and when it goes out
+                // a new refinement window opens, because a pointer that stops
+                // moving leaves a composited frame that deserves sharpening
+                // exactly like any other.
+                if (!emitPicture(FrameStamps{submittedUs, submittedUs, submittedUs, steadyNowUs()}))
+                    return;
                 continue;
             }
 
@@ -755,6 +872,9 @@ private:
                     finish("capture could not be restarted: " + error);
                     return;
                 }
+                // A picture held for the cadence lived in the old converter's
+                // texture, which went with the old device.
+                m_Cadence.drop();
                 // Whatever the client had is now stale: the encoder is a new one
                 // and has no reference frames, and the picture it is about to
                 // send is a different desktop.
@@ -779,6 +899,7 @@ private:
                 return;
             }
 
+            m_PresentsSeen++;
             const int64_t submittedUs = steadyNowUs();
 
             // An empty state draws nothing: that is how the client-drawn mode
@@ -807,28 +928,26 @@ private:
             // copied what it needs into the NV12 texture.
             m_Capture->release();
 
-            if (!emit(frameNumber, submittedUs, error, &frame)) return;
-            lastSentUs = steadyNowUs();
-            lastRealUs = lastSentUs;
-            refineQuiet = 0;
-            refinePasses = 0;
-            refineBytes = 0;
-            refineFirstBytes = m_LastEmitBytes;
+            // t₂ once the capture is given back, so the stage reads as the
+            // whole of what stands between the acquire and the encoder.
+            if (!emitPicture(
+                    FrameStamps{frame.presentUs, frame.capturedUs, submittedUs, steadyNowUs()}))
+                return;
         }
     }
 
     /// Encode whatever the converter currently holds and hand it to the
-    /// consumer. @p frame is the capture it came from, or null when this is a
-    /// re-send (idle floor, pointer-only) with no new present to report.
+    /// consumer. @p stamps are the picture's own t₀..t₂ — a capture's, or
+    /// "now" for a re-send (idle floor, refinement) that has no present of
+    /// its own; see resendStamps.
     ///
     /// Returns false when the session must end; the reason has been reported.
-    bool emit(uint32_t& frameNumber, int64_t submittedUs, std::string& error,
-              const capture::CapturedFrame* frame = nullptr)
+    bool emit(uint32_t& frameNumber, const FrameStamps& stamps, std::string& error)
     {
-        // t₂: the conversion has been issued, the encoder is about to be asked.
-        // Taken before the keyframe flag so the flag's exchange is inside the
-        // encode stage, where it belongs.
-        const int64_t convertedUs = steadyNowUs();
+        // t₂ᵇ: the encoder is about to be asked. Taken before the keyframe
+        // flag so the flag's exchange is inside the encode stage, where it
+        // belongs.
+        const int64_t dueUs = steadyNowUs();
         const bool forceKeyframe = m_ForceKeyframe.exchange(false);
         encode::EncoderOutput encoded;
         if (!m_Encoder->encode(m_Converter->output(), forceKeyframe, encoded, error)) {
@@ -855,14 +974,11 @@ private:
             out.keyframe = encoded.keyframe;
             out.frameNumber = frameNumber++;
             out.avgQp = encoded.avgQp;
-            // A re-send has no present of its own. Reporting "now" for both
-            // keeps the latency figures honest — it measures zero capture
-            // latency because there was no capture, rather than inheriting a
-            // stale present time and claiming half a second of delay.
-            out.presentUs = frame ? frame->presentUs : submittedUs;
-            out.capturedUs = frame ? frame->capturedUs : submittedUs;
-            out.submittedUs = submittedUs;
-            out.convertedUs = convertedUs;
+            out.presentUs = stamps.presentUs;
+            out.capturedUs = stamps.capturedUs;
+            out.submittedUs = stamps.submittedUs;
+            out.convertedUs = stamps.convertedUs;
+            out.dueUs = dueUs;
             out.encodedUs = steadyNowUs();
 
             // Delivered on this thread, and the consumer sends it before
@@ -1073,6 +1189,30 @@ private:
     ///
     /// noexcept because it is called from run()'s catch block: a throw here
     /// would re-enter termination with the original cause already lost.
+    /// One line at the end: what the display produced against what the stream
+    /// carried. The number that says whether the cadence did its job — and,
+    /// on a display faster than the stream, how much the wire was spared.
+    void logCadence()
+    {
+        if (m_PresentsSeen == 0) return;
+        const double seconds = (steadyNowUs() - m_LoopStartUs) / 1e6;
+        char span[32];
+        std::snprintf(span, sizeof(span), "%.1f", seconds);
+        std::string line = "[native] cadence: " + hzString(m_DisplayMilliHz) + " Hz display, " +
+                           std::to_string(m_EncodeFps) + " fps stream — " +
+                           std::to_string(m_PresentsSeen) + " presents in " + span + " s";
+        if (m_Cadence.enabled()) {
+            const int64_t skipped = m_Cadence.superseded();
+            const int perSecond =
+                seconds > 0 ? static_cast<int>(static_cast<double>(skipped) / seconds + 0.5) : 0;
+            line += ", " + std::to_string(skipped) + " not carried (" + std::to_string(perSecond) +
+                    "/s)";
+        } else {
+            line += ", every one carried";
+        }
+        log::info(line);
+    }
+
     void finish(const std::string& reason) noexcept
     {
         m_Running.store(false);
@@ -1089,6 +1229,17 @@ private:
     ResolvedTarget m_Target;
     SessionCallbacks m_Callbacks;
     SessionInfo m_Info;
+
+    /// The rate the encoder's budget is dimensioned for — the setting, or the
+    /// display's own refresh when the setting is 0. See start().
+    int m_EncodeFps = 0;
+    int m_DisplayMilliHz = 0;
+    /// Holds the loop to the stream's rate; disabled at fps 0. Owned by the
+    /// capture thread once the loop runs.
+    FrameCadence m_Cadence{0};
+    /// Presents the display delivered (AcquireStatus::Ok), for the log.
+    int64_t m_PresentsSeen = 0;
+    int64_t m_LoopStartUs = 0;
 
     std::unique_ptr<capture::DxgiDuplication> m_Capture;
     std::unique_ptr<convert::ColorConvert> m_Converter;

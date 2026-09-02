@@ -379,6 +379,62 @@ l'utilisateur passe avant une demande venue d'une page), jamais plus lentement
 que les 500 ms. Le timeout d'`AcquireNextFrame` suit le plancher, sinon une
 frame due à 33 ms serait livrée à 100.
 
+### 9.6 Cadence : le fps réglé est tenu (02/09/2026)
+
+Jusqu'au 02/09, la borne « jamais plus vite que le fps du stream » ne valait
+que pour le plancher : la boucle, elle, encodait **chaque présent DXGI**. Sur
+l'écran 165 Hz du banc avec 60 réglés, 164 images/s traversaient un CBR
+dimensionné pour 60 — le budget est *par image*, donc le fil portait 2,75 × le
+débit réglé sur un écran en mouvement (mesuré : 21,7 Ko de moyenne × 164 =
+28 Mbit/s pour 20 réglés, 63 Mbit/s quand les images plafonnaient au VBV en
+déplaçant une fenêtre). Invisible en LAN ; sur Internet l'excédent attend dans
+le SCTP et se sent comme un pointeur qui traîne.
+
+Le mécanisme (`FrameCadence`, pur, testé sans écran) : l'intervalle du stream
+est une grille. À l'intérieur d'un intervalle chaque présent est **converti**
+(la texture de sortie du convertisseur est le lieu de garde, le suivant
+l'écrase) mais seul le **dernier** est encodé, à l'échéance. Le dernier et non
+le premier : garder le premier enverrait une image plus vieille d'un
+demi-intervalle en moyenne que celle que le client aurait pu avoir. Un présent
+qui arrive à l'échéance ou juste après passe directement et la grille avance
+d'un intervalle (jamais « maintenant + intervalle », sinon le retard de réveil
+s'accumule et la cadence dérive — mesuré 56 fps pour 60 avant correction) ; un
+présent qui arrive alors que rien n'était retenu — écran redevenu vivant — passe
+directement et **ré-ancre** la grille sur lui. La boucle se réveille pour
+l'échéance par le timeout d'`AcquireNextFrame`, arrondi à la milliseconde
+supérieure, sous `timeBeginPeriod(1)` pour la durée de la session (sans quoi un
+timeout de 5 ms rend la main 15 ms plus tard).
+
+Le Selector résout « 0 » en la fréquence arrondie de l'écran ; la garde n'est
+construite que si le stream est **plus lent** que l'écran. À la cadence de
+l'écran tout présent est encodé tel quel — une garde au même rythme retiendrait
+encore un présent arrivé un peu tôt pour le jeter au suivant (mesuré : 23 sur
+1 651 en 10 s).
+
+Le budget de l'encodeur suit désormais le fps **effectif** (`m_EncodeFps`) et
+non plus 60 quand le réglage était 0.
+
+L'attente est une étape à part dans les stats, `hold` (t₂ → t₂ᵇ, `dueUs`
+dans `EncodedFrame`), pour ne pas la cacher dans l'encodage ni dans la
+conversion. Banc du 02/09, 1440p HEVC AMF sur le RX 7600, 20 Mbit/s, la même
+vidéo 4K jouant à l'écran :
+
+| Réglage | présents | encodées | non portées | hold ms | encodage ms | présent→encodé ms | Ko/image |
+|---|---|---|---|---|---|---|---|
+| 60 (avant) | 1 641 | 1 641 | 0 | — | 4,28 / 5,12 / 5,63 | 4,75 / 6,66 / 7,68 | 21,7 moy., 48 p95 |
+| **60 (après)** | 1 647 | 601 | 1 045 (104/s) | 0,99 / 5,63 / 6,14 | 4,10 / 5,12 / 5,63 | 5,52 / 9,22 / 10,24 | 36,0 moy., 48 p95 |
+| 0 = 165 | 1 651 | 1 628 | 0 | — | 4,24 / 5,12 / 5,63 | 4,87 / 6,66 / 8,19 | 13,2 moy., 40 p95 |
+
+(moyenne / p95 / p99.) Sur un vrai flux depuis l'instance dev (1080p HEVC
+AMF, 20 Mbit/s, 37 s, bureau avec une vidéo qui joue) : 6 107 présents, 2 148
+images envoyées, 105/s non portées ; `hold` 0,50 / 4,61 / 6,14 ms, encodage
+3,31 / 4,10 / 4,61, **total présent → dernier octet 4,73 / 8,19 / 10,24 ms**.
+Le prix : jusqu'à un intervalle d'écran (6,06 ms) d'âge
+sur l'image encodée, 1 ms en moyenne — c'est le coût inhérent au
+sous-échantillonnage, et « 0 » reste le réglage sans ce coût quand le lien
+suit. Le gain : 36 Ko × 60 = 17 Mbit/s réels pour 20 réglés, au lieu de 28 à
+63 ; l'encodeur dépense enfin son budget par image sur du contenu.
+
 ---
 
 ## 10. Host natif dans l'UI

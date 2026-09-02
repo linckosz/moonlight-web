@@ -62,7 +62,10 @@ if(WIN32)
     # d3dcompiler builds the colour-conversion shaders at session start (~1 ms,
     # once) — precompiling them would add fxc to the build for no runtime gain.
     # setupapi is ViGEmClient's: it finds the virtual bus by device interface.
-    target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32 setupapi)
+    # winmm is timeBeginPeriod: the capture loop waits for the stream's next
+    # due time, and without a 1 ms scheduler period that wait lands 15 ms late.
+    target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32 setupapi
+                                                 winmm)
 else()
     set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
@@ -152,6 +155,7 @@ if(MW_BUILD_TESTS)
         tests/test_vpl_params.cpp
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp
+        tests/test_frame_cadence.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)
