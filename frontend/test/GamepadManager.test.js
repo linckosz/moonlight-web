@@ -94,6 +94,42 @@ describe('GamepadManager', () => {
         gm.stop();
     });
 
+    it('repeats a pad held away from rest, never one at rest', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        let now = 1000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        const pad = fakePad({ index: 0, axes: [1, 0, 0, 0] });
+        setPads([pad]);
+
+        gm.start(); // first poll: connect + the pushed stick
+        send.mockClear();
+
+        // The same frame again, too soon: silence.
+        now += 100;
+        rafCb();
+        expect(send.mock.calls.find((c) => c[0].type === 'gamepad')).toBeUndefined();
+
+        // Half a second later, still pushed: said again, unchanged. This is
+        // what puts a pad back after the host centred it on a dead link.
+        now += 400;
+        rafCb();
+        const repeat = send.mock.calls.find((c) => c[0].type === 'gamepad');
+        expect(repeat[0]).toMatchObject({ type: 'gamepad', index: 0, lx: 32767 });
+
+        // Back to rest: reported once, then never repeated however long it sits.
+        send.mockClear();
+        pad.axes = [0, 0, 0, 0];
+        now += 100;
+        rafCb();
+        expect(send.mock.calls.filter((c) => c[0].type === 'gamepad')).toHaveLength(1);
+        send.mockClear();
+        now += 5000;
+        rafCb();
+        expect(send.mock.calls.find((c) => c[0].type === 'gamepad')).toBeUndefined();
+        gm.stop();
+    });
+
     it('detects controller types from the id string', () => {
         const cases = [
             ['DualSense Wireless', 2],

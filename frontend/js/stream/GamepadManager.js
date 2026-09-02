@@ -104,6 +104,34 @@ function axisToShort(v) {
     return s;
 }
 
+/**
+ * How often a pad held away from rest is repeated to the host even though
+ * nothing changed. Under the watchdog's long grace period (3 s), so a pad
+ * centred by the host on a dead link comes back within half a second of the
+ * link returning — and well over the frame rate, so a moving stick is never
+ * sent twice.
+ */
+const REEMIT_MS = 500;
+
+/**
+ * Whether a snapshot is away from rest (button, trigger or stick). The
+ * threshold matches the backend's (InputWatchdog::padAtRest): deliberately
+ * loose, since a barely-drifted stick counted as active costs a message and
+ * a shoved one missed costs a runaway.
+ */
+function isActive(s) {
+    const AT_REST = 4096;
+    return (
+        s.buttons !== 0 ||
+        s.lt !== 0 ||
+        s.rt !== 0 ||
+        Math.abs(s.lx) >= AT_REST ||
+        Math.abs(s.ly) >= AT_REST ||
+        Math.abs(s.rx) >= AT_REST ||
+        Math.abs(s.ry) >= AT_REST
+    );
+}
+
 export class GamepadManager {
     /**
      * @param {(msg:object)=>void} sendFn — sends a JSON input message.
@@ -126,7 +154,7 @@ export class GamepadManager {
         this._ignored = new Set();
         this._running = false;
         this._rafId = null;
-        // index → { last: {buttons,lt,rt,lx,ly,rx,ry}, hasRumble:boolean }
+        // index → { last: {buttons,lt,rt,lx,ly,rx,ry}, sentAt, hasRumble:boolean }
         this._pads = new Map();
         // index → { strong, weak, since, timer } for a vibration being held.
         this._rumble = new Map();
@@ -205,7 +233,7 @@ export class GamepadManager {
         }
         if (this._pads.has(gp.index)) return;
         const hasRumble = !!gp.vibrationActuator;
-        this._pads.set(gp.index, { last: null, hasRumble });
+        this._pads.set(gp.index, { last: null, sentAt: 0, hasRumble });
         this._send({
             type: 'gamepadconnect',
             index: gp.index,
@@ -261,6 +289,7 @@ export class GamepadManager {
             const ry = axisToShort(-(gp.axes[3] || 0));
 
             const cur = { buttons, lt, rt, lx, ly, rx, ry };
+            const now = performance.now();
             const p = entry.last;
             if (
                 p &&
@@ -272,9 +301,16 @@ export class GamepadManager {
                 p.rx === rx &&
                 p.ry === ry
             ) {
-                continue; // unchanged — don't flood the input channel
+                // Unchanged — don't flood the input channel. Except that a pad
+                // held away from rest is repeated now and then: the host's
+                // watchdog centres it when the link goes quiet for too long,
+                // and nothing else would put it back until the stick MOVES.
+                // The state is idempotent on every host, so a repeat costs
+                // two small messages a second and never misleads.
+                if (!isActive(cur) || now - entry.sentAt < REEMIT_MS) continue;
             }
             entry.last = cur;
+            entry.sentAt = now;
             this._send({ type: 'gamepad', index: gp.index, mask: this._mask(), ...cur });
         }
     }
@@ -285,25 +321,11 @@ export class GamepadManager {
      * A pad only reports on change, so a stick shoved and held goes silent
      * exactly like a held key — and the host's input watchdog reads silence as
      * a dead link. StreamView's held-input heartbeat asks this so it keeps
-     * beating while a stick is pushed. The threshold matches the backend's
-     * (MoonlightShim::sendControllerState).
+     * beating while a stick is pushed.
      */
     hasActiveState() {
-        const AT_REST = 4096;
         for (const entry of this._pads.values()) {
-            const s = entry.last;
-            if (!s) continue;
-            if (
-                s.buttons !== 0 ||
-                s.lt !== 0 ||
-                s.rt !== 0 ||
-                Math.abs(s.lx) >= AT_REST ||
-                Math.abs(s.ly) >= AT_REST ||
-                Math.abs(s.rx) >= AT_REST ||
-                Math.abs(s.ry) >= AT_REST
-            ) {
-                return true;
-            }
+            if (entry.last && isActive(entry.last)) return true;
         }
         return false;
     }
