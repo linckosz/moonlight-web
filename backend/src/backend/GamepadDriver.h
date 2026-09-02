@@ -114,6 +114,16 @@ inline QString downloadUrl()
                           "v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe");
 }
 
+/// SHA-256 of that exact asset, lowercase hex. The downloaded bundle runs as
+/// SYSTEM; a transport that is merely HTTPS-to-GitHub is not a reason to hand
+/// the machine to whatever bytes come back. Computed from the published file
+/// (6 278 576 bytes) and pinned with the URL, so bumping one without the other
+/// fails every install instead of silently trusting a new binary.
+inline QString downloadSha256()
+{
+    return QStringLiteral("89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd014c6a");
+}
+
 /// How an install attempt ended.
 enum class Result
 {
