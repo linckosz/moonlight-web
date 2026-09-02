@@ -30,8 +30,7 @@ enum class Stage : int
 {
     Acquire = 0, ///< t0 present → t1 acquired: how long DXGI took to wake us
     Convert,     ///< t1 acquired → t2 converted: the colour pass, CPU side
-    Hold,        ///< t2 converted → t2b due: held for the stream's cadence
-    Encode,      ///< t2b due → t3 encoded: the encoder, bitstream readable
+    Encode,      ///< t2 converted → t3 encoded: the encoder, bitstream readable
     Queue,       ///< t3 encoded → t4 first byte sent: every hop before the wire
     Send,        ///< t4 first byte → t5 last byte: the fragments through SCTP
     Total,       ///< t0 present → t5 last byte: what the client waits for
@@ -96,7 +95,7 @@ private:
     int64_t m_Max = 0;
 };
 
-/// The seven stages over two horizons at once: the current reporting window,
+/// The six stages over two horizons at once: the current reporting window,
 /// which the owner drains every few seconds for the live stats, and the whole
 /// session, read once at the end for the log.
 ///

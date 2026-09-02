@@ -4502,7 +4502,6 @@ export class StreamView {
                 const named = {
                     acquire: 'statStageAcquire',
                     convert: 'statStageConvert',
-                    hold: 'statStageHold',
                     encode: 'statStageEncode',
                     queue: 'statStageQueue',
                     send: 'statStageSend',

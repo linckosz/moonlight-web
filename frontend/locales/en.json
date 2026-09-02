@@ -526,7 +526,6 @@
         "statLegHeader": "avg / p99",
         "statStageAcquire": "Host · acquire",
         "statStageConvert": "Host · convert",
-        "statStageHold": "Host · cadence hold",
         "statStageEncode": "Host · encode",
         "statStageQueue": "Host · queue",
         "statStageSend": "Host · send",

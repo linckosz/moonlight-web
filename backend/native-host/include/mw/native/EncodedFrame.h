@@ -75,16 +75,10 @@ struct EncodedFrame
 
     /// When the conversion pass had been issued (t₂). `convertedUs -
     /// submittedUs` is the CPU side of the colour pass; the GPU side is paid
-    /// inside the encode that follows.
+    /// inside the encode that follows. The encoder is asked right after: a
+    /// picture is never held on the host for the stream's cadence (see
+    /// FrameCadence — the ones that would have waited are skipped instead).
     int64_t convertedUs = 0;
-
-    /// When the encoder was actually asked (t₂ᵇ). Equal to convertedUs unless
-    /// the frame was HELD for the stream's cadence: on a display refreshing
-    /// faster than the stream, every present is converted but only the last
-    /// one of each stream interval is encoded, when that interval falls due.
-    /// `dueUs - convertedUs` is that wait — the price of subsampling, kept
-    /// apart from the encoder's own time so neither hides in the other.
-    int64_t dueUs = 0;
 
     /// When the encoder's bitstream became readable (t₃).
     int64_t encodedUs = 0;

@@ -405,19 +405,34 @@ déplaçant une fenêtre). Invisible en LAN ; sur Internet l'excédent attend da
 le SCTP et se sent comme un pointeur qui traîne.
 
 Le mécanisme (`FrameCadence`, pur, testé sans écran) : l'intervalle du stream
-est une grille. À l'intérieur d'un intervalle chaque présent est **converti**
-(la texture de sortie du convertisseur est le lieu de garde, le suivant
-l'écrase) mais seul le **dernier** est encodé, à l'échéance. Le dernier et non
-le premier : garder le premier enverrait une image plus vieille d'un
-demi-intervalle en moyenne que celle que le client aurait pu avoir. Un présent
-qui arrive à l'échéance ou juste après passe directement et la grille avance
-d'un intervalle (jamais « maintenant + intervalle », sinon le retard de réveil
-s'accumule et la cadence dérive — mesuré 56 fps pour 60 avant correction) ; un
-présent qui arrive alors que rien n'était retenu — écran redevenu vivant — passe
-directement et **ré-ancre** la grille sur lui. La boucle se réveille pour
-l'échéance par le timeout d'`AcquireNextFrame`, arrondi à la milliseconde
-supérieure, sous `timeBeginPeriod(1)` pour la durée de la session (sans quoi un
-timeout de 5 ms rend la main 15 ms plus tard).
+est une grille. Chaque présent est **converti** (la texture de sortie du
+convertisseur est ce que les chemins « écran fixe » réémettent, elle doit
+rester la plus fraîche) mais seul le **premier présent à ou après chaque
+échéance** est encodé, **à l'instant où il arrive**. Les autres sont sautés.
+Rien n'attend jamais sur le thread de capture. La grille avance d'un intervalle
+à chaque présent admis (jamais « maintenant + intervalle », sinon la cadence
+dérive — mesuré 56 fps pour 60) ; un présent qui arrive un peu **avant**
+l'échéance, dans le quart d'intervalle qui la précède, passe aussi, plutôt que
+d'attendre une période d'écran entière pour le suivant. La grille n'est
+**ré-ancrée** sur le présent admis que s'il est en retard de plus d'une
+période d'écran, c'est-à-dire qu'un présent manquait là où la grille en
+attendait un : écran resté fixe, boucle bloquée, ou jeu tournant au fps du
+stream mais déphasé — auquel cas la grille se verrouille sur lui au lieu de
+battre contre lui (une image sautée une fois, pas à chaque intervalle).
+
+**Première version, abandonnée le 02/09 au soir.** Elle faisait l'inverse :
+retenir le *dernier* présent de chaque intervalle et l'encoder à l'échéance,
+réveil par le timeout d'`AcquireNextFrame` sous `timeBeginPeriod(1)`, pour
+une émission parfaitement régulière et l'image la plus fraîche possible *à
+l'échéance*. Mesurée par Bruno à 30 km par Internet : cette attente faisait
+**5,4 ms de moyenne et 17 ms au p99**, soit les deux tiers du temps hôte (8,1 ms
+sur un pipeline qui en coûte 2,7) — un présent arrivé juste après une échéance
+patientait l'intervalle entier. Une image qui attend sur l'hôte est de la
+latence que le joueur sent ; une émission en avance ou en retard d'une période
+d'écran (6 ms à 165 Hz, rien quand le jeu tourne lui-même au fps du stream) ne
+l'est pas, et avec le *tearing* côté client elle est invisible. Latence
+d'abord, régularité ensuite. L'étape `hold` (t₂ → t₂ᵇ, `dueUs`) a disparu des
+stats, de l'overlay et du banc avec elle ; `encode` va désormais de t₂ à t₃.
 
 Le Selector résout « 0 » en la fréquence arrondie de l'écran ; la garde n'est
 construite que si le stream est **plus lent** que l'écran. À la cadence de
@@ -428,10 +443,8 @@ encore un présent arrivé un peu tôt pour le jeter au suivant (mesuré : 23 su
 Le budget de l'encodeur suit désormais le fps **effectif** (`m_EncodeFps`) et
 non plus 60 quand le réglage était 0.
 
-L'attente est une étape à part dans les stats, `hold` (t₂ → t₂ᵇ, `dueUs`
-dans `EncodedFrame`), pour ne pas la cacher dans l'encodage ni dans la
-conversion. Banc du 02/09, 1440p HEVC AMF sur le RX 7600, 20 Mbit/s, la même
-vidéo 4K jouant à l'écran :
+Banc du 02/09 (première version, avec l'étape `hold` qui n'existe plus),
+1440p HEVC AMF sur le RX 7600, 20 Mbit/s, la même vidéo 4K jouant à l'écran :
 
 | Réglage | présents | encodées | non portées | hold ms | encodage ms | présent→encodé ms | Ko/image |
 |---|---|---|---|---|---|---|---|
@@ -443,11 +456,17 @@ vidéo 4K jouant à l'écran :
 AMF, 20 Mbit/s, 37 s, bureau avec une vidéo qui joue) : 6 107 présents, 2 148
 images envoyées, 105/s non portées ; `hold` 0,50 / 4,61 / 6,14 ms, encodage
 3,31 / 4,10 / 4,61, **total présent → dernier octet 4,73 / 8,19 / 10,24 ms**.
-Le prix : jusqu'à un intervalle d'écran (6,06 ms) d'âge
-sur l'image encodée, 1 ms en moyenne — c'est le coût inhérent au
-sous-échantillonnage, et « 0 » reste le réglage sans ce coût quand le lien
-suit. Le gain : 36 Ko × 60 = 17 Mbit/s réels pour 20 réglés, au lieu de 28 à
-63 ; l'encodeur dépense enfin son budget par image sur du contenu.
+Le gain : 36 Ko × 60 = 17 Mbit/s réels pour 20 réglés, au lieu de 28 à 63 ;
+l'encodeur dépense enfin son budget par image sur du contenu.
+
+**Version sans attente, mesurée le 02/09 au soir**, même instance dev, même
+écran 165 Hz, 60 réglés, 1080p HEVC AMF, 63 s de bureau avec une vidéo qui
+joue : 10 386 présents, 3 793 images envoyées (60/s exactement), 104/s non
+portées ; hôte `acquire 0,11 / 0,21 / 0,29 · convert 0,18 / 0,35 / 0,51 ·
+encode 3,38 / 4,10 / 4,61 · queue 0,16 / 0,38 / 0,96 · send 0,33 / 0,70 /
+1,02 · total 4,19 / 5,63 / 6,66 ms` (moyenne / p95 / p99). La session
+précédente, avec rétention, sur le même banc : total **7,70 / 20,48 / 24,58**.
+Le p99 hôte a été divisé par presque quatre pour le même débit sur le fil.
 
 ---
 

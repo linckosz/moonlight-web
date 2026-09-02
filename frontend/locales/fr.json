@@ -526,7 +526,6 @@
         "statLegHeader": "moy. / p99",
         "statStageAcquire": "Hôte · acquisition",
         "statStageConvert": "Hôte · conversion",
-        "statStageHold": "Hôte · attente de cadence",
         "statStageEncode": "Hôte · encodage",
         "statStageQueue": "Hôte · file",
         "statStageSend": "Hôte · envoi",
