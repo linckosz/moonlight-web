@@ -208,9 +208,29 @@ public:
             return false;
         }
 
+        // HDR is carried only when the whole chain can: the Selector has checked
+        // the display, the GPU and the codec, and the converter has the last
+        // word — it turns FP16 scRGB into P010, or it does not. When it does
+        // not, the capture is opened in 8-bit and DXGI hands over an HDR
+        // desktop already tone-mapped to SDR, which is the picture an SDR
+        // stream should carry. Opening in FP16 regardless is what made the
+        // session fail at the click on every machine with Windows HDR on: the
+        // converter refused a format nothing downstream could have used.
+        if (m_Target.hdr &&
+            !convert::ColorConvert::supportsSource(DXGI_FORMAT_R16G16B16A16_FLOAT)) {
+            log::info("[native] HDR negotiated but this build converts SDR only — streaming SDR "
+                      "from the tone-mapped desktop");
+            m_Target.hdr = false;
+        }
+
         m_Capture = std::make_unique<capture::DxgiDuplication>(m_Target.captureAdapterHandle,
-                                                               m_Target.outputIndex);
+                                                               m_Target.outputIndex, m_Target.hdr);
         if (!m_Capture->start(error)) return false;
+        if (!convert::ColorConvert::supportsSource(m_Capture->format())) {
+            error = "the display delivers frames in a format this build cannot convert (" +
+                    std::to_string(static_cast<int>(m_Capture->format())) + ")";
+            return false;
+        }
 
         // 4:4:4 only when the client asked AND the encoder can. Silently
         // downgrading would be worse than saying so: the whole reason to ask

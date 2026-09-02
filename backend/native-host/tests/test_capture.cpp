@@ -68,7 +68,9 @@ void run_capture_tests()
         if (d.gpuId == target->gpuId) ++outputIndex;
     }
 
-    capture::DxgiDuplication duplication(gpu->nativeHandle, outputIndex);
+    // SDR, as every session is in this build: on a desktop with Windows HDR on
+    // this is what makes the duplication deliver BGRA8 rather than FP16.
+    capture::DxgiDuplication duplication(gpu->nativeHandle, outputIndex, /*hdr=*/false);
 
     std::string error;
     if (!duplication.start(error)) {
