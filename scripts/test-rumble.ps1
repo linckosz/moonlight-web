@@ -157,7 +157,6 @@ public static class MwHid
 
     [DllImport("hid.dll")] static extern void HidD_GetHidGuid(out Guid guid);
     [DllImport("hid.dll", SetLastError = true)] static extern bool HidD_GetAttributes(IntPtr h, ref HIDD_ATTRIBUTES a);
-    [DllImport("hid.dll", SetLastError = true)] static extern bool HidD_SetOutputReport(IntPtr h, byte[] buffer, int len);
     [DllImport("hid.dll")] static extern bool HidD_GetPreparsedData(IntPtr h, out IntPtr pp);
     [DllImport("hid.dll")] static extern bool HidD_FreePreparsedData(IntPtr pp);
     [DllImport("hid.dll")] static extern int HidP_GetCaps(IntPtr pp, ref HIDP_CAPS caps);
@@ -259,14 +258,19 @@ public static class MwHid
             report[4] = weak;
             report[5] = strong;
 
-            if (HidD_SetOutputReport(h, report, report.Length)) return null;
-            int setErr = Marshal.GetLastWin32Error();
-
-            // Some drivers only accept the report through a plain write.
+            // WriteFile, and ONLY WriteFile. It becomes a USB interrupt OUT
+            // transfer, which is the one path ViGEmBus reads the motors from
+            // (Ds4Pdo.cpp, UsbBulkOrInterruptTransfer). HidD_SetOutputReport
+            // becomes a SET_REPORT control transfer instead, which the bus
+            // answers "success" to and then discards -- so it looks like it
+            // worked and nothing ever vibrates. That is exactly how the first
+            // DS4 rumble test on this project concluded "broken" when it was
+            // the test that never reached the device. Real pads take WriteFile
+            // too (it is what hidapi, SDL and Steam use), so nothing is lost.
             int written;
             if (WriteFile(h, report, report.Length, out written, IntPtr.Zero)) return null;
-            return "the device refused the report (SetOutputReport " + setErr +
-                   ", WriteFile " + Marshal.GetLastWin32Error() + ")";
+            return "the device refused the report (WriteFile error " +
+                   Marshal.GetLastWin32Error() + ")";
         }
         finally { CloseHandle(h); }
     }
