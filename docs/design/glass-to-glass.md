@@ -88,6 +88,52 @@ addEventListener('mouseup',()=>document.body.classList.remove('on'));
 </script>
 ```
 
+## 5 bis. Méthode C — sonde intégrée clic → drapeau (build debug, hôte Windows)
+
+Sans caméra, mais **clic → image** seulement (pas horloge), et sur un hôte
+Windows en build debug (`QT_DEBUG`, comme le sélecteur de profil manette).
+
+Principe :
+
+1. **Hôte** (`backend/src/LatencyFlag.cpp`) : un hook souris bas niveau
+   (`WH_MOUSE_LL`, clics *injectés* seulement) sur son propre thread ; à chaque
+   clic gauche, une fenêtre Win32 topmost, click-through, en haut au centre de
+   l'écran principal (44 %–56 % de la largeur × 0–5 % de la hauteur) affiche
+   trois bandes pleines bleu / blanc / rouge pendant 100 ms. C'est une fenêtre
+   OS, pas un ajout dans la texture capturée : rien n'est ajouté au pipeline
+   capture → encodage. En haut, parce qu'avec le tearing autorisé ce sont les
+   premières lignes scannées — les plus fraîches.
+2. **Client** (`frontend/js/stream/LatencyProbe.js`) : envoie un clic par le
+   chemin normal, horodate (`performance.now()`), peint un cercle gris d'une
+   frame à la position du pointeur (pour une caméra), puis échantillonne trois
+   pixels (un par bande) de la surface affichée — canvas ou `<video>` — à chaque
+   frame présentée et à chaque rAF, via un `drawImage` 100×20 en plus proche
+   voisin. Premier échantillon « bleu, blanc, rouge » = drapeau affiché. Rien
+   après 200 ms = échantillon écarté (perte réseau probable).
+
+Activation : Réglages → « Drapeau de latence clic → image (debug) », visible
+seulement si le serveur répond `latency_flag_supported` ; enregistré depuis
+localhost ; l'overlay suit le réglage à chaud. La réponse de lancement porte
+`latency_flag: true`, et seulement alors le StreamView installe la sonde.
+
+Usage, console du navigateur pendant un stream :
+
+```js
+await mwLatency.run();          // 3 clics espacés de 2 s, résumé médiane/p90
+await mwLatency.run(10, 1500);  // 10 clics, 1,5 s
+mwLatencyResults;               // toutes les entrées : {ts (µs epoch), latencyMs, fromMarkMs, ok, reason}
+```
+
+`latencyMs` compte depuis l'envoi du clic, `fromMarkMs` depuis la frame où le
+cercle gris a été peint (ce qu'une caméra sur l'écran client verrait). Les
+clics partent à la position courante du pointeur sur l'hôte : placer la souris
+sur une zone inerte avant de lancer.
+
+Ce qu'elle ne couvre pas : la présentation client après `draw()` (compositeur,
+scan-out, dalle) — la sonde s'arrête au dernier échantillon lisible sur la
+surface, c'est-à-dire au plus tard au rAF qui suit la présentation. Pour cette
+part, il reste la caméra (§2), qui peut apparier le cercle gris et le drapeau.
+
 ## 6. Conditions à consigner
 
 | Champ | Exemple |

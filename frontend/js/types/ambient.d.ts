@@ -130,6 +130,10 @@ interface RTCRtpReceiver {
 interface Window {
     /** Legacy constructor still required to unlock audio on older iOS Safari. */
     webkitAudioContext?: typeof AudioContext;
+    /** Click-to-photon probe of the visible stream (debug builds, Windows host). */
+    mwLatency?: import('../stream/LatencyProbe.js').LatencyProbe | null;
+    /** Every click-to-photon entry measured in this page, in order. */
+    mwLatencyResults?: any[];
 }
 
 interface TouchEvent {

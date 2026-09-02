@@ -84,6 +84,12 @@ export class SettingsView {
         // production the right behaviour is to guess correctly, and a visible
         // switch turns a detection bug into a question asked of the user.
         this._gamepadProfile = 'auto';
+        // Click-to-photon latency flag: a host-side switch (the host raises a
+        // flag on every click, the stream measures the delay). Shown only when
+        // the server can honour it — debug builds on Windows — and read from
+        // the server, never from this device's copy: it is the host's state.
+        this._latencyFlag = false;
+        this._latencyFlagSupported = false;
 
         // Power Saving mode (mobile only): forces the lightest pipeline.
         // _powerSaveBackup holds the values present before enabling, so unchecking
@@ -252,6 +258,8 @@ export class SettingsView {
             const data = await BackendClient.getStreamingSettings();
             this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
             this._debugBuild = data.debug_build === true;
+            this._latencyFlagSupported = data.latency_flag_supported === true;
+            this._latencyFlag = this._latencyFlagSupported && data.latency_flag_enabled === true;
 
             if (!stored) {
                 this._applySettings(data);
@@ -373,6 +381,8 @@ export class SettingsView {
             power_save: this._powerSave,
             power_save_backup: this._powerSaveBackup,
             gamepad_profile: this._gamepadProfile,
+            // Host-side switch: the server ignores it unless it can honour it.
+            latency_flag_enabled: this._latencyFlag,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -560,6 +570,9 @@ export class SettingsView {
             // which is 'auto' unless someone once ran a debug build here.
             const gpProfileEl = this.container.querySelector('#settings-gamepad-profile');
             const gamepadProfile = gpProfileEl ? gpProfileEl.value : this._gamepadProfile;
+            const latencyFlag =
+                this.container.querySelector('#settings-latency-flag')?.checked ??
+                this._latencyFlag;
 
             // Update internal state
             this._videoCodec = codec;
@@ -578,6 +591,7 @@ export class SettingsView {
             this._videoEnhancement = videoEnhancement;
             this._videoEnhancementAlgo = videoEnhancementAlgo;
             this._gamepadProfile = gamepadProfile;
+            this._latencyFlag = latencyFlag;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
@@ -841,6 +855,22 @@ export class SettingsView {
                         </select>
                     </div>`
             : '';
+        // Click-to-photon latency flag — debug builds on a Windows host only.
+        // A host-side switch (the overlay lives on the host's screen), saved
+        // through the same form; the server takes it only from localhost.
+        const latencyFlagHtml = this._latencyFlagSupported
+            ? `
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-latency-flag"
+                                ${this._latencyFlag ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.latencyFlag')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.latencyFlagDesc')}</span>
+                    </div>`
+            : '';
         const veNote = webgpuUnavailable
             ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
             : '';
@@ -994,6 +1024,7 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.chroma444Desc')}</span>
                     </div>
                     ${gamepadProfileHtml}
+                    ${latencyFlagHtml}
 
                     ${
                         IS_TOUCH_DEVICE

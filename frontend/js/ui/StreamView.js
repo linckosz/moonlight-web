@@ -65,6 +65,7 @@ import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { PipelineDiag, formatDiag } from '../stream/PipelineDiag.js';
 import { EnhancerGovernor } from '../stream/EnhancerGovernor.js';
 import { drawCapFor } from '../stream/RenderPacing.js';
+import { LatencyProbe } from '../stream/LatencyProbe.js';
 import { t } from '../i18n/i18n.js';
 
 /** @typedef {import('../types/transport.js').StreamTransport} StreamTransport */
@@ -547,6 +548,11 @@ export class StreamView {
         // letting it follow the controller we detect. 'auto' everywhere else —
         // see the gamepad profile note in SettingsView.
         this._gamepadProfile = opts.gamepadProfile || 'auto';
+        // Click-to-photon probe (debug builds, Windows host): the launch reply
+        // says whether the host raises its flag on every click. Only then is
+        // the measuring side installed — see stream/LatencyProbe.js.
+        this._latencyFlag = opts.latencyFlag === true;
+        this._latencyProbe = null;
         this.pointerLocked = false;
         // ── Host pointer, drawn by US ──────────────────────────────────────
         // The native host can hand over the pointer's shape instead of burning
@@ -1326,6 +1332,7 @@ export class StreamView {
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
                 <video id="stream-video" class="stream-video" autoplay muted playsinline></video>
                 <audio id="stream-audio" autoplay playsinline></audio>
+                <div id="stream-latency-mark" class="stream-latency-mark" hidden></div>
                 <div id="stream-input-layer" class="stream-input-layer"></div>
                 <div class="stream-click-hint" id="stream-hint">
                     ${t('stream.clickToCapture')}
@@ -1406,6 +1413,7 @@ export class StreamView {
         // over the video element.
         this.inputEl = /** @type {HTMLElement} */ (el.querySelector('#stream-input-layer'));
         this.inputEl.style.touchAction = 'none';
+        if (this._latencyFlag) this._initLatencyProbe(el);
 
         // statusEl kept for backward compatibility — setStatus() is now a no-op
         this.statusEl = null;
@@ -1816,6 +1824,11 @@ export class StreamView {
             case 'freezeframe':
                 if (this._onFreezeFrame) this._onFreezeFrame(m.bitmap || null);
                 else if (m.bitmap) m.bitmap.close();
+                break;
+            case 'probe-frame':
+                // The worker presented a frame while a click-to-photon
+                // measurement was on; sample the placeholder canvas now.
+                if (this._latencyProbe) this._latencyProbe.onFramePresented();
                 break;
         }
     }
@@ -2860,6 +2873,8 @@ export class StreamView {
     activate() {
         if (!this._standby) return;
         this._standby = false;
+        // The console handle follows the visible view.
+        if (this._latencyProbe) window.mwLatency = this._latencyProbe;
         if (this._rootEl) this._rootEl.style.visibility = '';
         // This leg is the live stream now, so it needs the full header — the
         // owner's Share menu above all: the retiring view takes its own away
@@ -3405,6 +3420,9 @@ export class StreamView {
                 // …and how that time splits between our work and waiting on the
                 // GPU/compositor, which is what tells back-pressure from cost.
                 this._diag.noteDraw(this._renderer && this._renderer.lastDraw, inFlight);
+                // Click-to-photon probe: a presented frame is a chance to spot
+                // the host's flag. One null check when no measurement is on.
+                if (this._latencyProbe) this._latencyProbe.onFramePresented();
             })
             .finally(() => {
                 this._drawsInFlight--;
@@ -6779,6 +6797,63 @@ export class StreamView {
         if (code) this._heldPhysKeys.delete(code);
     }
 
+    /**
+     * Click-to-photon probe (debug builds, Windows host). Installed only when
+     * the launch reply said the host raises its flag; reachable from the
+     * console as `mwLatency` (results in `mwLatencyResults`). The clicks it
+     * sends take the same path as a real one, at the host's current pointer.
+     */
+    _initLatencyProbe(root) {
+        const mark = /** @type {HTMLElement} */ (root.querySelector('#stream-latency-mark'));
+        const results = (window.mwLatencyResults = window.mwLatencyResults || []);
+        this._latencyProbe = new LatencyProbe({
+            // Whatever shows the picture right now: the <video> on the
+            // media-track / HDR sink paths (the only ones that set its inline
+            // display to block — the stylesheet hides it otherwise), the
+            // canvas everywhere else.
+            source: () =>
+                this.videoEl && this.videoEl.style.display === 'block' ? this.videoEl : this.canvas,
+            sendClick: () => {
+                this._sendMouseButton(1, true);
+                this._sendMouseButton(1, false);
+            },
+            // The grey circle: at the pointer when we know where it is, at the
+            // centre otherwise, up for exactly one frame (hidden again from the
+            // rAF after the one that paints it).
+            showMark: () => {
+                if (!mark || !this.canvasArea) return;
+                const rect = this.canvasArea.getBoundingClientRect();
+                const x =
+                    this._lastMouseClientX !== undefined
+                        ? this._lastMouseClientX - rect.left
+                        : rect.width / 2;
+                const y =
+                    this._lastMouseClientY !== undefined
+                        ? this._lastMouseClientY - rect.top
+                        : rect.height / 2;
+                mark.style.left = x + 'px';
+                mark.style.top = y + 'px';
+                mark.hidden = false;
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        mark.hidden = true;
+                    });
+                });
+            },
+            // The worker path presents off the main thread: ask it to report
+            // each draw for the length of the measurement.
+            requestFrameEvents: (ms) => {
+                if (this._videoWorker) this._videoWorker.postMessage({ type: 'probe', ms });
+            },
+            results,
+        });
+        // Standby views measure nothing; the visible one owns the console handle.
+        if (!this._standby) window.mwLatency = this._latencyProbe;
+        console.log(
+            '[StreamView] Click-to-photon probe ready: mwLatency.run(clicks = 3, spacingMs = 2000)',
+        );
+    }
+
     /** Send a mouse button event and keep _heldMouseButtons in sync (same
      *  reason as _sendKeyEvent). `button` is 1-based, as the host expects. */
     _sendMouseButton(button, down) {
@@ -7934,6 +8009,11 @@ export class StreamView {
         this.stopRenderLoop();
         this.unbindEvents();
         this.webrtc.close();
+        if (this._latencyProbe) {
+            this._latencyProbe.stop();
+            if (window.mwLatency === this._latencyProbe) window.mwLatency = null;
+            this._latencyProbe = null;
+        }
 
         if (this._shareMenu) {
             this._shareMenu.destroy();

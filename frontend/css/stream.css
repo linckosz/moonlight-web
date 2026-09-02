@@ -64,6 +64,20 @@ body.streaming-active::after {
     touch-action: none;
 }
 
+/* Click-to-photon probe: the grey circle painted for one frame at the click,
+   so a camera can pair the client's click with the host's flag. Above the
+   picture, below the input layer, never a hit target. */
+.stream-latency-mark {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    margin: -14px 0 0 -14px;
+    border-radius: 50%;
+    background: rgba(128, 128, 128, 0.95);
+    pointer-events: none;
+    z-index: 5;
+}
+
 .stream-header {
     position: relative;
     display: flex;
