@@ -208,11 +208,22 @@ void NativeMediaEngine::onEncodedFrame(const void* data, size_t size, bool keyfr
     // RTP, FEC, decryption and reassembly to produce it.
     QByteArray frame(static_cast<const char*>(data), static_cast<int>(size));
 
-    m_FramePresentationTimeUs.store(presentUs, std::memory_order_release);
-    m_FrameSubmitTimeUs.store(submittedUs, std::memory_order_release);
+    // The relay's contract for the frame's presentation time is the shim's:
+    // microseconds since the FIRST frame, added to firstFrameArrivalSteadyMs()
+    // to get back to the steady clock. The engine hands us an absolute
+    // steady_clock stamp, so the epoch has to be taken out here, or the sum
+    // counts the clock twice and the client sees capture time run at 2×.
+    //
+    // The epoch is the first frame's own present time — a real display present,
+    // not an arrival at the relay — so what the client receives IS the present
+    // time on our steady clock, to the millisecond.
+    int64_t epochUs = 0; // on failure, receives the stamp already stored
+    if (m_FirstPresentUs.compare_exchange_strong(epochUs, presentUs, std::memory_order_acq_rel))
+        epochUs = presentUs;
+    const int64_t relativePresentUs = presentUs > epochUs ? presentUs - epochUs : 0;
 
-    int64_t expected = 0;
-    m_FirstFrameArrivalUs.compare_exchange_strong(expected, encodedUs, std::memory_order_acq_rel);
+    m_FramePresentationTimeUs.store(relativePresentUs, std::memory_order_release);
+    m_FrameSubmitTimeUs.store(submittedUs, std::memory_order_release);
 
     // Measured, not reported: the real time from the display presenting the
     // frame to the encoder finishing it.
@@ -227,7 +238,7 @@ void NativeMediaEngine::onEncodedFrame(const void* data, size_t size, bool keyfr
     // that stays direct — which is the point: the GameStream path pays a queued
     // hop here, and not paying it is one of the reasons this engine exists.
     emit videoFrameReady(frame, keyframe ? kFrameTypeKeyframe : kFrameTypeDelta,
-                         static_cast<int>(frameNumber), presentUs);
+                         static_cast<int>(frameNumber), relativePresentUs);
 }
 
 void NativeMediaEngine::stopConnection()
@@ -303,7 +314,10 @@ int64_t NativeMediaEngine::framePresentationTimeUs() const
 
 int64_t NativeMediaEngine::firstFrameArrivalSteadyMs() const
 {
-    return m_FirstFrameArrivalUs.load(std::memory_order_acquire) / 1000;
+    // The epoch the relative presentation times are counted from — see
+    // onEncodedFrame. Named for the shim's contract; here it is the first
+    // frame's display present, which is the better t₀.
+    return m_FirstPresentUs.load(std::memory_order_acquire) / 1000;
 }
 
 void NativeMediaEngine::onCursor(const mw::native::CursorUpdate& cursor)
