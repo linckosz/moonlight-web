@@ -142,7 +142,11 @@ void addEvent(std::vector<input_event>& events, uint16_t type, uint16_t code, in
 
 UinputGamepad::Profile UinputGamepad::profileFor(uint8_t controllerType)
 {
-    if (controllerType == InputEvent::kControllerPlayStation) return Profile::DualShock4;
+    // Same decision as the Windows backend (2026-09-02): X360 for every pad.
+    // On evdev the two profiles differ only by identity, so the XInput-only
+    // argument is weaker here than under ViGEm — but one rule across hosts
+    // beats a pad that changes shape with the operating system it lands on.
+    (void)controllerType;
     return Profile::X360;
 }
 

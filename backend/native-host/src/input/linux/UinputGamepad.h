@@ -83,6 +83,7 @@ public:
     };
 
     /// The profile for a client's LI_CTYPE_* (InputEvent::controllerType).
+    /// X360 for everything, same decision as VigemGamepad (2026-09-02).
     static Profile profileFor(uint8_t controllerType);
 
     /// Whether a virtual pad can be created here, asked of /dev/uinput itself.

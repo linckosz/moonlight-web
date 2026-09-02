@@ -183,7 +183,16 @@ int VigemGamepad::connectedCount() const
 
 VigemGamepad::Profile VigemGamepad::profileFor(uint8_t controllerType)
 {
-    if (controllerType == InputEvent::kControllerPlayStation) return Profile::DualShock4;
+    // Decided 2026-09-02: X360 for every pad, PlayStation included. A virtual
+    // DualShock is invisible to a game that only speaks XInput, and that
+    // failure is silent and per game — the player sees a pad that works in one
+    // title and does nothing in the next, with no way to tell why. The X360
+    // profile works everywhere; the price is PlayStation prompts, which a game
+    // can get wrong and still be played. The DualShock 4 profile stays complete
+    // and validated (buttons, axes, rumble — 2026-09-02) so re-enabling it is
+    // this one line; the debug profile switch in the browser cannot reach it
+    // here, since a forced DS4 announces the same LI_CTYPE_PS as a detected one.
+    (void)controllerType;
     return Profile::X360;
 }
 

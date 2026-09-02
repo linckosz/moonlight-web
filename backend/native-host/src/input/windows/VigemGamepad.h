@@ -72,15 +72,18 @@ public:
     /// swaps pads on one slot has to remove and re-announce it.
     enum class Profile
     {
-        X360,       ///< the default, and every unrecognised pad
-        DualShock4, ///< a PlayStation pad on the client
+        X360,       ///< every pad, by decision (see profileFor)
+        DualShock4, ///< complete and validated, not selected today
     };
 
     /// The profile for a client's LI_CTYPE_* (InputEvent::controllerType).
     ///
-    /// Nintendo is deliberately absent: a Switch Pro pad needs a HID descriptor
-    /// ViGEmBus cannot produce (§2.2 of the design), so it gets the profile that
-    /// works rather than a refusal.
+    /// Answers X360 for everything since 2026-09-02: a virtual DualShock is
+    /// invisible to XInput-only games, silently, one title at a time. The
+    /// DualShock 4 profile is kept whole so the choice can be reversed here.
+    ///
+    /// Nintendo never had its own: a Switch Pro pad needs a HID descriptor
+    /// ViGEmBus cannot produce (§2.2 of the design).
     static Profile profileFor(uint8_t controllerType);
 
     /// Xbox 360 pads have four slots on the bus, and XInput exposes exactly
