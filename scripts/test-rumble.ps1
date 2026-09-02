@@ -327,7 +327,9 @@ if ($Ds4) {
     Write-Host ("Buzzing {0}s per device (left={1}, right={2})" -f $Seconds, $Left, $Right)
     Write-Host ""
 
-    $targets = if ($Slot -ge 0) { @($paths[[math]::Min($Slot, $paths.Count - 1)]) } else { $paths }
+    # @() on both branches: assigning a one-element list through an if-expression
+    # unrolls it to a bare string, which has no .Count under Set-StrictMode.
+    $targets = @(if ($Slot -ge 0) { $paths[[math]::Min($Slot, $paths.Count - 1)] } else { $paths })
 
     try {
         foreach ($path in $targets) {
