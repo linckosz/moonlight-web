@@ -117,17 +117,19 @@ export class Toast {
         setTimeout(remove, options.durationMs || 4000);
     }
 
-    static success(message) {
-        this.show(message, 'success');
+    // The shorthands forward `options`: a caller asking for a longer fade
+    // through Toast.warning() used to get the 4s default without a word.
+    static success(message, options) {
+        this.show(message, 'success', options);
     }
-    static error(message) {
-        this.show(message, 'error');
+    static error(message, options) {
+        this.show(message, 'error', options);
     }
-    static warning(message) {
-        this.show(message, 'warning');
+    static warning(message, options) {
+        this.show(message, 'warning', options);
     }
-    static info(message) {
-        this.show(message, 'info');
+    static info(message, options) {
+        this.show(message, 'info', options);
     }
 
     /**

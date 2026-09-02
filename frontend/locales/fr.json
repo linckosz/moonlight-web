@@ -488,7 +488,7 @@
         "webcodecsUnsupported": "WebCodecs non pris en charge",
         "codecUnsupported": "Codec non pris en charge par le navigateur",
         "streamDisconnected": "Flux déconnecté",
-        "gamepadIgnored": "Manette ignorée : « {{name}} » n'a pas de disposition standard. Passez-la en mode XInput (X sur la plupart des manettes) et rebranchez-la.",
+        "gamepadIgnored": "« {{name}} » ignorée : passez-la en mode XInput et rebranchez-la.",
         "webrtcError": "Erreur de connexion WebRTC",
         "degradeBitrate": "Réseau instable — débit réduit à {{mbps}} Mbps",
         "degradeBitrateFps": "Réseau instable — débit réduit à {{mbps}} Mbps, limité à 60 fps",
