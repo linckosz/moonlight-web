@@ -854,6 +854,7 @@ private:
             out.size = encoded.size;
             out.keyframe = encoded.keyframe;
             out.frameNumber = frameNumber++;
+            out.avgQp = encoded.avgQp;
             // A re-send has no present of its own. Reporting "now" for both
             // keeps the latency figures honest — it measures zero capture
             // latency because there was no capture, rather than inheriting a

@@ -452,7 +452,8 @@ libre de redevance)**. D'où la préférence AV1 quand les deux bouts suivent.
 | Conversion NV12 + AYUV 4:4:4 | UI (grille d'écrans, ligne GPU/encodeur) |
 | NVENC (3,46 ms), AMF (3,70 ms), oneVPL (écrit, non exécuté) | Retrait de Sunshine de l'installeur |
 | Intra-refresh sur les trois encodeurs + ride-out client | Linux, macOS |
-| Curseur composé, plancher sur écran immobile choisi par le client (§9.1) | Benchmarks vs Sunshine |
+| Curseur composé, plancher sur écran immobile choisi par le client (§9.1) | Benchmarks par encodeur (l'instrument est là, §14 ; les campagnes restent à mener) |
+| Six étapes mesurées par frame, p95/p99 dans les stats et le log (§4, point 4) | |
 | Clavier/souris (`SendInput`), manette (ViGEm) + rumble | |
 | Installeur : ViGEmBus en silencieux | |
 
@@ -476,6 +477,45 @@ n'est pas fini.
 | Fin de session | Tout ce qui est encore enfoncé est relâché, et les pads débranchés |
 | Pilote absent | Dégradation silencieuse : clavier/souris intacts, pas de manette |
 | Saut de thread | ⚠️ **Toujours présent** : le relais marshale vers le thread Qt (`DataChannelRelay.cpp:764`) parce que le même handler pilote presse-papier, politique et stats. Le sink est prêt, le relais non |
+
+---
+
+## 14. Le banc : `--native-bench`
+
+L'instrument des benchmarks d'encodeur. Il fait tourner le moteur — capture,
+conversion, encodage — sur un écran pendant N secondes **vers un puits** : pas de
+réseau, pas de navigateur, rien en aval de l'encodeur n'entre dans la mesure.
+
+```
+MoonlightWeb.exe --native-bench display=1,seconds=10,codec=hevc,fps=0,bitrate=20000,out=bench.csv
+MoonlightWeb.exe --native-bench ""          # liste les écrans (display=<id>)
+```
+
+Clés : `display`, `seconds`, `codec` (hevc|h264|av1), `fps` (0 = celui de
+l'écran), `bitrate` (kbps), `width`/`height` (0 = ceux de l'écran), `yuv444`,
+`intra` (intra-refresh), `out`.
+
+Par frame, une ligne CSV : numéro, keyframe, capturée ou ré-émise, octets,
+**QP moyen** (`frameAvgQP` côté NVENC, `StatisticsFeedbackAvgQP` côté AMF — un
+q-index 0–255 en AV1), t₀ présent, t₁ acquis, t₂ converti, t₃ encodé, et les
+durées dérivées. Le résumé sur la sortie standard donne cadence de capture
+effective, moyenne/p95/p99 par étape, taille par frame (toutes, puis deltas
+seuls) et QP moyen.
+
+Premier passage le 02/09/2026 sur DualRTX : NVENC (RTX 5060 Ti) rend le QP —
+première keyframe 1080p à **36 Ko / QP 36**, puis la rafale de raffinement à
+248 Ko / QP 20 → 15, encode 5,8 ms de moyenne ; AMF (RX 7600, 1440p) encode en
+5,5 ms mais **ne rend aucune statistique** sur ce pilote (`GetProperty` échoue
+sur le buffer de sortie) — à élucider quand la campagne AMF commence.
+
+Le QP est le **proxy objectif de qualité** du protocole de bench (plan v2 §5) : à
+débit fixe, un réglage plus rapide qui coûte plus de 2 points de QP moyen n'est
+pas plus rapide, il est plus flou. Les trois contenus (bureau fixe, défilement
+de texte, séquence de jeu rejouée plein écran) sont affaire d'opérateur : le banc
+mesure ce qui est à l'écran.
+
+Pas un service : Desktop Duplication exige le bureau interactif, donc une
+commande de terminal.
 
 ### ✅ Vérifié de bout en bout (31/08/2026)
 

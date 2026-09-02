@@ -308,8 +308,12 @@ void NativeMediaEngine::logStageSummary()
     if (line.empty()) return;
     // The one line a session leaves behind about where its time went. Tail
     // figures are what to read: a mean hides the frame that was felt.
+    // "sent frames": the count of frames the sender closed the timeline for.
+    // A frame replayed from the relay's pre-open keyframe buffer, or dropped
+    // before the channel opened, has host-side stamps but no send — the per-
+    // stage n in the line can therefore be a little higher.
     qInfo().noquote() << "[NativeMediaEngine] host stages over" << frames
-                      << "frames:" << QString::fromStdString(line);
+                      << "sent frames:" << QString::fromStdString(line);
 }
 
 void NativeMediaEngine::stopConnection()

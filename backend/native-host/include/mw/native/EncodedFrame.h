@@ -47,6 +47,11 @@ struct EncodedFrame
     /// to spot a hole; the engine uses it for reference invalidation (§9.2).
     uint32_t frameNumber = 0;
 
+    /// Average quantizer the encoder reports for this frame, -1 when unknown.
+    /// QP (0–51) for H.264/HEVC, q-index (0–255) for AV1. The benchmarks'
+    /// objective quality proxy; the stream itself never reads it.
+    int avgQp = -1;
+
     // ── Timestamps, in microseconds on a steady clock ────────────────────────
     //
     // These travel WITH the frame and are never re-read from a shared atomic at
