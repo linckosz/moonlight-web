@@ -526,6 +526,7 @@
         "statLegHeader": "平均 / p99",
         "statStageAcquire": "主机 · 采集",
         "statStageConvert": "主机 · 转换",
+        "statStageHold": "主机 · 节拍等待",
         "statStageEncode": "主机 · 编码",
         "statStageQueue": "主机 · 队列",
         "statStageSend": "主机 · 发送",

@@ -65,6 +65,7 @@ struct BenchRow
     int64_t capturedUs = 0;
     int64_t submittedUs = 0;
     int64_t convertedUs = 0;
+    int64_t dueUs = 0;
     int64_t encodedUs = 0;
 };
 
@@ -240,6 +241,7 @@ int runNativeBenchCommand(const QString& specText)
             row.capturedUs = f.capturedUs;
             row.submittedUs = f.submittedUs;
             row.convertedUs = f.convertedUs;
+            row.dueUs = f.dueUs;
             row.encodedUs = f.encodedUs;
             std::lock_guard<std::mutex> lock(rowsMutex);
             rows.push_back(row);
@@ -295,15 +297,15 @@ int runNativeBenchCommand(const QString& specText)
     {
         QTextStream csv(&file);
         csv << "frame,keyframe,captured,bytes,avg_qp,t0_present_us,t1_captured_us,"
-               "t1b_submitted_us,t2_converted_us,t3_encoded_us,acquire_us,convert_us,encode_us,"
-               "host_total_us\n";
+               "t1b_submitted_us,t2_converted_us,t2b_due_us,t3_encoded_us,acquire_us,convert_us,"
+               "hold_us,encode_us,host_total_us\n";
         for (const BenchRow& r : rows) {
             csv << r.frameNumber << ',' << (r.keyframe ? 1 : 0) << ',' << (r.captured ? 1 : 0)
                 << ',' << static_cast<qulonglong>(r.bytes) << ',' << r.avgQp << ',' << r.presentUs
                 << ',' << r.capturedUs << ',' << r.submittedUs << ',' << r.convertedUs << ','
-                << r.encodedUs << ',' << (r.capturedUs - r.presentUs) << ','
-                << (r.convertedUs - r.submittedUs) << ',' << (r.encodedUs - r.convertedUs) << ','
-                << (r.encodedUs - r.presentUs) << '\n';
+                << r.dueUs << ',' << r.encodedUs << ',' << (r.capturedUs - r.presentUs) << ','
+                << (r.convertedUs - r.submittedUs) << ',' << (r.dueUs - r.convertedUs) << ','
+                << (r.encodedUs - r.dueUs) << ',' << (r.encodedUs - r.presentUs) << '\n';
         }
     }
     file.close();
@@ -330,7 +332,8 @@ int runNativeBenchCommand(const QString& specText)
         lastUs = r.presentUs;
         stages.record(mw::native::Stage::Acquire, r.capturedUs - r.presentUs);
         stages.record(mw::native::Stage::Convert, r.convertedUs - r.submittedUs);
-        stages.record(mw::native::Stage::Encode, r.encodedUs - r.convertedUs);
+        stages.record(mw::native::Stage::Hold, r.dueUs - r.convertedUs);
+        stages.record(mw::native::Stage::Encode, r.encodedUs - r.dueUs);
         stages.record(mw::native::Stage::Total, r.encodedUs - r.presentUs);
     }
     const double spanS = (lastUs > firstUs) ? (lastUs - firstUs) / 1e6 : 0.0;
@@ -352,6 +355,7 @@ int runNativeBenchCommand(const QString& specText)
     out << "                mean / p95 / p99\n";
     out << "acquire   ms    " << st(mw::native::Stage::Acquire) << "\n";
     out << "convert   ms    " << st(mw::native::Stage::Convert) << "\n";
+    out << "hold      ms    " << st(mw::native::Stage::Hold) << "\n";
     out << "encode    ms    " << st(mw::native::Stage::Encode) << "\n";
     out << "present→encoded " << st(mw::native::Stage::Total) << "\n";
     out << "bytes/frame KB  " << tail(bytesAll, 1024.0, 1) << "  (deltas "

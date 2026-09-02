@@ -26,6 +26,7 @@ const char* toString(Stage stage)
     switch (stage) {
     case Stage::Acquire: return "acquire";
     case Stage::Convert: return "convert";
+    case Stage::Hold: return "hold";
     case Stage::Encode: return "encode";
     case Stage::Queue: return "queue";
     case Stage::Send: return "send";
