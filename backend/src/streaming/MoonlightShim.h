@@ -33,6 +33,7 @@
 #include <chrono>
 
 class QTimer;
+class InputWatchdog;
 
 struct _SERVER_INFORMATION;
 struct _STREAM_CONFIGURATION;
@@ -156,43 +157,12 @@ public:
 
     // ── Input watchdog (dead-man switch) ────────────────────────────────────
     //
-    // The input channel is ordered+reliable: a link stall does not lose events,
-    // it DELAYS them. A press that already landed therefore stays down on the
-    // host for the whole stall while its release waits in the SCTP queue, and
-    // the guest OS typematic turns one keystroke into dozens ("rrrrrrr..." for
-    // a 2 s freeze). A stuck key also outlives a link that never comes back.
-    //
-    // Nothing the client sends during the stall can fix this — its correction
-    // would ride the same blocked queue. So the host side watches for silence:
-    // every message from the client refreshes a liveness timestamp, and when it
-    // goes stale we release whatever is still held. The client heartbeats its
-    // full held-input state (only while something IS held), so the next message
-    // after the stall both refreshes liveness and re-presses anything the user
-    // is genuinely still holding — see syncHeldInputs().
-    //
-    // Two grace periods: `hold` inputs (movement keys/buttons in gaming mode)
-    // get the long one, so a network hiccup does not stop a player mid-stride;
-    // everything else gets the short one, chosen to fire BEFORE the typematic
-    // delay (~500 ms on Windows) so no repeat is ever generated.
-    static constexpr int kInputWatchdogTickMs = 100;
-    static constexpr int kInputStaleMs = 250;
-    static constexpr int kInputStaleHoldMs = 3000;
-
-    // HeldKey is inherited from IMediaEngine: a key stuck down through a link
-    // stall is session logic, not GameStream logic. MoonlightShim::HeldKey
-    // still resolves, so existing call sites are unaffected.
-
-    /// Refresh the client-liveness timestamp. Call from every relay on every
-    /// inbound client message, whatever its type.
+    // The contract and the rationale live in InputWatchdog.h: the watchdog is
+    // session logic shared with the native engine, and this class only says
+    // what letting go means on the GameStream wire (its Sink, built in the
+    // constructor). These three are the relays' entry points into it.
     void noteClientAlive() override;
-
-    /// Release every held key/button (and neutralize every non-idle gamepad).
-    /// `includeHold` also releases the inputs flagged `hold`.
     void releaseHeldInputs(bool includeHold) override;
-
-    /// Reconcile the host with the client's authoritative held-input state
-    /// (its heartbeat): press what the watchdog released but the user still
-    /// holds, release what drifted. `buttonMask` is 1 << (button - 1).
     void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
                         bool buttonsHold) override;
 
@@ -377,32 +347,17 @@ private:
     // startConnection → finishCleanup lifecycle, whatever teardown path runs.
     bool m_ActivityHeld = false;
 
-    // ── Input watchdog state (contract in the public section) ───────────────
-    // The relay input path runs on the relay thread, but the clipboard paste
-    // path injects its chord from the main thread — so the held-input state is
-    // mutex-guarded, and only the QTimer (thread-affine) is hopped back onto
-    // the shim's own thread.
-    QMutex m_InputStateMutex;
-    QTimer* m_InputWatchdog = nullptr;
+    /// Owned (a child), living on this shim's thread. Fed by the input
+    /// wrappers with the SHIFTED controller numbers, so its sink can put them
+    /// on the wire as they are.
+    InputWatchdog* m_Watchdog = nullptr;
     QTimer* m_EncoderWakeTimer = nullptr;
-    QElapsedTimer m_ClientAliveTimer; // invalid until the first client message
-    QHash<short, HeldKey> m_HeldKeys;
-    quint32 m_HeldButtons = 0; // 1 << (button - 1)
-    bool m_HeldButtonsHold = false;
-    QHash<short, short> m_ActiveGamepads; // controller index → active mask
     /// Offset applied to every controller number this session sends, so
     /// concurrent sessions do not collapse onto the host's controller 0.
     int m_ControllerOffset = 0;
     /// False when the shifted number has no pad on the host: the caller drops
     /// the event instead of sending it under a number another player owns.
     bool applyControllerOffset(short& controllerNumber, short& activeGamepadMask) const;
-    bool m_ShortStaleFired = false; // don't re-log/re-release each tick
-    bool m_LongStaleFired = false;
-    // The watchdog only arms once the client has proved it heartbeats its held
-    // state (first 'inputstate' message). Without that handshake an older
-    // cached frontend — which goes silent while a key is legitimately held —
-    // would have its keys released out from under it.
-    bool m_HeartbeatSeen = false;
 
     /// Force the host to capture a frame when it has gone silent with an IDR
     /// pending (contract above requestIdrFrame's wake-up section).
@@ -414,14 +369,6 @@ private:
     /// that are precisely what stopped coming.
     void armEncoderWakeTimer();
     void onEncoderWakeTick();
-
-    /// Run the watchdog only while something is actually held down.
-    void updateInputWatchdog();
-    void onInputWatchdogTick();
-    bool anythingHeld() const
-    {
-        return !m_HeldKeys.isEmpty() || m_HeldButtons != 0 || !m_ActiveGamepads.isEmpty();
-    }
 
     void finishCleanup();
     void blockingStopConnection();
