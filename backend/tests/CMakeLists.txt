@@ -74,8 +74,11 @@ add_executable(run_tests
     test_multiseat.cpp
     test_session_metrics.cpp
     test_us_scancode.cpp
+    test_input_watchdog.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
+    # The input dead-man switch, exercised against a fake wire.
+    ${_src}/src/streaming/InputWatchdog.cpp
     ${_src}/src/streaming/StreamConfig.cpp
     ${_src}/src/streaming/InputCrypto.cpp
     ${_src}/src/server/RestRouter.cpp

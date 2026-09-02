@@ -239,6 +239,7 @@ add_executable(mw-server
     src/streaming/RelayBase.cpp
     src/streaming/StreamConfig.cpp
     src/streaming/Session.cpp
+    src/streaming/InputWatchdog.cpp
     src/streaming/MoonlightShim.cpp
     src/streaming/NativeMediaEngine.cpp
     src/streaming/ClipboardBridge.cpp

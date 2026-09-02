@@ -16,6 +16,7 @@
  */
 
 #include "MoonlightShim.h"
+#include "InputWatchdog.h"
 
 #include "common/MacActivity.h"
 
@@ -42,7 +43,25 @@ std::atomic<MoonlightShim*> MoonlightShim::s_Instance{nullptr};
 
 MoonlightShim::MoonlightShim(QObject* parent)
     : IMediaEngine(parent)
-{}
+{
+    // What letting go means on the GameStream wire. Each guard is the same
+    // one the input wrappers use: the watchdog may fire around a teardown,
+    // and a Li* call after LiStopConnection is not one to make.
+    InputWatchdog::Sink sink;
+    sink.releaseKey = [this](const HeldKey& k) {
+        if (!m_Connected.load(std::memory_order_acquire)) return;
+        LiSendKeyboardEvent2(k.keyCode | 0x8000, KEY_ACTION_UP, 0, k.flags);
+    };
+    sink.releaseButton = [this](int button) {
+        if (!m_Connected.load(std::memory_order_acquire)) return;
+        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, static_cast<char>(button));
+    };
+    sink.neutralizePad = [this](short controller, short mask) {
+        if (!m_Connected.load(std::memory_order_acquire)) return;
+        LiSendMultiControllerEvent(controller, mask, 0, 0, 0, 0, 0, 0, 0);
+    };
+    m_Watchdog = new InputWatchdog(std::move(sink), this);
+}
 
 MoonlightShim::~MoonlightShim()
 {
@@ -640,20 +659,12 @@ void MoonlightShim::clSetHdrMode(bool) {}
 void MoonlightShim::sendKeyEvent(short keyCode, bool down, char modifiers, char flags, bool hold)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    {
-        QMutexLocker lock(&m_InputStateMutex);
-        if (down) {
-            HeldKey k;
-            k.keyCode = keyCode;
-            k.modifiers = modifiers;
-            k.flags = flags;
-            k.hold = hold;
-            m_HeldKeys.insert(keyCode, k);
-        } else {
-            m_HeldKeys.remove(keyCode);
-        }
-    }
-    updateInputWatchdog();
+    HeldKey k;
+    k.keyCode = keyCode;
+    k.modifiers = modifiers;
+    k.flags = flags;
+    k.hold = hold;
+    m_Watchdog->noteKey(k, down);
     LiSendKeyboardEvent2(keyCode | 0x8000, down ? KEY_ACTION_DOWN : KEY_ACTION_UP, modifiers,
                          flags);
 }
@@ -744,18 +755,7 @@ void MoonlightShim::sendMousePosition(short x, short y, short referenceWidth, sh
 void MoonlightShim::sendMouseButton(bool down, int button, bool hold)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    const quint32 bit = (button >= 1 && button <= 32) ? (1u << (button - 1)) : 0u;
-    {
-        QMutexLocker lock(&m_InputStateMutex);
-        if (down) {
-            m_HeldButtons |= bit;
-            if (hold) m_HeldButtonsHold = true;
-        } else {
-            m_HeldButtons &= ~bit;
-            if (m_HeldButtons == 0) m_HeldButtonsHold = false;
-        }
-    }
-    updateInputWatchdog();
+    m_Watchdog->noteButton(button, down, hold);
     LiSendMouseButtonEvent(down ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE,
                            static_cast<char>(button));
 }
@@ -888,24 +888,12 @@ void MoonlightShim::sendControllerState(short controllerNumber, short activeGame
     if (!m_Connected.load(std::memory_order_acquire)) return;
     // Refused at the arrival, already logged there: nothing to send for it.
     if (!applyControllerOffset(controllerNumber, activeGamepadMask)) return;
-    // A pad only sends on change, so a stick pushed and left there goes silent
-    // exactly like a held key. Track "not at rest" so the watchdog can zero it
-    // out if the link dies mid-input (a removal — empty state with the mask bit
-    // cleared — reads as at-rest here and simply drops out of the set).
-    // The threshold is deliberately loose: neutralizing a barely-drifted stick
-    // on a dead link costs nothing, missing a shoved one costs a runaway.
-    static constexpr short kStickAtRest = 4096;
-    const bool atRest = buttonFlags == 0 && leftTrigger == 0 && rightTrigger == 0 &&
-                        qAbs(leftStickX) < kStickAtRest && qAbs(leftStickY) < kStickAtRest &&
-                        qAbs(rightStickX) < kStickAtRest && qAbs(rightStickY) < kStickAtRest;
-    {
-        QMutexLocker lock(&m_InputStateMutex);
-        if (atRest)
-            m_ActiveGamepads.remove(controllerNumber);
-        else
-            m_ActiveGamepads.insert(controllerNumber, activeGamepadMask);
-    }
-    updateInputWatchdog();
+    // Tracked AFTER the shift, so the watchdog neutralizes the pad under the
+    // number the host knows it by. A removal — empty state with the mask bit
+    // cleared — reads as at-rest and simply drops out of the set.
+    m_Watchdog->notePad(controllerNumber, activeGamepadMask,
+                        InputWatchdog::padAtRest(buttonFlags, leftTrigger, rightTrigger, leftStickX,
+                                                 leftStickY, rightStickX, rightStickY));
     LiSendMultiControllerEvent(controllerNumber, activeGamepadMask, buttonFlags, leftTrigger,
                                rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
 }
@@ -916,118 +904,23 @@ void MoonlightShim::sendControllerRemoval(uint8_t controllerNumber, uint16_t act
     // cleared is the removal, and the host reads it as one. Deliberately the
     // same call the relays used to make directly — the interface gained a name
     // for the intent, this end did not change what goes on the wire.
-    sendControllerState(static_cast<short>(controllerNumber),
-                        static_cast<short>(activeGamepadMask), 0, 0, 0, 0, 0, 0, 0);
+    sendControllerState(static_cast<short>(controllerNumber), static_cast<short>(activeGamepadMask),
+                        0, 0, 0, 0, 0, 0, 0);
 }
 
 // --- Input watchdog --------------------------------------------------------
-// Contract and rationale: see the input-watchdog section of MoonlightShim.h.
+// Contract and rationale: InputWatchdog.h. The state and the timer live
+// there; this end only feeds it and puts its decisions on the wire.
 
 void MoonlightShim::noteClientAlive()
 {
-    QMutexLocker lock(&m_InputStateMutex);
-    m_ClientAliveTimer.start();
-    m_ShortStaleFired = false;
-    m_LongStaleFired = false;
-}
-
-void MoonlightShim::updateInputWatchdog()
-{
-    // QTimer is thread-affine and the clipboard paste path injects keys from
-    // the main thread — hop back to the thread that owns this shim.
-    if (QThread::currentThread() != thread()) {
-        QMetaObject::invokeMethod(this, [this]() { updateInputWatchdog(); }, Qt::QueuedConnection);
-        return;
-    }
-
-    bool run;
-    {
-        QMutexLocker lock(&m_InputStateMutex);
-        run = m_HeartbeatSeen && anythingHeld();
-    }
-    if (!run) {
-        if (m_InputWatchdog) m_InputWatchdog->stop();
-        return;
-    }
-    if (!m_InputWatchdog) {
-        m_InputWatchdog = new QTimer(this);
-        m_InputWatchdog->setTimerType(Qt::CoarseTimer);
-        connect(m_InputWatchdog, &QTimer::timeout, this, &MoonlightShim::onInputWatchdogTick);
-    }
-    if (!m_InputWatchdog->isActive()) m_InputWatchdog->start(kInputWatchdogTickMs);
-}
-
-void MoonlightShim::onInputWatchdogTick()
-{
-    if (!m_Connected.load(std::memory_order_acquire)) return;
-
-    qint64 silentMs;
-    bool longFire = false;
-    bool shortFire = false;
-    {
-        QMutexLocker lock(&m_InputStateMutex);
-        if (!m_ClientAliveTimer.isValid()) return;
-        silentMs = m_ClientAliveTimer.elapsed();
-        if (silentMs >= kInputStaleHoldMs && !m_LongStaleFired) {
-            m_LongStaleFired = m_ShortStaleFired = longFire = true;
-        } else if (silentMs >= kInputStaleMs && !m_ShortStaleFired) {
-            m_ShortStaleFired = shortFire = true;
-        }
-    }
-
-    if (longFire) {
-        qWarning() << "[MoonlightShim] Input link silent for" << silentMs
-                   << "ms — releasing every held input";
-        releaseHeldInputs(true);
-    } else if (shortFire) {
-        qInfo() << "[MoonlightShim] Input link silent for" << silentMs
-                << "ms — releasing held inputs (hold-flagged ones kept)";
-        releaseHeldInputs(false);
-    }
+    m_Watchdog->noteClientAlive();
 }
 
 void MoonlightShim::releaseHeldInputs(bool includeHold)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-
-    QVector<HeldKey> keys;
-    quint32 buttons = 0;
-    QHash<short, short> pads;
-    {
-        QMutexLocker lock(&m_InputStateMutex);
-        for (auto it = m_HeldKeys.begin(); it != m_HeldKeys.end();) {
-            if (it->hold && !includeHold) {
-                ++it;
-                continue;
-            }
-            keys.append(it.value());
-            it = m_HeldKeys.erase(it);
-        }
-        if (m_HeldButtons != 0 && (includeHold || !m_HeldButtonsHold)) {
-            buttons = m_HeldButtons;
-            m_HeldButtons = 0;
-            m_HeldButtonsHold = false;
-        }
-        // Gamepads are gaming input by definition: only the long grace period
-        // (link presumed dead) neutralizes them.
-        if (includeHold) {
-            pads = m_ActiveGamepads;
-            m_ActiveGamepads.clear();
-        }
-    }
-
-    // Modifiers cleared on release, like the client's own focus-loss path: the
-    // modifier keys are in this same set and are released alongside.
-    for (const HeldKey& k : keys)
-        LiSendKeyboardEvent2(k.keyCode | 0x8000, KEY_ACTION_UP, 0, k.flags);
-    for (int b = 1; b <= 32; ++b) {
-        if (buttons & (1u << (b - 1)))
-            LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, static_cast<char>(b));
-    }
-    for (auto it = pads.constBegin(); it != pads.constEnd(); ++it)
-        LiSendMultiControllerEvent(it.key(), it.value(), 0, 0, 0, 0, 0, 0, 0);
-
-    updateInputWatchdog();
+    m_Watchdog->release(includeHold);
 }
 
 void MoonlightShim::syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
@@ -1035,58 +928,21 @@ void MoonlightShim::syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonM
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
 
-    QVector<HeldKey> press, release;
-    QVector<int> buttonsDown, buttonsUp;
-    {
-        QMutexLocker lock(&m_InputStateMutex);
-        m_HeartbeatSeen = true;
+    const InputWatchdog::SyncDiff diff = m_Watchdog->sync(keys, buttonMask, buttonsHold);
 
-        QSet<short> clientKeys;
-        clientKeys.reserve(keys.size());
-        for (const HeldKey& k : keys) {
-            clientKeys.insert(k.keyCode);
-            auto it = m_HeldKeys.find(k.keyCode);
-            if (it == m_HeldKeys.end()) {
-                m_HeldKeys.insert(k.keyCode, k);
-                press.append(k);
-            } else {
-                it->hold = k.hold; // mouse mode may have flipped mid-hold
-            }
-        }
-        for (auto it = m_HeldKeys.begin(); it != m_HeldKeys.end();) {
-            if (clientKeys.contains(it.key())) {
-                ++it;
-                continue;
-            }
-            release.append(it.value());
-            it = m_HeldKeys.erase(it);
-        }
-
-        for (int b = 1; b <= 32; ++b) {
-            const quint32 bit = 1u << (b - 1);
-            if ((buttonMask & bit) && !(m_HeldButtons & bit))
-                buttonsDown.append(b);
-            else if (!(buttonMask & bit) && (m_HeldButtons & bit))
-                buttonsUp.append(b);
-        }
-        m_HeldButtons = buttonMask;
-        m_HeldButtonsHold = buttonMask != 0 && buttonsHold;
-    }
-
-    for (const HeldKey& k : release)
+    for (const HeldKey& k : diff.release)
         LiSendKeyboardEvent2(k.keyCode | 0x8000, KEY_ACTION_UP, 0, k.flags);
-    for (const HeldKey& k : press)
+    for (const HeldKey& k : diff.press)
         LiSendKeyboardEvent2(k.keyCode | 0x8000, KEY_ACTION_DOWN, k.modifiers, k.flags);
-    for (int b : buttonsUp)
+    for (int b : diff.buttonsUp)
         LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, static_cast<char>(b));
-    for (int b : buttonsDown)
+    for (int b : diff.buttonsDown)
         LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, static_cast<char>(b));
 
-    if (!press.isEmpty() || !buttonsDown.isEmpty()) {
-        qInfo() << "[MoonlightShim] Input resync: re-pressed" << press.size() << "key(s) and"
-                << buttonsDown.size() << "button(s) released during a stall";
+    if (!diff.press.isEmpty() || !diff.buttonsDown.isEmpty()) {
+        qInfo() << "[MoonlightShim] Input resync: re-pressed" << diff.press.size() << "key(s) and"
+                << diff.buttonsDown.size() << "button(s) released during a stall";
     }
-    updateInputWatchdog();
 }
 
 void MoonlightShim::requestIdrFrame()
