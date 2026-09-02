@@ -488,6 +488,7 @@
         "webcodecsUnsupported": "不支持 WebCodecs",
         "codecUnsupported": "浏览器不支持该编解码器",
         "streamDisconnected": "串流已断开",
+        "gamepadIgnored": "已忽略手柄：“{{name}}”没有标准布局。请将其切换到 XInput 模式（多数手柄为 X 档）后重新插入。",
         "webrtcError": "WebRTC 连接错误",
         "degradeBitrate": "网络不稳定——码率已降至 {{mbps}} Mbps",
         "degradeBitrateFps": "网络不稳定——码率已降至 {{mbps}} Mbps，帧率限制为 60 fps",

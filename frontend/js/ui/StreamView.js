@@ -3577,7 +3577,18 @@ export class StreamView {
                     (msg) => {
                         if (!this._quitting) this.webrtc.send(msg);
                     },
-                    { profile: this._gamepadProfile },
+                    {
+                        profile: this._gamepadProfile,
+                        // A pad with no standard mapping is not forwarded; say
+                        // so, or the player pushes buttons at a game that never
+                        // hears them. Longer than the default fade: this is
+                        // advice to act on, not an acknowledgement.
+                        onIgnored: (gp) => {
+                            Toast.warning(t('stream.gamepadIgnored', { name: gp.id || '?' }), {
+                                durationMs: 10000,
+                            });
+                        },
+                    },
                 );
             }
             // Standby: created but not polling — started in activate().
