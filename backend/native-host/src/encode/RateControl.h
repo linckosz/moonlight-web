@@ -91,10 +91,22 @@ inline uint32_t vbvBitsPerFrame(uint32_t bitsPerSecond, int fps)
 /// pair, through the setBitrate() path every encoder already implements —
 /// no new vendor code, no second rate-control mode to keep in step.
 ///
-/// Six, and a ceiling. Six covers the three-to-five a sharp desktop wants with a
-/// margin; the ceiling keeps a burst on a very high bitrate stream from turning
-/// into a frame no link can move in reasonable time.
-constexpr int kStillBoost = 6;
+/// ── Three, not six, and why the number is a latency ─────────────────────────
+///
+/// The multiplier is not "how sharp": a still picture converges to the same
+/// total number of bits whatever the per-frame cap, because every pass codes
+/// the residual of the previous one — a smaller cap only spreads the same
+/// bits over more passes. What the multiplier IS, is the longest the link can
+/// be occupied by one pass, hence the longest a motion frame arriving just
+/// after it can wait behind it: `boost / 60` seconds at the stream's own rate.
+/// Six was 100 ms, and it was measured — on the bench a 20 Mbps stream's
+/// first pass came out at 248 KB, exactly the ×6 cap, which is 100 ms of a
+/// 20 Mbps link. Three is 50 ms, the price of one refinement pass paid by a
+/// mouse that moves at the wrong moment; the passes are paced to the link by
+/// LinkOccupancy below, so that price is paid at most once. The ceiling keeps
+/// a burst on a very high bitrate stream from turning into a frame no link can
+/// move in reasonable time.
+constexpr int kStillBoost = 3;
 constexpr int kStillMaxKbps = 500000;
 
 inline int stillBitrateKbps(int streamKbps)
@@ -103,5 +115,111 @@ inline int stillBitrateKbps(int streamKbps)
     const int64_t boosted = static_cast<int64_t>(streamKbps) * kStillBoost;
     return static_cast<int>(boosted > kStillMaxKbps ? kStillMaxKbps : boosted);
 }
+
+/// How long the link is still busy with what has already been handed to it,
+/// estimated from the stream's own bitrate.
+///
+/// ── Why an estimate, and not the transport's own figure ─────────────────────
+///
+/// The transport does report a `bufferedAmount`, and it is the obvious thing
+/// to read. It is also blind exactly where it matters: it counts what
+/// libdatachannel holds AFTER usrsctp refused it, and usrsctp's send buffer is
+/// one mebibyte. On a 20 Mbps link that is 420 ms of backlog that reads as
+/// zero. A refinement burst is a few hundred kilobytes; the figure that is
+/// meant to say whether the link has drained it never moves.
+///
+/// What IS known is the bitrate the viewer set, which is their own statement
+/// of what the link carries — the same number the rate control already trusts
+/// for every frame. So the link is modelled as a pipe at that rate: each frame
+/// handed over occupies it for size / rate, back to back, and the pipe is
+/// drained when that time has passed. Motion frames keep it about level (a CBR
+/// frame is one interval of link time, sent once per interval); what it exists
+/// for is the still screen, where the refinement burst may send its next pass
+/// only once the previous one has left. The burst then never runs ahead of the
+/// link by more than one pass, whatever the stream's bitrate — instead of the
+/// whole burst at once, which on a slow link is the whole burst in front of the
+/// first frame of the next mouse movement.
+///
+/// A client-fed measure (the receiver's own arrival rate, §9.3) will replace
+/// the bitrate as the rate here when it exists; the model does not change.
+struct LinkOccupancy
+{
+    int64_t busyUntilUs = 0;
+
+    /// `bytes` were handed to the link at `nowUs`, on a stream of `kbps`.
+    void sent(int64_t nowUs, size_t bytes, int kbps)
+    {
+        if (kbps <= 0) return;
+        const int64_t from = busyUntilUs > nowUs ? busyUntilUs : nowUs;
+        busyUntilUs = from + static_cast<int64_t>(bytes) * 8000 / kbps;
+    }
+
+    /// Microseconds of link time still owed at `nowUs`; 0 once drained.
+    int64_t backlogUs(int64_t nowUs) const { return busyUntilUs > nowUs ? busyUntilUs - nowUs : 0; }
+
+    bool drainedAt(int64_t nowUs) const { return nowUs >= busyUntilUs; }
+};
+
+/// When a still picture has stopped improving — the refinement burst's exit.
+///
+/// ── Why size alone was the wrong witness ────────────────────────────────────
+///
+/// The burst used to stop when a pass came out under 2 KB: "the encoder had
+/// nothing left to add". True at 1 Mbps, where that is what a pass of nothing
+/// costs. False everywhere else: constant bitrate does not encode what the
+/// picture needs, it encodes what the rate asks for, and pads or lowers the QP
+/// until it gets there. Measured on a 55 Mbps stream at 165 fps: 26 passes of
+/// ~120 KB each on a picture that had not changed — 3 MB over the whole
+/// window, for every pause of the mouse, and the criterion never fired once.
+///
+/// So two witnesses, either one enough, and a ceiling behind both:
+///
+///  - a tiny pass — still right where it applies;
+///  - a QP that no longer falls. Every pass codes the residual of the last,
+///    so as long as the picture sharpens the QP the encoder reports for it
+///    drops; when the budget outruns the residual the QP stops moving (or
+///    rises, as the rate control hunts) and the extra bits are padding. Two
+///    flat passes in a row, after enough passes to know the burst has really
+///    begun. An encoder that reports no QP (-1: AMF on some drivers) simply
+///    never satisfies this one;
+///  - a hard cap on passes, for the encoder that reports nothing and a picture
+///    that never gets tiny. Eight: at the ×3 cap a pass is 50 ms of link, so
+///    the cap is at most 400 ms of link spent on one still picture.
+///
+/// The QP comparison is direction-only, so H.264/HEVC (0–51) and AV1's q-index
+/// (0–255) are handled alike without knowing which is in use.
+struct RefineConvergence
+{
+    static constexpr int kMinPasses = 4;
+    static constexpr int kMaxPasses = 8;
+    static constexpr size_t kQuietBytes = 2048;
+    static constexpr int kQuietPasses = 2;
+
+    enum class Verdict
+    {
+        Continue,
+        Converged,
+        Capped
+    };
+
+    int passes = 0;
+    int quiet = 0;
+    int lastQp = -1;
+
+    /// One more pass went out, of `bytes`, at `avgQp` (or -1 when unknown).
+    Verdict notePass(size_t bytes, int avgQp)
+    {
+        passes++;
+        const bool tiny = bytes <= kQuietBytes;
+        const bool qpFlat = avgQp >= 0 && lastQp >= 0 && avgQp >= lastQp;
+        lastQp = avgQp;
+        quiet = (passes >= kMinPasses && (tiny || qpFlat)) ? quiet + 1 : 0;
+        if (quiet >= kQuietPasses) return Verdict::Converged;
+        if (passes >= kMaxPasses) return Verdict::Capped;
+        return Verdict::Continue;
+    }
+
+    void reset() { *this = RefineConvergence{}; }
+};
 
 } // namespace mw::native::encode

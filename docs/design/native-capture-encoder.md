@@ -383,11 +383,56 @@ qui est indiscernable d'un stream mort. D'où un plancher — une frame toutes l
 figé peut se taire dépend de l'exactitude avec laquelle la plateforme signale un
 dommage. Sur DDA le signal est exact : `AcquireNextFrame` rend la main sur le
 présent réel, 0,06 ms après. Tout changement est donc une frame *immédiatement*,
-puis la **rafale de raffinement** ré-encode cette image pendant 1 s à ×6 de
+puis la **rafale de raffinement** ré-encode cette image pendant 1 s à ×3 de
 budget jusqu'à convergence. Un plancher plus haut ne ferait que continuer après
 ça, au budget ordinaire, sur une image que l'encodeur a déclarée finie — donc en
 mode bureau il n'apporte rien, quel que soit l'appareil. Une plateforme au
 signal plus flou remonte ce nombre ici, et aucun client ne l'apprend.
+
+**La rafale est cadencée sur le lien (02/09/2026, audit B5).** Jusque-là elle
+partait à ×6 aussi vite que l'encodeur produisait : au banc, la première passe
+d'un stream à 20 Mbps sortait à 248 Ko, exactement le plafond ×6, soit 100 ms
+d'un lien à 20 Mbps — et la rafale entière (plusieurs centaines de Ko) se
+retrouvait devant la première frame du mouvement suivant. Deux corrections :
+
+- **×3 au lieu de ×6.** Le multiplicateur n'est pas une netteté : une image
+  fixe converge vers le même total de bits quel que soit le plafond par frame
+  (chaque passe code le résidu de la précédente), un plafond plus petit étale
+  seulement les mêmes bits sur plus de passes. Ce qu'il est, c'est **une
+  latence** : le temps maximal qu'une passe occupe le lien, donc l'attente
+  maximale d'une frame de mouvement arrivée juste derrière — `boost / 60` s,
+  soit 50 ms au lieu de 100.
+- **Une passe n'est envoyée que lorsque le lien a fini la précédente**,
+  estimé par le débit réglé du stream (`LinkOccupancy`, `RateControl.h`) : la
+  rafale n'a jamais plus d'une passe d'avance sur le lien, quel que soit le
+  débit. Le plancher de vivacité n'est pas cadencé (quelques centaines
+  d'octets). Le log de fin de rafale dit combien de réveils ont été retenus
+  (`N passes, M held for the link`).
+- **La sortie de rafale ne se fie plus à la taille seule.** Le premier flux
+  réel rejoué après les deux points ci-dessus a montré `58 KB + 3097 KB over
+  26 passes, 8 held for the link (window closed)` sur un écran immobile à
+  55 Mbps / 165 fps : en CBR l'encodeur remplit chaque passe jusqu'à sa cible
+  (~120 Ko) quoi qu'il ait à dire, donc le critère « passe ≤ 2 Ko » n'était
+  atteint qu'à 1 Mbps, et partout ailleurs la rafale durait toute sa seconde —
+  3 Mo par arrêt de souris, sans une ligne de log (seule la convergence était
+  journalisée). `RefineConvergence` (`RateControl.h`) tranche désormais sur
+  **une passe minuscule ou un QP qui ne baisse plus** (deux passes de suite
+  après quatre), avec un **plafond de 8 passes** pour l'encodeur qui ne
+  rapporte pas de QP — soit 400 ms de lien au plus pour une image fixe. Toute
+  sortie est journalisée (`converged`, `pass cap`, `window closed`, `screen
+  moved`, `display lost`), avec le QP première → dernière passe quand il est
+  connu. Rejoué sur le même écran : `58 KB + 1081 KB over 8 passes, 2 held for
+  the link, QP 32 -> 11 (pass cap)` — le tiers des octets, et le QP dit ce que
+  la rafale a acheté.
+
+Pourquoi une estimation et pas `bufferedAmount` : ce compteur ne mesure que ce
+que libdatachannel garde **après** refus d'usrsctp, dont le tampon d'émission
+fait 1 Mio (`sctptransport.cpp`, `sctp_sendspace`). Sur un lien à 20 Mbps ce
+sont 420 ms de retard qui se lisent zéro ; le compteur ne bouge pas pour une
+rafale de quelques centaines de Ko. Le débit réglé est la parole de
+l'utilisateur sur son lien, celle que le rate control croit déjà pour chaque
+frame ; le retour mesuré du client (§9.3) le remplacera comme débit du modèle
+quand il existera, le modèle ne change pas.
 
 Un client peut demander **plus que la vivacité**, par un message `framefloor`
 que les trois relais transmettent :
