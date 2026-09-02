@@ -59,13 +59,21 @@ struct EncodedFrame
     /// arrival-time guess. It is the t₀ every latency figure is measured from.
     int64_t presentUs = 0;
 
-    /// When capture handed the surface over.
+    /// When capture handed the surface over (t₁).
     int64_t capturedUs = 0;
 
-    /// When the surface was submitted to the encoder.
+    /// When the surface was handed to the colour converter — right after the
+    /// acquire, so in practice t₁ again. Kept apart from capturedUs because a
+    /// re-send of a still picture has no capture at all, and then this is the
+    /// only "start of work" stamp the frame has.
     int64_t submittedUs = 0;
 
-    /// When the encoder's bitstream became readable.
+    /// When the conversion pass had been issued and the encoder was about to
+    /// be asked (t₂). `convertedUs - submittedUs` is the CPU side of the
+    /// colour pass; the GPU side is paid inside the encode that follows.
+    int64_t convertedUs = 0;
+
+    /// When the encoder's bitstream became readable (t₃).
     int64_t encodedUs = 0;
 
     /// Convenience: the host-side processing latency this frame really cost,

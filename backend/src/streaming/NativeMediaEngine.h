@@ -17,14 +17,20 @@
 
 #pragma once
 
+#include "FrameSentSink.h"
 #include "IMediaEngine.h"
 
+#include "mw/native/StageStats.h"
+
+#include <array>
 #include <atomic>
 #include <memory>
+#include <mutex>
 
 namespace mw::native {
 class Session;
 struct CursorUpdate;
+struct EncodedFrame;
 } // namespace mw::native
 
 class InputWatchdog;
@@ -55,8 +61,14 @@ class InputWatchdog;
  * `takeHostProcessingLatencyMs()` is the one metric that gets BETTER: on the
  * GameStream path it is whatever the remote host chose to report, while here it
  * is measured — the real present→encoded time of every frame in the window.
+ *
+ * And it goes further: every frame carries its stamps from the display's
+ * present to the encoder's output, and the sender thread reports when the last
+ * fragment left (FrameSentSink). Six stages, mean and tail, in the stats
+ * message every window and in the log once at the end of the session. Nothing
+ * on this path is optimized on a guess.
  */
-class NativeMediaEngine : public IMediaEngine
+class NativeMediaEngine : public IMediaEngine, public FrameSentSink
 {
     Q_OBJECT
 
@@ -131,6 +143,11 @@ public:
     int64_t frameSubmitTimeUs() const override;
     int64_t framePresentationTimeUs() const override;
     int64_t firstFrameArrivalSteadyMs() const override;
+    FrameSentSink* frameSentSink() override { return this; }
+    QJsonObject takeStageStats() override;
+
+    // ── FrameSentSink ───────────────────────────────────────────────────────
+    void frameSent(uint32_t frameNumber, int64_t firstByteUs, int64_t lastByteUs) override;
 
     /// Whether the engine draws the mouse pointer into the picture (gaming mode,
     /// and every touch screen) or reports its shape for the browser to draw
@@ -162,8 +179,10 @@ public:
     bool intraRefreshActive() const override;
 
 private:
-    void onEncodedFrame(const void* data, size_t size, bool keyframe, uint32_t frameNumber,
-                        int64_t presentUs, int64_t submittedUs, int64_t encodedUs);
+    void onEncodedFrame(const mw::native::EncodedFrame& frame);
+
+    /// The session's stage figures, once, when it ends. Idempotent.
+    void logStageSummary();
 
     /// Turn a borrowed cursor image into a PNG and emit it. Runs on the capture
     /// thread — the pixels do not outlive the call.
@@ -208,6 +227,31 @@ private:
     /// relative presentation time above, and what firstFrameArrivalSteadyMs()
     /// reports. Zero until the first frame.
     std::atomic<int64_t> m_FirstPresentUs{0};
+
+    // ── Per-stage latency ───────────────────────────────────────────────────
+    //
+    // Fed from two threads: the capture thread records t₀..t₃ as the frame
+    // comes out of the encoder, the sender thread closes the timeline with
+    // t₄/t₅ once the last fragment is on the wire. One mutex, uncontended in
+    // practice (two short critical sections per frame), guards both the
+    // histograms and the ring below.
+    std::mutex m_StageMutex;
+    mw::native::StageStats m_Stages;
+    bool m_StageSummaryLogged = false;
+
+    /// What the sender needs to know about a frame it is about to report on:
+    /// its present and its encode stamp. Indexed by frame number modulo the
+    /// size, and checked against the number so a frame the sender dropped
+    /// cannot be scored against a later frame's stamps.
+    struct InFlight
+    {
+        uint32_t frameNumber = 0;
+        bool valid = false;
+        int64_t presentUs = 0;
+        int64_t encodedUs = 0;
+    };
+    static constexpr size_t kInFlightRing = 256;
+    std::array<InFlight, kInFlightRing> m_InFlight{};
 
     /// VIDEO_FORMAT_* of what the encoder actually produces, so the browser
     /// configures the right decoder.

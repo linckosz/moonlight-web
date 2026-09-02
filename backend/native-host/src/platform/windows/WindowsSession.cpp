@@ -825,6 +825,10 @@ private:
     bool emit(uint32_t& frameNumber, int64_t submittedUs, std::string& error,
               const capture::CapturedFrame* frame = nullptr)
     {
+        // t₂: the conversion has been issued, the encoder is about to be asked.
+        // Taken before the keyframe flag so the flag's exchange is inside the
+        // encode stage, where it belongs.
+        const int64_t convertedUs = steadyNowUs();
         const bool forceKeyframe = m_ForceKeyframe.exchange(false);
         encode::EncoderOutput encoded;
         if (!m_Encoder->encode(m_Converter->output(), forceKeyframe, encoded, error)) {
@@ -857,6 +861,7 @@ private:
             out.presentUs = frame ? frame->presentUs : submittedUs;
             out.capturedUs = frame ? frame->capturedUs : submittedUs;
             out.submittedUs = submittedUs;
+            out.convertedUs = convertedUs;
             out.encodedUs = steadyNowUs();
 
             // Delivered on this thread, and the consumer sends it before

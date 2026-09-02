@@ -134,11 +134,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
 
     std::string error;
     m_Session = mw::native::NativeHost::createSession(
-        config,
-        [this](const mw::native::EncodedFrame& frame) {
-            onEncodedFrame(frame.data, frame.size, frame.keyframe, frame.frameNumber,
-                           frame.presentUs, frame.submittedUs, frame.encodedUs);
-        },
+        config, [this](const mw::native::EncodedFrame& frame) { onEncodedFrame(frame); },
         // Audio lands with its own backend; a null callback is the engine's
         // documented way of saying "not wanted".
         nullptr,
@@ -196,17 +192,34 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     emit connectionStarted();
 }
 
-void NativeMediaEngine::onEncodedFrame(const void* data, size_t size, bool keyframe,
-                                       uint32_t frameNumber, int64_t presentUs, int64_t submittedUs,
-                                       int64_t encodedUs)
+void NativeMediaEngine::onEncodedFrame(const mw::native::EncodedFrame& encoded)
 {
-    if (!data || size == 0) return;
+    if (!encoded.data || encoded.size == 0) return;
+
+    const int64_t presentUs = encoded.presentUs;
+    const int64_t encodedUs = encoded.encodedUs;
+    const uint32_t frameNumber = encoded.frameNumber;
 
     // The one copy on this path, and it is unavoidable: the engine's buffer is
     // unlocked the moment this returns, while the relay's send is asynchronous.
     // The GameStream path makes the same copy — after having already paid for
     // RTP, FEC, decryption and reassembly to produce it.
-    QByteArray frame(static_cast<const char*>(data), static_cast<int>(size));
+    QByteArray frame(reinterpret_cast<const char*>(encoded.data), static_cast<int>(encoded.size));
+
+    // The host-side stages this thread can close, and the stamps the sender
+    // will need to close the rest. Under the lock, briefly: the sender thread
+    // may be reporting the previous frame right now.
+    {
+        std::lock_guard<std::mutex> lock(m_StageMutex);
+        m_Stages.record(mw::native::Stage::Acquire, encoded.capturedUs - presentUs);
+        m_Stages.record(mw::native::Stage::Convert, encoded.convertedUs - encoded.submittedUs);
+        m_Stages.record(mw::native::Stage::Encode, encodedUs - encoded.convertedUs);
+        InFlight& slot = m_InFlight[frameNumber % kInFlightRing];
+        slot.frameNumber = frameNumber;
+        slot.valid = true;
+        slot.presentUs = presentUs;
+        slot.encodedUs = encodedUs;
+    }
 
     // The relay's contract for the frame's presentation time is the shim's:
     // microseconds since the FIRST frame, added to firstFrameArrivalSteadyMs()
@@ -223,7 +236,7 @@ void NativeMediaEngine::onEncodedFrame(const void* data, size_t size, bool keyfr
     const int64_t relativePresentUs = presentUs > epochUs ? presentUs - epochUs : 0;
 
     m_FramePresentationTimeUs.store(relativePresentUs, std::memory_order_release);
-    m_FrameSubmitTimeUs.store(submittedUs, std::memory_order_release);
+    m_FrameSubmitTimeUs.store(encoded.submittedUs, std::memory_order_release);
 
     // Measured, not reported: the real time from the display presenting the
     // frame to the encoder finishing it.
@@ -237,8 +250,66 @@ void NativeMediaEngine::onEncodedFrame(const void* data, size_t size, bool keyfr
     // Emitted on the capture thread. The relays' connections decide whether
     // that stays direct — which is the point: the GameStream path pays a queued
     // hop here, and not paying it is one of the reasons this engine exists.
-    emit videoFrameReady(frame, keyframe ? kFrameTypeKeyframe : kFrameTypeDelta,
+    emit videoFrameReady(frame, encoded.keyframe ? kFrameTypeKeyframe : kFrameTypeDelta,
                          static_cast<int>(frameNumber), relativePresentUs);
+}
+
+void NativeMediaEngine::frameSent(uint32_t frameNumber, int64_t firstByteUs, int64_t lastByteUs)
+{
+    std::lock_guard<std::mutex> lock(m_StageMutex);
+    InFlight& slot = m_InFlight[frameNumber % kInFlightRing];
+    // A frame the sender evicted never gets here, and its slot is overwritten
+    // by a later frame; the number check is what stops that later frame's
+    // stamps from being scored against this one's send.
+    if (!slot.valid || slot.frameNumber != frameNumber) return;
+    slot.valid = false;
+    m_Stages.record(mw::native::Stage::Queue, firstByteUs - slot.encodedUs);
+    m_Stages.record(mw::native::Stage::Send, lastByteUs - firstByteUs);
+    m_Stages.record(mw::native::Stage::Total, lastByteUs - slot.presentUs);
+}
+
+QJsonObject NativeMediaEngine::takeStageStats()
+{
+    std::array<mw::native::StageSummary, static_cast<size_t>(mw::native::Stage::Count)> window;
+    {
+        std::lock_guard<std::mutex> lock(m_StageMutex);
+        window = m_Stages.takeWindow();
+    }
+    // Microseconds, as integers: the client divides. A stage with no sample in
+    // this window is left out rather than reported as zero, which would read as
+    // "instant" on an overlay.
+    QJsonObject out;
+    for (size_t i = 0; i < window.size(); ++i) {
+        const mw::native::StageSummary& s = window[i];
+        if (s.count <= 0) continue;
+        QJsonObject stage;
+        stage["n"] = static_cast<qint64>(s.count);
+        stage["avg"] = static_cast<qint64>(s.meanUs);
+        stage["p50"] = static_cast<qint64>(s.p50Us);
+        stage["p95"] = static_cast<qint64>(s.p95Us);
+        stage["p99"] = static_cast<qint64>(s.p99Us);
+        stage["max"] = static_cast<qint64>(s.maxUs);
+        out[QString::fromLatin1(mw::native::toString(static_cast<mw::native::Stage>(i)))] = stage;
+    }
+    return out;
+}
+
+void NativeMediaEngine::logStageSummary()
+{
+    std::string line;
+    int64_t frames = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_StageMutex);
+        if (m_StageSummaryLogged) return;
+        m_StageSummaryLogged = true;
+        frames = m_Stages.sessionFrames();
+        line = mw::native::StageStats::describe(m_Stages.session());
+    }
+    if (line.empty()) return;
+    // The one line a session leaves behind about where its time went. Tail
+    // figures are what to read: a mean hides the frame that was felt.
+    qInfo().noquote() << "[NativeMediaEngine] host stages over" << frames
+                      << "frames:" << QString::fromStdString(line);
 }
 
 void NativeMediaEngine::stopConnection()
@@ -247,6 +318,7 @@ void NativeMediaEngine::stopConnection()
     m_Connected.store(false, std::memory_order_release);
     m_Session->stop();
     m_Session.reset();
+    logStageSummary();
     emit connectionStopped();
 }
 
