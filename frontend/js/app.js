@@ -1893,6 +1893,10 @@ const MoonlightApp = {
             ...viewOpts,
             intraRefresh: result.intra_refresh === true,
             gamepadProfile,
+            // Click-to-photon probe: the host says whether it raises its flag
+            // on every click (debug builds on Windows, setting on). Only then
+            // does the view install its measuring side.
+            latencyFlag: result.latency_flag === true,
         };
 
         return new StreamView(

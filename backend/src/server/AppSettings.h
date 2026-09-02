@@ -68,6 +68,17 @@ public:
     bool showPerformanceStats() const;
     void setShowPerformanceStats(bool enabled);
 
+    // ── Click-to-photon latency flag (debug builds on Windows only) ───────────
+    //
+    // When enabled, the host shows a French flag at the top of its screen for
+    // 100 ms on every injected click, and the browser measures the time from
+    // its click to the flag's appearance in the decoded picture — see
+    // LatencyFlag.h and frontend/js/stream/LatencyProbe.js. Stored as JSON bool
+    // "latency_flag_enabled", default false. Ignored outside supported builds.
+
+    bool latencyFlagEnabled() const;
+    void setLatencyFlagEnabled(bool enabled);
+
     // ── Stream bitrate ────────────────────────────────────────────────────────
     //
     // Target bitrate in kbps. Stored as JSON int "stream_bitrate", default 20000.

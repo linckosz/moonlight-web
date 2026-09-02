@@ -99,6 +99,7 @@
 #include "network/SessionMetrics.h"
 #include "network/UpdateChecker.h"
 #include "TrayManager.h"
+#include "LatencyFlag.h"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -4259,6 +4260,11 @@ int main(int argc, char* argv[])
     trayManager.setRemoteLinkProvider(remoteLink);
     if (hasGuiSession()) trayManager.init();
 
+    // Click-to-photon latency flag (debug builds on Windows): the overlay and
+    // its mouse hook live on their own thread, only while the setting is on,
+    // and only where there is a screen to draw on — see LatencyFlag.h.
+    LatencyFlag::setEnabled(hasGuiSession() && appSettings.latencyFlagEnabled());
+
     // Keep the one host-side entry point that is written down current when the
     // entry URL changes: a parity rebind moves the HTTPS port under it. The menu
     // needs no such upkeep — it resolves its address at the click — and the
@@ -4377,5 +4383,9 @@ int main(int argc, char* argv[])
         // off, or never turned it on. --status is where that gets explained.
     }
 
-    return app.exec();
+    const int exitCode = app.exec();
+    // Joins the overlay thread: a joinable std::thread left to a static
+    // destructor would terminate the process on its way out.
+    LatencyFlag::setEnabled(false);
+    return exitCode;
 }

@@ -29,6 +29,7 @@
 #include "../backend/IdentityManager.h"
 #include "../backend/streambackend/MediaDescriptor.h"
 #include "../server/AppSettings.h"
+#include "../LatencyFlag.h"
 
 extern "C" {
 #include "Limelight.h"
@@ -1015,6 +1016,11 @@ void StreamSession::onShimConnectionStarted()
     {
         AppSettings settings;
         result["audio_time_stretch"] = settings.audioTimeStretch();
+        // Click-to-photon probe: tells the browser the host will raise its
+        // flag on every click, so it installs its measuring side (and nothing
+        // is installed otherwise). Read from the setting, not the live thread:
+        // this runs in the worker process, the overlay lives in the server's.
+        result["latency_flag"] = LatencyFlag::isSupported() && settings.latencyFlagEnabled();
     }
 
     // If the codec was overridden (e.g. HEVC → H.264 for MediaTrack),

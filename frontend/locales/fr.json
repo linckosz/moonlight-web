@@ -251,6 +251,8 @@
         "chroma444Desc": "Couleur à pleine résolution (4:4:4) au lieu de 4:2:0. Nécessite que le GPU de l'hôte ET du client prennent en charge le 4:4:4 pour le codec choisi. Demande une bande passante nettement supérieure.",
         "gamepadProfile": "Manette présentée aux jeux (debug)",
         "gamepadProfileDesc": "La manette virtuelle que l'hôte branche pour la vôtre. Automatique suit celle que vous tenez ; forcer un profil sert à distinguer un problème de détection d'un problème de correspondance des boutons.",
+        "latencyFlag": "Drapeau de latence clic → image (debug)",
+        "latencyFlagDesc": "L'hôte affiche un drapeau français en haut de son écran pendant 100 ms à chaque clic, et le stream chronomètre l'aller-retour du clic au drapeau. Hôte Windows en build debug uniquement ; lancer mwLatency.run() dans la console du navigateur pendant le stream.",
         "gamepadProfileAuto": "Automatique",
         "gamepadProfileX360": "Toujours Xbox 360",
         "gamepadProfileDs4": "Toujours DualShock 4",

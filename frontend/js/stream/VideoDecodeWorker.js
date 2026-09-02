@@ -130,6 +130,10 @@ const S = {
 
     stats: { received: 0, decoded: 0, rendered: 0, dropped: 0 },
     _lastCountersPost: 0,
+    // Click-to-photon probe: until this performance.now(), every presented
+    // frame is reported to the main thread ('probe-frame') so it can sample
+    // the placeholder canvas right away. 0 = off (one comparison per draw).
+    probeUntil: 0,
 };
 
 // Record a decode() submit time and the frame's capture stamp; both are consumed
@@ -861,6 +865,10 @@ function pump() {
                 S.stats.rendered++;
                 addStageSample(S._renderSamples, performance.now() - drawStart);
                 S.diag.noteDraw(S.renderer && S.renderer.lastDraw, inFlight);
+                if (S.probeUntil) {
+                    if (performance.now() < S.probeUntil) post({ type: 'probe-frame' });
+                    else S.probeUntil = 0;
+                }
             }
         })
         .finally(() => {
@@ -979,6 +987,10 @@ self.onmessage = (e) => {
             S.outW = m.outW;
             S.outH = m.outH;
             if (S.renderer) S.renderer.setOutputSize(S.outW, S.outH);
+            break;
+        case 'probe':
+            // Click-to-photon probe: report each presented frame for `ms`.
+            S.probeUntil = performance.now() + (m.ms || 250);
             break;
         case 'capture':
             // Snapshot of the last presented frame, for the relaunch

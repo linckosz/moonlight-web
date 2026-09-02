@@ -251,6 +251,8 @@
         "chroma444Desc": "全分辨率色彩（4:4:4）而非 4:2:0。需要主机和客户端 GPU 均支持所选编解码器的 4:4:4。需要显著更高的带宽。",
         "gamepadProfile": "呈现给游戏的手柄（调试）",
         "gamepadProfileDesc": "主机为你的手柄接入哪种虚拟手柄。自动会跟随你手上的那一只；强制指定用于区分是识别出了问题，还是按键映射出了问题。",
+        "latencyFlag": "点击到画面延迟标志（调试）",
+        "latencyFlagDesc": "每次点击时，主机在屏幕顶部显示一面法国国旗 100 毫秒，串流端计时从点击到国旗出现的往返时间。仅限 Windows 主机的调试版本；串流时在浏览器控制台运行 mwLatency.run()。",
         "gamepadProfileAuto": "自动",
         "gamepadProfileX360": "始终 Xbox 360",
         "gamepadProfileDs4": "始终 DualShock 4",

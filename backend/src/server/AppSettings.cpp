@@ -424,6 +424,21 @@ void AppSettings::setShowPerformanceStats(bool enabled)
     writeAll(obj);
 }
 
+// ── Click-to-photon latency flag ─────────────────────────────────────────────
+
+bool AppSettings::latencyFlagEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("latency_flag_enabled").toBool(false);
+}
+
+void AppSettings::setLatencyFlagEnabled(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["latency_flag_enabled"] = enabled;
+    writeAll(obj);
+}
+
 // ── STUN server ──────────────────────────────────────────────────────────────────
 
 QString AppSettings::stunServer() const

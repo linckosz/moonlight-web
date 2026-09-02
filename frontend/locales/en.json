@@ -251,6 +251,8 @@
         "chroma444Desc": "Full-resolution color (4:4:4) instead of 4:2:0. Requires both the host AND client GPU to support 4:4:4 for the chosen codec. Needs significantly higher bandwidth.",
         "gamepadProfile": "Controller presented to games (debug)",
         "gamepadProfileDesc": "Which virtual controller the host plugs in for your pad. Automatic follows the controller you are holding; forcing one is for telling a detection problem from a mapping problem.",
+        "latencyFlag": "Click-to-photon latency flag (debug)",
+        "latencyFlagDesc": "The host raises a French flag at the top of its screen for 100 ms on every click, and the stream times the round trip from click to flag. Windows host, debug build only; run mwLatency.run() from the browser console while streaming.",
         "gamepadProfileAuto": "Automatic",
         "gamepadProfileX360": "Always Xbox 360",
         "gamepadProfileDs4": "Always DualShock 4",
