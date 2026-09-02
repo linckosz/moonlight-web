@@ -468,6 +468,42 @@ encode 3,38 / 4,10 / 4,61 · queue 0,16 / 0,38 / 0,96 · send 0,33 / 0,70 /
 précédente, avec rétention, sur le même banc : total **7,70 / 20,48 / 24,58**.
 Le p99 hôte a été divisé par presque quatre pour le même débit sur le fil.
 
+### 9.7 Écran verrouillé : la session attend, le stream reste vivant (02/09/2026)
+
+`AcquireNextFrame` rend `DXGI_ERROR_ACCESS_LOST` pour trois raisons de durées
+très différentes : un changement de mode (quelques centaines de ms), une
+invite UAC sur bureau sécurisé (le temps de la lire), un **verrouillage** —
+Win+L, écran de veille, capot refermé — pendant lequel DXGI refuse d'ouvrir
+une duplication du bureau sécurisé, des minutes durant. La première version de
+`restartCapture` bornait l'attente à 10 s : verrouiller le PC depuis le stream
+tuait le stream (bug B3 de l'audit).
+
+Désormais la boucle réessaie **tant que la session tourne**, au pas de
+`RestartBackoff.h` : 100, 200, 400, 800 ms puis 1 s (une tentative = création
+d'un device D3D11 + `DuplicateOutput`, ce n'est pas gratuit, et un écran
+verrouillé depuis une minute ne reviendra pas dans les 100 ms). Pendant
+l'attente le stream **reste vivant** : sans ça le navigateur déclare la famine
+à 1 s de silence et descend l'échelle de qualité sur une session qui n'est que
+verrouillée. Ce qui part est une **image noire**, au plancher d'écran fixe
+(500 ms, ou le plancher demandé par le client), encodée par l'encodeur que la
+session a encore — convertisseur et encodeur gardent leurs propres références
+au device et survivent à la perte de la duplication ; ils ne sont libérés
+qu'une fois la duplication rouverte, juste avant la reconstruction, pour ne
+jamais avoir deux sessions matérielles ouvertes à la fois. Noir plutôt que le
+dernier bureau : un bureau figé ressemble à un gel, et celui qui vient de faire
+Win+L le referait. L'input continue de passer tout le temps (`SendInput`
+atteint le bureau sécurisé), donc un mot de passe tapé dans le noir
+déverrouille l'hôte ; la duplication rouvre, la première image est une
+keyframe. Le journal dit « display is away », « still away after 10 s » une
+fois, puis « display is back after N s and M failed attempts ».
+
+Vérifié le 02/09 sur l'instance dev : quatre changements de mode 1440p ↔ 1080p
+pendant un stream, reprise au premier essai à chaque fois (≈ 50 ms, aucune
+image noire nécessaire), image intacte. **Le verrouillage lui-même reste à
+tester à la main** : DualRTX a UAC en « élever sans demander », donc pas de
+bureau sécurisé provoquable depuis un script, et verrouiller le poste sans
+l'accord de son utilisateur n'est pas une chose que l'agent fait.
+
 ---
 
 ## 10. Host natif dans l'UI

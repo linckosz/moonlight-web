@@ -20,6 +20,7 @@
 #include "../../core/FrameCadence.h"
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
+#include "../../core/RestartBackoff.h"
 #include "../../core/Session.h"
 #include "../../encode/RateControl.h"
 #include "../../encode/windows/AmfEncoder.h"
@@ -39,6 +40,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace mw::native {
 namespace {
@@ -466,39 +468,132 @@ private:
     /// absorbs the difference. A decoder reconfiguring mid-stream is a second
     /// black screen, and the viewer asked for neither.
     ///
-    /// And it retries. During a mode set the output is genuinely absent for a
-    /// moment, so the first attempt failing is the normal case, not an error.
-    /// Giving up there is what left the viewer staring at a dead stream with the
-    /// host showing a "Keep these display settings?" dialog they could no longer
-    /// reach — the one thing that has to keep working through a mode change is
-    /// the ability to click Revert.
-    bool restartCapture(std::string& error)
+    /// And it retries, for as long as the session runs. During a mode set the
+    /// output is genuinely absent for a moment, so the first attempt failing is
+    /// the normal case, not an error. Giving up there is what left the viewer
+    /// staring at a dead stream with the host showing a "Keep these display
+    /// settings?" dialog they could no longer reach — the one thing that has
+    /// to keep working through a mode change is the ability to click Revert.
+    ///
+    /// ── The locked screen ───────────────────────────────────────────────────
+    ///
+    /// Win+L, a screensaver, a UAC prompt: Windows switches to the secure
+    /// desktop, the duplication is lost, and DXGI refuses to open a new one
+    /// until the user's desktop is back — for as long as that takes. The first
+    /// version bounded the wait at ten seconds, so locking the PC from the
+    /// stream ended the stream. Now the loop waits (RestartBackoff.h says how),
+    /// and while it waits it keeps the stream ALIVE: the browser declares
+    /// starvation after a second of silence and walks its quality ladder down
+    /// on a session that is merely locked, so something has to go out.
+    ///
+    /// What goes out is a black picture, at the still-screen floor, encoded by
+    /// the encoder the session still has. Black rather than the last desktop:
+    /// a frozen desktop looks like a hang, and the viewer who has just pressed
+    /// Win+L would press it again. Black says "the screen went away", which is
+    /// the truth. Input keeps flowing the whole time — SendInput reaches the
+    /// secure desktop — so a password typed into the dark unlocks the host,
+    /// the duplication reopens, and the first frame back is a keyframe.
+    ///
+    /// The old converter and encoder are released only once the duplication
+    /// is open again, and before the new pipeline is built: the encoder holds
+    /// a hardware session — a consumer GPU has famously few — and building the
+    /// replacement while the old one is still open is how a rebuild fails with
+    /// a vendor error that says nothing about the real cause.
+    enum class Restart
     {
-        constexpr int64_t kRestartWindowUs = 10 * 1000 * 1000;
-        constexpr int kRestartSleepMs = 100;
+        /// Capturing again on a fresh pipeline.
+        Restarted,
+        /// stop() was called while waiting. Nothing has been reported.
+        Stopped,
+        /// The session ended while waiting (an encode failed); finish() has
+        /// already been called.
+        Ended,
+        /// The duplication reopened but the pipeline could not be rebuilt.
+        /// @p error says why; nothing has been reported.
+        Failed,
+    };
 
-        // Before the capture is reopened, not after. The old encoder holds a
-        // hardware session — a consumer GPU has famously few — and both it and
-        // the converter hold a reference to the outgoing D3D device, which would
-        // otherwise stay alive right through the retry loop below.
-        m_DesktopCopy.Reset();
-        m_Encoder.reset();
-        m_Converter.reset();
+    Restart restartCapture(uint32_t& frameNumber, int64_t floorIntervalUs, std::string& error)
+    {
+        // The longest the wait may sleep in one go, so a stop() is noticed and
+        // a floor due sooner than the next attempt is met.
+        constexpr int64_t kMaxSleepUs = 100 * 1000;
+        // When "still waiting" is said once more in the log, so a session log
+        // read afterwards shows a locked screen rather than a hung loop.
+        constexpr int64_t kStillWaitingUs = 10 * 1000 * 1000;
 
-        const int64_t deadlineUs = steadyNowUs() + kRestartWindowUs;
-        for (int attempt = 1;; ++attempt) {
-            if (!m_Running.load()) {
-                error = "the session was stopped while the display was reconfiguring";
-                return false;
+        // The picture sent while the screen is away. Made now, on the device
+        // the duplication was opened on — start() replaces that device, and a
+        // failed start() leaves none at all — and the size of what was being
+        // captured, which is what the converter is set up to take. Failing to
+        // make one is not fatal: the last picture is re-sent instead, as the
+        // idle floor does.
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> blank = makeBlank(error);
+        if (!blank)
+            log::warning("[native] no blank picture for the wait, re-sending the last: " + error);
+        bool blankShown = false;
+
+        const int64_t lostUs = steadyNowUs();
+        int64_t lastSentUs = 0;
+        int64_t nextTryUs = lostUs;
+        int failures = 0;
+        bool saidStillWaiting = false;
+        for (;;) {
+            if (!m_Running.load()) return Restart::Stopped;
+
+            int64_t nowUs = steadyNowUs();
+            if (nowUs >= nextTryUs) {
+                if (m_Capture->start(error)) break;
+                failures++;
+                nowUs = steadyNowUs();
+                nextTryUs = nowUs + restartRetryDelayMs(failures) * 1000;
+                if (failures == 1)
+                    log::info("[native] display is away (reconfiguring, or locked), waiting for "
+                              "it: " +
+                              error);
             }
-            if (m_Capture->start(error)) break;
-            if (steadyNowUs() >= deadlineUs) return false;
-            if (attempt == 1)
-                log::info("[native] display is reconfiguring, waiting for it: " + error);
-            std::this_thread::sleep_for(std::chrono::milliseconds(kRestartSleepMs));
+            if (!saidStillWaiting && nowUs - lostUs >= kStillWaitingUs) {
+                saidStillWaiting = true;
+                log::info("[native] display still away after 10 s, keeping the stream alive "
+                          "until it returns");
+            }
+
+            // The floor, from the very first failure: the viewer's screen goes
+            // dark the moment the host's did, not half a second later.
+            if (m_Converter && m_Encoder &&
+                (lastSentUs == 0 || nowUs - lastSentUs >= floorIntervalUs)) {
+                if (blank && !blankShown) {
+                    static const capture::CursorState kNoCursor;
+                    if (m_Converter->convert(blank.Get(), kNoCursor, cursorDraw(), error)) {
+                        blankShown = true;
+                    } else {
+                        log::warning("[native] could not draw the blank picture: " + error);
+                        blank.Reset();
+                    }
+                }
+                if (!emit(frameNumber, resendStamps(nowUs), error)) return Restart::Ended;
+                lastSentUs = nowUs;
+                nowUs = steadyNowUs();
+            }
+
+            int64_t sleepUs = nextTryUs - nowUs;
+            if (lastSentUs != 0 && lastSentUs + floorIntervalUs - nowUs < sleepUs)
+                sleepUs = lastSentUs + floorIntervalUs - nowUs;
+            if (sleepUs > kMaxSleepUs) sleepUs = kMaxSleepUs;
+            if (sleepUs < 1000) sleepUs = 1000;
+            std::this_thread::sleep_for(std::chrono::microseconds(sleepUs));
         }
 
-        if (!buildPipeline(m_Info.width, m_Info.height, error)) return false;
+        if (failures > 0) {
+            char span[32];
+            std::snprintf(span, sizeof(span), "%.1f", (steadyNowUs() - lostUs) / 1e6);
+            log::info("[native] display is back after " + std::string(span) + " s and " +
+                      std::to_string(failures) + " failed attempt" + (failures > 1 ? "s" : ""));
+        }
+
+        // buildPipeline() releases the old converter and encoder before it
+        // builds the new ones — see there.
+        if (!buildPipeline(m_Info.width, m_Info.height, error)) return Restart::Failed;
 
         // Absolute mouse input is aimed at the display's rectangle on the
         // virtual desktop, and a resolution change is exactly what moves it.
@@ -518,7 +613,44 @@ private:
         log::info("[native] capture restarted at " + std::to_string(m_Capture->width()) + "x" +
                   std::to_string(m_Capture->height()) + ", streaming " +
                   std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height));
-        return true;
+        return Restart::Restarted;
+    }
+
+    /// A black picture the size and format of what the capture was delivering,
+    /// on the capture's current device. See restartCapture for what it is for.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> makeBlank(std::string& error)
+    {
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> blank;
+        ID3D11Device* device = m_Capture ? m_Capture->device() : nullptr;
+        const int width = m_Capture ? m_Capture->width() : 0;
+        const int height = m_Capture ? m_Capture->height() : 0;
+        if (!device || width <= 0 || height <= 0) {
+            error = "the capture has no device to make it on";
+            return blank;
+        }
+
+        // Zero in every channel: black, whichever of the two 8-bit layouts the
+        // duplication used. Alpha is zero too, and the converter ignores it.
+        D3D11_TEXTURE2D_DESC desc = {};
+        desc.Width = static_cast<UINT>(width);
+        desc.Height = static_cast<UINT>(height);
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = m_Capture->format();
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+        const size_t pitch = static_cast<size_t>(width) * 4;
+        std::vector<uint8_t> zeros(pitch * static_cast<size_t>(height), 0);
+        D3D11_SUBRESOURCE_DATA initial = {};
+        initial.pSysMem = zeros.data();
+        initial.SysMemPitch = static_cast<UINT>(pitch);
+        if (FAILED(device->CreateTexture2D(&desc, &initial, blank.GetAddressOf()))) {
+            error = "the GPU refused a blank picture";
+            blank.Reset();
+        }
+        return blank;
     }
 
     /// The thread entry point. Nothing may escape it.
@@ -840,12 +972,17 @@ private:
             }
 
             if (status == capture::AcquireStatus::Lost) {
-                // A mode change, a resolution change, a desktop switch: the
-                // whole chain behind the duplication goes with it (see
-                // restartCapture).
-                if (!restartCapture(error)) {
-                    finish("capture could not be restarted: " + error);
+                // A mode change, a resolution change, a desktop switch, a
+                // locked screen: the whole chain behind the duplication goes
+                // with it, and the loop lives inside restartCapture until the
+                // display is back (see there).
+                switch (restartCapture(frameNumber, floorIntervalUs(), error)) {
+                case Restart::Restarted: break;
+                case Restart::Ended: return;
+                case Restart::Stopped:
+                    finish("the session was stopped while the display was away");
                     return;
+                case Restart::Failed: finish("capture could not be restarted: " + error); return;
                 }
                 // Whatever the client had is now stale: the encoder is a new one
                 // and has no reference frames, and the picture it is about to
