@@ -3594,7 +3594,7 @@ export class StreamView {
                                     .replace(/^[0-9a-f]{4}-[0-9a-f]{4}-/i, '')
                                     .trim() || '?';
                             Toast.warning(t('stream.gamepadIgnored', { name }), {
-                                durationMs: 15000,
+                                durationMs: 10000,
                             });
                         },
                     },
