@@ -3582,10 +3582,18 @@ export class StreamView {
                         // A pad with no standard mapping is not forwarded; say
                         // so, or the player pushes buttons at a game that never
                         // hears them. Longer than the default fade: this is
-                        // advice to act on, not an acknowledgement.
+                        // advice to act on, not an acknowledgement. The id
+                        // carries vendor/product ids the player cannot use
+                        // (Chrome appends them in parentheses, Firefox prefixes
+                        // them as hex); only the name is shown.
                         onIgnored: (gp) => {
-                            Toast.warning(t('stream.gamepadIgnored', { name: gp.id || '?' }), {
-                                durationMs: 10000,
+                            const name =
+                                (gp.id || '')
+                                    .replace(/\s*\(.*\)\s*$/, '')
+                                    .replace(/^[0-9a-f]{4}-[0-9a-f]{4}-/i, '')
+                                    .trim() || '?';
+                            Toast.warning(t('stream.gamepadIgnored', { name }), {
+                                durationMs: 15000,
                             });
                         },
                     },

@@ -488,7 +488,7 @@
         "webcodecsUnsupported": "WebCodecs not supported",
         "codecUnsupported": "Codec not supported by browser",
         "streamDisconnected": "Stream disconnected",
-        "gamepadIgnored": "Controller ignored: \"{{name}}\" has no standard layout. Switch it to XInput mode (X on most pads) and plug it back in.",
+        "gamepadIgnored": "\"{{name}}\" ignored: switch it to XInput mode and plug it back in.",
         "webrtcError": "WebRTC connection error",
         "degradeBitrate": "Unstable network — bitrate reduced to {{mbps}} Mbps",
         "degradeBitrateFps": "Unstable network — bitrate reduced to {{mbps}} Mbps, capped at 60 fps",
