@@ -83,6 +83,19 @@ function detectType(id) {
     return CTYPE.UNKNOWN;
 }
 
+// Rumble is a STATE on the host, not a pulse: XInput and the DualShock alike
+// say "motors at this level" and leave them there until told otherwise. The
+// Web API only offers timed effects, so a held vibration is rebuilt out of
+// back-to-back slices, each re-armed just before the previous one ends. One
+// slice is long enough that the seam is inaudible, short enough that a host
+// that vanishes mid-rumble leaves the pad shaking for a second, not forever.
+const RUMBLE_SLICE_MS = 1000;
+const RUMBLE_REARM_MS = 900;
+// And a ceiling on how long a level is kept alive without the host saying it
+// again: a real pad stops when the game exits; ours must not buzz on after a
+// crash that never sent the "off".
+const RUMBLE_MAX_HOLD_MS = 15000;
+
 // Float axis (-1..1) → signed short (-32767..32767).
 function axisToShort(v) {
     let s = Math.round(v * 32767);
@@ -108,6 +121,8 @@ export class GamepadManager {
         this._rafId = null;
         // index → { last: {buttons,lt,rt,lx,ly,rx,ry}, hasRumble:boolean }
         this._pads = new Map();
+        // index → { strong, weak, since, timer } for a vibration being held.
+        this._rumble = new Map();
         this._onConnect = (e) => this._handleConnect(e.gamepad);
         this._onDisconnect = (e) => this._handleDisconnect(e.gamepad);
     }
@@ -129,6 +144,9 @@ export class GamepadManager {
         window.removeEventListener('gamepaddisconnected', this._onDisconnect);
         if (this._rafId !== null) cancelAnimationFrame(this._rafId);
         this._rafId = null;
+        // Motors first: a pad still shaking after the stream closed would be
+        // shaking for nobody.
+        for (const index of Array.from(this._rumble.keys())) this._stopRumble(index);
         // Tell the host every controller is gone.
         for (const index of this._pads.keys()) {
             this._send({ type: 'gamepaddisconnect', index, mask: 0 });
@@ -173,6 +191,7 @@ export class GamepadManager {
 
     _handleDisconnect(gp) {
         if (!gp || !this._pads.has(gp.index)) return;
+        this._stopRumble(gp.index);
         this._pads.delete(gp.index);
         this._send({ type: 'gamepaddisconnect', index: gp.index, mask: this._mask() });
     }
@@ -253,22 +272,75 @@ export class GamepadManager {
         return false;
     }
 
-    /** Trigger vibration on the matching controller (host rumble request). */
+    /**
+     * Set the matching controller's motors to what the host asked for, and
+     * keep them there until the host says otherwise (see RUMBLE_SLICE_MS).
+     *
+     * Zero on both motors is the "off" the host sends when the game releases
+     * the pad; anything else replaces whatever was being held.
+     */
     rumble(index, low, high) {
-        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-        const gp = pads[index];
-        if (!gp || !gp.vibrationActuator) return;
         // Limelight motors are 16-bit; the Web API wants 0..1 magnitudes.
         const strong = Math.min(1, (low || 0) / 65535);
         const weak = Math.min(1, (high || 0) / 65535);
+
+        if (strong === 0 && weak === 0) {
+            this._stopRumble(index);
+            return;
+        }
+
+        const previous = this._rumble.get(index);
+        if (previous && previous.timer) clearTimeout(previous.timer);
+        this._rumble.set(index, { strong, weak, since: Date.now(), timer: null });
+        this._playRumbleSlice(index);
+    }
+
+    /** One slice of the vibration being held on `index`, and the next armed. */
+    _playRumbleSlice(index) {
+        const entry = this._rumble.get(index);
+        if (!entry) return;
+
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const gp = pads[index];
+        // No actuator (Safari, Firefox, a pad without motors): nothing to
+        // hold, and nothing to keep re-arming for.
+        if (!gp || !gp.vibrationActuator) {
+            this._rumble.delete(index);
+            return;
+        }
+        if (Date.now() - entry.since > RUMBLE_MAX_HOLD_MS) {
+            this._stopRumble(index);
+            return;
+        }
+
         try {
             gp.vibrationActuator.playEffect('dual-rumble', {
-                duration: 200,
-                strongMagnitude: strong,
-                weakMagnitude: weak,
+                duration: RUMBLE_SLICE_MS,
+                strongMagnitude: entry.strong,
+                weakMagnitude: entry.weak,
             });
         } catch (e) {
             /* unsupported actuator type */
+        }
+        entry.timer = setTimeout(() => this._playRumbleSlice(index), RUMBLE_REARM_MS);
+    }
+
+    /** Motors off on `index`, and no slice left armed. */
+    _stopRumble(index) {
+        const entry = this._rumble.get(index);
+        if (entry && entry.timer) clearTimeout(entry.timer);
+        this._rumble.delete(index);
+
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const gp = pads[index];
+        const actuator = gp && gp.vibrationActuator;
+        if (!actuator) return;
+        try {
+            // reset() cuts the running slice short; a browser without it just
+            // lets the current slice run out, which is at most a second.
+            if (typeof actuator.reset === 'function') actuator.reset();
+        } catch (e) {
+            /* nothing to cut short */
         }
     }
 }
