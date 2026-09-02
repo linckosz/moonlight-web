@@ -249,7 +249,15 @@ VigemGamepad::Pad* VigemGamepad::ensurePad(int slot, Profile profile)
 void VigemGamepad::arrive(const InputEvent& event)
 {
     const int slot = event.controllerNumber;
-    if (slot < 0 || slot >= kMaxPads) return;
+    if (slot < 0 || slot >= kMaxPads) {
+        // Said once, here, where the client announces the pad — not on every
+        // state update. A shared session's numbering offset is the usual way
+        // to land here, and a pad that silently does nothing is the worst
+        // possible way for a guest to find that out.
+        log::warning("[native] gamepad " + std::to_string(slot) + " has no slot on this host — " +
+                     std::to_string(kMaxPads) + " at most, XInput has no more; it is ignored");
+        return;
+    }
 
     std::lock_guard<std::mutex> lock(m_Mutex);
 
