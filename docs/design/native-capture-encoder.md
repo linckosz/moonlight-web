@@ -336,36 +336,34 @@ Un seul thread, aucune file d'attente. Ni l'un ni l'autre ne se justifierait :
 La boucle bloque dans `AcquireNextFrame` : elle est cadencée par l'écran, pas
 par un minuteur choisi, et un bureau immobile ne coûte rien.
 
-### 9.1 Le plancher sur écran immobile, choisi par le client
+### 9.1 Le plancher sur écran immobile
 
 La capture livre **sur dommage** : un écran où rien ne bouge ne produit rien, ce
 qui est indiscernable d'un stream mort. D'où un plancher — une frame toutes les
 500 ms, la dernière image ré-encodée, quelques centaines d'octets.
 
-Ce plancher-là ne répond qu'à « le stream est-il vivant ». Or une image ne
-s'affine que quand une frame la porte : à 2 fps, une fenêtre qu'on vient de
-faire défiler arrive floue et le reste une demi-seconde. C'est le flou qui
-revient lentement.
+**Ce nombre appartient à la capture, pas au client.** Combien de temps un écran
+figé peut se taire dépend de l'exactitude avec laquelle la plateforme signale un
+dommage. Sur DDA le signal est exact : `AcquireNextFrame` rend la main sur le
+présent réel, 0,06 ms après. Tout changement est donc une frame *immédiatement*,
+puis la **rafale de raffinement** ré-encode cette image pendant 1 s à ×6 de
+budget jusqu'à convergence. Un plancher plus haut ne ferait que continuer après
+ça, au budget ordinaire, sur une image que l'encodeur a déclarée finie — donc en
+mode bureau il n'apporte rien, quel que soit l'appareil. Une plateforme au
+signal plus flou remonte ce nombre ici, et aucun client ne l'apprend.
 
-Le bon débit dépend de qui regarde, ce que l'hôte ne peut pas savoir. **C'est
-donc le client qui le nomme**, par un message `framefloor` (les trois relais le
-transmettent), et l'hôte se contente de borner :
+Un client peut demander **plus que la vivacité**, par un message `framefloor`
+que les trois relais transmettent :
 
-| Situation du client | Plancher |
+| Situation du client | Plancher demandé |
 |---|---|
-| Bureau, pointeur libre | **15 fps** — le réglage devient invisible |
-| Mode jeu, pointeur capturé | **30 fps** — écran figé ≠ session inactive (pause, menu, chargement) |
-| Téléphone, tablette | plancher de l'hôte — lien mesuré et batterie priment |
+| Bureau, pointeur libre (tout appareil) | rien — celui de l'hôte |
+| Mode jeu, pointeur capturé | **30 fps** — le pointeur est *dans* l'image, et écran figé ≠ session inactive (pause, menu, chargement) |
 
 Deux bornes, côté hôte : jamais plus vite que le fps du stream (le réglage de
 l'utilisateur passe avant une demande venue d'une page), jamais plus lentement
 que les 500 ms. Le timeout d'`AcquireNextFrame` suit le plancher, sinon une
-frame due à 66 ms serait livrée à 100.
-
-À ne pas confondre avec la **rafale de raffinement** (§ boucle, `kRefineWindow`)
-qui suit chaque changement : elle, ré-encode pendant 1 s à la cadence du stream
-avec un budget multiplié, et s'arrête sur convergence. Le plancher prend le
-relais après.
+frame due à 33 ms serait livrée à 100.
 
 ---
 

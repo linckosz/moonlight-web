@@ -133,37 +133,38 @@ const PHONE_CURSOR_CSS_PX = 18;
 
 /**
  * How often the native host must keep sending frames while nothing at all moves
- * on its screen — a floor in frames per second, and 0 for the host's own (one
- * frame every 500 ms, which is only there so a receiver can tell a quiet stream
- * from a dead one).
+ * on its screen — a floor in frames per second, asked for by the client. 0 means
+ * "nothing in particular", and leaves the host its own.
  *
- * The host cannot decide this, which is why it is here. It knows the screen is
- * still; it does not know who is watching it, on what, or what they are doing.
+ * ── Why desktop mode asks for nothing ───────────────────────────────────────
  *
- * ── Desktop, pointer free ───────────────────────────────────────────────────
+ * Because the host already reacts on its own, sooner than any floor could.
+ * Desktop Duplication does not sample: AcquireNextFrame blocks inside Windows
+ * and returns when the desktop is genuinely presented — 0.06 ms later, stamped
+ * with the present's own clock. Anything changing on screen is therefore a
+ * frame immediately, and the host then re-encodes that picture for a second at
+ * six times the budget until it stops improving (its refinement burst).
  *
- * The host captures on damage, and a picture only sharpens when a frame carries
- * it. So a window that was just scrolled arrives soft and stays soft until the
- * next frame — which, on a screen someone is reading, is half a second away.
- * That is the blur that fades back in. 15 makes the settling too quick to
- * watch, and costs a re-encode of an unchanged picture: a few hundred bytes
- * each, on a link that is otherwise carrying nothing.
+ * A floor on top of that would only carry on at the ordinary budget, after the
+ * burst has already decided there was nothing left to add. So desktop mode says
+ * 0, and the host keeps its own liveness floor — which is where a number that
+ * depends on the capture technology belongs. If a platform ever lands whose
+ * damage signal is less exact than DXGI's, that floor rises over there and no
+ * client has to learn about it.
  *
- * ── Gaming, pointer locked ──────────────────────────────────────────────────
+ * ── Why gaming mode asks for 30 ─────────────────────────────────────────────
  *
- * A still screen here does not mean an idle session — it means a paused game, a
- * menu, a loading screen, an inventory. A picture that only refreshes twice a
- * second under a pointer that moves reads as a connection that dropped, so the
- * floor is high enough for the stream to keep feeling alive. The host clamps it
- * to the frame rate the viewer chose, so someone who set 20 fps still gets 20.
+ * There the pointer is drawn INTO the picture, so frames are the only channel
+ * anything reaches the viewer through — and a still screen does not mean an
+ * idle session, it means a paused game, a menu, a loading screen. A picture
+ * refreshing twice a second under a hand that is moving reads as a connection
+ * that dropped. The host clamps this to the frame rate the viewer chose, so
+ * someone who set 20 fps still gets 20.
  *
- * ── Phone and tablet ────────────────────────────────────────────────────────
- *
- * They keep the host's own floor. The two costs a desktop shrugs off — a
- * metered link and a battery — are the ones that decide there, and a picture
- * settling half a second later is a far smaller thing on a phone than either.
+ * A phone or tablet never reaches it: gaming mode is forced off on a touch
+ * device (see the constructor), so they always ask for nothing — which is also
+ * what a metered link and a battery would have asked for.
  */
-const FRAME_FLOOR_DESKTOP_FPS = 15;
 const FRAME_FLOOR_GAMING_FPS = 30;
 
 // Which MultiSeat hosts have already had their input notice this page, by uuid.
@@ -5712,13 +5713,12 @@ export class StreamView {
     /**
      * The still-screen frame floor this session should be asking for.
      *
-     * Mouse mode is asked first because it is the one that moves: gaming mode is
-     * forced off on every touch device (see the constructor), so the device test
-     * below only ever answers for a viewer genuinely in desktop mode.
+     * Only the mouse mode decides. Desktop mode asks for nothing on every device
+     * there is, because the host's own reaction to a change is already faster
+     * than a floor — see FRAME_FLOOR_GAMING_FPS for the whole argument.
      */
     _frameFloorFps() {
-        if (this._gamingMode) return FRAME_FLOOR_GAMING_FPS;
-        return IS_MOBILE_OR_TABLET ? 0 : FRAME_FLOOR_DESKTOP_FPS;
+        return this._gamingMode ? FRAME_FLOOR_GAMING_FPS : 0;
     }
 
     /**

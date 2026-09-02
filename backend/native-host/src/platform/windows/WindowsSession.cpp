@@ -492,10 +492,17 @@ private:
         // frame already converted and unchanged, which an encoder turns into
         // almost nothing — a few hundred bytes of "everything is the same".
         //
-        // This one only answers "is the stream alive", which is the least a
-        // floor can be for. A client that wants a still screen to keep settling
-        // — a desktop being worked on, a game paused with the pointer locked —
-        // asks for a faster one; see setFrameFloorFps.
+        // This one only answers "is the stream alive", and it is deliberately
+        // the CAPTURE's number rather than the client's: how long a still screen
+        // may stay silent is a property of how exactly this platform reports
+        // damage. On Desktop Duplication that report is exact — AcquireNextFrame
+        // returns on the real present, 0.06 ms after it — so nothing is lost by
+        // waiting here, and a client at a desk asks for no more. A platform
+        // whose damage signal is vaguer raises this, and no client learns of it.
+        //
+        // A client that wants MORE than liveness — a game paused with the
+        // pointer locked, where the picture is the only channel there is — asks
+        // for a faster floor; see setFrameFloorFps.
         constexpr int64_t kIdleFloorUs = 500 * 1000;
 
         // ── Refining a picture that stopped moving ──────────────────────────
