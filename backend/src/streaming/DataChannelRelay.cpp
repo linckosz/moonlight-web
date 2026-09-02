@@ -821,7 +821,7 @@ bool DataChannelRelay::ridingOutLoss() const
 
 // --- Video/Audio forwarding (from media engine signals, on main thread) ---
 
-void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /*frameNumber*/,
+void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber,
                                     qint64 presentationTimeUs)
 {
     // Balance the worker→main pending counter (incremented before each emit).
@@ -919,7 +919,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
         m_NewKeyframeArrived = true;
     }
 
-    sendFragmented(frameData, isKeyframe, m_VideoDc, presentationTimeUs);
+    sendFragmented(frameData, isKeyframe, m_VideoDc, presentationTimeUs, frameNumber);
 }
 
 // --- Buffered keyframe ---
@@ -1199,7 +1199,7 @@ void DataChannelRelay::onInputMessage(const std::string& message)
 
 void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
                                       std::shared_ptr<rtc::DataChannel>& dc,
-                                      qint64 presentationTimeUs)
+                                      qint64 presentationTimeUs, int frameNumber)
 {
     if (m_Stopping.load() || !dc || !dc->isOpen()) return;
     if (data.isEmpty()) return;
@@ -1326,7 +1326,11 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     // delta still queued behind the hole references a frame that will never
     // arrive. Start IDR recovery now instead of waiting a full round-trip for
     // the frontend to detect the gap and ask.
-    if (m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs)) {
+    // The engine that stamps its frames gets told when each one left; the
+    // others hand over a null sink and the sender reads no clock for them.
+    FrameSentSink* sink = (frameNumber >= 0 && m_Shim) ? m_Shim->frameSentSink() : nullptr;
+    if (m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs,
+                          static_cast<uint32_t>(frameNumber < 0 ? 0 : frameNumber), sink)) {
         m_AwaitingIdr = true;
         sendIdrRequestThrottled();
     }
@@ -1387,6 +1391,13 @@ void DataChannelRelay::onStatsTimerTick()
     // drives the frontend's congestion monitor (automatic bitrate degradation).
     stats["bpDrops"] =
         m_DeltaDroppedCount + m_KeyframeBackpressureWarnings + m_AwaitingIdrDropCount;
+    // Host-side stage latencies (present → acquire → convert → encode → queue
+    // → send), mean and tail over this window. Only an engine that stamps its
+    // own frames has any; the GameStream message is unchanged.
+    if (m_Shim) {
+        const QJsonObject stages = m_Shim->takeStageStats();
+        if (!stages.isEmpty()) stats["stages"] = stages;
+    }
 
     QByteArray statsJson = QJsonDocument(stats).toJson(QJsonDocument::Compact);
 

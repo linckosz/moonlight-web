@@ -29,6 +29,7 @@
 namespace rtc {
 class DataChannel;
 }
+class FrameSentSink;
 
 // Dedicated worker thread that performs DataChannel fragmentation + send,
 // offloading this per-frame CPU work off the Qt main thread (which also runs
@@ -56,8 +57,15 @@ public:
     // already carry a frameId, so the caller must start IDR recovery (the
     // frames still queued after the hole reference a frame that will never be
     // sent).
+    //
+    // `sink`, when given, is told on the worker thread when the frame's last
+    // fragment has been handed to the DataChannel, under `frameNumber` — the
+    // producer's own number for the frame, not `frameId`. It must outlive the
+    // sender: stop() joins the worker, and the relay stops the sender before
+    // anything it points at goes away.
     bool enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data, bool isKeyframe,
-                 bool isAudio, uint32_t frameId, uint32_t backendTs);
+                 bool isAudio, uint32_t frameId, uint32_t backendTs, uint32_t frameNumber = 0,
+                 FrameSentSink* sink = nullptr);
 
     // Stop the worker thread and discard pending jobs. Idempotent; safe to call
     // from the relay's stop()/destructor.
@@ -75,6 +83,8 @@ private:
         bool isAudio = false;
         uint32_t frameId = 0;
         uint32_t backendTs = 0;
+        uint32_t frameNumber = 0;
+        FrameSentSink* sink = nullptr;
     };
 
     // Must match DataChannelRelay's fragmentation format exactly.

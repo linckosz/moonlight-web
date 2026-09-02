@@ -167,8 +167,13 @@ private:
     // carried through the queued signal. -1 = unknown → fall back to the shim's
     // latest value. Never read the shim atomic for regular frames: a drained
     // burst would share one backendTs and defeat the frontend's ordering filter.
+    //
+    // frameNumber: the engine's own number for the frame, so the sender can
+    // report when it left (IMediaEngine::frameSentSink). -1 = not a live frame
+    // (a buffered keyframe replayed at DC open) — nothing is reported.
     void sendFragmented(const QByteArray& data, bool isKeyframe,
-                        std::shared_ptr<rtc::DataChannel>& dc, qint64 presentationTimeUs = -1);
+                        std::shared_ptr<rtc::DataChannel>& dc, qint64 presentationTimeUs = -1,
+                        int frameNumber = -1);
 
     // Send a previously buffered keyframe (arrived before Video DC was open).
     // Called from the Video DC onOpen callback (marshaled to main thread).

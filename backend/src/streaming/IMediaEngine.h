@@ -18,10 +18,13 @@
 #pragma once
 
 #include <QByteArray>
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QVector>
 #include <cstdint>
+
+class FrameSentSink;
 
 /**
  * @brief What produces a stream's video, audio and input, whatever the source.
@@ -200,6 +203,18 @@ public:
     /// GameStream that is when the first frame reached us; for the native engine
     /// it is the first frame's display present.
     virtual int64_t firstFrameArrivalSteadyMs() const = 0;
+
+    /// Where the sender thread reports when each frame left the process, or
+    /// null when this engine has no use for it. Only an engine that stamps its
+    /// own frames can close the timeline; a GameStream frame arrives with no
+    /// host-side stamps to close.
+    virtual FrameSentSink* frameSentSink() { return nullptr; }
+
+    /// Per-stage host latency over the window since the previous call — mean
+    /// and tail of acquire, convert, encode, queue, send and total — as a JSON
+    /// object for the stats message, or an empty object when the engine does
+    /// not measure them. Read-and-reset: one consumer only.
+    virtual QJsonObject takeStageStats() { return {}; }
 
     // ── GameStream-only, with truthful defaults ─────────────────────────────
 

@@ -19,6 +19,9 @@ add_library(mw-native-host STATIC
     src/core/Probe.cpp
     src/core/Selector.cpp
     src/core/NativeHost.cpp
+    # The per-stage latency histograms every native figure is read through.
+    # Pure arithmetic, no platform, so it is testable — and tested — anywhere.
+    src/core/StageStats.cpp
     # Platform-neutral on purpose, and compiled everywhere for that reason: the
     # DualShock 4 report is pure arithmetic, and it is the part of the profile
     # that can be wrong in an interesting way (an inverted axis, a D-pad
@@ -148,6 +151,7 @@ if(MW_BUILD_TESTS)
         tests/test_capture.cpp
         tests/test_vpl_params.cpp
         tests/test_ds4_mapping.cpp
+        tests/test_stage_stats.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)

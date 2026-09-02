@@ -16,11 +16,24 @@
  */
 
 #include "FrameSender.h"
+#include "FrameSentSink.h"
 
 #include <rtc/rtc.hpp>
 #include <QDebug>
-#include <cstring>
 #include <algorithm>
+#include <chrono>
+#include <cstring>
+
+namespace {
+
+int64_t steadyNowUs()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+} // namespace
 
 FrameSender::FrameSender()
 {
@@ -46,7 +59,8 @@ void FrameSender::stop()
 }
 
 bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data,
-                          bool isKeyframe, bool isAudio, uint32_t frameId, uint32_t backendTs)
+                          bool isKeyframe, bool isAudio, uint32_t frameId, uint32_t backendTs,
+                          uint32_t frameNumber, FrameSentSink* sink)
 {
     if (m_Stop.load(std::memory_order_acquire) || !dc) return false;
 
@@ -65,7 +79,8 @@ bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray
             droppedDelta = true;
         }
 
-        m_Queue.push_back(Job{std::move(dc), data, isKeyframe, isAudio, frameId, backendTs});
+        m_Queue.push_back(
+            Job{std::move(dc), data, isKeyframe, isAudio, frameId, backendTs, frameNumber, sink});
     }
     m_Cv.notify_one();
     if (droppedDelta) {
@@ -106,6 +121,10 @@ void FrameSender::sendJob(const Job& job)
 
     const int totalSize = job.data.size();
     const int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
+
+    // t₄, only when somebody is listening: the clock read is cheap, but a
+    // stamp nobody reads is still work on the wire's thread.
+    const int64_t firstByteUs = job.sink ? steadyNowUs() : 0;
 
     for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
         if (m_Stop.load(std::memory_order_acquire)) return;
@@ -160,4 +179,9 @@ void FrameSender::sendJob(const Job& job)
             return;
         }
     }
+
+    // t₅. A frame that failed part-way returned above and is not reported: a
+    // half-sent frame has no "last byte", and counting it would make the send
+    // stage look faster exactly when the link is failing.
+    if (job.sink) job.sink->frameSent(job.frameNumber, firstByteUs, steadyNowUs());
 }

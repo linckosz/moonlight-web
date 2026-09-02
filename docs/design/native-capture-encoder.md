@@ -121,6 +121,14 @@ Trois points de justesse invisibles hors exécution :
 2. **Un présent à zéro n'est pas une frame.** DXGI réveille aussi sur un simple
    mouvement de pointeur ; le compter comme une frame enverrait un doublon
    horodaté n'importe comment.
+4. **Six étapes, deux threads, un mutex.** Chaque frame porte t₀ présent, t₁
+   acquis, t₂ converti, t₃ encodé ; le thread émetteur ajoute t₄ premier octet
+   et t₅ dernier octet (`FrameSentSink`). `NativeMediaEngine` verse les six
+   différences dans des histogrammes à pas logarithmique (`StageStats`, huit
+   cases par octave, percentile rendu par le bord haut de sa case : il surestime,
+   jamais l'inverse). Le message `stats` porte la fenêtre (`stages`), le log
+   porte la session entière en une ligne à l'arrêt. Depuis le 02/09/2026 ; rien
+   sur ce chemin ne s'optimise sur une estimation.
 3. **L'époque du relais.** Le moteur date en absolu ; le relais, lui, attend le
    contrat du shim GameStream : un temps de présentation **relatif à la première
    frame**, qu'il rajoute à l'époque pour retrouver l'horloge. `NativeMediaEngine`
