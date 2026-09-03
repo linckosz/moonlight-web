@@ -412,29 +412,31 @@ export class StreamView {
         // equivalent of the desynchronized hint that lets Canvas2D bypass the
         // compositor. Canvas2D drew the same frames in 0.2–0.6 ms with zero
         // drops. createVideoRenderer still falls back to Canvas2D when WebGPU
-        // is unavailable. 'force2d' (debug) bypasses WebGPU even with the
-        // Enhancer on. Forwarded to the worker too (no localStorage there).
+        // is unavailable. Forwarded to the worker too (no localStorage there).
+        //
+        // The menu offers each upscaler in two flavours: on WebGPU ('sgsr',
+        // 'nis', 'fsr1') and on WebGL2 ('gl-sgsr', 'gl-nis', 'gl-fsr1'). The
+        // WebGL2 ones never ask for WebGPU; createVideoRenderer routes them.
         let algo = 'off'; // no upscaler
         let wantWebGpu = hdrEnabled === true; // HDR needs the WebGPU paths
         if (videoEnhancement === 'on') {
             wantWebGpu = true;
             const sel = videoEnhancementAlgo || 'auto';
-            if (sel === 'force2d') {
-                wantWebGpu = false; // debug: force the Canvas2D renderer
-            } else if (NO_WEBGPU_ALGOS.includes(sel)) {
-                // Debug: the enhancers that do without WebGPU (WebGL FSR1 /
-                // SGSR / NIS, Canvas2D resampling at display size). Chosen to
-                // measure what an upscaler costs once WebGPU's presentation
-                // path is out of the picture. createVideoRenderer routes them.
+            if (NO_WEBGPU_ALGOS.includes(sel)) {
                 wantWebGpu = false;
                 algo = sel;
             } else if (sel === 'auto') {
                 // 'auto' picks by platform (see pickAutoEnhancer): desktops + iOS
                 // → FSR1; beefy 1080p+ Android → FSR1; everything else → SGSR.
-                // WebGPU absence is handled downstream (Canvas2D, no enhancement).
+                // Without WebGPU the same upscaler runs on WebGL2 instead of
+                // silently degrading to a plain Canvas2D stretch.
                 algo = pickAutoEnhancer();
+                if (typeof navigator === 'undefined' || !navigator.gpu) {
+                    algo = 'gl-' + algo;
+                    wantWebGpu = false;
+                }
             } else {
-                algo = sel === 'sgsr' || sel === 'fsr1' ? sel : 'sgsr';
+                algo = sel === 'nis' || sel === 'fsr1' ? sel : 'sgsr';
             }
         }
         this._videoEnhancementAlgo = algo;
@@ -4385,26 +4387,23 @@ export class StreamView {
         let enhancerName = null;
         if (this._activeRendererKind === 'webgpu') {
             enhancerName =
-                this._videoEnhancementAlgo === 'fsr1'
-                    ? 'FSR1'
-                    : this._videoEnhancementAlgo === 'off'
-                      ? t('stream.enhancerOff')
-                      : 'SGSR';
+                this._videoEnhancementAlgo === 'off'
+                    ? t('stream.enhancerOff')
+                    : { fsr1: 'FSR1', nis: 'NIS', sgsr: 'SGSR' }[this._videoEnhancementAlgo] ||
+                      'SGSR';
             // Stepped down by the governor: say so, otherwise the card reads as
             // if the user's setting silently changed.
             if (this._enhancerDegraded) enhancerName += ' (auto)';
         } else if (NO_WEBGPU_ALGOS.includes(this._videoEnhancementAlgo)) {
-            // Debug enhancers without WebGPU: name what actually runs. The
-            // renderer may have fallen back (no WebGL2 → Canvas2D), so the
-            // kind decides, not the setting.
+            // WebGL2 enhancers: name what actually runs. The renderer may have
+            // fallen back (no WebGL2 → Canvas2D), so the kind decides, not the
+            // setting.
             enhancerName =
                 this._activeRendererKind === 'webgl'
                     ? { 'gl-fsr1': 'WebGL FSR1', 'gl-sgsr': 'WebGL SGSR', 'gl-nis': 'WebGL NIS' }[
                           this._videoEnhancementAlgo
                       ] || 'WebGL'
-                    : this._videoEnhancementAlgo === 'smooth2d'
-                      ? 'Canvas2D smoothing high'
-                      : 'OFF (WebGL unavailable)';
+                    : 'OFF (WebGL unavailable)';
         } else if (this._transport === 'webrtc-media' && this._videoEnhancementRequested) {
             enhancerName = 'OFF (not available on MediaTrack)';
         } else if (

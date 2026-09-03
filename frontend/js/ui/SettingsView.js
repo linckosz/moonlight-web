@@ -48,11 +48,18 @@ const IS_TOUCH_DEVICE =
 const STORAGE_KEY = 'mw-streaming-settings';
 
 /**
- * Enhancer choices shown in debug builds only: the ones that run without
- * WebGPU (see renderers/createRenderer.js NO_WEBGPU_ALGOS). Listed here rather
- * than imported so the settings page does not pull the renderers in.
+ * Enhancer choices, in menu order after 'auto': each upscaler on WebGL2 and on
+ * WebGPU. Listed here rather than imported so the settings page does not pull
+ * the renderers in. `gpu` marks the ones that need WebGPU (grayed out without).
  */
-const DEBUG_ENHANCERS = ['smooth2d', 'gl-fsr1', 'gl-sgsr', 'gl-nis'];
+const ENHANCER_CHOICES = [
+    { value: 'gl-sgsr', key: 'settings.algoPerfGl', gpu: false },
+    { value: 'sgsr', key: 'settings.algoPerfGpu', gpu: true },
+    { value: 'gl-nis', key: 'settings.algoBalGl', gpu: false },
+    { value: 'nis', key: 'settings.algoBalGpu', gpu: true },
+    { value: 'gl-fsr1', key: 'settings.algoQualGl', gpu: false },
+    { value: 'fsr1', key: 'settings.algoQualGpu', gpu: true },
+];
 
 export class SettingsView {
     constructor(container, onClose) {
@@ -80,9 +87,8 @@ export class SettingsView {
         // Worker decode mode: 'auto' (= off, default), 'on' (explicit opt-in) or 'off'.
         this._videoWorker = 'auto';
         this._mediaTrackOnlyH264 = false;
-        // Video enhancement (WebGPU upscale/sharpen): 'off'|'on' + algo selector.
-        // The algo selector is exposed only in debug builds (server reports it);
-        // in production the algo is forced to 'auto'.
+        // Video enhancement (upscale/sharpen): 'off'|'on' + algo selector, see
+        // ENHANCER_CHOICES ('auto' picks by platform).
         this._videoEnhancement = 'off';
         this._videoEnhancementAlgo = 'auto';
         this._debugBuild = false;
@@ -313,13 +319,7 @@ export class SettingsView {
         const profile = data.gamepad_profile;
         this._gamepadProfile = profile === 'x360' || profile === 'ds4' ? profile : 'auto';
         const algo = data.video_enhancement_algo;
-        this._videoEnhancementAlgo =
-            algo === 'sgsr' ||
-            algo === 'fsr1' ||
-            algo === 'force2d' ||
-            DEBUG_ENHANCERS.includes(algo)
-                ? algo
-                : 'auto';
+        this._videoEnhancementAlgo = ENHANCER_CHOICES.some((c) => c.value === algo) ? algo : 'auto';
         this._powerSave = data.power_save === true;
         this._powerSaveBackup =
             data.power_save_backup && typeof data.power_save_backup === 'object'
@@ -829,25 +829,18 @@ export class SettingsView {
             )
             .join('');
 
-        // Video Enhancement (WebGPU upscale/sharpen) — grayed out if WebGPU is
-        // unavailable, like the per-codec graying.
+        // Video Enhancement (upscale/sharpen). The WebGPU flavours are grayed
+        // out when WebGPU is unavailable, like the per-codec graying; the
+        // WebGL2 ones stay, so the feature is not lost with the API.
         const webgpuUnavailable = !this._webgpuUsable;
         const veAlgos = [
             { value: 'auto', label: t('settings.algoAuto'), disabled: false },
-            { value: 'fsr1', label: t('settings.algoFsr1'), disabled: false },
-            { value: 'sgsr', label: t('settings.algoSgsr'), disabled: false },
+            ...ENHANCER_CHOICES.map((c) => ({
+                value: c.value,
+                label: t(c.key),
+                disabled: c.gpu && webgpuUnavailable,
+            })),
         ];
-        // Debug builds: the enhancers that run without WebGPU, for the perf
-        // comparison of 03/09/2026 (WebGPU's presentation cost vs the shader's
-        // own). Not a product choice — the labels say so.
-        if (this._debugBuild) {
-            veAlgos.push(
-                { value: 'smooth2d', label: t('settings.algoSmooth2d'), disabled: false },
-                { value: 'gl-fsr1', label: t('settings.algoGlFsr1'), disabled: false },
-                { value: 'gl-sgsr', label: t('settings.algoGlSgsr'), disabled: false },
-                { value: 'gl-nis', label: t('settings.algoGlNis'), disabled: false },
-            );
-        }
         const veAlgoOptions = veAlgos
             .map(
                 (a) =>
@@ -904,8 +897,8 @@ export class SettingsView {
         // Pass 0, so FSR1/SGSR run on a normal SDR canvas. Show an informational
         // note while HDR is on (the tone-map costs a software AV1 decode).
         const veLockedClass = this._powerSave ? ' settings-field-locked' : '';
-        const veCheckboxDisabled = webgpuUnavailable || this._powerSave ? ' disabled' : '';
-        const veChecked = this._videoEnhancement === 'on' && !webgpuUnavailable ? 'checked' : '';
+        const veCheckboxDisabled = this._powerSave ? ' disabled' : '';
+        const veChecked = this._videoEnhancement === 'on' ? 'checked' : '';
         const veHdrNote = this._hdrEnabled
             ? `<div class="settings-note">${t('settings.videoEnhancementHdrNote')}</div>`
             : '';
@@ -990,7 +983,7 @@ export class SettingsView {
                             <input type="checkbox" id="settings-video-enhancement"
                                 ${veChecked}${veCheckboxDisabled} />
                             <span class="settings-checkbox-text">
-                                <strong>${t('settings.videoEnhancement')}${webgpuUnavailable ? t('settings.unavailableSuffix') : ''}</strong>
+                                <strong>${t('settings.videoEnhancement')}</strong>
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.videoEnhancementDesc')}</span>

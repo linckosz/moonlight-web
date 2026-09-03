@@ -31,13 +31,11 @@ import { WebGlRenderer, WEBGL_ALGOS } from './WebGlRenderer.js';
 import { VideoElementRenderer } from './VideoElementRenderer.js';
 
 /**
- * Enhancer choices that run WITHOUT WebGPU (debug builds only, for the perf
- * comparison of 03/09/2026): three WebGL2 shaders and Canvas2D drawing at the
- * display size with its best resampling filter. The caller keeps opts.webgpu
- * false for all of them; anything not in this list is the ordinary 'auto' /
- * 'sgsr' / 'fsr1' / 'off' handled by the WebGPU or Canvas2D path.
+ * Enhancer choices that run WITHOUT WebGPU: the three WebGL2 shaders. The
+ * caller keeps opts.webgpu false for all of them; anything not in this list
+ * ('sgsr' / 'nis' / 'fsr1' / 'off') is handled by the WebGPU or Canvas2D path.
  */
-export const NO_WEBGPU_ALGOS = ['smooth2d', ...WEBGL_ALGOS];
+export const NO_WEBGPU_ALGOS = WEBGL_ALGOS;
 
 export async function createVideoRenderer(canvas, opts) {
     // HDR: route decoded frames to a <video> element via MediaStreamTrackGenerator.
@@ -60,7 +58,7 @@ export async function createVideoRenderer(canvas, opts) {
             console.warn('[Renderer] WebGPU init failed, falling back to Canvas2D: ' + e.message);
         }
     }
-    // WebGL enhancers (debug). A failure here — no WebGL2, a shader the driver
+    // WebGL enhancers. A failure here — no WebGL2, a shader the driver
     // rejects — is safe to fall back from: getContext('webgl2') returning null
     // leaves the canvas free, and a compile error happens before any draw. A
     // context that was obtained is committed, though, so the renderer only
@@ -72,13 +70,5 @@ export async function createVideoRenderer(canvas, opts) {
             console.warn('[Renderer] WebGL init failed, falling back to Canvas2D: ' + e.message);
         }
     }
-    return await Canvas2DRenderer.create(canvas, {
-        ...opts,
-        // 'smooth2d' (debug): back the canvas at the display size and let the
-        // 2D context resample with imageSmoothingQuality 'high' instead of
-        // leaving the stretch to CSS. Everything else keeps the frame-sized
-        // backing and the CSS stretch.
-        scaleToOutput: opts.algo === 'smooth2d',
-        smoothingQuality: opts.algo === 'smooth2d' ? 'high' : null,
-    });
+    return await Canvas2DRenderer.create(canvas, opts);
 }
