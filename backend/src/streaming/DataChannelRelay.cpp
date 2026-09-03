@@ -454,7 +454,20 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     // Dedicated sender thread: fragmentation + dc->send() run off the main thread.
     m_Sender = std::make_unique<FrameSender>();
 
-    connect(m_Shim, &IMediaEngine::videoFrameReady, this, &DataChannelRelay::onVideoFrame);
+    // Video path threading. The native engine emits videoFrameReady on its own
+    // capture thread, the moment the encoder is done; queueing that onto the
+    // relay thread costs a wake-up per frame on a thread that also parses
+    // every input message, answers the signaling WS and ticks the stats. So
+    // for that engine the slot runs where the frame is, and the state it
+    // touches is serialized by m_VideoMutex (MediaTrackRelay's P2-B model).
+    // A GameStream engine keeps the queued hop, unchanged: its frames arrive
+    // from moonlight-common-c's thread and the relay thread has always been
+    // where they were handled.
+    m_DirectVideoSend = qobject_cast<NativeMediaEngine*>(engine) != nullptr;
+    qInfo() << "[DataChannelRelay] Video send mode:"
+            << (m_DirectVideoSend ? "direct (capture thread)" : "queued (relay thread)");
+    connect(m_Shim, &IMediaEngine::videoFrameReady, this, &DataChannelRelay::onVideoFrame,
+            m_DirectVideoSend ? Qt::DirectConnection : Qt::AutoConnection);
     connect(m_Shim, &IMediaEngine::audioSampleReady, this, &DataChannelRelay::onAudioSample);
     connect(m_Shim, &IMediaEngine::connectionTerminated, this,
             &DataChannelRelay::onShimConnectionTerminated);
@@ -819,28 +832,20 @@ bool DataChannelRelay::ridingOutLoss() const
     return m_RideOutLoss && m_Shim && m_Shim->intraRefreshActive();
 }
 
-// --- Video/Audio forwarding (from media engine signals, on main thread) ---
+// --- Video/Audio forwarding (from media engine signals) ---
+// Relay thread for a GameStream engine, the engine's capture thread for the
+// native one (m_DirectVideoSend) — see the class comment.
 
 void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber,
                                     qint64 presentationTimeUs)
 {
-    // Balance the worker→main pending counter (incremented before each emit).
+    // Balance the worker→relay pending counter (incremented before each emit).
     // m_Shim lifetime is guaranteed: the shim is Qt-parented to this relay
     // (Session.cpp), so it cannot be destroyed while this slot runs.
+    bool workerDroppedDelta = false;
     if (m_Shim) {
         m_Shim->videoFrameDelivered();
-        // Worker dropped deltas due to main-thread backlog — enter awaiting-IDR
-        // recovery (guards inside are no-ops when stopping).
-        //
-        // …unless the stream refreshes by intra-refresh AND the client said it
-        // will decode through the damage. Then the picture repairs itself over
-        // one refresh cycle, and the keyframe this would ask for is exactly the
-        // wrong thing to send: the drop happened because the link was already
-        // saturated, and an IDR is the largest frame there is.
-        if (m_Shim->takeWorkerDroppedDelta() && !ridingOutLoss()) {
-            m_AwaitingIdr = true;
-            sendIdrRequestThrottled();
-        }
+        workerDroppedDelta = m_Shim->takeWorkerDroppedDelta();
     }
 
     if (m_Stopping.load()) {
@@ -848,6 +853,27 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
         if (++dropCount <= 3)
             qInfo() << "[DataChannelRelay] onVideoFrame dropped — m_Stopping=true";
         return;
+    }
+
+    // Serialize with stop(), sendBufferedKeyframe() and the requestidr paths.
+    // In direct mode this runs on the capture thread; the lock is what keeps the
+    // video DC and the buffered keyframe from being torn down mid-frame.
+    std::lock_guard<std::mutex> lk(m_VideoMutex);
+
+    // Re-check after acquiring the lock: stop() may have run while we waited.
+    if (m_Stopping.load()) return;
+
+    // Worker dropped deltas due to relay-thread backlog — enter awaiting-IDR
+    // recovery (guards inside are no-ops when stopping).
+    //
+    // …unless the stream refreshes by intra-refresh AND the client said it
+    // will decode through the damage. Then the picture repairs itself over
+    // one refresh cycle, and the keyframe this would ask for is exactly the
+    // wrong thing to send: the drop happened because the link was already
+    // saturated, and an IDR is the largest frame there is.
+    if (workerDroppedDelta && !ridingOutLoss()) {
+        m_AwaitingIdr = true;
+        sendIdrRequestThrottled();
     }
 
     bool isKeyframe = (frameType == 1);
@@ -926,6 +952,10 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
 
 void DataChannelRelay::sendBufferedKeyframe()
 {
+    // Same lock as onVideoFrame: in direct mode the buffered keyframe is
+    // written from the capture thread while this runs on the relay thread.
+    std::lock_guard<std::mutex> lk(m_VideoMutex);
+
     if (!m_HaveBufferedKeyframe) return;
     if (m_Stopping.load() || !m_VideoDc || !m_VideoDc->isOpen()) return;
 
@@ -1144,6 +1174,7 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         }
     } else if (type == "requestidr") {
         qInfo() << "[DataChannelRelay] Requesting IDR frame from Sunshine (browser request)";
+        std::lock_guard<std::mutex> lk(m_VideoMutex);
         m_AwaitingIdr = true;
         sendIdrRequestThrottled();
     } else if (type == "ping") {
@@ -1357,11 +1388,17 @@ void DataChannelRelay::onStatsTimerTick()
     // mostly quiet; this is the log-file view of WHY IDR churn happens —
     // worker = relay-thread backlog (scheduling), senderQueue = sender-thread
     // backlog, sctp* = link saturation.
+    //
+    // The counters are written on the video path — the capture thread in
+    // direct mode — so the snapshot is taken under its lock. Once a second,
+    // for a handful of loads: nothing the capture thread will notice.
+    qint64 bpDrops = 0;
     {
+        std::lock_guard<std::mutex> lk(m_VideoMutex);
+        bpDrops = m_DeltaDroppedCount + m_KeyframeBackpressureWarnings + m_AwaitingIdrDropCount;
         const qint64 workerDrops = m_Shim ? m_Shim->workerDropCount() : 0;
         const qint64 senderDrops = m_Sender ? static_cast<qint64>(m_Sender->queueDropCount()) : 0;
-        const qint64 snapshot = workerDrops + senderDrops + m_DeltaDroppedCount +
-                                m_KeyframeBackpressureWarnings + m_AwaitingIdrDropCount;
+        const qint64 snapshot = workerDrops + senderDrops + bpDrops;
         if (snapshot != m_LastDropSnapshot) {
             m_LastDropSnapshot = snapshot;
             // bufferedAmount rides along: it is what decides every sctp* drop
@@ -1389,8 +1426,7 @@ void DataChannelRelay::onStatsTimerTick()
     // The frontend cannot see these drops (dropped frames never get a frameId),
     // so this is its only signal that the link is saturated backend-side. It
     // drives the frontend's congestion monitor (automatic bitrate degradation).
-    stats["bpDrops"] =
-        m_DeltaDroppedCount + m_KeyframeBackpressureWarnings + m_AwaitingIdrDropCount;
+    stats["bpDrops"] = bpDrops;
     // Host-side stage latencies (present → acquire → convert → encode → queue
     // → send), mean and tail over this window. Only an engine that stamps its
     // own frames has any; the GameStream message is unchanged.
@@ -1469,25 +1505,6 @@ void DataChannelRelay::stop()
         m_StatsTimer->stop();
     }
 
-    // Reset backpressure counters and IDR state for next session
-    m_DeltaDroppedCount = 0;
-    m_KeyframeBackpressureWarnings = 0;
-    m_BackpressureDropCount = 0;
-    m_AwaitingIdrDropCount = 0;
-    m_LastDecodeLatencyUs.store(0, std::memory_order_release);
-    m_AwaitingIdr = false;
-    m_IdrCooldownTimer.invalidate(); // Reset throttle state
-    m_IdrCooldownMs = kIdrCooldownBaseMs;
-    m_IdrOutstanding = false;
-
-    // Clear buffered keyframe (if any)
-    m_BufferedKeyframe.clear();
-    m_BufferedKeyframePresUs = -1;
-    m_HaveBufferedKeyframe = false;
-    m_NewKeyframeArrived = false;
-
-    m_Connected = false;
-
     // Close DataChannels
     auto closeDc = [](std::shared_ptr<rtc::DataChannel>& dc, const char* name) {
         if (dc) {
@@ -1499,7 +1516,36 @@ void DataChannelRelay::stop()
         }
     };
 
-    closeDc(m_VideoDc, "video");
+    // Video state and the video DC go under the video lock: in direct mode a
+    // frame may be halfway through onVideoFrame on the capture thread right
+    // now, and it must find either an open channel or a null one — never a
+    // channel being reset under it. m_Stopping is already true, so the next
+    // frame to take the lock leaves at once.
+    {
+        std::lock_guard<std::mutex> lk(m_VideoMutex);
+
+        // Reset backpressure counters and IDR state for next session
+        m_DeltaDroppedCount = 0;
+        m_KeyframeBackpressureWarnings = 0;
+        m_BackpressureDropCount = 0;
+        m_AwaitingIdrDropCount = 0;
+        m_LastDecodeLatencyUs.store(0, std::memory_order_release);
+        m_AwaitingIdr = false;
+        m_IdrCooldownTimer.invalidate(); // Reset throttle state
+        m_IdrCooldownMs = kIdrCooldownBaseMs;
+        m_IdrOutstanding = false;
+
+        // Clear buffered keyframe (if any)
+        m_BufferedKeyframe.clear();
+        m_BufferedKeyframePresUs = -1;
+        m_HaveBufferedKeyframe = false;
+        m_NewKeyframeArrived = false;
+
+        m_Connected = false;
+
+        closeDc(m_VideoDc, "video");
+    }
+
     closeDc(m_InputDc, "input");
 
     // Close the audio track under the audio send lock, so an in-flight audio
@@ -1538,6 +1584,7 @@ void DataChannelRelay::stop()
 void DataChannelRelay::requestIdrFrame()
 {
     if (m_Stopping.load() || !m_Shim) return;
+    std::lock_guard<std::mutex> lk(m_VideoMutex);
     m_AwaitingIdr = true;
     sendIdrRequestThrottled();
 }
