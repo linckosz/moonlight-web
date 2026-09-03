@@ -386,8 +386,9 @@ const MoonlightApp = {
                         // A guest gets no say over the pipeline: the backend fixed
                         // 60 fps, codec, bitrate and SDR. What is left is comfort.
                         show_performance_stats: false,
-                        video_enhancement: 'on',
-                        video_enhancement_algo: 'sgsr',
+                        // Off, like the owner's default: the plain Canvas2D path
+                        // is the fastest (see StreamView's renderer selection).
+                        video_enhancement: 'off',
                         touch_screen: touchScreen === true,
                     },
                     {
