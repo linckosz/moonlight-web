@@ -35,22 +35,6 @@ const GUID& codecGuid(Codec codec)
     return NV_ENC_CODEC_H264_GUID;
 }
 
-/// How often the intra-refresh wave sweeps the picture, in frames.
-///
-/// This replaces the periodic keyframe. Every frame carries a band of intra
-/// blocks, and after a full period the whole picture has been refreshed — so a
-/// client that joins or loses data recovers within one period without anyone
-/// ever sending a keyframe-sized burst.
-///
-/// Two seconds' worth: long enough that the per-frame cost is small, short
-/// enough that recovery is not noticeable.
-constexpr uint32_t kIntraRefreshPeriodFrames = 120;
-
-/// Length of the wave. Shorter concentrates the extra bits into fewer frames;
-/// spreading it over half the period keeps the bitrate flat, which is the whole
-/// point of using intra-refresh instead of keyframes.
-constexpr uint32_t kIntraRefreshCountFrames = 60;
-
 } // namespace
 
 NvencEncoder::~NvencEncoder()
@@ -157,6 +141,12 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     // receiver that decodes through damage can collect — see SessionConfig.
     m_IntraRefresh = intraRefresh;
     const uint32_t refreshEnabled = intraRefresh ? 1u : 0u;
+    // The wave replaces the periodic keyframe: every frame carries a band of
+    // intra blocks, and after one period the whole picture has been refreshed.
+    // Two seconds' worth at the rate frames are really encoded — see
+    // RateControl.h for why it is a duration and not a frame count.
+    const auto refreshPeriod = static_cast<uint32_t>(intraRefreshPeriodFrames(fps));
+    const auto refreshCount = static_cast<uint32_t>(intraRefreshCountFrames(fps));
 
     switch (codec) {
     case Codec::H264: {
@@ -165,8 +155,8 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         h264.repeatSPSPPS = 1;
         h264.idrPeriod = NVENC_INFINITE_GOPLENGTH;
         h264.enableIntraRefresh = refreshEnabled;
-        h264.intraRefreshPeriod = kIntraRefreshPeriodFrames;
-        h264.intraRefreshCnt = kIntraRefreshCountFrames;
+        h264.intraRefreshPeriod = refreshPeriod;
+        h264.intraRefreshCnt = refreshCount;
         break;
     }
     case Codec::Hevc: {
@@ -175,16 +165,16 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         hevc.repeatSPSPPS = 1;
         hevc.idrPeriod = NVENC_INFINITE_GOPLENGTH;
         hevc.enableIntraRefresh = refreshEnabled;
-        hevc.intraRefreshPeriod = kIntraRefreshPeriodFrames;
-        hevc.intraRefreshCnt = kIntraRefreshCountFrames;
+        hevc.intraRefreshPeriod = refreshPeriod;
+        hevc.intraRefreshCnt = refreshCount;
         break;
     }
     case Codec::Av1: {
         NV_ENC_CONFIG_AV1& av1 = m_Config.encodeCodecConfig.av1Config;
         av1.idrPeriod = NVENC_INFINITE_GOPLENGTH;
         av1.enableIntraRefresh = refreshEnabled;
-        av1.intraRefreshPeriod = kIntraRefreshPeriodFrames;
-        av1.intraRefreshCnt = kIntraRefreshCountFrames;
+        av1.intraRefreshPeriod = refreshPeriod;
+        av1.intraRefreshCnt = refreshCount;
         break;
     }
     }
@@ -233,7 +223,8 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     log::info("[native] NVENC ready: " + std::to_string(width) + "x" + std::to_string(height) +
               "@" + std::to_string(fps) + " " + toString(codec) + " CBR " +
               std::to_string(bitrateKbps) + " kbps" +
-              (m_IntraRefresh ? ", intra-refresh" : ", keyframes"));
+              (m_IntraRefresh ? ", intra-refresh over " + std::to_string(refreshPeriod) + " frames"
+                              : ", keyframes"));
     return true;
 }
 

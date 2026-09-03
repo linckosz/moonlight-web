@@ -11,6 +11,7 @@
 #include "VplEncoder.h"
 
 #include "../../core/Log.h"
+#include "../RateControl.h"
 
 #include <chrono>
 #include <cstring>
@@ -95,7 +96,7 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     };
 
     m_IntraRefresh = false;
-    if (intraRefresh) attachIntraRefresh(m_Params, m_CodingOption2, m_ExtBuffers);
+    if (intraRefresh) attachIntraRefresh(m_Params, m_CodingOption2, m_ExtBuffers, m_Fps);
 
     mfxStatus started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
 
@@ -142,7 +143,9 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     log::info("[native] oneVPL ready: " + std::to_string(width) + "x" + std::to_string(height) +
               "@" + std::to_string(m_Fps) + " " + toString(codec) + " 4:2:0 CBR " +
               std::to_string(bitrateKbps) + " kbps" +
-              (m_IntraRefresh ? ", intra-refresh" : ", keyframes on demand") +
+              (m_IntraRefresh ? ", intra-refresh over " +
+                                    std::to_string(intraRefreshPeriodFrames(m_Fps)) + " frames"
+                              : ", keyframes on demand") +
               " (UNVERIFIED — no Intel hardware has run this path yet)");
     return true;
 }

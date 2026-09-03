@@ -18,6 +18,11 @@
 #include "encode/RateControl.h"
 #include "native_test_framework.h"
 
+using mw::native::encode::intraRefreshCountFrames;
+using mw::native::encode::intraRefreshPeriodFrames;
+using mw::native::encode::kIntraRefreshMaxFrames;
+using mw::native::encode::kIntraRefreshMinFrames;
+using mw::native::encode::kIntraRefreshSeconds;
 using mw::native::encode::kStillBoost;
 using mw::native::encode::kStillMaxKbps;
 using mw::native::encode::kVbvFrameRateFloor;
@@ -194,6 +199,64 @@ void run_rate_control_tests()
         CHECK_EQ(conv.passes, 0);
         CHECK_EQ(conv.quiet, 0);
         CHECK_EQ(conv.lastQp, -1);
+    }
+
+    SECTION("IntraRefresh — one sweep is two seconds at the effective rate");
+    {
+        CHECK_EQ(kIntraRefreshSeconds, 2);
+        CHECK_EQ(intraRefreshPeriodFrames(30), 60);
+        CHECK_EQ(intraRefreshPeriodFrames(60), 120); // what the three paths hard-coded
+        CHECK_EQ(intraRefreshPeriodFrames(120), 240);
+        CHECK_EQ(intraRefreshPeriodFrames(144), 288);
+        CHECK_EQ(intraRefreshPeriodFrames(165), 330);
+        CHECK_EQ(intraRefreshPeriodFrames(240), 480);
+    }
+
+    SECTION("IntraRefresh — an unknown rate reads as 60, like the VBV");
+    {
+        CHECK_EQ(intraRefreshPeriodFrames(0), 120);
+        CHECK_EQ(intraRefreshPeriodFrames(-1), 120);
+    }
+
+    SECTION("IntraRefresh — the bounds only catch nonsense");
+    {
+        CHECK_EQ(intraRefreshPeriodFrames(5), kIntraRefreshMinFrames);
+        CHECK_EQ(intraRefreshPeriodFrames(1000), kIntraRefreshMaxFrames);
+        // Every real stream rate lands strictly inside them.
+        constexpr int kRates[] = {24, 30, 60, 90, 120, 144, 165, 240};
+        for (int fps : kRates) {
+            CHECK(intraRefreshPeriodFrames(fps) >= kIntraRefreshMinFrames);
+            CHECK(intraRefreshPeriodFrames(fps) <= kIntraRefreshMaxFrames);
+        }
+    }
+
+    SECTION("IntraRefresh — the NVENC wave is half the period, always shorter than it");
+    {
+        constexpr int kRates[] = {0, 24, 30, 60, 120, 144, 165, 240};
+        for (int fps : kRates) {
+            CHECK_EQ(intraRefreshCountFrames(fps), intraRefreshPeriodFrames(fps) / 2);
+            CHECK(intraRefreshCountFrames(fps) < intraRefreshPeriodFrames(fps));
+            CHECK(intraRefreshCountFrames(fps) > 0);
+        }
+    }
+
+    SECTION("IntraRefresh — AMD's per-slot count rounds down, so the sweep never runs short");
+    {
+        // What AmfEncoder computes: blocks in the picture divided by the
+        // period, at least one. A 1080p HEVC picture has 510 CTBs; at 240 fps
+        // one per frame sweeps in 510 frames, a little over two seconds, never
+        // under.
+        const int period240 = intraRefreshPeriodFrames(240);
+        const int ctbs1080p = ((1920 + 63) / 64) * ((1080 + 63) / 64);
+        CHECK_EQ(ctbs1080p, 510);
+        const int perSlot = ctbs1080p / period240 > 0 ? ctbs1080p / period240 : 1;
+        CHECK(ctbs1080p / perSlot >= period240);
+        // At 60 fps the same picture takes 4 CTBs per frame: 128 frames, still
+        // never shorter than the 120 asked for.
+        const int period60 = intraRefreshPeriodFrames(60);
+        const int perSlot60 = ctbs1080p / period60;
+        CHECK_EQ(perSlot60, 4);
+        CHECK(ctbs1080p / perSlot60 >= period60);
     }
 
     SECTION("LinkOccupancy — an unknown rate models nothing");
