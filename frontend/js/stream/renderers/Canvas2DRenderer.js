@@ -44,6 +44,16 @@ export class Canvas2DRenderer extends VideoRenderer {
         this.isChromeWindowsHevc = false;
         /** @type {number} Frames drawn — drives the one-shot warm-up logging. */
         this._rendered = 0;
+        /**
+         * Debug 'smooth2d' mode: back the canvas at the display size and draw
+         * the frame scaled with `smoothingQuality`, instead of a frame-sized
+         * backing stretched by CSS. Off by default (status quo).
+         */
+        this.scaleToOutput = false;
+        /** @type {string|null} imageSmoothingQuality when scaleToOutput. */
+        this.smoothingQuality = null;
+        this._outW = 0;
+        this._outH = 0;
     }
 
     /**
@@ -60,6 +70,8 @@ export class Canvas2DRenderer extends VideoRenderer {
         // Mutable so callers can update it if the platform flag is resolved after
         // creation (kept identical to the previous live-read behavior).
         r.isChromeWindowsHevc = !!opts.isChromeWindowsHevc;
+        r.scaleToOutput = opts.scaleToOutput === true;
+        r.smoothingQuality = r.scaleToOutput ? opts.smoothingQuality || 'high' : null;
         // desynchronized:true bypasses vsync composition (lower latency, possible
         // tearing). The worker always passes true; the main thread gates it on VSync.
         r.ctx = opts.desynchronized
@@ -69,6 +81,8 @@ export class Canvas2DRenderer extends VideoRenderer {
         canvas.width = 1920;
         canvas.height = 1080;
         r._rendered = 0;
+        if (r.scaleToOutput)
+            console.log('[Canvas2DRenderer] scaling to output, smoothing=' + r.smoothingQuality);
         return r;
     }
 
@@ -76,9 +90,43 @@ export class Canvas2DRenderer extends VideoRenderer {
         return 'canvas2d';
     }
 
+    /** Overlay name for the debug 'smooth2d' mode; null in the ordinary mode. */
+    get algoName() {
+        return this.scaleToOutput ? 'Canvas2D smoothing ' + this.smoothingQuality : null;
+    }
+
     setOutputSize(width, height) {
-        // No-op: the Canvas2D backing follows the frame resolution; the display
-        // box scales it via CSS.
+        // Ordinarily a no-op: the Canvas2D backing follows the frame resolution
+        // and the display box scales it via CSS. In 'smooth2d' the backing
+        // follows the display size instead and draw() resamples into it.
+        if (width > 0 && height > 0) {
+            this._outW = width;
+            this._outH = height;
+        }
+    }
+
+    /** Canvas size draw() wants for this frame: display box (smooth2d) or frame. */
+    _targetSize(frame) {
+        const inW = frame.displayWidth || frame.codedWidth || 0;
+        const inH = frame.displayHeight || frame.codedHeight || 0;
+        if (!this.scaleToOutput || this._outW <= 0 || this._outH <= 0 || inW <= 0 || inH <= 0)
+            return [inW, inH];
+        const frameAspect = inW / inH;
+        const boxAspect = this._outW / this._outH;
+        const cw = frameAspect >= boxAspect ? this._outW : Math.round(this._outH * frameAspect);
+        return [cw, Math.round(cw / frameAspect)];
+    }
+
+    /**
+     * Resizing a canvas resets its 2D context state, imageSmoothingQuality
+     * included — so the filter is re-armed after every resize, not once.
+     */
+    _applySmoothing() {
+        if (!this.smoothingQuality || !this.ctx) return;
+        try {
+            this.ctx.imageSmoothingEnabled = true;
+            this.ctx.imageSmoothingQuality = this.smoothingQuality;
+        } catch (e) {}
     }
 
     isContextLost() {
@@ -90,7 +138,10 @@ export class Canvas2DRenderer extends VideoRenderer {
 
     recreateContext() {
         // Recovery uses the default (composited) context, matching the original.
-        if (this.canvas) this.ctx = this.canvas.getContext('2d');
+        if (this.canvas) {
+            this.ctx = this.canvas.getContext('2d');
+            this._applySmoothing();
+        }
     }
 
     async draw(frame) {
@@ -108,14 +159,13 @@ export class Canvas2DRenderer extends VideoRenderer {
         const drawStart = performance.now();
         let waitMs = 0;
 
-        // Resize the backing buffer to the frame size when needed.
-        if (
-            frame.displayWidth &&
-            frame.displayHeight &&
-            (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight)
-        ) {
-            this.canvas.width = frame.displayWidth;
-            this.canvas.height = frame.displayHeight;
+        // Resize the backing buffer to the frame size when needed (or to the
+        // display box in 'smooth2d', see _targetSize).
+        const [tw, th] = this._targetSize(frame);
+        if (tw > 0 && th > 0 && (this.canvas.width !== tw || this.canvas.height !== th)) {
+            this.canvas.width = tw;
+            this.canvas.height = th;
+            this._applySmoothing();
         }
 
         const isHevcNv12 =

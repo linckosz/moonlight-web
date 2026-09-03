@@ -47,6 +47,13 @@ const IS_TOUCH_DEVICE =
 
 const STORAGE_KEY = 'mw-streaming-settings';
 
+/**
+ * Enhancer choices shown in debug builds only: the ones that run without
+ * WebGPU (see renderers/createRenderer.js NO_WEBGPU_ALGOS). Listed here rather
+ * than imported so the settings page does not pull the renderers in.
+ */
+const DEBUG_ENHANCERS = ['smooth2d', 'gl-fsr1', 'gl-sgsr', 'gl-nis'];
+
 export class SettingsView {
     constructor(container, onClose) {
         this.container = container;
@@ -307,7 +314,12 @@ export class SettingsView {
         this._gamepadProfile = profile === 'x360' || profile === 'ds4' ? profile : 'auto';
         const algo = data.video_enhancement_algo;
         this._videoEnhancementAlgo =
-            algo === 'sgsr' || algo === 'fsr1' || algo === 'force2d' ? algo : 'auto';
+            algo === 'sgsr' ||
+            algo === 'fsr1' ||
+            algo === 'force2d' ||
+            DEBUG_ENHANCERS.includes(algo)
+                ? algo
+                : 'auto';
         this._powerSave = data.power_save === true;
         this._powerSaveBackup =
             data.power_save_backup && typeof data.power_save_backup === 'object'
@@ -825,6 +837,17 @@ export class SettingsView {
             { value: 'fsr1', label: t('settings.algoFsr1'), disabled: false },
             { value: 'sgsr', label: t('settings.algoSgsr'), disabled: false },
         ];
+        // Debug builds: the enhancers that run without WebGPU, for the perf
+        // comparison of 03/09/2026 (WebGPU's presentation cost vs the shader's
+        // own). Not a product choice — the labels say so.
+        if (this._debugBuild) {
+            veAlgos.push(
+                { value: 'smooth2d', label: t('settings.algoSmooth2d'), disabled: false },
+                { value: 'gl-fsr1', label: t('settings.algoGlFsr1'), disabled: false },
+                { value: 'gl-sgsr', label: t('settings.algoGlSgsr'), disabled: false },
+                { value: 'gl-nis', label: t('settings.algoGlNis'), disabled: false },
+            );
+        }
         const veAlgoOptions = veAlgos
             .map(
                 (a) =>
