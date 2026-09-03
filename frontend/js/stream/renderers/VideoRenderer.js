@@ -85,6 +85,21 @@ export class VideoRenderer {
     }
 
     /**
+     * Click-to-photon probe support (see stream/LatencyProbe.js). A canvas that
+     * presents through a desynchronized swap chain (WebGL2 here) cannot be
+     * read back with drawImage once it is on screen — the drawing buffer is
+     * gone after present — so the renderer reads the probe's three pixels
+     * itself, right after the draw, while `probeActive` is set. `probePixels`
+     * is `undefined` when the renderer does not need this (the probe then
+     * samples the canvas), `null` while no frame has been drawn since the
+     * probe was armed, else the 12 RGBA values in blue/white/red column order.
+     */
+    set probeActive(on) {}
+    get probePixels() {
+        return undefined;
+    }
+
+    /**
      * Draw one VideoFrame and CLOSE it (always, even on error). Returns a
      * promise that resolves when the frame has been consumed. Does NOT touch
      * the caller's stats counters.
