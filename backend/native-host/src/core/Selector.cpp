@@ -114,16 +114,41 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     // that browser decodes in hardware. Walking it in order and taking the
     // first the GPU can also produce is the whole of §27 — and is why no codec
     // question is ever put to the user.
+    //
+    // 4:4:4 narrows that walk first. The capability is per codec (NVENC has it
+    // on H.264 and HEVC, not AV1), so a client preferring AV1 with 4:4:4 on
+    // must land on the first codec that can actually carry it, not on AV1
+    // with the chroma silently dropped — the setting exists for text, and a
+    // stream that ignores it looks broken. Only when no shared codec has 4:4:4
+    // does the walk fall back to the plain one, and the session says 4:2:0.
     bool found = false;
+    out.yuv444 = false;
+    if (config.yuv444) {
+        for (Codec candidate : config.clientCodecs) {
+            if (!gpuHasCodec(*out.gpu, candidate) || !out.gpu->supports444(candidate)) continue;
+            out.codec = candidate;
+            out.yuv444 = true;
+            found = true;
+            break;
+        }
+    }
     for (Codec candidate : config.clientCodecs) {
+        if (found) break;
         if (!gpuHasCodec(*out.gpu, candidate)) continue;
         out.codec = candidate;
         found = true;
-        break;
     }
     if (!found) {
         error = "this GPU and this browser have no video codec in common";
         return false;
+    }
+    if (config.yuv444 && !out.yuv444) {
+        log::info(std::string("[native] 4:4:4 requested but no codec this browser and '") +
+                  out.gpu->name + "' share can carry it — streaming 4:2:0 " + toString(out.codec));
+    } else if (out.yuv444 && out.codec != config.clientCodecs.front() &&
+               gpuHasCodec(*out.gpu, config.clientCodecs.front())) {
+        log::info(std::string("[native] 4:4:4 steers the codec to ") + toString(out.codec) + " — " +
+                  toString(config.clientCodecs.front()) + " has no 4:4:4 on this encoder");
     }
 
     out.encoder = out.gpu->encoders.front();

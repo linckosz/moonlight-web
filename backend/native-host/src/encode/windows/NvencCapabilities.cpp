@@ -142,13 +142,15 @@ NvencCaps queryUncached(uint64_t adapterLuid)
                     if (!guidsEqual(candidate.guid, supported)) continue;
                     caps.codecs.push_back(candidate.codec);
 
-                    // Capabilities are per codec; report the union, because the
-                    // session that matters is the one that gets picked and it
-                    // will re-check for itself.
+                    // Capabilities are per codec. 10-bit is reported as the
+                    // union (the Selector only pairs it with HEVC/AV1, which
+                    // agree on it); 4:4:4 is kept per codec because AV1 lacks
+                    // it while H.264 and HEVC have it on the same card, and the
+                    // Selector needs that difference to pick the codec.
                     if (queryCap(api->fn(), encoder, supported, NV_ENC_CAPS_SUPPORT_10BIT_ENCODE))
                         caps.supports10Bit = true;
                     if (queryCap(api->fn(), encoder, supported, NV_ENC_CAPS_SUPPORT_YUV444_ENCODE))
-                        caps.supports444 = true;
+                        caps.codecs444.push_back(candidate.codec);
                     if (queryCap(api->fn(), encoder, supported, NV_ENC_CAPS_SUPPORT_INTRA_REFRESH))
                         caps.supportsIntraRefresh = true;
                     if (queryCap(api->fn(), encoder, supported,

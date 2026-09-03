@@ -23,7 +23,8 @@ struct VplCaps
     bool usable = false;
     std::vector<Codec> codecs; ///< best first, as the Selector expects
     bool supports10Bit = false;
-    bool supports444 = false;
+    /// Codecs with a 4:4:4 path. Empty until an AYUV/Y410 input path exists.
+    std::vector<Codec> codecs444;
 };
 
 /// Open a real oneVPL session on the adapter with this LUID and ask it what it

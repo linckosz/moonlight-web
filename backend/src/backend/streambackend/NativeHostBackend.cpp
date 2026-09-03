@@ -75,7 +75,8 @@ int NativeHostBackend::codecModeSupport()
     // The union across GPUs. Which one a session actually gets is decided per
     // display by the engine's own Selector; this answers the broader question
     // the host list asks — "can this machine encode X at all".
-    bool h264 = false, hevc = false, av1 = false, tenBit = false, yuv444 = false;
+    bool h264 = false, hevc = false, av1 = false, tenBit = false;
+    bool h264_444 = false, hevc444 = false, av1_444 = false;
     for (const mw::native::GpuInfo& gpu : caps.gpus) {
         if (gpu.codecs.empty()) continue; // an API with no codec is no encoder
         for (mw::native::Codec codec : gpu.codecs) {
@@ -86,7 +87,12 @@ int NativeHostBackend::codecModeSupport()
             }
         }
         if (gpu.supports10Bit) tenBit = true;
-        if (gpu.supports444) yuv444 = true;
+        // 4:4:4 is per codec: NVENC has it on H.264 and HEVC but not AV1, and
+        // advertising AV1 4:4:4 here would have the browser prefer a mode the
+        // encoder then refuses.
+        if (gpu.supports444(mw::native::Codec::H264)) h264_444 = true;
+        if (gpu.supports444(mw::native::Codec::Hevc)) hevc444 = true;
+        if (gpu.supports444(mw::native::Codec::Av1)) av1_444 = true;
     }
 
     int mask = 0;
@@ -97,12 +103,14 @@ int NativeHostBackend::codecModeSupport()
         if (hevc) mask |= SCM_HEVC_MAIN10;
         if (av1) mask |= SCM_AV1_MAIN10;
     }
-    if (yuv444) {
-        if (h264) mask |= SCM_H264_HIGH8_444;
-        if (hevc) mask |= SCM_HEVC_REXT8_444;
-        if (hevc && tenBit) mask |= SCM_HEVC_REXT10_444;
-        if (av1) mask |= SCM_AV1_HIGH8_444;
-        if (av1 && tenBit) mask |= SCM_AV1_HIGH10_444;
+    if (h264_444) mask |= SCM_H264_HIGH8_444;
+    if (hevc444) {
+        mask |= SCM_HEVC_REXT8_444;
+        if (tenBit) mask |= SCM_HEVC_REXT10_444;
+    }
+    if (av1_444) {
+        mask |= SCM_AV1_HIGH8_444;
+        if (tenBit) mask |= SCM_AV1_HIGH10_444;
     }
     return mask;
 }

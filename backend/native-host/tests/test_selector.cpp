@@ -11,7 +11,7 @@ using namespace mw::native;
 namespace {
 
 GpuInfo makeGpu(int id, const char* name, std::vector<EncoderApi> encoders,
-                std::vector<Codec> codecs, bool tenBit)
+                std::vector<Codec> codecs, bool tenBit, std::vector<Codec> codecs444 = {})
 {
     GpuInfo gpu;
     gpu.id = id;
@@ -19,6 +19,7 @@ GpuInfo makeGpu(int id, const char* name, std::vector<EncoderApi> encoders,
     gpu.encoders = std::move(encoders);
     gpu.codecs = std::move(codecs);
     gpu.supports10Bit = tenBit;
+    gpu.codecs444 = std::move(codecs444);
     return gpu;
 }
 
@@ -48,8 +49,9 @@ Capabilities hybridMachine()
     caps.capture = CaptureApi::DxgiDuplication;
     caps.gpus = {
         makeGpu(0, "Intel Arc iGPU", {EncoderApi::Vpl}, {Codec::Hevc, Codec::H264}, false),
+        // As NVENC really answers: 4:4:4 on H.264 and HEVC, not on AV1.
         makeGpu(1, "NVIDIA GeForce RTX 4070", {EncoderApi::Nvenc},
-                {Codec::Av1, Codec::Hevc, Codec::H264}, true),
+                {Codec::Av1, Codec::Hevc, Codec::H264}, true, {Codec::Hevc, Codec::H264}),
     };
     caps.displays = {
         makeDisplay(0, 0, 1920, 1080, 60000, true, false),
@@ -261,6 +263,101 @@ void run_selector_tests()
         CHECK(select(caps, cfg, sel, err));
         CHECK_EQ(sel.codec, Codec::H264);
         CHECK(!sel.hdr);
+    }
+
+    SECTION("Selector — 4:4:4 steers the codec, never fails the session");
+
+    // ── The client prefers AV1, which has no 4:4:4 on NVENC: HEVC carries it ─
+    // Before this, the session took AV1 and the encoder refused at init: 4:4:4
+    // on + an AV1-capable browser = no stream at all.
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 1;
+        cfg.yuv444 = true;
+        cfg.clientCodecs = {Codec::Av1, Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.codec, Codec::Hevc);
+        CHECK(sel.yuv444);
+    }
+
+    // ── Not asked for: the client's first choice stands, 4:2:0 ───────────────
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 1;
+        cfg.clientCodecs = {Codec::Av1, Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.codec, Codec::Av1);
+        CHECK(!sel.yuv444);
+    }
+
+    // ── A browser that only decodes AV1: stream it 4:2:0 and say so ──────────
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 1;
+        cfg.yuv444 = true;
+        cfg.clientCodecs = {Codec::Av1};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.codec, Codec::Av1);
+        CHECK(!sel.yuv444);
+    }
+
+    // ── An encoder with no 4:4:4 at all (AMF, oneVPL today): 4:2:0, same codec
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 0; // the iGPU claims no 4:4:4 codec
+        cfg.yuv444 = true;
+        cfg.clientCodecs = {Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.codec, Codec::Hevc);
+        CHECK(!sel.yuv444);
+    }
+
+    // ── The client's order still rules among the codecs that carry 4:4:4 ─────
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 1;
+        cfg.yuv444 = true;
+        cfg.clientCodecs = {Codec::H264, Codec::Hevc};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.codec, Codec::H264);
+        CHECK(sel.yuv444);
+    }
+
+    // ── HDR and 4:4:4 together: 4:4:4 picks HEVC, HEVC keeps HDR ─────────────
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 1;
+        cfg.hdr = true;
+        cfg.yuv444 = true;
+        cfg.clientCodecs = {Codec::Av1, Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.codec, Codec::Hevc);
+        CHECK(sel.yuv444);
+        CHECK(sel.hdr);
     }
 
     SECTION("Selector — geometry defaults");

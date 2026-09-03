@@ -72,6 +72,7 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     resolved.height = selection.height;
     resolved.fps = selection.fps;
     resolved.hdr = selection.hdr;
+    resolved.yuv444 = selection.yuv444;
     resolved.clientCodecs = {selection.codec};
     // Carried through unchanged: whether the encoder can honour it is its own
     // answer, reported back in SessionInfo::intraRefresh.
@@ -81,7 +82,7 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
               std::to_string(resolved.width) + "x" + std::to_string(resolved.height) + "@" +
               std::to_string(resolved.fps) + " " + toString(selection.codec) + " via " +
               toString(selection.encoder) + " on " + selection.gpu->name +
-              (selection.hdr ? " (HDR)" : "") +
+              (selection.hdr ? " (HDR)" : "") + (selection.yuv444 ? " (4:4:4)" : "") +
               (selection.crossGpuCopy ? " [cross-GPU copy]" : ""));
 
     // Hand the decision down rather than let the backend take it again. The
@@ -95,7 +96,9 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     target.codec = selection.codec;
     target.crossGpuCopy = selection.crossGpuCopy;
     target.hdr = selection.hdr;
-    target.yuv444 = resolved.yuv444;
+    // Granted, not requested: the Selector already moved the codec to one that
+    // has 4:4:4, or gave it up. The backend must never re-ask the encoder.
+    target.yuv444 = selection.yuv444;
     target.encodeAdapterHandle = selection.gpu->nativeHandle;
 
     // Capture always happens on the adapter that scans the display out; only

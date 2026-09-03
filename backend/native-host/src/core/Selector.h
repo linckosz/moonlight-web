@@ -43,6 +43,12 @@ struct Selection
     /// runs SDR rather than failing.
     bool hdr = false;
 
+    /// 4:4:4 granted: asked for AND the chosen codec has it on this encoder.
+    /// The request steers the codec choice (see select()), so this is false
+    /// only when no codec the client and the GPU share can carry 4:4:4 — the
+    /// session then runs 4:2:0 rather than failing.
+    bool yuv444 = false;
+
     /// The chosen GPU is not the one driving the display, so each frame costs a
     /// cross-GPU copy (§6). Only ever true when the display's own GPU has no
     /// encoder at all.

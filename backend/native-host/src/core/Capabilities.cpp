@@ -17,6 +17,8 @@
 
 #include "mw/native/Capabilities.h"
 
+#include <algorithm>
+
 namespace mw::native {
 
 const char* toString(Codec c)
@@ -70,6 +72,11 @@ const char* toString(Unavailability u)
     case Unavailability::ProbeFailed: return "probe failed";
     }
     return "unknown";
+}
+
+bool GpuInfo::supports444(Codec codec) const
+{
+    return std::find(codecs444.begin(), codecs444.end(), codec) != codecs444.end();
 }
 
 const GpuInfo* Capabilities::gpuFor(const DisplayInfo& display) const

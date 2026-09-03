@@ -132,6 +132,14 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     // accepts 4:4:4 input and encodes 4:2:0 from it — the extra chroma is
     // silently discarded, which looks exactly like the feature not working.
     if (yuv444) {
+        if (codec == Codec::Av1) {
+            // No 4:4:4 profile exists for AV1 in this SDK, and the capability
+            // query says so per codec — the Selector routes 4:4:4 to HEVC or
+            // H.264 instead. Refusing here keeps a misrouted session from
+            // encoding 4:2:0 under a 4:4:4 label.
+            error = "NVENC has no 4:4:4 path for AV1";
+            return false;
+        }
         m_Config.profileGUID = codec == Codec::Hevc ? NV_ENC_HEVC_PROFILE_FREXT_GUID
                                                     : NV_ENC_H264_PROFILE_HIGH_444_GUID;
     }

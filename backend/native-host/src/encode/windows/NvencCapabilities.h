@@ -30,7 +30,9 @@ struct NvencCaps
     bool usable = false;
     std::vector<Codec> codecs; ///< best first, as the Selector expects
     bool supports10Bit = false;
-    bool supports444 = false;
+    /// The codecs whose encoder answered NV_ENC_CAPS_SUPPORT_YUV444_ENCODE —
+    /// H.264 and HEVC on every card that has it, never AV1 (SDK 12).
+    std::vector<Codec> codecs444;
     bool supportsIntraRefresh = false;
     bool supportsReferenceInvalidation = false;
 };
