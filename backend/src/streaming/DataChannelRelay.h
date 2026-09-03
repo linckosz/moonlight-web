@@ -47,11 +47,17 @@ class IMediaEngine;
 //   - input: DataChannel (SCTP, negotiated id=2, reliable + ordered)
 //
 // Thread safety:
-// - media engine signals arrive on Qt main thread (AutoConnection).
-//   sendMessage() is called from the main thread -> libdatachannel's DC send
-//   is internally thread-safe.
+// - The relay lives on a per-session relay thread (Session::spawnRelayThread),
+//   together with the media engine and the signaling server.
+// - GameStream engines: media engine signals are queued onto the relay thread
+//   (AutoConnection), byte for byte the historical path.
+// - Native engine: videoFrameReady is connected DIRECT, so onVideoFrame runs on
+//   the capture thread that just finished encoding — no event-loop hop before
+//   the frame reaches the sender. Everything that slot touches (buffered
+//   keyframe, IDR gate, drop counters, the video DC pointer) is guarded by
+//   m_VideoMutex, the arrangement MediaTrackRelay already runs with.
 // - libdatachannel callbacks (onMessage for input) fire from internal threads.
-//   We marshal input back to the main thread via QMetaObject::invokeMethod.
+//   We marshal input back to the relay thread via QMetaObject::invokeMethod.
 class DataChannelRelay : public RelayBase
 {
     Q_OBJECT
@@ -84,6 +90,7 @@ public:
     /// frames and the browser's VideoDecoder can never configure.
     QByteArray takeBufferedKeyframe()
     {
+        std::lock_guard<std::mutex> lk(m_VideoMutex);
         QByteArray kf = m_BufferedKeyframe;
         m_BufferedKeyframe.clear();
         m_BufferedKeyframePresUs = -1;
@@ -176,15 +183,30 @@ private:
                         int frameNumber = -1);
 
     // Send a previously buffered keyframe (arrived before Video DC was open).
-    // Called from the Video DC onOpen callback (marshaled to main thread).
+    // Called from the Video DC onOpen callback (marshaled to the relay thread).
     void sendBufferedKeyframe();
 
     // Coalescing IDR throttle: all IDR requests (frontend + internal) go through
     // this method. Requests arriving within the adaptive cooldown of the last
     // effective request are absorbed to prevent LiRequestIdrFrame flooding.
+    // Caller holds m_VideoMutex.
     void sendIdrRequestThrottled();
 
     IMediaEngine* m_Shim;
+
+    // True when videoFrameReady is wired DirectConnection (native engine):
+    // onVideoFrame then runs on the engine's capture thread. False for every
+    // GameStream engine, whose frames keep arriving through the relay thread's
+    // event loop exactly as before.
+    bool m_DirectVideoSend = false;
+
+    // Serializes the video path — onVideoFrame (capture thread in direct mode),
+    // sendBufferedKeyframe / takeBufferedKeyframe / requestidr (relay thread),
+    // stop() and the stats tick. Held for one frame's bookkeeping at most; the
+    // sender thread never takes it, so a full SCTP buffer cannot stall a
+    // holder. Everything from here to the ICE timer that is not atomic is
+    // guarded by it.
+    std::mutex m_VideoMutex;
 
     // Dedicated thread for DataChannel fragmentation + send (keeps the per-frame
     // memcpy + dc->send off the Qt main thread / HTTP event loop).
@@ -246,7 +268,7 @@ private:
 
     // Awaiting IDR: true when a delta was dropped (backpressure or DC not ready).
     // All delta frames are dropped and IDR requested until a keyframe is sent.
-    // Plain bool is safe — all accesses are on the Qt main thread.
+    // Guarded by m_VideoMutex.
     bool m_AwaitingIdr = false;
 
     // Buffered keyframe: if the first IDR arrives before the Video DataChannel
