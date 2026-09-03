@@ -589,6 +589,39 @@ export class WebGlRenderer extends VideoRenderer {
         this._nisScaleWarned = false;
         this._nisSharpness = 0.5;
         this._knobsReadMs = 0;
+        /** Click-to-photon probe: read the flag pixels after each draw. */
+        this._probeActive = false;
+        this._probePixels = null;
+    }
+
+    /**
+     * See VideoRenderer.probeActive. A desynchronized WebGL2 canvas cannot be
+     * sampled with drawImage once presented, so while a measurement is on the
+     * three flag pixels are read with readPixels at the end of draw() — a
+     * synchronous GPU round trip, paid only during the 200 ms of a probe.
+     */
+    set probeActive(on) {
+        this._probeActive = !!on;
+        this._probePixels = null;
+    }
+    get probePixels() {
+        return this._probePixels;
+    }
+
+    _readProbePixels(cw, ch) {
+        const gl = this.gl;
+        const px = new Uint8ClampedArray(12);
+        const one = new Uint8Array(4);
+        // Same spots as LatencyProbe: 46.5 %, 50.5 %, 54.5 % of the width,
+        // 2.5 % from the top (GL rows count from the bottom).
+        const y = Math.min(ch - 1, Math.max(0, ch - 1 - Math.floor(ch * 0.025)));
+        const xs = [0.465, 0.505, 0.545];
+        for (let i = 0; i < 3; i++) {
+            const x = Math.min(cw - 1, Math.floor(cw * xs[i]));
+            gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, one);
+            px.set(one, i * 4);
+        }
+        this._probePixels = px;
     }
 
     /**
@@ -921,6 +954,7 @@ export class WebGlRenderer extends VideoRenderer {
                 gl.drawArrays(gl.TRIANGLES, 0, 3);
                 gl.activeTexture(gl.TEXTURE0);
             }
+            if (this._probeActive) this._readProbePixels(cw, ch);
         } catch (e) {
             console.error('[WebGlRenderer] draw failed: ' + e.message);
             path = 'failed';

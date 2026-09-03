@@ -6870,6 +6870,12 @@ export class StreamView {
             requestFrameEvents: (ms) => {
                 if (this._videoWorker) this._videoWorker.postMessage({ type: 'probe', ms });
             },
+            // Renderers whose canvas cannot be read once presented (WebGL2,
+            // desynchronized) hand the probe their own pixel read instead.
+            samplePixels: () => (this._renderer ? this._renderer.probePixels : undefined),
+            setProbing: (on) => {
+                if (this._renderer) this._renderer.probeActive = on;
+            },
             results,
         });
         // Standby views measure nothing; the visible one owns the console handle.

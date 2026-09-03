@@ -54,6 +54,39 @@ export class Canvas2DRenderer extends VideoRenderer {
         this.smoothingQuality = null;
         this._outW = 0;
         this._outH = 0;
+        /** Click-to-photon probe: read the flag pixels after each draw. */
+        this._probeActive = false;
+        this._probePixels = null;
+    }
+
+    /**
+     * See VideoRenderer.probeActive. A desynchronized 2D canvas on screen
+     * cannot be sampled with drawImage from outside either, so the three flag
+     * pixels are read with getImageData right after the draw while a
+     * measurement is on (a GPU readback, paid only during the probe).
+     */
+    set probeActive(on) {
+        this._probeActive = !!on;
+        this._probePixels = null;
+    }
+    get probePixels() {
+        return this._probePixels;
+    }
+
+    _readProbePixels() {
+        const w = this.canvas.width,
+            h = this.canvas.height;
+        if (!(w > 0 && h > 0)) return;
+        try {
+            const px = new Uint8ClampedArray(12);
+            const y = Math.min(h - 1, Math.floor(h * 0.025));
+            const xs = [0.465, 0.505, 0.545];
+            for (let i = 0; i < 3; i++) {
+                const x = Math.min(w - 1, Math.floor(w * xs[i]));
+                px.set(this.ctx.getImageData(x, y, 1, 1).data, i * 4);
+            }
+            this._probePixels = px;
+        } catch (e) {}
     }
 
     /**
@@ -233,6 +266,7 @@ export class Canvas2DRenderer extends VideoRenderer {
                 } catch (e) {}
             }
 
+            if (this._probeActive) this._readProbePixels();
             frame.close();
             this._rendered++;
             this._noteDraw(drawStart, waitMs, bitmap ? 'nv12-bitmap' : 'nv12-fallback');
@@ -289,6 +323,7 @@ export class Canvas2DRenderer extends VideoRenderer {
             }
         }
 
+        if (this._probeActive && rendered) this._readProbePixels();
         frame.close();
         this._rendered++;
         this._noteDraw(drawStart, waitMs, rendered ? path : 'failed');

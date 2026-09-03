@@ -839,6 +839,11 @@ export class WebGpuRenderer extends VideoRenderer {
         this._nisSharpness = 0.5;
         this._nisKnobsMs = 0;
         this._nisScaleWarned = false;
+        /** Click-to-photon probe: three canvas texels copied out per frame. */
+        this._probeActive = false;
+        this._probePixels = null;
+        this._probeBuf = null;
+        this._probeBusy = false;
         /** @type {boolean} HDR→SDR tone-map path (exclusive with _hdr). */
         this._hdrTonemap = false;
         /** @type {number} 10-bit sample alignment (1.0 = low-aligned 0..1023). */
@@ -930,6 +935,70 @@ export class WebGpuRenderer extends VideoRenderer {
         return !!this._hdr;
     }
 
+    /**
+     * See VideoRenderer.probeActive. A presented WebGPU canvas cannot be read
+     * back with drawImage, so while a measurement is on, each frame copies the
+     * probe's three texels from the canvas texture into a mappable buffer
+     * (before submit) and maps it afterwards; the probe polls `probePixels`.
+     * 8-bit canvases only — the HDR float canvas is not sampled.
+     */
+    set probeActive(on) {
+        this._probeActive = !!on;
+        this._probePixels = null;
+    }
+    get probePixels() {
+        return this._probePixels;
+    }
+
+    _queueProbeRead(encoder, texture, cw, ch) {
+        if (this._probeBusy || this._hdr) return false;
+        if (!this._probeBuf) {
+            // One texel per 256-byte row: copyTextureToBuffer wants both the
+            // buffer offset and bytesPerRow aligned to 256.
+            this._probeBuf = this._device.createBuffer({
+                size: 768,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+            });
+        }
+        // Same spots as LatencyProbe: 46.5 %, 50.5 %, 54.5 % of the width,
+        // 2.5 % from the top.
+        const y = Math.min(ch - 1, Math.floor(ch * 0.025));
+        const xs = [0.465, 0.505, 0.545];
+        for (let i = 0; i < 3; i++) {
+            const x = Math.min(cw - 1, Math.floor(cw * xs[i]));
+            encoder.copyTextureToBuffer(
+                { texture, origin: { x, y } },
+                { buffer: this._probeBuf, offset: i * 256, bytesPerRow: 256 },
+                { width: 1, height: 1 },
+            );
+        }
+        this._probeBusy = true;
+        return true;
+    }
+
+    _mapProbeRead() {
+        const buf = this._probeBuf;
+        const bgra = this._format === 'bgra8unorm';
+        buf.mapAsync(GPUMapMode.READ)
+            .then(() => {
+                const a = new Uint8Array(buf.getMappedRange());
+                const px = new Uint8ClampedArray(12);
+                for (let i = 0; i < 3; i++) {
+                    const o = i * 256;
+                    px[i * 4 + 0] = bgra ? a[o + 2] : a[o + 0];
+                    px[i * 4 + 1] = a[o + 1];
+                    px[i * 4 + 2] = bgra ? a[o + 0] : a[o + 2];
+                    px[i * 4 + 3] = 255;
+                }
+                buf.unmap();
+                if (this._probeActive) this._probePixels = px;
+            })
+            .catch(() => {})
+            .finally(() => {
+                this._probeBusy = false;
+            });
+    }
+
     _configure() {
         if (this._hdr) {
             // HDR canvas: float16 backbuffer + 'extended' tone mapping so values
@@ -942,6 +1011,7 @@ export class WebGpuRenderer extends VideoRenderer {
                 this.ctx.configure({
                     device: this._device,
                     format: this._format,
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
                     alphaMode: 'opaque',
                     colorSpace: 'display-p3',
                     toneMapping: { mode: 'extended' },
@@ -962,6 +1032,8 @@ export class WebGpuRenderer extends VideoRenderer {
         this.ctx.configure({
             device: this._device,
             format: this._format,
+            // COPY_SRC: the click-to-photon probe copies three texels out.
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
             alphaMode: 'opaque',
             colorSpace: 'srgb',
         });
@@ -1607,6 +1679,7 @@ export class WebGpuRenderer extends VideoRenderer {
             }
 
             const encoder = this._device.createCommandEncoder();
+            const canvasTex = this.ctx.getCurrentTexture();
 
             // 'off' mode: single pass to the canvas (linear scale, no upscaler) —
             // either the plain external blit or the HDR YUV tone map.
@@ -1614,7 +1687,7 @@ export class WebGpuRenderer extends VideoRenderer {
                 const pass = encoder.beginRenderPass({
                     colorAttachments: [
                         {
-                            view: this.ctx.getCurrentTexture().createView(),
+                            view: canvasTex.createView(),
                             loadOp: 'clear',
                             storeOp: 'store',
                             clearValue: { r: 0, g: 0, b: 0, a: 1 },
@@ -1630,7 +1703,10 @@ export class WebGpuRenderer extends VideoRenderer {
                 }
                 pass.draw(3);
                 pass.end();
+                const probing =
+                    this._probeActive && this._queueProbeRead(encoder, canvasTex, cw, ch);
                 this._device.queue.submit([encoder.finish()]);
+                if (probing) this._mapProbeRead();
                 frame.close();
                 // Backpressure: resolve only when the GPU finished, so the caller's
                 // render guard reflects real GPU throughput (drop-to-latest then
@@ -1702,7 +1778,7 @@ export class WebGpuRenderer extends VideoRenderer {
                 const p2 = encoder.beginRenderPass({
                     colorAttachments: [
                         {
-                            view: this.ctx.getCurrentTexture().createView(),
+                            view: canvasTex.createView(),
                             loadOp: 'clear',
                             storeOp: 'store',
                             clearValue: { r: 0, g: 0, b: 0, a: 1 },
@@ -1755,7 +1831,7 @@ export class WebGpuRenderer extends VideoRenderer {
                 const p1 = encoder.beginRenderPass({
                     colorAttachments: [
                         {
-                            view: this.ctx.getCurrentTexture().createView(),
+                            view: canvasTex.createView(),
                             loadOp: 'clear',
                             storeOp: 'store',
                             clearValue: { r: 0, g: 0, b: 0, a: 1 },
@@ -1777,7 +1853,7 @@ export class WebGpuRenderer extends VideoRenderer {
                 const p1 = encoder.beginRenderPass({
                     colorAttachments: [
                         {
-                            view: this.ctx.getCurrentTexture().createView(),
+                            view: canvasTex.createView(),
                             loadOp: 'clear',
                             storeOp: 'store',
                             clearValue: { r: 0, g: 0, b: 0, a: 1 },
@@ -1790,7 +1866,9 @@ export class WebGpuRenderer extends VideoRenderer {
                 p1.end();
             }
 
+            const probing = this._probeActive && this._queueProbeRead(encoder, canvasTex, cw, ch);
             this._device.queue.submit([encoder.finish()]);
+            if (probing) this._mapProbeRead();
         } catch (e) {
             console.error('[WebGpuRenderer] draw failed:', e.message);
         }
@@ -1832,6 +1910,10 @@ export class WebGpuRenderer extends VideoRenderer {
             if (this._nisCoefTex) this._nisCoefTex.destroy();
         } catch (e) {}
         this._nisCoefTex = null;
+        try {
+            if (this._probeBuf) this._probeBuf.destroy();
+        } catch (e) {}
+        this._probeBuf = null;
         for (const t of [this._texY, this._texU, this._texV]) {
             try {
                 if (t) t.destroy();

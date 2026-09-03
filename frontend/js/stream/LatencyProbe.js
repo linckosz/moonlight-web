@@ -120,12 +120,28 @@ export class LatencyProbe {
      *        The main-thread paths call onFramePresented themselves.
      * @param {any[]} [deps.results] the array results are appended to;
      *        exposed as window.mwLatencyResults by the caller.
+     * @param {(() => (Uint8ClampedArray|null|undefined))|null} [deps.samplePixels]
+     *        renderer-side read of the three band pixels (see
+     *        VideoRenderer.probePixels): `undefined` = not offered, sample the
+     *        canvas; `null` = armed but no frame drawn yet; else 12 RGBA values.
+     * @param {((on: boolean) => void)|null} [deps.setProbing] arm/disarm that
+     *        renderer-side read around each measurement.
      */
-    constructor({ source, sendClick, showMark = null, requestFrameEvents = null, results = [] }) {
+    constructor({
+        source,
+        sendClick,
+        showMark = null,
+        requestFrameEvents = null,
+        results = [],
+        samplePixels = null,
+        setProbing = null,
+    }) {
         this._source = source;
         this._sendClick = sendClick;
         this._showMark = showMark;
         this._requestFrameEvents = requestFrameEvents;
+        this._samplePixels = samplePixels;
+        this._setProbing = setProbing;
         this.results = results;
         /** @type {null | {t0: number, ts: number, tMark: number, resolve: Function, timer: any, raf: number}} */
         this._pending = null;
@@ -189,13 +205,26 @@ export class LatencyProbe {
     async measureOnce() {
         if (this._pending) throw new Error('LatencyProbe: a measurement is already pending');
 
+        // Renderers that read their own pixels need a frame drawn after being
+        // armed before they have anything to show; give them a moment.
+        if (this._setProbing) this._setProbing(true);
+        let first = this._sample();
+        if (first === null && this._samplePixels && this._samplePixels() === null) {
+            await this._waitUntil(() => this._sample() !== null, 300);
+            first = this._sample();
+        }
         // The flag must be down before the click, or the first sample would
         // "detect" the previous click's flag. Give a lingering one time to go.
-        const first = this._sample();
-        if (first === null) return this._record(null, null, null, false, 'no picture to sample');
+        if (first === null) {
+            if (this._setProbing) this._setProbing(false);
+            return this._record(null, null, null, false, 'no picture to sample');
+        }
         if (first) {
             const cleared = await this._waitUntil(() => this._sample() === false, 300);
-            if (!cleared) return this._record(null, null, null, false, 'flag already up');
+            if (!cleared) {
+                if (this._setProbing) this._setProbing(false);
+                return this._record(null, null, null, false, 'flag already up');
+            }
         }
 
         return new Promise((resolve) => {
@@ -258,6 +287,7 @@ export class LatencyProbe {
         this._pending = null;
         if (p.timer) clearTimeout(p.timer);
         if (p.raf) cancelAnimationFrame(p.raf);
+        if (this._setProbing) this._setProbing(false);
         const ok = tHit !== null;
         p.resolve(
             this._record(p.ts, ok ? tHit - p.t0 : null, ok ? tHit - p.tMark : null, ok, reason),
@@ -282,6 +312,13 @@ export class LatencyProbe {
      *          to sample (no element, zero-sized, or a readback that throws).
      */
     _sample() {
+        // A renderer that reads its own pixels (desynchronized WebGL2) wins
+        // over the canvas readback, which would come back blank there.
+        if (this._samplePixels) {
+            const px = this._samplePixels();
+            if (px === null) return null;
+            if (px !== undefined) return looksLikeFlag(px);
+        }
         const el = this._source();
         if (!el) return null;
         try {
