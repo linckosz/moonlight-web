@@ -250,10 +250,12 @@ export class WebRtcDataChannel {
         // When the current ride-out started, or 0 when not riding one out.
         this._rideOutSince = 0;
         // How long to let the refresh wave work before giving up and asking for
-        // a keyframe after all. One cycle is ~2 s at 60 fps; a little more than
-        // that means the wave is genuinely not repairing the picture — a
-        // decoder that handles damage badly, or loss faster than the refresh.
-        // The worst case is then exactly today's behaviour, one beat later.
+        // a keyframe after all. One cycle is 2 s whatever the stream's rate (the
+        // native host sizes the sweep in frames of the rate it really encodes
+        // at); a little more than that means the wave is genuinely not
+        // repairing the picture — a decoder that handles damage badly, or loss
+        // faster than the refresh. The worst case is then exactly today's
+        // behaviour, one beat later.
         this.RIDE_OUT_MAX_MS = 2500;
         // Set when a ride-out ran its full course without the stream resuming.
         // Until the stream proves itself again — two frames in a row — recovery

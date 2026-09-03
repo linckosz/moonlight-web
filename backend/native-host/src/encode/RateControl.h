@@ -64,6 +64,54 @@ inline uint32_t vbvBitsPerFrame(uint32_t bitsPerSecond, int fps)
     return bitsPerSecond / static_cast<uint32_t>(rate);
 }
 
+/// How long one intra-refresh sweep takes, in frames — shared by every encoder.
+///
+/// ── Why a duration, expressed in frames of the EFFECTIVE rate ───────────────
+///
+/// The wave replaces the periodic keyframe: every frame carries a band of intra
+/// blocks, and once the band has crossed the whole picture a receiver that
+/// joined late or decoded through a loss is whole again. What matters to that
+/// receiver is how long the repair takes in seconds — the browser's ride-out
+/// watchdog gives the wave about that long before demanding a keyframe — and
+/// what matters to the link is how many extra bits each frame carries, which is
+/// the picture divided by the number of frames in the sweep.
+///
+/// Two seconds is the balance: short enough that a damaged picture heals before
+/// anyone reads it as a fault, long enough that the per-frame surcharge stays
+/// small. The three vendor paths used to hard-code 120 frames, which is two
+/// seconds only at 60 fps: a 30 fps stream took four seconds to heal (longer
+/// than the client's watchdog, so it asked for the keyframe anyway and paid for
+/// both), and a 144 fps stream swept in 0.8 s, spending two and a half times
+/// the intra bits per second that it needed to.
+///
+/// The rate handed in is the one frames are actually encoded at — the setting,
+/// or the display's own refresh when the setting is 0 — never the panel's rate
+/// when the stream is gated below it. An unknown rate reads as 60, like the VBV.
+/// The bounds only guard against nonsense: below 30 frames the band would be a
+/// visible stripe, above 600 (five seconds at 120 fps) the sweep is not a
+/// repair any more.
+constexpr int kIntraRefreshSeconds = 2;
+constexpr int kIntraRefreshMinFrames = 30;
+constexpr int kIntraRefreshMaxFrames = 600;
+
+inline int intraRefreshPeriodFrames(int fps)
+{
+    const int rate = fps > 0 ? fps : 60;
+    const int period = rate * kIntraRefreshSeconds;
+    if (period < kIntraRefreshMinFrames) return kIntraRefreshMinFrames;
+    if (period > kIntraRefreshMaxFrames) return kIntraRefreshMaxFrames;
+    return period;
+}
+
+/// How many frames of the period the band is actually moving, for the encoders
+/// that separate the two (NVENC). Half the period: shorter concentrates the
+/// extra bits into fewer frames; spreading it keeps the bitrate flat, which is
+/// the whole point of using intra-refresh instead of keyframes.
+inline int intraRefreshCountFrames(int fps)
+{
+    return intraRefreshPeriodFrames(fps) / 2;
+}
+
 /// The budget a frame gets while the screen is not moving, as a multiple of the
 /// stream's own.
 ///

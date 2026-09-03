@@ -180,7 +180,7 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
 }
 
 void attachIntraRefresh(mfxVideoParam& params, mfxExtCodingOption2& option,
-                        std::vector<mfxExtBuffer*>& buffers)
+                        std::vector<mfxExtBuffer*>& buffers, int fps)
 {
     std::memset(&option, 0, sizeof(option));
     option.Header.BufferId = MFX_EXTBUFF_CODING_OPTION2;
@@ -190,7 +190,7 @@ void attachIntraRefresh(mfxVideoParam& params, mfxExtCodingOption2& option,
     // vertical is the conventional choice and matches what the other two
     // vendors do by default.
     option.IntRefType = MFX_REFRESH_VERTICAL;
-    option.IntRefCycleSize = static_cast<mfxU16>(kIntraRefreshPeriodFrames);
+    option.IntRefCycleSize = static_cast<mfxU16>(intraRefreshPeriodFrames(fps));
     // Leave the refreshed blocks at the frame's own quality: a positive delta
     // would make the healing band visibly coarser than what surrounds it, which
     // is precisely the artefact this is meant to avoid.

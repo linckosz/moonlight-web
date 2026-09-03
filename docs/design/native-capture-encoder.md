@@ -308,6 +308,23 @@ rattraper. Côté navigateur, la suppression est bornée par un chien de garde d
 Le flag traverse le processus worker (`cfg["rideOutLoss"]`) : le moteur média
 vit dans l'enfant, le poser sur la session du parent ne l'atteindrait jamais.
 
+**La période de la vague est une durée, pas un nombre de frames** (audit B6,
+corrigé le 03/09). Les trois encodeurs figeaient 120 frames, qui ne font
+2 s qu'à 60 fps : un flux à 30 fps mettait 4 s à se réparer — plus que le
+chien de garde du client, qui redemandait donc la keyframe et payait les deux —
+et un flux à 144 fps balayait en 0,8 s, soit 2,5 fois les bits intra par
+seconde nécessaires. `intraRefreshPeriodFrames(fps)` dans `RateControl.h`
+donne 2 s **dans la cadence effective** (le réglage, ou le Hz de l'écran à
+réglage 0 — jamais la cadence de l'écran quand le flux est bridé sous elle),
+bornée à [30, 600] contre l'absurde ; NVENC prend la moitié comme longueur de
+vague, AMF en dérive son compte de blocs par frame (arrondi vers le bas, donc
+le balayage ne peut que dépasser légèrement 2 s, jamais y rester en dessous :
+1080p HEVC à 240 fps = 1 CTB par frame, 510 frames), oneVPL le pose dans
+`IntRefCycleSize`. La ligne « ready » de chaque encodeur dit la période
+retenue (`intra-refresh over N frames`). Vérifié en flux réel sur la RX 7600
+(AMF HEVC) : 120 frames à 60 fps, 480 à 240 fps, image présente dans les deux
+cas.
+
 ---
 
 ## 8. Conversion couleur — et le 4:4:4
