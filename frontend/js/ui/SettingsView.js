@@ -70,7 +70,7 @@ export class SettingsView {
         // Chromium desktop (desynchronized canvas); forced off elsewhere, where
         // the render loop keeps its VSync pacing.
         this._tearing = SUPPORTS_CANVAS_TEARING;
-        // Worker decode mode: 'auto' (heuristic, default), 'on' or 'off' (explicit).
+        // Worker decode mode: 'auto' (= off, default), 'on' (explicit opt-in) or 'off'.
         this._videoWorker = 'auto';
         this._mediaTrackOnlyH264 = false;
         // Video enhancement (WebGPU upscale/sharpen): 'off'|'on' + algo selector.
@@ -616,7 +616,9 @@ export class SettingsView {
         this._touchScreen = false;
         this._tearing = SUPPORTS_CANVAS_TEARING;
         this._videoWorker = 'auto';
-        this._videoEnhancement = 'on';
+        // Off: the plain Canvas2D path is the fastest first impression (see
+        // StreamView's renderer selection); the Enhancer is an opt-in.
+        this._videoEnhancement = 'off';
         this._videoEnhancementAlgo = 'auto';
         this._powerSave = false;
         this._powerSaveBackup = null;
@@ -1047,11 +1049,11 @@ export class SettingsView {
                     <div class="settings-field u-hidden">
                         <label class="settings-label" for="settings-video-worker">Decode on worker thread</label>
                         <select id="settings-video-worker" class="settings-select">
-                            <option value="auto" ${this._videoWorker === 'auto' ? 'selected' : ''}>Auto (by core count)</option>
+                            <option value="auto" ${this._videoWorker === 'auto' ? 'selected' : ''}>Auto (off)</option>
                             <option value="on" ${this._videoWorker === 'on' ? 'selected' : ''}>On</option>
                             <option value="off" ${this._videoWorker === 'off' ? 'selected' : ''}>Off</option>
                         </select>
-                        <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> enables it above 4 logical cores. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
+                        <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> keeps it off: measured slower on macOS (22 ms) and no faster elsewhere. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
                     </div>
 
                     <!-- Finger input, mobile/tablet only. A touchscreen laptop is

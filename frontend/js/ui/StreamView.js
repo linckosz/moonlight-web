@@ -293,7 +293,7 @@ export class StreamView {
         showPerformanceStats = true,
         touchSensitivity = 2.0,
         tearing = false,
-        videoWorker = true,
+        videoWorker = 'auto',
         videoEnhancement = 'off',
         videoEnhancementAlgo = 'auto',
         yuv444 = false,
@@ -371,26 +371,23 @@ export class StreamView {
         // Moves WebCodecs decode + canvas rendering off the main UI thread.
         // Controlled by the "Decode on worker thread" setting, a tri-state.
         // The setting is hidden from the UI (kept as a debug override); the
-        // effective default is 'auto':
-        //   'auto' (default) → ON above 4 logical cores, OFF at ≤4, regardless
-        //     of device type. Below 5 cores the extra hot thread contends for
-        //     scarce cores and presentation can be slower → lower fps.
-        //   'on' / 'off' (or legacy boolean true/false) → explicit override.
+        // effective default is 'auto', which means OFF:
+        //   'auto' (default) → OFF everywhere. Measured 03/09/2026 against
+        //     moonlight-qt: on macOS Chrome the worker cost a constant 22.8 ms
+        //     between the frame's arrival on the main thread and decode() (the
+        //     whole gap to moonlight-qt), and 10 ms of render instead of 4; on
+        //     Windows it cost nothing but bought nothing either (0.1 ms handoff
+        //     both ways). The main-thread pipeline also gets the desynchronized
+        //     Canvas2D context, which the worker's OffscreenCanvas cannot use.
+        //   'on' → explicit opt-in, kept for the case where the UI thread is
+        //     too busy to decode (not seen yet). 'off' (or a legacy boolean)
+        //     → explicit off.
         // Never used for the native RTP media transport (the browser renders the
         // <video> directly). Falls back to the main-thread pipeline automatically
         // if the worker cannot start.
         const workerMode =
             videoWorker === true ? 'on' : videoWorker === false ? 'off' : videoWorker || 'auto';
-        let workerWanted;
-        if (workerMode === 'on') {
-            workerWanted = true;
-        } else if (workerMode === 'off') {
-            workerWanted = false;
-        } else {
-            // Auto: enable above 4 logical cores, regardless of device type.
-            const cores = navigator.hardwareConcurrency || 4;
-            workerWanted = cores > 4;
-        }
+        const workerWanted = workerMode === 'on';
         this._useWorker = false;
         try {
             this._useWorker =
@@ -406,14 +403,21 @@ export class StreamView {
         }
         this._videoWorker = null;
         // Renderer selection for the canvas path (DC/WSS; webrtc-media uses <video>).
-        // WebGPU is the preferred renderer on ALL devices; createVideoRenderer falls
-        // back to Canvas2D when WebGPU is unavailable. The algo decides what WebGPU
-        // does: 'off' = pass-through (Enhancer disabled), 'sgsr'/'fsr1' = upscaler.
-        // 'force2d' (debug) bypasses WebGPU to exercise the Canvas2D path.
-        // Forwarded to the worker too (localStorage is unavailable there).
-        let algo = 'off'; // default: WebGPU pass-through (no upscaler)
-        let wantWebGpu = true; // WebGPU is the preferred canvas renderer
+        // Canvas2D is the default renderer; WebGPU is used only when something
+        // needs its shaders: the Enhancer (SGSR/FSR1) or the HDR paths (tone-map
+        // and the rgba16float canvas). Measured 03/09/2026 on the same stream:
+        // the WebGPU pass-through cost 4 ms of render on Windows and 10 ms on
+        // macOS (an onSubmittedWorkDone round trip to the GPU process, a p99 of
+        // one full vsync), held the decoder's VideoFrames longer, and has no
+        // equivalent of the desynchronized hint that lets Canvas2D bypass the
+        // compositor. Canvas2D drew the same frames in 0.2–0.6 ms with zero
+        // drops. createVideoRenderer still falls back to Canvas2D when WebGPU
+        // is unavailable. 'force2d' (debug) bypasses WebGPU even with the
+        // Enhancer on. Forwarded to the worker too (no localStorage there).
+        let algo = 'off'; // no upscaler
+        let wantWebGpu = hdrEnabled === true; // HDR needs the WebGPU paths
         if (videoEnhancement === 'on') {
+            wantWebGpu = true;
             const sel = videoEnhancementAlgo || 'auto';
             if (sel === 'force2d') {
                 wantWebGpu = false; // debug: force the Canvas2D renderer
