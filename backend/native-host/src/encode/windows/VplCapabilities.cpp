@@ -117,7 +117,7 @@ VplCaps queryUncached(uint64_t adapterLuid)
     // 4:4:4 is not claimed: the conversion pass produces AYUV, which oneVPL
     // does not take as an encoder input, so there is nothing to feed it with
     // even where the silicon could. Left for whoever adds a Y410/AYUV path.
-    caps.supports444 = false;
+    caps.codecs444.clear();
 
     caps.usable = !caps.codecs.empty();
     return caps;

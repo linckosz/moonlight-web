@@ -98,12 +98,19 @@ struct GpuInfo
     /// 10-bit), which is what HDR requires.
     bool supports10Bit = false;
 
-    /// True when the encoder can do 4:4:4 chroma. MoonlightWeb already offers
-    /// this choice for external hosts, so the native engine has to answer it
-    /// honestly rather than silently downgrade: 4:2:0 throws away three
-    /// quarters of the colour resolution, which is invisible on video and very
-    /// visible on text and thin UI lines — exactly what a desktop stream is.
-    bool supports444 = false;
+    /// The subset of `codecs` whose encoder can do 4:4:4 chroma. Per codec, not
+    /// per GPU: NVENC does 4:4:4 in H.264 and HEVC but not in AV1 (SDK 12), so
+    /// a single bit would either deny 4:4:4 to HEVC or promise it to AV1 and
+    /// fail the session. MoonlightWeb already offers this choice for external
+    /// hosts, so the native engine has to answer it honestly rather than
+    /// silently downgrade: 4:2:0 throws away three quarters of the colour
+    /// resolution, which is invisible on video and very visible on text and
+    /// thin UI lines — exactly what a desktop stream is.
+    std::vector<Codec> codecs444;
+
+    bool supports444(Codec codec) const;
+    /// Any codec at all — what the host list asks before a session exists.
+    bool supportsAny444() const { return !codecs444.empty(); }
 };
 
 /// A display, as the OS enumerates it. This is what the user picks from — and

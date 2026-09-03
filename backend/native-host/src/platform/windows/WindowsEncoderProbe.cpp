@@ -62,7 +62,7 @@ void probeEncoders(GpuInfo& gpu)
             gpu.encoders.push_back(EncoderApi::Nvenc);
             gpu.codecs = caps.codecs;
             gpu.supports10Bit = caps.supports10Bit;
-            gpu.supports444 = caps.supports444;
+            gpu.codecs444 = caps.codecs444;
         }
         break;
     }
@@ -76,7 +76,7 @@ void probeEncoders(GpuInfo& gpu)
             gpu.encoders.push_back(EncoderApi::Amf);
             gpu.codecs = caps.codecs;
             gpu.supports10Bit = caps.supports10Bit;
-            gpu.supports444 = caps.supports444;
+            gpu.codecs444 = caps.codecs444;
         }
         break;
     }
@@ -90,7 +90,7 @@ void probeEncoders(GpuInfo& gpu)
             gpu.encoders.push_back(EncoderApi::Vpl);
             gpu.codecs = caps.codecs;
             gpu.supports10Bit = caps.supports10Bit;
-            gpu.supports444 = caps.supports444;
+            gpu.codecs444 = caps.codecs444;
         }
         break;
     }
@@ -113,14 +113,16 @@ void probeEncoders(GpuInfo& gpu)
         return;
     }
 
+    // Per codec, because it is per codec: "HEVC (4:4:4), AV1" tells the reader
+    // why a 4:4:4 session landed on HEVC rather than the preferred AV1.
     std::string codecs;
     for (Codec c : gpu.codecs) {
         if (!codecs.empty()) codecs += ", ";
         codecs += toString(c);
+        if (gpu.supports444(c)) codecs += " (4:4:4)";
     }
     log::info("[native] " + gpu.name + ": " + toString(gpu.encoders.front()) + " confirmed — " +
-              codecs + (gpu.supports10Bit ? " (10-bit)" : "") +
-              (gpu.supports444 ? " (4:4:4)" : ""));
+              codecs + (gpu.supports10Bit ? " (10-bit)" : ""));
 }
 
 } // namespace mw::native::platform

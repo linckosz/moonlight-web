@@ -465,7 +465,7 @@ void run_capture_tests()
                 // native engine has to be able to honour it. Verified rather
                 // than assumed: the AYUV byte order is easy to get wrong, and
                 // getting it wrong swaps the colours instead of failing.
-                if (gpu->supports444) {
+                if (gpu->supports444(Codec::H264)) {
                     convert::ColorConvert converter444;
                     std::string error444;
                     if (!converter444.init(duplication.device(), duplication.format(),

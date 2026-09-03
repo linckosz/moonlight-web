@@ -230,13 +230,14 @@ public:
             return false;
         }
 
-        // 4:4:4 only when the client asked AND the encoder can. Silently
-        // downgrading would be worse than saying so: the whole reason to ask
-        // for it is text and UI legibility, and a stream that quietly returns
-        // 4:2:0 looks like the setting does nothing.
+        // 4:4:4 as the Selector granted it: it has already steered the codec to
+        // one that carries it, or given it up with a log line of its own. Said
+        // again here because this is the line a session log is read from, and
+        // a stream that quietly returns 4:2:0 looks like the setting does
+        // nothing.
         const bool yuv444 = m_Target.yuv444;
         if (m_Config.yuv444 && !yuv444)
-            log::info("[native] 4:4:4 requested but this encoder cannot — streaming 4:2:0");
+            log::info("[native] 4:4:4 requested but not granted — streaming 4:2:0");
 
         // The rate the encoder's budget is dimensioned for, and whether the
         // loop has to be held to it. The Selector has already resolved "0, the

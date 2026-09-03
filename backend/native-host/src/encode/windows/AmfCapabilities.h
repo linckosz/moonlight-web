@@ -23,7 +23,9 @@ struct AmfCaps
     bool usable = false;
     std::vector<Codec> codecs; ///< best first, as the Selector expects
     bool supports10Bit = false;
-    bool supports444 = false;
+    /// Codecs with a 4:4:4 path. Empty: AMF has no plain query for it and the
+    /// encoder path is not written — see AmfEncoder::init.
+    std::vector<Codec> codecs444;
 };
 
 /// Open a real AMF context on the adapter with this LUID and ask it what it
