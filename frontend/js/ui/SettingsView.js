@@ -56,6 +56,11 @@ const STORAGE_KEY = 'mw-streaming-settings';
  * WebGPU (grayed out without).
  */
 const ENHANCER_CHOICES = [
+    // Two plain presenters, for A/B against the upscalers: the Canvas2D path
+    // the SDR 'off' case uses, and the <video> sink (WebCodecs frames written
+    // to a MediaStreamTrackGenerator) the HDR HEVC case uses.
+    { value: 'canvas2d', key: 'settings.algoCanvas2d', gpu: false },
+    { value: 'video', key: 'settings.algoVideo', gpu: false },
     { value: 'smooth2d', key: 'settings.algoPerfSmooth2d', gpu: false },
     { value: 'gl-sgsr', key: 'settings.algoPerfGl', gpu: false },
     { value: 'sgsr', key: 'settings.algoPerfGpu', gpu: true },

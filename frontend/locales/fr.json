@@ -299,6 +299,8 @@
         "powerSaveToggle": "Mode économie d'énergie",
         "powerSaveDesc": "Force le pipeline le plus léger sur batterie : transport vidéo natif (UDP en priorité), H.264, pas de HDR, pas d'amélioration, 720p / 60fps. Résolution, fréquence et débit restent réglables. Décocher restaure vos valeurs précédentes si vous ne les avez pas modifiées.",
         "algoAuto": "Auto",
+        "algoCanvas2d": "Canvas2D (sans amélioration)",
+        "algoVideo": "Élément video (sans amélioration)",
         "algoPerfSmooth2d": "Performance (Smooth2D)",
         "algoPerfGl": "Performance (SGSR1 WebGL2)",
         "algoPerfGpu": "Performance (SGSR1 WebGPU)",
