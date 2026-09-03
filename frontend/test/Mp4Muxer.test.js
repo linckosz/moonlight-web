@@ -146,6 +146,16 @@ describe('Mp4Muxer — HEVC description + codec string', () => {
         expect(isHevcHdrProfile('hvc1.1.6.L153.B0')).toBe(false);
         expect(isHevcHdrProfile('')).toBe(false);
     });
+    it('does not take RExt (profile 4) for HDR unless the SPS is 10-bit', () => {
+        // An 8-bit 4:4:4 desktop stream is RExt and SDR: on macOS it decoded
+        // fine and was painted blown-out because it was configured as PQ.
+        expect(isHevcHdrProfile('hvc1.4.158.L123.B0')).toBe(false);
+        expect(isHevcHdrProfile('hev1.4.158.L123.B0')).toBe(false);
+        // A RExt SPS whose bit_depth_luma_minus8 parses as 0 stays SDR.
+        const rextSps = new Uint8Array(HEVC_SPS);
+        rextSps[2] = (rextSps[2] & 0xe0) | 4; // general_profile_idc = 4
+        expect(isHevcHdrProfile('hvc1.4.158.L123.B0', rextSps)).toBe(false);
+    });
 });
 
 describe('Mp4Muxer — toAvcc', () => {

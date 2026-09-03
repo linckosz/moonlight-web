@@ -454,8 +454,9 @@ function configureDecoder() {
             .catch(() => tryCodecs(configs, index + 1, onExhausted));
     };
 
-    // Detect HDR from the codec string (HEVC Main10 / AV1 10-bit).
-    const isHdr = isHevcHdrProfile(codec) || isAv1HdrProfile(codec);
+    // Detect HDR: HEVC Main10, HEVC RExt only when the SPS says 10-bit (8-bit
+    // 4:4:4 is RExt too and is SDR), AV1 10-bit.
+    const isHdr = isHevcHdrProfile(codec, S.nalParser.sps) || isAv1HdrProfile(codec);
 
     const shared = { codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true };
     // Decoder color space: HDR (BT.2020 + PQ) or SDR (BT.709).
