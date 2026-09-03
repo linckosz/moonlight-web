@@ -298,6 +298,7 @@
         "powerSaveToggle": "Power Saving Mode",
         "powerSaveDesc": "Forces the lightest pipeline on battery: native video transport (UDP first), H.264, no HDR, no enhancement, 720p / 60fps. Resolution, frame rate and bitrate stay adjustable. Unchecking restores your previous values if you didn't change them.",
         "algoAuto": "Auto",
+        "algoPerfSmooth2d": "Performance (Smooth2D)",
         "algoPerfGl": "Performance (SGSR1 WebGL2)",
         "algoPerfGpu": "Performance (SGSR1 WebGPU)",
         "algoBalGl": "Balanced (NIS WebGL2)",

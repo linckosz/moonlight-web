@@ -48,11 +48,13 @@ const IS_TOUCH_DEVICE =
 const STORAGE_KEY = 'mw-streaming-settings';
 
 /**
- * Enhancer choices, in menu order after 'auto': each upscaler on WebGL2 and on
- * WebGPU. Listed here rather than imported so the settings page does not pull
- * the renderers in. `gpu` marks the ones that need WebGPU (grayed out without).
+ * Enhancer choices, in menu order after 'auto': Canvas2D resampling, then each
+ * upscaler on WebGL2 and on WebGPU. Listed here rather than imported so the
+ * settings page does not pull the renderers in. `gpu` marks the ones that need
+ * WebGPU (grayed out without).
  */
 const ENHANCER_CHOICES = [
+    { value: 'smooth2d', key: 'settings.algoPerfSmooth2d', gpu: false },
     { value: 'gl-sgsr', key: 'settings.algoPerfGl', gpu: false },
     { value: 'sgsr', key: 'settings.algoPerfGpu', gpu: true },
     { value: 'gl-nis', key: 'settings.algoBalGl', gpu: false },
