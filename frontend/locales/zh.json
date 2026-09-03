@@ -301,6 +301,10 @@
         "algoSgsr": "SGSR1（性能）",
         "algoFsr1": "FSR1（画质）",
         "algoForce2d": "强制 Canvas 2D（调试）",
+        "algoSmooth2d": "Canvas 2D，高质量平滑（调试）",
+        "algoGlFsr1": "WebGL FSR1（调试）",
+        "algoGlSgsr": "WebGL SGSR1（调试）",
+        "algoGlNis": "WebGL NIS（调试，SDR）",
         "language": "语言",
         "languageDesc": "界面语言。更改后页面将重新加载。"
     },

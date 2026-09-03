@@ -301,6 +301,10 @@
         "algoSgsr": "SGSR1 (Performance)",
         "algoFsr1": "FSR1 (Quality)",
         "algoForce2d": "Force Canvas 2D (debug)",
+        "algoSmooth2d": "Canvas 2D, smoothing high (debug)",
+        "algoGlFsr1": "WebGL FSR1 (debug)",
+        "algoGlSgsr": "WebGL SGSR1 (debug)",
+        "algoGlNis": "WebGL NIS (debug, SDR)",
         "language": "Language",
         "languageDesc": "Interface language. The page reloads when you change it."
     },
