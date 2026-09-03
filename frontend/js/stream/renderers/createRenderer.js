@@ -31,11 +31,13 @@ import { WebGlRenderer, WEBGL_ALGOS } from './WebGlRenderer.js';
 import { VideoElementRenderer } from './VideoElementRenderer.js';
 
 /**
- * Enhancer choices that run WITHOUT WebGPU: the three WebGL2 shaders. The
- * caller keeps opts.webgpu false for all of them; anything not in this list
- * ('sgsr' / 'nis' / 'fsr1' / 'off') is handled by the WebGPU or Canvas2D path.
+ * Enhancer choices that run WITHOUT WebGPU: the three WebGL2 shaders and
+ * 'smooth2d' (Canvas2D drawing at the display size with its best resampling
+ * filter). The caller keeps opts.webgpu false for all of them; anything not in
+ * this list ('sgsr' / 'nis' / 'fsr1' / 'off') is handled by the WebGPU or
+ * Canvas2D path.
  */
-export const NO_WEBGPU_ALGOS = WEBGL_ALGOS;
+export const NO_WEBGPU_ALGOS = ['smooth2d', ...WEBGL_ALGOS];
 
 export async function createVideoRenderer(canvas, opts) {
     // HDR: route decoded frames to a <video> element via MediaStreamTrackGenerator.
@@ -70,5 +72,13 @@ export async function createVideoRenderer(canvas, opts) {
             console.warn('[Renderer] WebGL init failed, falling back to Canvas2D: ' + e.message);
         }
     }
-    return await Canvas2DRenderer.create(canvas, opts);
+    return await Canvas2DRenderer.create(canvas, {
+        ...opts,
+        // 'smooth2d': back the canvas at the display size and let the 2D
+        // context resample with imageSmoothingQuality 'high' instead of
+        // leaving the stretch to CSS. Everything else keeps the frame-sized
+        // backing and the CSS stretch.
+        scaleToOutput: opts.algo === 'smooth2d',
+        smoothingQuality: opts.algo === 'smooth2d' ? 'high' : null,
+    });
 }

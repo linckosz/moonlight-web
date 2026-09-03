@@ -415,8 +415,9 @@ export class StreamView {
         // is unavailable. Forwarded to the worker too (no localStorage there).
         //
         // The menu offers each upscaler in two flavours: on WebGPU ('sgsr',
-        // 'nis', 'fsr1') and on WebGL2 ('gl-sgsr', 'gl-nis', 'gl-fsr1'). The
-        // WebGL2 ones never ask for WebGPU; createVideoRenderer routes them.
+        // 'nis', 'fsr1') and on WebGL2 ('gl-sgsr', 'gl-nis', 'gl-fsr1'), plus
+        // 'smooth2d' (Canvas2D resampling at display size). None of the
+        // latter ask for WebGPU; createVideoRenderer routes them.
         let algo = 'off'; // no upscaler
         let wantWebGpu = hdrEnabled === true; // HDR needs the WebGPU paths
         if (videoEnhancement === 'on') {
@@ -4395,15 +4396,17 @@ export class StreamView {
             // if the user's setting silently changed.
             if (this._enhancerDegraded) enhancerName += ' (auto)';
         } else if (NO_WEBGPU_ALGOS.includes(this._videoEnhancementAlgo)) {
-            // WebGL2 enhancers: name what actually runs. The renderer may have
-            // fallen back (no WebGL2 → Canvas2D), so the kind decides, not the
-            // setting.
+            // Enhancers without WebGPU: name what actually runs. The renderer
+            // may have fallen back (no WebGL2 → Canvas2D), so the kind decides,
+            // not the setting.
             enhancerName =
                 this._activeRendererKind === 'webgl'
                     ? { 'gl-fsr1': 'WebGL FSR1', 'gl-sgsr': 'WebGL SGSR', 'gl-nis': 'WebGL NIS' }[
                           this._videoEnhancementAlgo
                       ] || 'WebGL'
-                    : 'OFF (WebGL unavailable)';
+                    : this._videoEnhancementAlgo === 'smooth2d'
+                      ? 'Canvas2D smoothing high'
+                      : 'OFF (WebGL unavailable)';
         } else if (this._transport === 'webrtc-media' && this._videoEnhancementRequested) {
             enhancerName = 'OFF (not available on MediaTrack)';
         } else if (
