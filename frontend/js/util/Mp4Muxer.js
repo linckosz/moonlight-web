@@ -532,13 +532,24 @@ export function buildDescription(parser) {
 }
 
 /**
- * Returns true if the HEVC codec string indicates a 10-bit (HDR-capable) profile.
- * Profile IDC 2 = Main10, 4 = Main10 Still Picture, etc.
+ * Returns true if the HEVC stream is 10-bit, which is what the HDR colour
+ * space (BT.2020 + PQ) is keyed on.
+ *
+ * Profile IDC 2 is Main10: 10-bit by definition. Profile IDC 4 is Format Range
+ * Extensions (RExt), which is NOT a bit depth: an 8-bit 4:4:4 desktop stream
+ * (Sunshine or the native host with chroma 4:4:4 on) is RExt too, and treating
+ * it as HDR hands an SDR picture to the PQ transfer — seen on macOS as a
+ * blown-out, over-saturated image. For RExt the SPS decides: pass the SPS NAL
+ * (with or without emulation prevention) and its bit_depth_luma_minus8 is
+ * read; without an SPS a RExt string is taken as 8-bit.
  */
-export function isHevcHdrProfile(codecString) {
+export function isHevcHdrProfile(codecString, sps) {
     if (!codecString) return false;
-    // hvc1.2.x, hvc1.4.x, hev1.2.x, hev1.4.x → Main10
-    return /^hvc1\.[24]\./.test(codecString) || /^hev1\.[24]\./.test(codecString);
+    if (/^(hvc1|hev1)\.2\./.test(codecString)) return true;
+    if (!/^(hvc1|hev1)\.4\./.test(codecString)) return false;
+    if (!sps) return false;
+    const info = parseHevcSpsInfo(removeEmulationPrevention(sps));
+    return info.bitDepthLumaMinus8 >= 2;
 }
 
 /**

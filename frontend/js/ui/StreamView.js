@@ -2100,9 +2100,10 @@ export class StreamView {
             return;
         }
 
-        // Detect HDR: true if the codec string indicates a 10-bit profile.
-        // HEVC: hvc1.2.x = Main10 (HDR), AV1: av01.x.x.10 = 10-bit (HDR).
-        const isHdr = isHevcHdrProfile(codec) || isAv1HdrProfile(codec);
+        // Detect HDR: true if the stream is 10-bit. HEVC: hvc1.2.x = Main10, and
+        // RExt (hvc1.4.x) only when the SPS says 10-bit — 8-bit 4:4:4 is RExt
+        // too and is SDR. AV1: av01.x.x.10 = 10-bit (HDR).
+        const isHdr = isHevcHdrProfile(codec, this.nalParser.sps) || isAv1HdrProfile(codec);
         this._hdrNegotiated = isHdr;
 
         console.log(
