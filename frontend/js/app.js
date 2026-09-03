@@ -57,7 +57,7 @@ import { Toast } from './ui/Toast.js';
 import { ConsentBar } from './ui/ConsentBar.js';
 import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
 import { VersionGuard } from './util/VersionGuard.js';
-import { IS_MOBILE_OR_TABLET, resolveTearing } from './util/BrowserDetect.js';
+import { IS_MOBILE_OR_TABLET, resolveTearing, supportsDisplayHdr } from './util/BrowserDetect.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
 import { DEFAULT_ASPECT, loadHostAspect, saveHostAspect } from './util/AspectRatio.js';
 import { startAspectProbe } from './stream/AspectProbe.js';
@@ -1360,6 +1360,14 @@ const MoonlightApp = {
         // drops HDR). undefined means "leave the stored preference untouched".
         if (hdrOverride !== undefined) {
             streamingSettings.hdr_enabled = hdrOverride === true;
+        }
+        // HDR is never asked of the host for a display that cannot show it: the
+        // settings page greys the box out on such a device, and this catches a
+        // preference saved while the desktop was still in HDR (Windows toggle,
+        // a laptop moved to another screen). PQ pixels on an SDR output clip.
+        if (streamingSettings.hdr_enabled && !supportsDisplayHdr()) {
+            console.log('[MW] HDR preference ignored: this display is not in an HDR mode');
+            streamingSettings.hdr_enabled = false;
         }
 
         // Mobile: request lower-bandwidth audio (10ms Opus frames, half the

@@ -246,7 +246,7 @@
         "fpsSuffix": "{{fps}} FPS",
         "hdr": "HDR",
         "hdrDesc": "High Dynamic Range — richer colors and contrast.",
-        "hdrNoWebgpu": "Unavailable: this browser/device has no WebGPU, the stream stays SDR.",
+        "hdrDeviceSdr": "HDR is not active on this device.",
         "chroma444": "4:4:4 Chroma",
         "chroma444Desc": "Full-resolution color (4:4:4) instead of 4:2:0. Requires both the host AND client GPU to support 4:4:4 for the chosen codec. Needs significantly higher bandwidth.",
         "gamepadProfile": "Controller presented to games (debug)",

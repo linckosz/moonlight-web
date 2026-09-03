@@ -246,7 +246,7 @@
         "fpsSuffix": "{{fps}} FPS",
         "hdr": "HDR",
         "hdrDesc": "Plage dynamique étendue — couleurs et contraste plus riches.",
-        "hdrNoWebgpu": "Indisponible : ce navigateur/appareil n'a pas WebGPU, le flux reste en SDR.",
+        "hdrDeviceSdr": "Le HDR n'est pas actif sur cet appareil.",
         "chroma444": "Chroma 4:4:4",
         "chroma444Desc": "Couleur à pleine résolution (4:4:4) au lieu de 4:2:0. Nécessite que le GPU de l'hôte ET du client prennent en charge le 4:4:4 pour le codec choisi. Demande une bande passante nettement supérieure.",
         "gamepadProfile": "Manette présentée aux jeux (debug)",

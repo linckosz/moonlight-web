@@ -60,6 +60,7 @@ import {
     IS_APPLE,
     SUPPORTS_CANVAS_TEARING,
     pickAutoEnhancer,
+    supportsDisplayHdr,
 } from '../util/BrowserDetect.js';
 import { createVideoRenderer, NO_WEBGPU_ALGOS } from '../stream/renderers/createRenderer.js';
 import { PipelineDiag, formatDiag } from '../stream/PipelineDiag.js';
@@ -464,10 +465,7 @@ export class StreamView {
         // Display HDR capability — main thread only (matchMedia doesn't exist in
         // workers) and evaluated once at stream start (renderers can't hot-swap);
         // reflects the OS toggle too (Windows "HDR off" → matches false).
-        let displayHdr = false;
-        try {
-            displayHdr = window.matchMedia('(dynamic-range: high)').matches;
-        } catch (e) {}
+        const displayHdr = supportsDisplayHdr();
         this._displayHdr = displayHdr;
         let tonemapWanted = this._videoEnhancementAlgo !== 'off' || !displayHdr;
         try {
