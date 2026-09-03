@@ -121,17 +121,20 @@ const CURSOR_USES_CLIENT_STYLE = false;
  * speck, and finding it is the oldest complaint about streaming to a phone.
  *
  * So the phone asks for a size instead of accepting the one it gets. This is
- * that size, and it was measured rather than reasoned: 28 was the first guess
- * and it read as oversized on a real iPhone — a pointer that covered what it was
- * aiming at. Two thirds of it is big enough to find on a moving picture and
- * small enough to point with. It is a target and not a floor — the host will not
- * shrink a pointer that is already bigger, so zooming in walks the magnification
- * back down to 1 on its own, and past that the pointer is simply its real size.
+ * that size — the longer side of the pointer's actual ink, not of the 32-pixel
+ * canvas Windows pads it into — and it was measured rather than reasoned: 28
+ * was the first guess and it read as oversized on a real iPhone, a pointer that
+ * covered what it was aiming at; 18 read right while the host still sized the
+ * canvas, which put the arrow's ink at about 14, and became oversized again the
+ * day the host started sizing the ink itself. So 14 it is, in ink. It is a
+ * target and not a floor — the host will not shrink a pointer that is already
+ * bigger, so zooming in walks the magnification back down to 1 on its own, and
+ * past that the pointer is simply its real size.
  *
  * Phones only. A tablet's picture is large enough that the real pointer reads
  * fine, and blowing it up there would look like a bug.
  */
-const PHONE_CURSOR_CSS_PX = 18;
+const PHONE_CURSOR_CSS_PX = 14;
 
 /**
  * How often the native host must keep sending frames while nothing at all moves

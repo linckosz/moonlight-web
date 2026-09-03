@@ -230,10 +230,12 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
     m_CursorHotspotX = static_cast<int>(shape.HotSpot.x);
     m_CursorHotspotY = static_cast<int>(shape.HotSpot.y);
 
-    // Rightmost column holding ink, +1. See CursorState::inkWidth.
+    // Rightmost column and lowest row holding ink, +1. See CursorState::inkWidth.
     int inkWidth = 0;
-    const auto noteInk = [&inkWidth](int x) {
+    int inkHeight = 0;
+    const auto noteInk = [&inkWidth, &inkHeight](int x, int y) {
         if (x + 1 > inkWidth) inkWidth = x + 1;
+        if (y + 1 > inkHeight) inkHeight = y + 1;
     };
 
     for (int y = 0; y < height; ++y) {
@@ -257,11 +259,11 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
                     const uint8_t v = xorBit ? 0xFF : 0x00;
                     px[0] = px[1] = px[2] = v;
                     px[3] = 0xFF;
-                    noteInk(x);
+                    noteInk(x, y);
                 } else if (xorBit) {
                     m_Cursor.invert[out] = 0xFF;
                     px[3] = 0xFF;
-                    noteInk(x);
+                    noteInk(x, y);
                 }
                 // andBit && !xorBit → transparent, already zeroed.
                 continue;
@@ -292,7 +294,7 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
                     px[2] = data[in + 2];
                     px[3] = 0xFF;
                 }
-                noteInk(x);
+                noteInk(x, y);
                 continue;
             }
 
@@ -301,11 +303,12 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
             px[1] = data[in + 1];
             px[2] = data[in + 2];
             px[3] = data[in + 3];
-            if (px[3] != 0) noteInk(x);
+            if (px[3] != 0) noteInk(x, y);
         }
     }
 
     m_Cursor.inkWidth = inkWidth;
+    m_Cursor.inkHeight = inkHeight;
 
     // Debug only: rare (a shape lasts thousands of frames) but pure diagnosis.
     // It is the one line that explains a pointer drawn at the wrong size or as
@@ -318,8 +321,8 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
                                ? "masked-color"
                                : "color") +
                " " + std::to_string(width) + "x" + std::to_string(height) + ", ink " +
-               std::to_string(inkWidth) + " wide, hotspot " + std::to_string(m_CursorHotspotX) +
-               "," + std::to_string(m_CursorHotspotY));
+               std::to_string(inkWidth) + "x" + std::to_string(inkHeight) + ", hotspot " +
+               std::to_string(m_CursorHotspotX) + "," + std::to_string(m_CursorHotspotY));
 }
 
 bool DxgiDuplication::updateCursor(const DXGI_OUTDUPL_FRAME_INFO& info)

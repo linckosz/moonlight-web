@@ -121,15 +121,20 @@ struct CursorState
     int width = 0;
     int height = 0;
 
-    /// How many columns, from the left, actually hold ink — a pixel that is
-    /// either coloured or inverting. Zero when the shape is empty.
+    /// How many columns (from the left) and rows (from the top) actually hold
+    /// ink — a pixel that is either coloured or inverting. Zero when the shape
+    /// is empty.
     ///
     /// The buffer is not the pointer: Windows pads an arrow into a 32×32 (or
     /// 48, or 64 on a scaled display) canvas and only a corner of it is drawn.
     /// Anything sized from `width` — a pointer magnified to a target size on a
     /// phone — would change size with the padding, not with the pointer, and two
     /// arrows that look the same on the desktop would come out at two sizes.
+    /// Both axes, because shapes are not square: an I-beam is tall and narrow,
+    /// a horizontal resize arrow wide and flat, and sizing on one axis alone
+    /// blows the other kind up.
     int inkWidth = 0;
+    int inkHeight = 0;
 
     /// width × height × 4, BGRA order as D3D11 wants it. Alpha is real coverage:
     /// colour cursors antialias their edges.
