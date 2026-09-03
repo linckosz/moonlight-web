@@ -246,7 +246,7 @@
         "fpsSuffix": "{{fps}} FPS",
         "hdr": "HDR",
         "hdrDesc": "高动态范围——更丰富的色彩与对比度。",
-        "hdrNoWebgpu": "不可用：此浏览器/设备不支持 WebGPU，串流将保持 SDR。",
+        "hdrDeviceSdr": "此设备未启用 HDR。",
         "chroma444": "4:4:4 色度",
         "chroma444Desc": "全分辨率色彩（4:4:4）而非 4:2:0。需要主机和客户端 GPU 均支持所选编解码器的 4:4:4。需要显著更高的带宽。",
         "gamepadProfile": "呈现给游戏的手柄（调试）",

@@ -36,6 +36,7 @@ import {
     SUPPORTS_CANVAS_TEARING,
     IS_MOBILE_OR_TABLET,
     resolveTearing,
+    supportsDisplayHdr,
 } from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 import { ASPECT_VALUES, SCREEN_ASPECTS } from '../util/AspectRatio.js';
@@ -729,9 +730,19 @@ export class SettingsView {
         const psDisabled = this._powerSave ? ' disabled' : '';
         const psLocked = this._powerSave ? ' settings-field-locked' : '';
 
-        const hdrDisabled = psDisabled;
-        const hdrLocked = psLocked;
+        // HDR is offered only on a display that can show it. matchMedia tracks
+        // the OS switch too (Windows "HDR off" → no match), so the box greys out
+        // the moment the desktop drops to SDR. On such a device the preference
+        // is also forced off: a saved "true" would otherwise still ask the host
+        // for HDR and hand PQ pixels to an SDR output.
+        const displayHdr = supportsDisplayHdr();
+        if (!displayHdr) this._hdrEnabled = false;
+        const hdrDisabled = displayHdr ? psDisabled : ' disabled';
+        const hdrLocked = displayHdr ? psLocked : ' settings-field-locked';
         const hdrChecked = this._hdrEnabled ? 'checked' : '';
+        const hdrNote = displayHdr
+            ? ''
+            : `<div class="settings-note">${t('settings.hdrDeviceSdr')}</div>`;
 
         // Allow tearing: only Chromium desktop can bypass VSync (desynchronized
         // canvas swapchain) — elsewhere the field is dimmed + locked (🔒),
@@ -947,8 +958,8 @@ export class SettingsView {
                         </select>
                     </div>
 
-                    <!-- HDR: requires HEVC (or AV1 HDR profile) and a WebGPU-capable browser.
-                         Shown when the app supports HDR; otherwise grayed out with the noWebgpu message. -->
+                    <!-- HDR: requires HEVC (or AV1 HDR profile) and a display in an HDR
+                         mode right now; otherwise greyed out, unchecked, with a one-line note. -->
                     <div class="settings-field${hdrLocked}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-hdr"
@@ -958,6 +969,7 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.hdrDesc')}</span>
+                        ${hdrNote}
                     </div>
 
                     <div class="settings-field">

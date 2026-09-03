@@ -205,6 +205,22 @@ export function resolveTearing(settings) {
     return s.tearing_default_v2 !== true || s.tearing_enabled === true;
 }
 
+/**
+ * True when the display this window sits on is in an HDR mode right now.
+ *
+ * A live property, not a capability: Windows with HDR switched off, or a
+ * laptop moved to an SDR screen, answers false. Evaluated on demand for that
+ * reason (the settings page and the launch both ask at their own moment).
+ * Main thread only — matchMedia does not exist in workers.
+ */
+export function supportsDisplayHdr() {
+    try {
+        return window.matchMedia('(dynamic-range: high)').matches;
+    } catch (e) {
+        return false;
+    }
+}
+
 /** True when the app runs as an installed PWA (no browser chrome). */
 export const IS_STANDALONE =
     window.navigator.standalone === true ||

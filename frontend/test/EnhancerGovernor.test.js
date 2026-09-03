@@ -45,10 +45,12 @@ function run(gov, costByLevel, seconds, startMs = 0, arrivalMs = 16.7) {
     return { steps, now };
 }
 
-// Cost of one draw per level, in ms. Under a call the GPU is contended and
-// FSR1 (3 passes) no longer fits a 16.7ms frame; SGSR (2 passes) does.
-const CONTENDED = { fsr1: 19.5, sgsr: 12, off: 3 };
-const IDLE = { fsr1: 10.3, sgsr: 6, off: 2 };
+// Cost of one draw per level, in ms, down the ladder fsr1 → nis → sgsr → off.
+// Under a call the GPU is contended and FSR1 (3 passes) no longer fits a
+// 16.7ms frame; NIS (one pass, heavier taps) does, and so does SGSR below it.
+const CONTENDED = { fsr1: 19.5, nis: 12, sgsr: 9, off: 3 };
+// Recovery needs the running level under 0.4 × 16.7 = 6.7ms.
+const IDLE = { fsr1: 10.3, nis: 6, sgsr: 5, off: 2 };
 
 describe('EnhancerGovernor — measured scenarios', () => {
     // Each: [name, render service time, arrival avg] from the captured [perf] lines.
@@ -71,7 +73,7 @@ describe('EnhancerGovernor — measured scenarios', () => {
     it('steps down under a Teams call at 60fps (19.5ms wait for a 16.7ms budget)', () => {
         const gov = new EnhancerGovernor('fsr1');
         const steps = feed(gov, { serviceMs: 19.5, arrivalMs: 16.7 }, 10);
-        expect(steps[0].algo).toBe('sgsr');
+        expect(steps[0].algo).toBe('nis');
         expect(gov.degraded).toBe(true);
     });
 });
@@ -86,7 +88,7 @@ describe('EnhancerGovernor', () => {
     it('walks the whole ladder down but stops at off', () => {
         const gov = new EnhancerGovernor('fsr1');
         const steps = feed(gov, { serviceMs: 40, arrivalMs: 16.7 }, 60);
-        expect(steps.map((s) => s.algo)).toEqual(['sgsr', 'off']);
+        expect(steps.map((s) => s.algo)).toEqual(['nis', 'sgsr', 'off']);
         expect(gov.level).toBe('off');
     });
 
@@ -102,14 +104,14 @@ describe('EnhancerGovernor', () => {
     it('stops at the first level that fits, instead of falling to off', () => {
         const gov = new EnhancerGovernor('fsr1');
         const { steps } = run(gov, CONTENDED, 120);
-        expect(steps.map((s) => s.algo)).toEqual(['sgsr']);
-        expect(gov.level).toBe('sgsr');
+        expect(steps.map((s) => s.algo)).toEqual(['nis']);
+        expect(gov.level).toBe('nis');
     });
 
     it('climbs back to the setting once the pressure is gone', () => {
         const gov = new EnhancerGovernor('fsr1');
         const call = run(gov, CONTENDED, 60);
-        expect(gov.level).toBe('sgsr');
+        expect(gov.level).toBe('nis');
 
         const after = run(gov, IDLE, 60, call.now);
         expect(after.steps.map((s) => s.algo)).toEqual(['fsr1']);
@@ -117,17 +119,17 @@ describe('EnhancerGovernor', () => {
     });
 
     it('backs off instead of flip-flopping when the level above never fits', () => {
-        // Pathological: SGSR looks cheap enough to justify a restore, FSR1 is
+        // Pathological: NIS looks cheap enough to justify a restore, FSR1 is
         // always too expensive — every restore is immediately undone.
         const gov = new EnhancerGovernor('fsr1');
-        const { steps } = run(gov, { fsr1: 19.5, sgsr: 6, off: 2 }, 300);
+        const { steps } = run(gov, { fsr1: 19.5, nis: 6, sgsr: 6, off: 2 }, 300);
         const restores = steps.filter((s) => s.algo === 'fsr1');
         // A fixed 15s retry would have burnt ~19 restores over five minutes.
         expect(restores.length).toBeLessThanOrEqual(4);
         // …and each attempt waits longer than the previous one.
         const gaps = restores.slice(1).map((s, i) => s.now - restores[i].now);
         for (let i = 1; i < gaps.length; i++) expect(gaps[i]).toBeGreaterThan(gaps[i - 1]);
-        expect(gov.level).toBe('sgsr');
+        expect(gov.level).toBe('nis');
     });
 
     it('ignores the window right after a switch (it describes the old level)', () => {
@@ -135,7 +137,7 @@ describe('EnhancerGovernor', () => {
         // One expensive burst, long enough to degrade once and no more: the
         // stale samples that follow must not walk the ladder down again.
         const steps = feed(gov, { serviceMs: 40, arrivalMs: 16.7 }, 3);
-        expect(steps.map((s) => s.algo)).toEqual(['sgsr']);
+        expect(steps.map((s) => s.algo)).toEqual(['nis']);
     });
 
     it('decides nothing without a usable frame budget', () => {
