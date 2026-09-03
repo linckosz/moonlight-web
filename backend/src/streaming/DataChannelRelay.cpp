@@ -454,20 +454,31 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     // Dedicated sender thread: fragmentation + dc->send() run off the main thread.
     m_Sender = std::make_unique<FrameSender>();
 
-    // Video path threading. The native engine emits videoFrameReady on its own
-    // capture thread, the moment the encoder is done; queueing that onto the
-    // relay thread costs a wake-up per frame on a thread that also parses
-    // every input message, answers the signaling WS and ticks the stats. So
-    // for that engine the slot runs where the frame is, and the state it
-    // touches is serialized by m_VideoMutex (MediaTrackRelay's P2-B model).
-    // A GameStream engine keeps the queued hop, unchanged: its frames arrive
-    // from moonlight-common-c's thread and the relay thread has always been
-    // where they were handled.
-    m_DirectVideoSend = qobject_cast<NativeMediaEngine*>(engine) != nullptr;
+    // Video path threading. The native engine finishes a frame on its own
+    // capture thread; queueing it onto the relay thread costs a wake-up per
+    // frame on a thread that also parses every input message, answers the
+    // signaling WS and ticks the stats — and a QByteArray copy so the frame
+    // survives the queue. So for that engine the relay takes the frame where
+    // it is: it installs itself as the engine's direct sink, reads the
+    // encoder's buffer through a borrowed QByteArray and cuts the wire chunks
+    // right there (sendFragmented). The state it touches is serialized by
+    // m_VideoMutex (MediaTrackRelay's P2-B model). A GameStream engine keeps
+    // the queued signal, unchanged: its frames arrive from moonlight-common-c's
+    // thread and the relay thread has always been where they were handled.
+    auto* native = qobject_cast<NativeMediaEngine*>(engine);
+    m_DirectVideoSend = native != nullptr;
     qInfo() << "[DataChannelRelay] Video send mode:"
-            << (m_DirectVideoSend ? "direct (capture thread)" : "queued (relay thread)");
-    connect(m_Shim, &IMediaEngine::videoFrameReady, this, &DataChannelRelay::onVideoFrame,
-            m_DirectVideoSend ? Qt::DirectConnection : Qt::AutoConnection);
+            << (m_DirectVideoSend ? "direct (capture thread, zero-copy)" : "queued (relay thread)");
+    if (native) {
+        native->setDirectFrameSink([this](const NativeMediaEngine::FrameView& view) {
+            handleVideoFrame(QByteArray::fromRawData(reinterpret_cast<const char*>(view.data),
+                                                     static_cast<qsizetype>(view.size)),
+                             view.keyframe, static_cast<int>(view.frameNumber),
+                             view.presentationTimeUs);
+        });
+    } else {
+        connect(m_Shim, &IMediaEngine::videoFrameReady, this, &DataChannelRelay::onVideoFrame);
+    }
     connect(m_Shim, &IMediaEngine::audioSampleReady, this, &DataChannelRelay::onAudioSample);
     connect(m_Shim, &IMediaEngine::connectionTerminated, this,
             &DataChannelRelay::onShimConnectionTerminated);
@@ -839,6 +850,12 @@ bool DataChannelRelay::ridingOutLoss() const
 void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber,
                                     qint64 presentationTimeUs)
 {
+    handleVideoFrame(data, frameType == 1, frameNumber, presentationTimeUs);
+}
+
+void DataChannelRelay::handleVideoFrame(const QByteArray& data, bool isKeyframe, int frameNumber,
+                                        qint64 presentationTimeUs)
+{
     // Balance the worker→relay pending counter (incremented before each emit).
     // m_Shim lifetime is guaranteed: the shim is Qt-parented to this relay
     // (Session.cpp), so it cannot be destroyed while this slot runs.
@@ -876,12 +893,12 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
         sendIdrRequestThrottled();
     }
 
-    bool isKeyframe = (frameType == 1);
-
     // HEVC VPS/SPS patch for Chrome Windows black screen.
     // Patch the first keyframe once per session: Chrome's HEVC decoder chokes
     // on some VPS/SPS parameters (high level_idc, temporal sublayers). H.264
-    // needs no patch. Work on a mutable copy.
+    // needs no patch. `frameData` shares `data` until something writes to it:
+    // the patch below is the only writer, and it happens once per session, so
+    // this is the one frame that ever gets copied here.
     QByteArray frameData = data;
     if (isKeyframe && !m_HevcPatched) {
         // Detect HEVC via the presence of a VPS NAL (type 32).
@@ -902,7 +919,10 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
     // Without this buffer, the keyframe (containing SPS/PPS) is lost, the
     // browser's VideoDecoder can never configure, and we get decoder=null.
     if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
-        m_BufferedKeyframe = frameData;
+        // A deep copy on purpose: in direct mode `frameData` may still be a
+        // window onto the encoder's buffer, which is gone the moment this
+        // returns, and this keyframe has to outlive the call.
+        m_BufferedKeyframe = QByteArray(frameData.constData(), frameData.size());
         m_BufferedKeyframePresUs = presentationTimeUs;
         m_HaveBufferedKeyframe = true;
         m_NewKeyframeArrived = false; // Reset — we have the latest buffer
@@ -1347,10 +1367,11 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         backendTs = static_cast<uint32_t>(QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
     }
 
-    // Offload fragmentation + dc->send() to the dedicated sender thread so the
-    // Qt main thread (HTTP/REST/signaling) is never spent building chunks or
-    // blocking on a full SCTP buffer. The job holds a shared_ptr copy of the DC,
-    // so an in-flight send cannot outlive the channel during stop().
+    // dc->send() belongs to the dedicated sender thread: it can block on a full
+    // SCTP buffer, and neither the relay thread (HTTP/REST/signaling) nor the
+    // capture thread may ever wait on the wire. The job holds a shared_ptr
+    // copy of the DC, so an in-flight send cannot outlive the channel during
+    // stop().
     //
     // If the sender queue was full and a queued delta got evicted, that delta
     // already carries a frameId: the frontend will see a frameId gap, and every
@@ -1360,8 +1381,25 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     // The engine that stamps its frames gets told when each one left; the
     // others hand over a null sink and the sender reads no clock for them.
     FrameSentSink* sink = (frameNumber >= 0 && m_Shim) ? m_Shim->frameSentSink() : nullptr;
-    if (m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs,
-                          static_cast<uint32_t>(frameNumber < 0 ? 0 : frameNumber), sink)) {
+    const uint32_t reportedNumber = static_cast<uint32_t>(frameNumber < 0 ? 0 : frameNumber);
+    bool evicted = false;
+    if (m_DirectVideoSend) {
+        // Direct mode: `data` may be borrowed from the encoder (valid only for
+        // this call), so the chunks are cut here, once, straight from it —
+        // the header and the slice written together, nothing copied before
+        // and nothing left for the sender to copy after.
+        auto fragments = FrameSender::buildFragments(
+            reinterpret_cast<const uint8_t*>(data.constData()), static_cast<size_t>(data.size()),
+            isKeyframe, frameId, backendTs);
+        evicted =
+            m_Sender->enqueueFragments(dc, std::move(fragments), isKeyframe, reportedNumber, sink);
+    } else {
+        // Queued mode: the frame is already ours (copied out of the GameStream
+        // engine), the sender cuts it on its own thread as it always has.
+        evicted = m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs,
+                                    reportedNumber, sink);
+    }
+    if (evicted) {
         m_AwaitingIdr = true;
         sendIdrRequestThrottled();
     }
@@ -1486,6 +1524,17 @@ void DataChannelRelay::stop()
     if (QThread::currentThread() != this->thread()) {
         QMetaObject::invokeMethod(this, [this]() { stop(); }, Qt::QueuedConnection);
         return;
+    }
+
+    // Step out of the engine's frame path first, and before taking
+    // m_VideoMutex: clearing the sink waits for a frame in flight, and that
+    // frame is waiting for the mutex. Done even when we are already stopping
+    // (a state-change callback may have set the flag without coming through
+    // here), because from this point the engine must emit videoFrameReady
+    // again — the WebSocket fallback listens to that signal. Idempotent.
+    if (m_DirectVideoSend) {
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
+            native->setDirectFrameSink(nullptr);
     }
 
     if (m_Stopping.exchange(true)) {

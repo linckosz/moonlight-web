@@ -192,6 +192,12 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     emit connectionStarted();
 }
 
+void NativeMediaEngine::setDirectFrameSink(FrameSink sink)
+{
+    std::lock_guard<std::mutex> lock(m_SinkMutex);
+    m_DirectSink = std::move(sink);
+}
+
 void NativeMediaEngine::onEncodedFrame(const mw::native::EncodedFrame& encoded)
 {
     if (!encoded.data || encoded.size == 0) return;
@@ -199,12 +205,6 @@ void NativeMediaEngine::onEncodedFrame(const mw::native::EncodedFrame& encoded)
     const int64_t presentUs = encoded.presentUs;
     const int64_t encodedUs = encoded.encodedUs;
     const uint32_t frameNumber = encoded.frameNumber;
-
-    // The one copy on this path, and it is unavoidable: the engine's buffer is
-    // unlocked the moment this returns, while the relay's send is asynchronous.
-    // The GameStream path makes the same copy — after having already paid for
-    // RTP, FEC, decryption and reassembly to produce it.
-    QByteArray frame(reinterpret_cast<const char*>(encoded.data), static_cast<int>(encoded.size));
 
     // The host-side stages this thread can close, and the stamps the sender
     // will need to close the rest. Under the lock, briefly: the sender thread
@@ -244,6 +244,34 @@ void NativeMediaEngine::onEncodedFrame(const mw::native::EncodedFrame& encoded)
         m_ProcWindowTotalUs.fetch_add(encodedUs - presentUs, std::memory_order_acq_rel);
         m_ProcWindowCount.fetch_add(1, std::memory_order_acq_rel);
     }
+
+    // The zero-copy path: the relay that owns the video takes the frame from
+    // the encoder's own buffer, here, on this thread, and fragments it before
+    // we return. No QByteArray, no signal, no queue.
+    {
+        std::lock_guard<std::mutex> lock(m_SinkMutex);
+        if (m_DirectSink) {
+            FrameView view;
+            view.data = encoded.data;
+            view.size = encoded.size;
+            view.keyframe = encoded.keyframe;
+            view.frameNumber = frameNumber;
+            view.presentationTimeUs = relativePresentUs;
+            // Same bookkeeping as the signal path: the consumer balances it with
+            // videoFrameDelivered(), so the relays' drop diagnostics stay true.
+            m_PendingVideoFrames.fetch_add(1, std::memory_order_acq_rel);
+            m_DirectSink(view);
+            return;
+        }
+    }
+
+    // The signal path — every other listener: the media-track relay, the
+    // WebSocket fallback, the legacy WSS relay. One copy, unavoidable here: the
+    // engine's buffer is unlocked the moment this returns, while a queued
+    // receiver reads it later. The GameStream path makes the same copy — after
+    // having already paid for RTP, FEC, decryption and reassembly to produce
+    // it.
+    QByteArray frame(reinterpret_cast<const char*>(encoded.data), static_cast<int>(encoded.size));
 
     m_PendingVideoFrames.fetch_add(1, std::memory_order_acq_rel);
 

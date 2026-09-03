@@ -51,11 +51,14 @@ class IMediaEngine;
 //   together with the media engine and the signaling server.
 // - GameStream engines: media engine signals are queued onto the relay thread
 //   (AutoConnection), byte for byte the historical path.
-// - Native engine: videoFrameReady is connected DIRECT, so onVideoFrame runs on
-//   the capture thread that just finished encoding — no event-loop hop before
-//   the frame reaches the sender. Everything that slot touches (buffered
-//   keyframe, IDR gate, drop counters, the video DC pointer) is guarded by
-//   m_VideoMutex, the arrangement MediaTrackRelay already runs with.
+// - Native engine: no signal at all. The relay installs itself as the engine's
+//   direct frame sink (NativeMediaEngine::setDirectFrameSink), so
+//   handleVideoFrame runs on the capture thread that just finished encoding,
+//   reading the encoder's own buffer, and the wire chunks are built right
+//   there — no event-loop hop and no intermediate copy before the frame
+//   reaches the sender. Everything that path touches (buffered keyframe, IDR
+//   gate, drop counters, the video DC pointer) is guarded by m_VideoMutex, the
+//   arrangement MediaTrackRelay already runs with.
 // - libdatachannel callbacks (onMessage for input) fire from internal threads.
 //   We marshal input back to the relay thread via QMetaObject::invokeMethod.
 class DataChannelRelay : public RelayBase
@@ -142,6 +145,14 @@ private slots:
     void onShimConnectionTerminated(int errorCode);
 
 private:
+    // The video path proper, shared by the queued slot above and the native
+    // engine's direct sink. `data` may be a BORROWED buffer
+    // (QByteArray::fromRawData over the encoder's output): valid until this
+    // returns, never to be kept — the one place that keeps a frame (the
+    // buffered keyframe) copies explicitly.
+    void handleVideoFrame(const QByteArray& data, bool isKeyframe, int frameNumber,
+                          qint64 presentationTimeUs);
+
     // Best-effort exit notice ({"type": ...}) on the input DC before stop().
     void sendExitNotice(const char* type);
 
@@ -178,6 +189,10 @@ private:
     // frameNumber: the engine's own number for the frame, so the sender can
     // report when it left (IMediaEngine::frameSentSink). -1 = not a live frame
     // (a buffered keyframe replayed at DC open) — nothing is reported.
+    //
+    // In direct mode the chunks are built here, on the calling thread, from
+    // `data` (which may be borrowed — see handleVideoFrame), and the sender
+    // only sends. Otherwise the frame is queued whole and the sender cuts it.
     void sendFragmented(const QByteArray& data, bool isKeyframe,
                         std::shared_ptr<rtc::DataChannel>& dc, qint64 presentationTimeUs = -1,
                         int frameNumber = -1);
@@ -194,8 +209,9 @@ private:
 
     IMediaEngine* m_Shim;
 
-    // True when videoFrameReady is wired DirectConnection (native engine):
-    // onVideoFrame then runs on the engine's capture thread. False for every
+    // True when this relay is the native engine's direct frame sink:
+    // handleVideoFrame then runs on the engine's capture thread over a borrowed
+    // buffer, and sendFragmented builds the chunks itself. False for every
     // GameStream engine, whose frames keep arriving through the relay thread's
     // event loop exactly as before.
     bool m_DirectVideoSend = false;
