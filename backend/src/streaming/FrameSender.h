@@ -24,20 +24,29 @@
 #include <deque>
 #include <memory>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace rtc {
 class DataChannel;
 }
 class FrameSentSink;
 
-// Dedicated worker thread that performs DataChannel fragmentation + send,
-// offloading this per-frame CPU work off the Qt main thread (which also runs
-// the HTTP server). Jobs are enqueued from the main thread; the worker builds
-// the fragment chunks and calls dc->send() (libdatachannel's send is internally
-// thread-safe). This keeps the control plane (HTTP/REST/signaling) responsive
-// under streaming load and brings the DataChannel transport to parity with the
-// MediaTrack transport, which already sends off the main thread.
+// Dedicated worker thread that performs the DataChannel send, offloading it
+// from whichever thread produces the frames: the relay thread for a GameStream
+// engine, the capture thread for the native one. dc->send() can block on a
+// full SCTP buffer, and neither of those threads may ever wait on the wire.
+//
+// Two kinds of job, one queue:
+//   - a whole frame (QByteArray): the worker fragments it and sends the chunks.
+//     This is the GameStream path, unchanged — the frame was already copied
+//     out of moonlight-common-c's buffers, so the copy into each chunk here is
+//     the only one that could be moved, and it is not worth changing that path.
+//   - ready fragments: the producer built the wire chunks itself, straight out
+//     of the encoder's buffer (buildFragments), and the worker only sends. This
+//     is the native path — the chunk write IS the one copy that frame pays
+//     outside the engine.
 //
 // Frame ordering per DataChannel is preserved: a single worker drains the queue
 // in FIFO order. The job holds a shared_ptr to the DataChannel so a send in
@@ -46,6 +55,10 @@ class FrameSentSink;
 class FrameSender
 {
 public:
+    /// One wire chunk: the 17-byte header followed by up to kMaxPayloadSize
+    /// bytes of payload. The same type libdatachannel calls rtc::binary.
+    using Fragment = std::vector<std::byte>;
+
     FrameSender();
     ~FrameSender();
 
@@ -67,6 +80,20 @@ public:
                  bool isAudio, uint32_t frameId, uint32_t backendTs, uint32_t frameNumber = 0,
                  FrameSentSink* sink = nullptr);
 
+    // Same contract, for fragments the producer already built (buildFragments).
+    // Nothing is copied here or on the worker: the chunks move into the queue
+    // and from the queue to the channel.
+    bool enqueueFragments(std::shared_ptr<rtc::DataChannel> dc, std::vector<Fragment>&& fragments,
+                          bool isKeyframe, uint32_t frameNumber = 0, FrameSentSink* sink = nullptr);
+
+    // Cut one frame into wire chunks, header included, reading `data` once.
+    // `data` is borrowed: it only has to stay valid until this returns, which
+    // is what lets the native relay call it on the encoder's own buffer before
+    // the encoder unlocks it. Same bytes, chunk for chunk, as the worker
+    // produces for a queued QByteArray.
+    static std::vector<Fragment> buildFragments(const uint8_t* data, size_t size, bool isKeyframe,
+                                                uint32_t frameId, uint32_t backendTs);
+
     // Stop the worker thread and discard pending jobs. Idempotent; safe to call
     // from the relay's stop()/destructor.
     void stop();
@@ -78,7 +105,10 @@ private:
     struct Job
     {
         std::shared_ptr<rtc::DataChannel> dc;
+        // Exactly one of the two is filled: a whole frame to fragment on the
+        // worker, or chunks ready to go.
         QByteArray data;
+        std::vector<Fragment> fragments;
         bool isKeyframe = false;
         bool isAudio = false;
         uint32_t frameId = 0;
@@ -95,6 +125,14 @@ private:
     // on a full SCTP buffer), drop the oldest delta frames rather than letting
     // the queue grow unbounded and add latency. Keyframes are always preserved.
     static constexpr size_t kMaxQueued = 8;
+
+    /// Write the 17-byte chunk header at `dst`.
+    static void writeHeader(std::byte* dst, uint32_t frameId, uint16_t chunkIdx,
+                            uint16_t totalChunks, bool isKeyframe, uint32_t payloadSize,
+                            uint32_t backendTs);
+
+    /// Queue a job under the cap. Returns true when a delta was evicted.
+    bool push(Job&& job);
 
     void run();
     void sendJob(const Job& job);

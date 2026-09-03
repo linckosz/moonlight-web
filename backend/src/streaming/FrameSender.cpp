@@ -58,12 +58,64 @@ void FrameSender::stop()
     if (m_Thread.joinable()) m_Thread.join();
 }
 
-bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data,
-                          bool isKeyframe, bool isAudio, uint32_t frameId, uint32_t backendTs,
-                          uint32_t frameNumber, FrameSentSink* sink)
+void FrameSender::writeHeader(std::byte* dst, uint32_t frameId, uint16_t chunkIdx,
+                              uint16_t totalChunks, bool isKeyframe, uint32_t payloadSize,
+                              uint32_t backendTs)
 {
-    if (m_Stop.load(std::memory_order_acquire) || !dc) return false;
+    // [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
+    // All multi-byte fields big endian.
+    dst[0] = static_cast<std::byte>((frameId >> 24) & 0xFF);
+    dst[1] = static_cast<std::byte>((frameId >> 16) & 0xFF);
+    dst[2] = static_cast<std::byte>((frameId >> 8) & 0xFF);
+    dst[3] = static_cast<std::byte>(frameId & 0xFF);
 
+    dst[4] = static_cast<std::byte>((chunkIdx >> 8) & 0xFF);
+    dst[5] = static_cast<std::byte>(chunkIdx & 0xFF);
+
+    dst[6] = static_cast<std::byte>((totalChunks >> 8) & 0xFF);
+    dst[7] = static_cast<std::byte>(totalChunks & 0xFF);
+
+    dst[8] = static_cast<std::byte>(isKeyframe ? 0x01 : 0x00);
+
+    dst[9] = static_cast<std::byte>((payloadSize >> 24) & 0xFF);
+    dst[10] = static_cast<std::byte>((payloadSize >> 16) & 0xFF);
+    dst[11] = static_cast<std::byte>((payloadSize >> 8) & 0xFF);
+    dst[12] = static_cast<std::byte>(payloadSize & 0xFF);
+
+    // Same value for all chunks of a frame.
+    dst[13] = static_cast<std::byte>((backendTs >> 24) & 0xFF);
+    dst[14] = static_cast<std::byte>((backendTs >> 16) & 0xFF);
+    dst[15] = static_cast<std::byte>((backendTs >> 8) & 0xFF);
+    dst[16] = static_cast<std::byte>(backendTs & 0xFF);
+}
+
+std::vector<FrameSender::Fragment> FrameSender::buildFragments(const uint8_t* data, size_t size,
+                                                               bool isKeyframe, uint32_t frameId,
+                                                               uint32_t backendTs)
+{
+    std::vector<Fragment> fragments;
+    if (!data || size == 0) return fragments;
+
+    const size_t payloadMax = static_cast<size_t>(kMaxPayloadSize);
+    const size_t totalChunks = (size + payloadMax - 1) / payloadMax;
+    fragments.reserve(totalChunks);
+
+    for (size_t chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+        const size_t offset = chunkIdx * payloadMax;
+        const size_t payloadSize = std::min(payloadMax, size - offset);
+
+        Fragment bin(static_cast<size_t>(kFragHeaderSize) + payloadSize);
+        writeHeader(bin.data(), frameId, static_cast<uint16_t>(chunkIdx),
+                    static_cast<uint16_t>(totalChunks), isKeyframe,
+                    static_cast<uint32_t>(payloadSize), backendTs);
+        std::memcpy(bin.data() + kFragHeaderSize, data + offset, payloadSize);
+        fragments.push_back(std::move(bin));
+    }
+    return fragments;
+}
+
+bool FrameSender::push(Job&& job)
+{
     bool droppedDelta = false;
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
@@ -79,8 +131,7 @@ bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray
             droppedDelta = true;
         }
 
-        m_Queue.push_back(
-            Job{std::move(dc), data, isKeyframe, isAudio, frameId, backendTs, frameNumber, sink});
+        m_Queue.push_back(std::move(job));
     }
     m_Cv.notify_one();
     if (droppedDelta) {
@@ -93,6 +144,39 @@ bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray
         }
     }
     return droppedDelta;
+}
+
+bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data,
+                          bool isKeyframe, bool isAudio, uint32_t frameId, uint32_t backendTs,
+                          uint32_t frameNumber, FrameSentSink* sink)
+{
+    if (m_Stop.load(std::memory_order_acquire) || !dc) return false;
+
+    Job job;
+    job.dc = std::move(dc);
+    job.data = data;
+    job.isKeyframe = isKeyframe;
+    job.isAudio = isAudio;
+    job.frameId = frameId;
+    job.backendTs = backendTs;
+    job.frameNumber = frameNumber;
+    job.sink = sink;
+    return push(std::move(job));
+}
+
+bool FrameSender::enqueueFragments(std::shared_ptr<rtc::DataChannel> dc,
+                                   std::vector<Fragment>&& fragments, bool isKeyframe,
+                                   uint32_t frameNumber, FrameSentSink* sink)
+{
+    if (m_Stop.load(std::memory_order_acquire) || !dc || fragments.empty()) return false;
+
+    Job job;
+    job.dc = std::move(dc);
+    job.fragments = std::move(fragments);
+    job.isKeyframe = isKeyframe;
+    job.frameNumber = frameNumber;
+    job.sink = sink;
+    return push(std::move(job));
 }
 
 void FrameSender::run()
@@ -119,64 +203,48 @@ void FrameSender::sendJob(const Job& job)
     auto& dc = job.dc;
     if (!dc || !dc->isOpen()) return;
 
-    const int totalSize = job.data.size();
-    const int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
-
     // t₄, only when somebody is listening: the clock read is cheap, but a
     // stamp nobody reads is still work on the wire's thread.
     const int64_t firstByteUs = job.sink ? steadyNowUs() : 0;
 
-    for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-        if (m_Stop.load(std::memory_order_acquire)) return;
-
-        const int offset = chunkIdx * kMaxPayloadSize;
-        const int payloadSize = std::min(kMaxPayloadSize, totalSize - offset);
-
-        rtc::binary bin(kFragHeaderSize + payloadSize);
-
-        // Frame ID (4 bytes, big endian)
-        bin[0] = static_cast<std::byte>((job.frameId >> 24) & 0xFF);
-        bin[1] = static_cast<std::byte>((job.frameId >> 16) & 0xFF);
-        bin[2] = static_cast<std::byte>((job.frameId >> 8) & 0xFF);
-        bin[3] = static_cast<std::byte>(job.frameId & 0xFF);
-
-        // Chunk index (2 bytes, big endian)
-        uint16_t chunkIdx16 = static_cast<uint16_t>(chunkIdx);
-        bin[4] = static_cast<std::byte>((chunkIdx16 >> 8) & 0xFF);
-        bin[5] = static_cast<std::byte>(chunkIdx16 & 0xFF);
-
-        // Total chunks (2 bytes, big endian)
-        uint16_t totalChunks16 = static_cast<uint16_t>(totalChunks);
-        bin[6] = static_cast<std::byte>((totalChunks16 >> 8) & 0xFF);
-        bin[7] = static_cast<std::byte>(totalChunks16 & 0xFF);
-
-        // Is keyframe (1 byte)
-        bin[8] = static_cast<std::byte>(job.isKeyframe ? 0x01 : 0x00);
-
-        // Payload size (4 bytes, big endian)
-        uint32_t payloadSize32 = static_cast<uint32_t>(payloadSize);
-        bin[9] = static_cast<std::byte>((payloadSize32 >> 24) & 0xFF);
-        bin[10] = static_cast<std::byte>((payloadSize32 >> 16) & 0xFF);
-        bin[11] = static_cast<std::byte>((payloadSize32 >> 8) & 0xFF);
-        bin[12] = static_cast<std::byte>(payloadSize32 & 0xFF);
-
-        // Backend timestamp (4 bytes, big endian) — same value for all chunks
-        bin[13] = static_cast<std::byte>((job.backendTs >> 24) & 0xFF);
-        bin[14] = static_cast<std::byte>((job.backendTs >> 16) & 0xFF);
-        bin[15] = static_cast<std::byte>((job.backendTs >> 8) & 0xFF);
-        bin[16] = static_cast<std::byte>(job.backendTs & 0xFF);
-
-        // Payload
-        std::memcpy(bin.data() + kFragHeaderSize, job.data.constData() + offset,
-                    static_cast<size_t>(payloadSize));
-
-        try {
-            dc->send(bin);
-        } catch (const std::exception& e) {
-            if (!m_Stop.load(std::memory_order_acquire)) {
-                qWarning() << "[FrameSender] send error:" << e.what();
+    if (!job.fragments.empty()) {
+        // Ready-made chunks: nothing to build, just hand them over in order.
+        for (const Fragment& bin : job.fragments) {
+            if (m_Stop.load(std::memory_order_acquire)) return;
+            try {
+                dc->send(bin);
+            } catch (const std::exception& e) {
+                if (!m_Stop.load(std::memory_order_acquire)) {
+                    qWarning() << "[FrameSender] send error:" << e.what();
+                }
+                return;
             }
-            return;
+        }
+    } else {
+        const int totalSize = job.data.size();
+        const int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
+
+        for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+            if (m_Stop.load(std::memory_order_acquire)) return;
+
+            const int offset = chunkIdx * kMaxPayloadSize;
+            const int payloadSize = std::min(kMaxPayloadSize, totalSize - offset);
+
+            rtc::binary bin(kFragHeaderSize + payloadSize);
+            writeHeader(bin.data(), job.frameId, static_cast<uint16_t>(chunkIdx),
+                        static_cast<uint16_t>(totalChunks), job.isKeyframe,
+                        static_cast<uint32_t>(payloadSize), job.backendTs);
+            std::memcpy(bin.data() + kFragHeaderSize, job.data.constData() + offset,
+                        static_cast<size_t>(payloadSize));
+
+            try {
+                dc->send(bin);
+            } catch (const std::exception& e) {
+                if (!m_Stop.load(std::memory_order_acquire)) {
+                    qWarning() << "[FrameSender] send error:" << e.what();
+                }
+                return;
+            }
         }
     }
 

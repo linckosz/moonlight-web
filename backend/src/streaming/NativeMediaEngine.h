@@ -24,6 +24,9 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -91,8 +94,38 @@ public:
         bool intraRefresh = false;
     };
 
+    /// One encoded frame, borrowed: `data` is the encoder's own output buffer
+    /// and is valid only until the sink returns. Whatever must outlive the call
+    /// (a keyframe kept for a channel that is not open yet) is copied by the
+    /// sink, explicitly — nothing here is copied on its behalf.
+    struct FrameView
+    {
+        const uint8_t* data = nullptr;
+        size_t size = 0;
+        bool keyframe = false;
+        uint32_t frameNumber = 0;
+        /// µs since the session's first frame — the same relative stamp the
+        /// videoFrameReady signal carries.
+        int64_t presentationTimeUs = 0;
+    };
+    using FrameSink = std::function<void(const FrameView&)>;
+
     explicit NativeMediaEngine(QObject* parent = nullptr);
     ~NativeMediaEngine() override;
+
+    /// Hand every encoded frame to @p sink, synchronously on the capture
+    /// thread, INSTEAD of copying it into a QByteArray and emitting
+    /// videoFrameReady. This is the zero-copy path: the relay fragments
+    /// straight out of the encoder's buffer.
+    ///
+    /// Only one consumer can have it, and it takes the signal away from every
+    /// other listener — so it is for the relay that owns the session's video,
+    /// and it must be cleared (nullptr) before that relay stops caring, at
+    /// which point the signal path resumes (the WebSocket fallback relies on
+    /// exactly this). Clearing blocks until a frame in flight has left the
+    /// sink, so once it returns the sink is never called again. Safe at any
+    /// time, from any thread — but never from inside the sink itself.
+    void setDirectFrameSink(FrameSink sink);
 
     /// Build and start the pipeline. Not part of IMediaEngine, for the same
     /// reason MoonlightShim::startConnection is not: the parameters are this
@@ -189,6 +222,13 @@ private:
     void onCursor(const mw::native::CursorUpdate& cursor);
 
     std::unique_ptr<mw::native::Session> m_Session;
+
+    /// See setDirectFrameSink. The mutex is held for the whole sink call, so
+    /// clearing the sink waits out a frame in flight; it is uncontended
+    /// otherwise (one lock per frame on the capture thread, and the relay only
+    /// touches it at setup and teardown).
+    std::mutex m_SinkMutex;
+    FrameSink m_DirectSink;
 
     /// The input dead-man switch (contract in InputWatchdog.h). Owned, on this
     /// engine's thread. Fed with the SHIFTED controller numbers, so what it
