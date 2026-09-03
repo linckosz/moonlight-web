@@ -155,23 +155,14 @@ export function physicalScreenSize() {
 
 /**
  * Pick the auto Video-Enhancement upscaler for this device: 'fsr1' (sharper,
- * heavier) or 'sgsr' (lighter). WebGPU availability is handled separately by the
- * renderer, which falls back to Canvas2D (no enhancement) when absent.
- *
- *  - FSR1: all desktops (Win/Linux/macOS), all iOS (Metal-backed WebGPU), and
- *    Android phones/tablets that are beefy enough (≥6 logical cores AND a
- *    physical screen of at least 1080p, i.e. short edge ≥ 1080).
- *  - SGSR: everything else.
+ * three passes) on a desktop, 'sgsr' (one light pass) on a phone or tablet.
+ * Decided 03/09/2026 with the SDR matrix: the platform class is the whole
+ * rule — a phone's GPU budget is spent on the decode, whatever its core count.
+ * Which API runs it (WebGL2 in SDR, WebGPU in HDR) is StreamView's call.
  * @returns {'fsr1'|'sgsr'}
  */
 export function pickAutoEnhancer() {
-    if (PLATFORM_TYPE === 'desktop' || IS_IOS) return 'fsr1';
-    if (IS_ANDROID) {
-        const cores = navigator.hardwareConcurrency || 0;
-        const { short } = physicalScreenSize();
-        if (cores >= 6 && short >= 1080) return 'fsr1';
-    }
-    return 'sgsr';
+    return PLATFORM_TYPE === 'desktop' ? 'fsr1' : 'sgsr';
 }
 
 /**
@@ -219,6 +210,59 @@ export function supportsDisplayHdr() {
     } catch (e) {
         return false;
     }
+}
+
+/** 10-bit profiles an HDR stream arrives in: HEVC Main10, then AV1 10-bit. */
+const HDR_DECODE_PROBES = ['hvc1.2.4.L153.B0', 'hev1.2.4.L153.B0', 'av01.0.08M.10'];
+let hdrStaticProbe = null;
+
+/**
+ * Whether THIS client can show an HDR stream, part by part: the display is in
+ * an HDR mode right now, WebGPU has an adapter (the only renderer with an HDR
+ * surface), and the browser decodes a 10-bit profile. `ok` is the three
+ * together — what the HDR checkbox and the launch gate both key on.
+ *
+ * The display answer is live (see supportsDisplayHdr); the other two are
+ * probed once per page, they do not change under us.
+ * @returns {Promise<{display: boolean, webgpu: boolean, decode: boolean, ok: boolean}>}
+ */
+export async function hdrClientCapability() {
+    if (!hdrStaticProbe) {
+        hdrStaticProbe = (async () => {
+            let webgpu = false;
+            try {
+                webgpu = !!(navigator.gpu && (await navigator.gpu.requestAdapter()));
+            } catch (e) {
+                webgpu = false;
+            }
+            let decode = false;
+            if (
+                typeof VideoDecoder !== 'undefined' &&
+                typeof VideoDecoder.isConfigSupported === 'function'
+            ) {
+                for (const codec of HDR_DECODE_PROBES) {
+                    try {
+                        const r = await VideoDecoder.isConfigSupported({ codec });
+                        if (r && r.supported) {
+                            decode = true;
+                            break;
+                        }
+                    } catch (e) {
+                        // This string is refused outright — try the next profile.
+                    }
+                }
+            }
+            return { webgpu, decode };
+        })();
+    }
+    const probe = await hdrStaticProbe;
+    const display = supportsDisplayHdr();
+    return {
+        display,
+        webgpu: probe.webgpu,
+        decode: probe.decode,
+        ok: display && probe.webgpu && probe.decode,
+    };
 }
 
 /** True when the app runs as an installed PWA (no browser chrome). */
