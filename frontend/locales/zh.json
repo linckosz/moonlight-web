@@ -299,6 +299,8 @@
         "powerSaveToggle": "省电模式",
         "powerSaveDesc": "在使用电池时强制采用最轻量的管线：原生视频传输（优先 UDP）、H.264、无 HDR、无增强、720p / 60fps。分辨率、帧率和码率仍可调整。取消勾选会恢复你之前未更改的值。",
         "algoAuto": "自动",
+        "algoCanvas2d": "Canvas2D（不增强）",
+        "algoVideo": "Video 元素（不增强）",
         "algoPerfSmooth2d": "性能（Smooth2D）",
         "algoPerfGl": "性能（SGSR1 WebGL2）",
         "algoPerfGpu": "性能（SGSR1 WebGPU）",

@@ -44,7 +44,13 @@ export async function createVideoRenderer(canvas, opts) {
     // The canvas paths (WebGPU/Canvas2D) tone-map HDR away (importExternalTexture /
     // drawImage only output SDR color spaces) — <video> presents HDR natively. Needs
     // a DOM <video> (opts.videoEl), so it is main-thread only (not the worker path).
-    if (opts.hdr && opts.videoEl && typeof MediaStreamTrackGenerator !== 'undefined') {
+    // opts.forceVideo: the same sink on purpose, HDR or not (the debug menu's
+    // "Video element" entry, to measure it against the canvas presenters).
+    if (
+        (opts.hdr || opts.forceVideo) &&
+        opts.videoEl &&
+        typeof MediaStreamTrackGenerator !== 'undefined'
+    ) {
         try {
             return await VideoElementRenderer.create(canvas, opts);
         } catch (e) {

@@ -436,8 +436,21 @@ export class StreamView {
         const hdr = hdrEnabled === true;
         let algo = 'off'; // no upscaler
         let wantWebGpu = hdr; // every HDR path renders on WebGPU
+        // Debug menu: the two plain presenters, chosen by hand to be measured
+        // against the upscalers. 'canvas2d' is the SDR 'off' path whatever the
+        // HDR setting (an SDR canvas: the browser tone-maps on import);
+        // 'video' is the <video> sink, in SDR too.
+        let forceCanvas2d = false;
+        let forceVideo = false;
         if (videoEnhancement === 'on') {
             let sel = videoEnhancementAlgo || 'auto';
+            if (sel === 'canvas2d') {
+                forceCanvas2d = true;
+                sel = 'off';
+            } else if (sel === 'video') {
+                forceVideo = true;
+                sel = 'off';
+            }
             if (sel === 'auto') sel = hdr ? 'fsr1' : 'gl-' + pickAutoEnhancer();
             // HDR has no WebGL2 or Canvas2D presentation in Chrome (no HDR
             // surface for either), so with HDR on every upscaler runs in its
@@ -462,7 +475,9 @@ export class StreamView {
         }
         // Whether the user enabled the Enhancer (used to flag it OFF in the overlay
         // when the stream lands on webrtc-media, where it can't be applied).
-        this._videoEnhancementRequested = videoEnhancement === 'on';
+        this._videoEnhancementRequested =
+            videoEnhancement === 'on' && !forceCanvas2d && !forceVideo;
+        if (forceCanvas2d) wantWebGpu = false;
         this._wantWebGpu = wantWebGpu;
         // Dev override (no UI): also force the Canvas2D path for comparison.
         try {
@@ -486,7 +501,11 @@ export class StreamView {
         // Dev: mw_hdr_tonemap = '1' forces 'tonemap' on an HDR display (to
         // compare), '0' disables the readback altogether.
         let hdrMode = 'none';
-        if (hdr && transport !== 'webrtc-media') {
+        if (forceVideo && transport !== 'webrtc-media') {
+            hdrMode = typeof MediaStreamTrackGenerator !== 'undefined' ? 'sink' : 'none';
+        } else if (forceCanvas2d) {
+            hdrMode = hdr ? 'browser' : 'none';
+        } else if (hdr && transport !== 'webrtc-media') {
             let readback = videoCodec === 'av1' && !!navigator.gpu;
             let forceTonemap = false;
             try {
@@ -510,6 +529,7 @@ export class StreamView {
         // dropped, and said so, rather than silently swapped for a tone-map that
         // would throw the HDR away.
         this._enhancerBlockedByHdr = false;
+        this._forceVideoSink = forceVideo;
         if (hdrMode === 'sink' && algo !== 'off') {
             console.log(
                 '[StreamView] HDR: ' +
@@ -1786,9 +1806,10 @@ export class StreamView {
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
                 webgpu: this._wantWebGpu,
                 algo: this._videoEnhancementAlgo,
-                hdr: this._useVideoSink || this._hdrLinear,
+                hdr: (this._useVideoSink && this._hdrEnabled) || this._hdrLinear,
                 hdrTonemap: this._hdrTonemap,
                 hdrLinear: this._hdrLinear,
+                forceVideo: this._forceVideoSink,
                 videoEl: this._useVideoSink ? this.videoEl : null,
             }).then((r) => {
                 this._renderer = r;
@@ -3763,9 +3784,10 @@ export class StreamView {
                         isChromeWindowsHevc: this._isChromeWindowsHevc,
                         webgpu: this._wantWebGpu,
                         algo: this._videoEnhancementAlgo,
-                        hdr: this._useVideoSink || this._hdrLinear,
+                        hdr: (this._useVideoSink && this._hdrEnabled) || this._hdrLinear,
                         hdrTonemap: this._hdrTonemap,
                         hdrLinear: this._hdrLinear,
+                        forceVideo: this._forceVideoSink,
                         videoEl: this._useVideoSink ? this.videoEl : null,
                     }).then((r) => {
                         this._renderer = r;
