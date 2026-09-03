@@ -1254,9 +1254,12 @@ private:
         // The drawn extent, not the canvas: Windows pads the same arrow into
         // 32, 48 or 64-pixel buffers depending on where it came from, and sizing
         // on the buffer made the pointer change size every time the shape
-        // changed hands. See CursorState::inkWidth.
+        // changed hands. The LONGER side of the ink, so a tall I-beam and a
+        // wide resize arrow both come out the size the client asked for rather
+        // than the narrow one being blown up. See CursorState::inkWidth.
         const capture::CursorState& shape = m_Capture->cursor();
-        const int shapeWidth = shape.inkWidth > 0 ? shape.inkWidth : shape.width;
+        const int ink = shape.inkWidth > shape.inkHeight ? shape.inkWidth : shape.inkHeight;
+        const int shapeWidth = ink > 0 ? ink : shape.width;
         if (shapeWidth <= 0) return 1.0f;
         const float natural = static_cast<float>(shapeWidth) * cursorScale();
         if (!(natural > 0.0f)) return 1.0f;
