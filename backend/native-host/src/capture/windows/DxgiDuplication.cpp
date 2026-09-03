@@ -230,6 +230,12 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
     m_CursorHotspotX = static_cast<int>(shape.HotSpot.x);
     m_CursorHotspotY = static_cast<int>(shape.HotSpot.y);
 
+    // Rightmost column holding ink, +1. See CursorState::inkWidth.
+    int inkWidth = 0;
+    const auto noteInk = [&inkWidth](int x) {
+        if (x + 1 > inkWidth) inkWidth = x + 1;
+    };
+
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const size_t out = (static_cast<size_t>(y) * width + x);
@@ -251,9 +257,11 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
                     const uint8_t v = xorBit ? 0xFF : 0x00;
                     px[0] = px[1] = px[2] = v;
                     px[3] = 0xFF;
+                    noteInk(x);
                 } else if (xorBit) {
                     m_Cursor.invert[out] = 0xFF;
                     px[3] = 0xFF;
+                    noteInk(x);
                 }
                 // andBit && !xorBit → transparent, already zeroed.
                 continue;
@@ -264,9 +272,18 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
 
             if (shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR) {
                 // Here the alpha byte is not coverage but a mask: 0 means "use
-                // this colour", 0xFF means "invert the background and ignore
-                // the colour".
+                // this colour", 0xFF means "XOR this colour with the screen".
+                //
+                // XOR, not invert — the distinction is the whole shape. The
+                // empty canvas around the pointer is encoded as mask 0xFF with a
+                // BLACK colour: XOR with zero leaves the screen alone, so those
+                // pixels are transparent. Reading them as "invert" turned the
+                // whole 32×32 canvas into an inverter, which on a white page is
+                // a black square with a ghost of the pointer inside. A white
+                // colour under the mask is a true inversion; other colours are
+                // rare enough that inverting is the nearest thing we draw.
                 if (data[in + 3] == 0xFF) {
+                    if ((data[in + 0] | data[in + 1] | data[in + 2]) == 0) continue;
                     m_Cursor.invert[out] = 0xFF;
                     px[3] = 0xFF;
                 } else {
@@ -275,6 +292,7 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
                     px[2] = data[in + 2];
                     px[3] = 0xFF;
                 }
+                noteInk(x);
                 continue;
             }
 
@@ -283,8 +301,25 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
             px[1] = data[in + 1];
             px[2] = data[in + 2];
             px[3] = data[in + 3];
+            if (px[3] != 0) noteInk(x);
         }
     }
+
+    m_Cursor.inkWidth = inkWidth;
+
+    // Debug only: rare (a shape lasts thousands of frames) but pure diagnosis.
+    // It is the one line that explains a pointer drawn at the wrong size or as
+    // a black square: the encoding, the canvas, and how much of the canvas is
+    // actually pointer.
+    if (!log::enabled(log::Level::Debug)) return;
+    log::debug("[native] cursor shape: " +
+               std::string(monochrome ? "monochrome"
+                           : shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR
+                               ? "masked-color"
+                               : "color") +
+               " " + std::to_string(width) + "x" + std::to_string(height) + ", ink " +
+               std::to_string(inkWidth) + " wide, hotspot " + std::to_string(m_CursorHotspotX) +
+               "," + std::to_string(m_CursorHotspotY));
 }
 
 bool DxgiDuplication::updateCursor(const DXGI_OUTDUPL_FRAME_INFO& info)
