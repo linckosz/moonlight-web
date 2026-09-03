@@ -1251,7 +1251,12 @@ private:
     {
         const int wanted = m_CursorFramePx.load();
         if (wanted <= 0 || !m_Capture) return 1.0f;
-        const int shapeWidth = m_Capture->cursor().width;
+        // The drawn extent, not the canvas: Windows pads the same arrow into
+        // 32, 48 or 64-pixel buffers depending on where it came from, and sizing
+        // on the buffer made the pointer change size every time the shape
+        // changed hands. See CursorState::inkWidth.
+        const capture::CursorState& shape = m_Capture->cursor();
+        const int shapeWidth = shape.inkWidth > 0 ? shape.inkWidth : shape.width;
         if (shapeWidth <= 0) return 1.0f;
         const float natural = static_cast<float>(shapeWidth) * cursorScale();
         if (!(natural > 0.0f)) return 1.0f;
