@@ -88,7 +88,9 @@ describe('BrowserDetect — enhancer choice + module constants', () => {
         expect(pickAutoEnhancer()).toBe('fsr1'); // jsdom default UA → desktop
     });
 
-    it('a beefy 1080p+ Android phone picks fsr1 (re-imported with a stubbed UA)', async () => {
+    it('a beefy 1080p+ Android phone still picks sgsr (re-imported with a stubbed UA)', async () => {
+        // The platform class is the whole rule since 03/09/2026: a phone's GPU
+        // budget goes to the decode, however many cores it has.
         vi.resetModules();
         vi.stubGlobal('navigator', {
             userAgent: UA.androidPhone,
@@ -99,7 +101,7 @@ describe('BrowserDetect — enhancer choice + module constants', () => {
         const m = await import('../js/util/BrowserDetect.js');
         expect(m.IS_ANDROID).toBe(true);
         expect(m.PLATFORM_TYPE).toBe('mobile');
-        expect(m.pickAutoEnhancer()).toBe('fsr1');
+        expect(m.pickAutoEnhancer()).toBe('sgsr');
     });
 
     it('a weak Android phone picks sgsr', async () => {

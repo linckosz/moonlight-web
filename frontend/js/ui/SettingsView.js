@@ -37,6 +37,7 @@ import {
     IS_MOBILE_OR_TABLET,
     resolveTearing,
     supportsDisplayHdr,
+    hdrClientCapability,
 } from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 import { ASPECT_VALUES, SCREEN_ASPECTS } from '../util/AspectRatio.js';
@@ -139,6 +140,9 @@ export class SettingsView {
         await this._loadState();
         this._codecSupport = await this._checkCodecSupport();
         this._webgpuUsable = await this._checkWebGpuSupport();
+        // The static half of the HDR gate (WebGPU adapter, 10-bit decoder); the
+        // display half is asked live at every render.
+        this._hdrCapability = await hdrClientCapability();
         this._canLogout = await this._checkSession();
         await this._loadStatsConsent();
         this.render();
@@ -578,9 +582,11 @@ export class SettingsView {
                     ? 'on'
                     : 'off'
                 : this._videoEnhancement;
-            // Algo dropdown is always available; defaults to 'auto'.
+            // The algo dropdown exists in debug builds only; production always
+            // saves 'auto' (see render), so a value picked under a debug build
+            // does not outlive it.
             const veAlgoEl = this.container.querySelector('#settings-video-enhancement-algo');
-            const videoEnhancementAlgo = veAlgoEl ? veAlgoEl.value : this._videoEnhancementAlgo;
+            const videoEnhancementAlgo = veAlgoEl ? veAlgoEl.value : 'auto';
             // Absent outside debug builds, where it keeps whatever it had —
             // which is 'auto' unless someone once ran a debug build here.
             const gpProfileEl = this.container.querySelector('#settings-gamepad-profile');
@@ -730,19 +736,24 @@ export class SettingsView {
         const psDisabled = this._powerSave ? ' disabled' : '';
         const psLocked = this._powerSave ? ' settings-field-locked' : '';
 
-        // HDR is offered only on a display that can show it. matchMedia tracks
-        // the OS switch too (Windows "HDR off" → no match), so the box greys out
-        // the moment the desktop drops to SDR. On such a device the preference
-        // is also forced off: a saved "true" would otherwise still ask the host
-        // for HDR and hand PQ pixels to an SDR output.
+        // HDR is offered only to a client that can show it: a display in an HDR
+        // mode, WebGPU (the one renderer with an HDR surface) and a 10-bit
+        // decoder. matchMedia tracks the OS switch too (Windows "HDR off" → no
+        // match), so the box greys out the moment the desktop drops to SDR. On
+        // such a device the preference is also forced off: a saved "true" would
+        // otherwise still ask the host for HDR and hand PQ pixels to an SDR
+        // output. The note says which half is missing — the screen, or the
+        // browser.
         const displayHdr = supportsDisplayHdr();
-        if (!displayHdr) this._hdrEnabled = false;
-        const hdrDisabled = displayHdr ? psDisabled : ' disabled';
-        const hdrLocked = displayHdr ? psLocked : ' settings-field-locked';
+        const hdrCap = this._hdrCapability || { webgpu: !!this._webgpuUsable, decode: true };
+        const hdrAvailable = displayHdr && hdrCap.webgpu && hdrCap.decode;
+        if (!hdrAvailable) this._hdrEnabled = false;
+        const hdrDisabled = hdrAvailable ? psDisabled : ' disabled';
+        const hdrLocked = hdrAvailable ? psLocked : ' settings-field-locked';
         const hdrChecked = this._hdrEnabled ? 'checked' : '';
-        const hdrNote = displayHdr
+        const hdrNote = hdrAvailable
             ? ''
-            : `<div class="settings-note">${t('settings.hdrDeviceSdr')}</div>`;
+            : `<div class="settings-note">${t(displayHdr ? 'settings.hdrBrowserUnsupported' : 'settings.hdrDeviceSdr')}</div>`;
 
         // Allow tearing: only Chromium desktop can bypass VSync (desynchronized
         // canvas swapchain) — elsewhere the field is dimmed + locked (🔒),
@@ -842,9 +853,14 @@ export class SettingsView {
             )
             .join('');
 
-        // Video Enhancement (upscale/sharpen). The WebGPU flavours are grayed
-        // out when WebGPU is unavailable, like the per-codec graying; the
-        // WebGL2 ones stay, so the feature is not lost with the API.
+        // Video Enhancement (upscale/sharpen). In production the feature is one
+        // checkbox and the algorithm is always 'auto' — the platform decides
+        // (StreamView: FSR1 on a desktop, SGSR1 on a phone or tablet, WebGL2 in
+        // SDR and WebGPU in HDR). The dropdown that picks an algorithm by hand
+        // exists in debug builds only, where it is the way to compare them; the
+        // WebGPU flavours are grayed out there when WebGPU is unavailable, like
+        // the per-codec graying, and the WebGL2 ones stay.
+        if (!this._debugBuild) this._videoEnhancementAlgo = 'auto';
         const webgpuUnavailable = !this._webgpuUsable;
         const veAlgos = [
             { value: 'auto', label: t('settings.algoAuto'), disabled: false },
@@ -902,8 +918,14 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.latencyFlagDesc')}</span>
                     </div>`
             : '';
-        const veNote = webgpuUnavailable
-            ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
+        const veNote =
+            this._debugBuild && webgpuUnavailable
+                ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
+                : '';
+        const veAlgoHtml = this._debugBuild
+            ? `<select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veCheckboxDisabled}>
+                            ${veAlgoOptions}
+                        </select>`
             : '';
 
         // HDR + Enhancer: the stream is tone-mapped HDR→SDR in the renderer's
@@ -1001,9 +1023,7 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.videoEnhancementDesc')}</span>
-                        <select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veCheckboxDisabled}>
-                            ${veAlgoOptions}
-                        </select>
+                        ${veAlgoHtml}
                         ${veHdrNote}
                         ${veNote}
                     </div>

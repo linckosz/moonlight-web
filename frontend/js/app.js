@@ -57,7 +57,7 @@ import { Toast } from './ui/Toast.js';
 import { ConsentBar } from './ui/ConsentBar.js';
 import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
 import { VersionGuard } from './util/VersionGuard.js';
-import { IS_MOBILE_OR_TABLET, resolveTearing, supportsDisplayHdr } from './util/BrowserDetect.js';
+import { IS_MOBILE_OR_TABLET, resolveTearing, hdrClientCapability } from './util/BrowserDetect.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
 import { DEFAULT_ASPECT, loadHostAspect, saveHostAspect } from './util/AspectRatio.js';
 import { startAspectProbe } from './stream/AspectProbe.js';
@@ -1361,13 +1361,30 @@ const MoonlightApp = {
         if (hdrOverride !== undefined) {
             streamingSettings.hdr_enabled = hdrOverride === true;
         }
-        // HDR is never asked of the host for a display that cannot show it: the
-        // settings page greys the box out on such a device, and this catches a
-        // preference saved while the desktop was still in HDR (Windows toggle,
-        // a laptop moved to another screen). PQ pixels on an SDR output clip.
-        if (streamingSettings.hdr_enabled && !supportsDisplayHdr()) {
-            console.log('[MW] HDR preference ignored: this display is not in an HDR mode');
-            streamingSettings.hdr_enabled = false;
+        // HDR is never asked of the host for a client that cannot show it —
+        // display in an HDR mode, WebGPU, a 10-bit decoder. The settings page
+        // greys the box out on such a device; this catches a preference saved
+        // while the desktop was still in HDR (Windows toggle, a laptop moved to
+        // another screen). PQ pixels on an SDR output clip.
+        // Dev: mw_hdr_request = '1' asks anyway — the way to exercise the
+        // HDR→SDR tone-map path on an SDR screen.
+        if (streamingSettings.hdr_enabled) {
+            const cap = await hdrClientCapability();
+            let devForce = false;
+            try {
+                devForce = localStorage.getItem('mw_hdr_request') === '1';
+            } catch (e) {}
+            if (!cap.ok && !devForce) {
+                console.log(
+                    '[MW] HDR preference ignored: display=' +
+                        cap.display +
+                        ' webgpu=' +
+                        cap.webgpu +
+                        ' decode=' +
+                        cap.decode,
+                );
+                streamingSettings.hdr_enabled = false;
+            }
         }
 
         // Mobile: request lower-bandwidth audio (10ms Opus frames, half the

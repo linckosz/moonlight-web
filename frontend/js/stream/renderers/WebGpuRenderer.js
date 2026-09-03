@@ -97,7 +97,7 @@ const HDR_TONEMAP_WGSL =
 @group(0) @binding(1) var texU : texture_2d<u32>;
 @group(0) @binding(2) var texV : texture_2d<u32>;
 @group(0) @binding(3) var<uniform> dims : vec4f;   // (yW, yH, cW, cH)
-@group(0) @binding(4) var<uniform> params : vec4f; // (refWhite nits, codeScale, exposure, curve 0=soft-clip 1=ACES)
+@group(0) @binding(4) var<uniform> params : vec4f; // (refWhite nits, codeScale, exposure, curve 0=soft-clip 1=ACES 2=linear HDR out)
 @group(0) @binding(5) var<uniform> csp : vec4f;    // frame.colorSpace: (fullRange, bt709 matrix, isPq, _)
 
 // SMPTE ST 2084 (PQ) constants.
@@ -167,6 +167,17 @@ fn fs(in : VSOut) -> @location(0) vec4f {
     let linear2020 = pqEotf(rgbE);
     // SDR diffuse white (refWhite nits) maps to 1.0 before tone mapping.
     let scaled = linear2020 * (10000.0 / params.x) * params.z;
+    if (params.w > 1.5) {
+        // HDR output: no tone curve. Scene light in the canvas' own Display-P3
+        // gamut (BT.2020 → P3, linear, column-major), 1.0 = reference white,
+        // highlights above it, encoded with the sRGB transfer the float16
+        // canvas extends past 1.0 (toneMapping 'extended').
+        let P = mat3x3f(
+            1.343578, -0.065298,  0.002822,
+           -0.282180,  1.075788, -0.019599,
+           -0.061399, -0.010491,  1.016777);
+        return vec4f(linToSrgb(max(P * scaled, vec3f(0.0))), 1.0);
+    }
     // BT.2020 → Rec.709 gamut (linear), column-major.
     let M = mat3x3f(
         1.6605, -0.1246, -0.0182,
@@ -872,10 +883,21 @@ export class WebGpuRenderer extends VideoRenderer {
         // via manual P010 readback, then run the enhancer on a normal SDR canvas.
         // Mutually exclusive with _hdr (the rgba16float extended canvas).
         r._hdrTonemap = !!opts.hdrTonemap;
-        r._refWhite = 433; // SDR diffuse white reference (nits) → maps to 1.0
+        // Linear HDR path: the same P010 readback, but no tone curve — PQ decoded
+        // to scene light, 1.0 = reference white, written to the rgba16float
+        // extended canvas so highlights reach the display's HDR headroom. The
+        // enhancer then runs on float intermediates, in HDR. Needs _hdr; if the
+        // HDR canvas is refused, _configure() turns this into the tone-map.
+        r._hdrLinear = !!opts.hdrLinear && r._hdr;
+        // Either readback path: the YUV Pass 0 replaces the external-texture blit.
+        r._hdrYuv = r._hdrTonemap || r._hdrLinear;
+        // Reference white (nits) → 1.0. 433 nits gives the SDR tone-map an
+        // SDR-looking picture on an SDR screen; on an HDR canvas 1.0 must be
+        // the display's SDR white, 203 nits (BT.2408), or the desktop reads dim.
+        r._refWhite = r._hdrLinear ? 203 : 433;
         r._codeScale = 1.0; // 10-bit sample alignment (1.0 = low-aligned 0..1023)
         r._exposure = 1.0; // linear multiplier before the tone curve
-        r._curve = 1; // 1 = white-normalized ACES (default), 0 = soft-clip
+        r._curve = r._hdrLinear ? 2 : 1; // 2 = linear (HDR out), 1 = ACES, 0 = soft-clip
         r._knobsReadMs = 0; // live-tuning knobs re-read throttle (see _readHdrKnobs)
         r._copyBuf = null;
         r._texY = null;
@@ -909,7 +931,9 @@ export class WebGpuRenderer extends VideoRenderer {
                 ' hdr=' +
                 r._hdr +
                 ' hdrTonemap=' +
-                r._hdrTonemap,
+                r._hdrTonemap +
+                ' hdrLinear=' +
+                r._hdrLinear,
         );
         return r;
     }
@@ -1023,6 +1047,15 @@ export class WebGpuRenderer extends VideoRenderer {
                         e.message,
                 );
                 this._hdr = false;
+                if (this._hdrLinear) {
+                    // Scene light on an 8-bit SDR canvas would clip every
+                    // highlight: keep the readback, put the tone curve back.
+                    this._hdrLinear = false;
+                    this._hdrTonemap = true;
+                    this._refWhite = 433;
+                    this._curve = 1;
+                    console.warn('[WebGpuRenderer] HDR linear path → ACES tone-map instead');
+                }
             }
         }
         // Standard 8-bit sRGB canvas (SDR).
@@ -1067,7 +1100,7 @@ export class WebGpuRenderer extends VideoRenderer {
             primitive: { topology: 'triangle-list' },
         });
 
-        if (this._hdrTonemap) this._buildHdrTonemapResources();
+        if (this._hdrYuv) this._buildHdrTonemapResources();
 
         if (this._algo === 'fsr1') {
             this._buildFsr1Resources();
@@ -1442,10 +1475,12 @@ export class WebGpuRenderer extends VideoRenderer {
         this._knobsReadMs = now;
         try {
             const rw = parseFloat(localStorage.getItem('mw_hdr_refwhite'));
-            this._refWhite = rw > 0 ? rw : 433;
+            this._refWhite = rw > 0 ? rw : this._hdrLinear ? 203 : 433;
             const ex = parseFloat(localStorage.getItem('mw_hdr_exposure'));
             this._exposure = ex > 0 ? ex : 1.0;
-            this._curve = localStorage.getItem('mw_hdr_curve') === 'soft' ? 0 : 1;
+            // The linear HDR path has no curve to choose: it is the HDR output.
+            if (this._hdrLinear) this._curve = 2;
+            else this._curve = localStorage.getItem('mw_hdr_curve') === 'soft' ? 0 : 1;
         } catch (e) {}
     }
 
@@ -1590,7 +1625,7 @@ export class WebGpuRenderer extends VideoRenderer {
         this._inH = 0;
         this._intermW = 0;
         this._intermH = 0;
-        if (this._hdrTonemap && wasOff !== (algo === 'off')) this._buildHdrTonemapResources();
+        if (this._hdrYuv && wasOff !== (algo === 'off')) this._buildHdrTonemapResources();
         console.log('[WebGpuRenderer] algo → ' + algo);
         return true;
     }
@@ -1642,10 +1677,11 @@ export class WebGpuRenderer extends VideoRenderer {
             this.canvas.height = ch;
         }
 
-        // HDR tone-map path: read back the raw 10-bit YUV (importExternalTexture
-        // would tone-map the HDR away). On failure, fall back to the blit below.
+        // HDR readback paths (tone-map or linear): read back the raw 10-bit YUV
+        // (importExternalTexture would tone-map the HDR away). On failure, fall
+        // back to the blit below.
         let useYuv = false;
-        if (this._hdrTonemap) {
+        if (this._hdrYuv) {
             const uploadStart = performance.now();
             try {
                 useYuv = await this._uploadP010(frame, inW, inH);

@@ -415,21 +415,36 @@ export class StreamView {
         // drops. createVideoRenderer still falls back to Canvas2D when WebGPU
         // is unavailable. Forwarded to the worker too (no localStorage there).
         //
-        // The menu offers each upscaler in two flavours: on WebGPU ('sgsr',
-        // 'nis', 'fsr1') and on WebGL2 ('gl-sgsr', 'gl-nis', 'gl-fsr1'), plus
-        // 'smooth2d' (Canvas2D resampling at display size). None of the
-        // latter ask for WebGPU; createVideoRenderer routes them.
+        // The menu (debug builds) offers each upscaler in two flavours: on
+        // WebGPU ('sgsr', 'nis', 'fsr1') and on WebGL2 ('gl-sgsr', 'gl-nis',
+        // 'gl-fsr1'), plus 'smooth2d' (Canvas2D resampling at display size).
+        // None of the latter ask for WebGPU; createVideoRenderer routes them.
+        //
+        // The production matrix (decided 03/09/2026), 'auto' being the only
+        // value a release build ever saves:
+        //   SDR  Off  → Canvas2D            Auto → FSR1 WebGL2 (desktop)
+        //                                          SGSR1 WebGL2 (phone/tablet)
+        //   HDR  Off  → WebGPU              Auto → FSR1 WebGPU
+        // In SDR the WebGL2 flavour won the click-to-photon runs in a window
+        // and keeps no WebGPU device alive; in HDR WebGPU is the one renderer
+        // with an HDR surface, so everything moves there.
+        // Display HDR capability — main thread only (matchMedia doesn't exist in
+        // workers) and evaluated once at stream start (renderers can't hot-swap);
+        // reflects the OS toggle too (Windows "HDR off" → matches false).
+        const displayHdr = supportsDisplayHdr();
+        this._displayHdr = displayHdr;
+        const hdr = hdrEnabled === true;
         let algo = 'off'; // no upscaler
-        let wantWebGpu = hdrEnabled === true; // HDR needs the WebGPU paths
+        let wantWebGpu = hdr; // every HDR path renders on WebGPU
         if (videoEnhancement === 'on') {
-            wantWebGpu = true;
             let sel = videoEnhancementAlgo || 'auto';
+            if (sel === 'auto') sel = hdr ? 'fsr1' : 'gl-' + pickAutoEnhancer();
             // HDR has no WebGL2 or Canvas2D presentation in Chrome (no HDR
             // surface for either), so with HDR on every upscaler runs in its
             // WebGPU flavour — the same algorithm, on the renderer that can
             // present the result. Smooth2D has no shader to move: it becomes
             // the plain WebGPU blit.
-            if (hdrEnabled === true && NO_WEBGPU_ALGOS.includes(sel)) {
+            if (hdr && NO_WEBGPU_ALGOS.includes(sel)) {
                 const toGpu = { 'gl-sgsr': 'sgsr', 'gl-nis': 'nis', 'gl-fsr1': 'fsr1' };
                 const moved = toGpu[sel] || 'off';
                 console.log('[StreamView] HDR: enhancer ' + sel + ' → ' + moved + ' on WebGPU');
@@ -440,21 +455,11 @@ export class StreamView {
             } else if (NO_WEBGPU_ALGOS.includes(sel)) {
                 wantWebGpu = false;
                 algo = sel;
-            } else if (sel === 'auto') {
-                // 'auto' picks by platform (see pickAutoEnhancer): desktops + iOS
-                // → FSR1; beefy 1080p+ Android → FSR1; everything else → SGSR.
-                // Without WebGPU the same upscaler runs on WebGL2 instead of
-                // silently degrading to a plain Canvas2D stretch.
-                algo = pickAutoEnhancer();
-                if (typeof navigator === 'undefined' || !navigator.gpu) {
-                    algo = 'gl-' + algo;
-                    wantWebGpu = false;
-                }
             } else {
+                wantWebGpu = true;
                 algo = sel === 'nis' || sel === 'fsr1' ? sel : 'sgsr';
             }
         }
-        this._videoEnhancementAlgo = algo;
         // Whether the user enabled the Enhancer (used to flag it OFF in the overlay
         // when the stream lands on webrtc-media, where it can't be applied).
         this._videoEnhancementRequested = videoEnhancement === 'on';
@@ -464,39 +469,66 @@ export class StreamView {
             if (localStorage.getItem('mw_force_2d') === '1') this._wantWebGpu = false;
         } catch (e) {}
 
-        // HDR routing (DataChannel/WSS only; decided after algo/wantWebGpu):
-        //  - true HDR via the <video> sink (MediaStreamTrackGenerator): the canvas
-        //    paths tone-map HDR away, so <video> presents it natively. The Enhancer
-        //    is effectively OFF when HDR (it can't run on the <video> sink).
-        //  - HDR→SDR (ACES) tone-map path: raw PQ planes read back (P010) and
-        //    tone-mapped in the renderer's Pass 0, then FSR1/SGSR run on a normal
-        //    SDR canvas. Costs a software decode (opaque hardware frames don't
-        //    support copyTo). Auto-selected when the Enhancer is on (it can't run
-        //    on the <video> sink) or when the display can't show HDR (HDR sent to
-        //    an SDR output clips → overexposed colors). Dev override:
-        //    mw_hdr_tonemap = '1' forces it on, '0' forces it off.
-        // Display HDR capability — main thread only (matchMedia doesn't exist in
-        // workers) and evaluated once at stream start (renderers can't hot-swap);
-        // reflects the OS toggle too (Windows "HDR off" → matches false).
-        const displayHdr = supportsDisplayHdr();
-        this._displayHdr = displayHdr;
-        let tonemapWanted = this._videoEnhancementAlgo !== 'off' || !displayHdr;
-        try {
-            const dev = localStorage.getItem('mw_hdr_tonemap');
-            if (dev === '1') tonemapWanted = true;
-            else if (dev === '0') tonemapWanted = false;
-        } catch (e) {}
-        this._hdrTonemap =
-            tonemapWanted &&
-            this._hdrEnabled &&
-            transport !== 'webrtc-media' &&
-            this._wantWebGpu &&
-            !!navigator.gpu;
-        this._useVideoSink =
-            this._hdrEnabled &&
-            !this._hdrTonemap &&
-            transport !== 'webrtc-media' &&
-            typeof MediaStreamTrackGenerator !== 'undefined';
+        // HDR routing (DataChannel/WSS only). Both WebGPU HDR paths need the
+        // raw PQ planes (frame.copyTo): importExternalTexture tone-maps HDR
+        // away on import, on any canvas. copyTo only works on software-decoded
+        // frames, and Chrome has a software decoder for AV1 (dav1d), not for
+        // HEVC. Hence four outcomes, from the display and the codec:
+        //  - HDR display + AV1  → 'linear': rgba16float canvas in extended
+        //    tone-mapping mode, PQ → scene light, 1.0 = reference white; the
+        //    enhancer runs in HDR on the float intermediates. True HDR.
+        //  - HDR display + HEVC → 'sink': the <video> element presents the
+        //    frames natively (hardware decode, true HDR). No enhancer there.
+        //  - SDR display + AV1  → 'tonemap': ACES HDR→SDR in the renderer's
+        //    Pass 0, then the enhancer on a normal SDR canvas.
+        //  - SDR display + HEVC → 'browser': plain blit, the browser's own
+        //    tone-map on import. The least good picture, and the only one left.
+        // Dev: mw_hdr_tonemap = '1' forces 'tonemap' on an HDR display (to
+        // compare), '0' disables the readback altogether.
+        let hdrMode = 'none';
+        if (hdr && transport !== 'webrtc-media') {
+            let readback = videoCodec === 'av1' && !!navigator.gpu;
+            let forceTonemap = false;
+            try {
+                const dev = localStorage.getItem('mw_hdr_tonemap');
+                if (dev === '1') forceTonemap = true;
+                else if (dev === '0') readback = false;
+            } catch (e) {}
+            if (readback && (forceTonemap || !displayHdr)) hdrMode = 'tonemap';
+            else if (readback) hdrMode = 'linear';
+            else if (displayHdr && typeof MediaStreamTrackGenerator !== 'undefined')
+                hdrMode = 'sink';
+            else hdrMode = 'browser';
+        }
+        this._hdrMode = hdrMode;
+        this._hdrTonemap = hdrMode === 'tonemap';
+        this._hdrLinear = hdrMode === 'linear';
+        this._useVideoSink = hdrMode === 'sink';
+        // Either readback path: the decoder must be software (see configureDecoder).
+        this._hdrYuv = this._hdrTonemap || this._hdrLinear;
+        // The <video> sink has no shader stage: an enhancer asked for there is
+        // dropped, and said so, rather than silently swapped for a tone-map that
+        // would throw the HDR away.
+        this._enhancerBlockedByHdr = false;
+        if (hdrMode === 'sink' && algo !== 'off') {
+            console.log(
+                '[StreamView] HDR: ' +
+                    videoCodec +
+                    ' has no software decode here — <video> sink, enhancer ' +
+                    algo +
+                    ' off',
+            );
+            this._enhancerBlockedByHdr = true;
+            algo = 'off';
+        } else if (hdrMode === 'browser') {
+            console.warn(
+                '[StreamView] HDR: ' +
+                    videoCodec +
+                    ' has no software decode here and the display is SDR — ' +
+                    'the browser tone-maps on import',
+            );
+        }
+        this._videoEnhancementAlgo = algo;
         this._workerLastDecoded = 0;
 
         // Backend timestamp tracking for stale frame detection.
@@ -1754,8 +1786,9 @@ export class StreamView {
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
                 webgpu: this._wantWebGpu,
                 algo: this._videoEnhancementAlgo,
-                hdr: this._hdrEnabled && !this._hdrTonemap,
+                hdr: this._useVideoSink || this._hdrLinear,
                 hdrTonemap: this._hdrTonemap,
+                hdrLinear: this._hdrLinear,
                 videoEl: this._useVideoSink ? this.videoEl : null,
             }).then((r) => {
                 this._renderer = r;
@@ -2139,11 +2172,12 @@ export class StreamView {
             // Try hardware-accelerated decoder first (GPU decoding on Android)
             const _doConfigure = (config, hwAccel) => {
                 let cfgToUse;
-                if (this._hdrTonemap) {
-                    // HDR→SDR tone-map + FSR1 needs CPU-readable frames: hardware
-                    // decoders output opaque frames (format=null) on which
-                    // VideoFrame.copyTo/allocationSize are unsupported. Force a
-                    // software decoder so the YUV planes can be read back.
+                if (this._hdrYuv) {
+                    // The HDR readback paths (ACES tone-map, or the linear HDR
+                    // canvas) need CPU-readable frames: hardware decoders output
+                    // opaque frames (format=null) on which VideoFrame.copyTo /
+                    // allocationSize are unsupported. Force a software decoder so
+                    // the YUV planes can be read back.
                     cfgToUse = { ...config, hardwareAcceleration: 'prefer-software' };
                 } else if (hwAccel) {
                     cfgToUse = { ...config, hardwareAcceleration: 'prefer-hardware' };
@@ -2218,11 +2252,12 @@ export class StreamView {
 
             const cfg = configs[index];
             const noDescription = cfg._noDescription === true;
-            // Probe what _doConfigure will actually configure: the tone-map path
-            // forces prefer-software, and e.g. Chrome has no software HEVC — the
-            // plain config would probe "supported", then configure() would fail
-            // asynchronously (3 decoder errors before the codec fallback kicks in).
-            const probeCfg = this._hdrTonemap
+            // Probe what _doConfigure will actually configure: the readback
+            // paths force prefer-software, and e.g. Chrome has no software HEVC —
+            // the plain config would probe "supported", then configure() would
+            // fail asynchronously (3 decoder errors before the codec fallback
+            // kicks in).
+            const probeCfg = this._hdrYuv
                 ? { ...cfg, hardwareAcceleration: 'prefer-software' }
                 : cfg;
             VideoDecoder.isConfigSupported(probeCfg)
@@ -3728,8 +3763,9 @@ export class StreamView {
                         isChromeWindowsHevc: this._isChromeWindowsHevc,
                         webgpu: this._wantWebGpu,
                         algo: this._videoEnhancementAlgo,
-                        hdr: this._hdrEnabled && !this._hdrTonemap,
+                        hdr: this._useVideoSink || this._hdrLinear,
                         hdrTonemap: this._hdrTonemap,
+                        hdrLinear: this._hdrLinear,
                         videoEl: this._useVideoSink ? this.videoEl : null,
                     }).then((r) => {
                         this._renderer = r;
@@ -3747,8 +3783,8 @@ export class StreamView {
                                 r.kind +
                                 ' hdr=' +
                                 this._hdrEnabled +
-                                ' tonemap=' +
-                                this._hdrTonemap +
+                                ' hdrMode=' +
+                                this._hdrMode +
                                 ' displayHdr=' +
                                 this._displayHdr +
                                 ' videoSink=' +
@@ -4379,9 +4415,12 @@ export class StreamView {
         // decode is HDR but the canvas fell back to SDR.
         let codecLabel = codec.toUpperCase() + (this._yuv444 ? ' 4:4:4' : '');
         if (this._hdrEnabled) {
-            // HDR→SDR when ACES tone-mapping feeds the enhancer; HDR*/HDR for the
-            // <video> sink (true HDR) vs SDR-fallback canvas.
-            if (this._hdrTonemap) codecLabel += ' HDR→SDR';
+            // HDR→SDR when the stream is tone-mapped for an SDR output (ACES, or
+            // the browser's own on import); HDR* when the canvas or the <video>
+            // sink really presents HDR; HDR when the decode is HDR but the
+            // renderer fell back to an SDR canvas.
+            if (this._hdrTonemap || this._hdrMode === 'browser') codecLabel += ' HDR→SDR';
+            else if (this._hdrLinear) codecLabel += this._rendererHdrActive ? ' HDR*' : ' HDR→SDR';
             else codecLabel += this._rendererHdrActive ? ' HDR*' : ' HDR';
         }
         html +=
@@ -5299,8 +5338,8 @@ export class StreamView {
         this.decoderConfiguring = true;
 
         let configs = buildAv1DecoderConfigs(seqHeaderObu || null);
-        if (this._hdrTonemap) {
-            // HDR→SDR tone-map reads the YUV planes back (copyTo); hardware
+        if (this._hdrYuv) {
+            // The HDR readback paths read the YUV planes back (copyTo); hardware
             // decoders output opaque frames (format=null) that don't support it.
             // Same forcing as the HEVC/H264 path in configureDecoder().
             configs = configs.map((c) => ({ ...c, hardwareAcceleration: 'prefer-software' }));
