@@ -16,7 +16,7 @@
  */
 
 /**
- * WebGpuRenderer — WebGPU output path (feature On). SGSRv1 (C4) and FSR1 (C6).
+ * WebGpuRenderer — WebGPU output path (feature On). SGSRv1 (C4), FSR1 (C6) and NIS.
  *
  * Common Pass 0 (blit): importExternalTexture(frame) → inputTex (rgba8unorm,
  * frame res). A texture_external can only be read with textureSampleBaseClampToEdge,
@@ -25,6 +25,12 @@
  * SGSRv1 (algo 'sgsr'): 2 passes — Pass 0 blit, Pass 1 SGSR inputTex → canvas.
  *   Port (Qualcomm, BSD-3-Clause) from sgsr1.h, mode 1, luma = GREEN, EdgeThreshold
  *   6/255, EdgeSharpness 1.5.
+ *
+ * NIS (algo 'nis'): 2 passes — Pass 0 blit, Pass 1 NVScaler inputTex → canvas.
+ *   NVIDIA Image Scaling SDK 1.0.3 (MIT), the same per-fragment port as
+ *   WebGlRenderer's 'gl-nis' (6×6 luma support, four 3×3 edge maps, 64-phase
+ *   filter banks in a 4×64 rgba32float texture, SDR config from NisTables).
+ *   Sharpness knob: localStorage.mw_nis_sharpness (main thread only).
  *
  * FSR1 (algo 'fsr1'): 3 passes — Pass 0 blit, Pass 1 EASU inputTex → intermTex
  *   (rgba8unorm, output res), Pass 2 RCAS intermTex → canvas. WGSL port from
@@ -43,6 +49,7 @@
  *   - Perceptual space: non-srgb formats only.
  */
 import { VideoRenderer } from './VideoRenderer.js';
+import { nisConfig, nisCoefTexture, readNisSharpness, nisScaleInRange } from './NisTables.js';
 
 // Full-screen triangle (uv 0..1, v down — matches texture sampling).
 const FULLSCREEN_VS = /* wgsl */ `
@@ -290,6 +297,207 @@ fn fs(in : VSOut) -> @location(0) vec4f {
     }
     pix.w = 1.0;
     return pix;
+}
+`;
+
+// NIS — NVIDIA Image Scaling (NVScaler, SDK 1.0.3, MIT). WGSL transcription of
+// the GLSL port in WebGlRenderer.js, itself the per-fragment form of the SDK's
+// compute shader. Arrays travel by pointer (function address space) so the 36
+// luma samples are gathered once per fragment and read in place.
+const NIS_WGSL =
+    FULLSCREEN_VS +
+    /* wgsl */ `
+struct NisUniforms {
+    scale : vec4f,   // kScaleX, kScaleY, 1/inW, 1/inH
+    detect : vec4f,  // kDetectRatio, kDetectThres, kMinContrastRatio, kRatioNorm
+    sharpA : vec4f,  // kContrastBoost, kEps, kSharpStartY, kSharpScaleY
+    sharpB : vec4f,  // kSharpStrengthMin, kSharpStrengthScale, kSharpLimitMin, kSharpLimitScale
+    outSize : vec4f, // outW, outH, 0, 0
+};
+@group(0) @binding(0) var samp : sampler;
+@group(0) @binding(1) var inputTex : texture_2d<f32>;
+@group(0) @binding(2) var coefTex : texture_2d<f32>;
+@group(0) @binding(3) var<uniform> u : NisUniforms;
+
+const kPhaseCount : i32 = 64;
+alias Luma36 = array<f32, 36>;
+alias Taps6 = array<f32, 6>;
+
+fn getY(c : vec3f) -> f32 { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
+fn coefScaler(phase : i32, i : i32) -> f32 {
+    let v = textureLoad(coefTex, vec2<i32>(i >> 2u, phase), 0);
+    return v[i & 3];
+}
+fn coefUSM(phase : i32, i : i32) -> f32 {
+    let v = textureLoad(coefTex, vec2<i32>(2 + (i >> 2u), phase), 0);
+    return v[i & 3];
+}
+fn lumaAt(c : vec2<i32>) -> f32 {
+    let mx = vec2<i32>(textureDimensions(inputTex)) - vec2<i32>(1);
+    return getY(textureLoad(inputTex, clamp(c, vec2<i32>(0), mx), 0).rgb);
+}
+fn P(p : ptr<function, Luma36>, i : i32, j : i32) -> f32 { return (*p)[i * 6 + j]; }
+
+fn getEdgeMap(p : ptr<function, Luma36>, i : i32, j : i32) -> vec4f {
+    let g_0 = abs(P(p, 0 + i, 0 + j) + P(p, 0 + i, 1 + j) + P(p, 0 + i, 2 + j) - P(p, 2 + i, 0 + j) - P(p, 2 + i, 1 + j) - P(p, 2 + i, 2 + j));
+    let g_45 = abs(P(p, 1 + i, 0 + j) + P(p, 0 + i, 0 + j) + P(p, 0 + i, 1 + j) - P(p, 2 + i, 1 + j) - P(p, 2 + i, 2 + j) - P(p, 1 + i, 2 + j));
+    let g_90 = abs(P(p, 0 + i, 0 + j) + P(p, 1 + i, 0 + j) + P(p, 2 + i, 0 + j) - P(p, 0 + i, 2 + j) - P(p, 1 + i, 2 + j) - P(p, 2 + i, 2 + j));
+    let g_135 = abs(P(p, 1 + i, 0 + j) + P(p, 2 + i, 0 + j) + P(p, 2 + i, 1 + j) - P(p, 0 + i, 1 + j) - P(p, 0 + i, 2 + j) - P(p, 1 + i, 2 + j));
+    let g_0_90_max = max(g_0, g_90);
+    let g_0_90_min = min(g_0, g_90);
+    let g_45_135_max = max(g_45, g_135);
+    let g_45_135_min = min(g_45, g_135);
+    if (g_0_90_max + g_45_135_max == 0.0) { return vec4f(0.0); }
+    let e_0_90 = min(g_0_90_max / (g_0_90_max + g_45_135_max), 1.0);
+    let e_45_135 = 1.0 - e_0_90;
+    let c_0_90 = (g_0_90_max > (g_0_90_min * u.detect.x)) && (g_0_90_max > u.detect.y) && (g_0_90_max > g_45_135_min);
+    let c_45_135 = (g_45_135_max > (g_45_135_min * u.detect.x)) && (g_45_135_max > u.detect.y) && (g_45_135_max > g_0_90_min);
+    let c_g_0_90 = g_0_90_max == g_0;
+    let c_g_45_135 = g_45_135_max == g_45;
+    let both = c_0_90 && c_45_135;
+    let f_e_0_90 = select(1.0, e_0_90, both);
+    let f_e_45_135 = select(1.0, e_45_135, both);
+    let weight_0 = select(0.0, f_e_0_90, c_0_90 && c_g_0_90);
+    let weight_90 = select(0.0, f_e_0_90, c_0_90 && !c_g_0_90);
+    let weight_45 = select(0.0, f_e_45_135, c_45_135 && c_g_45_135);
+    let weight_135 = select(0.0, f_e_45_135, c_45_135 && !c_g_45_135);
+    return vec4f(weight_0, weight_90, weight_45, weight_135);
+}
+
+fn calcLTI(p0 : f32, p1 : f32, p2 : f32, p3 : f32, p4 : f32, p5 : f32, phase_index : i32) -> f32 {
+    let selector = phase_index <= kPhaseCount / 2;
+    var sel = select(p3, p0, selector);
+    let a_min = min(min(p1, p2), sel);
+    let a_max = max(max(p1, p2), sel);
+    sel = select(p5, p2, selector);
+    let b_min = min(min(p3, p4), sel);
+    let b_max = max(max(p3, p4), sel);
+    let a_cont = a_max - a_min;
+    let b_cont = b_max - b_min;
+    let cont_ratio = max(a_cont, b_cont) / (min(a_cont, b_cont) + u.sharpA.y);
+    return (1.0 - saturate((cont_ratio - u.detect.z) * u.detect.w)) * u.sharpA.x;
+}
+
+fn evalPoly6(pxl : ptr<function, Taps6>, phase_int : i32) -> f32 {
+    var y = 0.0;
+    for (var i = 0; i < 6; i++) { y += coefScaler(phase_int, i) * (*pxl)[i]; }
+    var y_usm = 0.0;
+    for (var i = 0; i < 6; i++) { y_usm += coefUSM(phase_int, i) * (*pxl)[i]; }
+    let y_scale = 1.0 - saturate((y - u.sharpA.z) * u.sharpA.w);
+    let y_sharpness = y_scale * u.sharpB.y + u.sharpB.x;
+    y_usm *= y_sharpness;
+    let y_sharpness_limit = (y_scale * u.sharpB.w + u.sharpB.z) * y;
+    y_usm = min(y_sharpness_limit, max(-y_sharpness_limit, y_usm));
+    y_usm *= calcLTI((*pxl)[0], (*pxl)[1], (*pxl)[2], (*pxl)[3], (*pxl)[4], (*pxl)[5], phase_int);
+    return y + y_usm;
+}
+
+fn filterNormal(p : ptr<function, Luma36>, phase_x_frac_int : i32, phase_y_frac_int : i32) -> f32 {
+    var h_acc = 0.0;
+    for (var j = 0; j < 6; j++) {
+        var v_acc = 0.0;
+        for (var i = 0; i < 6; i++) { v_acc += P(p, i, j) * coefScaler(phase_y_frac_int, i); }
+        h_acc += v_acc * coefScaler(phase_x_frac_int, j);
+    }
+    return h_acc;
+}
+
+fn addDirFilters(p : ptr<function, Luma36>, phase_x_frac : f32, phase_y_frac : f32,
+                 phase_x_frac_int : i32, phase_y_frac_int : i32, w : vec4f) -> f32 {
+    var f = 0.0;
+    if (w.x > 0.0) {
+        var interp0Deg : Taps6;
+        for (var i = 0; i < 6; i++) { interp0Deg[i] = mix(P(p, i, 2), P(p, i, 3), phase_x_frac); }
+        f += evalPoly6(&interp0Deg, phase_y_frac_int) * w.x;
+    }
+    if (w.y > 0.0) {
+        var interp90Deg : Taps6;
+        for (var i = 0; i < 6; i++) { interp90Deg[i] = mix(P(p, 2, i), P(p, 3, i), phase_y_frac); }
+        f += evalPoly6(&interp90Deg, phase_x_frac_int) * w.y;
+    }
+    if (w.z > 0.0) {
+        var pphase_b45 = 0.5 + 0.5 * (phase_x_frac - phase_y_frac);
+        var temp : array<f32, 7>;
+        temp[1] = mix(P(p, 2, 1), P(p, 1, 2), pphase_b45);
+        temp[3] = mix(P(p, 3, 2), P(p, 2, 3), pphase_b45);
+        temp[5] = mix(P(p, 4, 3), P(p, 3, 4), pphase_b45);
+        pphase_b45 = pphase_b45 - 0.5;
+        let pos = pphase_b45 >= 0.0;
+        let a = select(P(p, 2, 0), P(p, 0, 2), pos);
+        let b = select(P(p, 3, 1), P(p, 1, 3), pos);
+        let c = select(P(p, 4, 2), P(p, 2, 4), pos);
+        let d = select(P(p, 5, 3), P(p, 3, 5), pos);
+        temp[0] = mix(P(p, 1, 1), a, abs(pphase_b45));
+        temp[2] = mix(P(p, 2, 2), b, abs(pphase_b45));
+        temp[4] = mix(P(p, 3, 3), c, abs(pphase_b45));
+        temp[6] = mix(P(p, 4, 4), d, abs(pphase_b45));
+        var interp45Deg : Taps6;
+        var pphase_p45 = phase_x_frac + phase_y_frac;
+        if (pphase_p45 >= 1.0) {
+            for (var i = 0; i < 6; i++) { interp45Deg[i] = temp[i + 1]; }
+            pphase_p45 = pphase_p45 - 1.0;
+        } else {
+            for (var i = 0; i < 6; i++) { interp45Deg[i] = temp[i]; }
+        }
+        f += evalPoly6(&interp45Deg, min(i32(pphase_p45 * 64.0), 63)) * w.z;
+    }
+    if (w.w > 0.0) {
+        var pphase_b135 = 0.5 * (phase_x_frac + phase_y_frac);
+        var temp : array<f32, 7>;
+        temp[1] = mix(P(p, 3, 1), P(p, 4, 2), pphase_b135);
+        temp[3] = mix(P(p, 2, 2), P(p, 3, 3), pphase_b135);
+        temp[5] = mix(P(p, 1, 3), P(p, 2, 4), pphase_b135);
+        pphase_b135 = pphase_b135 - 0.5;
+        let pos = pphase_b135 >= 0.0;
+        let a = select(P(p, 3, 0), P(p, 5, 2), pos);
+        let b = select(P(p, 2, 1), P(p, 4, 3), pos);
+        let c = select(P(p, 1, 2), P(p, 3, 4), pos);
+        let d = select(P(p, 0, 3), P(p, 2, 5), pos);
+        temp[0] = mix(P(p, 4, 1), a, abs(pphase_b135));
+        temp[2] = mix(P(p, 3, 2), b, abs(pphase_b135));
+        temp[4] = mix(P(p, 2, 3), c, abs(pphase_b135));
+        temp[6] = mix(P(p, 1, 4), d, abs(pphase_b135));
+        var interp135Deg : Taps6;
+        var pphase_p135 = 1.0 + (phase_x_frac - phase_y_frac);
+        if (pphase_p135 >= 1.0) {
+            for (var i = 0; i < 6; i++) { interp135Deg[i] = temp[i + 1]; }
+            pphase_p135 = pphase_p135 - 1.0;
+        } else {
+            for (var i = 0; i < 6; i++) { interp135Deg[i] = temp[i]; }
+        }
+        f += evalPoly6(&interp135Deg, min(i32(pphase_p135 * 64.0), 63)) * w.w;
+    }
+    return f;
+}
+
+@fragment
+fn fs(in : VSOut) -> @location(0) vec4f {
+    let dst = floor(in.uv * u.outSize.xy);
+    let src = (dst + 0.5) * u.scale.xy - 0.5;
+    let fsrc = floor(src);
+    let fr = src - fsrc;
+    let fi = min(vec2<i32>(fr * f32(kPhaseCount)), vec2<i32>(kPhaseCount - 1));
+    let s = vec2<i32>(fsrc);
+
+    var p : Luma36;
+    for (var i = 0; i < 6; i++) {
+        for (var j = 0; j < 6; j++) { p[i * 6 + j] = lumaAt(s + vec2<i32>(j - 2, i - 2)); }
+    }
+
+    let e00 = getEdgeMap(&p, 1, 1);
+    let e01 = getEdgeMap(&p, 1, 2);
+    let e10 = getEdgeMap(&p, 2, 1);
+    let e11 = getEdgeMap(&p, 2, 2);
+    let w = mix(mix(e00, e01, fr.x), mix(e10, e11, fr.x), fr.y);
+
+    let baseWeight = 1.0 - w.x - w.y - w.z - w.w;
+    var opY = filterNormal(&p, fi.x, fi.y) * baseWeight;
+    opY += addDirFilters(&p, fr.x, fr.y, fi.x, fi.y, w);
+
+    let coord = (src + 0.5) * u.scale.zw;
+    let op = textureSampleLevel(inputTex, samp, coord, 0.0);
+    let y = getY(op.rgb);
+    return vec4f(clamp(op.rgb + vec3f(opY - y), vec3f(0.0), vec3f(1.0)), 1.0);
 }
 `;
 
@@ -625,8 +833,12 @@ export class WebGpuRenderer extends VideoRenderer {
         // only construction path and overwrites all of them before returning.
         /** @type {string} 'h264' | 'hevc' | 'av1'. */
         this.videoCodec = '';
-        /** @type {'sgsr'|'fsr1'|'off'} Upscaler pass; 'off' blits through. */
+        /** @type {'sgsr'|'nis'|'fsr1'|'off'} Upscaler pass; 'off' blits through. */
         this._algo = 'sgsr';
+        /** NIS sharpness (0..1, 0.5 neutral) and its re-read throttle. */
+        this._nisSharpness = 0.5;
+        this._nisKnobsMs = 0;
+        this._nisScaleWarned = false;
         /** @type {boolean} HDR→SDR tone-map path (exclusive with _hdr). */
         this._hdrTonemap = false;
         /** @type {number} 10-bit sample alignment (1.0 = low-aligned 0..1023). */
@@ -645,7 +857,8 @@ export class WebGpuRenderer extends VideoRenderer {
         r.canvas = canvas;
         r.videoCodec = opts.videoCodec;
         // 'off' = WebGPU pass-through (blit only, no upscaler); sgsr is the safe default.
-        r._algo = opts.algo === 'fsr1' || opts.algo === 'off' ? opts.algo : 'sgsr';
+        r._algo =
+            opts.algo === 'fsr1' || opts.algo === 'nis' || opts.algo === 'off' ? opts.algo : 'sgsr';
         // HDR: rgba16float canvas in extended tone-mapping mode (values > 1.0
         // map to the display's HDR headroom). Gated on opts.hdr; _configure()
         // self-downgrades to SDR if the browser rejects the HDR canvas config.
@@ -704,9 +917,10 @@ export class WebGpuRenderer extends VideoRenderer {
         return 'webgpu';
     }
 
-    /** Effective algorithm name for the overlay: 'SGSR' | 'FSR1' | 'Off'. */
+    /** Effective algorithm name for the overlay: 'SGSR' | 'NIS' | 'FSR1' | 'Off'. */
     get algoName() {
         if (this._algo === 'fsr1') return 'FSR1';
+        if (this._algo === 'nis') return 'NIS';
         if (this._algo === 'off') return 'Off';
         return 'SGSR';
     }
@@ -785,6 +999,8 @@ export class WebGpuRenderer extends VideoRenderer {
 
         if (this._algo === 'fsr1') {
             this._buildFsr1Resources();
+        } else if (this._algo === 'nis') {
+            this._buildNisResources();
         } else if (this._algo === 'off') {
             this._buildPassthroughResources();
         } else {
@@ -838,6 +1054,52 @@ export class WebGpuRenderer extends VideoRenderer {
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._enhanceLayout] }),
             vertex: { module: sgsrModule, entryPoint: 'vs' },
             fragment: { module: sgsrModule, entryPoint: 'fs', targets: [{ format: this._format }] },
+            primitive: { topology: 'triangle-list' },
+        });
+    }
+
+    _buildNisResources() {
+        const device = this._device;
+        // Five vec4f: scale, detect, sharpA, sharpB, outSize (see NIS_WGSL).
+        this._nisUniform = device.createBuffer({
+            size: 80,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        // Filter banks: 64 phases × (6 scale taps, 6 USM taps) in a 4×64
+        // rgba32float texture, read with textureLoad (no filtering needed).
+        this._nisCoefTex = device.createTexture({
+            size: { width: 4, height: 64 },
+            format: 'rgba32float',
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+        device.queue.writeTexture(
+            { texture: this._nisCoefTex },
+            nisCoefTexture(),
+            { bytesPerRow: 4 * 16, rowsPerImage: 64 },
+            { width: 4, height: 64 },
+        );
+        this._nisCoefView = this._nisCoefTex.createView();
+        this._nisLayout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'float' },
+                },
+                {
+                    binding: 2,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'unfilterable-float' },
+                },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+            ],
+        });
+        const nisModule = device.createShaderModule({ code: NIS_WGSL });
+        this._nisPipeline = device.createRenderPipeline({
+            layout: device.createPipelineLayout({ bindGroupLayouts: [this._nisLayout] }),
+            vertex: { module: nisModule, entryPoint: 'vs' },
+            fragment: { module: nisModule, entryPoint: 'fs', targets: [{ format: this._format }] },
             primitive: { topology: 'triangle-list' },
         });
     }
@@ -1141,6 +1403,16 @@ export class WebGpuRenderer extends VideoRenderer {
                     { binding: 2, resource: { buffer: this._easuUniform } },
                 ],
             });
+        } else if (this._algo === 'nis') {
+            this._enhanceBindGroup = this._device.createBindGroup({
+                layout: this._nisLayout,
+                entries: [
+                    { binding: 0, resource: this._sampler },
+                    { binding: 1, resource: this._inputTexView },
+                    { binding: 2, resource: this._nisCoefView },
+                    { binding: 3, resource: { buffer: this._nisUniform } },
+                ],
+            });
         } else {
             this._enhanceBindGroup = this._device.createBindGroup({
                 layout: this._enhanceLayout,
@@ -1222,17 +1494,18 @@ export class WebGpuRenderer extends VideoRenderer {
      *   - the HDR tone-map pipeline, whose render target is the canvas format
      *     in 'off' mode and the intermediate format otherwise.
      *
-     * @param {string} algo 'sgsr' | 'fsr1' | 'off'; anything else is refused.
+     * @param {string} algo 'sgsr' | 'nis' | 'fsr1' | 'off'; anything else is refused.
      * @returns {boolean} true when the renderer switched.
      */
     setAlgo(algo) {
         if (algo === this._algo) return false;
         if (!this._ready || !this._device) return false;
-        if (algo !== 'sgsr' && algo !== 'fsr1' && algo !== 'off') return false;
+        if (algo !== 'sgsr' && algo !== 'nis' && algo !== 'fsr1' && algo !== 'off') return false;
 
         try {
             if (algo === 'off' && !this._passthroughPipeline) this._buildPassthroughResources();
             else if (algo === 'sgsr' && !this._enhancePipeline) this._buildSgsrResources();
+            else if (algo === 'nis' && !this._nisPipeline) this._buildNisResources();
             else if (algo === 'fsr1' && !this._easuPipeline) this._buildFsr1Resources();
         } catch (e) {
             console.error('[WebGpuRenderer] setAlgo(' + algo + ') failed: ' + e.message);
@@ -1440,6 +1713,59 @@ export class WebGpuRenderer extends VideoRenderer {
                 p2.setBindGroup(0, this._rcasBindGroup);
                 p2.draw(3);
                 p2.end();
+            } else if (this._algo === 'nis') {
+                // NIS is specified for scale factors in [0.5, 1] (up to 2× up).
+                // Outside that it still runs — just not what NVIDIA validated —
+                // so say so once rather than refuse the frame.
+                const kScaleX = inW / cw,
+                    kScaleY = inH / ch;
+                if (!this._nisScaleWarned && !nisScaleInRange(kScaleX, kScaleY)) {
+                    this._nisScaleWarned = true;
+                    console.warn(
+                        '[WebGpuRenderer] NIS scale ' +
+                            kScaleX.toFixed(3) +
+                            '×' +
+                            kScaleY.toFixed(3) +
+                            ' is outside the SDK range [0.5, 1] (2× upscale max, no downscale)',
+                    );
+                }
+                if (performance.now() - this._nisKnobsMs >= 500) {
+                    this._nisKnobsMs = performance.now();
+                    this._nisSharpness = readNisSharpness();
+                }
+                const cfg = nisConfig(this._nisSharpness);
+                this._device.queue.writeBuffer(
+                    this._nisUniform,
+                    0,
+                    new Float32Array([
+                        kScaleX,
+                        kScaleY,
+                        1 / inW,
+                        1 / inH,
+                        ...cfg.detect,
+                        ...cfg.sharpA,
+                        ...cfg.sharpB,
+                        cw,
+                        ch,
+                        0,
+                        0,
+                    ]),
+                );
+                // Pass 1: NIS inputTex → canvas.
+                const p1 = encoder.beginRenderPass({
+                    colorAttachments: [
+                        {
+                            view: this.ctx.getCurrentTexture().createView(),
+                            loadOp: 'clear',
+                            storeOp: 'store',
+                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                        },
+                    ],
+                });
+                p1.setPipeline(this._nisPipeline);
+                p1.setBindGroup(0, this._enhanceBindGroup);
+                p1.draw(3);
+                p1.end();
             } else {
                 // SGSR: viewport = (1/inW, 1/inH, inW, inH).
                 this._device.queue.writeBuffer(
@@ -1502,6 +1828,10 @@ export class WebGpuRenderer extends VideoRenderer {
         try {
             if (this._intermTex) this._intermTex.destroy();
         } catch (e) {}
+        try {
+            if (this._nisCoefTex) this._nisCoefTex.destroy();
+        } catch (e) {}
+        this._nisCoefTex = null;
         for (const t of [this._texY, this._texU, this._texV]) {
             try {
                 if (t) t.destroy();

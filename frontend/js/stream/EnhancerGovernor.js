@@ -32,15 +32,18 @@
  * rate the pipeline has to sustain. Costing 10ms is fine at 22fps (45ms apart)
  * and fine at 60fps (16.7ms apart); costing 19.5ms at 60fps is not.
  *
- * The ladder only ever goes DOWN from what the user picked (fsr1 → sgsr → off)
+ * The ladder only ever goes DOWN from what the user picked (fsr1 → nis → sgsr → off)
  * and climbs back when the pressure is gone. Recovery is deliberately shy: the
  * cost at the level above cannot be measured from the level below, so a restore
  * is a bet. Each undone bet doubles the wait before the next one, which turns a
  * long call into one failed attempt instead of a flip-flop every 15 seconds.
  */
 
-/** Descending cost order — the only direction this ladder is walked. */
-export const ENHANCER_LADDER = ['fsr1', 'sgsr', 'off'];
+/**
+ * Descending cost order — the only direction this ladder is walked. The menu
+ * calls them Quality (FSR1), Balanced (NIS) and Performance (SGSR1).
+ */
+export const ENHANCER_LADDER = ['fsr1', 'nis', 'sgsr', 'off'];
 
 /** Draw wait above this share of the frame budget = it no longer fits. */
 const DEGRADE_RATIO = 0.8;
