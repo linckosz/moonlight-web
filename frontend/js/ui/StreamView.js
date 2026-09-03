@@ -423,8 +423,21 @@ export class StreamView {
         let wantWebGpu = hdrEnabled === true; // HDR needs the WebGPU paths
         if (videoEnhancement === 'on') {
             wantWebGpu = true;
-            const sel = videoEnhancementAlgo || 'auto';
-            if (NO_WEBGPU_ALGOS.includes(sel)) {
+            let sel = videoEnhancementAlgo || 'auto';
+            // HDR has no WebGL2 or Canvas2D presentation in Chrome (no HDR
+            // surface for either), so with HDR on every upscaler runs in its
+            // WebGPU flavour — the same algorithm, on the renderer that can
+            // present the result. Smooth2D has no shader to move: it becomes
+            // the plain WebGPU blit.
+            if (hdrEnabled === true && NO_WEBGPU_ALGOS.includes(sel)) {
+                const toGpu = { 'gl-sgsr': 'sgsr', 'gl-nis': 'nis', 'gl-fsr1': 'fsr1' };
+                const moved = toGpu[sel] || 'off';
+                console.log('[StreamView] HDR: enhancer ' + sel + ' → ' + moved + ' on WebGPU');
+                sel = moved;
+            }
+            if (sel === 'off') {
+                // Nothing to upscale with: HDR alone decides the renderer.
+            } else if (NO_WEBGPU_ALGOS.includes(sel)) {
                 wantWebGpu = false;
                 algo = sel;
             } else if (sel === 'auto') {
