@@ -30,6 +30,8 @@
 
 // GetCursorInfo/LoadCursorW, for naming the pointer — see currentCursorKind().
 #include <windows.h>
+// AvSetMmThreadCharacteristicsW: the capture loop runs as an MMCSS "Games" task.
+#include <avrt.h>
 
 #include <atomic>
 #include <chrono>
@@ -663,6 +665,17 @@ private:
     /// turned into an ended session with a reason.
     void run() noexcept
     {
+        // MMCSS "Games": the scheduler gives this thread the same standing as
+        // a game's render thread, ahead of the desktop's background work, for
+        // the whole life of the session. Refusal (a service session, a policy)
+        // is logged once and costs nothing — the loop is the same either way.
+        DWORD mmcssTask = 0;
+        HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Games", &mmcssTask);
+        if (mmcss)
+            log::info("capture thread on MMCSS Games");
+        else
+            log::info("MMCSS Games refused for the capture thread (error " +
+                      std::to_string(GetLastError()) + ") — ordinary priority");
         try {
             runLoop();
             logCadence();
@@ -671,6 +684,7 @@ private:
         } catch (...) {
             finish("the capture loop threw an unknown exception");
         }
+        if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
     }
 
     void runLoop()

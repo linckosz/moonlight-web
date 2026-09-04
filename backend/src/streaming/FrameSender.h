@@ -59,7 +59,26 @@ public:
     /// bytes of payload. The same type libdatachannel calls rtc::binary.
     using Fragment = std::vector<std::byte>;
 
-    FrameSender();
+    /// Queue cap for a GameStream engine: the historical value, unchanged.
+    static constexpr size_t kDefaultMaxQueued = 8;
+
+    struct Options
+    {
+        /// Register the worker as an MMCSS "Games" task (Windows only; silently
+        /// ignored when refused or elsewhere). The native engine's frames are
+        /// produced by a thread of that class, and the last hop before the wire
+        /// should not be the one the scheduler starves.
+        bool multimediaPriority = false;
+        /// How many DELTA frames may wait in the queue. kDefaultMaxQueued keeps
+        /// the historical behaviour (8 jobs, deltas evicted oldest-first only
+        /// when the queue is full). 1 means: a delta that has not left yet is
+        /// replaced by the next frame — a queued delta is latency, and the
+        /// picture repairs itself (intra-refresh) or asks for a keyframe.
+        /// Keyframes are never evicted.
+        size_t maxQueuedDeltas = kDefaultMaxQueued;
+    };
+
+    explicit FrameSender(Options options = {});
     ~FrameSender();
 
     // Enqueue a frame for fragmentation + send on the worker thread.
@@ -124,7 +143,9 @@ private:
     // Cap pending jobs: if the worker cannot keep up (e.g. dc->send() blocking
     // on a full SCTP buffer), drop the oldest delta frames rather than letting
     // the queue grow unbounded and add latency. Keyframes are always preserved.
-    static constexpr size_t kMaxQueued = 8;
+    static constexpr size_t kMaxQueued = kDefaultMaxQueued;
+
+    const Options m_Options;
 
     /// Write the 17-byte chunk header at `dst`.
     static void writeHeader(std::byte* dst, uint32_t frameId, uint16_t chunkIdx,

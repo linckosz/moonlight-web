@@ -64,8 +64,10 @@ if(WIN32)
     # setupapi is ViGEmClient's: it finds the virtual bus by device interface.
     # winmm is timeBeginPeriod: the capture loop waits for the stream's next
     # due time, and without a 1 ms scheduler period that wait lands 15 ms late.
+    # avrt is MMCSS: the capture thread registers as a "Games" task so the
+    # scheduler favours it over the desktop's background work.
     target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32 setupapi
-                                                 winmm)
+                                                 winmm avrt)
 else()
     set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)

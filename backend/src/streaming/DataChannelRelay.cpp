@@ -451,8 +451,19 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
 {
     qInfo() << "[DataChannelRelay] Created";
 
-    // Dedicated sender thread: fragmentation + dc->send() run off the main thread.
-    m_Sender = std::make_unique<FrameSender>();
+    // Dedicated sender thread: fragmentation + dc->send() run off the main
+    // thread. For the native engine it runs as an MMCSS "Games" task like the
+    // capture thread that feeds it, and holds at most ONE delta: a delta that
+    // has not left when the next frame is ready is replaced (latency first;
+    // the hole is repaired by intra-refresh or a keyframe). GameStream engines
+    // keep the historical eight-job queue and ordinary priority.
+    {
+        const bool nativeEngine = qobject_cast<NativeMediaEngine*>(engine) != nullptr;
+        FrameSender::Options senderOptions;
+        senderOptions.multimediaPriority = nativeEngine;
+        senderOptions.maxQueuedDeltas = nativeEngine ? 1 : FrameSender::kDefaultMaxQueued;
+        m_Sender = std::make_unique<FrameSender>(senderOptions);
+    }
 
     // Video path threading. The native engine finishes a frame on its own
     // capture thread; queueing it onto the relay thread costs a wake-up per
@@ -1399,7 +1410,12 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         evicted = m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs,
                                     reportedNumber, sink);
     }
-    if (evicted) {
+    // An eviction leaves a hole in the reference chain. A stream that repairs
+    // itself by intra-refresh and a client that rides out the damage need no
+    // keyframe for it (same bargain as the SCTP drop above); every other
+    // stream asks for one. GameStream engines never ride out, so this is
+    // exactly their previous behaviour.
+    if (evicted && !ridingOutLoss()) {
         m_AwaitingIdr = true;
         sendIdrRequestThrottled();
     }
