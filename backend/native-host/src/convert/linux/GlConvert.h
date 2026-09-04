@@ -105,6 +105,17 @@ private:
 
     bool createContext(const std::string& renderNode, std::string& error);
     bool createShaders(std::string& error);
+    /// Bind the context to the calling thread if it is not already. convert()
+    /// runs on the capture thread, init() on whoever built the session.
+    bool makeCurrent(std::string& error);
+
+public:
+    /// Release the context from the calling thread. A thread that converted
+    /// calls this before it ends, so stop() — on another thread — can bind
+    /// the context to tear it down. Harmless when nothing is current.
+    void detachThread();
+
+private:
     bool updateCursorTextures(const capture::CursorState& cursor, std::string& error);
 
     uint32_t m_SourceFourcc = 0;

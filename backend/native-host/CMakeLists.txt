@@ -97,7 +97,6 @@ if(WIN32)
                                                  winmm avrt ole32 runtimeobject)
 else()
     set(MW_NATIVE_PLATFORM "none")
-    target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # The virtual gamepad, ahead of the rest of the Linux backend.
@@ -131,8 +130,13 @@ else()
             pkg_check_modules(MW_LINUX_GFX libdrm libva libva-drm egl glesv2 gbm)
         endif()
         if(MW_LINUX_GFX_FOUND)
+            set(MW_NATIVE_PLATFORM "linux")
             message(STATUS "mw-native-host: Linux graphics backend ON (libdrm ${MW_LINUX_GFX_libdrm_VERSION}, libva ${MW_LINUX_GFX_libva_VERSION})")
+            # The real platform seam replaces the stub: probe from KMS + VA-API,
+            # session KMS → EGL → VA-API.
             target_sources(mw-native-host PRIVATE
+                src/platform/linux/LinuxProbe.cpp
+                src/platform/linux/LinuxSession.cpp
                 src/capture/linux/KmsCapture.cpp
                 src/convert/linux/GlConvert.cpp
                 src/encode/linux/VaapiEncoder.cpp)
@@ -143,6 +147,10 @@ else()
         else()
             message(WARNING "mw-native-host: Linux graphics backend OFF — install libdrm-dev libva-dev libegl1-mesa-dev libgles2-mesa-dev libgbm-dev to build it")
         endif()
+    endif()
+
+    if(MW_NATIVE_PLATFORM STREQUAL "none")
+        target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
     endif()
 endif()
 
@@ -217,6 +225,7 @@ if(MW_BUILD_TESTS)
         tests/test_win32_cursor.cpp
         tests/test_evdev_keymap.cpp
         tests/test_linux_pipeline.cpp
+        tests/test_linux_session.cpp
         tests/test_vpl_params.cpp
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp

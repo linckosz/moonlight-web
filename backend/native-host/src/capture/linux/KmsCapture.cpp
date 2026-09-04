@@ -533,7 +533,12 @@ bool KmsCapture::updateCursor()
 AcquireStatus KmsCapture::acquire(int timeoutMs, KmsFrame& frame)
 {
     if (m_Card < 0) return AcquireStatus::Failed;
-    if (m_HeldCount > 0) release(); // the contract is one release() per Ok
+    // The frame handed out last time is NOT closed here. It stays valid until
+    // a new buffer is exported (below), so a caller that only got a PointerOnly
+    // or a Timeout can re-convert the picture it already has with the pointer
+    // at its new place — the KMS equivalent of the desktop copy the Windows
+    // session keeps for the same purpose, at the cost of no copy at all: the
+    // compositor rotates between buffers, and holding the fd of one keeps it.
 
     const int64_t deadlineUs = steadyNowUs() + static_cast<int64_t>(timeoutMs) * 1000;
     bool cursorMoved = false;
@@ -567,6 +572,9 @@ AcquireStatus KmsCapture::acquire(int timeoutMs, KmsFrame& frame)
         if (!fbId || crtc != m_CrtcId) return AcquireStatus::Lost;
 
         if (fbId != m_LastFbId) {
+            // The previous buffer's fds go now, with a new one about to replace
+            // it — see the note at the top.
+            closeFrameFds();
             std::string error;
             if (!exportFramebuffer(fbId, frame, error)) {
                 log::warning("[native] KMS: " + error);

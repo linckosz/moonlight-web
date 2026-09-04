@@ -129,7 +129,10 @@ public:
     /// Timeout — or PointerOnly when only the cursor plane moved.
     AcquireStatus acquire(int timeoutMs, KmsFrame& frame);
 
-    /// Close the frame's fds. One per Ok, before the next acquire().
+    /// Close the frame's fds early. Optional: acquire() closes the previous
+    /// frame itself when a new buffer replaces it, and a caller that wants to
+    /// re-convert the last picture (pointer moved, screen did not) simply keeps
+    /// it. Call this to give the buffer back sooner than that.
     void release();
     void stop();
 

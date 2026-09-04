@@ -34,6 +34,7 @@
 #include <GLES2/gl2ext.h>
 // clang-format on
 
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -359,11 +360,40 @@ bool GlConvert::init(const std::string& renderNode, uint32_t sourceFourcc, int s
 
     if (!createContext(renderNode, error)) return false;
     if (!createShaders(error)) return false;
+    // Built on this thread, converted on another: let go of the context so the
+    // capture thread can take it (an EGL context is current on one thread).
+    detachThread();
 
     log::info("[native] colour conversion: " + std::to_string(m_SourceWidth) + "x" +
               std::to_string(m_SourceHeight) + " XRGB -> " + std::to_string(m_OutputWidth) + "x" +
               std::to_string(m_OutputHeight) + " NV12 4:2:0 (BT.709 limited), via EGL");
     return true;
+}
+
+bool GlConvert::makeCurrent(std::string& error)
+{
+    // An EGL context is current on ONE thread, and init() ran on whichever
+    // thread built the session while convert() runs on the capture thread.
+    // Without this, every GL call below is a silent no-op — no context, no
+    // error either — and the encoder reads a surface nothing ever wrote:
+    // a black picture with nothing in the log. Cheap when already current.
+    if (eglGetCurrentContext() == d->context) return true;
+    if (!eglMakeCurrent(d->display, EGL_NO_SURFACE, EGL_NO_SURFACE, d->context)) {
+        // EGL_BAD_ACCESS here means another thread still holds it: whoever
+        // used the converter last did not detachThread().
+        char code[16];
+        std::snprintf(code, sizeof(code), "0x%X", static_cast<unsigned>(eglGetError()));
+        error = std::string("could not bind the ES3 context to this thread (") + code + ")";
+        return false;
+    }
+    return true;
+}
+
+void GlConvert::detachThread()
+{
+    if (!d || d->context == EGL_NO_CONTEXT) return;
+    if (eglGetCurrentContext() == d->context)
+        eglMakeCurrent(d->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
 
 bool GlConvert::bindTarget(const Nv12Target& target, std::string& error)
@@ -372,6 +402,7 @@ bool GlConvert::bindTarget(const Nv12Target& target, std::string& error)
         error = "GL conversion is not initialized";
         return false;
     }
+    if (!makeCurrent(error)) return false;
     if (target.width != m_OutputWidth || target.height != m_OutputHeight) {
         error = "the encoder's surface is not the size the converter produces";
         return false;
@@ -411,6 +442,7 @@ bool GlConvert::bindTarget(const Nv12Target& target, std::string& error)
         return false;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    detachThread();
     return true;
 }
 
@@ -451,6 +483,7 @@ bool GlConvert::convert(const capture::KmsFrame& frame, const capture::CursorSta
         error = "GL conversion has no target bound";
         return false;
     }
+    if (!makeCurrent(error)) return false;
     if (!updateCursorTextures(cursor, error)) return false;
 
     // The scanout buffer, imported fresh. The compositor rotates between two
@@ -517,6 +550,10 @@ void GlConvert::stop()
 {
     if (!d) return;
     if (d->display != EGL_NO_DISPLAY && d->context != EGL_NO_CONTEXT) {
+        // Fails (EGL_BAD_ACCESS) if the capture thread still holds the
+        // context — LinuxSession detaches before its thread ends — in which
+        // case the GL deletes below are no-ops and eglDestroyContext still
+        // frees everything once the context is released.
         eglMakeCurrent(d->display, EGL_NO_SURFACE, EGL_NO_SURFACE, d->context);
         if (d->lumaFbo) glDeleteFramebuffers(1, &d->lumaFbo);
         if (d->chromaFbo) glDeleteFramebuffers(1, &d->chromaFbo);

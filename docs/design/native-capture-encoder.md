@@ -1614,8 +1614,10 @@ rend dedans, parce que VA-API alloue les siennes.
 
 Le vertex shader **ne retourne pas Y**, contrairement au HLSL : un framebuffer GL
 adossé à un DMA-BUF a sa première ligne mémoire en NDC y = −1, et écrire uv (0,0)
-en (−1,−1) fait correspondre première ligne source et première ligne cible. C'est
-raisonné, pas encore vu : l'orientation se vérifiera à l'œil au premier flux.
+en (−1,−1) fait correspondre première ligne source et première ligne cible.
+**Vu le 05/09** : le flux d'une session complète décodé par ffmpeg sur la machine
+donne le bureau GNOME droit, barre en haut, dock à gauche, texte lisible, orange
+Ubuntu et icône Chrome aux bonnes couleurs (donc l'ordre B/R du XRGB est juste).
 
 Vérifié (`test_linux_pipeline`, qui tourne sur toute machine et se déclare sauté
 sans écran actif ou sans capacité) : `KmsCapture` liste les connecteurs et leur
@@ -1642,9 +1644,54 @@ séquence, VUI comprise (`bitstream_restriction` — la leçon B8 — et timing)
 en-têtes empaquetés que FFmpeg envoie ne le sont pas tant qu'une mesure ne montre
 pas qu'il y manque quelque chose.
 
-### 19.5 Ce qui reste
+### 19.5 La couture plateforme : `LinuxProbe` et `LinuxSession` (05/09/2026)
 
-`LinuxProbe` et `LinuxSession` (la couture plateforme, qui remplace
-`Unimplemented.cpp`), HEVC et AV1 VA-API, l'audio (PipeWire/Pulse → Opus, et Opus
-n'est pas encore construit sous Linux), le portail PipeWire en repli, et le
-`setcap` dans le paquet.
+`Unimplemented.cpp` ne sert plus sous Linux dès que les bibliothèques graphiques
+sont là (`MW_NATIVE_PLATFORM "linux"`). La sonde répond aux trois questions de
+`WindowsProbe` depuis trois autres endroits : les GPU depuis `/dev/dri/card*`
+(PCI vendor/device et nom de pilote par libdrm, nom lisible extrait de la chaîne
+vendeur VA-API — « AMD Radeon Graphics (gfx1103_r1) »), les écrans depuis KMS
+(connecteurs branchés, mode exact, le primaire = celui à l'origine du bureau), les
+encodeurs depuis VA-API sur le render node. **Seul H.264 est annoncé** tant que
+`VaapiEncoder` n'a pas de chemin HEVC/AV1 — la leçon B7 : une capacité que
+l'encodeur n'honore pas est une session morte à l'init ; le silicium HEVC et AV1
+est dit dans le log seulement. `hasInteractiveSession()` n'a plus le sens Windows
+(« ce processus atteint-il un bureau ? ») mais « y a-t-il un CRTC allumé ? » —
+KMS capture qui que ce soit et sans serveur d'affichage, c'est le point. La
+capacité `cap_sys_admin` est vérifiée une fois dans la sonde pour que la carte
+d'hôte dise pourquoi, plutôt qu'un échec au clic.
+
+`LinuxSession` est le portage étage par étage de `WindowsSession` — même thread
+unique sans file, même garde de cadence, même plancher écran fixe et rafale de
+raffinement, mêmes trois couches de débit, même redémarrage sur écran perdu — avec
+les différences propres à la plateforme marquées là où elles vivent : l'image que
+le chemin pointeur-seul reconvertit est **le dernier tampon KMS tenu par son fd**,
+pas une copie (`KmsCapture::acquire` ne ferme le tampon précédent qu'au moment
+d'exporter le suivant) ; l'encodeur possède la surface ; pas d'invalidation de
+référence ni d'intra-refresh sur radeonsi (une image perdue coûte une keyframe, et
+`SessionInfo` le dit) ; clavier/souris uinput et manette uinput construits comme
+`Win32Input`/`VigemGamepad` ; pas d'audio, pas de HDR.
+
+**Le piège qui a coûté la première image** : la session a d'abord produit un flux
+de 1,5 Ko pour 13 images — du noir pur, luma 0, pas 16. Le contexte EGL est rendu
+courant par `init()` sur le thread qui construit la session, et `convert()` tourne
+sur le thread de capture : sans contexte courant **tout appel GL est un no-op
+silencieux**, `glGetError()` compris, et l'encodeur lit une surface que rien n'a
+écrite. Le test pipeline, sur un seul thread, ne pouvait pas le voir. Le
+convertisseur lie maintenant le contexte au thread qui l'appelle
+(`makeCurrent`), le relâche à la fin de `init()`/`bindTarget()` et le thread de
+capture le rend avant de finir (`detachThread`), sinon `stop()` sur l'autre thread
+se heurte à `EGL_BAD_ACCESS`.
+
+Vérifié (`test_linux_session`, une session par `NativeHost::probe()` →
+`createSession()` → 2,7 s → fichier) : 13 images, 2 keyframes (la première et
+celle demandée), ordre des numéros tenu, latence hôte au pire 8,1 ms, 560 Ko, et
+l'image décodée décrite en 19.4. 1952 vérifications vertes sous Linux, 2005 sous
+Windows (les deux tests Linux s'y déclarent sautés). ffmpeg n'intervient que sur le
+banc, pour regarder le flux : le paquet n'en dépend pas.
+
+### 19.6 Ce qui reste
+
+HEVC et AV1 VA-API, l'audio (PipeWire/Pulse → Opus, et Opus n'est pas encore
+construit sous Linux), le portail PipeWire en repli, le `setcap cap_sys_admin+ep`
+dans le paquet, et le premier flux vers un vrai navigateur depuis un hôte Linux.
