@@ -634,6 +634,12 @@ export class StreamView {
         // the measuring side installed — see stream/LatencyProbe.js.
         this._latencyFlag = opts.latencyFlag === true;
         this._latencyProbe = null;
+        // Native host: mouse motion goes out on `pointerrawupdate` — every
+        // report the device makes, not the one-per-display-frame sum that
+        // `mousemove` delivers. Decided in _bindPointerRaw; while it is on, the
+        // mousemove handlers keep their cursor bookkeeping and stop sending.
+        this._nativeHost = opts.nativeHost === true;
+        this._rawPointer = false;
         this.pointerLocked = false;
         // ── Host pointer, drawn by US ──────────────────────────────────────
         // The native host can hand over the pointer's shape instead of burning
@@ -5498,6 +5504,7 @@ export class StreamView {
         // write that was denied for lack of transient activation.
         document.addEventListener('pointerdown', this._onPointerDownFlush, true);
         this.inputEl.addEventListener('wheel', this._onWheel, { passive: false });
+        this._bindPointerRaw();
         this.streamEl.addEventListener('contextmenu', this._onContextMenu);
         // Touch events (mobile): bound to the WHOLE overlay so the entire
         // screen acts as a laptop trackpad, not just the canvas rectangle.
@@ -5621,6 +5628,9 @@ export class StreamView {
         // relative movement via pointer lock deltas when focused.
         this._onGamingMouseMove = (e) => {
             if (this._mouseFocused) {
+                // Raw mode: every report already went out from _onPointerRaw;
+                // this is the same motion summed up, a frame late.
+                if (this._rawPointer) return;
                 this._sendToHost({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
                 this._lastMouseClientX = e.clientX;
@@ -6084,21 +6094,14 @@ export class StreamView {
             // where it is — the client cursor is off the stream surface.
             if (!inside) return;
 
-            // Clamp to image bounds to avoid sending out-of-range coordinates
-            const x = Math.round(Math.max(0, Math.min(rawX, rect.width)));
-            const y = Math.round(Math.max(0, Math.min(rawY, rect.height)));
-            const refW = Math.round(rect.width);
-            const refH = Math.round(rect.height);
+            // Raw mode: the position already went out from _onPointerRaw, at
+            // the device's own rate. Only the cursor bookkeeping above is ours.
+            if (this._rawPointer) return;
 
             // Send absolute position. LiSendMousePositionEvent() on the backend
-            // will scale (x, y) from the (refW, refH) plane to host screen coords.
-            this._sendToHost({
-                type: 'mousemove',
-                x: x,
-                y: y,
-                referenceWidth: refW,
-                referenceHeight: refH,
-            });
+            // will scale (x, y) from the reference plane to host screen coords.
+            const msg = this._absoluteMouseMessage(e.clientX, e.clientY);
+            if (msg) this._sendToHost(msg);
         };
 
         this._onNormalMouseDown = (e) => {
@@ -6168,6 +6171,11 @@ export class StreamView {
         }
         if (this.inputEl) {
             this.inputEl.removeEventListener('wheel', this._onWheel);
+            if (this._onPointerRaw) {
+                this.inputEl.removeEventListener('pointerrawupdate', this._onPointerRaw);
+                this._onPointerRaw = null;
+                this._rawPointer = false;
+            }
 
             // Mode-specific listeners
             if (this._gamingMode) {
@@ -7039,6 +7047,65 @@ export class StreamView {
         this.webrtc.send(msg);
     }
 
+    /**
+     * Mouse motion at the device's own report rate (native host only).
+     *
+     * `mousemove` is dispatched once per display frame with the motion since
+     * the previous one summed up: a 1000 Hz mouse on a 60 Hz screen reaches
+     * the host as 60 messages a second, each up to 16 ms after the hand moved.
+     * `pointerrawupdate` (Chromium) fires for every report instead, off the
+     * frame clock. The native host injects each event on the thread that
+     * receives it (no per-frame batching anywhere downstream), so there the
+     * extra messages buy the delay back; a GameStream host keeps the coalesced
+     * cadence its own protocol was built around — hence the gate.
+     *
+     * The mousemove handlers stay bound for what only they know how to do
+     * (cursor styling, the pre-focus click-to-capture position) and skip the
+     * send while this is active.
+     */
+    _bindPointerRaw() {
+        this._rawPointer = false;
+        if (!this._nativeHost || !this.inputEl) return;
+        if (!('onpointerrawupdate' in window)) return;
+        this._onPointerRaw = (e) => {
+            if (e.pointerType !== 'mouse') return;
+            if (this._gamingMode) {
+                // Pre-focus, the pointer is free: the mousemove path places the
+                // host cursor and handles the capture click.
+                if (!this._mouseFocused) return;
+                if (e.movementX || e.movementY) {
+                    this._sendToHost({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
+                }
+                return;
+            }
+            const msg = this._absoluteMouseMessage(e.clientX, e.clientY);
+            if (msg) this._sendToHost(msg);
+        };
+        this.inputEl.addEventListener('pointerrawupdate', this._onPointerRaw);
+        this._rawPointer = true;
+        console.log('[StreamView] Mouse: raw report rate (pointerrawupdate, native host)');
+    }
+
+    /**
+     * The absolute-position message for a client point, or null when the point
+     * is over the letterbox bars (the host cursor stays where it is). The host
+     * scales (x, y) from the (referenceWidth, referenceHeight) plane to its
+     * screen.
+     */
+    _absoluteMouseMessage(clientX, clientY) {
+        const rect = this._mediaRect();
+        const rawX = clientX - rect.left;
+        const rawY = clientY - rect.top;
+        if (rawX < 0 || rawY < 0 || rawX > rect.width || rawY > rect.height) return null;
+        return {
+            type: 'mousemove',
+            x: Math.round(Math.max(0, Math.min(rawX, rect.width))),
+            y: Math.round(Math.max(0, Math.min(rawY, rect.height))),
+            referenceWidth: Math.round(rect.width),
+            referenceHeight: Math.round(rect.height),
+        };
+    }
+
     // =========================================================================
     // Clipboard sync (see backend ClipboardBridge for the full protocol)
     // =========================================================================
@@ -7162,6 +7229,7 @@ export class StreamView {
 
     handleMouseMove(e) {
         if (!this.pointerLocked) return;
+        if (this._rawPointer) return; // already sent per report by _onPointerRaw
         this._sendToHost({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
     }
 

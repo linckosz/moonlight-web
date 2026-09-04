@@ -1011,6 +1011,14 @@ void StreamSession::onShimConnectionStarted()
     // indefinitely.
     result["intra_refresh"] = m_Engine && m_Engine->intraRefreshActive();
 
+    // Whether the host is this machine's own screen. The browser adapts what
+    // only makes sense there — today, sending the mouse at its raw report rate
+    // (pointerrawupdate) instead of once per display frame: the native engine
+    // injects each event on the thread that receives it, so more events mean
+    // less delay, whereas a GameStream host gets them over its own protocol
+    // and keeps the browser's frame-coalesced cadence.
+    result["native"] = qobject_cast<NativeMediaEngine*>(m_Engine) != nullptr;
+
     // Audio time-stretch (WSOLA) — file-only setting (settings.json), default
     // false. Read fresh per session so a file edit applies on the next launch.
     {
