@@ -1,0 +1,287 @@
+/*
+ * MoonlightWeb — native capture & encoding engine, test suite.
+ * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>. GPLv3.
+ */
+#include "native_test_framework.h"
+
+#if defined(MW_NATIVE_LINUX_GFX)
+#include "capture/linux/KmsCapture.h"
+#include "convert/linux/GlConvert.h"
+#include "encode/linux/VaapiEncoder.h"
+
+#include <fcntl.h>
+#include <glob.h>
+#include <unistd.h>
+#include <va/va.h>
+#include <va/va_drm.h>
+#include <va/va_drmcommon.h>
+#endif
+
+#include <cstdio>
+#include <string>
+
+// The Linux capture and conversion against the real display and the real GPU.
+//
+// Same stance as the Windows capture test: this cannot be faked, so it runs on
+// whatever the machine has and says "skipped" honestly where it lacks the
+// display, the GPU, or the privilege. The proof at the end is the one that
+// matters everywhere: real pixels, read back, in the legal range — a pipeline
+// that comes up and hands the encoder a black surface passes every other check.
+
+void run_linux_pipeline_tests()
+{
+    SECTION("Linux — KMS capture → EGL conversion → VA-API surface");
+
+#if !defined(MW_NATIVE_LINUX_GFX)
+    std::fprintf(stderr, "  skipped: Linux graphics backend not built\n");
+#else
+    using namespace mw::native;
+
+    // ── Find a display that is actually being shown ─────────────────────────
+    glob_t cards = {};
+    glob("/dev/dri/card*", 0, nullptr, &cards);
+    capture::KmsOutput target;
+    for (size_t i = 0; i < cards.gl_pathc && !target.active; ++i) {
+        std::string error;
+        for (const capture::KmsOutput& out :
+             capture::KmsCapture::listOutputs(cards.gl_pathv[i], error)) {
+            std::fprintf(stderr, "  %s %s: %s%s %dx%d @ %.2f Hz at %d,%d\n", out.cardPath.c_str(),
+                         out.name.c_str(), out.connected ? "connected" : "disconnected",
+                         out.active ? ", active" : "", out.width, out.height,
+                         out.refreshMilliHz / 1000.0, out.x, out.y);
+            if (out.active && !target.active) target = out;
+        }
+    }
+    globfree(&cards);
+    if (!target.active) {
+        std::fprintf(stderr, "  skipped: no display is being scanned out\n");
+        return;
+    }
+
+    std::string why;
+    if (!capture::KmsCapture::canReadFramebuffers(target.cardPath, why)) {
+        std::fprintf(stderr, "  skipped: %s\n", why.c_str());
+        return;
+    }
+
+    // ── Capture ─────────────────────────────────────────────────────────────
+    capture::KmsCapture kms(target.cardPath, target.connectorId);
+    std::string error;
+    if (!kms.start(error)) {
+        std::fprintf(stderr, "  skipped: %s\n", error.c_str());
+        return;
+    }
+    CHECK_EQ(kms.width(), target.width);
+    CHECK_EQ(kms.height(), target.height);
+    CHECK(kms.refreshMilliHz() > 0);
+    CHECK(!kms.renderNodePath().empty());
+    CHECK(kms.desktopRect().valid());
+
+    // The first acquire always has a frame: the buffer on screen has not been
+    // handed out yet. Later ones on a still desktop are Timeouts, correctly.
+    capture::KmsFrame frame;
+    const capture::AcquireStatus status = kms.acquire(100, frame);
+    CHECK_EQ(static_cast<int>(status), static_cast<int>(capture::AcquireStatus::Ok));
+    if (status != capture::AcquireStatus::Ok) {
+        kms.stop();
+        return;
+    }
+    std::fprintf(
+        stderr, "  frame %dx%d fourcc %.4s modifier 0x%llx, %d plane(s), capture latency %lld us\n",
+        frame.width, frame.height, reinterpret_cast<const char*>(&frame.fourcc),
+        static_cast<unsigned long long>(frame.modifier), frame.planeCount,
+        static_cast<long long>(frame.capturedUs - frame.presentUs));
+    CHECK(frame.planeCount >= 1);
+    CHECK(frame.fds[0] >= 0);
+    CHECK(frame.presentUs > 0);
+    // A present in the future would poison the link governor (see WgcCapture).
+    CHECK(frame.capturedUs >= frame.presentUs);
+
+    // A second acquire on a still desktop: Timeout or PointerOnly, never a
+    // duplicate Ok for the same buffer.
+    {
+        capture::KmsFrame again;
+        kms.release();
+        const capture::AcquireStatus second = kms.acquire(50, again);
+        CHECK(second != capture::AcquireStatus::Lost);
+        CHECK(second != capture::AcquireStatus::Failed);
+        if (second == capture::AcquireStatus::Ok) {
+            std::fprintf(stderr, "  (the desktop moved between acquires — fine)\n");
+            kms.release();
+        }
+        // Re-acquire for the conversion below: force a fresh export.
+        kms.stop();
+        CHECK(kms.start(error));
+        CHECK_EQ(static_cast<int>(kms.acquire(100, frame)),
+                 static_cast<int>(capture::AcquireStatus::Ok));
+    }
+
+    // ── The encoder's surface, stood in for by VA-API directly ──────────────
+    const int render = ::open(kms.renderNodePath().c_str(), O_RDWR | O_CLOEXEC);
+    CHECK(render >= 0);
+    VADisplay display = vaGetDisplayDRM(render);
+    int major = 0, minor = 0;
+    CHECK_EQ(vaInitialize(display, &major, &minor), VA_STATUS_SUCCESS);
+    std::fprintf(stderr, "  VA-API %d.%d: %s\n", major, minor, vaQueryVendorString(display));
+
+    VASurfaceID nv12 = VA_INVALID_SURFACE;
+    CHECK_EQ(vaCreateSurfaces(display, VA_RT_FORMAT_YUV420, static_cast<unsigned>(frame.width),
+                              static_cast<unsigned>(frame.height), &nv12, 1, nullptr, 0),
+             VA_STATUS_SUCCESS);
+    VADRMPRIMESurfaceDescriptor exported = {};
+    CHECK_EQ(vaExportSurfaceHandle(display, nv12, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
+                                   VA_EXPORT_SURFACE_WRITE_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS,
+                                   &exported),
+             VA_STATUS_SUCCESS);
+    CHECK_EQ(exported.num_layers, 2u);
+
+    convert::Nv12Target nv12Target;
+    nv12Target.width = frame.width;
+    nv12Target.height = frame.height;
+    nv12Target.modifier = exported.objects[0].drm_format_modifier;
+    nv12Target.fdY = exported.objects[exported.layers[0].object_index[0]].fd;
+    nv12Target.offsetY = exported.layers[0].offset[0];
+    nv12Target.pitchY = exported.layers[0].pitch[0];
+    nv12Target.fdUV = exported.objects[exported.layers[1].object_index[0]].fd;
+    nv12Target.offsetUV = exported.layers[1].offset[0];
+    nv12Target.pitchUV = exported.layers[1].pitch[0];
+
+    // ── Convert ─────────────────────────────────────────────────────────────
+    convert::GlConvert gl;
+    CHECK(gl.init(kms.renderNodePath(), frame.fourcc, frame.width, frame.height, frame.width,
+                  frame.height, error));
+    if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
+    CHECK(gl.bindTarget(nv12Target, error));
+    if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
+    CHECK(gl.convert(frame, kms.cursor(), convert::CursorDraw{}, error));
+    if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
+    kms.release();
+
+    // ── Look at the pixels ──────────────────────────────────────────────────
+    VAImageFormat format = {};
+    format.fourcc = VA_FOURCC_NV12;
+    format.byte_order = VA_LSB_FIRST;
+    format.bits_per_pixel = 12;
+    VAImage image = {};
+    CHECK_EQ(vaCreateImage(display, &format, frame.width, frame.height, &image), VA_STATUS_SUCCESS);
+    CHECK_EQ(vaGetImage(display, nv12, 0, 0, static_cast<unsigned>(frame.width),
+                        static_cast<unsigned>(frame.height), image.image_id),
+             VA_STATUS_SUCCESS);
+    uint8_t* pixels = nullptr;
+    CHECK_EQ(vaMapBuffer(display, image.buf, reinterpret_cast<void**>(&pixels)), VA_STATUS_SUCCESS);
+    if (pixels) {
+        unsigned minLuma = 255, maxLuma = 0;
+        for (int y = 0; y < frame.height; y += 16) {
+            const uint8_t* row =
+                pixels + image.offsets[0] + static_cast<size_t>(y) * image.pitches[0];
+            for (int x = 0; x < frame.width; x += 16) {
+                minLuma = row[x] < minLuma ? row[x] : minLuma;
+                maxLuma = row[x] > maxLuma ? row[x] : maxLuma;
+            }
+        }
+        std::fprintf(stderr, "  NV12 luma range: %u..%u\n", minLuma, maxLuma);
+        // BT.709 limited range puts black at 16 and white at 235. A desktop
+        // always holds more than one shade, so a flat image means the
+        // conversion drew nothing — and a value outside 16..235 means the
+        // limited-range scaling was skipped.
+        CHECK(maxLuma > minLuma);
+        CHECK(minLuma >= 16);
+        CHECK(maxLuma <= 235);
+        vaUnmapBuffer(display, image.buf);
+    }
+    vaDestroyImage(display, image.image_id);
+    for (unsigned i = 0; i < exported.num_objects; ++i)
+        ::close(exported.objects[i].fd);
+    vaDestroySurfaces(display, &nv12, 1);
+    vaTerminate(display);
+    ::close(render);
+    gl.stop();
+
+    // ── …and through the encoder, the way a session wires it ────────────────
+    //
+    // The encoder OWNS the surface here (VA-API allocates), the converter
+    // renders into its exported planes, and the bitstream that comes out is
+    // inspected rather than trusted: an Annex-B stream a browser can start from
+    // carries its parameter sets on the keyframe.
+    SECTION("Linux — VA-API encoder, from the converter's surface to Annex-B");
+    {
+        encode::VaapiEncoder encoder;
+        if (!encoder.init(kms.renderNodePath(), Codec::H264, frame.width, frame.height, 60, 20000,
+                          /*intraRefresh=*/true, EncoderTuning{}, error)) {
+            std::fprintf(stderr, "  encoder skipped: %s\n", error.c_str());
+        } else {
+            convert::GlConvert gl2;
+            CHECK(gl2.init(kms.renderNodePath(), frame.fourcc, frame.width, frame.height,
+                           frame.width, frame.height, error));
+            CHECK(gl2.bindTarget(encoder.inputTarget(), error));
+            if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
+
+            // A fresh frame for the encoder's surface.
+            kms.stop();
+            CHECK(kms.start(error));
+            CHECK_EQ(static_cast<int>(kms.acquire(100, frame)),
+                     static_cast<int>(capture::AcquireStatus::Ok));
+            CHECK(gl2.convert(frame, kms.cursor(), convert::CursorDraw{}, error));
+            if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
+            kms.release();
+
+            encode::EncoderOutput out;
+            const bool encoded = encoder.encode(true, 0, out, error);
+            if (!encoded) std::fprintf(stderr, "  encode failed: %s\n", error.c_str());
+            CHECK(encoded);
+            if (encoded && out.data) {
+                CHECK(out.keyframe);
+                CHECK(out.size > 0);
+                // Walk the Annex-B NAL units: a decodable keyframe has an SPS
+                // (7), a PPS (8) and an IDR slice (5). Their absence is the
+                // failure that looks like a working encoder and a black client.
+                bool sps = false, pps = false, idr = false;
+                int nals = 0;
+                for (size_t i = 0; i + 3 < out.size; ++i) {
+                    if (out.data[i] == 0 && out.data[i + 1] == 0 && out.data[i + 2] == 1) {
+                        const int type = out.data[i + 3] & 0x1F;
+                        ++nals;
+                        if (type == 7) sps = true;
+                        if (type == 8) pps = true;
+                        if (type == 5) idr = true;
+                        i += 3;
+                    }
+                }
+                std::fprintf(
+                    stderr, "  H.264 keyframe: %zu bytes, %d NAL(s), SPS %s PPS %s IDR %s\n",
+                    out.size, nals, sps ? "yes" : "NO", pps ? "yes" : "NO", idr ? "yes" : "NO");
+                CHECK(sps);
+                CHECK(pps);
+                CHECK(idr);
+                encoder.releaseOutput();
+
+                // A delta frame follows and is not a keyframe. The surface still
+                // holds the converted picture — encoding it again is a P-frame
+                // of a still screen, which is exactly what the floor sends.
+                encode::EncoderOutput delta;
+                if (encoder.encode(false, 1, delta, error)) {
+                    CHECK(!delta.keyframe);
+                    CHECK(delta.size > 0);
+                    std::fprintf(stderr, "  H.264 delta: %zu bytes\n", delta.size);
+                    encoder.releaseOutput();
+                } else {
+                    std::fprintf(stderr, "  delta encode failed: %s\n", error.c_str());
+                    CHECK(false);
+                }
+
+                // Changing the bitrate mid-session must not need a restart.
+                CHECK(encoder.setBitrate(10000, error));
+                std::fprintf(stderr, "  intra-refresh: %s\n",
+                             encoder.intraRefreshEnabled() ? "rolling column" : "not offered");
+            }
+            gl2.stop();
+            encoder.stop();
+        }
+    }
+
+    kms.stop();
+    // Idempotent teardown, as on Windows.
+    kms.stop();
+    kms.release();
+#endif
+}

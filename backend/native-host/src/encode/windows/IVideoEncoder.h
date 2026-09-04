@@ -19,6 +19,7 @@
 
 #include "mw/native/Capabilities.h"
 #include "mw/native/EncoderTuning.h"
+#include "../EncoderOutput.h"
 
 #include <d3d11.h>
 
@@ -26,24 +27,6 @@
 #include <string>
 
 namespace mw::native::encode {
-
-/// One encoded frame, pointing into the encoder's own output buffer.
-///
-/// Valid only until the next call on this encoder: the buffer is released as
-/// soon as the caller is done with it, which is what keeps the GPU→CPU copy at
-/// exactly one per frame instead of one plus an allocation.
-struct EncoderOutput
-{
-    const uint8_t* data = nullptr;
-    size_t size = 0;
-    bool keyframe = false;
-
-    /// The average quantizer the encoder reports for this frame, or -1 when it
-    /// does not say. The objective proxy for quality in the benchmarks: at a
-    /// fixed bitrate, a lower QP is a sharper picture. H.264/HEVC report a QP
-    /// (0–51); AV1 reports a q-index (0–255) — same direction, other scale.
-    int avgQp = -1;
-};
 
 /// A hardware encoder taking D3D11 textures.
 ///

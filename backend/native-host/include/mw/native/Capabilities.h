@@ -63,8 +63,9 @@ enum class CaptureApi
     None,
     DxgiDuplication,        ///< Windows, primary
     WindowsGraphicsCapture, ///< Windows, automatic fallback
-    PipeWire,               ///< Linux, via the ScreenCast portal
+    PipeWire,               ///< Linux, via the ScreenCast portal (fallback)
     ScreenCaptureKit,       ///< macOS 12.3+
+    Kms,                    ///< Linux, DRM/KMS scanout framebuffer (primary)
 };
 
 const char* toString(CaptureApi a);

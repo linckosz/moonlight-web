@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "../CaptureTypes.h"
+
 #include <d3d11.h>
 
 #include <cstdint>
@@ -43,36 +45,6 @@
 
 namespace mw::native::capture {
 
-/// What one acquire() attempt produced.
-enum class AcquireStatus
-{
-    /// A new frame is in `CapturedFrame::texture`, and release() must be called
-    /// before the next acquire().
-    Ok,
-
-    /// Nothing was presented within the timeout. Not an error, and the common
-    /// case on a still desktop: the display genuinely has nothing new. The
-    /// caller must NOT treat this as a dropped frame.
-    Timeout,
-
-    /// Only the mouse moved or changed shape — the desktop image is untouched,
-    /// so DXGI hands back no usable texture and release() has already happened.
-    ///
-    /// Worth its own status rather than being folded into Timeout: the cursor is
-    /// composited by us, so a pointer move IS a visible change even though not
-    /// one pixel of the desktop moved. Reporting it as "nothing happened" is
-    /// what made the cursor sit still on a quiet screen.
-    PointerOnly,
-
-    /// The duplication became invalid — a mode change, a resolution change, a
-    /// desktop switch (UAC / lock screen), or the GPU being reset. Recoverable:
-    /// the caller re-runs start() and carries on.
-    Lost,
-
-    /// Unrecoverable. `error` on the capture object says what happened.
-    Failed,
-};
-
 /// One captured frame. The texture is BORROWED: it belongs to the capture and
 /// is valid only until release(). Nothing here owns anything.
 struct CapturedFrame
@@ -91,86 +63,6 @@ struct CapturedFrame
     /// When acquire() returned. `capturedUs - presentUs` is the capture
     /// latency, and it is the first number worth watching.
     int64_t capturedUs = 0;
-};
-
-/// The mouse pointer, as Desktop Duplication reports it.
-///
-/// ── Why we have to draw it ourselves ────────────────────────────────────────
-///
-/// The duplicated desktop image does NOT contain the cursor. Windows composites
-/// the pointer at scan-out, so a captured frame is the desktop with a hole where
-/// the user is looking. DXGI hands the pointer over separately — a position, and
-/// a shape that changes only when the cursor does — and compositing the two is
-/// the caller's job.
-///
-/// The shape arrives in three encodings, and all three are reduced here to one:
-/// an RGBA image plus a per-pixel invert flag. Monochrome cursors (the text
-/// I-beam, most resize arrows) are the reason the flag exists — they carry no
-/// colour of their own and are defined as inverting whatever is behind them,
-/// which is what keeps an I-beam visible on both black and white text areas.
-struct CursorState
-{
-    /// Whether the pointer is on THIS display right now.
-    bool visible = false;
-
-    /// Top-left of the cursor image in captured-frame pixels — the hotspot has
-    /// already been subtracted, so this is where the image goes.
-    int x = 0;
-    int y = 0;
-
-    int width = 0;
-    int height = 0;
-
-    /// How many columns (from the left) and rows (from the top) actually hold
-    /// ink — a pixel that is either coloured or inverting. Zero when the shape
-    /// is empty.
-    ///
-    /// The buffer is not the pointer: Windows pads an arrow into a 32×32 (or
-    /// 48, or 64 on a scaled display) canvas and only a corner of it is drawn.
-    /// Anything sized from `width` — a pointer magnified to a target size on a
-    /// phone — would change size with the padding, not with the pointer, and two
-    /// arrows that look the same on the desktop would come out at two sizes.
-    /// Both axes, because shapes are not square: an I-beam is tall and narrow,
-    /// a horizontal resize arrow wide and flat, and sizing on one axis alone
-    /// blows the other kind up.
-    int inkWidth = 0;
-    int inkHeight = 0;
-
-    /// width × height × 4, BGRA order as D3D11 wants it. Alpha is real coverage:
-    /// colour cursors antialias their edges.
-    std::vector<uint8_t> pixels;
-
-    /// width × height, 255 where the pixel inverts the background instead of
-    /// replacing it. Zero everywhere for an ordinary colour cursor.
-    std::vector<uint8_t> invert;
-
-    /// Bumped every time `pixels`/`invert` change. Lets the consumer re-upload
-    /// the small textures only when the shape actually changed — a moving
-    /// cursor keeps the same shape for thousands of frames.
-    uint64_t shapeVersion = 0;
-};
-
-/// Where a display sits on the Windows desktop.
-///
-/// ── This is the DPI-VIRTUALIZED rectangle, on purpose ───────────────────────
-///
-/// DXGI reports desktop coordinates through the same DPI virtualization that
-/// made a 2560×1440 monitor at 125% measure 2048×1152 — the bug that sent the
-/// probe to QueryDisplayConfig for the real mode. Do not "fix" this one the
-/// same way. SendInput's absolute coordinates are expressed against
-/// SM_XVIRTUALSCREEN/SM_CXVIRTUALSCREEN, which are virtualized identically, so
-/// the two agree exactly. Substituting the true pixel size here would put the
-/// cursor in the wrong place on every scaled display.
-struct DesktopRect
-{
-    int left = 0;
-    int top = 0;
-    int right = 0;
-    int bottom = 0;
-
-    int width() const { return right - left; }
-    int height() const { return bottom - top; }
-    bool valid() const { return right > left && bottom > top; }
 };
 
 class IWindowsCapture

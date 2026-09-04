@@ -54,6 +54,7 @@ const char* toString(CaptureApi a)
     case CaptureApi::WindowsGraphicsCapture: return "Windows.Graphics.Capture";
     case CaptureApi::PipeWire: return "PipeWire";
     case CaptureApi::ScreenCaptureKit: return "ScreenCaptureKit";
+    case CaptureApi::Kms: return "DRM/KMS";
     }
     return "unknown";
 }

@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../../capture/windows/IWindowsCapture.h"
+#include "../CursorDraw.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -25,27 +26,6 @@
 #include <string>
 
 namespace mw::native::convert {
-
-/// How the pointer is placed on the picture, beyond the position and shape the
-/// capture already reports.
-///
-/// Separate from CursorState because none of it comes from the capture: the
-/// magnification is a client request, and the hotspot — which CursorState has
-/// already subtracted out of its position — has to come back for the pointer to
-/// grow around the point it aims with rather than around its top-left corner.
-struct CursorDraw
-{
-    /// Multiplier on the drawn size. 1 is the size the pointer has on the
-    /// desktop, which is what everything but a small screen wants.
-    float magnify = 1.0f;
-
-    /// The point inside the shape that IS the pointer position, in cursor
-    /// pixels. Only consulted when magnifying: it is the fixed point of the
-    /// growth, so the tip of an enlarged arrow stays exactly where the real one
-    /// was.
-    int hotspotX = 0;
-    int hotspotY = 0;
-};
 
 /// Turns a captured desktop texture into the format the encoder wants, on the
 /// GPU, without ever touching system memory.

@@ -118,6 +118,31 @@ else()
         target_sources(mw-native-host PRIVATE
             src/input/linux/UinputGamepad.cpp
             src/input/linux/UinputInput.cpp)
+
+        # The Linux graphics backend — KMS capture, EGL conversion, VA-API —
+        # needs libdrm, libva, EGL, GLESv2 and GBM (all MIT, on the allow-list
+        # in LICENSE.md). Found → built and exercised by the tests on a machine
+        # that has a display; not found → the module still builds, with the
+        # honest stub, and says so loudly rather than failing the configure.
+        # That keeps a runner without the dev packages green while the packaging
+        # workflow catches up.
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(MW_LINUX_GFX libdrm libva libva-drm egl glesv2 gbm)
+        endif()
+        if(MW_LINUX_GFX_FOUND)
+            message(STATUS "mw-native-host: Linux graphics backend ON (libdrm ${MW_LINUX_GFX_libdrm_VERSION}, libva ${MW_LINUX_GFX_libva_VERSION})")
+            target_sources(mw-native-host PRIVATE
+                src/capture/linux/KmsCapture.cpp
+                src/convert/linux/GlConvert.cpp
+                src/encode/linux/VaapiEncoder.cpp)
+            target_include_directories(mw-native-host SYSTEM PRIVATE ${MW_LINUX_GFX_INCLUDE_DIRS})
+            target_link_libraries(mw-native-host PRIVATE ${MW_LINUX_GFX_LIBRARIES})
+            # PUBLIC so the tests can tell whether the backend exists.
+            target_compile_definitions(mw-native-host PUBLIC MW_NATIVE_LINUX_GFX=1)
+        else()
+            message(WARNING "mw-native-host: Linux graphics backend OFF — install libdrm-dev libva-dev libegl1-mesa-dev libgles2-mesa-dev libgbm-dev to build it")
+        endif()
     endif()
 endif()
 
@@ -191,6 +216,7 @@ if(MW_BUILD_TESTS)
         tests/test_capture.cpp
         tests/test_win32_cursor.cpp
         tests/test_evdev_keymap.cpp
+        tests/test_linux_pipeline.cpp
         tests/test_vpl_params.cpp
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp

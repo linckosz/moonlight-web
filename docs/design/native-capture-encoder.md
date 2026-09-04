@@ -1568,19 +1568,83 @@ indépendante de la disposition. Linux n'a pas de repli — uinput prend le code
 rien — donc `KEY_PAUSE` y est nommé. Le test l'exige à **exactement une**
 divergence, pour qu'une seconde, elle, échoue.
 
-### 19.3 Ce qui reste du backend Linux, et pourquoi ce n'est pas écrit
+### 19.3 ⚠️ La route de capture : KMS d'abord, portail en repli
 
-La capture (PipeWire) et l'encodage (VA-API) ne sont pas là. Ce ne sont pas des
-oublis :
+Écrit le 04/09 quand aucune machine Linux n'existait ; **caduc le soir même** :
+Bruno a redémarré l'bench-mini sous Ubuntu 22.04 avec sa Radeon 780M, et a tranché
+« les deux, KMS puis portail ». Ce qui suit est mesuré sur cette machine.
 
-- **Aucune machine ne peut les exécuter.** Le banc Linux bare-metal n'existe plus
-  (l'bench-mini est passé sous Windows) et une VM Hyper-V n'a pas de GPU. WSL peut
-  les *compiler* avec `libpipewire-0.3-dev` et `libva-dev`, pas les faire tourner.
-- **Le portail pose une vraie question de conception.** `org.freedesktop.portal.
-  ScreenCast` demande une autorisation interactive à chaque session : un hôte qui
-  doit démarrer sans personne devant l'écran s'en accommode mal, et « zéro
-  configuration » est une règle de ce projet. Sunshine passe par KMS/DRM pour
-  cette raison. Le plan nomme PipeWire ; l'arbitrage mérite d'être conscient.
+Le plan disait PipeWire. La reconnaissance a pesé autrement : GNOME en
+**Wayland**, et le portail `ScreenCast` demande un clic d'autorisation sur
+l'écran de l'hôte à la première session, puis exige de tourner **dans la session
+D-Bus de l'utilisateur** — l'exact problème de la session 0 Windows, en miroir.
+KMS/DRM lit la sortie écran directement, sans dialogue et sans session, au prix
+de `cap_sys_admin` posée sur le binaire par le paquet : Sunshine porte cette
+capacité sur cette machine même. La symétrie avec Windows s'impose — **KMS =
+DDA** (image au scan-out, réveil sur le vblank), **portail = WGC** (file du
+compositeur, repli).
 
-Les licences, elles, ne bloquent pas : libpipewire et libva sont MIT, toutes deux
-sur la liste permissive de `LICENSE.md`.
+Les licences ne bloquent pas : libpipewire, libva, libdrm, EGL, GBM sont MIT.
+
+### 19.4 La chaîne zero-copy Linux, prouvée sur la 780M (04-05/09/2026)
+
+Le zero-copy a **failli ne pas exister**, et l'endroit où il a plié est instructif.
+
+`GETFB2` sur le plan primaire réussit pour tout le monde mais rend des poignées
+GEM **nulles** sans `cap_sys_admin` ; avec, elles apparaissent et
+`drmPrimeHandleToFD` exporte le tampon (8,9 Mo pour du 1080p, plus que 1920×1080×4
+: il est tuilé). Son modificateur `0x200000010467b04` se décode en GFX11, tuile
+64K_R_X, **DCC activé avec retile**. Et là : **radeonsi refuse l'import VA-API de
+ce tampon** (`invalid parameter`), alors qu'il accepte un modificateur linéaire ou
+invalide. L'attribut `VASurfaceAttribDRMFormatModifiers` qu'il annonce sert à
+l'allocation, pas à l'import. EGL, sur le même pilote, liste ce modificateur parmi
+ses six formats d'import XRGB8888 — et son import a d'abord échoué aussi, en
+`EGL_BAD_MATCH`, parce qu'un tampon DCC porte **trois plans** (les pixels, puis deux
+de métadonnées de compression aux offsets 8 847 360 et 8 896 512) et que je n'en
+passais qu'un. Tous les plans passés, l'import réussit.
+
+La chaîne est donc celle de Sunshine, et elle calque le chemin Windows shader pour
+shader : **plan KMS tuilé → EGLImage → deux passes GLES écrivant les plans d'une
+surface NV12 allouée par VA-API → encodeur**. La surface est exportée par
+`vaExportSurfaceHandle` en deux couches, R8 et GR88, importées chacune comme sa
+propre EGLImage et attachée à son propre framebuffer — le même tour que les vues
+`R8_UNORM`/`R8G8_UNORM` de D3D11 sur un NV12. La propriété est inversée par rapport
+à Windows : c'est **l'encodeur qui possède la surface** et le convertisseur qui
+rend dedans, parce que VA-API alloue les siennes.
+
+Le vertex shader **ne retourne pas Y**, contrairement au HLSL : un framebuffer GL
+adossé à un DMA-BUF a sa première ligne mémoire en NDC y = −1, et écrire uv (0,0)
+en (−1,−1) fait correspondre première ligne source et première ligne cible. C'est
+raisonné, pas encore vu : l'orientation se vérifiera à l'œil au premier flux.
+
+Vérifié (`test_linux_pipeline`, qui tourne sur toute machine et se déclare sauté
+sans écran actif ou sans capacité) : `KmsCapture` liste les connecteurs et leur
+mode exact (clock/htotal·vtotal, pas le vrefresh arrondi), capture le plan
+primaire en 3 plans, lit le **plan curseur** (256×256 ARGB linéaire — présent ici,
+absent sur la VM Debian) ; `GlConvert` convertit et la relecture donne **luma
+25..235** ; `VaapiEncoder` produit une **keyframe H.264 de 50 Ko avec SPS, PPS et
+IDR** puis un delta de 33 Ko. 1938 vérifications vertes sous Linux, 2013 sous
+Windows après l'extraction des types partagés (`CaptureTypes.h`, `CursorDraw.h`,
+`EncoderOutput.h`) hors des en-têtes D3D11.
+
+Deux faits mesurés valent d'être retenus :
+
+- **L'horodatage du vblank est prédit**, pas lu : le noyau le calcule depuis la
+  position de balayage et il devance le réveil de ~400 µs. Plafonné à
+  « maintenant » pour la même raison que sur WGC — le gouverneur de lien lit le
+  délai aller simple sur (arrivée − présent).
+- **radeonsi 23.2 n'offre pas d'intra-refresh** par colonnes
+  (`VAConfigAttribEncIntraRefresh` non supporté) : sur Linux AMD la récupération
+  reste par keyframe, et `intraRefreshEnabled()` le dit.
+
+Les en-têtes SPS/PPS sont **écrits par le pilote** depuis les paramètres de
+séquence, VUI comprise (`bitstream_restriction` — la leçon B8 — et timing). Les
+en-têtes empaquetés que FFmpeg envoie ne le sont pas tant qu'une mesure ne montre
+pas qu'il y manque quelque chose.
+
+### 19.5 Ce qui reste
+
+`LinuxProbe` et `LinuxSession` (la couture plateforme, qui remplace
+`Unimplemented.cpp`), HEVC et AV1 VA-API, l'audio (PipeWire/Pulse → Opus, et Opus
+n'est pas encore construit sous Linux), le portail PipeWire en repli, et le
+`setcap` dans le paquet.

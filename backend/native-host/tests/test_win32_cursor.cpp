@@ -10,7 +10,12 @@
 
 #include <cstdio>
 
+// Only the Windows header above declares the namespace: on Linux the body of
+// this file is a single "skipped" line, and opening mw::native would not
+// compile — which is exactly what happened on the first Linux build.
+#if defined(_WIN32)
 using namespace mw::native;
+#endif
 
 // The pointer, read from Win32 rather than from the capture.
 //
