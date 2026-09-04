@@ -964,7 +964,8 @@ export class WebGpuRenderer extends VideoRenderer {
      * back with drawImage, so while a measurement is on, each frame copies the
      * probe's three texels from the canvas texture into a mappable buffer
      * (before submit) and maps it afterwards; the probe polls `probePixels`.
-     * 8-bit canvases only — the HDR float canvas is not sampled.
+     * The HDR float canvas is read too: its half floats are clamped to 0..1 and
+     * scaled to 8 bits, which is all the flag test needs.
      */
     set probeActive(on) {
         this._probeActive = !!on;
@@ -975,7 +976,7 @@ export class WebGpuRenderer extends VideoRenderer {
     }
 
     _queueProbeRead(encoder, texture, cw, ch) {
-        if (this._probeBusy || this._hdr) return false;
+        if (this._probeBusy) return false;
         if (!this._probeBuf) {
             // One texel per 256-byte row: copyTextureToBuffer wants both the
             // buffer offset and bytesPerRow aligned to 256.
@@ -1003,15 +1004,32 @@ export class WebGpuRenderer extends VideoRenderer {
     _mapProbeRead() {
         const buf = this._probeBuf;
         const bgra = this._format === 'bgra8unorm';
+        const half = this._format === 'rgba16float';
+        // IEEE half → float, enough for a clamped 0..1 read (no NaN/Inf care).
+        const h2f = (h) => {
+            const s = h & 0x8000 ? -1 : 1;
+            const e = (h >> 10) & 0x1f;
+            const m = h & 0x3ff;
+            if (e === 0) return s * m * 2 ** -24;
+            if (e === 31) return s * Infinity;
+            return s * (1 + m / 1024) * 2 ** (e - 15);
+        };
         buf.mapAsync(GPUMapMode.READ)
             .then(() => {
-                const a = new Uint8Array(buf.getMappedRange());
+                const range = buf.getMappedRange();
+                const a = new Uint8Array(range);
                 const px = new Uint8ClampedArray(12);
                 for (let i = 0; i < 3; i++) {
                     const o = i * 256;
-                    px[i * 4 + 0] = bgra ? a[o + 2] : a[o + 0];
-                    px[i * 4 + 1] = a[o + 1];
-                    px[i * 4 + 2] = bgra ? a[o + 0] : a[o + 2];
+                    if (half) {
+                        const w = new Uint16Array(range, o, 4);
+                        for (let c = 0; c < 3; c++)
+                            px[i * 4 + c] = Math.round(Math.min(1, Math.max(0, h2f(w[c]))) * 255);
+                    } else {
+                        px[i * 4 + 0] = bgra ? a[o + 2] : a[o + 0];
+                        px[i * 4 + 1] = a[o + 1];
+                        px[i * 4 + 2] = bgra ? a[o + 0] : a[o + 2];
+                    }
                     px[i * 4 + 3] = 255;
                 }
                 buf.unmap();
