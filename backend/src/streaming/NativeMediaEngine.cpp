@@ -135,9 +135,16 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     std::string error;
     m_Session = mw::native::NativeHost::createSession(
         config, [this](const mw::native::EncodedFrame& frame) { onEncodedFrame(frame); },
-        // Audio lands with its own backend; a null callback is the engine's
-        // documented way of saying "not wanted".
-        nullptr,
+        // Opus packets, 5 ms each, from the engine's audio thread. Emitted as
+        // the same signal the GameStream engine emits from moonlight-common-c's
+        // audio thread: the relays already copy the bytes onto their own
+        // thread and stamp the RTP clock by audioSamplesPerFrame(), which is
+        // the 240 the engine produces.
+        [this](const mw::native::AudioPacket& packet) {
+            if (!packet.data || packet.size == 0) return;
+            emit audioSampleReady(QByteArray(reinterpret_cast<const char*>(packet.data),
+                                             static_cast<qsizetype>(packet.size)));
+        },
         // Rumble is the only signal that travels host → browser. It arrives on
         // a ViGEm callback thread, so it is emitted as a queued signal rather
         // than touched directly: the relay that forwards it lives on another

@@ -25,6 +25,7 @@ void run_stage_stats_tests();
 void run_frame_cadence_tests();
 void run_restart_backoff_tests();
 void run_rate_control_tests();
+void run_audio_pacer_tests();
 
 int main()
 {
@@ -46,6 +47,7 @@ int main()
     run_frame_cadence_tests();
     run_restart_backoff_tests();
     run_rate_control_tests();
+    run_audio_pacer_tests();
     run_capture_tests();
 
     const int total = g_nativeStats.passed + g_nativeStats.failed;

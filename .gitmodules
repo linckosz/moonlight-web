@@ -15,3 +15,7 @@
 	path = backend/third_party/miniupnp
 	url = https://github.com/miniupnp/miniupnp.git
 	ignore = all
+[submodule "backend/native-host/third_party/opus"]
+	path = backend/native-host/third_party/opus
+	url = https://github.com/xiph/opus.git
+	ignore = all

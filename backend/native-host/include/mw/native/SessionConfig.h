@@ -128,6 +128,12 @@ struct SessionInfo
     /// True when the frame has to cross from the display's GPU to a different
     /// GPU to be encoded (§6). Costly and rare — always worth a log line.
     bool crossGpuCopy = false;
+
+    /// True when the session captures the host's playback and delivers Opus
+    /// packets. False when no audio callback was given, or when the platform
+    /// could not open a playback device — the stream is then silent, and the
+    /// log says why.
+    bool audio = false;
 };
 
 } // namespace mw::native
