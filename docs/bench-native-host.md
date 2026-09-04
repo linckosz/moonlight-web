@@ -169,6 +169,54 @@ bugs vus au passage se corrigent) :
 Aucun codec ne coûte plus de 1 ms de décodage de plus qu'un autre sur ce
 Chrome/RTX : le choix de codec peut se faire sur le coût hôte et la licence.
 
+## 6b. Le contenu cible — un FPS en plein écran (Call of Duty, 1440p60)
+
+Ajouté à la demande de Bruno après le premier rapport : le texte qui défile
+coûtait +5 de QP à P1, que vaut une scène d'action ? Séquence de gameplay
+Call of Duty (vidéo YouTube `yaNr1hHAg2M`, flux 1440p60 VP9 récupéré en local,
+lue de 37 s à 52 s, plein écran sur l'écran capturé, relancée de zéro avant
+chaque passe — répétabilité du réglage courant 7,67 / 7,69 ms). C'est le cas
+le plus dur de la campagne : QP 25 à 40 Mbit/s là où le clip de plateforme
+tenait 18.
+
+| Réglage | encode ms (moy / p95 / p99) | total moy | Ko/frame | QP |
+|---|---|---|---|---|
+| **P4/ULL (courant), 40 Mbit/s** | **7,67 / 10,24 / 11,26** | 8,32 | 29,5 | **25** |
+| P1 | 3,40 / 4,61 / 5,12 | 4,02 | 29,5 | **25** |
+| P1, AQ spatial | 4,33 / 6,14 / 6,62 | 4,95 | 29,5 | 23 |
+| P1, multipass off | 2,62 / 4,10 / 4,61 | 3,21 | 29,0 | 25 |
+| P2 | 5,73 / 7,68 / 7,68 | 6,30 | 29,5 | 25 |
+| P3 | 6,61 / 8,19 / 8,86 | 7,05 | 29,5 | 25 |
+| P4, AQ spatial | 8,32 / 11,26 / 12,29 | 8,87 | 29,5 | 22 |
+| P4, AV1 | 5,39 / 7,17 / 7,68 | 5,96 | 28,2 | q 91 |
+| P1, AV1 | 3,28 / 4,61 / 5,12 | 3,83 | 28,2 | q 92 |
+| P4, H.264 | 5,79 / 7,68 / 7,68 | 6,32 | 29,5 | 27 |
+| P1, H.264 | 4,07 / 5,63 / 6,14 | 4,58 | 29,5 | 27 |
+| **P4, 20 Mbit/s** | 7,36 / 10,24 / 11,26 | 7,90 | 14,8 | 31 |
+| P1, 20 Mbit/s | 3,08 / 4,61 / 4,61 | 3,59 | 14,8 | 32 |
+| P1 + AQ, 20 Mbit/s | 4,11 / 5,63 / 6,14 | 4,69 | 14,8 | 29 |
+
+**Sur l'action, P1 ne coûte rien en QP** : 25 contre 25 à 40 Mbit/s, 32 contre
+31 à 20 Mbit/s, pour 3,4 ms au lieu de 7,7 (et 3,1 au lieu de 7,4 à 20 Mbit/s).
+Le +5 du texte défilant est propre au texte : contours nets à fort contraste,
+que P4 sait mieux prédire ; une scène de jeu est faite de textures et de flou de
+mouvement, où l'estimation de mouvement plus fine de P4 n'achète rien que le
+rate control ne rende sous forme de QP identique.
+
+**Et à l'œil.** Le banc encode vers un puits ; pour juger l'image il faut le
+flux décodé. Protocole : instance dev avec `MW_NATIVE_TUNING`, client Chrome
+dédié piloté par CDP (clics réels, donc plein écran accordé), flux 1440p60
+HEVC 40 Mbit/s du même écran, capture `PrintWindow` de la fenêtre plein écran
+en 2560×1440 physiques à 9, 12, 15 et 18 s après le relancement du clip — les
+mêmes secondes à ±0,1 s pour P4, P1 et P1 + AQ (`bench/shots/`, montages
+`compare-*.png` recadrés au centre et `zoom-*.png` agrandis ×2). Constat : aucun
+des trois ne montre de blocs, de fourmillement ni de « bouillie » ; les
+contours du décor, les débris, l'arme au premier plan et le HUD sont
+également nets ; les différences entre vignettes sont celles du mouvement entre
+deux images à un dixième de seconde d'écart, pas du réglage. À égalité de QP,
+c'est le résultat attendu. La comparaison à 20 Mbit/s (QP 31–32) reste à faire
+à l'œil si Bruno le souhaite ; l'écart d'un point de QP la rend peu probable.
+
 ## 7. Ce que les chiffres disent
 
 1. **Le preset est le levier, et il est grand.** Sur ce NVENC (Blackwell), P1
@@ -177,10 +225,11 @@ Chrome/RTX : le choix de codec peut se faire sur le coût hôte et la licence.
    « moins d'une milliseconde d'écart entre P1 et P4 » : c'était faux d'un
    facteur trois. P2 est le pire des deux mondes (lent **et** QP de P1) ; P3, P5,
    P6 valent P4 ; P7 coûte 0,2–0,7 ms de plus pour le même QP.
-2. **Le prix de P1 en qualité dépend du contenu.** Jeu : +1 de QP (19 vs 18),
-   indiscernable par construction (le protocole §5 tolère 2). Texte qui défile :
-   +5 (31 vs 26), au-dessus de la tolérance ; **c'est le seul cas où P1 paie**.
-   Écran fixe : identique (la rafale de raffinement converge pareil à QP 8).
+2. **Le prix de P1 en qualité dépend du contenu.** FPS en action : **0** de QP
+   (25 vs 25 à 40 Mbit/s, 32 vs 31 à 20), et rien à l'œil sur le flux décodé
+   (§6b). Jeu de plateforme : +1 (19 vs 18). Texte qui défile : +5 (31 vs 26),
+   au-dessus de la tolérance ; **c'est le seul cas où P1 paie**. Écran fixe :
+   identique (la rafale de raffinement converge pareil à QP 8).
 3. **Multipass.** Le quart de résolution que le preset ULL active coûte 0,4 ms
    (P4) à 0,6 ms (P1) sur le mouvement, pour le même QP. Mais l'éteindre **casse
    la rafale de raffinement de l'écran fixe** : sans première passe, le rate
@@ -212,9 +261,11 @@ Chrome/RTX : le choix de codec peut se faire sur le coût hôte et la licence.
 
 **NVENC : passer de P4 à P1, multipass quart conservé, tout le reste inchangé.**
 
-- Jeu : −3,4 ms de moyenne et −6 ms de p99 sur l'étape encode, pour +1 de QP.
-  C'est le gain le plus grand mesuré sur toute la chaîne hôte depuis la phase C
-  (queue 0,22 → 0,16 ms) — l'étape encode était les deux tiers du temps hôte.
+- FPS en action (la cible) : **−4,3 ms de moyenne et −6 ms de p99** sur l'étape
+  encode (7,7 → 3,4 ms), pour **0** de QP et rien de visible sur le flux décodé.
+  Plateforme : −3,4 ms pour +1 de QP. C'est le gain le plus grand mesuré sur
+  toute la chaîne hôte depuis la phase C — l'étape encode était les deux tiers
+  du temps hôte.
 - Texte défilant : +5 de QP. Deux façons de le régler, à trancher **à l'œil**
   par Bruno (protocole §5 : A/B en aveugle, netteté du texte, fourmillement en
   mouvement, jank) :
