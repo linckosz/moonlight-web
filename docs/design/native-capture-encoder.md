@@ -626,7 +626,8 @@ Sur la page Hosts, ce message n'apparaît **que** si aucun host n'est visible
 | AMF, oneVPL | MIT | OK | en-têtes seulement, les runtimes viennent des pilotes |
 | **ViGEmClient** (manette) | **MIT** | OK | ⚠️ noté BSD-3 dans le plan d'origine — c'est faux, l'amont livre du MIT. Vendoré tel quel en v1.16.18.0, jamais modifié |
 | ViGEmBus (le pilote) | BSD-3 | OK | **pas redistribué** : installé par l'installeur depuis l'amont |
-| libopus, OpenH264, libva, PipeWire | BSD/MIT | OK | à venir |
+| **libopus** (audio) | **BSD-3** | OK | livré le 04/09/2026 : sous-module `native-host/third_party/opus` épinglé v1.5.2, bibliothèque statique, sans programmes ni tests ni installation |
+| OpenH264, libva, PipeWire | BSD/MIT | OK | à venir |
 | ❌ FFmpeg / libavcodec | LGPL/GPL | **écarté** | Sunshine l'utilise (156 appels `av_*`) ; nous non |
 | ❌ x264 / x265 | GPL-2.0 | **interdit** | — |
 | ❌ moonlight-common-c | GPL-3.0 | **jamais lié au module** | — |
@@ -641,8 +642,9 @@ libre de redevance)**. D'où la préférence AV1 quand les deux bouts suivent.
 
 | Livré et mesuré | Reste |
 |---|---|
-| Module isolé + garde de licence | **Audio (WASAPI loopback → Opus)** |
-| `IMediaEngine`, relais découplés | HDR (P010 + PQ) |
+| Module isolé + garde de licence | HDR (P010 + PQ) |
+| **Audio** : WASAPI loopback → cadenceur 5 ms → libopus, thread « Pro Audio » (04/09/2026 ; le son reste audible sur l'hôte, à couper en v0.3.0) | |
+| `IMediaEngine`, relais découplés | |
 | Sonde displays/GPU + association | WGC en repli |
 | Capture DXGI (0,06 ms) | Lanceur de session console (service Windows) |
 | Conversion NV12 + AYUV 4:4:4 | UI (grille d'écrans, ligne GPU/encodeur) |
@@ -658,8 +660,14 @@ pairing, un clic sur un écran construit un `NativeMediaEngine` qui alimente le
 relais WebRTC existant, et clavier/souris/manette reviennent par le
 DataChannel d'entrée. Le chemin Sunshine/Wolf/MultiSeat est intact.
 
-**Ce qui manque vraiment** : l'audio. Un stream muet reste utilisable, mais ce
-n'est pas fini.
+**L'audio est là depuis le 04/09/2026** (`src/audio/`) : la sortie par défaut de
+l'hôte, capturée en loopback WASAPI, cadencée à une trame Opus toutes les 5 ms
+exactement (le fil avance l'horloge RTP d'une trame par paquet, donc le
+cadenceur remplit de silence quand rien n'a été capturé et jette au-delà de
+20 ms de file), encodée par libopus en CELT bas délai à 128 kbit/s VBR. Ce qui
+reste : l'hôte continue d'entendre son propre son — le loopback capture ce qui
+part vers les haut-parleurs — là où Sunshine le coupe (`localAudioPlayMode`).
+Périphérique audio virtuel ou équivalent à étudier pour la v0.3.0.
 
 ### Input — ce qui a été tranché
 
