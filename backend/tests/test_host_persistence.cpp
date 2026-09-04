@@ -133,4 +133,30 @@ void run_host_persistence_tests()
         CHECK(stored.update(manual));
         CHECK_EQ(stored.manualAddress.address(), QStringLiteral("192.168.1.42"));
     }
+
+    // --- The native engine is this machine even though it has no address ---
+    //
+    // It is the one host where "is this us?" is certain, and the one host the
+    // address matching cannot answer: it has nothing to reach. Since the
+    // Windows installer stopped shipping Sunshine, this card is the only local
+    // paired host a fresh install has, and the one-click update offers itself
+    // on exactly that condition.
+    {
+        NvComputer native;
+        native.uuid = QStringLiteral("native-0");
+        native.backendType = QStringLiteral("native");
+        native.pairState = NvComputer::PS_PAIRED;
+        CHECK(native.isNativeEngine());
+        CHECK(native.uniqueAddresses().isEmpty());
+        CHECK(native.isLocalMachine());
+        CHECK(native.toJson().value(QStringLiteral("isLocalHost")).toBool());
+
+        // A GameStream host with no address stays what it was: unknown, not us.
+        NvComputer orphan = makeHost();
+        orphan.activeAddress = NvAddress();
+        orphan.localAddress = NvAddress();
+        orphan.manualAddress = NvAddress();
+        CHECK(!orphan.isNativeEngine());
+        CHECK(!orphan.isLocalMachine());
+    }
 }

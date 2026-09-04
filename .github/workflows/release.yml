@@ -283,9 +283,10 @@ jobs:
           if (-not (Test-Path $signed)) { throw "SignPath returned no $signed" }
           Copy-Item $signed dist\MoonlightWeb.exe -Force
 
-      # Interactive installer: stepped wizard (Internet authorization, Sunshine
-      # detection/silent-install + pairing, Desktop admin shortcut). It is the
-      # only Windows artifact shipped (no raw zip).
+      # Interactive installer: stepped wizard (Internet authorization, ViGEmBus,
+      # Desktop admin shortcut). It is the only Windows artifact shipped (no raw
+      # zip). It installs no streaming server: the app captures and encodes this
+      # machine itself since September 2026.
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y

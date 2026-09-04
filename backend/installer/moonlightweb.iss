@@ -5,13 +5,18 @@
 ;    1. installs the app + Start-Menu shortcuts (app, admin page, uninstaller),
 ;    2. asks the user to authorize the Internet link (no DNS record, no
 ;       certificate, no open web port — see InternetPageBody),
-;    3. detects Sunshine and adapts a Skip/Next/Cancel page to what it finds —
-;       absent (install it silently with the prefilled admin/admin credentials),
-;       installed but unpaired (ask for its real credentials), or already paired
-;       (nothing to ask, no Skip button),
+;    3. installs the ViGEmBus gamepad driver silently, best-effort,
 ;    4. drops a provisioning.json the server consumes on first run (enable
-;       Internet Access, auto-pair the local Sunshine via its REST API),
+;       Internet Access),
 ;    5. creates a Desktop shortcut to the admin page and opens it at the end.
+;
+;  It does NOT install Sunshine. Since September 2026 the app captures and
+;  encodes this machine itself (the native host, run in the console session by
+;  the service — see docs/design/native-capture-encoder.md §15), so a Windows
+;  install needs no streaming server beside it. Sunshine remains fully supported
+;  as a HOST: a machine that already runs it is discovered and paired from the
+;  hosts page like any other, and SunshineInstaller stays for macOS/Linux, where
+;  the native host does not exist yet.
 ;
 ;  DNS/ACME secrets are NOT shipped with the installer: they are compiled into
 ;  MoonlightWeb.exe at build time (CMake, from CI secrets). Nothing on the user's
@@ -39,16 +44,6 @@
 #ifndef MyAppVersion
   #define MyAppVersion "0.1.2"
 #endif
-; Latest Sunshine Windows installer (NSIS, supports /S silent). Overridable.
-; Asset names are arch-specific: Sunshine-Windows-{AMD64,ARM64}-installer.exe.
-#ifndef SunshineUrl
-  #if MyArch == "arm64"
-    #define SunshineUrl "https://github.com/LizardByte/Sunshine/releases/latest/download/Sunshine-Windows-ARM64-installer.exe"
-  #else
-    #define SunshineUrl "https://github.com/LizardByte/Sunshine/releases/latest/download/Sunshine-Windows-AMD64-installer.exe"
-  #endif
-#endif
-
 ; ViGEmBus — the virtual gamepad bus driver the native host needs to present a
 ; controller to Windows. One asset covers x64, x86 and ARM64. Installed silently
 ; and best-effort: a machine without it streams fine, just without a gamepad, so
@@ -135,135 +130,72 @@ en.InternetPageCaption=Internet Link
 en.InternetPageDesc=Allow access from the Internet?
 en.InternetPageBody=MoonlightWeb can allow streaming from outside your local network, in a highly secure way.%n%nStreaming is direct, from this PC to the browser you invited. While a session runs, your router is asked (UPnP) to open a single port for it: UDP, with TCP on the same number for networks that block UDP. It carries nothing but the encrypted stream, every connection on it has to authenticate first, and it closes again when the session ends.%n%nA rendezvous server introduces the two sides, so nothing about this PC is published. No public DNS record is created, no certificate is issued for this machine, and ports 80/443 stay closed. Your public IP address is listed nowhere: only that server and whoever holds the link you sent ever see it. To learn its own public address, this PC asks a MoonlightWeb STUN server, or a public one (Google, Cloudflare) if that one cannot be reached.%n%nYou can turn this off at any time from the Admin page.
 en.InternetPageOption=Allow the Internet link (recommended)
-en.SunshinePageCaption=Sunshine
-en.SunshinePageDesc=Sunshine streaming server
-en.SunshineInstallCheck=Install Sunshine automatically
-en.SunshineInstallCheckDone=Install Sunshine automatically (already installed)
-en.SunshineDetected=The installer detected that Sunshine is already installed on this machine.%nEnter its credentials to pair MoonlightWeb automatically, or click Skip to pair later from the admin page.
-en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically. The credentials below are the ones it will be created with; change them if you prefer.
-en.SunshineAlreadyPaired=Sunshine is already installed on this machine and already paired with MoonlightWeb.%n%nThere is nothing to set up here. Click Next to continue.
-en.ButtonSkip=&Skip
 en.InternetBtnSkip=&Skip
 en.InternetBtnAccept=&Accept
-en.SunshineUserLabel=Username
-en.SunshinePassLabel=Password
-en.SunshineCredsRequired=Please enter the Sunshine username and password so MoonlightWeb can pair automatically.
-en.SunshineCheckWait=Checking the Sunshine credentials...
-en.SunshineCredsWrong=Sunshine refused these credentials.%n%nCheck the username and password of its web interface (https://localhost:47990), or click Skip to pair later from the admin page.
-en.SunshineNoAnswer=Sunshine is installed but is not answering on this machine.%n%nStart Sunshine and try again, or click Skip to pair later from the admin page.
 en.RunApp=Launch MoonlightWeb
 en.RunAdmin=Open the admin page
-en.SunshineDownloadCaption=Downloading and installing Sunshine...
-en.SunshineDownloadFail=Failed to download Sunshine:
-en.SunshineLaunchFail=Could not start the Sunshine installer.
 en.ProvisionPageCaption=Setting up MoonlightWeb
 en.ProvisionPageDesc=Finalizing the installation
 en.ProvisionWorking=Please wait while MoonlightWeb finishes setting up...
 en.ResolveLinkWait=Preparing the link to the admin page...
-en.TaskSunshine=Install the Sunshine streaming server
-en.TaskSunshineDone=Sunshine is already installed
-en.TaskPairing=Pair the local Sunshine
-en.TaskPairingDone=Sunshine is already paired
 en.TaskArecord=Enable the Internet link
 en.ButtonUpdate=&Update
 en.UpdatePageCaption=Update MoonlightWeb
 en.UpdatePageDesc=A newer version will replace the installed one
-en.UpdateReadyMemo=MoonlightWeb %1 is installed and will be updated to %2.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are. There is nothing to configure.
-en.UpdateReadyMemoFresh=MoonlightWeb will be updated to %1.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are. There is nothing to configure.
+en.UpdateReadyMemo=MoonlightWeb %1 is installed and will be updated to %2.%n%nYour settings, the Internet link and your paired hosts are kept as they are. There is nothing to configure.
+en.UpdateReadyMemoFresh=MoonlightWeb will be updated to %1.%n%nYour settings, the Internet link and your paired hosts are kept as they are. There is nothing to configure.
 en.UninstConfigTitle=Uninstall MoonlightWeb
 en.UninstConfigBody=Your configuration is kept by default: if you install MoonlightWeb again, it starts up exactly as you left it.
 en.UninstConfigOption=Also delete my configuration
-en.UninstConfigDetail=Settings, accounts, certificates and Sunshine pairings are erased for good.
+en.UninstConfigDetail=Settings, accounts, certificates and host pairings are erased for good.
 ; --- French ---
 fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
 fr.InternetPageDesc=Autoriser l'accès depuis Internet ?
 fr.InternetPageBody=MoonlightWeb peut autoriser le streaming depuis l'extérieur de votre réseau local, de façon hautement sécurisée.%n%nLe streaming est direct, de ce PC vers le navigateur que vous avez invité. Pendant une session, votre box se voit demander (UPnP) l'ouverture d'un seul port : en UDP, avec le TCP sur le même numéro pour les réseaux qui bloquent l'UDP. Il ne transporte rien d'autre que le flux chiffré, toute connexion dessus doit d'abord s'authentifier, et il est refermé à la fin de la session.%n%nUn serveur de rendez-vous met les deux côtés en relation, si bien que rien de ce PC n'est publié. Aucun enregistrement DNS public n'est créé, aucun certificat n'est émis pour cette machine, et les ports 80/443 restent fermés. Votre adresse IP publique n'est listée nulle part : seuls ce serveur et la personne à qui vous avez donné le lien la voient. Pour connaître sa propre adresse publique, ce PC interroge un serveur STUN MoonlightWeb, ou un serveur public (Google, Cloudflare) si le premier est injoignable.%n%nDésactivable à tout moment depuis la page admin.
 fr.InternetPageOption=Autoriser le lien Internet (recommandé)
-fr.SunshinePageCaption=Sunshine
-fr.SunshinePageDesc=Serveur de streaming Sunshine
-fr.SunshineInstallCheck=Installer Sunshine automatiquement
-fr.SunshineInstallCheckDone=Installer Sunshine automatiquement (déjà installé)
-fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé sur cette machine.%nSaisissez ses identifiants pour appairer MoonlightWeb automatiquement, ou cliquez sur Ignorer pour appairer plus tard depuis la page admin.
-fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement. Les identifiants ci-dessous sont ceux qui lui seront attribués ; modifiez-les si vous le souhaitez.
-fr.SunshineAlreadyPaired=Sunshine est déjà installé sur cette machine et déjà appairé avec MoonlightWeb.%n%nIl n'y a rien à configurer ici. Cliquez sur Suivant pour continuer.
-fr.ButtonSkip=&Ignorer
 fr.InternetBtnSkip=&Passer
 fr.InternetBtnAccept=&Accepter
-fr.SunshineUserLabel=Identifiant
-fr.SunshinePassLabel=Mot de passe
-fr.SunshineCredsRequired=Veuillez saisir l'identifiant et le mot de passe Sunshine pour que MoonlightWeb puisse appairer automatiquement.
-fr.SunshineCheckWait=Vérification des identifiants Sunshine...
-fr.SunshineCredsWrong=Sunshine a refusé ces identifiants.%n%nVérifiez l'identifiant et le mot de passe de son interface web (https://localhost:47990), ou cliquez sur Ignorer pour appairer plus tard depuis la page admin.
-fr.SunshineNoAnswer=Sunshine est installé mais ne répond pas sur cette machine.%n%nDémarrez Sunshine puis réessayez, ou cliquez sur Ignorer pour appairer plus tard depuis la page admin.
 fr.RunApp=Lancer MoonlightWeb
 fr.RunAdmin=Ouvrir la page admin
-fr.SunshineDownloadCaption=Téléchargement et installation de Sunshine...
-fr.SunshineDownloadFail=Échec du téléchargement de Sunshine :
-fr.SunshineLaunchFail=Impossible de lancer l'installeur Sunshine.
 fr.ProvisionPageCaption=Configuration de MoonlightWeb
 fr.ProvisionPageDesc=Finalisation de l'installation
 fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de MoonlightWeb...
 fr.ResolveLinkWait=Préparation du lien vers la page admin...
-fr.TaskSunshine=Installer le serveur de streaming Sunshine
-fr.TaskSunshineDone=Sunshine est déjà installé
-fr.TaskPairing=Appairer le Sunshine local
-fr.TaskPairingDone=Sunshine est déjà appairé
 fr.TaskArecord=Activer le lien Internet
 fr.ButtonUpdate=&Mettre à jour
 fr.UpdatePageCaption=Mise à jour de MoonlightWeb
 fr.UpdatePageDesc=Une version plus récente va remplacer celle installée
-fr.UpdateReadyMemo=MoonlightWeb %1 est installé et va être mis à jour vers %2.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels. Il n'y a rien à configurer.
-fr.UpdateReadyMemoFresh=MoonlightWeb va être mis à jour vers %1.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels. Il n'y a rien à configurer.
+fr.UpdateReadyMemo=MoonlightWeb %1 est installé et va être mis à jour vers %2.%n%nVos réglages, le lien Internet et vos hôtes appairés sont conservés tels quels. Il n'y a rien à configurer.
+fr.UpdateReadyMemoFresh=MoonlightWeb va être mis à jour vers %1.%n%nVos réglages, le lien Internet et vos hôtes appairés sont conservés tels quels. Il n'y a rien à configurer.
 fr.UninstConfigTitle=Désinstallation de MoonlightWeb
 fr.UninstConfigBody=Votre configuration est conservée par défaut : si vous réinstallez MoonlightWeb, il redémarrera exactement dans l'état où vous l'avez laissé.
 fr.UninstConfigOption=Supprimer aussi ma configuration
-fr.UninstConfigDetail=Les réglages, comptes, certificats et appairages Sunshine seront définitivement effacés.
+fr.UninstConfigDetail=Les réglages, comptes, certificats et appairages d'hôtes seront définitivement effacés.
 ; --- Simplified Chinese ---
 zh.AutoStartTask=登录时启动 MoonlightWeb
 zh.InternetPageCaption=互联网链接
 zh.InternetPageDesc=是否允许从互联网访问？
 zh.InternetPageBody=MoonlightWeb 可以以高度安全的方式，允许从本地网络之外进行串流。%n%n串流是点对点直连的，从这台电脑直接到您邀请的浏览器。会话进行期间，会通过 UPnP 请求路由器只开放一个端口：UDP，并在同一端口号上以 TCP 作为备用（用于封锁 UDP 的网络）。该端口只承载加密后的串流，任何连接都必须先通过身份验证，才会发送第一帧画面，会话结束后端口即被关闭。%n%n由一台会合服务器为双方牵线，因此这台电脑无需公开任何信息。不会创建任何公开 DNS 记录，不会为这台机器签发任何证书，端口 80/443 保持关闭。您的公网 IP 地址不会被列在任何地方：只有该服务器以及持有您所发送链接的人才能看到。为了得知自己的公网地址，这台电脑会向 MoonlightWeb STUN 服务器查询，若无法连接则改用公共服务器（Google、Cloudflare）。%n%n可随时在管理页面关闭。
 zh.InternetPageOption=允许互联网链接（推荐）
-zh.SunshinePageCaption=Sunshine
-zh.SunshinePageDesc=Sunshine 串流服务器
-zh.SunshineInstallCheck=自动安装 Sunshine
-zh.SunshineInstallCheckDone=自动安装 Sunshine（已安装）
-zh.SunshineDetected=安装程序检测到此计算机上已安装 Sunshine。%n请输入其凭据以自动配对 MoonlightWeb，或点击“跳过”以稍后在管理页面配对。
-zh.SunshineNotDetected=未检测到 Sunshine。勾选此框以自动安装。下方的凭据即为将要设置的凭据，如需更改请自行修改。
-zh.SunshineAlreadyPaired=此计算机上已安装 Sunshine，并且已与 MoonlightWeb 配对。%n%n此处无需任何设置，点击“下一步”继续。
-zh.ButtonSkip=跳过(&S)
 zh.InternetBtnSkip=跳过(&S)
 zh.InternetBtnAccept=接受(&A)
-zh.SunshineUserLabel=用户名
-zh.SunshinePassLabel=密码
-zh.SunshineCredsRequired=请输入 Sunshine 的用户名和密码，以便 MoonlightWeb 自动配对。
-zh.SunshineCheckWait=正在验证 Sunshine 凭据...
-zh.SunshineCredsWrong=Sunshine 拒绝了这些凭据。%n%n请在其网页界面（https://localhost:47990）中核对用户名和密码，或点击“跳过”以稍后在管理页面配对。
-zh.SunshineNoAnswer=此计算机上已安装 Sunshine，但没有响应。%n%n请启动 Sunshine 后重试，或点击“跳过”以稍后在管理页面配对。
 zh.RunApp=启动 MoonlightWeb
 zh.RunAdmin=打开管理页面
-zh.SunshineDownloadCaption=正在下载并安装 Sunshine...
-zh.SunshineDownloadFail=下载 Sunshine 失败：
-zh.SunshineLaunchFail=无法启动 Sunshine 安装程序。
 zh.ProvisionPageCaption=正在设置 MoonlightWeb
 zh.ProvisionPageDesc=正在完成安装
 zh.ProvisionWorking=请稍候，MoonlightWeb 正在完成设置...
 zh.ResolveLinkWait=正在准备通往管理页面的链接...
-zh.TaskSunshine=安装 Sunshine 串流服务器
-zh.TaskSunshineDone=Sunshine 已安装
-zh.TaskPairing=配对本地 Sunshine
-zh.TaskPairingDone=Sunshine 已配对
 zh.TaskArecord=启用互联网链接
 zh.ButtonUpdate=更新(&U)
 zh.UpdatePageCaption=更新 MoonlightWeb
 zh.UpdatePageDesc=较新的版本将替换已安装的版本
-zh.UpdateReadyMemo=已安装 MoonlightWeb %1，将更新到 %2。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变，无需任何配置。
-zh.UpdateReadyMemoFresh=MoonlightWeb 将更新到 %1。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变，无需任何配置。
+zh.UpdateReadyMemo=已安装 MoonlightWeb %1，将更新到 %2。%n%n您的设置、互联网链接和已配对的主机将保持不变，无需任何配置。
+zh.UpdateReadyMemoFresh=MoonlightWeb 将更新到 %1。%n%n您的设置、互联网链接和已配对的主机将保持不变，无需任何配置。
 zh.UninstConfigTitle=卸载 MoonlightWeb
 zh.UninstConfigBody=默认保留您的配置：如果您再次安装 MoonlightWeb，它将完全按照您离开时的状态启动。
 zh.UninstConfigOption=同时删除我的配置
-zh.UninstConfigDetail=设置、账户、证书和 Sunshine 配对将被永久删除。
+zh.UninstConfigDetail=设置、账户、证书和主机配对将被永久删除。
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -291,17 +223,7 @@ Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
 Filename: "{code:GetAdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
 
 [Code]
-// The Sunshine page has three mutually exclusive shapes (see CurPageChanged):
-//   scAbsent — Sunshine not installed: offer to install it, credentials
-//              prefilled with admin/admin (the ones it will be created with).
-//   scUnpaired — Sunshine installed but MoonlightWeb never paired with it: ask
-//              for its real credentials so first-run pairing can push the PIN.
-//   scPaired — Sunshine installed AND already paired: nothing to ask, the page
-//              is a plain confirmation (no Skip button either).
 const
-  scAbsent = 0;
-  scUnpaired = 1;
-  scPaired = 2;
   // Inno files its uninstall entry under "<AppId>_is1" and exposes no constant
   // for it to [Code] — KEEP THIS IN SYNC WITH [Setup] AppId above.
   UninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}_is1';
@@ -324,35 +246,12 @@ var
   InternetSkipButton: TNewButton;
   InternetSkipped: Boolean;
   InternetAuthorized: Boolean;
-  SunshinePage: TWizardPage;
-  SunshineInstallCheck: TNewCheckBox;
-  SunshineUserEdit: TNewEdit;
-  SunshinePassEdit: TNewEdit;
-  SunshineUserLabel: TNewStaticText;
-  SunshinePassLabel: TNewStaticText;
-  SunshineStatusLabel: TNewStaticText;
-  // Shown only while Next probes an already-installed Sunshine with the typed
-  // credentials (ProbeSunshineCreds).
-  SunshineCheckLabel: TNewStaticText;
-  SunshineDetected: Boolean;
-  SunshineExePath: String;
-  SunshineCase: Integer;
-  SunshinePagePrepared: Boolean;
-  // The Sunshine page swaps Back for a Skip button; these track that swap and
-  // the user's choice to walk past the page without installing/pairing.
-  SkipButton: TNewButton;
   BackButtonHidden: Boolean;
-  SunshineSkipped: Boolean;
-  // The password starts visible (prefilled "admin") and masks itself as soon as
-  // the user edits it. SettingPass suppresses the OnChange we cause ourselves.
-  SunshinePassMasked: Boolean;
-  SettingPass: Boolean;
-  // Live post-install checklist (Sunshine / pairing / A-record).
+  // Live post-install checklist. One row since September 2026: the app captures
+  // and encodes this machine itself, so there is no streaming server to install
+  // and no local host to pair — only the Internet link is provisioned here.
   ProgressPage: TOutputProgressWizardPage;
-  LblSunshine: TNewStaticText;
-  LblPairing: TNewStaticText;
   LblArecord: TNewStaticText;
-  SunshineStepState: String;
   // Update mode: a MoonlightWeb is already installed, so this run only swaps the
   // payload. Every question was answered by the previous install — the wizard
   // collapses to a single "Update" confirmation (see ShouldSkipPage).
@@ -419,119 +318,6 @@ function DesktopIconExists(): Boolean;
 begin
   Result := FileExists(ExpandConstant('{autodesktop}\MoonlightWeb.lnk'))
          or FileExists(ExpandConstant('{userdesktop}\MoonlightWeb.lnk'));
-end;
-
-function DetectSunshine(): Boolean;
-var
-  p: String;
-begin
-  Result := False;
-  SunshineExePath := '';
-  p := ExpandConstant('{autopf}\Sunshine\sunshine.exe');
-  if FileExists(p) then begin SunshineExePath := p; Result := True; Exit; end;
-  p := ExpandConstant('{commonpf64}\Sunshine\sunshine.exe');
-  if FileExists(p) then begin SunshineExePath := p; Result := True; Exit; end;
-  // Registry uninstall entry (covers non-default install dirs).
-  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
-                         'InstallLocation', p) and (p <> '') then begin
-    SunshineExePath := AddBackslash(p) + 'sunshine.exe';
-    Result := FileExists(SunshineExePath);
-  end;
-end;
-
-// True when the registry entry describes the Sunshine running on THIS machine:
-// either the host was added by loopback address (what the installer's own
-// auto-pairing does) or its advertised hostname matches the local computer name
-// (what an mDNS-discovered local host looks like).
-function IsLocalHostEntry(const key: String): Boolean;
-var
-  v: String;
-begin
-  Result := False;
-  if RegQueryStringValue(HKCU, key, 'manualaddress', v)
-     and ((v = '127.0.0.1') or (v = '::1') or (Lowercase(v) = 'localhost')) then begin
-    Result := True;
-    Exit;
-  end;
-  if RegQueryStringValue(HKCU, key, 'hostname', v) and (v <> '')
-     and (CompareText(v, GetComputerNameString()) = 0) then
-    Result := True;
-end;
-
-// True when a previous MoonlightWeb run already paired with the local Sunshine.
-// The server persists its host list through QSettings, which on Windows is the
-// registry (HKCU\Software\<org>\<app>\hosts\<n>\...; see ComputerManager::
-// saveHosts / NvComputer::serialize). Absent key / no local paired host → False,
-// so an unreadable hive degrades to the normal "ask for credentials" page.
-function LocalSunshinePaired(): Boolean;
-var
-  root, key, state: String;
-  names: TArrayOfString;
-  i: Integer;
-begin
-  Result := False;
-  root := 'Software\MoonlightWeb\MoonlightWeb\hosts';
-  if not RegGetSubkeyNames(HKCU, root, names) then Exit;
-  for i := 0 to GetArrayLength(names) - 1 do begin
-    key := root + '\' + names[i];
-    if RegQueryStringValue(HKCU, key, 'pairState', state)
-       and (Lowercase(state) = 'paired') and IsLocalHostEntry(key) then begin
-      Result := True;
-      Exit;
-    end;
-  end;
-end;
-
-// Gray out the credential fields unless they are actually needed: when Sunshine
-// is already installed (user must supply its real creds) or the "install"
-// checkbox is ticked (creds for the fresh install). Disabled when Sunshine is
-// absent and installation is declined.
-procedure UpdateSunshineFieldsEnabled();
-var
-  enabled: Boolean;
-begin
-  enabled := SunshineDetected or SunshineInstallCheck.Checked;
-  SunshineUserEdit.Enabled := enabled;
-  SunshinePassEdit.Enabled := enabled;
-  SunshineUserLabel.Enabled := enabled;
-  SunshinePassLabel.Enabled := enabled;
-end;
-
-procedure SunshineInstallCheckClick(Sender: TObject);
-begin
-  UpdateSunshineFieldsEnabled();
-end;
-
-// The prefilled default ("admin") is shown in clear so the user can read what
-// will be applied; the field turns into a real password box on the first edit.
-procedure SunshinePassChange(Sender: TObject);
-begin
-  if SettingPass or SunshinePassMasked then Exit;
-  SunshinePassMasked := True;
-  SunshinePassEdit.PasswordChar := '*';
-end;
-
-procedure SetSunshinePassword(const value: String; masked: Boolean);
-begin
-  SettingPass := True;
-  SunshinePassEdit.Text := value;
-  SettingPass := False;
-  SunshinePassMasked := masked;
-  if masked then SunshinePassEdit.PasswordChar := '*'
-  else SunshinePassEdit.PasswordChar := #0;
-end;
-
-// "Skip": walk past the Sunshine page without installing or pairing anything.
-// Clearing both fields is what makes CurStepChanged write auto_pair=false, and
-// SunshineSkipped keeps PrepareToInstall from downloading Sunshine. The user can
-// still install/pair later from the admin page.
-procedure SkipButtonClick(Sender: TObject);
-begin
-  SunshineSkipped := True;
-  SunshineUserEdit.Text := '';
-  SetSunshinePassword('', True);
-  // Simulate a click on Next — Inno has no API to advance the wizard directly.
-  WizardForm.NextButton.OnClick(WizardForm.NextButton);
 end;
 
 // "Passer": decline the Internet link and move on. Inno has no API to advance
@@ -629,8 +415,7 @@ begin
 
   // "Passer" in the slot the Back button gives up on this page, so the pair
   // reads Passer / Accepter left to right — the order a Windows user expects,
-  // with the affirmative one on the right. Same construction as SkipButton on
-  // the Sunshine page.
+  // with the affirmative one on the right.
   InternetSkipButton := TNewButton.Create(WizardForm);
   InternetSkipButton.Parent := WizardForm.BackButton.Parent;
   InternetSkipButton.Left := WizardForm.BackButton.Left;
@@ -641,74 +426,7 @@ begin
   InternetSkipButton.OnClick := @InternetSkipClick;
   InternetSkipButton.Visible := False;
 
-  // Step: Sunshine.
-  SunshinePage := CreateCustomPage(InternetPage.ID,
-    ExpandConstant('{cm:SunshinePageCaption}'), ExpandConstant('{cm:SunshinePageDesc}'));
-
-  SunshineStatusLabel := TNewStaticText.Create(WizardForm);
-  SunshineStatusLabel.Parent := SunshinePage.Surface;
-  SunshineStatusLabel.Left := 0;
-  SunshineStatusLabel.Top := 0;
-  SunshineStatusLabel.Width := SunshinePage.SurfaceWidth;
-  SunshineStatusLabel.AutoSize := False;
-  SunshineStatusLabel.Height := ScaleY(40);
-  SunshineStatusLabel.WordWrap := True;
-
-  SunshineInstallCheck := TNewCheckBox.Create(WizardForm);
-  SunshineInstallCheck.Parent := SunshinePage.Surface;
-  SunshineInstallCheck.Top := ScaleY(48);
-  SunshineInstallCheck.Width := SunshinePage.SurfaceWidth;
-  SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheck}');
-  SunshineInstallCheck.OnClick := @SunshineInstallCheckClick;
-
-  SunshineUserLabel := TNewStaticText.Create(WizardForm);
-  SunshineUserLabel.Parent := SunshinePage.Surface;
-  SunshineUserLabel.Top := ScaleY(80);
-  SunshineUserLabel.Caption := ExpandConstant('{cm:SunshineUserLabel}');
-
-  SunshinePassLabel := TNewStaticText.Create(WizardForm);
-  SunshinePassLabel.Parent := SunshinePage.Surface;
-  SunshinePassLabel.Left := ScaleX(200);
-  SunshinePassLabel.Top := ScaleY(80);
-  SunshinePassLabel.Caption := ExpandConstant('{cm:SunshinePassLabel}');
-
-  SunshineUserEdit := TNewEdit.Create(WizardForm);
-  SunshineUserEdit.Parent := SunshinePage.Surface;
-  SunshineUserEdit.Top := ScaleY(98);
-  SunshineUserEdit.Width := ScaleX(180);
-
-  SunshinePassEdit := TNewEdit.Create(WizardForm);
-  SunshinePassEdit.Parent := SunshinePage.Surface;
-  SunshinePassEdit.Top := ScaleY(98);
-  SunshinePassEdit.Left := ScaleX(200);
-  SunshinePassEdit.Width := ScaleX(180);
-  SunshinePassEdit.PasswordChar := '*';
-  SunshinePassEdit.OnChange := @SunshinePassChange;
-  SunshinePassMasked := True;
-
-  // Waiting line for the credential probe, under the two fields.
-  SunshineCheckLabel := TNewStaticText.Create(WizardForm);
-  SunshineCheckLabel.Parent := SunshinePage.Surface;
-  SunshineCheckLabel.Top := ScaleY(136);
-  SunshineCheckLabel.Width := SunshinePage.SurfaceWidth;
-  SunshineCheckLabel.Visible := False;
-
-  // "Skip" — shown only on the Sunshine page, in the slot the Back button
-  // occupies (which is hidden there): the page must offer Skip / Next / Cancel.
-  SkipButton := TNewButton.Create(WizardForm);
-  SkipButton.Parent := WizardForm.BackButton.Parent;
-  SkipButton.Left := WizardForm.BackButton.Left;
-  SkipButton.Top := WizardForm.BackButton.Top;
-  SkipButton.Width := WizardForm.BackButton.Width;
-  SkipButton.Height := WizardForm.BackButton.Height;
-  SkipButton.Caption := ExpandConstant('{cm:ButtonSkip}');
-  SkipButton.OnClick := @SkipButtonClick;
-  SkipButton.Visible := False;
-
   // Live checklist shown during post-install (driven in RunProvisionChecklist).
-  // Default each task to "skipped"; PrepareToInstall / the backend status file
-  // promote them to running/done/failed.
-  SunshineStepState := 'skipped';
   ProgressPage := CreateOutputProgressPage(
     ExpandConstant('{cm:ProvisionPageCaption}'), ExpandConstant('{cm:ProvisionPageDesc}'));
 
@@ -720,32 +438,18 @@ begin
   ProgressPage.Msg1Label.Top := ScaleY(0);
   ProgressPage.Msg1Label.Height := ScaleY(34);
 
-  LblSunshine := TNewStaticText.Create(WizardForm);
-  LblSunshine.Parent := ProgressPage.Surface;
-  LblSunshine.Top := ScaleY(44);
-  LblSunshine.Width := ProgressPage.SurfaceWidth;
-  LblSunshine.Font.Name := 'Consolas';
-  LblSunshine.Font.Size := 10;
-
-  LblPairing := TNewStaticText.Create(WizardForm);
-  LblPairing.Parent := ProgressPage.Surface;
-  LblPairing.Top := ScaleY(68);
-  LblPairing.Width := ProgressPage.SurfaceWidth;
-  LblPairing.Font.Name := 'Consolas';
-  LblPairing.Font.Size := 10;
-
   LblArecord := TNewStaticText.Create(WizardForm);
   LblArecord.Parent := ProgressPage.Surface;
-  LblArecord.Top := ScaleY(92);
+  LblArecord.Top := ScaleY(44);
   LblArecord.Width := ProgressPage.SurfaceWidth;
   LblArecord.Font.Name := 'Consolas';
   LblArecord.Font.Size := 10;
 
   // Progress bar below the checklist (not overlapping it), with the secondary
-  // message under the bar. Without this the bar sits on top of the labels.
-  ProgressPage.ProgressBar.Top := ScaleY(124);
+  // message under the bar. Without this the bar sits on top of the label.
+  ProgressPage.ProgressBar.Top := ScaleY(76);
   ProgressPage.ProgressBar.Width := ProgressPage.SurfaceWidth;
-  ProgressPage.Msg2Label.Top := ScaleY(150);
+  ProgressPage.Msg2Label.Top := ScaleY(102);
 
   // The tasks page is hidden in update mode, so its checkboxes would fall back
   // to their defaults (both ticked) and silently re-add a Desktop icon or an
@@ -763,19 +467,15 @@ begin
   end;
 end;
 
-// Update mode collapses the wizard to the Ready page: the destination, the
-// shortcuts and Sunshine were all settled by the previous install, and re-asking
-// is exactly what makes updates feel heavy. Only a question that was never
-// answered still deserves a page.
+// Update mode collapses the wizard to the Ready page: the destination and the
+// shortcuts were settled by the previous install, and re-asking is exactly what
+// makes updates feel heavy. Only a question that was never answered still
+// deserves a page.
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   if not UpdateMode then Exit;
   if (PageID = wpSelectDir) or (PageID = wpSelectProgramGroup) or (PageID = wpSelectTasks) then
-    Result := True
-  else if (SunshinePage <> nil) and (PageID = SunshinePage.ID) then
-    // Nothing to install or pair on an update: the admin page owns pairing from
-    // here on, and asking for credentials again would be pure noise.
     Result := True
   else if (InternetPage <> nil) and (PageID = InternetPage.ID) then
     Result := SettingsHasKey('internet_access_enabled');
@@ -809,73 +509,6 @@ begin
   Result := s;
 end;
 
-// Build the Sunshine page for the case detected on this machine. Runs once (the
-// page is entered once — Back is hidden there) so a user who edited the fields
-// and came back through another route never sees their input reset.
-procedure PrepareSunshinePage();
-var
-  showFields: Boolean;
-begin
-  if SunshinePagePrepared then Exit;
-  SunshinePagePrepared := True;
-
-  SunshineDetected := DetectSunshine();
-  if not SunshineDetected then SunshineCase := scAbsent
-  else if LocalSunshinePaired() then SunshineCase := scPaired
-  else SunshineCase := scUnpaired;
-
-  showFields := SunshineCase <> scPaired;
-  SunshineInstallCheck.Visible := showFields;
-  SunshineUserLabel.Visible := showFields;
-  SunshinePassLabel.Visible := showFields;
-  SunshineUserEdit.Visible := showFields;
-  SunshinePassEdit.Visible := showFields;
-
-  case SunshineCase of
-    scPaired:
-      begin
-        // Nothing to install, nothing to pair: a plain confirmation. The empty
-        // credentials make CurStepChanged write auto_pair=false, and the message
-        // gets the whole surface since no control sits under it.
-        SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineAlreadyPaired}');
-        SunshineStatusLabel.Height := SunshinePage.SurfaceHeight;
-        SunshineUserEdit.Text := '';
-        SetSunshinePassword('', True);
-      end;
-    scUnpaired:
-      begin
-        SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineDetected}');
-        // Already installed: show the box ticked + "(already installed)" and keep
-        // it disabled. PrepareToInstall skips the download when SunshineDetected,
-        // so a ticked box here never triggers a reinstall.
-        SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheckDone}');
-        SunshineInstallCheck.Checked := True;
-        SunshineInstallCheck.Enabled := False;
-        // Do NOT prefill: wrong (default) credentials make the REST PIN push fail,
-        // leaving a pending pairing request and an unpaired host. The user types
-        // Sunshine's real username/password to pair — or clicks Skip to pair later
-        // (auto_pair is then written false; see CurStepChanged).
-        SunshineUserEdit.Text := '';
-        SetSunshinePassword('', True);
-        UpdateSunshineFieldsEnabled();
-      end;
-  else
-    begin
-      SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineNotDetected}');
-      SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheck}');
-      SunshineInstallCheck.Enabled := True;
-      SunshineInstallCheck.Checked := True;
-      // Fresh install: the silent installer applies these via --creds, so both
-      // default to "admin". The password shows in clear until the user edits it
-      // (SunshinePassChange) — it is a value to read, not a secret to hide, until
-      // it becomes one.
-      SunshineUserEdit.Text := 'admin';
-      SetSunshinePassword('admin', False);
-      UpdateSunshineFieldsEnabled();
-    end;
-  end;
-end;
-
 procedure CurPageChanged(CurPageID: Integer);
 begin
   // In update mode every other page is skipped, so this IS the whole wizard: an
@@ -889,9 +522,7 @@ begin
   end;
 
   if (InternetPage <> nil) and (CurPageID = InternetPage.ID) then begin
-    // Defensive: nothing can currently re-enter this page, because the Sunshine
-    // page after it hides Back as well. If that ever changes, a second visit
-    // must not inherit the first visit's Passer.
+    // Defensive: a second visit must not inherit the first visit's Passer.
     InternetSkipped := False;
     WizardForm.BackButton.Visible := False;
     BackButtonHidden := True;
@@ -902,194 +533,25 @@ begin
     WizardForm.NextButton.Caption := ExpandConstant('{cm:InternetBtnAccept}');
   end else begin
     InternetSkipButton.Visible := False;
-  end;
-
-  if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
-    PrepareSunshinePage();
-    // Re-entering the page (Back from the "ready to install" page) cancels an
-    // earlier Skip: whatever the user leaves in the fields now is what counts,
-    // so a skipped fresh install gets its admin/admin defaults back.
-    if SunshineSkipped then begin
-      SunshineSkipped := False;
-      if SunshineCase = scAbsent then begin
-        SunshineUserEdit.Text := 'admin';
-        SetSunshinePassword('admin', False);
-      end;
-    end;
-    // Skip / Next / Cancel: the Back button gives up its slot to Skip. When
-    // Sunshine is already paired there is nothing to skip, so the page keeps
-    // just Next / Cancel.
-    WizardForm.BackButton.Visible := False;
-    BackButtonHidden := True;
-    SkipButton.Visible := SunshineCase <> scPaired;
-  end else begin
-    SkipButton.Visible := False;
-    // Only ever restore what we hid, and never on a page that is itself hiding
-    // Back (the Internet page runs through this branch too).
-    if BackButtonHidden and not ((InternetPage <> nil) and (CurPageID = InternetPage.ID)) then begin
+    // Only ever restore what we hid. The Internet page is the one page that
+    // hides Back, and it takes the branch above rather than this one.
+    if BackButtonHidden then begin
       WizardForm.BackButton.Visible := True;
       BackButtonHidden := False;
     end;
   end;
 end;
 
-// Base64 of the UTF-8 bytes of `s`, for the probe's Basic-Auth header. Inno's
-// strings are UTF-16 and its AnsiString conversions go through the system
-// codepage, so the UTF-8 encoding is spelled out here (BMP only — a credential
-// made of astral-plane characters is not a case worth carrying).
-function Base64OfUtf8(const s: String): String;
-var
-  alphabet: String;
-  bytes: array of Integer;
-  i, n, c, acc: Integer;
-begin
-  alphabet := 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  SetArrayLength(bytes, Length(s) * 3);
-  n := 0;
-  for i := 1 to Length(s) do begin
-    c := Ord(s[i]);
-    if c < $80 then begin
-      bytes[n] := c;
-      n := n + 1;
-    end else if c < $800 then begin
-      bytes[n] := $C0 or (c shr 6);
-      bytes[n + 1] := $80 or (c and $3F);
-      n := n + 2;
-    end else begin
-      bytes[n] := $E0 or (c shr 12);
-      bytes[n + 1] := $80 or ((c shr 6) and $3F);
-      bytes[n + 2] := $80 or (c and $3F);
-      n := n + 3;
-    end;
-  end;
-
-  Result := '';
-  i := 0;
-  while i < n do begin
-    acc := bytes[i] shl 16;
-    if i + 1 < n then acc := acc or (bytes[i + 1] shl 8);
-    if i + 2 < n then acc := acc or bytes[i + 2];
-    Result := Result + alphabet[((acc shr 18) and 63) + 1] + alphabet[((acc shr 12) and 63) + 1];
-    if i + 1 < n then Result := Result + alphabet[((acc shr 6) and 63) + 1]
-    else Result := Result + '=';
-    if i + 2 < n then Result := Result + alphabet[(acc and 63) + 1]
-    else Result := Result + '=';
-    i := i + 3;
-  end;
-end;
-
-// Try the typed credentials against the Sunshine already installed here: a
-// Basic-Auth GET on its web-UI port (47990). Returns False when the probe could
-// not run at all (no MSXML) — the wizard then lets the user through rather than
-// blocking on its own failure. Otherwise `httpStatus` is what Sunshine answered
-// with, or 0 when it did not answer.
-//
-// Only 401/403 means "wrong credentials": any other answer proves the header got
-// past the guard, so a Sunshine whose API differs is never mistaken for a bad
-// password.
-function ProbeSunshineCreds(const user, pass: String; var httpStatus: Integer): Boolean;
-var
-  req: Variant;
-begin
-  Result := False;
-  httpStatus := 0;
-  try
-    req := CreateOleObject('MSXML2.ServerXMLHTTP.6.0');
-  except
-    Exit;
-  end;
-  Result := True;
-
-  // The request below is synchronous — MSXML's asynchronous mode never leaves
-  // readyState 1 inside Setup's apartment — so the wait indicator has to be on
-  // screen BEFORE it starts. Update() forces the repaint that the blocked
-  // message loop would otherwise only get around to once the answer is in.
-  SunshineCheckLabel.Caption := ExpandConstant('{cm:SunshineCheckWait}');
-  SunshineCheckLabel.Visible := True;
-  WizardForm.NextButton.Enabled := False;
-  SkipButton.Enabled := False;
-  WizardForm.Cursor := crHourglass;
-  WizardForm.Update;
-  try
-    try
-      req.open('GET', 'https://127.0.0.1:47990/api/apps', False);
-      // Loopback: a Sunshine that is up answers in milliseconds. These caps are
-      // what turns "not running" into an error the user reads rather than a
-      // wizard that hangs.
-      req.setTimeouts(2000, 2000, 2000, 4000);
-      // Sunshine self-signs its web UI: ignore every server-certificate error.
-      req.setOption(2, 13056);
-      // SXH_PROXY_SET_DIRECT — a configured proxy must never see loopback.
-      req.setProxy(1);
-      req.setRequestHeader('Authorization', 'Basic ' + Base64OfUtf8(user + ':' + pass));
-      req.send('');
-      httpStatus := req.status;
-    except
-      // Refused connection, TLS failure, timeout: nothing answered, and reading
-      // .status would raise in turn. 0 is the "no answer" verdict.
-      httpStatus := 0;
-    end;
-  finally
-    WizardForm.Cursor := crDefault;
-    SunshineCheckLabel.Visible := False;
-    WizardForm.NextButton.Enabled := True;
-    SkipButton.Enabled := True;
-  end;
-end;
-
-// Credentials are only MANDATORY for a fresh auto-install: the silent installer
-// sets Sunshine's username/password via --creds, so both must be provided (they
-// come prefilled with admin/admin, so this only fires if the user empties them).
-// When Sunshine is ALREADY installed the credentials only drive optional
-// auto-pairing — Skip walks past the page and pairs later from the admin page.
-// If Sunshine is absent and install is declined, the grayed-out fields are
-// irrelevant.
+// The Internet page is the only one that answers a question, and it answers it
+// through this hook: "Accepter" is Next itself, "Passer" is Next reached through
+// InternetSkipClick — so the flag, not the button, is the answer.
 function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  user, pass: String;
-  httpStatus: Integer;
 begin
   Result := True;
-
-  // The Internet page: "Accepter" is Next itself, "Passer" is Next reached
-  // through InternetSkipClick — so the flag, not the button, is the answer.
-  if (InternetPage <> nil) and (CurPageID = InternetPage.ID) then begin
+  if (InternetPage <> nil) and (CurPageID = InternetPage.ID) then
     InternetAuthorized := not InternetSkipped;
-    Exit;
-  end;
-
-  if (SunshinePage = nil) or (CurPageID <> SunshinePage.ID) or SunshineSkipped then Exit;
-
-  // Probed and written exactly as typed: trimming here would validate one pair
-  // of credentials and hand another to provisioning.json.
-  user := SunshineUserEdit.Text;
-  pass := SunshinePassEdit.Text;
-
-  if (not SunshineDetected) and SunshineInstallCheck.Checked
-     and ((Trim(user) = '') or (Trim(pass) = '')) then begin
-    MsgBox(ExpandConstant('{cm:SunshineCredsRequired}'), mbError, MB_OK);
-    Result := False;
-    Exit;
-  end;
-
-  // Sunshine was already on this machine, so its credentials are the user's to
-  // know — and a wrong pair fails silently much later (a pending pairing request
-  // in Sunshine, an unpaired host). Settle it here, while the page is still up
-  // and Skip is one click away. A fresh install is never probed: those
-  // credentials are the ones the installer is about to create.
-  if (SunshineCase = scUnpaired) and (Trim(user) <> '') and (Trim(pass) <> '') then begin
-    if not ProbeSunshineCreds(user, pass, httpStatus) then Exit;
-    if (httpStatus = 401) or (httpStatus = 403) then begin
-      MsgBox(ExpandConstant('{cm:SunshineCredsWrong}'), mbError, MB_OK);
-      Result := False;
-    end else if httpStatus = 0 then begin
-      MsgBox(ExpandConstant('{cm:SunshineNoAnswer}'), mbError, MB_OK);
-      Result := False;
-    end;
-  end;
 end;
 
-// --- Silent Sunshine install (download + /S + set credentials) ------------
 // --- ViGEmBus: the virtual gamepad bus ------------------------------------
 //
 // Keyboard and mouse can be injected with a plain API call; a gamepad cannot.
@@ -1135,53 +597,11 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  DownloadPage: TDownloadWizardPage;
-  tmp: String;
-  rc: Integer;
 begin
   Result := '';
-
-  // Before the Sunshine branch, and outside every one of its early exits: the
-  // gamepad driver is wanted on an update and on a machine that declined
-  // Sunshine just as much as on a fresh install.
+  // The gamepad driver is wanted on an update as much as on a fresh install,
+  // and it is the only thing this installer fetches from the network.
   InstallVigemBus();
-  // Skip the download when Sunshine is already present (the box is ticked but
-  // disabled purely as an "already installed" indicator), when the user clicked
-  // Skip, when they declined it, or on an update (the Sunshine page never ran).
-  // Only a ticked box on a machine WITHOUT Sunshine triggers a real install.
-  if (SunshinePage = nil) or UpdateMode or SunshineDetected or SunshineSkipped
-     or (not SunshineInstallCheck.Checked) then begin
-    if SunshineDetected then SunshineStepState := 'done';
-    Exit;
-  end;
-
-  DownloadPage := CreateDownloadPage(ExpandConstant('{cm:SunshinePageCaption}'),
-    ExpandConstant('{cm:SunshineDownloadCaption}'), nil);
-  DownloadPage.Clear;
-  DownloadPage.Add('{#SunshineUrl}', 'sunshine-installer.exe', '');
-  DownloadPage.Show;
-  try
-    try
-      DownloadPage.Download;
-    except
-      Result := ExpandConstant('{cm:SunshineDownloadFail}') + ' ' + GetExceptionMessage;
-      Exit;
-    end;
-    tmp := ExpandConstant('{tmp}\sunshine-installer.exe');
-    if not Exec(tmp, '/S', '', SW_HIDE, ewWaitUntilTerminated, rc) then begin
-      Result := ExpandConstant('{cm:SunshineLaunchFail}');
-      Exit;
-    end;
-    // Re-detect to get the installed path, then set credentials via the CLI.
-    // Quote both values: spaces/special characters must reach Sunshine intact.
-    if DetectSunshine() then
-      Exec(SunshineExePath, '--creds "' + SunshineUserEdit.Text + '" "' + SunshinePassEdit.Text + '"',
-           '', SW_HIDE, ewWaitUntilTerminated, rc);
-    SunshineStepState := 'done';
-  finally
-    DownloadPage.Hide;
-  end;
 end;
 
 // --- Auto-start: logon scheduled task (keeps the tray icon, native) -------
@@ -1441,13 +861,13 @@ end;
 // Ask the running server for the internet way into its own admin page: the
 // rendezvous address, with a single-use host key in the fragment.
 //
+// Loopback, self-signed certificate, no proxy. Empty on anything unexpected, so
+// the caller falls back.
+//
 // The question can only be put to the server, because only the server knows
 // whether the line is up AND whether the introduction server answers when asked
 // — it probes that itself. An empty url is its considered answer, not a
 // failure: it means loopback is the honest address here.
-//
-// Same shape as the Sunshine probe above: loopback, self-signed certificate,
-// no proxy. Empty on anything unexpected, so the caller falls back.
 function AskRemoteAdminLink(const origin: String): String;
 var
   req: Variant;
@@ -1544,16 +964,15 @@ begin
 end;
 
 // Launch the server (kicks off first-run provisioning) and poll its status file,
-// driving the on-screen checklist until every task is terminal or it times out.
+// driving the on-screen checklist until the task is terminal or it times out.
 procedure RunProvisionChecklist();
 var
-  statusPath, content, ps, psDisp, ar, spin: String;
-  sunLabel, pairLabel: String;
+  statusPath, content, ar, spin: String;
   raw: AnsiString; // LoadStringFromFile requires an AnsiString out-param.
   i, rc: Integer;
-  pctSun, pctPair, pctAr, itSun, itPair, itAr: Integer;
-  prevSun, prevPair, prevAr: String;
-  holdDone, alreadyPaired: Boolean;
+  pctAr, itAr: Integer;
+  prevAr: String;
+  holdDone: Boolean;
 begin
   // Bring the server back up. A service install owns its own lifecycle (session
   // 0, no tray) — restarting it is what StopRunningInstance stopped.
@@ -1582,26 +1001,10 @@ begin
   // Qt AppDataLocation on Windows: %AppData%\<Org>\<App> = MoonlightWeb\MoonlightWeb.
   statusPath := ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json');
 
-  // A step the installer had nothing to do for must read as a statement of fact
-  // ("Sunshine is already installed"), not as an instruction it never carried
-  // out — the latter reads as a lie next to a 100% bar.
-  sunLabel := ExpandConstant('{cm:TaskSunshine}');
-  if SunshineDetected then sunLabel := ExpandConstant('{cm:TaskSunshineDone}');
-
-  // scPaired: a previous MoonlightWeb already paired this machine, so the wizard
-  // asked for no credentials and provisioning.json carries auto_pair=false — the
-  // backend reports the step as "skipped". Note that wiping %AppData% does NOT
-  // undo that pairing: the client identity and the host list are QSettings, i.e.
-  // HKCU\Software\MoonlightWeb on Windows. The step really is complete, so show
-  // it complete rather than with the "[--]" that means "not done".
-  alreadyPaired := SunshinePagePrepared and (SunshineCase = scPaired);
-  pairLabel := ExpandConstant('{cm:TaskPairing}');
-  if alreadyPaired then pairLabel := ExpandConstant('{cm:TaskPairingDone}');
-
   ProgressPage.SetText(ExpandConstant('{cm:ProvisionWorking}'), '');
   ProgressPage.Show;
-  itSun := 0; itPair := 0; itAr := 0;
-  prevSun := ''; prevPair := ''; prevAr := '';
+  itAr := 0;
+  prevAr := '';
   try
     // ~3min budget (600 * 300ms). On a fresh install the internet step closes
     // in seconds (no DNS, no certificate); the budget is sized for a legacy
@@ -1610,56 +1013,36 @@ begin
     // mid-issuance and the wizard moved on while the domain was still served
     // with the self-signed fallback.
     for i := 0 to 600 do begin
-      ps := ''; ar := '';
+      ar := '';
       if LoadStringFromFile(statusPath, raw) then begin
         content := raw; // implicit AnsiString -> String (Unicode Inno)
-        ps := StatusValue(content, 'pairing');
         ar := StatusValue(content, 'arecord');
       end;
       spin := SpinChar(i);
-      psDisp := ps;
-      if alreadyPaired and (psDisp = 'skipped') then psDisp := 'done';
 
-      // Pseudo-progress: climb towards 95 while a task runs, then snap to 100 on
-      // done. Gives a long step visible movement instead of a spinner that looks
-      // frozen. Each step climbs at its own rate, sized on how long it actually
-      // takes, so none of them parks at 95% for the rest of the install:
-      //   Sunshine  ~1%/300ms  (download + silent install)
-      //   pairing   ~1%/600ms  (up to ~65s: PIN push + the 5-stage handshake)
-      //   A-record  ~1%/1.5s   (DNS propagation, then the ACME order)
-      if SunshineStepState = 'done' then pctSun := 100
-      else if IsTerminal(SunshineStepState) then pctSun := 0
-      else begin itSun := itSun + 1; pctSun := itSun; if pctSun > 95 then pctSun := 95; end;
-
-      if psDisp = 'done' then pctPair := 100
-      else if IsTerminal(psDisp) then pctPair := 0
-      else begin itPair := itPair + 1; pctPair := itPair div 2; if pctPair > 95 then pctPair := 95; end;
-
+      // Pseudo-progress: climb towards 95 while the task runs, then snap to 100
+      // on done. Gives a long step visible movement instead of a spinner that
+      // looks frozen; the rate (~1%/1.5s) is sized on DNS propagation followed
+      // by the ACME order, so it does not park at 95% for the rest of the wait.
       if ar = 'done' then pctAr := 100
       else if IsTerminal(ar) then pctAr := 0
       else begin itAr := itAr + 1; pctAr := itAr div 5; if pctAr > 95 then pctAr := 95; end;
 
-      LblSunshine.Caption := StepGlyph(SunshineStepState, spin) + ' ' + PadRight(StepPercent(SunshineStepState, pctSun), 6) + sunLabel;
-      LblPairing.Caption  := StepGlyph(psDisp, spin) + ' ' + PadRight(StepPercent(psDisp, pctPair), 6) + pairLabel;
-      LblArecord.Caption  := StepGlyph(ar, spin) + ' ' + PadRight(StepPercent(ar, pctAr), 6) + ExpandConstant('{cm:TaskArecord}');
+      LblArecord.Caption := StepGlyph(ar, spin) + ' ' + PadRight(StepPercent(ar, pctAr), 6) + ExpandConstant('{cm:TaskArecord}');
 
-      // Smooth overall bar driven by the three pseudo-percentages (max 300). A
-      // skipped/failed step counts as complete here (its label already says so):
-      // it is finished, and scoring it 0 would both drag the bar backwards when
-      // it resolves and stop it ever reaching 100%.
-      ProgressPage.SetProgress(BarPercent(SunshineStepState, pctSun) + BarPercent(psDisp, pctPair)
-                               + BarPercent(ar, pctAr), 300);
+      // A skipped/failed step counts as complete on the bar (its label already
+      // says so): it is finished, and scoring it 0 would stop the bar ever
+      // reaching 100%.
+      ProgressPage.SetProgress(BarPercent(ar, pctAr), 100);
 
-      // When a task has just turned [OK], pause 1s so the user registers it.
-      holdDone := ((SunshineStepState = 'done') and (prevSun <> 'done'))
-               or ((psDisp = 'done') and (prevPair <> 'done'))
-               or ((ar = 'done') and (prevAr <> 'done'));
-      prevSun := SunshineStepState; prevPair := psDisp; prevAr := ar;
+      // When the task has just turned [OK], pause 1s so the user registers it.
+      holdDone := (ar = 'done') and (prevAr <> 'done');
+      prevAr := ar;
 
-      if IsTerminal(SunshineStepState) and IsTerminal(psDisp) and IsTerminal(ar) then begin
-        // Everything settled. SetProgress above already pumped the message queue,
-        // so the full bar and the final [OK] lines are on screen: hold them long
-        // enough to be read instead of blinking straight to the next page.
+      if IsTerminal(ar) then begin
+        // Settled. SetProgress above already pumped the message queue, so the
+        // full bar and the final [OK] line are on screen: hold them long enough
+        // to be read instead of blinking straight to the next page.
         Sleep(900);
         Break;
       end;
@@ -1673,7 +1056,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   lines: TArrayOfString;
-  internet, consent, autoPair: String;
+  internet, consent: String;
 begin
   // Before the file copy: nothing under {app} can be replaced while the server
   // is holding it open.
@@ -1709,25 +1092,16 @@ begin
     consent := ExpandConstant('{cm:InternetPageBody}') + ' / '
              + ExpandConstant('{cm:InternetPageOption}');
     StringChangeEx(consent, '%n', ' ', True);
-    // Only ask the server to auto-pair when the user actually supplied credentials.
-    // Blank creds mean "no pairing to do": the user clicked Skip, or MoonlightWeb
-    // is already paired with the local Sunshine (scPaired clears both fields).
-    // Pairing with empty creds would fail and leave a pending request, so mark it
-    // skipped instead.
-    if (Trim(SunshineUserEdit.Text) <> '') and (Trim(SunshinePassEdit.Text) <> '') then
-      autoPair := 'true'
-    else
-      autoPair := 'false';
-    SetArrayLength(lines, 9);
+    // No "sunshine" object any more: this installer installs no streaming server
+    // and pairs no local host, so there is nothing to auto-pair. Provisioning
+    // reads a missing object as auto_pair=false and marks the step skipped, so
+    // an older server given this file behaves exactly as if Skip had been
+    // clicked — and no plaintext credential is ever written to disk.
+    SetArrayLength(lines, 4);
     lines[0] := '{';
     lines[1] := '  "internet_access_authorized": ' + internet + ',';
-    lines[2] := '  "consent_message": "' + JsonEscape(consent) + '",';
-    lines[3] := '  "sunshine": {';
-    lines[4] := '    "auto_pair": ' + autoPair + ',';
-    lines[5] := '    "username": "' + JsonEscape(SunshineUserEdit.Text) + '",';
-    lines[6] := '    "password": "' + JsonEscape(SunshinePassEdit.Text) + '"';
-    lines[7] := '  }';
-    lines[8] := '}';
+    lines[2] := '  "consent_message": "' + JsonEscape(consent) + '"';
+    lines[3] := '}';
     SaveStringsToUTF8FileWithoutBOM(ExpandConstant('{app}\provisioning.json'), lines, False);
   end;
 
@@ -1748,8 +1122,8 @@ begin
   if WizardIsTaskSelected('autostart') then
     RegisterLogonTask();
 
-  // Launch the server and show the live checklist (Sunshine / pairing / A-record)
-  // while first-run provisioning completes.
+  // Launch the server and show the live checklist (the Internet link) while
+  // first-run provisioning completes.
   RunProvisionChecklist();
 
   // With the server up, settle the address the Finish page will offer: the
@@ -1765,8 +1139,8 @@ end;
 // dialog is the opt-in that wipes it instead:
 //   %AppData%\MoonlightWeb\MoonlightWeb  settings.json, sessions.json, the ACME
 //                                        certificate, logs and crash dumps
-//   HKCU\Software\MoonlightWeb           the QSettings hive: paired Sunshine
-//                                        hosts and the Moonlight client identity
+//   HKCU\Software\MoonlightWeb           the QSettings hive: paired hosts and
+//                                        the Moonlight client identity
 // Unchecked by default: losing the pairing certificate means re-pairing every
 // host, which must never happen by accident.
 function AskRemoveConfig(): Boolean;

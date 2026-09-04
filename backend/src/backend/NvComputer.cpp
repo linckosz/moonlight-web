@@ -304,10 +304,21 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
 
 bool NvComputer::isLocalMachine() const
 {
-    // Same logic the setup wizard uses (SystemRoutes): a host is "us" when any of
-    // its addresses is localhost, loopback, or an address bound to one of this
-    // machine's own network interfaces (mDNS may register the local Sunshine
-    // under its LAN IP rather than 127.0.0.1).
+    // The native engine is this machine, by construction — it captures the very
+    // desktop this process runs on. It has no address at all (nothing to poll,
+    // nothing to reach), so the address matching below would answer a flat "not
+    // us" on the one host where the answer is certain. Everything that reads
+    // this flag depends on it: the "you are streaming the PC you are sitting
+    // at" warning, the OS inference (which short-circuits on local), and the
+    // one-click update, which offers itself only when this machine has a paired
+    // local host — since the installer stopped shipping Sunshine, the native
+    // card is the only host a fresh Windows install has.
+    if (isNativeEngine()) return true;
+
+    // Otherwise: a host is "us" when any of its addresses is localhost,
+    // loopback, or an address bound to one of this machine's own network
+    // interfaces (mDNS may register the local Sunshine under its LAN IP rather
+    // than 127.0.0.1).
     const QList<QHostAddress> selfAddrs = QNetworkInterface::allAddresses();
     for (const NvAddress& na : {activeAddress, localAddress, manualAddress}) {
         if (na.isNull()) continue;
