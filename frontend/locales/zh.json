@@ -528,6 +528,7 @@
         "statLegServer": "服务器",
         "statLegNet": "网络",
         "statLegJitter": "抖动缓冲",
+        "statLegAudio": "音频缓冲",
         "statLegArrive": "交接",
         "statLegDecode": "解码",
         "statLegQueue": "渲染队列",
