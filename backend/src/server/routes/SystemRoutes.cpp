@@ -28,6 +28,9 @@
 #include "backend/GamepadDriver.h"
 #include "backend/SunshineInstaller.h"
 #include "backend/SunshineRestClient.h"
+#include "backend/streambackend/NativeProbeService.h"
+#include "streaming/ConsoleSession.h"
+#include "mw/native/Capabilities.h"
 #include "Autostart.h"
 #include "DisplaySleep.h"
 #include "LatencyFlag.h"
@@ -505,6 +508,80 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                 result["status"] = "completed";
                 respond(HttpResponse::json(result));
             });
+    });
+
+    // GET /api/native/status — can this machine stream itself, and on what.
+    //
+    // Two audiences, one route. Whether the native host is available, and the
+    // one-line reason when it is not, is a fact any viewer is entitled to: it
+    // explains why the "<hostname> — MoonlightWeb Host" card is or is not in
+    // their list. Everything past that — the display names, the GPU, the
+    // encoder and codec — names the machine's hardware, so it travels only to
+    // a caller sitting at it, on the same reasoning as /internet/status
+    // trimming its topology for a remote session.
+    //
+    // As a service the answer is the console-session probe snapshot, so this
+    // also reports where the desktop is and who is on it, which is the whole
+    // difference between "no encoder" and "nobody is logged in yet".
+    server.router()->get("/api/native/status", [](const HttpRequest& req) {
+        const mw::native::Capabilities caps = NativeProbeService::instance().snapshot();
+        const bool local = req.isLocal && !req.viaTunnel;
+
+        QJsonObject obj;
+        obj["available"] = caps.available;
+        obj["reason"] = QString::fromUtf8(mw::native::toString(caps.reason));
+        // Where the engine lives, so the page can say "log in at the PC" rather
+        // than "unsupported" when that is the actual state.
+        obj["remote_session"] = NativeProbeService::instance().remote();
+        if (NativeProbeService::instance().remote()) {
+            const ConsoleSession::Info console = NativeProbeService::instance().console();
+            obj["user_present"] = console.userPresent;
+            if (local && console.userPresent) obj["user"] = console.userName;
+        }
+        if (!caps.available) {
+            // The English diagnostic is a log/host-machine detail; a remote
+            // viewer gets the enum reason above, not the free-form text.
+            if (local && !caps.diagnostic.empty())
+                obj["diagnostic"] = QString::fromStdString(caps.diagnostic);
+            return HttpResponse::json(obj);
+        }
+
+        if (!local) return HttpResponse::json(obj); // availability only, for a remote caller
+
+        obj["capture"] = QString::fromUtf8(mw::native::toString(caps.capture));
+        QJsonArray displays;
+        for (const mw::native::DisplayInfo& d : caps.displays) {
+            QJsonObject o;
+            o["id"] = d.id;
+            o["label"] = QString::fromStdString(d.label);
+            o["detail"] = QString::fromStdString(d.detail);
+            o["width"] = d.width;
+            o["height"] = d.height;
+            o["refresh_mhz"] = d.refreshMilliHz;
+            o["hdr_active"] = d.hdrActive;
+            // What would encode it — the GPU that drives it, or the first that
+            // can when its own has no encoder (one cross-GPU copy).
+            const mw::native::GpuInfo* gpu = caps.gpuFor(d);
+            if (!gpu)
+                for (const mw::native::GpuInfo& g : caps.gpus)
+                    if (!g.encoders.empty()) {
+                        gpu = &g;
+                        break;
+                    }
+            if (gpu) {
+                o["gpu"] = QString::fromStdString(gpu->name);
+                if (!gpu->encoders.empty())
+                    o["encoder"] = QString::fromUtf8(mw::native::toString(gpu->encoders.front()));
+                QString codecs;
+                for (mw::native::Codec c : gpu->codecs)
+                    codecs += (codecs.isEmpty() ? QString() : QStringLiteral(", ")) +
+                              QString::fromUtf8(mw::native::toString(c));
+                o["codecs"] = codecs;
+            }
+            displays.append(o);
+        }
+        obj["displays"] = displays;
+        return HttpResponse::json(obj);
     });
 
     // POST /api/system/open-screen-recording — open macOS' Screen Recording

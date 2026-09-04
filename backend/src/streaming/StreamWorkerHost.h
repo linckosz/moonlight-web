@@ -31,7 +31,15 @@
  *
  * Protocol: see worker/StreamWorkerMain.h (JSON lines over stdin/stdout;
  * worker logging goes to its own log file, stderr is forwarded).
+ *
+ * Two launchers, one protocol. A GameStream/Wolf/MultiSeat worker is a plain
+ * QProcess child of this process. A NATIVE worker started by the Windows
+ * service is launched into the console session as the logged-on user instead
+ * (ConsoleProcess — session 0 has no desktop to capture), and speaks the same
+ * lines over the same three pipes; nothing past start() knows the difference.
  */
+class ConsoleProcess;
+
 class StreamWorkerHost : public QObject
 {
     Q_OBJECT
@@ -81,12 +89,21 @@ signals:
     void exited();
 
 private:
+    bool startInProcess(const QStringList& args, const QByteArray& configLine);
+    bool startInConsoleSession(const QStringList& args, const QByteArray& configLine);
+    void onStdoutData(const QByteArray& data);
+    void onStderrData(const QByteArray& data);
     void onStdout();
     void onFinished(int exitCode, QProcess::ExitStatus status);
+    void onChildFinished(int exitCode, bool crashed);
     void sendCommand(const char* cmd);
     void sendJson(const QJsonObject& msg);
+    void writeLine(const QByteArray& line);
+    void killChild();
+    qint64 childPid() const;
 
     QProcess* m_Proc = nullptr;
+    ConsoleProcess* m_Console = nullptr;
     QByteArray m_Buf;
     bool m_ResponseEmitted = false;
     bool m_EndedEmitted = false;

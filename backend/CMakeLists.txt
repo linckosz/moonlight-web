@@ -230,6 +230,8 @@ add_executable(mw-server
     src/backend/streambackend/WolfBackend.cpp
     src/backend/streambackend/MultiSeatBackend.cpp
     src/backend/streambackend/NativeHostBackend.cpp
+    src/backend/streambackend/NativeCapabilitiesJson.cpp
+    src/backend/streambackend/NativeProbeService.cpp
     src/backend/streambackend/StreamBackendSetup.cpp
     src/backend/SunshineInstaller.cpp
     src/backend/GamepadDriver.cpp
@@ -252,6 +254,7 @@ add_executable(mw-server
     src/streaming/MediaTrackRelay.cpp
     src/streaming/SignalingServer.cpp
     src/streaming/StreamWorkerHost.cpp
+    src/streaming/ConsoleSession.cpp
     src/streaming/worker/StreamWorkerMain.cpp
     src/streaming/worker/CoopSessionResolver.cpp
 )
@@ -339,7 +342,10 @@ target_link_libraries(mw-server PRIVATE
 # ── Platform-specific link libs ────────────────────────────────────────────
 if(WIN32)
     # avrt: MMCSS for the native engine's sender thread (FrameSender).
-    target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi Dbghelp avrt)
+    # wtsapi32 + userenv: launching the native worker into the console session
+    # from the service (ConsoleSession.cpp).
+    target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi Dbghelp avrt
+                                            wtsapi32 userenv)
     # OpenSSL is linked dynamically (import libs) — ship the DLLs next to the exe.
     file(GLOB _mw_ssl_dlls "${_mw_ssl}/lib/${_mw_ssl_arch}/*-3-${_mw_ssl_arch}.dll")
     foreach(_dll ${_mw_ssl_dlls})

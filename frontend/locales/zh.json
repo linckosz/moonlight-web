@@ -520,6 +520,7 @@
         "statFramerate": "帧率：",
         "statBitrate": "码率：",
         "statCodec": "编解码器：",
+        "statEngine": "引擎：",
         "statEnhancer": "增强器：",
         "statTransport": "传输：",
         "statLatency": "延迟：",

@@ -520,6 +520,7 @@
         "statFramerate": "Framerate:",
         "statBitrate": "Bitrate:",
         "statCodec": "Codec:",
+        "statEngine": "Engine:",
         "statEnhancer": "Enhancer:",
         "statTransport": "Transport:",
         "statLatency": "Latency:",

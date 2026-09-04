@@ -1117,3 +1117,94 @@ Choix assumés, notés pour qui reprendra :
 aucun corps de méthode modifié — mais il touche les trois relais. Sunshine a
 été revérifié le 31/08 après le chantier intra-refresh (HEVC, 132 fps, 9,9 ms,
 aucun changement de comportement) ; Wolf reste à repasser.
+
+## 15. Le service : capturer depuis la session console (04/09/2026)
+
+L'installation standard de MoonlightWeb est un service Windows (NSSM, session 0).
+La session 0 n'a pas de bureau : Desktop Duplication n'y duplique rien, `SendInput`
+n'y atteint aucune fenêtre, et la sonde du moteur le dit déjà en une ligne
+(`hasInteractiveSession()` = faux, « no interactive desktop session »). Sans ce
+chantier, le host natif n'existe donc **pas** pour l'installation la plus
+courante — il n'apparaît qu'en instance dev, lancée à la main sur un bureau.
+
+Tout ce que le natif fait doit se passer dans la **session console** — celle qui a
+le moniteur et le clavier — dans un processus qui tourne sous l'utilisateur qui y
+est connecté. Deux choses en découlent : **sonder** le moteur, et **lancer** le
+worker de stream, tous deux ailleurs que dans le processus service.
+
+### 15.1 `--native-probe` : les yeux du service sur le bureau
+
+`MoonlightWeb --native-probe` fait tourner `NativeHost::probe()` là où il est
+lancé, imprime **un objet JSON** sur stdout (`NativeCapabilitiesJson`, schéma
+versionné : les deux bouts sont le même binaire, mais un schéma inconnu — un
+fichier remplacé sous un service qui tourne — est refusé en entier plutôt que
+cru à moitié) et sort ; le log du moteur part sur stderr, où le parent le récupère
+pour le sien. Les énums voyagent en valeurs numériques, la poignée d'adaptateur
+64 bits en hexadécimal (un `double` JSON perdrait ses bits au-delà de 2⁵³).
+
+`NativeProbeService` en fait un **instantané** : lancer un processus à chaque
+requête de la liste des hosts serait cher, donc la dernière réponse est gardée,
+rendue tout de suite, et renouvelée en arrière-plan quand elle a plus de 20 s et
+que quelqu'un demande, quand l'utilisateur console change (ouverture/fermeture de
+session, surveillée toutes les 5 s **sans** rien lancer), et au démarrage.
+`changed()` lève la carte du host quand l'utilisateur se connecte et la baisse
+quand il se déconnecte. Avant la première réponse, l'instantané dit
+« indisponible, en attente de la sonde de session console » : un host qui
+apparaît une seconde après le démarrage du service est correct, un host offert
+qui échoue ne l'est pas. Sur un bureau (instance dev, lancement manuel), rien de
+tout cela : `snapshot()` appelle directement le moteur, à chaque fois.
+
+### 15.2 `ConsoleProcess` : lancer sous l'utilisateur connecté
+
+`WTSGetActiveConsoleSessionId` + `WTSQueryUserToken` donnent le jeton du shell de
+l'utilisateur ; sous UAC c'est le jeton **filtré** d'un administrateur, alors le
+jeton **lié** (le complet) est demandé ensuite et préféré quand il existe — le
+worker tape alors dans les fenêtres élevées comme l'utilisateur le pourrait, et
+tourne quand même **sous l'utilisateur, pas sous SYSTEM**. Un processus réseau qui
+décode des inputs venus d'un navigateur est précisément celui à qui laisser le
+moins de privilèges possible ; le prix — image noire pendant qu'une invite UAC est
+à l'écran, que la boucle de capture gère déjà comme un display perdu — est celui
+que les utilisateurs Sunshine paient sous une autre forme (l'invite est capturée,
+mais le stream ne peut pas y répondre non plus).
+
+`CreateProcessAsUserW` sur `winsta0\default`, avec le bloc d'environnement de
+l'utilisateur (son `%APPDATA%`, là où Qt met ensuite le log et l'identité du
+worker) et trois tubes dont les bouts enfant sont les **seuls** handles hérités
+(`PROC_THREAD_ATTRIBUTE_HANDLE_LIST` : le parent peut être SYSTEM et l'enfant
+l'utilisateur, aucun socket ni fichier du service ne doit franchir cette ligne).
+Les tubes sont drainés par des threads à eux ; la sortie n'est signalée qu'une
+fois les deux lecteurs finis, si bien qu'une ligne `response` écrite juste avant
+de mourir n'est jamais doublée par la sortie du processus.
+
+`StreamWorkerHost` choisit le lanceur en une ligne : un worker **natif** démarré
+par le service va en session console (`ConsoleProcess`), tout autre backend parle
+à un host par le réseau et tourne très bien depuis la session 0 (`QProcess`,
+inchangé). Le même protocole de lignes JSON, les mêmes trois tubes ; rien après
+`start()` ne voit la différence. `MW_CONSOLE_LAUNCH=force` prend ce chemin depuis
+un bureau ordinaire, pour l'éprouver sans service.
+
+### 15.3 `/api/native/status` et la ligne d'overlay
+
+`GET /api/native/status` répond `{available, reason, remote_session, ...}`. La
+disponibilité et la raison (l'énum) vont à tout appelant : c'est ce qui explique
+pourquoi la carte « <hôte> — MoonlightWeb Host » est ou n'est pas dans sa liste.
+Le reste — noms d'écrans, GPU, encodeur, codecs — ne va qu'à un appelant **assis à
+la machine** (même raisonnement que `/api/internet/status` qui masque sa topologie
+à distance). En service, `remote_session` est vrai et `user_present` distingue
+« personne n'est encore connecté » d'« aucun encodeur ». La ligne d'overlay
+« Moteur : GPU · encodeur codec … » (`describeSession()`, portée dans `/start` par
+`native_engine`) nomme enfin, côté client, sur quoi ce stream tourne.
+
+### 15.4 Vérifié / à valider par Bruno
+
+Vérifié le 04/09 en mode `MW_CONSOLE_LAUNCH=force` (bureau, `ConsoleProcess` en
+`CreateProcess` même session) : le service voit « no desktop (session 0) »,
+affiche d'abord « waiting for the console session probe », relaie le stderr de la
+sonde en `[native-probe]`, puis « console probe: available — 2 display(s),
+5 GPU(s) » et lève la carte du host ; `/api/native/status` en loopback rend les
+deux écrans avec GPU/encodeur/codecs. **Reste à valider par Bruno en vrai
+service** (installer le binaire en service, se connecter, streamer) : un stream
+natif complet passé par `CreateProcessAsUser` sous le jeton console, et la
+neutralité du chemin `QProcess` pour Sunshine/Wolf/MultiSeat (inchangé, mais
+`StreamWorkerHost` a bougé). Le retrait de Sunshine de l'installeur (H4) attend
+cette validation.

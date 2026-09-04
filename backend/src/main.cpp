@@ -85,6 +85,7 @@
 #include "streaming/Session.h"
 #include "streaming/IMediaEngine.h"
 #include "streaming/NativeBench.h"
+#include "backend/streambackend/NativeProbeService.h"
 #include "Limelight.h" // SCM_* codec-support masks
 #include "streaming/DataChannelRelay.h"
 #include "streaming/MediaTrackRelay.h"
@@ -1297,6 +1298,7 @@ int main(int argc, char* argv[])
     // noise that breaks `moonlightweb --help | less`.
     for (int i = 1; i < argc; ++i) {
         static const char* const kQuietStdout[] = {"--stream-worker",
+                                                   "--native-probe",
                                                    "--status",
                                                    "--new-pin",
                                                    "--enable-internet",
@@ -1318,7 +1320,14 @@ int main(int argc, char* argv[])
         const QString logDir =
             QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
         QDir().mkpath(logDir);
-        Logger::instance()->setLogFile(logDir + "/moonlightweb.log");
+        // The console probe runs in the user's session, where the tray client
+        // already owns moonlightweb.log; two processes appending to one file
+        // interleave, so it gets a file of its own.
+        bool probe = false;
+        for (int i = 1; i < argc; ++i)
+            if (qstrcmp(argv[i], "--native-probe") == 0) probe = true;
+        Logger::instance()->setLogFile(logDir +
+                                       (probe ? "/moonlightweb-probe.log" : "/moonlightweb.log"));
     }
 
     // Install the crash handler before anything can crash: on Windows it writes a
@@ -1400,6 +1409,13 @@ int main(int argc, char* argv[])
         "spec");
     parser.addOption(nativeBenchOption);
 
+    // The service's eyes on the desktop: session 0 cannot probe displays or
+    // encoders, so it launches this in the console session and reads the JSON.
+    QCommandLineOption nativeProbeOption(
+        "native-probe", "Print what the native engine can do on this desktop, as one JSON "
+                        "object on stdout (used by the service to ask the console session).");
+    parser.addOption(nativeProbeOption);
+
     // Development instance: isolated state (see the applicationName switch at
     // startup), no single-instance lock, and alternate default ports — so it can
     // run alongside an installed service without touching it. Never for production.
@@ -1416,6 +1432,7 @@ int main(int argc, char* argv[])
     // (Desktop Duplication), so it is a terminal command, never a service one.
     if (parser.isSet(nativeBenchOption))
         return runNativeBenchCommand(parser.value(nativeBenchOption));
+    if (parser.isSet(nativeProbeOption)) return NativeProbeService::runProbeCommand();
 
     // ── Stream-worker child process ─────────────────────────────────────────
     // Branch BEFORE the single-instance lock (the worker is a deliberate second

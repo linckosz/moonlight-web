@@ -756,6 +756,23 @@ export class BackendClient {
         return this.post('/api/system/gamepad-driver/install');
     }
 
+    /**
+     * Whether this machine can stream itself, and on what.
+     *
+     * `{available, reason, remote_session, user_present?, user?, capture?,
+     * displays?: [{id, label, detail, gpu, encoder, codecs, hdr_active, …}]}`.
+     * Availability and the enum reason come to any caller; the machine detail
+     * (display names, GPU, encoder) only to one on the host itself — the server
+     * decides that from the socket peer, so take the shape it sends as given.
+     *
+     * `remote_session` true means the engine runs in the console session (this
+     * process is a service): `user_present` false with it is "nobody logged in
+     * yet", not "unsupported".
+     */
+    static async getNativeStatus() {
+        return this.get('/api/native/status');
+    }
+
     // ── Internet Access (PowerDNS) ───────────────────────────────────────────────────────
 
     static async getInternetStatus() {

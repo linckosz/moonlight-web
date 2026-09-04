@@ -23,7 +23,7 @@ extern "C" {
 #include "Limelight.h"
 }
 
-#include "mw/native/NativeHost.h"
+#include "NativeProbeService.h"
 
 #include <QHostInfo>
 
@@ -32,9 +32,13 @@ namespace {
 /// One probe per call, deliberately. A display can be unplugged and a user can
 /// log out between two requests, and a cached "available" would offer a host
 /// that cannot start. The engine's probe is built to be cheap for this reason.
+///
+/// As a service the probe runs in another session and this is its latest
+/// snapshot instead (see NativeProbeService) — asking still costs nothing, and
+/// asking is what keeps the snapshot fresh.
 mw::native::Capabilities probeEngine()
 {
-    return mw::native::NativeHost::probe();
+    return NativeProbeService::instance().snapshot();
 }
 
 /// Displays are presented to the browser as apps, so an app id has to survive
