@@ -35,6 +35,34 @@ const GUID& codecGuid(Codec codec)
     return NV_ENC_CODEC_H264_GUID;
 }
 
+/// The engine's own preset. P4 is the middle of the speed/quality range: the
+/// brief asks for 70 % latency, 30 % quality, and the difference between P4
+/// and P1 on a modern encoder was expected to be under a millisecond — which
+/// is precisely the assumption the bench exists to check (plan v2, phase E).
+constexpr int kDefaultPreset = 4;
+
+const GUID& presetGuid(int preset)
+{
+    switch (preset) {
+    case 1: return NV_ENC_PRESET_P1_GUID;
+    case 2: return NV_ENC_PRESET_P2_GUID;
+    case 3: return NV_ENC_PRESET_P3_GUID;
+    case 5: return NV_ENC_PRESET_P5_GUID;
+    case 6: return NV_ENC_PRESET_P6_GUID;
+    case 7: return NV_ENC_PRESET_P7_GUID;
+    default: return NV_ENC_PRESET_P4_GUID;
+    }
+}
+
+const char* multiPassName(NV_ENC_MULTI_PASS mode)
+{
+    switch (mode) {
+    case NV_ENC_TWO_PASS_QUARTER_RESOLUTION: return "quarter";
+    case NV_ENC_TWO_PASS_FULL_RESOLUTION: return "full";
+    default: return "off";
+    }
+}
+
 } // namespace
 
 NvencEncoder::~NvencEncoder()
@@ -43,7 +71,8 @@ NvencEncoder::~NvencEncoder()
 }
 
 bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                        int bitrateKbps, bool yuv444, bool intraRefresh, std::string& error)
+                        int bitrateKbps, bool yuv444, bool intraRefresh,
+                        const EncoderTuning& tuning, std::string& error)
 {
     stop();
 
@@ -83,15 +112,18 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     // preset carries the tuning for this GPU generation, and only the settings
     // that are wrong for a live stream are then overridden.
     //
-    // P4 is the middle of the speed/quality range. The brief asks for 70 %
-    // latency, 30 % quality — P1 would be faster but visibly softer, and the
-    // difference between P4 and P1 on a modern encoder is under a millisecond.
+    // The preset and the latency tuning are the engine's (kDefaultPreset,
+    // ultra-low-latency) unless the bench moved them — see EncoderTuning.
+    const int presetNumber = tuning.nvencPreset > 0 ? tuning.nvencPreset : kDefaultPreset;
+    const GUID& presetId = presetGuid(presetNumber);
+    const NV_ENC_TUNING_INFO tuningInfo = tuning.nvencTuning == EncoderTuning::Latency::Low
+                                              ? NV_ENC_TUNING_INFO_LOW_LATENCY
+                                              : NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
     NV_ENC_PRESET_CONFIG preset = {};
     preset.version = NV_ENC_PRESET_CONFIG_VER;
     preset.presetCfg.version = NV_ENC_CONFIG_VER;
-    status =
-        m_Api->fn().nvEncGetEncodePresetConfigEx(m_Encoder, codecGuid(codec), NV_ENC_PRESET_P4_GUID,
-                                                 NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY, &preset);
+    status = m_Api->fn().nvEncGetEncodePresetConfigEx(m_Encoder, codecGuid(codec), presetId,
+                                                      tuningInfo, &preset);
     if (status != NV_ENC_SUCCESS) {
         error =
             std::string("could not read the encoder preset: ") + NvencApi::statusToString(status);
@@ -101,6 +133,42 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
 
     m_Config = preset.presetCfg;
     m_Config.version = NV_ENC_CONFIG_VER;
+
+    // What the preset itself switched on, before anything here touches it.
+    // Logged because it is the part of the configuration nobody wrote: a
+    // preset is a bundle of decisions the driver took, and the bench compares
+    // against them without being able to read them any other way.
+    log::info(
+        std::string("[native] NVENC preset P") + std::to_string(presetNumber) +
+        (tuningInfo == NV_ENC_TUNING_INFO_LOW_LATENCY ? "/LL" : "/ULL") +
+        " as the driver ships it: multipass=" + multiPassName(m_Config.rcParams.multiPass) +
+        " aq=" + std::to_string(m_Config.rcParams.enableAQ) +
+        " taq=" + std::to_string(m_Config.rcParams.enableTemporalAQ) + " lookahead=" +
+        std::to_string(m_Config.rcParams.enableLookahead ? m_Config.rcParams.lookaheadDepth : 0) +
+        " rc=" + std::to_string(static_cast<int>(m_Config.rcParams.rateControlMode)));
+
+    // ── The bench's overrides, where it gave any ────────────────────────────
+    // Lookahead is deliberately NOT among them: it holds N frames back by
+    // definition, so it is N frame intervals of latency before any measurement
+    // — disqualified by construction, not by a number.
+    switch (tuning.nvencMultiPass) {
+    case EncoderTuning::MultiPass::Off:
+        m_Config.rcParams.multiPass = NV_ENC_MULTI_PASS_DISABLED;
+        break;
+    case EncoderTuning::MultiPass::QuarterRes:
+        m_Config.rcParams.multiPass = NV_ENC_TWO_PASS_QUARTER_RESOLUTION;
+        break;
+    case EncoderTuning::MultiPass::FullRes:
+        m_Config.rcParams.multiPass = NV_ENC_TWO_PASS_FULL_RESOLUTION;
+        break;
+    case EncoderTuning::MultiPass::Default: break;
+    }
+    if (tuning.spatialAq != EncoderTuning::Choice::Default)
+        m_Config.rcParams.enableAQ = tuning.spatialAq == EncoderTuning::Choice::On ? 1u : 0u;
+    if (tuning.temporalAq != EncoderTuning::Choice::Default)
+        m_Config.rcParams.enableTemporalAQ =
+            tuning.temporalAq == EncoderTuning::Choice::On ? 1u : 0u;
+    m_VbvFrames = tuning.vbvFrames;
 
     // ── Never send a periodic keyframe ──────────────────────────────────────
     // A keyframe is a bitrate spike; on a congested link the spike causes the
@@ -121,7 +189,7 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     // encoder may spend, so no single frame can be so large that it takes
     // several frame times to transmit. See RateControl.h for why it has a
     // floor rather than being one frame at any refresh rate.
-    m_Config.rcParams.vbvBufferSize = vbvBitsPerFrame(m_Config.rcParams.averageBitRate, fps);
+    m_Config.rcParams.vbvBufferSize = vbvBits(m_Config.rcParams.averageBitRate, fps, m_VbvFrames);
     m_Config.rcParams.vbvInitialDelay = m_Config.rcParams.vbvBufferSize;
 
     // ── Codec-specific: parameter sets and intra-refresh ────────────────────
@@ -162,6 +230,13 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         h264.chromaFormatIDC = yuv444 ? 3 : 1;
         h264.repeatSPSPPS = 1;
         h264.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+        // Tell the decoder there is nothing to reorder. Without the VUI's
+        // bitstream_restriction the browser's D3D11 H.264 decoder assumes the
+        // worst — a DPB's worth of reordering, which at 1440p60 is a dozen
+        // frames it holds back before showing any. Measured on the bench:
+        // 200 ms of decode latency on a stream with no B-frames at all, against
+        // 1 ms for HEVC, whose parameter sets carry the figure by default.
+        h264.h264VUIParameters.bitstreamRestrictionFlag = 1;
         h264.enableIntraRefresh = refreshEnabled;
         h264.intraRefreshPeriod = refreshPeriod;
         h264.intraRefreshCnt = refreshCount;
@@ -190,8 +265,8 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     m_InitParams = {};
     m_InitParams.version = NV_ENC_INITIALIZE_PARAMS_VER;
     m_InitParams.encodeGUID = codecGuid(codec);
-    m_InitParams.presetGUID = NV_ENC_PRESET_P4_GUID;
-    m_InitParams.tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
+    m_InitParams.presetGUID = presetId;
+    m_InitParams.tuningInfo = tuningInfo;
     m_InitParams.encodeWidth = static_cast<uint32_t>(width);
     m_InitParams.encodeHeight = static_cast<uint32_t>(height);
     m_InitParams.darWidth = static_cast<uint32_t>(width);
@@ -228,11 +303,19 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     }
     m_Bitstream = buffer.bitstreamBuffer;
 
+    const std::string overrides = tuning.describe();
     log::info("[native] NVENC ready: " + std::to_string(width) + "x" + std::to_string(height) +
               "@" + std::to_string(fps) + " " + toString(codec) + " CBR " +
-              std::to_string(bitrateKbps) + " kbps" +
+              std::to_string(bitrateKbps) + " kbps, VBV " +
+              std::to_string(m_Config.rcParams.vbvBufferSize / 8 / 1024) + " KB" +
               (m_IntraRefresh ? ", intra-refresh over " + std::to_string(refreshPeriod) + " frames"
-                              : ", keyframes"));
+                              : ", keyframes") +
+              ", P" + std::to_string(presetNumber) +
+              (tuningInfo == NV_ENC_TUNING_INFO_LOW_LATENCY ? "/LL" : "/ULL") +
+              " multipass=" + multiPassName(m_Config.rcParams.multiPass) +
+              " aq=" + std::to_string(m_Config.rcParams.enableAQ) +
+              " taq=" + std::to_string(m_Config.rcParams.enableTemporalAQ) +
+              (overrides.empty() ? "" : " [bench: " + overrides + "]"));
     return true;
 }
 
@@ -359,8 +442,9 @@ bool NvencEncoder::setBitrate(int bitrateKbps, std::string& error)
     m_Config.rcParams.averageBitRate = static_cast<uint32_t>(bitrateKbps) * 1000u;
     m_Config.rcParams.maxBitRate = m_Config.rcParams.averageBitRate;
     if (m_InitParams.frameRateNum > 0) {
-        m_Config.rcParams.vbvBufferSize = vbvBitsPerFrame(
-            m_Config.rcParams.averageBitRate, static_cast<int>(m_InitParams.frameRateNum));
+        m_Config.rcParams.vbvBufferSize =
+            vbvBits(m_Config.rcParams.averageBitRate, static_cast<int>(m_InitParams.frameRateNum),
+                    m_VbvFrames);
         m_Config.rcParams.vbvInitialDelay = m_Config.rcParams.vbvBufferSize;
     }
     reconfigure.reInitEncodeParams = m_InitParams;

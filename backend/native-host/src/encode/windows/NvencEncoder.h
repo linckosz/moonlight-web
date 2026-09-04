@@ -62,7 +62,8 @@ public:
     ///               otherwise, which is a clearer failure than a silent
     ///               downgrade but still a failure.
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, bool intraRefresh, std::string& error) override;
+              bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
+              std::string& error) override;
 
     /// Encode one NV12 texture. Blocking: returns with the bitstream ready.
     bool encode(ID3D11Texture2D* nv12, bool forceKeyframe, EncoderOutput& out,
@@ -105,6 +106,9 @@ private:
     int m_Width = 0;
     int m_Height = 0;
     bool m_IntraRefresh = false;
+    /// The bench's VBV override, kept so setBitrate() resizes the buffer by the
+    /// same rule init() used. 0 is the engine's own rule.
+    int m_VbvFrames = 0;
     uint64_t m_FrameIndex = 0;
 };
 

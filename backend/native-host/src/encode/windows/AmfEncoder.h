@@ -46,7 +46,8 @@ public:
     ~AmfEncoder() override;
 
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, bool intraRefresh, std::string& error) override;
+              bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
+              std::string& error) override;
 
     bool encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,
                 std::string& error) override;
@@ -72,6 +73,9 @@ private:
     int m_Fps = 60;
     /// What the encoder was actually configured with — reported, not wished for.
     bool m_IntraRefresh = false;
+    /// The bench's VBV override, so setBitrate() sizes the buffer by the rule
+    /// init() used. 0 is the engine's own rule.
+    int m_VbvFrames = 0;
 };
 
 } // namespace mw::native::encode

@@ -17,6 +17,7 @@
 
 #include "NativeMediaEngine.h"
 #include "InputWatchdog.h"
+#include "NativeBench.h"
 
 #include "mw/native/NativeHost.h"
 
@@ -30,9 +31,23 @@ namespace {
 // already understands. Spelled out here rather than included: this file is the
 // boundary, and pulling Limelight.h in for three constants would drag a GPL
 // header into the one place that must stay able to talk to both sides.
-constexpr int kVideoFormatH264 = 0x0001;
-constexpr int kVideoFormatHevc = 0x0100;
-constexpr int kVideoFormatAv1 = 0x0200;
+//
+// Whole-codec MASKS on the way in (any profile of the codec means the browser
+// decodes that codec), specific profiles on the way out. The first version had
+// AV1 as 0x0200 — which is HEVC Main10 — so AV1 was never selectable on the
+// native host and an HDR HEVC request read as an AV1 one. Found by the encoder
+// bench on 04/09/2026, when an AV1 stream came back as HEVC.
+constexpr int kVideoFormatMaskH264 = 0x000F;
+constexpr int kVideoFormatMaskHevc = 0x0F00;
+constexpr int kVideoFormatMaskAv1 = 0xF000;
+constexpr int kVideoFormatH264 = 0x0001;        // High
+constexpr int kVideoFormatH264High444 = 0x0004; // High 4:4:4 8-bit
+constexpr int kVideoFormatHevc = 0x0100;        // Main
+constexpr int kVideoFormatHevcMain10 = 0x0200;  // Main10
+constexpr int kVideoFormatHevcRext444 = 0x0400; // RExt 4:4:4 8-bit
+constexpr int kVideoFormatAv1 = 0x1000;         // Main 8-bit
+constexpr int kVideoFormatAv1Main10 = 0x2000;   // Main 10-bit
+constexpr int kVideoFormatAv1High444 = 0x4000;  // High 4:4:4 8-bit
 
 /// Frame type as the relays read it: 1 is a keyframe (FRAME_TYPE_IDR).
 constexpr int kFrameTypeKeyframe = 1;
@@ -44,9 +59,9 @@ std::vector<mw::native::Codec> codecsFromMask(int mask)
     std::vector<mw::native::Codec> codecs;
     // Order matters and is ours, not the mask's: AV1 first for its
     // royalty-free licence and quality per bit, then HEVC, then the floor.
-    if (mask & kVideoFormatAv1) codecs.push_back(mw::native::Codec::Av1);
-    if (mask & kVideoFormatHevc) codecs.push_back(mw::native::Codec::Hevc);
-    if (mask & kVideoFormatH264) codecs.push_back(mw::native::Codec::H264);
+    if (mask & kVideoFormatMaskAv1) codecs.push_back(mw::native::Codec::Av1);
+    if (mask & kVideoFormatMaskHevc) codecs.push_back(mw::native::Codec::Hevc);
+    if (mask & kVideoFormatMaskH264) codecs.push_back(mw::native::Codec::H264);
     // An empty mask means the caller never filled it in. H.264 is the only
     // format every browser decodes, so it is the safe assumption — and a
     // wrong-but-decodable stream beats refusing to start.
@@ -54,14 +69,22 @@ std::vector<mw::native::Codec> codecsFromMask(int mask)
     return codecs;
 }
 
-int maskFromCodec(mw::native::Codec codec)
+/// The VIDEO_FORMAT_* bit of what the session really produces — codec AND
+/// profile, since 4:4:4 and 10-bit are what the bits distinguish.
+int formatFromSession(const mw::native::SessionInfo& info)
 {
-    switch (codec) {
-    case mw::native::Codec::Av1: return kVideoFormatAv1;
-    case mw::native::Codec::Hevc: return kVideoFormatHevc;
+    switch (info.codec) {
+    case mw::native::Codec::Av1:
+        return info.yuv444 ? kVideoFormatAv1High444
+               : info.hdr  ? kVideoFormatAv1Main10
+                           : kVideoFormatAv1;
+    case mw::native::Codec::Hevc:
+        return info.yuv444 ? kVideoFormatHevcRext444
+               : info.hdr  ? kVideoFormatHevcMain10
+                           : kVideoFormatHevc;
     case mw::native::Codec::H264: break;
     }
-    return kVideoFormatH264;
+    return info.yuv444 ? kVideoFormatH264High444 : kVideoFormatH264;
 }
 
 } // namespace
@@ -132,6 +155,21 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.yuv444 = params.yuv444;
     config.intraRefresh = params.intraRefresh;
 
+    // The bench's encoder knobs, on a real session, from the environment: the
+    // one way to put two encoder settings in front of a person on the same
+    // screen (plan v2 §5, the A/B). Never set in production — nothing in the
+    // product writes it — and logged loudly when it is, so a stray variable
+    // cannot pass for the engine's own choice.
+    const QString tuningSpec = qEnvironmentVariable("MW_NATIVE_TUNING");
+    if (!tuningSpec.isEmpty()) {
+        QString parseError;
+        if (parseEncoderTuningSpec(tuningSpec, config.tuning, config.encodeGpuId, parseError))
+            qWarning().noquote() << "[NativeMediaEngine] MW_NATIVE_TUNING in effect:" << tuningSpec
+                                 << "— this session does not run the engine's own settings";
+        else
+            qWarning().noquote() << "[NativeMediaEngine] MW_NATIVE_TUNING ignored:" << parseError;
+    }
+
     std::string error;
     m_Session = mw::native::NativeHost::createSession(
         config, [this](const mw::native::EncodedFrame& frame) { onEncodedFrame(frame); },
@@ -192,7 +230,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
         m_Session->setFrameFloorFps(floor);
 
     const mw::native::SessionInfo& info = m_Session->info();
-    m_NegotiatedVideoFormat.store(maskFromCodec(info.codec), std::memory_order_release);
+    m_NegotiatedVideoFormat.store(formatFromSession(info), std::memory_order_release);
     m_Connected.store(true, std::memory_order_release);
 
     qInfo().noquote() << "[NativeMediaEngine] streaming" << describeSession();

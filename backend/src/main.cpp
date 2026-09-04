@@ -1392,8 +1392,11 @@ int main(int argc, char* argv[])
         "native-bench",
         "Benchmark the native capture & encode engine on this machine, without a browser: "
         "key=value list (display=<id>,seconds=10,codec=hevc|h264|av1,fps=0,bitrate=20000,"
-        "width=0,height=0,yuv444=0,intra=0,out=<csv>). Without display= the displays are "
-        "listed. Writes one CSV row per frame, prints a summary, then exits",
+        "width=0,height=0,yuv444=0,intra=0,gpu=<id>,preset=1..7,tuning=ull|ll,"
+        "multipass=off|quarter|full,aq=0|1,taq=0|1,preanalysis=0|1,"
+        "quality=speed|balanced|quality,tu=1..7,vbv=<frames>,out=<csv>). Without display= "
+        "the displays and GPUs are listed. Writes one CSV row per frame, prints a summary, "
+        "then exits",
         "spec");
     parser.addOption(nativeBenchOption);
 

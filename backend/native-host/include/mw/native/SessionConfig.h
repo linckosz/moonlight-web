@@ -18,6 +18,7 @@
 #pragma once
 
 #include "Capabilities.h"
+#include "EncoderTuning.h"
 
 #include <cstdint>
 #include <vector>
@@ -88,6 +89,22 @@ struct SessionConfig
     /// one. Lets the engine align capture phase with the client's vsync and
     /// shave up to a frame of beat (§9.4). Zero means "unknown, free-run".
     int clientRefreshMilliHz = 0;
+
+    // ── Bench-only, below this line ─────────────────────────────────────────
+    //
+    // Neither field is ever set by a session a browser started. They exist so
+    // `--native-bench` can measure the engine's choices against the
+    // alternatives, on hardware the choices were not made on. See EncoderTuning.
+
+    /// Encoder settings to override the engine's own with. Default = the
+    /// engine's choice, which is the product.
+    EncoderTuning tuning;
+
+    /// Encode on THIS GPU (GpuInfo::id) rather than on the display's own,
+    /// paying the cross-GPU copy the Selector otherwise avoids. -1, the
+    /// default, lets the Selector decide. How the bench reaches an encoder
+    /// that drives no display — an iGPU next to a discrete card, typically.
+    int encodeGpuId = -1;
 };
 
 /// What the engine settled on once a session started. Mirrored into the stats

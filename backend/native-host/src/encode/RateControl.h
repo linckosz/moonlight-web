@@ -65,6 +65,18 @@ inline uint32_t vbvBitsPerFrame(uint32_t bitsPerSecond, int fps)
     return bitsPerSecond / static_cast<uint32_t>(rate);
 }
 
+/// The VBV the encoders actually configure: the rule above, unless the bench
+/// asked for exactly @p frames frames' worth at the stream's rate, floor and
+/// all set aside. That is how the rule gets measured against its alternatives
+/// rather than assumed — see EncoderTuning::vbvFrames.
+inline uint32_t vbvBits(uint32_t bitsPerSecond, int fps, int frames)
+{
+    if (frames <= 0) return vbvBitsPerFrame(bitsPerSecond, fps);
+    const int rate = fps > 0 ? fps : 60;
+    return static_cast<uint32_t>(static_cast<uint64_t>(bitsPerSecond) *
+                                 static_cast<uint32_t>(frames) / static_cast<uint32_t>(rate));
+}
+
 /// How long one intra-refresh sweep takes, in frames — shared by every encoder.
 ///
 /// ── Why a duration, expressed in frames of the EFFECTIVE rate ───────────────
