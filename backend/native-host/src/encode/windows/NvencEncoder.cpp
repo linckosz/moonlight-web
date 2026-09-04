@@ -35,11 +35,23 @@ const GUID& codecGuid(Codec codec)
     return NV_ENC_CODEC_H264_GUID;
 }
 
-/// The engine's own preset. P4 is the middle of the speed/quality range: the
-/// brief asks for 70 % latency, 30 % quality, and the difference between P4
-/// and P1 on a modern encoder was expected to be under a millisecond — which
-/// is precisely the assumption the bench exists to check (plan v2, phase E).
-constexpr int kDefaultPreset = 4;
+/// The engine's own preset: P1, the fastest, since the bench of 04/09/2026
+/// (`docs/bench-native-host.md`).
+///
+/// It started as P4, on the belief that P1 would be visibly softer for under a
+/// millisecond of gain. Measured on an RTX 5060 Ti at 1440p, 40 Mbit/s: P1
+/// encodes a first-person shooter in 3.4 ms against 7.7 for P4 (p99 5 against
+/// 11), at the SAME average QP (25) and with nothing to tell apart on the
+/// decoded picture; a platform game costs +1 QP, and only scrolling text — sharp
+/// high-contrast edges P4 predicts better — pays +5 QP while it moves. Latency
+/// first (rule 3 of the module): the shooter is the target, the text is the
+/// exception. P2 was slower AND softer, P3/P5/P6 equal P4, P7 slower still.
+///
+/// What stays: the ULL tuning's quarter-resolution multipass. Turning it off
+/// buys 0.6 ms more but breaks the still-screen refinement burst (§9.1) — the
+/// single-pass rate control of a picture that just stopped moving never spends
+/// its budget, and the QP stalls at 29 instead of reaching 8.
+constexpr int kDefaultPreset = 1;
 
 const GUID& presetGuid(int preset)
 {
@@ -112,8 +124,9 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     // preset carries the tuning for this GPU generation, and only the settings
     // that are wrong for a live stream are then overridden.
     //
-    // The preset and the latency tuning are the engine's (kDefaultPreset,
-    // ultra-low-latency) unless the bench moved them — see EncoderTuning.
+    // The preset and the latency tuning are the engine's (kDefaultPreset — P1,
+    // see there — and ultra-low-latency) unless the bench moved them — see
+    // EncoderTuning.
     const int presetNumber = tuning.nvencPreset > 0 ? tuning.nvencPreset : kDefaultPreset;
     const GUID& presetId = presetGuid(presetNumber);
     const NV_ENC_TUNING_INFO tuningInfo = tuning.nvencTuning == EncoderTuning::Latency::Low

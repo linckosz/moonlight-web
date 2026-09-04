@@ -47,7 +47,7 @@ struct EncoderTuning
     };
 
     /// NVENC: the P1 (fastest) … P7 (best quality) preset. 0 is the engine's
-    /// own (P4 today).
+    /// own (P1 since the bench of 04/09/2026 — see NvencEncoder.cpp).
     int nvencPreset = 0;
 
     /// NVENC: which latency tuning the preset is fetched for.

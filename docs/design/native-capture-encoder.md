@@ -271,7 +271,7 @@ NVENC qui visent l'encodage de fichiers.
 
 | Réglage | Pourquoi |
 |---|---|
-| `ULTRA_LOW_LATENCY`, preset P4 | ⚠️ **mesuré faux le 04/09/2026** (`docs/bench-native-host.md`) : sur une RTX 5060 Ti, P1 encode en 2,7–3,1 ms contre 4,7–6,5 pour P4, pour +1 de QP sur un jeu et +5 sur du texte qui défile. Le preset ULL active de lui-même le multipass quart de résolution (lu dans le log, pas supposé) et **l'éteindre casse la rafale de raffinement de l'écran fixe** (§9.1). Recommandation P1 + multipass quart, en attente de l'A/B de Bruno |
+| `ULTRA_LOW_LATENCY`, **preset P1** (P4 jusqu'au 04/09/2026) | La croyance « P1 plus mou pour moins d'une milliseconde » était fausse (`docs/bench-native-host.md`) : sur une RTX 5060 Ti à 1440p, P1 encode un FPS en **3,4 ms contre 7,7** pour P4 (p99 5 contre 11), au **même QP** (25) et sans rien de visible sur l'image décodée ; +1 de QP sur un jeu de plateforme, +5 seulement sur du texte qui défile. Appliqué le 04/09/2026 sur confirmation de Bruno. Le preset ULL active de lui-même le multipass quart de résolution, **conservé** : l'éteindre gagne 0,6 ms mais casse la rafale de raffinement de l'écran fixe (§9.1, QP bloqué à 29 au lieu de 8) |
 | **VUI `bitstream_restriction` en H.264** | sans `max_num_reorder_frames` le décodeur D3D11 de Chrome retient un DPB entier avant d'afficher : **200 ms** de décodage mesurés sur un flux sans B-frame, 1 ms après. Le HEVC le porte par défaut (04/09/2026) |
 | **Aucune B-frame** (`frameIntervalP = 1`) | elle référencerait une image pas encore envoyée → une trame entière retenue |
 | **GOP infini + intra-refresh** | une keyframe est un pic de débit ; `MediaTrackRelay` documente ce que ces pics font à un lien congestionné (perte → tempête de PLI → effondrement) |
