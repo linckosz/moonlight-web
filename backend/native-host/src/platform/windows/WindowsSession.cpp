@@ -18,6 +18,7 @@
 #include "../../audio/windows/WasapiLoopback.h"
 #include "../../capture/windows/DxgiDuplication.h"
 #include "../../convert/windows/ColorConvert.h"
+#include "../../core/CadenceAlign.h"
 #include "../../core/FrameCadence.h"
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
@@ -252,25 +253,21 @@ public:
             log::info("[native] 4:4:4 requested but not granted — streaming 4:2:0");
 
         // The rate the encoder's budget is dimensioned for, and whether the
-        // loop has to be held to it. The Selector has already resolved "0, the
-        // display's own" to the display's rounded refresh, so the setting is
-        // always a number here; the guard below is for a config that bypassed
-        // it. The cadence gate exists only when the display is FASTER than the
-        // stream: at the display's own rate every present is encoded as it
-        // comes, and a gate at that same rate would skip a present that
-        // arrived a little early and wait a whole period for the next one.
+        // loop has to be held to it — chosen against the client's own screen
+        // when it presents on vsync (chooseCadence). The Selector has already
+        // resolved "0, the display's own" to the display's rounded refresh,
+        // so the setting is always a number here; the guard in chooseCadence
+        // is for a config that bypassed it.
         m_DisplayMilliHz = display->refreshMilliHz;
-        const int displayHz = (display->refreshMilliHz + 500) / 1000;
-        m_EncodeFps = m_Config.fps > 0 ? m_Config.fps : displayHz;
-        if (m_EncodeFps <= 0) m_EncodeFps = 60;
-        m_Cadence = FrameCadence(m_EncodeFps < displayHz ? m_EncodeFps : 0, displayHz);
-        if (m_Cadence.enabled())
-            log::info("[native] cadence: " + std::to_string(m_EncodeFps) + " fps stream on a " +
-                      hzString(m_DisplayMilliHz) +
-                      " Hz display — the first present of each interval is encoded, at once");
-        else
-            log::info("[native] cadence: " + std::to_string(m_EncodeFps) + " fps stream on a " +
-                      hzString(m_DisplayMilliHz) + " Hz display — every present is encoded");
+        m_ClientMilliHz.store(m_Config.clientRefreshMilliHz);
+        m_ClientVsync.store(m_Config.clientVsync);
+        {
+            std::string line;
+            m_EncodeFps =
+                chooseCadence(m_Config.clientRefreshMilliHz, m_Config.clientVsync, m_Cadence, line);
+            m_CadenceFps = m_EncodeFps;
+            log::info(line);
+        }
 
         // The client's own frame size is whatever it asked for, or the desktop
         // when it asked for nothing.
@@ -469,6 +466,20 @@ public:
             m_LinkFeedback = feedback;
             m_LinkPending = true;
         }
+    }
+
+    void setClientRefresh(int milliHz, bool vsync) override
+    {
+        // Bounded rather than trusted: it crosses the network from a page.
+        // Nothing presents above 1000 Hz; below 1 Hz is "unknown".
+        if (milliHz < 1000) milliHz = 0;
+        if (milliHz > 1000000) milliHz = 1000000;
+        const bool same =
+            m_ClientMilliHz.exchange(milliHz) == milliHz && m_ClientVsync.exchange(vsync) == vsync;
+        if (same) return;
+        // The loop owns the gate and the budget; it re-chooses on its next
+        // wake-up, between two frames.
+        m_ClientRefreshDirty.store(true);
     }
 
 private:
@@ -1049,6 +1060,26 @@ private:
                 applyGovernor("ceiling moved");
             }
 
+            // The client's screen changed — another monitor, another refresh,
+            // tearing switched. The gate is re-chosen against it (§9.11); the
+            // encoder keeps the rate it was built for and its per-frame budget
+            // follows through the same setBitrate() everything else uses, at
+            // once, so a gate that just went from 60 to 72 does not spend a
+            // second handing out 60-sized frames 72 times.
+            if (m_ClientRefreshDirty.exchange(false)) {
+                FrameCadence chosen{0};
+                std::string line;
+                const int fps =
+                    chooseCadence(m_ClientMilliHz.load(), m_ClientVsync.load(), chosen, line);
+                if (chosen.intervalUs() != m_Cadence.intervalUs() || fps != m_CadenceFps) {
+                    m_Cadence = chosen;
+                    m_CadenceFps = fps;
+                    log::info(line + " (client screen changed mid-session)");
+                    if (effective.retarget(fps))
+                        applyBitrate(boosted ? encode::stillBitrateKbps(baseKbps) : baseKbps);
+                }
+            }
+
             // The receiver's word on the link, and the silence of it.
             {
                 LinkFeedback fb;
@@ -1562,6 +1593,62 @@ private:
         return true;
     }
 
+    /// Choose the loop's gate for the viewer's setting against the client's
+    /// screen — at start, and again whenever the client's screen changes.
+    ///
+    /// The gate exists only when the display is FASTER than the stream: at
+    /// the display's own rate every present is encoded as it comes, and a gate
+    /// at that same rate would skip a present that arrived a little early and
+    /// wait a whole period for the next one. A client presenting on vsync
+    /// gets a cadence that is a divisor of its refresh (CadenceAlign.h); a
+    /// client that tears gets the setting as it is. Returns the cadence's
+    /// rate, fills @p cadence, and writes the log line that says why.
+    int chooseCadence(int clientMilliHz, bool clientVsync, FrameCadence& cadence,
+                      std::string& line) const
+    {
+        const int displayHz = (m_DisplayMilliHz + 500) / 1000;
+        int fps = m_Config.fps > 0 ? m_Config.fps : displayHz;
+        if (fps <= 0) fps = 60;
+
+        AlignedCadence aligned;
+        if (m_Config.fps > 0 && clientVsync)
+            aligned = alignCadence(m_Config.fps, clientMilliHz, displayHz);
+
+        if (aligned.aligned) {
+            fps = aligned.fps;
+            cadence = fps < displayHz ? FrameCadence::fromIntervalNs(aligned.intervalNs, displayHz)
+                                      : FrameCadence(0, displayHz);
+            const std::string every =
+                aligned.divisor == 1   ? std::string("every refresh")
+                : aligned.divisor == 2 ? std::string("every 2nd refresh")
+                : aligned.divisor == 3 ? std::string("every 3rd refresh")
+                                       : "every " + std::to_string(aligned.divisor) + "th refresh";
+            line = "[native] cadence: " + std::to_string(fps) + " fps stream for a " +
+                   hzString(clientMilliHz) + " Hz client presenting on vsync (" +
+                   std::to_string(m_Config.fps) + " set, " + every + ") on a " +
+                   hzString(m_DisplayMilliHz) + " Hz display" +
+                   (cadence.enabled() ? " — the first present of each interval is encoded, at once"
+                                      : " — every present is encoded");
+            return fps;
+        }
+
+        cadence = FrameCadence(fps < displayHz ? fps : 0, displayHz);
+        line = "[native] cadence: " + std::to_string(fps) + " fps stream on a " +
+               hzString(m_DisplayMilliHz) + " Hz display" +
+               (cadence.enabled() ? " — the first present of each interval is encoded, at once"
+                                  : " — every present is encoded");
+        if (clientMilliHz > 0) {
+            line += "; client at " + hzString(clientMilliHz) + " Hz";
+            if (!clientVsync)
+                line += ", tearing — nothing to align on";
+            else if (m_Config.fps <= 0)
+                line += ", the host's own rate — nothing to align";
+            else
+                line += ", no divisor within a fifth of the setting";
+        }
+        return fps;
+    }
+
     /// Report an unrecoverable end once, from the loop thread.
     ///
     /// noexcept because it is called from run()'s catch block: a throw here
@@ -1576,7 +1663,7 @@ private:
         char span[32];
         std::snprintf(span, sizeof(span), "%.1f", seconds);
         std::string line = "[native] cadence: " + hzString(m_DisplayMilliHz) + " Hz display, " +
-                           std::to_string(m_EncodeFps) + " fps stream — " +
+                           std::to_string(m_CadenceFps) + " fps stream — " +
                            std::to_string(m_PresentsSeen) + " presents in " + span + " s";
         if (m_Cadence.enabled()) {
             const int64_t skipped = m_Cadence.skipped();
@@ -1625,6 +1712,15 @@ private:
     /// Holds the loop to the stream's rate; disabled at fps 0. Owned by the
     /// capture thread once the loop runs.
     FrameCadence m_Cadence{0};
+    /// The rate the gate runs at: m_EncodeFps at start, re-chosen when the
+    /// client's screen changes (chooseCadence). The encoder never follows it
+    /// — its budget does, through EffectiveCadence::retarget.
+    int m_CadenceFps = 0;
+    /// The client's screen as last reported — SessionConfig at start, then
+    /// setClientRefresh. The dirty flag wakes the loop's re-choice.
+    std::atomic<int> m_ClientMilliHz{0};
+    std::atomic<bool> m_ClientVsync{false};
+    std::atomic<bool> m_ClientRefreshDirty{false};
     /// Presents the display delivered (AcquireStatus::Ok), for the log.
     int64_t m_PresentsSeen = 0;
     int64_t m_LoopStartUs = 0;

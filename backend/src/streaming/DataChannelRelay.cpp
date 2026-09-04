@@ -1169,6 +1169,19 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         return;
     }
 
+    if (type == "clientrefresh") {
+        // The client's screen changed under the stream — its window moved to
+        // another monitor, or tearing was switched. Its refresh in millihertz
+        // and whether it paints on vsync; the native engine re-chooses the
+        // stream's cadence so frames land on the client's grid. See
+        // Session::setClientRefresh.
+        //
+        // Native host only: a GameStream host's cadence is its own.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
+            native->setClientRefresh(msg["mhz"].toInt(0), msg["vsync"].toBool(false));
+        return;
+    }
+
     if (type == "linkstats") {
         // The receiver's view of the link, twice a second: how much later
         // frames arrive than at the best of the session (the queue building

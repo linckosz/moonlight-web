@@ -93,6 +93,12 @@ public:
         /// Encode with intra-refresh. Only worth asking when the receiver will
         /// decode through a gap — see rideOutLoss in MediaDescriptor.h.
         bool intraRefresh = false;
+        /// The client's screen, as the browser measured it: refresh in
+        /// millihertz (0 = unknown) and whether it paints on vsync. A vsync
+        /// client gets a cadence that divides its refresh — see
+        /// SessionConfig::clientRefreshMilliHz.
+        int clientRefreshMilliHz = 0;
+        bool clientVsync = false;
     };
 
     /// One encoded frame, borrowed: `data` is the encoder's own output buffer
@@ -224,6 +230,13 @@ public:
     /// itself, and the surest sign the link is full.
     void noteEviction() { m_Evictions.fetch_add(1, std::memory_order_relaxed); }
 
+    /// The client's screen changed mid-session (a `clientrefresh` message):
+    /// its refresh in millihertz and whether it paints on vsync. The engine
+    /// re-chooses the stream's cadence against it — see
+    /// Session::setClientRefresh. Safe from any thread; remembered for a
+    /// session that starts after it was said.
+    void setClientRefresh(int milliHz, bool vsync);
+
     /// A human-readable description of what the session settled on, for the
     /// stats overlay: "NVIDIA GeForce RTX 4070 · NVENC HEVC 4:4:4". Empty until
     /// the session has started.
@@ -326,6 +339,12 @@ private:
     /// The client's last word on the still-screen frame floor, replayed onto a
     /// session that starts after it was said. See setFrameFloorFps.
     std::atomic<int> m_FrameFloorFps{0};
+
+    /// The client's screen as last reported, replayed onto a session that
+    /// starts after it was said. See setClientRefresh.
+    std::atomic<int> m_ClientRefreshMilliHz{0};
+    std::atomic<bool> m_ClientVsync{false};
+    std::atomic<bool> m_ClientRefreshKnown{false};
 
     /// Sender evictions since the last link report — see noteEviction().
     std::atomic<int> m_Evictions{0};

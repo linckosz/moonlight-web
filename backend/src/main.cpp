@@ -2779,6 +2779,10 @@ int main(int argc, char* argv[])
             // Absent means today's behaviour, so an older cached frontend — and
             // every non-native host — is unaffected.
             s->setRideOutLoss(body["ride_out_loss"].toBool(false));
+            // The client's screen: its measured refresh and whether it paints
+            // on vsync. Absent (an older frontend) → unknown, no alignment.
+            s->setClientPresentation(body["client_refresh_mhz"].toInt(0),
+                                     body["client_vsync"].toBool(false));
             s->setClientKind(clientKind);
             // Which provider drives this host: plain GameStream unless it was
             // registered as a Wolf or MultiSeat backend.
@@ -2893,6 +2897,8 @@ int main(int argc, char* argv[])
             // travel with the config — setting it on the in-process session
             // alone would never reach the encoder.
             cfg["rideOutLoss"] = body["ride_out_loss"].toBool(false);
+            cfg["clientRefreshMilliHz"] = body["client_refresh_mhz"].toInt(0);
+            cfg["clientVsync"] = body["client_vsync"].toBool(false);
             cfg["clientUniqueId"] = reqClientUniqueId;
             cfg["clientKind"] = NetClassify::toString(clientKind);
             cfg["autoMode"] = true;

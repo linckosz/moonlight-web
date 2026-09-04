@@ -58,6 +58,7 @@ import { ConsentBar } from './ui/ConsentBar.js';
 import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
 import { VersionGuard } from './util/VersionGuard.js';
 import { IS_MOBILE_OR_TABLET, resolveTearing, hdrClientCapability } from './util/BrowserDetect.js';
+import { startRefreshRateMonitor, currentRefreshMilliHz } from './util/RefreshRate.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
 import { DEFAULT_ASPECT, loadHostAspect, saveHostAspect } from './util/AspectRatio.js';
 import { startAspectProbe } from './stream/AspectProbe.js';
@@ -138,6 +139,11 @@ const MoonlightApp = {
 
     async init() {
         console.log('[MW] Initializing MoonlightWeb...');
+
+        // Measure this screen's refresh rate now, and again whenever the
+        // window may have changed screen, so a launch can tell the native
+        // host without waiting for a measurement — see util/RefreshRate.js.
+        startRefreshRateMonitor();
 
         // Before anything is on screen: the seal, whenever this page arrived
         // down a tunnel. The wait that follows is the connection being made and
@@ -1929,6 +1935,9 @@ const MoonlightApp = {
             // Its encoder heals a lost frame with a delta (reference
             // invalidation): the view then decodes through a gap.
             refInvalidation: result.ref_invalidation === true,
+            // What /start told the host this screen refreshes at, so the view
+            // only speaks up again when the number changes.
+            clientRefreshMilliHz: currentRefreshMilliHz(),
         };
         // The degradation ladder stands down for the native host — see
         // _onStreamCongested.

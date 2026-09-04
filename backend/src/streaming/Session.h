@@ -139,6 +139,17 @@ public:
     /// benefit. Ignored by every path except the native engine.
     void setRideOutLoss(bool enabled) { m_RideOutLoss = enabled; }
 
+    /// The client's screen, from the /start request: its refresh in
+    /// millihertz (0 = it did not measure one) and whether it paints on
+    /// vsync (tearing off, or a browser that cannot tear). Only the native
+    /// engine acts on it: a vsync client gets a stream cadence that divides
+    /// its refresh, so frames land on its grid instead of beating against it.
+    void setClientPresentation(int refreshMilliHz, bool vsync)
+    {
+        m_ClientRefreshMilliHz = refreshMilliHz;
+        m_ClientVsync = vsync;
+    }
+
     /// The provider this session launches through. Required: set it before
     /// start(). It is what decides which host/seat is dialled and, for a
     /// multi-seat backend, which identity is presented.
@@ -366,6 +377,10 @@ private:
     /// keyframe. Set from the /start request; only the native engine acts on
     /// it, and only if its encoder really honours intra-refresh.
     bool m_RideOutLoss = false;
+
+    /// The client's screen at /start — see setClientPresentation.
+    int m_ClientRefreshMilliHz = 0;
+    bool m_ClientVsync = false;
 
     /// The engine producing this session's media: MoonlightShim for a
     /// GameStream host, NativeMediaEngine for this machine's own screen.
