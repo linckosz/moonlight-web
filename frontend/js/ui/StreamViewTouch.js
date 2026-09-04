@@ -74,6 +74,8 @@ export class StreamViewTouch {
             this._touchHadTwoFingers = false;
             this._scrollAccum = 0;
             this._scrollAccumX = 0;
+            this._moveAccumX = 0;
+            this._moveAccumY = 0;
             this._touchScrollAnchored = false;
             this._scrollSamples.length = 0;
             this._panSamples.length = 0;
@@ -320,6 +322,10 @@ export class StreamViewTouch {
                 const t = e.touches[0];
                 this._touchLastX = t.clientX;
                 this._touchLastY = t.clientY;
+                // The skipped delta must not come back as carry on the next
+                // event: this branch exists precisely to drop it.
+                this._moveAccumX = 0;
+                this._moveAccumY = 0;
             } else {
                 this._seedMultiTouch(e.touches);
             }
@@ -377,14 +383,22 @@ export class StreamViewTouch {
                 // x2→0.9, x3→0.8, x4→0.7…) for finer aim when zoomed in.
                 const zoomSlow = Math.max(0.1, 1 - 0.1 * (this._zoom - 1));
                 const sens = this._touchSensitivity * zoomSlow;
-                const dx = (touch.clientX - this._touchLastX) * sens;
-                const dy = (touch.clientY - this._touchLastY) * sens;
+                // Carried as fractions, exactly like the wheel in _emitScroll,
+                // and for the same reason: a finger moving slowly (or a zoomed
+                // view, which divides the sensitivity by up to 3) produces
+                // sub-pixel deltas per event. Rounding each one on its own sent
+                // an endless run of {dx:0, dy:0} — the host dutifully injected
+                // them and the cursor never moved, however far the finger
+                // travelled. Found 04/09/2026 on an iPhone: 12 events injected
+                // over a whole gesture, against 247 for the same drag done fast.
+                this._moveAccumX += (touch.clientX - this._touchLastX) * sens;
+                this._moveAccumY += (touch.clientY - this._touchLastY) * sens;
+                const dx = Math.trunc(this._moveAccumX);
+                const dy = Math.trunc(this._moveAccumY);
                 if (dx !== 0 || dy !== 0) {
-                    this.webrtc.send({
-                        type: 'mousemove',
-                        dx: Math.round(dx),
-                        dy: Math.round(dy),
-                    });
+                    this._moveAccumX -= dx;
+                    this._moveAccumY -= dy;
+                    this.webrtc.send({ type: 'mousemove', dx, dy });
                 }
             }
 

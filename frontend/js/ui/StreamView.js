@@ -1077,6 +1077,12 @@ export class StreamView {
         this._touchScrollScale = 1.5;
         this._scrollAccum = 0; // fractional vertical wheel-delta carry between frames
         this._scrollAccumX = 0; // same, horizontal
+        // Same carry for the trackpad cursor. Without it a slow drag moved
+        // nothing at all: each touchmove's delta is a fraction of a host pixel,
+        // and rounding every one of them independently threw the whole gesture
+        // away. See handleTouchMove().
+        this._moveAccumX = 0;
+        this._moveAccumY = 0;
         this._scrollSamples = []; // recent {t, x, y} centroid samples (flick velocity)
         // Same carry for the desktop wheel: a notch is 120 host units and a
         // browser delta rarely lands on a whole one. See handleWheel().
