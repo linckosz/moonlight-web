@@ -1018,6 +1018,14 @@ void StreamSession::onShimConnectionStarted()
     // less delay, whereas a GameStream host gets them over its own protocol
     // and keeps the browser's frame-coalesced cadence.
     result["native"] = qobject_cast<NativeMediaEngine*>(m_Engine) != nullptr;
+    // Whether a lost frame is healed with a delta (NVENC reference
+    // invalidation): the browser then keeps decoding through a gap and names
+    // the frames it missed instead of discarding deltas until a keyframe.
+    // Native host only, and only when its encoder really does it.
+    {
+        auto* native = qobject_cast<NativeMediaEngine*>(m_Engine);
+        result["ref_invalidation"] = native != nullptr && native->referenceInvalidation();
+    }
 
     // Audio time-stretch (WSOLA) — file-only setting (settings.json), default
     // false. Read fresh per session so a file edit applies on the next launch.

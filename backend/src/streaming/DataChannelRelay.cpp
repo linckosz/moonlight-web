@@ -450,6 +450,10 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     , m_Shim(engine)
 {
     qInfo() << "[DataChannelRelay] Created";
+    // Empty until a frame has used the slot — an atomic's default value is not
+    // guaranteed to be anything before C++20.
+    for (auto& slot : m_FrameNumberById)
+        slot.store(-1, std::memory_order_relaxed);
 
     // Dedicated sender thread: fragmentation + dc->send() run off the main
     // thread. For the native engine it runs as an MMCSS "Games" task like the
@@ -1254,6 +1258,38 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         std::lock_guard<std::mutex> lk(m_VideoMutex);
         m_AwaitingIdr = true;
         sendIdrRequestThrottled();
+    } else if (type == "invalidateref") {
+        // The receiver names the wire ids it never got, `from`..`to`
+        // inclusive. For the native engine each one becomes a reference
+        // invalidation — the next delta predicts from older frames and the
+        // picture heals without a keyframe (design §9.2). Anything the ring
+        // no longer remembers, or a hole wider than a DPB could cover, is
+        // answered the old way. Never for a GameStream engine, which has no
+        // such call: the receiver only sends this when /start said it could.
+        auto* native = qobject_cast<NativeMediaEngine*>(m_Shim);
+        const qint64 from = msg["from"].toDouble(-1);
+        const qint64 to = msg["to"].toDouble(-1);
+        bool healed = false;
+        if (native && from >= 0 && to >= from && to - from < 16) {
+            healed = true;
+            for (qint64 id = from; id <= to; ++id) {
+                const int64_t slot =
+                    m_FrameNumberById[static_cast<uint32_t>(id) % kFrameNumberRing].load(
+                        std::memory_order_acquire);
+                if (slot < 0 || (slot >> 32) != id) {
+                    healed = false;
+                    break;
+                }
+                native->invalidateReference(static_cast<uint32_t>(slot & 0xffffffff));
+            }
+        }
+        if (!healed) {
+            qInfo() << "[DataChannelRelay] invalidateref" << from << ".." << to
+                    << "could not be mapped — requesting a keyframe instead";
+            std::lock_guard<std::mutex> lk(m_VideoMutex);
+            m_AwaitingIdr = true;
+            sendIdrRequestThrottled();
+        }
     } else if (type == "ping") {
         // Respond with pong on the input DataChannel.
         // The ts field mirrors the browser's timestamp so it can compute RTT.
@@ -1396,6 +1432,15 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     // Video-only path now (audio is a native RTP Opus track, not fragmented over
     // a DataChannel), so this always uses the video frameId sequence.
     uint32_t frameId = m_FrameId++;
+    // Remember which engine frame went out under this wire id, so a receiver
+    // naming a lost id can be answered with a reference invalidation. The slot
+    // packs both so a stale entry from 512 frames ago is never mistaken for
+    // the current id.
+    m_FrameNumberById[frameId % kFrameNumberRing].store(
+        frameNumber >= 0
+            ? (static_cast<int64_t>(frameId) << 32) | static_cast<uint32_t>(frameNumber)
+            : -1,
+        std::memory_order_release);
 
     // ── End-to-end latency timestamp
     // ───────────────────────────────────────

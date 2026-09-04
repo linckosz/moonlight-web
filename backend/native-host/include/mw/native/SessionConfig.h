@@ -137,6 +137,12 @@ struct SessionInfo
     /// here, and the receiver must then keep its usual keyframe recovery.
     bool intraRefresh = false;
 
+    /// True when a frame the receiver lost can be healed by an ordinary delta
+    /// (Session::invalidateReference does what it says). The receiver then
+    /// keeps decoding after a gap instead of discarding deltas until a
+    /// keyframe; false means the engine answers an invalidation with an IDR.
+    bool referenceInvalidation = false;
+
     /// Memory copies between capture and the wire, counted rather than
     /// estimated. Logged at session start and compared in the benchmarks (§16);
     /// if this number ever grows, a zero-copy path silently broke.

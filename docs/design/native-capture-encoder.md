@@ -679,6 +679,44 @@ congestion se lit dans le log — « [native] link: delay rising — encoding at
 32000 kbps of the 40000 set » — et **reste à observer sur un lien qui
 souffre** (4G, hôtel).
 
+### 9.10 Une image perdue se répare par un delta (04/09/2026)
+
+Le §9.2 promis depuis le début. Jusqu'ici un trou dans la numérotation côté
+client fermait la porte aux deltas et réclamait une IDR : ~70 Ko d'un coup sur
+un lien déjà en peine, et une image figée le temps de l'aller-retour.
+
+NVENC garde désormais un **DPB de quatre images** (`maxNumRefFrames` /
+`maxNumRefFramesInDPB`, les trois codecs) et chaque image est estampillée de
+**son propre numéro** (`inputTimeStamp = frameNumber`). Quand le récepteur nomme
+celle qu'il n'a pas reçue, `NvEncInvalidateRefFrames` la retire des références
+et l'image suivante est prédite depuis celles que le récepteur possède : un
+delta ordinaire, le flux se répare sans rien de plus gros. Le DPB est un repli,
+pas une recherche plus large — l'encodeur prédit toujours depuis la dernière
+image, et le temps d'encode ne bouge pas : mesuré A/B au banc (`dpb=1` contre 4,
+clip FPS 1440p, 40 Mbit/s, deux passes chacun) 3,69 / 3,79 ms contre
+3,75 / 3,77 ms, même taille, même QP.
+
+Le chemin : `/start` répond `ref_invalidation` quand l'encodeur de la session le
+fait vraiment (`SessionInfo::referenceInvalidation`, faux sur AMF et oneVPL) ;
+sur un trou de numérotation le client envoie `invalidateref {from, to}` (ids de
+fil) et **continue de décoder** au lieu de jeter les deltas jusqu'à la keyframe ;
+le relais DC traduit les ids de fil en numéros de moteur — un anneau des 512
+derniers, parce que les deux divergent à chaque image que le relais jette avant
+d'attribuer un id — et appelle `Session::invalidateReference` ; la session le
+garde pour le thread de capture, qui le dit à l'encodeur juste avant la
+prochaine image. Un trou plus large que le DPB (16 ids), un id oublié, un
+encodeur sans la fonction : keyframe comme avant, le récepteur a toujours une
+réparation. Un décodeur qui n'accepterait pas de décoder par-dessus le trou
+tombe dans `_handleDecoderError`, qui demande une keyframe.
+
+Vérifié avec le crochet de debug `localStorage.mw_drop_test = N` (le client
+jette un delta sur N) : « Frame gap: lost 120..120 — naming them to the host,
+decoding on », « reference invalidated: frame 222 never reached the receiver,
+healing with a delta », aucune IDR demandée, aucune erreur de décodeur, 53
+images/s et 5,2 ms pendant l'exercice. L'éviction C5 du `FrameSender` garde
+la keyframe (l'émetteur ne dit pas laquelle il a jetée) — à brancher ici plus
+tard.
+
 ---
 
 ## 10. Host natif dans l'UI

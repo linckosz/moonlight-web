@@ -157,9 +157,11 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     return true;
 }
 
-bool VplEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,
-                        std::string& error)
+bool VplEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t frameNumber,
+                        EncoderOutput& out, std::string& error)
 {
+    // No reference invalidation on this path yet; the number is not needed.
+    (void)frameNumber;
     if (!m_Session.isOpen()) {
         error = "the encoder is not initialized";
         return false;

@@ -91,6 +91,11 @@ struct EncoderTuning
     /// oneVPL: TargetUsage 1 (quality) … 7 (speed). 0 is the engine's own (7).
     int vplTargetUsage = 0;
 
+    /// NVENC: how many frames the decoded picture buffer holds. 0 is the
+    /// engine's own (4, so a lost frame can be healed by a delta — see
+    /// NvencEncoder); 1 is the bench's "before" for the cost of that.
+    int dpbFrames = 0;
+
     /// The VBV, in frames at the stream's own rate — exactly, with no floor.
     /// 0 is the engine's rule: one frame, never less than a sixtieth of a
     /// second's worth (RateControl.h says why). 1 and 2 are the two bounds the
@@ -102,7 +107,8 @@ struct EncoderTuning
         return nvencPreset == 0 && nvencTuning == Latency::Default &&
                nvencMultiPass == MultiPass::Default && spatialAq == Choice::Default &&
                temporalAq == Choice::Default && preAnalysis == Choice::Default &&
-               amfQuality == AmfQuality::Default && vplTargetUsage == 0 && vbvFrames == 0;
+               amfQuality == AmfQuality::Default && vplTargetUsage == 0 && vbvFrames == 0 &&
+               dpbFrames == 0;
     }
 
     /// One line naming every field that is NOT at its default, for the log and
@@ -129,6 +135,7 @@ struct EncoderTuning
         if (amfQuality == AmfQuality::Quality) add("quality=quality");
         if (vplTargetUsage > 0) add("tu=" + std::to_string(vplTargetUsage));
         if (vbvFrames > 0) add("vbv=" + std::to_string(vbvFrames) + "f");
+        if (dpbFrames > 0) add("dpb=" + std::to_string(dpbFrames));
         return s;
     }
 };

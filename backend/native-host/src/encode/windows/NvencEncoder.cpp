@@ -237,12 +237,33 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     const auto refreshPeriod = static_cast<uint32_t>(intraRefreshPeriodFrames(fps));
     const auto refreshCount = static_cast<uint32_t>(intraRefreshCountFrames(fps));
 
+    // ── A DPB deep enough to lose a frame in ────────────────────────────────
+    // Reference invalidation (design §9.2) only works when the encoder has
+    // somewhere else to look: with one reference frame, invalidating it leaves
+    // nothing but an IDR. Four frames of DPB let up to three consecutive lost
+    // frames be healed by an ordinary delta. The encoder still predicts from
+    // the most recent frame — the DPB is a fallback, not a wider search — so
+    // the encode time is unchanged (measured: within noise at P1).
+    const uint32_t kDpbFrames = tuning.dpbFrames > 0 ? static_cast<uint32_t>(tuning.dpbFrames) : 4u;
+    m_RefInvalidation = false;
+    {
+        NV_ENC_CAPS_PARAM capParam = {};
+        capParam.version = NV_ENC_CAPS_PARAM_VER;
+        capParam.capsToQuery = NV_ENC_CAPS_SUPPORT_REF_PIC_INVALIDATION;
+        int capValue = 0;
+        if (m_Api->fn().nvEncGetEncodeCaps(m_Encoder, codecGuid(codec), &capParam, &capValue) ==
+                NV_ENC_SUCCESS &&
+            capValue != 0)
+            m_RefInvalidation = true;
+    }
+
     switch (codec) {
     case Codec::H264: {
         NV_ENC_CONFIG_H264& h264 = m_Config.encodeCodecConfig.h264Config;
         h264.chromaFormatIDC = yuv444 ? 3 : 1;
         h264.repeatSPSPPS = 1;
         h264.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+        h264.maxNumRefFrames = kDpbFrames;
         // Tell the decoder there is nothing to reorder. Without the VUI's
         // bitstream_restriction the browser's D3D11 H.264 decoder assumes the
         // worst — a DPB's worth of reordering, which at 1440p60 is a dozen
@@ -260,6 +281,7 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         hevc.chromaFormatIDC = yuv444 ? 3 : 1;
         hevc.repeatSPSPPS = 1;
         hevc.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+        hevc.maxNumRefFramesInDPB = kDpbFrames;
         hevc.enableIntraRefresh = refreshEnabled;
         hevc.intraRefreshPeriod = refreshPeriod;
         hevc.intraRefreshCnt = refreshCount;
@@ -268,6 +290,7 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     case Codec::Av1: {
         NV_ENC_CONFIG_AV1& av1 = m_Config.encodeCodecConfig.av1Config;
         av1.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+        av1.maxNumRefFramesInDPB = kDpbFrames;
         av1.enableIntraRefresh = refreshEnabled;
         av1.intraRefreshPeriod = refreshPeriod;
         av1.intraRefreshCnt = refreshCount;
@@ -327,8 +350,34 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
               (tuningInfo == NV_ENC_TUNING_INFO_LOW_LATENCY ? "/LL" : "/ULL") +
               " multipass=" + multiPassName(m_Config.rcParams.multiPass) +
               " aq=" + std::to_string(m_Config.rcParams.enableAQ) +
-              " taq=" + std::to_string(m_Config.rcParams.enableTemporalAQ) +
+              " taq=" + std::to_string(m_Config.rcParams.enableTemporalAQ) + ", DPB " +
+              std::to_string(kDpbFrames) +
+              (m_RefInvalidation ? " with reference invalidation" : ", no reference invalidation") +
               (overrides.empty() ? "" : " [bench: " + overrides + "]"));
+    return true;
+}
+
+bool NvencEncoder::invalidateReference(uint32_t frameNumber, std::string& error)
+{
+    if (!m_Encoder) {
+        error = "the encoder is not initialized";
+        return false;
+    }
+    if (!m_RefInvalidation) {
+        error = "this NVENC does not support reference invalidation";
+        return false;
+    }
+    // The picture was stamped with its frame number at encode(); that stamp is
+    // how the driver finds it in the DPB. A frame already out of the DPB is
+    // not an error: nothing references it any more.
+    const NVENCSTATUS status =
+        m_Api->fn().nvEncInvalidateRefFrames(m_Encoder, static_cast<uint64_t>(frameNumber));
+    if (status != NV_ENC_SUCCESS) {
+        error =
+            std::string("could not invalidate the reference: ") + NvencApi::statusToString(status);
+        return false;
+    }
+    m_Invalidations++;
     return true;
 }
 
@@ -366,8 +415,8 @@ bool NvencEncoder::registerInput(ID3D11Texture2D* texture, std::string& error)
     return true;
 }
 
-bool NvencEncoder::encode(ID3D11Texture2D* nv12, bool forceKeyframe, EncoderOutput& out,
-                          std::string& error)
+bool NvencEncoder::encode(ID3D11Texture2D* nv12, bool forceKeyframe, uint32_t frameNumber,
+                          EncoderOutput& out, std::string& error)
 {
     if (!m_Encoder || !m_Bitstream) {
         error = "the encoder is not initialized";
@@ -398,7 +447,9 @@ bool NvencEncoder::encode(ID3D11Texture2D* nv12, bool forceKeyframe, EncoderOutp
     pic.inputHeight = static_cast<uint32_t>(m_Height);
     pic.outputBitstream = m_Bitstream;
     pic.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
-    pic.inputTimeStamp = m_FrameIndex++;
+    // The frame's own number, not a private counter: it is the name the
+    // receiver will use to say "this one never came" (invalidateReference).
+    pic.inputTimeStamp = frameNumber;
     if (forceKeyframe)
         pic.encodePicFlags = NV_ENC_PIC_FLAG_FORCEIDR | NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
 
@@ -492,7 +543,10 @@ void NvencEncoder::stop()
 
     m_Api->fn().nvEncDestroyEncoder(m_Encoder);
     m_Encoder = nullptr;
-    m_FrameIndex = 0;
+    if (m_Invalidations > 0)
+        log::info("[native] NVENC: " + std::to_string(m_Invalidations) +
+                  " reference invalidation(s) this session");
+    m_Invalidations = 0;
 }
 
 } // namespace mw::native::encode

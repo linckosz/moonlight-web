@@ -296,7 +296,7 @@ void run_capture_tests()
                         encode::EncoderOutput encoded;
                         // The first frame must be a keyframe: a client has
                         // nothing to decode against otherwise.
-                        CHECK(encoder.encode(converter.output(), true, encoded, encodeError));
+                        CHECK(encoder.encode(converter.output(), true, 0, encoded, encodeError));
                         if (encoded.data) {
                             std::fprintf(
                                 stderr, "  encoded keyframe: %zu bytes, intra-refresh %s\n",
@@ -358,7 +358,7 @@ void run_capture_tests()
                         for (int i = 0; i < 30; ++i) {
                             const auto before = std::chrono::steady_clock::now();
                             encode::EncoderOutput delta;
-                            if (!encoder.encode(converter.output(), false, delta, encodeError)) {
+                            if (!encoder.encode(converter.output(), false, 1, delta, encodeError)) {
                                 std::fprintf(stderr, "  encode stopped at frame %d: %s\n", i,
                                              encodeError.c_str());
                                 break;
@@ -432,7 +432,7 @@ void run_capture_tests()
                                 }
 
                                 encode::EncoderOutput liveEncoded;
-                                if (!encoder.encode(converter.output(), false, liveEncoded,
+                                if (!encoder.encode(converter.output(), false, 2, liveEncoded,
                                                     encodeError)) {
                                     std::fprintf(stderr, "  cycle stopped after %d frames: %s\n",
                                                  cycled, encodeError.c_str());
@@ -489,7 +489,8 @@ void run_capture_tests()
                                          error444.c_str());
                         } else {
                             encode::EncoderOutput out444;
-                            CHECK(encoder444.encode(converter444.output(), true, out444, error444));
+                            CHECK(encoder444.encode(converter444.output(), true, 0, out444,
+                                                    error444));
                             if (out444.data) {
                                 std::fprintf(stderr, "  4:4:4 keyframe: %zu bytes\n", out444.size);
                                 CHECK(out444.size > 0);

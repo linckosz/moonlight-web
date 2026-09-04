@@ -78,8 +78,26 @@ public:
                       std::string& error) = 0;
 
     /// Encode one texture. Blocking: returns with the bitstream ready.
-    virtual bool encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,
-                        std::string& error) = 0;
+    /// @param frameNumber the number this frame goes out under (EncodedFrame::
+    ///                    frameNumber). The encoder stamps its picture with it,
+    ///                    which is what lets a receiver name the frame it lost
+    ///                    to invalidateReference().
+    virtual bool encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t frameNumber,
+                        EncoderOutput& out, std::string& error) = 0;
+
+    /// Whether invalidateReference() does anything on this encoder.
+    virtual bool supportsReferenceInvalidation() const { return false; }
+
+    /// The frame numbered @p frameNumber never reached the receiver: encode
+    /// the next pictures against older frames only, so the stream heals with
+    /// an ordinary delta instead of a keyframe (design §9.2). Returns false
+    /// when this encoder cannot — the caller then forces a keyframe.
+    virtual bool invalidateReference(uint32_t frameNumber, std::string& error)
+    {
+        (void)frameNumber;
+        error = "reference invalidation is not available on this encoder";
+        return false;
+    }
 
     /// Release the buffer handed out by the last encode(). Must be called
     /// before the next encode().

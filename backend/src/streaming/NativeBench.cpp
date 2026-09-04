@@ -93,7 +93,8 @@ const char* const kUsage =
     "  preanalysis=0|1  AMF pre-analysis\n"
     "  quality=speed|balanced|quality   AMF quality preset\n"
     "  tu=1..7          oneVPL TargetUsage (1 quality .. 7 speed)\n"
-    "  vbv=<frames>     VBV of exactly N frames at the stream rate, no floor\n";
+    "  vbv=<frames>     VBV of exactly N frames at the stream rate, no floor\n"
+    "  dpb=<frames>     NVENC decoded picture buffer (default 4, for reference invalidation)\n";
 
 bool parseChoice(const QString& value, mw::native::EncoderTuning::Choice& out)
 {
@@ -129,6 +130,10 @@ bool applyTuningKey(const QString& key, const QString& value, mw::native::Encode
         const int frames = value.toInt(&ok);
         ok = ok && frames >= 1 && frames <= 16;
         tuning.vbvFrames = frames;
+    } else if (key == "dpb") {
+        const int frames = value.toInt(&ok);
+        ok = ok && frames >= 1 && frames <= 16;
+        tuning.dpbFrames = frames;
     } else if (key == "aq")
         ok = parseChoice(value, tuning.spatialAq);
     else if (key == "taq")
