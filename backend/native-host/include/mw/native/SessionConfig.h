@@ -146,6 +146,15 @@ struct SessionInfo
     /// here, and the receiver must then keep its usual keyframe recovery.
     bool intraRefresh = false;
 
+    /// How many encoded frames one intra-refresh wave takes to sweep the whole
+    /// picture — the period the encoder was configured with, in frames of the
+    /// rate it encodes at (RateControl.h intraRefreshPeriodFrames). Zero when
+    /// intraRefresh is false. The receiver counts the frames it gets against
+    /// this to know when a wave has had its chance: in frames, because the
+    /// wave advances per frame encoded, not per second — a game presenting at
+    /// 30 under a 165 fps stream stretches a 330-frame period to 11 s.
+    int intraRefreshFrames = 0;
+
     /// True when a frame the receiver lost can be healed by an ordinary delta
     /// (Session::invalidateReference does what it says). The receiver then
     /// keeps decoding after a gap instead of discarding deltas until a

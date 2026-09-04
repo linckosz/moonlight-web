@@ -781,6 +781,105 @@ pas le taux par moniteur. Le chemin de re-choix est couvert par test unitaire
 effectivement deux taux (à voir chez Bruno, multi-moniteurs de fréquences
 différentes).
 
+### 9.12 Gels et récupération côté navigateur (04/09/2026)
+
+Ce que le navigateur fait quand l'image s'arrête ou se casse a été écrit pour
+Sunshine : une keyframe demandée à chaque doute, parce que c'était la seule
+réparation qui existait. Avec l'hôte natif, §9.10 en a apporté une autre — la
+perte nommée, réparée par un delta — et les cinq réflexes ci-dessous ont été
+relus à cette lumière. La règle : **le chemin GameStream ne change pas d'un
+octet** ; tout ce qui suit est conditionné à `ref_invalidation` (la réponse
+`/start`) ou à l'hôte natif.
+
+**Famine (G1).** Le transport déclarait une famine après 1 s sans image et
+demandait une IDR. Pour l'hôte natif, cette demande est toujours de trop : une
+image qui n'est pas venue n'est pas une image perdue. Si des images ont été
+jetées en route, la première qui arrive porte un trou de `frameId` et le
+gestionnaire de trous les nomme à l'hôte (§9.10) ; si aucune ne l'a été, le flux
+reprend simplement. Dans les deux cas la keyframe aurait été la plus grosse image
+qui soit, envoyée sur un lien qui vient de prouver qu'il souffre. Donc, quand
+l'hôte répare par invalidation, la famine **compte et chronomètre** (`stalls`,
+ligne « Stream resumed after N ms ») et **ne demande rien**. ⚠️ Le plan
+prévoyait un seuil adaptatif de « 4 intervalles d'image » (67 ms à 60 fps) :
+**impossible**. Un écran fixe se tait légitimement — le plancher de vivacité de
+l'hôte est à **500 ms** (§9.1, mesuré : 2 fps dans l'overlay sur un bureau
+immobile), Sunshine n'envoie rien du tout — et un seuil de 67 ms lirait chaque
+bureau au repos comme un flux mort. La seconde est la marge au-dessus de ce
+plancher, et c'est sur elle que l'hôte a dimensionné son plancher.
+
+Deux autres demandes du transport tombent sous la même règle sur l'hôte natif :
+l'image incomplète et l'image périmée (`FRAME_TIMEOUT_MS`). Et un **bug** trouvé
+à la lecture : `onFrameLoss` invalidait la référence côté vue **sans condition**,
+donc sur l'hôte natif une image dont un fragment manquait était d'abord nommée à
+l'hôte et réparée par un delta (§9.10), puis, 500 ms plus tard, le nettoyage des
+images périmées la déclarait perdue, invalidait la référence, jetait tous les
+deltas et demandait la keyframe que la réparation venait d'éviter. Sur l'hôte
+natif `onFrameLoss` ne fait plus rien : le trou de `frameId` est la seule voie.
+Et comme le canal vidéo est **ordonné** (`unordered = false`, 3 retransmissions),
+une image qu'une plus récente a dépassée ne se complétera jamais : elle est
+déclarée perdue **à l'instant** où la suivante s'assemble, au lieu d'attendre les
+500 ms de l'horloge — c'est le temps pendant lequel l'image restait en retard
+d'une image qu'elle aurait pu montrer.
+
+**Ride-out (G2).** Le chien de garde qui laisse la vague d'intra-refresh
+travailler avant de réclamer une keyframe comptait **2,5 s** d'horloge. Or la
+vague avance **par image encodée** : `intraRefreshPeriodFrames` vaut 2 s de
+la cadence de l'encodeur, mais un jeu qui présente à 30 sous un stream 165
+étire une période de 330 images sur **11 s**, et l'horloge de 2,5 s l'aurait
+déclarée en échec quatre fois de suite. `/start` porte désormais
+`intra_refresh_frames` (`SessionInfo::intraRefreshFrames`, le nombre exact que
+les trois encodeurs ont reçu) et le chien de garde compte les **images reçues**
+contre 1,2 période — les images non reçues ont fait avancer la vague aussi, mais
+ne compter que les siennes est le côté prudent — avec l'horloge gardée en
+garde-fou (15 s) pour un flux qui s'arrête. Le message « Ride-out did not
+recover » devient un compteur (`rideOutFailed`), montré dans le détail de
+l'overlay avec les deux autres. Sans période connue (hôte qui ne la dit pas),
+l'horloge de 2,5 s reste seule.
+
+**Erreur du décodeur (G3).** `VideoDecoder` est à usage unique : sur erreur,
+la vue le ferme, en crée un autre, remet le parseur NAL à zéro et demande une
+keyframe. Relu : rien n'est à garder — les deltas en attente prédisent depuis
+une référence que le nouveau décodeur n'a pas, et le parseur remis à zéro se
+reconfigure à l'arrivée de la keyframe, qui porte ses SPS/PPS de toute façon.
+Ce qui manquait, c'est la **mesure** : la récupération est chronométrée de
+l'erreur à la première image que le nouveau décodeur sort, et journalisée avec
+les images jetées entre-temps (« Decoder recovered in N ms, M frames dropped
+meanwhile »), sur le thread principal comme dans le worker ; compteur
+`recoveries`, même ligne d'overlay.
+
+**Garde keyframe (G4).** Côté hôte, `sendBufferedKeyframe` ne jette une
+keyframe tamponnée que si une plus récente est **déjà partie** — la mémoire
+`webrtc-media-freeze-diagnosis` est respectée telle quelle. Côté natif, une
+chose changeait : une keyframe demandée (`requestKeyframe`) n'était encodée qu'au
+prochain `emit`, et sur un **écran fixe** le prochain `emit` est le tic du
+plancher — jusqu'à **500 ms** pendant lesquelles un navigateur en récupération,
+ou qui vient d'ouvrir son canal vidéo, regardait le vide alors que l'image
+convertie attendait. La boucle encode maintenant **à l'instant** une keyframe
+demandée sur un écran immobile (même image que le plancher aurait envoyée, un
+encodage). C'est ce que Sunshine ne peut pas faire (§9.1 : il n'encode que sur
+dommage) et que l'hôte natif peut.
+
+**Onglet caché, retour (G5).** Mesuré le 04/09 sur l'instance dev : un onglet
+**caché** continue de décoder — seuls ses timers passent à une seconde,
+`linkstats` compris, ce qui reste sous les 4 s de silence que le gouverneur
+(§9.9) lit comme un lien mort — et il n'y a rien à réparer. Une page **gelée**
+(onglet d'arrière-plan sur téléphone, ou Chrome qui gèle un onglet caché depuis
+longtemps ; `Page.setWebLifecycleState frozen` au banc) est différente : le
+gouverneur coupe à 16 000 kbps pour « no report from the receiver » et remonte
+en cinq rapports, et au dégel les images qui attendaient dans le canal arrivent
+en rafale. Toute mesure qui lit un temps d'arrivée prendrait cette rafale pour
+le fait du lien — la référence de délai aller simple lirait des secondes de
+« montée » et l'hôte couperait son débit au moment même où le spectateur
+revient ; le détecteur d'arrêts périodiques marquerait un événement ; le pacer
+épinglerait sa réserve. Au retour (`visibilitychange` → `_resyncAfterHidden`)
+ils sont ré-amorcés, le transport apprend que le silence était le nôtre, et les
+manettes — dont la scrutation `requestAnimationFrame` s'est arrêtée avec
+l'onglet, pendant que le chien de garde de l'hôte centrait ce qu'il n'entendait
+plus — sont **redites une fois**, au repos ou non (`GamepadManager.resendAll`).
+Les images que l'hôte a évincées pendant l'absence arrivent comme un trou de
+`frameId` et prennent le chemin ordinaire : nommées, réparées par un delta.
+Rien n'est demandé au retour.
+
 ---
 
 ## 10. Host natif dans l'UI

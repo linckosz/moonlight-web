@@ -653,6 +653,14 @@ export class StreamView {
         // frames it missed and keeps decoding, instead of discarding deltas
         // until a keyframe — see handleVideoFrame.
         this._refInvalidation = opts.refInvalidation === true;
+        if ('healsByInvalidation' in this.webrtc) {
+            // Recovery is this view's gap handler from here on: the transport's
+            // own keyframe requests (incomplete, stale, silence) stand down.
+            this.webrtc.healsByInvalidation = this._refInvalidation;
+            // And the ride-out watchdog counts frames of the wave the host
+            // described, instead of guessing 2.5 s.
+            this.webrtc.rideOutFrames = opts.intraRefreshFrames | 0;
+        }
         // Debug: drop one delta every N frames on purpose (localStorage
         // mw_drop_test = N), to exercise the gap paths on a link that never
         // loses anything.
@@ -757,7 +765,20 @@ export class StreamView {
         // networkLost: frames the backend sent that never arrived (frameId gaps).
         // Denominator for the loss rate is the frameId span, tracked separately
         // because `received` counts only what the pipeline actually got.
-        this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0, networkLost: 0 };
+        this.stats = {
+            received: 0,
+            decoded: 0,
+            rendered: 0,
+            dropped: 0,
+            networkLost: 0,
+            // Decoder rebuilds after an error (see _handleDecoderError).
+            recoveries: 0,
+        };
+        // When the current decoder recovery began (performance.now), 0 when
+        // none is in progress: the first decoded frame closes it with a line
+        // saying how long the picture was gone.
+        this._recoveryStartedPerf = 0;
+        this._recoveryDroppedBefore = 0;
         this._firstFrameId = -1;
 
         // Overlay stats
@@ -1103,6 +1124,7 @@ export class StreamView {
             // modifier stays stuck on the host.
             if (document.visibilityState === 'hidden') this._releaseAllPhysKeys();
             if (document.visibilityState === 'visible' && !this._quitting) {
+                this._resyncAfterHidden();
                 // Coming back to the tab may leave the pointer over the picture
                 // without a mousemove — re-hide the local cursor (double cursor).
                 this._refreshLocalCursorOnFocus();
@@ -1915,6 +1937,7 @@ export class StreamView {
                 this.stats.decoded = m.decoded;
                 this.stats.rendered = m.rendered;
                 this.stats.dropped = m.dropped;
+                this.stats.recoveries = m.recoveries || 0;
                 if (m.resolution && m.resolution !== this._resolution)
                     this._resolution = m.resolution;
                 // Client pipeline stages measured inside the worker (its own
@@ -2134,7 +2157,14 @@ export class StreamView {
         //    next keyframe
         this.nalParser.reset();
 
-        // 5. Create a new decoder
+        // 5. Create a new decoder. Timed from here to the first frame it
+        //    outputs: that is how long the picture was frozen, and the
+        //    frames dropped meanwhile say what the recovery cost.
+        if (!this._recoveryStartedPerf) {
+            this._recoveryStartedPerf = performance.now();
+            this._recoveryDroppedBefore = this.stats.dropped;
+            this.stats.recoveries++;
+        }
         this.setupDecoder();
 
         // 6. Request an IDR so Sunshine sends a clean keyframe
@@ -2852,6 +2882,18 @@ export class StreamView {
 
         // A successful decode means we've recovered — reset the counter
         this._recoveryAttempts = 0;
+        if (this._recoveryStartedPerf) {
+            console.warn(
+                '[StreamView] Decoder recovered in ' +
+                    Math.round(performance.now() - this._recoveryStartedPerf) +
+                    ' ms, ' +
+                    (this.stats.dropped - this._recoveryDroppedBefore) +
+                    ' frames dropped meanwhile (recovery ' +
+                    this.stats.recoveries +
+                    ')',
+            );
+            this._recoveryStartedPerf = 0;
+        }
 
         // FPS tracking: record decode timestamp (2s sliding window in _updateOverlay)
         this._fpsTimestamps.push(performance.now());
@@ -3935,6 +3977,13 @@ export class StreamView {
             // Frame loss from reassembly: invalidate reference until next keyframe.
             // IDR is already requested by WebRtcDataChannel (throttled) — don't double it.
             this.webrtc.onFrameLoss = (frameId, wasKeyframe) => {
+                // A host that heals by invalidation: the lost frame shows up as
+                // a frameId gap on the next one, and handleVideoFrame names it
+                // to the host and decodes on. Invalidating the reference here
+                // would undo exactly that — every delta dropped until a
+                // keyframe, the keyframe requested — half a second after the
+                // gap had already been healed with a delta.
+                if (this._refInvalidation) return;
                 this._referenceValid = false;
                 if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
             };
@@ -4219,6 +4268,40 @@ export class StreamView {
             this._linkTimer = null;
         }
         this._link = null;
+    }
+
+    /**
+     * The tab is visible again after being hidden or frozen.
+     *
+     * Measured on the native host (04/09/2026): a hidden tab keeps decoding —
+     * only its timers slow to once a second — and nothing needs mending. A
+     * FROZEN page (a phone's background tab, or Chrome freezing a hidden one
+     * after a while) is different: its frames wait in the channel and land in
+     * one burst on thaw. Every measurement that reads arrival time would take
+     * that burst for the link's doing — the one-way-delay reference would
+     * report seconds of "rise" and the host would cut its bitrate at the very
+     * moment the viewer is back; the stall detector would score an event; the
+     * pacer would pin its reserve — so they are re-primed here, and the
+     * transport is told the silence was ours. Frames the host evicted while
+     * we were away arrive as a frameId gap and take the ordinary path: named
+     * to the host, healed with a delta. Nothing is requested here.
+     *
+     * Pads are the other thing rAF took with it: the gamepad poll stopped, the
+     * host's watchdog centred what it stopped hearing, so every pad's state is
+     * repeated once — a held stick comes back within a poll.
+     */
+    _resyncAfterHidden() {
+        if (!this.connected) return;
+        console.log('[StreamView] Back from the background — timing re-primed, pads repeated');
+        this._stallDetector.reset();
+        this._clearPacingTimer();
+        if (this._framePacer) this._framePacer.reset();
+        if (this._videoWorker) this._videoWorker.postMessage({ type: 'resync' });
+        if (this._link) this._link.windowMinOffset = Infinity;
+        if (this.webrtc && typeof this.webrtc.noteResumed === 'function') {
+            this.webrtc.noteResumed();
+        }
+        if (this._gamepadManager) this._gamepadManager.resendAll();
     }
 
     // ── This screen's refresh, for the native host's cadence ─────────────
@@ -4939,6 +5022,23 @@ export class StreamView {
                     '%</span>' +
                     '</div>';
             }
+            // How often the picture had to be put back: decoder rebuilds,
+            // silences past the starvation window, ride-outs that gave up.
+            // Counts, not rates — each one was a visible freeze.
+            const tStats = (this.webrtc && this.webrtc.stats) || {};
+            html +=
+                '<div class="stats-row">' +
+                '<span class="stats-label">' +
+                escapeHtml(t('stream.statRecovery')) +
+                '</span>' +
+                '<span class="stats-value">' +
+                (this.stats.recoveries || 0) +
+                ' · ' +
+                (tStats.stalls || 0) +
+                ' · ' +
+                (tStats.rideOutFailed || 0) +
+                '</span>' +
+                '</div>';
         }
 
         // ── Pipeline observations ───────────────────────────────────────────

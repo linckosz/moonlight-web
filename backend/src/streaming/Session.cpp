@@ -1029,6 +1029,13 @@ void StreamSession::onShimConnectionStarted()
     {
         auto* native = qobject_cast<NativeMediaEngine*>(m_Engine);
         result["ref_invalidation"] = native != nullptr && native->referenceInvalidation();
+        // How many frames one intra-refresh wave takes (0 when the stream does
+        // not refresh that way): the browser lets a gap ride out for that many
+        // received frames before it concludes the wave is not repairing the
+        // picture and asks for a keyframe after all. Counted in frames on
+        // purpose — the wave advances per frame encoded, and a host whose game
+        // presents slowly stretches the same period over many more seconds.
+        result["intra_refresh_frames"] = native != nullptr ? native->intraRefreshFrames() : 0;
     }
 
     // Audio time-stretch (WSOLA) — file-only setting (settings.json), default

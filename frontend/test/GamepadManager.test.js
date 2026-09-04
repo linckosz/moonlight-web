@@ -7,13 +7,22 @@ import { GamepadManager } from '../js/stream/GamepadManager.js';
 
 let rafCb = null;
 
-function fakePad({ index = 0, id = 'Xbox 360 Controller', mapping = 'standard', buttons = [], axes = [0, 0, 0, 0], vibration = false } = {}) {
+function fakePad({
+    index = 0,
+    id = 'Xbox 360 Controller',
+    mapping = 'standard',
+    buttons = [],
+    axes = [0, 0, 0, 0],
+    vibration = false,
+} = {}) {
     return {
         index,
         id,
         mapping,
         vibrationActuator: vibration ? { playEffect: vi.fn() } : null,
-        buttons: buttons.map((b) => (typeof b === 'object' ? b : { pressed: !!b, value: b ? 1 : 0 })),
+        buttons: buttons.map((b) =>
+            typeof b === 'object' ? b : { pressed: !!b, value: b ? 1 : 0 },
+        ),
         axes,
     };
 }
@@ -127,6 +136,39 @@ describe('GamepadManager', () => {
         now += 5000;
         rafCb();
         expect(send.mock.calls.find((c) => c[0].type === 'gamepad')).toBeUndefined();
+        gm.stop();
+    });
+
+    it('repeats every pad once after resendAll, at rest or not', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        let now = 1000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        const pushed = fakePad({ index: 0, axes: [1, 0, 0, 0] });
+        const resting = fakePad({ index: 1 });
+        setPads([pushed, resting]);
+
+        gm.start(); // first poll: both announced and reported
+        send.mockClear();
+        now += 100;
+        rafCb(); // unchanged, too soon: silence
+        expect(send.mock.calls.find((c) => c[0].type === 'gamepad')).toBeUndefined();
+
+        // The tab comes back from the background: the host may have centred
+        // the pushed pad, so both are said again on the very next poll.
+        gm.resendAll();
+        now += 10;
+        rafCb();
+        const said = send.mock.calls.filter((c) => c[0].type === 'gamepad').map((c) => c[0]);
+        expect(said).toHaveLength(2);
+        expect(said.find((m) => m.index === 0)).toMatchObject({ lx: 32767 });
+        expect(said.find((m) => m.index === 1)).toMatchObject({ lx: 0, buttons: 0 });
+
+        // And then it is quiet again for the resting one.
+        send.mockClear();
+        now += 10;
+        rafCb();
+        expect(send.mock.calls.find((c) => c[0].index === 1)).toBeUndefined();
         gm.stop();
     });
 

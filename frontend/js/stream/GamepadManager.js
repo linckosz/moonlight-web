@@ -316,6 +316,22 @@ export class GamepadManager {
     }
 
     /**
+     * Forget what was last sent, so the next poll repeats every pad's state
+     * whether it changed or not — at rest included.
+     *
+     * For the tab coming back from the background: rAF stops while it is
+     * hidden, so the poll did too, and the host's watchdog has meanwhile
+     * centred any pad it stopped hearing from. A stick still held is put back
+     * within one poll; a pad at rest costs one idempotent message.
+     */
+    resendAll() {
+        for (const entry of this._pads.values()) {
+            entry.last = null;
+            entry.sentAt = 0;
+        }
+    }
+
+    /**
      * True when any pad is away from rest (button, trigger or stick).
      *
      * A pad only reports on change, so a stick shoved and held goes silent
