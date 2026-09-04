@@ -218,6 +218,9 @@ private:
     /// Same "log only when it moves" discipline for the receiver's counters,
     /// which arrive as `clientstats` on the input DataChannel.
     qint64 m_LastClientStatsSnapshot = -1;
+    /// packetsLost as of the previous `clientstats`, so the native engine's
+    /// rate governor is fed the loss of each window rather than the total.
+    int m_LastPacketsLostReported = 0;
     /// Diagnostics for the IDR path — both were invisible before 2026-08-30.
     std::atomic<int> m_PliCount{0};
     std::atomic<int> m_IdrAbsorbedCount{0};

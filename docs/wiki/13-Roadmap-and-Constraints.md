@@ -40,7 +40,7 @@ An honest inventory of what remains, what constrains the design, and where the l
 ## 13.3 Improvement leads
 
 **Streaming quality**
-- Bandwidth estimation on the DC path (receiver-side rate feedback) to drive the degradation ladder proactively rather than reactively.
+- Bandwidth estimation on the DC path (receiver-side rate feedback) to drive the degradation ladder proactively rather than reactively — **done for the native host** (September 2026: the receiver reports its one-way-delay rise and frame gaps twice a second, the host's rate governor moves the encoder's bitrate between two frames, the ladder stands down); the GameStream hosts still rely on the reactive ladder.
 - FEC on the DataChannel video path (moonlight-common-c already exposes RTP FEC data) to reduce IDR dependence on lossy links.
 - Extend `JitterController` telemetry into the stats overlay for user-visible network diagnosis.
 

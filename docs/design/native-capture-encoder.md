@@ -628,6 +628,57 @@ Vérifié sur le clip : à 40 Mbit/s, 61 Ko et QP 16 par image en moyenne sur 20
 31 Ko et QP 22 contre 15 Ko et QP 31. Encode +0,3 ms pour des images deux fois
 plus grosses. Le fil reste sous le réglage.
 
+### 9.9 Le débit suit le lien, piloté par ce que voit le récepteur (04/09/2026)
+
+Le §9.3 annonçait un rate control « piloté par le retour réel du client » ; le
+voici, et il a fallu corriger le plan sur deux points. `clientstats` n'existe
+que sur le transport media (compteurs RTP), et `bufferedAmount` ne voit rien :
+il compte ce qui a débordé du méga-octet de tampon usrsctp, donc 420 ms de
+retard à 20 Mbit/s se lisent zéro. Sur l'hôte, un lien qui s'étrangle ressemble
+à des images qui partent à l'heure. **Le premier endroit où la file se mesure
+est l'arrivée** : chaque image porte l'heure de présent de l'hôte, et le
+récepteur sait de combien elle arrive plus tard que d'habitude — la file, en
+millisecondes, des secondes avant la première perte. C'est l'idée du contrôle
+de congestion par le délai de WebRTC, réduite à l'os : un flux, un sens, un
+récepteur qui horodate tout, un encodeur qui change de débit entre deux images.
+
+**Client** (`StreamView._startLinkReporting`, hôte natif sur DataChannel) : un
+message `linkstats` toutes les 500 ms — `owdRiseMs` = minimum sur la fenêtre de
+(arrivée − présent hôte) moins le minimum de session (référence glissante sur
+30 s, pour qu'une dérive d'horloge ne se lise jamais comme une file) ; le
+décalage entre les deux horloges s'annule dans la soustraction, il ne reste que
+l'attente — `gaps` = trous de numérotation, `fps`. Sur media, les compteurs de
+`clientstats` alimentent la même entrée (pertes RTP en trous, jitter en délai).
+Côté hôte, les évictions du `FrameSender` s'ajoutent au rapport : c'est de la
+perte que l'hôte s'inflige, et le signe le plus sûr d'un lien plein.
+
+**Moteur** (`encode::RateGovernor`, pur, testé ; `Session::reportLink`,
+`LinkFeedback` en en-tête public) : surutilisation — délai ≥ 30 ms (deux
+intervalles à 60 fps), un trou ou une éviction — **coupe de 20 % à l'instant**
+et gel de 2 s ; trois secondes de calme (délai < 10 ms, rien de perdu)
+remontent de **5 % par rapport**, jamais au-dessus du réglage ; entre les deux
+(file présente, pas croissante) on tient ; plancher 20 % du réglage et
+2 Mbit/s ; quatre secondes sans rapport valent une coupe, une seule. Couper
+vite et remonter lentement : une coupe coûte de la netteté une seconde, un
+débordement coûte la main du joueur.
+
+**Trois couches** dans la boucle de session, et un seul `setBitrate()` : le
+plafond du joueur (le réglage, déplacé par l'échelle du front via
+`setTargetBitrate`) → ce que le lien prend (le gouverneur ; c'est le débit du
+fil, et celui du modèle de lien `LinkOccupancy`) → le budget par image de la
+cadence réelle (§9.8), et la rafale de raffinement par-dessus.
+
+**Le front s'efface** : `_onStreamCongested` ne reconstruit plus la session
+pour l'hôte natif. Relancer pour −30 % de débit vingt secondes après le premier
+signe jetterait une image que l'hôte adapte déjà en 500 ms. L'échelle garde ses
+autres hôtes.
+
+Vérifié en LAN (04/09) : « link reports flowing from the receiver (first:
+owdRise 0 ms, gaps 0) », gouverneur muet, 6,1 ms. La réaction en vraie
+congestion se lit dans le log — « [native] link: delay rising — encoding at
+32000 kbps of the 40000 set » — et **reste à observer sur un lien qui
+souffre** (4G, hôtel).
+
 ---
 
 ## 10. Host natif dans l'UI

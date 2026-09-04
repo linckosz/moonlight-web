@@ -20,6 +20,7 @@
 #include "FrameSentSink.h"
 #include "IMediaEngine.h"
 
+#include "mw/native/LinkFeedback.h"
 #include "mw/native/StageStats.h"
 
 #include <array>
@@ -198,6 +199,19 @@ public:
     /// then never say it again. Safe at any time.
     void setFrameFloorFps(int fps);
 
+    /// The receiver's report on the link (a `linkstats` message on the input
+    /// channel, or the RTP counters of `clientstats`), handed to the engine's
+    /// rate governor with the frames our own sender evicted since the last
+    /// report folded in — see Session::reportLink. Safe from any thread;
+    /// dropped when no session runs.
+    void reportLink(const mw::native::LinkFeedback& feedback);
+
+    /// The relay's sender dropped a frame because the link had not taken the
+    /// previous ones. Counted here, from the relay's thread, and carried by the
+    /// next reportLink(): to the governor an eviction is loss the host caused
+    /// itself, and the surest sign the link is full.
+    void noteEviction() { m_Evictions.fetch_add(1, std::memory_order_relaxed); }
+
     /// A human-readable description of what the session settled on, for the
     /// stats overlay: "NVIDIA GeForce RTX 4070 · NVENC HEVC 4:4:4". Empty until
     /// the session has started.
@@ -300,4 +314,7 @@ private:
     /// The client's last word on the still-screen frame floor, replayed onto a
     /// session that starts after it was said. See setFrameFloorFps.
     std::atomic<int> m_FrameFloorFps{0};
+
+    /// Sender evictions since the last link report — see noteEviction().
+    std::atomic<int> m_Evictions{0};
 };

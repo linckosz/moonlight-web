@@ -24,6 +24,7 @@
 #include "../../core/RestartBackoff.h"
 #include "../../core/Session.h"
 #include "../../encode/RateControl.h"
+#include "../../encode/RateGovernor.h"
 #include "../../encode/windows/AmfEncoder.h"
 #include "../../encode/windows/NvencEncoder.h"
 #include "../../encode/windows/VplEncoder.h"
@@ -441,7 +442,36 @@ public:
 
     void setTargetBitrate(int kbps) override { m_PendingBitrate.store(kbps); }
 
+    void reportLink(const LinkFeedback& feedback) override
+    {
+        // Kept for the loop, which owns the governor. Two reports between two
+        // wake-ups fold into one: the worse delay and the summed counts, so
+        // nothing the receiver saw is lost and the loop never runs the
+        // governor twice for one moment.
+        std::lock_guard<std::mutex> lock(m_LinkMutex);
+        if (m_LinkPending) {
+            if (feedback.owdRiseMs > m_LinkFeedback.owdRiseMs)
+                m_LinkFeedback.owdRiseMs = feedback.owdRiseMs;
+            m_LinkFeedback.gaps += feedback.gaps;
+            m_LinkFeedback.evictions += feedback.evictions;
+            m_LinkFeedback.receivedFps = feedback.receivedFps;
+        } else {
+            m_LinkFeedback = feedback;
+            m_LinkPending = true;
+        }
+    }
+
 private:
+    /// Take the receiver's latest report, if one arrived since the last call.
+    bool takeLinkFeedback(LinkFeedback& out)
+    {
+        std::lock_guard<std::mutex> lock(m_LinkMutex);
+        if (!m_LinkPending) return false;
+        out = m_LinkFeedback;
+        m_LinkPending = false;
+        return true;
+    }
+
     /// The device the converter and the encoder are built on: the capture's,
     /// or the bridge's when the encoder sits on another GPU.
     ID3D11Device* pipelineDevice() const
@@ -874,13 +904,23 @@ private:
 
         // The stream's own bitrate, which the quality ladder may move under us,
         // and whether the still-screen budget is currently in its place.
-        int baseKbps = m_Config.bitrateKbps;
+        // ── Three layers decide what the encoder is told ────────────────────
+        //
+        //  1. the viewer's CEILING (the setting, moved by the frontend's ladder
+        //     through setTargetBitrate);
+        //  2. what the LINK can take right now, under it — the governor, fed by
+        //     the receiver's reports (encode::RateGovernor). That is `baseKbps`,
+        //     the rate the wire really carries and the link model is fed with;
+        //  3. the budget PER FRAME for the rate frames really come at
+        //     (encode::EffectiveCadence), and the still-screen boost on top.
+        //
+        // Every change goes through applyBitrate(), so the three never disagree
+        // about what the encoder holds.
+        encode::RateGovernor governor;
+        governor.start(m_Config.bitrateKbps, steadyNowUs() / 1000);
+        int baseKbps = governor.targetKbps();
         m_LinkKbps = baseKbps;
         bool boosted = false;
-        // The encoder is handed the budget for the rate frames REALLY come at,
-        // not the configured one — see encode::EffectiveCadence. The still
-        // boost multiplies on top; the link model (m_LinkKbps) never sees
-        // either, it is the wire's rate and the wire's rate does not move.
         encode::EffectiveCadence effective;
         effective.start(m_EncodeFps, steadyNowUs());
         auto applyBitrate = [&](int kbps) {
@@ -889,6 +929,20 @@ private:
                 log::warning("[native] bitrate change refused: " + error);
         };
         int cadenceLogged = 0;
+        int governorLogged = 0;
+        // The governor moved the wire's rate: the link model and whatever the
+        // encoder currently holds (boosted or not) follow.
+        auto applyGovernor = [&](const char* why) {
+            baseKbps = governor.targetKbps();
+            m_LinkKbps = baseKbps;
+            applyBitrate(boosted ? encode::stillBitrateKbps(baseKbps) : baseKbps);
+            if (governorLogged < 10 || governor.changes() % 10 == 0) {
+                governorLogged++;
+                log::info("[native] link: " + std::string(why) + " — encoding at " +
+                          std::to_string(baseKbps) + " kbps of the " +
+                          std::to_string(governor.settingKbps()) + " set");
+            }
+        };
 
         // The first few bursts, then silence. These are the numbers that say
         // whether any of this worked: what one frame's budget bought, against
@@ -977,13 +1031,27 @@ private:
         m_LoopStartUs = steadyNowUs();
         while (m_Running.load()) {
             if (const int kbps = m_PendingBitrate.exchange(0); kbps > 0) {
-                // The ladder moves the stream's rate, not the still-screen one.
+                // The ladder moves the CEILING, not the still-screen budget.
                 // Applying it while boosted would drop the burst back to normal
                 // mid-refinement; the boost is recomputed from the new base
                 // instead, and the base takes over when the burst ends.
-                baseKbps = kbps;
-                m_LinkKbps = baseKbps;
-                applyBitrate(boosted ? encode::stillBitrateKbps(baseKbps) : baseKbps);
+                governor.setSetting(kbps);
+                applyGovernor("ceiling moved");
+            }
+
+            // The receiver's word on the link, and the silence of it.
+            {
+                LinkFeedback fb;
+                const int64_t nowMs = steadyNowUs() / 1000;
+                if (takeLinkFeedback(fb)) {
+                    if (governor.report(fb, nowMs))
+                        applyGovernor(fb.gaps > 0 || fb.evictions > 0 ? "frames lost"
+                                      : fb.owdRiseMs >= encode::RateGovernor::kOveruseMs
+                                          ? "delay rising"
+                                          : "quiet, raising");
+                } else if (governor.tick(nowMs)) {
+                    applyGovernor("no report from the receiver");
+                }
             }
 
             // Decided before the acquire because it also chooses how long the
@@ -1584,6 +1652,11 @@ private:
     std::vector<uint8_t> m_CursorScratch;
     /// Zero means "no change pending". Exchanged by the loop each iteration.
     std::atomic<int> m_PendingBitrate{0};
+    /// The receiver's latest report on the link, folded until the loop takes
+    /// it — see reportLink().
+    std::mutex m_LinkMutex;
+    LinkFeedback m_LinkFeedback;
+    bool m_LinkPending = false;
     /// What the link is still carrying, by the stream's own rate. Fed by every
     /// emit(); read by the refinement burst, which does not send a pass into a
     /// link that has not finished with the previous one. See RateControl.h.

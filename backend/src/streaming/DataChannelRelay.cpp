@@ -1165,6 +1165,32 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         return;
     }
 
+    if (type == "linkstats") {
+        // The receiver's view of the link, twice a second: how much later
+        // frames arrive than at the best of the session (the queue building
+        // in the transport, in milliseconds, before anything is lost) and the
+        // frames it never got. The native engine's rate governor lowers the
+        // encoder's target on it and raises it back through quiet — between
+        // two frames, nothing renegotiated. See mw::native::LinkFeedback.
+        //
+        // Native host only: a GameStream host's rate is Sunshine's business.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim)) {
+            mw::native::LinkFeedback fb;
+            fb.owdRiseMs = msg["owdRiseMs"].toInt(0);
+            fb.gaps = msg["gaps"].toInt(0);
+            fb.receivedFps = msg["fps"].toInt(0);
+            if (!m_LinkReportsSeen) {
+                // Once: the loop is closed. The governor logs its own moves.
+                m_LinkReportsSeen = true;
+                qInfo() << "[DataChannelRelay] link reports flowing from the receiver (first:"
+                        << "owdRise" << fb.owdRiseMs << "ms, gaps" << fb.gaps << ", fps"
+                        << fb.receivedFps << ")";
+            }
+            native->reportLink(fb);
+        }
+        return;
+    }
+
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
         short keyCode;
@@ -1439,6 +1465,11 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         m_AwaitingIdr = true;
         sendIdrRequestThrottled();
     }
+    // The native engine's rate governor counts evictions as the surest sign
+    // the link is full — loss the host caused itself. GameStream engines have
+    // no governor to tell.
+    if (evicted)
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim)) native->noteEviction();
 
     m_FrameCount++;
 }
