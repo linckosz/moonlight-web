@@ -24,6 +24,14 @@
 #include <chrono>
 #include <cstring>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <avrt.h>
+#endif
+
 namespace {
 
 int64_t steadyNowUs()
@@ -33,9 +41,39 @@ int64_t steadyNowUs()
         .count();
 }
 
+/// Register the calling thread as an MMCSS "Games" task. Returns the handle
+/// to revert with, or null when the platform or the service refused — in
+/// which case the thread simply keeps its ordinary priority.
+void* enterGamesTask()
+{
+#ifdef _WIN32
+    DWORD taskIndex = 0;
+    HANDLE h = AvSetMmThreadCharacteristicsW(L"Games", &taskIndex);
+    if (!h) {
+        qInfo() << "[FrameSender] MMCSS Games refused (error" << GetLastError()
+                << ") — ordinary priority";
+        return nullptr;
+    }
+    qInfo() << "[FrameSender] sender thread on MMCSS Games";
+    return h;
+#else
+    return nullptr;
+#endif
+}
+
+void leaveGamesTask(void* h)
+{
+#ifdef _WIN32
+    if (h) AvRevertMmThreadCharacteristics(static_cast<HANDLE>(h));
+#else
+    (void)h;
+#endif
+}
+
 } // namespace
 
-FrameSender::FrameSender()
+FrameSender::FrameSender(Options options)
+    : m_Options(options)
 {
     m_Thread = std::thread([this]() { run(); });
 }
@@ -131,6 +169,30 @@ bool FrameSender::push(Job&& job)
             droppedDelta = true;
         }
 
+        // Delta depth (native engine: 1). A delta still waiting when the next
+        // frame arrives is a frame the viewer would see late; the newer one
+        // takes its place. Counted like the eviction above: the caller starts
+        // recovery for the hole it leaves. Keyframes never wait behind a delta
+        // either — they are what the recovery is waiting for.
+        if (m_Options.maxQueuedDeltas < kMaxQueued) {
+            const size_t keep = job.isKeyframe || m_Options.maxQueuedDeltas == 0
+                                    ? 0
+                                    : m_Options.maxQueuedDeltas - 1;
+            size_t deltas = 0;
+            for (const Job& j : m_Queue)
+                if (!j.isKeyframe) deltas++;
+            for (auto it = m_Queue.begin(); it != m_Queue.end() && deltas > keep;) {
+                if (it->isKeyframe) {
+                    ++it;
+                    continue;
+                }
+                it = m_Queue.erase(it);
+                deltas--;
+                m_QueueDrops.fetch_add(1, std::memory_order_relaxed);
+                droppedDelta = true;
+            }
+        }
+
         m_Queue.push_back(std::move(job));
     }
     m_Cv.notify_one();
@@ -181,6 +243,7 @@ bool FrameSender::enqueueFragments(std::shared_ptr<rtc::DataChannel> dc,
 
 void FrameSender::run()
 {
+    void* mmcss = m_Options.multimediaPriority ? enterGamesTask() : nullptr;
     for (;;) {
         Job job;
         {
@@ -188,12 +251,13 @@ void FrameSender::run()
             m_Cv.wait(lock, [this]() {
                 return m_Stop.load(std::memory_order_acquire) || !m_Queue.empty();
             });
-            if (m_Stop.load(std::memory_order_acquire)) return;
+            if (m_Stop.load(std::memory_order_acquire)) break;
             job = std::move(m_Queue.front());
             m_Queue.pop_front();
         }
         sendJob(job);
     }
+    leaveGamesTask(mmcss);
 }
 
 void FrameSender::sendJob(const Job& job)

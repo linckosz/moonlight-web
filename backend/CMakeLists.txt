@@ -338,7 +338,8 @@ target_link_libraries(mw-server PRIVATE
 
 # ── Platform-specific link libs ────────────────────────────────────────────
 if(WIN32)
-    target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi Dbghelp)
+    # avrt: MMCSS for the native engine's sender thread (FrameSender).
+    target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi Dbghelp avrt)
     # OpenSSL is linked dynamically (import libs) — ship the DLLs next to the exe.
     file(GLOB _mw_ssl_dlls "${_mw_ssl}/lib/${_mw_ssl_arch}/*-3-${_mw_ssl_arch}.dll")
     foreach(_dll ${_mw_ssl_dlls})
