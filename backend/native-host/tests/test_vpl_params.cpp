@@ -98,6 +98,52 @@ void run_vpl_params_tests()
         CHECK(high.mfx.BufferSizeInKB > 0);
     }
 
+    // ── Changing the bitrate must change ONLY the bitrate ───────────────────
+    //
+    // This is the shape of the bug that was found here by reading, on 04/09/2026
+    // — and of bug B4 before it on AMF. setBitrate rebuilt the parameter block
+    // from scratch, which threw away the extension chain (so intra-refresh
+    // stopped) and the runtime's EncodeQuery corrections, while
+    // intraRefreshEnabled() went on answering true. The link governor changes
+    // the bitrate about twice a second, so the wave survived roughly half a
+    // second of streaming.
+    //
+    // applyRateControl exists so the mid-session path can touch what it means to
+    // touch. What follows is the proof that it does.
+    {
+        mfxVideoParam p = {};
+        CHECK(encode::fillEncodeParams(p, Codec::Hevc, 1920, 1080, 60, 20000));
+
+        // Stand in for what init() adds after building: the intra-refresh chain,
+        // plus a correction of the kind EncodeQuery applies in place.
+        mfxExtCodingOption2 option = {};
+        std::vector<mfxExtBuffer*> buffers;
+        encode::attachIntraRefresh(p, option, buffers, 60);
+        CHECK_EQ(p.NumExtParam, static_cast<mfxU16>(1));
+        p.mfx.TargetUsage = 4; // as if the runtime had corrected it
+
+        const mfxU16 refreshCycle = option.IntRefCycleSize;
+        CHECK(refreshCycle > 0);
+
+        encode::applyRateControl(p, 60, 40000, EncoderTuning{});
+
+        // The bitrate moved…
+        const int effective = static_cast<int>(p.mfx.TargetKbps) * p.mfx.BRCParamMultiplier;
+        CHECK(effective > 39000);
+        CHECK_EQ(p.mfx.MaxKbps, p.mfx.TargetKbps);
+        CHECK(p.mfx.BufferSizeInKB > 0);
+
+        // …and nothing else did. These three are the ones that were lost.
+        CHECK_EQ(p.NumExtParam, static_cast<mfxU16>(1));
+        CHECK(p.ExtParam != nullptr);
+        CHECK_EQ(option.IntRefCycleSize, refreshCycle);
+        CHECK_EQ(p.mfx.TargetUsage, static_cast<mfxU16>(4));
+        // And the latency invariants are still the ones init() established.
+        CHECK_EQ(p.AsyncDepth, static_cast<mfxU16>(1));
+        CHECK_EQ(p.mfx.GopRefDist, static_cast<mfxU16>(1));
+        CHECK(p.mfx.GopPicSize >= 0xFFFF);
+    }
+
     // ── Geometry: aligned surface, exact crop ───────────────────────────────
     //
     // Intel hardware wants 16-aligned surface dimensions; the crop is what the

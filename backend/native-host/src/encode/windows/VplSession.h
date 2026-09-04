@@ -96,4 +96,14 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
 void attachIntraRefresh(mfxVideoParam& params, mfxExtCodingOption2& option,
                         std::vector<mfxExtBuffer*>& buffers, int fps);
 
+/// Write the rate-control fields — and only those — into an existing block.
+///
+/// Split out of fillEncodeParams so that changing the bitrate mid-session can
+/// touch what it means to touch and nothing else. Rebuilding the whole block
+/// instead is what cost oneVPL its intra-refresh (a fresh block has no
+/// extension chain) and its runtime corrections (a fresh block has never been
+/// through EncodeQuery) on every rate change — and the link governor makes one
+/// about twice a second.
+void applyRateControl(mfxVideoParam& params, int fps, int bitrateKbps, const EncoderTuning& tuning);
+
 } // namespace mw::native::encode

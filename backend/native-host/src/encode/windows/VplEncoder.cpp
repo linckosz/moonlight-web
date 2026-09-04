@@ -261,11 +261,25 @@ bool VplEncoder::setBitrate(int bitrateKbps, std::string& error)
         return false;
     }
 
-    mfxVideoParam params;
-    if (!fillEncodeParams(params, m_Codec, m_Width, m_Height, m_Fps, bitrateKbps, m_Tuning)) {
-        error = "no oneVPL codec for this format";
-        return false;
-    }
+    // ⚠️ The block is MUTATED, never rebuilt, and that is the whole fix.
+    //
+    // Rebuilding it with fillEncodeParams — which is what this did — threw away
+    // two things nobody would notice going:
+    //
+    //   · the extension chain, so intra-refresh silently stopped, while
+    //     intraRefreshEnabled() went on answering true from the flag init()
+    //     set. The receiver is then told the stream repairs itself, rides out a
+    //     loss waiting for a wave that will never come, and gives up on G2's
+    //     15 s guard.
+    //   · the runtime's own corrections, applied by EncodeQuery at init() and
+    //     absent from any freshly built block.
+    //
+    // And it runs constantly: the link governor changes the bitrate about twice
+    // a second on a moving link, so intra-refresh survived roughly half a
+    // second of real streaming. Same shape as bug B4 on AMF — a mid-session
+    // re-application that quietly drops what init() had settled.
+    mfxVideoParam params = m_Params;
+    applyRateControl(params, m_Fps, bitrateKbps, m_Tuning);
 
     // Reset keeps the session and its surfaces; only the rate control changes.
     const mfxStatus status = m_Session.api()->EncodeReset(m_Session.handle(), &params);
@@ -274,6 +288,7 @@ bool VplEncoder::setBitrate(int bitrateKbps, std::string& error)
         error = std::string("could not change the bitrate: ") + VplApi::statusToString(status);
         return false;
     }
+    // ExtParam still points into m_ExtBuffers, a member that outlives this.
     m_Params = params;
     return true;
 }

@@ -1465,3 +1465,55 @@ dans les tests la relecture des pixels — **luma NV12 19..234**, donc une vraie
 image et pas un écran noir, ce que « la session a démarré » n'aurait jamais
 prouvé. La branche WGC des tests s'exécute sur **toute** machine, pas seulement
 sur celles qui en ont besoin.
+
+## 18. oneVPL : audit sans matériel (04/09/2026)
+
+Troisième morceau de la phase I, et le seul qui ne pouvait pas être exécuté : il
+n'y a pas de GPU Intel ici. Le travail utile était donc de relire ce chemin
+contre les invariants que NVENC et AMF respectent, et un vrai défaut en est
+sorti.
+
+### 18.1 ⚠️ `setBitrate` éteignait l'intra-refresh
+
+`setBitrate` reconstruisait le bloc de paramètres de zéro avec
+`fillEncodeParams`, puis appelait `EncodeReset`. Ce bloc neuf jette deux choses
+que personne ne verrait partir :
+
+- **la chaîne d'extension**, donc l'intra-refresh s'arrête — pendant que
+  `intraRefreshEnabled()` continue de répondre vrai depuis le drapeau posé à
+  l'init. Le récepteur est alors informé que le flux se répare seul, encaisse
+  une perte en attendant une vague qui ne viendra jamais, et abandonne sur le
+  garde-fou de 15 s de G2 ;
+- **les corrections du runtime**, appliquées par `EncodeQuery` à l'init et
+  absentes de tout bloc fraîchement construit.
+
+Et ça tourne en permanence : le gouverneur de lien change le débit environ deux
+fois par seconde sur un lien qui bouge, donc l'intra-refresh survivait à peu près
+une demi-seconde de streaming réel.
+
+C'est exactement la forme du bug **B4** sur AMF — une ré-application en cours de
+session qui laisse tomber en silence ce que l'init avait mis en place. Le fait
+que le même piège se soit tendu deux fois, sur deux encodeurs écrits à des
+moments différents, dit que la faute est structurelle et pas d'inattention.
+
+**Correctif** : `applyRateControl()` écrit les champs de débit — et rien d'autre —
+dans un bloc **existant**, et `setBitrate` mute `m_Params` au lieu de le
+reconstruire. C'est ce que NVENC fait depuis toujours (il réutilise `m_Config`) et
+ce qui rend l'erreur impossible plutôt que corrigée. `fillEncodeParams` appelle le
+même helper, donc l'arithmétique n'a qu'un seul endroit.
+
+Vérifié sans matériel (`test_vpl_params`) : après un changement de débit, la
+chaîne d'extension est toujours attachée, la période d'intra-refresh intacte, une
+correction simulée du runtime préservée, et les invariants de latence
+(AsyncDepth 1, pas de B-frames, GOP infini) inchangés.
+
+### 18.2 Ce qui reste vrai : ce chemin n'a jamais encodé une image
+
+NVENC et AMF ont été mesurés sur les machines qu'ils visent. oneVPL, non — et la
+ligne « ready » le dit encore à chaque session. Ni le HDR ni le 4:4:4 n'y sont
+implémentés, et leurs capacités sont **fausses par construction** (§16.3) pour que
+le Selector n'y route jamais une session qui mourrait à l'init.
+
+Bruno aura du matériel Intel plus tard ; à ce moment-là, l'ordre est : lever les
+capacités une par une, dans le même commit que le chemin qu'elles annoncent, et
+jamais avant.

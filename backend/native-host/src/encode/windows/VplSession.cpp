@@ -109,6 +109,33 @@ void VplSession::close()
     }
 }
 
+void applyRateControl(mfxVideoParam& params, int fps, int bitrateKbps, const EncoderTuning& tuning)
+{
+    if (fps <= 0) fps = 60;
+    if (bitrateKbps <= 0) bitrateKbps = 20000;
+
+    // TargetKbps and friends are 16-bit, so anything at or above 65535 kbps
+    // needs the multiplier — and MoonlightWeb genuinely offers up to 150 Mbps.
+    // Without this a 100 Mbps request would silently wrap to a fraction of
+    // itself, which looks like the encoder ignoring the bitrate setting.
+    mfxU16 multiplier = 1;
+    while (bitrateKbps / multiplier > 65000)
+        ++multiplier;
+    params.mfx.BRCParamMultiplier = multiplier;
+    params.mfx.TargetKbps = static_cast<mfxU16>(bitrateKbps / multiplier);
+    params.mfx.MaxKbps = params.mfx.TargetKbps;
+
+    // The buffer, in KB, which is what actually enforces the latency: no single
+    // frame may be so large that it takes several frame times to transmit. See
+    // RateControl.h for why it has a frame-rate floor.
+    const int frameKb =
+        static_cast<int>(vbvBits(static_cast<uint32_t>(bitrateKbps), fps, tuning.vbvFrames)) / 8;
+    const int bufferKb = frameKb > 0 ? frameKb : 1;
+    params.mfx.BufferSizeInKB =
+        static_cast<mfxU16>((bufferKb / multiplier) > 0 ? (bufferKb / multiplier) : 1);
+    params.mfx.InitialDelayInKB = params.mfx.BufferSizeInKB;
+}
+
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,
                       int bitrateKbps, const EncoderTuning& tuning)
 {
@@ -137,26 +164,7 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
                                  : static_cast<mfxU16>(MFX_TARGETUSAGE_7);
     params.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
 
-    // TargetKbps and friends are 16-bit, so anything at or above 65535 kbps
-    // needs the multiplier — and MoonlightWeb genuinely offers up to 150 Mbps.
-    // Without this a 100 Mbps request would silently wrap to a fraction of
-    // itself, which looks like the encoder ignoring the bitrate setting.
-    mfxU16 multiplier = 1;
-    while (bitrateKbps / multiplier > 65000)
-        ++multiplier;
-    params.mfx.BRCParamMultiplier = multiplier;
-    params.mfx.TargetKbps = static_cast<mfxU16>(bitrateKbps / multiplier);
-    params.mfx.MaxKbps = params.mfx.TargetKbps;
-
-    // The buffer, in KB, which is what actually enforces the latency: no single
-    // frame may be so large that it takes several frame times to transmit. See
-    // RateControl.h for why it has a frame-rate floor.
-    const int frameKb =
-        static_cast<int>(vbvBits(static_cast<uint32_t>(bitrateKbps), fps, tuning.vbvFrames)) / 8;
-    const int bufferKb = frameKb > 0 ? frameKb : 1;
-    params.mfx.BufferSizeInKB =
-        static_cast<mfxU16>((bufferKb / multiplier) > 0 ? (bufferKb / multiplier) : 1);
-    params.mfx.InitialDelayInKB = params.mfx.BufferSizeInKB;
+    applyRateControl(params, fps, bitrateKbps, tuning);
 
     // No B-frames, and no keyframe the client did not ask for.
     params.mfx.GopRefDist = 1;
