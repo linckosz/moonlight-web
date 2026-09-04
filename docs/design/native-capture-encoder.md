@@ -590,6 +590,44 @@ tester à la main** : DualRTX a UAC en « élever sans demander », donc pas de
 bureau sécurisé provoquable depuis un script, et verrouiller le poste sans
 l'accord de son utilisateur n'est pas une chose que l'agent fait.
 
+### 9.8 Le budget de l'encodeur suit la cadence réelle (04/09/2026)
+
+Le CBR est un budget **par image** : débit ÷ cadence. La cadence dont l'encodeur
+est configuré est le réglage du stream — ou le rafraîchissement de l'écran quand
+le réglage est 0 — et un jeu ne tourne presque jamais à l'une ni à l'autre. Un
+jeu à 60 fps sur un écran 165 Hz sous un stream « 165 » produit 60 images par
+seconde, chacune dotée d'un 165e du débit : le fil porte 60/165 de ce que le
+joueur a autorisé, et l'image est quantifiée comme si le lien était 2,75 fois
+plus petit. Mesuré au banc (Call of Duty à 60 fps, 40 Mbit/s) : 29 Ko et QP 25
+par image avec le réglage à 165 ; 65 Ko et QP 12 avec le réglage à 60 — même
+contenu, même lien, même encodeur.
+
+`encode::EffectiveCadence` compte les images réellement encodées depuis une
+capture sur des fenêtres d'une seconde et tient la cadence pour laquelle le
+budget est dimensionné. Le budget est déplacé en **multipliant le débit
+transmis à l'encodeur** par cadence configurée ÷ cadence réelle — pas en
+reconfigurant la cadence, parce que les trois encodeurs ont un `setBitrate()`
+à chaud et aucun ne promet un changement de cadence à chaud. Le fil porte
+toujours le débit réglé : (débit × 165/60) × 60 images = débit. Le VBV grandit
+avec, et c'est le but : une image plus grosse est permise parce qu'il en vient
+moins. Le modèle de lien (`LinkOccupancy`) ne voit rien de tout cela — c'est le
+débit du fil, et il ne bouge pas ; la rafale de raffinement multiplie par-dessus.
+
+Sens de variation : une cadence qui **monte** est rattrapée dans le quart de
+seconde (sous-fenêtre de 250 ms — chaque image est désormais trop grosse, et
+une seconde à 2,75× le lien c'est le pointeur qui traîne) ; une cadence qui
+**descend** attend deux fenêtres d'une seconde qui s'accordent (un à-coup ne
+gonfle pas la seconde suivante) ; 15 % d'hystérésis ; jamais sous 30 fps (un
+écran fixe ne capture presque rien, ses passes ont leur propre budget) ni
+au-dessus du réglage (la parole du joueur sur son lien). Log : « frames arrive
+at 59 fps for a 165 fps stream — encoder budget 111864 kbps per second of
+frames (40000 on the wire) ».
+
+Vérifié sur le clip : à 40 Mbit/s, 61 Ko et QP 16 par image en moyenne sur 20 s
+(dont les deux premières à l'ancien budget) contre 29 Ko et QP 25 ; à 20 Mbit/s,
+31 Ko et QP 22 contre 15 Ko et QP 31. Encode +0,3 ms pour des images deux fois
+plus grosses. Le fil reste sous le réglage.
+
 ---
 
 ## 10. Host natif dans l'UI

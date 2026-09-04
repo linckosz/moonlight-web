@@ -877,10 +877,18 @@ private:
         int baseKbps = m_Config.bitrateKbps;
         m_LinkKbps = baseKbps;
         bool boosted = false;
+        // The encoder is handed the budget for the rate frames REALLY come at,
+        // not the configured one — see encode::EffectiveCadence. The still
+        // boost multiplies on top; the link model (m_LinkKbps) never sees
+        // either, it is the wire's rate and the wire's rate does not move.
+        encode::EffectiveCadence effective;
+        effective.start(m_EncodeFps, steadyNowUs());
         auto applyBitrate = [&](int kbps) {
-            if (kbps > 0 && !m_Encoder->setBitrate(kbps, error))
+            if (kbps <= 0) return;
+            if (!m_Encoder->setBitrate(effective.scaledKbps(kbps), error))
                 log::warning("[native] bitrate change refused: " + error);
         };
+        int cadenceLogged = 0;
 
         // The first few bursts, then silence. These are the numbers that say
         // whether any of this worked: what one frame's budget bought, against
@@ -945,6 +953,24 @@ private:
             if (!m_Cadence.admit(stamps.convertedUs)) return true;
             if (!emit(frameNumber, stamps, error)) return false;
             noteReal();
+            // A real picture went out: one more frame in this second's count.
+            // When the second closes on a different rate, the encoder's budget
+            // follows — through the same setBitrate() the boost and the ladder
+            // use, so the three never disagree about what the encoder holds.
+            if (effective.noteFrame(steadyNowUs())) {
+                applyBitrate(boosted ? encode::stillBitrateKbps(baseKbps) : baseKbps);
+                if (cadenceLogged < 5 || effective.changes % 30 == 0) {
+                    cadenceLogged++;
+                    log::info("[native] frames arrive at " + std::to_string(effective.currentFps) +
+                              " fps for a " + std::to_string(effective.configuredFps) +
+                              " fps stream — encoder budget " +
+                              (effective.scaling()
+                                   ? std::to_string(effective.scaledKbps(baseKbps)) +
+                                         " kbps per second of frames (" + std::to_string(baseKbps) +
+                                         " on the wire)"
+                                   : std::string("back to ") + std::to_string(baseKbps) + " kbps"));
+                }
+            }
             return true;
         };
 
