@@ -177,13 +177,13 @@ The client is half of the latency. The native host's encoder was benched the sam
 
 | Finding | Number (RTX 5060 Ti, 1440p, 40 Mbit/s) |
 |---|---|
-| NVENC preset is the lever | P1 encodes in **2.7–3.1 ms** against **4.7–6.5 ms** for P4 (the default), same frame size, +1 QP on a game, +5 QP on scrolling text |
+| NVENC preset is the lever | P1 encodes in **2.7–3.4 ms** against **4.7–7.7 ms** for P4, same frame size; on a first-person shooter (the target content) the average QP is **identical** (25) and nothing tells the decoded pictures apart, a platform game costs +1 QP, scrolling text +5 QP while it moves |
 | Multipass stays | the ULL preset enables quarter-resolution multipass on its own; turning it off saves 0.4 ms but breaks the still-screen refinement burst (QP stalls at 29 instead of reaching 8) |
 | VBV, AQ, codec | the 1/60 s VBV floor holds; temporal AQ does nothing; AV1 < H.264 < HEVC in encode time, all three decode in ~1 ms on this Chrome |
 | Two bugs found on the way | H.264 decoded in **200 ms** (no `bitstream_restriction` in the SPS, the decoder held a whole DPB) → 1 ms; AV1 was never selectable on the native host (a wrong codec bit) |
 | AMD iGPU (through a new cross-GPU copy) | 7.9 ms at 1440p, no knob matters, pre-analysis kills the encoder; 165 fps only at 1080p |
 
-The recommendation (P1, multipass kept) waits for a blind A/B on real streams — `MW_NATIVE_TUNING=preset=1` starts a session with the candidate — before any default moves.
+**Applied on 4 September 2026**: the native host encodes with P1 (multipass kept), after the numbers above and a side-by-side of the decoded streams on the shooter footage. `MW_NATIVE_TUNING` remains the way to start a session with any other setting for a later comparison.
 
 ---
 

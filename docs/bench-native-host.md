@@ -257,7 +257,12 @@ c'est le résultat attendu. La comparaison à 20 Mbit/s (QP 31–32) reste à fa
 8. **AMF (iGPU)** : rien à régler qui compte ; le seul levier est la résolution.
    La pré-analyse est à ne jamais activer en ULL/CBR.
 
-## 8. Recommandation
+## 8. Recommandation — **appliquée le 04/09/2026** (E1)
+
+Bruno a confirmé après le contenu FPS (§6b) : `kDefaultPreset = 1` dans
+`NvencEncoder.cpp`, multipass quart conservé, rien d'autre ne bouge. Vérifié sur
+un flux réel sans `MW_NATIVE_TUNING` : la ligne « NVENC ready » dit `P1/ULL
+multipass=quarter` sans crochet `[bench]`.
 
 **NVENC : passer de P4 à P1, multipass quart conservé, tout le reste inchangé.**
 
