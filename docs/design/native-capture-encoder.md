@@ -717,6 +717,70 @@ images/s et 5,2 ms pendant l'exercice. L'éviction C5 du `FrameSender` garde
 la keyframe (l'émetteur ne dit pas laquelle il a jetée) — à brancher ici plus
 tard.
 
+### 9.11 La cadence s'aligne sur le rafraîchissement du client (04/09/2026)
+
+Un client qui peint sur son vsync — *tearing* coupé, ou un navigateur qui ne
+sait pas déchirer — affiche au plus **une image par rafraîchissement**, et
+seulement au rafraîchissement. Un stream 60 sur un écran client 144 Hz tombe
+alors sur des tics espacés de 2,4 rafraîchissements : certaines images tiennent
+deux rafraîchissements, d'autres trois, et l'œil lit l'alternance comme un
+à-coup alors qu'aucune image n'a été perdue. Le même stream sur 120 Hz est
+parfaitement régulier — 60 divise 120.
+
+Donc quand le client peint sur son vsync, le stream tourne à un **diviseur
+entier du rafraîchissement client** plutôt qu'au réglage exact, dans une fenêtre
+de ±20 % autour de lui : 144 Hz et 60 réglés donnent **72** (un rafraîchissement
+sur deux), 165 Hz donne **55** (un sur trois), 120 Hz garde 60 (un sur deux).
+Le réglage est un vœu sur la fluidité et le budget du lien, pas un contrat ; une
+cadence à un cinquième de lui qui tombe sur la grille du client est l'image la
+plus lisse pour le même coût. Le diviseur le plus proche gagne, le plus rapide
+en cas d'égalité (72 plutôt que 48 pour 60 sur 144 Hz : un joueur qui a demandé
+60 et peut avoir 72 pour la même fluidité est mieux servi).
+
+`AlignedCadence` (`core/CadenceAlign.h`, pur) fait ce choix. La grille de
+`FrameCadence` est tenue en **nanosecondes** : 55 fps sur 165 Hz, c'est trois
+périodes de 6060,6 µs = 18181,8 µs, et une grille tronquée au microseconde
+glisserait d'une image toutes les deux minutes (mesuré en test sur 99 000
+présents : zéro dérive, chaque écart de trois présents exactement). Le budget
+de l'encodeur suit par `EffectiveCadence::retarget()` — l'encodeur garde le
+débit par image pour lequel il a été construit, et le débit transmis est
+multiplié à l'instant où la grille change, jamais une seconde d'images
+sur-dimensionnées pendant qu'elle passe de 60 à 72.
+
+**Quand la règle ne s'applique pas**, la garde de cadence ordinaire (§9.6)
+reprend telle quelle : le client *déchire* (Chromium desktop, le défaut) — il
+n'y a pas de grille contre laquelle battre, l'image est peinte dès qu'elle est
+décodée, et le réglage brut est la plus basse latence ; le réglage est 0 (le
+rythme de l'hôte) ; aucun diviseur ne tombe dans la fenêtre (le réglage tient) ;
+ou le diviseur demande plus que l'écran hôte ne produit (hôte 60 Hz, client
+144 Hz, 60 réglés → 72 : l'hôte n'a pas 72 présents à donner, le réglage tient).
+
+**Le chemin.** Le client mesure son rafraîchissement par `requestAnimationFrame`
+(`util/RefreshRate.js`) : la **moyenne** des bons deltas donne la période au
+dixième de pour-cent (les horodatages sont grossis à la milliseconde sans
+isolation cross-origin, donc un delta seul ne distingue pas 165 de 166,7 ; une
+médiane trie d'abord les images que le navigateur a sautées). La valeur part
+dans `/start` (`client_refresh_mhz`, `client_vsync = !tearing`) ; l'hôte choisit
+la cadence à l'ouverture et la journalise (« 55 fps stream for a 165 Hz client
+presenting on vsync (60 set, every 3rd refresh) »). Quand la fenêtre change
+d'écran en cours de stream, le nouveau taux part en `clientrefresh {mhz, vsync}`
+sur le canal d'input et l'hôte re-choisit **entre deux images**, sans rien
+relancer (`Session::setClientRefresh`, natif seulement, `qobject_cast` sur les
+deux relais). Le message est traité comme `framefloor` : accepté par
+`InputPolicy`, inerte pour tout host GameStream.
+
+Vérifié le 04/09 sur l'instance dev (client Chrome dédié, *tearing* coupé, écran
+165 Hz) : `/start` porte 164 972 mHz, l'hôte ouvre à **55 fps, un
+rafraîchissement sur trois**, NVENC configuré `2560x1440@55`, budget par image
+tenu ; fin de session 4 771 présents, 797 non portés, arrêt propre. **Limite
+mesurée** : Chrome garde son horloge `requestAnimationFrame` à 165 Hz même
+lorsque la fenêtre est physiquement sur l'écran 60 Hz, donc le re-choix en cours
+de session ne se déclenche pas sur cette machine — le navigateur ne distingue
+pas le taux par moniteur. Le chemin de re-choix est couvert par test unitaire
+(`retarget`) ; sa démonstration en vrai demande un client qui rapporte
+effectivement deux taux (à voir chez Bruno, multi-moniteurs de fréquences
+différentes).
+
 ---
 
 ## 10. Host natif dans l'UI

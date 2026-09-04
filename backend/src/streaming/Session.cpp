@@ -582,6 +582,10 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // Intra-refresh is only worth its cost when the client will decode
         // through the damage, so the client's word is what turns it on.
         nativeParams.intraRefresh = media.nativeHost.rideOutLoss;
+        // The client's screen, so the cadence can land on its grid when it
+        // paints on vsync — see SessionConfig::clientRefreshMilliHz.
+        nativeParams.clientRefreshMilliHz = m_ClientRefreshMilliHz;
+        nativeParams.clientVsync = m_ClientVsync;
 
         startEngine = [native, nativeParams]() { native->startCapture(nativeParams); };
     } else {

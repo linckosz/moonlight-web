@@ -154,6 +154,16 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.hdr = params.hdr;
     config.yuv444 = params.yuv444;
     config.intraRefresh = params.intraRefresh;
+    // The client's screen: what /start carried, unless a `clientrefresh`
+    // message already said otherwise (a session that starts after the
+    // client's window moved).
+    if (m_ClientRefreshKnown.load(std::memory_order_acquire)) {
+        config.clientRefreshMilliHz = m_ClientRefreshMilliHz.load(std::memory_order_relaxed);
+        config.clientVsync = m_ClientVsync.load(std::memory_order_relaxed);
+    } else {
+        config.clientRefreshMilliHz = params.clientRefreshMilliHz;
+        config.clientVsync = params.clientVsync;
+    }
 
     // The bench's encoder knobs, on a real session, from the environment: the
     // one way to put two encoder settings in front of a person on the same
@@ -511,6 +521,14 @@ void NativeMediaEngine::setFrameFloorFps(int fps)
 void NativeMediaEngine::invalidateReference(uint32_t frameNumber)
 {
     if (m_Session) m_Session->invalidateReference(frameNumber);
+}
+
+void NativeMediaEngine::setClientRefresh(int milliHz, bool vsync)
+{
+    m_ClientRefreshMilliHz.store(milliHz, std::memory_order_relaxed);
+    m_ClientVsync.store(vsync, std::memory_order_relaxed);
+    m_ClientRefreshKnown.store(true, std::memory_order_release);
+    if (m_Session) m_Session->setClientRefresh(milliHz, vsync);
 }
 
 bool NativeMediaEngine::referenceInvalidation() const

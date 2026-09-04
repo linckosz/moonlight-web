@@ -178,6 +178,7 @@ if(MW_BUILD_TESTS)
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp
         tests/test_frame_cadence.cpp
+        tests/test_cadence_align.cpp
         tests/test_restart_backoff.cpp
         tests/test_rate_control.cpp
         tests/test_audio_pacer.cpp

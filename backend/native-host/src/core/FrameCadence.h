@@ -77,6 +77,14 @@ namespace mw::native {
 /// and everything goes through. It is the right choice when the link can carry
 /// it.
 ///
+/// ── The grid is kept in nanoseconds ─────────────────────────────────────────
+///
+/// A cadence aligned on the client's refresh (CadenceAlign.h) is an exact
+/// multiple of a measured period — three 165 Hz periods are 18181.8 µs — and a
+/// grid that truncated it to whole microseconds would slip a present every two
+/// minutes. The interval and the grid are held in nanoseconds; the loop's
+/// stamps stay in microseconds, the unit everything else here speaks.
+///
 /// Pure and clocked by the caller, so it can be tested without a display.
 class FrameCadence
 {
@@ -92,42 +100,55 @@ public:
     /// refresh, which sets how late an admitted present may be before the grid
     /// is re-anchored on it (see above); 0 falls back to half an interval.
     explicit FrameCadence(int fps, int displayHz = 0)
-        : m_IntervalUs(fps > 0 ? 1000000 / fps : 0)
-        , m_ReanchorUs(displayHz > 0 ? 1000000 / displayHz : m_IntervalUs / 2)
+        : m_IntervalNs(fps > 0 ? static_cast<int64_t>(1000000 / fps) * 1000 : 0)
+        , m_ReanchorNs(displayHz > 0 ? static_cast<int64_t>(1000000 / displayHz) * 1000
+                                     : m_IntervalNs / 2)
     {}
 
-    bool enabled() const { return m_IntervalUs > 0; }
-    int64_t intervalUs() const { return m_IntervalUs; }
-    int64_t slackUs() const { return m_IntervalUs / kSlackDivisor; }
-    int64_t reanchorUs() const { return m_ReanchorUs; }
+    /// The same gate on an exact interval rather than a whole number of frames
+    /// per second — for a cadence aligned on the client's refresh, where the
+    /// interval is a multiple of a measured period and rarely a round number.
+    static FrameCadence fromIntervalNs(int64_t intervalNs, int displayHz)
+    {
+        FrameCadence c(0, displayHz);
+        c.m_IntervalNs = intervalNs > 0 ? intervalNs : 0;
+        if (displayHz <= 0) c.m_ReanchorNs = c.m_IntervalNs / 2;
+        return c;
+    }
+
+    bool enabled() const { return m_IntervalNs > 0; }
+    int64_t intervalUs() const { return m_IntervalNs / 1000; }
+    int64_t slackUs() const { return intervalUs() / kSlackDivisor; }
+    int64_t reanchorUs() const { return m_ReanchorNs / 1000; }
 
     /// A new picture is ready at @p nowUs. True: encode it now. False: skip it
     /// — the next present is the one that will carry the interval.
     bool admit(int64_t nowUs)
     {
         if (!enabled()) return true;
-        if (nowUs + slackUs() < m_NextDueUs) {
+        const int64_t nowNs = nowUs * 1000;
+        if (nowNs + slackUs() * 1000 < m_NextDueNs) {
             m_Skipped++;
             return false;
         }
-        if (nowUs - m_NextDueUs > m_ReanchorUs)
-            m_NextDueUs = nowUs + m_IntervalUs;
+        if (nowNs - m_NextDueNs > m_ReanchorNs)
+            m_NextDueNs = nowNs + m_IntervalNs;
         else
-            m_NextDueUs += m_IntervalUs;
+            m_NextDueNs += m_IntervalNs;
         return true;
     }
 
     /// When the next present will be admitted. Meaningful only when enabled.
-    int64_t nextDueUs() const { return m_NextDueUs; }
+    int64_t nextDueUs() const { return m_NextDueNs / 1000; }
 
     /// Presents that were not encoded — what the display produced that the
     /// stream did not carry.
     int64_t skipped() const { return m_Skipped; }
 
 private:
-    int64_t m_IntervalUs = 0;
-    int64_t m_ReanchorUs = 0;
-    int64_t m_NextDueUs = 0;
+    int64_t m_IntervalNs = 0;
+    int64_t m_ReanchorNs = 0;
+    int64_t m_NextDueNs = 0;
     int64_t m_Skipped = 0;
 };
 

@@ -23,6 +23,7 @@ void run_vpl_params_tests();
 void run_ds4_mapping_tests();
 void run_stage_stats_tests();
 void run_frame_cadence_tests();
+void run_cadence_align_tests();
 void run_restart_backoff_tests();
 void run_rate_control_tests();
 void run_audio_pacer_tests();
@@ -45,6 +46,7 @@ int main()
     run_ds4_mapping_tests();
     run_stage_stats_tests();
     run_frame_cadence_tests();
+    run_cadence_align_tests();
     run_restart_backoff_tests();
     run_rate_control_tests();
     run_audio_pacer_tests();

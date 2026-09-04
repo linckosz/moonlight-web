@@ -85,10 +85,19 @@ struct SessionConfig
     /// user needs to see where they are pointing.
     bool captureCursor = true;
 
-    /// The client's display refresh, in millihertz, when the browser reported
-    /// one. Lets the engine align capture phase with the client's vsync and
-    /// shave up to a frame of beat (§9.4). Zero means "unknown, free-run".
+    /// The client's display refresh, in millihertz, when the browser measured
+    /// one. Zero means "unknown". Read together with clientVsync: a client
+    /// that presents on its vsync gets a stream cadence that is an integer
+    /// divisor of this rate, within a fifth of `fps`, so frames land on its
+    /// grid instead of beating against it (§9.11, CadenceAlign.h). Ignored
+    /// when `fps` is 0 (the host's own rate) or when the client tears.
     int clientRefreshMilliHz = 0;
+
+    /// True when the client paints frames on its display's vsync — tearing
+    /// off, or a browser that cannot tear. False, the default, means frames
+    /// are painted the moment they are decoded and there is no grid to align
+    /// on: the setting is followed as it is, which is the lowest latency.
+    bool clientVsync = false;
 
     // ── Bench-only, below this line ─────────────────────────────────────────
     //

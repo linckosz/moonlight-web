@@ -271,6 +271,8 @@ int runStreamWorker(QCoreApplication& app)
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));
     // Absent (an older parent) → off, which is exactly today's behaviour.
     session->setRideOutLoss(cfg["rideOutLoss"].toBool(false));
+    session->setClientPresentation(cfg["clientRefreshMilliHz"].toInt(0),
+                                   cfg["clientVsync"].toBool(false));
     session->setBackend(backend);
     session->setClientUniqueId(cfg["clientUniqueId"].toString());
     session->setPreferResume(cfg["preferResume"].toBool(false));

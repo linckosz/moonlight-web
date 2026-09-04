@@ -64,6 +64,8 @@ const RIDE_OUT_LOSS = true;
  */
 
 import { loadOrCreateIdentity, rememberHostIdentity } from '../util/pairingCrypto.js';
+import { resolveTearing } from '../util/BrowserDetect.js';
+import { currentRefreshMilliHz } from '../util/RefreshRate.js';
 
 export class BackendClient {
     /** Cached promise for the per-run admin key (see _adminKey). */
@@ -353,6 +355,12 @@ export class BackendClient {
                 appId,
                 client_uniqueid: this.clientUniqueId(),
                 ride_out_loss: RIDE_OUT_LOSS,
+                // This screen's measured refresh and whether frames wait for
+                // its vsync (tearing off). The native host runs a vsync client
+                // at a divisor of its refresh so frames land on its grid — see
+                // util/RefreshRate.js. Other hosts ignore both.
+                client_refresh_mhz: currentRefreshMilliHz(),
+                client_vsync: !resolveTearing(streamingSettings),
                 ...streamingSettings,
             },
             // Fail fast if the backend hangs/crashes instead of waiting for the

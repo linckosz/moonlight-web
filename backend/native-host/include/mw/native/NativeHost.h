@@ -258,6 +258,15 @@ public:
     /// quiet, between two frames, with nothing renegotiated (§9.3). Safe from
     /// any thread; a report on a session that is not running is dropped.
     virtual void reportLink(const LinkFeedback& feedback) = 0;
+
+    /// The client's display changed under a running session — its window
+    /// moved to another screen, or its refresh rate changed. Same contract as
+    /// SessionConfig::clientRefreshMilliHz / clientVsync: the stream's cadence
+    /// is re-chosen against it (§9.11), between two frames, and the encoder's
+    /// per-frame budget follows. Nothing else moves — the encoder keeps the
+    /// rate it was built for. Safe from any thread; ignored when the session
+    /// runs at the host's own rate.
+    virtual void setClientRefresh(int milliHz, bool vsync) = 0;
 };
 
 /// Entry point to the engine.

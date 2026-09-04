@@ -29,6 +29,7 @@ import { Toast } from './Toast.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
 import { JitterController } from '../stream/JitterController.js';
 import { FramePacer } from '../stream/FramePacer.js';
+import { measureRefreshRate, onRefreshRateChange } from '../util/RefreshRate.js';
 import { PeriodicStallDetector } from '../stream/PeriodicStallDetector.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
 import { armAudioPlayRetry } from '../util/audioAutoplay.js';
@@ -639,6 +640,14 @@ export class StreamView {
         // `mousemove` delivers. Decided in _bindPointerRaw; while it is on, the
         // mousemove handlers keep their cursor bookkeeping and stop sending.
         this._nativeHost = opts.nativeHost === true;
+        // The screen this view paints on, as the native host knows it: frames
+        // wait for its vsync unless tearing is on, and /start carried its
+        // measured refresh. A vsync client gets a stream cadence that divides
+        // its refresh; when the window changes screen mid-stream the new rate
+        // goes out as `clientrefresh` — see _startRefreshWatch.
+        this._clientVsync = !this._tearing;
+        this._sentClientRefresh = opts.clientRefreshMilliHz || 0;
+        this._offRefreshChange = null;
         // The host heals a lost frame with a delta (NVENC reference
         // invalidation, /start says so): after a gap this view names the
         // frames it missed and keeps decoding, instead of discarding deltas
@@ -3783,6 +3792,8 @@ export class StreamView {
             // governor (DataChannel transport; the media transport reports its
             // RTP counters through clientstats instead).
             this._startLinkReporting();
+            // …and this screen's refresh, whenever it changes under the stream.
+            this._startRefreshWatch();
 
             if (this._transport === 'webrtc-media') {
                 // Media track mode: video arrives natively via <video> element.
@@ -4144,6 +4155,7 @@ export class StreamView {
         }
         this._stopAudioStatsPolling();
         this._stopLinkReporting();
+        this._stopRefreshWatch();
     }
 
     // ── Link report for the native host's rate governor ──────────────────
@@ -4207,6 +4219,38 @@ export class StreamView {
             this._linkTimer = null;
         }
         this._link = null;
+    }
+
+    // ── This screen's refresh, for the native host's cadence ─────────────
+    //
+    // /start carried what the monitor had measured by then (possibly nothing,
+    // on a page that launched within its first second). From here on the view
+    // measures once more now and listens for a change — the window moving to
+    // another monitor — and tells the host only when the number really moved.
+    // The host re-chooses its cadence between two frames; nothing relaunches.
+    // Native host only: no other host can be told how to pace its capture.
+    _startRefreshWatch() {
+        if (!this._nativeHost || this._offRefreshChange) return;
+        const tell = (mhz) => {
+            if (!mhz) return;
+            const before = this._sentClientRefresh;
+            if (before && Math.abs(mhz - before) <= before * 0.01) return;
+            this._sentClientRefresh = mhz;
+            this._sendToHost({ type: 'clientrefresh', mhz, vsync: this._clientVsync });
+            console.log(
+                `[StreamView] Screen refresh ${(mhz / 1000).toFixed(1)} Hz ` +
+                    `(${this._clientVsync ? 'vsync' : 'tearing'}) told to the host`,
+            );
+        };
+        this._offRefreshChange = onRefreshRateChange(tell);
+        measureRefreshRate().then(tell, () => {});
+    }
+
+    _stopRefreshWatch() {
+        if (this._offRefreshChange) {
+            this._offRefreshChange();
+            this._offRefreshChange = null;
+        }
     }
 
     /** One frame arrived at @p arrivalMs (performance.now) carrying the host's

@@ -729,6 +729,11 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         // native host only, full reasoning in DataChannelRelay's handler.
         if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
             native->setFrameFloorFps(msg["fps"].toInt(0));
+    } else if (type == "clientrefresh") {
+        // The client's screen changed mid-session — native host only, see
+        // DataChannelRelay's handler.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
+            native->setClientRefresh(msg["mhz"].toInt(0), msg["vsync"].toBool(false));
     } else if (type == "request_idr") {
         qInfo() << "[MediaTrackRelay] Requesting IDR frame via DataChannel (browser)";
         sendIdrRequestThrottled(true);

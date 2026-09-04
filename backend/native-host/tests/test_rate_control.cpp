@@ -342,6 +342,42 @@ void run_rate_control_tests()
         CHECK_EQ(c.changes, 1);
     }
 
+    SECTION("EffectiveCadence — retarget: the gate moved, the budget follows at once");
+    {
+        // Encoder built for 60. The client's screen changes and the gate now
+        // admits 72 a second: each frame must get 60/72 of its budget so the
+        // wire still carries the setting.
+        EffectiveCadence c;
+        c.start(60, 0);
+        CHECK(c.retarget(72));
+        CHECK_EQ(c.configuredFps, 72);
+        CHECK_EQ(c.encoderFps, 60);
+        CHECK_EQ(c.currentFps, 72);
+        CHECK(c.scaling());
+        CHECK_EQ(c.scaledKbps(36000), 36000 * 60 / 72);
+        CHECK_EQ(static_cast<int64_t>(c.scaledKbps(36000)) * 72 / 60, 36000);
+        // Frames measured above the new gate never inflate past it.
+        CHECK(!c.evaluate(90));
+        CHECK_EQ(c.currentFps, 72);
+        // Back to 60: no scaling, same as never having moved.
+        CHECK(c.retarget(60));
+        CHECK(!c.scaling());
+        CHECK_EQ(c.scaledKbps(36000), 36000);
+        // Same value again: nothing to do.
+        CHECK(!c.retarget(60));
+        CHECK(!c.retarget(0));
+
+        // Down to 55 on a 60 encoder: bigger frames, fewer of them.
+        CHECK(c.retarget(55));
+        CHECK_EQ(c.scaledKbps(36000), 36000 * 60 / 55);
+        // A game at 30 under the 55 gate still lowers after two windows, from
+        // the encoder's 60 — not from 55.
+        c.evaluate(30);
+        CHECK(c.evaluate(30));
+        CHECK_EQ(c.currentFps, 30);
+        CHECK_EQ(c.scaledKbps(36000), 36000 * 60 / 30);
+    }
+
     SECTION("EffectiveCadence — bounded by 30 below and the setting above");
     {
         EffectiveCadence c;

@@ -176,7 +176,13 @@ struct EffectiveCadence
     static constexpr int kHysteresisPercent = 15;
     static constexpr int kLowerAfterWindows = 2;
 
+    /// The stream's cadence: what the gate admits, and the ceiling of the
+    /// measured rate. Starts as the encoder's own rate; retarget() moves it
+    /// when the client's refresh changes mid-session (CadenceAlign.h).
     int configuredFps = 60;
+    /// The rate the encoder was INITIALIZED for — the one its per-frame budget
+    /// is bitrate / this. Fixed for the session: no encoder changes it hot.
+    int encoderFps = 60;
     /// What the encoder's budget is dimensioned for right now.
     int currentFps = 60;
     int64_t windowStartUs = 0;
@@ -190,6 +196,7 @@ struct EffectiveCadence
     void start(int fps, int64_t nowUs)
     {
         configuredFps = fps > 0 ? fps : 60;
+        encoderFps = configuredFps;
         currentFps = configuredFps;
         windowStartUs = nowUs;
         raiseWindowStartUs = nowUs;
@@ -261,16 +268,36 @@ struct EffectiveCadence
         return false;
     }
 
+    /// The stream's cadence changed under a running encoder — the client's
+    /// refresh moved and the gate now admits @p fps a second. The encoder
+    /// keeps its own rate; the budget follows through scaledKbps(), at once:
+    /// a gate that just went from 60 to 72 must not spend a second handing
+    /// out 60-sized frames 72 times. Returns true when the scaled bitrate
+    /// changed.
+    bool retarget(int fps)
+    {
+        if (fps <= 0 || fps == configuredFps) return false;
+        const int before = scaledKbps(1000000);
+        configuredFps = fps;
+        // Whatever the measurement said, frames now come at the new gate's
+        // rate at most, and at it in practice while the screen moves.
+        currentFps = fps;
+        lowerStreak = 0;
+        changes++;
+        return scaledKbps(1000000) != before;
+    }
+
     /// The bitrate to hand the encoder so that a frame at the current rate
-    /// gets the budget the configured bitrate implies at the configured rate.
+    /// gets the budget the configured bitrate implies at the rate the encoder
+    /// was initialized for.
     int scaledKbps(int kbps) const
     {
-        if (currentFps <= 0 || currentFps >= configuredFps) return kbps;
-        const int64_t scaled = static_cast<int64_t>(kbps) * configuredFps / currentFps;
+        if (currentFps <= 0 || currentFps == encoderFps) return kbps;
+        const int64_t scaled = static_cast<int64_t>(kbps) * encoderFps / currentFps;
         return static_cast<int>(scaled);
     }
 
-    bool scaling() const { return currentFps < configuredFps; }
+    bool scaling() const { return currentFps != encoderFps; }
 };
 
 /// The budget a frame gets while the screen is not moving, as a multiple of the
