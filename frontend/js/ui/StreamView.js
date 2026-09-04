@@ -546,9 +546,10 @@ export class StreamView {
         } else if (hdrMode === 'browser') {
             console.warn(
                 '[StreamView] HDR: ' +
-                    videoCodec +
-                    ' has no software decode here and the display is SDR — ' +
-                    'the browser tone-maps on import',
+                    (forceCanvas2d
+                        ? 'Canvas2D forced'
+                        : videoCodec + ' has no software decode here and the display is SDR') +
+                    ' — the browser tone-maps on import',
             );
         }
         this._videoEnhancementAlgo = algo;
