@@ -542,6 +542,7 @@
         "statStageTotal": "Hôte · total",
         "statLossNetwork": "Images perdues (réseau)",
         "statLossJitter": "Images jetées (gigue)",
+        "statRecovery": "Récupérations (décodeur · arrêts · ride-out)",
         "periodicStallWarning": "Saccades détectées : quelque chose interrompt le Wi-Fi de cet appareil toutes les {{period}}ms, à intervalle régulier. Sur du matériel Apple c'est presque toujours AirDrop et Continuité, qui partagent la puce Wi-Fi. Désactiver AirDrop le temps de la session suffit en général.",
         "periodicStallDismiss": "Ne plus afficher",
         "periodicStallTitle": "Saccades détectées",

@@ -542,6 +542,7 @@
         "statStageTotal": "Host · total",
         "statLossNetwork": "Frames lost (network)",
         "statLossJitter": "Frames dropped (jitter)",
+        "statRecovery": "Recoveries (decoder · stalls · ride-out)",
         "periodicStallWarning": "Stutter detected: something interrupts this device's Wi-Fi every {{period}}ms, on a timer. On Apple hardware that is almost always AirDrop and Continuity, which share the Wi-Fi chip. Turning AirDrop off for the session usually clears it.",
         "periodicStallDismiss": "Don't show again",
         "periodicStallTitle": "Stutter detected",

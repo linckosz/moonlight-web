@@ -549,6 +549,11 @@ bool NativeMediaEngine::intraRefreshActive() const
     return m_Session && m_Session->info().intraRefresh;
 }
 
+int NativeMediaEngine::intraRefreshFrames() const
+{
+    return intraRefreshActive() ? m_Session->info().intraRefreshFrames : 0;
+}
+
 QString NativeMediaEngine::describeSession() const
 {
     if (!m_Session) return {};

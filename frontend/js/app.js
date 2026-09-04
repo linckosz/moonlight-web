@@ -1935,6 +1935,9 @@ const MoonlightApp = {
             // Its encoder heals a lost frame with a delta (reference
             // invalidation): the view then decodes through a gap.
             refInvalidation: result.ref_invalidation === true,
+            // Frames per intra-refresh wave (0 when the stream does not
+            // refresh that way): sizes the ride-out watchdog in frames.
+            intraRefreshFrames: Number(result.intra_refresh_frames) || 0,
             // What /start told the host this screen refreshes at, so the view
             // only speaks up again when the number changes.
             clientRefreshMilliHz: currentRefreshMilliHz(),

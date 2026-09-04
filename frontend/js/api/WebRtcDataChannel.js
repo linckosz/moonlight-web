@@ -147,7 +147,16 @@ export class WebRtcDataChannel {
         this.onSessionEnded = null; // () the owner ended the session we were invited to
 
         // Stats
-        this.stats = { framesReceived: 0, chunksReceived: 0, framesDropped: 0, framesAssembled: 0 };
+        this.stats = {
+            framesReceived: 0,
+            chunksReceived: 0,
+            framesDropped: 0,
+            framesAssembled: 0,
+            // Episodes of silence longer than STARVATION_TIMEOUT_MS, and
+            // ride-outs that ran their course without the stream recovering.
+            stalls: 0,
+            rideOutFailed: 0,
+        };
 
         // Reassembly buffers: Map<frame_id, { chunks: Uint8Array[], total: number, keyframe: boolean, firstChunkTime: number }>
         this._reassembly = new Map();
@@ -163,7 +172,15 @@ export class WebRtcDataChannel {
         // to kick-start the decoder.
         this._lastAssembledTime = 0;
         this._starvationRequested = false;
-        this.STARVATION_TIMEOUT_MS = 1000; // 1s without a frame — avoids false positives at 60fps with jitter
+        // Not "a few frame intervals": a still screen legitimately goes quiet.
+        // The native host sends a liveness frame every 500 ms on a screen where
+        // nothing moves (and Sunshine sends nothing at all), so this has to sit
+        // above that floor with margin, or every paused desktop would read as a
+        // stalled stream. 1 s is that margin; the host sized its floor to it.
+        this.STARVATION_TIMEOUT_MS = 1000;
+        // When the current silence began, for the "resumed after N ms" line;
+        // 0 while frames flow.
+        this._stalledSince = 0;
 
         // Guard
         this._stopping = false;
@@ -263,6 +280,41 @@ export class WebRtcDataChannel {
         // opens a fresh 2.5 s window and the watchdog's verdict is thrown away
         // the moment it is reached.
         this._rideOutFailed = false;
+        // The wave's period in frames, when the host said it (/start
+        // intra_refresh_frames). The wave advances once per frame ENCODED, so
+        // its duration is not 2 s but "period frames at whatever rate frames
+        // actually come": a game presenting at 30 under a 165 fps stream makes
+        // a 330-frame sweep last 11 s, and a 2.5 s clock would have called it
+        // failed four times over. So the watchdog counts frames it receives
+        // (a frame not received advanced the wave too, but did not reach us —
+        // counting only ours is the conservative side) against 1.2 periods,
+        // with the wall clock kept as a backstop for a stream that stops. 0 =
+        // period unknown, the 2.5 s clock stands alone.
+        this.rideOutFrames = 0;
+        this._rideOutFramesSeen = 0;
+        this.RIDE_OUT_HARD_MAX_MS = 15000;
+        // Set from the /start reply when the host heals a named loss with a
+        // delta (ref_invalidation). Recovery then belongs to StreamView's gap
+        // handler, which knows WHICH frames are missing and tells the host;
+        // every keyframe request this transport would make on its own — an
+        // incomplete frame, a stale one, a silence — is at best redundant with
+        // that and at worst the largest frame there is, sent down a link that
+        // just dropped something. So they are all counted here and sent
+        // nowhere. Off for every host but the native one; nothing changes for
+        // GameStream.
+        this.healsByInvalidation = false;
+        this._idrSuppressed = 0;
+    }
+
+    /**
+     * The page is back from the background. The silence it caused was the
+     * browser's, not the link's: do not count it as a stall, and do not act
+     * on it now that frames flow again.
+     */
+    noteResumed() {
+        this._lastAssembledTime = performance.now();
+        this._starvationRequested = false;
+        this._stalledSince = 0;
     }
 
     /**
@@ -1245,6 +1297,47 @@ export class WebRtcDataChannel {
         // delivering chunks of incomplete frames must still trigger starvation.
         this._lastAssembledTime = performance.now();
         this._starvationRequested = false;
+        if (this._stalledSince) {
+            console.warn(
+                '[WebRTC] Stream resumed after ' +
+                    Math.round(this._lastAssembledTime - this._stalledSince) +
+                    ' ms of silence (stall ' +
+                    this.stats.stalls +
+                    ')',
+            );
+            this._stalledSince = 0;
+        }
+        // One more frame of the refresh wave seen, while a gap is being ridden out.
+        if (this._rideOutSince) this._rideOutFramesSeen++;
+
+        // Ordered delivery: a frame this one overtook can never complete —
+        // its missing chunks were given up on by the sender (maxRetransmits)
+        // or they would have come first. Declare it lost now rather than
+        // 500 ms from now (FRAME_TIMEOUT_MS), which is how long the picture
+        // would otherwise stay one frame behind the one it could show. Only
+        // on the native path: the GameStream path keeps its clock.
+        if (this.healsByInvalidation && this._reassembly.size > 0) {
+            for (const [id, older] of this._reassembly) {
+                if (id >= frameId || older.completed) continue;
+                this.stats.framesDropped++;
+                if (this._frameLogCount < 5) {
+                    console.warn(
+                        '[WebRTC] Frame #' +
+                            id +
+                            ' overtaken by #' +
+                            frameId +
+                            ' with ' +
+                            older.received +
+                            '/' +
+                            older.total +
+                            ' chunks — lost',
+                    );
+                    this._frameLogCount++;
+                }
+                if (this.onFrameLoss) this.onFrameLoss(id, older.keyframe);
+                this._reassembly.delete(id);
+            }
+        }
 
         // Keyframe assembled: IDR recovery completed — reset the request backoff.
         if (entry.keyframe) {
@@ -1352,6 +1445,14 @@ export class WebRtcDataChannel {
 
         // Starvation detection: if no frame was assembled for STARVATION_TIMEOUT_MS
         // and we haven't already requested an IDR for this episode, request one.
+        //
+        // With a host that heals by invalidation there is nothing to request:
+        // a frame that has not come is not a frame that was lost. If frames
+        // were dropped on the way, the first one to arrive carries a frameId
+        // gap and StreamView names the missing ones to the host; if none were,
+        // the stream simply resumes. Either way a keyframe here would be
+        // waste. The episode is still counted and timed — it is the number
+        // that says how often the picture froze.
         if (
             !this._starvationRequested &&
             this._lastAssembledTime > 0 &&
@@ -1359,9 +1460,25 @@ export class WebRtcDataChannel {
             this.stats.framesAssembled > 5 /* skip initial quiet period */
         ) {
             this._starvationRequested = true;
-            this._requestIdrFrame(
-                'starvation (' + Math.round(now - this._lastAssembledTime) + 'ms since last frame)',
-            );
+            this.stats.stalls++;
+            this._stalledSince = this._lastAssembledTime;
+            if (this.healsByInvalidation) {
+                if (this.stats.stalls <= 5 || this.stats.stalls % 20 === 0) {
+                    console.warn(
+                        '[WebRTC] No frame for ' +
+                            Math.round(now - this._lastAssembledTime) +
+                            ' ms — waiting, the host names what is lost (stall ' +
+                            this.stats.stalls +
+                            ')',
+                    );
+                }
+            } else {
+                this._requestIdrFrame(
+                    'starvation (' +
+                        Math.round(now - this._lastAssembledTime) +
+                        'ms since last frame)',
+                );
+            }
         }
     }
 
@@ -1372,6 +1489,22 @@ export class WebRtcDataChannel {
     _requestIdrFrame(reason) {
         const now = performance.now();
 
+        // The host heals what it is told it lost: StreamView tells it. Nothing
+        // this transport could ask for on its own would help — see the flag.
+        if (this.healsByInvalidation) {
+            this._idrSuppressed++;
+            if (this._idrSuppressed <= 3 || this._idrSuppressed % 50 === 0) {
+                console.log(
+                    '[WebRTC] No IDR asked for (' +
+                        reason +
+                        ') — the host heals named losses with deltas (' +
+                        this._idrSuppressed +
+                        ' so far)',
+                );
+            }
+            return;
+        }
+
         // Riding it out: the stream carries a moving band of intra blocks, so
         // the picture repairs itself over one cycle. Asking for a keyframe here
         // would undo that AND send the largest frame there is down a link that
@@ -1379,19 +1512,35 @@ export class WebRtcDataChannel {
         //
         // The watchdog is what makes this safe to try: if the picture is still
         // not right after one cycle plus a margin, the wave is not doing its
-        // job and we fall back to exactly today's recovery.
+        // job and we fall back to exactly today's recovery. "One cycle" is
+        // counted in frames received when the host said how long its wave is,
+        // on the clock otherwise — see rideOutFrames.
         if (this.rideOutLoss && !this._rideOutFailed) {
             if (!this._rideOutSince) {
                 this._rideOutSince = now;
+                this._rideOutFramesSeen = 0;
                 console.log('[WebRTC] Riding out a gap (' + reason + ') — no IDR requested');
                 return;
             }
-            if (now - this._rideOutSince < this.RIDE_OUT_MAX_MS) return;
-            console.warn(
-                '[WebRTC] Ride-out did not recover after ' +
-                    Math.round(now - this._rideOutSince) +
-                    ' ms — falling back to an IDR request',
-            );
+            const elapsedMs = now - this._rideOutSince;
+            const waveHadItsChance =
+                this.rideOutFrames > 0
+                    ? this._rideOutFramesSeen >= Math.ceil(this.rideOutFrames * 1.2) ||
+                      elapsedMs >= this.RIDE_OUT_HARD_MAX_MS
+                    : elapsedMs >= this.RIDE_OUT_MAX_MS;
+            if (!waveHadItsChance) return;
+            this.stats.rideOutFailed++;
+            if (this.stats.rideOutFailed <= 3 || this.stats.rideOutFailed % 20 === 0) {
+                console.warn(
+                    '[WebRTC] Ride-out did not recover after ' +
+                        Math.round(elapsedMs) +
+                        ' ms / ' +
+                        this._rideOutFramesSeen +
+                        ' frames — falling back to an IDR request (' +
+                        this.stats.rideOutFailed +
+                        ' so far)',
+                );
+            }
             this._rideOutSince = 0;
             this._rideOutFailed = true;
         }

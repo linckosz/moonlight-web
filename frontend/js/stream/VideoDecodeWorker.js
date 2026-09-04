@@ -128,7 +128,10 @@ const S = {
     QUEUE_RESET_MS: 1000,
     MAX_RECOVERY_ATTEMPTS: 10,
 
-    stats: { received: 0, decoded: 0, rendered: 0, dropped: 0 },
+    stats: { received: 0, decoded: 0, rendered: 0, dropped: 0, recoveries: 0 },
+    // Decoder recovery in progress: when it began and the drop count then.
+    _recoveryStartedPerf: 0,
+    _recoveryDroppedBefore: 0,
     _lastCountersPost: 0,
     // Click-to-photon probe: until this performance.now(), every presented
     // frame is reported to the main thread ('probe-frame') so it can sample
@@ -252,6 +255,7 @@ function postCounters(force) {
         received: S.stats.received,
         decoded: S.stats.decoded,
         rendered: S.stats.rendered,
+        recoveries: S.stats.recoveries,
         dropped: S.stats.dropped,
         clientDecodeMs: stageAvg(S._decodeSamples),
         clientQueueMs: stageAvg(S._queueSamples),
@@ -369,6 +373,12 @@ function handleDecoderError(err) {
     clearPacingTimer();
     if (S.pacer) S.pacer.reset();
 
+    // Timed to the first frame the new decoder outputs — see onDecodedFrame.
+    if (!S._recoveryStartedPerf) {
+        S._recoveryStartedPerf = performance.now();
+        S._recoveryDroppedBefore = S.stats.dropped;
+        S.stats.recoveries++;
+    }
     setupDecoder();
     requestIdr('decoder error');
     setStatus('connecting', 'Recovering...');
@@ -774,6 +784,18 @@ function decodeAv1Frame(data, isKeyframe, arrivalAbs) {
 function onDecodedFrame(frame) {
     S.stats.decoded++;
     S._recoveryAttempts = 0;
+    if (S._recoveryStartedPerf) {
+        console.warn(
+            '[VideoWorker] Decoder recovered in ' +
+                Math.round(performance.now() - S._recoveryStartedPerf) +
+                ' ms, ' +
+                (S.stats.dropped - S._recoveryDroppedBefore) +
+                ' frames dropped meanwhile (recovery ' +
+                S.stats.recoveries +
+                ')',
+        );
+        S._recoveryStartedPerf = 0;
+    }
 
     // Pair the decoder output with its decode() submit time (same clock): this
     // closes the decode stage (decode queue + decode). The frame carries its
@@ -983,6 +1005,13 @@ self.onmessage = (e) => {
         }
         case 'frameloss':
             S._referenceValid = false;
+            break;
+        case 'resync':
+            // The tab is back from the background: the burst of frames that
+            // waited for it is not jitter — re-prime the pacer rather than let
+            // it pin the reserve on it (see StreamView._resyncAfterHidden).
+            clearPacingTimer();
+            if (S.pacer) S.pacer.reset();
             break;
         case 'resize':
             S.outW = m.outW;

@@ -289,6 +289,10 @@ public:
         m_Info.intraRefresh = m_Encoder->intraRefreshEnabled();
         if (m_Config.intraRefresh && !m_Info.intraRefresh)
             log::info("[native] intra-refresh requested but this encoder declined it");
+        // The wave's period, in frames of the rate the encoder was built for —
+        // the same number the three encoders configured themselves with.
+        m_Info.intraRefreshFrames =
+            m_Info.intraRefresh ? encode::intraRefreshPeriodFrames(m_EncodeFps) : 0;
         // Reported the same way: the receiver decodes through a gap only when
         // the encoder really heals it (NVENC today; AMF and oneVPL answer an
         // invalidation with a keyframe).
@@ -1159,6 +1163,21 @@ private:
                 // client asked to keep settling at. Both re-encode what is
                 // already converted, so this costs an encode and not a capture.
                 if (!m_Converter->outputWidth()) continue;
+
+                // A keyframe the receiver asked for goes out NOW, not at the
+                // next floor tick. On a still screen the floor is the only
+                // clock, and it beats every 500 ms — so a browser recovering
+                // from a decoder error, or one that just opened its video
+                // channel, sat looking at nothing for up to half a second for
+                // no reason: the picture is converted and waiting, and this
+                // engine, unlike Sunshine, can encode it whenever it likes.
+                // Same picture as the floor would have sent, one encode.
+                if (m_ForceKeyframe.load(std::memory_order_relaxed)) {
+                    if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
+                    lastSentUs = steadyNowUs();
+                    continue;
+                }
+
                 if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : idleIntervalUs))
                     continue;
 

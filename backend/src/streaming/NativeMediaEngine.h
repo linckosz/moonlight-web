@@ -250,6 +250,11 @@ public:
     /// always what the stream DOES, never what was asked for.
     bool intraRefreshActive() const override;
 
+    /// Frames per intra-refresh wave (SessionInfo::intraRefreshFrames), 0 when
+    /// the stream does not intra-refresh or no session has started. The
+    /// browser sizes its ride-out watchdog on it, in frames it receives.
+    int intraRefreshFrames() const;
+
 private:
     void onEncodedFrame(const mw::native::EncodedFrame& frame);
 

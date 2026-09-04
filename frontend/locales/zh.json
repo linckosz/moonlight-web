@@ -542,6 +542,7 @@
         "statStageTotal": "主机 · 合计",
         "statLossNetwork": "丢失帧（网络）",
         "statLossJitter": "丢弃帧（抖动）",
+        "statRecovery": "恢复次数（解码器 · 停滞 · 等待刷新）",
         "periodicStallWarning": "检测到卡顿：本设备的 Wi-Fi 每隔 {{period}} 毫秒被规律性地打断一次。在苹果设备上这几乎总是 AirDrop 和「接力」造成的，它们与 Wi-Fi 共用同一颗芯片。串流期间关闭 AirDrop 通常即可解决。",
         "periodicStallDismiss": "不再显示",
         "periodicStallTitle": "检测到卡顿",
