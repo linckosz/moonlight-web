@@ -37,8 +37,8 @@ void run_gamepad_driver_tests()
 {
     SECTION("GamepadDriver — the notice is offered to this machine only");
 
-    using NetClassify::Kind;
     using GamepadDriver::mayOffer;
+    using NetClassify::Kind;
 
     // The one case that says yes: sitting at the host, driver missing.
     CHECK(mayOffer(Kind::Loopback, false, absent()));

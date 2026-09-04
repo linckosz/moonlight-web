@@ -76,7 +76,7 @@ Identity identityFor(UinputGamepad::Profile profile)
 /// The buttons the device declares. Both profiles expose the same set: on
 /// evdev, BTN_SOUTH is the bottom face button whatever is printed on it.
 constexpr uint16_t kButtons[] = {
-    BTN_SOUTH,  BTN_EAST,  BTN_NORTH, BTN_WEST,  BTN_TL,     BTN_TR,
+    BTN_SOUTH,  BTN_EAST,  BTN_NORTH, BTN_WEST,   BTN_TL,     BTN_TR,
     BTN_SELECT, BTN_START, BTN_MODE,  BTN_THUMBL, BTN_THUMBR,
 };
 
@@ -89,20 +89,23 @@ struct AxisSpec
 };
 
 constexpr AxisSpec kAxes[] = {
-    {ABS_X, kStickMin, kStickMax},   {ABS_Y, kStickMin, kStickMax},
-    {ABS_RX, kStickMin, kStickMax},  {ABS_RY, kStickMin, kStickMax},
-    {ABS_Z, 0, kTriggerMax},         {ABS_RZ, 0, kTriggerMax},
+    {ABS_X, kStickMin, kStickMax},
+    {ABS_Y, kStickMin, kStickMax},
+    {ABS_RX, kStickMin, kStickMax},
+    {ABS_RY, kStickMin, kStickMax},
+    {ABS_Z, 0, kTriggerMax},
+    {ABS_RZ, 0, kTriggerMax},
     // The D-pad is a hat: two axes that only ever read −1, 0 or 1. Declaring it
     // as four buttons instead is what makes a pad whose D-pad "does nothing" in
     // half the games — SDL's mappings expect the hat.
-    {ABS_HAT0X, -1, 1},              {ABS_HAT0Y, -1, 1},
+    {ABS_HAT0X, -1, 1},
+    {ABS_HAT0Y, -1, 1},
 };
 
 std::string describeErrno(int err)
 {
     switch (err) {
-    case ENOENT:
-        return "/dev/uinput is missing — the uinput kernel module is not loaded";
+    case ENOENT: return "/dev/uinput is missing — the uinput kernel module is not loaded";
     case EACCES:
     case EPERM:
         return "/dev/uinput refused access — the udev rule granting this user is not installed";
@@ -207,7 +210,8 @@ void UinputGamepad::stop()
 
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
-        for (int slot = 0; slot < kMaxPads; ++slot) destroyPad(slot);
+        for (int slot = 0; slot < kMaxPads; ++slot)
+            destroyPad(slot);
     }
 
     if (m_WakeFd >= 0) {
@@ -361,8 +365,7 @@ void UinputGamepad::update(const InputEvent& event)
     // Y inverted: the protocol has up positive (XInput's convention), evdev has
     // up negative like every other pointing axis on Linux. −32768 is clamped
     // rather than negated, which would not fit back into the axis.
-    addEvent(events, EV_ABS, ABS_Y,
-             event.leftStickY == kStickMin ? kStickMax : -event.leftStickY);
+    addEvent(events, EV_ABS, ABS_Y, event.leftStickY == kStickMin ? kStickMax : -event.leftStickY);
     addEvent(events, EV_ABS, ABS_RX, event.rightStickX);
     addEvent(events, EV_ABS, ABS_RY,
              event.rightStickY == kStickMin ? kStickMax : -event.rightStickY);
@@ -396,8 +399,10 @@ void UinputGamepad::remove(const InputEvent& event)
     // Zero is the resting value of every axis declared here: the sticks are
     // centred at 0, and the triggers and the hat rest there too.
     std::vector<input_event> neutral;
-    for (uint16_t button : kButtons) addEvent(neutral, EV_KEY, button, 0);
-    for (const AxisSpec& axis : kAxes) addEvent(neutral, EV_ABS, axis.code, 0);
+    for (uint16_t button : kButtons)
+        addEvent(neutral, EV_KEY, button, 0);
+    for (const AxisSpec& axis : kAxes)
+        addEvent(neutral, EV_ABS, axis.code, 0);
     (void)writeReport(m_Pads[slot].fd, neutral);
 
     destroyPad(slot);
@@ -523,7 +528,8 @@ void UinputGamepad::feedbackLoop()
         }
 
         // Outside the lock, always.
-        for (const RumbleEvent& rumble : pending) m_OnRumble(rumble);
+        for (const RumbleEvent& rumble : pending)
+            m_OnRumble(rumble);
     }
 }
 

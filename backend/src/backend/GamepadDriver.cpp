@@ -192,8 +192,8 @@ bool canInstall()
 
     TOKEN_ELEVATION elevation{};
     DWORD size = 0;
-    const bool ok = ::GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation),
-                                          &size) != FALSE;
+    const bool ok =
+        ::GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) != FALSE;
     ::CloseHandle(token);
     return ok && elevation.TokenIsElevated;
 #else
