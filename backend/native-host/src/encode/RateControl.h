@@ -125,6 +125,154 @@ inline int intraRefreshCountFrames(int fps)
     return intraRefreshPeriodFrames(fps) / 2;
 }
 
+/// The rate frames are REALLY produced at, and what the encoder should be told
+/// about it (plan v2, E4).
+///
+/// ── The problem it fixes ────────────────────────────────────────────────────
+///
+/// Constant bitrate is a budget per frame: bitrate / frame rate. The frame rate
+/// the encoder is configured with is the stream's setting — or the display's
+/// refresh when the setting is 0 — and a game rarely runs at either. A 60 fps
+/// game on a 165 Hz display under a "165" stream produces 60 frames a second,
+/// each budgeted at 1/165th of the bitrate: the wire carries 60/165 of what the
+/// viewer allowed, and the picture is quantized as if the link were 2.75 times
+/// smaller than it is. Measured on the bench (Call of Duty footage at 60 fps,
+/// 40 Mbit/s): 29 KB per frame and QP 25 with the setting at 165, 65 KB and
+/// QP 12 with the setting at 60 — same content, same link, same encoder.
+///
+/// ── What it does ────────────────────────────────────────────────────────────
+///
+/// Counts the frames actually encoded from a capture over one-second windows,
+/// and holds the rate the encoder's budget is dimensioned for. The budget is
+/// moved by scaling the bitrate handed to the encoder — bitrate × configured /
+/// effective — rather than by reconfiguring the frame rate, because every
+/// vendor path already has a live setBitrate() and none of them promises a
+/// live frame-rate change. The wire still carries the configured bitrate:
+/// (bitrate × configured / effective) × effective frames = bitrate. The VBV
+/// scales with it, which is the point — a bigger frame is allowed because
+/// fewer of them are coming.
+///
+/// ── Why it moves the way it does ────────────────────────────────────────────
+///
+/// Raising the rate (frames got MORE frequent) must be quick: each frame is now
+/// too big for the interval, and every second spent at the old budget is a
+/// second of frames at up to 2.75× the link — on the Internet, that is the
+/// pointer trailing the hand. So frames are also counted over a quarter-second
+/// sub-window, and a sub-window already faster than the current rate raises it
+/// on the spot; the overshoot is bounded to a quarter of a second of frames.
+/// Lowering (frames got less frequent, the budget may grow) waits for two
+/// consecutive one-second windows to agree, so a hitch never inflates the next
+/// second's frames. Fifteen percent of hysteresis either way keeps a game
+/// hovering around a rate from reconfiguring the encoder every second. Never
+/// below 30: a still screen produces almost no captures, and its frames — the
+/// refinement burst — have a budget of their own (kStillBoost). Never above
+/// the configured rate: that is the viewer's own statement of what the link
+/// carries.
+struct EffectiveCadence
+{
+    static constexpr int64_t kWindowUs = 1000 * 1000;
+    static constexpr int64_t kRaiseWindowUs = 250 * 1000;
+    static constexpr int kMinFps = 30;
+    static constexpr int kHysteresisPercent = 15;
+    static constexpr int kLowerAfterWindows = 2;
+
+    int configuredFps = 60;
+    /// What the encoder's budget is dimensioned for right now.
+    int currentFps = 60;
+    int64_t windowStartUs = 0;
+    int framesInWindow = 0;
+    int64_t raiseWindowStartUs = 0;
+    int framesInRaiseWindow = 0;
+    int lowerStreak = 0;
+    /// How often the rate moved, for the log.
+    int changes = 0;
+
+    void start(int fps, int64_t nowUs)
+    {
+        configuredFps = fps > 0 ? fps : 60;
+        currentFps = configuredFps;
+        windowStartUs = nowUs;
+        raiseWindowStartUs = nowUs;
+        framesInWindow = 0;
+        framesInRaiseWindow = 0;
+        lowerStreak = 0;
+    }
+
+    /// One frame encoded from a real capture at @p nowUs. Returns true when
+    /// the rate the encoder should be dimensioned for just changed.
+    bool noteFrame(int64_t nowUs)
+    {
+        framesInWindow++;
+        framesInRaiseWindow++;
+        bool changed = false;
+
+        // The quick look, for a rate that went UP.
+        if (nowUs - raiseWindowStartUs >= kRaiseWindowUs) {
+            const int quick = ratePerSecond(framesInRaiseWindow, nowUs - raiseWindowStartUs);
+            raiseWindowStartUs = nowUs;
+            framesInRaiseWindow = 0;
+            changed = raiseTo(quick);
+        }
+
+        if (nowUs - windowStartUs < kWindowUs) return changed;
+        const int measured = ratePerSecond(framesInWindow, nowUs - windowStartUs);
+        windowStartUs = nowUs;
+        framesInWindow = 0;
+        return evaluate(measured) || changed;
+    }
+
+    static int ratePerSecond(int frames, int64_t spanUs)
+    {
+        if (spanUs <= 0) return 0;
+        return static_cast<int>((static_cast<int64_t>(frames) * 1000000 + spanUs / 2) / spanUs);
+    }
+
+    /// The upward half of evaluate(): act when @p measured is clearly above
+    /// the current rate. Clamped to the setting.
+    bool raiseTo(int measured)
+    {
+        const int target = measured > configuredFps ? configuredFps : measured;
+        if (target <= currentFps + currentFps * kHysteresisPercent / 100) return false;
+        currentFps = target;
+        lowerStreak = 0;
+        changes++;
+        return true;
+    }
+
+    /// The window closed with @p measured frames per second. Split out so it
+    /// can be tested without a clock.
+    bool evaluate(int measured)
+    {
+        int target = measured;
+        if (target > configuredFps) target = configuredFps;
+        if (target < kMinFps) target = kMinFps;
+
+        if (raiseTo(target)) return true;
+        if (target < currentFps - currentFps * kHysteresisPercent / 100) {
+            if (++lowerStreak >= kLowerAfterWindows) {
+                currentFps = target;
+                lowerStreak = 0;
+                changes++;
+                return true;
+            }
+            return false;
+        }
+        lowerStreak = 0;
+        return false;
+    }
+
+    /// The bitrate to hand the encoder so that a frame at the current rate
+    /// gets the budget the configured bitrate implies at the configured rate.
+    int scaledKbps(int kbps) const
+    {
+        if (currentFps <= 0 || currentFps >= configuredFps) return kbps;
+        const int64_t scaled = static_cast<int64_t>(kbps) * configuredFps / currentFps;
+        return static_cast<int>(scaled);
+    }
+
+    bool scaling() const { return currentFps < configuredFps; }
+};
+
 /// The budget a frame gets while the screen is not moving, as a multiple of the
 /// stream's own.
 ///

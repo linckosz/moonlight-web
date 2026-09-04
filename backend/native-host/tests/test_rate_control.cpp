@@ -18,6 +18,7 @@
 #include "encode/RateControl.h"
 #include "native_test_framework.h"
 
+using mw::native::encode::EffectiveCadence;
 using mw::native::encode::intraRefreshCountFrames;
 using mw::native::encode::intraRefreshPeriodFrames;
 using mw::native::encode::kIntraRefreshMaxFrames;
@@ -282,5 +283,112 @@ void run_rate_control_tests()
             now += 16667;
         }
         CHECK(link.drainedAt(now));
+    }
+
+    SECTION("EffectiveCadence — a 60 fps game under a 165 fps stream gets the whole budget");
+    {
+        // The bench case: 40 Mbit/s set, frames at 60/s, encoder told 165. The
+        // rate lowers after two agreeing windows and the encoder is handed
+        // 165/60 of the bitrate — the wire still carries 40.
+        EffectiveCadence c;
+        c.start(165, 0);
+        CHECK_EQ(c.currentFps, 165);
+        CHECK_EQ(c.scaledKbps(40000), 40000);
+        CHECK(!c.evaluate(60)); // first window: noted, not acted on
+        CHECK_EQ(c.currentFps, 165);
+        CHECK(c.evaluate(60)); // second: lowered
+        CHECK_EQ(c.currentFps, 60);
+        CHECK(c.scaling());
+        CHECK_EQ(c.scaledKbps(40000), 40000 * 165 / 60);
+        // Wire rate is unchanged: scaled bitrate × frames = configured bitrate.
+        CHECK_EQ(static_cast<int64_t>(c.scaledKbps(40000)) * 60 / 165, 40000);
+    }
+
+    SECTION("EffectiveCadence — raising is immediate, lowering waits");
+    {
+        EffectiveCadence c;
+        c.start(165, 0);
+        c.evaluate(60);
+        c.evaluate(60);
+        CHECK_EQ(c.currentFps, 60);
+        // The game jumps to 120: every frame is now too big, act at once.
+        CHECK(c.evaluate(120));
+        CHECK_EQ(c.currentFps, 120);
+        // One slow window is a hitch, not a new rate.
+        CHECK(!c.evaluate(40));
+        CHECK_EQ(c.currentFps, 120);
+        CHECK(!c.evaluate(118)); // back to normal: the streak is forgotten
+        CHECK(!c.evaluate(40));
+        CHECK_EQ(c.currentFps, 120);
+        CHECK(c.evaluate(40));
+        CHECK_EQ(c.currentFps, 40);
+    }
+
+    SECTION("EffectiveCadence — hysteresis: hovering around a rate moves nothing");
+    {
+        EffectiveCadence c;
+        c.start(165, 0);
+        c.evaluate(60);
+        c.evaluate(60);
+        constexpr int kHovering[] = {55, 65, 58, 68, 52, 69};
+        for (int fps : kHovering) {
+            CHECK(!c.evaluate(fps));
+            CHECK_EQ(c.currentFps, 60);
+        }
+        CHECK_EQ(c.changes, 1);
+    }
+
+    SECTION("EffectiveCadence — bounded by 30 below and the setting above");
+    {
+        EffectiveCadence c;
+        c.start(60, 0);
+        c.evaluate(5);
+        CHECK(c.evaluate(5));
+        CHECK_EQ(c.currentFps, EffectiveCadence::kMinFps);
+        CHECK_EQ(c.scaledKbps(20000), 20000 * 60 / 30);
+        // Frames faster than the setting (the cadence gate lets a few through
+        // early) never inflate the budget above the viewer's own statement.
+        CHECK(c.evaluate(200));
+        CHECK_EQ(c.currentFps, 60);
+        CHECK(!c.scaling());
+        CHECK_EQ(c.scaledKbps(20000), 20000);
+    }
+
+    SECTION("EffectiveCadence — a rate that goes up is caught within a quarter second");
+    {
+        // Settled at 60 (two windows), then the game jumps to 165: the budget
+        // must come back down before a whole second of oversized frames has
+        // gone out — the quarter-second sub-window catches it.
+        EffectiveCadence c;
+        c.start(165, 0);
+        c.evaluate(60);
+        c.evaluate(60);
+        CHECK_EQ(c.currentFps, 60);
+        int64_t now = 0;
+        int64_t raisedAt = -1;
+        for (int i = 1; i <= 165 && raisedAt < 0; i++) {
+            now = i * 6061;
+            if (c.noteFrame(now)) raisedAt = now;
+        }
+        CHECK(raisedAt > 0);
+        CHECK(raisedAt <= 300000); // well under a second
+        CHECK_EQ(c.currentFps, 165);
+    }
+
+    SECTION("EffectiveCadence — the clock closes windows of one second");
+    {
+        EffectiveCadence c;
+        c.start(165, 1000);
+        // 60 frames spread over the first second: the window closes on the
+        // 61st frame, just past the second, and reads 60 fps. The quick look
+        // never fires — 60 is below the 165 the encoder is dimensioned for.
+        bool changed = false;
+        for (int i = 1; i <= 61; i++)
+            changed = c.noteFrame(1000 + i * 16667) || changed;
+        CHECK(!changed); // first window only notes
+        for (int i = 62; i <= 122; i++)
+            changed = c.noteFrame(1000 + i * 16667) || changed;
+        CHECK(changed);
+        CHECK_EQ(c.currentFps, 60);
     }
 }
