@@ -16,6 +16,7 @@
  */
 
 #include "StreamWorkerHost.h"
+#include "ConsoleSession.h"
 
 #include <QCoreApplication>
 #include <QJsonDocument>
@@ -34,13 +35,13 @@ StreamWorkerHost::~StreamWorkerHost()
         m_Proc->kill();
         m_Proc->waitForFinished(1000);
     }
+    // A console child is killed and joined by its own destructor (it is our
+    // QObject child), so nothing more is needed here.
 }
 
 bool StreamWorkerHost::start(const QJsonObject& config)
 {
-    Q_ASSERT(!m_Proc);
-    m_Proc = new QProcess(this);
-    m_Proc->setProgram(QCoreApplication::applicationFilePath());
+    Q_ASSERT(!m_Proc && !m_Console);
     QStringList args{QStringLiteral("--stream-worker")};
     // Carry --dev into the child. The flag drives the application name, which
     // is what moves the settings, logs and — the part that matters here — the
@@ -48,6 +49,21 @@ bool StreamWorkerHost::start(const QJsonObject& config)
     // would launch streams as the installed instance.
     if (QCoreApplication::applicationName().endsWith(QStringLiteral("-dev")))
         args << QStringLiteral("--dev");
+    const QByteArray configLine = QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
+
+    // The native engine captures the desktop, and a service has none: its
+    // worker goes to the console session, as the user sitting there. Every
+    // other backend talks to a host over the network and runs fine from here.
+    const bool native = config["backendType"].toString() == QLatin1String("native");
+    if (native && ConsoleSession::launchesElsewhere())
+        return startInConsoleSession(args, configLine);
+    return startInProcess(args, configLine);
+}
+
+bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray& configLine)
+{
+    m_Proc = new QProcess(this);
+    m_Proc->setProgram(QCoreApplication::applicationFilePath());
     m_Proc->setArguments(args);
     // stdout carries the JSON event protocol; worker stderr joins ours so a
     // crashing worker still leaves a trace in the parent console/journal.
@@ -55,12 +71,8 @@ bool StreamWorkerHost::start(const QJsonObject& config)
     m_Proc->setReadChannel(QProcess::StandardOutput);
 
     connect(m_Proc, &QProcess::readyReadStandardOutput, this, &StreamWorkerHost::onStdout);
-    connect(m_Proc, &QProcess::readyReadStandardError, this, [this]() {
-        // Relay worker stderr lines into our log (prefixed).
-        const QByteArray err = m_Proc->readAllStandardError();
-        for (const QByteArray& line : err.split('\n'))
-            if (!line.trimmed().isEmpty()) qInfo() << "[StreamWorker/child]" << line.constData();
-    });
+    connect(m_Proc, &QProcess::readyReadStandardError, this,
+            [this]() { onStderrData(m_Proc->readAllStandardError()); });
     connect(m_Proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
             &StreamWorkerHost::onFinished);
 
@@ -72,28 +84,72 @@ bool StreamWorkerHost::start(const QJsonObject& config)
         return false;
     }
 
-    const QByteArray line = QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
-    m_Proc->write(line);
+    m_Proc->write(configLine);
     qInfo() << "[StreamWorkerHost] Worker spawned, pid=" << m_Proc->processId();
+    return true;
+}
+
+bool StreamWorkerHost::startInConsoleSession(const QStringList& args, const QByteArray& configLine)
+{
+    m_Console = new ConsoleProcess(this);
+    connect(m_Console, &ConsoleProcess::stdoutData, this, &StreamWorkerHost::onStdoutData);
+    connect(m_Console, &ConsoleProcess::stderrData, this, &StreamWorkerHost::onStderrData);
+    connect(m_Console, &ConsoleProcess::finished, this, &StreamWorkerHost::onChildFinished);
+
+    QString error;
+    if (!m_Console->start(QCoreApplication::applicationFilePath(), args, &error)) {
+        // Said plainly, because the fallback the caller has (run the session
+        // in this process) cannot work either: there is no desktop here.
+        qWarning() << "[StreamWorkerHost] Native worker cannot enter the console session:" << error;
+        m_Console->deleteLater();
+        m_Console = nullptr;
+        return false;
+    }
+
+    m_Console->write(configLine);
+    qInfo() << "[StreamWorkerHost] Worker spawned in the console session as"
+            << m_Console->userName() << ", pid=" << m_Console->processId();
     return true;
 }
 
 bool StreamWorkerHost::isRunning() const
 {
+    if (m_Console) return m_Console->isRunning();
     return m_Proc && m_Proc->state() != QProcess::NotRunning;
+}
+
+void StreamWorkerHost::writeLine(const QByteArray& line)
+{
+    if (!isRunning()) return;
+    if (m_Console)
+        m_Console->write(line);
+    else
+        m_Proc->write(line);
+}
+
+void StreamWorkerHost::killChild()
+{
+    if (m_Console)
+        m_Console->kill();
+    else if (m_Proc)
+        m_Proc->kill();
+}
+
+qint64 StreamWorkerHost::childPid() const
+{
+    if (m_Console) return m_Console->processId();
+    return m_Proc ? m_Proc->processId() : 0;
 }
 
 void StreamWorkerHost::sendCommand(const char* cmd)
 {
-    if (!isRunning()) return;
-    m_Proc->write(QByteArray("{\"cmd\":\"") + cmd + "\"}\n");
+    writeLine(QByteArray("{\"cmd\":\"") + cmd + "\"}\n");
 }
 
 void StreamWorkerHost::sendJson(const QJsonObject& msg)
 {
-    if (!isRunning()) return;
     // One line, no newlines inside: the worker's pump reads with std::getline.
-    m_Proc->write(QJsonDocument(msg).toJson(QJsonDocument::Compact) + "\n");
+    writeLine(QJsonDocument(msg).toJson(QJsonDocument::Compact) + "\n");
 }
 
 void StreamWorkerHost::setInputPolicy(bool gamepad, bool keyboardMouse)
@@ -120,7 +176,7 @@ void StreamWorkerHost::requestQuit()
     QTimer::singleShot(5000, this, [this]() {
         if (isRunning()) {
             qWarning() << "[StreamWorkerHost] Worker did not exit after quit — killing";
-            m_Proc->kill();
+            killChild();
         }
     });
 }
@@ -129,7 +185,7 @@ void StreamWorkerHost::notifyTakenOver()
 {
     sendCommand("takenOver");
     QTimer::singleShot(5000, this, [this]() {
-        if (isRunning()) m_Proc->kill();
+        if (isRunning()) killChild();
     });
 }
 
@@ -137,7 +193,7 @@ void StreamWorkerHost::notifyRevoked()
 {
     sendCommand("revoked");
     QTimer::singleShot(5000, this, [this]() {
-        if (isRunning()) m_Proc->kill();
+        if (isRunning()) killChild();
     });
 }
 
@@ -145,13 +201,30 @@ void StreamWorkerHost::notifySessionEnded()
 {
     sendCommand("sessionEnded");
     QTimer::singleShot(5000, this, [this]() {
-        if (isRunning()) m_Proc->kill();
+        if (isRunning()) killChild();
     });
+}
+
+void StreamWorkerHost::onStderrData(const QByteArray& data)
+{
+    // Relay worker stderr lines into our log (prefixed).
+    for (const QByteArray& line : data.split('\n'))
+        if (!line.trimmed().isEmpty()) qInfo() << "[StreamWorker/child]" << line.constData();
 }
 
 void StreamWorkerHost::onStdout()
 {
-    m_Buf += m_Proc->readAllStandardOutput();
+    onStdoutData(m_Proc->readAllStandardOutput());
+}
+
+void StreamWorkerHost::onChildFinished(int exitCode, bool crashed)
+{
+    onFinished(exitCode, crashed ? QProcess::CrashExit : QProcess::NormalExit);
+}
+
+void StreamWorkerHost::onStdoutData(const QByteArray& data)
+{
+    m_Buf += data;
     int nl;
     while ((nl = m_Buf.indexOf('\n')) >= 0) {
         const QByteArray line = m_Buf.left(nl);

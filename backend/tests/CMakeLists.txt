@@ -75,7 +75,13 @@ add_executable(run_tests
     test_session_metrics.cpp
     test_us_scancode.cpp
     test_input_watchdog.cpp
+    test_native_capabilities_json.cpp
     # In-scope production units (+ their real deps)
+    # The probe result as it crosses from the console session to the service.
+    # Capabilities.cpp is the engine's plain-C++ enum/lookup file: no Windows
+    # header, no D3D, so it comes along on any platform.
+    ${_src}/src/backend/streambackend/NativeCapabilitiesJson.cpp
+    ${_src}/native-host/src/core/Capabilities.cpp
     ${_src}/src/streaming/InputEncoder.cpp
     # The input dead-man switch, exercised against a fake wire.
     ${_src}/src/streaming/InputWatchdog.cpp
@@ -121,6 +127,8 @@ target_include_directories(run_tests PRIVATE
     # so the layout the injector converts through can be checked on any
     # platform — the rest of that engine cannot come along for the ride.
     ${_src}/native-host/src
+    # The engine's public Capabilities.h, for the JSON round trip above.
+    ${_src}/native-host/include
 )
 
 # Silence production qDebug() noise; keep qInfo()/qCritical() (test output).

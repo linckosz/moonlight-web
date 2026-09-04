@@ -44,6 +44,12 @@
  * the engine cannot run here the backend fails with a plain message and the
  * host simply does not appear — which is what lets the Hosts page offer
  * Sunshine instead.
+ *
+ * "The engine" may live in another session: as a Windows service (session 0)
+ * the probe and the stream both run in the console session as the logged-on
+ * user (ConsoleSession.h), and what this backend re-asks is the latest probe
+ * snapshot (NativeProbeService). The rules above hold unchanged; only where
+ * the answer comes from differs.
  */
 class NativeHostBackend : public IStreamBackend
 {

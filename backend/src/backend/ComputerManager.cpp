@@ -25,6 +25,7 @@
 #include "PairingChain.h"
 #include "WolfApiClient.h"
 #include "streambackend/NativeHostBackend.h"
+#include "streambackend/NativeProbeService.h"
 #include "streambackend/StreamBackendSetup.h"
 #include "IdentityManager.h"
 #include "SunshineInstaller.h"
@@ -216,6 +217,11 @@ void ComputerManager::init()
 {
     loadHosts();
     refreshNativeHost();
+    // As a service the engine is probed in the console session, asynchronously:
+    // the first call above saw "waiting", and this is what puts the host card up
+    // when the answer arrives — and takes it down when the user logs off.
+    connect(&NativeProbeService::instance(), &NativeProbeService::changed, this,
+            &ComputerManager::refreshNativeHost);
     startPolling();
 
     // Single-shot timer that closes each mDNS discovery window and frees 5353.

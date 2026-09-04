@@ -1938,6 +1938,9 @@ const MoonlightApp = {
             // Frames per intra-refresh wave (0 when the stream does not
             // refresh that way): sizes the ride-out watchdog in frames.
             intraRefreshFrames: Number(result.intra_refresh_frames) || 0,
+            // "GPU · encoder codec …", for the stats overlay — only the native
+            // host, whose encoder runs on this very machine, can name it.
+            nativeEngine: typeof result.native_engine === 'string' ? result.native_engine : '',
             // What /start told the host this screen refreshes at, so the view
             // only speaks up again when the number changes.
             clientRefreshMilliHz: currentRefreshMilliHz(),

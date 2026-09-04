@@ -1036,6 +1036,10 @@ void StreamSession::onShimConnectionStarted()
         // purpose — the wave advances per frame encoded, and a host whose game
         // presents slowly stretches the same period over many more seconds.
         result["intra_refresh_frames"] = native != nullptr ? native->intraRefreshFrames() : 0;
+        // "GPU · encoder codec [4:4:4] [HDR] [intra-refresh]" — what the engine
+        // settled on, for the stats overlay. Empty for every other host, whose
+        // encoder runs on a machine this process cannot see into.
+        if (native != nullptr) result["native_engine"] = native->describeSession();
     }
 
     // Audio time-stretch (WSOLA) — file-only setting (settings.json), default
