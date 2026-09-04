@@ -164,7 +164,8 @@ void VigemGamepad::stop()
 
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
-        for (int slot = 0; slot < kMaxPads; ++slot) unplug(slot);
+        for (int slot = 0; slot < kMaxPads; ++slot)
+            unplug(slot);
     }
 
     vigem_disconnect(m_Client);
@@ -223,8 +224,8 @@ VigemGamepad::Pad* VigemGamepad::ensurePad(int slot, Profile profile)
     if (!m_Client || slot < 0 || slot >= kMaxPads) return nullptr;
     if (m_Pads[slot].target) return &m_Pads[slot];
 
-    PVIGEM_TARGET target = profile == Profile::DualShock4 ? vigem_target_ds4_alloc()
-                                                          : vigem_target_x360_alloc();
+    PVIGEM_TARGET target =
+        profile == Profile::DualShock4 ? vigem_target_ds4_alloc() : vigem_target_x360_alloc();
     if (!target) return nullptr;
 
     const VIGEM_ERROR added = vigem_target_add(m_Client, target);
