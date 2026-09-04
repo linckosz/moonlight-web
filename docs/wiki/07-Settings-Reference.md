@@ -43,12 +43,12 @@ Access is single-threaded, synchronous I/O. **Restart the server after a manual 
 | `stream_aspect` | string | `"auto"` | `auto` (the browser takes the host's real format from the shape it encodes, or failing that measures it from the bars Sunshine pads with, then relaunches at it) or explicit `16:9` / `16:10` / `21:9` / `4:3` / `3:2` / `32:9` / `5:4`. Width is derived from the height. |
 | `stream_fps` | int | `60` | 15–240. |
 | `hdr_enabled` | bool | `false` | Request HDR10 encode (see [HDR limitations](05-Streaming-and-Transports.md#53-hdr--support-and-limitations)). |
-| `chroma_444_enabled` | bool | `false` | YUV 4:4:4 (needs bandwidth + a browser decoding the 4:4:4 profile). |
+| `chroma_444_enabled` | bool | `false` | YUV 4:4:4 (needs bandwidth + a browser decoding the 4:4:4 profile). SDR only: 10-bit 4:4:4 renders green on Chrome/Windows ([ch. 15 §15.6](15-Client-Presentation-Benchmarks.md#156-decision-5--444-chroma)). The native host grants it per codec (H.264/HEVC on NVENC, never AV1, nothing on AMF/oneVPL) and falls back to 4:2:0 with a log line. |
 | `mute_host_audio` | bool | `true` | GameStream `localAudioPlayMode`: mute the host PC speakers while streaming. |
 | `gaming_mode` | bool | `false` | Pointer-lock mouse (relative) vs absolute tracking. |
 | `show_performance_stats` | bool | `false` | Stats overlay default. |
-| `video_enhancement` | string | `"on"` | `on`/`off` — WebGPU upscale/sharpen. When on, transport negotiation deprioritizes webrtc-media (canvas required). |
-| `video_enhancement_algo` | string | `"auto"` | `auto` \| `sgsr` \| `fsr1` \| `force2d`. |
+| `video_enhancement` | string | `"off"` (frontend seed; the backend answers `on` for a key it never stored) | `on`/`off` — upscale/sharpen on WebGL2 (SDR) or WebGPU (HDR). Off by default since 09/2026: the plain Canvas2D path is the fastest first impression ([ch. 15](15-Client-Presentation-Benchmarks.md)). When on, transport negotiation deprioritizes webrtc-media (canvas required). |
+| `video_enhancement_algo` | string | `"auto"` | Always `auto` in production (desktop → FSR1 WebGL2, mobile/tablet → SGSR1 WebGL2, HDR → FSR1 WebGPU). Debug builds expose the full menu: `canvas2d` \| `video` \| `smooth2d` \| `gl-sgsr` \| `gl-nis` \| `gl-fsr1` \| `sgsr` \| `nis` \| `fsr1`. |
 | `audio_time_stretch` | bool | `true` | **File-only** (no UI), seeded at startup: WSOLA pitch-preserving stretch in the AudioWorklet. |
 
 The browser also stores per-device keys the server deliberately ignores when the Settings overlay POSTs them back (`touch_sensitivity`, `touch_screen`, `tearing_enabled`, `video_worker`, `power_save`, `power_save_backup`, `seamless_switching`) — see [§7.4](#74-browser-side-preferences-localstorage).
@@ -114,7 +114,9 @@ CI bakes `MW_DOMAIN` and `MW_PDNS_TOKEN` (from repo secrets, via CMake defines) 
 | `mw_client_uniqueid` | Per-browser Sunshine identity (session isolation); the standby stream slot derives its own id from it. |
 | `mw_jitter_auto` | Adaptive jitterBufferTarget toggle (webrtc-media). |
 | `mw_pacing` | Adaptive presentation reserve (DataChannel/WSS paths — the `FramePacer` de-jitter clock). Off by default (freshest-frame-first: on real Wi-Fi the reserve legitimately sits near its 25ms cap, and latency wins over smoothness); set to `1` to opt in. The reserve is shown live in the latency breakdown ("jitter reserve" — the row only exists while the pacer runs), and is read once per stream start — set it, then relaunch the stream. |
-| `mw_hdr_tonemap` | `1/0` override of the automatic ACES tone-map; `mw_hdr_curve` / `mw_hdr_exposure` / `mw_hdr_refwhite` tune it. |
+| `mw_hdr_tonemap` | `1` forces the ACES tone-map on an HDR display (to compare with the `linear` path), `0` disables the raw-plane readback altogether; `mw_hdr_curve` / `mw_hdr_exposure` / `mw_hdr_refwhite` tune the tone-map ([ch. 5 §5.3](05-Streaming-and-Transports.md#53-hdr--support-and-limitations)). |
+| `mw_hdr_request` | `1` offers the HDR checkbox even when `hdrClientCapability()` says the client cannot present HDR (experiments only). |
+| `mw_force_2d` | `1` forces the Canvas2D renderer whatever the Enhancer says (comparison runs). |
 | `mw_force_2d` | Force the Canvas2D renderer (skip the WebGPU probe). |
 | `mw_setup_dismissed` / `mw_update_dismissed` | Banner dismissals (setup nudge, update banner). |
 
