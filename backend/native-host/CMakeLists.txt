@@ -109,7 +109,15 @@ else()
         # keeps it honest: it compiles at -Wall -Wextra on every Linux CI run,
         # so it cannot rot into the sort of "ready" code that has never once
         # been through a compiler.
-        target_sources(mw-native-host PRIVATE src/input/linux/UinputGamepad.cpp)
+        #
+        # Keyboard and mouse joined it on 04/09/2026 (phase I) on the same
+        # terms: uinput needs no library at all — it is kernel ioctls — so this
+        # is the one piece of the Linux backend that could be written and
+        # compiled without a Linux machine to run it on. The capture and the
+        # encoder cannot: see §19 of docs/design/native-capture-encoder.md.
+        target_sources(mw-native-host PRIVATE
+            src/input/linux/UinputGamepad.cpp
+            src/input/linux/UinputInput.cpp)
     endif()
 endif()
 
@@ -182,6 +190,7 @@ if(MW_BUILD_TESTS)
         tests/test_capabilities.cpp
         tests/test_capture.cpp
         tests/test_win32_cursor.cpp
+        tests/test_evdev_keymap.cpp
         tests/test_vpl_params.cpp
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp

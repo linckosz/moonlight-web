@@ -1517,3 +1517,70 @@ le Selector n'y route jamais une session qui mourrait à l'init.
 Bruno aura du matériel Intel plus tard ; à ce moment-là, l'ordre est : lever les
 capacités une par une, dans le même commit que le chemin qu'elles annoncent, et
 jamais avant.
+
+## 19. Linux : les entrées (04/09/2026)
+
+Quatrième morceau de la phase I, entamé par la seule pièce qui pouvait l'être
+sans machine Linux : **uinput ne demande aucune bibliothèque**, ce sont des ioctl
+noyau. Elle compile donc pour de vrai, à `-Wall -Wextra` sous WSL Debian 13, ce
+qui est un cran au-dessus de « écrit ».
+
+### 19.1 Pourquoi uinput et pas le serveur d'affichage
+
+XTEST marche sous X11 et nulle part ailleurs ; Wayland n'a aucun protocole
+d'injection et n'en aura pas. uinput crée un **vrai périphérique** dans le noyau,
+sous les deux : le même code sert X11, tous les compositeurs Wayland et une
+console nue, et le compositeur applique la disposition clavier de l'utilisateur
+par-dessus exactement comme pour un clavier physique. C'est aussi ce que la
+manette virtuelle utilise déjà, donc un hôte Linux présente trois périphériques
+ordinaires plutôt que trois cas particuliers.
+
+**Deux périphériques, pas un** : un appareil qui déclare à la fois des axes
+relatifs et absolus est lu différemment selon le compositeur — certains en
+ignorent un, d'autres y voient une tablette.
+
+### 19.2 La table clavier, et pourquoi elle est écrite en chiffres
+
+Le navigateur envoie la **position** de la touche, exprimée comme la touche
+virtuelle que cette position porte sur un clavier US. Les codes evdev sont des
+positions aussi : c'est donc une correspondance position → position, et la
+disposition de l'hôte ne doit pas y entrer. Un hôte français tape français depuis
+un client AZERTY sans que cette table sache rien de l'un ni de l'autre.
+
+Les valeurs sont des **littéraux** et non des macros `KEY_*`, pour que l'en-tête
+compile — et soit **testable** — sur une machine sans en-tête Linux, ce qu'est
+toute machine sur laquelle ce moteur a été développé. Les codes sont une ABI
+noyau, donc figés. C'est une affirmation, donc elle est vérifiée et non crue :
+sous Linux, `UinputInput.cpp` compare 22 entrées couvrant chaque groupe de la
+table à `<linux/input-event-codes.h>` par `static_assert`. Une dérive casse la
+compilation au lieu de taper la mauvaise lettre sur le bureau de quelqu'un.
+
+Vérifié aussi sous Windows (`test_evdev_keymap`, 104 codes distincts) : rangée
+des chiffres qui ne commence pas à zéro, pavé numérique en ordre inverse de ses
+touches virtuelles, F11/F12 non contigus à F10, modificateurs gauche et droite
+distincts — les confondre casserait AltGr, donc `@` et `#` sur un clavier AZERTY —,
+et **injectivité** de la table hors les trois alias voulus.
+
+⚠️ La comparaison avec la table Windows a trouvé une divergence, et elle est
+**intentionnelle des deux côtés** : `usScanCode` répond 0 pour Pause parce que
+l'appelant Windows retombe alors sur `MapVirtualKey`, cette touche étant
+indépendante de la disposition. Linux n'a pas de repli — uinput prend le code ou
+rien — donc `KEY_PAUSE` y est nommé. Le test l'exige à **exactement une**
+divergence, pour qu'une seconde, elle, échoue.
+
+### 19.3 Ce qui reste du backend Linux, et pourquoi ce n'est pas écrit
+
+La capture (PipeWire) et l'encodage (VA-API) ne sont pas là. Ce ne sont pas des
+oublis :
+
+- **Aucune machine ne peut les exécuter.** Le banc Linux bare-metal n'existe plus
+  (l'bench-mini est passé sous Windows) et une VM Hyper-V n'a pas de GPU. WSL peut
+  les *compiler* avec `libpipewire-0.3-dev` et `libva-dev`, pas les faire tourner.
+- **Le portail pose une vraie question de conception.** `org.freedesktop.portal.
+  ScreenCast` demande une autorisation interactive à chaque session : un hôte qui
+  doit démarrer sans personne devant l'écran s'en accommode mal, et « zéro
+  configuration » est une règle de ce projet. Sunshine passe par KMS/DRM pour
+  cette raison. Le plan nomme PipeWire ; l'arbitrage mérite d'être conscient.
+
+Les licences, elles, ne bloquent pas : libpipewire et libva sont MIT, toutes deux
+sur la liste permissive de `LICENSE.md`.

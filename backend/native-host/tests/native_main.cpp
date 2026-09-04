@@ -1,4 +1,4 @@
-/*
+﻿/*
  * MoonlightWeb — native capture & encoding engine, test suite.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>. GPLv3.
  *
@@ -20,6 +20,7 @@ void run_selector_tests();
 void run_capabilities_tests();
 void run_capture_tests();
 void run_win32_cursor_tests();
+void run_evdev_keymap_tests();
 void run_vpl_params_tests();
 void run_ds4_mapping_tests();
 void run_stage_stats_tests();
@@ -53,6 +54,7 @@ int main()
     run_audio_pacer_tests();
     run_capture_tests();
     run_win32_cursor_tests();
+    run_evdev_keymap_tests();
 
     const int total = g_nativeStats.passed + g_nativeStats.failed;
     std::fprintf(stderr, "\n========================================\n");
