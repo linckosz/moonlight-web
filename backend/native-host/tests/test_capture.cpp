@@ -290,7 +290,7 @@ void run_capture_tests()
                     std::string encodeError;
                     if (!encoder.init(duplication.device(), Codec::H264, converter.outputWidth(),
                                       converter.outputHeight(), 60, 20000, false, false,
-                                      encodeError)) {
+                                      EncoderTuning{}, encodeError)) {
                         std::fprintf(stderr, "  encode skipped: %s\n", encodeError.c_str());
                     } else {
                         encode::EncoderOutput encoded;
@@ -481,9 +481,10 @@ void run_capture_tests()
                         // 4:4:4 is only claimed by NVENC so far, and the
                         // capability query above is what gates this block.
                         encode::NvencEncoder encoder444;
-                        if (!encoder444.init(
-                                duplication.device(), Codec::H264, converter444.outputWidth(),
-                                converter444.outputHeight(), 60, 20000, true, false, error444)) {
+                        if (!encoder444.init(duplication.device(), Codec::H264,
+                                             converter444.outputWidth(),
+                                             converter444.outputHeight(), 60, 20000, true, false,
+                                             EncoderTuning{}, error444)) {
                             std::fprintf(stderr, "  4:4:4 encode unavailable: %s\n",
                                          error444.c_str());
                         } else {

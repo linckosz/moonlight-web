@@ -110,7 +110,7 @@ void VplSession::close()
 }
 
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,
-                      int bitrateKbps)
+                      int bitrateKbps, const EncoderTuning& tuning)
 {
     std::memset(&params, 0, sizeof(params));
 
@@ -131,8 +131,10 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
 
     // 7 = best speed. The brief weights latency at 70 % against 30 % quality,
     // and on Intel the target-usage scale costs far more time at the quality
-    // end than it returns in picture.
-    params.mfx.TargetUsage = MFX_TARGETUSAGE_7;
+    // end than it returns in picture. The bench may ask for another to check.
+    params.mfx.TargetUsage = (tuning.vplTargetUsage >= 1 && tuning.vplTargetUsage <= 7)
+                                 ? static_cast<mfxU16>(tuning.vplTargetUsage)
+                                 : static_cast<mfxU16>(MFX_TARGETUSAGE_7);
     params.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
 
     // TargetKbps and friends are 16-bit, so anything at or above 65535 kbps
@@ -150,7 +152,7 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
     // frame may be so large that it takes several frame times to transmit. See
     // RateControl.h for why it has a frame-rate floor.
     const int frameKb =
-        static_cast<int>(vbvBitsPerFrame(static_cast<uint32_t>(bitrateKbps), fps)) / 8;
+        static_cast<int>(vbvBits(static_cast<uint32_t>(bitrateKbps), fps, tuning.vbvFrames)) / 8;
     const int bufferKb = frameKb > 0 ? frameKb : 1;
     params.mfx.BufferSizeInKB =
         static_cast<mfxU16>((bufferKb / multiplier) > 0 ? (bufferKb / multiplier) : 1);

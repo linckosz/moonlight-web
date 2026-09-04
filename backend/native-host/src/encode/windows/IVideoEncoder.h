@@ -18,6 +18,7 @@
 #pragma once
 
 #include "mw/native/Capabilities.h"
+#include "mw/native/EncoderTuning.h"
 
 #include <d3d11.h>
 
@@ -69,8 +70,12 @@ public:
     ///                     receiver will decode through the damage; an encoder
     ///                     that cannot do it reports so from
     ///                     intraRefreshEnabled() rather than failing.
+    /// @param tuning the bench's overrides of this encoder's own settings; a
+    ///               default-constructed one IS the engine's choice, and is what
+    ///               every session a browser starts passes.
     virtual bool init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, bool intraRefresh, std::string& error) = 0;
+                      int bitrateKbps, bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
+                      std::string& error) = 0;
 
     /// Encode one texture. Blocking: returns with the bitstream ready.
     virtual bool encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,

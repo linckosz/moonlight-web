@@ -50,7 +50,8 @@ public:
     ~VplEncoder() override;
 
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, bool intraRefresh, std::string& error) override;
+              bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
+              std::string& error) override;
 
     bool encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,
                 std::string& error) override;
@@ -83,6 +84,9 @@ private:
     int m_Width = 0;
     int m_Height = 0;
     int m_Fps = 60;
+    /// The bench's overrides, kept so setBitrate() rebuilds the same parameter
+    /// block init() did.
+    EncoderTuning m_Tuning;
 };
 
 } // namespace mw::native::encode

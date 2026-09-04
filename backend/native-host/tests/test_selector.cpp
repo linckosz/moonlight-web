@@ -423,4 +423,85 @@ void run_selector_tests()
         CHECK(!select(caps, cfg, sel, err));
         CHECK(!err.empty());
     }
+
+    SECTION("Selector — the bench may force the encoder's GPU");
+
+    // ── Forced onto the other GPU: honoured, and the copy is declared ────────
+    // Display 0 is on the iGPU; the bench asks for the RTX. This is how an
+    // encoder that drives no display gets measured at all.
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.encodeGpuId = 1;
+        cfg.clientCodecs = {Codec::Av1, Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.gpu->id, 1);
+        CHECK_EQ(sel.encoder, EncoderApi::Nvenc);
+        CHECK_EQ(sel.codec, Codec::Av1); // the forced GPU's codecs, not the display's
+        CHECK(sel.crossGpuCopy);
+    }
+
+    // ── Forced onto the display's own GPU: no copy, nothing to declare ───────
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.encodeGpuId = 0;
+        cfg.clientCodecs = {Codec::Hevc};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.gpu->id, 0);
+        CHECK(!sel.crossGpuCopy);
+    }
+
+    // ── A GPU that cannot encode is refused up front, with its name ──────────
+    {
+        Capabilities caps = hybridMachine();
+        caps.gpus[0].encoders.clear();
+        caps.gpus[0].codecs.clear();
+        SessionConfig cfg;
+        cfg.displayId = 1;
+        cfg.encodeGpuId = 0;
+        cfg.clientCodecs = {Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(!select(caps, cfg, sel, err));
+        CHECK(err.find("Intel Arc iGPU") != std::string::npos);
+    }
+
+    // ── A GPU id that names nothing is an error, not a fallback ──────────────
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.encodeGpuId = 7;
+        cfg.clientCodecs = {Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(!select(caps, cfg, sel, err));
+        CHECK(!err.empty());
+    }
+
+    // ── -1, the default, changes nothing about the ordinary rule ─────────────
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.encodeGpuId = -1;
+        cfg.clientCodecs = {Codec::Hevc};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.gpu->id, 0);
+        CHECK(!sel.crossGpuCopy);
+    }
 }

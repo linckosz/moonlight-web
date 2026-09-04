@@ -42,7 +42,8 @@ VplEncoder::~VplEncoder()
 }
 
 bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, bool intraRefresh, std::string& error)
+                      int bitrateKbps, bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
+                      std::string& error)
 {
     stop();
 
@@ -62,10 +63,11 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     m_Width = width;
     m_Height = height;
     m_Fps = fps > 0 ? fps : 60;
+    m_Tuning = tuning;
 
     if (!m_Session.open(device, error)) return false;
 
-    if (!fillEncodeParams(m_Params, codec, width, height, m_Fps, bitrateKbps)) {
+    if (!fillEncodeParams(m_Params, codec, width, height, m_Fps, bitrateKbps, m_Tuning)) {
         error = "no oneVPL codec for this format";
         stop();
         return false;
@@ -140,13 +142,18 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     m_Bitstream.Data = m_BitstreamData.data();
     m_Bitstream.MaxLength = static_cast<mfxU32>(m_BitstreamData.size());
 
-    log::info("[native] oneVPL ready: " + std::to_string(width) + "x" + std::to_string(height) +
-              "@" + std::to_string(m_Fps) + " " + toString(codec) + " 4:2:0 CBR " +
-              std::to_string(bitrateKbps) + " kbps" +
-              (m_IntraRefresh ? ", intra-refresh over " +
-                                    std::to_string(intraRefreshPeriodFrames(m_Fps)) + " frames"
-                              : ", keyframes on demand") +
-              " (UNVERIFIED — no Intel hardware has run this path yet)");
+    const std::string overrides = tuning.describe();
+    log::info(
+        "[native] oneVPL ready: " + std::to_string(width) + "x" + std::to_string(height) + "@" +
+        std::to_string(m_Fps) + " " + toString(codec) + " 4:2:0 CBR " +
+        std::to_string(bitrateKbps) + " kbps, VBV " +
+        std::to_string(m_Params.mfx.BufferSizeInKB * m_Params.mfx.BRCParamMultiplier) + " KB" +
+        (m_IntraRefresh
+             ? ", intra-refresh over " + std::to_string(intraRefreshPeriodFrames(m_Fps)) + " frames"
+             : ", keyframes on demand") +
+        ", TU" + std::to_string(m_Params.mfx.TargetUsage) +
+        (overrides.empty() ? "" : " [bench: " + overrides + "]") +
+        " (UNVERIFIED — no Intel hardware has run this path yet)");
     return true;
 }
 
@@ -244,7 +251,7 @@ bool VplEncoder::setBitrate(int bitrateKbps, std::string& error)
     }
 
     mfxVideoParam params;
-    if (!fillEncodeParams(params, m_Codec, m_Width, m_Height, m_Fps, bitrateKbps)) {
+    if (!fillEncodeParams(params, m_Codec, m_Width, m_Height, m_Fps, bitrateKbps, m_Tuning)) {
         error = "no oneVPL codec for this format";
         return false;
     }

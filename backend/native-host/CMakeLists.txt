@@ -39,6 +39,7 @@ if(WIN32)
         src/platform/windows/WindowsProbe.cpp
         src/platform/windows/WindowsEncoderProbe.cpp
         src/platform/windows/WindowsSession.cpp
+        src/platform/windows/CrossGpuBridge.cpp
         src/capture/windows/DxgiDuplication.cpp
         src/convert/windows/ColorConvert.cpp
         src/input/windows/Win32Input.cpp

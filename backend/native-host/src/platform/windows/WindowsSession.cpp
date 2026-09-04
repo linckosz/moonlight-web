@@ -28,6 +28,7 @@
 #include "../../encode/windows/NvencEncoder.h"
 #include "../../encode/windows/VplEncoder.h"
 #include "../../input/windows/Win32Input.h"
+#include "CrossGpuBridge.h"
 
 // GetCursorInfo/LoadCursorW, for naming the pointer — see currentCursorKind().
 #include <windows.h>
@@ -199,14 +200,21 @@ public:
             return false;
         }
 
-        // Encoding on an adapter other than the one scanning the display out
-        // needs the frame copied between GPUs, which is not written yet. Say so
-        // plainly: the alternative is the encoder failing with a vendor error
-        // that says nothing about the real cause.
+        // Encoding on an adapter other than the one scanning the display out:
+        // the frame crosses through system memory (CrossGpuBridge says what
+        // that costs). The converter and the encoder are then built on the
+        // encoder's device, and every picture passes the bridge on its way to
+        // them. Opened once, here: the encoder's adapter does not change when
+        // the duplication is lost and reopened.
+        m_Bridge.reset();
         if (m_Target.crossGpuCopy) {
-            error = "this display is driven by a GPU that cannot encode, and copying the "
-                    "frame to another GPU is not supported yet";
-            return false;
+            auto bridge = std::make_unique<CrossGpuBridge>(m_Target.encodeAdapterHandle);
+            if (!bridge->open(error)) return false;
+            m_Bridge = std::move(bridge);
+            log::warning("[native] cross-GPU copy: the display's frames are carried to '" +
+                         m_Target.encodeGpuName +
+                         "' through system memory — every zero-copy "
+                         "figure of this engine is off on this session");
         }
 
         // HDR is carried only when the whole chain can: the Selector has checked
@@ -284,8 +292,9 @@ public:
         if (m_Config.intraRefresh && !m_Info.intraRefresh)
             log::info("[native] intra-refresh requested but this encoder declined it");
         // Counted, not estimated: one GPU→CPU read of the bitstream. Everything
-        // upstream of it stays in VRAM on the capturing adapter.
-        m_Info.copiesPerFrame = 1;
+        // upstream of it stays in VRAM on the capturing adapter — unless the
+        // bridge is in, which adds the readback and the upload of every frame.
+        m_Info.copiesPerFrame = m_Bridge ? 3 : 1;
         m_Info.crossGpuCopy = m_Target.crossGpuCopy;
 
         // Input comes up last, and its failure is NOT fatal. A session that
@@ -361,6 +370,8 @@ public:
         m_Encoder.reset();
         m_Converter.reset();
         m_DesktopCopy.Reset();
+        // After the converter and the encoder, which live on its device.
+        m_Bridge.reset();
         m_Capture.reset();
     }
 
@@ -431,6 +442,22 @@ public:
     void setTargetBitrate(int kbps) override { m_PendingBitrate.store(kbps); }
 
 private:
+    /// The device the converter and the encoder are built on: the capture's,
+    /// or the bridge's when the encoder sits on another GPU.
+    ID3D11Device* pipelineDevice() const
+    {
+        if (m_Bridge) return m_Bridge->device();
+        return m_Capture ? m_Capture->device() : nullptr;
+    }
+
+    /// The texture the converter is to read for @p captured — the texture
+    /// itself in the ordinary case, or its copy on the encoder's GPU when the
+    /// two differ. Null, with @p error set, when the copy failed.
+    ID3D11Texture2D* pictureFor(ID3D11Texture2D* captured, std::string& error)
+    {
+        if (!m_Bridge) return captured;
+        return m_Bridge->transfer(m_Capture->device(), m_Capture->context(), captured, error);
+    }
     /// Build the converter and the encoder against whatever the capture is
     /// handing out RIGHT NOW — its device, its size, its format.
     ///
@@ -450,8 +477,11 @@ private:
         m_Encoder.reset();
         m_Converter.reset();
 
+        // On the encoder's device — the capture's, unless a bridge carries the
+        // frames to another GPU, in which case both stages live over there and
+        // read the bridge's copy.
         m_Converter = std::make_unique<convert::ColorConvert>();
-        if (!m_Converter->init(m_Capture->device(), m_Capture->format(), m_Capture->width(),
+        if (!m_Converter->init(pipelineDevice(), m_Capture->format(), m_Capture->width(),
                                m_Capture->height(), outputWidth, outputHeight,
                                m_Target.yuv444 ? convert::ColorConvert::Chroma::C444
                                                : convert::ColorConvert::Chroma::C420,
@@ -469,9 +499,9 @@ private:
             return false;
         }
 
-        return m_Encoder->init(m_Capture->device(), m_Target.codec, m_Converter->outputWidth(),
+        return m_Encoder->init(pipelineDevice(), m_Target.codec, m_Converter->outputWidth(),
                                m_Converter->outputHeight(), m_EncodeFps, m_Config.bitrateKbps,
-                               m_Target.yuv444, m_Config.intraRefresh, error);
+                               m_Target.yuv444, m_Config.intraRefresh, m_Config.tuning, error);
     }
 
     /// The duplication was lost — a resolution change, a mode set, a desktop
@@ -639,11 +669,12 @@ private:
     }
 
     /// A black picture the size and format of what the capture was delivering,
-    /// on the capture's current device. See restartCapture for what it is for.
+    /// on the converter's device (the capture's, or the bridge's) so it can be
+    /// converted directly. See restartCapture for what it is for.
     Microsoft::WRL::ComPtr<ID3D11Texture2D> makeBlank(std::string& error)
     {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> blank;
-        ID3D11Device* device = m_Capture ? m_Capture->device() : nullptr;
+        ID3D11Device* device = pipelineDevice();
         const int width = m_Capture ? m_Capture->width() : 0;
         const int height = m_Capture ? m_Capture->height() : 0;
         if (!device || width <= 0 || height <= 0) {
@@ -976,8 +1007,9 @@ private:
                 // screen is exactly that: no present, no pointer motion, and a
                 // cursor that has to resize anyway.
                 if (m_CursorDirty.exchange(false) && m_CompositeCursor.load() && m_DesktopCopy) {
-                    if (!m_Converter->convert(m_DesktopCopy.Get(), m_Capture->cursor(),
-                                              cursorDraw(), error)) {
+                    ID3D11Texture2D* picture = pictureFor(m_DesktopCopy.Get(), error);
+                    if (!picture ||
+                        !m_Converter->convert(picture, m_Capture->cursor(), cursorDraw(), error)) {
                         finish("colour conversion failed: " + error);
                         return;
                     }
@@ -1052,8 +1084,9 @@ private:
                 if (!m_DesktopCopy) continue;
                 m_CursorDirty.store(false);
                 const int64_t submittedUs = steadyNowUs();
-                if (!m_Converter->convert(m_DesktopCopy.Get(), m_Capture->cursor(), cursorDraw(),
-                                          error)) {
+                ID3D11Texture2D* picture = pictureFor(m_DesktopCopy.Get(), error);
+                if (!picture ||
+                    !m_Converter->convert(picture, m_Capture->cursor(), cursorDraw(), error)) {
                     finish("colour conversion failed: " + error);
                     return;
                 }
@@ -1111,7 +1144,11 @@ private:
             static const capture::CursorState kNoCursor;
             const bool composite = m_CompositeCursor.load();
             m_CursorDirty.store(false);
-            if (!m_Converter->convert(frame.texture, composite ? m_Capture->cursor() : kNoCursor,
+            // Through the bridge first when the encoder is on another GPU;
+            // the texture itself otherwise. Counted in the convert stage.
+            ID3D11Texture2D* picture = pictureFor(frame.texture, error);
+            if (!picture ||
+                !m_Converter->convert(picture, composite ? m_Capture->cursor() : kNoCursor,
                                       cursorDraw(), error)) {
                 m_Capture->release();
                 finish("colour conversion failed: " + error);
@@ -1420,6 +1457,17 @@ private:
             line += ", every one carried";
         }
         log::info(line);
+
+        // What the bridge cost, when there was one: the figure that says how
+        // much of this session's convert stage was the copy and not the pass.
+        if (m_Bridge && m_Bridge->transfers() > 0) {
+            char mean[32], peak[32];
+            std::snprintf(mean, sizeof(mean), "%.2f", m_Bridge->meanUs() / 1000.0);
+            std::snprintf(peak, sizeof(peak), "%.2f", m_Bridge->maxUs() / 1000.0);
+            log::info("[native] cross-GPU copy: " + std::to_string(m_Bridge->transfers()) +
+                      " frames of " + std::to_string(m_Bridge->bytesPerFrame() / (1024 * 1024)) +
+                      " MB, " + mean + " ms mean, " + peak + " ms max");
+        }
     }
 
     void finish(const std::string& reason) noexcept
@@ -1451,6 +1499,10 @@ private:
     int64_t m_LoopStartUs = 0;
 
     std::unique_ptr<capture::DxgiDuplication> m_Capture;
+    /// Present only when the encoder sits on another GPU than the display's:
+    /// carries every frame across, and owns the device the converter and the
+    /// encoder are then built on. See CrossGpuBridge.
+    std::unique_ptr<CrossGpuBridge> m_Bridge;
     std::unique_ptr<convert::ColorConvert> m_Converter;
     /// The last captured desktop, kept only while the pointer is on this
     /// screen — see retainDesktop().

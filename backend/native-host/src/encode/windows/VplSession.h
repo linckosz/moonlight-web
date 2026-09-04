@@ -15,6 +15,8 @@
 
 #include <d3d11.h>
 
+#include "mw/native/EncoderTuning.h"
+
 #include <string>
 #include <vector>
 
@@ -74,10 +76,13 @@ private:
 ///  - CBR with a one-frame buffer — the buffer is what actually enforces low
 ///    latency, capping how far ahead the encoder may spend.
 ///
+/// @p tuning is the bench's overrides (TargetUsage, VBV); the default is the
+/// engine's own choice and what every real session passes.
+///
 /// Returns false when the codec has no oneVPL FourCC (nothing does today, but
 /// the enum can grow).
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,
-                      int bitrateKbps);
+                      int bitrateKbps, const EncoderTuning& tuning = EncoderTuning{});
 
 /// Attach intra-refresh to @p params, sweeping the picture over two seconds'
 /// worth of frames at @p fps — the same duration the NVENC and AMF paths use

@@ -17,7 +17,19 @@
 
 #pragma once
 
+#include "mw/native/EncoderTuning.h"
+
 #include <QString>
+
+/// Parse the encoder-knob part of a bench spec — `preset=1,multipass=off,
+/// aq=1,…,gpu=<id>` — into @p tuning and @p gpu (-1 when absent). Shared with
+/// the `MW_NATIVE_TUNING` environment variable, which lets a real session be
+/// started with the same overrides for an A/B the bench cannot do: two
+/// settings looked at, by a person, on the same screen. Unknown keys are an
+/// error; the bench's own keys (display, seconds, codec…) are not accepted
+/// here. Returns false and fills @p error on a bad key or value.
+bool parseEncoderTuningSpec(const QString& spec, mw::native::EncoderTuning& tuning, int& gpu,
+                            QString& error);
 
 /// `--native-bench <spec>`: run the native capture & encode engine on one
 /// display for a while, with no network and no browser, and write what every

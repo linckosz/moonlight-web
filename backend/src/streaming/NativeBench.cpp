@@ -48,6 +48,10 @@ struct BenchSpec
     int height = 0;
     bool yuv444 = false;
     bool intraRefresh = false;
+    /// The GPU to encode on, -1 for the display's own. See SessionConfig.
+    int gpu = -1;
+    /// The encoder knobs under test; default = the engine's own choices.
+    mw::native::EncoderTuning tuning;
 };
 
 /// What one frame cost, copied out of the callback. The bytes themselves are
@@ -78,7 +82,92 @@ const char* const kUsage =
     "  width=<px>,height=<px>   output size, 0 = the display's (default 0)\n"
     "  yuv444=0|1       (default 0)\n"
     "  intra=0|1        intra-refresh instead of keyframes (default 0)\n"
-    "  out=<path.csv>   one row per frame (default native-bench-<time>.csv here)\n";
+    "  gpu=<id>         encode on this GPU instead of the display's own (cross-GPU copy)\n"
+    "  out=<path.csv>   one row per frame (default native-bench-<time>.csv here)\n"
+    "encoder knobs, each defaulting to the engine's own choice:\n"
+    "  preset=1..7      NVENC P1 (fastest) .. P7 (best)\n"
+    "  tuning=ull|ll    NVENC latency tuning\n"
+    "  multipass=off|quarter|full   NVENC two-pass rate control\n"
+    "  aq=0|1           spatial adaptive quantization (NVENC AQ, AMF VBAQ/CAQ)\n"
+    "  taq=0|1          NVENC temporal AQ\n"
+    "  preanalysis=0|1  AMF pre-analysis\n"
+    "  quality=speed|balanced|quality   AMF quality preset\n"
+    "  tu=1..7          oneVPL TargetUsage (1 quality .. 7 speed)\n"
+    "  vbv=<frames>     VBV of exactly N frames at the stream rate, no floor\n";
+
+bool parseChoice(const QString& value, mw::native::EncoderTuning::Choice& out)
+{
+    if (value == "0" || value.compare("off", Qt::CaseInsensitive) == 0) {
+        out = mw::native::EncoderTuning::Choice::Off;
+        return true;
+    }
+    if (value == "1" || value.compare("on", Qt::CaseInsensitive) == 0) {
+        out = mw::native::EncoderTuning::Choice::On;
+        return true;
+    }
+    return false;
+}
+
+/// One encoder knob, `key=value`. Returns false when the key is not a knob at
+/// all (so the caller can try its own keys), and sets @p ok false on a bad
+/// value for a knob it does know.
+bool applyTuningKey(const QString& key, const QString& value, mw::native::EncoderTuning& tuning,
+                    int& gpu, bool& ok)
+{
+    ok = true;
+    if (key == "gpu")
+        gpu = value.toInt(&ok);
+    else if (key == "preset") {
+        const int p = value.toInt(&ok);
+        ok = ok && p >= 1 && p <= 7;
+        tuning.nvencPreset = p;
+    } else if (key == "tu") {
+        const int tu = value.toInt(&ok);
+        ok = ok && tu >= 1 && tu <= 7;
+        tuning.vplTargetUsage = tu;
+    } else if (key == "vbv") {
+        const int frames = value.toInt(&ok);
+        ok = ok && frames >= 1 && frames <= 16;
+        tuning.vbvFrames = frames;
+    } else if (key == "aq")
+        ok = parseChoice(value, tuning.spatialAq);
+    else if (key == "taq")
+        ok = parseChoice(value, tuning.temporalAq);
+    else if (key == "preanalysis")
+        ok = parseChoice(value, tuning.preAnalysis);
+    else if (key == "tuning") {
+        const QString t = value.toLower();
+        if (t == "ull")
+            tuning.nvencTuning = mw::native::EncoderTuning::Latency::UltraLow;
+        else if (t == "ll")
+            tuning.nvencTuning = mw::native::EncoderTuning::Latency::Low;
+        else
+            ok = false;
+    } else if (key == "multipass") {
+        const QString m = value.toLower();
+        if (m == "off" || m == "0")
+            tuning.nvencMultiPass = mw::native::EncoderTuning::MultiPass::Off;
+        else if (m == "quarter")
+            tuning.nvencMultiPass = mw::native::EncoderTuning::MultiPass::QuarterRes;
+        else if (m == "full")
+            tuning.nvencMultiPass = mw::native::EncoderTuning::MultiPass::FullRes;
+        else
+            ok = false;
+    } else if (key == "quality") {
+        const QString q = value.toLower();
+        if (q == "speed")
+            tuning.amfQuality = mw::native::EncoderTuning::AmfQuality::Speed;
+        else if (q == "balanced")
+            tuning.amfQuality = mw::native::EncoderTuning::AmfQuality::Balanced;
+        else if (q == "quality")
+            tuning.amfQuality = mw::native::EncoderTuning::AmfQuality::Quality;
+        else
+            ok = false;
+    } else {
+        return false;
+    }
+    return true;
+}
 
 bool parseSpec(const QString& text, BenchSpec& spec, QString& error)
 {
@@ -93,7 +182,9 @@ bool parseSpec(const QString& text, BenchSpec& spec, QString& error)
         const QString key = item.left(eq).trimmed().toLower();
         const QString value = item.mid(eq + 1).trimmed();
         bool ok = true;
-        if (key == "display")
+        if (applyTuningKey(key, value, spec.tuning, spec.gpu, ok)) {
+            // handled, ok says whether the value was good
+        } else if (key == "display")
             spec.display = value.toInt(&ok);
         else if (key == "seconds")
             spec.seconds = value.toInt(&ok);
@@ -149,6 +240,21 @@ QString describeDisplay(const mw::native::DisplayInfo& d)
         .arg(d.detail.empty() ? QString() : "  (" + QString::fromStdString(d.detail) + ")");
 }
 
+QString describeGpu(const mw::native::GpuInfo& g)
+{
+    QString codecs;
+    for (mw::native::Codec c : g.codecs) {
+        if (!codecs.isEmpty()) codecs += ' ';
+        codecs += mw::native::toString(c);
+    }
+    return QString("  gpu=%1  %2  %3%4")
+        .arg(g.id)
+        .arg(QString::fromStdString(g.name), -32)
+        .arg(g.encoders.empty() ? QString("no encoder")
+                                : QString(mw::native::toString(g.encoders.front())) + ": " + codecs)
+        .arg(g.supports10Bit ? " (10-bit)" : "");
+}
+
 /// mean / p95 / p99 of an integer quantity, with a unit divisor.
 QString tail(const mw::native::LatencyHistogram& h, double divisor, int decimals)
 {
@@ -160,6 +266,33 @@ QString tail(const mw::native::LatencyHistogram& h, double divisor, int decimals
 }
 
 } // namespace
+
+bool parseEncoderTuningSpec(const QString& spec, mw::native::EncoderTuning& tuning, int& gpu,
+                            QString& error)
+{
+    gpu = -1;
+    const QStringList items = spec.split(QRegularExpression("[,;]"), Qt::SkipEmptyParts);
+    for (const QString& raw : items) {
+        const QString item = raw.trimmed();
+        const int eq = item.indexOf('=');
+        if (eq <= 0) {
+            error = "not a key=value pair: " + item;
+            return false;
+        }
+        const QString key = item.left(eq).trimmed().toLower();
+        const QString value = item.mid(eq + 1).trimmed();
+        bool ok = true;
+        if (!applyTuningKey(key, value, tuning, gpu, ok)) {
+            error = "not an encoder knob: " + key;
+            return false;
+        }
+        if (!ok) {
+            error = "bad value for " + key + ": " + value;
+            return false;
+        }
+    }
+    return true;
+}
 
 int runNativeBenchCommand(const QString& specText)
 {
@@ -202,7 +335,10 @@ int runNativeBenchCommand(const QString& specText)
         out << "Displays:\n";
         for (const mw::native::DisplayInfo& d : caps.displays)
             out << describeDisplay(d) << "\n";
-        out << "\nRun again with display=<id>.\n";
+        out << "GPUs:\n";
+        for (const mw::native::GpuInfo& g : caps.gpus)
+            out << describeGpu(g) << "\n";
+        out << "\nRun again with display=<id> (and gpu=<id> to encode elsewhere).\n";
         out.flush();
         err.flush();
         return spec.display >= 0 ? 1 : 2;
@@ -217,6 +353,8 @@ int runNativeBenchCommand(const QString& specText)
     config.clientCodecs = {spec.codec};
     config.yuv444 = spec.yuv444;
     config.intraRefresh = spec.intraRefresh;
+    config.encodeGpuId = spec.gpu;
+    config.tuning = spec.tuning;
 
     std::mutex rowsMutex;
     std::vector<BenchRow> rows;
@@ -269,7 +407,11 @@ int runNativeBenchCommand(const QString& specText)
         << (info.yuv444 ? " 4:4:4" : " 4:2:0") << " · " << info.width << "x" << info.height
         << " · fps " << (info.fps > 0 ? QString::number(info.fps) : QString("display")) << " · "
         << spec.bitrateKbps << " kbps" << (info.intraRefresh ? " · intra-refresh" : "") << " · "
-        << spec.seconds << " s on " << QString::fromStdString(display->label) << "\n";
+        << spec.seconds << " s on " << QString::fromStdString(display->label)
+        << (info.crossGpuCopy ? " · cross-GPU copy" : "")
+        << (spec.tuning.isDefault() ? QString()
+                                    : " · " + QString::fromStdString(spec.tuning.describe()))
+        << "\n";
     out.flush();
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(spec.seconds);

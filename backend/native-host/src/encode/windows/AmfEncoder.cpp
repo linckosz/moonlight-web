@@ -50,6 +50,16 @@ struct CodecProperties
     /// the one statistic read back: the average quantizer (a q-index on AV1).
     const wchar_t* statisticsFeedback;
     const wchar_t* statisticAvgQp;
+    /// The bench's knobs. The quality preset's three values are per codec (the
+    /// enums do not even agree on which way round the scale runs); adaptive
+    /// quantization is a bool on H.264/HEVC (VBAQ) and a mode on AV1 (CAQ).
+    const wchar_t* qualityPreset;
+    amf_int64 qualitySpeed;
+    amf_int64 qualityBalanced;
+    amf_int64 qualityQuality;
+    const wchar_t* preAnalysis;
+    const wchar_t* adaptiveQuant;
+    bool adaptiveQuantIsMode;
 };
 
 const CodecProperties& propertiesFor(Codec codec)
@@ -73,6 +83,13 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_QUERY_TIMEOUT,
         AMF_VIDEO_ENCODER_STATISTICS_FEEDBACK,
         AMF_VIDEO_ENCODER_STATISTIC_AVERAGE_QP,
+        AMF_VIDEO_ENCODER_QUALITY_PRESET,
+        AMF_VIDEO_ENCODER_QUALITY_PRESET_SPEED,
+        AMF_VIDEO_ENCODER_QUALITY_PRESET_BALANCED,
+        AMF_VIDEO_ENCODER_QUALITY_PRESET_QUALITY,
+        AMF_VIDEO_ENCODER_PRE_ANALYSIS_ENABLE,
+        AMF_VIDEO_ENCODER_ENABLE_VBAQ,
+        false,
     };
     static const CodecProperties kHevc = {
         AMFVideoEncoder_HEVC,
@@ -93,6 +110,13 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_HEVC_QUERY_TIMEOUT,
         AMF_VIDEO_ENCODER_HEVC_STATISTICS_FEEDBACK,
         AMF_VIDEO_ENCODER_HEVC_STATISTIC_AVERAGE_QP,
+        AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET,
+        AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET_SPEED,
+        AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET_BALANCED,
+        AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET_QUALITY,
+        AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE,
+        AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ,
+        false,
     };
     static const CodecProperties kAv1 = {
         AMFVideoEncoder_AV1,
@@ -113,6 +137,13 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_AV1_QUERY_TIMEOUT,
         AMF_VIDEO_ENCODER_AV1_STATISTICS_FEEDBACK,
         AMF_VIDEO_ENCODER_AV1_STATISTIC_AVERAGE_Q_INDEX,
+        AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET,
+        AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_SPEED,
+        AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_BALANCED,
+        AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_QUALITY,
+        AMF_VIDEO_ENCODER_AV1_PRE_ANALYSIS_ENABLE,
+        AMF_VIDEO_ENCODER_AV1_AQ_MODE,
+        true,
     };
 
     switch (codec) {
@@ -136,6 +167,16 @@ constexpr amf_int64 kEffectivelyInfiniteGop = 1 << 20;
 /// GPU is never cut off mid-frame.
 constexpr int kQueryTimeoutMs = 100;
 
+/// Name the quality preset the encoder is running with, in the codec's own
+/// scale — for the log, so a bench line says what the USAGE chose.
+std::string qualityName(const CodecProperties& props, amf_int64 value)
+{
+    if (value == props.qualitySpeed) return "speed";
+    if (value == props.qualityBalanced) return "balanced";
+    if (value == props.qualityQuality) return "quality";
+    return "value " + std::to_string(value);
+}
+
 } // namespace
 
 AmfEncoder::~AmfEncoder()
@@ -144,7 +185,8 @@ AmfEncoder::~AmfEncoder()
 }
 
 bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, bool intraRefresh, std::string& error)
+                      int bitrateKbps, bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
+                      std::string& error)
 {
     stop();
 
@@ -200,16 +242,56 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     // parameter set, so anything set before it is overwritten.
     m_Encoder->SetProperty(props.usage, props.usageUltraLowLatency);
 
+    // What the usage chose for the knobs the bench can move, before it moves
+    // them. Read back rather than assumed: AMF documents every one of these as
+    // "default = depends on USAGE", and the bench compares against them.
+    amf_int64 usageQuality = -1;
+    amf_int64 usagePreAnalysis = -1;
+    amf_int64 usageAq = -1;
+    m_Encoder->GetProperty(props.qualityPreset, &usageQuality);
+    m_Encoder->GetProperty(props.preAnalysis, &usagePreAnalysis);
+    m_Encoder->GetProperty(props.adaptiveQuant, &usageAq);
+    log::info(std::string("[native] AMF ultra-low-latency usage as the driver ships it: quality=") +
+              qualityName(props, usageQuality) + " preanalysis=" +
+              std::to_string(usagePreAnalysis) + " aq=" + std::to_string(usageAq));
+
+    // ── The bench's overrides, where it gave any ────────────────────────────
+    switch (tuning.amfQuality) {
+    case EncoderTuning::AmfQuality::Speed:
+        m_Encoder->SetProperty(props.qualityPreset, props.qualitySpeed);
+        break;
+    case EncoderTuning::AmfQuality::Balanced:
+        m_Encoder->SetProperty(props.qualityPreset, props.qualityBalanced);
+        break;
+    case EncoderTuning::AmfQuality::Quality:
+        m_Encoder->SetProperty(props.qualityPreset, props.qualityQuality);
+        break;
+    case EncoderTuning::AmfQuality::Default: break;
+    }
+    if (tuning.preAnalysis != EncoderTuning::Choice::Default)
+        m_Encoder->SetProperty(props.preAnalysis, tuning.preAnalysis == EncoderTuning::Choice::On);
+    if (tuning.spatialAq != EncoderTuning::Choice::Default) {
+        const bool on = tuning.spatialAq == EncoderTuning::Choice::On;
+        if (props.adaptiveQuantIsMode)
+            m_Encoder->SetProperty(props.adaptiveQuant,
+                                   amf_int64(on ? AMF_VIDEO_ENCODER_AV1_AQ_MODE_CAQ
+                                                : AMF_VIDEO_ENCODER_AV1_AQ_MODE_NONE));
+        else
+            m_Encoder->SetProperty(props.adaptiveQuant, on);
+    }
+    m_VbvFrames = tuning.vbvFrames;
+
     // CBR. The VBV is what actually enforces low latency: it caps how far ahead
     // the encoder may spend, so no single frame can be so large that it takes
     // several frame times to transmit. See RateControl.h for why it has a floor
     // rather than being one frame at any refresh rate.
     const amf_int64 bitsPerSecond = static_cast<amf_int64>(bitrateKbps) * 1000;
+    const amf_int64 vbvBitsNow =
+        static_cast<amf_int64>(vbvBits(static_cast<uint32_t>(bitsPerSecond), m_Fps, m_VbvFrames));
     m_Encoder->SetProperty(props.rateControl, props.rateControlCbr);
     m_Encoder->SetProperty(props.targetBitrate, bitsPerSecond);
     m_Encoder->SetProperty(props.peakBitrate, bitsPerSecond);
-    m_Encoder->SetProperty(props.vbvBufferSize, static_cast<amf_int64>(vbvBitsPerFrame(
-                                                    static_cast<uint32_t>(bitsPerSecond), m_Fps)));
+    m_Encoder->SetProperty(props.vbvBufferSize, vbvBitsNow);
 
     m_Encoder->SetProperty(props.frameSize, ::AMFConstructSize(width, height));
     m_Encoder->SetProperty(props.frameRate, ::AMFConstructRate(m_Fps, 1));
@@ -291,11 +373,22 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         return false;
     }
 
+    // The knobs as the encoder holds them now — usage, then overrides, then
+    // Init(), which may have corrected any of them.
+    amf_int64 quality = -1, preAnalysis = -1, aq = -1;
+    m_Encoder->GetProperty(props.qualityPreset, &quality);
+    m_Encoder->GetProperty(props.preAnalysis, &preAnalysis);
+    m_Encoder->GetProperty(props.adaptiveQuant, &aq);
+    const std::string overrides = tuning.describe();
     log::info("[native] AMF ready: " + std::to_string(width) + "x" + std::to_string(height) + "@" +
               std::to_string(m_Fps) + " " + toString(codec) + " 4:2:0 CBR " +
-              std::to_string(bitrateKbps) + " kbps" +
+              std::to_string(bitrateKbps) + " kbps, VBV " + std::to_string(vbvBitsNow / 8 / 1024) +
+              " KB" +
               (m_IntraRefresh ? ", intra-refresh over " + std::to_string(refreshPeriod) + " frames"
-                              : ", keyframes on demand"));
+                              : ", keyframes on demand") +
+              ", quality=" + qualityName(props, quality) +
+              " preanalysis=" + std::to_string(preAnalysis) + " aq=" + std::to_string(aq) +
+              (overrides.empty() ? "" : " [bench: " + overrides + "]"));
     return true;
 }
 
@@ -396,8 +489,9 @@ bool AmfEncoder::setBitrate(int bitrateKbps, std::string& error)
     // exists to prevent, reintroduced on AMD by the very path meant to sharpen it.
     m_Encoder->SetProperty(props.targetBitrate, bitsPerSecond);
     m_Encoder->SetProperty(props.peakBitrate, bitsPerSecond);
-    m_Encoder->SetProperty(props.vbvBufferSize, static_cast<amf_int64>(vbvBitsPerFrame(
-                                                    static_cast<uint32_t>(bitsPerSecond), m_Fps)));
+    m_Encoder->SetProperty(
+        props.vbvBufferSize,
+        static_cast<amf_int64>(vbvBits(static_cast<uint32_t>(bitsPerSecond), m_Fps, m_VbvFrames)));
     return true;
 }
 

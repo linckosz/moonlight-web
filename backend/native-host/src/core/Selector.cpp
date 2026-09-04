@@ -90,6 +90,31 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     out.gpu = caps.gpuFor(*out.display);
     out.crossGpuCopy = false;
 
+    // The bench may name the encoder's GPU outright — that is how an encoder
+    // that drives no display (an iGPU beside a discrete card) gets measured at
+    // all. A real session never sets this. The copy it costs is declared, and
+    // the GPU still has to be able to encode: forcing a GPU without an encoder
+    // would fail at init with a vendor error that says nothing.
+    if (config.encodeGpuId >= 0) {
+        const GpuInfo* forced = nullptr;
+        for (const GpuInfo& gpu : caps.gpus)
+            if (gpu.id == config.encodeGpuId) forced = &gpu;
+        if (!forced) {
+            error = "GPU " + std::to_string(config.encodeGpuId) + " does not exist";
+            return false;
+        }
+        if (forced->encoders.empty() || forced->codecs.empty()) {
+            error = "GPU " + std::to_string(config.encodeGpuId) + " ('" + forced->name +
+                    "') has no usable encoder";
+            return false;
+        }
+        out.crossGpuCopy = out.gpu != forced;
+        if (out.crossGpuCopy)
+            log::warning("[native] encoder GPU forced to '" + forced->name +
+                         "' (bench) — a cross-GPU copy per frame");
+        out.gpu = forced;
+    }
+
     // Same rule as the fallback below: an encoder with no codec cannot encode,
     // so a display whose GPU is in that state must look elsewhere rather than
     // fail codec negotiation a few lines later.
