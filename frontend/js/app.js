@@ -1923,6 +1923,9 @@ const MoonlightApp = {
             // on every click (debug builds on Windows, setting on). Only then
             // does the view install its measuring side.
             latencyFlag: result.latency_flag === true,
+            // The host is this machine's own screen (mw-native-host): the mouse
+            // is sent at its raw report rate there — see _bindPointerRaw.
+            nativeHost: result.native === true,
         };
 
         return new StreamView(
