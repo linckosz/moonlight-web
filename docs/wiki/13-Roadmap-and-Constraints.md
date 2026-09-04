@@ -11,8 +11,9 @@ An honest inventory of what remains, what constrains the design, and where the l
 | Area | Item | Status / notes |
 |---|---|---|
 | Gamepad | **Phases 2–3**: non-standard controllers (wheels, HOTAS) per-device remapping, richer haptics | Phase 1 MVP shipped (standard mapping + rumble); ignoring non-standard pads is deliberate (`GamepadManager.js`) |
-| Video Enhancement | **C7 (optional)**: HDR-aware enhancement path (f16/compute pipeline) | C1–C6 complete & validated; blocked on the canvas-HDR limitation ([ch. 5](05-Streaming-and-Transports.md#53-hdr--support-and-limitations)) |
-| Frontend threading | OffscreenCanvas decode/render worker now defaults to `auto` (heuristic, desktop only); `video_worker: on\|off` forces it | Extend the heuristic to mobile after broader device validation |
+| Video Enhancement | HDR-aware enhancement shipped for **AV1** (`rgba16float` linear path, FSR1 in HDR); HEVC HDR still goes through `<video>` with no Enhancer | Waits for Chrome to let a hardware-decoded HDR frame reach a shader untouched ([ch. 5 §5.3](05-Streaming-and-Transports.md#53-hdr--support-and-limitations), [ch. 15](15-Client-Presentation-Benchmarks.md)) |
+| Frontend threading | OffscreenCanvas decode/render worker: `auto` resolves to off (measured no gain; WebGPU in a worker is a 22 ms hand-off on macOS); `video_worker: on` forces it | Revisit only with a measurement on Mac **and** Windows |
+| Client presentation | Two measurements left open in [ch. 15](15-Client-Presentation-Benchmarks.md): Canvas2D slower than FSR1 WebGL2 in one windowed SDR series; WebGPU ahead of WebGL2 fullscreen | Confirm on game content before touching a default |
 | Multi-instance NAT | Two instances behind one NAT coexist (deterministic fallback ports), but a "process dies" crash report in that setup remains to be root-caused | `upnp-multi-instance` follow-up |
 | Input | Clipboard sync and NumLock host-sync shipped but flagged "to validate E2E" on more device matrices | |
 | C++ quality tooling | clang-format + cppcheck gate exists; **clang-tidy is not yet a CI gate** (`run_clang_tidy.sh` is local-only) | |
@@ -24,7 +25,7 @@ An honest inventory of what remains, what constrains the design, and where the l
 |---|---|
 | **`moonlight-common-c` is a process-global singleton** | One session **per process** — hence take-over semantics and deferred starts. Lifted to *two* concurrent slots by running each session in a `--stream-worker` child (which is what makes seamless quality switching possible); going beyond that is a matter of generalizing the slot table, not of architecture. |
 | **Browsers only** | Codec support is at the browser's mercy (HEVC/AV1 availability varies; MediaTrack path is H.264-only); no raw UDP from JS — everything rides WebRTC/WSS. |
-| **Canvas is SDR-referred** | Real HDR requires the `<video>` sink → HDR and WebGPU enhancement are mutually exclusive. Until browsers expose HDR canvas (WebGPU `rgba16float` + HDR compositing is still maturing), this stands. |
+| **Canvas import is SDR-referred** | `importExternalTexture`/`drawImage` tone-map HDR on import; the signal survives only via `copyTo` of software-decoded frames. Hence true HDR on a canvas = **AV1, software decoded** (~10 ms more than SDR), and HDR with HEVC = the `<video>` sink, the slowest presenter, without the Enhancer ([ch. 15](15-Client-Presentation-Benchmarks.md#155-decision-4--hdr-routing)). |
 | **The `/start` response precedes ICE** | The client must own transport fallback; the server can never know a transport failed. |
 | **Self-signed cert on LAN** | A first-visit browser warning is unavoidable without a user-provided domain and certificate. |
 | **UPnP/NAT reality** | CGNAT/double-NAT cannot be traversed (detected + reported); routers rarely hairpin UDP (hence local-candidate advertisement to LAN clients). |
@@ -43,7 +44,8 @@ An honest inventory of what remains, what constrains the design, and where the l
 - Extend `JitterController` telemetry into the stats overlay for user-visible network diagnosis.
 
 **HDR**
-- Track browser HDR-canvas proposals (WebGPU HDR compositing / `CanvasHighDynamicRangeOptions`); when available, unlock Enhancement+HDR together (the planned C7).
+- Track Chrome's handling of hardware-decoded HDR frames in WebGPU (`importExternalTexture` keeping PQ, or `copyTo` on hardware frames): either one lets HEVC HDR leave the `<video>` sink and cuts the software-AV1 cost of the `linear` path.
+- HDR on the native host (FP16 capture → P010 → HEVC Main10 / AV1 10-bit) — the "HDR host, SDR client" ACES case is real only on Sunshine today.
 
 **Platform & ops**
 - Make the ASan workflow a scheduled job; add clang-tidy to CI as advisory → blocking.

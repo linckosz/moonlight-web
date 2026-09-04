@@ -58,15 +58,20 @@ Key mechanics (all present in the code — regressions here are the most expensi
 
 ### Why canvas *and* `<video>`?
 
-- **Canvas (WebCodecs decode)** gives frame-level latency control, codec freedom (HEVC/AV1), custom rendering (WebGPU upscaling/sharpening) and precise stats. It is the default sink.
-- **`<video>`** is used in two situations: (a) the *webrtc-media* transport, where the browser owns decode and dejitter entirely; (b) the `VideoElementRenderer` sink on the DC transport, because canvas sampling is SDR-referred — only a `<video>` element presents BT.2020+PQ frames as real HDR.
+- **Canvas (WebCodecs decode)** gives frame-level latency control, codec freedom (HEVC/AV1), custom rendering (WebGL2/WebGPU upscaling/sharpening) and precise stats. It is the default sink, and the fastest one measured: the `<video>` element presents on the compositor's vsync behind its generator's queue and came out 35–45 ms slower click-to-photon in every series ([ch. 15](15-Client-Presentation-Benchmarks.md#155-decision-4--hdr-routing)).
+- **`<video>`** is used in two situations: (a) the *webrtc-media* transport, where the browser owns decode and dejitter entirely; (b) the `VideoElementRenderer` sink on the DC transport for **HDR with HEVC**, the one case where no canvas can carry the HDR signal (below).
 
 ## 5.3 HDR — support and limitations
 
-- The stream can be encoded HDR10 (HEVC/AV1, `hdr_enabled`); decoded `VideoFrame`s carry the bt2020/PQ `VideoColorSpace`.
-- **Limitation**: WebGPU/Canvas2D can only output SDR color spaces (srgb/display-p3). `importExternalTexture`/`drawImage` tone-map PQ→SDR *before* the app sees the pixels, so HDR through the canvas path always looks washed out. Chrome historically double-converted, making naïve canvas-HDR attempts worse.
-- **Current routing** (`docs/` + memory of `hdr-routing`): true HDR requires the **`<video>` sink** (VideoElementRenderer or webrtc-media). When the Enhancer is ON, or the display is SDR (`dynamic-range` media query), an **ACES tone-map of the P010 signal** is applied automatically in the canvas path; `mw_hdr_tonemap=1/0` (localStorage) overrides.
-- Practical consequence: **HDR and Video Enhancement are mutually exclusive** — enhancement needs canvas, real HDR needs `<video>`.
+- The stream can be encoded HDR10 (HEVC/AV1, `hdr_enabled`); decoded `VideoFrame`s carry the bt2020/PQ `VideoColorSpace`. The Sunshine/GameStream hosts encode it; the native host does not yet.
+- **The constraint**: on any canvas, `importExternalTexture` (WebGPU) and `drawImage` (Canvas2D) tone-map a PQ frame to SDR **on import**. The HDR signal survives only through `VideoFrame.copyTo()` of the raw planes, and `copyTo` works on **software-decoded** frames only — Chrome has a software AV1 decoder (dav1d), no software HEVC. WebGL2 and Canvas2D have no HDR surface at all in Chrome.
+- **Routing** (`_hdrMode` in `StreamView.js`, decided from codec and display; the display answer is live via `matchMedia('(dynamic-range: high)')`):
+  - HDR display + **AV1** → `linear`: `rgba16float` WebGPU canvas in extended tone-mapping mode, PQ → scene light (203 nits = 1.0), BT.2020 → P3; the Enhancer runs in HDR. True HDR.
+  - HDR display + **HEVC** → `sink`: `<video>` via `MediaStreamTrackGenerator`, hardware decode, true HDR, Enhancer refused (overlay says so).
+  - SDR display + AV1 → `tonemap`: ACES HDR→SDR in the renderer's first pass, Enhancer on a normal canvas. `mw_hdr_tonemap=1/0` forces / disables it; `mw_hdr_curve` / `mw_hdr_exposure` / `mw_hdr_refwhite` tune it.
+  - SDR display + HEVC → `browser`: plain blit, the browser's own tone-map on import.
+- **Guard**: the HDR checkbox is offered only when the client has an HDR display **and** a WebGPU adapter **and** a 10-bit decoder (`hdrClientCapability()`); otherwise it is greyed with the reason and the launch omits `hdr_enabled`. `mw_hdr_request=1` bypasses the guard for experiments.
+- Practical consequences: **HDR and the Enhancer are compatible on AV1**, exclusive on HEVC; true HDR costs about 10 ms more than SDR on this client (software AV1 decode + float canvas); **HDR is 4:2:0 only** — HEVC 4:4:4 10-bit decodes but renders green on Chrome/Windows ([ch. 15 §15.6](15-Client-Presentation-Benchmarks.md#156-decision-5--444-chroma)).
 
 ## 5.4 Audio path
 

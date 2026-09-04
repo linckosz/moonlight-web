@@ -28,6 +28,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 | 12 | [Agentic Coding](12-Agentic-Coding.md) | Recommended AI-agent setup (Claude Code, GitHub Copilot): master agent, skills, sub-agents |
 | 13 | [Roadmap & Constraints](13-Roadmap-and-Constraints.md) | Known remaining work, current constraints, improvement leads |
 | 14 | [Conclusion](14-Conclusion.md) | Design philosophy summary and pointers |
+| 15 | [Client Presentation Benchmarks](15-Client-Presentation-Benchmarks.md) | The measurements behind the client defaults: Canvas2D vs WebGL2 vs WebGPU vs `<video>`, Enhancer algorithms, HDR routing, 4:4:4 |
 
 ## Project at a glance
 
