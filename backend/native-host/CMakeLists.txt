@@ -54,7 +54,24 @@ if(WIN32)
         src/encode/windows/VplSession.cpp
         src/encode/windows/VplCapabilities.cpp
         src/encode/windows/VplEncoder.cpp
+        src/audio/OpusEncoder.cpp
+        src/audio/windows/WasapiLoopback.cpp
     )
+
+    # libopus (BSD-3-Clause, on the allow-list in LICENSE.md), built from the
+    # pinned submodule as a static library: nothing installed, nothing shared,
+    # no programs, no tests. The encoder the audio thread runs.
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third_party/opus EXCLUDE_FROM_ALL)
+    set_target_properties(opus PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_link_libraries(mw-native-host PRIVATE Opus::opus)
+    target_include_directories(mw-native-host SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/opus/include)
+
     # DXGI enumerates the adapters and their outputs (the display→GPU
     # association everything else depends on) and drives Desktop Duplication;
     # d3d11 owns the textures frames live in; user32/gdi32 supply the exact
@@ -65,9 +82,11 @@ if(WIN32)
     # winmm is timeBeginPeriod: the capture loop waits for the stream's next
     # due time, and without a 1 ms scheduler period that wait lands 15 ms late.
     # avrt is MMCSS: the capture thread registers as a "Games" task so the
-    # scheduler favours it over the desktop's background work.
+    # scheduler favours it over the desktop's background work (and the audio
+    # thread as "Pro Audio").
+    # ole32 is COM: WASAPI's device enumerator is a COM object.
     target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32 setupapi
-                                                 winmm avrt)
+                                                 winmm avrt ole32)
 else()
     set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
@@ -160,6 +179,7 @@ if(MW_BUILD_TESTS)
         tests/test_frame_cadence.cpp
         tests/test_restart_backoff.cpp
         tests/test_rate_control.cpp
+        tests/test_audio_pacer.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)

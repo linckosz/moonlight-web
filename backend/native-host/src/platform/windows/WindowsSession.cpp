@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "../../audio/windows/WasapiLoopback.h"
 #include "../../capture/windows/DxgiDuplication.h"
 #include "../../convert/windows/ColorConvert.h"
 #include "../../core/FrameCadence.h"
@@ -310,6 +311,21 @@ public:
             }
         }
 
+        // Audio, on the same terms as input: wanted only when the consumer gave
+        // a callback, and its failure degrades the session (silent) rather
+        // than refusing it. A machine with no playback device at all still
+        // streams its screen.
+        if (m_Callbacks.onAudio) {
+            auto audio = std::make_unique<audio::WasapiLoopback>(m_Callbacks.onAudio);
+            std::string audioError;
+            if (audio->start(audioError)) {
+                m_Audio = std::move(audio);
+                m_Info.audio = true;
+            } else {
+                log::warning("[native] audio unavailable, streaming silent: " + audioError);
+            }
+        }
+
         // The first frame must be a keyframe — a client has nothing to decode
         // against otherwise.
         m_ForceKeyframe.store(true);
@@ -336,6 +352,9 @@ public:
             std::lock_guard<std::mutex> lock(m_InputMutex);
             m_Input.reset();
         }
+        // Joins the audio thread; its last packet has been delivered when this
+        // returns, so the consumer can be torn down after us.
+        m_Audio.reset();
 
         if (!wasRunning && !m_Encoder && !m_Capture) return;
 
@@ -1445,6 +1464,10 @@ private:
     /// the network thread.
     std::mutex m_InputMutex;
     std::unique_ptr<input::IInputSink> m_Input;
+
+    /// Optional too: the host's playback, captured and encoded on its own
+    /// thread. Null when the consumer asked for none or no device could open.
+    std::unique_ptr<audio::WasapiLoopback> m_Audio;
 
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};
