@@ -1191,9 +1191,20 @@ pourquoi la carte « <hôte> — MoonlightWeb Host » est ou n'est pas dans sa l
 Le reste — noms d'écrans, GPU, encodeur, codecs — ne va qu'à un appelant **assis à
 la machine** (même raisonnement que `/api/internet/status` qui masque sa topologie
 à distance). En service, `remote_session` est vrai et `user_present` distingue
-« personne n'est encore connecté » d'« aucun encodeur ». La ligne d'overlay
-« Moteur : GPU · encodeur codec … » (`describeSession()`, portée dans `/start` par
-`native_engine`) nomme enfin, côté client, sur quoi ce stream tourne.
+« personne n'est encore connecté » d'« aucun encodeur ». Côté client, une ligne
+**« Encodeur : NVENC »** dans le détail de latence nomme enfin le bloc de silicium
+qui encode ce stream (`describeEncoder()`, portée dans `/start` par
+`native_encoder`).
+
+⚠️ **corrigé le 04/09 au soir sur retour de Bruno** : la première version mettait
+`describeSession()` en entier — « NVIDIA GeForce RTX 5060 Ti · NVENC HEVC
+intra-refresh » — dans le bloc toujours visible. Soixante caractères de valeur
+élargissent la carte au-delà d'un écran de téléphone, et **toutes les autres
+lignes se retrouvaient coupées** (« 1920× », « 0.8 M »). La chaîne longue reste ce
+qu'elle a toujours bien fait, une ligne de log ; le codec a déjà sa ligne, le GPU
+est sur la page admin, et ce qui manquait vraiment à l'overlay tient en un mot.
+Il est rangé dans le détail plutôt que dans le bloc compact : il explique les
+étapes listées sous lui et ne change jamais en cours de session.
 
 ### 15.4 Vérifié / à valider par Bruno
 

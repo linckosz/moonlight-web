@@ -653,9 +653,11 @@ export class StreamView {
         // frames it missed and keeps decoding, instead of discarding deltas
         // until a keyframe — see handleVideoFrame.
         this._refInvalidation = opts.refInvalidation === true;
-        // "GPU · encoder codec …" — the native engine's own account of what it
-        // runs on, shown as one overlay row. Empty for every other host.
-        this._nativeEngineLabel = typeof opts.nativeEngine === 'string' ? opts.nativeEngine : '';
+        // "NVENC" / "AMF" / "oneVPL" — which silicon block encodes this stream.
+        // Empty for every other host. Shown in the latency detail, not in the
+        // always-visible block: it is a "why is it this fast" answer, and the
+        // compact card has no room to spare on a phone.
+        this._nativeEncoderLabel = typeof opts.nativeEncoder === 'string' ? opts.nativeEncoder : '';
         if ('healsByInvalidation' in this.webrtc) {
             // Recovery is this view's gap handler from here on: the transport's
             // own keyframe requests (incomplete, stale, silence) stand down.
@@ -4752,21 +4754,6 @@ export class StreamView {
             '</span>' +
             '</div>';
 
-        // Native engine: "GPU · encoder codec …", the one line that names which
-        // GPU and encoder this machine's own capture path settled on. Only the
-        // native host fills it — a remote host's encoder is out of our sight.
-        if (this._nativeEngineLabel) {
-            html +=
-                '<div class="stats-row">' +
-                '<span class="stats-label">' +
-                escapeHtml(t('stream.statEngine')) +
-                '</span>' +
-                '<span class="stats-value">' +
-                escapeHtml(this._nativeEngineLabel) +
-                '</span>' +
-                '</div>';
-        }
-
         // Enhancer: show the active algo when the WebGPU renderer is up. On
         // webrtc-media (<video>, no canvas) the Enhancer can't be applied — if the
         // user enabled it, flag it OFF so they know it isn't active.
@@ -4923,6 +4910,17 @@ export class StreamView {
                     value = ms.toFixed(1) + this._legTailSuffix(leg) + 'ms';
                 }
                 rows.push(legRow(label, value));
+            }
+            // Which encoder produced these stages. Named here rather than in
+            // the compact block above because it explains the numbers under it
+            // and never changes mid-session. Only the native host knows it.
+            if (this._nativeEncoderLabel) {
+                rows.push(
+                    legRow(
+                        escapeHtml(t('stream.statEncoder')),
+                        escapeHtml(this._nativeEncoderLabel),
+                    ),
+                );
             }
             // The host's stages, shown but not added: the total leg above
             // already holds their sum. These say WHICH stage moved.

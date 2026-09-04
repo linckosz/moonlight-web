@@ -569,6 +569,12 @@ QString NativeMediaEngine::describeSession() const
     return text;
 }
 
+QString NativeMediaEngine::describeEncoder() const
+{
+    if (!m_Session) return {};
+    return QString::fromUtf8(mw::native::toString(m_Session->info().encoder));
+}
+
 // ── Input ───────────────────────────────────────────────────────────────────
 //
 // Injection lands with the input backend; these translate and forward. The

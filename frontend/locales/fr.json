@@ -520,7 +520,7 @@
         "statFramerate": "Fréquence :",
         "statBitrate": "Débit :",
         "statCodec": "Codec :",
-        "statEngine": "Moteur :",
+        "statEncoder": "Encodeur",
         "statEnhancer": "Amélioration :",
         "statTransport": "Transport :",
         "statLatency": "Latence :",

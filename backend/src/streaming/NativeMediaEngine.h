@@ -238,9 +238,19 @@ public:
     void setClientRefresh(int milliHz, bool vsync);
 
     /// A human-readable description of what the session settled on, for the
-    /// stats overlay: "NVIDIA GeForce RTX 4070 · NVENC HEVC 4:4:4". Empty until
+    /// session log: "NVIDIA GeForce RTX 4070 · NVENC HEVC 4:4:4". Empty until
     /// the session has started.
     QString describeSession() const;
+
+    /// Just the encoder's name — "NVENC", "AMF", "oneVPL". Empty until the
+    /// session has started.
+    ///
+    /// This is what the client is told, not describeSession(): that one names
+    /// the GPU, the codec and every flag, and a 60-character value pushed the
+    /// stats overlay wider than a phone screen (04/09/2026). The codec already
+    /// has its own row, the GPU is on the admin page, and what the overlay was
+    /// missing is which silicon block does the encoding.
+    QString describeEncoder() const;
 
     /// Whether the running stream really refreshes by intra-refresh.
     ///
