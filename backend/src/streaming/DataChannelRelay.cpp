@@ -478,8 +478,14 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     // thread and the relay thread has always been where they were handled.
     auto* native = qobject_cast<NativeMediaEngine*>(engine);
     m_DirectVideoSend = native != nullptr;
+    // Same split for input: the native engine injects on whatever thread calls
+    // it, so the message is handled on the libdatachannel thread that received
+    // it instead of queueing behind the relay thread's event loop.
+    m_DirectInput = native != nullptr;
     qInfo() << "[DataChannelRelay] Video send mode:"
-            << (m_DirectVideoSend ? "direct (capture thread, zero-copy)" : "queued (relay thread)");
+            << (m_DirectVideoSend ? "direct (capture thread, zero-copy)" : "queued (relay thread)")
+            << "— input:"
+            << (m_DirectInput ? "direct (libdatachannel thread)" : "queued (relay thread)");
     if (native) {
         native->setDirectFrameSink([this](const NativeMediaEngine::FrameView& view) {
             handleVideoFrame(QByteArray::fromRawData(reinterpret_cast<const char*>(view.data),
@@ -825,12 +831,20 @@ void DataChannelRelay::createDataChannels()
 
         // Input messages arrive from browser on this channel
         m_InputDc->onMessage([this](const std::variant<rtc::binary, rtc::string>& msg) {
-            // Marshal to main thread for Qt signal safety
-            if (std::holds_alternative<rtc::string>(msg)) {
-                std::string text = std::get<rtc::string>(msg);
-                QMetaObject::invokeMethod(
-                    this, [this, text]() { onInputMessage(text); }, Qt::QueuedConnection);
+            if (!std::holds_alternative<rtc::string>(msg)) return;
+            if (m_DirectInput) {
+                // Native engine: parse and inject here, on the receiving
+                // thread. A message that finds the relay stopping leaves; one
+                // that got in before stop() took the lock finishes first.
+                std::lock_guard<std::mutex> lk(m_InputMutex);
+                if (m_Stopping.load()) return;
+                onInputMessage(std::get<rtc::string>(msg));
+                return;
             }
+            // GameStream engines: marshal to the relay thread, as always.
+            std::string text = std::get<rtc::string>(msg);
+            QMetaObject::invokeMethod(
+                this, [this, text]() { onInputMessage(text); }, Qt::QueuedConnection);
         });
     }
 
@@ -1087,7 +1101,13 @@ void DataChannelRelay::onShimConnectionTerminated(int errorCode)
     }
 }
 
-// --- Input handling (from libdatachannel callback, marshaled to main thread) ---
+// --- Input handling ---
+// Runs on the relay thread for a GameStream engine (queued from the
+// libdatachannel callback), on the libdatachannel thread itself under
+// m_InputMutex for the native engine. Nothing in here may assume the relay
+// thread: engine input calls are thread-safe by IMediaEngine's contract, the
+// clipboard bridge hops to the main thread on its own, and the one piece of
+// video state touched (requestidr) goes under m_VideoMutex.
 
 void DataChannelRelay::onInputMessage(const std::string& message)
 {
@@ -1612,6 +1632,15 @@ void DataChannelRelay::stop()
     }
 
     closeDc(m_InputDc, "input");
+
+    // Direct input: a message may be halfway through injection on a
+    // libdatachannel thread. Wait it out — m_Stopping is set, so the next one
+    // to take the lock leaves at once — before the caller goes on to stop the
+    // engine the message is injecting into. Taken with no other relay lock
+    // held (see the ordering note on m_InputMutex).
+    if (m_DirectInput) {
+        std::lock_guard<std::mutex> lk(m_InputMutex);
+    }
 
     // Close the audio track under the audio send lock, so an in-flight audio
     // sendFrame finishes before the track is destroyed.

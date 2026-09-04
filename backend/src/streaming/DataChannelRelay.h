@@ -60,7 +60,16 @@ class IMediaEngine;
 //   gate, drop counters, the video DC pointer) is guarded by m_VideoMutex, the
 //   arrangement MediaTrackRelay already runs with.
 // - libdatachannel callbacks (onMessage for input) fire from internal threads.
-//   We marshal input back to the relay thread via QMetaObject::invokeMethod.
+//   GameStream engines: input is marshaled back to the relay thread via
+//   QMetaObject::invokeMethod, unchanged. Native engine: the message is parsed
+//   and injected right there, on the thread that received it — the engine's
+//   input path is thread-safe end to end (InputWatchdog is mutex-guarded, the
+//   clipboard bridge hops to the main thread itself, WindowsSession::sendInput
+//   injects on the calling thread under its own lock), so the only thing the
+//   hop bought was a queue behind whatever the relay thread was doing. The
+//   relay-side state that path reads (the input policy, the DC pointer) is
+//   guarded by m_InputMutex, which stop() also takes once to let a message
+//   in flight finish before the engine goes away.
 class DataChannelRelay : public RelayBase
 {
     Q_OBJECT
@@ -81,6 +90,16 @@ public:
     bool addRemoteCandidate(const std::string& candidate, const std::string& mid) override;
 
     void stop() override;
+
+    /// Hides RelayBase::setInputPolicy: in direct-input mode the policy is read
+    /// on a libdatachannel thread while the session pushes updates onto the
+    /// relay thread, so the write goes under m_InputMutex. Same signature and
+    /// meaning; callers hold a DataChannelRelay*, so they land here.
+    void setInputPolicy(const InputMsg::Policy& policy)
+    {
+        std::lock_guard<std::mutex> lk(m_InputMutex);
+        RelayBase::setInputPolicy(policy);
+    }
 
     void notifyClientTakenOver() override;
 
@@ -215,6 +234,20 @@ private:
     // GameStream engine, whose frames keep arriving through the relay thread's
     // event loop exactly as before.
     bool m_DirectVideoSend = false;
+
+    // True when input messages are handled on the libdatachannel thread that
+    // received them (native engine). False for every GameStream engine, whose
+    // input keeps hopping to the relay thread exactly as before.
+    bool m_DirectInput = false;
+
+    // Direct-input mode: serializes onInputMessage against setInputPolicy and
+    // stop(). One message at a time is already libdatachannel's contract for a
+    // single channel, so it is uncontended in steady state; stop() takes it
+    // once, after closing the input DC, so a message halfway through injection
+    // finishes before the engine is torn down. Never held while waiting on
+    // m_VideoMutex from stop(): the requestidr path takes m_VideoMutex INSIDE
+    // this one, so stop() must not do the reverse.
+    std::mutex m_InputMutex;
 
     // Serializes the video path — onVideoFrame (capture thread in direct mode),
     // sendBufferedKeyframe / takeBufferedKeyframe / requestidr (relay thread),
