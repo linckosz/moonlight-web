@@ -528,6 +528,7 @@
         "statLegServer": "Serveur",
         "statLegNet": "Réseau",
         "statLegJitter": "Tampon",
+        "statLegAudio": "Tampon audio",
         "statLegArrive": "Remise",
         "statLegDecode": "Décodage",
         "statLegQueue": "File rendu",

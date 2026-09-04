@@ -823,6 +823,19 @@ export class StreamView {
         // must be read from RTCPeerConnection.getStats() instead of the
         // WebCodecs pipeline counters used by the DataChannel transports.
         this._mediaStatsTimer = null;
+        // ── Audio playout buffer (both WebRTC transports) ─────────────────────
+        // The audio rides an RTP track on either transport, so the browser's
+        // NetEq owns its buffer: this is how far the sound sits behind the
+        // picture, over and above the network. Read from getStats once a
+        // second (interval delta of jitterBufferDelay / jitterBufferEmittedCount,
+        // both cumulative) and shown in the latency breakdown — never added to
+        // the video total, the two paths are independent by design (no video
+        // frame ever waits for audio).
+        this._audioStatsTimer = null;
+        this._audioJbMs = -1;
+        this._audioJbAt = 0;
+        this._lastAudioJbDelay = 0;
+        this._lastAudioJbEmitted = 0;
         this._mediaFps = 0;
         this._mediaBitrateMbps = 0;
         // Per-tick latency samples, one window per stage (network RTT/2, jitter
@@ -3750,6 +3763,9 @@ export class StreamView {
             // Standby: created but not polling — started in activate().
             if (this._gamepadManager && !this._standby) this._gamepadManager.start();
 
+            // The audio track's playout buffer, on either WebRTC transport.
+            this._startAudioStatsPolling();
+
             if (this._transport === 'webrtc-media') {
                 // Media track mode: video arrives natively via <video> element.
                 // No WebCodecs decoder needed. The first video frame triggers
@@ -4107,6 +4123,52 @@ export class StreamView {
         if (this._mediaStatsTimer) {
             clearInterval(this._mediaStatsTimer);
             this._mediaStatsTimer = null;
+        }
+        this._stopAudioStatsPolling();
+    }
+
+    /**
+     * Once a second, how long the browser holds audio before playing it: the
+     * interval delta of the inbound audio track's jitterBufferDelay over its
+     * emitted samples (both cumulative, so the delta is the live value). Shown
+     * in the latency breakdown; nothing acts on it — the native host paces its
+     * audio to the RTP clock and the browser's NetEq sizes this on its own.
+     */
+    _startAudioStatsPolling() {
+        if (this._audioStatsTimer) return;
+        const pc = this.webrtc && this.webrtc.pc;
+        if (!pc || typeof pc.getStats !== 'function') return;
+        this._audioStatsTimer = setInterval(async () => {
+            if (this._quitting) return;
+            const peer = this.webrtc && this.webrtc.pc;
+            if (!peer || typeof peer.getStats !== 'function') return;
+            try {
+                const report = await peer.getStats();
+                let inbound = null;
+                report.forEach((s) => {
+                    if (s.type === 'inbound-rtp' && s.kind === 'audio') inbound = s;
+                });
+                if (!inbound) return;
+                const delay = inbound.jitterBufferDelay || 0;
+                const emitted = inbound.jitterBufferEmittedCount || 0;
+                const dDelay = delay - this._lastAudioJbDelay;
+                const dEmitted = emitted - this._lastAudioJbEmitted;
+                this._lastAudioJbDelay = delay;
+                this._lastAudioJbEmitted = emitted;
+                if (dEmitted > 0 && dDelay >= 0) {
+                    this._audioJbMs = (dDelay / dEmitted) * 1000;
+                    this._audioJbAt = performance.now();
+                }
+            } catch (e) {
+                // getStats can throw transiently during teardown — ignore
+            }
+        }, 1000);
+    }
+
+    _stopAudioStatsPolling() {
+        if (this._audioStatsTimer) {
+            clearInterval(this._audioStatsTimer);
+            this._audioStatsTimer = null;
         }
     }
 
@@ -4666,6 +4728,14 @@ export class StreamView {
                         pacer.targetMs.toFixed(1) +
                         'ms</span>' +
                         '</div>',
+                );
+            }
+            // The audio playout buffer: how far the sound sits behind the
+            // picture on the browser side. Shown, not added — audio and video
+            // are independent paths, and the total is the picture's.
+            if (this._audioJbMs >= 0 && now - this._audioJbAt < 4000) {
+                rows.push(
+                    legRow(escapeHtml(t('stream.statLegAudio')), this._audioJbMs.toFixed(0) + 'ms'),
                 );
             }
             if (haveLatency) {

@@ -528,6 +528,7 @@
         "statLegServer": "Server",
         "statLegNet": "Network",
         "statLegJitter": "Jitter buffer",
+        "statLegAudio": "Audio buffer",
         "statLegArrive": "Handoff",
         "statLegDecode": "Decode",
         "statLegQueue": "Render queue",
