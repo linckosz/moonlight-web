@@ -23,6 +23,7 @@
 #include <QElapsedTimer>
 #include <QMutex>
 #include <QTimer>
+#include <array>
 #include <memory>
 #include <atomic>
 #include <string>
@@ -286,7 +287,15 @@ private:
     /// relay thread afterwards.
     bool m_RideOutLoss = false;
     int m_FrameCount = 0;
-    uint32_t m_FrameId = 0;      // Monotonic counter for VIDEO fragmentation headers
+    uint32_t m_FrameId = 0; // Monotonic counter for VIDEO fragmentation headers
+    /// Wire frameId → the engine's own frame number, for the last few hundred
+    /// frames: the browser names a lost frame by the wire id, the native
+    /// engine's reference invalidation wants its own number, and the two drift
+    /// apart at every frame the relay drops before assigning an id. Written on
+    /// the sending thread, read on the input thread — hence atomics; a slot
+    /// holds -1 until a frame has used it. Indexed by frameId modulo the size.
+    static constexpr uint32_t kFrameNumberRing = 512;
+    std::array<std::atomic<int64_t>, kFrameNumberRing> m_FrameNumberById;
     uint32_t m_AudioFrameId = 0; // Separate counter for audio — audio must not
                                  // consume video frameIds (frontend gap detection
                                  // relies on contiguous video ids)

@@ -49,8 +49,8 @@ public:
               bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
               std::string& error) override;
 
-    bool encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,
-                std::string& error) override;
+    bool encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t frameNumber,
+                EncoderOutput& out, std::string& error) override;
 
     void releaseOutput() override;
     void stop() override;

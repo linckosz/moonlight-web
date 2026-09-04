@@ -292,6 +292,10 @@ public:
         m_Info.intraRefresh = m_Encoder->intraRefreshEnabled();
         if (m_Config.intraRefresh && !m_Info.intraRefresh)
             log::info("[native] intra-refresh requested but this encoder declined it");
+        // Reported the same way: the receiver decodes through a gap only when
+        // the encoder really heals it (NVENC today; AMF and oneVPL answer an
+        // invalidation with a keyframe).
+        m_Info.referenceInvalidation = m_Encoder->supportsReferenceInvalidation();
         // Counted, not estimated: one GPU→CPU read of the bitstream. Everything
         // upstream of it stays in VRAM on the capturing adapter — unless the
         // bridge is in, which adds the readback and the upload of every frame.
@@ -432,12 +436,18 @@ public:
 
     void invalidateReference(uint32_t frameNumber) override
     {
-        // NVENC can re-encode against an older still-valid frame instead of
-        // sending a full IDR. Until that is wired through, degrade to the
-        // honest fallback rather than silently doing nothing — a client that
-        // asked for recovery must get some.
-        (void)frameNumber;
-        m_ForceKeyframe.store(true);
+        // Kept for the capture thread, which owns the encoder: the driver call
+        // has to land between two encodes, not during one. An encoder without
+        // the feature turns every one of these into a keyframe there.
+        std::lock_guard<std::mutex> lock(m_InvalidateMutex);
+        if (m_PendingInvalidations.size() >= kMaxPendingInvalidations) {
+            // More lost frames than the DPB could ever cover: a keyframe is
+            // cheaper than the list, and certain.
+            m_PendingInvalidations.clear();
+            m_ForceKeyframe.store(true);
+            return;
+        }
+        m_PendingInvalidations.push_back(frameNumber);
     }
 
     void setTargetBitrate(int kbps) override { m_PendingBitrate.store(kbps); }
@@ -1279,9 +1289,36 @@ private:
     /// Returns false when the session must end; the reason has been reported.
     bool emit(uint32_t& frameNumber, const FrameStamps& stamps, std::string& error)
     {
+        // Frames the receiver said it never got, told to the encoder before
+        // the next picture is predicted (design §9.2). An encoder that cannot
+        // do it — or a frame it refuses — falls back to a keyframe, so the
+        // receiver always gets SOME repair.
+        {
+            std::vector<uint32_t> lost;
+            {
+                std::lock_guard<std::mutex> lock(m_InvalidateMutex);
+                lost.swap(m_PendingInvalidations);
+            }
+            for (uint32_t n : lost) {
+                std::string why;
+                if (m_Encoder->invalidateReference(n, why)) {
+                    m_Invalidated++;
+                    if (m_Invalidated <= 5 || m_Invalidated % 50 == 0)
+                        log::info("[native] reference invalidated: frame " + std::to_string(n) +
+                                  " never reached the receiver, healing with a delta (" +
+                                  std::to_string(m_Invalidated) + " so far)");
+                } else {
+                    if (m_InvalidateFallbacks++ < 3)
+                        log::info("[native] reference invalidation refused (" + why +
+                                  ") — keyframe instead");
+                    m_ForceKeyframe.store(true);
+                }
+            }
+        }
+
         const bool forceKeyframe = m_ForceKeyframe.exchange(false);
         encode::EncoderOutput encoded;
-        if (!m_Encoder->encode(m_Converter->output(), forceKeyframe, encoded, error)) {
+        if (!m_Encoder->encode(m_Converter->output(), forceKeyframe, frameNumber, encoded, error)) {
             finish("encode failed: " + error);
             return false;
         }
@@ -1652,6 +1689,14 @@ private:
     std::vector<uint8_t> m_CursorScratch;
     /// Zero means "no change pending". Exchanged by the loop each iteration.
     std::atomic<int> m_PendingBitrate{0};
+    /// Frames the receiver reported lost, waiting for the capture thread to
+    /// tell the encoder — see invalidateReference(). Bounded: past the DPB's
+    /// reach a keyframe is the honest answer.
+    static constexpr size_t kMaxPendingInvalidations = 16;
+    std::mutex m_InvalidateMutex;
+    std::vector<uint32_t> m_PendingInvalidations;
+    int m_Invalidated = 0;
+    int m_InvalidateFallbacks = 0;
     /// The receiver's latest report on the link, folded until the loop takes
     /// it — see reportLink().
     std::mutex m_LinkMutex;

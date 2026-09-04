@@ -55,7 +55,8 @@ inline bool allowed(const QString& type, const Policy& p)
     if (type.startsWith(QLatin1String("gamepad"))) return p.gamepad;
     if (type == QLatin1String("ping") || type == QLatin1String("requestidr") ||
         type == QLatin1String("request_idr") || type == QLatin1String("clientstats") ||
-        type == QLatin1String("linkstats") || type == QLatin1String("framefloor"))
+        type == QLatin1String("linkstats") || type == QLatin1String("invalidateref") ||
+        type == QLatin1String("framefloor"))
         return true;
     if (type == QLatin1String("inputstate")) return true;
     return p.keyboardMouse; // key*, mouse*, wheel, textinput, locksync, clipboard

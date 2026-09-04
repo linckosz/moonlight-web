@@ -1926,6 +1926,9 @@ const MoonlightApp = {
             // The host is this machine's own screen (mw-native-host): the mouse
             // is sent at its raw report rate there — see _bindPointerRaw.
             nativeHost: result.native === true,
+            // Its encoder heals a lost frame with a delta (reference
+            // invalidation): the view then decodes through a gap.
+            refInvalidation: result.ref_invalidation === true,
         };
         // The degradation ladder stands down for the native host — see
         // _onStreamCongested.

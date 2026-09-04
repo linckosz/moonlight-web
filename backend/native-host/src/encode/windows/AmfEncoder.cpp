@@ -392,9 +392,12 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     return true;
 }
 
-bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, EncoderOutput& out,
-                        std::string& error)
+bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t frameNumber,
+                        EncoderOutput& out, std::string& error)
 {
+    // No reference invalidation on this path (AMF has no equivalent of
+    // NVENC's call); the number is not needed here.
+    (void)frameNumber;
     if (!m_Encoder || !m_Context) {
         error = "the encoder is not initialized";
         return false;

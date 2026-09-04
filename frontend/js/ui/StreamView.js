@@ -639,6 +639,20 @@ export class StreamView {
         // `mousemove` delivers. Decided in _bindPointerRaw; while it is on, the
         // mousemove handlers keep their cursor bookkeeping and stop sending.
         this._nativeHost = opts.nativeHost === true;
+        // The host heals a lost frame with a delta (NVENC reference
+        // invalidation, /start says so): after a gap this view names the
+        // frames it missed and keeps decoding, instead of discarding deltas
+        // until a keyframe — see handleVideoFrame.
+        this._refInvalidation = opts.refInvalidation === true;
+        // Debug: drop one delta every N frames on purpose (localStorage
+        // mw_drop_test = N), to exercise the gap paths on a link that never
+        // loses anything.
+        this._dropTestEvery = 0;
+        try {
+            this._dropTestEvery = Number(localStorage.getItem('mw_drop_test') || 0) | 0;
+        } catch (e) {
+            /* storage unavailable */
+        }
         this._rawPointer = false;
         this.pointerLocked = false;
         // ── Host pointer, drawn by US ──────────────────────────────────────
@@ -5168,24 +5182,54 @@ export class StreamView {
         // Disabled for WSS transport: TCP does not lose frames, so a frameId
         // discontinuity there is a false positive that would freeze the stream.
         if (this._transport !== 'wss' && frameId !== undefined && frameId !== 0) {
-            // Forward jump = frames were lost or delayed — drop deltas until the
-            // next keyframe restores the reference picture.
+            // Debug hook: lose this delta on purpose, so the next one opens a
+            // gap. The id is not remembered, exactly as if it never arrived.
+            if (
+                this._dropTestEvery > 0 &&
+                !isKeyframe &&
+                this._lastFrameId !== -1 &&
+                frameId % this._dropTestEvery === 0
+            ) {
+                console.warn('[StreamView] drop test: discarding frame ' + frameId);
+                return;
+            }
+            // Forward jump = frames were lost or delayed.
             if (this._lastFrameId !== -1 && frameId > this._lastFrameId + 1) {
-                console.warn(
-                    '[StreamView] Frame gap: expected ' +
-                        (this._lastFrameId + 1) +
-                        ' got ' +
-                        frameId +
-                        ' — invalidating reference, requesting IDR',
-                );
+                const lostFrom = this._lastFrameId + 1;
+                const lostTo = frameId - 1;
                 // Frames the network owes us and will never deliver. frameId is
                 // assigned in backend send order, so the size of the jump IS the
                 // count lost — this is the overlay's network-loss numerator.
                 this.stats.networkLost += frameId - this._lastFrameId - 1;
                 if (this._link) this._link.gaps += frameId - this._lastFrameId - 1;
-                this._referenceValid = false;
-                if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
-                this._requestIdr('frame gap');
+                if (this._refInvalidation && lostTo - lostFrom < 16) {
+                    // The native host heals a named loss with a delta: tell it
+                    // which frames, keep decoding. Only the frames in the hole
+                    // are missing from the decoder's picture buffer; every
+                    // frame from here on predicts from ones it has. A decoder
+                    // that objects anyway lands in _handleDecoderError, which
+                    // asks for a keyframe as before.
+                    console.warn(
+                        '[StreamView] Frame gap: lost ' +
+                            lostFrom +
+                            '..' +
+                            lostTo +
+                            ' — naming them to the host, decoding on',
+                    );
+                    this._sendToHost({ type: 'invalidateref', from: lostFrom, to: lostTo });
+                } else {
+                    // Drop deltas until the next keyframe restores the reference.
+                    console.warn(
+                        '[StreamView] Frame gap: expected ' +
+                            lostFrom +
+                            ' got ' +
+                            frameId +
+                            ' — invalidating reference, requesting IDR',
+                    );
+                    this._referenceValid = false;
+                    if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
+                    this._requestIdr('frame gap');
+                }
             }
             if (this._firstFrameId === -1) this._firstFrameId = frameId;
             if (frameId > this._lastFrameId) {

@@ -66,8 +66,13 @@ public:
               std::string& error) override;
 
     /// Encode one NV12 texture. Blocking: returns with the bitstream ready.
-    bool encode(ID3D11Texture2D* nv12, bool forceKeyframe, EncoderOutput& out,
+    bool encode(ID3D11Texture2D* nv12, bool forceKeyframe, uint32_t frameNumber, EncoderOutput& out,
                 std::string& error) override;
+
+    /// NVENC keeps a DPB of several frames (see init) and can be told that one
+    /// of them never arrived: the next picture references the others.
+    bool supportsReferenceInvalidation() const override { return m_RefInvalidation; }
+    bool invalidateReference(uint32_t frameNumber, std::string& error) override;
 
     /// Release the bitstream handed out by the last encode(). Must be called
     /// before the next encode().
@@ -109,7 +114,9 @@ private:
     /// The bench's VBV override, kept so setBitrate() resizes the buffer by the
     /// same rule init() used. 0 is the engine's own rule.
     int m_VbvFrames = 0;
-    uint64_t m_FrameIndex = 0;
+    /// Whether the driver claims reference invalidation for this codec.
+    bool m_RefInvalidation = false;
+    int m_Invalidations = 0;
 };
 
 } // namespace mw::native::encode

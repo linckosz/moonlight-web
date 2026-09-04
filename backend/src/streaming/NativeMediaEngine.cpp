@@ -508,6 +508,17 @@ void NativeMediaEngine::setFrameFloorFps(int fps)
     if (m_Session) m_Session->setFrameFloorFps(fps);
 }
 
+void NativeMediaEngine::invalidateReference(uint32_t frameNumber)
+{
+    if (m_Session) m_Session->invalidateReference(frameNumber);
+}
+
+bool NativeMediaEngine::referenceInvalidation() const
+{
+    return m_Session && m_Connected.load(std::memory_order_acquire) &&
+           m_Session->info().referenceInvalidation;
+}
+
 void NativeMediaEngine::reportLink(const mw::native::LinkFeedback& feedback)
 {
     mw::native::LinkFeedback fb = feedback;

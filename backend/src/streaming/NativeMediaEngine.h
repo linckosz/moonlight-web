@@ -206,6 +206,18 @@ public:
     /// dropped when no session runs.
     void reportLink(const mw::native::LinkFeedback& feedback);
 
+    /// The receiver never got frame @p frameNumber (the engine's own number,
+    /// EncodedFrame::frameNumber — the relay maps its wire ids to it): the
+    /// encoder predicts the next pictures from older frames and the stream
+    /// heals with a delta instead of a keyframe (Session::invalidateReference).
+    /// Safe from any thread; dropped when no session runs.
+    void invalidateReference(uint32_t frameNumber);
+
+    /// Whether the session's encoder really heals a lost frame with a delta —
+    /// what the receiver needs to know before it keeps decoding through a gap.
+    /// False until a session started, false on encoders without it.
+    bool referenceInvalidation() const;
+
     /// The relay's sender dropped a frame because the link had not taken the
     /// previous ones. Counted here, from the relay's thread, and carried by the
     /// next reportLink(): to the governor an eviction is loss the host caused

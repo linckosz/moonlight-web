@@ -292,6 +292,22 @@ rebranchée (même matrice, même script) ; d'ici là le réglage courant (speed
 sans pré-analyse) est aussi le plus rapide mesuré. **oneVPL** : pas de GPU
 Intel, la matrice `tu=1..7` attend.
 
+## 8b. Après la campagne — ce que E4 et E2 ont changé aux chiffres (04/09 après-midi)
+
+- **E4, le budget suit la cadence réelle** (design §9.8) : le même clip FPS à
+  60 images/s sous un stream 165, 40 Mbit/s, passe de 29 Ko / QP 25 par image à
+  **63 Ko / QP 18** — l'encodeur reçoit enfin le débit que le joueur a autorisé
+  au lieu de 60/165 de celui-ci. Encode 3,4 → 3,75 ms pour des images deux fois
+  plus grosses. Le fil reste à 38,5 Mbit/s mesurés sur un flux réel.
+- **E2, DPB de 4 images pour l'invalidation de référence** (design §9.10) :
+  `dpb=1` contre `dpb=4`, deux passes chacun : 3,69 / 3,79 ms contre
+  3,75 / 3,77 ms, même taille, même QP. Gratuit.
+- Piège de banc rencontré : l'écran virtuel devenu **écran principal** (session
+  Parsec de Bruno) a reçu ses fenêtres ; le kiosque passait dessous et le banc
+  capturait un bureau à moitié figé (14 Ko / QP 10, faux). `kiosk.ps1` épingle
+  désormais la fenêtre TOPMOST sur le rectangle physique de l'écran et attend
+  qu'elle existe.
+
 ## 9. Pour l'A/B
 
 Le banc encode vers un puits ; l'A/B se fait sur un vrai flux. Une session
