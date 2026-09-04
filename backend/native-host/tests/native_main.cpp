@@ -19,6 +19,7 @@ NativeTestStats g_nativeStats;
 void run_selector_tests();
 void run_capabilities_tests();
 void run_capture_tests();
+void run_win32_cursor_tests();
 void run_vpl_params_tests();
 void run_ds4_mapping_tests();
 void run_stage_stats_tests();
@@ -51,6 +52,7 @@ int main()
     run_rate_control_tests();
     run_audio_pacer_tests();
     run_capture_tests();
+    run_win32_cursor_tests();
 
     const int total = g_nativeStats.passed + g_nativeStats.failed;
     std::fprintf(stderr, "\n========================================\n");

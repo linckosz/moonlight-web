@@ -41,6 +41,9 @@ if(WIN32)
         src/platform/windows/WindowsSession.cpp
         src/platform/windows/CrossGpuBridge.cpp
         src/capture/windows/DxgiDuplication.cpp
+        src/capture/windows/WgcCapture.cpp
+        src/capture/windows/CursorShape.cpp
+        src/capture/windows/Win32Cursor.cpp
         src/convert/windows/ColorConvert.cpp
         src/input/windows/Win32Input.cpp
         src/input/windows/VigemGamepad.cpp
@@ -86,8 +89,12 @@ if(WIN32)
     # scheduler favours it over the desktop's background work (and the audio
     # thread as "Pro Audio").
     # ole32 is COM: WASAPI's device enumerator is a COM object.
+    # runtimeobject is the Windows Runtime's ABI entry points — RoInitialize,
+    # RoGetActivationFactory, the HSTRING helpers — which is how the WGC
+    # fallback reaches Windows.Graphics.Capture without linking a C++/WinRT
+    # projection (see WgcCapture.h on why the projection is unwanted here).
     target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32 setupapi
-                                                 winmm avrt ole32)
+                                                 winmm avrt ole32 runtimeobject)
 else()
     set(MW_NATIVE_PLATFORM "none")
     target_sources(mw-native-host PRIVATE src/platform/Unimplemented.cpp)
@@ -174,6 +181,7 @@ if(MW_BUILD_TESTS)
         tests/test_selector.cpp
         tests/test_capabilities.cpp
         tests/test_capture.cpp
+        tests/test_win32_cursor.cpp
         tests/test_vpl_params.cpp
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp

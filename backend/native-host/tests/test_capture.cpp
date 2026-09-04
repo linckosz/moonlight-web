@@ -10,6 +10,7 @@
 #include "capture/windows/DxgiDuplication.h"
 #include "convert/windows/ColorConvert.h"
 #include "encode/windows/AmfEncoder.h"
+#include "capture/windows/WgcCapture.h"
 #include "encode/windows/NvencEncoder.h"
 #include <memory>
 #include <wrl/client.h>
@@ -708,5 +709,104 @@ void run_capture_tests()
     // teardown runs on error paths where the state is not known.
     duplication.stop();
     duplication.release();
+
+    // ── Windows.Graphics.Capture, the fallback ──────────────────────────────
+    //
+    // Exercised on every machine, not only on the ones that need it. A fallback
+    // that is written once and never run is a fallback that is broken on the
+    // single machine it was written for — and that machine is a hybrid laptop
+    // somebody else owns.
+    //
+    // The same proof as the Desktop Duplication leg above: real pixels, read
+    // back, and looked at. "The session started" is not evidence — a capture
+    // that hands over a black texture starts perfectly well.
+    {
+        capture::WgcCapture wgc(gpu->nativeHandle, outputIndex);
+        std::string wgcError;
+        if (!capture::WgcCapture::available()) {
+            std::fprintf(stderr, "  WGC skipped: not available on this Windows build\n");
+        } else if (!wgc.start(wgcError)) {
+            std::fprintf(stderr, "  WGC skipped: %s\n", wgcError.c_str());
+        } else {
+            CHECK(wgc.width() > 0);
+            CHECK(wgc.height() > 0);
+            CHECK(wgc.device() != nullptr);
+            CHECK(wgc.desktopRect().valid());
+            // WGC has no HDR path here, deliberately: see openCapture().
+            CHECK_EQ(static_cast<int>(wgc.format()), static_cast<int>(DXGI_FORMAT_B8G8R8A8_UNORM));
+
+            capture::CapturedFrame wgcFrame;
+            bool haveWgcFrame = false;
+            for (int attempt = 0; attempt < 40 && !haveWgcFrame; ++attempt) {
+                if (wgc.acquire(100, wgcFrame) == capture::AcquireStatus::Ok) haveWgcFrame = true;
+            }
+
+            if (!haveWgcFrame) {
+                std::fprintf(stderr, "  WGC not exercised: the screen stayed still\n");
+            } else {
+                // A real present time, not the moment we noticed: every latency
+                // figure downstream is measured from it, so a frame stamped
+                // "now" would quietly report zero capture latency forever.
+                std::fprintf(stderr, "  WGC capture latency: %lld us\n",
+                             static_cast<long long>(wgcFrame.capturedUs - wgcFrame.presentUs));
+                CHECK(wgcFrame.presentUs > 0);
+                // Never negative. WGC's own stamp leads the pull by a few
+                // milliseconds (it is a scheduled presentation, not a completed
+                // one), so the backend caps it at "now" — see acquire(). Left
+                // uncapped this is the value that would have the link governor
+                // cut the bitrate on a healthy link.
+                CHECK(wgcFrame.capturedUs >= wgcFrame.presentUs);
+
+                convert::ColorConvert wgcConv;
+                CHECK(wgcConv.init(wgc.device(), wgc.format(), wgc.width(), wgc.height(),
+                                   wgc.width(), wgc.height(), convert::ColorConvert::Chroma::C420,
+                                   false, wgcError));
+                CHECK(wgcConv.convert(wgcFrame.texture, wgc.cursor(), convert::CursorDraw{},
+                                      wgcError));
+
+                Microsoft::WRL::ComPtr<ID3D11Device> wgcDevice = wgc.device();
+                Microsoft::WRL::ComPtr<ID3D11DeviceContext> wgcContext;
+                wgcDevice->GetImmediateContext(&wgcContext);
+
+                D3D11_TEXTURE2D_DESC nv12 = {};
+                wgcConv.output()->GetDesc(&nv12);
+                nv12.Usage = D3D11_USAGE_STAGING;
+                nv12.BindFlags = 0;
+                nv12.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                nv12.MiscFlags = 0;
+
+                Microsoft::WRL::ComPtr<ID3D11Texture2D> wgcStaging;
+                if (SUCCEEDED(wgcDevice->CreateTexture2D(&nv12, nullptr, &wgcStaging))) {
+                    wgcContext->CopyResource(wgcStaging.Get(), wgcConv.output());
+                    D3D11_MAPPED_SUBRESOURCE wgcMapped = {};
+                    if (SUCCEEDED(
+                            wgcContext->Map(wgcStaging.Get(), 0, D3D11_MAP_READ, 0, &wgcMapped))) {
+                        const auto* rows = static_cast<const uint8_t*>(wgcMapped.pData);
+                        uint8_t minLuma = 255;
+                        uint8_t maxLuma = 0;
+                        for (int y = 0; y < wgcConv.outputHeight(); y += 16) {
+                            const uint8_t* row = rows + static_cast<size_t>(y) * wgcMapped.RowPitch;
+                            for (int x = 0; x < wgcConv.outputWidth(); x += 16) {
+                                minLuma = (row[x] < minLuma) ? row[x] : minLuma;
+                                maxLuma = (row[x] > maxLuma) ? row[x] : maxLuma;
+                            }
+                        }
+                        wgcContext->Unmap(wgcStaging.Get(), 0);
+
+                        std::fprintf(stderr, "  WGC NV12 luma range: %u..%u\n", minLuma, maxLuma);
+                        CHECK(maxLuma > minLuma);
+                        CHECK(minLuma >= 16);
+                        CHECK(maxLuma <= 235);
+                    }
+                }
+
+                wgc.release();
+            }
+            wgc.stop();
+            // Same teardown contract as above: idempotent, in any order.
+            wgc.stop();
+            wgc.release();
+        }
+    }
 #endif
 }

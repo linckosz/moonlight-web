@@ -18,6 +18,7 @@
 #include "DxgiDuplication.h"
 
 #include "../../core/Log.h"
+#include "CursorShape.h"
 
 #include <chrono>
 
@@ -239,117 +240,33 @@ bool DxgiDuplication::start(std::string& error)
 void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, const uint8_t* data,
                                   size_t size)
 {
-    const int pitch = static_cast<int>(shape.Pitch);
-    const int width = static_cast<int>(shape.Width);
+    ShapeSource source;
+    switch (shape.Type) {
+    case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME:
+        source.encoding = ShapeSource::Encoding::Monochrome;
+        break;
+    case DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR:
+        source.encoding = ShapeSource::Encoding::MaskedColor;
+        break;
+    default: source.encoding = ShapeSource::Encoding::Color; break;
+    }
+    source.width = static_cast<int>(shape.Width);
     // A monochrome cursor packs two 1-bit masks into one image: the AND mask on
     // top, the XOR mask below. Its real height is half what DXGI reports.
-    const bool monochrome = shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
-    const int height = static_cast<int>(shape.Height) / (monochrome ? 2 : 1);
+    source.height = static_cast<int>(shape.Height) /
+                    (source.encoding == ShapeSource::Encoding::Monochrome ? 2 : 1);
+    source.pitch = static_cast<int>(shape.Pitch);
+    source.hotspotX = static_cast<int>(shape.HotSpot.x);
+    source.hotspotY = static_cast<int>(shape.HotSpot.y);
+    source.data = data;
+    source.size = size;
 
-    if (width <= 0 || height <= 0 || pitch <= 0) return;
+    // Kept even when the shape is refused, so the hotspot never describes a
+    // shape other than the one on screen.
+    m_CursorHotspotX = source.hotspotX;
+    m_CursorHotspotY = source.hotspotY;
 
-    m_Cursor.width = width;
-    m_Cursor.height = height;
-    m_Cursor.pixels.assign(static_cast<size_t>(width) * height * 4, 0);
-    m_Cursor.invert.assign(static_cast<size_t>(width) * height, 0);
-    ++m_Cursor.shapeVersion;
-
-    m_CursorHotspotX = static_cast<int>(shape.HotSpot.x);
-    m_CursorHotspotY = static_cast<int>(shape.HotSpot.y);
-
-    // Rightmost column and lowest row holding ink, +1. See CursorState::inkWidth.
-    int inkWidth = 0;
-    int inkHeight = 0;
-    const auto noteInk = [&inkWidth, &inkHeight](int x, int y) {
-        if (x + 1 > inkWidth) inkWidth = x + 1;
-        if (y + 1 > inkHeight) inkHeight = y + 1;
-    };
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const size_t out = (static_cast<size_t>(y) * width + x);
-            uint8_t* px = &m_Cursor.pixels[out * 4];
-
-            if (monochrome) {
-                // Bit per pixel, most significant bit first. The AND mask
-                // selects between "the XOR bit is a colour" and "the XOR bit
-                // says whether to invert".
-                const size_t andOffset = static_cast<size_t>(y) * pitch + (x / 8);
-                const size_t xorOffset = static_cast<size_t>(y + height) * pitch + (x / 8);
-                if (xorOffset >= size) continue;
-                const uint8_t mask = static_cast<uint8_t>(0x80 >> (x % 8));
-                const bool andBit = (data[andOffset] & mask) != 0;
-                const bool xorBit = (data[xorOffset] & mask) != 0;
-
-                if (!andBit) {
-                    // Opaque: black where the XOR bit is clear, white where set.
-                    const uint8_t v = xorBit ? 0xFF : 0x00;
-                    px[0] = px[1] = px[2] = v;
-                    px[3] = 0xFF;
-                    noteInk(x, y);
-                } else if (xorBit) {
-                    m_Cursor.invert[out] = 0xFF;
-                    px[3] = 0xFF;
-                    noteInk(x, y);
-                }
-                // andBit && !xorBit → transparent, already zeroed.
-                continue;
-            }
-
-            const size_t in = static_cast<size_t>(y) * pitch + static_cast<size_t>(x) * 4;
-            if (in + 3 >= size) continue;
-
-            if (shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR) {
-                // Here the alpha byte is not coverage but a mask: 0 means "use
-                // this colour", 0xFF means "XOR this colour with the screen".
-                //
-                // XOR, not invert — the distinction is the whole shape. The
-                // empty canvas around the pointer is encoded as mask 0xFF with a
-                // BLACK colour: XOR with zero leaves the screen alone, so those
-                // pixels are transparent. Reading them as "invert" turned the
-                // whole 32×32 canvas into an inverter, which on a white page is
-                // a black square with a ghost of the pointer inside. A white
-                // colour under the mask is a true inversion; other colours are
-                // rare enough that inverting is the nearest thing we draw.
-                if (data[in + 3] == 0xFF) {
-                    if ((data[in + 0] | data[in + 1] | data[in + 2]) == 0) continue;
-                    m_Cursor.invert[out] = 0xFF;
-                    px[3] = 0xFF;
-                } else {
-                    px[0] = data[in + 0];
-                    px[1] = data[in + 1];
-                    px[2] = data[in + 2];
-                    px[3] = 0xFF;
-                }
-                noteInk(x, y);
-                continue;
-            }
-
-            // Plain colour: BGRA with real coverage in alpha.
-            px[0] = data[in + 0];
-            px[1] = data[in + 1];
-            px[2] = data[in + 2];
-            px[3] = data[in + 3];
-            if (px[3] != 0) noteInk(x, y);
-        }
-    }
-
-    m_Cursor.inkWidth = inkWidth;
-    m_Cursor.inkHeight = inkHeight;
-
-    // Debug only: rare (a shape lasts thousands of frames) but pure diagnosis.
-    // It is the one line that explains a pointer drawn at the wrong size or as
-    // a black square: the encoding, the canvas, and how much of the canvas is
-    // actually pointer.
-    if (!log::enabled(log::Level::Debug)) return;
-    log::debug("[native] cursor shape: " +
-               std::string(monochrome ? "monochrome"
-                           : shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR
-                               ? "masked-color"
-                               : "color") +
-               " " + std::to_string(width) + "x" + std::to_string(height) + ", ink " +
-               std::to_string(inkWidth) + "x" + std::to_string(inkHeight) + ", hotspot " +
-               std::to_string(m_CursorHotspotX) + "," + std::to_string(m_CursorHotspotY));
+    decodeCursorShape(source, m_Cursor);
 }
 
 bool DxgiDuplication::updateCursor(const DXGI_OUTDUPL_FRAME_INFO& info)

@@ -1372,3 +1372,96 @@ dépend du présentateur navigateur (F0e/F0f) : AV1 10 bits passe par WebGPU en 
 `linear`, HEVC 10 bits par l'élément `<video>`. Personne n'a encore regardé une
 image HDR **native** sur un écran HDR — seulement des chiffres qui disent que les
 octets sont dans les bonnes bornes.
+
+## 17. Windows.Graphics.Capture, le repli (04/09/2026)
+
+Deuxième morceau de la phase I. Desktop Duplication répond
+`DXGI_ERROR_UNSUPPORTED` quand l'écran n'est pas balayé par l'adaptateur auquel on
+la demande : c'est l'état ordinaire d'un portable hybride, dont la dalle pend à
+l'iGPU pendant que le dGPU fait tourner le jeu. Aucun contournement n'existe côté
+DXGI. WGC passe par le compositeur et ne se soucie pas de qui balaye.
+
+### 17.1 Pourquoi c'est un repli et pas le défaut
+
+DDA réveille l'appelant **sur le présent** — la meilleure propriété de latence de
+tout ce moteur. WGC livre par une file que le compositeur remplit : c'est un
+réveil derrière une queue, pas le présent lui-même. Le choix est donc DDA
+d'abord, à chaque ouverture **et à chaque redémarrage** : un changement de mode ou
+un redémarrage de pilote est exactement le moment où le bon backend change, et
+rejouer le choix ne coûte qu'une tentative DDA ratée.
+
+⚠️ **Pas de chiffre de comparaison ici.** Deux mesures au banc sur le même écran
+se sont contredites (DDA 0,19 ms puis 2,19 ms de moyenne d'`acquire`, WGC 1,81
+puis 1,05), parce qu'un bureau immobile ne présente presque rien : avec 16 trames
+capturées en 6 secondes, `acquire` mesure surtout **quand l'écran a présenté**, pas
+l'API. L'argument structurel tient, le chiffre n'est pas acquis — il demande un
+écran en mouvement continu, comme la campagne E s'en était donné un.
+
+### 17.2 Le curseur, que WGC ne donne pas
+
+WGC ne rapporte aucun pointeur : il sait le composer **dans** l'image, et c'est
+tout. Insuffisant ici pour deux raisons — un client peut demander à dessiner le
+sien (il lui faut la forme en données, pas en pixels) et un téléphone l'agrandit
+(il lui faut être séparable du bureau).
+
+Le chemin WGC lit donc le pointeur directement dans Win32 : `GetCursorInfo` pour
+la position et le `HCURSOR`, `GetIconInfo` pour la forme. Les trois encodages
+Windows s'y retrouvent à l'identique — monochrome (deux masques 1 bit empilés,
+AND au-dessus de XOR), couleur avec vraie couverture alpha, et couleur masquée
+quand le bitmap n'a pas d'alpha du tout. Le décodeur qui les réduit tous les trois
+en « image RGBA + drapeau d'inversion » a été **sorti de `DxgiDuplication` dans
+`CursorShape`** et sert désormais les deux backends : ce sont soixante lignes de
+manipulation de bits subtile qu'il aurait fallu corriger deux fois.
+
+La position est mise à l'échelle entre le rectangle de bureau (virtualisé DPI) et
+la texture capturée (en vrais pixels), sans quoi le pointeur dessiné se retrouve à
+une fraction d'écran du vrai sur tout affichage mis à l'échelle.
+
+Vérifié (`test_win32_cursor`, sans matériel particulier) : flèche standard lue en
+canevas 32×32 dont **12×19 d'encre**, hotspot dans la forme, aucun pixel à la fois
+dessiné et inversant, cache de forme qui ne re-décode pas un pointeur immobile,
+mise à l'échelle vérifiée à un pixel près, et pointeur d'un autre écran déclaré
+invisible.
+
+### 17.3 ⚠️ L'horodatage de WGC n'est pas celui de DDA
+
+DDA rapporte `LastPresentTime` : l'instant où la trame **a été** mise à l'écran,
+toujours dans le passé. `SystemRelativeTime` de WGC est l'estampille du
+compositeur et le **devance** — mesuré ici jusqu'à ~9 ms en avance sur l'instant
+où on tire la trame, parce que c'est la présentation pour laquelle elle est
+planifiée, pas une qui a eu lieu.
+
+Laissé tel quel, c'est une latence de capture **négative**, et ça ne reste pas une
+curiosité cosmétique : le gouverneur de lien (E3) dérive le délai aller simple du
+client de (arrivée − présent), donc un présent dans le futur gonfle la montée
+qu'il lit et fait couper le débit sur un lien qui va bien. L'estampille est donc
+plafonnée à « maintenant ». La latence de capture sur ce chemin est un **plancher,
+pas une mesure** — ce qui mérite d'être dit, et fait une raison de plus de garder
+DDA en premier.
+
+### 17.4 Choix d'implémentation et vérification
+
+Pas de C++/WinRT : sa projection est fondée sur les exceptions, et ce module n'en
+lie aucune. Les trois interfaces nécessaires sont du COM ABI ordinaire, activées
+par `RoGetActivationFactory`. Le gestionnaire `FrameArrived` **doit** être agile
+(`FtmBase`) — le pool libre-thread appelle depuis l'apartment du compositeur, et
+sans le marshaleur libre l'abonnement est refusé d'emblée, ce qui a été la
+première panne rencontrée. Le pool a **deux** tampons, pas plus : une file est de
+la latence, et une plus profonde laisserait le compositeur prendre de l'avance sur
+l'encodeur.
+
+`put_IsCursorCaptureEnabled(false)` pour garder le pointeur séparable, et
+`put_IsBorderRequired(false)` pour la bordure jaune (Windows 11 seulement ; sur
+Windows 10 elle reste).
+
+**`MW_CAPTURE=wgc` force le repli** sur une machine où DDA marche parfaitement.
+Sans ça le chemin WGC n'est atteignable que sur du matériel que personne ici ne
+possède — et c'est ainsi qu'un repli pourrit : écrit une fois, jamais exécuté,
+trouvé cassé sur la seule machine qui en avait besoin. Même intention que
+`MW_CONSOLE_LAUNCH=force`.
+
+Vérifié : flux au banc sur le chemin forcé (80 trames, keyframe, arrêt propre), et
+dans les tests la relecture des pixels — **luma NV12 19..234**, donc une vraie
+image et pas un écran noir, ce que « la session a démarré » n'aurait jamais
+prouvé. La branche WGC des tests s'exécute sur **toute** machine, pas seulement
+sur celles qui en ont besoin.

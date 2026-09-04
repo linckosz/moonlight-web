@@ -17,6 +17,7 @@
 
 #include "../../audio/windows/WasapiLoopback.h"
 #include "../../capture/windows/DxgiDuplication.h"
+#include "../../capture/windows/WgcCapture.h"
 #include "../../convert/windows/ColorConvert.h"
 #include "../../core/CadenceAlign.h"
 #include "../../core/FrameCadence.h"
@@ -230,9 +231,7 @@ public:
         // An SDR session, conversely, opens the capture in 8-bit and DXGI tone
         // maps an HDR desktop for it — which is exactly the picture an SDR
         // stream should carry.
-        m_Capture = std::make_unique<capture::DxgiDuplication>(m_Target.captureAdapterHandle,
-                                                               m_Target.outputIndex, m_Target.hdr);
-        if (!m_Capture->start(error)) return false;
+        if (!openCapture(error)) return false;
         if (!convert::ColorConvert::supportsSource(m_Capture->format())) {
             error = "the display delivers frames in a format this build cannot convert (" +
                     std::to_string(static_cast<int>(m_Capture->format())) + ")";
@@ -281,7 +280,10 @@ public:
         m_Info.fps = m_Config.fps;
         m_Info.codec = m_Target.codec;
         m_Info.encoder = m_Target.encoder;
-        m_Info.capture = caps.capture;
+        // What actually answered, not what the probe expected: a display that
+        // fell back to WGC has to say so, because everything downstream — the
+        // latency figures above all — is read differently for it.
+        m_Info.capture = m_CaptureApi;
         m_Info.gpuName = m_Target.encodeGpuName;
         m_Info.hdr = m_Target.hdr;
         m_Info.yuv444 = yuv444;
@@ -522,6 +524,74 @@ private:
     /// client asked for no particular resolution. A rebuild passes the size back
     /// in, so the host changing its own mode does not change the client's
     /// geometry underneath a decoder that is already configured.
+    /// Open the capture: Desktop Duplication, or Windows.Graphics.Capture when
+    /// it refuses.
+    ///
+    /// DDA is tried first every time, including on a restart, because it is the
+    /// better of the two by the measure this engine cares about: it wakes the
+    /// caller ON the present, where WGC wakes it on a compositor queue. The
+    /// fallback is for the machines where DDA cannot work at all — a hybrid
+    /// laptop whose panel is not scanned out by the adapter it is asked of
+    /// answers DXGI_ERROR_UNSUPPORTED and always will.
+    bool openCapture(std::string& error)
+    {
+        // MW_CAPTURE=wgc takes the fallback on a machine where Desktop
+        // Duplication works perfectly well. Without it the WGC path is only
+        // reachable on hardware nobody here has, which is how a fallback rots:
+        // it is written once, never run, and found broken on the one machine
+        // that needed it. Same purpose as MW_CONSOLE_LAUNCH=force for the
+        // console launcher.
+        bool forceWgc = false;
+        {
+            char value[16] = {};
+            const DWORD n = ::GetEnvironmentVariableA("MW_CAPTURE", value, sizeof(value));
+            forceWgc = n > 0 && n < sizeof(value) && ::_stricmp(value, "wgc") == 0;
+        }
+
+        std::string ddaError;
+        if (!forceWgc) {
+            m_Capture = std::make_unique<capture::DxgiDuplication>(
+                m_Target.captureAdapterHandle, m_Target.outputIndex, m_Target.hdr);
+            if (m_Capture->start(ddaError)) {
+                m_CaptureApi = CaptureApi::DxgiDuplication;
+                return true;
+            }
+        } else {
+            ddaError = "MW_CAPTURE=wgc";
+        }
+
+        if (!capture::WgcCapture::available()) {
+            // No fallback to offer: report the FIRST failure, which is the one
+            // that describes this machine. "WGC is unavailable" would send the
+            // reader after the wrong thing entirely.
+            error = ddaError;
+            return false;
+        }
+
+        log::info("[native] Desktop Duplication refused this display (" + ddaError +
+                  ") — falling back to Windows.Graphics.Capture");
+
+        m_Capture = std::make_unique<capture::WgcCapture>(m_Target.captureAdapterHandle,
+                                                          m_Target.outputIndex);
+        if (!m_Capture->start(error)) {
+            // Both failed. The DDA reason is the one worth carrying: WGC is the
+            // afterthought, and its message would hide why the primary path
+            // could not serve this display.
+            error = ddaError + " (and the fallback failed too: " + error + ")";
+            m_Capture.reset();
+            return false;
+        }
+
+        // ⚠️ HDR is not carried on this path. WGC can deliver FP16, but nothing
+        // here has ever seen it do so — the machines that need the fallback are
+        // exactly the ones nobody has an HDR panel on — and an unwatched colour
+        // pipeline is how a stream ends up subtly wrong for months (the rule
+        // AMF and oneVPL are held to in §16.3). The session downgrades itself
+        // below, on the format the capture really hands over.
+        m_CaptureApi = CaptureApi::WindowsGraphicsCapture;
+        return true;
+    }
+
     bool buildPipeline(int outputWidth, int outputHeight, std::string& error)
     {
         // Released before the replacements are built, not after. Both hold a
@@ -664,7 +734,12 @@ private:
 
             int64_t nowUs = steadyNowUs();
             if (nowUs >= nextTryUs) {
-                if (m_Capture->start(error)) break;
+                // Through openCapture(), not m_Capture->start(): the reason the
+                // display went away may be the reason Desktop Duplication can
+                // serve it again — or stop being able to. A driver restart or a
+                // mode change is exactly when the right backend changes, and
+                // re-running the choice costs one failed DDA attempt.
+                if (openCapture(error)) break;
                 failures++;
                 nowUs = steadyNowUs();
                 nextTryUs = nowUs + restartRetryDelayMs(failures) * 1000;
@@ -1758,7 +1833,12 @@ private:
     int64_t m_PresentsSeen = 0;
     int64_t m_LoopStartUs = 0;
 
-    std::unique_ptr<capture::DxgiDuplication> m_Capture;
+    std::unique_ptr<capture::IWindowsCapture> m_Capture;
+    /// Which backend actually answered. Settled by openCapture(), reported in
+    /// SessionInfo, and re-decided on every restart: a display that gains a
+    /// duplication back (a driver restart, a mode change) should stop paying
+    /// for the fallback.
+    CaptureApi m_CaptureApi = CaptureApi::DxgiDuplication;
     /// Present only when the encoder sits on another GPU than the display's:
     /// carries every frame across, and owns the device the converter and the
     /// encoder are then built on. See CrossGpuBridge.
