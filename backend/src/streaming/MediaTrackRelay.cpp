@@ -745,6 +745,18 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         const int freezes = msg["freezeCount"].toInt(0);
         const int nacks = msg["nackCount"].toInt(0);
         const int plis = msg["pliCount"].toInt(0);
+        // On this transport the counters ARE the link report: packets lost
+        // since the last one go to the native engine's rate governor as gaps,
+        // the RTP jitter as the delay signal. Cumulative on the wire, deltas
+        // for the governor.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim)) {
+            mw::native::LinkFeedback fb;
+            fb.gaps = lost > m_LastPacketsLostReported ? lost - m_LastPacketsLostReported : 0;
+            fb.owdRiseMs = qRound(msg["jitterMs"].toDouble(0));
+            fb.receivedFps = msg["fps"].toInt(0);
+            native->reportLink(fb);
+        }
+        m_LastPacketsLostReported = lost;
         const qint64 snapshot = lost + freezes + nacks + plis;
         if (snapshot != m_LastClientStatsSnapshot) {
             m_LastClientStatsSnapshot = snapshot;

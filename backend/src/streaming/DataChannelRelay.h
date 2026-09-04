@@ -239,6 +239,8 @@ private:
     // received them (native engine). False for every GameStream engine, whose
     // input keeps hopping to the relay thread exactly as before.
     bool m_DirectInput = false;
+    /// The receiver's first `linkstats` has arrived (native host): logged once.
+    bool m_LinkReportsSeen = false;
 
     // Direct-input mode: serializes onInputMessage against setInputPolicy and
     // stop(). One message at a time is already libdatachannel's contract for a

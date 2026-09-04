@@ -3765,6 +3765,10 @@ export class StreamView {
 
             // The audio track's playout buffer, on either WebRTC transport.
             this._startAudioStatsPolling();
+            // What this receiver sees of the link, for the native host's rate
+            // governor (DataChannel transport; the media transport reports its
+            // RTP counters through clientstats instead).
+            this._startLinkReporting();
 
             if (this._transport === 'webrtc-media') {
                 // Media track mode: video arrives natively via <video> element.
@@ -4125,6 +4129,83 @@ export class StreamView {
             this._mediaStatsTimer = null;
         }
         this._stopAudioStatsPolling();
+        this._stopLinkReporting();
+    }
+
+    // ── Link report for the native host's rate governor ──────────────────
+    /**
+     * Twice a second, tell the host what the link looks like from here: how
+     * much later frames arrive than at the best of the session, and how many
+     * never arrived. The host cannot see either — on its side a congested link
+     * looks like frames leaving on time into a transport buffer — and the
+     * arrival side is the first place a queue shows, as delay, seconds before
+     * anything is lost. The native host's governor lowers the encoder's target
+     * on it and raises it back through quiet, between two frames, with nothing
+     * relaunched; that is why the app's own degradation ladder stands down for
+     * the native host (see app.js).
+     *
+     * The delay figure is the minimum over the window of (arrival − host
+     * present time) minus the minimum of the same over the session: the clock
+     * offset between the two machines cancels in the subtraction and only
+     * queueing remains. The session minimum is refreshed from the last 30 s so
+     * a slow clock drift never reads as a rising queue.
+     *
+     * Native host on the DataChannel transport only: every other host paces
+     * its own rate, and the media transport reports its RTP counters through
+     * clientstats.
+     */
+    _startLinkReporting() {
+        if (this._linkTimer || !this._nativeHost || this._transport === 'webrtc-media') return;
+        this._link = {
+            windowMinOffset: Infinity,
+            sessionMinOffset: Infinity,
+            recentMinOffset: Infinity,
+            recentSince: performance.now(),
+            gaps: 0,
+            frames: 0,
+        };
+        this._linkTimer = setInterval(() => {
+            if (this._quitting || !this._link) return;
+            const l = this._link;
+            const now = performance.now();
+            let owdRiseMs = 0;
+            if (l.windowMinOffset !== Infinity && l.sessionMinOffset !== Infinity) {
+                owdRiseMs = Math.max(0, Math.round(l.windowMinOffset - l.sessionMinOffset));
+            }
+            const fps = Math.round(l.frames * 2);
+            this._sendToHost({ type: 'linkstats', owdRiseMs, gaps: l.gaps, fps });
+            this._linkOwdRiseMs = owdRiseMs;
+            // The window closes; the 30 s reference rolls over.
+            l.windowMinOffset = Infinity;
+            l.gaps = 0;
+            l.frames = 0;
+            if (now - l.recentSince > 30000) {
+                if (l.recentMinOffset !== Infinity) l.sessionMinOffset = l.recentMinOffset;
+                l.recentMinOffset = Infinity;
+                l.recentSince = now;
+            }
+        }, 500);
+    }
+
+    _stopLinkReporting() {
+        if (this._linkTimer) {
+            clearInterval(this._linkTimer);
+            this._linkTimer = null;
+        }
+        this._link = null;
+    }
+
+    /** One frame arrived at @p arrivalMs (performance.now) carrying the host's
+     *  present time @p backendTs (ms, host clock). */
+    _noteLinkArrival(backendTs, arrivalMs) {
+        const l = this._link;
+        if (!l) return;
+        l.frames++;
+        if (!(backendTs > 0)) return;
+        const offset = arrivalMs - backendTs;
+        if (offset < l.windowMinOffset) l.windowMinOffset = offset;
+        if (offset < l.sessionMinOffset) l.sessionMinOffset = offset;
+        if (offset < l.recentMinOffset) l.recentMinOffset = offset;
     }
 
     /**
@@ -5101,6 +5182,7 @@ export class StreamView {
                 // assigned in backend send order, so the size of the jump IS the
                 // count lost — this is the overlay's network-loss numerator.
                 this.stats.networkLost += frameId - this._lastFrameId - 1;
+                if (this._link) this._link.gaps += frameId - this._lastFrameId - 1;
                 this._referenceValid = false;
                 if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
                 this._requestIdr('frame gap');
@@ -5122,6 +5204,9 @@ export class StreamView {
 
         // Track cumulative video bytes for bitrate calculation
         this._totalBytes += data.length;
+
+        // What the link did to this frame, for the native host's governor.
+        this._noteLinkArrival(backendTs, arrivalAbs - performance.timeOrigin);
 
         // Arrival cadence, sampled here rather than deeper in the pipeline: this
         // is the last point that is common to every transport and to both the

@@ -21,6 +21,7 @@
 #include "Capabilities.h"
 #include "EncodedFrame.h"
 #include "InputEvent.h"
+#include "LinkFeedback.h"
 #include "SessionConfig.h"
 
 #include <functional>
@@ -244,10 +245,19 @@ public:
     /// encoder that cannot do it.
     virtual void invalidateReference(uint32_t frameNumber) = 0;
 
-    /// Move the target bitrate. Applied from the next frame, with no
-    /// renegotiation of any kind — being in-process is what makes this cheap
-    /// enough to drive from live client feedback (§9.3).
+    /// Move the viewer's bitrate CEILING. Applied from the next frame, with no
+    /// renegotiation of any kind — being in-process is what makes this cheap.
+    /// What the encoder actually runs at is this, lowered by what the link
+    /// can take (reportLink) and re-dimensioned for the rate frames really
+    /// come at (encode::EffectiveCadence).
     virtual void setTargetBitrate(int kbps) = 0;
+
+    /// What the receiver saw of the link over its last window — see
+    /// LinkFeedback. The engine's rate governor (encode::RateGovernor) lowers
+    /// the encoder's target when the queue builds and raises it back through
+    /// quiet, between two frames, with nothing renegotiated (§9.3). Safe from
+    /// any thread; a report on a session that is not running is dropped.
+    virtual void reportLink(const LinkFeedback& feedback) = 0;
 };
 
 /// Entry point to the engine.

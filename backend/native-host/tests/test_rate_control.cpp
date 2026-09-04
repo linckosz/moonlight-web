@@ -16,7 +16,11 @@
  */
 
 #include "encode/RateControl.h"
+#include "encode/RateGovernor.h"
 #include "native_test_framework.h"
+
+using mw::native::LinkFeedback;
+using mw::native::encode::RateGovernor;
 
 using mw::native::encode::EffectiveCadence;
 using mw::native::encode::intraRefreshCountFrames;
@@ -373,6 +377,118 @@ void run_rate_control_tests()
         CHECK(raisedAt > 0);
         CHECK(raisedAt <= 300000); // well under a second
         CHECK_EQ(c.currentFps, 165);
+    }
+
+    SECTION("RateGovernor — a rising delay cuts at once, quiet raises slowly");
+    {
+        RateGovernor g;
+        g.start(40000, 0);
+        CHECK_EQ(g.targetKbps(), 40000);
+        CHECK(!g.limiting());
+        LinkFeedback rising;
+        rising.owdRiseMs = 45;
+        CHECK(g.report(rising, 500));
+        CHECK_EQ(g.targetKbps(), 32000);
+        CHECK(g.limiting());
+        // Inside the two-second hold, quiet does nothing yet.
+        LinkFeedback quiet;
+        CHECK(!g.report(quiet, 1000));
+        CHECK(!g.report(quiet, 2000));
+        CHECK_EQ(g.targetKbps(), 32000);
+        // Quiet since the cut, three seconds of it: the first raise, 5 %.
+        CHECK(!g.report(quiet, 3000));
+        CHECK(g.report(quiet, 4000));
+        CHECK_EQ(g.targetKbps(), 33600);
+        // And on, one step per report, up to the setting and no further:
+        // 33 600 → 35 280 → 37 044 → 38 896 → 40 000.
+        int64_t t = 4500;
+        int steps = 0;
+        while (g.limiting() && steps < 100) {
+            g.report(quiet, t);
+            t += 500;
+            steps++;
+        }
+        CHECK_EQ(g.targetKbps(), 40000);
+        CHECK_EQ(steps, 4); // gradual, not a jump back
+        CHECK(!g.report(quiet, t));
+    }
+
+    SECTION("RateGovernor — loss and evictions are overuse whatever the delay says");
+    {
+        RateGovernor g;
+        g.start(20000, 0);
+        LinkFeedback gap;
+        gap.gaps = 1;
+        CHECK(g.report(gap, 500));
+        CHECK_EQ(g.targetKbps(), 16000);
+        LinkFeedback evicted;
+        evicted.evictions = 2;
+        CHECK(g.report(evicted, 1000)); // a second overuse inside the hold cuts again
+        CHECK_EQ(g.targetKbps(), 12800);
+    }
+
+    SECTION("RateGovernor — never below the floor, never above the setting");
+    {
+        RateGovernor g;
+        g.start(10000, 0);
+        CHECK_EQ(g.floorKbps(), RateGovernor::kFloorKbps); // 20 % of 10 000 is under it
+        LinkFeedback bad;
+        bad.owdRiseMs = 200;
+        for (int i = 0; i < 40; i++)
+            g.report(bad, i * 500);
+        CHECK_EQ(g.targetKbps(), RateGovernor::kFloorKbps);
+        RateGovernor big;
+        big.start(100000, 0);
+        CHECK_EQ(big.floorKbps(), 20000);
+        for (int i = 0; i < 40; i++)
+            big.report(bad, i * 500);
+        CHECK_EQ(big.targetKbps(), 20000);
+    }
+
+    SECTION("RateGovernor — a queue that is present but not growing holds");
+    {
+        RateGovernor g;
+        g.start(40000, 0);
+        LinkFeedback rising;
+        rising.owdRiseMs = 40;
+        g.report(rising, 500);
+        CHECK_EQ(g.targetKbps(), 32000);
+        LinkFeedback middling;
+        middling.owdRiseMs = 20; // between quiet and overuse
+        for (int i = 0; i < 20; i++)
+            CHECK(!g.report(middling, 3000 + i * 500));
+        CHECK_EQ(g.targetKbps(), 32000);
+    }
+
+    SECTION("RateGovernor — the ceiling moving down takes the target with it");
+    {
+        RateGovernor g;
+        g.start(40000, 0);
+        g.setSetting(15000);
+        CHECK_EQ(g.targetKbps(), 15000);
+        CHECK(!g.limiting());
+        g.setSetting(40000); // back up: the target stays where the link left it
+        CHECK_EQ(g.targetKbps(), 15000);
+        CHECK(g.limiting());
+    }
+
+    SECTION("RateGovernor — silence from the receiver is one cut, not a slide");
+    {
+        RateGovernor g;
+        g.start(40000, 0);
+        LinkFeedback quiet;
+        g.report(quiet, 500);
+        CHECK(!g.tick(3000));
+        CHECK(g.tick(4600));
+        CHECK_EQ(g.targetKbps(), 32000);
+        CHECK(!g.tick(9000)); // still silent: no further cut
+        CHECK(!g.tick(20000));
+        CHECK_EQ(g.targetKbps(), 32000);
+        // A report resumes the ordinary rules — quiet all this time, so the
+        // first one already raises.
+        CHECK(g.report(quiet, 20500));
+        CHECK_EQ(g.targetKbps(), 33600);
+        CHECK_EQ(g.silences(), 1);
     }
 
     SECTION("EffectiveCadence — the clock closes windows of one second");

@@ -508,6 +508,13 @@ void NativeMediaEngine::setFrameFloorFps(int fps)
     if (m_Session) m_Session->setFrameFloorFps(fps);
 }
 
+void NativeMediaEngine::reportLink(const mw::native::LinkFeedback& feedback)
+{
+    mw::native::LinkFeedback fb = feedback;
+    fb.evictions += m_Evictions.exchange(0, std::memory_order_relaxed);
+    if (m_Session) m_Session->reportLink(fb);
+}
+
 bool NativeMediaEngine::intraRefreshActive() const
 {
     return m_Session && m_Session->info().intraRefresh;

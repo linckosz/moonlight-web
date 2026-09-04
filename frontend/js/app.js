@@ -1927,6 +1927,9 @@ const MoonlightApp = {
             // is sent at its raw report rate there — see _bindPointerRaw.
             nativeHost: result.native === true,
         };
+        // The degradation ladder stands down for the native host — see
+        // _onStreamCongested.
+        this._lastStreamNative = result.native === true;
 
         return new StreamView(
             document.getElementById('app'),
@@ -2638,6 +2641,17 @@ const MoonlightApp = {
         if (this._nav.overlay !== 'streaming') return;
         // A seamless transition is already in flight — let it finish first.
         if (this._standbyView) return;
+        // The native host runs its own rate governor, fed twice a second by
+        // this receiver's link report (StreamView._startLinkReporting): it
+        // lowers the encoder's bitrate between two frames the moment the queue
+        // builds, and raises it back through quiet. Relaunching the session
+        // for a −30 % bitrate step would throw away a picture the host is
+        // already adapting, twenty seconds late. The ladder keeps its other
+        // hosts.
+        if (this._lastStreamNative) {
+            console.warn('[MW] Sustained congestion on the native host — its governor handles it');
+            return;
+        }
         // Sharing pins the stream: see _qualityRelaunch. Bail out here rather
         // than at the relaunch, so no toast promises a step that never happens.
         if (this._sharePinsQuality()) return;
