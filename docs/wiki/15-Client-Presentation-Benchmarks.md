@@ -171,6 +171,20 @@ Decision: **4:4:4 is SDR-only.** HDR stays 4:2:0. Text legibility is the whole p
 
 Open, not planned: the Canvas2D-vs-FSR1 anomaly of 15.5 item 4; fullscreen WebGPU advantage of 15.3 to be confirmed on game content; the backend's `on` default for a never-stored `video_enhancement` key.
 
+## 15.8 The other end — the native host's encoder
+
+The client is half of the latency. The native host's encoder was benched the same way on 4 September 2026, with the engine's own instrument (`MoonlightWeb.exe --native-bench`: capture, convert, encode into a sink, one CSV row per frame with the average QP as the objective quality proxy), on three contents (still text, scrolling text, a looped game clip) and every knob the vendor exposes — preset, latency tuning, multipass, adaptive quantization, VBV, codec, chroma, intra-refresh. Full tables and the argued recommendation live in [`docs/bench-native-host.md`](../bench-native-host.md); the short version:
+
+| Finding | Number (RTX 5060 Ti, 1440p, 40 Mbit/s) |
+|---|---|
+| NVENC preset is the lever | P1 encodes in **2.7–3.1 ms** against **4.7–6.5 ms** for P4 (the default), same frame size, +1 QP on a game, +5 QP on scrolling text |
+| Multipass stays | the ULL preset enables quarter-resolution multipass on its own; turning it off saves 0.4 ms but breaks the still-screen refinement burst (QP stalls at 29 instead of reaching 8) |
+| VBV, AQ, codec | the 1/60 s VBV floor holds; temporal AQ does nothing; AV1 < H.264 < HEVC in encode time, all three decode in ~1 ms on this Chrome |
+| Two bugs found on the way | H.264 decoded in **200 ms** (no `bitstream_restriction` in the SPS, the decoder held a whole DPB) → 1 ms; AV1 was never selectable on the native host (a wrong codec bit) |
+| AMD iGPU (through a new cross-GPU copy) | 7.9 ms at 1440p, no knob matters, pre-analysis kills the encoder; 165 fps only at 1080p |
+
+The recommendation (P1, multipass kept) waits for a blind A/B on real streams — `MW_NATIVE_TUNING=preset=1` starts a session with the candidate — before any default moves.
+
 ---
 
 [← Conclusion](14-Conclusion.md) · [Home](Home.md)

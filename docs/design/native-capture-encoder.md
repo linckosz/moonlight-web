@@ -156,6 +156,20 @@ rouvrir le même adaptateur pour la duplication *et* pour l'encodeur.
 > Demander `HARDWARE` l'ignore silencieusement et prend le défaut — c'est ainsi
 > qu'un pipeline « zéro-copie » se met à copier entre GPU sans rien dire.
 
+**La copie inter-GPU existe depuis le 04/09/2026** (`CrossGpuBridge`). Quand le
+Selector choisit un encodeur sur un autre adaptateur que celui qui scanne
+l'écran — un écran piloté par un GPU sans encodeur, ou le banc qui force
+`gpu=<id>` pour mesurer un iGPU sans écran — la trame capturée passe par une
+texture de lecture (staging) sur le GPU source, un `Map`, une copie ligne à
+ligne dans une texture dynamique du GPU d'encodage, puis la conversion et
+l'encodeur y sont construits. D3D11 n'offre aucune autre route entre deux
+adaptateurs. Coût mesuré : **14 Mo par trame 1440p, 2 à 5 ms**, compté dans
+l'étape `convert` et résumé en fin de session (« cross-GPU copy: N frames of
+14 MB, x ms mean, y ms max »). `SessionInfo::copiesPerFrame` passe à 3. La
+session le dit en warning au démarrage : sur ce chemin, toutes les promesses
+zéro-copie de ce document sont hors jeu. Avant cette date la session refusait
+de démarrer.
+
 ---
 
 ## 6. ⚠️ Ce que le banc a corrigé
@@ -257,7 +271,8 @@ NVENC qui visent l'encodage de fichiers.
 
 | Réglage | Pourquoi |
 |---|---|
-| `ULTRA_LOW_LATENCY`, preset P4 | P1 serait plus rapide mais visiblement plus mou ; l'écart est sous la milliseconde sur un encodeur moderne |
+| `ULTRA_LOW_LATENCY`, preset P4 | ⚠️ **mesuré faux le 04/09/2026** (`docs/bench-native-host.md`) : sur une RTX 5060 Ti, P1 encode en 2,7–3,1 ms contre 4,7–6,5 pour P4, pour +1 de QP sur un jeu et +5 sur du texte qui défile. Le preset ULL active de lui-même le multipass quart de résolution (lu dans le log, pas supposé) et **l'éteindre casse la rafale de raffinement de l'écran fixe** (§9.1). Recommandation P1 + multipass quart, en attente de l'A/B de Bruno |
+| **VUI `bitstream_restriction` en H.264** | sans `max_num_reorder_frames` le décodeur D3D11 de Chrome retient un DPB entier avant d'afficher : **200 ms** de décodage mesurés sur un flux sans B-frame, 1 ms après. Le HEVC le porte par défaut (04/09/2026) |
 | **Aucune B-frame** (`frameIntervalP = 1`) | elle référencerait une image pas encore envoyée → une trame entière retenue |
 | **GOP infini + intra-refresh** | une keyframe est un pic de débit ; `MediaTrackRelay` documente ce que ces pics font à un lien congestionné (perte → tempête de PLI → effondrement) |
 | **CBR, VBV = une frame** | c'est le VBV qui impose réellement la faible latence : aucune frame ne peut être si grosse qu'elle mette plusieurs temps de trame à passer |
@@ -650,7 +665,8 @@ libre de redevance)**. D'où la préférence AV1 quand les deux bouts suivent.
 | Conversion NV12 + AYUV 4:4:4 | UI (grille d'écrans, ligne GPU/encodeur) |
 | NVENC (3,46 ms), AMF (3,70 ms), oneVPL (écrit, non exécuté) | Retrait de Sunshine de l'installeur |
 | Intra-refresh sur les trois encodeurs + ride-out client | Linux, macOS |
-| Curseur composé, plancher sur écran immobile choisi par le client (§9.1) | Benchmarks par encodeur (l'instrument est là, §14 ; les campagnes restent à mener) |
+| Curseur composé, plancher sur écran immobile choisi par le client (§9.1) | Benchmarks : NVENC et AMF (iGPU) mesurés le 04/09/2026 (`docs/bench-native-host.md`) ; RX 7600 et Intel attendent leur GPU ; l'application du réglage attend l'A/B |
+| Copie inter-GPU (§5, 04/09/2026) : un écran dont le GPU n'encode pas streame quand même | |
 | Six étapes mesurées par frame, p95/p99 dans les stats et le log (§4, point 4) | |
 | Clavier/souris (`SendInput`), manette (ViGEm) + rumble | |
 | Installeur : ViGEmBus en silencieux | |
@@ -698,6 +714,21 @@ MoonlightWeb.exe --native-bench ""          # liste les écrans (display=<id>)
 Clés : `display`, `seconds`, `codec` (hevc|h264|av1), `fps` (0 = celui de
 l'écran), `bitrate` (kbps), `width`/`height` (0 = ceux de l'écran), `yuv444`,
 `intra` (intra-refresh), `out`.
+
+**Depuis le 04/09/2026, les réglages d'encodeur eux-mêmes** (`EncoderTuning`,
+en-tête public, défaut = le choix du moteur, jamais rempli par une session
+navigateur) : `preset=1..7`, `tuning=ull|ll`, `multipass=off|quarter|full`,
+`aq`, `taq`, `preanalysis`, `quality=speed|balanced|quality`, `tu=1..7`,
+`vbv=<frames>` ; et `gpu=<id>` pour encoder sur un autre GPU que celui de
+l'écran (copie inter-GPU, §5) — c'est ainsi que l'iGPU AMD de DualRTX, qui ne
+pilote aucun écran, a pu être mesuré. Sans `display=`, le banc liste écrans **et
+GPU**. Chaque encodeur écrit dans son log ce que le preset ou l'usage active de
+lui-même (multipass, AQ, lookahead ; qualité, pré-analyse, VBAQ) puis la
+configuration effective. Le lookahead n'est pas exposé : il retient N images par
+construction, disqualifié avant toute mesure. La variable d'environnement
+`MW_NATIVE_TUNING` accepte les mêmes clés sur une **vraie session** (log
+« MW_NATIVE_TUNING in effect »), pour l'A/B à l'œil que le banc ne peut pas
+faire. Campagne du 04/09/2026 et recommandation : `docs/bench-native-host.md`.
 
 Par frame, une ligne CSV : numéro, keyframe, capturée ou ré-émise, octets,
 **QP moyen** (`frameAvgQP` côté NVENC, `StatisticsFeedbackAvgQP` côté AMF — un
