@@ -107,16 +107,23 @@ VplCaps queryUncached(uint64_t adapterLuid)
     for (Codec codec : wanted) {
         if (!canEncode(session, codec, false)) continue;
         caps.codecs.push_back(codec);
-        // 10-bit is asked per codec and only credited where it answered: an
-        // unclaimed capability costs a better codec, a wrongly claimed one
-        // costs a failed session.
-        if ((codec == Codec::Hevc || codec == Codec::Av1) && canEncode(session, codec, true))
-            caps.supports10Bit = true;
     }
 
-    // 4:4:4 is not claimed: the conversion pass produces AYUV, which oneVPL
-    // does not take as an encoder input, so there is nothing to feed it with
-    // even where the silicon could. Left for whoever adds a Y410/AYUV path.
+    // ⚠️ Neither 10-bit nor 4:4:4 is claimed, and both omissions are on purpose.
+    //
+    // `canEncode(session, codec, true)` really does answer yes for 10-bit on
+    // Intel silicon, but VplEncoder has no P010 path — so claiming it would
+    // have the Selector grant HDR and the session die at init(). A capability
+    // here means "this pipeline can carry it", never "this chip could": that
+    // distinction is what bug B7 cost us, when a per-GPU `supports444` killed
+    // every 4:4:4 stream on a Radeon at the click.
+    //
+    // 4:4:4 is refused for a second, independent reason: the conversion pass
+    // produces AYUV, which oneVPL does not take as an encoder input at all.
+    //
+    // Restore each query in the same commit that writes its encoder path, on
+    // hardware that can be watched — never before.
+    caps.supports10Bit = false;
     caps.codecs444.clear();
 
     caps.usable = !caps.codecs.empty();

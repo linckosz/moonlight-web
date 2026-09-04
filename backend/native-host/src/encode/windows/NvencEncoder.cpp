@@ -83,7 +83,7 @@ NvencEncoder::~NvencEncoder()
 }
 
 bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                        int bitrateKbps, bool yuv444, bool intraRefresh,
+                        int bitrateKbps, bool yuv444, bool hdr, bool intraRefresh,
                         const EncoderTuning& tuning, std::string& error)
 {
     stop();
@@ -97,10 +97,22 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         error = "invalid encoder parameters";
         return false;
     }
+    if (hdr && codec == Codec::H264) {
+        // H.264 has a 10-bit profile, and no browser decodes HDR with it. The
+        // Selector already routes HDR to HEVC or AV1; this is the guard that
+        // keeps a misrouted session from encoding something unplayable.
+        error = "HDR needs HEVC or AV1 — H.264 has no HDR path a browser decodes";
+        return false;
+    }
 
     m_Codec = codec;
-    // AYUV is what the 4:4:4 conversion pass produces; NV12 the 4:2:0 one.
-    m_BufferFormat = yuv444 ? NV_ENC_BUFFER_FORMAT_AYUV : NV_ENC_BUFFER_FORMAT_NV12;
+    m_Hdr = hdr;
+    // P010 is what the HDR conversion pass produces, AYUV the 4:4:4 one, NV12
+    // the plain 4:2:0 one. NVENC calls P010 "YUV420_10BIT" and, like the
+    // shader, puts the ten bits in the high end of each 16-bit word.
+    m_BufferFormat = hdr      ? NV_ENC_BUFFER_FORMAT_YUV420_10BIT
+                     : yuv444 ? NV_ENC_BUFFER_FORMAT_AYUV
+                              : NV_ENC_BUFFER_FORMAT_NV12;
     m_Width = width;
     m_Height = height;
     if (fps <= 0) fps = 60;
@@ -224,6 +236,11 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         m_Config.profileGUID = codec == Codec::Hevc ? NV_ENC_HEVC_PROFILE_FREXT_GUID
                                                     : NV_ENC_H264_PROFILE_HIGH_444_GUID;
     }
+    // HEVC's 10-bit profile has to be named, exactly like the 4:4:4 one above:
+    // left on Main, NVENC accepts the P010 surface and encodes 8-bit from it,
+    // so the HDR would be silently thrown away. AV1 carries its bit depth in
+    // the config rather than in a profile GUID, and is set below.
+    if (hdr && codec == Codec::Hevc) m_Config.profileGUID = NV_ENC_HEVC_PROFILE_MAIN10_GUID;
 
     // Intra-refresh only when the caller asked for it. Enabling it unasked
     // costs slightly larger P-frames at a fixed CBR budget for a benefit only a
@@ -285,6 +302,21 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         hevc.enableIntraRefresh = refreshEnabled;
         hevc.intraRefreshPeriod = refreshPeriod;
         hevc.intraRefreshCnt = refreshCount;
+        if (hdr) {
+            hevc.pixelBitDepthMinus8 = 2;
+            // The colour description travels in the VUI, and it is the whole
+            // reason a browser knows to run the PQ curve backwards. Without it
+            // the decoder assumes BT.709 sRGB and paints a flat, grey picture:
+            // the classic "HDR looks washed out" that reads as a shader bug and
+            // is in fact three missing integers.
+            hevc.hevcVUIParameters.videoSignalTypePresentFlag = 1;
+            hevc.hevcVUIParameters.videoFullRangeFlag = 0; // limited, as the shader writes
+            hevc.hevcVUIParameters.colourDescriptionPresentFlag = 1;
+            hevc.hevcVUIParameters.colourPrimaries = NV_ENC_VUI_COLOR_PRIMARIES_BT2020;
+            hevc.hevcVUIParameters.transferCharacteristics =
+                NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SMPTE2084;
+            hevc.hevcVUIParameters.colourMatrix = NV_ENC_VUI_MATRIX_COEFFS_BT2020_NCL;
+        }
         break;
     }
     case Codec::Av1: {
@@ -294,6 +326,16 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
         av1.enableIntraRefresh = refreshEnabled;
         av1.intraRefreshPeriod = refreshPeriod;
         av1.intraRefreshCnt = refreshCount;
+        if (hdr) {
+            // AV1 names its depth in the config, in and out: the input really is
+            // 10-bit and so must the bitstream be, or the hardware would helpfully
+            // convert one to the other and drop the range we came for.
+            av1.inputPixelBitDepthMinus8 = 2;
+            av1.pixelBitDepthMinus8 = 2;
+            av1.colorPrimaries = NV_ENC_VUI_COLOR_PRIMARIES_BT2020;
+            av1.transferCharacteristics = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_SMPTE2084;
+            av1.matrixCoefficients = NV_ENC_VUI_MATRIX_COEFFS_BT2020_NCL;
+        }
         break;
     }
     }
@@ -341,9 +383,9 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
 
     const std::string overrides = tuning.describe();
     log::info("[native] NVENC ready: " + std::to_string(width) + "x" + std::to_string(height) +
-              "@" + std::to_string(fps) + " " + toString(codec) + " CBR " +
-              std::to_string(bitrateKbps) + " kbps, VBV " +
-              std::to_string(m_Config.rcParams.vbvBufferSize / 8 / 1024) + " KB" +
+              "@" + std::to_string(fps) + " " + toString(codec) +
+              (m_Hdr ? " Main10 (BT.2020 PQ)" : "") + " CBR " + std::to_string(bitrateKbps) +
+              " kbps, VBV " + std::to_string(m_Config.rcParams.vbvBufferSize / 8 / 1024) + " KB" +
               (m_IntraRefresh ? ", intra-refresh over " + std::to_string(refreshPeriod) + " frames"
                               : ", keyframes") +
               ", P" + std::to_string(presetNumber) +

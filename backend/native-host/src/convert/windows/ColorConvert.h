@@ -93,26 +93,51 @@ public:
     /// Whether init() will accept frames in @p format.
     ///
     /// Asked BEFORE the capture is opened, because the answer decides what the
-    /// capture is asked for: a session that will render SDR must not receive
-    /// FP16 from an HDR desktop, it must receive the desktop tone-mapped to
-    /// 8-bit by DXGI — and this build converts 8-bit only. FP16 scRGB needs a
-    /// PQ transfer and a P010 target, neither of which is written yet.
+    /// capture is asked for: an SDR session must not receive FP16 from an HDR
+    /// desktop, it must receive the desktop tone-mapped to 8-bit by DXGI. That
+    /// choice is made by what the CAPTURE is opened with, not here — this only
+    /// says which formats have a shader.
+    ///
+    /// FP16 scRGB is accepted since the HDR path landed (September 2026); it is
+    /// only usable with `hdr` set on init(), which is the pairing the session
+    /// enforces.
     static bool supportsSource(DXGI_FORMAT format)
     {
-        return format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM;
+        return format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+               format == DXGI_FORMAT_R16G16B16A16_FLOAT;
     }
+
+    /// Whether @p format carries HDR — i.e. requires the PQ path rather than
+    /// the BT.709 one. The capture's answer is the truth here: asking DXGI for
+    /// FP16 does not guarantee getting it (a display that left HDR mode hands
+    /// back 8-bit), so the session reconciles what it wanted with this.
+    static bool isHdrSource(DXGI_FORMAT format) { return format == DXGI_FORMAT_R16G16B16A16_FLOAT; }
 
     /// Prepare the pipeline for @p sourceFormat frames of @p sourceWidth ×
     /// @p sourceHeight, producing @p chroma at @p outputWidth × @p outputHeight.
     ///
+    /// @p hdr selects the HDR path: an FP16 scRGB source becomes **P010**,
+    /// BT.2020 primaries with the PQ transfer, 10-bit limited range. It must
+    /// match the source format — FP16 with `hdr` false, or an 8-bit source with
+    /// `hdr` true, is refused rather than silently misinterpreted, because both
+    /// mistakes produce a picture that is merely wrong instead of an error.
+    ///
+    /// HDR is 4:2:0 only. The 10-bit 4:4:4 format (Y410) has no browser that
+    /// displays it — Chrome 152 accepts `hvc1.4.156` and then renders green
+    /// (measured 04/09/2026, doc §15/F0f) — so producing it would cost a shader
+    /// nobody could watch.
+    ///
     /// For 4:2:0 the output dimensions are rounded down to even numbers: NV12
-    /// chroma is half-resolution in both axes, so an odd size has no
+    /// and P010 chroma are half-resolution in both axes, so an odd size has no
     /// representation. 4:4:4 has no such constraint but is rounded the same way
     /// to keep one code path and to stay friendly to every encoder.
     bool init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sourceWidth, int sourceHeight,
-              int outputWidth, int outputHeight, Chroma chroma, std::string& error);
+              int outputWidth, int outputHeight, Chroma chroma, bool hdr, std::string& error);
 
     Chroma chroma() const { return m_Chroma; }
+
+    /// Whether the output is P010 in BT.2020 PQ rather than 8-bit BT.709.
+    bool hdr() const { return m_Hdr; }
 
     /// Convert one frame. @p source is the texture from capture; the result is
     /// in output(), ready for the encoder to register.
@@ -147,6 +172,10 @@ private:
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_VertexShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_LumaShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ChromaShader;
+    /// The HDR pair. Compiled only for an HDR session: the PQ shaders are the
+    /// expensive ones to compile and a desktop session never needs them.
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> m_LumaHdrShader;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> m_ChromaHdrShader;
     /// 4:4:4 needs only this one: a single draw writes all three components.
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_PackedShader;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> m_Sampler;
@@ -178,6 +207,7 @@ private:
     ID3D11Texture2D* m_SourceViewFor = nullptr;
 
     Chroma m_Chroma = Chroma::C420;
+    bool m_Hdr = false;
     DXGI_FORMAT m_SourceFormat = DXGI_FORMAT_UNKNOWN;
     int m_SourceWidth = 0;
     int m_SourceHeight = 0;

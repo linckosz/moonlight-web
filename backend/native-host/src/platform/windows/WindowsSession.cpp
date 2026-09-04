@@ -219,21 +219,17 @@ public:
                          "figure of this engine is off on this session");
         }
 
-        // HDR is carried only when the whole chain can: the Selector has checked
-        // the display, the GPU and the codec, and the converter has the last
-        // word — it turns FP16 scRGB into P010, or it does not. When it does
-        // not, the capture is opened in 8-bit and DXGI hands over an HDR
-        // desktop already tone-mapped to SDR, which is the picture an SDR
-        // stream should carry. Opening in FP16 regardless is what made the
-        // session fail at the click on every machine with Windows HDR on: the
-        // converter refused a format nothing downstream could have used.
-        if (m_Target.hdr &&
-            !convert::ColorConvert::supportsSource(DXGI_FORMAT_R16G16B16A16_FLOAT)) {
-            log::info("[native] HDR negotiated but this build converts SDR only — streaming SDR "
-                      "from the tone-mapped desktop");
-            m_Target.hdr = false;
-        }
-
+        // HDR is carried only when the whole chain can. The Selector has checked
+        // the display, the GPU and the codec; the capture has the last word,
+        // and it is not a matter of opinion — asking DuplicateOutput1 for FP16
+        // does not guarantee getting it. A display that left HDR mode between
+        // the probe and the click hands back 8-bit, and a session that went on
+        // believing it had scRGB would run the PQ curve over sRGB bytes and
+        // paint a blown-out picture rather than fail.
+        //
+        // An SDR session, conversely, opens the capture in 8-bit and DXGI tone
+        // maps an HDR desktop for it — which is exactly the picture an SDR
+        // stream should carry.
         m_Capture = std::make_unique<capture::DxgiDuplication>(m_Target.captureAdapterHandle,
                                                                m_Target.outputIndex, m_Target.hdr);
         if (!m_Capture->start(error)) return false;
@@ -241,6 +237,11 @@ public:
             error = "the display delivers frames in a format this build cannot convert (" +
                     std::to_string(static_cast<int>(m_Capture->format())) + ")";
             return false;
+        }
+        if (m_Target.hdr && !convert::ColorConvert::isHdrSource(m_Capture->format())) {
+            log::info("[native] HDR was negotiated but the display handed over 8-bit frames — "
+                      "streaming SDR from the tone-mapped desktop");
+            m_Target.hdr = false;
         }
 
         // 4:4:4 as the Selector granted it: it has already steered the codec to
@@ -536,11 +537,24 @@ private:
         // frames to another GPU, in which case both stages live over there and
         // read the bridge's copy.
         m_Converter = std::make_unique<convert::ColorConvert>();
+        // The HDR flag has to match the format the capture is REALLY handing
+        // over, not what was negotiated: a rebuild happens after a mode change,
+        // and turning Windows HDR off is one of the changes that triggers it.
+        // The converter refuses a mismatch rather than misreading the bytes,
+        // and this is what keeps it from ever seeing one.
+        const bool hdr = convert::ColorConvert::isHdrSource(m_Capture->format());
+        if (m_Target.hdr != hdr) {
+            log::info(hdr ? "[native] the display is now HDR — rebuilding on the PQ path"
+                          : "[native] the display left HDR — rebuilding on the SDR path");
+            m_Target.hdr = hdr;
+            m_Info.hdr = hdr;
+        }
+
         if (!m_Converter->init(pipelineDevice(), m_Capture->format(), m_Capture->width(),
                                m_Capture->height(), outputWidth, outputHeight,
                                m_Target.yuv444 ? convert::ColorConvert::Chroma::C444
                                                : convert::ColorConvert::Chroma::C420,
-                               error))
+                               hdr, error))
             return false;
 
         // The encoder the Selector chose, not one guessed from the display.
@@ -556,7 +570,7 @@ private:
 
         return m_Encoder->init(pipelineDevice(), m_Target.codec, m_Converter->outputWidth(),
                                m_Converter->outputHeight(), m_EncodeFps, m_Config.bitrateKbps,
-                               m_Target.yuv444, m_Config.intraRefresh, m_Config.tuning, error);
+                               m_Target.yuv444, hdr, m_Config.intraRefresh, m_Config.tuning, error);
     }
 
     /// The duplication was lost — a resolution change, a mode set, a desktop

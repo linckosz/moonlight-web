@@ -114,21 +114,21 @@ AmfCaps queryUncached(uint64_t adapterLuid)
 
         caps.codecs.push_back(candidate.codec);
 
-        // 10-bit is asked of HEVC only, and only through the capability the
-        // header actually exposes: whether the encoder reaches the Main10
-        // profile. AV1's 10-bit and 4:4:4 have no equally plain query here, so
-        // they are not claimed — an unclaimed capability costs a better codec,
-        // a wrongly claimed one costs a failed session.
-        if (candidate.codec == Codec::Hevc) {
-            amf::AMFCapsPtr encoderCaps;
-            if (encoder->GetCaps(&encoderCaps) == AMF_OK && encoderCaps) {
-                amf_int64 maxProfile = 0;
-                if (encoderCaps->GetProperty(AMF_VIDEO_ENCODER_HEVC_CAP_MAX_PROFILE, &maxProfile) ==
-                        AMF_OK &&
-                    maxProfile >= AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN_10)
-                    caps.supports10Bit = true;
-            }
-        }
+        // ⚠️ 10-bit is deliberately NOT claimed, and this is not an oversight.
+        //
+        // The silicon has it — AMF_VIDEO_ENCODER_HEVC_CAP_MAX_PROFILE reaches
+        // Main10 on every recent Radeon — but AmfEncoder has no P010 path, so
+        // claiming it would have the Selector grant HDR and the session then
+        // die at init(). That is exactly bug B7, where `supports444` was a
+        // per-GPU union and 4:4:4 on a Radeon killed the stream at the click.
+        //
+        // A capability here means "this pipeline can carry it", never "this
+        // chip could". Restore the query below in the same commit that writes
+        // the encoder path, never before:
+        //
+        //   if (candidate.codec == Codec::Hevc) { … MAX_PROFILE >= MAIN_10 … }
+        //
+        // Same rule as codecs444 above, and for the same reason.
 
         encoder->Terminate();
     }

@@ -62,7 +62,7 @@ public:
     ///               otherwise, which is a clearer failure than a silent
     ///               downgrade but still a failure.
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
+              bool yuv444, bool hdr, bool intraRefresh, const EncoderTuning& tuning,
               std::string& error) override;
 
     /// Encode one NV12 texture. Blocking: returns with the bitstream ready.
@@ -108,6 +108,7 @@ private:
     /// The input format registered with NVENC, and the profile the stream is
     /// encoded at. Kept together because they must agree.
     NV_ENC_BUFFER_FORMAT m_BufferFormat = NV_ENC_BUFFER_FORMAT_NV12;
+    bool m_Hdr = false;
     int m_Width = 0;
     int m_Height = 0;
     bool m_IntraRefresh = false;

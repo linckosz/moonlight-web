@@ -189,6 +189,25 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
         log::info("[native] HDR requested but not achievable here — streaming SDR");
     }
 
+    // ── HDR and 4:4:4 are exclusive, and HDR wins ───────────────────────────
+    //
+    // 10-bit 4:4:4 exists in HEVC (Y410, profile 4) and no browser displays it:
+    // Chrome 152 accepts `hvc1.4.156`, decodes it in hardware and renders a
+    // green rectangle (measured 04/09/2026). So the pair has no encoding that
+    // could be watched, and the conversion pass refuses it outright rather
+    // than produce one.
+    //
+    // Granting both here would therefore kill the session at init() — the same
+    // shape as bug B7, where a capability nothing downstream honoured turned a
+    // ticked box into a dead stream. HDR is the one kept: it changes every
+    // pixel of a picture, where 4:4:4 changes the edges of text, and it is the
+    // one the user can see is missing.
+    if (out.hdr && out.yuv444) {
+        out.yuv444 = false;
+        log::info("[native] 4:4:4 and HDR cannot ride together (no browser decodes 10-bit "
+                  "4:4:4) — keeping HDR, streaming 4:2:0");
+    }
+
     // ── Geometry: zero means "native", which is the default ─────────────────
     out.width = config.width > 0 ? config.width : out.display->width;
     out.height = config.height > 0 ? config.height : out.display->height;

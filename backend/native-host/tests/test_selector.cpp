@@ -343,7 +343,14 @@ void run_selector_tests()
         CHECK(sel.yuv444);
     }
 
-    // ── HDR and 4:4:4 together: 4:4:4 picks HEVC, HEVC keeps HDR ─────────────
+    // ── HDR and 4:4:4 together: exclusive, and HDR is the one kept ───────────
+    //
+    // 4:4:4 still steers the CODEC — the walk runs before the HDR decision, so
+    // HEVC is chosen because it is the codec with a 4:4:4 path — and the chroma
+    // is then given back, because 10-bit 4:4:4 has no browser that displays it
+    // (Chrome renders `hvc1.4.156` green). Granting both used to be this test's
+    // expectation and would now kill the session at init(): the conversion pass
+    // refuses the pair rather than produce a picture nobody can watch.
     {
         const Capabilities caps = hybridMachine();
         SessionConfig cfg;
@@ -356,8 +363,32 @@ void run_selector_tests()
         std::string err;
         CHECK(select(caps, cfg, sel, err));
         CHECK_EQ(sel.codec, Codec::Hevc);
-        CHECK(sel.yuv444);
         CHECK(sel.hdr);
+        CHECK(!sel.yuv444);
+    }
+
+    // ── 4:4:4 survives when the HDR it competed with was not granted ─────────
+    //
+    // The SAME display and the SAME GPU as above, with Windows HDR simply
+    // turned off. Nothing is dropped, because nothing is in conflict: the
+    // exclusion has to be a consequence of HDR being real, never of it having
+    // been asked for. Testing this on the machine's other display would prove
+    // nothing — that one hangs off an iGPU with no 4:4:4 at all.
+    {
+        Capabilities caps = hybridMachine();
+        caps.displays[1].hdrActive = false;
+        SessionConfig cfg;
+        cfg.displayId = 1;
+        cfg.hdr = true;
+        cfg.yuv444 = true;
+        cfg.clientCodecs = {Codec::Av1, Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK(!sel.hdr);
+        CHECK(sel.yuv444);
+        CHECK_EQ(sel.codec, Codec::Hevc);
     }
 
     SECTION("Selector — geometry defaults");

@@ -47,6 +47,7 @@ struct BenchSpec
     int width = 0;
     int height = 0;
     bool yuv444 = false;
+    bool hdr = false;
     bool intraRefresh = false;
     /// The GPU to encode on, -1 for the display's own. See SessionConfig.
     int gpu = -1;
@@ -81,6 +82,9 @@ const char* const kUsage =
     "  bitrate=<kbps>   (default 20000)\n"
     "  width=<px>,height=<px>   output size, 0 = the display's (default 0)\n"
     "  yuv444=0|1       (default 0)\n"
+    "  hdr=0|1          capture FP16 scRGB and encode BT.2020 PQ 10-bit (default 0).\n"
+    "                   Needs Windows HDR ON for that display and HEVC or AV1;\n"
+    "                   the session says so and runs SDR when it is not there.\n"
     "  intra=0|1        intra-refresh instead of keyframes (default 0)\n"
     "  gpu=<id>         encode on this GPU instead of the display's own (cross-GPU copy)\n"
     "  out=<path.csv>   one row per frame (default native-bench-<time>.csv here)\n"
@@ -203,6 +207,8 @@ bool parseSpec(const QString& text, BenchSpec& spec, QString& error)
             spec.height = value.toInt(&ok);
         else if (key == "yuv444")
             spec.yuv444 = value.toInt(&ok) != 0;
+        else if (key == "hdr")
+            spec.hdr = value.toInt(&ok) != 0;
         else if (key == "intra")
             spec.intraRefresh = value.toInt(&ok) != 0;
         else if (key == "out")
@@ -357,6 +363,7 @@ int runNativeBenchCommand(const QString& specText)
     config.bitrateKbps = spec.bitrateKbps;
     config.clientCodecs = {spec.codec};
     config.yuv444 = spec.yuv444;
+    config.hdr = spec.hdr;
     config.intraRefresh = spec.intraRefresh;
     config.encodeGpuId = spec.gpu;
     config.tuning = spec.tuning;
@@ -409,8 +416,9 @@ int runNativeBenchCommand(const QString& specText)
     const mw::native::SessionInfo& info = session->info();
     out << "native-bench: " << QString::fromStdString(info.gpuName) << " · "
         << mw::native::toString(info.encoder) << " " << mw::native::toString(info.codec)
-        << (info.yuv444 ? " 4:4:4" : " 4:2:0") << " · " << info.width << "x" << info.height
-        << " · fps " << (info.fps > 0 ? QString::number(info.fps) : QString("display")) << " · "
+        << (info.yuv444 ? " 4:4:4" : " 4:2:0") << (info.hdr ? " HDR (BT.2020 PQ)" : " SDR") << " · "
+        << info.width << "x" << info.height << " · fps "
+        << (info.fps > 0 ? QString::number(info.fps) : QString("display")) << " · "
         << spec.bitrateKbps << " kbps" << (info.intraRefresh ? " · intra-refresh" : "") << " · "
         << spec.seconds << " s on " << QString::fromStdString(display->label)
         << (info.crossGpuCopy ? " · cross-GPU copy" : "")

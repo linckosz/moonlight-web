@@ -65,6 +65,13 @@ public:
     ///               that captured them.
     /// @param yuv444 encode 4:4:4 rather than 4:2:0. The caller must have
     ///               checked GpuInfo::supports444 first.
+    /// @param hdr the surface is **P010** — 10-bit, BT.2020 primaries, the PQ
+    ///            transfer — rather than 8-bit BT.709. The encoder must pick a
+    ///            10-bit profile AND describe the colour in its bitstream: a
+    ///            browser that is not told the transfer curve displays PQ as if
+    ///            it were sRGB, which is a grey, washed-out picture rather than
+    ///            an error. Mutually exclusive with @p yuv444 (no browser
+    ///            decodes 10-bit 4:4:4) and only ever true for HEVC or AV1.
     /// @param intraRefresh encode with a moving band of intra blocks instead of
     ///                     relying on keyframes for recovery. Only ask when the
     ///                     receiver will decode through the damage; an encoder
@@ -74,8 +81,8 @@ public:
     ///               default-constructed one IS the engine's choice, and is what
     ///               every session a browser starts passes.
     virtual bool init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
-                      std::string& error) = 0;
+                      int bitrateKbps, bool yuv444, bool hdr, bool intraRefresh,
+                      const EncoderTuning& tuning, std::string& error) = 0;
 
     /// Encode one texture. Blocking: returns with the bitstream ready.
     /// @param frameNumber the number this frame goes out under (EncodedFrame::

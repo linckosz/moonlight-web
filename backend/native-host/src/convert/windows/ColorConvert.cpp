@@ -145,6 +145,117 @@ float2 PsChroma(VsOut i) : SV_TARGET
     float cr = (rgb.r - y) / 1.5748;
     return float2(cb, cr) * kChromaScale + kChromaBias;
 }
+
+// ── HDR: scRGB FP16 → BT.2020 PQ, 10-bit limited range ──────────────────────
+//
+// What DXGI hands over for an HDR desktop is scRGB: linear light, BT.709
+// primaries, and 1.0 meaning SDR white — 80 nits by definition, with the
+// desktop's "SDR content brightness" slider already baked in by the compositor.
+// Values above 1.0 are the highlights, and values below 0 are the colours
+// outside BT.709 that scRGB expresses as negatives.
+//
+// Four steps, in this order, and the order is not negotiable: primaries first
+// (a matrix is only linear-light-valid), then the absolute scale, then the PQ
+// curve, then the YCbCr matrix — which is defined on the PQ-encoded signal, not
+// on light. Doing PQ after the YCbCr matrix is the classic way to get a picture
+// that is nearly right and subtly wrong in every gradient.
+
+// BT.709 → BT.2020 primaries, linear light.
+static const float3x3 kBt709ToBt2020 = float3x3(
+    0.6274040, 0.3292820, 0.0433136,
+    0.0690970, 0.9195400, 0.0113612,
+    0.0163916, 0.0880132, 0.8956050);
+
+// PQ (SMPTE ST 2084) constants.
+static const float kPqM1 = 0.1593017578125;   // 2610 / 16384
+static const float kPqM2 = 78.84375;          // 2523 / 4096 * 128
+static const float kPqC1 = 0.8359375;         // 3424 / 4096
+static const float kPqC2 = 18.8515625;        // 2413 / 4096 * 32
+static const float kPqC3 = 18.6875;           // 2392 / 4096 * 32
+
+// scRGB 1.0 is 80 nits; PQ is defined against a 10000-nit peak.
+static const float kScRgbToPqDomain = 80.0 / 10000.0;
+
+// BT.2020 non-constant luminance.
+static const float3 kLuma2020 = float3(0.2627, 0.6780, 0.0593);
+
+// P010 keeps its 10 bits in the HIGH bits of each 16-bit word, so a UNORM
+// render target wants the code shifted left by 6. Writing code/1023 instead
+// would be a picture 64× too dark, which is the one mistake here that looks
+// like a dead screen rather than a wrong colour.
+static const float kP010 = 64.0 / 65535.0;
+
+// One 10-bit code, placed where P010 wants it.
+//
+// The rounding is the point. Handing the target a fractional code lets the
+// UNORM conversion land anywhere in the 16-bit range, which leaves rubbish in
+// the six padding bits that the format defines as zero. Hardware reads the top
+// ten bits and does not care, so this costs nothing visible either way — but a
+// surface that is only accidentally valid is one nobody can check, and the
+// round trip through a staging texture is exactly how the tests verify that
+// the shift happened at all.
+float P010Code(float value, float scale, float bias)
+{
+    return floor(value * scale + bias + 0.5) * kP010;
+}
+
+float3 PqFromLinear(float3 linearRgb)
+{
+    // Negative scRGB is real (it is how the format carries colours outside
+    // BT.709) but PQ has no answer for it, and pow() of a negative is NaN —
+    // which propagates through the whole frame. Clamp after the BT.2020
+    // matrix, where the out-of-gamut values have already had their chance to
+    // become positive.
+    float3 y = max(linearRgb, 0.0) * kScRgbToPqDomain;
+    float3 ym = pow(y, kPqM1);
+    return pow((kPqC1 + kPqC2 * ym) / (1.0 + kPqC3 * ym), kPqM2);
+}
+
+// The HDR scene, in linear scRGB with the pointer composited in.
+//
+// The cursor's pixels are 8-bit sRGB, so they have to be linearised and placed
+// at SDR white (scRGB 1.0) — blending them as if they were already linear makes
+// a pointer that is far too dark on an HDR desktop. The invert mask is bounded
+// against SDR white too: "1 - rgb" on a 10.0 highlight would be -9, and a
+// negative that then meets the clamp above turns the I-beam into a black hole.
+float3 SrgbToLinear(float3 c)
+{
+    return c <= 0.04045 ? c / 12.92 : pow(max(c + 0.055, 0.0) / 1.055, 2.4);
+}
+
+float3 SceneHdr(float2 uv)
+{
+    float3 rgb = Source.Sample(Linear, uv).rgb;
+    if (CursorEnabled < 0.5) return rgb;
+
+    float2 c = (uv - CursorRect.xy) / CursorRect.zw;
+    if (c.x < 0.0 || c.y < 0.0 || c.x > 1.0 || c.y > 1.0) return rgb;
+
+    if (CursorInvert.SampleLevel(Nearest, c, 0) > 0.5) return 1.0 - saturate(rgb);
+
+    float4 cursor = CursorPixels.SampleLevel(Linear, c, 0);
+    return lerp(rgb, SrgbToLinear(cursor.rgb), cursor.a);
+}
+
+float PsLumaHdr(VsOut i) : SV_TARGET
+{
+    float3 pq = PqFromLinear(mul(kBt709ToBt2020, SceneHdr(i.uv)));
+    float  y  = dot(pq, kLuma2020);
+    // Limited range, 10-bit: luma 64..940.
+    return P010Code(y, 876.0, 64.0);
+}
+
+float2 PsChromaHdr(VsOut i) : SV_TARGET
+{
+    float3 pq = PqFromLinear(mul(kBt709ToBt2020, SceneHdr(i.uv)));
+    float  y  = dot(pq, kLuma2020);
+
+    // The BT.2020 denominators: 2*(1-Kb) and 2*(1-Kr).
+    float cb = (pq.b - y) / 1.8814;
+    float cr = (pq.r - y) / 1.4746;
+    // Limited range, 10-bit: chroma 64..960 around a 512 centre.
+    return float2(P010Code(cb, 896.0, 512.0), P010Code(cr, 896.0, 512.0));
+}
 )HLSL";
 
 bool compile(const char* entryPoint, const char* target, ComPtr<ID3DBlob>& blob, std::string& error)
@@ -169,26 +280,40 @@ ColorConvert::~ColorConvert() = default;
 
 bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sourceWidth,
                         int sourceHeight, int outputWidth, int outputHeight, Chroma chroma,
-                        std::string& error)
+                        bool hdr, std::string& error)
 {
     if (!device) {
         error = "no D3D11 device";
         return false;
     }
 
-    // HDR arrives as FP16 in scRGB and needs a PQ transfer plus a P010 target,
-    // not this matrix. Refusing outright beats converting it as if it were SDR,
-    // which would look washed out and wrong rather than obviously broken. The
-    // session asks supportsSource() first and opens the capture in 8-bit when
-    // the answer is no, so reaching this line means a format nobody asked for.
     if (!supportsSource(sourceFormat)) {
-        error = "this build converts 8-bit SDR frames only (HDR capture needs the P010 path)";
+        error = "no colour conversion for source format " +
+                std::to_string(static_cast<int>(sourceFormat));
+        return false;
+    }
+
+    // The transfer function is not a preference, it is a property of the bytes
+    // that arrived. Treating scRGB as if it were sRGB, or the reverse, produces
+    // a picture that is merely wrong — washed out one way, crushed the other —
+    // and a wrong picture is far more expensive to diagnose than a refusal.
+    if (hdr != isHdrSource(sourceFormat)) {
+        error = hdr ? "HDR was asked for but the display delivers 8-bit SDR frames"
+                    : "the display delivers FP16 HDR frames but this session is SDR";
+        return false;
+    }
+
+    // 10-bit 4:4:4 (Y410) is deliberately absent: no browser displays it. See
+    // the header.
+    if (hdr && chroma == Chroma::C444) {
+        error = "HDR is 4:2:0 only (no browser decodes 10-bit 4:4:4)";
         return false;
     }
 
     m_Device = device;
     m_Device->GetImmediateContext(m_Context.ReleaseAndGetAddressOf());
     m_Chroma = chroma;
+    m_Hdr = hdr;
     m_SourceFormat = sourceFormat;
     m_SourceWidth = sourceWidth;
     m_SourceHeight = sourceHeight;
@@ -207,30 +332,53 @@ bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sour
     if (!createOutput(error)) return false;
 
     log::info("[native] colour conversion: " + std::to_string(m_SourceWidth) + "x" +
-              std::to_string(m_SourceHeight) + " BGRA -> " + std::to_string(m_OutputWidth) + "x" +
-              std::to_string(m_OutputHeight) +
-              (m_Chroma == Chroma::C444 ? " AYUV 4:4:4" : " NV12 4:2:0") + " (BT.709 limited)");
+              std::to_string(m_SourceHeight) + (m_Hdr ? " FP16 scRGB -> " : " BGRA -> ") +
+              std::to_string(m_OutputWidth) + "x" + std::to_string(m_OutputHeight) +
+              (m_Hdr                      ? " P010 4:2:0 (BT.2020 PQ, limited)"
+               : m_Chroma == Chroma::C444 ? " AYUV 4:4:4 (BT.709 limited)"
+                                          : " NV12 4:2:0 (BT.709 limited)"));
     return true;
 }
 
 bool ColorConvert::createShaders(std::string& error)
 {
-    ComPtr<ID3DBlob> vs, luma, chroma, packed;
+    ComPtr<ID3DBlob> vs;
     if (!compile("VsMain", "vs_5_0", vs, error)) return false;
-    if (!compile("PsLuma", "ps_5_0", luma, error)) return false;
-    if (!compile("PsChroma", "ps_5_0", chroma, error)) return false;
-    if (!compile("PsPacked444", "ps_5_0", packed, error)) return false;
-
     if (FAILED(m_Device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr,
-                                            m_VertexShader.ReleaseAndGetAddressOf())) ||
-        FAILED(m_Device->CreatePixelShader(luma->GetBufferPointer(), luma->GetBufferSize(), nullptr,
-                                           m_LumaShader.ReleaseAndGetAddressOf())) ||
+                                            m_VertexShader.ReleaseAndGetAddressOf()))) {
+        error = "could not create the vertex shader";
+        return false;
+    }
+
+    // Only the pair this session will actually draw with. The PQ shaders carry
+    // two pow() chains and are the slowest of the set to compile; a desktop
+    // session has no use for them, and an HDR one has no use for the BT.709
+    // matrix.
+    const char* lumaEntry = m_Hdr ? "PsLumaHdr" : "PsLuma";
+    const char* chromaEntry = m_Hdr ? "PsChromaHdr" : "PsChroma";
+
+    ComPtr<ID3DBlob> luma, chroma;
+    if (!compile(lumaEntry, "ps_5_0", luma, error)) return false;
+    if (!compile(chromaEntry, "ps_5_0", chroma, error)) return false;
+
+    auto& lumaShader = m_Hdr ? m_LumaHdrShader : m_LumaShader;
+    auto& chromaShader = m_Hdr ? m_ChromaHdrShader : m_ChromaShader;
+    if (FAILED(m_Device->CreatePixelShader(luma->GetBufferPointer(), luma->GetBufferSize(), nullptr,
+                                           lumaShader.ReleaseAndGetAddressOf())) ||
         FAILED(m_Device->CreatePixelShader(chroma->GetBufferPointer(), chroma->GetBufferSize(),
-                                           nullptr, m_ChromaShader.ReleaseAndGetAddressOf())) ||
-        FAILED(m_Device->CreatePixelShader(packed->GetBufferPointer(), packed->GetBufferSize(),
-                                           nullptr, m_PackedShader.ReleaseAndGetAddressOf()))) {
+                                           nullptr, chromaShader.ReleaseAndGetAddressOf()))) {
         error = "could not create the conversion shaders";
         return false;
+    }
+
+    if (m_Chroma == Chroma::C444) {
+        ComPtr<ID3DBlob> packed;
+        if (!compile("PsPacked444", "ps_5_0", packed, error)) return false;
+        if (FAILED(m_Device->CreatePixelShader(packed->GetBufferPointer(), packed->GetBufferSize(),
+                                               nullptr, m_PackedShader.ReleaseAndGetAddressOf()))) {
+            error = "could not create the 4:4:4 conversion shader";
+            return false;
+        }
     }
 
     // Linear filtering is what makes a downscale and the 4:2:0 chroma average
@@ -325,7 +473,9 @@ bool ColorConvert::createOutput(std::string& error)
     desc.Height = static_cast<UINT>(m_OutputHeight);
     desc.MipLevels = 1;
     desc.ArraySize = 1;
-    desc.Format = m_Chroma == Chroma::C444 ? DXGI_FORMAT_AYUV : DXGI_FORMAT_NV12;
+    desc.Format = m_Hdr                      ? DXGI_FORMAT_P010
+                  : m_Chroma == Chroma::C444 ? DXGI_FORMAT_AYUV
+                                             : DXGI_FORMAT_NV12;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
     // RENDER_TARGET so the plane (or packed) views can be written;
@@ -333,7 +483,8 @@ bool ColorConvert::createOutput(std::string& error)
     desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 
     if (FAILED(m_Device->CreateTexture2D(&desc, nullptr, m_Output.ReleaseAndGetAddressOf()))) {
-        error = m_Chroma == Chroma::C444
+        error = m_Hdr ? "this GPU cannot render into a P010 texture (HDR unavailable)"
+                : m_Chroma == Chroma::C444
                     ? "this GPU cannot render into an AYUV texture (4:4:4 unavailable)"
                     : "this GPU cannot render into an NV12 texture";
         return false;
@@ -356,18 +507,21 @@ bool ColorConvert::createOutput(std::string& error)
     }
 
     // The plane is selected by the view's FORMAT, which is the whole trick:
-    // R8 addresses luma, R8G8 addresses the interleaved chroma at half size.
-    view.Format = DXGI_FORMAT_R8_UNORM;
+    // R8 addresses NV12's luma, R8G8 its interleaved chroma at half size. P010
+    // is the same shape one notch wider — R16 and R16G16 — because its 10 bits
+    // are stored in 16-bit words.
+    view.Format = m_Hdr ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
     if (FAILED(m_Device->CreateRenderTargetView(m_Output.Get(), &view,
                                                 m_LumaTarget.ReleaseAndGetAddressOf()))) {
-        error = "could not view the NV12 luma plane";
+        error = m_Hdr ? "could not view the P010 luma plane" : "could not view the NV12 luma plane";
         return false;
     }
 
-    view.Format = DXGI_FORMAT_R8G8_UNORM;
+    view.Format = m_Hdr ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R8G8_UNORM;
     if (FAILED(m_Device->CreateRenderTargetView(m_Output.Get(), &view,
                                                 m_ChromaTarget.ReleaseAndGetAddressOf()))) {
-        error = "could not view the NV12 chroma plane";
+        error =
+            m_Hdr ? "could not view the P010 chroma plane" : "could not view the NV12 chroma plane";
         return false;
     }
     return true;
@@ -461,7 +615,7 @@ bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& 
         ID3D11RenderTargetView* lumaTarget[] = {m_LumaTarget.Get()};
         m_Context->OMSetRenderTargets(1, lumaTarget, nullptr);
         m_Context->RSSetViewports(1, &viewport);
-        m_Context->PSSetShader(m_LumaShader.Get(), nullptr, 0);
+        m_Context->PSSetShader(m_Hdr ? m_LumaHdrShader.Get() : m_LumaShader.Get(), nullptr, 0);
         m_Context->Draw(3, 0);
 
         // Chroma: half resolution, which is what makes this 4:2:0.
@@ -471,7 +625,7 @@ bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& 
         ID3D11RenderTargetView* chromaTarget[] = {m_ChromaTarget.Get()};
         m_Context->OMSetRenderTargets(1, chromaTarget, nullptr);
         m_Context->RSSetViewports(1, &viewport);
-        m_Context->PSSetShader(m_ChromaShader.Get(), nullptr, 0);
+        m_Context->PSSetShader(m_Hdr ? m_ChromaHdrShader.Get() : m_ChromaShader.Get(), nullptr, 0);
         m_Context->Draw(3, 0);
     }
 

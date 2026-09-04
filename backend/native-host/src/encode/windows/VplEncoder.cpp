@@ -42,8 +42,8 @@ VplEncoder::~VplEncoder()
 }
 
 bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
-                      std::string& error)
+                      int bitrateKbps, bool yuv444, bool hdr, bool intraRefresh,
+                      const EncoderTuning& tuning, std::string& error)
 {
     stop();
 
@@ -56,6 +56,15 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         // should never route such a session here. Refusing loudly beats
         // encoding 4:2:0 while the overlay says 4:4:4.
         error = "4:4:4 is not implemented on the Intel encoder path";
+        return false;
+    }
+    if (hdr) {
+        // Same shape as 4:4:4: the silicon has 10-bit, this path does not, and
+        // the capability query is made to say so (see VplCapabilities.cpp). The
+        // whole oneVPL path has never encoded a single frame on real hardware
+        // anyway — adding an unwatched colour pipeline on top of an unwatched
+        // encoder is how a stream ends up subtly wrong for a year.
+        error = "HDR is not implemented on the Intel encoder path";
         return false;
     }
 

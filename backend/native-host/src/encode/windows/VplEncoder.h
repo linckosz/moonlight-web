@@ -50,7 +50,7 @@ public:
     ~VplEncoder() override;
 
     bool init(ID3D11Device* device, Codec codec, int width, int height, int fps, int bitrateKbps,
-              bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
+              bool yuv444, bool hdr, bool intraRefresh, const EncoderTuning& tuning,
               std::string& error) override;
 
     bool encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t frameNumber,

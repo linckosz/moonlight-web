@@ -1254,3 +1254,121 @@ jour le PC hôte ». `isNativeEngine()` répond maintenant vrai en premier ; au
 passage `hostOs()` en profite (il court-circuite sur « local »), et
 `/api/setup/status` exclut explicitement la carte native de son `sunshine.paired`,
 qui doit continuer de vouloir dire ce qu'il dit.
+
+## 16. HDR réel : scRGB FP16 → P010 BT.2020 PQ (04/09/2026)
+
+Premier morceau de la phase I. Jusqu'ici le HDR était négocié puis **rabattu en
+SDR** : le convertisseur ne savait faire que du 8 bits BT.709, et la session
+ouvrait donc la capture en 8 bits pour recevoir le bureau déjà tone-mappé par
+DXGI. Le chemin complet existe maintenant.
+
+### 16.1 La chaîne, et l'ordre des étapes
+
+DXGI livre un bureau HDR en **scRGB** : lumière linéaire, primaires BT.709, et
+1.0 = le blanc SDR, soit 80 nits par définition (le curseur « luminosité du
+contenu SDR » de Windows est déjà appliqué par le compositeur). Les valeurs
+au-dessus de 1.0 sont les hautes lumières ; celles **en dessous de 0** sont les
+couleurs hors BT.709, que scRGB exprime en négatif.
+
+Quatre étapes, et l'ordre n'est pas négociable :
+
+1. **primaires** BT.709 → BT.2020, en lumière linéaire — une matrice n'est
+   valide que là ;
+2. **échelle absolue** : ×80/10000, PQ étant défini contre un pic de 10 000 nits ;
+3. **courbe PQ** (SMPTE ST 2084), avec un `max(0)` juste avant : `pow()` d'un
+   négatif donne NaN, et un NaN se propage à toute la trame ;
+4. **matrice YCbCr** BT.2020 non-constant luminance, qui est définie **sur le
+   signal PQ**, pas sur la lumière.
+
+Faire PQ après la matrice YCbCr est la façon classique d'obtenir une image
+presque juste et subtilement fausse dans chaque dégradé.
+
+Sortie : **P010**, 4:2:0 10 bits, plage limitée (luma 64..940, chroma 64..960
+autour de 512). Les vues de plan sont les mêmes que NV12 d'un cran plus large,
+`R16_UNORM` et `R16G16_UNORM`, parce que P010 range ses 10 bits dans des mots de
+16. Le code est **arrondi à l'entier** avant d'être écrit : les 6 bits bas sont
+définis comme nuls, le matériel n'en lit que les 10 hauts et s'en moque, mais une
+surface seulement valide par accident est une surface que personne ne peut
+vérifier — et c'est exactement ce que le test relit.
+
+Le curseur est linéarisé depuis sRGB avant d'être composé (le mélanger tel quel
+donne un pointeur bien trop sombre sur un bureau HDR), et le masque d'inversion
+est borné contre le blanc SDR : `1 - rgb` sur une haute lumière à 10.0 vaudrait
+-9, et ce négatif rencontrant le `max(0)` transformerait le curseur texte en trou
+noir.
+
+### 16.2 Ce que l'encodeur doit dire, pas seulement faire
+
+NVENC : `NV_ENC_BUFFER_FORMAT_YUV420_10BIT` (c'est P010), profil **Main10 nommé
+explicitement** pour le HEVC — laissé sur Main, NVENC accepte la surface P010 et
+encode 8 bits dedans, donc le HDR part à la poubelle en silence — et
+`inputPixelBitDepthMinus8`/`pixelBitDepthMinus8` pour l'AV1, qui porte sa
+profondeur dans sa config et non dans un GUID de profil.
+
+Surtout, la **description couleur dans le flux** : primaires 9 (BT.2020),
+transfert 16 (SMPTE 2084), matrice 9 (BT.2020 NCL), plage limitée. C'est par elle
+que le navigateur sait qu'il doit inverser la courbe PQ. Sans elle il suppose du
+BT.709 sRGB et peint une image plate et grisâtre : le classique « le HDR est
+délavé » qui se lit comme un bug de shader et n'est en fait que trois entiers
+manquants.
+
+### 16.3 Deux pièges de type B7 fermés au passage
+
+**AMF et oneVPL annonçaient `supports10Bit`** depuis une vraie requête matérielle
+— la silicium l'a — alors qu'aucun des deux n'a de chemin P010. Le Selector aurait
+donc accordé le HDR sur une Radeon et la session serait morte à `init()` : c'est
+mot pour mot le bug B7, où un `supports444` par GPU tuait le flux au clic. Les
+deux capacités sont désormais **fausses par construction**, avec la ligne de code
+à restaurer écrite en commentaire, dans le même commit que le chemin encodeur et
+jamais avant. Une capacité dit « ce pipeline sait le porter », jamais « cette puce
+le pourrait ».
+
+**HDR et 4:4:4 ne peuvent pas voyager ensemble.** Le 10 bits 4:4:4 existe (Y410,
+profil HEVC 4) et aucun navigateur ne l'affiche : Chrome 152 accepte
+`hvc1.4.156`, le décode en matériel et rend un rectangle vert (F0f). Le Selector
+les accordait tous les deux ; il garde maintenant le HDR et rend la chroma, avec
+une ligne de log. Le 4:4:4 continue de **choisir le codec** — le HEVC est retenu
+parce que c'est lui qui a un chemin 4:4:4 — et n'est repris qu'ensuite.
+
+### 16.4 ⚠️ Le bug qui rendait tout stream SDR impossible depuis un bureau HDR
+
+Trouvé en écrivant ce chapitre, sur un écran mis en HDR pour l'occasion, et
+antérieur à lui : `DxgiDuplication` prenait son format dans
+`duplDesc.ModeDesc.Format`, qui décrit le **mode d'affichage**, pas la sortie de
+la duplication.
+
+`DuplicateOutput1` convertit le bureau vers le premier format de la liste qu'il
+peut honorer : une session SDR, dont la liste ne contient que BGRA8, reçoit donc
+vraiment du BGRA8. `ModeDesc`, lui, continue d'annoncer FP16. Le convertisseur
+construisait alors une vue FP16 sur une texture 8 bits, `CreateShaderResourceView`
+la refusait, et la session mourait à la première image sur « could not view the
+captured frame ».
+
+C'était **tout stream SDR depuis une machine avec le HDR Windows activé** — le cas
+exact que B1 devait régler et n'a réglé qu'à moitié : B1 a cessé de *demander* du
+FP16, ceci cesse de *mal lire* ce qui revient. Le correctif est étroit : une liste
+à une seule entrée est le seul cas où la réponse est connaissable sans acquérir
+une trame, et c'est aussi le seul où `ModeDesc` se trompe (avec la liste HDR à
+deux entrées DXGI garde le format du bureau, que `ModeDesc` rapporte fidèlement,
+et le repli `DuplicateOutput` ne convertit rien).
+
+### 16.5 Vérifié, et ce qui reste
+
+Vérifié sur bench-desk, écran mis en HDR par `scratchpad/Set-DisplayHdr.ps1` :
+`--native-bench display=0,hdr=1` donne « duplication started: (HDR, FP16) » →
+« colour conversion: FP16 scRGB -> P010 4:2:0 (BT.2020 PQ, limited) » →
+« NVENC ready: HEVC Main10 (BT.2020 PQ) », 30 trames encodées. Le banc a une
+option `hdr=0|1`.
+
+Tests (`test_capture`, branche qui ne s'exécute que sur un écran réellement en
+mode HDR, et se déclare sautée sinon) : sortie **P010** confirmée, plage de luma
+relue **64..588 en codes 10 bits** — dans les bornes légales, donc ni biais oublié
+ni échelle oubliée —, 6 bits bas nuls, et une keyframe **HEVC Main10 de 37 Ko**.
+La branche SDR relit 16..235 sur le même bureau HDR, ce qui est la non-régression
+de 16.4. 1977 vérifications natives HDR allumé, 1966 éteint.
+
+**Reste à Bruno** : le rendu à l'œil sur un vrai client. Le HDR de bout en bout
+dépend du présentateur navigateur (F0e/F0f) : AV1 10 bits passe par WebGPU en mode
+`linear`, HEVC 10 bits par l'élément `<video>`. Personne n'a encore regardé une
+image HDR **native** sur un écran HDR — seulement des chiffres qui disent que les
+octets sont dans les bonnes bornes.

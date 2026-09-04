@@ -185,8 +185,8 @@ AmfEncoder::~AmfEncoder()
 }
 
 bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, bool yuv444, bool intraRefresh, const EncoderTuning& tuning,
-                      std::string& error)
+                      int bitrateKbps, bool yuv444, bool hdr, bool intraRefresh,
+                      const EncoderTuning& tuning, std::string& error)
 {
     stop();
 
@@ -204,6 +204,18 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         // never route a 4:4:4 session here. Refusing loudly beats encoding
         // 4:2:0 while the overlay says 4:4:4.
         error = "4:4:4 is not implemented on the AMD encoder path";
+        return false;
+    }
+    if (hdr) {
+        // AMF does 10-bit HEVC (AMF_VIDEO_ENCODER_HEVC_PROFILE_MAIN_10) and the
+        // surface would be the same P010 the shader writes, but none of it has
+        // been exercised: there is no HDR display on an AMD machine here, and
+        // shipping a colour path nobody has looked at is how you get a stream
+        // that is subtly wrong for months. The capability query does not claim
+        // 10-bit on this path, so the Selector routes HDR elsewhere or runs
+        // SDR — this is the guard for a misrouted session, and the line to
+        // delete first when an AMD HDR bench exists.
+        error = "HDR is not implemented on the AMD encoder path";
         return false;
     }
 

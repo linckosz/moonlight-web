@@ -33,6 +33,50 @@ using namespace mw::native;
 
 void run_capture_tests()
 {
+#if defined(_WIN32)
+    // ── The HDR/SDR pairing rules, which need no hardware at all ────────────
+    //
+    // These are static answers about which byte formats have a shader and which
+    // of them carry HDR, and they decide what the capture is OPENED with — long
+    // before any display is involved. They are checked here rather than left to
+    // a machine with an HDR panel because getting them wrong does not produce
+    // an error, it produces a picture with the wrong transfer curve.
+    SECTION("Colour conversion — which sources exist, and which are HDR");
+    {
+        using convert::ColorConvert;
+        CHECK(ColorConvert::supportsSource(DXGI_FORMAT_B8G8R8A8_UNORM));
+        CHECK(ColorConvert::supportsSource(DXGI_FORMAT_R8G8B8A8_UNORM));
+        // FP16 scRGB became convertible when the PQ path landed; before that it
+        // was refused, and the session downgraded itself to SDR on every HDR
+        // desktop.
+        CHECK(ColorConvert::supportsSource(DXGI_FORMAT_R16G16B16A16_FLOAT));
+        CHECK(!ColorConvert::supportsSource(DXGI_FORMAT_R10G10B10A2_UNORM));
+        CHECK(!ColorConvert::supportsSource(DXGI_FORMAT_UNKNOWN));
+
+        // Exactly one source format carries HDR, and 8-bit never does — that is
+        // what lets the session reconcile "HDR was negotiated" against "the
+        // display actually handed over 8-bit" instead of trusting the request.
+        CHECK(ColorConvert::isHdrSource(DXGI_FORMAT_R16G16B16A16_FLOAT));
+        CHECK(!ColorConvert::isHdrSource(DXGI_FORMAT_B8G8R8A8_UNORM));
+        CHECK(!ColorConvert::isHdrSource(DXGI_FORMAT_R8G8B8A8_UNORM));
+
+        // Exactly one of the convertible formats is the HDR one. A second would
+        // mean a source that reaches the PQ shaders without anyone having
+        // written its scale factor, and the picture would be wrong by whatever
+        // that factor is — not broken, just wrong.
+        int convertible = 0;
+        int hdrCapable = 0;
+        for (DXGI_FORMAT f : {DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
+                              DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM,
+                              DXGI_FORMAT_NV12, DXGI_FORMAT_P010}) {
+            if (ColorConvert::supportsSource(f)) ++convertible;
+            if (ColorConvert::isHdrSource(f)) ++hdrCapable;
+        }
+        CHECK_EQ(convertible, 3);
+        CHECK_EQ(hdrCapable, 1);
+    }
+#endif
+
     SECTION("Capture — Desktop Duplication against the real display");
 
 #if !defined(_WIN32)
@@ -189,7 +233,9 @@ void run_capture_tests()
         std::string convertError;
         if (!converter.init(duplication.device(), duplication.format(), duplication.width(),
                             duplication.height(), duplication.width(), duplication.height(),
-                            convert::ColorConvert::Chroma::C420, convertError)) {
+                            convert::ColorConvert::Chroma::C420,
+                            convert::ColorConvert::isHdrSource(duplication.format()),
+                            convertError)) {
             std::fprintf(stderr, "  conversion skipped: %s\n", convertError.c_str());
         } else {
             // Grab one more frame to convert. The screen may be still, so allow
@@ -203,6 +249,9 @@ void run_capture_tests()
             if (!haveFrame) {
                 std::fprintf(stderr, "  conversion not exercised: the screen stayed still\n");
             } else {
+                if (!converter.convert(frame.texture, duplication.cursor(), convert::CursorDraw{},
+                                       convertError))
+                    std::fprintf(stderr, "  conversion failed: %s\n", convertError.c_str());
                 CHECK(converter.convert(frame.texture, duplication.cursor(), convert::CursorDraw{},
                                         convertError));
                 CHECK(converter.output() != nullptr);
@@ -288,9 +337,16 @@ void run_capture_tests()
                     encode::IVideoEncoder& encoder = *encoderPtr;
                     std::fprintf(stderr, "  encoder: %s\n", toString(gpu->encoders.front()));
                     std::string encodeError;
-                    if (!encoder.init(duplication.device(), Codec::H264, converter.outputWidth(),
-                                      converter.outputHeight(), 60, 20000, false, false,
-                                      EncoderTuning{}, encodeError)) {
+                    // H.264 has no HDR path, so this leg is SDR whatever the
+                    // desktop is doing. A converter that came up on the PQ path
+                    // would hand it P010, so skip rather than mislead.
+                    if (converter.hdr()) {
+                        std::fprintf(stderr, "  encode skipped: the desktop is HDR and this leg "
+                                             "encodes H.264 8-bit\n");
+                    } else if (!encoder.init(duplication.device(), Codec::H264,
+                                             converter.outputWidth(), converter.outputHeight(), 60,
+                                             20000, false, false, false, EncoderTuning{},
+                                             encodeError)) {
                         std::fprintf(stderr, "  encode skipped: %s\n", encodeError.c_str());
                     } else {
                         encode::EncoderOutput encoded;
@@ -465,13 +521,16 @@ void run_capture_tests()
                 // native engine has to be able to honour it. Verified rather
                 // than assumed: the AYUV byte order is easy to get wrong, and
                 // getting it wrong swaps the colours instead of failing.
-                if (gpu->supports444(Codec::H264)) {
+                // 4:4:4 is 8-bit only, so an HDR desktop has nothing to offer
+                // this leg: the converter refuses HDR + C444 by construction.
+                if (gpu->supports444(Codec::H264) &&
+                    !convert::ColorConvert::isHdrSource(duplication.format())) {
                     convert::ColorConvert converter444;
                     std::string error444;
                     if (!converter444.init(duplication.device(), duplication.format(),
                                            duplication.width(), duplication.height(),
                                            duplication.width(), duplication.height(),
-                                           convert::ColorConvert::Chroma::C444, error444)) {
+                                           convert::ColorConvert::Chroma::C444, false, error444)) {
                         std::fprintf(stderr, "  4:4:4 conversion unavailable: %s\n",
                                      error444.c_str());
                     } else if (!converter444.convert(frame.texture, duplication.cursor(),
@@ -484,7 +543,7 @@ void run_capture_tests()
                         if (!encoder444.init(duplication.device(), Codec::H264,
                                              converter444.outputWidth(),
                                              converter444.outputHeight(), 60, 20000, true, false,
-                                             EncoderTuning{}, error444)) {
+                                             false, EncoderTuning{}, error444)) {
                             std::fprintf(stderr, "  4:4:4 encode unavailable: %s\n",
                                          error444.c_str());
                         } else {
@@ -510,6 +569,140 @@ void run_capture_tests()
     }
 
     duplication.stop();
+
+    // ── The same walk again, in HDR ─────────────────────────────
+    //
+    // Only on a display Windows really has in an HDR mode: the
+    // whole point is that DXGI then hands over FP16 scRGB, which is
+    // the only input the PQ shaders have. On an SDR desktop there
+    // is nothing here to exercise and the leg says so.
+    //
+    // Worth its own duplication because HDR is decided when the
+    // capture is OPENED, not per frame — and because the failure
+    // this catches is not a crash. A PQ curve applied to the wrong
+    // scale, or a P010 write that forgets the 6-bit shift, produces
+    // a picture that is merely dark or flat, and the range below is
+    // what tells the two apart from a working one.
+    //
+    // Placed AFTER the SDR duplication has been stopped, and that is not a
+    // matter of taste: DXGI allows one duplication per output per process, so
+    // opening the HDR one beside the SDR one is refused outright with
+    // E_INVALIDARG.
+    if (target->hdrActive) {
+        capture::DxgiDuplication hdrDup(gpu->nativeHandle, outputIndex, /*hdr=*/true);
+        std::string hdrError;
+        if (!hdrDup.start(hdrError)) {
+            std::fprintf(stderr, "  HDR capture skipped: %s\n", hdrError.c_str());
+        } else if (!convert::ColorConvert::isHdrSource(hdrDup.format())) {
+            // Asked for FP16 and given 8-bit: legal, and exactly the
+            // case the session reconciles instead of trusting.
+            std::fprintf(stderr, "  HDR capture skipped: the display handed over "
+                                 "8-bit despite being in an HDR mode\n");
+        } else {
+            convert::ColorConvert hdrConv;
+            CHECK(hdrConv.init(hdrDup.device(), hdrDup.format(), hdrDup.width(), hdrDup.height(),
+                               hdrDup.width(), hdrDup.height(), convert::ColorConvert::Chroma::C420,
+                               true, hdrError));
+            CHECK(hdrConv.hdr());
+
+            capture::CapturedFrame hdrFrame;
+            bool haveHdrFrame = false;
+            for (int attempt = 0; attempt < 40 && !haveHdrFrame; ++attempt) {
+                if (hdrDup.acquire(100, hdrFrame) == capture::AcquireStatus::Ok)
+                    haveHdrFrame = true;
+            }
+
+            if (!haveHdrFrame) {
+                std::fprintf(stderr, "  HDR conversion not exercised: the screen "
+                                     "stayed still\n");
+            } else {
+                CHECK(hdrConv.convert(hdrFrame.texture, hdrDup.cursor(), convert::CursorDraw{},
+                                      hdrError));
+
+                Microsoft::WRL::ComPtr<ID3D11Device> hdrDevice = hdrDup.device();
+                Microsoft::WRL::ComPtr<ID3D11DeviceContext> hdrContext;
+                hdrDevice->GetImmediateContext(&hdrContext);
+
+                D3D11_TEXTURE2D_DESC p010 = {};
+                hdrConv.output()->GetDesc(&p010);
+                CHECK_EQ(static_cast<int>(p010.Format), static_cast<int>(DXGI_FORMAT_P010));
+                p010.Usage = D3D11_USAGE_STAGING;
+                p010.BindFlags = 0;
+                p010.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                p010.MiscFlags = 0;
+
+                Microsoft::WRL::ComPtr<ID3D11Texture2D> hdrStaging;
+                if (SUCCEEDED(hdrDevice->CreateTexture2D(&p010, nullptr, &hdrStaging))) {
+                    hdrContext->CopyResource(hdrStaging.Get(), hdrConv.output());
+                    D3D11_MAPPED_SUBRESOURCE hdrMapped = {};
+                    if (SUCCEEDED(
+                            hdrContext->Map(hdrStaging.Get(), 0, D3D11_MAP_READ, 0, &hdrMapped))) {
+                        const auto* bytes = static_cast<const uint8_t*>(hdrMapped.pData);
+                        uint16_t minY = 0xFFFF;
+                        uint16_t maxY = 0;
+                        for (int y = 0; y < hdrConv.outputHeight(); y += 16) {
+                            const auto* row = reinterpret_cast<const uint16_t*>(
+                                bytes + static_cast<size_t>(y) * hdrMapped.RowPitch);
+                            for (int x = 0; x < hdrConv.outputWidth(); x += 16) {
+                                minY = row[x] < minY ? row[x] : minY;
+                                maxY = row[x] > maxY ? row[x] : maxY;
+                            }
+                        }
+                        hdrContext->Unmap(hdrStaging.Get(), 0);
+
+                        // Reported in the 10-bit codes the format
+                        // really carries, not in the 16-bit words it
+                        // stores them in — that shift is the mistake
+                        // being guarded against, so the numbers a
+                        // reader compares must be on the same scale
+                        // as the 64..940 the standard names.
+                        const int minCode = minY >> 6;
+                        const int maxCode = maxY >> 6;
+                        std::fprintf(stderr, "  P010 luma range: %d..%d (10-bit)\n", minCode,
+                                     maxCode);
+
+                        CHECK(maxCode > minCode);
+                        // BT.2020 limited range, 10-bit: 64..940.
+                        // Below 64 means the bias was skipped, above
+                        // 940 means the scale was; either way the
+                        // client sees crushed or clipped highlights
+                        // rather than an error.
+                        CHECK(minCode >= 64);
+                        CHECK(maxCode <= 940);
+                        // The low 6 bits are padding in P010 and
+                        // must be zero. A non-zero one means the
+                        // shader wrote the code as if the field were
+                        // 16 bits wide, and the picture is then 64×
+                        // too bright at the bottom of the range.
+                        CHECK_EQ(maxY & 0x3F, 0);
+                    }
+                }
+
+                // And through a 10-bit encoder: Main10 has to be
+                // named, or NVENC takes the P010 and quietly encodes
+                // 8 bits from it.
+                if (gpu->encoders.front() == EncoderApi::Nvenc && gpu->supports10Bit) {
+                    encode::NvencEncoder hdrEnc;
+                    if (!hdrEnc.init(hdrDup.device(), Codec::Hevc, hdrConv.outputWidth(),
+                                     hdrConv.outputHeight(), 60, 20000, false, true, false,
+                                     EncoderTuning{}, hdrError)) {
+                        std::fprintf(stderr, "  HDR encode unavailable: %s\n", hdrError.c_str());
+                    } else {
+                        encode::EncoderOutput hdrOut;
+                        CHECK(hdrEnc.encode(hdrConv.output(), true, 0, hdrOut, hdrError));
+                        if (hdrOut.data) {
+                            std::fprintf(stderr, "  HEVC Main10 keyframe: %zu bytes\n",
+                                         hdrOut.size);
+                            CHECK(hdrOut.size > 0);
+                            CHECK(hdrOut.keyframe);
+                            hdrEnc.releaseOutput();
+                        }
+                        hdrEnc.stop();
+                    }
+                }
+            }
+        }
+    }
 
     // Stopping twice, and releasing without holding, must both be harmless:
     // teardown runs on error paths where the state is not known.
