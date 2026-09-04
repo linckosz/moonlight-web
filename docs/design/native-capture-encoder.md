@@ -1206,5 +1206,40 @@ deux écrans avec GPU/encodeur/codecs. **Reste à valider par Bruno en vrai
 service** (installer le binaire en service, se connecter, streamer) : un stream
 natif complet passé par `CreateProcessAsUser` sous le jeton console, et la
 neutralité du chemin `QProcess` pour Sunshine/Wolf/MultiSeat (inchangé, mais
-`StreamWorkerHost` a bougé). Le retrait de Sunshine de l'installeur (H4) attend
-cette validation.
+`StreamWorkerHost` a bougé).
+
+### 15.5 L'installeur Windows n'installe plus Sunshine (04/09/2026)
+
+Conséquence produit de 15.1–15.3, faite sur le feu vert de Bruno **avant** la
+validation en vrai service (le plan la faisait attendre) : l'installeur Inno ne
+détecte plus Sunshine, ne le télécharge plus, ne lui écrit plus d'identifiants et
+n'appaire plus rien. Il reste une page de question, le lien Internet, et une
+checklist d'une ligne. Ce qui disparaît du script : la page Sunshine et ses trois
+formes, le bouton Skip, la sonde d'identifiants Basic-Auth (avec son encodeur
+Base64 maison), le téléchargement `/S` + `--creds`, et l'objet `sunshine` de
+`provisioning.json` — donc **plus aucun mot de passe en clair écrit sur le
+disque**. `Provisioning::applyOnce` lit un objet absent comme `auto_pair=false` et
+marque l'étape « skipped », si bien qu'un serveur plus ancien recevant ce fichier
+se comporte exactement comme si l'utilisateur avait cliqué sur Ignorer.
+
+Ce qui **ne** bouge **pas** : `SunshineInstaller` en entier, et la page Sunshine
+du `SetupView`. ⚠️ **le plan disait « retrait de Sunshine de l'installeur *et* de
+`SetupView` », c'est faux** : `SetupView` ne s'affiche jamais sous Windows
+(`/api/setup/status` y répond `setup_completed: true` en dur, et `app.js` sort sur
+`os === 'Windows'`) — c'est le premier lancement de **macOS et Linux**, les deux
+plates-formes où le moteur natif répond « no backend for this platform in this
+build » jusqu'à la phase I. L'y retirer ne complèterait pas H4, ça priverait ces
+machines de tout hôte. Sunshine y reste donc la voie normale, et il reste partout
+un **hôte** de plein droit : une machine qui le fait déjà tourner se découvre et
+s'appaire depuis la page des hôtes comme avant.
+
+Effet de bord corrigé au passage, sans quoi le retrait aurait été une
+régression : `NvComputer::isLocalMachine()` répondait faux pour le host natif.
+Elle compare des adresses, et le natif n'en a aucune — il *est* ce processus. Or
+la mise à jour en un clic ne s'offre que si la machine a un hôte local appairé
+(`_canSelfUpdate`), et depuis ce chantier la carte native est le seul hôte d'une
+installation Windows fraîche : la bannière serait retombée à jamais sur « mettez à
+jour le PC hôte ». `isNativeEngine()` répond maintenant vrai en premier ; au
+passage `hostOs()` en profite (il court-circuite sur « local »), et
+`/api/setup/status` exclut explicitement la carte native de son `sunshine.paired`,
+qui doit continuer de vouloir dire ce qu'il dit.

@@ -283,16 +283,24 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         sunObj["installed"] = sun.installed;
         sunObj["can_auto_install"] = SunshineInstaller::canAutoInstall();
         sunObj["running"] = sun.installed && SunshineInstaller::isRunning();
-        // Paired = some known host is paired AND lives on this machine. The
-        // address matching this used to do by hand is exactly what
+        // Paired = some known GameStream host is paired AND lives on this
+        // machine. The address matching this used to do by hand is exactly what
         // NvComputer::isLocalMachine() does (loopback, or one of our own
         // interface addresses — mDNS may register the local Sunshine under its
         // LAN IP rather than 127.0.0.1), and it is surfaced as isLocalHost.
+        //
+        // The native card is excluded even though it is local and paired: this
+        // key says whether the wizard's Sunshine step is settled, and a machine
+        // that streams itself has not installed Sunshine. Moot on Windows (the
+        // wizard never runs there) and there is no native engine on the
+        // platforms where it does — but the name has to keep meaning what it
+        // says, for the day Phase I changes that.
         bool paired = false;
         const QJsonArray hosts = computerManager.getHostsJson();
         for (const QJsonValue& v : hosts) {
             const QJsonObject h = v.toObject();
             if (h.value("pairState").toString() != QLatin1String("paired")) continue;
+            if (h.value("backendType").toString() == QLatin1String("native")) continue;
             if (h.value("isLocalHost").toBool()) {
                 paired = true;
                 break;
