@@ -1864,15 +1864,60 @@ rallumé, 123 Ko de première keyframe.
 Autres constats de ce flux : `MaxFrameDelayCount = 0` est refusé par l'encodeur
 matériel (-12900, en debug, sans conséquence visible) ; la sortie SCK suit le format
 demandé par le client (2560×1440 puis 2218×1440 quand le front a réaligné le
-rapport d'aspect sur l'écran 3600×2338) ; Accessibility n'était pas encore
-accordé, donc entrées non vérifiées sur ce flux.
+rapport d'aspect sur l'écran 3600×2338).
 
-### 20.7 Ce qui reste
+### 20.7 Les entrées, validées — et le piège TCC qui les bloquait (05/09/2026)
+
+Session de 213 s depuis Chrome : **10 233 présents pour un flux à 60 fps sur un
+écran 120 Hz, 9 non portés** par la garde de cadence ; **12 768 images livrées par
+SCK, 0 « idle », 2 534 remplacées avant d'être prises** — la règle « dernière image,
+jamais d'arriéré » à l'œuvre ; 48 événements d'entrée injectés ; première keyframe
+114 Ko ; fin propre.
+
+Souris et clavier vérifiés **à l'œil, pas seulement dans le log** : un clic a mis les
+Réglages Système au premier plan puis a actionné des boutons de dialogue, et
+« clavier ok » s'est écrit dans leur champ de recherche. `CgInput` est donc juste de
+bout en bout : position absolue mise à l'échelle du panneau, modificateurs portés
+par chaque événement, texte par `CGEventKeyboardSetUnicodeString`.
+
+⚠️ **Le piège, et il coûtera cher à un utilisateur** : TCC n'accroche pas une
+autorisation à un identifiant de bundle mais à une **exigence de code** (le
+*designated requirement*). Sur ce Mac, l'entrée « Accessibilité » de MoonlightWeb
+avait été créée par l'ancienne application de `/Applications`, signée ad hoc, donc
+enregistrée comme `cdhash H"9d8aba5f…"`. La nouvelle build, signée par certificat
+(`identifier "com.moonlightweb.server" and certificate leaf = H"d88095f4…"`), ne
+correspond pas : l'interrupteur était bien coché dans les Réglages, et macOS jetait
+quand même tous les événements — silencieusement, ce qui donne un flux qui s'affiche
+et ne répond pas. `CGPreflightPostEventAccess()` est ce qui le détecte, et
+`kTCCServicePostEvent` est la ligne à regarder dans la base.
+
+La réparation ne peut pas se faire à la main dans la base : **SIP la rend illisible
+en écriture même pour root** (« attempt to write a readonly database »). La séquence
+qui marche est `tccutil reset Accessibility com.moonlightweb.server`, puis laisser
+l'application redemander (elle réapparaît dans la liste avec la bonne exigence),
+puis cocher. Les trois lignes portent ensuite la même exigence que le binaire qui
+tourne.
+
+Conséquence produit, à trancher avant la release macOS : tant que le `.pkg` est
+signé ad hoc, **chaque mise à jour change le cdhash et reperd Screen Recording et
+Accessibility**, sans le dire. Un Developer ID, ou n'importe quelle identité stable,
+supprime le problème d'un coup. C'est le même constat qu'en §20.5, mais mesuré cette
+fois sur ses conséquences réelles.
+
+Enfin, un fait de banc qui n'est pas de notre code : **Sunshine ne finit pas son
+démarrage quand l'écran du Mac est en veille** — il s'arrête après le test des
+encodeurs et n'ouvre aucun port. La veille écran est désormais désactivée sur cette
+machine (`pmset -a displaysleep 0 sleep 0`).
+
+### 20.8 Ce qui reste
 
 L'audio (SCK capture le son système depuis macOS 13, `capturesAudio` → Opus, qui
 n'est construit que sous Windows), le HDR (P010 en entrée, Main10 en sortie — le
-silicium le fait), le pointeur agrandi, la signature du `.pkg` (§20.5), la
-vérification clavier/souris une fois Accessibility accordé, et un point hors de ce
-module vu au passage : **Internet Access se désactive entièrement quand
-l'enregistrement PowerDNS échoue** (jeton absent), rendez-vous compris, alors que
-le rendez-vous n'a aucun besoin du sous-domaine (`legacy_dns`).
+silicium le fait), le pointeur agrandi, et la signature du `.pkg` (§20.5, §20.7).
+
+Hors de ce module, vu au passage et **corrigé depuis** : Internet Access se
+désactivait entièrement quand l'enregistrement PowerDNS échouait, rendez-vous
+compris, alors que le rendez-vous n'a aucun besoin du sous-domaine. La
+rétro-compatibilité DNS côté client a été retirée le 05/09/2026 — plus aucune
+installation n'écrit dans PowerDNS ni ne lance ACME, et ce chemin de coupure
+n'existe plus.
