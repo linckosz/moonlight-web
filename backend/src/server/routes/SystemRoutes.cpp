@@ -167,15 +167,14 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
         // Legal traceability: record the exact agreement text the user read when
         // they ticked the checkbox. The mechanism is decided here, not by the
-        // client: a legacy instance still consents to the DNS registration it
-        // keeps running, everyone else to the rendezvous-era behaviour (UPnP
-        // during sessions, peer-visible IP, no DNS record, no certificate).
+        // client — and since 05/09/2026 there is only one: the rendezvous-era
+        // behaviour (UPnP during sessions, peer-visible IP, no DNS record, no
+        // certificate). An upgraded install no longer runs the DNS mechanism,
+        // so it can no longer consent to it, whatever `registered_uid` says.
         if (body.value("internet_access_enabled").toBool(false) &&
             body.contains("consent_message")) {
-            const bool legacy = !appSettings.registeredUid().isEmpty();
-            appSettings.setInternetConsent(
-                body["consent_message"].toString(), QStringLiteral("admin"),
-                legacy ? QStringLiteral("dns") : QStringLiteral("rendezvous"));
+            appSettings.setInternetConsent(body["consent_message"].toString(),
+                                           QStringLiteral("admin"), QStringLiteral("rendezvous"));
         }
 
         bool enabled =

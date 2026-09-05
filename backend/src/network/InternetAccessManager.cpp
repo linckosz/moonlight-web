@@ -177,9 +177,12 @@ void InternetAccessManager::start()
     // Consent gate. A consent record without a version was obtained for the
     // retired DNS mechanism ("create an A record pointing at your IP") — it
     // does not cover what enabling does today, so the UI has to ask again with
-    // the current wording. Legacy instances still run that mechanism until the
-    // announced shutdown, so their v1 consent remains exactly right; a custom
-    // domain involves no service of ours to consent to.
+    // the current wording. Since 05/09/2026 that applies to EVERY upgraded
+    // install, not only to those that never registered: none of them runs the
+    // DNS mechanism any more, so none of them can still be covered by a
+    // consent worded for it. The price is one re-tick per existing user, on
+    // the admin page, the first time they open Internet Access after
+    // upgrading. A custom domain involves no service of ours to consent to.
     if (!m_LegacyDns && !m_CustomDomain && m_Settings->internetConsentVersion() < 2 &&
         !m_Settings->internetConsent().isEmpty()) {
         qInfo() << "[InternetAccess] Stored consent predates the current mechanism —"
@@ -781,29 +784,28 @@ void InternetAccessManager::ensureIdentifiers()
         return;
     }
 
-    // Only an instance that actually registered a subdomain under the retiring
-    // DNS mechanism keeps a public domain. registered_uid is written on the
-    // first successful A-record registration (shipped since v0.1.0) and never
-    // cleared, so it is the one reliable marker — the skip-when-already-resolving
-    // path never runs before a first registration succeeded.
-    m_LegacyDns = !m_Settings->registeredUid().isEmpty();
-    if (!m_LegacyDns) {
-        // Fresh instance: unique_id stays (it seeds the deterministic UPnP
-        // fallback port, so two instances on one LAN never collide) but it
-        // never leaves this machine — no domain, no ownership token, nothing
-        // to publish. An empty domain is what keeps every entry point
-        // (shortcut, tray, hairpin test) on the LAN address.
-        m_Domain.clear();
-        return;
-    }
-
-    // Store sentinel — the real domain is always derivable from uniqueId + baseDomain.
-    m_Domain = buildDomain();
-    m_Settings->setDomain(QStringLiteral("MW_DOMAIN"));
-
-    // Make the ownership token available on the PowerDNS client before any write
-    // (release/claim/create), so every PATCH carries the X-MW-Owner header.
-    ensureOwnerToken();
+    // ── No client keeps the retiring DNS mechanism (decision of 05/09/2026) ──
+    //
+    // settings.json may still carry `registered_uid`, written years ago on this
+    // machine's first A-record registration. It is now IGNORED: this version
+    // never writes to PowerDNS, never runs ACME, and never maps 80/443/47999,
+    // whatever an upgraded install used to do. Backward compatibility lives on
+    // the PowerDNS server alone, which keeps serving the records of clients
+    // still running v0.2.4 until that stack is retired — nothing on this side
+    // has to know about it.
+    //
+    // What replaces it is the rendezvous: it needs no subdomain, no DNS write,
+    // no ownership token and no public certificate, so an instance that cannot
+    // reach PowerDNS is no longer an instance that cannot be reached at all.
+    // (That coupling was real: a failed registration used to switch Internet
+    // Access off entirely, rendezvous included.)
+    //
+    // unique_id stays — it seeds the deterministic UPnP fallback port, so two
+    // instances on one LAN never collide — but it never leaves this machine.
+    // An empty domain is what keeps every entry point (shortcut, tray, hairpin
+    // test) on the LAN address, with the rendezvous for everything else.
+    m_LegacyDns = false;
+    m_Domain.clear();
 }
 
 // ---------------------------------------------------------------------------

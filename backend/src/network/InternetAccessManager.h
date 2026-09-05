@@ -121,12 +121,15 @@ public:
     bool customDomain() const { return m_CustomDomain; }
 
     /// True when this instance registered a `{unique_id}.{MW_DOMAIN}` subdomain
-    /// under the retiring DNS mechanism (settings.json carries a non-empty
-    /// `registered_uid` — written on the first successful A-record registration,
-    /// shipped since v0.1.0, never cleared). Only such an instance keeps running
-    /// the DNS/ACME half of this manager, until the announced shutdown of the
-    /// PowerDNS stack (February 2027). A fresh install never registers anything:
-    /// no subdomain, no public certificate, no 80/443 mapping.
+    /// under the retiring DNS mechanism.
+    ///
+    /// **Always false since 05/09/2026.** No client keeps that mechanism: an
+    /// upgraded install ignores its own `registered_uid`, so nothing here ever
+    /// writes to PowerDNS, runs ACME, or maps 80/443/47999. The compatibility
+    /// that remains is on the PowerDNS server, for clients still running
+    /// v0.2.4 — invisible from this side. Kept as an accessor so the branches
+    /// it gates read as deliberately dead rather than deleted in a hurry; they
+    /// go with the PowerDNS stack itself.
     bool legacyDns() const { return m_LegacyDns; }
 
     /// Current public IP.
