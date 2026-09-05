@@ -71,16 +71,11 @@ describe('Internet consent text', () => {
             l.admin.internetInfo1,
             customMessage(lang, 'InternetPageBody'),
         ]) {
-            // The DNS record and the per-instance certificate went away in August
-            // 2026; only admin.internetInfoLegacy may still describe them.
+            // The DNS record and the per-instance certificate are gone from
+            // every client, so no surface may still promise them.
             expect(text).not.toMatch(/future update|future mise à jour|未来的更新/);
+            expect(text).not.toMatch(/PowerDNS/);
         }
-    });
-
-    it('the legacy wording is still there for the instances that still run it', () => {
-        // Instances registered before the DNS mechanism was retired keep their
-        // v1 consent, and the admin page has to keep describing what they do.
-        expect(locale('en').admin.internetInfoLegacy).toContain('PowerDNS');
     });
 
     it('both installer buttons are translated everywhere', () => {

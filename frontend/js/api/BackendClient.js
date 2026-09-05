@@ -787,7 +787,4 @@ export class BackendClient {
     static async refreshInternet() {
         return this.post('/api/internet/refresh');
     }
-    static async renewCert() {
-        return this.post('/api/internet/renew-cert');
-    }
 }

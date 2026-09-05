@@ -23,10 +23,10 @@
 
 /// Owns everything TLS-certificate related, extracted out of HttpServer so the
 /// socket server no longer mixes network I/O with certificate discovery,
-/// loading, ACME renewal and self-signed generation.
+/// loading and self-signed generation.
 ///
 /// It produces two QSslConfigurations:
-///   - public: the PositiveSSL/Let's Encrypt cert served to public-domain clients
+///   - public: a certificate the user supplied for a domain they own
 ///   - local:  a self-signed cert with LAN SANs served to localhost / LAN IPs (SNI)
 ///
 /// HttpServer keeps ownership of the live listener and pushes publicConfig()
@@ -55,8 +55,8 @@ public:
     /// and load it into localConfig(). Called after loadCert() for SNI.
     void ensureLocalSslConfig();
 
-    /// Reload the public cert from its sources/dir (hot reload after ACME
-    /// issuance). Populates publicConfig(). Returns true on success. The caller
+    /// Reload the public cert from its sources/dir (hot reload after the user
+    /// replaced it). Populates publicConfig(). Returns true on success. The caller
     /// is responsible for pushing the new config onto the live listener.
     bool reloadTls();
 

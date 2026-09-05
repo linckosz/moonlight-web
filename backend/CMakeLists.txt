@@ -202,9 +202,7 @@ add_executable(mw-server
     src/common/RendezvousId.cpp
     src/network/RendezvousClient.cpp
     src/network/UPNPClient.cpp
-    src/network/PdnsClient.cpp
     src/network/StunClient.cpp
-    src/network/AcmeClient.cpp
     src/network/InternetAccessManager.cpp
     src/network/GeoIpService.cpp
     src/network/SessionMetrics.cpp
@@ -317,11 +315,14 @@ if(DEFINED ENV{MW_CERT_KEY} AND NOT "$ENV{MW_CERT_KEY}" STREQUAL "")
     message(STATUS "MW_CERT_KEY embedded at build time")
 endif()
 
-# Optional build-time embedding of Internet-Access config (CI/production). Lets
-# the distributed binary carry its DNS/ACME config without shipping a .env file.
+# Optional build-time embedding of the project's own service config
+# (CI/production), so the distributed binary carries it without shipping a .env
+# file. MW_PDNS_TOKEN is no longer a DNS credential: it is the shared API key
+# for the update relay and the metrics endpoint, and its presence is how an
+# official build is told apart from one someone compiled themselves.
 # Values come from CI secrets (env vars at configure time); skipped when unset.
 # A runtime env var / local .env still wins — see applyEmbeddedEnvDefaults().
-foreach(_mw_var MW_DOMAIN MW_PDNS_URL MW_PDNS_TOKEN MW_ZEROSSL_EAB_KID MW_ZEROSSL_EAB_HMAC)
+foreach(_mw_var MW_DOMAIN MW_PDNS_TOKEN)
     if(DEFINED ENV{${_mw_var}} AND NOT "$ENV{${_mw_var}}" STREQUAL "")
         target_compile_definitions(mw-server PRIVATE ${_mw_var}="$ENV{${_mw_var}}")
         message(STATUS "${_mw_var} embedded at build time")

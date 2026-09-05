@@ -33,7 +33,7 @@
 /// That rules out the whole high range the fallback used to scan (49443+,
 /// 49080+): those ports sit inside the OS dynamic/ephemeral range — 32768-60999
 /// on Linux (net.ipv4.ip_local_port_range), 49152-65535 on Windows — where an
-/// outgoing connection this very process makes (STUN, ACME, Sunshine, WebRTC)
+/// outgoing connection this very process makes (STUN, Sunshine, WebRTC)
 /// can be holding the port at the moment of the next bind. The listener then
 /// moves, gets persisted, and the address drifts on every restart.
 ///

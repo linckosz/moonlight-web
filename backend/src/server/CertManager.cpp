@@ -267,7 +267,8 @@ QString CertManager::scanKeyInDir(const QString& dir) const
     while (it.hasNext()) {
         QString filePath = it.next();
 
-        // Skip ACME account key — it's for ACME account auth, not TLS
+        // Skip the ACME account key a pre-0.3 install left behind: it
+        // authenticated to the certificate authority, it is not a TLS key.
         if (filePath.endsWith("account_key.pem")) continue;
 
         QFile file(filePath);
@@ -403,8 +404,8 @@ bool CertManager::loadCertFiles(const QString& certDir)
     }
 
     // Load private key. Prefer the key file sitting next to the certificate —
-    // it is authoritative for ACME-issued certs (cert + key are written together
-    // in the same dir). The embedded env key (MW_CERT_KEY) belongs to ONE
+    // a cert and its key are dropped in together, so the neighbour is
+    // authoritative. The embedded env key (MW_CERT_KEY) belongs to ONE
     // specific embedded cert; pairing it with a different scanned cert produces
     // OpenSSL "key values mismatch" at handshake time (e.g. brunoocto key paired
     // with a brunchlee/damian cert). So the env key is only a last resort, used
@@ -603,8 +604,8 @@ bool CertManager::loadCert()
         // A loaded certificate is always kept, even close to expiry: replacing a
         // real (if ageing) certificate with a self-signed one turns a warning
         // nobody sees yet into a browser error right now. Renewal belongs to
-        // whoever owns the domain — AcmeClient for the shared one, the user for
-        // their own (they drop new PEM files in and restart).
+        // whoever owns the domain — the user, for a domain they configured
+        // themselves (they drop new PEM files in and restart).
         QDateTime expiry = m_SslConfig.localCertificate().expiryDate();
         if (expiry <= QDateTime::currentDateTimeUtc().addDays(14)) {
             Logger::warning(QString("SSL certificate expires %1 — renew it soon")
@@ -713,18 +714,18 @@ bool CertManager::generateSelfSignedCert()
 void CertManager::ensureLocalSslConfig()
 {
     // The local self-signed cert lives in AppData/cert/, separate from any
-    // public cert (ACME-issued certs live in the configured cert dir).
+    // public cert (which lives in the configured cert dir).
     // This cert is ALWAYS regenerated with SANs for localhost + all current
     // LAN IPs so that every local access method gets a hostname-matching
     // certificate (DHCP changes are reflected on restart).
     QString certDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
     QDir().mkpath(certDir);
 
-    // Dedicated filenames for the local self-signed cert. These MUST NOT collide
-    // with the public cert key (cert/key.pem), which onAcmeFinished writes from
-    // the ACME issuance. Sharing "key.pem" caused this regen to clobber the
-    // ZeroSSL/LE private key, breaking the public cert on the next boot
-    // (cert=fullchain.pem ZeroSSL + key=self-signed -> "key values mismatch").
+    // Dedicated filenames for the local self-signed cert. These MUST NOT
+    // collide with the public cert key (cert/key.pem). Sharing "key.pem" made
+    // this regeneration clobber the public private key, breaking the public
+    // cert on the next boot (cert=fullchain.pem + key=self-signed ->
+    // "key values mismatch").
     QString certPath = certDir + "local-cert.pem";
     QString keyPath = certDir + "local-key.pem";
 

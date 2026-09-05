@@ -73,20 +73,16 @@ export class AdminView {
         // Server settings state
         this._httpsPort = 443;
         this._httpPort = 80;
-        // External (router-side) HTTPS port for the public domain URL. Equals the
-        // local port for the first instance; a fallback port for a co-existing
-        // instance behind the same NAT.
+        // Router-side HTTPS port a user-owned domain is forwarded to. Nothing
+        // maps it for them, so it equals the local port.
         this._externalHttpsPort = 443;
 
         // Internet Access state
         this._internetEnabled = false;
+        // A domain the user configured themselves, or empty — the normal case,
+        // since enabling only authorizes the per-session router mapping and the
+        // rendezvous line.
         this._domain = '';
-        // True when this instance registered a sub-domain under the retiring
-        // DNS mechanism: it keeps the DNS activation steps, the propagation
-        // polling and its public URL until the announced shutdown (Feb 2027).
-        // A fresh install has none of that — enabling only authorizes the
-        // per-session router mapping.
-        this._legacyDns = false;
         // Version of the stored consent record (0 = none, 1 = DNS-era wording).
         // The backend holds phase "consent_required" until a version-2 consent
         // is recorded, so the checkbox must re-ask with the current text.
@@ -99,9 +95,8 @@ export class AdminView {
         this._transportMode = 'auto';
         this._availableTransports = [];
         this._upnpAvailable = false;
-        this._pendingRegistration = false;
-        this._active = false; // DNS registration actually succeeded (domain live)
-        this._rendezvousUrl = ''; // address a fresh install is reached at, once claimed
+        this._active = false; // the manager is running (IP detected, router asked)
+        this._rendezvousUrl = ''; // address this install is reached at, once claimed
         this._rendezvousOnline = false; // the held line is actually up
         this._lastError = '';
 
@@ -109,11 +104,6 @@ export class AdminView {
         this._activating = false;
         this._phase = '';
         this._phasePollTimer = null;
-
-        // DNS propagation polling
-        this._dnsPollTimer = null;
-        this._dnsPollAttempts = 0;
-        this._maxDnsPollAttempts = 60; // 5 min at 5s interval
 
         // Sunshine (local streaming server) state — from /api/setup/status.
         this._sunshineInstalled = false;
@@ -161,7 +151,6 @@ export class AdminView {
         await this._loadSunshineState();
         this.render();
         this.bindEvents();
-        this._startDnsPollingIfNeeded();
         // Provisioning may have started Internet Access before the page opened;
         // keep the loader live until the backend reaches a terminal phase.
         if (this._activating) this._startPhasePolling();
@@ -200,14 +189,12 @@ export class AdminView {
                       ? [this._localIp]
                       : [];
             this._uniqueId = status.unique_id || '';
-            this._legacyDns = status.legacy_dns || false;
             this._consentVersion = status.consent_version || 0;
             this._transportMode = status.transport_mode || 'auto';
             this._availableTransports = status.available_transports || [];
             this._upnpAvailable = status.upnp_available || false;
-            this._pendingRegistration = status.pending_registration || false;
             this._active = status.active || false;
-            // The address a fresh install is reached at. It exists nowhere but
+            // The address this install is reached at. It exists nowhere but
             // here: no record is published any more, so this page is where its
             // owner learns it. `online` is a separate answer from having a URL —
             // the line is held, not published, and while it is down the address
@@ -502,7 +489,6 @@ export class AdminView {
     }
 
     destroy() {
-        this._stopDnsPolling();
         this._stopSessionsPolling();
         this._stopPhasePolling();
     }
@@ -575,72 +561,6 @@ export class AdminView {
             clearInterval(this._sessionsPollTimer);
             this._sessionsPollTimer = null;
         }
-    }
-
-    // --- DNS Propagation Polling ---
-
-    _startDnsPollingIfNeeded() {
-        if (this._internetEnabled && this._pendingRegistration) {
-            this._startDnsPolling();
-        }
-    }
-
-    _startDnsPolling() {
-        this._stopDnsPolling();
-        this._dnsPollAttempts = 0;
-        this._dnsPollTimer = setInterval(async () => {
-            this._dnsPollAttempts++;
-            if (this._dnsPollAttempts > this._maxDnsPollAttempts) {
-                this._stopDnsPolling();
-                this._pendingRegistration = false;
-                this._lastError = t('admin.dnsTimeout');
-                this.render();
-                this.bindEvents();
-                return;
-            }
-            try {
-                const status = await BackendClient.getInternetStatus();
-                if (status.active && status.domain) {
-                    // Registration actually succeeded — domain is live
-                    this._stopDnsPolling();
-                    this._internetEnabled = true;
-                    this._active = true;
-                    this._domain = status.domain || this._domain;
-                    this._externalHttpsPort = status.external_https_port || this._externalHttpsPort;
-                    this._publicIp = status.public_ip || this._publicIp;
-                    this._pendingRegistration = false;
-                    this._lastError = '';
-                    this.render();
-                    this.bindEvents();
-                    Toast.success(t('admin.dnsPropagated', { domain: this._domain }));
-                } else if (!status.pending_registration) {
-                    // No longer pending but not active → registration failed/gave up
-                    this._stopDnsPolling();
-                    this._active = false;
-                    this._pendingRegistration = false;
-                    this._lastError = status.last_error || t('admin.internetNotActive');
-                    this._internetEnabled = false; // error → uncheck the toggle
-                    this.render();
-                    this.bindEvents();
-                } else if (status.last_error && status.last_error !== this._lastError) {
-                    this._lastError = status.last_error;
-                    this._pendingRegistration = status.pending_registration !== false;
-                    this._internetEnabled = false; // error → uncheck the toggle
-                    this.render();
-                    this.bindEvents();
-                }
-            } catch (err) {
-                console.warn('[Admin] DNS poll failed:', err);
-            }
-        }, 5000);
-    }
-
-    _stopDnsPolling() {
-        if (this._dnsPollTimer) {
-            clearInterval(this._dnsPollTimer);
-            this._dnsPollTimer = null;
-        }
-        this._dnsPollAttempts = 0;
     }
 
     // --- Dirty tracking ---
@@ -941,10 +861,7 @@ export class AdminView {
                             ? `
                                 <div class="admin-url-row">
                                     ${
-                                        this._internetEnabled &&
-                                        this._active &&
-                                        !this._pendingRegistration &&
-                                        domainUrl
+                                        this._internetEnabled && this._active && domainUrl
                                             ? `<a href="${this.esc(domainUrl)}" target="_blank" rel="noopener" class="tunnel-url-link">${this.esc(domainUrl)}</a>`
                                             : `<span class="tunnel-url-disabled">${domainUrl ? this.esc(domainUrl) : ''}</span>`
                                     }
@@ -965,30 +882,13 @@ export class AdminView {
                                 <p class="admin-url-note">${
                                     !this._rendezvousOnline
                                         ? t('admin.rendezvousOffline')
-                                        : // Keyed on whether a sub-domain EXISTS, not on whether
-                                          // one is displayed — it is no longer displayed, and this
-                                          // sentence is now the only thing that accounts for it.
-                                          this._domain
-                                          ? t('admin.rendezvousReplaces')
-                                          : t('admin.rendezvousReady')
+                                        : t('admin.rendezvousReady')
                                 }</p>
                     `
                             : ''
                     }
 
-                    ${
-                        this._legacyDns
-                            ? `
-                        <div class="internet-info-box internet-info-error">
-                            <p>${t('admin.legacySunset', { domain: this.esc(this._domain) })}</p>
-                        </div>
-                    `
-                            : ''
-                    }
-
-                    <!-- Info frame (always visible): the exact consent wording.
-                         A legacy instance still runs the DNS mechanism, so it
-                         keeps the wording it agreed to. -->
+                    <!-- Info frame (always visible): the exact consent wording. -->
                     <div class="internet-info-box">
                         <p><strong class="internet-important-label">${t('admin.importantLabel')}</strong><br>
                         ${this._internetConsentText()}</p>
@@ -1002,21 +902,9 @@ export class AdminView {
                         </p>
                     </div>
 
-                    <!-- DNS propagation indicator -->
-                    ${
-                        this._pendingRegistration
-                            ? `
-                        <div class="dns-propagating">
-                            <span class="tunnel-spinner"></span>
-                            <span>${t('admin.dnsPropagating')}</span>
-                        </div>
-                    `
-                            : ''
-                    }
-
                     <!-- Error display -->
                     ${
-                        this._lastError && !this._pendingRegistration
+                        this._lastError
                             ? `
                         <div class="internet-info-box internet-info-error">
                             <p>${this.esc(this._lastError)}</p>
@@ -1038,12 +926,11 @@ export class AdminView {
                             : ''
                     }
 
-                    <!-- Enabled but registration not live, with no specific error
-                         (e.g. remote view where the reason is hidden) -->
+                    <!-- Enabled but the link never came up, with no specific
+                         error (e.g. remote view where the reason is hidden) -->
                     ${
                         this._internetEnabled &&
                         !this._active &&
-                        !this._pendingRegistration &&
                         !this._lastError &&
                         this._phase !== 'consent_required'
                             ? `
@@ -1990,11 +1877,10 @@ export class AdminView {
     // Internet Access enable / disable
 
     // The exact agreement text shown next to the checkbox — and recorded
-    // server-side as consent_message. A legacy instance still runs the DNS
-    // registration it originally agreed to; everyone else gets the current
-    // wording (per-session UPnP, peer-visible IP, no DNS record, no cert).
+    // server-side as consent_message: per-session UPnP, peer-visible IP, no DNS
+    // record, no certificate.
     _internetConsentText() {
-        return this._legacyDns ? t('admin.internetInfoLegacy') : t('admin.internetInfo1');
+        return t('admin.internetInfo1');
     }
 
     async _enableInternet() {
@@ -2032,9 +1918,6 @@ export class AdminView {
                 await this._loadInternetState();
                 this.render();
                 this.bindEvents();
-                if (this._pendingRegistration) {
-                    this._startDnsPolling();
-                }
             } else {
                 Toast.error(t('admin.internetEnableFailed'));
                 this._internetEnabled = false;
@@ -2066,23 +1949,17 @@ export class AdminView {
                     const loader = this.container.querySelector('#internet-activation');
                     if (loader) loader.innerHTML = this._renderActivationSteps();
                 }
-                // Terminal phase (success, give-up, waiting, or consent renewal):
-                // close the loader and refresh the full view. Needed when
-                // activation was triggered by provisioning (no awaited enable
-                // call to finalize). An empty phase is treated as "not reported
-                // yet", never as terminal.
-                if (
-                    phase === 'active' ||
-                    phase === 'error' ||
-                    phase === 'pending' ||
-                    phase === 'consent_required'
-                ) {
+                // Terminal phase (success, failure, or consent renewal): close
+                // the loader and refresh the full view. Needed when activation
+                // was triggered by provisioning (no awaited enable call to
+                // finalize). An empty phase is treated as "not reported yet",
+                // never as terminal.
+                if (phase === 'active' || phase === 'error' || phase === 'consent_required') {
                     this._stopPhasePolling();
                     this._activating = false;
                     await this._loadInternetState();
                     this.render();
                     this.bindEvents();
-                    if (this._pendingRegistration) this._startDnsPolling();
                 }
             } catch (_err) {
                 // Transient during activation (backend busy) — ignore and retry.
@@ -2108,7 +1985,6 @@ export class AdminView {
         try {
             await BackendClient.disableInternet();
             this._internetEnabled = false;
-            this._stopDnsPolling();
             Toast.success(t('admin.internetDisabled'));
             await this._loadInternetState();
             this.render();
@@ -2142,20 +2018,12 @@ export class AdminView {
     // Build the activation step checklist for the loader. Marks steps before the
     // current phase as done, the current one as spinning, the rest as pending.
     _renderActivationSteps() {
-        // Only a legacy instance still walks the DNS/certificate steps; a fresh
-        // install goes straight from IP detection to the router configuration.
-        const phases = this._legacyDns
-            ? [
-                  ['detecting_ip', t('admin.phaseDetectingIp')],
-                  ['registering_dns', t('admin.phaseRegisteringDns')],
-                  ['checking_dns', t('admin.phaseCheckingDns')],
-                  ['issuing_certificate', t('admin.phaseIssuingCert')],
-                  ['configuring_ports', t('admin.phaseConfiguringPorts')],
-              ]
-            : [
-                  ['detecting_ip', t('admin.phaseDetectingIp')],
-                  ['configuring_ports', t('admin.phaseConfiguringPorts')],
-              ];
+        // Two steps: find this machine's public address, then ask the router.
+        // Nothing is registered and no certificate is ordered.
+        const phases = [
+            ['detecting_ip', t('admin.phaseDetectingIp')],
+            ['configuring_ports', t('admin.phaseConfiguringPorts')],
+        ];
         const order = phases.map((p) => p[0]);
         const done = this._phase === 'active';
         const cur = order.indexOf(this._phase);

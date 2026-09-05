@@ -525,19 +525,6 @@ void AppSettings::setUniqueId(const QString& id)
     writeAll(obj);
 }
 
-QString AppSettings::registeredUid() const
-{
-    QJsonObject obj = readAll();
-    return obj.value("registered_uid").toString();
-}
-
-void AppSettings::setRegisteredUid(const QString& id)
-{
-    QJsonObject obj = readAll();
-    obj["registered_uid"] = id;
-    writeAll(obj);
-}
-
 bool AppSettings::isValidFqdn(const QString& domain)
 {
     static const QRegularExpression re(
@@ -547,29 +534,26 @@ bool AppSettings::isValidFqdn(const QString& domain)
 
 QString AppSettings::domain() const
 {
-    // Compute the default domain from unique_id + base domain
+    // The name a pre-0.3 install would have registered under the retired DNS
+    // mechanism. Computed only to be excluded below — nothing points at it.
     QString baseDomain = QString::fromUtf8(qgetenv("MW_DOMAIN"));
     if (baseDomain.isEmpty()) baseDomain = QStringLiteral("moonlightweb.top");
 
-    QString uid = uniqueId();
-    QString computed = uid.isEmpty() ? baseDomain : (uid + QLatin1Char('.') + baseDomain);
+    const QString uid = uniqueId();
+    const QString retired = uid.isEmpty() ? baseDomain : (uid + QLatin1Char('.') + baseDomain);
 
-    // If stored domain is a real FQDN different from the default → custom domain
+    // A valid FQDN in settings.json that is NOT that retired name belongs to
+    // the user: they own the zone and the certificate, and we serve it as-is.
     QJsonObject obj = readAll();
     QString stored = obj.value("domain").toString();
     if (!stored.isEmpty() && stored != QStringLiteral("MW_DOMAIN") && isValidFqdn(stored) &&
-        stored != computed)
+        stored != retired)
         return stored;
 
-    // The computed {unique_id}.{MW_DOMAIN} form only exists for an instance
-    // that actually registered it under the retiring DNS mechanism. A fresh
-    // install has a unique_id (it seeds the deterministic UPnP fallback port)
-    // but no public name: returning the subdomain here would make HttpServer
-    // trust a Host header nothing ever points at, and hand entry points a URL
-    // that does not resolve.
-    if (registeredUid().isEmpty()) return {};
-
-    return computed;
+    // Otherwise this host has no public name. Returning the retired sub-domain
+    // would make HttpServer trust a Host header nothing points at, and hand
+    // entry points a URL that does not resolve.
+    return {};
 }
 
 void AppSettings::setDomain(const QString& domain)
@@ -652,19 +636,6 @@ void AppSettings::setVideoEnhancementAlgo(const QString& algo)
     writeAll(obj);
 }
 
-bool AppSettings::pendingRegistration() const
-{
-    QJsonObject obj = readAll();
-    return obj.value("pending_registration").toBool(false);
-}
-
-void AppSettings::setPendingRegistration(bool pending)
-{
-    QJsonObject obj = readAll();
-    obj["pending_registration"] = pending;
-    writeAll(obj);
-}
-
 QString AppSettings::certPem() const
 {
     QJsonObject obj = readAll();
@@ -740,21 +711,6 @@ void AppSettings::setRemoteAdminEnabled(bool enabled)
 {
     QJsonObject obj = readAll();
     obj["remote_admin_enabled"] = enabled;
-    writeAll(obj);
-}
-
-// ── DNS subdomain ownership token ───────────────────────────────────────────────
-
-QString AppSettings::ownerToken() const
-{
-    QJsonObject obj = readAll();
-    return obj.value("owner_token").toString();
-}
-
-void AppSettings::setOwnerToken(const QString& token)
-{
-    QJsonObject obj = readAll();
-    obj["owner_token"] = token;
     writeAll(obj);
 }
 

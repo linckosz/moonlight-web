@@ -239,7 +239,7 @@ Nothing to publish, but these paths have to exist. On the host network they do.
 | LAN multicast | 5353 | UDP | mDNS host discovery (host networking only). |
 | LAN multicast | 1900 | UDP | SSDP, to find the UPnP router (host networking only). |
 | Internet | 19302 | UDP | STUN, to learn the public address for a stream from outside the LAN. |
-| Internet | 443 | TCP | Update check; plus ACME certificate renewals and the DNS API, only for an install that still holds a legacy sub-domain. |
+| Internet | 443 | TCP | Update check, and the held line to the rendezvous server when Internet Access is on. |
 
 ---
 
@@ -262,15 +262,13 @@ release notes. Until then a remote browser has no way in unless you forward
 TCP 443 yourself and accept the self-signed warning, or bring your own domain
 and certificate.
 
-**A container that still holds a legacy `moonlightweb.top` sub-domain** (one
-that enabled Internet Access on v0.2.4 or earlier) keeps its sub-domain,
-certificate renewals and 80/443 forwards unchanged until the shared DNS
-service shuts down in February 2027. For those, the official images carry the
-same DNS and ACME configuration the installers do; pointing them at your own
-PowerDNS and ACME account instead is a matter of setting `MW_DOMAIN`,
-`MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_KID` and
-`MW_ZEROSSL_EAB_HMAC` — a runtime value always wins over the one compiled
-in.
+**A container upgraded from v0.2.4 or earlier** stops using the
+`moonlightweb.top` sub-domain it once registered: this version registers no
+name, renews no certificate and forwards no web port. The sub-domain keeps
+resolving — that is the DNS server's doing, not the container's — until the
+shared service shuts down in February 2027. Nothing has to be reconfigured;
+the consent checkbox is asked once more, because the wording it was ticked
+under described a mechanism that no longer runs.
 
 ---
 
@@ -304,7 +302,7 @@ docker run --rm -v mw-data:/data -v "$PWD:/backup" debian:trixie-slim \
 | `MW_HTTP_PORT` | `80` | HTTP listener (HTTP-to-HTTPS redirect). |
 | `MW_UPNP` | `1` | `0` stops the app asking the router to map ports — set it on a bridge network, where the request cannot reach a router anyway. |
 | `TZ` | `Etc/UTC` | Timestamps in the logs and the admin UI. |
-| `MW_DOMAIN`, `MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_KID`, `MW_ZEROSSL_EAB_HMAC` | baked in | DNS and ACME configuration for a legacy sub-domain (pre-v0.2.5 installs only). The official images carry the project's, exactly like the `.deb`. |
+| `MW_DOMAIN`, `MW_PDNS_TOKEN` | baked in | The rendezvous domain and the shared API key for the update relay and aggregate metrics. The official images carry the project's, exactly like the `.deb`; without them the container never contacts our infrastructure. |
 
 Everything else is configured from the admin page, or by editing
 `settings.json` in the volume and restarting — see

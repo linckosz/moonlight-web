@@ -174,10 +174,7 @@ jobs:
           build-args: |
             MW_VERSION=${{ steps.ver.outputs.version }}
             MW_DOMAIN=${{ secrets.MW_DOMAIN }}
-            MW_PDNS_URL=${{ secrets.MW_PDNS_URL }}
             MW_PDNS_TOKEN=${{ secrets.MW_PDNS_TOKEN }}
-            MW_ZEROSSL_EAB_KID=${{ secrets.MW_ZEROSSL_EAB_KID }}
-            MW_ZEROSSL_EAB_HMAC=${{ secrets.MW_ZEROSSL_EAB_HMAC }}
           # Labels only — the tags are applied once, on the manifest list, by
           # the merge job below. Pushing tags from here would have the two
           # architectures overwrite each other.

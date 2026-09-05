@@ -362,7 +362,6 @@ const POST_ROUTES = [
     ],
     ['disableInternet', () => BackendClient.disableInternet(), '/api/internet/disable', {}],
     ['refreshInternet', () => BackendClient.refreshInternet(), '/api/internet/refresh', {}],
-    ['renewCert', () => BackendClient.renewCert(), '/api/internet/renew-cert', {}],
 ];
 
 /** @type {[string, () => Promise<any>, string][]} */

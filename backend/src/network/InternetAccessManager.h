@@ -17,20 +17,13 @@
 
 #pragma once
 
-#include <functional>
-
 #include <QObject>
 #include <QTimer>
-#include <QDateTime>
 #include <QJsonObject>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 #include <QStringList>
 
-#include "PdnsClient.h"
 #include "StunClient.h"
 #include "UPNPClient.h"
-#include "AcmeClient.h"
 
 class AppSettings;
 
@@ -38,19 +31,21 @@ class AppSettings;
  * @brief Orchestrates the full Internet Access feature.
  *
  * Responsibilities:
- *   1. Unique ID generation & PowerDNS domain registration
- *   2. Public IP detection via STUN (with fallback chain)
- *   3. A record management through PowerDNS API
- *   4. Periodic checks every 5 minutes (IP change, DNS resolution)
- *   5. TLS certificate management via native ACMEv2 client (DNS-01)
- *   6. UPnP port mapping delegation
- *   7. Pending registration retry every 30s
+ *   1. Public IP detection via STUN (with fallback chain)
+ *   2. UPnP port mapping delegation
+ *   3. NAT-hairpin verdict for the host machine's own entry points
+ *   4. Periodic checks every 5 minutes (IP change, mappings, hairpin)
  *
- * Bring-your-own-domain: when settings.json's `domain` holds a valid FQDN that
- * is not the computed {unique_id}.{MW_DOMAIN}, steps 1/3/4/5 are skipped — the
- * user owns the zone and the certificate. Only the network half runs (public IP
- * detection, UPnP mapping, NAT-hairpin test), so the same one-click toggle keeps
- * the router configured for a domain we do not manage.
+ * This manager publishes nothing. It registers no name, writes no DNS record
+ * and issues no certificate: a machine is reached from the internet through
+ * the rendezvous server, which needs none of that. What is left here is the
+ * router half — knowing this host's public address, opening the ports a
+ * session needs, and telling the host's own shortcuts whether the router
+ * reflects its public address back to the LAN.
+ *
+ * Bring-your-own-domain: when settings.json's `domain` holds a valid FQDN, it
+ * is served as-is and the certificate for it is the user's to provide. Nothing
+ * changes here — this manager never owned a zone in the first place.
  *
  * Lifecycle:
  *   - Created early in main(), registered with API routes.
@@ -68,17 +63,14 @@ public:
     explicit InternetAccessManager(AppSettings* settings, QObject* parent = nullptr);
     ~InternetAccessManager() override;
 
-    /// Enable Internet Access: register domain, detect IP, set up A record.
+    /// Enable Internet Access: detect the public IP, map the router ports.
     void start();
 
     /// Disable Internet Access: stop timers, clean up.
     void stop();
 
-    /// Force re-check public IP and update DNS immediately.
+    /// Force re-check public IP immediately.
     void forceRefresh();
-
-    /// Force TLS certificate renewal immediately.
-    void renewCertificate();
 
     /// Get current status as JSON object (for API responses).
     QJsonObject statusJson() const;
@@ -95,42 +87,17 @@ public:
     /// on because of a consent given for a mechanism that no longer runs.
     bool consentRequired() const { return m_Phase == QLatin1String("consent_required"); }
 
-    /// True while an ACME issuance is in flight. start() emits ready() as soon
-    /// as the A-record resolves, but issuance runs asynchronously and finishes
-    /// later (certificateChanged): until then the domain is still served with
-    /// the self-signed fallback and a browser shows a certificate error, so
-    /// callers that hand a URL to a browser must wait for this to clear.
-    bool certificateIssuing() const { return m_CertIssuing; }
-
-    /// True when @p label collides with a subdomain the PowerDNS stack owns
-    /// (apex, www, api, stats, stream, ns1/ns2, mail) or an internal token label
-    /// (anything starting with '_', e.g. _owner / _acme-challenge). A
-    /// per-instance unique_id must be rejected when this returns true, otherwise
-    /// it would hijack the DNS server's own records. Case-insensitive.
-    static bool isReservedSubdomain(const QString& label);
-
-    /// The registered domain name (e.g. "92b8d127.example.com"), or the
-    /// user-owned FQDN when one is configured (see customDomain()).
+    /// The user-owned FQDN from settings.json, or empty — which is the normal
+    /// case. This instance registers no name of its own: it is reached through
+    /// the rendezvous server.
     QString domain() const { return m_Domain; }
 
-    /// True when the served domain comes from settings.json (`domain` holding a
-    /// valid FQDN that is not the computed one) rather than from the shared
-    /// MW_DOMAIN registration. In that mode this manager never touches DNS and
-    /// never issues a certificate — the user owns both — but still detects the
-    /// public IP and tests NAT hairpin. The 443 forward is the user's to set up.
+    /// True when settings.json carries a valid FQDN the user owns. It is served
+    /// as-is; the certificate for it is theirs to drop in the cert directory.
+    /// This manager still detects the public IP and tests NAT hairpin, so the
+    /// same one-click toggle configures the router. The 443 forward is the
+    /// user's to set up.
     bool customDomain() const { return m_CustomDomain; }
-
-    /// True when this instance registered a `{unique_id}.{MW_DOMAIN}` subdomain
-    /// under the retiring DNS mechanism.
-    ///
-    /// **Always false since 05/09/2026.** No client keeps that mechanism: an
-    /// upgraded install ignores its own `registered_uid`, so nothing here ever
-    /// writes to PowerDNS, runs ACME, or maps 80/443/47999. The compatibility
-    /// that remains is on the PowerDNS server, for clients still running
-    /// v0.2.4 — invisible from this side. Kept as an accessor so the branches
-    /// it gates read as deliberately dead rather than deleted in a hurry; they
-    /// go with the PowerDNS stack itself.
-    bool legacyDns() const { return m_LegacyDns; }
 
     /// Current public IP.
     QString publicIp() const { return m_PublicIp; }
@@ -140,14 +107,10 @@ public:
     /// constructor, so it is usable before — and without — Internet Access.
     QStringList localIps() const { return m_LocalIps; }
 
-    /// External (router-side) HTTPS port this instance is reachable on from the
-    /// internet. Equals the internal HTTPS port (443) for the first instance to
-    /// claim it; a deterministic fallback port for further instances behind the
-    /// same NAT. 0 until UPnP mapping has run.
-    quint16 externalHttpsPort() const { return m_ExternalHttpsPort; }
-
-    /// External (router-side) HTTP port (used for the HTTP→HTTPS redirect).
-    quint16 externalHttpPort() const { return m_ExternalHttpPort; }
+    /// Router-side HTTPS port a user-owned domain is forwarded to. This manager
+    /// maps no web port of its own, so it is simply the local listener port —
+    /// the forward is the user's own router configuration.
+    quint16 externalHttpsPort() const { return m_HttpsPort; }
 
     /// True when this host can reach its own public endpoint, i.e. the router
     /// reflects it back to the LAN (NAT hairpin). False until the first test has
@@ -158,20 +121,9 @@ public:
     /// UPnP client (exposed for integration with existing session code).
     UPNPClient* upnpClient() { return &m_Upnp; }
 
-    /// PowerDNS client (for direct API access if needed).
-    PdnsClient* pdnsClient() { return &m_Pdns; }
-
     /// Set the actual HTTP and HTTPS ports the server is listening on.
-    /// Must be called before start() so UPnP mappings use the correct ports.
+    /// Must be called before start() so the hairpin test probes the right port.
     void setPorts(quint16 httpPort, quint16 httpsPort);
-
-    /// Callback used to move the HTTPS listener to a new port when port parity
-    /// requires it (external router port must equal the local HTTPS port).
-    /// Returns true when the rebind succeeded. Must be set before start().
-    void setHttpsRebindCallback(std::function<bool(quint16)> cb)
-    {
-        m_HttpsRebindCallback = std::move(cb);
-    }
 
 signals:
     /// Emitted when Internet Access becomes fully operational.
@@ -183,14 +135,6 @@ signals:
     /// Emitted when a fatal error prevents Internet Access from working.
     void error(const QString& message);
 
-    /// Emitted when TLS certificate is renewed or changed.
-    void certificateChanged();
-
-    /// Emitted after the HTTPS listener was successfully moved to a new port
-    /// (port parity rebind). Entry points depending on the port (Desktop
-    /// shortcut, tray tooltip) must refresh.
-    void httpsPortChanged(quint16 port);
-
     /// Emitted when the NAT-hairpin verdict flips. Host-side entry points (tray,
     /// Desktop shortcut) pick the public domain or loopback based on it, so they
     /// must be rebuilt when it changes.
@@ -200,48 +144,16 @@ private slots:
     /// Called every 5 minutes for periodic checks.
     void onPeriodicCheck();
 
-    /// Called when pending registration is active. Retries with fixed delay (3s, 3s, 3s), max 3
-    /// attempts.
-    void onPendingRegistrationRetry();
-
-    /// Called when ACME client reports progress.
-    void onAcmeProgress(const QString& message);
-
-    /// Called when ACME client errors out.
-    void onAcmeError(const QString& message);
-
-    /// Called when ACME client finishes (success or failure).
-    void onAcmeFinished(bool success);
-
 private:
     /// Generate a unique 8-char hex ID.
     QString generateUniqueId();
 
-    /// Eager init: ensure unique_id and domain exist, without touching DNS.
+    /// Eager init: ensure unique_id exists and settle whether a user-owned
+    /// domain is configured. Touches nothing on the network.
     void ensureIdentifiers();
 
     /// Re-read this host's IPv4 addresses into m_LocalIps / m_LocalIp (best first).
     void refreshLocalAddresses();
-
-    /// Create or verify the A record under the existing parent domain.
-    bool createOrUpdateARecord();
-
-    /// Ensure the per-instance ownership token exists (generate + persist on
-    /// first call) and push it to the PowerDNS client so every write carries the
-    /// X-MW-Owner header. Returns the token. Idempotent.
-    QString ensureOwnerToken();
-
-    /// Claim (if unowned) or verify ownership of this instance's subdomain.
-    /// Ownership is now enforced server-side by the mw-proxy middleware via the
-    /// X-MW-Owner header (see ensureOwnerToken); the token is never published in
-    /// a public TXT. Kept as the single entry point that guarantees the token is
-    /// ready before the A record is written.
-    bool claimOrVerifyOwnership(QString& errorMsg);
-
-    /// Release the previously registered subdomain when unique_id changed, so an
-    /// owner never holds more than one live subdomain. Deletes the old A record
-    /// and its _owner TXT, but only after verifying we own it (TXT == ownerToken).
-    void releaseOldSubdomain();
 
     /// Detect public IP via STUN (with fallback chain).
     bool detectPublicIp();
@@ -250,52 +162,14 @@ private:
     /// Used when STUN servers all fail to respond.
     QString detectPublicIpViaHttp();
 
-    /// Update the A record on PowerDNS with the current public IP.
-    bool updateARecord();
-
-    /// Append a traceability entry to the dedicated audit log every time an
-    /// A-record registration request is sent to the PowerDNS API. Records the
-    /// timestamp, unique ID, domain, public IP and the user's consent (exact
-    /// agreement text, when and where it was accepted).
-    void logDnsRegistrationAudit(const QString& action);
-
-    /// Issue a TLS certificate via the native ACME client.
-    bool issueCertificate();
-
-    /// Read certificate expiry date directly from the PEM file.
-    /// Returns ISO 8601 string, or empty string if file missing/invalid.
-    static QString readCertExpiry(const QString& certPath);
-
-    /// Check certificate expiry and renew if < 30 days remaining.
-    bool checkCertificate();
-
-    /// Build the domain name from unique ID.
+    /// The name this instance would have carried under the retired DNS
+    /// mechanism. Never served: it exists only so a `domain` left in
+    /// settings.json by such an install is recognised as that name rather than
+    /// mistaken for a domain the user owns.
     QString buildDomain() const;
 
-    /// Deterministic fallback external port derived from unique_id, so two
-    /// instances behind the same NAT never converge on the same port (the router
-    /// forwards each external port to a single host).
-    quint16 fallbackExternalPort(quint16 internalPort) const;
-
-    /// Map an external port to the given internal port, preferring the internal
-    /// port itself (clean URL) and falling back to a deterministic per-instance
-    /// port when another device already owns it. Never evicts another device's
-    /// mapping. Returns the external port actually mapped, or 0 on failure.
-    quint16 mapPortWithFallback(quint16 internalPort, const char* protocol, const char* desc);
-
-    /// Map the HTTPS port with strict external==internal parity: the router-side
-    /// port always equals the local listener port (443→443, 48123→48123, ...).
-    /// When the preferred port is owned by another device on the router, a
-    /// deterministic fallback port is chosen and the HTTPS listener is moved to
-    /// it via m_HttpsRebindCallback (deferred, out of the current call stack).
-    /// Returns the external (== eventual internal) port, or 0 on failure.
-    quint16 mapHttpsPortParity();
-
-    /// True when the given TCP port can be bound locally (quick listen test).
-    static bool isLocalPortBindable(quint16 port);
-
     /// Test whether the host can reach its own public endpoint (domain +
-    /// external HTTPS port) — i.e. whether the router supports NAT hairpin /
+    /// HTTPS port) — i.e. whether the router supports NAT hairpin /
     /// loopback. A short TCP connect from this machine to its public address is
     /// exactly what a browser on the same host would attempt. Blocks up to a few
     /// seconds; call only from timers, never from the HTTP request path.
@@ -305,17 +179,9 @@ private:
     /// changed so live admin pages pick it up.
     void updateHairpinStatus();
 
-    /// Resolve the domain via system DNS.
-    QString resolveDomain(const QString& domain);
-
-    /// Ping the domain (fallback when DNS fails).
-    bool pingDomain(const QString& domain);
-
     // Owned sub-clients
-    PdnsClient m_Pdns;
     StunClient m_Stun;
     UPNPClient m_Upnp;
-    AcmeClient m_Acme;
 
     // Settings reference (not owned)
     AppSettings* m_Settings = nullptr;
@@ -323,47 +189,22 @@ private:
     // State
     bool m_Active = false;
     QString m_Domain;
-    bool m_CustomDomain = false; ///< True when settings.json carries a user-owned FQDN instead of
-                                 ///< the computed {unique_id}.{MW_DOMAIN}. The DNS/ACME half of the
-                                 ///< manager is then inert (we own neither the zone nor the cert).
-    bool m_LegacyDns = false;    ///< True when this instance holds a subdomain registered under the
-                                 ///< retiring DNS mechanism (registered_uid set). Gates every DNS,
-                                 ///< ACME and 80/443/47999 code path — see legacyDns().
+    bool m_CustomDomain = false; ///< True when settings.json carries a user-owned FQDN. It is
+                                 ///< served as-is; we own neither the zone nor the certificate.
     QString m_PublicIp;
     QString m_LocalIp;      ///< Best LAN IP of this host: the default-route address (= first
-                            ///< entry of m_LocalIps). What the port mapping and the shared
-                            ///< access URL point at.
+                            ///< entry of m_LocalIps). What the shared access URL points at.
     QStringList m_LocalIps; ///< Every IPv4 another machine can reach us on, best first. Includes
                             ///< host-only virtual switches, only reachable from their own VMs.
     QString m_UniqueId;
     QString m_LastError;
     QString m_Phase; ///< Current activation step (drives the UI loader). See statusJson "phase".
-    bool m_CertIssuing = false;      ///< True while ACME issuance is in progress
     bool m_HairpinReachable = false; ///< True when the host can reach its own public
                                      ///< endpoint (router supports NAT hairpin). Drives
                                      ///< the host-machine redirect to the public domain.
     quint16 m_HttpPort = 0;          ///< Actual HTTP server port
     quint16 m_HttpsPort = 0;         ///< Actual HTTPS server port
-    quint16 m_ExternalHttpsPort = 0; ///< Router-side external HTTPS port (443 or fallback)
-    quint16 m_ExternalHttpPort = 0;  ///< Router-side external HTTP port (80 or fallback)
-    quint16 m_ExternalUdpPort = 0;   ///< Router-side external UDP stream port (47999 or fallback),
-                                     ///< tracked so stop() can close it — a mapping left behind
-                                     ///< after "disable" would keep the NAT hole open for up to
-                                     ///< the remaining lease (1 h)
-    bool m_ServiceManaged = false; ///< True when launched by a service supervisor (MW_SERVICE set);
-                                   ///< such an instance never steals a port mapping owned by
-                                   ///< another device — only a manual launch takes over.
-
-    // HTTPS listener rebind hook (port parity), set from main.cpp.
-    std::function<bool(quint16)> m_HttpsRebindCallback;
-
-    // Retry state
-    int m_PendingRetryCount = 0; ///< Current retry attempt (0..3) for pending registration
-
-    // Last DNS check timestamp (spaced to 24h)
-    QDateTime m_LastDnsCheck;
 
     // Timers
     QTimer* m_PeriodicCheckTimer = nullptr;
-    QTimer* m_PendingRegistrationTimer = nullptr;
 };

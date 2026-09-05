@@ -97,9 +97,8 @@ public:
         , m_Guard(guard)
     {}
 
-    // Update the public (SNI default) config on a running server. Needed after
-    // ACME issuance so new connections get the freshly issued cert without a
-    // full server restart.
+    // Update the public (SNI default) config on a running server, so new
+    // connections get a replaced certificate without a full server restart.
     void setPublicSslConfig(const QSslConfiguration& cfg) { m_PublicSslConfig = cfg; }
 
 protected:

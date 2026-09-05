@@ -60,8 +60,6 @@ void run_app_settings_tests()
     CHECK_EQ(s.autoIpDetection(), false);
     s.setInternetAccessEnabled(true);
     CHECK_EQ(s.internetAccessEnabled(), true);
-    s.setPendingRegistration(true);
-    CHECK_EQ(s.pendingRegistration(), true);
     s.setCertAuthEnabled(true);
     CHECK_EQ(s.certAuthEnabled(), true);
 
@@ -78,8 +76,6 @@ void run_app_settings_tests()
     CHECK_EQ(s.transportMode(), QString("webrtc-dc-udp"));
     s.setUniqueId("abcd1234");
     CHECK_EQ(s.uniqueId(), QString("abcd1234"));
-    s.setRegisteredUid("abcd1234");
-    CHECK_EQ(s.registeredUid(), QString("abcd1234"));
     s.setPublicIp("1.2.3.4");
     CHECK_EQ(s.publicIp(), QString("1.2.3.4"));
     s.setCertPem("MW_CERT_PEM");
@@ -88,40 +84,29 @@ void run_app_settings_tests()
     CHECK_EQ(s.certKey(), QString("MW_CERT_KEY"));
     s.setCertificateToken("token-xyz");
     CHECK_EQ(s.certificateToken(), QString("token-xyz"));
-    s.setOwnerToken("owner-xyz");
-    CHECK_EQ(s.ownerToken(), QString("owner-xyz"));
 
     // HMAC key (Base64 binary) round-trip.
     QByteArray key("\x01\x02\x03\x04binarykey", 13);
     s.setHmacKey(key);
     CHECK_EQ(s.hmacKey(), key);
 
-    // domain(): the sentinel resolves to {unique_id}.{MW_DOMAIN}, while a stored
-    // FQDN is a user-owned domain and must survive verbatim — InternetAccess
-    // decides on exactly this difference whether it may touch DNS/ACME.
-    // The computed form only exists for a legacy instance (registered_uid set
-    // above): a fresh install has a unique_id but no public name.
+    // domain(): a stored FQDN is a user-owned domain and must survive verbatim.
+    // Everything else resolves to nothing — this host registers no name, and
+    // handing out a sub-domain nothing points at would poison the Host-header
+    // trust and every entry-point URL.
     qputenv("MW_DOMAIN", "example.test");
     s.setUniqueId("abcd1234");
-    s.setDomain("MW_DOMAIN");
-    CHECK_EQ(s.domain(), QString("abcd1234.example.test"));
-    s.setDomain("my.host.example.com");
-    CHECK_EQ(s.domain(), QString("my.host.example.com"));
-    // A stored value that is not a valid FQDN never wins over the computed one.
-    s.setDomain("nodot");
-    CHECK_EQ(s.domain(), QString("abcd1234.example.test"));
-    // Storing the computed name is not a custom domain either.
-    s.setDomain("abcd1234.example.test");
-    CHECK_EQ(s.domain(), QString("abcd1234.example.test"));
-    // Without a legacy registration the computed name disappears entirely —
-    // handing out a subdomain nothing points at would poison the Host-header
-    // trust and every entry-point URL. A custom domain still wins.
-    s.setRegisteredUid("");
     s.setDomain("MW_DOMAIN");
     CHECK_EQ(s.domain(), QString());
     s.setDomain("my.host.example.com");
     CHECK_EQ(s.domain(), QString("my.host.example.com"));
-    s.setRegisteredUid("abcd1234");
+    // A stored value that is not a valid FQDN is not a domain at all.
+    s.setDomain("nodot");
+    CHECK_EQ(s.domain(), QString());
+    // The name a pre-0.3 install registered is excluded by name: it is left in
+    // settings.json on every upgraded machine, and it is not the user's.
+    s.setDomain("abcd1234.example.test");
+    CHECK_EQ(s.domain(), QString());
     s.setDomain("MW_DOMAIN");
     qunsetenv("MW_DOMAIN");
 

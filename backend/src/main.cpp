@@ -182,10 +182,10 @@ static void loadEnvFile()
 }
 
 // Apply compile-time embedded defaults (baked in by CI via CMake from repo
-// secrets) for any Internet-Access env var the runtime environment / .env did
-// not already provide. Lets the distributed build carry its DNS/ACME config
-// without shipping a .env next to the executable. Runtime env and .env win;
-// embedded values are only a fallback.
+// secrets) for any of the project's own service settings the runtime
+// environment / .env did not already provide. Lets the distributed build carry
+// them without shipping a .env next to the executable. Runtime env and .env
+// win; embedded values are only a fallback.
 static void applyEmbeddedEnvDefaults()
 {
     auto setIfEmpty = [](const char* key, const char* value) {
@@ -195,17 +195,8 @@ static void applyEmbeddedEnvDefaults()
 #ifdef MW_DOMAIN
     setIfEmpty("MW_DOMAIN", MW_DOMAIN);
 #endif
-#ifdef MW_PDNS_URL
-    setIfEmpty("MW_PDNS_URL", MW_PDNS_URL);
-#endif
 #ifdef MW_PDNS_TOKEN
     setIfEmpty("MW_PDNS_TOKEN", MW_PDNS_TOKEN);
-#endif
-#ifdef MW_ZEROSSL_EAB_KID
-    setIfEmpty("MW_ZEROSSL_EAB_KID", MW_ZEROSSL_EAB_KID);
-#endif
-#ifdef MW_ZEROSSL_EAB_HMAC
-    setIfEmpty("MW_ZEROSSL_EAB_HMAC", MW_ZEROSSL_EAB_HMAC);
 #endif
 }
 
@@ -611,11 +602,10 @@ static int runStatusCommand(quint16 persistedHttpsPort)
 
     const bool internetOn =
         inet.value("active").toBool(false) && !inet.value("domain").toString().isEmpty();
-    // A fresh install has no domain and never will: it is reached through the
-    // rendezvous server instead. That address exists nowhere else — nothing is
-    // published in DNS any more — so if this command does not print it, its
-    // owner has no way to learn it. Before this branch existed such an instance
-    // was reported as "From internet off", which was the opposite of true.
+    // An install has no domain unless its owner configured one of their own: it
+    // is reached through the rendezvous server instead. That address exists
+    // nowhere else — nothing is published in DNS — so if this command does not
+    // print it, its owner has no way to learn it.
     const QJsonObject rdv = inet.value("rendezvous").toObject();
     const QString rdvUrl = rdv.value("url").toString();
     const bool internetWanted = inet.value("internet_access_enabled").toBool(false);
@@ -623,15 +613,9 @@ static int runStatusCommand(quint16 persistedHttpsPort)
         const int extPort = inet.value("external_https_port").toInt(443);
         out << "  From internet  https://" << inet.value("domain").toString()
             << (extPort == 443 ? QString() : QStringLiteral(":%1").arg(extPort)) << "\n";
-        if (inet.value("cert_issuing").toBool(false))
-            out << "                 (certificate still being issued — retry in a minute)\n";
-        // A legacy instance gets BOTH: the sub-domain it hands out today, and
-        // the address that replaces it when that service shuts down. Printing
-        // only the first would leave the people who actually have to migrate as
-        // the only ones never shown where to migrate to.
-        if (!rdvUrl.isEmpty())
-            out << "                 " << rdvUrl << "\n"
-                << "                 (works now; replaces the address above in February 2027)\n";
+        // Both are printed: the user's own domain needs a port forward to
+        // answer, the rendezvous address answers without one.
+        if (!rdvUrl.isEmpty()) out << "                 " << rdvUrl << "\n";
     } else if (!rdvUrl.isEmpty()) {
         out << "  From internet  " << rdvUrl << "\n";
         // Held connection, not a published record: while it is down the address
@@ -875,8 +859,8 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
     out << "\nEnabling the Internet link…\n";
     out.flush();
 
-    // Generous: the handler returns only once the A record resolves, and DNS
-    // propagation plus the ACME order are both network round-trips away.
+    // Generous: the handler runs STUN detection and asks the router, both
+    // network round-trips with their own timeouts.
     const LoopbackReply reply = loopbackAdminPost(
         base, "/api/internet/enable", QJsonDocument(body).toJson(QJsonDocument::Compact), 180000);
     if (!reply.ok) {
@@ -901,9 +885,9 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
     }
 
     if (domain.isEmpty()) {
-        // Fresh instance: nothing is published — the link only authorizes the
-        // per-session router mapping. The remote entry point arrives with the
-        // introduction server.
+        // Nothing is published — the link only authorizes the per-session
+        // router mapping. The remote entry point arrives with the introduction
+        // server.
         out << "\n  Internet link  enabled — streaming sessions may open a router port"
             << (upnp ? " (UPnP gateway found).\n"
                      : ".\n                 No UPnP gateway answered: remote streams will need a "
@@ -912,8 +896,6 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
             << "                 no certificate is issued, ports 80/443 stay closed).\n";
     } else {
         out << "\n  Public URL     https://" << domain << extSuffix << "\n";
-        if (st.value("cert_issuing").toBool(false))
-            out << "                 certificate still being issued — it lands within a minute\n";
 
         out << "\n";
         if (upnp) {
@@ -1459,7 +1441,7 @@ int main(int argc, char* argv[])
                  (mw::hasDisplayServer() ? QString() : QStringLiteral(" (no display — headless)")));
 
     // Force Qt's TLS backend to OpenSSL. On Windows Qt defaults to Schannel,
-    // which cannot import the public ACME cert's PEM private key — handshakes on
+    // which cannot import a public cert's PEM private key — handshakes on
     // the public domain fail with SEC_E_CERT_UNKNOWN (0x80090327) and the browser
     // ends up served the LAN self-signed cert (no public-domain SAN), yielding
     // ERR_CERT_COMMON_NAME_INVALID. The OpenSSL plugin + libssl/libcrypto DLLs are
@@ -1900,26 +1882,24 @@ int main(int argc, char* argv[])
     updatePollTimer.setInterval(UpdateChecker::kCacheHours * 3600 * 1000);
     QObject::connect(&updatePollTimer, &QTimer::timeout, &updateChecker, &UpdateChecker::refresh);
     updatePollTimer.start();
-    // First fetch shortly after boot: late enough for the network stack (and any
-    // ACME/DNS work above) to be up, early enough to precede the first client.
+    // First fetch shortly after boot: late enough for the network stack to be
+    // up, early enough to precede the first client.
     QTimer::singleShot(5000, &updateChecker, &UpdateChecker::refresh);
 
-    // Re-sync domain on HttpServer — ensureIdentifiers() (called in
-    // the InternetAccessManager constructor) may have just generated a
-    // new unique_id, which changes the computed domain.
+    // Re-sync domain on HttpServer — ensureIdentifiers() (called in the
+    // InternetAccessManager constructor) settles whether a user-owned domain is
+    // configured. Empty on an install that has none, which is the normal case.
     server.setDomain(appSettings.domain());
 
     // ── Startup cert domain sync ──────────────────────────────────────────────
-    // After ensureIdentifiers() has computed the correct domain from unique_id,
-    // check if the embedded cert (MW_CERT_PEM/MW_CERT_KEY)
-    // has a CN that matches this domain.
+    // Only runs for a host that serves a domain of its own. Check whether the
+    // embedded cert (MW_CERT_PEM/MW_CERT_KEY) has a CN matching it.
     //
     // If the CN matches, restore the env-var references in settings.json,
-    // overriding any file paths that were left over from a previous ACME run
-    // (e.g. after a unique_id change-and-revert cycle).
+    // overriding any file paths left over from an earlier configuration.
     //
-    // If the CN does NOT match, leave settings as-is; loadCert() will fall
-    // through to file scan or trigger ACME issuance via InternetAccessManager.
+    // If the CN does NOT match, leave settings as-is; loadCert() falls through
+    // to the file scan, and to the self-signed certificate if that finds none.
     {
         QString domain = server.domain();
         if (!domain.isEmpty()) {
@@ -1956,22 +1936,6 @@ int main(int argc, char* argv[])
             }
         }
     }
-
-    // Hot-reload TLS when certificate is renewed (no server restart needed)
-    QObject::connect(&internetAccess, &InternetAccessManager::certificateChanged,
-                     [&server, &appSettings]() {
-                         qInfo() << "[main] Certificate renewed, reloading TLS";
-                         // Sync the domain on HttpServer too — it may have been updated since
-                         // the initial setDomain() call (e.g. unique_id changed via API).
-                         // Without this, reloadTls() uses the stale m_Domain and can reject
-                         // the newly issued certificate due to CN mismatch.
-                         server.setDomain(appSettings.domain());
-                         server.setCertPem(appSettings.certPem());
-                         server.setCertKey(appSettings.certKey());
-                         if (!server.reloadTls()) {
-                             qWarning() << "[main] TLS reload failed -- restart may be required";
-                         }
-                     });
 
     // Register API routes
     server.router()->get("/api/health", [](const HttpRequest&) {
@@ -3940,19 +3904,9 @@ int main(int argc, char* argv[])
         if (appSettings.httpPort(0) != activeHttp) appSettings.setHttpPort(activeHttp);
     }
 
-    // Sync UPnP port mapping port with the actual server port
+    // Tell the manager which ports the server actually listens on, so its
+    // hairpin test probes the right one.
     internetAccess.setPorts(server.httpPort(), server.activeHttpsPort());
-
-    // Port parity (external == internal): when the router-side default port is
-    // owned by another instance, InternetAccessManager claims a fallback port so
-    // the public URL port is exactly the port the router forwards. We ADD a
-    // second HTTPS listener on that port for the domain rather than moving the
-    // primary — the primary keeps serving localhost/LAN, so the admin page never
-    // loses the origin it is loaded on (no reload race, no stranded page).
-    internetAccess.setHttpsRebindCallback([&server](quint16 port) -> bool {
-        qInfo() << "[main] Port parity: adding HTTPS listener for the public domain on" << port;
-        return server.addSecondaryHttpsListener(port);
-    });
 
     // URL for the host machine's own entry points (Desktop shortcut, installer
     // post-install page, Dock, tray, startup open).
@@ -4011,48 +3965,28 @@ int main(int argc, char* argv[])
     // off — no need for its return value here.
     Provisioning::applyOnce(QCoreApplication::applicationDirPath(), appSettings, computerManager);
 
-    // Mark the A-record checklist step done once the address is usable (legacy
-    // instances only — a fresh install never opens that step). The shortcut is
-    // rewritten alongside because the active HTTPS port can move at this moment
-    // (port parity claims a fallback), not because the link itself changes: it
-    // is loopback either way.
-    //
-    // "done" means the address is usable in a browser, which takes BOTH the
-    // A-record and the certificate. ready() only covers the former, so when an
-    // ACME order is still in flight the step stays "running" and is closed by
-    // the certificateChanged handler below — otherwise the installer declares
-    // success and opens the admin page on the still-self-signed domain.
+    // Close the internet-link checklist step once the link is up. The shortcut
+    // is rewritten alongside because the active HTTPS port is known by then,
+    // not because the link itself changes: it is loopback either way.
     //
     // Gated on the step being "running" rather than on `provisioned`: the
     // in-app setup wizard (macOS/Linux) opens the very same step from
-    // /api/setup/apply, and it needs the certificate folded into "done" for
-    // exactly the same reason the installer does.
+    // /api/setup/apply.
     QObject::connect(&internetAccess, &InternetAccessManager::ready, &app,
-                     [&adminUrl, &internetAccess](const QString&, const QString&) {
-                         // adminUrl() folds in the active HTTPS port (fallback port
-                         // for a co-existing instance behind the same NAT).
+                     [&adminUrl](const QString&, const QString&) {
                          writeAdminShortcut(adminUrl());
-                         if (arecordRunning() && !internetAccess.certificateIssuing())
+                         if (arecordRunning())
                              Provisioning::setStepStatus(QStringLiteral("arecord"),
                                                          QStringLiteral("done"));
                      });
-    // The certificate landed (and the TLS reload connected earlier already
-    // swapped it in): the domain URL is now trusted, so republish it and close
-    // the checklist step.
-    QObject::connect(
-        &internetAccess, &InternetAccessManager::certificateChanged, &app, [&adminUrl]() {
-            writeAdminShortcut(adminUrl());
-            if (arecordRunning())
-                Provisioning::setStepStatus(QStringLiteral("arecord"), QStringLiteral("done"));
-        });
     QObject::connect(&internetAccess, &InternetAccessManager::error, &app, [](const QString&) {
         if (arecordRunning())
             Provisioning::setStepStatus(QStringLiteral("arecord"), QStringLiteral("failed"));
     });
 
-    // Auto-start Internet Access if it was enabled before last shutdown.
-    // This handles DNS registration + public IP detection at boot without
-    // waiting for the user to toggle the checkbox in the UI.
+    // Auto-start Internet Access if it was enabled before last shutdown, so the
+    // public IP is known and the router has been asked at boot without waiting
+    // for the user to toggle the checkbox in the UI.
     if (appSettings.internetAccessEnabled()) {
         qInfo() << "[main] internet_access_enabled is true — auto-starting...";
         internetAccess.start();
@@ -4061,10 +3995,8 @@ int main(int argc, char* argv[])
                 << "domain:" << st.value("domain").toString()
                 << "lastError:" << st.value("last_error").toString();
         // start() may resolve synchronously (no 'ready' signal emitted): reflect
-        // the final A-record state into the installer checklist either way. An
-        // ACME order still in flight keeps the step running — certificateChanged
-        // (or the installer's own timeout) closes it.
-        if (arecordRunning() && !internetAccess.certificateIssuing())
+        // the final state into the installer checklist either way.
+        if (arecordRunning())
             Provisioning::setStepStatus(QStringLiteral("arecord"), internetAccess.isActive()
                                                                        ? QStringLiteral("done")
                                                                        : QStringLiteral("failed"));
@@ -4291,12 +4223,6 @@ int main(int argc, char* argv[])
     // and only where there is a screen to draw on — see LatencyFlag.h.
     LatencyFlag::setEnabled(hasGuiSession() && appSettings.latencyFlagEnabled());
 
-    // Keep the one host-side entry point that is written down current when the
-    // entry URL changes: a parity rebind moves the HTTPS port under it. The menu
-    // needs no such upkeep — it resolves its address at the click — and the
-    // tooltip carries no address at all any more.
-    QObject::connect(&internetAccess, &InternetAccessManager::httpsPortChanged, &trayManager,
-                     [adminUrl](quint16) { writeAdminShortcut(adminUrl()); });
     // The hairpin verdict decides between the domain and loopback, and it can
     // flip long after startup (router reconfigured, periodic re-test): rebuild
     // the shortcut rather than leaving it on an address that stopped working —
@@ -4389,16 +4315,10 @@ int main(int argc, char* argv[])
             quint16 extPort = internetAccess.externalHttpsPort();
             if (extPort == 0) extPort = activePort;
             Logger::info("  From the internet: https://" + internetAccess.domain() +
-                         (extPort == 443 ? QString() : QStringLiteral(":%1").arg(extPort)) +
-                         (internetAccess.certificateIssuing()
-                              ? QStringLiteral(" (certificate still being issued — retry in a "
-                                               "minute)")
-                              : QString()));
-            // A legacy instance gets BOTH: the sub-domain it hands out today,
-            // and the address that replaces it when that service shuts down.
-            if (!rdvUrl.isEmpty())
-                Logger::info("  From the internet: " + rdvUrl +
-                             " (works now; replaces the address above in February 2027)");
+                         (extPort == 443 ? QString() : QStringLiteral(":%1").arg(extPort)));
+            // A user-owned domain does not replace the rendezvous: it is the
+            // one address that works when the router forwards nothing.
+            if (!rdvUrl.isEmpty()) Logger::info("  From the internet: " + rdvUrl);
         } else if (!rdvUrl.isEmpty()) {
             Logger::info("  From the internet: " + rdvUrl);
         } else if (rendezvousShouldRun()) {

@@ -144,18 +144,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 
-        // unique_id is immutable once assigned: it keys this instance's subdomain,
-        // its DNS ownership token, and its certificate. Only accept it when unset.
-        if (body.contains("unique_id") && appSettings.uniqueId().isEmpty()) {
-            const QString requestedUid = body["unique_id"].toString().trimmed().toLower();
-            // Reject labels the PowerDNS stack owns (www, api, stats, ns1/ns2, ...):
-            // using one would hijack the DNS server's own records for this domain.
-            if (InternetAccessManager::isReservedSubdomain(requestedUid))
-                return HttpResponse::error(
-                    400, "This subdomain is reserved by the DNS server — choose another unique_id");
-            appSettings.setUniqueId(requestedUid);
-        }
-        // pdns_token is no longer stored in settings; set MW_PDNS_TOKEN env var instead.
+        // unique_id is this instance's local identity and is immutable once
+        // assigned. It is published nowhere — accepting it here only lets a
+        // fresh install be given a readable name before it has generated one.
+        if (body.contains("unique_id") && appSettings.uniqueId().isEmpty())
+            appSettings.setUniqueId(body["unique_id"].toString().trimmed().toLower());
         if (body.contains("auto_ip_detection"))
             appSettings.setAutoIpDetection(body["auto_ip_detection"].toBool());
         if (body.contains("public_ip")) appSettings.setPublicIp(body["public_ip"].toString());
@@ -170,7 +163,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // client — and since 05/09/2026 there is only one: the rendezvous-era
         // behaviour (UPnP during sessions, peer-visible IP, no DNS record, no
         // certificate). An upgraded install no longer runs the DNS mechanism,
-        // so it can no longer consent to it, whatever `registered_uid` says.
+        // so it can no longer consent to it.
         if (body.value("internet_access_enabled").toBool(false) &&
             body.contains("consent_message")) {
             appSettings.setInternetConsent(body["consent_message"].toString(),
@@ -476,8 +469,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                 if (internetAuth) {
                     Provisioning::setStepStatus("arecord", "running");
                     // Legal traceability: the wizard sends the exact agreement text shown.
-                    // The wizard only runs on a fresh install, which never registers a
-                    // subdomain — the consent is for the rendezvous-era behaviour.
+                    // Nothing is registered anywhere — the consent is for the
+                    // rendezvous-era behaviour.
                     appSettings.setInternetConsent(body.value("consent_message").toString(),
                                                    QStringLiteral("setup"),
                                                    QStringLiteral("rendezvous"));
@@ -489,18 +482,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                     // the next restart brought the line up at boot.
                     if (onInternetAccessToggled) onInternetAccessToggled(true);
                     const bool active = internetAccess.isActive();
-                    // start() returns once the A record resolves, but the ACME order for
-                    // that domain is still in flight — and it cannot progress while this
-                    // handler holds the event loop. So leave the step "running" and let
-                    // the certificateChanged/error handlers in main.cpp close it once we
-                    // return; the wizard keeps polling until then. Closing it here would
-                    // send the user to a domain their browser still rejects, because it
-                    // is served with the self-signed fallback until the order lands.
-                    const bool certPending = active && internetAccess.certificateIssuing();
-                    if (!certPending)
-                        Provisioning::setStepStatus("arecord", active ? "done" : "failed");
+                    Provisioning::setStepStatus("arecord", active ? "done" : "failed");
                     result["internet_active"] = active;
-                    result["certificate_pending"] = certPending;
                     result["domain"] = internetAccess.domain();
                     // Usually empty right here: the claim is a round-trip that cannot
                     // run while this handler holds the event loop. The wizard picks the
@@ -787,26 +770,14 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             return HttpResponse::json(obj);
         });
 
-    // API route: force refresh (re-check IP, DNS, certificate)
+    // API route: force refresh (re-detect the public IP, re-test NAT hairpin)
     server.router()->post("/api/internet/refresh", [&](const HttpRequest& req) {
-        // Localhost only: refresh re-runs DNS/ACME and must not be triggerable by
-        // a remote session (avoids abusing the ACME provider's rate limits).
+        // Localhost only: it reaches out to STUN servers and to this host's own
+        // public address, and must not be triggerable by a remote session.
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         internetAccess.forceRefresh();
         return HttpResponse::json(internetAccess.statusJson());
-    });
-
-    // API route: renew TLS certificate
-    server.router()->post("/api/internet/renew-cert", [&](const HttpRequest& req) {
-        // Localhost only: certificate issuance is subject to strict ACME rate
-        // limits — never let a remote session drive it.
-        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
-
-        internetAccess.renewCertificate();
-        QJsonObject obj;
-        obj["status"] = "renewing";
-        return HttpResponse::json(obj);
     });
 
     // — Admin settings (localhost only, server config) —

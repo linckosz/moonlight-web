@@ -452,8 +452,8 @@ cmd //c backend/build_msvc.bat
 **Qt Creator** kit configuration, frontend tests and the PR workflow — is in
 **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
-**DNS stack (legacy Internet access).** The per‑instance sub‑domain mechanism is retired for new installs and its shared service shuts down in **February 2027** — but the stack that still serves existing installs, and that a fork could run for its own users, lives in [`deploy/powerdns/`](deploy/powerdns/): a turnkey Docker stack (dnsdist + PowerDNS + Caddy).\
-Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 80 and 443, register your nameservers at your registrar, then set `MW_DOMAIN` / `MW_PDNS_URL` / `MW_PDNS_TOKEN` in the server's `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).
+**DNS stack (rendezvous server).** The domain the rendezvous server answers on is served by [`deploy/powerdns/`](deploy/powerdns/): a turnkey Docker stack (dnsdist + PowerDNS + Caddy), which a fork can run for its own users. It also keeps answering for the per‑instance sub‑domains v0.2.4 clients registered, until that retired mechanism's shared service shuts down in **February 2027** — no version of the app writes to it any more.\
+Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 80 and 443, register your nameservers at your registrar, then point the app at it with `MW_DOMAIN` in its `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).
 
 ---
 

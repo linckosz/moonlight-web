@@ -279,29 +279,24 @@ public:
 
     // ── Internet Access ───────────────────────────────────────────────────────
 
-    /// Whether Internet Access via PowerDNS is enabled.
+    /// Whether the machine may reach out to the internet on the user's behalf
+    /// (public-IP detection, router port mapping, the rendezvous line).
     /// Default: false.
     bool internetAccessEnabled() const;
     void setInternetAccessEnabled(bool enabled);
 
-    /// Unique 8-char hex identifier for the PowerDNS subdomain.
+    /// Unique 8-char hex identifier of this instance. Local only: it names the
+    /// machine in the admin page and is published nowhere.
     QString uniqueId() const;
     void setUniqueId(const QString& id);
 
-    /// Last subdomain actually registered in DNS (the one whose _owner TXT we
-    /// hold). Used to release the previous subdomain when unique_id changes,
-    /// so an owner never holds more than one live subdomain.
-    QString registeredUid() const;
-    void setRegisteredUid(const QString& id);
-
-    /// Full domain name: "{uniqueId}.{MW_DOMAIN}" or the stored FQDN.
+    /// The FQDN this host serves, or empty — which is the normal case, since
+    /// nothing registers a name any more.
     ///
-    /// Logic:
-    ///   1. Read "domain" from settings.json.
-    ///   2. If it is a valid FQDN (contains at least one dot), return it as-is.
-    ///   3. Otherwise construct "{uniqueId}.{MW_DOMAIN}" where MW_DOMAIN is
-    ///      read from the MW_DOMAIN env var (fallback "moonlightweb.top").
-    ///      If uniqueId is empty, returns just the base domain.
+    /// Returns the stored "domain" when it is a valid FQDN the user owns.
+    /// A "{uniqueId}.{MW_DOMAIN}" left there by a pre-0.3 install is NOT
+    /// returned: nothing points at that name, so serving it would hand every
+    /// entry point a URL that does not resolve.
     QString domain() const;
     void setDomain(const QString& domain);
 
@@ -328,20 +323,15 @@ public:
     QByteArray hmacKey() const;
     void setHmacKey(const QByteArray& key);
 
-    /// Pending domain registration flag (set when no internet at install time).
-    /// On each startup, if true, retry registration every 30s until success.
-    bool pendingRegistration() const;
-    void setPendingRegistration(bool pending);
-
     /// Certificate PEM source: env var name (e.g. "MW_CERT_PEM") or file path.
     /// Defaults to "MW_CERT_PEM" (reads the PEM from environment variable).
-    /// After ACME issuance, set to a file path (e.g. letsencrypt/fullchain.pem).
+    /// A file path when the user dropped their own certificate in.
     QString certPem() const;
     void setCertPem(const QString& value);
 
     /// Private key source: env var name (e.g. "MW_CERT_KEY") or file path.
     /// Defaults to "MW_CERT_KEY" (reads the PEM from environment variable).
-    /// After ACME issuance, set to a file path (e.g. letsencrypt/domain_key.pem).
+    /// A file path when the user dropped their own key in.
     QString certKey() const;
     void setCertKey(const QString& value);
 
@@ -392,32 +382,18 @@ public:
     /// Turn remote administration on or off.
     void setRemoteAdminEnabled(bool enabled);
 
-    // ── DNS subdomain ownership ─────────────────────────────────────────────
-    //
-    // Per-instance random token written to a _owner.<uid> TXT record. Before
-    // replacing its A record, an instance verifies this matches (or claims it
-    // if absent), so two instances cannot clobber each other's subdomain.
-
-    QString ownerToken() const;
-    void setOwnerToken(const QString& token);
-
     // ── Rendezvous identity (0.3.0+) ────────────────────────────────────────
     //
-    // What replaces the sub-domain: the instance is reached at
-    // https://stream.{MW_DOMAIN}/{rendezvous_id}. Two values, deliberately
-    // distinct from the DNS pair above.
+    // How the instance is reached from the internet:
+    // https://stream.{MW_DOMAIN}/{rendezvous_id}. No DNS record, no
+    // certificate order, no port forward.
     //
     // rendezvous_id is a LOCATOR, not a secret — it identifies, it does not
     // authenticate (that is the pairing signature's job). It is drawn once and
     // never rotates: an address that changes cannot be bookmarked.
     //
     // rendezvous_token is the credential that proves ownership of that id to
-    // the rendezvous server, which stores only HMAC(token). It is NOT
-    // owner_token: that one authorises a DNS zone claim and retires with the
-    // sub-domain mechanism in February 2027, while this one authorises a
-    // rendezvous line and outlives it. Sharing one value between the two would
-    // merge two unrelated authorisations, and retiring the first would either
-    // strand the second or keep alive a credential that should have died.
+    // the rendezvous server, which stores only HMAC(token).
 
     /// 26 Crockford base32 characters, empty until first claimed.
     QString rendezvousId() const;

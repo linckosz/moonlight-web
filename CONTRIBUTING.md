@@ -107,11 +107,16 @@ bash scripts/run-tests.sh
 
 ---
 
-## DNS stack (Internet access)
+## DNS stack (rendezvous server)
 
-To offer auto sub‑domain + TLS you need an authoritative DNS server on a domain you
-own. [`deploy/powerdns/`](deploy/powerdns/) ships a turnkey Docker stack (dnsdist +
-PowerDNS + Caddy). Install on a small Linux VM with `sudo ./install.sh`, open ports
-53 (UDP/TCP), 80 and 443, register your nameservers at your registrar, then set
-`MW_DOMAIN` / `MW_PDNS_URL` / `MW_PDNS_TOKEN` in the server's `.env`. See
+Reaching a machine from outside its LAN goes through the rendezvous server,
+which lives on a domain you own. [`deploy/powerdns/`](deploy/powerdns/) ships a
+turnkey Docker stack (dnsdist + PowerDNS + Caddy) that serves it — and that
+still answers for the per-instance sub-domains v0.2.4 clients registered, until
+that mechanism's announced shutdown in February 2027. Nothing in the app writes
+to it any more.
+
+Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP),
+80 and 443, register your nameservers at your registrar, then point the app at
+it with `MW_DOMAIN` in its `.env`. See
 [`deploy/powerdns/README.md`](deploy/powerdns/README.md).

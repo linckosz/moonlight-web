@@ -68,20 +68,17 @@ RUN apt-get update \
 # `--version`, the update check and the User-Agent report.
 ARG MW_VERSION=""
 
-# Internet Access configuration, embedded at configure time exactly as the .deb
-# and the installers embed it (backend/CMakeLists.txt reads these from the
-# environment). Empty in a local build → the image is LAN-only, which is the
-# sane default for someone building their own.
+# The project's own service configuration, embedded at configure time exactly
+# as the .deb and the installers embed it (backend/CMakeLists.txt reads these
+# from the environment). Empty in a local build → the image never contacts our
+# infrastructure, which is the sane default for someone building their own.
 #
 # These are build-stage ARGs, and the runtime stage below starts from its own
 # FROM: nothing here reaches the published image's layers or `docker history`.
 # The values do end up compiled into the binary, which is the same exposure the
 # distributed packages already have.
 ARG MW_DOMAIN=""
-ARG MW_PDNS_URL=""
 ARG MW_PDNS_TOKEN=""
-ARG MW_ZEROSSL_EAB_KID=""
-ARG MW_ZEROSSL_EAB_HMAC=""
 
 WORKDIR /src
 COPY backend backend
