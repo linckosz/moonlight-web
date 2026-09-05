@@ -116,21 +116,15 @@ else()
     set(MW_NATIVE_PLATFORM "none")
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        # The virtual gamepad, ahead of the rest of the Linux backend.
-        #
-        # Compiled but NOT yet reachable: there is no Linux session to route
-        # input from (no capture, no encoder), so nothing constructs it and
-        # probeVirtualGamepad() still answers "no backend on this platform" —
-        # which is the truth a user can act on today. Building it here is what
-        # keeps it honest: it compiles at -Wall -Wextra on every Linux CI run,
-        # so it cannot rot into the sort of "ready" code that has never once
-        # been through a compiler.
-        #
-        # Keyboard and mouse joined it on 04/09/2026 (phase I) on the same
-        # terms: uinput needs no library at all — it is kernel ioctls — so this
-        # is the one piece of the Linux backend that could be written and
-        # compiled without a Linux machine to run it on. The capture and the
-        # encoder cannot: see §19 of docs/design/native-capture-encoder.md.
+        # The input side of the Linux backend: virtual gamepad, keyboard and
+        # mouse, all through uinput. Unconditional, unlike the graphics below:
+        # uinput needs no library at all — it is kernel ioctls — so it builds on
+        # any Linux, -dev packages or not, and stays honest at -Wall -Wextra on
+        # every Linux CI run. Reached since the Linux session landed (04/09/2026,
+        # §19): LinuxSession constructs both and routes the controller events to
+        # the gamepad, and LinuxProbe::probeVirtualGamepad asks /dev/uinput
+        # itself. On a build without the graphics backend they are compiled and
+        # never constructed (the stub session refuses first).
         target_sources(mw-native-host PRIVATE
             src/input/linux/UinputGamepad.cpp
             src/input/linux/UinputInput.cpp)
