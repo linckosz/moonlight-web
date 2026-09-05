@@ -35,17 +35,22 @@ void run_rate_control_tests();
 void run_audio_pacer_tests();
 void run_audio_interleave_tests();
 
+void installTestLogSink()
+{
+    mw::native::NativeHost::setLogSink([](int level, const std::string& message) {
+        static const char* kNames[] = {"debug", "info", "warn", "error"};
+        const char* name = (level >= 0 && level <= 3) ? kNames[level] : "?";
+        std::fprintf(stderr, "  [%s] %s\n", name, message.c_str());
+    });
+}
+
 int main()
 {
     // Route the engine's own logging to stderr for the whole run. The engine
     // explains itself in the log — which adapter refused a session, why a
     // driver was rejected — and a suite that hides that leaves a failure with
     // nothing to go on but a count.
-    mw::native::NativeHost::setLogSink([](int level, const std::string& message) {
-        static const char* kNames[] = {"debug", "info", "warn", "error"};
-        const char* name = (level >= 0 && level <= 3) ? kNames[level] : "?";
-        std::fprintf(stderr, "  [%s] %s\n", name, message.c_str());
-    });
+    installTestLogSink();
 
     run_capabilities_tests();
     run_selector_tests();

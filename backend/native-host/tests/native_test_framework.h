@@ -20,6 +20,12 @@ struct NativeTestStats
 
 extern NativeTestStats g_nativeStats;
 
+/// Route the engine's log to stderr, prefixed by level. Installed by main()
+/// for the whole run; a test that swaps the sink out (to prove logging is
+/// optional, say) must put THIS back, or every test after it runs mute — which
+/// is how the session tests' "[native]" lines went missing for a day.
+void installTestLogSink();
+
 inline void mw_native_check(bool ok, const char* expr, const char* file, int line)
 {
     if (ok) {

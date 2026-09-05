@@ -166,6 +166,8 @@ void run_capabilities_tests()
         NativeHost::setLogSink([&seen](int, const std::string&) { seen++; });
         (void)NativeHost::probe();
         CHECK(seen > 0);
-        NativeHost::setLogSink(nullptr);
+        // Back to the suite's sink — leaving it null silenced every test after
+        // this one, session logs included, until 05/09/2026.
+        installTestLogSink();
     }
 }

@@ -161,6 +161,24 @@ else()
             target_link_libraries(mw-native-host PRIVATE ${MW_LINUX_GFX_LIBRARIES})
             # PUBLIC so the tests can tell whether the backend exists.
             target_compile_definitions(mw-native-host PUBLIC MW_NATIVE_LINUX_GFX=1)
+
+            # The sound: a PipeWire capture stream on the default output's
+            # monitor (libpipewire-0.3, MIT — libpulse is LGPL and off the
+            # allow-list in LICENSE.md). Optional on the same terms as the
+            # graphics: found → the session carries the host's audio; not
+            # found → it streams silent and the configure says why.
+            pkg_check_modules(MW_LINUX_AUDIO libpipewire-0.3)
+            if(MW_LINUX_AUDIO_FOUND)
+                message(STATUS "mw-native-host: Linux audio (PipeWire ${MW_LINUX_AUDIO_VERSION}) ON")
+                target_sources(mw-native-host PRIVATE src/audio/linux/PipeWireCapture.cpp)
+                target_include_directories(mw-native-host SYSTEM PRIVATE ${MW_LINUX_AUDIO_INCLUDE_DIRS})
+                target_link_libraries(mw-native-host PRIVATE ${MW_LINUX_AUDIO_LIBRARIES})
+                target_compile_options(mw-native-host PRIVATE ${MW_LINUX_AUDIO_CFLAGS_OTHER})
+                # PUBLIC so the session test knows whether to expect audio.
+                target_compile_definitions(mw-native-host PUBLIC MW_NATIVE_LINUX_AUDIO=1)
+            else()
+                message(WARNING "mw-native-host: Linux audio OFF — install libpipewire-0.3-dev to build it")
+            endif()
         else()
             message(WARNING "mw-native-host: Linux graphics backend OFF — install libdrm-dev libva-dev libegl1-mesa-dev libgles2-mesa-dev libgbm-dev to build it")
         endif()
@@ -175,14 +193,15 @@ message(STATUS "mw-native-host: platform backend = ${MW_NATIVE_PLATFORM}")
 
 # ── Audio ───────────────────────────────────────────────────────────────────
 # The encoder and the pacing sink are platform-neutral and compiled wherever
-# there is a capture to feed them: Windows (WASAPI loopback, its own thread)
-# and macOS (ScreenCaptureKit's audio tap, through PacedOpusSink). Linux has no
-# capture source yet, so libopus is not built there — nothing would call it.
+# there is a capture to feed them: Windows (WASAPI loopback, its own thread),
+# macOS (ScreenCaptureKit's audio tap, through PacedOpusSink) and Linux when
+# libpipewire is there (the default output's monitor, through the same sink).
+# Without a source libopus is not built — nothing would call it.
 #
 # libopus (BSD-3-Clause, on the allow-list in LICENSE.md) is built from the
 # pinned submodule as a static library: nothing installed, nothing shared, no
 # programs, no tests.
-if(WIN32 OR APPLE)
+if(WIN32 OR APPLE OR MW_LINUX_AUDIO_FOUND)
     target_sources(mw-native-host PRIVATE
         src/audio/OpusEncoder.cpp
         src/audio/PacedOpusSink.cpp)
@@ -294,6 +313,15 @@ if(MW_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/amf-headers
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpl-headers
     )
+    # Where the module encodes audio, the session tests decode it back with the
+    # same libopus to look at the signal — the only proof this side of a browser
+    # that the tap captured sound and not a perfectly paced silence.
+    if(TARGET opus)
+        target_link_libraries(mw-native-tests PRIVATE Opus::opus)
+        target_include_directories(mw-native-tests SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/opus/include)
+        target_compile_definitions(mw-native-tests PRIVATE MW_NATIVE_TESTS_HAVE_OPUS=1)
+    endif()
     add_test(NAME native-host COMMAND mw-native-tests)
 
     # The boundary rule is itself a test, so a failure shows up in the ctest

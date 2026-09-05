@@ -138,7 +138,8 @@ Trois points de justesse invisibles hors exécution :
 
 ### Linux / macOS
 
-Linux : KMS/DRM d'abord (§19.3–19.5), le portail PipeWire en repli reste à écrire.
+Linux : KMS/DRM d'abord (§19.3–19.5), le portail PipeWire en repli reste à écrire ;
+le son par PipeWire (§19.7).
 macOS : ScreenCaptureKit, qui écrit directement le NV12 de l'encodeur (§20).
 
 ---
@@ -932,7 +933,9 @@ Sur la page Hosts, ce message n'apparaît **que** si aucun host n'est visible
 | **ViGEmClient** (manette) | **MIT** | OK | ⚠️ noté BSD-3 dans le plan d'origine — c'est faux, l'amont livre du MIT. Vendoré tel quel en v1.16.18.0, jamais modifié |
 | ViGEmBus (le pilote) | BSD-3 | OK | **pas redistribué** : installé par l'installeur depuis l'amont |
 | **libopus** (audio) | **BSD-3** | OK | livré le 04/09/2026 : sous-module `native-host/third_party/opus` épinglé v1.5.2, bibliothèque statique, sans programmes ni tests ni installation |
-| OpenH264, libva, PipeWire | BSD/MIT | OK | à venir |
+| libva, libdrm, EGL/GLES, GBM | MIT | OK | livrés le 05/09/2026 (§19), liés dynamiquement, trouvés par pkg-config |
+| **libpipewire-0.3** (audio Linux) | **MIT** | OK | livré le 05/09/2026 (§19.7) ; **libpulse écarté** (LGPL) — d'où la limite « PipeWire doit être le serveur audio » |
+| OpenH264 | BSD | OK | à venir (repli logiciel, pas encore nécessaire) |
 | ❌ FFmpeg / libavcodec | LGPL/GPL | **écarté** | Sunshine l'utilise (156 appels `av_*`) ; nous non |
 | ❌ x264 / x265 | GPL-2.0 | **interdit** | — |
 | ❌ moonlight-common-c | GPL-3.0 | **jamais lié au module** | — |
@@ -1670,7 +1673,8 @@ pas une copie (`KmsCapture::acquire` ne ferme le tampon précédent qu'au moment
 d'exporter le suivant) ; l'encodeur possède la surface ; pas d'invalidation de
 référence ni d'intra-refresh sur radeonsi (une image perdue coûte une keyframe, et
 `SessionInfo` le dit) ; clavier/souris uinput et manette uinput construits comme
-`Win32Input`/`VigemGamepad` ; pas d'audio, pas de HDR.
+`Win32Input`/`VigemGamepad` ; le son par PipeWire depuis le 05/09 au soir (§19.7) ;
+pas de HDR.
 
 **Le piège qui a coûté la première image** : la session a d'abord produit un flux
 de 1,5 Ko pour 13 images — du noir pur, luma 0, pas 16. Le contexte EGL est rendu
@@ -1692,11 +1696,74 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 
 ### 19.6 Ce qui reste
 
-HEVC et AV1 VA-API, l'audio (PipeWire/Pulse → Opus ; la moitié neutre du chemin
-existe depuis macOS — `PacedOpusSink`, §20.8 — il manque la source et la
-construction d'Opus sous Linux), le portail PipeWire en repli, le
-`setcap cap_sys_admin+ep` dans le paquet, et le premier flux vers un vrai
-navigateur depuis un hôte Linux.
+HEVC et AV1 VA-API, le portail PipeWire en repli, le premier flux vers un vrai
+navigateur depuis un hôte Linux, et **le paquet** : le job Linux de `release.yml`
+n'installe ni `libdrm-dev`, `libva-dev`, `libegl1-mesa-dev`, `libgles2-mesa-dev`,
+`libgbm-dev`, ni `libpipewire-0.3-dev` (constaté le 05/09) — le `.deb` et le `.rpm`
+publiés embarquent donc encore le stub « pas de backend sur cette plateforme », et
+il leur manque le `setcap cap_sys_admin+ep` que §19.3 suppose posé.
+
+### 19.7 Le son : le moniteur de la sortie par défaut, par PipeWire (05/09/2026)
+
+Le choix de la bibliothèque est une décision de licence avant d'être une décision
+technique : **libpulse est LGPL et hors de la liste blanche** de `LICENSE.md`,
+**libpipewire est MIT et dedans**. Ça tombe bien : PipeWire est le serveur audio
+de tous les bureaux actuels (Fedora depuis 34, Ubuntu depuis 22.10, Debian depuis
+12, Arch, SteamOS, Bazzite), et les applications PulseAudio y tournent par
+`pipewire-pulse`. L'inverse n'est pas vrai, et c'est **la limite à connaître** : sur
+une machine où PulseAudio tient encore la carte son — Ubuntu 22.04, notre banc
+même —, le démon PipeWire tourne (pour les portails) mais son graphe n'a **aucune
+sortie** ; le flux de capture est refusé (« no node available »), la session
+streame en silence et le log dit en clair qu'il faut `pipewire-pulse`. Le tap
+réessaie toutes les deux secondes : une sortie peut apparaître (HDMI branché,
+serveur basculé).
+
+La source (`src/audio/linux/PipeWireCapture`) est un `pw_stream` en capture avec
+`stream.capture.sink = true` — **le moniteur d'une sortie, jamais un micro** — et
+sans cible nommée, pour que le gestionnaire de session l'accroche à la sortie par
+défaut et **la déplace** quand l'utilisateur change de sortie en cours de session
+(le « suit le périphérique par défaut » de WASAPI, fait par le serveur). On demande
+du float32 entrelacé, 48 kHz, deux canaux : l'adaptateur de PipeWire convertit
+depuis ce que la sortie fait tourner, donc une sortie 44,1 kHz ou 5.1 coûte un
+resampler dans le graphe et rien chez nous. Les tampons sont lus contre le format
+**négocié**, jamais contre le format demandé ; un mono ou un 5.1 qui passerait
+quand même est ramené en stéréo par `interleavedToStereo` (`AudioInterleave.h`,
+mêmes trois décisions que le planaire, testé partout). PipeWire appelle sur son
+propre thread, quand le graphe tourne : c'est une API *push* comme le tap de
+ScreenCaptureKit, donc la cadence vit dans `PacedOpusSink` (§20.8), et libopus se
+construit maintenant sous Linux aussi.
+
+**Mesuré sur l'bench-mini** (Ubuntu 22.04 basculé sur `pipewire-pulse` 0.3.48 pour
+l'occasion, sink nul `mw_null` en sortie par défaut, une sinusoïde 440 Hz à −12 dBFS
+en boucle dedans ; `test_linux_session`, 2,8 s) : format négocié **F32 entrelacé,
+2 canaux, 48 000 Hz** ; **128 échantillons par tampon** (2,7 ms — le graphe a donné
+moins que les 240 demandés) ; **135 168 échantillons en 1 056 tampons**, soit
+48 kHz à l'échantillon près sur la durée ; **575 paquets, 0 jeté, 13 trames de
+silence** — les 65 ms entre le départ du pacer et l'état *streaming* du flux, pas
+une perte en régime ; et le signal **décodé en retour par libopus dans le test** :
+crête **0,261**, RMS **0,175** pour une sinusoïde d'amplitude 0,25 (79 octets par
+paquet ; le même test sans tonalité lit crête 0,000 et 3 octets par paquet).
+Avant `pipewire-pulse`, sur le même banc : cadence parfaite, 3 octets par paquet,
+crête 0,000 — exactement le symptôme de §20.8, cette fois pour une vraie raison
+(pas de sortie dans le graphe).
+
+Deux pièges de banc, retenus dans `mac-m1-bench`/la mémoire Linux : `pgrep -f` et
+`pkill -f` attrapent **le shell SSH lui-même** dont la ligne de commande contient le
+motif (la première tentative a tué son propre script avant de lancer la tonalité) ;
+et libopus construit depuis un tarball sans `.git` s'annonce « libopus unknown » —
+la version vient de `git describe`, rien à corriger côté module.
+
+Le test de session décode désormais les paquets avec le même libopus et imprime la
+crête : c'est la seule preuve, ce côté-ci d'un navigateur, qu'un tap capture du son
+et pas un silence parfaitement cadencé. Au passage, **les tests de session étaient
+muets depuis le 04/09** : `test_capabilities` remettait le puits de log à `nullptr`
+pour prouver qu'il est optionnel et ne le restaurait pas — corrigé
+(`installTestLogSink()`), les lignes « [native] » des sessions Linux et macOS
+réapparaissent dans la sortie de `mw-native-tests`.
+
+Reste : le premier flux Linux vers un vrai navigateur (image **et** son), le
+`node.latency` que le graphe n'honore pas forcément (la file du pacer, 40 ms,
+absorbe un quantum par défaut de 21 ms), et le paquet (§19.6).
 
 ---
 

@@ -20,6 +20,7 @@
 
 #include <vector>
 
+using mw::native::audio::interleavedToStereo;
 using mw::native::audio::interleaveToStereo;
 
 void run_audio_interleave_tests()
@@ -81,6 +82,57 @@ void run_audio_interleave_tests()
         CHECK_EQ(out[0], 0.0f);
         CHECK_EQ(out[1], 0.0f);
         interleaveToStereo(planes, 1, 1, nullptr); // must simply return
+        CHECK(true);
+    }
+
+    SECTION("AudioInterleave — interleaved stereo in is stereo out, sample for sample");
+    {
+        const float in[6] = {1.0f, -1.0f, 2.0f, -2.0f, 3.0f, -3.0f};
+        std::vector<float> out(6, 99.0f);
+        interleavedToStereo(in, 2, 3, out.data());
+        for (int i = 0; i < 6; ++i)
+            CHECK_EQ(out[static_cast<size_t>(i)], in[i]);
+    }
+
+    SECTION("AudioInterleave — interleaved mono plays in both ears");
+    {
+        const float mono[3] = {0.25f, 0.5f, 0.75f};
+        std::vector<float> out(6, 99.0f);
+        interleavedToStereo(mono, 1, 3, out.data());
+        CHECK_EQ(out[0], 0.25f);
+        CHECK_EQ(out[1], 0.25f);
+        CHECK_EQ(out[4], 0.75f);
+        CHECK_EQ(out[5], 0.75f);
+    }
+
+    SECTION("AudioInterleave — a 5.1 monitor keeps front-left and front-right");
+    {
+        // FL FR FC LFE RL RR, two frames. The fronts survive, in order; the
+        // surrounds are dropped, not summed into the fronts.
+        const float six[12] = {1.0f, 2.0f, 9.0f, 9.0f, 9.0f, 9.0f,
+                               3.0f, 4.0f, 9.0f, 9.0f, 9.0f, 9.0f};
+        std::vector<float> out(4, 99.0f);
+        interleavedToStereo(six, 6, 2, out.data());
+        CHECK_EQ(out[0], 1.0f);
+        CHECK_EQ(out[1], 2.0f);
+        CHECK_EQ(out[2], 3.0f);
+        CHECK_EQ(out[3], 4.0f);
+    }
+
+    SECTION("AudioInterleave — interleaved with nothing behind it is silence");
+    {
+        std::vector<float> out(4, 99.0f);
+        interleavedToStereo(nullptr, 2, 2, out.data());
+        CHECK_EQ(out[0], 0.0f);
+        CHECK_EQ(out[3], 0.0f);
+        const float in[2] = {1.0f, 1.0f};
+        std::vector<float> zero(4, 99.0f);
+        interleavedToStereo(in, 0, 1, zero.data());
+        CHECK_EQ(zero[0], 0.0f);
+        CHECK_EQ(zero[1], 0.0f);
+        interleavedToStereo(in, 2, 0, zero.data());
+        CHECK_EQ(zero[2], 99.0f);               // nothing to do leaves the buffer alone
+        interleavedToStereo(in, 2, 1, nullptr); // must simply return
         CHECK(true);
     }
 }

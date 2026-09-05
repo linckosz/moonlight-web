@@ -6,19 +6,29 @@
 
 #include "mw/native/NativeHost.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
+
+#if defined(MW_NATIVE_LINUX_AUDIO) && defined(MW_NATIVE_TESTS_HAVE_OPUS)
+#include <opus.h>
+#endif
 
 using namespace mw::native;
 
 // A whole Linux session, the way the backend would run one: probe, select,
 // create, stream for a moment, stop. The frames go to a file so the machine's
 // own decoder can look at them afterwards — that is the only proof of
-// orientation and colour this side of a browser.
+// orientation and colour this side of a browser. The audio packets are decoded
+// back with libopus and their peak printed: a paced silence and a captured tone
+// have the same cadence, and only the signal tells them apart.
 
 void run_linux_session_tests()
 {
@@ -66,6 +76,24 @@ void run_linux_session_tests()
     std::ofstream out("/tmp/mw-linux-session.h264", std::ios::binary | std::ios::trunc);
     std::string ended;
 
+    // The host's sound, through PipeWire. What is CHECKED is the cadence —
+    // the relay advances the RTP clock by one frame per packet, so 200 a
+    // second is the contract whether the host plays anything or not. What is
+    // printed is the decoded peak, for the bench: a tone played into the
+    // default output must show up here as a number well above zero.
+    std::atomic<int> audioPackets{0};
+    std::atomic<size_t> audioBytes{0};
+    std::atomic<bool> audioFrameSizeOk{true};
+    std::mutex audioMutex;
+    std::vector<std::vector<uint8_t>> audioCopies;
+    AudioCallback onAudio = [&](const AudioPacket& p) {
+        audioPackets.fetch_add(1);
+        audioBytes.fetch_add(p.size);
+        if (p.samplesPerChannel != 240) audioFrameSizeOk.store(false);
+        std::lock_guard<std::mutex> lock(audioMutex);
+        if (audioCopies.size() < 1000) audioCopies.emplace_back(p.data, p.data + p.size);
+    };
+
     std::string error;
     std::unique_ptr<Session> session = NativeHost::createSession(
         config,
@@ -79,7 +107,7 @@ void run_linux_session_tests()
                 worstProcessingUs.store(f.processingUs());
             out.write(reinterpret_cast<const char*>(f.data), static_cast<std::streamsize>(f.size));
         },
-        nullptr, nullptr, nullptr, [&](const std::string& reason) { ended = reason; }, error);
+        onAudio, nullptr, nullptr, [&](const std::string& reason) { ended = reason; }, error);
     if (!session) {
         std::fprintf(stderr, "  createSession failed: %s\n", error.c_str());
         CHECK(false);
@@ -113,6 +141,58 @@ void run_linux_session_tests()
     CHECK(keyframes.load() >= 2); // the first, and the one asked for
     CHECK(firstWasKeyframe.load());
     CHECK(orderOk.load());
+
+#if defined(MW_NATIVE_LINUX_AUDIO)
+    if (!info.audio) {
+        // No PipeWire daemon for this user (a bare console, a CI runner): the
+        // session said so in the log and streams silent. Nothing to check.
+        std::fprintf(stderr, "  audio: skipped — the session has no audio (see the log above)\n");
+    } else {
+        // 2.7 s at 200 packets/s is 540; the bounds leave room for the pacer's
+        // start-up and the stop() timing, and would catch a tap that fired in
+        // bursts or a pacer that stalled.
+        std::fprintf(stderr, "  audio: %d packet(s), %zu bytes (%.1f/s)\n", audioPackets.load(),
+                     audioBytes.load(), audioPackets.load() / 2.7);
+        CHECK(audioPackets.load() >= 400);
+        CHECK(audioPackets.load() <= 700);
+        CHECK(audioFrameSizeOk.load());
+
+#if defined(MW_NATIVE_TESTS_HAVE_OPUS)
+        // Decode what went out and look at it. A quiet host is legal (peak
+        // ~0); a tone playing on the host must read well above zero here, and
+        // a packet that is 3 bytes of silence while the host plays is the bug
+        // §20.8 describes.
+        int opusError = 0;
+        ::OpusDecoder* decoder = opus_decoder_create(48000, 2, &opusError);
+        if (decoder && opusError == OPUS_OK) {
+            std::vector<float> pcm(240 * 2);
+            float peak = 0.0f;
+            double sumSquares = 0.0;
+            size_t samples = 0;
+            std::lock_guard<std::mutex> lock(audioMutex);
+            for (const std::vector<uint8_t>& packet : audioCopies) {
+                const int n =
+                    opus_decode_float(decoder, packet.data(),
+                                      static_cast<opus_int32>(packet.size()), pcm.data(), 240, 0);
+                if (n <= 0) continue;
+                for (int i = 0; i < n * 2; ++i) {
+                    peak = std::max(peak, std::fabs(pcm[static_cast<size_t>(i)]));
+                    sumSquares += static_cast<double>(pcm[static_cast<size_t>(i)]) *
+                                  pcm[static_cast<size_t>(i)];
+                }
+                samples += static_cast<size_t>(n) * 2;
+            }
+            opus_decoder_destroy(decoder);
+            std::fprintf(stderr,
+                         "  audio decoded: %zu packet(s), peak %.3f, RMS %.4f — play a tone into "
+                         "the default output to see it here\n",
+                         audioCopies.size(), peak,
+                         samples > 0 ? std::sqrt(sumSquares / static_cast<double>(samples)) : 0.0);
+        }
+#endif
+    }
+#endif
+
     std::fprintf(stderr, "  wrote /tmp/mw-linux-session.h264 — decode it to look at the picture\n");
 #endif
 }

@@ -55,4 +55,25 @@ inline void interleaveToStereo(const float* const* planes, int planeCount, size_
     }
 }
 
+/// Interleaved float32 with any channel count → interleaved stereo, by the
+/// same three decisions. PipeWire negotiates interleaved F32 for a capture
+/// stream and is asked for two channels, but what it hands over is what it
+/// negotiated — a mono monitor, a 5.1 sink — and the answer to "not stereo"
+/// belongs here, tested, rather than in a real-time callback.
+inline void interleavedToStereo(const float* in, int channels, size_t frames, float* out)
+{
+    if (!out || frames == 0) return;
+    if (!in || channels <= 0) {
+        for (size_t i = 0; i < frames * 2; ++i)
+            out[i] = 0.0f;
+        return;
+    }
+    const size_t stride = static_cast<size_t>(channels);
+    for (size_t i = 0; i < frames; ++i) {
+        const float* s = in + i * stride;
+        out[i * 2] = s[0];
+        out[i * 2 + 1] = channels >= 2 ? s[1] : s[0];
+    }
+}
+
 } // namespace mw::native::audio

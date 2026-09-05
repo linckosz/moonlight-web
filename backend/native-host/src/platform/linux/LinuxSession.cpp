@@ -27,6 +27,10 @@
 #include "../../encode/linux/VaapiEncoder.h"
 #include "../../input/linux/UinputGamepad.h"
 #include "../../input/linux/UinputInput.h"
+#if defined(MW_NATIVE_LINUX_AUDIO)
+#include "../../audio/PacedOpusSink.h"
+#include "../../audio/linux/PipeWireCapture.h"
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -50,7 +54,13 @@
 //    (VaapiEncoder::inputTarget), the reverse of D3D11;
 //  - no reference invalidation and no intra-refresh on radeonsi 23.2: a lost
 //    frame costs a keyframe, and SessionInfo says so;
-//  - no audio yet, and no HDR.
+//  - the sound comes from PipeWire (the default output's monitor), a push
+//    source like ScreenCaptureKit's tap, so it goes through PacedOpusSink
+//    rather than owning its thread the way WASAPI does — and it is built only
+//    where libpipewire is (MW_NATIVE_LINUX_AUDIO);
+//  - no HDR.
+//
+// See §19 of docs/design/native-capture-encoder.md.
 
 namespace mw::native {
 namespace {
@@ -163,6 +173,32 @@ public:
                 log::info("[native] input: no virtual gamepad this session — " + padError);
         }
 
+#if defined(MW_NATIVE_LINUX_AUDIO)
+        // Audio, on the same terms as input: wanted only when the consumer
+        // gave us somewhere to put it, and never a reason to fail the session.
+        // The sink first — it owns the encoder and the 5 ms cadence — then the
+        // capture that feeds it. A daemon that is there but has no output to
+        // record is the capture's business (it retries); no daemon at all is
+        // "no audio this session", said here.
+        if (m_Callbacks.onAudio) {
+            auto sink = std::make_unique<audio::PacedOpusSink>(m_Callbacks.onAudio);
+            std::string audioError;
+            if (!sink->start("PipeWire, the default output's monitor, 48 kHz stereo", audioError)) {
+                log::warning("[native] audio unavailable, streaming silent: " + audioError);
+            } else {
+                auto* raw = sink.get();
+                auto tap = std::make_unique<audio::PipeWireCapture>(
+                    [raw](const float* pcm, size_t frames) { raw->push(pcm, frames); });
+                if (tap->start(audioError)) {
+                    m_Audio = std::move(sink);
+                    m_AudioTap = std::move(tap);
+                } else {
+                    log::warning("[native] audio unavailable, streaming silent: " + audioError);
+                }
+            }
+        }
+#endif
+
         m_Info = SessionInfo{};
         m_Info.displayId = m_Target.displayId;
         m_Info.width = m_Converter->outputWidth();
@@ -181,12 +217,17 @@ public:
         // written in place: one copy remains, the bitstream leaving VRAM.
         m_Info.copiesPerFrame = 1;
         m_Info.crossGpuCopy = false;
+#if defined(MW_NATIVE_LINUX_AUDIO)
+        m_Info.audio = static_cast<bool>(m_Audio);
+#else
         m_Info.audio = false;
+#endif
 
         log::info(std::string("[native] session: ") + m_ConnectorName + " " +
                   std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + "@" +
                   std::to_string(m_EncodeFps) + " " + toString(m_Info.codec) + " via VA-API on " +
-                  m_Info.gpuName + " — KMS → EGL → VA-API, 1 copy (the bitstream)");
+                  m_Info.gpuName + " — KMS → EGL → VA-API, 1 copy (the bitstream)" +
+                  (m_Info.audio ? ", with the host's audio (PipeWire, 48 kHz stereo)" : ""));
 
         m_Running.store(true);
         m_Thread = std::thread([this] { run(); });
@@ -209,6 +250,12 @@ public:
             if (m_Gamepad) m_Gamepad->stop();
             m_Gamepad.reset();
         }
+#if defined(MW_NATIVE_LINUX_AUDIO)
+        // The tap goes first: tearing it down is what guarantees no sample
+        // callback is still in flight when the sink it pushes into is freed.
+        m_AudioTap.reset();
+        m_Audio.reset();
+#endif
         if (!wasRunning && !m_Encoder && !m_Capture) return;
         m_Encoder.reset();
         m_Converter.reset();
@@ -816,6 +863,11 @@ private:
     std::mutex m_InputMutex;
     std::unique_ptr<input::UinputInput> m_Input;
     std::unique_ptr<input::UinputGamepad> m_Gamepad;
+
+#if defined(MW_NATIVE_LINUX_AUDIO)
+    std::unique_ptr<audio::PacedOpusSink> m_Audio;
+    std::unique_ptr<audio::PipeWireCapture> m_AudioTap;
+#endif
 
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};
