@@ -66,7 +66,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // parameter dies when this function returns, the route lambda does not.
     server.router()->get("/api/internet/status", [&, rendezvousStatus](const HttpRequest& req) {
         QJsonObject obj = internetAccess.statusJson();
-        if (rendezvousStatus) obj[QStringLiteral("rendezvous")] = rendezvousStatus();
+        const QJsonObject rdv = rendezvousStatus ? rendezvousStatus() : QJsonObject();
+        if (rendezvousStatus) obj[QStringLiteral("rendezvous")] = rdv;
         // The admin UI runs on localhost and needs the full payload. Remote
         // sessions must not learn the internal network topology / file layout.
         //
@@ -77,10 +78,24 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // and a remote admin who needs the address has it in their own address
         // bar. Redaction stays keyed on isLocal so there is one rule here, not
         // two.
+        //
+        // One exception, and it is the one case where withholding the address
+        // costs something real: a browser sitting on this LAN that reached us on
+        // a socket, under this machine's own name. It is looking at a LAN IP and
+        // a certificate warning, and it has no other way to learn the machine
+        // has a public entrance — which is exactly what the hosts page tells it.
+        // Not a tracking handle there either: the caller is already on the same
+        // network as the machine it would be tracking. Anything arriving from
+        // the internet keeps the redaction, and so does a tunnel arrival — that
+        // one came in ON the address, so it has nothing to learn.
         if (!req.isLocal) {
             for (const char* key : {"local_ip", "local_ips", "public_ip", "unique_id", "cert_pem",
                                     "cert_key", "last_error", "rendezvous"})
                 obj.remove(QLatin1String(key));
+
+            const bool lanDirect =
+                !req.viaTunnel && req.hostTrusted && AuthManager::isLanAddress(req.clientAddress);
+            if (lanDirect && rendezvousStatus) obj[QStringLiteral("rendezvous")] = rdv;
         }
         return HttpResponse::json(obj);
     });

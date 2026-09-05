@@ -73,6 +73,7 @@ import {
     pageCameThroughTunnel,
 } from './net/tunnelBridge.js';
 import { SecuringOverlay } from './ui/SecuringOverlay.js';
+import { ourStunHost } from './api/IceServers.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
 window.addEventListener('error', (evt) => {
@@ -110,6 +111,10 @@ window.addEventListener('unhandledrejection', (evt) => {
         main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
     }
 });
+
+/** An address rendered as a clickable, copyable link in a banner. */
+const linkHtml = (u) =>
+    `<a href="${encodeURI(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a>`;
 
 const MoonlightApp = {
     // ── View instances persisted across overlays ─────────────────────────────
@@ -554,8 +559,10 @@ const MoonlightApp = {
         this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
         this.hostListView.start();
 
-        // On https://localhost, tell the user how OTHER PCs reach this server.
-        this._maybeShowRemoteAccessBanner();
+        // Tell the user how OTHER PCs reach this server (host machine), and —
+        // on every machine — what is missing or better than the address they
+        // are reading this page on.
+        this._mountHostsBanners();
 
         // And, on the host machine only, say so when a controller has no driver
         // to reach the games through. The server decides who may be offered the
@@ -612,7 +619,8 @@ const MoonlightApp = {
      * Returns { url, remote, rendezvousUrl, rendezvousOnline, domain, localIp,
      * httpsPort, extPort, upnpAvailable, internetActive } or null on failure
      * (url may be '' when nothing is known).
-     * Host-machine only in practice — callers gate on _isHostMachine().
+     * Callable from any machine: a LAN browser gets the rendezvous address and
+     * nothing else, a remote one gets neither and lands on `url === ''`.
      */
     async _computeRemoteAccessUrls() {
         let httpsPort = 443;
@@ -624,20 +632,27 @@ const MoonlightApp = {
         let rendezvousUrl = '';
         let rendezvousOnline = false;
         try {
-            const [admin, status] = await Promise.all([
-                BackendClient.getAdminSettings(),
+            // Settled, not all: the internet status is what every caller needs,
+            // and the admin settings only supply a port fallback. Failing the
+            // whole answer because a non-admin browser was refused the second
+            // one would cost that browser both hosts-page banners.
+            const [adminRes, status] = await Promise.all([
+                BackendClient.getAdminSettings().catch((err) => {
+                    console.warn('[MW] Could not read admin settings:', err);
+                    return null;
+                }),
                 BackendClient.getInternetStatus(),
             ]);
-            httpsPort = admin.https_port || 443;
+            httpsPort = (adminRes && adminRes.https_port) || 443;
             domain = status.domain || '';
             localIp = status.local_ip || '';
             extPort = status.external_https_port || httpsPort;
             upnpAvailable = !!status.upnp_available;
             internetActive = !!status.active && !!status.internet_access_enabled;
-            // Redacted for anything but a loopback caller (it carries this
-            // instance's permanent identifier), which a LAN admin unlocked with
-            // the password is not — they fall through to the LAN IP below, the
-            // address they are already reading this page on.
+            // Redacted for anything but a loopback caller or a browser sitting
+            // on this LAN (it carries this instance's permanent identifier) —
+            // see the route. A remote session falls through to the LAN IP below,
+            // the address it is already reading this page on.
             rendezvousUrl = (status.rendezvous && status.rendezvous.url) || '';
             rendezvousOnline = !!(status.rendezvous && status.rendezvous.online);
         } catch (err) {
@@ -673,29 +688,61 @@ const MoonlightApp = {
     },
 
     /**
-     * On the host machine, show an informative banner at the top of the hosts
-     * page telling the user how other devices reach this server — one address,
-     * picked by _computeRemoteAccessUrls (rendezvous → legacy sub-domain → LAN).
-     * When that address only reaches this LAN and a UPnP router answered, a
-     * discreet "enable internet access" link opens the admin page scrolled to
-     * the INTERNET section.
-     * Best-effort and host-machine-only; silently skipped otherwise. "Other
-     * devices reach me here" is worth reading on the machine itself and nowhere
-     * else: a LAN admin holding the password is already one of those other
-     * devices, and would be told the address of the page it is reading.
+     * Put the informative banners at the top of the hosts page, in order:
+     *
+     *   1. "Other computers can connect at …" — host machine only. That
+     *      sentence is worth reading on the machine itself and nowhere else: a
+     *      LAN admin holding the password is already one of those other
+     *      devices, and would be told the address of the page it is reading.
+     *   2. The address hint — on every machine. Either "nothing outside this
+     *      network reaches this server, turn Internet Access on", or, once it
+     *      is on and this browser came in on the LAN address anyway, the public
+     *      address that works from anywhere.
+     *
+     * One status fetch for both, and both mounted together so their order on
+     * screen never depends on which request answered first.
+     * Best-effort throughout: a failed status read leaves the page bannerless.
      */
-    async _maybeShowRemoteAccessBanner() {
-        if (!this._isHostMachine()) return;
-
+    async _mountHostsBanners() {
         const info = await this._computeRemoteAccessUrls();
-        if (!info || !info.url) return;
+        if (!info) return;
 
         const view = document.getElementById('view-hosts');
         if (!view || view.querySelector('.remote-access-banner')) return;
 
-        const linkHtml = (u) =>
-            `<a href="${encodeURI(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a>`;
+        const banners = [];
+        if (this._isHostMachine() && info.url) banners.push(this._buildRemoteAccessBanner(info));
+        const hint = this._buildAddressHintBanner(info);
+        if (hint) banners.push(hint);
+        if (!banners.length) return;
 
+        const frag = document.createDocumentFragment();
+        for (const b of banners) frag.appendChild(b);
+        view.insertBefore(frag, view.firstChild);
+
+        const enableLink = view.querySelector('#banner-enable-internet');
+        if (enableLink) {
+            enableLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                this._openOverlay('admin', { scrollTo: 'internet' });
+            });
+        }
+    },
+
+    /** A banner box: the globe, then whatever HTML the caller composed. */
+    _buildBanner(bodyHtml) {
+        const banner = document.createElement('div');
+        banner.className = 'remote-access-banner';
+        banner.innerHTML = `<span class="remote-access-icon" aria-hidden="true">\u{1F310}</span>
+            <span>${bodyHtml}</span>`;
+        return banner;
+    },
+
+    /**
+     * "Other computers can connect to this server at: <url>" — one address,
+     * picked by _computeRemoteAccessUrls (rendezvous → legacy sub-domain → LAN).
+     */
+    _buildRemoteAccessBanner(info) {
         let bodyHtml = `${t('hosts.remoteAccess')} ${linkHtml(info.url)}`;
         // A held connection, not a published record: while it is down the
         // address is correct and answers to nobody. Saying so beats showing a
@@ -705,28 +752,65 @@ const MoonlightApp = {
                 t('admin.rendezvousOffline'),
             )}</span>`;
         }
-        // LAN URL (nothing reaches this machine from outside) + UPnP available →
-        // offer the discreet shortcut to open this server to the Internet.
-        if (!info.remote && info.upnpAvailable) {
-            bodyHtml +=
-                `<br><span class="banner-internet-hint">${t('hosts.internetAvailableHint')}` +
-                ` <a href="#" id="banner-enable-internet" class="consent-highlight">` +
-                `${t('hosts.enableInternetLink')}</a></span>`;
+        return this._buildBanner(bodyHtml);
+    },
+
+    /**
+     * The second box, and the only one a machine other than the host gets.
+     *
+     * Internet Access off → say so and point at the switch. Someone who clicked
+     * past the installer's checkbox has no way of knowing what they turned down;
+     * all they see is a server that works at home and nowhere else, which looks
+     * like a broken product rather than a setting.
+     *
+     * Internet Access on, but this page was opened on the LAN address → name
+     * the public address instead. We do not redirect there: a LAN session that
+     * works right now would be sent through the introduction server, and it
+     * would break outright whenever that line is down (or when the machine is
+     * deliberately being used offline). Naming the address leaves the choice
+     * where it belongs, and the link carries the browser over in one click.
+     *
+     * Returns an element, or null when there is nothing useful to say (the page
+     * is already on the public address, or is the host's own loopback tab — the
+     * banner above already told it).
+     */
+    _buildAddressHintBanner(info) {
+        const hostname = window.location.hostname;
+
+        if (!info.internetActive) {
+            const domain = ourStunHost();
+            let bodyHtml = escapeHtml(t('hosts.internetDisabledHint', { domain }));
+            // Only offer the shortcut to a browser that may open the admin page
+            // at all; on any other machine the sentence above still says where
+            // the setting lives.
+            if (this._canReachAdmin()) {
+                bodyHtml +=
+                    ` <a href="#" id="banner-enable-internet" class="consent-highlight">` +
+                    `${t('hosts.enableInternetLink')}</a>`;
+            }
+            return this._buildBanner(bodyHtml);
         }
 
-        const banner = document.createElement('div');
-        banner.className = 'remote-access-banner';
-        banner.innerHTML = `<span class="remote-access-icon" aria-hidden="true">\u{1F310}</span>
-            <span>${bodyHtml}</span>`;
-        view.insertBefore(banner, view.firstChild);
-
-        const enableLink = banner.querySelector('#banner-enable-internet');
-        if (enableLink) {
-            enableLink.addEventListener('click', (e) => {
-                e.preventDefault();
-                this._openOverlay('admin', { scrollTo: 'internet' });
-            });
+        if (!info.rendezvousUrl) return null;
+        // Loopback is the host's own tab: the first banner named this address.
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') {
+            return null;
         }
+        // Already there — arrived through the tunnel, or typed the address.
+        if (pageCameThroughTunnel()) return null;
+        try {
+            if (new URL(info.rendezvousUrl).hostname === hostname) return null;
+        } catch (_e) {
+            /* unparseable address — treat it as "not where we are" */
+        }
+
+        let bodyHtml = `${t('hosts.alsoReachableHint')} ${linkHtml(info.rendezvousUrl)}`;
+        if (!info.rendezvousOnline) {
+            bodyHtml += `<br><span class="banner-internet-hint">${escapeHtml(
+                t('admin.rendezvousOffline'),
+            )}</span>`;
+        }
+        return this._buildBanner(bodyHtml);
     },
 
     // =========================================================================
