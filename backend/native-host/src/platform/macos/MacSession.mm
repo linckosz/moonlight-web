@@ -17,6 +17,7 @@
 
 #include "MacDisplays.h"
 
+#include "../../audio/PacedOpusSink.h"
 #include "../../capture/macos/SckCapture.h"
 #include "../../core/CadenceAlign.h"
 #include "../../core/FrameCadence.h"
@@ -53,8 +54,13 @@
 //    for a client that draws its own comes from AppKit's account of the
 //    system cursor, polled, not from the capture;
 //  - no pointer-only path: with the pointer in the picture a move IS a frame;
+//  - the sound arrives as a second output of the SAME ScreenCaptureKit stream
+//    (macOS has no loopback device to open), so it is set up on the capture
+//    and paced into Opus by the platform-neutral sink;
 //  - no reference invalidation, no intra-refresh (VideoToolbox has neither),
-//    no virtual gamepad, no audio yet, no HDR.
+//    no virtual gamepad, no HDR.
+//
+// See §20 of docs/design/native-capture-encoder.md.
 
 namespace mw::native {
 namespace {
@@ -211,7 +217,24 @@ public:
             log::info(line);
         }
 
+        // Audio, on the same terms as input: wanted only when the consumer
+        // gave us somewhere to put it, and never a reason to fail the session.
+        // Started BEFORE the capture, because the capture is what feeds it.
+        if (m_Callbacks.onAudio) {
+            auto sink = std::make_unique<audio::PacedOpusSink>(m_Callbacks.onAudio);
+            std::string audioError;
+            if (sink->start("ScreenCaptureKit, 48 kHz stereo", audioError))
+                m_Audio = std::move(sink);
+            else
+                log::warning("[native] audio unavailable, streaming silent: " + audioError);
+        }
+
         if (!openCapture(m_Config.width, m_Config.height, error)) return false;
+        if (m_Audio && !m_Capture->audioActive()) {
+            // The stream took no audio tap (macOS 12). Nothing will ever push,
+            // so the sink would tick out pure silence for the whole session.
+            m_Audio.reset();
+        }
         if (!buildEncoder(error)) return false;
 
         {
@@ -246,7 +269,7 @@ public:
         // remains, the bitstream leaving VRAM.
         m_Info.copiesPerFrame = 1;
         m_Info.crossGpuCopy = false;
-        m_Info.audio = false;
+        m_Info.audio = static_cast<bool>(m_Audio);
 
         log::info(std::string("[native] session: ") + m_Display.name + " " +
                   std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + "@" +
@@ -282,9 +305,12 @@ public:
             IOPMAssertionRelease(m_Wake);
             m_Wake = kIOPMNullAssertionID;
         }
-        if (!wasRunning && !m_Encoder && !m_Capture) return;
+        if (!wasRunning && !m_Encoder && !m_Capture && !m_Audio) return;
         m_Encoder.reset();
+        // The capture goes first: stopping it is what guarantees no audio
+        // callback is still in flight when the sink it points at is freed.
         m_Capture.reset();
+        m_Audio.reset();
     }
 
     const SessionInfo& info() const override { return m_Info; }
@@ -386,6 +412,13 @@ private:
         m_Capture =
             std::make_unique<capture::SckCapture>(m_Display.displayId, outputWidth, outputHeight,
                                                   m_DisplayMilliHz, m_CompositeCursor.load());
+        // Set on every open, restarts included: the sink outlives the capture,
+        // and while a display is away the pacer keeps the wire fed with silence.
+        if (m_Audio) {
+            auto* sink = m_Audio.get();
+            m_Capture->setAudioSink(
+                [sink](const float* pcm, size_t frames) { sink->push(pcm, frames); });
+        }
         return m_Capture->start(error);
     }
 
@@ -893,6 +926,7 @@ private:
     std::atomic<bool> m_ClientRefreshDirty{false};
 
     std::unique_ptr<capture::SckCapture> m_Capture;
+    std::unique_ptr<audio::PacedOpusSink> m_Audio;
     std::unique_ptr<encode::VtEncoder> m_Encoder;
     /// The frame the capture last handed out — the picture the still-screen
     /// floor and the refinement burst re-encode.

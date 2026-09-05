@@ -43,6 +43,9 @@ void runOne(const Capabilities& caps, const DisplayInfo& display, Codec codec, c
     std::atomic<uint32_t> lastNumber{0};
     std::atomic<int64_t> worstProcessingUs{0};
     std::atomic<size_t> bytes{0};
+    std::atomic<int> audioPackets{0};
+    std::atomic<size_t> audioBytes{0};
+    std::atomic<bool> audioFrameSizeOk{true};
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     std::string ended;
 
@@ -60,7 +63,16 @@ void runOne(const Capabilities& caps, const DisplayInfo& display, Codec codec, c
             bytes.fetch_add(f.size);
             out.write(reinterpret_cast<const char*>(f.data), static_cast<std::streamsize>(f.size));
         },
-        nullptr, nullptr, nullptr, [&](const std::string& reason) { ended = reason; }, error);
+        // The host's own sound, through ScreenCaptureKit's audio tap. What is
+        // checked is the CADENCE, not the content: the relay advances the RTP
+        // clock by one frame per packet, so 200 packets a second is the
+        // contract whether the Mac is playing anything or sitting silent.
+        [&](const AudioPacket& p) {
+            audioPackets.fetch_add(1);
+            audioBytes.fetch_add(p.size);
+            if (p.samplesPerChannel != 240) audioFrameSizeOk.store(false);
+        },
+        nullptr, nullptr, [&](const std::string& reason) { ended = reason; }, error);
     if (!session) {
         std::fprintf(stderr, "  createSession failed: %s\n", error.c_str());
         CHECK(false);
@@ -80,6 +92,7 @@ void runOne(const Capabilities& caps, const DisplayInfo& display, Codec codec, c
     CHECK_EQ(static_cast<int>(info.capture), static_cast<int>(CaptureApi::ScreenCaptureKit));
     CHECK(!info.intraRefresh);
     CHECK(!info.referenceInvalidation);
+    CHECK(info.audio); // macOS 13+: the stream carries the host's sound
     (void)caps;
 
     // Two seconds. A still desktop yields the first frame plus the floor at
@@ -99,6 +112,17 @@ void runOne(const Capabilities& caps, const DisplayInfo& display, Codec codec, c
     CHECK(keyframes.load() >= 2); // the first, and the one asked for
     CHECK(firstWasKeyframe.load());
     CHECK(orderOk.load());
+
+    // 2.7 s of session ≈ 540 packets. The floor is deliberately loose (the
+    // sink starts before the capture and the session is stopped mid-tick);
+    // what it would catch is a tap that delivers nothing, or a pacer that
+    // fired in bursts.
+    std::fprintf(stderr, "  audio: %d packet(s), %zu bytes (%.1f/s)\n", audioPackets.load(),
+                 audioBytes.load(), audioPackets.load() / 2.7);
+    CHECK(audioPackets.load() >= 400);
+    CHECK(audioPackets.load() <= 700);
+    CHECK(audioFrameSizeOk.load());
+
     std::fprintf(stderr, "  wrote %s — decode it to look at the picture\n", path);
 }
 #endif

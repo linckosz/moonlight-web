@@ -21,7 +21,9 @@
 
 #include <CoreVideo/CoreVideo.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -56,11 +58,23 @@
 // showsCursor is an ordinary new frame, which is exactly what the composited
 // mode wants.
 //
+// ── The sound comes through here too ────────────────────────────────────────
+//
+// macOS has no loopback device to open: the only supported way to record what
+// the Mac is playing is ScreenCaptureKit's own audio tap (macOS 13+), which is
+// a second output on THIS stream rather than a capture of its own. That is why
+// setAudioSink() lives on the screen capture: one stream, one permission, and
+// the audio stops and restarts with the picture instead of drifting on when
+// the display goes away. Samples arrive on a queue of their own, so a slow
+// frame never delays a packet.
+//
 // ── Permission ──────────────────────────────────────────────────────────────
 //
 // Screen Recording (TCC). Refused, SCK reports every display but streams none;
 // the probe answers CapturePermission and asks the OS to prompt once, the way
-// every screen-sharing app on macOS has to.
+// every screen-sharing app on macOS has to. The audio tap rides on that same
+// permission — there is no separate microphone prompt, because this is not a
+// microphone.
 
 namespace mw::native::capture {
 
@@ -83,6 +97,10 @@ struct SckFrame
 class SckCapture
 {
 public:
+    /// Captured host audio, interleaved stereo float at 48 kHz. Delivered on
+    /// SCK's audio queue, in whatever chunk sizes it feels like.
+    using AudioSampleCallback = std::function<void(const float* interleaved, size_t frames)>;
+
     /// The refresh rate SCK will be asked to deliver at, in millihertz —
     /// the panel's own, so the session's cadence gate sees every present.
     SckCapture(uint32_t displayId, int outputWidth, int outputHeight, int refreshMilliHz,
@@ -91,6 +109,16 @@ public:
 
     SckCapture(const SckCapture&) = delete;
     SckCapture& operator=(const SckCapture&) = delete;
+
+    /// Ask this stream to carry the host's audio as well. Must be called
+    /// BEFORE start(): whether a stream captures audio is fixed when it is
+    /// built. A null callback turns it back off.
+    void setAudioSink(AudioSampleCallback onSamples);
+
+    /// True once start() has actually got an audio tap — false when the sink
+    /// was set but the OS is older than macOS 13, which is the one case where
+    /// asking for audio is not an error and still gives none.
+    bool audioActive() const { return m_AudioActive; }
 
     /// Resolve the display in SCK's shareable content and start the stream.
     /// Blocks until the stream is running or refused (a second at most).
@@ -129,6 +157,7 @@ private:
     int m_Height = 0;
     int m_RefreshMilliHz = 0;
     bool m_ShowsCursor = true;
+    bool m_AudioActive = false;
     DesktopRect m_Rect;
 };
 

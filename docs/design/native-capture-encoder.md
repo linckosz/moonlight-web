@@ -1692,9 +1692,11 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 
 ### 19.6 Ce qui reste
 
-HEVC et AV1 VA-API, l'audio (PipeWire/Pulse → Opus, et Opus n'est pas encore
-construit sous Linux), le portail PipeWire en repli, le `setcap cap_sys_admin+ep`
-dans le paquet, et le premier flux vers un vrai navigateur depuis un hôte Linux.
+HEVC et AV1 VA-API, l'audio (PipeWire/Pulse → Opus ; la moitié neutre du chemin
+existe depuis macOS — `PacedOpusSink`, §20.8 — il manque la source et la
+construction d'Opus sous Linux), le portail PipeWire en repli, le
+`setcap cap_sys_admin+ep` dans le paquet, et le premier flux vers un vrai
+navigateur depuis un hôte Linux.
 
 ---
 
@@ -1909,11 +1911,65 @@ démarrage quand l'écran du Mac est en veille** — il s'arrête après le test
 encodeurs et n'ouvre aucun port. La veille écran est désormais désactivée sur cette
 machine (`pmset -a displaysleep 0 sleep 0`).
 
-### 20.8 Ce qui reste
+### 20.8 Le son : le tap de ScreenCaptureKit, mis en cadence (05/09/2026)
 
-L'audio (SCK capture le son système depuis macOS 13, `capturesAudio` → Opus, qui
-n'est construit que sous Windows), le HDR (P010 en entrée, Main10 en sortie — le
-silicium le fait), le pointeur agrandi, et la signature du `.pkg` (§20.5, §20.7).
+macOS n'a pas de périphérique de boucle à ouvrir. Le seul moyen supporté
+d'enregistrer ce que le Mac joue est le **tap audio de ScreenCaptureKit** (macOS
+13+), qui n'est pas une capture à part mais **une seconde sortie du même flux** :
+`capturesAudio = YES`, `sampleRate = 48000`, `channelCount = 2` sur la
+configuration, et un `SCStreamOutputTypeAudio` ajouté sur une file qui lui est
+propre (une image garée ne doit jamais retarder un paquet). C'est pourquoi
+`setAudioSink()` vit sur la capture d'écran : un flux, une autorisation — celle
+de « Screen & System Audio Recording », pas de micro —, et le son qui s'arrête et
+repart avec l'image au lieu de dériver quand l'écran s'en va.
+
+**La cadence, elle, n'a pas de plateforme.** Le relais avance l'horloge RTP d'une
+trame par paquet : un paquet manquant n'est pas un paquet en retard, c'est une
+horloge fausse. Windows tient ce contrat dans le fil WASAPI lui-même — le
+périphérique signale, le même thread encode. Les API *push* (SCK ici, PipeWire
+plus tard) appellent quand elles veulent, sur leur file : le tic doit vivre
+ailleurs. C'est `PacedOpusSink` (`src/audio/`), neutre de plateforme : `push()`
+depuis la capture, un thread à nous qui sort une trame Opus toutes les 5 ms,
+silence compris.
+
+Deux pièges, tous deux mesurés sur le banc :
+
+- **`CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer` refuse une
+  structure de taille fixe.** Une `AudioBufferList` dimensionnée pour huit
+  canaux — largement de quoi tenir le stéréo — reçoit
+  `kCMSampleBufferError_ArrayTooSmall` (-12737) : la taille que CoreMedia veut
+  couvre plus que les tampons eux-mêmes. Il faut la **forme en deux appels** (le
+  premier demande la taille). Le symptôme, sinon, est propre et trompeur : la
+  chaîne entière tourne, 200 paquets/s exactement, 0 perdu, **3 octets par
+  paquet** — du silence numérique parfaitement cadencé.
+- **Core Audio livre du planaire** : 2 tampons d'1 canal, 960 échantillons (20 ms)
+  à la fois. D'où `AudioInterleave.h`, où sont écrites les trois décisions qui
+  comptent (mono dupliqué dans les deux oreilles, pas panoramiqué à gauche ; au-delà
+  du stéréo on garde les deux frontaux ; un plan absent est du silence, pas une
+  lecture par un pointeur nul) — arithmétique pure, donc testée partout.
+- **La file du pacer était calibrée pour WASAPI.** Quatre trames = 20 ms, soit
+  exactement une rafale SCK : chaque rafale remplissait la file à ras bord et la
+  moindre gigue la débordait. Mesuré : **1 170 images capturées jetées ET 1 214
+  trames envoyées en silence dans la même minute**, la file pleine et vide tour à
+  tour, dix pour cent du flux dans chaque sens. Huit trames (40 ms) → **121
+  jetées et 165 silences sur 16 536 paquets**, soit un dixième de ce qu'elle
+  perdait. Le plafond ne borne que le pire cas : en régime établi la file se vide
+  à chaque rafale, elle n'ajoute pas de latence.
+
+Vérifié de bout en bout depuis Chrome sous Windows, un son bouclé sur le Mac :
+**16 536 paquets en 82,6 s — 200,0/s exactement**, 3 958 080 échantillons captés
+(61,8 s à 48 kHz sur la session précédente, sans un trou), et le signal **mesuré à
+la sortie du décodeur du navigateur** : crête 0,235, RMS moyen 0,011 sur 413
+blocs. Le son du Mac est audible dans le navigateur.
+
+Reste à améliorer : le pour-cent de trames encore jeté ou envoyé en silence — de
+la gigue d'ordonnancement, pas une erreur de débit (les deux horloges tiennent
+48 kHz).
+
+### 20.9 Ce qui reste
+
+Le HDR (P010 en entrée, Main10 en sortie — le silicium le fait), le pointeur
+agrandi, et la signature du `.pkg` (§20.5, §20.7).
 
 Hors de ce module, vu au passage et **corrigé depuis** : Internet Access se
 désactivait entièrement quand l'enregistrement PowerDNS échouait, rendez-vous

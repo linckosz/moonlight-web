@@ -58,23 +58,8 @@ if(WIN32)
         src/encode/windows/VplSession.cpp
         src/encode/windows/VplCapabilities.cpp
         src/encode/windows/VplEncoder.cpp
-        src/audio/OpusEncoder.cpp
         src/audio/windows/WasapiLoopback.cpp
     )
-
-    # libopus (BSD-3-Clause, on the allow-list in LICENSE.md), built from the
-    # pinned submodule as a static library: nothing installed, nothing shared,
-    # no programs, no tests. The encoder the audio thread runs.
-    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
-    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
-    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-    add_subdirectory(third_party/opus EXCLUDE_FROM_ALL)
-    set_target_properties(opus PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
-    target_link_libraries(mw-native-host PRIVATE Opus::opus)
-    target_include_directories(mw-native-host SYSTEM PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/opus/include)
 
     # DXGI enumerates the adapters and their outputs (the display→GPU
     # association everything else depends on) and drives Desktop Duplication;
@@ -188,6 +173,31 @@ endif()
 
 message(STATUS "mw-native-host: platform backend = ${MW_NATIVE_PLATFORM}")
 
+# ── Audio ───────────────────────────────────────────────────────────────────
+# The encoder and the pacing sink are platform-neutral and compiled wherever
+# there is a capture to feed them: Windows (WASAPI loopback, its own thread)
+# and macOS (ScreenCaptureKit's audio tap, through PacedOpusSink). Linux has no
+# capture source yet, so libopus is not built there — nothing would call it.
+#
+# libopus (BSD-3-Clause, on the allow-list in LICENSE.md) is built from the
+# pinned submodule as a static library: nothing installed, nothing shared, no
+# programs, no tests.
+if(WIN32 OR APPLE)
+    target_sources(mw-native-host PRIVATE
+        src/audio/OpusEncoder.cpp
+        src/audio/PacedOpusSink.cpp)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third_party/opus EXCLUDE_FROM_ALL)
+    set_target_properties(opus PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_link_libraries(mw-native-host PRIVATE Opus::opus)
+    target_include_directories(mw-native-host SYSTEM PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/opus/include)
+endif()
+
 target_include_directories(mw-native-host
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -268,6 +278,7 @@ if(MW_BUILD_TESTS)
         tests/test_restart_backoff.cpp
         tests/test_rate_control.cpp
         tests/test_audio_pacer.cpp
+        tests/test_audio_interleave.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)

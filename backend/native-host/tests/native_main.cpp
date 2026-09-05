@@ -33,6 +33,7 @@ void run_cadence_align_tests();
 void run_restart_backoff_tests();
 void run_rate_control_tests();
 void run_audio_pacer_tests();
+void run_audio_interleave_tests();
 
 int main()
 {
@@ -56,6 +57,7 @@ int main()
     run_restart_backoff_tests();
     run_rate_control_tests();
     run_audio_pacer_tests();
+    run_audio_interleave_tests();
     run_capture_tests();
     run_win32_cursor_tests();
     run_evdev_keymap_tests();

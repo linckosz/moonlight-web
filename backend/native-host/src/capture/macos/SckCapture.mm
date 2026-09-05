@@ -17,6 +17,7 @@
 
 #include "SckCapture.h"
 
+#include "../../audio/AudioInterleave.h"
 #include "../../core/Log.h"
 
 #import <CoreMedia/CoreMedia.h>
@@ -28,6 +29,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <vector>
 
 namespace mw::native::capture {
 namespace {
@@ -67,6 +69,20 @@ struct SckCapture::Impl
     SCStreamConfiguration* config = nil;
     id sink = nil;
     dispatch_queue_t queue = nullptr;
+    /// Audio has a queue of its own so a frame being parked never delays a
+    /// packet — the video queue can sit under the capture's mutex.
+    dispatch_queue_t audioQueue = nullptr;
+
+    /// Set before start() when the session wants sound. Read only on the audio
+    /// queue, and cleared in stop() after the stream has been stopped.
+    SckCapture::AudioSampleCallback onAudio;
+    /// The interleaving buffer, owned by the audio queue alone (serial).
+    std::vector<float> audioScratch;
+    /// The AudioBufferList CoreMedia fills, sized by CoreMedia itself and kept
+    /// between buffers. Audio queue only.
+    std::vector<uint8_t> audioListStorage;
+    uint64_t audioFrames = 0;
+    uint64_t audioCallbacks = 0;
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -106,7 +122,14 @@ struct SckCapture::Impl
                    ofType:(SCStreamOutputType)type
 {
     (void)stream;
-    if (type != SCStreamOutputTypeScreen || !self.owner) return;
+    if (!self.owner) return;
+    if (@available(macOS 13.0, *)) {
+        if (type == SCStreamOutputTypeAudio) {
+            [self handleAudio:sampleBuffer];
+            return;
+        }
+    }
+    if (type != SCStreamOutputTypeScreen) return;
     auto* d = self.owner;
 
     // The frame's status rides in the sample attachments. Idle means "nothing
@@ -147,6 +170,69 @@ struct SckCapture::Impl
     d->pendingCapturedUs = nowUs;
     d->delivered++;
     d->cv.notify_one();
+}
+
+/// One buffer of host audio, as Core Audio hands it over: float32, 48 kHz,
+/// and PLANAR — one buffer per channel — which is why the interleaver exists.
+/// Called on the audio queue, which is serial, so the scratch buffer needs no
+/// lock of its own.
+- (void)handleAudio:(CMSampleBufferRef)sampleBuffer
+{
+    auto* d = self.owner;
+    if (!d) return;
+    if (!d->onAudio) return;
+    d->audioCallbacks++;
+    const CMItemCount frames = CMSampleBufferGetNumSamples(sampleBuffer);
+    if (frames <= 0) return;
+
+    // The buffer list is asked for its own size first, then filled. A fixed
+    // struct sized for eight channels looks like it should be enough and is
+    // NOT: CoreMedia answers kCMSampleBufferError_ArrayTooSmall (-12737) for
+    // it, because the size it wants covers more than the buffers themselves.
+    // Measured on macOS 15.6 — the two-call form is the one that works, and
+    // the storage is kept between buffers so the audio queue allocates nothing
+    // per packet.
+    size_t needed = 0;
+    if (CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer, &needed, nullptr, 0, kCFAllocatorDefault, kCFAllocatorDefault, 0,
+            nullptr) != noErr ||
+        needed == 0)
+        return;
+    if (d->audioListStorage.size() < needed) d->audioListStorage.resize(needed);
+    auto* list = reinterpret_cast<AudioBufferList*>(d->audioListStorage.data());
+
+    CMBlockBufferRef block = nullptr;
+    const OSStatus status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+        sampleBuffer, nullptr, list, d->audioListStorage.size(), kCFAllocatorDefault,
+        kCFAllocatorDefault, kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &block);
+    if (status != noErr || !block) {
+        if (d->audioCallbacks == 1)
+            mw::native::log::warning("[native] audio tap: buffer list refused, status=" +
+                                     std::to_string(status));
+        if (block) CFRelease(block);
+        return;
+    }
+
+    const size_t count = static_cast<size_t>(frames);
+    const UInt32 buffers = list->mNumberBuffers;
+    if (d->audioFrames == 0)
+        mw::native::log::info("[native] audio tap: " + std::to_string(buffers) + " buffer(s), " +
+                              std::to_string(list->mBuffers[0].mNumberChannels) +
+                              " channel(s) each, " + std::to_string(count) + " samples");
+    if (buffers == 1 && list->mBuffers[0].mNumberChannels == 2) {
+        // Already interleaved stereo: hand it over untouched.
+        d->onAudio(static_cast<const float*>(list->mBuffers[0].mData), count);
+    } else if (buffers >= 1) {
+        const float* planes[2] = {nullptr, nullptr};
+        const int planeCount = buffers >= 2 ? 2 : 1;
+        for (int i = 0; i < planeCount; ++i)
+            planes[i] = static_cast<const float*>(list->mBuffers[i].mData);
+        d->audioScratch.resize(count * 2);
+        mw::native::audio::interleaveToStereo(planes, planeCount, count, d->audioScratch.data());
+        d->onAudio(d->audioScratch.data(), count);
+    }
+    d->audioFrames += count;
+    CFRelease(block);
 }
 
 - (void)stream:(SCStream*)stream didStopWithError:(NSError*)error
@@ -264,8 +350,27 @@ bool SckCapture::start(std::string& error)
         config.minimumFrameInterval = CMTimeMake(1000, m_RefreshMilliHz);
         config.queueDepth = 3;
         config.showsCursor = m_ShowsCursor;
-        // No audio through this stream (off by default; the property itself
-        // only exists from macOS 13).
+
+        // The host's sound, when the session asked for it. 48 kHz stereo is
+        // what the rest of the path speaks, so no resampling happens anywhere.
+        // The property only exists from macOS 13 — on 12.x the picture still
+        // streams, silently, and audioActive() says so.
+        m_AudioActive = false;
+        if (d->onAudio) {
+            if (@available(macOS 13.0, *)) {
+                config.capturesAudio = YES;
+                config.sampleRate = 48000;
+                config.channelCount = 2;
+                // Our own process makes no sound; excluding it would only
+                // hide a browser tab opened ON the Mac being streamed, which
+                // is a feedback loop the user can hear and close themselves.
+                config.excludesCurrentProcessAudio = NO;
+                m_AudioActive = true;
+            } else {
+                log::warning("[native] audio: ScreenCaptureKit captures sound from macOS 13 on — "
+                             "this Mac streams the picture only");
+            }
+        }
 
         d->queue = dispatch_queue_create("moonlightweb.native.sck", DISPATCH_QUEUE_SERIAL);
         MWSckSink* sink = [[MWSckSink alloc] init];
@@ -285,6 +390,24 @@ bool SckCapture::start(std::string& error)
                                error:&addError]) {
             error = "ScreenCaptureKit refused the frame output: " + describe(addError);
             return false;
+        }
+
+        if (m_AudioActive) {
+            if (@available(macOS 13.0, *)) {
+                d->audioQueue =
+                    dispatch_queue_create("moonlightweb.native.sck.audio", DISPATCH_QUEUE_SERIAL);
+                NSError* audioError = nil;
+                if (![stream addStreamOutput:sink
+                                        type:SCStreamOutputTypeAudio
+                          sampleHandlerQueue:d->audioQueue
+                                       error:&audioError]) {
+                    // The picture is the session; sound is not worth failing
+                    // it. Say what happened and carry on silent.
+                    log::warning("[native] audio: ScreenCaptureKit refused the audio output: " +
+                                 describe(audioError) + " — streaming silent");
+                    m_AudioActive = false;
+                }
+            }
         }
 
         __block NSError* startError = nil;
@@ -309,8 +432,14 @@ bool SckCapture::start(std::string& error)
     log::info("[native] ScreenCaptureKit: display " + std::to_string(m_DisplayId) + " → " +
               std::to_string(m_Width) + "x" + std::to_string(m_Height) + " NV12 at " +
               std::to_string((m_RefreshMilliHz + 500) / 1000) + " Hz, pointer " +
-              (m_ShowsCursor ? "in the picture" : "left out"));
+              (m_ShowsCursor ? "in the picture" : "left out") +
+              (m_AudioActive ? ", with the host's audio (48 kHz stereo)" : ""));
     return true;
+}
+
+void SckCapture::setAudioSink(AudioSampleCallback onSamples)
+{
+    d->onAudio = std::move(onSamples);
 }
 
 void SckCapture::stop()
@@ -333,6 +462,12 @@ void SckCapture::stop()
     }
     d->config = nil;
     d->queue = nullptr;
+    // The stream is stopped and the sink disowned, so no audio callback can be
+    // in flight: dropping it here is what lets the session free the sink it
+    // points at.
+    d->audioQueue = nullptr;
+    d->onAudio = nullptr;
+    m_AudioActive = false;
     {
         std::lock_guard<std::mutex> lock(d->mutex);
         d->clearPending();
@@ -340,9 +475,11 @@ void SckCapture::stop()
         d->held = nullptr;
     }
     if (d->started) {
-        log::info("[native] ScreenCaptureKit: " + std::to_string(d->delivered) + " frame(s), " +
-                  std::to_string(d->idle) + " idle, " + std::to_string(d->replaced) +
-                  " superseded before being taken");
+        log::info(
+            "[native] ScreenCaptureKit: " + std::to_string(d->delivered) + " frame(s), " +
+            std::to_string(d->idle) + " idle, " + std::to_string(d->replaced) +
+            " superseded before being taken" +
+            (d->audioFrames > 0 ? ", " + std::to_string(d->audioFrames) + " audio samples" : ""));
         d->started = false;
     }
 }
