@@ -789,17 +789,22 @@ const MoonlightApp = {
         const hostname = window.location.hostname;
 
         if (!info.internetActive) {
-            const domain = ourStunHost();
-            let bodyHtml = escapeHtml(t('hosts.internetDisabledHint', { domain }));
-            // Only offer the shortcut to a browser that may open the admin page
-            // at all; on any other machine the sentence above still says where
-            // the setting lives.
-            if (this._canReachAdmin()) {
-                bodyHtml +=
-                    ` <a href="#" id="banner-enable-internet" class="consent-highlight">` +
-                    `${t('hosts.enableInternetLink')}</a>`;
-            }
-            return this._buildBanner(bodyHtml);
+            // The action is a clause of the sentence, not a second copy of it
+            // bolted on the end. Built by escaping the whole translated line
+            // first and putting the anchor back at a marker no escape touches,
+            // so a locale string still cannot carry markup of its own.
+            const MARK = '@@LINK@@';
+            const label = escapeHtml(t('hosts.enableInternetLink'));
+            // Only make it a link for a browser that may open the admin page at
+            // all; on any other machine the clause stays plain text and the
+            // sentence still says where the setting lives.
+            const action = this._canReachAdmin()
+                ? `<a href="#" id="banner-enable-internet" class="consent-highlight">${label}</a>`
+                : label;
+            const sentence = escapeHtml(
+                t('hosts.internetDisabledHint', { domain: ourStunHost(), link: MARK }),
+            );
+            return this._buildBanner(sentence.replace(MARK, action));
         }
 
         if (!info.rendezvousUrl || shownUrl === info.rendezvousUrl) return null;

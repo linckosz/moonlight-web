@@ -243,6 +243,12 @@
 .remote-access-banner a:hover {
     text-decoration: underline;
 }
+/* The action link is a clause inside the sentence, not an address tacked on
+   the end: the gap that sets a URL apart from its label reads as a stray
+   space mid-sentence. */
+.remote-access-banner a.consent-highlight {
+    margin-left: 0;
+}
 
 /* ── Host card ─────────────────────────────────────────────────────────── */
 .host-card {

@@ -102,7 +102,7 @@
         "offlineMessage": "此主机处于离线状态",
         "unavailableMessage": "此主机在网络中，但 MoonlightWeb 未运行",
         "remoteAccess": "其他电脑可通过以下地址连接到此服务器：",
-        "internetDisabledHint": "若要通过 {{domain}} 访问您的串流，请在管理页面中启用互联网访问。",
+        "internetDisabledHint": "若要通过 {{domain}} 访问您的串流，请在管理页面中{{link}}。",
         "alsoReachableHint": "您也可以通过以下地址连接到此服务器：",
         "enableInternetLink": "启用互联网访问",
         "stopSession": "停止会话",
