@@ -601,9 +601,12 @@ const MoonlightApp = {
 
     /**
      * Best-effort: resolve the URL other devices use to reach this server.
-     *   - A claimed rendezvous address → that, whoever is asking. It is the one
-     *     address that works from the next room and from another country, and it
-     *     is served under a certificate the browser already trusts.
+     *   - A claimed rendezvous address, while Internet Access is on → that,
+     *     whoever is asking. It is the one address that works from the next room
+     *     and from another country, and it is served under a certificate the
+     *     browser already trusts. The identity survives the switch being turned
+     *     off, so the check is on the switch and not on the address: naming an
+     *     entrance nobody is holding open is worse than naming none.
      *   - Legacy sub-domain (Internet Access active, pre-retirement instance) →
      *     the public domain URL, with the external (router-side) port.
      *   - Otherwise → the LAN IP URL (with local HTTPS port).
@@ -662,9 +665,10 @@ const MoonlightApp = {
 
         let url = '';
         let remote = false;
-        if (rendezvousUrl) {
-            // Not gated on the line being up: while it is down the address is
-            // still the right one, and callers say so from `rendezvousOnline`.
+        if (rendezvousUrl && internetActive) {
+            // Not gated on the LINE being up: a line that dropped comes back on
+            // its own, the address is still the right one, and callers say so
+            // from `rendezvousOnline`. The switch is another matter — see above.
             url = rendezvousUrl;
             remote = true;
         } else if (internetActive && domain) {
@@ -711,8 +715,9 @@ const MoonlightApp = {
         if (!view || view.querySelector('.remote-access-banner')) return;
 
         const banners = [];
-        if (this._isHostMachine() && info.url) banners.push(this._buildRemoteAccessBanner(info));
-        const hint = this._buildAddressHintBanner(info);
+        const showRemote = this._isHostMachine() && !!info.url;
+        if (showRemote) banners.push(this._buildRemoteAccessBanner(info));
+        const hint = this._buildAddressHintBanner(info, showRemote ? info.url : '');
         if (hint) banners.push(hint);
         if (!banners.length) return;
 
@@ -746,8 +751,10 @@ const MoonlightApp = {
         let bodyHtml = `${t('hosts.remoteAccess')} ${linkHtml(info.url)}`;
         // A held connection, not a published record: while it is down the
         // address is correct and answers to nobody. Saying so beats showing a
-        // link that silently fails.
-        if (info.rendezvousUrl && !info.rendezvousOnline) {
+        // link that silently fails — but only about the address on screen. With
+        // Internet Access off the line is down by definition and we are showing
+        // the LAN IP, which is unaffected; the second box explains that case.
+        if (info.url === info.rendezvousUrl && !info.rendezvousOnline) {
             bodyHtml += `<br><span class="banner-internet-hint">${escapeHtml(
                 t('admin.rendezvousOffline'),
             )}</span>`;
@@ -770,11 +777,15 @@ const MoonlightApp = {
      * deliberately being used offline). Naming the address leaves the choice
      * where it belongs, and the link carries the browser over in one click.
      *
-     * Returns an element, or null when there is nothing useful to say (the page
-     * is already on the public address, or is the host's own loopback tab — the
-     * banner above already told it).
+     * `shownUrl` is the address the banner above is already displaying, if any.
+     * Returns an element, or null when there is nothing useful to say — the page
+     * is already on the public address, or that banner just named it. The host
+     * reading its own server on its LAN IP is the case that needs the second
+     * test: it is the host machine (so it gets the first banner) AND it is not
+     * on the public address (so it qualifies for this one), and without this it
+     * would be told the same URL twice, one line apart.
      */
-    _buildAddressHintBanner(info) {
+    _buildAddressHintBanner(info, shownUrl) {
         const hostname = window.location.hostname;
 
         if (!info.internetActive) {
@@ -791,11 +802,7 @@ const MoonlightApp = {
             return this._buildBanner(bodyHtml);
         }
 
-        if (!info.rendezvousUrl) return null;
-        // Loopback is the host's own tab: the first banner named this address.
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') {
-            return null;
-        }
+        if (!info.rendezvousUrl || shownUrl === info.rendezvousUrl) return null;
         // Already there — arrived through the tunnel, or typed the address.
         if (pageCameThroughTunnel()) return null;
         try {
@@ -1668,7 +1675,7 @@ const MoonlightApp = {
         // Plain (non-clickable) text so the user can select and copy the URL to
         // paste into a browser on another device.
         const offlineHtml =
-            info && info.rendezvousUrl && !info.rendezvousOnline
+            info && url && url === info.rendezvousUrl && !info.rendezvousOnline
                 ? `<p class="setting-desc">${escapeHtml(t('admin.rendezvousOffline'))}</p>`
                 : '';
         const urlHtml = url
