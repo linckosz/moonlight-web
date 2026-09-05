@@ -138,8 +138,8 @@ Trois points de justesse invisibles hors exécution :
 
 ### Linux / macOS
 
-PipeWire via le portail ScreenCast (DMA-BUF, `restore_token` pour ne demander
-l'autorisation qu'une fois) et ScreenCaptureKit. Non implémentés.
+Linux : KMS/DRM d'abord (§19.3–19.5), le portail PipeWire en repli reste à écrire.
+macOS : ScreenCaptureKit, qui écrit directement le NV12 de l'encodeur (§20).
 
 ---
 
@@ -1695,3 +1695,184 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 HEVC et AV1 VA-API, l'audio (PipeWire/Pulse → Opus, et Opus n'est pas encore
 construit sous Linux), le portail PipeWire en repli, le `setcap cap_sys_admin+ep`
 dans le paquet, et le premier flux vers un vrai navigateur depuis un hôte Linux.
+
+---
+
+## 20. macOS : ScreenCaptureKit → VideoToolbox, sans étage de conversion (05/09/2026)
+
+Le troisième backend, écrit sur bench-desk et construit sur le Mac M1 Pro de test
+(macOS 15.6.1, SDK 15.5, Apple clang 17). Cinq fichiers Objective-C++ :
+`SckCapture.mm`, `VtEncoder.mm`, `CgInput.mm`, `MacProbe.mm`, `MacSession.mm`, plus
+la table clavier `MacKeyMap.h` (C++ pur, testée partout). Même couture plateforme
+que Windows et Linux (`Probe.h`, `Session.h`), même boucle de session portée étage
+par étage.
+
+### 20.1 La chaîne, et pourquoi il n'y a pas de convertisseur
+
+Sous Windows et Linux la capture livre le bureau tel qu'il est scanné (BGRA, ou un
+DMA-BUF tuilé) et un shader le transforme en NV12 pour l'encodeur. ScreenCaptureKit
+est la sortie du compositeur lui-même, et le compositeur sait écrire du NV12 : on
+demande `'420v'` (4:2:0 bi-planaire, video range, matrice BT.709) à la résolution du
+flux, et chaque image arrive comme un `CVPixelBuffer` sur IOSurface que VideoToolbox
+lit en place — mise à l'échelle, conversion couleur et, si on le demande, pointeur
+composé, déjà faits par WindowServer sur le GPU. La chaîne est donc **capture →
+encodeur**, rien entre les deux ; la seule copie restante est le bitstream qui sort
+de la VRAM (`copiesPerFrame = 1`, comme sur les deux autres OS).
+
+SCK pousse ses images sur une file dispatch ; la boucle est écrite contre un
+`acquire(timeout)` bloquant — c'est ainsi que DXGI et KMS répondent — donc la
+dernière image est **parquée sous un mutex et remplacée** par la suivante si elle
+n'a pas été prise : aucune file, la règle « dernière image, jamais d'arriéré ». Les
+images `Idle` (rien n'a changé) sont comptées et ignorées ; `Complete` et `Started`
+portent la sortie du compositeur. L'horodatage de présentation vient de l'attache
+`SCStreamFrameInfoDisplayTime` (mach time), ramené sur l'horloge stable par « il y a
+combien de temps ». La fréquence demandée à SCK est celle du panneau (120 Hz sur ce
+M1 Pro, ProMotion) : la garde de cadence de la session voit chaque présent et décide
+lesquels le flux porte, exactement comme sous Windows.
+
+Pas de statut `PointerOnly` : avec le pointeur dans l'image, un mouvement de souris
+**est** une nouvelle image (c'est ce que veut le mode composé) ; pointeur exclu, le
+client dessine le sien, et la **forme** lui vient d'AppKit
+(`NSCursor.currentSystemCursor`, rastérisé à l'échelle du panneau, haché ; nommé —
+`default`, `text`, `pointer`, `ew-resize`… — quand son hachage est celui d'un
+curseur standard appris une fois au démarrage). Le pointeur agrandi pour téléphone
+(`cursorFramePx`) n'a pas de route ici : SCK dessine le pointeur à sa taille, et la
+session le dit une fois dans le log.
+
+### 20.2 VideoToolbox : ce qu'il a, ce qu'il n'a pas
+
+Les mêmes décisions de latence que les quatre autres encodeurs : `RealTime`,
+`AllowFrameReordering = false` (pas de B, une image en vol), `MaxKeyFrameInterval` et
+sa durée poussés à « jamais » (les keyframes sont à la demande), `ExpectedFrameRate`,
+`MaxFrameDelayCount = 0`, `PrioritizeEncodingSpeedOverQuality`, High/CABAC en H.264,
+Main sans open-GOP en HEVC, matériel exigé
+(`RequireHardwareAcceleratedVideoEncoder`). Le VBV est celui de `RateControl.h`
+exprimé dans le vocabulaire de VideoToolbox : `DataRateLimits = [octets, secondes]`
+avec une image de budget sur une image de temps. Le débit se change à chaud par
+`AverageBitRate` + `DataRateLimits`, sans reconstruction. Chaque `encode()` **bloque**
+jusqu'au bitstream (`CompleteFrames` puis attente du callback) : VideoToolbox est
+asynchrone par construction, et l'attente de l'image que l'on vient de soumettre est
+ce qui rend vraie la « une image en vol » de la boucle.
+
+Ce qu'il n'a pas : ni intra-refresh, ni invalidation de référence, ni QP par image.
+Une image perdue coûte une keyframe et `SessionInfo` le dit ; la rafale de
+raffinement converge sur la taille et son plafond de passes seul (`RefineConvergence`
+était déjà écrit pour un encodeur muet sur le QP — AMF fut le premier). Pas d'AV1 :
+aucun encodeur Apple n'en produit. HEVC et H.264 seulement, dans cet ordre.
+
+**AVCC → Annex B en place.** VideoToolbox sort des NAL préfixés de leur longueur, les
+paramètres (SPS/PPS, VPS en HEVC) à part dans la description de format ; le
+navigateur et tous les relais veulent de l'Annex B avec les paramètres devant chaque
+keyframe. Un préfixe de longueur fait 4 octets, un start code aussi : une image
+delta est **réécrite dans le tampon même de l'encodeur** et livrée sans copie ; une
+keyframe — rare — est assemblée dans un tampon de travail, paramètres devant.
+
+### 20.3 Les entrées : Quartz, et les deux choses que macOS laisse à l'émetteur
+
+`CGEventPost` au HID tap, thread-safe et à la microseconde : la seule route. Deux
+choses que Windows et Linux font pour nous et que macOS non :
+
+1. **Les modificateurs sont des drapeaux, pas des touches.** Un appui sur Shift se
+   poste en `kCGEventFlagsChanged` avec le nouvel état, et chaque événement clavier
+   ou souris qui suit doit porter les modificateurs tenus dans son propre champ —
+   WindowServer ne s'en souvient pas pour nous. `CgInput` tient le masque et
+   l'estampille sur tout ce qu'il poste.
+2. **Le double-clic se déclare, il ne se détecte pas.** Un second appui dans
+   l'intervalle doit dire `clickState = 2`, sinon ce sont deux clics simples ; un
+   déplacement bouton enfoncé est un `…Dragged`, pas un `MouseMoved`.
+
+La table clavier `MacKeyMap.h` est écrite en chiffres (codes ADB, inchangés depuis le
+premier Macintosh) et non en `kVK_*` pour être testée sur toute machine ; même
+raisonnement position → position que les deux autres tables, la disposition de
+l'hôte étant appliquée par l'OS. Win → Command, Alt → Option, Ctrl → Control ;
+Impr. écran / Arrêt défil. / Pause vont là où un clavier Apple met F13–F15 ; la
+touche menu et les touches média n'ont pas de place et sont écartées plutôt que
+devinées. Caps Lock est un **état**, réglé par IOKit (`IOHIDSetModifierLockState`),
+pas une frappe. Pas de manette : tranché le 02/09 (extension DriverKit signée,
+entitlement Apple), `probeVirtualGamepad` répond `supported = false`.
+
+### 20.4 La sonde : trois pièges, tous rencontrés le premier jour
+
+- **La session graphique.** Un binaire lancé par SSH est dans une autre session
+  d'audit : `CGSessionCopyCurrentDictionary` répond quand même « sur la console »
+  (il parle de l'*utilisateur*), puis `CGGetActiveDisplayList` ne trouve aucun écran
+  et la sonde aurait dit « Mac sans écran ». `hasInteractiveSession()` pose donc une
+  seconde question, celle du *processus* : `SessionGetInfo` et son bit
+  `sessionHasGraphicAccess`. Sous SSH la réponse est maintenant « pas de session
+  interactive » ; les tests se lancent par `launchctl bootstrap gui/<uid>`, qui est
+  la session de l'agent `com.moonlightweb.agent`.
+- **L'écran endormi.** Un panneau en veille sort de la liste *active* : le Mac laissé
+  dix minutes disparaissait de la liste des hôtes (« no active display », capot
+  ouvert, écran noir). La sonde énumère la liste *online* (branché et utilisable) et
+  note « (asleep) » dans le détail ; la session **réveille** le panneau au départ
+  (`IOPMAssertionDeclareUserActivity`) et tient une assertion
+  `PreventUserIdleDisplaySleep` tant qu'elle tourne — quelqu'un qui streame ce Mac
+  l'utilise, quoi qu'en pense son minuteur.
+- **La permission.** Screen Recording (TCC) est la seule chose que le programme ne
+  peut pas s'accorder : la sonde répond `CapturePermission`, demande une fois par
+  processus l'invite système (`CGRequestScreenCaptureAccess`), et dit dans quel
+  panneau des Réglages Système est l'interrupteur — l'octroi ne vaut que pour les
+  processus lancés *après*. Les entrées ont le même mur, Accessibility, vérifié dans
+  `CgInput::start()` (`CGPreflightPostEventAccess`) avec la même phrase.
+
+### 20.5 Ce que le banc a appris avant même la première image
+
+- **TCC accroche l'octroi au *designated requirement* de la signature.** Une
+  signature ad hoc (ce que fait l'éditeur de liens sur Apple Silicon, et ce que fait
+  `codesign -s -` dans `release.yml`) a pour exigence le hachage du binaire lui-même :
+  **chaque rebuild reperd l'autorisation et redemande**. Le banc signe tests et app
+  avec une identité auto-signée stable (« MoonlightWeb Dev », trousseau dédié) dont
+  l'exigence est `identifier … and certificate leaf = H"…"` ; un octroi, tous les
+  builds. ⚠️ **Conséquence produit** : tant que le `.pkg` est signé ad hoc, chaque
+  mise à jour de MoonlightWeb sur un Mac redemandera Screen Recording et
+  Accessibility. Sunshine a le même problème sans Developer ID. À arbitrer avant la
+  release macOS du host natif.
+- **`FrameSender(Options options = {})` ne compile pas chez Apple clang** (« default
+  member initializer needed within definition of enclosing class ») alors que MSVC
+  et GCC l'acceptent : `Options` porte des initialiseurs de membre et le défaut est
+  analysé avant qu'ils soient complets. Le seul appelant passe ses options ; le
+  défaut est retiré. C'était une casse latente du job macOS de la CI depuis C4.
+- **Le Mac de test n'a ni Homebrew utilisable ni sudo** : CMake et Ninja depuis leurs
+  archives officielles sous `~/tools`, OpenSSL statique compilé sur place, Qt 6.10.3
+  par `aqt` sous `~/Qt`, et l'app livrée sous `~/Applications` avec le LaunchAgent
+  repointé, `/Applications/MoonlightWeb.app` appartenant à root.
+- `.clang-format` n'avait pas de section Objective-C : les `.mm` n'étaient jamais
+  formatés (« configuration does not support Objective-C »). Ajoutée, même style.
+
+### 20.6 Le premier flux (05/09/2026)
+
+Chrome 152 sur bench-desk → rendez-vous (`stream.moonlightweb.top/<id>`, ICE en LAN
+`10.0.0.34:48010`) → l'app complète construite sur le Mac (Qt 6.10.3, OpenSSL
+statique, signée avec l'identité de banc). Session `Built-in Retina Display
+2560x1440@60 HEVC via VideoToolbox on Apple M1 Pro`, VBV 666 kbit, décodeur
+Chrome `hev1.1.176.L153.B0` matériel, première image décodée en NV12, écran de
+verrouillage du Mac **droit et aux bonnes couleurs** dans le navigateur. Cadence
+lue : « 120 Hz display, 60 fps stream — 83 presents in 9.1 s, 1 not carried » ;
+SCK : 84 images, 459 idle, 1 remplacée avant d'être prise ; première keyframe
+123 Ko ; le gouverneur de lien a coupé une fois (« delay rising », 25,6 Mbit/s) puis
+remonté par pas de 5 %.
+
+⚠️ **Ce qui a été faux d'abord** : la première session a livré dix secondes de noir
+(keyframes de 1,5 Ko), puis SCK a arrêté le flux (« Failed to find any displays »,
+-3815) et la session a bouclé 45 tentatives jusqu'à ce qu'un `caffeinate -u`
+externe rallume le panneau. Cause : `IOPMAssertionDeclareUserActivity` **relâchée
+aussitôt déclarée** ne réveille rien. L'assertion est maintenant gardée pour la
+session et redéclarée à chaque tentative de redémarrage ; rejoué avec l'écran
+endormi par `pmset displaysleepnow` : image dès la première seconde, écran
+rallumé, 123 Ko de première keyframe.
+
+Autres constats de ce flux : `MaxFrameDelayCount = 0` est refusé par l'encodeur
+matériel (-12900, en debug, sans conséquence visible) ; la sortie SCK suit le format
+demandé par le client (2560×1440 puis 2218×1440 quand le front a réaligné le
+rapport d'aspect sur l'écran 3600×2338) ; Accessibility n'était pas encore
+accordé, donc entrées non vérifiées sur ce flux.
+
+### 20.7 Ce qui reste
+
+L'audio (SCK capture le son système depuis macOS 13, `capturesAudio` → Opus, qui
+n'est construit que sous Windows), le HDR (P010 en entrée, Main10 en sortie — le
+silicium le fait), le pointeur agrandi, la signature du `.pkg` (§20.5), la
+vérification clavier/souris une fois Accessibility accordé, et un point hors de ce
+module vu au passage : **Internet Access se désactive entièrement quand
+l'enregistrement PowerDNS échoue** (jeton absent), rendez-vous compris, alors que
+le rendez-vous n'a aucun besoin du sous-domaine (`legacy_dns`).

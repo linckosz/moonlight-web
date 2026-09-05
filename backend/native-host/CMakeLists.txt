@@ -95,6 +95,38 @@ if(WIN32)
     # projection (see WgcCapture.h on why the projection is unwanted here).
     target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32 setupapi
                                                  winmm avrt ole32 runtimeobject)
+elseif(APPLE)
+    set(MW_NATIVE_PLATFORM "macos")
+    # ScreenCaptureKit → VideoToolbox, with no conversion stage in between:
+    # the compositor writes the encoder's NV12 itself (SckCapture.h). Input by
+    # Quartz events. Objective-C++ throughout, compiled as C++ sources with
+    # ARC turned on per file — CMake's CXX language already knows .mm.
+    set(MW_NATIVE_MACOS_SOURCES
+        src/platform/macos/MacProbe.mm
+        src/platform/macos/MacSession.mm
+        src/capture/macos/SckCapture.mm
+        src/encode/macos/VtEncoder.mm
+        src/input/macos/CgInput.mm)
+    target_sources(mw-native-host PRIVATE ${MW_NATIVE_MACOS_SOURCES})
+    set_source_files_properties(${MW_NATIVE_MACOS_SOURCES} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    # ScreenCaptureKit needs macOS 12.3; everything else here is older. The
+    # deployment target is the top-level build's business (the .pkg says 12.0
+    # today), so the 12.3 APIs are what the probe's isOsSupported() guards.
+    target_link_libraries(mw-native-host PRIVATE
+        "-framework ScreenCaptureKit"
+        "-framework VideoToolbox"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework CoreGraphics"
+        "-framework CoreFoundation"
+        "-framework Foundation"
+        "-framework AppKit"
+        "-framework Metal"
+        "-framework IOKit"
+        "-framework IOSurface"
+        "-framework Security")
+    # PUBLIC so the tests can tell whether the backend exists.
+    target_compile_definitions(mw-native-host PUBLIC MW_NATIVE_MACOS=1)
 else()
     set(MW_NATIVE_PLATFORM "none")
 
@@ -226,6 +258,8 @@ if(MW_BUILD_TESTS)
         tests/test_evdev_keymap.cpp
         tests/test_linux_pipeline.cpp
         tests/test_linux_session.cpp
+        tests/test_mac_keymap.cpp
+        tests/test_mac_session.cpp
         tests/test_vpl_params.cpp
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp

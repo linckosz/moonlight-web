@@ -23,6 +23,8 @@ void run_win32_cursor_tests();
 void run_evdev_keymap_tests();
 void run_linux_pipeline_tests();
 void run_linux_session_tests();
+void run_mac_keymap_tests();
+void run_mac_session_tests();
 void run_vpl_params_tests();
 void run_ds4_mapping_tests();
 void run_stage_stats_tests();
@@ -57,8 +59,10 @@ int main()
     run_capture_tests();
     run_win32_cursor_tests();
     run_evdev_keymap_tests();
+    run_mac_keymap_tests();
     run_linux_pipeline_tests();
     run_linux_session_tests();
+    run_mac_session_tests();
 
     const int total = g_nativeStats.passed + g_nativeStats.failed;
     std::fprintf(stderr, "\n========================================\n");

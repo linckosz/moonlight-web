@@ -48,3 +48,52 @@ KeepEmptyLinesAtTheStartOfBlocks: false
 # Preserve the deliberate include grouping (local -> Qt -> std); reordering can
 # break compilation when headers have implicit ordering dependencies.
 SortIncludes: false
+
+---
+# The same house style for Objective-C++ (.mm): the macOS backend of the native
+# engine and MacActivity.mm. Without this section clang-format refuses .mm files
+# ("configuration does not support Objective-C") and they went unformatted.
+Language: ObjC
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+PointerAlignment: Left
+ReferenceAlignment: Left
+AccessModifierOffset: -4
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: false
+  AfterControlStatement: Never
+  BeforeElse: false
+  BeforeCatch: false
+  BeforeLambdaBody: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+
+BreakConstructorInitializers: BeforeComma
+ConstructorInitializerIndentWidth: 4
+NamespaceIndentation: None
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortBlocksOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortLoopsOnASingleLine: false
+AllowShortEnumsOnASingleLine: true
+
+AlignTrailingComments: true
+AlignAfterOpenBracket: Align
+SpaceBeforeParens: ControlStatements
+KeepEmptyLinesAtTheStartOfBlocks: false
+SortIncludes: false
+
+ObjCBlockIndentWidth: 4
+ObjCSpaceAfterProperty: false
+ObjCSpaceBeforeProtocolList: true

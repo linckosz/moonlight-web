@@ -78,7 +78,12 @@ public:
         size_t maxQueuedDeltas = kDefaultMaxQueued;
     };
 
-    explicit FrameSender(Options options = {});
+    // No default argument on purpose: `Options options = {}` is legal C++ but
+    // Apple clang rejects it ("default member initializer needed within
+    // definition of enclosing class") because Options' initializers are not
+    // yet complete where the default is parsed. The one caller passes its
+    // options explicitly anyway.
+    explicit FrameSender(Options options);
     ~FrameSender();
 
     // Enqueue a frame for fragmentation + send on the worker thread.
