@@ -1778,8 +1778,15 @@ libgles2-mesa-dev libgbm-dev libpipewire-0.3-dev` (tous présents sur l'image
 surtout en rendant la régression **impossible en silence** : le job lit la sortie
 de configuration et refuse de paquetiser si « Linux graphics backend ON » ou
 « Linux audio (PipeWire » n'y sont pas, puis vérifie par `readelf` que le binaire
-assemblé a bien `libdrm`, `libva`, `libEGL`, `libGLESv2`, `libgbm` et
-`libpipewire-0.3` en `NEEDED` — le stub n'en lie aucun.
+assemblé a bien `libdrm`, `libva`, `libEGL`, `libgbm` et `libpipewire-0.3` en
+`NEEDED` — le stub n'en lie aucun. ⚠️ **Corrigé le 05/09 au soir, en rejouant le job
+sur le banc** : la première version de la garde exigeait aussi `libGLESv2.so.2`, et
+le binaire ne l'a **pas** — le module passe bien `-lGLESv2` et 33 symboles `gl*` sont
+référencés, mais Qt6Gui tire `libOpenGL.so.0` (glvnd) plus tôt sur la ligne de lien,
+qui exporte les mêmes points d'entrée GLES, et `--as-needed` écarte libGLESv2 comme
+redondante. La répartition vers le GLES du pilote passe par glvnd dans les deux cas ;
+la garde ne nomme plus libGLESv2, la dépendance `libgles2` du paquet reste (inoffensive,
+et c'est ce que le module demande).
 
 **Le piège, mesuré avant d'écrire une ligne.** §19.3 supposait « `setcap` sur le
 binaire, comme Sunshine ». Un binaire qui *gagne* une capacité à l'exec est lancé
@@ -1879,14 +1886,32 @@ plutôt que de laisser chercher une carte d'hôte qui n'apparaît pas ; le porta
 PipeWire sera sa route. L'image Docker n'est pas touchée : sans écran ni GPU, le
 stub y est le bon backend.
 
-**Non vérifié** : le job lui-même — `--exclude-library` de linuxdeploy et les
-nouvelles dépendances passées à fpm n'ont été relus que dans leur documentation,
-et se jugent au premier `workflow_dispatch` de `release.yml` (plateforme
-`linux`) ; un `.deb` installé sur une vraie machine puis un flux navigateur
-(l'application Qt complète n'a encore jamais tourné sous Linux au banc, seul le
-module l'a) ; et l'effet de `moonlightweb-launch` sur un bureau qui lance l'entrée
-`.desktop` (`StartupWMClass` inchangé : le processus final s'appelle toujours
-`MoonlightWeb`).
+**Vérifié le 05/09 au soir, en rejouant le job Linux étape par étape sur le banc**
+(bench-mini, Ubuntu 22.04 — la distribution de l'image `ubuntu-22.04` du job —, Qt
+6.6.3 local, fpm 1.18, linuxdeploy `continuous` extrait sans FUSE) : configure « ON »
+× 2, build sans warning, ctest 3/3, AppDir avec `libqoffscreen.so`, aucune des sept
+bibliothèques système embarquée (66 libs dans `usr/lib`, `RUNPATH=$ORIGIN/../lib`),
+`.deb` et `.rpm` de 44 Mo avec les quinze dépendances attendues. Puis `dpkg -i`
+**par-dessus le 0.2.1 déjà installé** — le vrai chemin de mise à jour : `prerm` a
+arrêté l'ancien `--autostart`, `postinst` a posé `cap_sys_admin=p` sur le lanceur
+(rien sur `MoonlightWeb`), `/usr/bin/moonlightweb` et l'entrée `.desktop` pointent
+le lanceur, et `systemd-run --user` a relancé l'app dans la session GNOME Wayland de
+l'utilisateur (Qt en `xcb` par XWayland, tray créé, page admin ouverte). Le
+processus final s'appelle `/opt/moonlightweb/bin/MoonlightWeb` (argv0 = chemin,
+parent = systemd utilisateur) et porte exactement l'état de la table ci-dessus :
+`CapInh 200000 / CapPrm 200000 / CapEff 0 / CapAmb 0`. Le log dit « `[caps]
+CAP_SYS_ADMIN held (permitted): the screen can be captured through KMS; dropped
+from the effective set; withheld from child processes except the native worker »
+puis « Native host available: bench-mini — MoonlightWeb Host », et
+`/api/native/status` répond `available`, `DRM/KMS`, `HDMI-A-1 — 1920×1080 · 60 Hz`,
+`VA-API`, `AMD Radeon Graphics (gfx1103_r1)`, codecs `H.264` — la sonde a donc bien
+levé la capacité par thread dans le serveur, sans qu'elle soit effective ailleurs.
+`ldd` : Qt depuis `/opt/moonlightweb/lib`, libva/libOpenGL depuis le système.
+
+**Reste non vérifié** : le job GitHub lui-même (au premier `workflow_dispatch` de
+`release.yml`, plateforme `linux`, après le push) — la seule différence avec le
+banc est Qt 6.11 à la place de 6.6.3 ; et le **premier flux navigateur** depuis cet
+hôte (§19.6), qui est la prochaine étape.
 
 ---
 

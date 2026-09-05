@@ -499,7 +499,12 @@ jobs:
             fi
           done
           # And the binary really links them: the stub links none of these.
-          for lib in libdrm.so.2 libva.so.2 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libpipewire-0.3.so.0; do
+          # libGLESv2 is deliberately not in this list although the module links
+          # it: Qt6Gui pulls glvnd's libOpenGL.so.0 first, which exports the same
+          # gl* entry points, so --as-needed drops libGLESv2 as redundant (seen
+          # on Ubuntu 22.04, 05/09/2026). Dispatch to the driver's GLES goes
+          # through glvnd either way.
+          for lib in libdrm.so.2 libva.so.2 libEGL.so.1 libgbm.so.1 libpipewire-0.3.so.0; do
             readelf -d AppDir/usr/bin/MoonlightWeb | grep -q "NEEDED.*$lib" \
               || { echo "::error::MoonlightWeb does not link $lib — the native Linux backend is not in this build"; exit 1; }
           done
