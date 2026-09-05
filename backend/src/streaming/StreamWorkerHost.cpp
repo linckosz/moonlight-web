@@ -17,6 +17,7 @@
 
 #include "StreamWorkerHost.h"
 #include "ConsoleSession.h"
+#include "common/LinuxCapabilities.h"
 
 #include <QCoreApplication>
 #include <QJsonDocument>
@@ -57,14 +58,23 @@ bool StreamWorkerHost::start(const QJsonObject& config)
     const bool native = config["backendType"].toString() == QLatin1String("native");
     if (native && ConsoleSession::launchesElsewhere())
         return startInConsoleSession(args, configLine);
-    return startInProcess(args, configLine);
+    return startInProcess(args, configLine, native);
 }
 
-bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray& configLine)
+bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray& configLine,
+                                      bool native)
 {
     m_Proc = new QProcess(this);
     m_Proc->setProgram(QCoreApplication::applicationFilePath());
     m_Proc->setArguments(args);
+#if defined(Q_OS_LINUX)
+    // KMS capture needs CAP_SYS_ADMIN. This process keeps it permitted but hands
+    // it to nothing it spawns (common/LinuxCapabilities.h) — except this one
+    // child, the only one that captures. Runs in the forked child before exec.
+    if (native) m_Proc->setChildProcessModifier([] { mw::raiseCaptureCapabilityForChild(); });
+#else
+    Q_UNUSED(native);
+#endif
     // stdout carries the JSON event protocol; worker stderr joins ours so a
     // crashing worker still leaves a trace in the parent console/journal.
     m_Proc->setProcessChannelMode(QProcess::SeparateChannels);

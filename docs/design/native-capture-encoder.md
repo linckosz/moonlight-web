@@ -1582,8 +1582,10 @@ Le plan disait PipeWire. La reconnaissance a pesé autrement : GNOME en
 l'écran de l'hôte à la première session, puis exige de tourner **dans la session
 D-Bus de l'utilisateur** — l'exact problème de la session 0 Windows, en miroir.
 KMS/DRM lit la sortie écran directement, sans dialogue et sans session, au prix
-de `cap_sys_admin` posée sur le binaire par le paquet : Sunshine porte cette
-capacité sur cette machine même. La symétrie avec Windows s'impose — **KMS =
+de `cap_sys_admin` posée ~~sur le binaire~~ par le paquet : Sunshine porte cette
+capacité sur cette machine même (⚠️ **corrigé le 05/09 au soir** : pas sur le
+binaire, sur un *lanceur* — une capacité sur `MoonlightWeb` lui-même casse son
+rpath `$ORIGIN`, §19.8). La symétrie avec Windows s'impose — **KMS =
 DDA** (image au scan-out, réveil sur le vblank), **portail = WGC** (file du
 compositeur, repli).
 
@@ -1696,12 +1698,12 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 
 ### 19.6 Ce qui reste
 
-HEVC et AV1 VA-API, le portail PipeWire en repli, le premier flux vers un vrai
-navigateur depuis un hôte Linux, et **le paquet** : le job Linux de `release.yml`
-n'installe ni `libdrm-dev`, `libva-dev`, `libegl1-mesa-dev`, `libgles2-mesa-dev`,
-`libgbm-dev`, ni `libpipewire-0.3-dev` (constaté le 05/09) — le `.deb` et le `.rpm`
-publiés embarquent donc encore le stub « pas de backend sur cette plateforme », et
-il leur manque le `setcap cap_sys_admin+ep` que §19.3 suppose posé.
+HEVC et AV1 VA-API, le portail PipeWire en repli — et avec lui l'**AppImage**, qui
+ne peut porter aucune capacité (§19.8) et n'aura de capture que par le portail —,
+et le premier flux vers un vrai navigateur depuis un hôte Linux, image et son.
+~~Le paquet~~ : traité en §19.8 le 05/09 au soir (constaté le même jour : le job
+Linux de `release.yml` n'installait aucune des `-dev`, le `.deb` et le `.rpm`
+publiés embarquaient le stub).
 
 ### 19.7 Le son : le moniteur de la sortie par défaut, par PipeWire (05/09/2026)
 
@@ -1763,7 +1765,128 @@ réapparaissent dans la sortie de `mw-native-tests`.
 
 Reste : le premier flux Linux vers un vrai navigateur (image **et** son), le
 `node.latency` que le graphe n'honore pas forcément (la file du pacer, 40 ms,
-absorbe un quantum par défaut de 21 ms), et le paquet (§19.6).
+absorbe un quantum par défaut de 21 ms), et le paquet (§19.8).
+
+### 19.8 Le paquet : la capacité, le lanceur, et ce que linuxdeploy ne doit pas embarquer (05/09/2026)
+
+Le constat du matin : le job Linux de `release.yml` n'installait aucune des
+bibliothèques de développement du backend — le CMake du module avertit et
+construit le stub, et c'est le stub que chaque `.deb`, `.rpm` et AppImage publié
+portait. Corrigé en ajoutant `libdrm-dev libva-dev libegl1-mesa-dev
+libgles2-mesa-dev libgbm-dev libpipewire-0.3-dev` (tous présents sur l'image
+`ubuntu-22.04` du job, vérifié sur le banc qui est la même distribution), et
+surtout en rendant la régression **impossible en silence** : le job lit la sortie
+de configuration et refuse de paquetiser si « Linux graphics backend ON » ou
+« Linux audio (PipeWire » n'y sont pas, puis vérifie par `readelf` que le binaire
+assemblé a bien `libdrm`, `libva`, `libEGL`, `libGLESv2`, `libgbm` et
+`libpipewire-0.3` en `NEEDED` — le stub n'en lie aucun.
+
+**Le piège, mesuré avant d'écrire une ligne.** §19.3 supposait « `setcap` sur le
+binaire, comme Sunshine ». Un binaire qui *gagne* une capacité à l'exec est lancé
+par glibc en **mode sécurisé** (`AT_SECURE`), et dans ce mode `$ORIGIN` n'est
+développé que si le binaire vit dans un répertoire système (`/usr/lib`…). Notre
+`MoonlightWeb` vit sous `/opt/moonlightweb/bin` et trouve son Qt embarqué par
+`RUNPATH=$ORIGIN/../lib`, réécrit par linuxdeploy. Reproduit sur l'bench-mini avec
+un programme de trois lignes et sa bibliothèque à côté :
+
+```
+$ ./bin/app                          # answer 42
+$ sudo setcap cap_sys_admin+p bin/app
+$ ./bin/app
+./bin/app: error while loading shared libraries: libanswer.so: cannot open shared object file
+```
+
+Le paquet aurait installé une application qui ne démarre plus. Sunshine ne le
+rencontre pas : son binaire est dans `/usr/bin` et lie les bibliothèques du système.
+Le même mode sécurisé ignore aussi `LD_LIBRARY_PATH`, donc aucun contournement par
+l'environnement.
+
+**Le lanceur.** `backend/packaging/linux/moonlightweb-launch.c`, 16 Ko compilés,
+lié à la seule libc (qui vit, elle, dans un répertoire de confiance). C'est *lui*
+qui porte `cap_sys_admin+p` — **permitted seulement**, la posture exacte de
+Sunshine (`getcap /usr/bin/sunshine` sur le banc : `cap_sys_admin,cap_sys_nice=p`).
+Il met la capacité dans son ensemble *inheritable* (`capset`, permis puisqu'il la
+tient permitted), la lève dans l'ensemble **ambiant** (`prctl(PR_CAP_AMBIENT,
+RAISE)`), et `execv` le `MoonlightWeb` **à côté de lui** (résolu par
+`/proc/self/exe`, jamais par `PATH` : une capacité ne doit pas suivre un nom dans
+un répertoire que quelqu'un d'autre écrit). Un exec qui ne gagne rien que son
+parent n'avait déjà n'est pas un exec sécurisé : l'application démarre
+normalement, rpath compris, avec `CAP_SYS_ADMIN` permitted, effective et ambiant.
+Sans capacité sur le fichier (arbre construit à la main, AppImage), la levée échoue
+et le lanceur exec simplement — la sonde dit ensuite que la capture est
+indisponible et pourquoi. Mesuré sur le banc : avec la capacité sur le lanceur,
+l'application charge sa bibliothèque `$ORIGIN` **et** lit
+`CapPrm/CapEff/CapAmb = 0x200000` (bit 21) ; par un lien symbolique aussi (ce que
+`/usr/bin/moonlightweb` devient) ; sans capacité, tout à zéro et `answer 42`.
+
+**Ce que l'application en fait** (`common/LinuxCapabilities.cpp`, première ligne
+de `main()`, quand le thread principal est encore seul — les capacités sont *par
+thread* et les threads héritent de celui qui les crée) : elle **garde** permitted
+et inheritable, **retire** effective, et **abaisse** l'ambiant — `LOWER` sur
+`CAP_SYS_ADMIN` seulement, pas `CLEAR_ALL`, parce qu'une unité systemd peut avoir
+donné `CAP_NET_BIND_SERVICE` par le même mécanisme et celle-là doit rester. Le
+serveur HTTP, la signalisation, les relais tournent donc **sans** la capacité
+effective, et **rien de ce que le processus lance** ne l'hérite — `xdg-open` et le
+navigateur derrière, `gio`, un installeur — sauf un seul enfant : le worker natif,
+auquel `StreamWorkerHost` la rend par `QProcess::setChildProcessModifier` (dans
+l'enfant forké, avant l'exec, en appels bruts). Le worker, même binaire, même
+`main()`, se confine à son tour ; et `KmsCapture` lève la capacité dans l'ensemble
+effectif **de son thread** le temps d'un `GETFB2` — `ScopedSysAdmin`, quatre
+sites, `capget`/`capset` bruts, pas de libcap (rien à lier, et le `capset` de
+libcap synchronise tous les threads, l'inverse du but). La séquence a été rejouée
+en C sous le vrai lanceur avant d'être écrite en C++ :
+
+| Étape | CapPrm | CapEff | CapAmb |
+|---|---|---|---|
+| à l'entrée, tel que le lanceur le donne | ✔ | ✔ | ✔ |
+| après le confinement | ✔ | — | — |
+| enfant A, `fork`+`exec` ordinaire (= `xdg-open`) | — | — | — |
+| enfant B, levée ambiante puis `exec` (= le worker) | ✔ | ✔ | ✔ |
+| un thread pendant `ScopedSysAdmin` | ✔ | ✔ | — |
+| le thread principal au même instant, et le thread après | ✔ | — | — |
+
+Et la preuve sur le module lui-même : `mw-native-tests` avec `cap_sys_admin+p`
+**seulement** (le banc posait `+ep` jusqu'ici) — capture KMS, conversion, encodeur
+et session complète, **2133/2133**.
+
+**Ce qui doit rester au système.** linuxdeploy embarque tout ce qui n'est pas sur
+sa liste d'exclusion, et une bibliothèque de pilote embarquée est pire qu'absente :
+`libva` charge `radeonsi_drv_video.so` et `libpipewire` ses modules de protocole
+depuis des chemins **compilés dans la bibliothèque** — une copie faite sur Ubuntu
+cherche sous `/usr/lib/x86_64-linux-gnu` et ne trouve rien sur le `/usr/lib64` de
+Fedora. La liste de pkg2appimage (lue le 05/09) contient `libdrm.so.2`,
+`libEGL.so.1`, `libgbm.so.1`, `libpipewire-0.3.so.0` mais **pas** `libva.so.2`,
+`libva-drm.so.2` ni `libGLESv2.so.2` : ces trois-là sont exclues explicitement, et
+le job vérifie qu'aucune des sept n'a atterri dans `AppDir/usr/lib`, pour qu'un
+changement de la liste amont ne puisse pas en embarquer une sans bruit. En face,
+les paquets les **déclarent** : `libdrm2 libva2 libva-drm2 libgles2 libgbm1
+libpipewire-0.3-0` (+ `libcap2-bin` pour `setcap`) côté `.deb`, les sonames côté
+`.rpm`, `libdrm libva mesa pipewire libcap` côté AUR. `libpipewire` n'est que la
+bibliothèque cliente : une machine encore sous PulseAudio l'a aussi, et l'hôte y
+streame muet avec son log (§19.7) plutôt que de ne pas démarrer.
+
+**Le reste du paquet** : `/usr/bin/moonlightweb`, l'entrée `.desktop`, l'unité
+systemd et le `systemd-run` du postinst pointent le lanceur ; le postinst pose
+`setcap cap_sys_admin+p` sur lui **à chaque installation et mise à jour** — ni
+dpkg ni rpm ne restaurent une capacité de fichier depuis la charge utile —, avec
+`/usr/sbin:/sbin` ajoutés au `PATH` du gestionnaire de paquets, et un avertissement
+lisible sinon (Fedora a `setcap` dans `libcap`, toujours présent ; openSUSE dans
+`libcap-progs`) ; l'AUR a son `.install` pour la même raison (pacman non plus). Le
+lanceur est aussi dans l'AppImage, où il n'est qu'un exec : une AppImage est un
+montage FUSE `nosuid`, ce qui désactive aussi les capacités de fichier — **pas de
+capture depuis une AppImage**, et `install.sh` le dit au moment de l'installer
+plutôt que de laisser chercher une carte d'hôte qui n'apparaît pas ; le portail
+PipeWire sera sa route. L'image Docker n'est pas touchée : sans écran ni GPU, le
+stub y est le bon backend.
+
+**Non vérifié** : le job lui-même — `--exclude-library` de linuxdeploy et les
+nouvelles dépendances passées à fpm n'ont été relus que dans leur documentation,
+et se jugent au premier `workflow_dispatch` de `release.yml` (plateforme
+`linux`) ; un `.deb` installé sur une vraie machine puis un flux navigateur
+(l'application Qt complète n'a encore jamais tourné sous Linux au banc, seul le
+module l'a) ; et l'effet de `moonlightweb-launch` sur un bureau qui lance l'entrée
+`.desktop` (`StartupWMClass` inchangé : le processus final s'appelle toujours
+`MoonlightWeb`).
 
 ---
 

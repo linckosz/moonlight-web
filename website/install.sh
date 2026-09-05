@@ -517,6 +517,14 @@ EOF
     say "  Start it:  ${bold}$DEST/MoonlightWeb.AppImage${reset}"
     say "  Then open: ${bold}https://localhost/setup${reset}"
     say ""
+    # File capabilities do not survive inside an AppImage (its FUSE mount is
+    # nosuid), and the KMS screen capture needs one — only the .deb/.rpm and
+    # the AUR package can grant it. Said here rather than discovered later as a
+    # host card that never appears.
+    say "  ${dim}An AppImage cannot capture this machine's own screen (no file capability${reset}"
+    say "  ${dim}inside it): it streams from Sunshine/Apollo/Wolf hosts on your network.${reset}"
+    say "  ${dim}To host from this machine, install the .deb, the .rpm or the AUR package.${reset}"
+    say ""
     cli_hint
     # Nothing started the app here — unlike the packages, an AppImage has no
     # postinstall — so the internet link cannot be enabled from this script.

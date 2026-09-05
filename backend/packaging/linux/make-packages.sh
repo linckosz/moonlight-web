@@ -2,11 +2,12 @@
 # ============================================================================
 # MoonlightWeb — build .deb and .rpm from the linuxdeploy AppDir.
 #
-# The AppDir already contains the binary, the bundled Qt runtime (libs +
-# plugins, ELF rpaths rewritten to $ORIGIN-relative by linuxdeploy) and the
-# frontend, so the same tree is simply relocated under /opt/moonlightweb and
-# packaged twice with fpm. Result: self-contained packages that install with a
-# double-click on every major desktop distro:
+# The AppDir already contains the binary, the capability launcher
+# (moonlightweb-launch, see below), the bundled Qt runtime (libs + plugins, ELF
+# rpaths rewritten to $ORIGIN-relative by linuxdeploy) and the frontend, so the
+# same tree is simply relocated under /opt/moonlightweb and packaged twice with
+# fpm. Result: self-contained packages that install with a double-click on every
+# major desktop distro:
 #   .deb → Debian, Ubuntu, Mint, Pop!_OS...    (App Center / GDebi)
 #   .rpm → Fedora, RHEL, openSUSE, Nobara...   (GNOME Software / YaST)
 # Arch-based and immutable gaming distros (SteamOS, Bazzite) use the AppImage.
@@ -43,7 +44,16 @@ EOF
 
 # CLI entry point on PATH. Also what the headless operator commands are invoked
 # as (`moonlightweb --status`, `--new-pin`, `--enable-internet`).
-ln -sfn "$PREFIX/bin/MoonlightWeb" "$PKG/usr/bin/moonlightweb"
+#
+# It points at the LAUNCHER, not the binary — as do the .desktop entry and the
+# systemd unit. The KMS screen capture needs CAP_SYS_ADMIN, and the file
+# capability cannot sit on MoonlightWeb itself: glibc runs a binary that gains a
+# capability in secure mode, where the $ORIGIN rpath linuxdeploy wrote is
+# refused and the bundled Qt is never found (measured: "error while loading
+# shared libraries" on Ubuntu 22.04). moonlightweb-launch links libc only,
+# carries the capability, and execs MoonlightWeb next to it with the capability
+# in the ambient set — see moonlightweb-launch.c. postinst sets it below.
+ln -sfn "$PREFIX/bin/moonlightweb-launch" "$PKG/usr/bin/moonlightweb"
 
 # systemd unit for headless installs. Vendor directory, not /etc/systemd/system:
 # a unit that merely *exists* there does nothing until something enables it, so
@@ -79,7 +89,7 @@ cat > "$PKG/usr/share/applications/$APPID.desktop" <<EOF
 Type=Application
 Name=MoonlightWeb
 Comment=Sunshine streaming client for the browser
-Exec=$PREFIX/bin/MoonlightWeb
+Exec=$PREFIX/bin/moonlightweb-launch
 Icon=moonlightweb
 Categories=Network;Game;
 Keywords=streaming;sunshine;moonlight;gaming;remote;
@@ -108,6 +118,22 @@ cat > "$ROOT/postinst.sh" <<'EOF'
 #!/bin/sh
 update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
+
+# The capability the screen capture needs, on the launcher (never on the
+# binary — see make-packages.sh). Neither dpkg nor rpm restores file
+# capabilities from the payload, so it is set here, first, on every install and
+# upgrade. Permitted only (+p), Sunshine's posture: the app raises it into the
+# effective set of one thread around the one ioctl that checks it. setcap lives
+# in /usr/sbin (or /sbin on an unmerged system), which a package manager's PATH
+# does not always include. Loud on failure: the symptom otherwise is a host card
+# that never appears, with the reason buried in a log.
+PATH="$PATH:/usr/sbin:/sbin"
+if ! setcap cap_sys_admin+p /opt/moonlightweb/bin/moonlightweb-launch 2>/dev/null; then
+    echo "warning: could not set cap_sys_admin on /opt/moonlightweb/bin/moonlightweb-launch" >&2
+    echo "         (is setcap installed? libcap2-bin on Debian/Ubuntu, libcap on Fedora," >&2
+    echo "         libcap-progs on openSUSE). Until it is set, this machine cannot host" >&2
+    echo "         its own screen:  sudo setcap cap_sys_admin+p /opt/moonlightweb/bin/moonlightweb-launch" >&2
+fi
 
 # Apply the uinput rule now rather than at the next boot, and load the module so
 # the first stream after an install already has a gamepad. Best-effort, like
@@ -190,7 +216,7 @@ else
         # $setenv is deliberately unquoted: it must split into separate flags
         # (values are socket/display names — no whitespace).
         if $asuser systemd-run --user --collect --quiet $setenv \
-            /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
+            /opt/moonlightweb/bin/moonlightweb-launch >/dev/null 2>&1; then
             started=1
             break
         fi
@@ -297,20 +323,38 @@ EOF
 # The list is what `ldd` reports unresolved on a bare debian:12 (plus libxcb,
 # needed by the xcb platform plugin on a desktop). Keep it in step with
 # backend/packaging/aur/PKGBUILD, which names the same set for Arch.
+#
+# Second group: what the native host links for capture, conversion, encoding
+# and audio — libdrm, libva (+ its DRM backend), GLESv2, GBM and the PipeWire
+# client library. Deliberately NOT bundled (release.yml excludes them from the
+# AppDir: their driver and module paths are compiled in, so a copy from the
+# build host would find nothing on another distro). NEEDED entries of the
+# executable, so the process does not start without them. libpipewire is only
+# the client library: a machine still on PulseAudio has it too, and the host
+# then streams silent with an explicit log rather than not starting.
+# libcap2-bin provides setcap for the postinst above.
 deb_depends=(
     --depends libgl1 --depends libopengl0 --depends libegl1
     --depends libfontconfig1 --depends libfreetype6
     --depends libx11-6 --depends libx11-xcb1 --depends libxcb1
+    --depends libdrm2 --depends libva2 --depends libva-drm2
+    --depends libgles2 --depends libgbm1 --depends libpipewire-0.3-0
+    --depends libcap2-bin
 )
 # RPM resolves soname provides, which every RPM distro generates the same way —
 # unlike package names, which differ between Fedora (libglvnd-glx) and openSUSE
-# (Mesa-libGL1). Depending on the soname keeps one .rpm valid for both.
+# (Mesa-libGL1). Depending on the soname keeps one .rpm valid for both. setcap
+# has no soname: Fedora ships it in `libcap` (always present, systemd needs it),
+# openSUSE in `libcap-progs`, so postinst looks for it and says what to install.
 rpm_depends=(
     --depends "libGLX.so.0()(64bit)" --depends "libOpenGL.so.0()(64bit)"
     --depends "libGL.so.1()(64bit)" --depends "libEGL.so.1()(64bit)"
     --depends "libfontconfig.so.1()(64bit)" --depends "libfreetype.so.6()(64bit)"
     --depends "libX11.so.6()(64bit)" --depends "libX11-xcb.so.1()(64bit)"
     --depends "libxcb.so.1()(64bit)"
+    --depends "libdrm.so.2()(64bit)" --depends "libva.so.2()(64bit)"
+    --depends "libva-drm.so.2()(64bit)" --depends "libGLESv2.so.2()(64bit)"
+    --depends "libgbm.so.1()(64bit)" --depends "libpipewire-0.3.so.0()(64bit)"
 )
 
 common=(

@@ -199,6 +199,7 @@ add_executable(mw-server
     src/common/Logger.cpp
     src/common/CrashHandler.cpp
     src/common/DesktopSession.cpp
+    src/common/LinuxCapabilities.cpp
     src/common/RendezvousId.cpp
     src/network/RendezvousClient.cpp
     src/network/UPNPClient.cpp
@@ -359,6 +360,19 @@ elseif(APPLE)
         "-framework Security" "-framework CoreFoundation" "-framework Foundation")
 else() # Linux / other Unix
     target_link_libraries(mw-server PRIVATE dl)
+endif()
+
+# ── Linux: the capability launcher ─────────────────────────────────────────
+# KMS capture needs CAP_SYS_ADMIN, and a file capability cannot sit on
+# MoonlightWeb itself (glibc's secure mode refuses its $ORIGIN rpath — see the
+# comment at the top of the source). This tiny C program carries it instead and
+# execs MoonlightWeb next to it; the packages point /usr/bin/moonlightweb, the
+# .desktop entry and the systemd unit at it, and their postinst runs setcap on
+# it. Links libc only, on purpose.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    enable_language(C)
+    add_executable(moonlightweb-launch packaging/linux/moonlightweb-launch.c)
+    target_compile_options(moonlightweb-launch PRIVATE -Wall -Wextra)
 endif()
 
 # ── Debug symbols in Release (for crash minidump symbolization) ─────────────

@@ -25,7 +25,10 @@ StartLimitBurst=5
 [Service]
 Type=simple
 # Path used by the .deb/.rpm layout. A hand-built tree needs both lines adjusted.
-ExecStart=/opt/moonlightweb/bin/MoonlightWeb
+# The launcher, not the binary: it carries the CAP_SYS_ADMIN file capability the
+# KMS screen capture needs and execs MoonlightWeb next to it (see
+# backend/packaging/linux/moonlightweb-launch.c). Under root it changes nothing.
+ExecStart=/opt/moonlightweb/bin/moonlightweb-launch
 # The frontend is resolved relative to the executable, so this only affects
 # relative paths in logs — but keep it next to the binary all the same.
 WorkingDirectory=/opt/moonlightweb/bin

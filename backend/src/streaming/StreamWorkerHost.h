@@ -37,6 +37,8 @@
  * service is launched into the console session as the logged-on user instead
  * (ConsoleProcess — session 0 has no desktop to capture), and speaks the same
  * lines over the same three pipes; nothing past start() knows the difference.
+ * On Linux a native worker is the one child handed CAP_SYS_ADMIN (KMS capture);
+ * see common/LinuxCapabilities.h.
  */
 class ConsoleProcess;
 
@@ -89,7 +91,7 @@ signals:
     void exited();
 
 private:
-    bool startInProcess(const QStringList& args, const QByteArray& configLine);
+    bool startInProcess(const QStringList& args, const QByteArray& configLine, bool native);
     bool startInConsoleSession(const QStringList& args, const QByteArray& configLine);
     void onStdoutData(const QByteArray& data);
     void onStderrData(const QByteArray& data);

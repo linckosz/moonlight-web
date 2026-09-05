@@ -29,12 +29,17 @@ license=('GPL-3.0-only')
 
 # Qt and OpenSSL are bundled inside /opt/moonlightweb (linuxdeploy rewrote the
 # rpaths to $ORIGIN), so only what linuxdeploy deliberately leaves to the system
-# is listed here — the libraries any graphical session already provides.
+# is listed here — the libraries any graphical session already provides, plus
+# the driver-coupled stack the native host captures and encodes with (libdrm,
+# libva, EGL/GLES via libglvnd, GBM via mesa) and the PipeWire client library
+# for the host's audio. libcap provides setcap for the .install hook.
 depends=('glibc' 'gcc-libs' 'libglvnd' 'libx11' 'libxkbcommon-x11'
-         'fontconfig' 'freetype2' 'zlib' 'dbus')
+         'fontconfig' 'freetype2' 'zlib' 'dbus'
+         'libdrm' 'libva' 'mesa' 'pipewire' 'libcap')
 
 provides=('moonlightweb')
 conflicts=('moonlightweb')
+install=moonlightweb-bin.install
 
 # The bundled Qt libraries ship as-is; stripping them buys nothing and has
 # broken plugin loading before.

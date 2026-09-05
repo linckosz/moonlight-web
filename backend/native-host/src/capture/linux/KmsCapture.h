@@ -35,8 +35,12 @@
 // zero-copy property, and the same "wake on the display's own clock" through
 // the vblank event.
 //
-// It needs CAP_SYS_ADMIN (the kernel refuses buffer handles to anyone else),
-// which the package sets on the binary the way Sunshine does. It does not need
+// It needs CAP_SYS_ADMIN (the kernel refuses buffer handles to anyone else).
+// The package delivers it through a launcher that carries the file capability
+// and execs the app with it in the ambient set (a capability on the app itself
+// would put glibc in secure mode and break its $ORIGIN rpath); the app keeps it
+// PERMITTED only, and this file raises it into the calling thread's effective
+// set around the one ioctl that checks it — Sunshine's posture. It does not need
 // a display server at all — X11, Wayland or a bare console look identical from
 // here — and it does not need to be inside anybody's session, which is what
 // lets a host start before anyone logs in. The portal route (PipeWire) has

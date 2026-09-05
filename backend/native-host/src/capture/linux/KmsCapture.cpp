@@ -23,13 +23,62 @@
 #include <chrono>
 #include <cstring>
 #include <fcntl.h>
+#include <linux/capability.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
 namespace mw::native::capture {
 namespace {
+
+/// CAP_SYS_ADMIN in the effective set of THIS thread for the scope, when the
+/// process holds it permitted. The app deliberately runs with the capability
+/// permitted but not effective (the HTTP server and everything else in the
+/// process never carry it), so the ioctl that checks it — GETFB2 — is wrapped
+/// in one of these. Raw capget/capset on the calling thread, no libcap: the
+/// module links nothing it does not have to, and libcap's setter would sync
+/// every thread of the process, which is the opposite of the intent.
+///
+/// A process without the capability at all is left alone: GETFB2 then hands
+/// back zero handles and the callers say why.
+class ScopedSysAdmin
+{
+public:
+    ScopedSysAdmin()
+    {
+        __user_cap_header_struct header{};
+        __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3]{};
+        header.version = _LINUX_CAPABILITY_VERSION_3;
+        if (syscall(SYS_capget, &header, data) != 0) return;
+        if (!(data[kIndex].permitted & kBit) || (data[kIndex].effective & kBit)) return;
+        data[kIndex].effective |= kBit;
+        m_Raised = syscall(SYS_capset, &header, data) == 0;
+    }
+    ~ScopedSysAdmin()
+    {
+        if (!m_Raised) return;
+        __user_cap_header_struct header{};
+        __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3]{};
+        header.version = _LINUX_CAPABILITY_VERSION_3;
+        if (syscall(SYS_capget, &header, data) != 0) return;
+        data[kIndex].effective &= ~kBit;
+        syscall(SYS_capset, &header, data);
+    }
+    ScopedSysAdmin(const ScopedSysAdmin&) = delete;
+    ScopedSysAdmin& operator=(const ScopedSysAdmin&) = delete;
+
+private:
+    static constexpr unsigned kIndex = CAP_SYS_ADMIN >> 5;
+    static constexpr unsigned kBit = 1u << (CAP_SYS_ADMIN & 31);
+    bool m_Raised = false;
+};
+
+const char* const kNeedsCapability =
+    "the kernel withholds framebuffer handles: this process needs CAP_SYS_ADMIN "
+    "(the package's launcher, moonlightweb-launch, hands it over; a build run by hand "
+    "or the AppImage does not have it)";
 
 int64_t steadyNowUs()
 {
@@ -200,6 +249,7 @@ bool KmsCapture::canReadFramebuffers(const std::string& cardPath, std::string& w
     drmModePlaneRes* planes = drmModeGetPlaneResources(card);
     bool sawBuffer = false;
     bool readable = false;
+    ScopedSysAdmin privilege;
     for (uint32_t i = 0; planes && i < planes->count_planes && !readable; ++i) {
         drmModePlane* p = drmModeGetPlane(card, planes->planes[i]);
         if (!p) continue;
@@ -224,8 +274,7 @@ bool KmsCapture::canReadFramebuffers(const std::string& cardPath, std::string& w
         return false;
     }
     if (!readable) {
-        why = "the kernel withholds framebuffer handles: this process needs CAP_SYS_ADMIN "
-              "(the package sets it on the binary; a build run by hand does not have it)";
+        why = kNeedsCapability;
         return false;
     }
     return true;
@@ -355,6 +404,7 @@ bool KmsCapture::start(std::string& error)
         return false;
     }
     if (p->fb_id) {
+        ScopedSysAdmin privilege;
         drmModeFB2* fb = drmModeGetFB2(m_Card, p->fb_id);
         if (!fb) {
             error = "GETFB2 refused (" + errnoText() + ") — a kernel older than 5.4?";
@@ -363,8 +413,7 @@ bool KmsCapture::start(std::string& error)
             return false;
         }
         if (!fb->handles[0]) {
-            error = "the kernel withholds framebuffer handles: this process needs CAP_SYS_ADMIN "
-                    "(the package sets it on the binary; a build run by hand does not have it)";
+            error = kNeedsCapability;
             drmModeFreeFB2(fb);
             drmModeFreePlane(p);
             stop();
@@ -392,6 +441,7 @@ bool KmsCapture::start(std::string& error)
 
 bool KmsCapture::exportFramebuffer(uint32_t fbId, KmsFrame& frame, std::string& error)
 {
+    ScopedSysAdmin privilege;
     drmModeFB2* fb = drmModeGetFB2(m_Card, fbId);
     if (!fb) {
         error = "GETFB2 failed (" + errnoText() + ")";
@@ -473,6 +523,7 @@ bool KmsCapture::updateCursor()
         // once per shape through a CPU mapping — rare (a shape lasts thousands
         // of frames), and a GPU path for 256 KB would be a lot of machinery for
         // no latency anyone could measure.
+        ScopedSysAdmin privilege;
         drmModeFB2* fb = drmModeGetFB2(m_Card, static_cast<uint32_t>(fbId));
         if (fb && fb->handles[0]) {
             int fd = -1;

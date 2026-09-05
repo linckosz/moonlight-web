@@ -75,6 +75,7 @@
 #include "server/routes/ShareRoutes.h"
 #include "server/routes/SystemRoutes.h"
 #include "common/Logger.h"
+#include "common/LinuxCapabilities.h"
 #include "common/PairingCrypto.h"
 #include "common/CrashHandler.h"
 #include "common/DesktopSession.h"
@@ -1229,6 +1230,12 @@ static int concurrentSessionCap(const QString& backendType)
 
 int main(int argc, char* argv[])
 {
+    // First, while this is still the only thread: if the Linux launcher handed
+    // us CAP_SYS_ADMIN (KMS capture), keep it permitted, run without it
+    // effective, and hand it to nothing we spawn except the native worker. See
+    // common/LinuxCapabilities.h. Logged below, once the log exists.
+    const QString capabilityNote = mw::confineCapabilities();
+
     // Before QApplication: on a headless Linux host this swaps the xcb platform
     // plugin (which would abort for want of a display) for offscreen.
     selectHeadlessPlatform();
@@ -1311,6 +1318,7 @@ int main(int argc, char* argv[])
         Logger::instance()->setLogFile(logDir +
                                        (probe ? "/moonlightweb-probe.log" : "/moonlightweb.log"));
     }
+    if (!capabilityNote.isEmpty()) qInfo().noquote() << "[caps]" << capabilityNote;
 
     // Install the crash handler before anything can crash: on Windows it writes a
     // minidump (call stacks + modules) next to the log so a hard C++ crash leaves

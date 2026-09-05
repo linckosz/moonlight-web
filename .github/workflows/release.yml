@@ -394,6 +394,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config \
             libssl-dev libfuse2 wget rpm ruby appstream
+          # The native host's Linux backend: KMS capture (libdrm), EGL/GLES
+          # conversion (libegl, libgles, libgbm), VA-API encoding (libva) and
+          # the PipeWire client library for the host's audio. Without these
+          # CMake still builds — the "no backend for this platform" stub, which
+          # is exactly what every Linux package shipped until 05/09/2026. The
+          # Build step below refuses to package that stub again.
+          sudo apt-get install -y libdrm-dev libva-dev libegl1-mesa-dev \
+            libgles2-mesa-dev libgbm-dev libpipewire-0.3-dev
           # fpm turns the staged tree into .deb + .rpm (see make-packages.sh);
           # appstream provides appstreamcli, which validates the metainfo file
           # there before a broken one reaches anyone's software centre.
@@ -417,8 +425,17 @@ jobs:
           MW_DOMAIN: ${{ secrets.MW_DOMAIN }}
           MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
         run: |
+          set -o pipefail
           cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DMW_VERSION=${{ needs.setup.outputs.pkg_version }}
+            -DMW_VERSION=${{ needs.setup.outputs.pkg_version }} | tee configure.log
+          # The native backend is optional at configure time (a WARNING, not an
+          # error, so a developer without the -dev packages can still build).
+          # A release is not a developer: a package that silently carries the
+          # "no backend for this platform" stub is the bug this guards against.
+          grep -q 'Linux graphics backend ON' configure.log \
+            || { echo "::error::mw-native-host built WITHOUT its Linux graphics backend — the package would ship the stub"; exit 1; }
+          grep -q 'Linux audio (PipeWire' configure.log \
+            || { echo "::error::mw-native-host built WITHOUT PipeWire audio — the host would stream silent"; exit 1; }
           cmake --build build -j
 
       # Same gate the CI build job applies; packaging is the only build on a
@@ -428,11 +445,15 @@ jobs:
 
       # `cmake --install` applies the frontend excludes (node_modules, tests,
       # .claude, lint configs) — never copy frontend/ straight from the checkout.
+      # moonlightweb-launch is the capability launcher the packages point at
+      # (backend/packaging/linux/moonlightweb-launch.c); it rides in bin/ next to
+      # the binary it execs, in the AppImage too (where, with no capability to
+      # hand over, it is a plain exec).
       - name: Assemble AppDir
         run: |
           cmake --install build --prefix stage
           mkdir -p AppDir/usr/bin
-          cp build/MoonlightWeb AppDir/usr/bin/
+          cp build/MoonlightWeb build/moonlightweb-launch AppDir/usr/bin/
           cp -r stage/frontend AppDir/usr/bin/frontend
           cp frontend/assets/icon-512.png AppDir/MoonlightWeb.png
 
@@ -450,14 +471,38 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy*.AppImage
+          # The graphics and audio stack the native host links is driver- and
+          # distro-coupled and must stay the SYSTEM's: libva loads its driver
+          # (radeonsi_drv_video.so…) and libpipewire its protocol modules from
+          # paths compiled into the library — a copy built on Ubuntu looks under
+          # /usr/lib/x86_64-linux-gnu and finds nothing on Fedora's /usr/lib64.
+          # linuxdeploy's own exclude list already covers libdrm, libEGL, libgbm
+          # and libpipewire-0.3, but NOT libva, libva-drm or libGLESv2 (checked
+          # 05/09/2026 against pkg2appimage's excludelist); they are named here,
+          # and the whole set is asserted absent below so a list change upstream
+          # cannot quietly bundle one of them.
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
             -e build/MoonlightWeb \
             -d backend/packaging/moonlightweb.desktop \
             -i AppDir/MoonlightWeb.png \
+            --exclude-library 'libva.so.*' \
+            --exclude-library 'libva-drm.so.*' \
+            --exclude-library 'libGLESv2.so.*' \
             --plugin qt
           # A silent miss here only shows up as a crash on a user's headless box.
           test -f AppDir/usr/plugins/platforms/libqoffscreen.so \
             || { echo "::error::offscreen QPA plugin missing from the AppDir — headless hosts cannot start"; exit 1; }
+          for lib in libva.so libva-drm.so libGLESv2.so libdrm.so libEGL.so libgbm.so libpipewire-0.3.so; do
+            if ls AppDir/usr/lib/"$lib"* >/dev/null 2>&1; then
+              echo "::error::$lib was bundled into the AppDir — it must stay the system's (driver paths are compiled into it)"
+              exit 1
+            fi
+          done
+          # And the binary really links them: the stub links none of these.
+          for lib in libdrm.so.2 libva.so.2 libEGL.so.1 libGLESv2.so.2 libgbm.so.1 libpipewire-0.3.so.0; do
+            readelf -d AppDir/usr/bin/MoonlightWeb | grep -q "NEEDED.*$lib" \
+              || { echo "::error::MoonlightWeb does not link $lib — the native Linux backend is not in this build"; exit 1; }
+          done
 
       # No Wayland client plugins here, on purpose. A step used to try, guarded
       # on a file name Qt 6.11 had renamed, so it silently bundled nothing for
@@ -937,6 +982,8 @@ jobs:
             sed -e "s/@MW_VERSION@/${VERSION}/g" -e "s/@MW_SHA256@/${SHA}/g" \
               "backend/packaging/aur/$f" > "aur-out/$f"
           done
+          # The install hook (setcap on the launcher) has nothing to template.
+          cp backend/packaging/aur/moonlightweb-bin.install aur-out/
           echo "aur: moonlightweb-bin ${VERSION} sha256 ${SHA}" >> "$GITHUB_STEP_SUMMARY"
 
       # continue-on-error for the same reason as the tap push: the release is
@@ -964,10 +1011,10 @@ jobs:
           EOF
 
           git clone ssh://aur@aur.archlinux.org/moonlightweb-bin.git aur
-          cp aur-out/PKGBUILD aur-out/.SRCINFO aur/
+          cp aur-out/PKGBUILD aur-out/.SRCINFO aur-out/moonlightweb-bin.install aur/
           git -C aur config user.name "github-actions[bot]"
           git -C aur config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C aur add PKGBUILD .SRCINFO
+          git -C aur add PKGBUILD .SRCINFO moonlightweb-bin.install
           # Re-running a tag build must not fail on an empty commit.
           if git -C aur diff --cached --quiet; then
             echo "AUR package already at ${VERSION}, nothing to push"
