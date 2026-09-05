@@ -4259,7 +4259,19 @@ export class StreamView {
                 owdRiseMs = Math.max(0, Math.round(l.windowMinOffset - l.sessionMinOffset));
             }
             const fps = Math.round(l.frames * 2);
-            this._sendToHost({ type: 'linkstats', owdRiseMs, gaps: l.gaps, fps });
+            const report = { type: 'linkstats', owdRiseMs, gaps: l.gaps, fps };
+            // The first report after the tab came back (see _resyncAfterHidden)
+            // says so: the frames it names as missing were evicted by the host's
+            // own sender while nobody here was draining them, and the host cut
+            // its bitrate when our reports stopped. Neither is the link's doing,
+            // and the host lifts that cut at once rather than climbing back
+            // through five quiet reports. The field is absent otherwise, so the
+            // wire is unchanged for every ordinary report.
+            if (l.resumed) {
+                report.resumed = true;
+                l.resumed = false;
+            }
+            this._sendToHost(report);
             this._linkOwdRiseMs = owdRiseMs;
             // The window closes; the 30 s reference rolls over.
             l.windowMinOffset = Infinity;
@@ -4295,7 +4307,11 @@ export class StreamView {
      * pacer would pin its reserve — so they are re-primed here, and the
      * transport is told the silence was ours. Frames the host evicted while
      * we were away arrive as a frameId gap and take the ordinary path: named
-     * to the host, healed with a delta. Nothing is requested here.
+     * to the host, healed with a delta. Nothing is requested here — except
+     * that the next link report carries `resumed`, so the host's governor
+     * does not read those gaps as the link's and undoes the cut it made when
+     * our reports stopped (a frozen page cost five quiet reports to climb
+     * back, measured 04/09/2026).
      *
      * Pads are the other thing rAF took with it: the gamepad poll stopped, the
      * host's watchdog centred what it stopped hearing, so every pad's state is
@@ -4308,7 +4324,12 @@ export class StreamView {
         this._clearPacingTimer();
         if (this._framePacer) this._framePacer.reset();
         if (this._videoWorker) this._videoWorker.postMessage({ type: 'resync' });
-        if (this._link) this._link.windowMinOffset = Infinity;
+        if (this._link) {
+            this._link.windowMinOffset = Infinity;
+            // Tells the host's governor, in the next report, that the silence
+            // and the gaps were ours (see _startLinkReporting).
+            this._link.resumed = true;
+        }
         if (this.webrtc && typeof this.webrtc.noteResumed === 'function') {
             this.webrtc.noteResumed();
         }

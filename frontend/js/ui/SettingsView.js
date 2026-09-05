@@ -38,6 +38,7 @@ import {
     resolveTearing,
     supportsDisplayHdr,
     hdrClientCapability,
+    chroma444ClientCapability,
 } from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 import { ASPECT_VALUES, SCREEN_ASPECTS } from '../util/AspectRatio.js';
@@ -148,6 +149,8 @@ export class SettingsView {
         // The static half of the HDR gate (WebGPU adapter, 10-bit decoder); the
         // display half is asked live at every render.
         this._hdrCapability = await hdrClientCapability();
+        // Whether a 4:4:4 stream (HEVC RExt / H.264 High 4:4:4) decodes here.
+        this._chroma444Capability = await chroma444ClientCapability();
         this._canLogout = await this._checkSession();
         await this._loadStatsConsent();
         this.render();
@@ -760,6 +763,20 @@ export class SettingsView {
             ? ''
             : `<div class="settings-note">${t(displayHdr ? 'settings.hdrBrowserUnsupported' : 'settings.hdrDeviceSdr')}</div>`;
 
+        // 4:4:4 arrives as HEVC RExt or H.264 High 4:4:4, and not every browser
+        // decodes either — Chrome on Windows decodes neither, and a stream asked
+        // for anyway fails three decodes and falls back to 4:2:0 three seconds
+        // in. Greyed out and forced off there, like HDR; the launch gate in
+        // app.js is the backstop for a preference saved on another browser.
+        const chromaCap = this._chroma444Capability || { decode: true };
+        const chroma444Available = chromaCap.decode !== false;
+        if (!chroma444Available) this._chroma444 = false;
+        const chroma444Disabled = chroma444Available ? psDisabled : ' disabled';
+        const chroma444Locked = chroma444Available ? psLocked : ' settings-field-locked';
+        const chroma444Note = chroma444Available
+            ? ''
+            : `<div class="settings-note">${t('settings.chroma444BrowserUnsupported')}</div>`;
+
         // Allow tearing: only Chromium desktop can bypass VSync (desynchronized
         // canvas swapchain) — elsewhere the field is dimmed + locked (🔒),
         // unchecked, with the "(unavailable)" suffix. Power Saving also locks it.
@@ -1070,15 +1087,16 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.tearingDesc')}</span>
                     </div>
 
-                    <div class="settings-field${psLocked}">
+                    <div class="settings-field${chroma444Locked}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-chroma-444"
-                                ${this._chroma444 ? 'checked' : ''}${psDisabled} />
+                                ${this._chroma444 ? 'checked' : ''}${chroma444Disabled} />
                             <span class="settings-checkbox-text">
                                 <strong>${t('settings.chroma444')}</strong>
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.chroma444Desc')}</span>
+                        ${chroma444Note}
                     </div>
                     ${gamepadProfileHtml}
                     ${latencyFlagHtml}

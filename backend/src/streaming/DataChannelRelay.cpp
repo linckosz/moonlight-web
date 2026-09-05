@@ -1196,6 +1196,9 @@ void DataChannelRelay::onInputMessage(const std::string& message)
             fb.owdRiseMs = msg["owdRiseMs"].toInt(0);
             fb.gaps = msg["gaps"].toInt(0);
             fb.receivedFps = msg["fps"].toInt(0);
+            // Present, and true, only on the first report after the page came
+            // back from the background (StreamView._resyncAfterHidden).
+            fb.resumed = msg["resumed"].toBool(false);
             if (!m_LinkReportsSeen) {
                 // Once: the loop is closed. The governor logs its own moves.
                 m_LinkReportsSeen = true;

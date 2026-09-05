@@ -58,6 +58,13 @@ namespace mw::native::encode {
 ///    the frontend's own ladder move resolution or transport.
 ///  - **Silence**: no report for kSilenceMs — the feedback channel itself is
 ///    stuck — reads as overuse once, then nothing until a report comes back.
+///  - **Back from the background**: a report flagged `resumed` says the
+///    receiver's page was hidden or frozen. Its gaps are frames our own sender
+///    evicted while nobody drained them, and its silence was the browser's:
+///    the report is not read as overuse, and a standing silence cut is undone
+///    at once — the target goes back to where the link had left it — instead
+///    of being climbed back in five quiet raises. A cut a real overuse made
+///    before the page went away stays.
 ///
 /// Pure and clocked by the caller, so it can be tested without a network.
 class RateGovernor
@@ -98,6 +105,19 @@ public:
     bool report(const LinkFeedback& fb, int64_t nowMs)
     {
         m_LastReportMs = nowMs;
+        if (fb.resumed) {
+            const bool restore = m_SilenceCut && m_TargetBeforeSilence > m_Target;
+            m_SilenceCut = false;
+            // Quiet starts over: what this report measured straddles the
+            // burst a thawed page receives, and the next one is the first
+            // honest look at the link.
+            m_QuietSinceMs = nowMs;
+            if (!restore) return false;
+            m_Target = m_TargetBeforeSilence < m_Setting ? m_TargetBeforeSilence : m_Setting;
+            m_HoldUntilMs = 0;
+            m_Changes++;
+            return true;
+        }
         m_SilenceCut = false;
         const bool overuse = fb.owdRiseMs >= kOveruseMs || fb.gaps > 0 || fb.evictions > 0;
         const bool quiet = fb.owdRiseMs < kQuietMs && fb.gaps == 0 && fb.evictions == 0;
@@ -124,6 +144,7 @@ public:
     {
         if (m_SilenceCut || nowMs - m_LastReportMs < kSilenceMs) return false;
         m_SilenceCut = true;
+        m_TargetBeforeSilence = m_Target;
         m_HoldUntilMs = nowMs + kHoldAfterCutMs;
         m_QuietSinceMs = nowMs;
         m_Silences++;
@@ -172,6 +193,9 @@ private:
     int64_t m_LastReportMs = 0;
     int64_t m_HoldUntilMs = 0;
     bool m_SilenceCut = false;
+    /// Where the link had left the target when the reports stopped, for the
+    /// receiver that comes back and says the silence was its own.
+    int m_TargetBeforeSilence = 0;
     int m_Overuses = 0;
     int m_Silences = 0;
     int m_Changes = 0;

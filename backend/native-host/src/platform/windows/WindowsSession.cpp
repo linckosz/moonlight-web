@@ -1179,7 +1179,8 @@ private:
                 const int64_t nowMs = steadyNowUs() / 1000;
                 if (takeLinkFeedback(fb)) {
                     if (governor.report(fb, nowMs))
-                        applyGovernor(fb.gaps > 0 || fb.evictions > 0 ? "frames lost"
+                        applyGovernor(fb.resumed ? "the receiver is back from the background"
+                                      : fb.gaps > 0 || fb.evictions > 0 ? "frames lost"
                                       : fb.owdRiseMs >= encode::RateGovernor::kOveruseMs
                                           ? "delay rising"
                                           : "quiet, raising");

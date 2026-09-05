@@ -57,7 +57,12 @@ import { Toast } from './ui/Toast.js';
 import { ConsentBar } from './ui/ConsentBar.js';
 import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
 import { VersionGuard } from './util/VersionGuard.js';
-import { IS_MOBILE_OR_TABLET, resolveTearing, hdrClientCapability } from './util/BrowserDetect.js';
+import {
+    IS_MOBILE_OR_TABLET,
+    resolveTearing,
+    hdrClientCapability,
+    chroma444ClientCapability,
+} from './util/BrowserDetect.js';
 import { startRefreshRateMonitor, currentRefreshMilliHz } from './util/RefreshRate.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
 import { DEFAULT_ASPECT, loadHostAspect, saveHostAspect } from './util/AspectRatio.js';
@@ -1489,6 +1494,20 @@ const MoonlightApp = {
             }
         }
 
+        // 4:4:4 is never asked of the host for a browser that decodes no 4:4:4
+        // profile (HEVC RExt, H.264 High 4:4:4). Chrome on Windows decodes
+        // neither: asked anyway, the stream came up, failed three decodes and
+        // fell back to 4:2:0 H.264 three seconds later (B7, 03/09/2026). The
+        // settings page greys the box out on such a browser; this catches a
+        // preference saved on another one (the settings travel with the account).
+        if (streamingSettings.chroma_444_enabled) {
+            const cap = await chroma444ClientCapability();
+            if (!cap.decode) {
+                console.log('[MW] 4:4:4 preference ignored: this browser decodes no 4:4:4 profile');
+                streamingSettings.chroma_444_enabled = false;
+            }
+        }
+
         // Mobile: request lower-bandwidth audio (10ms Opus frames, half the
         // packet rate) to ease transmission on constrained networks. Negligible
         // quality loss on phone speakers.
@@ -2743,7 +2762,7 @@ const MoonlightApp = {
      * so a knob that is already at its floor is skipped naturally):
      *   1. bitrate −30%
      *   2. resolution one rung down (2160→1440→1080→720), bitrate aligned to
-     *      the new height; SGSR upscaling is auto-enabled when the user streams
+     *      the new height; the upscaler is auto-enabled when the user streams
      *      without video enhancement so the drop stays visually discreet
      *   3. switch to the native media transport (RTP: no SCTP queueing/cwnd)
      *   4. cap at 60 fps (+ bitrate −30%)
@@ -2831,15 +2850,21 @@ const MoonlightApp = {
             newBitrate = Math.max(2000, Math.min(newBitrate, autoKbps));
             toastKey = 'stream.degradeResolution';
             toastParams.res = String(next);
-            // SGSR auto-enable: upscale the reduced stream back to the display
-            // size so the drop stays visually discreet. Session-only override —
-            // the user's Settings checkbox is never touched. Not applicable on
-            // the media transport (<video> element, no canvas for WebGPU).
+            // Upscaler auto-enable: scale the reduced stream back to the
+            // display size so the drop stays visually discreet. Session-only
+            // override — the user's Settings checkbox is never touched. Not
+            // applicable on the media transport (<video> element, no canvas).
+            //
+            // 'auto', never a named algorithm: the renderer routes it (F0e) —
+            // FSR1/SGSR on WebGL2 in SDR, WebGPU only in HDR. This used to name
+            // 'sgsr', which forced the WebGPU pass on a stream the user had
+            // chosen to run on Canvas2D — the pass that costs 20 ms in a worker
+            // on macOS (F0), on exactly the link that was already struggling.
             if (effective.video_enhancement !== 'on' && !onMedia && !o.transport_mode) {
                 o.video_enhancement = 'on';
-                o.video_enhancement_algo = 'sgsr';
+                o.video_enhancement_algo = 'auto';
                 this._enhancementAutoForced = true;
-                toastKey = 'stream.degradeResolutionSgsr';
+                toastKey = 'stream.degradeResolutionUpscale';
             }
         } else if (!onMedia && !o.transport_mode) {
             o.transport_mode = 'webrtc-media-udp';
@@ -2929,7 +2954,7 @@ const MoonlightApp = {
             if (!next || next >= target) {
                 delete o.stream_height;
                 toastParams.res = String(target);
-                // The reduced resolution goes away — the auto-forced SGSR
+                // The reduced resolution goes away — the auto-forced upscaler
                 // override goes with it (the user's own setting applies again).
                 if (this._enhancementAutoForced) {
                     delete o.video_enhancement;

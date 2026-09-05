@@ -659,7 +659,13 @@ intervalles à 60 fps), un trou ou une éviction — **coupe de 20 % à l'instan
 et gel de 2 s ; trois secondes de calme (délai < 10 ms, rien de perdu)
 remontent de **5 % par rapport**, jamais au-dessus du réglage ; entre les deux
 (file présente, pas croissante) on tient ; plancher 20 % du réglage et
-2 Mbit/s ; quatre secondes sans rapport valent une coupe, une seule. Couper
+2 Mbit/s ; quatre secondes sans rapport valent une coupe, une seule — et
+**depuis le 05/09**, le premier rapport d'un récepteur revenu de l'arrière-plan
+porte `resumed` : ses trous sont les images que notre propre émetteur a évincées
+faute de drainage et son silence était celui du navigateur, donc ce rapport n'est
+pas lu comme une surutilisation et **la coupe du silence est défaite à l'instant**
+(la cible revient où le lien l'avait laissée, une coupe de vraie congestion
+antérieure reste) au lieu de remonter en cinq rapports. Couper
 vite et remonter lentement : une coupe coûte de la netteté une seconde, un
 débordement coûte la main du joueur.
 
@@ -879,7 +885,10 @@ l'onglet, pendant que le chien de garde de l'hôte centrait ce qu'il n'entendait
 plus — sont **redites une fois**, au repos ou non (`GamepadManager.resendAll`).
 Les images que l'hôte a évincées pendant l'absence arrivent comme un trou de
 `frameId` et prennent le chemin ordinaire : nommées, réparées par un delta.
-Rien n'est demandé au retour.
+Rien n'est demandé au retour — sauf, depuis le 05/09, que le premier
+`linkstats` porte `resumed` (§9.3) : le gouverneur ne lit pas ses trous comme
+ceux du lien et défait à l'instant la coupe que notre silence lui avait fait
+faire, au lieu de la remonter en cinq rapports.
 
 ---
 

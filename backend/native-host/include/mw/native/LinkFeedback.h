@@ -52,6 +52,13 @@ struct LinkFeedback
     /// Frames the receiver decoded in the window per second, as a sanity
     /// check on the rest; 0 when unknown.
     int receivedFps = 0;
+
+    /// The receiver's first report after its page was hidden or frozen. The
+    /// gaps it names were frames the host's own sender evicted because nobody
+    /// was draining them, and the silence before it was the browser's, not the
+    /// link's: the governor reads neither as overuse and lifts the cut the
+    /// silence caused. False on every ordinary report.
+    bool resumed = false;
 };
 
 } // namespace mw::native

@@ -265,6 +265,54 @@ export async function hdrClientCapability() {
     };
 }
 
+/**
+ * 8-bit 4:4:4 profiles a chroma 4:4:4 stream arrives in: HEVC Range Extensions
+ * (general_profile_idc 4 — the same profile a 10-bit 4:4:4 stream uses, the SPS
+ * tells them apart), then H.264 High 4:4:4 Predictive (profile 244, 0xF4).
+ */
+const CHROMA444_DECODE_PROBES = [
+    'hvc1.4.10.L153.B0',
+    'hev1.4.10.L153.B0',
+    'hvc1.4.10.L123.B0',
+    'avc1.F4002A',
+];
+let chroma444Probe = null;
+
+/**
+ * Whether THIS browser decodes any profile a 4:4:4 stream can arrive in.
+ *
+ * Measured 03/09/2026: Chrome 152 on Windows answers false for every RExt
+ * string (no 4:4:4 DXVA GUID on Chromium's D3D11 path) while Chrome on macOS
+ * answers true and shows the picture. Asked for the host anyway, the stream
+ * came up, failed three decodes and fell back to 4:2:0 H.264 three seconds
+ * later — so the settings page greys the box out here, and the launch gate
+ * drops a saved preference. Probed once per page: a decoder does not change
+ * under us. A browser without isConfigSupported is trusted, as for HDR.
+ * @returns {Promise<{decode: boolean}>}
+ */
+export async function chroma444ClientCapability() {
+    if (!chroma444Probe) {
+        chroma444Probe = (async () => {
+            if (
+                typeof VideoDecoder === 'undefined' ||
+                typeof VideoDecoder.isConfigSupported !== 'function'
+            ) {
+                return { decode: true };
+            }
+            for (const codec of CHROMA444_DECODE_PROBES) {
+                try {
+                    const r = await VideoDecoder.isConfigSupported({ codec });
+                    if (r && r.supported) return { decode: true };
+                } catch (e) {
+                    // This string is refused outright — try the next profile.
+                }
+            }
+            return { decode: false };
+        })();
+    }
+    return chroma444Probe;
+}
+
 /** True when the app runs as an installed PWA (no browser chrome). */
 export const IS_STANDALONE =
     window.navigator.standalone === true ||

@@ -527,6 +527,49 @@ void run_rate_control_tests()
         CHECK_EQ(g.silences(), 1);
     }
 
+    SECTION("RateGovernor — a receiver back from the background undoes the silence cut");
+    {
+        RateGovernor g;
+        g.start(40000, 0);
+        LinkFeedback quiet;
+        g.report(quiet, 500);
+        CHECK(g.tick(4600));
+        CHECK_EQ(g.targetKbps(), 32000);
+        // Its first report names the frames it missed while hidden — evicted
+        // by our own sender — and a delay that straddles the thaw burst, and
+        // says it was away: not overuse, and the precautionary cut is lifted
+        // at once rather than climbed back in five raises.
+        LinkFeedback back;
+        back.resumed = true;
+        back.gaps = 12;
+        back.owdRiseMs = 400;
+        CHECK(g.report(back, 20500));
+        CHECK_EQ(g.targetKbps(), 40000);
+        CHECK(!g.limiting());
+        CHECK_EQ(g.overuses(), 0);
+        // The next report is an ordinary one: a queue it measures is real.
+        LinkFeedback rising;
+        rising.owdRiseMs = 50;
+        CHECK(g.report(rising, 21000));
+        CHECK_EQ(g.targetKbps(), 32000);
+
+        // A cut a real overuse made before the page went away stays: only the
+        // silence cut is undone.
+        RateGovernor h;
+        h.start(40000, 0);
+        h.report(rising, 500);
+        CHECK_EQ(h.targetKbps(), 32000);
+        CHECK(h.tick(4600));
+        CHECK_EQ(h.targetKbps(), 25600);
+        CHECK(h.report(back, 20500));
+        CHECK_EQ(h.targetKbps(), 32000);
+        // No silence cut standing: "resumed" changes nothing, and is still
+        // not read as overuse.
+        CHECK(!h.report(back, 21000));
+        CHECK_EQ(h.targetKbps(), 32000);
+        CHECK_EQ(h.overuses(), 1);
+    }
+
     SECTION("EffectiveCadence — the clock closes windows of one second");
     {
         EffectiveCadence c;
