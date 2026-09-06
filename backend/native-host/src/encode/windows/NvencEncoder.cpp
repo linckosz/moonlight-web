@@ -321,6 +321,12 @@ bool NvencEncoder::init(ID3D11Device* device, Codec codec, int width, int height
     }
     case Codec::Av1: {
         NV_ENC_CONFIG_AV1& av1 = m_Config.encodeCodecConfig.av1Config;
+        // AV1's answer to repeatSPSPPS. Without it NVENC writes the sequence
+        // header once, at the very start: a browser served any keyframe but the
+        // first has nothing to configure its decoder from. The relay sends the
+        // LAST buffered keyframe, so that is the ordinary case, not the rare
+        // one — the same failure the AMD path had until 06/09/2026.
+        av1.repeatSeqHdr = 1;
         av1.idrPeriod = NVENC_INFINITE_GOPLENGTH;
         av1.maxNumRefFramesInDPB = kDpbFrames;
         av1.enableIntraRefresh = refreshEnabled;
