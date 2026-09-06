@@ -8,7 +8,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // admin page has to look again. Before this, it read the status once, found no
 // address, and left the Internet box empty until the user reloaded by hand.
 vi.mock('../js/api/BackendClient.js', () => ({
-    BackendClient: { getInternetStatus: vi.fn() },
+    BackendClient: { getInternetStatus: vi.fn(), enableInternet: vi.fn() },
+}));
+vi.mock('../js/ui/Toast.js', () => ({
+    Toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
 import { AdminView } from '../js/ui/AdminView.js';
@@ -97,6 +100,35 @@ describe('AdminView — waiting for the rendezvous address', () => {
         expect(view._awaitingRdv).toBe(true);
         await vi.advanceTimersByTimeAsync(700);
         expect(view._rendezvousUrl).toBe('https://stream.moonlightweb.top/xyz');
+    });
+
+    // The wiring, not just the helper: enabling is where the empty box came from.
+    it('starts the wait when enabling returns without an address', async () => {
+        BackendClient.enableInternet.mockResolvedValue({ status: 'enabled', domain: '' });
+        BackendClient.getInternetStatus.mockResolvedValue(statusWith(''));
+
+        await view._enableInternet();
+
+        expect(view._awaitingRdv).toBe(true);
+        BackendClient.getInternetStatus.mockResolvedValue(
+            statusWith('https://stream.moonlightweb.top/late'),
+        );
+        await vi.advanceTimersByTimeAsync(700);
+        expect(view._rendezvousUrl).toBe('https://stream.moonlightweb.top/late');
+        expect(view._awaitingRdv).toBe(false);
+    });
+
+    it('does not wait when enabling already answered with the address', async () => {
+        BackendClient.enableInternet.mockResolvedValue({ status: 'enabled', domain: '' });
+        BackendClient.getInternetStatus.mockResolvedValue(
+            statusWith('https://stream.moonlightweb.top/known'),
+        );
+
+        await view._enableInternet();
+
+        expect(view._rendezvousUrl).toBe('https://stream.moonlightweb.top/known');
+        expect(view._awaitingRdv).toBe(false);
+        expect(view._rdvPollTimer).toBe(null);
     });
 
     it('is stopped by destroy(), so a closed page leaves no timer behind', async () => {
