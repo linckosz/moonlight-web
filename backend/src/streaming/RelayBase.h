@@ -46,18 +46,31 @@ public:
     /// How long ICE may take to reach Connected after setRemoteDescription()
     /// before the transport is declared dead and the fallback chain moves on.
     ///
-    /// Sized from where the peer is. On loopback/LAN a candidate pair is
-    /// checked in a couple of round trips. A public peer has to punch through
-    /// two NATs, and its checks carry STUN's retransmit backoff — 3s expired
+    /// Sized from where the peer is. A public peer has to punch through two
+    /// NATs, and its checks carry STUN's retransmit backoff — 3s expired
     /// mid-handshake and killed sessions whose video was already flowing,
     /// leaving the host to tear down a stream it had just started (and, on
     /// Sunshine, to stop answering /launch for minutes afterwards).
+    ///
+    /// The LAN value is NOT "a couple of round trips", which is what it was
+    /// sized on. Chrome publishes its host candidates as mDNS names
+    /// (`<uuid>.local`), so before any check can be answered THIS side has to
+    /// resolve one — a Windows LLMNR/mDNS lookup with its own retransmit
+    /// timeline, seconds long the first time a name is seen and ~0 once the
+    /// resolver has cached it. Measured on the ARM bench (Snapdragon 7c on
+    /// Wi-Fi, 2026-09-06, nine launches): connected in 0.19–1.72s once warm,
+    /// but two launches never made it inside 3s and were thrown away — each
+    /// costing a full failed attempt plus a retry, about 6s of black screen,
+    /// for a handshake that succeeds in under 2s when simply given the time.
+    /// 8s keeps a genuinely dead LAN attempt short (a UDP-blocked LAN client
+    /// still falls back to WS well inside a launch) without discarding one
+    /// that is merely waiting on a name lookup.
     ///
     /// Public because the browser runs the very same deadline on its own side
     /// and must be told which one applies: whichever end fires first ends the
     /// attempt, so a host that waits 10s while the browser gives up at 3s has
     /// gained nothing. SignalingServer ships the value in its ice-config.
-    static constexpr int kIceTimeoutLocalMs = 3000;
+    static constexpr int kIceTimeoutLocalMs = 8000;
     static constexpr int kIceTimeoutInternetMs = 10000;
 
     explicit RelayBase(QObject* parent = nullptr)
