@@ -96,6 +96,7 @@ const char* const kUsage =
     "  taq=0|1          NVENC temporal AQ\n"
     "  preanalysis=0|1  AMF pre-analysis\n"
     "  quality=speed|balanced|quality   AMF quality preset\n"
+    "  lowlatency=0|1   AMF internal low-latency mode (H.264/HEVC)\n"
     "  tu=1..7          oneVPL TargetUsage (1 quality .. 7 speed)\n"
     "  vbv=<frames>     VBV of exactly N frames at the stream rate, no floor\n"
     "  dpb=<frames>     NVENC decoded picture buffer (default 4, for reference invalidation)\n";
@@ -144,6 +145,8 @@ bool applyTuningKey(const QString& key, const QString& value, mw::native::Encode
         ok = parseChoice(value, tuning.temporalAq);
     else if (key == "preanalysis")
         ok = parseChoice(value, tuning.preAnalysis);
+    else if (key == "lowlatency")
+        ok = parseChoice(value, tuning.amfLowLatency);
     else if (key == "tuning") {
         const QString t = value.toLower();
         if (t == "ull")

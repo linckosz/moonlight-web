@@ -88,6 +88,16 @@ struct EncoderTuning
     };
     AmfQuality amfQuality = AmfQuality::Default;
 
+    /// AMF H.264/HEVC: the encoder's internal low-latency mode
+    /// (`LowLatencyInternal`, which also puts H.264 in POC mode 2).
+    ///
+    /// Its own header says `default = false` — flatly, not "depends on USAGE"
+    /// like every other knob here — so the ultra-low-latency usage is not
+    /// documented to switch it on. Worth a measurement rather than a guess: it
+    /// is the one AMD knob this engine has never touched. AV1 has no such
+    /// property; it has an explicit latency mode, already set to its lowest.
+    Choice amfLowLatency = Choice::Default;
+
     /// oneVPL: TargetUsage 1 (quality) … 7 (speed). 0 is the engine's own (7).
     int vplTargetUsage = 0;
 
@@ -110,8 +120,8 @@ struct EncoderTuning
         return nvencPreset == 0 && nvencTuning == Latency::Default &&
                nvencMultiPass == MultiPass::Default && spatialAq == Choice::Default &&
                temporalAq == Choice::Default && preAnalysis == Choice::Default &&
-               amfQuality == AmfQuality::Default && vplTargetUsage == 0 && vbvFrames == 0 &&
-               dpbFrames == 0;
+               amfQuality == AmfQuality::Default && amfLowLatency == Choice::Default &&
+               vplTargetUsage == 0 && vbvFrames == 0 && dpbFrames == 0;
     }
 
     /// One line naming every field that is NOT at its default, for the log and
@@ -136,6 +146,8 @@ struct EncoderTuning
         if (amfQuality == AmfQuality::Speed) add("quality=speed");
         if (amfQuality == AmfQuality::Balanced) add("quality=balanced");
         if (amfQuality == AmfQuality::Quality) add("quality=quality");
+        if (amfLowLatency != Choice::Default)
+            add(std::string("lowlatency=") + choice(amfLowLatency));
         if (vplTargetUsage > 0) add("tu=" + std::to_string(vplTargetUsage));
         if (vbvFrames > 0) add("vbv=" + std::to_string(vbvFrames) + "f");
         if (dpbFrames > 0) add("dpb=" + std::to_string(dpbFrames));

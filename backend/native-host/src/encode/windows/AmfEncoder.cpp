@@ -93,6 +93,13 @@ struct CodecProperties
     amf_int64 headerInsertionOnKeyframe;
     const wchar_t* insertSps; ///< null on HEVC/AV1
     const wchar_t* insertPps;
+    /// The encoder's internal low-latency mode, on the two codecs that have one
+    /// (`LowLatencyInternal`; null on AV1, which has an explicit latency mode
+    /// set to its lowest instead). Its header says `default = false` outright,
+    /// where every other knob here says "depends on USAGE" — so the
+    /// ultra-low-latency usage is not documented to turn it on, and init()
+    /// reads it back to find out what the driver actually did.
+    const wchar_t* lowLatencyMode;
 };
 
 const CodecProperties& propertiesFor(Codec codec)
@@ -134,6 +141,7 @@ const CodecProperties& propertiesFor(Codec codec)
         0,
         AMF_VIDEO_ENCODER_INSERT_SPS,
         AMF_VIDEO_ENCODER_INSERT_PPS,
+        AMF_VIDEO_ENCODER_LOWLATENCY_MODE,
     };
     static const CodecProperties kHevc = {
         AMFVideoEncoder_HEVC,
@@ -172,6 +180,7 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED,
         nullptr,
         nullptr,
+        AMF_VIDEO_ENCODER_HEVC_LOWLATENCY_MODE,
     };
     static const CodecProperties kAv1 = {
         AMFVideoEncoder_AV1,
@@ -210,6 +219,7 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_AV1_HEADER_INSERTION_MODE_KEY_FRAME_ALIGNED,
         nullptr,
         nullptr,
+        nullptr, // AV1 has AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE instead
     };
 
     switch (codec) {
@@ -342,12 +352,15 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     amf_int64 usageQuality = -1;
     amf_int64 usagePreAnalysis = -1;
     amf_int64 usageAq = -1;
+    amf_int64 usageLowLatency = -1;
     m_Encoder->GetProperty(props.qualityPreset, &usageQuality);
     m_Encoder->GetProperty(props.preAnalysis, &usagePreAnalysis);
     m_Encoder->GetProperty(props.adaptiveQuant, &usageAq);
+    if (props.lowLatencyMode) m_Encoder->GetProperty(props.lowLatencyMode, &usageLowLatency);
     log::info(std::string("[native] AMF ultra-low-latency usage as the driver ships it: quality=") +
-              qualityName(props, usageQuality) + " preanalysis=" +
-              std::to_string(usagePreAnalysis) + " aq=" + std::to_string(usageAq));
+              qualityName(props, usageQuality) +
+              " preanalysis=" + std::to_string(usagePreAnalysis) +
+              " aq=" + std::to_string(usageAq) + " lowlatency=" + std::to_string(usageLowLatency));
 
     // ── The bench's overrides, where it gave any ────────────────────────────
     switch (tuning.amfQuality) {
@@ -364,6 +377,9 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     }
     if (tuning.preAnalysis != EncoderTuning::Choice::Default)
         m_Encoder->SetProperty(props.preAnalysis, tuning.preAnalysis == EncoderTuning::Choice::On);
+    if (tuning.amfLowLatency != EncoderTuning::Choice::Default && props.lowLatencyMode)
+        m_Encoder->SetProperty(props.lowLatencyMode,
+                               tuning.amfLowLatency == EncoderTuning::Choice::On);
     if (tuning.spatialAq != EncoderTuning::Choice::Default) {
         const bool on = tuning.spatialAq == EncoderTuning::Choice::On;
         if (props.adaptiveQuantIsMode)
@@ -504,10 +520,11 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
 
     // The knobs as the encoder holds them now — usage, then overrides, then
     // Init(), which may have corrected any of them.
-    amf_int64 quality = -1, preAnalysis = -1, aq = -1;
+    amf_int64 quality = -1, preAnalysis = -1, aq = -1, lowLatency = -1;
     m_Encoder->GetProperty(props.qualityPreset, &quality);
     m_Encoder->GetProperty(props.preAnalysis, &preAnalysis);
     m_Encoder->GetProperty(props.adaptiveQuant, &aq);
+    if (props.lowLatencyMode) m_Encoder->GetProperty(props.lowLatencyMode, &lowLatency);
     const std::string overrides = tuning.describe();
     log::info("[native] AMF ready: " + std::to_string(width) + "x" + std::to_string(height) + "@" +
               std::to_string(m_Fps) + " " + toString(codec) + " 4:2:0 CBR " +
@@ -517,6 +534,7 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
                               : ", keyframes on demand") +
               ", quality=" + qualityName(props, quality) +
               " preanalysis=" + std::to_string(preAnalysis) + " aq=" + std::to_string(aq) +
+              " lowlatency=" + std::to_string(lowLatency) +
               (m_Ltr.enabled() ? ", " + std::to_string(m_Ltr.count()) + " LTR slots every " +
                                      std::to_string(m_Ltr.stride()) +
                                      " frames with reference invalidation (reach " +

@@ -411,6 +411,30 @@ choix du pilote) est déjà le plus rapide mesuré, et le pilote ne rapporte pas
 QP qui permettrait d'aller chercher un compromis qualité. La seule variable qui
 compte sur AMD est la résolution, et elle est le choix de l'utilisateur.
 
+**Le dernier bouton AMD jamais touché : `LowLatencyInternal`** (06/09, au soir).
+Le seul réglage AMF que ce moteur n'avait ni posé ni mesuré, et le seul dont
+l'en-tête d'AMD annonce « **default = false** » au lieu du « depends on USAGE »
+de tous les autres — celui que Sunshine pose explicitement. Il vaut donc une
+mesure, pas une supposition. `AmfEncoder::init` le **relit** maintenant, après
+avoir posé l'usage et avant toute surcharge, et la réponse tient en un mot :
+`lowlatency=1` **déjà**, sur les trois passes par défaut comme sur les forcées.
+L'usage ultra-low-latency l'allume lui-même, l'en-tête est trompeur. L'A/B le
+confirme, HEVC puis H.264, en alternance, CoD 1440p 40 Mbit/s :
+
+| Passe | encode ms (moy / p95 / p99) | Ko/frame | cadence |
+|---|---|---|---|
+| HEVC défaut | 4,65 / 9,22 / 11,26 · 4,82 / 9,22 / 12,29 | 59,8 · 59,7 | 59,9 |
+| HEVC `lowlatency=1` forcé | 4,93 / 10,24 / 12,29 · 4,83 / 10,24 / 12,29 | 59,6 · 59,9 | 59,9 |
+| H.264 défaut | 4,68 / 10,24 / 12,29 · 4,67 / 10,24 / 11,26 | 59,5 · 54,5 | 59,9 |
+| H.264 `lowlatency=1` forcé | 4,63 / 9,22 / 11,26 · 4,83 / 10,24 / 12,29 | 60,0 · 57,6 | 59,8 |
+
+Rien à appliquer, et pour la meilleure des raisons : c'était déjà appliqué. Ce
+qui reste du travail, c'est la **ligne de log** — l'état effectif du mode est
+désormais écrit à côté de `quality` et `preanalysis`, donc un pilote qui
+changerait d'avis se verrait au lieu de se deviner. Clé de banc `lowlatency=0|1`
+pour rejouer, AV1 excepté (il a son propre `ENCODING_LATENCY_MODE`, déjà au plus
+bas).
+
 **Invalidation de référence AMF** — livrée le 06/09 (R4 du plan), mesurée ici
 gratuite (point 5) et **configurée sur les trois codecs** : la ligne « AMF
 ready » porte « 4 LTR slots every N frames with reference invalidation (reach M
@@ -451,6 +475,6 @@ MoonlightWeb.exe --native-bench display=1,gpu=2,seconds=10,bitrate=40000
 
 Clés d'encodeur : `preset=1..7`, `tuning=ull|ll`, `multipass=off|quarter|full`,
 `aq=0|1`, `taq=0|1`, `preanalysis=0|1`, `quality=speed|balanced|quality`,
-`tu=1..7`, `vbv=<frames>`, `gpu=<id>`. Le contenu est affaire d'opérateur : ici
+`tu=1..7`, `vbv=<frames>`, `lowlatency=0|1`, `gpu=<id>`. Le contenu est affaire d'opérateur : ici
 un Chrome dédié en kiosque sur l'écran capturé (`--user-data-dir` séparé,
 `--kiosk --window-position=<x>,<y>`), relancé avant chaque passe pour le clip.
