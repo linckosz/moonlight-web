@@ -153,15 +153,55 @@ export function physicalScreenSize() {
     return { short: Math.round(Math.min(w, h)), long: Math.round(Math.max(w, h)) };
 }
 
+let snapdragonProbe = null;
+
+/**
+ * True when the GPU drawing this page is a Qualcomm Adreno — a Snapdragon.
+ *
+ * Asked of WebGL, not of the user agent: Chrome on Windows-on-ARM presents
+ * itself as "Windows NT 10.0; Win64; x64" and `mobile: false` (measured on the
+ * ARM bench, 06/09/2026), so nothing the platform detection reads tells a
+ * Snapdragon laptop from an x64 one. The renderer string does — "ANGLE
+ * (Qualcomm, Qualcomm(R) Adreno(TM) 618 GPU …)" on that bench — and the GPU is
+ * the thing the answer is about anyway. Probed once per page: the GPU does not
+ * change under us. A browser that masks the string, or has no WebGL, answers
+ * false and keeps the platform rule.
+ */
+export function isSnapdragonGpu() {
+    if (snapdragonProbe === null) {
+        snapdragonProbe = false;
+        try {
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+            if (gl) {
+                const ext = gl.getExtension('WEBGL_debug_renderer_info');
+                const renderer = String(
+                    gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '',
+                );
+                snapdragonProbe = /adreno|qualcomm/i.test(renderer);
+                const lose = gl.getExtension('WEBGL_lose_context');
+                if (lose) lose.loseContext();
+            }
+        } catch (e) {
+            snapdragonProbe = false;
+        }
+    }
+    return snapdragonProbe;
+}
+
 /**
  * Pick the auto Video-Enhancement upscaler for this device: 'fsr1' (sharper,
- * three passes) on a desktop, 'sgsr' (one light pass) on a phone or tablet.
- * Decided 03/09/2026 with the SDR matrix: the platform class is the whole
- * rule — a phone's GPU budget is spent on the decode, whatever its core count.
- * Which API runs it (WebGL2 in SDR, WebGPU in HDR) is StreamView's call.
+ * three passes) on a desktop, 'sgsr' (one light pass) on a phone or tablet —
+ * and 'sgsr' on ANY Snapdragon, a Windows-on-ARM laptop included. SGSR is
+ * Qualcomm's upscaler, written for the Adreno's shader cores; on that GPU it is
+ * the one to run whatever the form factor (asked by Bruno, 06/09/2026).
+ * Decided 03/09/2026 with the SDR matrix: otherwise the platform class is the
+ * whole rule — a phone's GPU budget is spent on the decode, whatever its core
+ * count. Which API runs it (WebGL2 in SDR, WebGPU in HDR) is StreamView's call.
  * @returns {'fsr1'|'sgsr'}
  */
 export function pickAutoEnhancer() {
+    if (isSnapdragonGpu()) return 'sgsr';
     return PLATFORM_TYPE === 'desktop' ? 'fsr1' : 'sgsr';
 }
 

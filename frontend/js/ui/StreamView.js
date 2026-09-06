@@ -60,6 +60,7 @@ import {
     IS_MOBILE_OR_TABLET,
     IS_APPLE,
     SUPPORTS_CANVAS_TEARING,
+    isSnapdragonGpu,
     pickAutoEnhancer,
     supportsDisplayHdr,
 } from '../util/BrowserDetect.js';
@@ -427,8 +428,10 @@ export class StreamView {
         // The production matrix (decided 03/09/2026), 'auto' being the only
         // value a release build ever saves:
         //   SDR  Off  → Canvas2D            Auto → FSR1 WebGL2 (desktop)
-        //                                          SGSR1 WebGL2 (phone/tablet)
+        //                                          SGSR1 WebGL2 (phone/tablet,
+        //                                          and any Snapdragon GPU)
         //   HDR  Off  → WebGPU              Auto → FSR1 WebGPU
+        //                                          (SGSR1 WebGPU on Snapdragon)
         // In SDR the WebGL2 flavour won the click-to-photon runs in a window
         // and keeps no WebGPU device alive; in HDR WebGPU is the one renderer
         // with an HDR surface, so everything moves there.
@@ -455,7 +458,12 @@ export class StreamView {
                 forceVideo = true;
                 sel = 'off';
             }
-            if (sel === 'auto') sel = hdr ? 'fsr1' : 'gl-' + pickAutoEnhancer();
+            if (sel === 'auto') {
+                // A Snapdragon runs Qualcomm's own upscaler in both flavours;
+                // HDR otherwise keeps FSR1, the sharper one, on WebGPU.
+                if (hdr) sel = isSnapdragonGpu() ? 'sgsr' : 'fsr1';
+                else sel = 'gl-' + pickAutoEnhancer();
+            }
             // HDR has no WebGL2 or Canvas2D presentation in Chrome (no HDR
             // surface for either), so with HDR on every upscaler runs in its
             // WebGPU flavour — the same algorithm, on the renderer that can

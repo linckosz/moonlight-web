@@ -2,7 +2,7 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  */
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     detectPlatform,
     isIphone,
@@ -81,7 +81,15 @@ describe('BrowserDetect.physicalScreenSize', () => {
 });
 
 describe('BrowserDetect — enhancer choice + module constants', () => {
-    afterEach(() => vi.unstubAllGlobals());
+    // jsdom has no WebGL: answer "no context" quietly instead of logging its
+    // not-implemented notice each time the GPU probe asks.
+    beforeEach(() => {
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
 
     it('PLATFORM_TYPE is a known value and desktop picks fsr1', () => {
         expect(['mobile', 'tablet', 'desktop']).toContain(PLATFORM_TYPE);
@@ -114,5 +122,69 @@ describe('BrowserDetect — enhancer choice + module constants', () => {
         vi.stubGlobal('screen', { width: 720, height: 1280 });
         const m = await import('../js/util/BrowserDetect.js');
         expect(m.pickAutoEnhancer()).toBe('sgsr');
+    });
+});
+
+// Chrome on Windows-on-ARM says "Win64; x64" and mobile:false — the platform
+// rule reads a Snapdragon laptop as a plain desktop. The GPU string is the one
+// thing that tells, so SGSR (Qualcomm's upscaler) is keyed on it.
+describe('BrowserDetect — Snapdragon picks SGSR whatever the form factor', () => {
+    const ADRENO =
+        'ANGLE (Qualcomm, Qualcomm(R) Adreno(TM) 618 GPU (0x41333830) Direct3D11 vs_5_0 ps_5_0, D3D11)';
+    const NVIDIA =
+        'ANGLE (NVIDIA, NVIDIA GeForce RTX 5060 Ti (0x00002D04) Direct3D11 vs_5_0 ps_5_0, D3D11)';
+
+    /** Fake a WebGL context whose debug extension reports `renderer`. */
+    function fakeWebGl(renderer) {
+        const UNMASKED = 0x9246;
+        const gl = {
+            RENDERER: 0x1f01,
+            getExtension: (name) =>
+                name === 'WEBGL_debug_renderer_info' ? { UNMASKED_RENDERER_WEBGL: UNMASKED } : null,
+            getParameter: (p) => (p === UNMASKED ? renderer : 'masked'),
+        };
+        return vi
+            .spyOn(document, 'createElement')
+            .mockImplementation(() => ({ getContext: () => (renderer === null ? null : gl) }));
+    }
+
+    async function freshModule(renderer) {
+        vi.resetModules();
+        vi.stubGlobal('navigator', { userAgent: UA.desktop, maxTouchPoints: 0 });
+        const spy = fakeWebGl(renderer);
+        const m = await import('../js/util/BrowserDetect.js');
+        return { m, spy };
+    }
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    it('an Adreno under a desktop user agent picks sgsr', async () => {
+        const { m } = await freshModule(ADRENO);
+        expect(m.PLATFORM_TYPE).toBe('desktop');
+        expect(m.isSnapdragonGpu()).toBe(true);
+        expect(m.pickAutoEnhancer()).toBe('sgsr');
+    });
+
+    it('any other desktop GPU keeps fsr1', async () => {
+        const { m } = await freshModule(NVIDIA);
+        expect(m.isSnapdragonGpu()).toBe(false);
+        expect(m.pickAutoEnhancer()).toBe('fsr1');
+    });
+
+    it('without WebGL the platform rule stands', async () => {
+        const { m } = await freshModule(null);
+        expect(m.isSnapdragonGpu()).toBe(false);
+        expect(m.pickAutoEnhancer()).toBe('fsr1');
+    });
+
+    it('asks the GPU once per page', async () => {
+        const { m, spy } = await freshModule(ADRENO);
+        m.pickAutoEnhancer();
+        m.pickAutoEnhancer();
+        m.isSnapdragonGpu();
+        expect(spy).toHaveBeenCalledTimes(1);
     });
 });
