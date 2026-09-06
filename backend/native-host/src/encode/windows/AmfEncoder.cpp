@@ -71,6 +71,28 @@ struct CodecProperties
     const wchar_t* forceLtrBitfield;
     const wchar_t* outputMarkedLtrIndex;
     const wchar_t* outputReferencedLtrBitfield;
+    /// Parameter sets in the bitstream, which decide whether a browser can
+    /// configure its decoder at all.
+    ///
+    /// NVENC has `repeatSPSPPS = 1` and that is the end of it. AMF has no such
+    /// switch on by default: its own headers say `InsertSPS`/`InsertPPS`
+    /// default to **false**, the HEVC and AV1 insertion modes default to
+    /// **NONE**, and the H.264 spacing "depends on USAGE". So the parameter
+    /// sets reach the wire once, if at all — and a client that misses that one
+    /// frame never sees them again. That is not a rare case: whenever the data
+    /// channel is not open yet the relay buffers a keyframe and sends a LATER
+    /// one, so the browser's first frame is routinely not the first keyframe.
+    /// It then warns "cannot extract SPS/PPS" on every delta and the picture
+    /// never starts.
+    ///
+    /// HEVC and AV1 take a mode, set once at init. H.264 has no IDR-aligned
+    /// mode — only a periodic spacing, which is not the same promise — so it
+    /// asks per picture instead, which is exact: with an effectively infinite
+    /// GOP every IDR is one this class forced.
+    const wchar_t* headerInsertionMode; ///< null on H.264
+    amf_int64 headerInsertionOnKeyframe;
+    const wchar_t* insertSps; ///< null on HEVC/AV1
+    const wchar_t* insertPps;
 };
 
 const CodecProperties& propertiesFor(Codec codec)
@@ -108,6 +130,10 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_FORCE_LTR_REFERENCE_BITFIELD,
         AMF_VIDEO_ENCODER_OUTPUT_MARKED_LTR_INDEX,
         AMF_VIDEO_ENCODER_OUTPUT_REFERENCED_LTR_INDEX_BITFIELD,
+        nullptr, // no IDR-aligned mode on H.264: asked for per picture below
+        0,
+        AMF_VIDEO_ENCODER_INSERT_SPS,
+        AMF_VIDEO_ENCODER_INSERT_PPS,
     };
     static const CodecProperties kHevc = {
         AMFVideoEncoder_HEVC,
@@ -142,6 +168,10 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_HEVC_FORCE_LTR_REFERENCE_BITFIELD,
         AMF_VIDEO_ENCODER_HEVC_OUTPUT_MARKED_LTR_INDEX,
         AMF_VIDEO_ENCODER_HEVC_OUTPUT_REFERENCED_LTR_INDEX_BITFIELD,
+        AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE,
+        AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED,
+        nullptr,
+        nullptr,
     };
     static const CodecProperties kAv1 = {
         AMFVideoEncoder_AV1,
@@ -176,6 +206,10 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_AV1_FORCE_LTR_REFERENCE_BITFIELD,
         AMF_VIDEO_ENCODER_AV1_OUTPUT_MARKED_LTR_INDEX,
         AMF_VIDEO_ENCODER_AV1_OUTPUT_REFERENCED_LTR_INDEX_BITFIELD,
+        AMF_VIDEO_ENCODER_AV1_HEADER_INSERTION_MODE,
+        AMF_VIDEO_ENCODER_AV1_HEADER_INSERTION_MODE_KEY_FRAME_ALIGNED,
+        nullptr,
+        nullptr,
     };
 
     switch (codec) {
@@ -346,6 +380,12 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     m_Encoder->SetProperty(props.frameSize, ::AMFConstructSize(width, height));
     m_Encoder->SetProperty(props.frameRate, ::AMFConstructRate(m_Fps, 1));
     m_Encoder->SetProperty(props.gopSize, kEffectivelyInfiniteGop);
+
+    // Parameter sets on every keyframe, never once (see CodecProperties). With
+    // the GOP effectively infinite there are no IDRs but the ones this class
+    // forces, so the per-picture route on H.264 covers all of them.
+    if (props.headerInsertionMode)
+        m_Encoder->SetProperty(props.headerInsertionMode, props.headerInsertionOnKeyframe);
 
     // Make QueryOutput block rather than answer AMF_REPEAT.
     //
@@ -545,7 +585,17 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
             }
         }
     }
-    if (forceKeyframe) input->SetProperty(props.forcePictureType, props.forcePictureTypeIdr);
+    if (forceKeyframe) {
+        input->SetProperty(props.forcePictureType, props.forcePictureTypeIdr);
+        // H.264 only: its parameter sets are asked for on the picture, there
+        // being no IDR-aligned insertion mode to set once (see
+        // CodecProperties). Without this the browser's decoder can never
+        // configure itself from anything but the very first keyframe.
+        if (props.insertSps) {
+            input->SetProperty(props.insertSps, true);
+            input->SetProperty(props.insertPps, true);
+        }
+    }
 
     // Mark this picture into its slot when it is its turn — always for a
     // keyframe, which has just emptied every slot.
