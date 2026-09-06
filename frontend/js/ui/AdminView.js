@@ -123,6 +123,10 @@ export class AdminView {
         this._sessions = [];
         this._sessionsRendered = ''; // signature of the rows currently on screen
         this._certAuthEnabled = false;
+        // Desktop notification when someone starts/stops streaming this screen
+        // through the native host. Server-side setting: the tray obeys it, and
+        // the tray may live in another process.
+        this._streamNotifications = true;
 
         // Dirty tracking: snapshot of values at load time
         this._cleanState = {};
@@ -159,11 +163,34 @@ export class AdminView {
         // keep the loader live until the backend reaches a terminal phase.
         if (this._activating) this._startPhasePolling();
         this._startSessionsPolling();
-        // Deep link from the hosts-page banner: bring the INTERNET section into
-        // view so the user lands directly on the enable checkbox.
-        if (this._options.scrollTo === 'internet') {
-            const section = this.container.querySelector('#admin-section-internet');
-            if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Deep links: the hosts-page banner asks for the INTERNET section (the
+        // user lands directly on the enable checkbox), the tray's
+        // "Streaming (n)" entry for the SESSIONS table (who is watching).
+        const anchors = {
+            internet: '#admin-section-internet',
+            sessions: '#admin-section-sessions',
+        };
+        const anchor = anchors[this._options.scrollTo];
+        // Instant, and twice.
+        //
+        // Instant because a smooth scroll is an animation, and an animation is
+        // exactly what a browser declines to run in a tab that is not in front
+        // — which is the normal case here: the page is being opened FROM
+        // somewhere else (the tray, a banner), so it is still arriving. The
+        // smooth version silently did nothing at all and left the reader at the
+        // top of a long page, one scroll away from the thing they clicked for.
+        //
+        // Twice because the overlay is still settling when start() returns: it
+        // is mounted, then painted, and only then is its panel the thing that
+        // scrolls. The second attempt lands on a laid-out page; when the first
+        // already worked it re-aims at the same place and nothing moves.
+        if (anchor) {
+            const scroll = () => {
+                const section = this.container.querySelector(anchor);
+                if (section) section.scrollIntoView({ behavior: 'instant', block: 'start' });
+            };
+            requestAnimationFrame(scroll);
+            setTimeout(scroll, 250);
         }
     }
 
@@ -173,6 +200,7 @@ export class AdminView {
             this._httpsPort = admin.https_port || 443;
             this._httpPort = admin.http_port || 80;
             this._certAuthEnabled = admin.cert_auth_enabled || false;
+            this._streamNotifications = admin.stream_notifications !== false;
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
@@ -1000,12 +1028,18 @@ export class AdminView {
                 ${
                     this._isLocalhost()
                         ? `
-                    <div class="settings-section">
+                    <div class="settings-section" id="admin-section-sessions">
                         <h3 class="settings-section-title">${t('admin.activeSessions')}</h3>
                         <div class="settings-field u-pt-0">
                             <p class="setting-desc">
                                 ${t('admin.activeSessionsDesc')}
                             </p>
+                            <label class="settings-checkbox-label">
+                                <input type="checkbox" id="chk-stream-notifications"
+                                       ${this._streamNotifications ? 'checked' : ''} />
+                                <span class="settings-checkbox-text">${t('admin.streamNotifications')}</span>
+                            </label>
+                            <p class="setting-desc">${t('admin.streamNotificationsDesc')}</p>
                             <p class="settings-hint" id="admin-session-count">
                                 ${
                                     this._activeSessions > 0
@@ -1641,6 +1675,29 @@ export class AdminView {
                     Toast.error(t('admin.clearFailed', { message: err.message }));
                     clearBtn.disabled = false;
                     clearBtn.textContent = t('common.clear');
+                }
+            });
+        }
+
+        // ── Streaming notifications ────────────────────────────────────────
+        // Saved on the spot, like the toggles below it: there is nothing to
+        // confirm, and the tray picks the new answer up on its next poll.
+        const notifyChk = this.container.querySelector('#chk-stream-notifications');
+        if (notifyChk) {
+            notifyChk.addEventListener('change', async () => {
+                const enabled = notifyChk.checked;
+                try {
+                    await BackendClient.saveAdminSettings({ stream_notifications: enabled });
+                    this._streamNotifications = enabled;
+                    Toast.success(
+                        enabled
+                            ? t('admin.streamNotificationsOn')
+                            : t('admin.streamNotificationsOff'),
+                    );
+                } catch (err) {
+                    console.error('[Admin] Failed to save notification setting:', err);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
+                    notifyChk.checked = !enabled; // revert
                 }
             });
         }

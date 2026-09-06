@@ -470,8 +470,13 @@ const MoonlightApp = {
         // ── Initial route ──────────────────────────────────────────────────
         const path = window.location.pathname;
         let mainView, mainState, initialOverlay;
+        // Deep link from the tray's "Streaming (n)" entry: the admin page, at
+        // its sessions table. A path rather than a hash because the entry may
+        // travel over the internet link, whose fragment already carries the
+        // single-use host key.
+        const overlayOptions = path === '/sessions' ? { scrollTo: 'sessions' } : undefined;
 
-        if (path === '/admin' && this._canReachAdmin()) {
+        if ((path === '/admin' || path === '/sessions') && this._canReachAdmin()) {
             // Admin survives refresh — shown as overlay on hosts. Admins only:
             // a remote session landing on /admin is sent to the hosts view
             // (unless it may unlock, in which case AdminView asks for the
@@ -492,7 +497,7 @@ const MoonlightApp = {
         this._renderMainView();
 
         if (initialOverlay) {
-            this._openOverlay(initialOverlay);
+            this._openOverlay(initialOverlay, overlayOptions);
         }
     },
 

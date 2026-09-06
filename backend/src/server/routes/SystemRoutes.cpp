@@ -797,6 +797,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             // active listener at startup, so they are identical.
             obj["https_port"] = static_cast<int>(appSettings.httpsPort(server.activeHttpsPort()));
             obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+            // Whether the desktop is told when someone streams this screen.
+            obj["stream_notifications"] = appSettings.streamNotifications();
             // Host machine only: the current host key, so the
             // admin page can carry its session over to the
             // public-domain URL after Internet activation. Not
@@ -824,6 +826,16 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["cert_auth_enabled"].toBool();
             authManager.setCertAuthEnabled(enabled);
             obj["cert_auth_enabled"] = enabled;
+            hadChange = true;
+        }
+
+        // ── Streaming notifications ──────────────────────────────────────
+        // Read by the tray on its next poll (both the in-process one and the
+        // client that decorates a service), so no restart and no signal.
+        if (body.contains("stream_notifications")) {
+            bool enabled = body["stream_notifications"].toBool();
+            appSettings.setStreamNotifications(enabled);
+            obj["stream_notifications"] = enabled;
             hadChange = true;
         }
 

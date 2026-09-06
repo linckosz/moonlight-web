@@ -892,6 +892,13 @@ QList<SessionInfo> AuthManager::sessions() const
     return list;
 }
 
+SessionInfo AuthManager::sessionForToken(const QString& token) const
+{
+    if (token.isEmpty()) return {};
+    auto it = m_sessions.constFind(hashToken(token));
+    return it == m_sessions.constEnd() ? SessionInfo() : *it;
+}
+
 QString AuthManager::sessionIdForToken(const QString& token) const
 {
     if (token.isEmpty()) return {};

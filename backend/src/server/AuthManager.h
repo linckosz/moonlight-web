@@ -251,6 +251,14 @@ public:
      */
     QList<SessionInfo> sessions() const;
 
+    /** The session behind raw cookie @p token — RAW, like the other lookups
+     *  above, because that is what the stream slots carry. Returns a
+     *  default-constructed SessionInfo (empty token) when it matches none.
+     *
+     *  The tray reads it to name the device in "X started streaming this
+     *  screen", and to tell a visitor from this machine's own browser. */
+    SessionInfo sessionForToken(const QString& token) const;
+
     /** The opaque id (the value carried in sessions()/toJson and expected by
      *  destroySession/renameSession) of the session a raw cookie token belongs
      *  to, or an empty string when the token matches none. Lets the admin UI

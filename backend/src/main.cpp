@@ -70,6 +70,7 @@
 #include "server/NetClassify.h"
 #include "server/ShareManager.h"
 #include "server/SessionPool.h"
+#include "server/StreamActivity.h"
 #include "server/routes/AuthRoutes.h"
 #include "server/routes/HostRoutes.h"
 #include "server/routes/ShareRoutes.h"
@@ -87,6 +88,7 @@
 #include "streaming/IMediaEngine.h"
 #include "streaming/NativeBench.h"
 #include "backend/streambackend/NativeProbeService.h"
+#include "backend/streambackend/NativeHostBackend.h"
 #include "Limelight.h" // SCM_* codec-support masks
 #include "streaming/DataChannelRelay.h"
 #include "streaming/MediaTrackRelay.h"
@@ -1064,6 +1066,26 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
         loopbackAdminPost(base, QStringLiteral("/api/system/quit"), QByteArrayLiteral("{}"));
     });
 
+    // Who is watching the screen this tray sits on. The server keeps that
+    // answer — this process has no slot table, no sessions and no settings —
+    // so it is asked for over the same loopback as everything else, on a short
+    // budget: a wedged server must cost the icon nothing but a stale count, and
+    // an unanswered poll simply reports nobody rather than inventing viewers.
+    tray.setActivityProvider(
+        [&port]() -> StreamActivity {
+            const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
+                                             : QStringLiteral("https://127.0.0.1:%1").arg(port);
+            const LoopbackReply reply = loopbackRequest(
+                base, QStringLiteral("/api/server/stream-activity"), QByteArray(), 2000);
+            if (!reply.ok) {
+                StreamActivity unknown;
+                unknown.valid = false;
+                return unknown;
+            }
+            return StreamActivity::fromJson(reply.json);
+        },
+        2000);
+
     if (!tray.init()) {
         Logger::warning("Tray client: no system tray available — exiting");
         return 0;
@@ -1737,6 +1759,45 @@ int main(int argc, char* argv[])
     // Owns the share state machine (link + PIN + permissions per player slot);
     // the stream side of it lives here because only main.cpp drives workers.
     ShareManager shareManager;
+
+    // ── Who is watching this screen ────────────────────────────────────────
+    //
+    // The tray's answer to "is anyone streaming me, and who?". Read from the
+    // slot table, which is the only place that knows, and narrowed twice:
+    //
+    //  - to the native host. Every other backend means this machine is the
+    //    CLIENT of a screen somewhere else, and telling its owner that someone
+    //    is watching them would be false.
+    //  - to people, not sessions. The owner's standby leg (slot 1) is the same
+    //    viewer continuing their own stream through a quality change, so it
+    //    shares their browser's uniqueid and collapses into one row here —
+    //    otherwise a single person switching quality would read as two, and
+    //    would announce themselves twice.
+    //
+    // The legacy in-process path (stream_worker_enabled off) is deliberately
+    // not consulted: its globals are not cleared on every exit, and a stuck
+    // "Streaming (1)" that no longer matches anything is worse than silence.
+    auto streamActivity = [&g_Pool, &authManager, &shareManager, &appSettings]() {
+        StreamActivity activity;
+        activity.notify = appSettings.streamNotifications();
+        QSet<QString> seen;
+        for (int i = 0; i < g_Pool.size(); ++i) {
+            const SessionPool::Slot& sl = g_Pool.at(i);
+            if (sl.worker.isNull()) continue;
+            if (sl.hostUuid != NativeHostBackend::hostUuid()) continue;
+            const QString id =
+                sl.clientUniqueId.isEmpty() ? QStringLiteral("slot-%1").arg(i) : sl.clientUniqueId;
+            if (seen.contains(id)) continue;
+            seen.insert(id);
+            // An authenticated device is named by whatever the admin sessions
+            // list calls it; an invited guest by the row they were let in on.
+            const SessionInfo session = authManager.sessionForToken(sl.sessionToken);
+            QString name = session.machineName;
+            if (name.isEmpty() && ShareManager::isPlayerSlot(i)) name = shareManager.name(i);
+            activity.viewers.append({id, name, session.isHost});
+        }
+        return activity;
+    };
 
     // Tear every player worker down and revoke their shares. Called when the
     // owner really stops — their session is the one the players resumed into.
@@ -4123,6 +4184,19 @@ int main(int argc, char* argv[])
         return HttpResponse::json(QJsonObject{{QStringLiteral("url"), remoteLink(path)}});
     });
 
+    // GET /api/server/stream-activity — who is streaming this screen, for the
+    // tray client. Same snapshot the in-process tray reads straight from the
+    // slot table; this is how the tray that lives in another process gets it.
+    //
+    // Local callers only. It names devices and the people invited on them, and
+    // nothing outside this machine has any business asking.
+    server.router()->get("/api/server/stream-activity",
+                         [streamActivity](const HttpRequest& req) -> HttpResponse {
+                             if (!req.isLocal)
+                                 return HttpResponse::error(403, "Only available from localhost");
+                             return HttpResponse::json(streamActivity().toJson());
+                         });
+
     if (rendezvousShouldRun()) rendezvous.start();
 
     // Write the Desktop admin shortcut with the best URL known at this point.
@@ -4224,6 +4298,7 @@ int main(int argc, char* argv[])
     TrayManager trayManager(&server);
     trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
     trayManager.setRemoteLinkProvider(remoteLink);
+    trayManager.setActivityProvider(streamActivity);
     if (hasGuiSession()) trayManager.init();
 
     // Click-to-photon latency flag (debug builds on Windows): the overlay and

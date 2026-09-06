@@ -21,11 +21,15 @@
 
 #include <QAction>
 #include <QObject>
+#include <QSet>
 #include <QSystemTrayIcon>
 #include <QMenu>
+#include <QTimer>
 #include <QUrl>
 #include <QIcon>
 #include <QElapsedTimer>
+
+#include "server/StreamActivity.h"
 
 class HttpServer;
 
@@ -97,14 +101,38 @@ public:
         m_RemoteLink = std::move(provider);
     }
 
+    /// Who is streaming this screen, asked every @p intervalMs.
+    ///
+    /// Polled rather than pushed because the tray is usually not in the process
+    /// that knows: under a service the icon belongs to a client that only has
+    /// loopback (see runTrayClient). The server-side tray answers from its own
+    /// slot table instead, and both then take the same three consequences —
+    /// the tooltip, the "Streaming (n)" entry, and a notification per arrival
+    /// and per departure.
+    ///
+    /// Call before init(). With no provider the tray never mentions streaming.
+    void setActivityProvider(std::function<StreamActivity()> provider, int intervalMs = 2000)
+    {
+        m_Activity = std::move(provider);
+        m_ActivityIntervalMs = intervalMs;
+    }
+
 private slots:
     void onActivated(QSystemTrayIcon::ActivationReason reason);
     void onOpen();
     void onOpenSettings();
+    void onOpenSessions();
     void onRestart();
     void onQuit();
 
 private:
+    /// Ask the provider, then say what changed: tooltip, menu entry, and one
+    /// notification per viewer who arrived or left.
+    void pollActivity();
+    /// "MoonlightWeb", plus "Streaming (n)" on a second line while anyone is.
+    void refreshTooltip(int count);
+    /// What to call a viewer in a notification.
+    static QString viewerName(const StreamViewer& v);
     /// localhost URL for `path`, preferring HTTPS, falling back to HTTP; empty if
     /// no listener is up.
     QUrl localUrl(const QString& path) const;
@@ -123,4 +151,17 @@ private:
     QMenu* m_Menu;
     QMenu* m_DockMenu;         // macOS Dock right-click menu (null elsewhere)
     QElapsedTimer m_StartedAt; // filters out the app-launch activation (macOS)
+
+    // ── Streaming activity ─────────────────────────────────────────────────
+    std::function<StreamActivity()> m_Activity;
+    int m_ActivityIntervalMs = 2000;
+    QTimer m_ActivityTimer;
+    QAction* m_StreamingAction = nullptr;    // hidden while nobody is streaming
+    QAction* m_StreamingSeparator = nullptr; // hidden with it
+    QSet<QString> m_Viewers;                 // ids seen at the previous poll
+    QList<StreamViewer> m_LastViewers;       // ...and their names, to say who left
+    // The first answer describes a world that already existed — a tray client
+    // started after the streams it finds. Adopt it silently; announce only
+    // what changes afterwards.
+    bool m_ViewersKnown = false;
 };

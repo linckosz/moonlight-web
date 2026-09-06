@@ -86,11 +86,14 @@ bool TrayManager::init()
     }
     m_TrayIcon->setIcon(icon);
 
-    // The name and nothing else. A hover tooltip is read at a glance, by someone
-    // who is already at this machine and about to click the menu that knows the
-    // right address; spelling out a port there was a third place claiming to
-    // know the way in, and the one least able to keep up with it.
-    m_TrayIcon->setToolTip(QStringLiteral("MoonlightWeb"));
+    // The name, and — only while it is true — who is watching this screen. A
+    // hover tooltip is read at a glance, by someone who is already at this
+    // machine and about to click the menu that knows the right address;
+    // spelling out a port there was a third place claiming to know the way in,
+    // and the one least able to keep up with it. "Streaming (2)" is a different
+    // kind of fact: it is about this machine right now, and there is nowhere
+    // else it could be read without opening a page.
+    refreshTooltip(0);
 
     // Build context menu. In client mode the server is a service in another
     // session this process cannot see: the header says so, and Restart / Quit act
@@ -101,6 +104,17 @@ bool TrayManager::init()
         header->setEnabled(false);
         m_Menu->addSeparator();
     }
+    // Who is watching, above everything else, and only when someone is: an
+    // entry that says "Streaming (2)" is news, and it leads to the one page
+    // that can say more about it. It stays hidden the rest of the time rather
+    // than showing "Streaming (0)" — a permanent entry reading zero is noise,
+    // and the tooltip already answers "is anyone?" without a click.
+    m_StreamingAction = m_Menu->addAction(tr("Streaming"));
+    m_StreamingAction->setVisible(false);
+    m_StreamingSeparator = m_Menu->addSeparator();
+    m_StreamingSeparator->setVisible(false);
+    connect(m_StreamingAction, &QAction::triggered, this, &TrayManager::onOpenSessions);
+
     QAction* openAction = m_Menu->addAction(tr("&Open"));
     QAction* controlPanelAction = m_Menu->addAction(tr("&Server Settings"));
     m_Menu->addSeparator();
@@ -122,6 +136,7 @@ bool TrayManager::init()
     // Dock right-click menu — reuse the tray actions; macOS appends its own
     // Quit entry, so ours is omitted here.
     m_DockMenu = new QMenu();
+    m_DockMenu->addAction(m_StreamingAction); // hides itself with the tray entry
     m_DockMenu->addAction(openAction);
     m_DockMenu->addAction(controlPanelAction);
     m_DockMenu->addSeparator();
@@ -139,6 +154,13 @@ bool TrayManager::init()
             });
 #endif
 
+    if (m_Activity) {
+        m_ActivityTimer.setInterval(m_ActivityIntervalMs);
+        connect(&m_ActivityTimer, &QTimer::timeout, this, &TrayManager::pollActivity);
+        m_ActivityTimer.start();
+        pollActivity(); // adopt whatever is already running, silently
+    }
+
     // Query stripped: the entry URL carries the single-use host key (?mwk=...),
     // which has no business in a log file.
     QUrl logged = localUrl(QString());
@@ -146,6 +168,83 @@ bool TrayManager::init()
     qInfo() << "[TrayManager] System tray icon created" << (m_ClientMode ? "(client mode)" : "")
             << "for" << logged.toString();
     return true;
+}
+
+// "MoonlightWeb" alone when nobody is watching; the count on a second line when
+// someone is. Windows shows both lines, and every platform shows the first.
+void TrayManager::refreshTooltip(int count)
+{
+    if (!m_TrayIcon) return;
+    QString tip = QStringLiteral("MoonlightWeb");
+    if (count > 0) tip += QLatin1Char('\n') + tr("Streaming (%1)").arg(count);
+    m_TrayIcon->setToolTip(tip);
+}
+
+// What to call a viewer in a notification.
+//
+// The device name from the sessions table, except for a browser on this very
+// machine: its row reads "Host machine (remote link)", which distinguishes it
+// from the other rows and says nothing to somebody reading a notice on that
+// machine. And "Someone" when there is no name at all — a local stream carries
+// no session row to take one from.
+QString TrayManager::viewerName(const StreamViewer& v)
+{
+    if (v.self) return tr("This computer");
+    return v.name.isEmpty() ? tr("Someone") : v.name;
+}
+
+// One poll, three consequences: the tooltip, the menu entry, and a notification
+// for each viewer who arrived or left since the last one.
+//
+// The comparison is by viewer id, not by count: two people swapping places
+// between two polls leaves the count at 1, and both facts are worth a word. And
+// a viewer only ever produces one notification per event, so a stream that
+// merely changes quality (the standby leg is the same person continuing) says
+// nothing — the provider is what guarantees that, by reporting people rather
+// than sessions.
+void TrayManager::pollActivity()
+{
+    if (!m_Activity || !m_TrayIcon) return;
+    const StreamActivity activity = m_Activity();
+    if (!activity.valid) return; // no answer is not an answer — keep what we had
+
+    QSet<QString> ids;
+    for (const StreamViewer& v : activity.viewers)
+        ids.insert(v.id);
+
+    // Logged as well as shown, because whether the desktop actually DISPLAYS a
+    // notification is not ours to decide: Do Not Disturb, focus assist and the
+    // shell's own rate limiting all swallow them silently, and without a line
+    // here "no notification appeared" cannot be told from "none was sent".
+    if (m_ViewersKnown && activity.notify) {
+        for (const StreamViewer& v : activity.viewers) {
+            if (m_Viewers.contains(v.id)) continue;
+            qInfo() << "[TrayManager] Notifying: arrival of" << viewerName(v);
+            m_TrayIcon->showMessage(QStringLiteral("MoonlightWeb"),
+                                    tr("%1 started streaming this screen").arg(viewerName(v)),
+                                    QSystemTrayIcon::Information, 5000);
+        }
+        // Departures are named from the previous snapshot, which is the only
+        // place a viewer who is gone still has a name.
+        for (const StreamViewer& v : m_LastViewers) {
+            if (ids.contains(v.id)) continue;
+            qInfo() << "[TrayManager] Notifying: departure of" << viewerName(v);
+            m_TrayIcon->showMessage(QStringLiteral("MoonlightWeb"),
+                                    tr("%1 stopped streaming this screen").arg(viewerName(v)),
+                                    QSystemTrayIcon::Information, 5000);
+        }
+    }
+
+    m_Viewers = ids;
+    m_LastViewers = activity.viewers;
+    m_ViewersKnown = true;
+
+    refreshTooltip(activity.count());
+    if (m_StreamingAction) {
+        m_StreamingAction->setText(tr("Streaming (%1)").arg(activity.count()));
+        m_StreamingAction->setVisible(activity.count() > 0);
+        if (m_StreamingSeparator) m_StreamingSeparator->setVisible(activity.count() > 0);
+    }
 }
 
 void TrayManager::onActivated(QSystemTrayIcon::ActivationReason reason)
@@ -222,6 +321,16 @@ void TrayManager::onOpen()
 void TrayManager::onOpenSettings()
 {
     openAppPage(QStringLiteral("/admin"));
+}
+
+// The admin page, scrolled to its Sessions table — which is the only place that
+// answers the question the menu entry just raised: who, since when, from where.
+//
+// Its own path rather than a fragment on /admin: the internet link carries the
+// single-use host key in the fragment, and there is exactly one of those.
+void TrayManager::onOpenSessions()
+{
+    openAppPage(QStringLiteral("/sessions"));
 }
 
 void TrayManager::onRestart()

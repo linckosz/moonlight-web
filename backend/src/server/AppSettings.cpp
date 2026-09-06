@@ -394,6 +394,21 @@ void AppSettings::setMuteHostAudio(bool enabled)
     writeAll(obj);
 }
 
+// ── Streaming notifications ────────────────────────────────────────────────────
+
+bool AppSettings::streamNotifications() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("stream_notifications").toBool(true);
+}
+
+void AppSettings::setStreamNotifications(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["stream_notifications"] = enabled;
+    writeAll(obj);
+}
+
 // ── Chroma 4:4:4 ───────────────────────────────────────────────────────────────
 
 bool AppSettings::chroma444Enabled() const

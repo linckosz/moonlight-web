@@ -131,6 +131,21 @@ public:
     bool muteHostAudio() const;
     void setMuteHostAudio(bool enabled);
 
+    // ── Streaming notifications (tray) ────────────────────────────────────────
+    //
+    // Whether the desktop gets a notification when someone starts — or stops —
+    // streaming THIS machine through the native host. Stored as JSON bool
+    // "stream_notifications", default true.
+    //
+    // It is our own switch rather than the operating system's on purpose. Both
+    // Windows and macOS do let a user silence an application, but only one it
+    // has already met, buried in a settings page they would have to be told
+    // about; the person who wants the toasts gone wants them gone from the app
+    // that sends them. The OS switch keeps working on top of this one.
+
+    bool streamNotifications() const;
+    void setStreamNotifications(bool enabled);
+
     // ── Chroma 4:4:4 ───────────────────────────────────────────────────────────
     //
     // Whether full-resolution YUV 4:4:4 chroma is requested (vs the default
