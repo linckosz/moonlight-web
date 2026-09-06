@@ -217,6 +217,50 @@ deux images à un dixième de seconde d'écart, pas du réglage. À égalité de
 c'est le résultat attendu. La comparaison à 20 Mbit/s (QP 31–32) reste à faire
 à l'œil si Bruno le souhaite ; l'écart d'un point de QP la rend peu probable.
 
+## 6c. Présentateurs client en plein écran 1:1 — clic → drapeau (06/09/2026)
+
+Le 04/09, en fenêtre (1080p → 996×935, donc en réduction), Canvas2D « Off »
+mesurait 54 ms de clic → image contre 36 pour FSR1 WebGL2 — un écart assez gros
+pour remettre le défaut SDR en question, et assez surprenant pour exiger d'être
+recoupé dans le cas qui compte : plein écran, un pixel du flux pour un pixel de
+l'écran.
+
+Banc : sonde clic → drapeau (`docs/design/glass-to-glass.md` §5 bis, build
+debug), hôte natif **AMF RX 7600, HEVC 2560×1440 @ 60, 20 Mbit/s**, bureau
+quasi fixe ; client **Chrome dédié en kiosque** sur l'écran virtuel 1440p de la
+même machine (canvas 1707×960 CSS à 1,5 = **2560×1440 physiques**, page visible,
+`document.fullscreenElement` vrai), transport `webrtc-dc-udp`. Trois séries de
+10 clics par présentateur, **en alternance** (Off, FSR1, Off, FSR1, Off, FSR1),
+un clic de chauffe écarté avant chaque série, 60 clics mesurés sur 60.
+
+| Présentateur | séries (médiane ms) | 30 clics : médiane | p90 | min–max |
+|---|---|---|---|---|
+| Off — Canvas2D `desynchronized` | 27,0 · 36,3 · 31,4 | **34,5** | 62,7 | 20,9–73,5 |
+| Auto — FSR1 WebGL2 (EASU + RCAS, ×1) | 32,3 · 35,7 · 29,9 | **34,7** | 67,7 | 20,5–89,2 |
+
+Indiscernables : 0,2 ms de médiane d'écart pour une dispersion de 15 ms entre
+séries du même mode. La distribution est bimodale (≈ 25–38 ms ou ≈ 55–70), ce
+qui est la quantification de la capture à 60 présents/s sur un bureau immobile
+— le drapeau tombe avant ou après l'échéance suivante —, pas le présentateur.
+**Verdict : le défaut SDR reste Canvas2D Off.** L'écart vu en fenêtre était
+propre à la réduction dans une fenêtre (un `drawImage` qui rééchantillonne vers
+le bas contre un passage GL au même coût quelle que soit l'échelle) ; il ne dit
+rien du plein écran.
+
+Deux pièges de banc, pour la prochaine fois :
+
+- **L'extension Chrome ne fait pas de plein écran réel.** Elle émule un viewport
+  fixe (2048×1017 CSS ici) quel que soit l'écran, `requestFullscreen` répond
+  « not granted » à ses clics, et l'onglet reste `hidden`. Toute mesure de
+  présentation passe par un Chrome dédié piloté en CDP (`scratchpad/bench/cdp.py`,
+  port 9333) où le clic sur le bouton Fullscreen de l'app vaut activation.
+- **Un clic injecté qui active une autre fenêtre gèle la sonde.** Le pointeur
+  hôte parqué sur la barre des tâches est tombé sur le chevron des icônes
+  masquées : le Chrome plein écran perdu l'activation → page `hidden` → rAF
+  gelé → `_waitUntil` ne rend jamais la main. Cible de clic = une petite fenêtre
+  topmost `WS_EX_NOACTIVATE` sur l'écran capturé (`click-target.ps1`), qui
+  encaisse les clics sans rien activer ; `Page.bringToFront` avant chaque série.
+
 ## 7. Ce que les chiffres disent
 
 1. **Le preset est le levier, et il est grand.** Sur ce NVENC (Blackwell), P1

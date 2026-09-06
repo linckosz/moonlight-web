@@ -1488,6 +1488,20 @@ dépend du présentateur navigateur (F0e/F0f) : AV1 10 bits passe par WebGPU en 
 image HDR **native** sur un écran HDR — seulement des chiffres qui disent que les
 octets sont dans les bonnes bornes.
 
+**✅ B1 vérifié en vrai le 06/09/2026** (le test « HDR Windows actif → session
+SDR » que le plan laissait à Bruno) : HDR activé sur le M27Q **pendant** un
+stream SDR natif (HEVC 2560×1440@60, client Chrome sur l'écran virtuel voisin).
+La session survit — « duplication lost (mode change or desktop switch) — will
+restart » puis « duplication started: 2560x1440 (SDR, BGRA8) » en 90 ms, deux
+fois de suite (le basculement HDR change le mode deux fois) — et l'image reçue par
+le client, capturée à l'écran, est **identique** à celle du même bureau en SDR :
+DXGI livre le rendu SDR du compositeur de Windows lui-même, ni délavé ni
+sur-exposé (le « bureau HDR délavé en SDR » de Sunshine ne se produit pas ici).
+Conséquence pour le client : un hôte Windows en HDR streamé en SDR n'a besoin
+d'aucun tone-map côté navigateur — la piste « ACES WebGL2 pour hôte HDR → client
+SDR » (F0d(2)) ne vaut que pour une capture qui ne sait pas rendre le SDR d'un
+bureau HDR, ce qui n'existe sur aucune plateforme livrée.
+
 ## 17. Windows.Graphics.Capture, le repli (04/09/2026)
 
 Deuxième morceau de la phase I. Desktop Duplication répond
