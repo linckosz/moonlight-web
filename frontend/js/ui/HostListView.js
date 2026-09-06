@@ -47,6 +47,16 @@ import {
 import { noteHostUse, forgetHostUse, hostUsageRanker } from '../util/hostUsage.js';
 
 /**
+ * Where the empty host list sends someone who has nothing to stream from yet.
+ *
+ * The project's releases page rather than a file: every platform's build is
+ * behind it, the maintainers keep it current, and what the user gets is what
+ * LizardByte published — no mirror of ours to go stale, and no download this
+ * app started on its own.
+ */
+const SUNSHINE_DOWNLOAD_URL = 'https://github.com/LizardByte/Sunshine/releases/latest';
+
+/**
  * Update progress is driven by a local animation, not by the poll samples.
  *
  * The host reports a figure every ~900 ms at best, and stops reporting at all
@@ -782,7 +792,12 @@ export class HostListView {
             const firstLoad = !this._hostsLoaded;
             this._hostsLoaded = true;
             const after = this._fingerprint();
-            if (before !== after) this.renderList();
+            // firstLoad, and not only a changed fingerprint: an empty answer
+            // leaves the fingerprint exactly as it was before the request, so
+            // the one case that most needs repainting — nothing found — is the
+            // one no change signals. Same trap the update banner documents
+            // below.
+            if (firstLoad || before !== after) this.renderList();
             // The update banner's shape depends on the local host's pair state,
             // so it can only be decided once the list is known — including the
             // "no hosts at all" case, which no fingerprint change signals.
@@ -855,13 +870,38 @@ export class HostListView {
         const list = this.container.querySelector('#hosts-list');
         if (!list) return;
 
-        // Empty state
+        // Empty state.
+        //
+        // An empty list is the one moment where the answer is not on this page:
+        // MoonlightWeb streams a machine, it does not make one streamable, and a
+        // user who has nothing here has nothing to click. So it says what is
+        // missing and points at Sunshine.
+        //
+        // A link, and only a link. Sunshine is somebody else's program: it is
+        // downloaded and installed by its owner, on the machine they want to
+        // play from, exactly like any other application. MoonlightWeb stopped
+        // installing it with H4 and does not do it from here either — no
+        // credentials asked, no silent download, nothing to un-install later.
+        //
+        // Waits for the first list: the placeholder is what the view shows
+        // before any answer has come back, and inviting someone to install a
+        // second program before we have even looked would be a poor greeting on
+        // a machine that has three hosts.
         if (this.hosts.length === 0) {
             list.innerHTML = `
                 <div class="hosts-empty">
                     <span class="empty-icon">\u{1F5B4}</span>
                     <p>${t('hosts.empty')}</p>
                     <p class="hint">${t('hosts.emptyHint')}</p>
+                    ${
+                        this._hostsLoaded
+                            ? `<div class="hosts-empty-cta">
+                    <p class="hint">${t('hosts.emptyNeedsHost')}</p>
+                    <a class="btn btn-secondary" href="${SUNSHINE_DOWNLOAD_URL}"
+                       target="_blank" rel="noopener noreferrer">${t('hosts.emptyGetSunshine')}</a>
+                </div>`
+                            : ''
+                    }
                 </div>`;
             return;
         }

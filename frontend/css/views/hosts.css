@@ -193,6 +193,19 @@
     opacity: 0.7;
 }
 
+/* The "you need host software" invitation, under the empty-list message and
+   separated from it: the lines above are about this list, this one is about
+   another program on another machine. */
+.hosts-empty-cta {
+    margin-top: var(--space-5);
+    padding-top: var(--space-5);
+    border-top: 1px solid var(--border-1);
+}
+.hosts-empty-cta .hint {
+    max-width: 46ch;
+    margin: 0 auto var(--space-4);
+}
+
 /* ── Insecure (http://) gate ───────────────────────────────────────────── */
 .insecure-gate {
     max-width: 520px;
