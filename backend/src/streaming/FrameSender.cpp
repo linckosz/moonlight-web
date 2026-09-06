@@ -152,7 +152,7 @@ std::vector<FrameSender::Fragment> FrameSender::buildFragments(const uint8_t* da
     return fragments;
 }
 
-bool FrameSender::push(Job&& job)
+bool FrameSender::push(Job&& job, std::vector<uint32_t>* evicted)
 {
     bool droppedDelta = false;
     {
@@ -164,6 +164,7 @@ bool FrameSender::push(Job&& job)
             auto it = std::find_if(m_Queue.begin(), m_Queue.end(),
                                    [](const Job& j) { return !j.isKeyframe; });
             if (it == m_Queue.end()) break; // Only keyframes queued — let them through
+            if (evicted) evicted->push_back(it->frameNumber);
             m_Queue.erase(it);
             m_QueueDrops.fetch_add(1, std::memory_order_relaxed);
             droppedDelta = true;
@@ -186,6 +187,7 @@ bool FrameSender::push(Job&& job)
                     ++it;
                     continue;
                 }
+                if (evicted) evicted->push_back(it->frameNumber);
                 it = m_Queue.erase(it);
                 deltas--;
                 m_QueueDrops.fetch_add(1, std::memory_order_relaxed);
@@ -210,7 +212,7 @@ bool FrameSender::push(Job&& job)
 
 bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data,
                           bool isKeyframe, bool isAudio, uint32_t frameId, uint32_t backendTs,
-                          uint32_t frameNumber, FrameSentSink* sink)
+                          uint32_t frameNumber, FrameSentSink* sink, std::vector<uint32_t>* evicted)
 {
     if (m_Stop.load(std::memory_order_acquire) || !dc) return false;
 
@@ -223,12 +225,13 @@ bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray
     job.backendTs = backendTs;
     job.frameNumber = frameNumber;
     job.sink = sink;
-    return push(std::move(job));
+    return push(std::move(job), evicted);
 }
 
 bool FrameSender::enqueueFragments(std::shared_ptr<rtc::DataChannel> dc,
                                    std::vector<Fragment>&& fragments, bool isKeyframe,
-                                   uint32_t frameNumber, FrameSentSink* sink)
+                                   uint32_t frameNumber, FrameSentSink* sink,
+                                   std::vector<uint32_t>* evicted)
 {
     if (m_Stop.load(std::memory_order_acquire) || !dc || fragments.empty()) return false;
 
@@ -238,7 +241,7 @@ bool FrameSender::enqueueFragments(std::shared_ptr<rtc::DataChannel> dc,
     job.isKeyframe = isKeyframe;
     job.frameNumber = frameNumber;
     job.sink = sink;
-    return push(std::move(job));
+    return push(std::move(job), evicted);
 }
 
 void FrameSender::run()

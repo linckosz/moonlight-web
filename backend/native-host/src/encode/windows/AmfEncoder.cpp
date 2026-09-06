@@ -17,6 +17,7 @@
 #include <components/VideoEncoderHEVC.h>
 #include <components/VideoEncoderVCE.h>
 
+#include <algorithm>
 #include <thread>
 
 namespace mw::native::encode {
@@ -60,6 +61,16 @@ struct CodecProperties
     const wchar_t* preAnalysis;
     const wchar_t* adaptiveQuant;
     bool adaptiveQuantIsMode;
+    /// Long-term references, for reference invalidation (class comment): the
+    /// slot count and mode on the encoder, the mark and the forced bitfield on
+    /// each input surface, and the driver's answers on the output buffer.
+    const wchar_t* maxLtrFrames;
+    const wchar_t* ltrMode;
+    amf_int64 ltrModeResetUnused;
+    const wchar_t* markLtrIndex;
+    const wchar_t* forceLtrBitfield;
+    const wchar_t* outputMarkedLtrIndex;
+    const wchar_t* outputReferencedLtrBitfield;
 };
 
 const CodecProperties& propertiesFor(Codec codec)
@@ -90,6 +101,13 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_PRE_ANALYSIS_ENABLE,
         AMF_VIDEO_ENCODER_ENABLE_VBAQ,
         false,
+        AMF_VIDEO_ENCODER_MAX_LTR_FRAMES,
+        AMF_VIDEO_ENCODER_LTR_MODE,
+        AMF_VIDEO_ENCODER_LTR_MODE_RESET_UNUSED,
+        AMF_VIDEO_ENCODER_MARK_CURRENT_WITH_LTR_INDEX,
+        AMF_VIDEO_ENCODER_FORCE_LTR_REFERENCE_BITFIELD,
+        AMF_VIDEO_ENCODER_OUTPUT_MARKED_LTR_INDEX,
+        AMF_VIDEO_ENCODER_OUTPUT_REFERENCED_LTR_INDEX_BITFIELD,
     };
     static const CodecProperties kHevc = {
         AMFVideoEncoder_HEVC,
@@ -117,6 +135,13 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE,
         AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ,
         false,
+        AMF_VIDEO_ENCODER_HEVC_MAX_LTR_FRAMES,
+        AMF_VIDEO_ENCODER_HEVC_LTR_MODE,
+        AMF_VIDEO_ENCODER_HEVC_LTR_MODE_RESET_UNUSED,
+        AMF_VIDEO_ENCODER_HEVC_MARK_CURRENT_WITH_LTR_INDEX,
+        AMF_VIDEO_ENCODER_HEVC_FORCE_LTR_REFERENCE_BITFIELD,
+        AMF_VIDEO_ENCODER_HEVC_OUTPUT_MARKED_LTR_INDEX,
+        AMF_VIDEO_ENCODER_HEVC_OUTPUT_REFERENCED_LTR_INDEX_BITFIELD,
     };
     static const CodecProperties kAv1 = {
         AMFVideoEncoder_AV1,
@@ -144,6 +169,13 @@ const CodecProperties& propertiesFor(Codec codec)
         AMF_VIDEO_ENCODER_AV1_PRE_ANALYSIS_ENABLE,
         AMF_VIDEO_ENCODER_AV1_AQ_MODE,
         true,
+        AMF_VIDEO_ENCODER_AV1_MAX_LTR_FRAMES,
+        AMF_VIDEO_ENCODER_AV1_LTR_MODE,
+        AMF_VIDEO_ENCODER_AV1_LTR_MODE_RESET_UNUSED,
+        AMF_VIDEO_ENCODER_AV1_MARK_CURRENT_WITH_LTR_INDEX,
+        AMF_VIDEO_ENCODER_AV1_FORCE_LTR_REFERENCE_BITFIELD,
+        AMF_VIDEO_ENCODER_AV1_OUTPUT_MARKED_LTR_INDEX,
+        AMF_VIDEO_ENCODER_AV1_OUTPUT_REFERENCED_LTR_INDEX_BITFIELD,
     };
 
     switch (codec) {
@@ -159,6 +191,12 @@ const CodecProperties& propertiesFor(Codec codec)
 /// spike causes the loss that provokes the request for another — so they are
 /// emitted only on demand, when a client says it cannot go on.
 constexpr amf_int64 kEffectivelyInfiniteGop = 1 << 20;
+
+/// Long-term reference slots asked of the driver: the same depth as NVENC's
+/// DPB (NvencEncoder), for the same reason — enough places to predict from
+/// once one of them is lost. The driver answers with what it can hold, and
+/// that answer is what the table is sized to.
+constexpr int kLtrSlots = 4;
 
 /// How long QueryOutput may block waiting for a frame, in milliseconds.
 ///
@@ -377,12 +415,38 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
             AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE,
             amf_int64(AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_LOWEST_LATENCY));
 
+    // ── Long-term reference slots, for reference invalidation ───────────────
+    // Asked before Init(), read back after it: "default = 0" and the driver
+    // may grant fewer than asked. `dpb=1` from the bench is "one reference,
+    // nothing to heal with" — the same "before" as on NVENC. RESET_UNUSED is
+    // the mode the repair relies on: a forced bitfield drops the slots it does
+    // not name, which are exactly the tainted ones.
+    m_Ltr = ReferenceSlots(0);
+    m_LostPending = false;
+    m_Invalidations = 0;
+    m_MarkRefusedLogged = m_ForceIgnoredLogged = false;
+    m_HealsLogged = 0;
+    const int ltrAsked =
+        tuning.dpbFrames > 0 ? (tuning.dpbFrames > 1 ? tuning.dpbFrames : 0) : kLtrSlots;
+    if (ltrAsked > 0) {
+        m_Encoder->SetProperty(props.maxLtrFrames, amf_int64(ltrAsked));
+        m_Encoder->SetProperty(props.ltrMode, props.ltrModeResetUnused);
+    }
+
     result = m_Encoder->Init(amf::AMF_SURFACE_NV12, width, height);
     if (result != AMF_OK) {
         error =
             std::string("could not initialize the AMD encoder: ") + AmfApi::resultToString(result);
         stop();
         return false;
+    }
+
+    amf_int64 ltrGranted = 0;
+    if (ltrAsked > 0 && m_Encoder->GetProperty(props.maxLtrFrames, &ltrGranted) == AMF_OK &&
+        ltrGranted > 0) {
+        const int slots =
+            static_cast<int>(std::min<amf_int64>(ltrGranted, ReferenceSlots::kMaxSlots));
+        m_Ltr = ReferenceSlots(slots, ReferenceSlots::strideFor(m_Fps, slots));
     }
 
     // The knobs as the encoder holds them now — usage, then overrides, then
@@ -400,16 +464,47 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
                               : ", keyframes on demand") +
               ", quality=" + qualityName(props, quality) +
               " preanalysis=" + std::to_string(preAnalysis) + " aq=" + std::to_string(aq) +
+              (m_Ltr.enabled() ? ", " + std::to_string(m_Ltr.count()) + " LTR slots every " +
+                                     std::to_string(m_Ltr.stride()) +
+                                     " frames with reference invalidation (reach " +
+                                     std::to_string(m_Ltr.reachFrames()) + " frames)"
+                               : ", no reference invalidation") +
               (overrides.empty() ? "" : " [bench: " + overrides + "]"));
+    return true;
+}
+
+bool AmfEncoder::invalidateReference(uint32_t frameNumber, std::string& error)
+{
+    if (!m_Encoder) {
+        error = "the encoder is not initialized";
+        return false;
+    }
+    if (!m_Ltr.enabled()) {
+        error = "this AMD encoder granted no long-term reference slots";
+        return false;
+    }
+    // Everything from the lost frame on predicts from it; two losses reported
+    // between two encodes fold into the older one. The check is made now, on
+    // the table as it stands, because the caller forces a keyframe on a
+    // refusal — and the table cannot change before the next encode() applies
+    // the answer (both run on the capture thread).
+    const uint32_t from = m_LostPending ? std::min(m_LostFrom, frameNumber) : frameNumber;
+    if (m_Ltr.cleanSlotBefore(from) < 0) {
+        error = "no long-term reference older than frame " + std::to_string(from) +
+                " is held — the loss is beyond the " + std::to_string(m_Ltr.reachFrames()) +
+                "-frame reach";
+        m_LostPending = false; // the keyframe that follows heals it all
+        return false;
+    }
+    m_LostFrom = from;
+    m_LostPending = true;
+    m_Invalidations++;
     return true;
 }
 
 bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t frameNumber,
                         EncoderOutput& out, std::string& error)
 {
-    // No reference invalidation on this path (AMF has no equivalent of
-    // NVENC's call); the number is not needed here.
-    (void)frameNumber;
     if (!m_Encoder || !m_Context) {
         error = "the encoder is not initialized";
         return false;
@@ -429,7 +524,33 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
     }
 
     const CodecProperties& props = propertiesFor(m_Codec);
+
+    // ── The repair the receiver asked for, if any ───────────────────────────
+    // Force this picture onto the newest slot that predates the loss; the
+    // slots not named are dropped by the driver (RESET_UNUSED) and forgotten
+    // here. A keyframe makes the question moot — it empties the DPB.
+    amf_int64 forcedBits = 0;
+    if (m_LostPending) {
+        m_LostPending = false;
+        if (!forceKeyframe) {
+            const int slot = m_Ltr.cleanSlotBefore(m_LostFrom);
+            if (slot >= 0) {
+                forcedBits = static_cast<amf_int64>(ReferenceSlots::bitFor(slot));
+                input->SetProperty(props.forceLtrBitfield, forcedBits);
+                m_Ltr.dropFrom(m_LostFrom);
+            } else {
+                // Cannot happen — invalidateReference() checked the same table
+                // — but a keyframe is the safe answer if it ever does.
+                forceKeyframe = true;
+            }
+        }
+    }
     if (forceKeyframe) input->SetProperty(props.forcePictureType, props.forcePictureTypeIdr);
+
+    // Mark this picture into its slot when it is its turn — always for a
+    // keyframe, which has just emptied every slot.
+    const int markSlot = m_Ltr.slotFor(frameNumber, forceKeyframe);
+    if (markSlot >= 0) input->SetProperty(props.markLtrIndex, amf_int64(markSlot));
 
     result = m_Encoder->SubmitInput(input);
     if (result != AMF_OK) {
@@ -476,6 +597,52 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
     amf_int64 avgQp = -1;
     if (data->GetProperty(props.statisticAvgQp, &avgQp) == AMF_OK && avgQp >= 0)
         out.avgQp = static_cast<int>(avgQp);
+
+    // ── What the driver did with the slots ──────────────────────────────────
+    // The table records the driver's answer, not the request: a keyframe
+    // empties it, a confirmed mark fills one slot, and a forced reference the
+    // driver ignored is said once — the picture went out predicting from a
+    // lost frame, which is the corruption NVENC's path also tolerates until
+    // the intra-refresh wave passes.
+    if (m_Ltr.enabled()) {
+        if (out.keyframe) m_Ltr.clear();
+        if (markSlot >= 0) {
+            amf_int64 markedIdx = -1;
+            if (data->GetProperty(props.outputMarkedLtrIndex, &markedIdx) == AMF_OK &&
+                markedIdx >= 0) {
+                m_Ltr.marked(static_cast<int>(markedIdx), frameNumber);
+            } else if (!m_MarkRefusedLogged) {
+                m_MarkRefusedLogged = true;
+                log::warning("[native] AMF did not mark frame " + std::to_string(frameNumber) +
+                             " as a long-term reference (asked slot " + std::to_string(markSlot) +
+                             ") — a lost frame will cost a keyframe until it does");
+            }
+        }
+        if (forcedBits != 0) {
+            amf_int64 used = 0;
+            const bool known =
+                data->GetProperty(props.outputReferencedLtrBitfield, &used) == AMF_OK;
+            const bool ignored = known && (used & forcedBits) == 0;
+            if (ignored) {
+                if (!m_ForceIgnoredLogged) {
+                    m_ForceIgnoredLogged = true;
+                    log::warning("[native] AMF ignored the forced long-term reference (asked "
+                                 "slot bitfield " +
+                                 std::to_string(forcedBits) + ", used " + std::to_string(used) +
+                                 ") — the delta predicts from a frame the receiver lost");
+                }
+            } else {
+                if (m_HealsLogged < 5 || m_HealsLogged % 50 == 0)
+                    log::info("[native] AMF healed frame " + std::to_string(frameNumber) +
+                              " with a delta from long-term slot bitfield " +
+                              std::to_string(forcedBits) +
+                              (known ? " (driver confirms " + std::to_string(used) + ")"
+                                     : " (driver reports nothing)") +
+                              ", " + std::to_string(m_Invalidations) + " invalidation(s) so far");
+                m_HealsLogged++;
+            }
+        }
+    }
     return true;
 }
 

@@ -287,10 +287,10 @@ multipass=quarter` sans crochet `[bench]`.
 **À ne pas toucher** : multipass (quart), VBV (plancher 1/60 s), tuning ULL,
 AQ temporel éteint, lookahead éteint, préférence AV1 > HEVC > H.264.
 
-**AMF** : rien à appliquer sur l'iGPU. La RX 7600 sera mesurée quand elle sera
-rebranchée (même matrice, même script) ; d'ici là le réglage courant (speed,
-sans pré-analyse) est aussi le plus rapide mesuré. **oneVPL** : pas de GPU
-Intel, la matrice `tu=1..7` attend.
+**AMF** : rien à appliquer, ni sur l'iGPU ni sur la RX 7600 discrète (§8c,
+mesurée le 06/09) — le réglage courant (speed, sans pré-analyse) est aussi le
+plus rapide sur les deux. **oneVPL** : pas de GPU Intel, la matrice `tu=1..7`
+attend.
 
 ## 8b. Après la campagne — ce que E4 et E2 ont changé aux chiffres (04/09 après-midi)
 
@@ -307,6 +307,77 @@ Intel, la matrice `tu=1..7` attend.
   capturait un bureau à moitié figé (14 Ko / QP 10, faux). `kiosk.ps1` épingle
   désormais la fenêtre TOPMOST sur le rectangle physique de l'écran et attend
   qu'elle existe.
+
+## 8c. AMF sur la RX 7600 discrète (06/09/2026)
+
+La RX 7600 est revenue dans la machine (`gpu=0`), à côté des deux RTX. Elle ne
+pilote aucun des écrans du banc, donc mêmes conditions que l'iGPU du 04/09 :
+atteinte par le pont inter-GPU depuis Display 3 (VDD sur la RTX), soit une trame
+de 14 Mo à travers la mémoire système comptée dans `convert` (2,4 ms mesurés),
+la colonne `encode` mesurant l'encodeur seul. Contenu Call of Duty 1440p60, la
+même séquence relancée avant chaque passe qu'au §6b. **Ce pilote ne rapporte
+toujours aucun QP** (même constat que l'iGPU et que le 02/09) : la qualité AMD
+n'a pas de mesure objective ici.
+
+| Réglage (CoD 1440p, 40 Mbit/s sauf mention) | encode ms (moy / p95 / p99) | Ko/frame | cadence |
+|---|---|---|---|
+| **speed (courant)** | **4,66 / 7,17 / 12,29** | 61,4 | 59,8 fps |
+| dpb=1 (pas d'invalidation) | 4,77 / 7,68 / 11,26 | 58,8 | 59,9 |
+| balanced | 4,53 / 7,68 / 11,26 | 60,1 | 59,7 |
+| quality | 5,04 / 7,17 / 11,26 | 59,8 | 60,0 |
+| aq (VBAQ) | 4,68 / 6,66 / 11,26 | 60,0 | 59,9 |
+| **pré-analyse** | — | — | **la session meurt** (« stopped producing frames ») |
+| VBV 1 frame (29 Ko) | 4,84 / 7,68 / 12,29 | 51,5 | 59,9 |
+| VBV 2 frames (59 Ko) | 4,95 / 9,22 / 12,29 | 59,1 | 59,9 |
+| H.264 | 4,66 / 7,68 / 11,90 | 59,5 | 59,9 |
+| AV1 | 5,38 / 9,22 / 11,26 | 53,0 | 59,8 |
+| AV1, dpb=1 | 5,41 / 9,22 / 12,29 | 53,1 | 59,9 |
+| intra-refresh | 4,74 / 7,68 / 11,26 | 59,7 | 59,9 |
+| fps réglé 60 | 4,88 / 10,24 / 11,26 | 60,2 | 55,5 |
+| 20 Mbit/s | 4,79 / 9,22 / 11,26 | 30,3 | 59,9 |
+| **1920×1080** | **3,71 / 7,68 / 10,24** | 59,9 | 59,9 |
+| défilement de texte 1440p (162 présents/s) | 3,78 / 4,61 / 5,12 | 25,1 | **162,2 fps** |
+| défilement · AV1 | 4,51 / 5,63 / 6,14 | 26,7 | 144,3 |
+| défilement · 1080p | (voir CSV) | | |
+
+Lecture, et ce qui confirme l'iGPU comme ce qui l'infirme :
+
+1. **La carte discrète tient 1440p60 sans effort et 1080p à pleine cadence.**
+   4,66 ms d'encode à 1440p (l'iGPU était à 7,9 sur un clip *plus facile*), 3,71
+   à 1080p, et **162 fps** sur le texte défilant 1440p là où l'iGPU plafonnait à
+   102. La classe « carte AMD dédiée » n'a pas le problème de cadence de l'iGPU.
+2. **Les presets AMF ne bougent presque rien**, exactement comme sur l'iGPU :
+   speed 4,66 / balanced 4,53 / quality 5,04 ms. Le « quality » coûte 0,4 ms
+   pour aucune mesure de gain (pas de QP). Rien à gagner à quitter « speed ».
+3. **La pré-analyse tue encore l'encodeur** en ULL/CBR, sur la carte dédiée comme
+   sur l'iGPU — le verrou de `AmfEncoder::init` (§18 du design) est justifié sur
+   les deux silicium AMD, pas un hasard de l'iGPU.
+4. **AV1 coûte ~0,7 ms de plus que HEVC** (5,38 vs 4,66) ; H.264 = HEVC (4,66).
+   Même hiérarchie que NVENC, à ceci près qu'AMF n'a pas l'avance d'AV1 de NVENC.
+5. **L'invalidation de référence AMF est gratuite en temps.** `dpb=1` (qui
+   l'éteint) contre le défaut : 4,77 vs 4,66 ms HEVC, 5,41 vs 5,38 AV1 — dans le
+   bruit, comme le DPB de 4 sur NVENC. Les slots LTR ne coûtent rien à porter.
+6. **VBV** : le plancher tient ; 1 ou 2 frames font des images plus petites (51
+   au lieu de 61 Ko à VBV 1) sans gagner de temps — du débit non dépensé, même
+   verdict que NVENC.
+
+**Recommandation AMF (RX 7600 comme iGPU) : rien à appliquer.** Le réglage par
+défaut (usage ultra-low-latency = « speed », pré-analyse interdite, VBAQ au
+choix du pilote) est déjà le plus rapide mesuré, et le pilote ne rapporte pas de
+QP qui permettrait d'aller chercher un compromis qualité. La seule variable qui
+compte sur AMD est la résolution, et elle est le choix de l'utilisateur.
+
+**Invalidation de référence AMF** — livrée le 06/09 (R4 du plan), mesurée ici
+gratuite (point 5) et **configurée sur les trois codecs** : la ligne « AMF
+ready » porte « 4 LTR slots every N frames with reference invalidation (reach M
+frames) », et `dpb=1` la retire (« no reference invalidation »). Détail du
+mécanisme : design §9.10. ⚠️ **Reste à observer sur un vrai lien** : la ligne
+« AMF healed frame … from long-term slot bitfield » à la réparation effective —
+le banc encode vers un puits (pas de récepteur pour nommer une perte), et le
+client Chrome piloté par CDP du banc ne décode pas ce flux (il redemande une
+IDR sans jamais monter la vue), donc le test de perte (`mw_drop_test`, qui vit
+dans `StreamView`) ne s'arme pas. Même angle mort que l'effet visuel de la
+réparation NVENC laissé à l'œil de Bruno au §8b.
 
 ## 9. Pour l'A/B
 

@@ -100,15 +100,22 @@ public:
     // producer's own number for the frame, not `frameId`. It must outlive the
     // sender: stop() joins the worker, and the relay stops the sender before
     // anything it points at goes away.
+    //
+    // `evicted`, when given, receives the `frameNumber` of every delta thrown
+    // out to make room — the frames the receiver will never get, named by the
+    // one party that knows them for certain. A producer that stamps its
+    // frames can hand them to its encoder as reference invalidations at once,
+    // a round trip before the receiver notices the gap.
     bool enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data, bool isKeyframe,
                  bool isAudio, uint32_t frameId, uint32_t backendTs, uint32_t frameNumber = 0,
-                 FrameSentSink* sink = nullptr);
+                 FrameSentSink* sink = nullptr, std::vector<uint32_t>* evicted = nullptr);
 
     // Same contract, for fragments the producer already built (buildFragments).
     // Nothing is copied here or on the worker: the chunks move into the queue
     // and from the queue to the channel.
     bool enqueueFragments(std::shared_ptr<rtc::DataChannel> dc, std::vector<Fragment>&& fragments,
-                          bool isKeyframe, uint32_t frameNumber = 0, FrameSentSink* sink = nullptr);
+                          bool isKeyframe, uint32_t frameNumber = 0, FrameSentSink* sink = nullptr,
+                          std::vector<uint32_t>* evicted = nullptr);
 
     // Cut one frame into wire chunks, header included, reading `data` once.
     // `data` is borrowed: it only has to stay valid until this returns, which
@@ -157,8 +164,9 @@ private:
                             uint16_t totalChunks, bool isKeyframe, uint32_t payloadSize,
                             uint32_t backendTs);
 
-    /// Queue a job under the cap. Returns true when a delta was evicted.
-    bool push(Job&& job);
+    /// Queue a job under the cap. Returns true when a delta was evicted; the
+    /// evicted frames' numbers are appended to `evicted` when it is given.
+    bool push(Job&& job, std::vector<uint32_t>* evicted);
 
     void run();
     void sendJob(const Job& job);

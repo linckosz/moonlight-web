@@ -290,6 +290,7 @@ if(MW_BUILD_TESTS)
         tests/test_cadence_align.cpp
         tests/test_restart_backoff.cpp
         tests/test_rate_control.cpp
+        tests/test_reference_slots.cpp
         tests/test_audio_pacer.cpp
         tests/test_audio_interleave.cpp
     )

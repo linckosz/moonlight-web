@@ -12,6 +12,7 @@
 
 #include "AmfApi.h"
 #include "IVideoEncoder.h"
+#include "../ReferenceSlots.h"
 
 #include <wrl/client.h>
 
@@ -35,6 +36,20 @@ namespace mw::native::encode {
 /// cycle, while one that discards deltas and demands an IDR — MoonlightWeb's
 /// default — collects nothing and still pays in slightly larger P-frames.
 ///
+/// ── Reference invalidation, through long-term references ────────────────────
+///
+/// AMF has no `NvEncInvalidateRefFrames`. It has long-term reference slots
+/// (`MaxOfLTRFrames`), a per-picture "mark me into slot k"
+/// (`MarkCurrentWithLTRIndex`) and a per-picture "predict from these slots
+/// only" (`ForceLTRReferenceBitfield`) — enough to do the same repair from the
+/// other side. Pictures are marked into the slots on a stride (ReferenceSlots
+/// says why); when the receiver names a lost frame, the next picture is forced
+/// onto the newest slot whose frame predates the loss, and in RESET_UNUSED mode
+/// the driver drops the slots that were not forced — the tainted ones. What the
+/// table records is what the OUTPUT buffer says was marked, never what was
+/// asked, so a driver that ignores the request degrades to keyframes rather
+/// than to a wrong table.
+///
 /// **Property names are per codec.** AMF has no shared namespace: the same
 /// concept is `TargetBitrate`, `HevcTargetBitrate` or `Av1TargetBitrate`. They
 /// are gathered in one table (see the .cpp) so the configuration logic is
@@ -51,6 +66,9 @@ public:
 
     bool encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t frameNumber,
                 EncoderOutput& out, std::string& error) override;
+
+    bool supportsReferenceInvalidation() const override { return m_Ltr.enabled(); }
+    bool invalidateReference(uint32_t frameNumber, std::string& error) override;
 
     void releaseOutput() override;
     void stop() override;
@@ -76,6 +94,20 @@ private:
     /// The bench's VBV override, so setBitrate() sizes the buffer by the rule
     /// init() used. 0 is the engine's own rule.
     int m_VbvFrames = 0;
+
+    /// The long-term reference slots as the driver confirmed them (disabled
+    /// when it granted none). Touched only by the capture thread: encode() and
+    /// invalidateReference() are both called from the session loop.
+    ReferenceSlots m_Ltr;
+    /// A loss the receiver named, waiting for the next encode() to force the
+    /// reference: every frame from m_LostFrom on is unusable.
+    bool m_LostPending = false;
+    uint32_t m_LostFrom = 0;
+    int m_Invalidations = 0;
+    /// Each driver refusal is logged once: the table already copes.
+    bool m_MarkRefusedLogged = false;
+    bool m_ForceIgnoredLogged = false;
+    int m_HealsLogged = 0;
 };
 
 } // namespace mw::native::encode

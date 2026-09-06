@@ -704,10 +704,10 @@ clip FPS 1440p, 40 Mbit/s, deux passes chacun) 3,69 / 3,79 ms contre
 3,75 / 3,77 ms, même taille, même QP.
 
 Le chemin : `/start` répond `ref_invalidation` quand l'encodeur de la session le
-fait vraiment (`SessionInfo::referenceInvalidation`, faux sur AMF et oneVPL) ;
-sur un trou de numérotation le client envoie `invalidateref {from, to}` (ids de
-fil) et **continue de décoder** au lieu de jeter les deltas jusqu'à la keyframe ;
-le relais DC traduit les ids de fil en numéros de moteur — un anneau des 512
+fait vraiment (`SessionInfo::referenceInvalidation`, faux sur oneVPL) ; sur un
+trou de numérotation le client envoie `invalidateref {from, to}` (ids de fil) et
+**continue de décoder** au lieu de jeter les deltas jusqu'à la keyframe ; le
+relais DC traduit les ids de fil en numéros de moteur — un anneau des 512
 derniers, parce que les deux divergent à chaque image que le relais jette avant
 d'attribuer un id — et appelle `Session::invalidateReference` ; la session le
 garde pour le thread de capture, qui le dit à l'encodeur juste avant la
@@ -720,9 +720,62 @@ Vérifié avec le crochet de debug `localStorage.mw_drop_test = N` (le client
 jette un delta sur N) : « Frame gap: lost 120..120 — naming them to the host,
 decoding on », « reference invalidated: frame 222 never reached the receiver,
 healing with a delta », aucune IDR demandée, aucune erreur de décodeur, 53
-images/s et 5,2 ms pendant l'exercice. L'éviction C5 du `FrameSender` garde
-la keyframe (l'émetteur ne dit pas laquelle il a jetée) — à brancher ici plus
-tard.
+images/s et 5,2 ms pendant l'exercice (NVENC).
+
+### 9.10.1 AMF : la même réparation par références long terme (06/09/2026)
+
+⚠️ **plan corrigé** : le plan disait « pas d'équivalent AMF (AMF n'a pas
+d'appel) ». AMF n'a en effet pas le `NvEncInvalidateRefFrames` de NVIDIA, mais
+il a les **références long terme** (LTR) — de quoi faire la même réparation par
+l'autre bout. Au lieu de *retirer* l'image perdue, on *nomme une survivante* :
+les images sont marquées dans des slots LTR au fil de l'encodage
+(`MarkCurrentWithLTRIndex`), et quand le récepteur nomme une perte, l'image
+suivante est forcée à ne prédire que du slot le plus récent *antérieur* à la
+perte (`ForceLTRReferenceBitfield`) ; en mode `RESET_UNUSED`, le pilote lâche
+les slots non nommés — précisément ceux qui portaient les images gâtées. Le flux
+est propre à partir de cette image, sans rien de plus gros qu'un delta.
+
+`ReferenceSlots` (`encode/ReferenceSlots.h`, pur, 37 checks) tient
+l'arithmétique : quel slot marquer, quel slot est propre avant une perte,
+lesquels oublier. **Portée** : 4 slots marqués à chaque image ne reculent que de
+3 images — 18 ms à 165 fps, moins qu'un aller-retour Internet. Donc on marque
+tous les `stride` images, le pas choisi pour que les slots couvrent ≥ 125 ms
+quelle que soit la cadence (60 fps → pas 2 → 8 images ; 165 → pas 6 → 24). Le
+prix est que la référence forcée peut être de `stride` images plus vieille que
+la dernière propre — un delta un peu plus gros, une fois, au lieu d'une keyframe.
+Ce que la table enregistre est ce que le **buffer de sortie confirme** avoir été
+marqué, jamais ce qui a été demandé : un pilote qui ignore le marquage
+(`MarkedLTRIndex` absent) ou la référence forcée (`ReferencedLTRIndexBitfield`
+sans le bit) dégrade en keyframe et le dit une fois, il ne fabrique pas une
+table fausse.
+
+Vérifié sur la RX 7600 réelle le 06/09 (les trois codecs) : « AMF ready : … 4
+LTR slots every N frames with reference invalidation (reach M frames) », et
+`dpb=1` (le « avant » du banc) éteint proprement les slots (« no reference
+invalidation »). Coût mesuré nul (bench §8c, point 5). ⚠️ **Reste à observer sur
+un vrai lien** : la ligne « AMF healed frame … from long-term slot bitfield » à
+la réparation *effective*. Le banc encode vers un puits (aucun récepteur pour
+nommer une perte) et le Chrome de banc piloté par CDP ne décode pas ce flux (il
+redemande une IDR sans monter la vue, donc `mw_drop_test` — qui vit dans
+`StreamView` — ne s'arme pas) : même angle mort que l'effet visuel de la
+réparation NVENC, laissé à l'œil de Bruno sur son propre client.
+
+### 9.10.2 L'éviction du FrameSender nomme enfin l'image jetée (06/09/2026)
+
+Le §9.10 laissait un reste : quand l'émetteur (`FrameSender`) évince un delta de
+sa file parce que le lien est plein, il « ne dit pas lequel il a jeté » et le
+relais demandait donc une keyframe (ou, en intra-refresh, laissait le client
+nommer le trou un aller-retour plus tard). L'émetteur **est** pourtant la seule
+partie qui connaît le numéro de l'image jetée avec certitude. `enqueue` /
+`enqueueFragments` prennent maintenant un `std::vector<uint32_t>* evicted`
+optionnel, rempli du `frameNumber` de chaque delta écarté (dans les deux chemins
+d'éviction : le plafond dur et la profondeur 1 du natif). Le relais, pour un
+moteur qui répare par invalidation (`referenceInvalidation()` vrai), les passe
+aussitôt à `invalidateReference` — un aller-retour **avant** que le récepteur ne
+voie le trou et le nomme lui-même ; la session traduit un refus en keyframe
+comme toujours. Pour tout autre moteur, le comportement d'avant est intact
+(demande de keyframe sauf ride-out), garanti par le drapeau `nameEvictions`.
+Ceci vaut pour NVENC comme pour AMF depuis que ce dernier a l'invalidation.
 
 ### 9.11 La cadence s'aligne sur le rafraîchissement du client (04/09/2026)
 

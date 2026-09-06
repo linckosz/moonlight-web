@@ -32,6 +32,7 @@ void run_frame_cadence_tests();
 void run_cadence_align_tests();
 void run_restart_backoff_tests();
 void run_rate_control_tests();
+void run_reference_slots_tests();
 void run_audio_pacer_tests();
 void run_audio_interleave_tests();
 
@@ -61,6 +62,7 @@ int main()
     run_cadence_align_tests();
     run_restart_backoff_tests();
     run_rate_control_tests();
+    run_reference_slots_tests();
     run_audio_pacer_tests();
     run_audio_interleave_tests();
     run_capture_tests();

@@ -1500,6 +1500,12 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     // others hand over a null sink and the sender reads no clock for them.
     FrameSentSink* sink = (frameNumber >= 0 && m_Shim) ? m_Shim->frameSentSink() : nullptr;
     const uint32_t reportedNumber = static_cast<uint32_t>(frameNumber < 0 ? 0 : frameNumber);
+    // The engine that stamps its frames also wants to know WHICH ones the
+    // sender threw away: those are the numbers it can invalidate.
+    auto* native = qobject_cast<NativeMediaEngine*>(m_Shim);
+    const bool nameEvictions = native && frameNumber >= 0 && native->referenceInvalidation();
+    std::vector<uint32_t> evictedNumbers;
+    std::vector<uint32_t>* evictedOut = nameEvictions ? &evictedNumbers : nullptr;
     bool evicted = false;
     if (m_DirectVideoSend) {
         // Direct mode: `data` may be borrowed from the encoder (valid only for
@@ -1509,28 +1515,34 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         auto fragments = FrameSender::buildFragments(
             reinterpret_cast<const uint8_t*>(data.constData()), static_cast<size_t>(data.size()),
             isKeyframe, frameId, backendTs);
-        evicted =
-            m_Sender->enqueueFragments(dc, std::move(fragments), isKeyframe, reportedNumber, sink);
+        evicted = m_Sender->enqueueFragments(dc, std::move(fragments), isKeyframe, reportedNumber,
+                                             sink, evictedOut);
     } else {
         // Queued mode: the frame is already ours (copied out of the GameStream
         // engine), the sender cuts it on its own thread as it always has.
         evicted = m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs,
-                                    reportedNumber, sink);
+                                    reportedNumber, sink, evictedOut);
     }
-    // An eviction leaves a hole in the reference chain. A stream that repairs
-    // itself by intra-refresh and a client that rides out the damage need no
-    // keyframe for it (same bargain as the SCTP drop above); every other
-    // stream asks for one. GameStream engines never ride out, so this is
-    // exactly their previous behaviour.
-    if (evicted && !ridingOutLoss()) {
+    // An eviction leaves a hole in the reference chain. The engine that heals
+    // by reference invalidation is told the exact frames now — the sender is
+    // the one party that knows them for certain, and this is a round trip
+    // earlier than the receiver seeing the gap and naming it (design §9.10);
+    // the session turns a refusal into a keyframe itself. Otherwise: a stream
+    // that repairs itself by intra-refresh and a client that rides out the
+    // damage need no keyframe for it (same bargain as the SCTP drop above);
+    // every other stream asks for one. GameStream engines never ride out, so
+    // this is exactly their previous behaviour.
+    if (evicted && nameEvictions && !evictedNumbers.empty()) {
+        for (uint32_t n : evictedNumbers)
+            native->invalidateReference(n);
+    } else if (evicted && !ridingOutLoss()) {
         m_AwaitingIdr = true;
         sendIdrRequestThrottled();
     }
     // The native engine's rate governor counts evictions as the surest sign
     // the link is full — loss the host caused itself. GameStream engines have
     // no governor to tell.
-    if (evicted)
-        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim)) native->noteEviction();
+    if (evicted && native) native->noteEviction();
 
     m_FrameCount++;
 }

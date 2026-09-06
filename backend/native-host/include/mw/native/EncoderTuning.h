@@ -91,9 +91,12 @@ struct EncoderTuning
     /// oneVPL: TargetUsage 1 (quality) … 7 (speed). 0 is the engine's own (7).
     int vplTargetUsage = 0;
 
-    /// NVENC: how many frames the decoded picture buffer holds. 0 is the
-    /// engine's own (4, so a lost frame can be healed by a delta — see
-    /// NvencEncoder); 1 is the bench's "before" for the cost of that.
+    /// How many reference pictures the encoder keeps for healing a lost frame
+    /// by a delta. NVENC: the decoded picture buffer's depth (engine's own: 4
+    /// — see NvencEncoder). AMF: the number of long-term reference slots
+    /// (engine's own: 4 — see AmfEncoder / ReferenceSlots). 0 is the engine's
+    /// own; 1 is the bench's "before" — a single reference, no invalidation
+    /// possible on either vendor — for the cost of the feature.
     int dpbFrames = 0;
 
     /// The VBV, in frames at the stream's own rate — exactly, with no floor.
