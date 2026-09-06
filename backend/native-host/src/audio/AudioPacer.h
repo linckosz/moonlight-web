@@ -46,10 +46,26 @@ namespace mw::native::audio {
 ///  - `pop()` fills one frame from the queue, or with silence when the queue
 ///    runs dry (an underrun, counted). Silence on the wire is what keeps the
 ///    receiver's clock honest through a quiet host.
+///  - `take()` is `pop()` for a PUSH capture, with a grace: a frame the clock
+///    owes but the queue cannot fill yet is DEFERRED for up to two periods
+///    before silence goes out instead. See below for why that matters.
 ///
 /// A thread that fell behind by more than the queue's depth is not asked to
 /// catch up with a burst of stale frames: the clock re-anchors and the lost
 /// time is a hole the receiver has already concealed.
+///
+/// ── Why the grace exists (measured on macOS, 05–06/09/2026) ─────────────────
+///
+/// ScreenCaptureKit delivers 20 ms of audio at a time, on its own schedule.
+/// With `pop()` alone, a burst arriving 3 ms after the tick that needed it
+/// sent one frame of SILENCE — and that silence is not free: the clock moved
+/// on without consuming the queue, so from then on the queue held one frame
+/// MORE than before, permanently, until the cap dropped one. Every late burst
+/// added a frame; every dropped frame was that addition coming back out.
+/// Measured: 165 silence frames and 121 dropped frames in the same 83 s, about
+/// one percent of the stream each way, on a host whose clocks were both exact.
+/// Waiting a few milliseconds for the burst costs the receiver nothing (its
+/// jitter buffer holds 35 ms) and removes both counters at once.
 ///
 /// Pure arithmetic over floats, no platform: this is the part that is tested.
 class AudioPacer
@@ -61,6 +77,10 @@ public:
     static constexpr int kFrameSamples = 240;
     static constexpr int64_t kFramePeriodUs = 5000;
     static constexpr size_t kFrameFloats = static_cast<size_t>(kFrameSamples) * kChannels;
+    /// How long take() waits for a late capture before sending silence: two
+    /// periods. Shorter than any receiver jitter buffer; longer than the
+    /// scheduling jitter of a 20 ms burst.
+    static constexpr int64_t kUnderrunGraceUs = 2 * kFramePeriodUs;
 
     explicit AudioPacer(int maxQueuedFrames = 4)
         : m_MaxQueuedFloats(static_cast<size_t>(std::max(1, maxQueuedFrames)) * kFrameFloats)
@@ -110,18 +130,40 @@ public:
     bool pop(float* out)
     {
         m_NextDueUs += kFramePeriodUs;
-        if (m_Queue.size() >= kFrameFloats) {
-            std::copy(m_Queue.begin(), m_Queue.begin() + static_cast<std::ptrdiff_t>(kFrameFloats),
-                      out);
-            m_Queue.erase(m_Queue.begin(),
-                          m_Queue.begin() + static_cast<std::ptrdiff_t>(kFrameFloats));
-            return true;
-        }
+        if (takeFrame(out)) return true;
         // A partial frame is not worth a hole: keep what there is for the next
         // tick and send silence now.
         std::memset(out, 0, kFrameFloats * sizeof(float));
         m_Underruns++;
         return false;
+    }
+
+    enum class Take
+    {
+        Frame,    ///< `out` holds captured audio; the clock advanced
+        Silence,  ///< `out` holds silence (underrun, counted); the clock advanced
+        Deferred, ///< nothing to send yet and the grace has not run out; the
+                  ///< clock did NOT advance — ask again when the capture pushes
+                  ///< or the grace ends, whichever comes first
+    };
+
+    /// `pop()` with the grace of the class comment. `nowUs` is the caller's
+    /// clock; a frame owed less than kUnderrunGraceUs ago waits for the
+    /// capture rather than being replaced by silence.
+    Take take(float* out, int64_t nowUs)
+    {
+        if (takeFrame(out)) {
+            m_NextDueUs += kFramePeriodUs;
+            return Take::Frame;
+        }
+        if (nowUs - m_NextDueUs < kUnderrunGraceUs) {
+            m_Deferrals++;
+            return Take::Deferred;
+        }
+        m_NextDueUs += kFramePeriodUs;
+        std::memset(out, 0, kFrameFloats * sizeof(float));
+        m_Underruns++;
+        return Take::Silence;
     }
 
     /// Samples waiting, in frames (fractional part dropped).
@@ -134,8 +176,19 @@ public:
     int64_t underruns() const { return m_Underruns; }
     /// Times the clock gave up catching up and re-anchored on the present.
     int64_t reanchors() const { return m_Reanchors; }
+    /// Times take() waited for a late capture instead of sending silence.
+    int64_t deferrals() const { return m_Deferrals; }
 
 private:
+    bool takeFrame(float* out)
+    {
+        if (m_Queue.size() < kFrameFloats) return false;
+        std::copy(m_Queue.begin(), m_Queue.begin() + static_cast<std::ptrdiff_t>(kFrameFloats),
+                  out);
+        m_Queue.erase(m_Queue.begin(), m_Queue.begin() + static_cast<std::ptrdiff_t>(kFrameFloats));
+        return true;
+    }
+
     void trim()
     {
         if (m_Queue.size() <= m_MaxQueuedFloats) return;
@@ -155,6 +208,7 @@ private:
     int64_t m_Dropped = 0;
     int64_t m_Underruns = 0;
     int64_t m_Reanchors = 0;
+    int64_t m_Deferrals = 0;
 };
 
 } // namespace mw::native::audio

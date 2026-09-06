@@ -124,6 +124,66 @@ void run_audio_pacer_tests()
         CHECK_EQ(pacer.underruns(), int64_t(0));
     }
 
+    SECTION("AudioPacer — take() waits for a late capture, then sends silence past the grace");
+    {
+        AudioPacer pacer(8);
+        pacer.start(0);
+        std::vector<float> out(AudioPacer::kFrameFloats, 9.0f);
+        // Owed at 5 ms, nothing queued, 3 ms late: wait, and the clock stays.
+        CHECK(pacer.take(out.data(), 8'000) == AudioPacer::Take::Deferred);
+        CHECK_EQ(pacer.nextDueUs(), int64_t(5'000));
+        CHECK_EQ(pacer.underruns(), int64_t(0));
+        CHECK_EQ(pacer.deferrals(), int64_t(1));
+        CHECK(allEqual(out, 9.0f)); // untouched
+        // Still nothing at 14.9 ms: still waiting. At 15 ms the grace is spent.
+        CHECK(pacer.take(out.data(), 14'999) == AudioPacer::Take::Deferred);
+        CHECK(pacer.take(out.data(), 15'000) == AudioPacer::Take::Silence);
+        CHECK(allEqual(out, 0.0f));
+        CHECK_EQ(pacer.nextDueUs(), int64_t(10'000));
+        CHECK_EQ(pacer.underruns(), int64_t(1));
+        // The burst arrives: the frame owed at 10 ms goes out with real audio.
+        std::vector<float> burst = tone(960, 0.3f);
+        pacer.push(burst.data(), 960);
+        CHECK(pacer.take(out.data(), 15'500) == AudioPacer::Take::Frame);
+        CHECK(allEqual(out, 0.3f));
+        CHECK_EQ(pacer.nextDueUs(), int64_t(15'000));
+    }
+
+    SECTION("AudioPacer — 20 ms bursts with 9 ms of jitter: no silence, no drop (the macOS case)");
+    {
+        // What ScreenCaptureKit does: 960 samples every 20 ms, delivered a
+        // few ms early or late by the dispatch queue. Played against a 5 ms
+        // tick for two seconds. With pop() every late burst cost a silence
+        // frame AND, later, a dropped one (see the class comment); take()
+        // must cost neither.
+        AudioPacer pacer(8);
+        pacer.start(0);
+        const int64_t jitterUs[] = {6'000, -2'000, 9'000, 0, 3'000, -1'000, 8'000, 1'000};
+        std::vector<float> burst = tone(960, 0.5f);
+        std::vector<float> out(AudioPacer::kFrameFloats);
+        int frames = 0, burstsPushed = 0;
+        for (int64_t t = 0; t <= 2'000'000; t += 250) {
+            const int64_t k = burstsPushed;
+            const int64_t at = 20'000 * k + 5'000 + jitterUs[k % 8];
+            if (t >= at) {
+                pacer.push(burst.data(), 960);
+                burstsPushed++;
+            }
+            const int due = pacer.dueFrames(t);
+            for (int i = 0; i < due; ++i) {
+                const AudioPacer::Take got = pacer.take(out.data(), t);
+                if (got == AudioPacer::Take::Deferred) break;
+                frames++;
+            }
+        }
+        CHECK_EQ(pacer.underruns(), int64_t(0));
+        CHECK_EQ(pacer.droppedFrames(), int64_t(0));
+        CHECK_EQ(pacer.reanchors(), int64_t(0));
+        CHECK(pacer.deferrals() > 0); // the grace was what did it
+        // 100 bursts of 4 frames, all but the last few (still queued) sent.
+        CHECK(frames >= 392 && frames <= 400);
+    }
+
     SECTION("AudioPacer — a thread asleep for a second re-anchors instead of bursting");
     {
         AudioPacer pacer(4);

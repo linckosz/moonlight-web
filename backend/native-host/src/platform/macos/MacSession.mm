@@ -19,6 +19,7 @@
 
 #include "../../audio/PacedOpusSink.h"
 #include "../../capture/macos/SckCapture.h"
+#include "../../convert/CursorBlend.h"
 #include "../../core/CadenceAlign.h"
 #include "../../core/FrameCadence.h"
 #include "../../core/Log.h"
@@ -33,8 +34,10 @@
 
 #include <IOKit/pwr_mgt/IOPMLib.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -49,16 +52,25 @@
 // display. Where it differs it is because the platform does:
 //
 //  - there is NO conversion stage: ScreenCaptureKit writes the encoder's NV12
-//    directly (SckCapture.h), so a frame goes capture → encoder in place;
-//  - the pointer in the picture is the compositor's (showsCursor); the shape
-//    for a client that draws its own comes from AppKit's account of the
-//    system cursor, polled, not from the capture;
-//  - no pointer-only path: with the pointer in the picture a move IS a frame;
+//    directly (SckCapture.h) — or its 10-bit BT.2020 PQ for HDR, which the
+//    Apple Video Encoder takes as HEVC Main10 — so a frame goes capture →
+//    encoder in place;
+//  - the pointer in the picture is the compositor's (showsCursor), at its own
+//    size. When a small screen asks for a MAGNIFIED pointer the capture is
+//    told to leave it out and the engine blends AppKit's account of the
+//    system cursor into the compositor's buffer before encoding
+//    (convert/CursorBlend.h), undoing its own drawing before re-encoding the
+//    same buffer. The shape for a client that draws its own comes from the
+//    same AppKit source, polled, not from the capture;
+//  - a pointer-only path exists only in that magnified mode: with the pointer
+//    left out of the capture, a move on a still screen makes no frame, so the
+//    loop looks at the pointer at the stream's rate and re-encodes the held
+//    picture when it moved;
 //  - the sound arrives as a second output of the SAME ScreenCaptureKit stream
 //    (macOS has no loopback device to open), so it is set up on the capture
 //    and paced into Opus by the platform-neutral sink;
 //  - no reference invalidation, no intra-refresh (VideoToolbox has neither),
-//    no virtual gamepad, no HDR.
+//    no virtual gamepad.
 //
 // See §20 of docs/design/native-capture-encoder.md.
 
@@ -93,6 +105,10 @@ std::string hzString(int milliHz)
 constexpr int kMaxFloorFps = 480;
 /// How often the system pointer's shape is looked at, at most.
 constexpr int64_t kCursorPollUs = 50 * 1000;
+/// The most a pointer is grown for a small screen — the same bound as the
+/// Windows converter, and for the same reason: past it the pointer is a
+/// blurred thumbnail, not a bigger pointer.
+constexpr float kMaxCursorMagnify = 2.5f;
 
 uint64_t fnv1a(const uint8_t* data, size_t size)
 {
@@ -260,7 +276,9 @@ public:
         m_Info.encoder = m_Target.encoder;
         m_Info.capture = CaptureApi::ScreenCaptureKit;
         m_Info.gpuName = m_Target.encodeGpuName;
-        m_Info.hdr = false;
+        // The Selector granted it only with an EDR panel, macOS 15 and HEVC;
+        // the capture and the encoder were opened on it above.
+        m_Info.hdr = m_Target.hdr;
         m_Info.yuv444 = false;
         m_Info.intraRefresh = false;
         m_Info.intraRefreshFrames = 0;
@@ -274,7 +292,8 @@ public:
         log::info(std::string("[native] session: ") + m_Display.name + " " +
                   std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + "@" +
                   std::to_string(m_EncodeFps) + " " + toString(m_Info.codec) +
-                  " via VideoToolbox on " + m_Info.gpuName +
+                  (m_Info.hdr ? " HDR (Main10, BT.2020 PQ)" : "") + " via VideoToolbox on " +
+                  m_Info.gpuName +
                   " — ScreenCaptureKit → VideoToolbox, no conversion stage, 1 copy (the "
                   "bitstream)");
 
@@ -323,17 +342,32 @@ public:
 
     void setCompositeCursor(bool composite, int cursorFramePx) override
     {
-        // The compositor draws the pointer at its own size; a magnified
-        // pointer for a phone (cursorFramePx) has no route here and is noted
-        // once rather than silently dropped.
-        if (cursorFramePx > 0 && !m_MagnifyNoted.exchange(true))
-            log::info("[native] cursor: a magnified pointer was asked for; ScreenCaptureKit "
-                      "draws it at its own size");
-        if (m_CompositeCursor.exchange(composite) == composite) return;
-        log::info(composite ? "[native] cursor: drawn into the picture (gaming)"
-                            : "[native] cursor: handed to the client to draw (desktop)");
-        m_CursorModeDirty.store(true);
-        m_ResendCursor.store(true);
+        // Three ways to show the pointer: the compositor draws it (composite,
+        // no size asked), the ENGINE draws it magnified (composite + a size —
+        // the small screen), or the client draws its own (not composite).
+        const int wanted = cursorFramePx > 0 ? cursorFramePx : 0;
+        const bool wasComposite = m_CompositeCursor.load();
+        const bool wasSelf = wasComposite && m_CursorFramePx.load() > 0;
+        m_CursorFramePx.store(wanted);
+        m_CompositeCursor.store(composite);
+        const bool isSelf = composite && wanted > 0;
+        if (wasComposite != composite)
+            log::info(composite ? "[native] cursor: drawn into the picture (gaming)"
+                                : "[native] cursor: handed to the client to draw (desktop)");
+        if (isSelf && !wasSelf)
+            log::info("[native] cursor: a " + std::to_string(wanted) +
+                      " px pointer asked — ScreenCaptureKit leaves it out, the engine draws it");
+        if (wasComposite != composite || wasSelf != isSelf) {
+            // Who draws changed: the capture has to be told, the client that
+            // now draws needs a shape, and the last picture the client holds
+            // shows the wrong pointer.
+            m_CursorModeDirty.store(true);
+            m_ResendCursor.store(true);
+        } else if (isSelf) {
+            // Same mode, another size — a viewer pinch-zooming a still
+            // desktop. Nothing else in the loop would ever notice.
+            m_PointerDirty.store(true);
+        }
     }
 
     void setFrameFloorFps(int fps) override
@@ -407,11 +441,16 @@ private:
                                          kIOPMUserActiveLocal, &m_Wake);
     }
 
+    /// The engine, not the compositor, draws the pointer: composite mode with
+    /// a size asked for it (the small screen). Read on the capture thread.
+    bool selfDrawn() const { return m_CompositeCursor.load() && m_CursorFramePx.load() > 0; }
+
     bool openCapture(int outputWidth, int outputHeight, std::string& error)
     {
-        m_Capture =
-            std::make_unique<capture::SckCapture>(m_Display.displayId, outputWidth, outputHeight,
-                                                  m_DisplayMilliHz, m_CompositeCursor.load());
+        m_Capture = std::make_unique<capture::SckCapture>(
+            m_Display.displayId, outputWidth, outputHeight, m_DisplayMilliHz,
+            m_CompositeCursor.load() && !selfDrawn(), m_Target.hdr);
+        m_Patch = convert::PlanePatch{};
         // Set on every open, restarts included: the sink outlives the capture,
         // and while a display is away the pacer keeps the wire fed with silence.
         if (m_Audio) {
@@ -427,7 +466,7 @@ private:
         m_Encoder.reset();
         m_Encoder = std::make_unique<encode::VtEncoder>();
         return m_Encoder->init(m_Target.codec, m_Capture->width(), m_Capture->height(), m_EncodeFps,
-                               m_Config.bitrateKbps, m_Config.tuning, error);
+                               m_Config.bitrateKbps, m_Target.hdr, m_Config.tuning, error);
     }
 
     enum class Restart
@@ -608,7 +647,10 @@ private:
             }
             if (m_CursorModeDirty.exchange(false)) {
                 std::string cursorError;
-                if (!m_Capture->setShowsCursor(m_CompositeCursor.load(), cursorError))
+                // The compositor draws the pointer only when the picture
+                // wants it AND the engine is not drawing a magnified one.
+                if (!m_Capture->setShowsCursor(m_CompositeCursor.load() && !selfDrawn(),
+                                               cursorError))
                     log::warning("[native] " + cursorError);
                 // A still screen produces no frame for the change; the next
                 // one carries the pointer (or not), and a keyframe makes the
@@ -640,7 +682,12 @@ private:
             const int idleTimeoutMs = static_cast<int>(idleIntervalUs / 1000) < kAcquireTimeoutMs
                                           ? static_cast<int>(idleIntervalUs / 1000)
                                           : kAcquireTimeoutMs;
-            const int timeoutMs = refineSoon ? refineTimeoutMs : idleTimeoutMs;
+            int timeoutMs = refineSoon ? refineTimeoutMs : idleTimeoutMs;
+            // Drawing the pointer ourselves: the capture no longer makes a
+            // frame for a pointer move on a still screen, so the loop looks
+            // at the pointer at the stream's own rate instead.
+            if (haveFrame && selfDrawn())
+                timeoutMs = std::min(timeoutMs, std::max(4, 1000 / std::max(1, m_EncodeFps)));
 
             capture::SckFrame fresh;
             const capture::AcquireStatus status = m_Capture->acquire(timeoutMs, fresh);
@@ -658,6 +705,16 @@ private:
                 if (m_ForceKeyframe.load(std::memory_order_relaxed)) {
                     if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
                     lastSentUs = steadyNowUs();
+                    continue;
+                }
+                if (selfDrawn() && pointerChanged() &&
+                    steadyNowUs() - lastSentUs >= 1000000 / std::max(1, m_EncodeFps)) {
+                    // A pointer move IS a new picture when the engine draws
+                    // it: the held buffer, re-encoded with the pointer where
+                    // it is now (emit() repaints it), at the stream's rate.
+                    if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
+                    lastSentUs = steadyNowUs();
+                    m_PointerFrames++;
                     continue;
                 }
                 if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : idleIntervalUs))
@@ -692,6 +749,7 @@ private:
             if (status == capture::AcquireStatus::Lost) {
                 haveFrame = false;
                 m_Held = capture::SckFrame{};
+                m_Patch = convert::PlanePatch{};
                 closeBurst("display lost");
                 switch (restartCapture(error)) {
                 case Restart::Restarted: break;
@@ -715,6 +773,9 @@ private:
 
             m_PresentsSeen++;
             m_Held = fresh;
+            // A new compositor buffer: whatever pointer was drawn into the
+            // previous one went with it.
+            m_HeldSerial++;
             haveFrame = true;
             const int64_t submittedUs = steadyNowUs();
             // No conversion: the compositor's buffer goes to the encoder as
@@ -727,6 +788,10 @@ private:
 
     bool emit(uint32_t& frameNumber, const FrameStamps& stamps, std::string& error)
     {
+        // The magnified pointer goes into the buffer right before it is
+        // encoded — every time, because the same buffer is re-encoded by the
+        // still-screen floor and the pointer may have moved since.
+        if (selfDrawn()) paintCursor();
         const bool forceKeyframe = m_ForceKeyframe.exchange(false);
         encode::EncoderOutput encoded;
         if (!m_Encoder->encode(m_Held.pixels, forceKeyframe, stamps.presentUs, encoded, error)) {
@@ -822,6 +887,194 @@ private:
         return static_cast<double>(m_Display.pixelWidth) / points;
     }
 
+    // ── The magnified pointer, drawn by the engine ──────────────────────────
+
+    struct PointerNow
+    {
+        bool visible = false;
+        /// Position in FRAME pixels — the pointer's hotspot.
+        float fx = 0.0f;
+        float fy = 0.0f;
+    };
+
+    /// Where the pointer is, in the frame, if it is on this display.
+    PointerNow pointerNow() const
+    {
+        PointerNow p;
+        CGEventRef event = CGEventCreate(nullptr);
+        if (!event) return p;
+        const CGPoint at = CGEventGetLocation(event);
+        CFRelease(event);
+        const int w = m_Display.right - m_Display.left;
+        const int h = m_Display.bottom - m_Display.top;
+        if (w <= 0 || h <= 0 || m_Info.width <= 0 || m_Info.height <= 0) return p;
+        const double x = at.x - m_Display.left;
+        const double y = at.y - m_Display.top;
+        if (x < 0 || y < 0 || x >= w || y >= h) return p;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        p.visible = CGCursorIsVisible();
+#pragma clang diagnostic pop
+        p.fx = static_cast<float>(x * m_Info.width / w);
+        p.fy = static_cast<float>(y * m_Info.height / h);
+        return p;
+    }
+
+    /// Has the pointer moved, appeared, vanished or changed shape since the
+    /// last paint? Called on a still screen, at the stream's rate; the shape
+    /// is rasterised at most every kCursorPollUs, the position every time.
+    bool pointerChanged()
+    {
+        if (m_PointerDirty.exchange(false)) return true;
+        const PointerNow p = pointerNow();
+        if (p.visible != m_DrawnVisible) return true;
+        if (p.visible && (std::fabs(p.fx - m_DrawnX) >= 0.5f || std::fabs(p.fy - m_DrawnY) >= 0.5f))
+            return true;
+        if (!p.visible) return false;
+        const int64_t now = steadyNowUs();
+        if (now - m_LastShapePollUs < kCursorPollUs) return false;
+        m_LastShapePollUs = now;
+        @autoreleasepool {
+            CursorShape shape;
+            if (!rasterize([NSCursor currentSystemCursor], backingScale(), shape)) return false;
+            return shape.hash != m_DrawnHash;
+        }
+    }
+
+    /// Draw the system pointer, magnified for the client's screen, into the
+    /// held compositor buffer — after undoing the previous drawing when this
+    /// buffer is the one it was made in.
+    void paintCursor()
+    {
+        CVPixelBufferRef buffer = m_Held.pixels;
+        if (!buffer) return;
+        @autoreleasepool {
+            CursorShape shape;
+            const bool haveShape = rasterize([NSCursor currentSystemCursor], backingScale(), shape);
+            if (haveShape && shape.hash != m_PreparedHash) {
+                m_Prepared = convert::prepareCursor(shape.pixels.data(), shape.width, shape.height,
+                                                    m_Info.hdr ? convert::BlendTarget::P010Bt2020Pq
+                                                               : convert::BlendTarget::Nv12Bt709);
+                m_PreparedHash = shape.hash;
+                m_PreparedHotspotX = shape.hotspotX;
+                m_PreparedHotspotY = shape.hotspotY;
+            }
+            const PointerNow p = pointerNow();
+
+            if (CVPixelBufferLockBaseAddress(buffer, 0) != kCVReturnSuccess) {
+                if (!m_LockFailedLogged) {
+                    m_LockFailedLogged = true;
+                    log::warning("[native] cursor: the compositor's buffer cannot be written — "
+                                 "the pointer stays at its own size");
+                }
+                return;
+            }
+            convert::PlaneViews planes;
+            planes.y = static_cast<uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(buffer, 0));
+            planes.yStride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0);
+            planes.uv = static_cast<uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(buffer, 1));
+            planes.uvStride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1);
+            planes.width = static_cast<int>(CVPixelBufferGetWidthOfPlane(buffer, 0)) & ~1;
+            planes.height = static_cast<int>(CVPixelBufferGetHeightOfPlane(buffer, 0)) & ~1;
+            planes.tenBit = m_Info.hdr;
+            if (planes.y && planes.uv) {
+                // Undo: the buffer is the one the last pointer was drawn in.
+                if (m_Patch.valid() && m_PatchSerial == m_HeldSerial)
+                    convert::restorePatch(planes, m_Patch);
+                m_Patch = convert::PlanePatch{};
+
+                if (p.visible && haveShape && !m_Prepared.empty()) {
+                    // The shape is in display pixels; the frame may be
+                    // smaller. Its natural size in the frame is the floor,
+                    // the client's request the target, sized on the longer
+                    // side of the ink (CursorState::inkWidth says why).
+                    const float frameScale = m_Display.pixelWidth > 0
+                                                 ? static_cast<float>(planes.width) /
+                                                       static_cast<float>(m_Display.pixelWidth)
+                                                 : 1.0f;
+                    const int ink = std::max(m_Prepared.inkWidth, m_Prepared.inkHeight);
+                    const int wanted = m_CursorFramePx.load();
+                    float scale = frameScale;
+                    if (wanted > 0 && ink > 0)
+                        scale = std::max(frameScale, static_cast<float>(wanted) / ink);
+                    scale = std::min(scale, frameScale * kMaxCursorMagnify);
+
+                    convert::CursorPlacement place;
+                    place.scale = scale;
+                    place.x = p.fx - m_PreparedHotspotX * scale;
+                    place.y = p.fy - m_PreparedHotspotY * scale;
+                    const convert::BlendRect rect =
+                        convert::blendFootprint(m_Prepared, place, planes);
+                    convert::savePatch(planes, rect, m_Patch);
+                    convert::blendCursor(m_Prepared, place, planes);
+                    m_PatchSerial = m_HeldSerial;
+                    if (!m_PaintLogged) {
+                        m_PaintLogged = true;
+                        // Read-back, once, in debug: the raster pixel near the
+                        // hotspot, what it was prepared into, and what the
+                        // planes hold where it was drawn — the three numbers
+                        // that tell a colour bug from a layout bug (06/09/2026:
+                        // a "green pointer" report was the bench Mac's own
+                        // Accessibility pointer colour, BGRA 0 255 0 255 at
+                        // the source, blended faithfully).
+                        {
+                            const int sx = std::min(shape.width - 1, m_PreparedHotspotX + 2);
+                            const int sy = std::min(shape.height - 1, m_PreparedHotspotY + 4);
+                            const size_t si = static_cast<size_t>(sy) * shape.width + sx;
+                            const uint8_t* sp = shape.pixels.data() + si * 4;
+                            const int dx = static_cast<int>(place.x + sx * scale + scale / 2);
+                            const int dy = static_cast<int>(place.y + sy * scale + scale / 2);
+                            int y = -1, cb = -1, cr = -1;
+                            if (dx >= 0 && dy >= 0 && dx < planes.width && dy < planes.height) {
+                                const uint8_t* yl =
+                                    planes.y + static_cast<size_t>(dy) * planes.yStride;
+                                const uint8_t* ul =
+                                    planes.uv + static_cast<size_t>(dy / 2) * planes.uvStride;
+                                if (planes.tenBit) {
+                                    uint16_t w;
+                                    std::memcpy(&w, yl + dx * 2, 2);
+                                    y = w >> 6;
+                                    std::memcpy(&w, ul + (dx & ~1) * 2, 2);
+                                    cb = w >> 6;
+                                    std::memcpy(&w, ul + ((dx & ~1) + 1) * 2, 2);
+                                    cr = w >> 6;
+                                } else {
+                                    y = yl[dx];
+                                    cb = ul[dx & ~1];
+                                    cr = ul[(dx & ~1) + 1];
+                                }
+                            }
+                            char probe[240];
+                            std::snprintf(
+                                probe, sizeof(probe),
+                                "[native] cursor probe: raster(%d,%d) BGRA %d %d %d %d -> "
+                                "prepared luma %.1f cb %.1f cr %.1f a %.2f -> frame(%d,%d) "
+                                "Y %d Cb %d Cr %d (strides %zu/%zu, %s)",
+                                sx, sy, sp[0], sp[1], sp[2], sp[3], m_Prepared.luma[si],
+                                m_Prepared.cb[si], m_Prepared.cr[si], m_Prepared.alpha[si], dx, dy,
+                                y, cb, cr, planes.yStride, planes.uvStride,
+                                planes.tenBit ? "10-bit" : "8-bit");
+                            log::debug(probe);
+                        }
+                        char line[160];
+                        std::snprintf(line, sizeof(line),
+                                      "[native] cursor: drawing the pointer at x%.2f of the frame "
+                                      "(%d px asked, shape %dx%d, ink %dx%d)",
+                                      scale / (frameScale > 0.0f ? frameScale : 1.0f), wanted,
+                                      m_Prepared.width, m_Prepared.height, m_Prepared.inkWidth,
+                                      m_Prepared.inkHeight);
+                        log::info(line);
+                    }
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, 0);
+            m_DrawnVisible = p.visible;
+            m_DrawnX = p.fx;
+            m_DrawnY = p.fy;
+            m_DrawnHash = haveShape ? shape.hash : 0;
+        }
+    }
+
     /// The standard pointers, hashed once, so a shape can be named for the
     /// client (CursorUpdate::kind) instead of only pictured.
     void learnStandardShapes()
@@ -897,6 +1150,8 @@ private:
             line += ", " + std::to_string(m_Cadence.skipped()) + " not carried";
         else
             line += ", every one carried";
+        if (m_PointerFrames > 0)
+            line += ", " + std::to_string(m_PointerFrames) + " pointer-only re-encodes";
         log::info(line);
     }
 
@@ -941,7 +1196,10 @@ private:
     std::atomic<bool> m_ForceKeyframe{true};
     std::atomic<bool> m_CompositeCursor{true};
     std::atomic<bool> m_CursorModeDirty{false};
-    std::atomic<bool> m_MagnifyNoted{false};
+    /// How wide the client wants the pointer, in frame pixels; 0 = its own
+    /// size, which the compositor then draws.
+    std::atomic<int> m_CursorFramePx{0};
+    std::atomic<bool> m_PointerDirty{false};
     std::atomic<int> m_FloorFps{0};
     std::atomic<bool> m_ResendCursor{false};
     std::atomic<int> m_PendingBitrate{0};
@@ -962,6 +1220,25 @@ private:
     uint64_t m_ReportedHash = 0;
     bool m_ReportedVisible = false;
     std::vector<std::pair<uint64_t, const char*>> m_KnownShapes;
+
+    // The engine-drawn pointer (capture thread only).
+    convert::PreparedCursor m_Prepared;
+    uint64_t m_PreparedHash = 0;
+    int m_PreparedHotspotX = 0;
+    int m_PreparedHotspotY = 0;
+    /// What the last blend overwrote, and which held buffer it was.
+    convert::PlanePatch m_Patch;
+    uint64_t m_PatchSerial = 0;
+    uint64_t m_HeldSerial = 0;
+    /// The pointer as last painted, for pointerChanged().
+    bool m_DrawnVisible = false;
+    float m_DrawnX = -1.0f;
+    float m_DrawnY = -1.0f;
+    uint64_t m_DrawnHash = 0;
+    int64_t m_LastShapePollUs = 0;
+    int64_t m_PointerFrames = 0;
+    bool m_PaintLogged = false;
+    bool m_LockFailedLogged = false;
 };
 
 } // namespace

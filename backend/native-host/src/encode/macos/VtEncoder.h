@@ -70,8 +70,10 @@ public:
 
     /// Configure a hardware @p codec encoder for @p width × @p height NV12 at
     /// @p fps and @p bitrateKbps. H.264 and HEVC (Main, 8-bit); AV1 is refused
-    /// — no Apple encoder produces it.
-    bool init(Codec codec, int width, int height, int fps, int bitrateKbps,
+    /// — no Apple encoder produces it. @p hdr takes 10-bit 'x420' frames and
+    /// produces HEVC Main10 with the BT.2020 PQ colour description in the
+    /// stream (HEVC only: H.264 has no HDR a browser decodes).
+    bool init(Codec codec, int width, int height, int fps, int bitrateKbps, bool hdr,
               const EncoderTuning& tuning, std::string& error);
 
     /// Encode @p pixels (the capture's NV12 buffer, read in place). Blocking:
@@ -110,6 +112,7 @@ private:
     int m_Height = 0;
     int m_Fps = 60;
     int m_BitrateKbps = 20000;
+    bool m_Hdr = false;
     EncoderTuning m_Tuning;
 
     std::vector<uint8_t> m_Scratch;

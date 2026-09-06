@@ -126,3 +126,6 @@ backend/installer/MoonlightWeb/
 # republished by make-repo.sh on every release. Neither belongs in git, and a
 # stray `git add -A` must never be able to stage the private half.
 *.asc
+
+# Release signing material (macOS code-signing identity); never committed
+.secrets/

@@ -92,6 +92,11 @@ std::vector<MacDisplay> listDisplays()
                 if (!number || number.unsignedIntValue != ids[i]) continue;
                 if (const char* name = screen.localizedName.UTF8String) d.name = name;
                 if (refresh <= 0) refresh = screen.maximumFramesPerSecond;
+                // The POTENTIAL headroom: what the panel can do, not what it
+                // is showing this instant (the current value sits at 1.0 on a
+                // desktop with no HDR content and climbs when some appears).
+                d.edrHeadroom = screen.maximumPotentialExtendedDynamicRangeColorComponentValue;
+                d.hdr = d.edrHeadroom > 1.0;
                 break;
             }
             if (refresh <= 0) refresh = 60;
@@ -211,6 +216,13 @@ Unavailability enumerate(Capabilities& caps)
     std::string encoderDetail;
     probeEncoders(h264, hevc, encoderDetail);
 
+    // HDR needs the capture to hand over 10-bit PQ, which ScreenCaptureKit
+    // does from macOS 15 (SCStreamConfiguration.captureDynamicRange). The
+    // encoder side — HEVC Main10 — every Apple Silicon Mac has had since the
+    // first; it is the capture that gates the platform.
+    bool hdrCapture = false;
+    if (@available(macOS 15.0, *)) hdrCapture = true;
+
     // One GpuInfo per Metal device, in the order the displays name them.
     for (const MacDisplay& d : displays) {
         int gpuId = -1;
@@ -226,9 +238,11 @@ Unavailability enumerate(Capabilities& caps)
             if (hevc || h264) gpu.encoders.push_back(EncoderApi::VideoToolbox);
             if (hevc) gpu.codecs.push_back(Codec::Hevc);
             if (h264) gpu.codecs.push_back(Codec::H264);
-            // 10-bit HEVC exists on Apple Silicon; not claimed until the HDR
-            // path (P010 in, Main10 out) is written for this platform.
-            gpu.supports10Bit = false;
+            // 10-bit HEVC out of the Apple Video Encoder, fed by the 10-bit
+            // capture: the HDR path of this platform (design §20.10). Claimed
+            // only where the whole path exists — a capability says "this
+            // pipeline can carry it", never "this chip could" (§16.3).
+            gpu.supports10Bit = hevc && hdrCapture;
             caps.gpus.push_back(gpu);
             gpuId = gpu.id;
             log::info("[native] " + gpu.name + ": " + encoderDetail);
@@ -240,13 +254,18 @@ Unavailability enumerate(Capabilities& caps)
         display.width = d.pixelWidth;
         display.height = d.pixelHeight;
         display.refreshMilliHz = d.refreshMilliHz;
-        // No HDR on this path yet: the capture asks for 8-bit NV12.
-        display.hdrActive = false;
+        // "In an HDR mode right now" has no switch to read on macOS: a panel
+        // with EDR headroom is always in it. So this is the panel's headroom,
+        // gated on a capture that can deliver 10-bit PQ (macOS 15).
+        display.hdrActive = d.hdr && hdrCapture;
         display.primary = d.isMain;
         display.label = "Display " + std::to_string(display.id + 1);
         display.detail = d.name + " \xE2\x80\x94 " + std::to_string(d.pixelWidth) + "\xC3\x97" +
                          std::to_string(d.pixelHeight) + " \xC2\xB7 " +
                          std::to_string((d.refreshMilliHz + 500) / 1000) + " Hz" +
+                         (d.hdr ? " \xC2\xB7 HDR (EDR \xC3\x97" +
+                                      std::to_string(static_cast<int>(d.edrHeadroom + 0.5)) + ")"
+                                : std::string()) +
                          (d.isAsleep ? " (asleep)" : "");
         caps.displays.push_back(display);
     }

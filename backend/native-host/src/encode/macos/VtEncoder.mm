@@ -128,7 +128,7 @@ VtEncoder::~VtEncoder()
     stop();
 }
 
-bool VtEncoder::init(Codec codec, int width, int height, int fps, int bitrateKbps,
+bool VtEncoder::init(Codec codec, int width, int height, int fps, int bitrateKbps, bool hdr,
                      const EncoderTuning& tuning, std::string& error)
 {
     stop();
@@ -137,6 +137,7 @@ bool VtEncoder::init(Codec codec, int width, int height, int fps, int bitrateKbp
     m_Height = height & ~1;
     m_Fps = fps > 0 ? fps : 60;
     m_BitrateKbps = bitrateKbps > 0 ? bitrateKbps : 20000;
+    m_Hdr = hdr;
     m_Tuning = tuning;
 
     CMVideoCodecType codecType = 0;
@@ -144,6 +145,12 @@ bool VtEncoder::init(Codec codec, int width, int height, int fps, int bitrateKbp
     case Codec::H264: codecType = kCMVideoCodecType_H264; break;
     case Codec::Hevc: codecType = kCMVideoCodecType_HEVC; break;
     case Codec::Av1: error = "no Apple hardware encodes AV1"; return false;
+    }
+    if (hdr && codec != Codec::Hevc) {
+        // The Selector routes HDR to HEVC; this is the guard that keeps a
+        // future caller from asking for a stream no browser decodes.
+        error = "HDR needs HEVC on macOS — H.264 has no HDR path a browser decodes";
+        return false;
     }
 
     // Hardware or nothing: the software encoders VideoToolbox also lists are
@@ -154,12 +161,14 @@ bool VtEncoder::init(Codec codec, int width, int height, int fps, int bitrateKbp
     CFDictionarySetValue(spec, kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
                          kCFBooleanTrue);
 
-    // The frames will be the capture's own IOSurface-backed NV12 buffers;
-    // telling the session so up front lets it skip its own pixel transfer.
+    // The frames will be the capture's own IOSurface-backed NV12 (or, in HDR,
+    // 10-bit 'x420') buffers; telling the session so up front lets it skip
+    // its own pixel transfer.
     CFMutableDictionaryRef source = CFDictionaryCreateMutable(
         kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     {
-        int32_t format = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+        int32_t format = hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+                             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
         CFNumberRef n = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &format);
         CFDictionarySetValue(source, kCVPixelBufferPixelFormatTypeKey, n);
         CFRelease(n);
@@ -231,6 +240,23 @@ bool VtEncoder::init(Codec codec, int width, int height, int fps, int bitrateKbp
         VTSessionSetProperty(session, kVTCompressionPropertyKey_H264EntropyMode,
                              kVTH264EntropyMode_CABAC);
         profileName = "High";
+    } else if (hdr) {
+        // Main10, named: the profile is what makes the 10 bits real (a Main
+        // session accepts the 10-bit surface and encodes 8 bits into it). And
+        // the colour description in the stream — primaries 9, transfer 16,
+        // matrix 9 — is what tells the browser to run the PQ curve backwards;
+        // without it the picture decodes fine and looks flat and grey
+        // (design §16.2). Set on the session so it lands in the VUI.
+        VTSessionSetProperty(session, kVTCompressionPropertyKey_ProfileLevel,
+                             kVTProfileLevel_HEVC_Main10_AutoLevel);
+        VTSessionSetProperty(session, kVTCompressionPropertyKey_AllowOpenGOP, kCFBooleanFalse);
+        VTSessionSetProperty(session, kVTCompressionPropertyKey_ColorPrimaries,
+                             kCMFormatDescriptionColorPrimaries_ITU_R_2020);
+        VTSessionSetProperty(session, kVTCompressionPropertyKey_TransferFunction,
+                             kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ);
+        VTSessionSetProperty(session, kVTCompressionPropertyKey_YCbCrMatrix,
+                             kCMFormatDescriptionYCbCrMatrix_ITU_R_2020);
+        profileName = "Main10 (BT.2020 PQ)";
     } else {
         VTSessionSetProperty(session, kVTCompressionPropertyKey_ProfileLevel,
                              kVTProfileLevel_HEVC_Main_AutoLevel);

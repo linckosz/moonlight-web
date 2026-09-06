@@ -106,7 +106,8 @@ void PacedOpusSink::stop()
         log::info("[native] audio: " + std::to_string(m_Packets.load()) + " packets, " +
                   std::to_string(m_Pacer->droppedFrames()) + " frames dropped, " +
                   std::to_string(m_Pacer->underruns()) +
-                  " silence frames (quiet host or late capture)");
+                  " silence frames (quiet host or late capture), " +
+                  std::to_string(m_Pacer->deferrals()) + " waits for a late burst");
     m_Encoder.reset();
     m_Pacer.reset();
 }
@@ -114,9 +115,13 @@ void PacedOpusSink::stop()
 void PacedOpusSink::push(const float* interleaved, size_t frames)
 {
     if (!interleaved || frames == 0) return;
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    if (!m_Pacer || !m_Running.load(std::memory_order_relaxed)) return;
-    m_Pacer->push(interleaved, frames);
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        if (!m_Pacer || !m_Running.load(std::memory_order_relaxed)) return;
+        m_Pacer->push(interleaved, frames);
+    }
+    // A tick that found the queue empty is waiting for exactly this.
+    m_Cv.notify_one();
 }
 
 void PacedOpusSink::run() noexcept
@@ -138,7 +143,11 @@ void PacedOpusSink::runLoop()
     std::vector<float> frame(AudioPacer::kFrameFloats);
     std::vector<uint8_t> packet;
     int64_t lastReportUs = steadyNowUs();
-    int64_t reportedDropped = 0, reportedUnderruns = 0;
+    int64_t reportedDropped = 0, reportedUnderruns = 0, reportedDeferrals = 0;
+    // The last tick found the queue empty inside the grace: the next wait
+    // ends at the grace's end, or at the capture's next push — whichever
+    // comes first.
+    bool deferred = false;
 
     while (m_Running.load(std::memory_order_acquire)) {
         int due = 0;
@@ -147,23 +156,33 @@ void PacedOpusSink::runLoop()
             std::unique_lock<std::mutex> lock(m_Mutex);
             // Sleep until the next frame is owed, never longer than one period:
             // a stop() has to be noticed within a tick.
-            const int64_t waitUs = std::clamp(m_Pacer->nextDueUs() - steadyNowUs(), int64_t{0},
-                                              AudioPacer::kFramePeriodUs);
+            int64_t target = m_Pacer->nextDueUs();
+            if (deferred) target += AudioPacer::kUnderrunGraceUs;
+            const int64_t waitUs =
+                std::clamp(target - steadyNowUs(), int64_t{0}, AudioPacer::kFramePeriodUs);
             if (waitUs > 0)
-                m_Cv.wait_for(lock, std::chrono::microseconds(waitUs),
-                              [this] { return !m_Running.load(std::memory_order_acquire); });
+                m_Cv.wait_for(lock, std::chrono::microseconds(waitUs), [this, deferred] {
+                    return !m_Running.load(std::memory_order_acquire) ||
+                           (deferred && m_Pacer->queuedFrames() > 0);
+                });
             if (!m_Running.load(std::memory_order_acquire)) break;
             now = steadyNowUs();
             due = m_Pacer->dueFrames(now);
         }
+        deferred = false;
 
         for (int i = 0; i < due; ++i) {
+            AudioPacer::Take got;
             {
-                // Popped under the lock (it moves the pacer's clock and its
+                // Taken under the lock (it moves the pacer's clock and its
                 // queue), encoded outside it: a push() from the capture's
                 // thread must never wait on libopus.
                 std::lock_guard<std::mutex> lock(m_Mutex);
-                m_Pacer->pop(frame.data());
+                got = m_Pacer->take(frame.data(), now);
+            }
+            if (got == AudioPacer::Take::Deferred) {
+                deferred = true;
+                break;
             }
             const size_t n = m_Encoder->encode(frame.data(), packet);
             if (n == 0) continue;
@@ -180,21 +199,24 @@ void PacedOpusSink::runLoop()
         // counters that tell a saturated thread from a quiet host.
         if (now - lastReportUs >= 60'000'000) {
             lastReportUs = now;
-            int64_t dropped = 0, underruns = 0, reanchors = 0;
+            int64_t dropped = 0, underruns = 0, reanchors = 0, deferrals = 0;
             {
                 std::lock_guard<std::mutex> lock(m_Mutex);
                 dropped = m_Pacer->droppedFrames();
                 underruns = m_Pacer->underruns();
                 reanchors = m_Pacer->reanchors();
+                deferrals = m_Pacer->deferrals();
             }
             if (dropped != reportedDropped || reanchors > 0) {
                 log::info("[native] audio: " + std::to_string(dropped - reportedDropped) +
                           " frames dropped (queue full), " +
-                          std::to_string(underruns - reportedUnderruns) +
-                          " sent as silence, in the last minute");
+                          std::to_string(underruns - reportedUnderruns) + " sent as silence, " +
+                          std::to_string(deferrals - reportedDeferrals) +
+                          " waits for a late burst, in the last minute");
             }
             reportedDropped = dropped;
             reportedUnderruns = underruns;
+            reportedDeferrals = deferrals;
         }
     }
 }

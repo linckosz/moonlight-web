@@ -47,6 +47,13 @@ struct MacDisplay
     /// The panel is dark (display sleep). Still online, still capturable
     /// once woken — which a session does.
     bool isAsleep = false;
+    /// How far above SDR white the panel can go — Extended Dynamic Range,
+    /// which is what macOS calls HDR. 1.0 is an SDR panel; a Liquid Retina
+    /// XDR answers 16. There is no HDR switch on macOS: a panel that has
+    /// headroom always has it, and the compositor uses it whenever content
+    /// asks. `hdr` is headroom > 1.
+    double edrHeadroom = 1.0;
+    bool hdr = false;
     /// The display's rectangle in POINTS on the global desktop — the space
     /// CGEvent positions live in.
     int left = 0;

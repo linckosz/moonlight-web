@@ -78,12 +78,14 @@
 
 namespace mw::native::capture {
 
-/// One captured frame: the compositor's NV12 buffer, retained by the capture
-/// until the next acquire() replaces it (or release() gives it back).
+/// One captured frame: the compositor's NV12 (or, in HDR, 10-bit 'x420')
+/// buffer, retained by the capture until the next acquire() replaces it (or
+/// release() gives it back).
 struct SckFrame
 {
     /// Borrowed: valid until the next acquire() that returns Ok. NV12
-    /// ('420v'), BT.709 limited range, at the size start() was given.
+    /// ('420v'), BT.709 limited range, at the size start() was given — or, for
+    /// an HDR capture, 'x420' (10-bit in 16, the P010 layout) BT.2020 PQ.
     CVPixelBufferRef pixels = nullptr;
     int width = 0;
     int height = 0;
@@ -103,8 +105,10 @@ public:
 
     /// The refresh rate SCK will be asked to deliver at, in millihertz —
     /// the panel's own, so the session's cadence gate sees every present.
+    /// @p hdr asks the compositor for 10-bit BT.2020 PQ instead of 8-bit
+    /// BT.709 (macOS 15+; start() refuses it on an older OS).
     SckCapture(uint32_t displayId, int outputWidth, int outputHeight, int refreshMilliHz,
-               bool showsCursor);
+               bool showsCursor, bool hdr);
     ~SckCapture();
 
     SckCapture(const SckCapture&) = delete;
@@ -141,6 +145,8 @@ public:
     int width() const { return m_Width; }
     int height() const { return m_Height; }
     int refreshMilliHz() const { return m_RefreshMilliHz; }
+    /// Frames are 10-bit BT.2020 PQ ('x420') rather than NV12 BT.709.
+    bool hdr() const { return m_Hdr; }
     /// The display's rectangle on the desktop, in POINTS — what CGEvent wants
     /// for absolute pointer positions (see CgInput).
     DesktopRect desktopRect() const { return m_Rect; }
@@ -157,6 +163,7 @@ private:
     int m_Height = 0;
     int m_RefreshMilliHz = 0;
     bool m_ShowsCursor = true;
+    bool m_Hdr = false;
     bool m_AudioActive = false;
     DesktopRect m_Rect;
 };

@@ -2307,14 +2307,162 @@ Reste à améliorer : le pour-cent de trames encore jeté ou envoyé en silence 
 la gigue d'ordonnancement, pas une erreur de débit (les deux horloges tiennent
 48 kHz).
 
-### 20.9 Ce qui reste
+### 20.9 Ce qui restait — fermé le 06/09/2026
 
-Le HDR (P010 en entrée, Main10 en sortie — le silicium le fait), le pointeur
-agrandi, et la signature du `.pkg` (§20.5, §20.7).
+Le HDR (§20.10), le pointeur agrandi (§20.11), le résidu audio (§20.12), la
+signature stable et les tests avec Screen Recording (§20.13). La plateforme est
+au niveau des deux autres, à une exception près qui n'est pas du code : le
+`.pkg` n'est pas notarié (Developer ID payant), donc un double-clic sur le
+téléchargement affiche « développeur non identifié » ; le chemin Homebrew n'en
+souffre pas.
 
 Hors de ce module, vu au passage et **corrigé depuis** : Internet Access se
 désactivait entièrement quand l'enregistrement PowerDNS échouait, rendez-vous
 compris, alors que le rendez-vous n'a aucun besoin du sous-domaine. La
 rétro-compatibilité DNS côté client a été retirée le 05/09/2026 — plus aucune
 installation n'écrit dans PowerDNS ni ne lance ACME, et ce chemin de coupure
-n'existe plus.
+n'existe plus. **Vérifié en vrai le 06/09** : l'app complète à jour déployée
+sur le Mac de banc (`.env` réduit à `MW_DOMAIN` + `MW_PDNS_TOKEN`, les seules
+clés que le client lit encore), le consentement v2 redonné par
+`MoonlightWeb --enable-internet --yes`, et la ligne de rendez-vous levée sans
+qu'aucun enregistrement DNS ne soit écrit.
+
+### 20.10 HDR : le 10 bits PQ de ScreenCaptureKit → HEVC Main10 (06/09/2026)
+
+macOS n'a pas d'interrupteur HDR. Un panneau capable d'aller au-dessus du blanc
+SDR l'est toujours — c'est l'*Extended Dynamic Range*, et
+`NSScreen.maximumPotentialExtendedDynamicRangeColorComponentValue` dit de
+combien (le Liquid Retina XDR du banc répond 5 ; un panneau SDR répond 1). La
+sonde traduit donc `hdrActive` par « headroom > 1 **et** macOS 15 », parce que
+c'est la capture qui gate la plateforme : `SCStreamConfiguration.captureDynamicRange`
+n'existe que depuis macOS 15, et sans elle le compositeur ne livre que du 8 bits.
+`supports10Bit` suit la même règle (HEVC matériel **et** capture 10 bits), jamais
+« la puce le pourrait » (§16.3).
+
+La chaîne reste sans étage de conversion : on demande au compositeur du
+`x420` (4:2:0 10 bits dans des mots de 16, la disposition P010) avec
+`SCCaptureDynamicRangeHDRCanonicalDisplay` — la référence fixe à 1 000 nits,
+pas le headroom local, pour que le flux ne suive pas l'état de luminosité du
+panneau — et l'espace `ITUR_2100_PQ`. ⚠️ CGDisplayStream n'a jamais eu de
+constante de matrice BT.2020 ; la propriété prend les mêmes chaînes que
+CoreVideo attache aux tampons, et `kCVImageBufferYCbCrMatrix_ITU_R_2020` est
+acceptée. La première image est **relue et journalisée** (format, primaires,
+transfert, matrice) : `x420 2218x1440, primaries ITU_R_2020, transfer
+SMPTE_ST_2084_PQ, matrix ITU_R_2020` — c'est la ligne qui prouve que la
+description couleur de l'encodeur dit la vérité.
+
+VideoToolbox : profil **Main10 nommé** (un profil Main accepte la surface 10
+bits et encode 8 bits dedans, §16.2) et les trois propriétés couleur posées sur
+la session — `ColorPrimaries ITU_R_2020`, `TransferFunction SMPTE_ST_2084_PQ`,
+`YCbCrMatrix ITU_R_2020` — pour qu'elles atterrissent dans le VUI. En SDR rien
+n'est posé : VideoToolbox lit alors les attaches du tampon, et une description
+qui différerait d'elles déclencherait une conversion couleur silencieuse.
+
+**Vérifié depuis Chrome/Windows sur le M27Q en HDR** : session « HEVC HDR
+(Main10, BT.2020 PQ) », première keyframe 98 Ko, overlay client « HEVC HDR »
+(présentateur `<video>`, le chemin F0e), image aux bonnes couleurs — les
+séquoias de l'économiseur du Mac, pas délavés. Le pointeur agrandi (§20.11)
+passe par le même chemin 10 bits (courbe PQ, matrice BT.2020 sur le signal PQ,
+blanc SDR à 203 nits).
+
+### 20.11 Le pointeur agrandi : dessiné par le moteur (06/09/2026)
+
+Le §20.1 disait « pas de route » : ScreenCaptureKit compose le pointeur à sa
+taille, et il n'y a pas de convertisseur où le grossir. La route est celle-ci :
+quand le client demande une taille (`cursorFramePx`, le téléphone), la capture
+est mise en `showsCursor = NO` et le moteur **dessine lui-même** le curseur
+système — l'image `NSCursor` déjà rastérisée pour le mode client-dessiné — dans
+le tampon du compositeur, juste avant l'encodage. `convert/CursorBlend.h`, pur
+et testé partout : la forme est préparée **une fois** par changement dans les
+valeurs de code de la cible (luma/chroma × couverture, BT.709 8 bits ou BT.2020
+PQ 10 bits), puis chaque image coûte un échantillonnage bilinéaire à l'échelle
+voulue et un multiplier-ajouter par plan sur l'empreinte du pointeur — quelques
+centaines de pixels dans une image 4K, verrouillage `CVPixelBufferLockBaseAddress`
+compris.
+
+Trois détails qui ont une raison :
+
+- **Le tampon est le compositeur's, et il est ré-encodé.** Le plancher écran
+  fixe et la rafale de raffinement ré-encodent la dernière image ; un pointeur
+  brûlé dedans laisserait une traînée. Le blend sauve d'abord le rectangle
+  qu'il couvre (`PlanePatch`) et le **restaure avant le blend suivant**, tant que
+  le tampon est le même (numéro de série de l'image tenue).
+- **Un mouvement de pointeur redevient une image.** Pointeur hors capture, un
+  déplacement sur un écran fixe ne produit plus d'image ; la boucle regarde
+  alors le pointeur (position à chaque tour, forme toutes les 50 ms) et
+  ré-encode l'image tenue quand il a bougé, au plus à la cadence du flux —
+  l'équivalent du statut PointerOnly de DXGI, obtenu autrement.
+- **L'échelle** : taille naturelle dans l'image = raster × (image / pixels de
+  l'écran) ; cible = taille demandée / côté long de l'encre ; plafond ×2,5 comme
+  le convertisseur Windows.
+
+**Vérifié en vrai** : « drawing the pointer at x2.50 of the frame (96 px asked,
+shape 34x46, ink 34x46) », le pointeur suit la souris injectée depuis le client,
+en SDR comme en HDR. ⚠️ Fausse alerte du banc : il est sorti **vert** — la
+couleur de remplissage personnalisée du pointeur de ce Mac (Accessibilité ›
+Pointeur, `cursorFill` dans `com.apple.universalaccess`), fidèlement reproduite,
+ce qu'une sonde de relecture (raster → contributions → plans, en debug) a
+tranché en une ligne : `BGRA 0 255 0 255` à la source.
+
+### 20.12 Le résidu audio : la grâce du pacer (06/09/2026)
+
+Le pour-cent du §20.8 avait une cause, pas une gigue. ScreenCaptureKit livre
+20 ms de son à la fois, à son heure ; avec `pop()` seul, une rafale arrivée 3 ms
+après le tic qui en avait besoin envoyait une trame de **silence** — et ce
+silence n'était pas gratuit : l'horloge avançait sans consommer la file, qui
+gardait dès lors une trame **de plus**, pour toujours, jusqu'à ce que le plafond
+en jette une. Chaque rafale tardive ajoutait une trame, chaque trame jetée était
+cet ajout qui ressortait — d'où deux compteurs jumeaux (165 silences, 121
+jetées sur 83 s) sur un hôte dont les deux horloges étaient exactes.
+
+`AudioPacer::take()` : une trame due que la file ne peut pas remplir est
+**différée** jusqu'à deux périodes (10 ms) avant que le silence parte ; le
+`PacedOpusSink` dort alors jusqu'à la fin de la grâce **ou** jusqu'au `push()`
+suivant, qui le réveille. Le récepteur tient 35 ms de tampon de gigue : il ne
+voit rien. `pop()` est conservé tel quel pour WASAPI (un seul fil, pas de rafale
+à attendre). Test : 20 ms de rafales avec 9 ms de gigue pendant 2 s → zéro
+silence, zéro jetée.
+
+**Mesuré sur 325 s de flux réel (tonalité jouée sur le Mac)** : 65 138 paquets,
+**7 jetées, 57 silences** (0,01 % et 0,09 %, dont 4 et 50 dans la première
+minute — la rafale de démarrage de SCK), 2 344 attentes. Les minutes suivantes :
+1 / 1, puis 2 / 2. Le dixième de pour-cent restant est la rafale initiale et
+quelques rafales à plus de 10 ms de retard ; il n'y a plus d'accumulation.
+
+### 20.13 Signature stable, tests avec Screen Recording, banc à jour (06/09/2026)
+
+**La signature.** Le §20.5 et le §20.7 disaient le problème : TCC accroche ses
+octrois à l'*exigence de code*, et une signature ad hoc en change à chaque
+build, donc chaque mise à jour reperdait Screen Recording et Accessibility (la
+seconde en silence). `release.yml` signe désormais l'app avec un certificat
+**auto-signé stable** (« MoonlightWeb », valable jusqu'en 2041 ; identité
+générée le 06/09/2026, conservée hors dépôt dans `.secrets/` chez le mainteneur,
+publiée dans les secrets d'environnement `MACOS_SIGN_P12` (base64) et
+`MACOS_SIGN_PASSWORD`). Exigence désignée résultante :
+`identifier "com.moonlightweb.server" and certificate root = H"d051d7d8…"` —
+« root » parce qu'un auto-signé est sa propre racine ; constante d'une release
+à l'autre. Gatekeeper n'y voit aucune différence avec l'ad hoc (« développeur
+non identifié » au double-clic, rien via Homebrew) ; le `.pkg` lui-même reste
+non signé, une signature d'installeur n'ayant de sens qu'avec un Developer ID
+Installer. Une installation qui vient d'une build ad hoc redemandera les deux
+autorisations **une dernière fois**. Répété sur le banc avant d'être écrit dans
+le workflow, avec deux pièges : `security import` refuse un `.p12` moderne
+(PBES2/AES-256, ce qu'OpenSSL 3 produit par défaut — « MAC verification
+failed ») et veut du SHA-1/3DES ; et `codesign` répond `errSecInternalComponent`
+tant que le trousseau temporaire n'est pas dans la **liste de recherche**, même
+nommé par `--keychain`. Secret absent → ad hoc comme avant, avec un avertissement.
+
+**Les tests.** `mw-native-tests` n'avait pas Screen Recording et l'octroi à la
+main ne survivait pas au rebuild (§20.5). TCC identifie un exécutable nu par
+son **chemin**, un bundle par son identifiant + son exigence : enveloppé dans un
+`.app` minimal qui porte l'identifiant de l'app (`com.moonlightweb.server`) et
+signé de la même identité, le binaire de tests satisfait **l'octroi existant de
+l'app** — même ligne dans `TCC.db`, aucune nouvelle. `scripts/mac-native-tests.sh`
+fait l'enveloppe, la signature et le lancement par `launchctl` dans la session
+graphique (la seule où SCK voit un écran) ; mesuré : les tests de session
+capturent au premier essai, 2 254/2 254.
+
+**Le banc.** Le clone du Mac est passé au HEAD de la machine Windows par
+`git bundle` (les commits ne sont pas poussés), l'app complète rebâtie et
+déployée : c'est la première fois que le Mac tourne le code du jour et non un
+`native-host` superposé à un serveur vieux d'une semaine.

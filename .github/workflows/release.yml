@@ -646,14 +646,64 @@ jobs:
           </dict></plist>
           PLIST
 
+      # ── The signing identity ────────────────────────────────────────────────
+      # macOS TCC (Screen Recording, Accessibility — the two grants without
+      # which the native host streams nothing and moves nothing) keys a grant
+      # on the code signature's DESIGNATED REQUIREMENT, not on the bundle id.
+      # An ad-hoc signature's requirement is the binary's own hash, so every
+      # update lost both grants and asked again — silently for Accessibility:
+      # the switch stays ticked and macOS drops the events (design §20.7).
+      #
+      # A certificate signature — Apple-issued or not — has the requirement
+      # `identifier "com.moonlightweb.server" and certificate leaf = H"…"`,
+      # constant for as long as the same certificate signs: one grant, every
+      # version. There is no Developer ID here (no free tier for open source),
+      # so the identity is a self-signed code-signing certificate, kept as a
+      # base64 .p12 in MACOS_SIGN_P12 with its password in MACOS_SIGN_PASSWORD
+      # (generated 06/09/2026, valid to 2041; the .p12 is in the maintainer's
+      # keyring — losing it means one more re-grant on the next release, not a
+      # broken build). Gatekeeper treats it exactly as it treated ad hoc:
+      # "unidentified developer" on a double-click, nothing at all through the
+      # Homebrew cask. Unset → ad-hoc signing as before, loudly.
+      - name: Import the signing identity
+        id: sign
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_SIGN_P12" ]; then
+            echo "::warning title=macOS app signed ad hoc::MACOS_SIGN_P12 is unset - every update of this build will re-ask Screen Recording and Accessibility on the Mac."
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            echo "keychain_flag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KC="$RUNNER_TEMP/mw-sign.keychain-db"
+          security create-keychain -p "" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "" "$KC"
+          echo "$MACOS_SIGN_P12" | base64 --decode > "$RUNNER_TEMP/sign.p12"
+          security import "$RUNNER_TEMP/sign.p12" -k "$KC" -P "$MACOS_SIGN_PASSWORD" -T /usr/bin/codesign -A
+          rm -f "$RUNNER_TEMP/sign.p12"
+          # Let codesign use the key without a UI prompt, and let it FIND the
+          # key: a keychain named with --keychain but absent from the search
+          # list gives errSecInternalComponent (measured on the bench).
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          echo "identity=MoonlightWeb" >> "$GITHUB_OUTPUT"
+          echo "keychain_flag=--keychain $KC" >> "$GITHUB_OUTPUT"
+
       - name: Deploy Qt + sign bundle
+        env:
+          IDENTITY: ${{ steps.sign.outputs.identity }}
+          KEYCHAIN_FLAG: ${{ steps.sign.outputs.keychain_flag }}
         run: |
           # Deploy the Qt frameworks into the bundle.
           macdeployqt MoonlightWeb.app
 
-          # Ad-hoc re-sign (identity "-"): no Apple Developer account needed, but
-          # it stops Gatekeeper flagging the bundle as "damaged". Users still get
-          # a one-time "unidentified developer" prompt (right-click → Open).
+          # Re-sign with the identity above ("-" = ad hoc when the secret is
+          # unset). Either way it stops Gatekeeper flagging the bundle as
+          # "damaged"; users still get a one-time "unidentified developer"
+          # prompt (right-click → Open) on a double-clicked .pkg.
           #
           # We must NOT use `codesign --deep`: it unreliably re-signs frameworks
           # that already carry a signature. The Qt binaries from aqt are signed
@@ -661,18 +711,24 @@ jobs:
           # binary became ad-hoc (empty Team ID), so at launch dyld rejected them
           # with "mapping process and mapped file have different Team IDs" and the
           # app crashed. Instead sign inside-out, explicitly, each Mach-O first,
-          # then the app bundle last, forcing every signature to ad-hoc.
+          # then the app bundle last, forcing every signature to the one identity.
+          # $KEYCHAIN_FLAG is deliberately unquoted: two words, or none.
+          SIGN=(codesign --force --timestamp=none $KEYCHAIN_FLAG -s "$IDENTITY")
           find MoonlightWeb.app/Contents/Frameworks \
             \( -name '*.dylib' -o -name '*.framework' \) -print0 |
-            xargs -0 -I {} codesign --force --timestamp=none -s - {}
+            xargs -0 -I {} "${SIGN[@]}" {}
           # Any plugins deployed alongside (platforms, tls, imageformats, ...).
           find MoonlightWeb.app/Contents/PlugIns -name '*.dylib' -print0 2>/dev/null |
-            xargs -0 -I {} codesign --force --timestamp=none -s - {} || true
-          # Main executable, then the whole bundle (seals everything above).
-          codesign --force --timestamp=none -s - MoonlightWeb.app/Contents/MacOS/MoonlightWeb
-          codesign --force --timestamp=none -s - MoonlightWeb.app
-          # Verify the seal is internally consistent (no Team-ID mismatch).
+            xargs -0 -I {} "${SIGN[@]}" {} || true
+          # Main executable — with the bundle's identifier, so the requirement
+          # TCC records names the app and not the file — then the whole bundle
+          # (seals everything above).
+          "${SIGN[@]}" --identifier com.moonlightweb.server MoonlightWeb.app/Contents/MacOS/MoonlightWeb
+          "${SIGN[@]}" MoonlightWeb.app
+          # Verify the seal is internally consistent (no Team-ID mismatch), and
+          # print the requirement the grants will be keyed on.
           codesign --verify --deep --strict --verbose=2 MoonlightWeb.app
+          codesign -d -r- MoonlightWeb.app 2>&1 | grep designated | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Build interactive .pkg installer
         env:
@@ -681,9 +737,10 @@ jobs:
         # toggle + Sunshine download progress), packs the signed app + the
         # postinstall (installs Sunshine, writes provisioning.json, LaunchAgent,
         # launches the app) into the component pkg, and wraps it in a guided
-        # productbuild archive. Pairing + the public A-record run in the app on
-        # first launch (Provisioning::applyOnce). Unsigned: no Apple Developer
-        # account (same posture as the old ad-hoc DMG).
+        # productbuild archive. Pairing runs in the app on first launch
+        # (Provisioning::applyOnce). The .pkg itself is unsigned: a package
+        # signature needs a Developer ID Installer certificate to mean anything
+        # to installer(8), and the app inside carries its own (see above).
         run: |
           APP="$PWD/MoonlightWeb.app" \
           OUT="$PWD/moonlightweb-${{ needs.setup.outputs.version }}-macos-arm64.pkg" \

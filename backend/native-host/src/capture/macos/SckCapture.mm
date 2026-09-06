@@ -60,6 +60,27 @@ std::string describe(NSError* error)
            std::to_string(error.code) + ")";
 }
 
+/// A pixel buffer's colour attachment as text ("ITU_R_2020", "SMPTE_ST_2084_PQ"…),
+/// for the one log line that says what the compositor actually delivered.
+std::string attachmentString(CVImageBufferRef image, CFStringRef key)
+{
+    CFTypeRef value = CVBufferCopyAttachment(image, key, nullptr);
+    if (!value) return "unset";
+    std::string out = "?";
+    if (CFGetTypeID(value) == CFStringGetTypeID()) {
+        if (const char* s = [(__bridge NSString*)value UTF8String]) out = s;
+    }
+    CFRelease(value);
+    return out;
+}
+
+std::string fourcc(OSType type)
+{
+    char s[5] = {static_cast<char>(type >> 24), static_cast<char>(type >> 16),
+                 static_cast<char>(type >> 8), static_cast<char>(type), 0};
+    return s;
+}
+
 } // namespace
 
 /// Everything the Objective-C side needs to reach, kept out of the header.
@@ -163,6 +184,21 @@ struct SckCapture::Impl
     const int64_t nowUs = mw::native::capture::steadyNowUs();
 
     std::lock_guard<std::mutex> lock(d->mutex);
+    if (d->delivered == 0) {
+        // What the compositor really hands over, once: the encoder's colour
+        // description has to match it, and this is the line that proves it did
+        // (a PQ stream described as BT.709 is the classic washed-out HDR).
+        mw::native::log::info(
+            "[native] ScreenCaptureKit: first frame " +
+            mw::native::capture::fourcc(CVPixelBufferGetPixelFormatType(image)) + " " +
+            std::to_string(CVPixelBufferGetWidth(image)) + "x" +
+            std::to_string(CVPixelBufferGetHeight(image)) + ", primaries " +
+            mw::native::capture::attachmentString(image, kCVImageBufferColorPrimariesKey) +
+            ", transfer " +
+            mw::native::capture::attachmentString(image, kCVImageBufferTransferFunctionKey) +
+            ", matrix " +
+            mw::native::capture::attachmentString(image, kCVImageBufferYCbCrMatrixKey));
+    }
     if (d->pending) d->replaced++;
     d->clearPending();
     d->pending = CVPixelBufferRetain(image);
@@ -251,13 +287,14 @@ struct SckCapture::Impl
 namespace mw::native::capture {
 
 SckCapture::SckCapture(uint32_t displayId, int outputWidth, int outputHeight, int refreshMilliHz,
-                       bool showsCursor)
+                       bool showsCursor, bool hdr)
     : d(std::make_unique<Impl>())
     , m_DisplayId(displayId)
     , m_Width(outputWidth)
     , m_Height(outputHeight)
     , m_RefreshMilliHz(refreshMilliHz)
     , m_ShowsCursor(showsCursor)
+    , m_Hdr(hdr)
 {}
 
 SckCapture::~SckCapture()
@@ -340,11 +377,31 @@ bool SckCapture::start(std::string& error)
         SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
         config.width = static_cast<size_t>(m_Width);
         config.height = static_cast<size_t>(m_Height);
-        // NV12, video range, BT.709: exactly what the encoder consumes, so
-        // there is no conversion stage on this platform (see the header).
-        config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-        config.colorMatrix = kCGDisplayStreamYCbCrMatrix_ITU_R_709_2;
-        config.colorSpaceName = kCGColorSpaceSRGB;
+        if (m_Hdr) {
+            // 10-bit 4:2:0 ('x420', the P010 layout), BT.2020 PQ: the HDR
+            // input HEVC Main10 wants, written by the compositor itself. The
+            // canonical HDR display — a fixed 1000-nit reference — rather than
+            // the local panel's headroom, so the stream does not follow the
+            // panel's brightness state. macOS 15 only.
+            if (@available(macOS 15.0, *)) {
+                config.pixelFormat = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+                config.captureDynamicRange = SCCaptureDynamicRangeHDRCanonicalDisplay;
+                // CGDisplayStream never had a BT.2020 matrix constant; the
+                // property takes the same strings CoreVideo attaches to the
+                // buffers, and this is the one a PQ buffer carries.
+                config.colorMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020;
+                config.colorSpaceName = kCGColorSpaceITUR_2100_PQ;
+            } else {
+                error = "HDR capture needs macOS 15 (ScreenCaptureKit's dynamic-range control)";
+                return false;
+            }
+        } else {
+            // NV12, video range, BT.709: exactly what the encoder consumes, so
+            // there is no conversion stage on this platform (see the header).
+            config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+            config.colorMatrix = kCGDisplayStreamYCbCrMatrix_ITU_R_709_2;
+            config.colorSpaceName = kCGColorSpaceSRGB;
+        }
         // Every present of the panel: the session's own cadence gate decides
         // which ones the stream carries, the same way it does on Windows.
         config.minimumFrameInterval = CMTimeMake(1000, m_RefreshMilliHz);
@@ -430,7 +487,8 @@ bool SckCapture::start(std::string& error)
 
     d->started = true;
     log::info("[native] ScreenCaptureKit: display " + std::to_string(m_DisplayId) + " → " +
-              std::to_string(m_Width) + "x" + std::to_string(m_Height) + " NV12 at " +
+              std::to_string(m_Width) + "x" + std::to_string(m_Height) +
+              (m_Hdr ? " 10-bit BT.2020 PQ (x420) at " : " NV12 at ") +
               std::to_string((m_RefreshMilliHz + 500) / 1000) + " Hz, pointer " +
               (m_ShowsCursor ? "in the picture" : "left out") +
               (m_AudioActive ? ", with the host's audio (48 kHz stereo)" : ""));
