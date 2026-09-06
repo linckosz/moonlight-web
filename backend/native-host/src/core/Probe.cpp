@@ -81,8 +81,16 @@ Capabilities probe()
     }
     if (!anyEncoder) {
         caps.reason = Unavailability::NoEncoder;
-        caps.diagnostic = "no hardware encoder on any GPU, and software encoding was not "
-                          "fast enough for this display";
+        // Says only what was actually looked for. The previous wording ("...and
+        // software encoding was not fast enough for this display") described a
+        // measurement that never happens: this engine has no software encoder to
+        // fall back to — NVENC, AMF and oneVPL are the whole list — so nothing
+        // was timed and found wanting. Read on a Windows-on-ARM machine
+        // (Snapdragon/Adreno, 06/09/2026) it invited the user to go looking for a
+        // speed setting that does not exist, when the honest answer is that this
+        // GPU has no encoder we can drive.
+        caps.diagnostic = "no video encoder this engine can drive on any GPU "
+                          "(NVIDIA NVENC, AMD AMF or Intel Quick Sync)";
         log::info("[native] unavailable: " + caps.diagnostic);
         return caps;
     }

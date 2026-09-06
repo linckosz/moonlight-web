@@ -162,10 +162,10 @@ enum class Unavailability
     NoDisplay,            ///< headless: nothing attached (no virtual display in v1)
     NoCaptureApi,         ///< Windows: DDA and WGC both failed · Linux: no portal
     CapturePermission,    ///< macOS Screen Recording (TCC) not granted
-    NoEncoder,            ///< no hardware encoder AND software probe insufficient
+    NoEncoder,            ///< no encoder this engine can drive (there is no software fallback)
     NoInteractiveSession, ///< Windows service with nobody logged in (§13)
     OsTooOld,             ///< Win10 < 2004 · macOS < 12.3 · Linux without PipeWire
-    ArchNotSupported,     ///< Windows ARM64 in v1
+    ArchNotSupported,     ///< no platform backend compiled in (platform/Unimplemented.cpp)
     ProbeFailed,          ///< the probe itself threw or timed out
 };
 

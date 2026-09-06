@@ -104,6 +104,10 @@ export class AdminView {
         this._activating = false;
         this._phase = '';
         this._phasePollTimer = null;
+        // Waiting for the rendezvous address, which is claimed AFTER the enable
+        // call answers (see _awaitRendezvousUrl).
+        this._rdvPollTimer = null;
+        this._awaitingRdv = false;
 
         // Sunshine (local streaming server) state — from /api/setup/status.
         this._sunshineInstalled = false;
@@ -491,6 +495,7 @@ export class AdminView {
     destroy() {
         this._stopSessionsPolling();
         this._stopPhasePolling();
+        this._stopRendezvousPolling();
     }
 
     // --- Sessions Polling ---
@@ -836,7 +841,9 @@ export class AdminView {
                 <!-- Internet -->
                 <div class="settings-section" id="admin-section-internet">
                     <h3 class="settings-section-title">${t('admin.internet')}${
-                        this._internetEnabled && !this._active && !this._lastError
+                        this._internetEnabled &&
+                        !this._lastError &&
+                        (!this._active || this._awaitingRdv)
                             ? `<span class="cyber-loader" title="${this.esc(t('admin.internetComingUp'))}"
                                      aria-label="${this.esc(t('admin.internetComingUp'))}"></span>`
                             : ''
@@ -932,6 +939,7 @@ export class AdminView {
                         this._internetEnabled &&
                         !this._active &&
                         !this._lastError &&
+                        !this._awaitingRdv &&
                         this._phase !== 'consent_required'
                             ? `
                         <div class="internet-info-box internet-info-error">
@@ -1916,6 +1924,8 @@ export class AdminView {
                 this._domain = result.domain || this._domain;
                 this._externalHttpsPort = result.external_https_port || this._externalHttpsPort;
                 await this._loadInternetState();
+                // The address is not known yet — keep looking for it.
+                this._awaitRendezvousUrl();
                 this.render();
                 this.bindEvents();
             } else {
@@ -1958,6 +1968,9 @@ export class AdminView {
                     this._stopPhasePolling();
                     this._activating = false;
                     await this._loadInternetState();
+                    // Same race as the enable path below: 'active' is reported
+                    // before the address has been claimed.
+                    if (phase === 'active') this._awaitRendezvousUrl();
                     this.render();
                     this.bindEvents();
                 }
@@ -1972,6 +1985,50 @@ export class AdminView {
             clearInterval(this._phasePollTimer);
             this._phasePollTimer = null;
         }
+    }
+
+    // Wait for the rendezvous address, then re-render.
+    //
+    // Enabling Internet Access cannot answer with it: claiming an address is a
+    // round-trip the backend cannot run while it is holding the event loop for
+    // this very request — /api/setup/apply says as much where it returns an
+    // empty `rendezvous` on purpose, and the setup wizard covers itself by
+    // polling /api/setup/status. This page had no such second look: it read the
+    // status once, found no address, and left the box empty until the user
+    // reloaded by hand (seen on the Windows ARM bench, 06/09/2026).
+    //
+    // Bounded, and not only against a slow line: a build with no rendezvous at
+    // all never reports one, and an unbounded wait would leave this page
+    // polling — and spinning — forever on a machine that is working as
+    // intended. When the deadline passes we simply render what the backend does
+    // report, which is exactly what a reload would have shown.
+    _awaitRendezvousUrl(timeoutMs = 20000) {
+        if (this._rendezvousUrl) return;
+        this._stopRendezvousPolling();
+        this._awaitingRdv = true;
+        const deadline = Date.now() + timeoutMs;
+        this._rdvPollTimer = setInterval(async () => {
+            let found = false;
+            try {
+                const status = await BackendClient.getInternetStatus();
+                found = !!(status.rendezvous && status.rendezvous.url);
+            } catch (_err) {
+                // Transient while the line comes up — keep waiting.
+            }
+            if (!found && Date.now() < deadline) return;
+            this._stopRendezvousPolling();
+            await this._loadInternetState();
+            this.render();
+            this.bindEvents();
+        }, 700);
+    }
+
+    _stopRendezvousPolling() {
+        if (this._rdvPollTimer) {
+            clearInterval(this._rdvPollTimer);
+            this._rdvPollTimer = null;
+        }
+        this._awaitingRdv = false;
     }
 
     // Turning Internet Access on used to move this page to the public
