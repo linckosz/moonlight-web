@@ -746,19 +746,62 @@ la dernière propre — un delta un peu plus gros, une fois, au lieu d'une keyfr
 Ce que la table enregistre est ce que le **buffer de sortie confirme** avoir été
 marqué, jamais ce qui a été demandé : un pilote qui ignore le marquage
 (`MarkedLTRIndex` absent) ou la référence forcée (`ReferencedLTRIndexBitfield`
-sans le bit) dégrade en keyframe et le dit une fois, il ne fabrique pas une
-table fausse.
+sans le bit) dégrade en keyframe et le dit, il ne fabrique pas une table fausse.
+
+⚠️ **Deux corrections du 06/09, trouvées en observant la réparation en vrai.**
+
+**Le sentinelle `-1` de `MarkedLTRIndex` arrive en 32 bits.** La documentation
+dit « default = -1 » ; le pilote le range dans 32 bits et la propriété rend
+**4294967295**. Le test `markedIdx >= 0` lisait donc « je n'ai pas marqué »
+comme le slot quatre milliards, appelait `marked()` avec un cast qui retombe sur
+−1, et la table gardait **un trou là où elle croyait avoir une référence**. Le
+trou est invisible jusqu'à une perte, où la réparation nomme un slot que le
+pilote n'a jamais rempli. Tout ce qui sort des slots accordés est un refus,
+quelle que soit sa forme binaire — et le refus est dit avec la valeur reçue.
+
+**Une référence se juge sur l'image, pas sur l'index.** Le pilote référence
+souvent un autre slot que celui demandé, et il a le droit : ce qui rend une
+référence propre est **l'image qu'elle porte**, pas son numéro. `allBefore()`
+répond « toutes les images nommées précèdent-elles la perte ? » ; `describe()`
+nomme les images derrière un bitfield, pour que le log soit lisible. Quand la
+réponse est oui, c'est une réparation, même si ce n'est pas le slot demandé.
+Quand c'est non — une image *postérieure* à la perte, ou aucune référence long
+terme — le delta prédit de ce que le récepteur n'a pas, et **l'image suivante
+est forcée en keyframe** : c'est ce que le design promettait et que le code ne
+faisait pas (il se contentait d'un avertissement, une fois).
 
 Vérifié sur la RX 7600 réelle le 06/09 (les trois codecs) : « AMF ready : … 4
 LTR slots every N frames with reference invalidation (reach M frames) », et
 `dpb=1` (le « avant » du banc) éteint proprement les slots (« no reference
-invalidation »). Coût mesuré nul (bench §8c, point 5). ⚠️ **Reste à observer sur
-un vrai lien** : la ligne « AMF healed frame … from long-term slot bitfield » à
-la réparation *effective*. Le banc encode vers un puits (aucun récepteur pour
-nommer une perte) et le Chrome de banc piloté par CDP ne décode pas ce flux (il
-redemande une IDR sans monter la vue, donc `mw_drop_test` — qui vit dans
-`StreamView` — ne s'arme pas) : même angle mort que l'effet visuel de la
-réparation NVENC, laissé à l'œil de Bruno sur son propre client.
+invalidation »). Coût mesuré nul (bench §8c, point 5).
+
+✅ **Réparation observée en vrai le 06/09** (l'angle mort du banc est levé : le
+Chrome piloté décode ce flux depuis le correctif des paramètres AMF, §9.10.3, et
+`mw_drop_test` s'arme donc). Flux HEVC AMF, un delta jeté toutes les 60 images,
+**12 pertes** : le client les nomme et continue de décoder — *zéro* « Requesting
+IDR », *zéro* erreur de décodeur, image nette de bout en bout. Sur l'hôte,
+**une perte sur deux est réparée par un delta** :
+
+```
+AMF healed frame 71 with a delta from long-term slot 2 = frame 68
+                                  (driver referenced slot 1 = frame 66)
+```
+
+et l'autre moitié dégrade en keyframe, avec sa raison :
+
+```
+AMF ignored the forced long-term reference (asked slot 3 = frame 126,
+    referenced slot 0 = never marked, slot 1 = frame 130) for a loss at 129
+```
+
+⚠️ **L'alternance a une cause, pas encore traitée** : le pilote **ne marque pas
+la keyframe** (« did not mark frame 0 … answered 4294967295 of 4 slots »). Or
+une keyframe vide la table (`clear()`), donc après chaque dégradation la table
+repart avec un trou, le choix du pilote tombe sur une image postérieure à la
+perte, et la réparation suivante dégrade à son tour — ce qui refait une
+keyframe, et ainsi de suite. À concevoir : marquer l'image **suivant** une
+keyframe hors du tour de rôle quand le marquage de celle-ci a été refusé, pour
+que la table se remplisse avant la première perte.
 
 ### 9.10.2 L'éviction du FrameSender nomme enfin l'image jetée (06/09/2026)
 

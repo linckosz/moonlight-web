@@ -104,9 +104,13 @@ private:
     bool m_LostPending = false;
     uint32_t m_LostFrom = 0;
     int m_Invalidations = 0;
-    /// Each driver refusal is logged once: the table already copes.
+    /// A refusal to mark is logged once: the table copes on its own, a loss
+    /// simply costs a keyframe until the driver obliges.
     bool m_MarkRefusedLogged = false;
-    bool m_ForceIgnoredLogged = false;
+    /// A reference the driver refused UNSAFELY — it predicted from a picture at
+    /// or after the loss — costs the next frame as a keyframe. Not logged once
+    /// but every time: this is the cost the whole path exists to avoid.
+    bool m_ForceKeyframeNext = false;
     int m_HealsLogged = 0;
 };
 

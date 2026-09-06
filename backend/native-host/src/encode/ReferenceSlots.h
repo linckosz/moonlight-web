@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 
 namespace mw::native::encode {
 
@@ -91,6 +92,46 @@ public:
         if (slot < 0 || slot >= m_Count) return;
         m_Frame[static_cast<size_t>(slot)] = frameNumber;
         m_Held[static_cast<size_t>(slot)] = true;
+        m_Ever[static_cast<size_t>(slot)] = true;
+    }
+
+    /// True when every slot named by @p bitfield carries a frame numbered below
+    /// @p lostFrom.
+    ///
+    /// A driver may reference a slot other than the one asked for and still be
+    /// right: what makes a reference clean is the frame it holds, not its
+    /// index. An empty bitfield, an unknown slot, or a slot never marked all
+    /// count as unclean — there is nothing to vouch for.
+    bool allBefore(uint64_t bitfield, uint32_t lostFrom) const
+    {
+        if (bitfield == 0) return false;
+        for (int s = 0; s < kMaxSlots; ++s) {
+            if ((bitfield & bitFor(s)) == 0) continue;
+            if (s >= m_Count) return false;
+            const auto i = static_cast<size_t>(s);
+            if (!m_Ever[i] || m_Frame[i] >= lostFrom) return false;
+        }
+        // Bits above kMaxSlots name slots this table never handed out.
+        return (bitfield >> kMaxSlots) == 0;
+    }
+
+    /// The frames behind @p bitfield, for a log line: "slot 0 = frame 128".
+    /// Says so when a named slot was never marked; drops nothing silently.
+    std::string describe(uint64_t bitfield) const
+    {
+        std::string out;
+        for (int s = 0; s < kMaxSlots; ++s) {
+            if ((bitfield & bitFor(s)) == 0) continue;
+            if (!out.empty()) out += ", ";
+            out += "slot " + std::to_string(s) + " = ";
+            if (s >= m_Count)
+                out += "not a slot this encoder has";
+            else if (!m_Ever[static_cast<size_t>(s)])
+                out += "never marked";
+            else
+                out += "frame " + std::to_string(m_Frame[static_cast<size_t>(s)]);
+        }
+        return out.empty() ? "no long-term reference at all" : out;
     }
 
     /// The slot holding the newest frame numbered below @p lostFrom — the one
@@ -122,6 +163,7 @@ public:
     {
         m_Frame.fill(0);
         m_Held.fill(false);
+        m_Ever.fill(false);
     }
 
     int held() const
@@ -139,6 +181,10 @@ private:
     int m_Stride;
     std::array<uint32_t, kMaxSlots> m_Frame{};
     std::array<bool, kMaxSlots> m_Held{};
+    /// Marked at least once and not emptied since. A slot dropped by dropFrom()
+    /// keeps its frame number — it is exactly the frame that makes it unusable,
+    /// and naming it is how a driver's own choice gets judged.
+    std::array<bool, kMaxSlots> m_Ever{};
 };
 
 } // namespace mw::native::encode

@@ -464,7 +464,7 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     m_Ltr = ReferenceSlots(0);
     m_LostPending = false;
     m_Invalidations = 0;
-    m_MarkRefusedLogged = m_ForceIgnoredLogged = false;
+    m_MarkRefusedLogged = m_ForceKeyframeNext = false;
     m_HealsLogged = 0;
     const int ltrAsked =
         tuning.dpbFrames > 0 ? (tuning.dpbFrames > 1 ? tuning.dpbFrames : 0) : kLtrSlots;
@@ -552,6 +552,13 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
     if (m_Output) {
         error = "the previous frame was not released";
         return false;
+    }
+    // A repair the driver refused last time: the picture that went out was
+    // predicting from a frame the receiver never had, and a keyframe is the
+    // only thing that ends that.
+    if (m_ForceKeyframeNext) {
+        m_ForceKeyframeNext = false;
+        forceKeyframe = true;
     }
 
     // The zero-copy step: AMF wraps the very texture the conversion pass wrote,
@@ -655,41 +662,70 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
     // lost frame, which is the corruption NVENC's path also tolerates until
     // the intra-refresh wave passes.
     if (m_Ltr.enabled()) {
-        if (out.keyframe) m_Ltr.clear();
-        if (markSlot >= 0) {
-            amf_int64 markedIdx = -1;
-            if (data->GetProperty(props.outputMarkedLtrIndex, &markedIdx) == AMF_OK &&
-                markedIdx >= 0) {
-                m_Ltr.marked(static_cast<int>(markedIdx), frameNumber);
-            } else if (!m_MarkRefusedLogged) {
-                m_MarkRefusedLogged = true;
-                log::warning("[native] AMF did not mark frame " + std::to_string(frameNumber) +
-                             " as a long-term reference (asked slot " + std::to_string(markSlot) +
-                             ") — a lost frame will cost a keyframe until it does");
-            }
-        }
+        // Judged before this picture is recorded, so the table still holds the
+        // references the driver had to choose from.
         if (forcedBits != 0) {
             amf_int64 used = 0;
             const bool known =
                 data->GetProperty(props.outputReferencedLtrBitfield, &used) == AMF_OK;
-            const bool ignored = known && (used & forcedBits) == 0;
-            if (ignored) {
-                if (!m_ForceIgnoredLogged) {
-                    m_ForceIgnoredLogged = true;
-                    log::warning("[native] AMF ignored the forced long-term reference (asked "
-                                 "slot bitfield " +
-                                 std::to_string(forcedBits) + ", used " + std::to_string(used) +
-                                 ") — the delta predicts from a frame the receiver lost");
-                }
-            } else {
+            const auto usedBits = static_cast<uint64_t>(used);
+            // A driver that picks a slot of its own is not necessarily wrong:
+            // what makes a reference clean is the FRAME it holds, not its
+            // index. Asked for the newest picture before the loss, given an
+            // older one, the delta is merely larger. Given a picture from the
+            // loss onwards — or no long-term reference at all — it predicts
+            // from something the receiver never had, and only a keyframe ends
+            // that.
+            const bool obeyed = !known || (usedBits & static_cast<uint64_t>(forcedBits)) != 0;
+            const bool clean = obeyed || m_Ltr.allBefore(usedBits, m_LostFrom);
+            if (clean) {
                 if (m_HealsLogged < 5 || m_HealsLogged % 50 == 0)
                     log::info("[native] AMF healed frame " + std::to_string(frameNumber) +
-                              " with a delta from long-term slot bitfield " +
-                              std::to_string(forcedBits) +
-                              (known ? " (driver confirms " + std::to_string(used) + ")"
+                              " with a delta from long-term " +
+                              m_Ltr.describe(static_cast<uint64_t>(forcedBits)) +
+                              (known ? " (driver referenced " + m_Ltr.describe(usedBits) + ")"
                                      : " (driver reports nothing)") +
                               ", " + std::to_string(m_Invalidations) + " invalidation(s) so far");
                 m_HealsLogged++;
+            } else {
+                // The picture already went out predicting from a lost frame;
+                // nothing takes it back. The next one is a keyframe, which is
+                // what this whole path exists to avoid — so it is worth saying
+                // every time, not once: it is a cost, not a quirk.
+                m_ForceKeyframeNext = true;
+                log::warning("[native] AMF ignored the forced long-term reference (asked " +
+                             m_Ltr.describe(static_cast<uint64_t>(forcedBits)) + ", referenced " +
+                             m_Ltr.describe(usedBits) + ") for a loss at frame " +
+                             std::to_string(m_LostFrom) +
+                             " — that delta predicts from a frame the receiver lost, so the next "
+                             "picture is a keyframe");
+            }
+        }
+        if (out.keyframe) m_Ltr.clear();
+        if (markSlot >= 0) {
+            amf_int64 markedIdx = -1;
+            const bool answered =
+                data->GetProperty(props.outputMarkedLtrIndex, &markedIdx) == AMF_OK;
+            // "default = -1" is documented, but the driver stores it in 32 bits
+            // and it arrives as 4294967295 — a plain `>= 0` reads "not marked"
+            // as slot four billion, calls marked() with a cast that lands back
+            // on -1, and the table quietly keeps a hole where a reference
+            // should be. That hole is invisible until a loss, when the repair
+            // names a slot the driver never filled. Anything outside the slots
+            // granted is a refusal, whatever its bit pattern.
+            const int idx = (answered && markedIdx >= 0 && markedIdx < m_Ltr.count())
+                                ? static_cast<int>(markedIdx)
+                                : -1;
+            if (idx >= 0) {
+                m_Ltr.marked(idx, frameNumber);
+            } else if (!m_MarkRefusedLogged) {
+                m_MarkRefusedLogged = true;
+                log::warning("[native] AMF did not mark frame " + std::to_string(frameNumber) +
+                             " as a long-term reference (asked slot " + std::to_string(markSlot) +
+                             ", answered " +
+                             (answered ? std::to_string(markedIdx) : std::string("nothing")) +
+                             " of " + std::to_string(m_Ltr.count()) +
+                             " slots) — a lost frame costs a keyframe until it does");
             }
         }
     }

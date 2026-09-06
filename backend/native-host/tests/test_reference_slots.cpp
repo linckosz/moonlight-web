@@ -134,4 +134,41 @@ void run_reference_slots_tests()
         CHECK(slots.cleanSlotBefore(12) == -1); // 10 is gone, 14 is too new
         CHECK(slots.cleanSlotBefore(15) == 2);
     }
+
+    SECTION("ReferenceSlots — a reference is judged on its frame, not its index");
+    {
+        ReferenceSlots slots(4, 2);
+        for (uint32_t n = 0; n <= 20; ++n) {
+            const int s = slots.slotFor(n);
+            if (s >= 0) slots.marked(s, n);
+        }
+        // Held: slot 3 = 14, slot 0 = 16, slot 1 = 18, slot 2 = 20.
+        CHECK(slots.describe(ReferenceSlots::bitFor(0)) == "slot 0 = frame 16");
+        // A loss at 19: 14, 16 and 18 predate it, 20 does not. A driver that
+        // picks any of the first three is right whatever we asked for.
+        CHECK(slots.allBefore(ReferenceSlots::bitFor(3), 19));
+        CHECK(slots.allBefore(ReferenceSlots::bitFor(0) | ReferenceSlots::bitFor(1), 19));
+        CHECK(!slots.allBefore(ReferenceSlots::bitFor(2), 19));
+        // Mixed: one clean slot does not redeem a picture that also predicts
+        // from a frame the receiver lost.
+        CHECK(!slots.allBefore(ReferenceSlots::bitFor(1) | ReferenceSlots::bitFor(2), 19));
+        // Nothing to vouch for: no reference at all, or a slot this encoder
+        // never handed out.
+        CHECK(!slots.allBefore(0, 19));
+        CHECK(!slots.allBefore(ReferenceSlots::bitFor(5), 19));
+        CHECK(!slots.allBefore(uint64_t{1} << 40, 19));
+        CHECK(slots.describe(ReferenceSlots::bitFor(5)) == "slot 5 = not a slot this encoder has");
+        CHECK(slots.describe(0) == "no long-term reference at all");
+        // dropFrom() forgets a slot but keeps its frame — that number is
+        // exactly what disqualifies it, and the log has to be able to say it.
+        slots.dropFrom(19);
+        CHECK(slots.describe(ReferenceSlots::bitFor(2)) == "slot 2 = frame 20");
+        CHECK(!slots.allBefore(ReferenceSlots::bitFor(2), 19));
+        CHECK(slots.allBefore(ReferenceSlots::bitFor(1), 19));
+        // A keyframe empties the table: nothing can be vouched for again until
+        // a slot is marked.
+        slots.clear();
+        CHECK(!slots.allBefore(ReferenceSlots::bitFor(1), 19));
+        CHECK(slots.describe(ReferenceSlots::bitFor(1)) == "slot 1 = never marked");
+    }
 }
