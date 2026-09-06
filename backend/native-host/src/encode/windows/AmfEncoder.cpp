@@ -232,6 +232,16 @@ constexpr amf_int64 kEffectivelyInfiniteGop = 1 << 20;
 /// that answer is what the table is sized to.
 constexpr int kLtrSlots = 4;
 
+/// The driver keeps long-term index 0 for itself: asked to mark a picture
+/// there it answers "not marked" (-1, in 32 bits) — keyframe or delta, every
+/// eighth frame on the RX 7600 — while it references that index on its own
+/// when a picture is forced elsewhere. So the table never names it: slot s of
+/// the table is index s + 1 to the driver, one more index is asked for at
+/// init to keep kLtrSlots usable, and a bitfield the driver reports is shifted
+/// back before being judged. Bit 0 in that report is the driver's private
+/// reference, which this class cannot vouch for.
+constexpr int kLtrReservedIndices = 1;
+
 /// How long QueryOutput may block waiting for a frame, in milliseconds.
 ///
 /// A deadline, not a schedule: encoding takes a few milliseconds, and reaching
@@ -464,10 +474,13 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     m_Ltr = ReferenceSlots(0);
     m_LostPending = false;
     m_Invalidations = 0;
-    m_MarkRefusedLogged = m_ForceKeyframeNext = false;
+    m_MarkRefusals = 0;
+    m_ForceKeyframeNext = false;
     m_HealsLogged = 0;
-    const int ltrAsked =
+    const int ltrWanted =
         tuning.dpbFrames > 0 ? (tuning.dpbFrames > 1 ? tuning.dpbFrames : 0) : kLtrSlots;
+    // One more than the table will use: the driver's own index comes off the top.
+    const int ltrAsked = ltrWanted > 0 ? ltrWanted + kLtrReservedIndices : 0;
     if (ltrAsked > 0) {
         m_Encoder->SetProperty(props.maxLtrFrames, amf_int64(ltrAsked));
         m_Encoder->SetProperty(props.ltrMode, props.ltrModeResetUnused);
@@ -483,9 +496,9 @@ bool AmfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
 
     amf_int64 ltrGranted = 0;
     if (ltrAsked > 0 && m_Encoder->GetProperty(props.maxLtrFrames, &ltrGranted) == AMF_OK &&
-        ltrGranted > 0) {
-        const int slots =
-            static_cast<int>(std::min<amf_int64>(ltrGranted, ReferenceSlots::kMaxSlots));
+        ltrGranted > kLtrReservedIndices) {
+        const int slots = static_cast<int>(
+            std::min<amf_int64>(ltrGranted - kLtrReservedIndices, ReferenceSlots::kMaxSlots));
         m_Ltr = ReferenceSlots(slots, ReferenceSlots::strideFor(m_Fps, slots));
     }
 
@@ -583,7 +596,8 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
             const int slot = m_Ltr.cleanSlotBefore(m_LostFrom);
             if (slot >= 0) {
                 forcedBits = static_cast<amf_int64>(ReferenceSlots::bitFor(slot));
-                input->SetProperty(props.forceLtrBitfield, forcedBits);
+                // Table bits → driver indices (kLtrReservedIndices).
+                input->SetProperty(props.forceLtrBitfield, forcedBits << kLtrReservedIndices);
                 m_Ltr.dropFrom(m_LostFrom);
             } else {
                 // Cannot happen — invalidateReference() checked the same table
@@ -607,7 +621,8 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
     // Mark this picture into its slot when it is its turn — always for a
     // keyframe, which has just emptied every slot.
     const int markSlot = m_Ltr.slotFor(frameNumber, forceKeyframe);
-    if (markSlot >= 0) input->SetProperty(props.markLtrIndex, amf_int64(markSlot));
+    if (markSlot >= 0)
+        input->SetProperty(props.markLtrIndex, amf_int64(markSlot + kLtrReservedIndices));
 
     result = m_Encoder->SubmitInput(input);
     if (result != AMF_OK) {
@@ -668,7 +683,11 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
             amf_int64 used = 0;
             const bool known =
                 data->GetProperty(props.outputReferencedLtrBitfield, &used) == AMF_OK;
-            const auto usedBits = static_cast<uint64_t>(used);
+            // Driver indices → table bits. The driver's own index 0 falls off
+            // the shift: if it referenced that alone, usedBits is empty, and an
+            // empty bitfield is "nothing to vouch for" below — a keyframe
+            // rather than a guess about what the driver keeps there.
+            const auto usedBits = static_cast<uint64_t>(used) >> kLtrReservedIndices;
             // A driver that picks a slot of its own is not necessarily wrong:
             // what makes a reference clean is the FRAME it holds, not its
             // index. Asked for the newest picture before the loss, given an
@@ -713,14 +732,15 @@ bool AmfEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
             // should be. That hole is invisible until a loss, when the repair
             // names a slot the driver never filled. Anything outside the slots
             // granted is a refusal, whatever its bit pattern.
-            const int idx = (answered && markedIdx >= 0 && markedIdx < m_Ltr.count())
-                                ? static_cast<int>(markedIdx)
+            const amf_int64 tableIdx = markedIdx - kLtrReservedIndices; // driver → table
+            const int idx = (answered && tableIdx >= 0 && tableIdx < m_Ltr.count())
+                                ? static_cast<int>(tableIdx)
                                 : -1;
             if (idx >= 0) {
                 m_Ltr.marked(idx, frameNumber);
-            } else if (!m_MarkRefusedLogged) {
-                m_MarkRefusedLogged = true;
+            } else if (m_MarkRefusals++ < 5) {
                 log::warning("[native] AMF did not mark frame " + std::to_string(frameNumber) +
+                             (out.keyframe ? " (a keyframe)" : "") +
                              " as a long-term reference (asked slot " + std::to_string(markSlot) +
                              ", answered " +
                              (answered ? std::to_string(markedIdx) : std::string("nothing")) +

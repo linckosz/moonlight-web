@@ -794,14 +794,21 @@ AMF ignored the forced long-term reference (asked slot 3 = frame 126,
     referenced slot 0 = never marked, slot 1 = frame 130) for a loss at 129
 ```
 
-⚠️ **L'alternance a une cause, pas encore traitée** : le pilote **ne marque pas
-la keyframe** (« did not mark frame 0 … answered 4294967295 of 4 slots »). Or
-une keyframe vide la table (`clear()`), donc après chaque dégradation la table
-repart avec un trou, le choix du pilote tombe sur une image postérieure à la
-perte, et la réparation suivante dégrade à son tour — ce qui refait une
-keyframe, et ainsi de suite. À concevoir : marquer l'image **suivant** une
-keyframe hors du tour de rôle quand le marquage de celle-ci a été refusé, pour
-que la table se remplisse avant la première perte.
+✅ **L'alternance avait une cause, traitée le 06/09 : le pilote se réserve
+l'index long terme 0.** Première hypothèse — « il ne marque pas la keyframe » —
+**fausse** : en laissant parler l'avertissement cinq fois, les refus tombent sur
+les frames 0, 8, 16, 24, 32 — **toutes celles qui demandaient l'index 0**,
+keyframes comme deltas. Le pilote répond −1 à toute demande de marquage en 0, et
+référence cet index de lui-même quand une image est forcée ailleurs (c'est le
+« slot 0 = never marked » de chaque dégradation). La table ne lui parle donc
+plus qu'en indices **1..N** (`kLtrReservedIndices`) : slot *s* de la table =
+index *s* + 1 pour le pilote, un index de plus demandé à l'init pour garder
+quatre places utiles (5 accordés → 4 slots), bitfield rapporté décalé d'un cran
+avant jugement — le bit 0 du pilote tombe, et s'il a référencé cela seul, le
+bitfield vide vaut « rien à garantir », donc keyframe plutôt qu'un pari sur ce
+qu'il garde là. Rejoué : **7 pertes, 7 réparations par delta**, aucun refus de
+marquage, le slot 0 de la table (index 1) porte enfin des images (« driver
+referenced slot 0 = frame 128 »), zéro IDR, zéro erreur de décodeur.
 
 ### 9.10.2 L'éviction du FrameSender nomme enfin l'image jetée (06/09/2026)
 

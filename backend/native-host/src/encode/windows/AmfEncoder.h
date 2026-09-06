@@ -106,7 +106,7 @@ private:
     int m_Invalidations = 0;
     /// A refusal to mark is logged once: the table copes on its own, a loss
     /// simply costs a keyframe until the driver obliges.
-    bool m_MarkRefusedLogged = false;
+    int m_MarkRefusals = 0;
     /// A reference the driver refused UNSAFELY — it predicted from a picture at
     /// or after the loss — costs the next frame as a keyframe. Not logged once
     /// but every time: this is the cost the whole path exists to avoid.
