@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../IInputSink.h"
+#include "X11Pointer.h"
 
 #include <mutex>
 #include <set>
@@ -81,6 +82,10 @@ private:
     void injectKey(const InputEvent& event, bool down);
     void injectButton(const InputEvent& event, bool down);
 
+    /// Bring the pointer back onto the captured display before a delta is
+    /// applied from it — X11 only, and a no-op everywhere else. See X11Pointer.
+    void bringPointerOntoDisplay();
+
     int m_Keyboard = -1; ///< keys + relative pointer + wheel
     int m_Absolute = -1; ///< absolute pointer only
 
@@ -97,9 +102,23 @@ private:
 
     /// The captured display's rectangle, for absolute positions. The absolute
     /// device is created with a fixed 0..32767 range — the convention a tablet
-    /// uses — so this only scales the incoming reference surface onto it.
+    /// uses — so the size only scales the incoming reference surface onto it.
+    ///
+    /// The ORIGIN is used by nothing else: an absolute position is expressed in
+    /// the display's own space and needs no offset. It is kept for the warp,
+    /// which speaks the desktop's coordinates rather than the display's.
+    int m_RectLeft = 0;
+    int m_RectTop = 0;
     int m_RectWidth = 0;
     int m_RectHeight = 0;
+
+    /// The X pointer, when there is an X server. Absent on Wayland and on a
+    /// headless host, where relative motion keeps behaving as it did.
+    X11Pointer m_X11;
+    /// Whether a warp has already been reported this session. The first one is
+    /// worth an info line; the rest are not, and a display rectangle that does
+    /// not match the X root would otherwise log on every single movement.
+    bool m_WarpLogged = false;
 };
 
 } // namespace mw::native::input

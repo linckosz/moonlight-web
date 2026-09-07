@@ -180,6 +180,11 @@ bool UinputInput::start(std::string& error)
         return false;
     }
 
+    // Best effort, and never a reason to fail: without it relative motion is
+    // exactly what it was before, which is right on the single-screen hosts
+    // that are the common case.
+    m_X11.open();
+
     log::info("[native] input: uinput keyboard and pointer created");
     return true;
 }
@@ -206,6 +211,9 @@ void UinputInput::stop()
         ::close(*fd);
         *fd = -1;
     }
+
+    m_X11.close();
+    m_WarpLogged = false;
 }
 
 void UinputInput::emit(int fd, uint16_t type, uint16_t code, int32_t value)
@@ -252,8 +260,43 @@ void UinputInput::injectButton(const InputEvent& event, bool down)
 void UinputInput::setDisplayRect(int left, int top, int right, int bottom)
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
+    m_RectLeft = left;
+    m_RectTop = top;
     m_RectWidth = right - left;
     m_RectHeight = bottom - top;
+}
+
+void UinputInput::bringPointerOntoDisplay()
+{
+    // The caller holds m_Mutex, which is also what serialises Xlib here.
+    if (!m_X11.isOpen() || m_RectWidth <= 0 || m_RectHeight <= 0) return;
+
+    int x = 0;
+    int y = 0;
+    if (!m_X11.position(x, y)) return;
+
+    // The rectangle comes from KMS and the position from X. They agree on any
+    // ordinary desktop, where the X root is laid out over the same CRTCs — and
+    // where they do not agree, the worst case is a pointer parked on an edge
+    // rather than a pointer lost off-screen.
+    int warpX = 0;
+    int warpY = 0;
+    if (!clampIntoRect(m_RectLeft, m_RectTop, m_RectLeft + m_RectWidth, m_RectTop + m_RectHeight, x,
+                       y, warpX, warpY))
+        return;
+
+    if (!m_X11.warp(warpX, warpY)) return;
+
+    const std::string where = "pointer was at " + std::to_string(x) + "," + std::to_string(y) +
+                              ", off the captured display — brought back to " +
+                              std::to_string(warpX) + "," + std::to_string(warpY);
+    // Once at info, then quietly: see m_WarpLogged.
+    if (!m_WarpLogged) {
+        m_WarpLogged = true;
+        log::info("[native] input: " + where);
+    } else {
+        log::debug("[native] input: " + where);
+    }
 }
 
 void UinputInput::inject(const InputEvent& event)
@@ -269,6 +312,14 @@ void UinputInput::inject(const InputEvent& event)
     case Type::MouseButtonUp: injectButton(event, false); break;
 
     case Type::MouseMoveRelative:
+        // A delta moves the pointer from wherever it IS, and on a multi-monitor
+        // host that may be a screen the viewer is not looking at — where they
+        // can swipe forever without the cursor ever coming into view. So it is
+        // brought home first, and the delta applied from there.
+        //
+        // Only when a delta arrives, never at session start: opening a stream
+        // should not touch the host's mouse until the viewer moves it.
+        if (event.deltaX != 0 || event.deltaY != 0) bringPointerOntoDisplay();
         if (event.deltaX != 0) emit(m_Keyboard, EV_REL, REL_X, event.deltaX);
         if (event.deltaY != 0) emit(m_Keyboard, EV_REL, REL_Y, event.deltaY);
         if (event.deltaX != 0 || event.deltaY != 0) emitSyn(m_Keyboard);

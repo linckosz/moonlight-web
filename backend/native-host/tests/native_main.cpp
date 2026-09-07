@@ -21,6 +21,7 @@ void run_capabilities_tests();
 void run_capture_tests();
 void run_win32_cursor_tests();
 void run_evdev_keymap_tests();
+void run_pointer_clamp_tests();
 void run_linux_pipeline_tests();
 void run_linux_session_tests();
 void run_mac_keymap_tests();
@@ -70,6 +71,7 @@ int main()
     run_capture_tests();
     run_win32_cursor_tests();
     run_evdev_keymap_tests();
+    run_pointer_clamp_tests();
     run_mac_keymap_tests();
     run_linux_pipeline_tests();
     run_linux_session_tests();

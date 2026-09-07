@@ -126,9 +126,18 @@ else()
         # the gamepad, and LinuxProbe::probeVirtualGamepad asks /dev/uinput
         # itself. On a build without the graphics backend they are compiled and
         # never constructed (the stub session refuses first).
+        #
+        # X11Pointer is unconditional for the same reason: libX11 is opened with
+        # dlopen at runtime, never linked, so no -dev package is needed to build
+        # it and a host with no X at all still runs — it simply finds nothing.
         target_sources(mw-native-host PRIVATE
             src/input/linux/UinputGamepad.cpp
-            src/input/linux/UinputInput.cpp)
+            src/input/linux/UinputInput.cpp
+            src/input/linux/X11Pointer.cpp)
+        # dlopen lives in libc since glibc 2.34 and our floor is 2.35, so this
+        # is empty on every platform we ship — kept because it is what makes the
+        # dependency explicit rather than lucky.
+        target_link_libraries(mw-native-host PRIVATE ${CMAKE_DL_LIBS})
 
         # The Linux graphics backend — KMS capture, EGL conversion, VA-API —
         # needs libdrm, libva, EGL, GLESv2 and GBM (all MIT, on the allow-list
@@ -280,6 +289,7 @@ if(MW_BUILD_TESTS)
         tests/test_capture.cpp
         tests/test_win32_cursor.cpp
         tests/test_evdev_keymap.cpp
+        tests/test_pointer_clamp.cpp
         tests/test_linux_pipeline.cpp
         tests/test_linux_session.cpp
         tests/test_mac_keymap.cpp
