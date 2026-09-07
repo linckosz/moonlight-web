@@ -104,6 +104,9 @@ public:
         /// else is kept out of windows that run as administrator — see
         /// SessionConfig::allowElevatedInput.
         bool viewerAdmin = true;
+        /// Silence the host's speakers while the session runs — the same
+        /// stream setting GameStream hosts receive as localAudioPlayMode.
+        bool muteHostAudio = true;
     };
 
     /// One encoded frame, borrowed: `data` is the encoder's own output buffer

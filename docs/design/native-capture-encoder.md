@@ -3072,3 +3072,89 @@ interpole entre les bornes du display en coordonnées globales.
 Limite assumée : seules les sorties de la carte capturée sont comptées. Un bureau
 étalé sur deux GPU compterait un bureau trop petit — et se tromperait alors du
 même pointeur mal placé qu'on vient de corriger, pas de pire.
+
+## 24. Couper le son de l'hôte sans couper la capture (07/09/2026)
+
+Depuis D4 (§13) l'hôte natif capture sa sortie par défaut en loopback WASAPI —
+et continue de l'entendre. Sunshine coupe les haut-parleurs quand le client le
+demande (`localAudioPlayMode=0`), et MoonlightWeb a ce réglage depuis toujours
+(`mute_host_audio`, coché par défaut) : il partait vers les hôtes GameStream et
+n'était **pas lu** par le natif. Le chapitre consistait à savoir *comment* le
+lire, parce que la réponse évidente est fausse.
+
+### 24.1 La mesure qui tranche
+
+Le loopback WASAPI prélève la **sortie du moteur audio**, avant l'endpoint. Tout
+ce que le moteur fait à cette sortie atteint donc la capture ; tout ce que le
+pilote fait après, non. Sonde écrite pour le mesurer (une tonalité 440 Hz jouée
+par un autre processus, RMS du loopback sur 2 s par état), sur la sortie par
+défaut de bench-desk — le HDMI du M27Q, pilote AMD :
+
+| État de l'endpoint | RMS loopback | Ce que ça dit |
+|---|---|---|
+| Rien | 0,1726 | référence |
+| `IAudioEndpointVolume::SetMute(TRUE)` | **0,1726** | le mute est fait **par le pilote**, après le prélèvement : haut-parleurs muets, capture intacte |
+| `SetMasterVolumeLevelScalar(0)` | 0,0175 | le volume est appliqué **par le moteur** : la capture s'éteint avec les haut-parleurs |
+| `Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE)` | — | `AUDCLNT_E_DEVICE_IN_USE` : impossible tant qu'un flux partagé (le jeu) existe |
+
+Ce qui distingue les deux premières lignes est déclaré par le pilote :
+`QueryHardwareSupport()` répond `ENDPOINT_HARDWARE_SUPPORT_MUTE` (0x2) sans le
+bit volume sur cet endpoint. Un endpoint qui coupe en logiciel aurait une
+première ligne à zéro — et l'on n'a **aucun** moyen de couper ses haut-parleurs
+sans couper la capture. Le mode exclusif, parfois proposé pour « prendre » la
+sortie, est écarté par construction : il refuse dès qu'une application partagée
+joue, c'est-à-dire exactement pendant un stream.
+
+### 24.2 Trois stratégies, dans l'ordre (`audio/windows/HostMute.h`)
+
+1. **Mute matériel** — la sortie par défaut annonce le mute matériel : `SetMute`
+   pour la session, remis à la fin. Aucune dépendance, un seul effet visible :
+   l'icône du haut-parleur.
+2. **Sortie virtuelle** — pas de mute matériel, mais un périphérique de lecture
+   qui n'a pas de haut-parleur existe (Steam Streaming Speakers, VB-Cable,
+   VoiceMeeter, Virtual Audio Cable, Virtual Desktop Audio, reconnus par leur
+   nom) : il devient la sortie par défaut (rôles Console et Multimédia ;
+   Communications n'est pas touché, un appel en cours n'a rien à faire sur un
+   périphérique que personne n'entend) par la même interface `IPolicyConfig`
+   non publiée que Sunshine et tous les commutateurs de sortie utilisent, et le
+   loopback s'ouvre **dessus** — d'où l'ordre : `engage()` avant `WasapiLoopback`.
+   La sortie d'avant est remise à la fin.
+3. **Rien** — l'hôte continue de s'entendre, et le journal dit pourquoi en une
+   phrase (« *mutes in software (the capture would go quiet too) and there is no
+   virtual output to route to* »).
+
+Deux règles de restitution : ce que l'utilisateur a changé pendant la session
+lui appartient (un mute levé à la main n'est pas remis ; une sortie changée à la
+main reste), et la destruction de l'objet relâche aussi — une session qui meurt
+par une exception ne laisse pas la pièce muette. Ce qui n'est pas couvert : un
+worker **tué** (crash, `taskkill`) laisse le mute ou la sortie en place, à
+remettre dans le panneau Son.
+
+`SessionConfig::muteHostAudio` porte le réglage (`Session.cpp` le prend dans
+`m_Config.muteHostAudio`, la même source que le GameStream), `SessionInfo::
+hostMuted` dit ce qui a été obtenu, la ligne « streaming … » du moteur porte
+`[host muted]`.
+
+### 24.3 Vérifié
+
+- `test_host_mute.cpp` : la stratégie prévue a toujours une phrase ; aller-retour
+  `engage()`/`release()` avec l'état de l'endpoint lu de l'extérieur avant, pendant
+  (muet) et après (identique à l'avant) ; idempotence ; destructeur. 2671 checks.
+- **Flux réel** Display 1 (AMF HEVC, RX 7600) depuis Chrome par le rendez-vous :
+  « speakers muted on "4 - M27Q (2- AMD High Definition Audio Device)" (hardware
+  mute — the capture keeps hearing the mix) », endpoint lu `muted=1` pendant le
+  stream, **loopback RMS 0,274 avec la tonalité** — la capture entend ce que la
+  pièce n'entend plus ; à l'arrêt, `muted=0`.
+
+### 24.4 Ce qui reste
+
+- **macOS et Linux** : rien. macOS n'a pas de périphérique de boucle du tout (le
+  tap ScreenCaptureKit prélève l'application, §20.8) — couper la sortie revient à
+  changer de périphérique de sortie par défaut, ce que Core Audio permet ;
+  PipeWire permettrait de déplacer les flux vers un sink nul (`mw_null` existe
+  déjà sur le banc). Deux petits chapitres, non ouverts.
+- La stratégie 2 n'a été vérifiée que par la sonde (Steam Streaming Speakers
+  existe sur bench-desk mais le HDMI passe en stratégie 1) : `SetDefaultEndpoint`
+  et la remise sont écrits, pas exercés en flux réel.
+- Un endpoint qui **dit** matériel et refuse `SetMute` retombe sur la stratégie
+  2 puis 3 — chemin écrit, jamais vu.

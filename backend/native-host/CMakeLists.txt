@@ -64,6 +64,7 @@ if(WIN32)
         src/encode/windows/MfEncoder.cpp
         src/encode/windows/SoftwareEncoder.cpp
         src/audio/windows/WasapiLoopback.cpp
+        src/audio/windows/HostMute.cpp
     )
 
     # DXGI enumerates the adapters and their outputs (the display→GPU
@@ -313,6 +314,7 @@ if(MW_BUILD_TESTS)
         tests/test_capabilities.cpp
         tests/test_capture.cpp
         tests/test_win32_cursor.cpp
+        tests/test_host_mute.cpp
         tests/test_evdev_keymap.cpp
         tests/test_pointer_clamp.cpp
         tests/test_absolute_map.cpp

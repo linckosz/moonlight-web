@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "../../audio/windows/HostMute.h"
 #include "../../audio/windows/WasapiLoopback.h"
 #include "../../capture/windows/DxgiDuplication.h"
 #include "../../capture/windows/WgcCapture.h"
@@ -340,6 +341,16 @@ public:
         // than refusing it. A machine with no playback device at all still
         // streams its screen.
         if (m_Callbacks.onAudio) {
+            // Before the loopback opens: the mute may move the default output
+            // to a device without speakers, and the capture must open on THAT
+            // one. Best effort, and said in the log either way — a machine
+            // whose output mutes in software keeps playing (see HostMute.h).
+            if (m_Config.muteHostAudio) {
+                std::string how;
+                const auto strategy = m_HostMute.engage(how);
+                m_Info.hostMuted = strategy != audio::HostMute::Strategy::None;
+                log::info(std::string("[native] audio: ") + how);
+            }
             auto audio = std::make_unique<audio::WasapiLoopback>(m_Callbacks.onAudio);
             std::string audioError;
             if (audio->start(audioError)) {
@@ -379,6 +390,9 @@ public:
         // Joins the audio thread; its last packet has been delivered when this
         // returns, so the consumer can be torn down after us.
         m_Audio.reset();
+        // After the loopback is closed: the speakers come back, or the default
+        // output goes back to where it was.
+        m_HostMute.release();
 
         if (!wasRunning && !m_Encoder && !m_Capture) return;
 
@@ -1889,6 +1903,7 @@ private:
     /// Optional too: the host's playback, captured and encoded on its own
     /// thread. Null when the consumer asked for none or no device could open.
     std::unique_ptr<audio::WasapiLoopback> m_Audio;
+    audio::HostMute m_HostMute;
 
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};

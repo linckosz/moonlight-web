@@ -588,6 +588,9 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         nativeParams.clientVsync = m_ClientVsync;
         // Who is on the other end, for the administrator-window gate.
         nativeParams.viewerAdmin = m_ViewerAdmin;
+        // The "mute host audio" stream setting, honoured here as the GameStream
+        // path honours it through localAudioPlayMode.
+        nativeParams.muteHostAudio = m_Config.muteHostAudio;
 
         startEngine = [native, nativeParams]() { native->startCapture(nativeParams); };
     } else {

@@ -155,6 +155,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.yuv444 = params.yuv444;
     config.intraRefresh = params.intraRefresh;
     config.allowElevatedInput = params.viewerAdmin;
+    config.muteHostAudio = params.muteHostAudio;
     // The client's screen: what /start carried, unless a `clientrefresh`
     // message already said otherwise (a session that starts after the
     // client's window moved).
@@ -585,6 +586,7 @@ QString NativeMediaEngine::describeSession() const
     if (info.hdr) text += QStringLiteral(" HDR");
     if (info.intraRefresh) text += QStringLiteral(" intra-refresh");
     if (info.crossGpuCopy) text += QStringLiteral(" [cross-GPU copy]");
+    if (info.hostMuted) text += QStringLiteral(" [host muted]");
     return text;
 }
 

@@ -109,6 +109,14 @@ struct SessionConfig
     /// own regardless (see InputGate); this flag only ever narrows further.
     bool allowElevatedInput = true;
 
+    /// Silence the host's own speakers for the length of the session, the way
+    /// GameStream's `localAudioPlayMode=0` does: the viewer hears the game, the
+    /// room does not. Best effort — whether the machine has a way to mute its
+    /// output without muting the capture is the platform's to find out
+    /// (Windows: audio/windows/HostMute.h), and SessionInfo::hostMuted says
+    /// what happened. False leaves the speakers alone.
+    bool muteHostAudio = false;
+
     // ── Bench-only, below this line ─────────────────────────────────────────
     //
     // Neither field is ever set by a session a browser started. They exist so
@@ -185,6 +193,12 @@ struct SessionInfo
     /// could not open a playback device — the stream is then silent, and the
     /// log says why.
     bool audio = false;
+
+    /// True when the host's speakers are silenced for this session
+    /// (SessionConfig::muteHostAudio honoured). False when it was not asked,
+    /// or when this machine has no way to do it without silencing the capture
+    /// too — the log names the reason.
+    bool hostMuted = false;
 };
 
 } // namespace mw::native

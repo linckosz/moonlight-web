@@ -20,6 +20,7 @@ void run_selector_tests();
 void run_capabilities_tests();
 void run_capture_tests();
 void run_win32_cursor_tests();
+void run_host_mute_tests();
 void run_evdev_keymap_tests();
 void run_pointer_clamp_tests();
 void run_absolute_map_tests();
@@ -77,6 +78,7 @@ int main()
     run_cursor_blend_tests();
     run_capture_tests();
     run_win32_cursor_tests();
+    run_host_mute_tests();
     run_evdev_keymap_tests();
     run_pointer_clamp_tests();
     run_absolute_map_tests();
