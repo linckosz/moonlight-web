@@ -2745,6 +2745,15 @@ Desktop Duplication, elle, la capturerait. La prochaine étape utile est donc de
 regarder l'écran du banc autrement (Desktop Duplication, ou l'œil), pas de
 recommencer la même mesure.
 
+⚠️ **Complément du même jour, et il déplace la question.** La sonde a été
+instrumentée : elle lit bien de vrais pixels, au bon endroit
+(Canvas2DRenderer._readProbePixels échantillonne y = 2,5 % de la hauteur et
+x = 46,5 / 50,5 / 54,5 % — exactement le rectangle du drapeau), 244 lectures sur
+les 1,5 s qui suivent un clic. Elles rendent toutes **R = G = B autour de 140**,
+alors que le haut de l'écran de l'hôte est à ce moment-là une page blanche. Ce
+que la sonde échantillonne ne correspond donc pas au haut de l'image de l'hôte,
+quel que soit le drapeau. C'est une piste **client**, indépendante d'Intel.
+
 ### 21.10 HDR sur Intel : FP16 scRGB → P010 → HEVC Main10 (07/09/2026)
 
 Le §21 disait « HDR refusé par construction ». Corrigé le même jour : la chaîne
