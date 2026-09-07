@@ -460,12 +460,18 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     // capture thread that feeds it, and holds at most ONE delta: a delta that
     // has not left when the next frame is ready is replaced (latency first;
     // the hole is repaired by intra-refresh or a keyframe). GameStream engines
-    // keep the historical eight-job queue and ordinary priority.
+    // hold two: the queue only ever grows when dc->send() is blocked on a full
+    // SCTP buffer, i.e. when the link is saturated, and eight deltas waiting
+    // there were 133 ms of picture the viewer would see late at 60 fps — the
+    // historical depth, kept until the dedicated pass of September 2026
+    // (docs/optimisations-existant.md). Two absorb a frame that lands while
+    // the previous one is on the wire; a third evicts the oldest and asks for
+    // a keyframe, as the SCTP watermark below does. Ordinary priority.
     {
         const bool nativeEngine = qobject_cast<NativeMediaEngine*>(engine) != nullptr;
         FrameSender::Options senderOptions;
         senderOptions.multimediaPriority = nativeEngine;
-        senderOptions.maxQueuedDeltas = nativeEngine ? 1 : FrameSender::kDefaultMaxQueued;
+        senderOptions.maxQueuedDeltas = nativeEngine ? 1 : kGameStreamQueuedDeltas;
         m_Sender = std::make_unique<FrameSender>(senderOptions);
     }
 
@@ -477,19 +483,22 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
     // it is: it installs itself as the engine's direct sink, reads the
     // encoder's buffer through a borrowed QByteArray and cuts the wire chunks
     // right there (sendFragmented). The state it touches is serialized by
-    // m_VideoMutex (MediaTrackRelay's P2-B model). A GameStream engine keeps
-    // the queued signal, unchanged: its frames arrive from moonlight-common-c's
-    // thread and the relay thread has always been where they were handled.
+    // m_VideoMutex (MediaTrackRelay's P2-B model). A GameStream engine hands
+    // over a QByteArray of its own through the signal, and the sender thread
+    // cuts it — but the signal is connected DIRECT too (September 2026, the
+    // dedicated pass on the other engines): the frame is handled on
+    // moonlight-common-c's decode thread, where it was queued to the relay
+    // thread before, one wake-up per frame behind the input parser and the
+    // stats. Same lock, same code after it; the QByteArray is shared, not
+    // copied, by the sender's job.
     auto* native = qobject_cast<NativeMediaEngine*>(engine);
     m_DirectVideoSend = native != nullptr;
-    // Same split for input: the native engine injects on whatever thread calls
-    // it, so the message is handled on the libdatachannel thread that received
-    // it instead of queueing behind the relay thread's event loop.
-    m_DirectInput = native != nullptr;
+    // Input is handled on the libdatachannel thread that received it for every
+    // engine (see m_DirectInput).
     qInfo() << "[DataChannelRelay] Video send mode:"
-            << (m_DirectVideoSend ? "direct (capture thread, zero-copy)" : "queued (relay thread)")
-            << "— input:"
-            << (m_DirectInput ? "direct (libdatachannel thread)" : "queued (relay thread)");
+            << (m_DirectVideoSend ? "direct (capture thread, zero-copy)"
+                                  : "direct (engine thread, sender cuts)")
+            << "— input: direct (libdatachannel thread)";
     if (native) {
         native->setDirectFrameSink([this](const NativeMediaEngine::FrameView& view) {
             handleVideoFrame(QByteArray::fromRawData(reinterpret_cast<const char*>(view.data),
@@ -498,7 +507,8 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
                              view.presentationTimeUs);
         });
     } else {
-        connect(m_Shim, &IMediaEngine::videoFrameReady, this, &DataChannelRelay::onVideoFrame);
+        connect(m_Shim, &IMediaEngine::videoFrameReady, this, &DataChannelRelay::onVideoFrame,
+                Qt::DirectConnection);
     }
     connect(m_Shim, &IMediaEngine::audioSampleReady, this, &DataChannelRelay::onAudioSample);
     connect(m_Shim, &IMediaEngine::connectionTerminated, this,
@@ -853,15 +863,16 @@ void DataChannelRelay::createDataChannels()
         m_InputDc->onMessage([this](const std::variant<rtc::binary, rtc::string>& msg) {
             if (!std::holds_alternative<rtc::string>(msg)) return;
             if (m_DirectInput) {
-                // Native engine: parse and inject here, on the receiving
-                // thread. A message that finds the relay stopping leaves; one
+                // Parse and inject here, on the receiving thread, whatever the
+                // engine. A message that finds the relay stopping leaves; one
                 // that got in before stop() took the lock finishes first.
                 std::lock_guard<std::mutex> lk(m_InputMutex);
                 if (m_Stopping.load()) return;
                 onInputMessage(std::get<rtc::string>(msg));
                 return;
             }
-            // GameStream engines: marshal to the relay thread, as always.
+            // The queued form, kept for a flag nothing clears today: the relay
+            // thread handles the message on its next turn.
             std::string text = std::get<rtc::string>(msg);
             QMetaObject::invokeMethod(
                 this, [this, text]() { onInputMessage(text); }, Qt::QueuedConnection);
@@ -889,8 +900,9 @@ bool DataChannelRelay::ridingOutLoss() const
 }
 
 // --- Video/Audio forwarding (from media engine signals) ---
-// Relay thread for a GameStream engine, the engine's capture thread for the
-// native one (m_DirectVideoSend) — see the class comment.
+// The engine's own thread in both cases: moonlight-common-c's decode thread
+// for a GameStream engine (direct signal connection), the capture thread for
+// the native one (m_DirectVideoSend, direct sink) — see the class comment.
 
 void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber,
                                     qint64 presentationTimeUs)

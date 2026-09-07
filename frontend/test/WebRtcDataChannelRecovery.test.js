@@ -91,14 +91,32 @@ describe('WebRtcDataChannel recovery — a host that heals by invalidation', () 
         expect(t.stats.framesDropped).toBe(1);
     });
 
-    it('leaves an incomplete older frame to the 500 ms clock on other hosts', () => {
+    it('declares an overtaken frame lost at once on other hosts too, and asks for one keyframe', () => {
+        // Was left to the 500 ms clock until September 2026: on an ordered
+        // channel the older frame can never complete, so waiting only delayed
+        // the keyframe request by half a second.
         const t = transport();
         const lost = [];
         t.onFrameLoss = (id) => lost.push(id);
-        t._reassembly.set(5, { ...completeEntry(), total: 3, received: 1 });
+        t._reassembly.set(4, { ...completeEntry(), total: 3, received: 1 });
+        t._reassembly.set(5, { ...completeEntry(), total: 3, received: 2 });
+        t._assembleFrame(6, completeEntry());
+        expect(lost).toEqual([4, 5]);
+        expect(t._reassembly.has(4)).toBe(false);
+        expect(t._reassembly.has(5)).toBe(false);
+        expect(t.stats.framesDropped).toBe(2);
+        // Two frames, one request: the batch is named in one go.
+        expect(idrRequests(t)).toBe(1);
+    });
+
+    it('never mistakes a completed older frame for a lost one', () => {
+        const t = transport();
+        const lost = [];
+        t.onFrameLoss = (id) => lost.push(id);
+        t._reassembly.set(5, { ...completeEntry(), completed: true });
         t._assembleFrame(6, completeEntry());
         expect(lost).toEqual([]);
-        expect(t._reassembly.has(5)).toBe(true);
+        expect(idrRequests(t)).toBe(0);
     });
 
     it('forgets a silence the page itself caused', () => {

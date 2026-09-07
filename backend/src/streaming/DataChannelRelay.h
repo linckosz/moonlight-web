@@ -200,6 +200,9 @@ private:
     // backpressure drop on following deltas, re-arming m_AwaitingIdr and
     // looping IDR requests at the 300ms throttle (3-4 fps).
     static constexpr size_t kHighWatermark = 256 * 1024;
+    // Deltas a GameStream engine may leave waiting on the sender thread before
+    // the oldest is evicted (the native engine keeps one). See the constructor.
+    static constexpr size_t kGameStreamQueuedDeltas = 2;
 
     // presentationTimeUs: the frame's own capture time (from the decode unit),
     // carried through the queued signal. -1 = unknown → fall back to the shim's
@@ -232,14 +235,20 @@ private:
     // True when this relay is the native engine's direct frame sink:
     // handleVideoFrame then runs on the engine's capture thread over a borrowed
     // buffer, and sendFragmented builds the chunks itself. False for every
-    // GameStream engine, whose frames keep arriving through the relay thread's
-    // event loop exactly as before.
+    // GameStream engine, whose frames are its own QByteArray and are cut by the
+    // sender thread — but since September 2026 they too reach handleVideoFrame
+    // on the thread that produced them (a direct signal connection), not
+    // through the relay thread's event loop: m_VideoMutex is what serializes
+    // the frame path in both cases, and a queued hop bought nothing but a
+    // wake-up behind the input parser (docs/optimisations-existant.md).
     bool m_DirectVideoSend = false;
 
-    // True when input messages are handled on the libdatachannel thread that
-    // received them (native engine). False for every GameStream engine, whose
-    // input keeps hopping to the relay thread exactly as before.
-    bool m_DirectInput = false;
+    // Input messages are handled on the libdatachannel thread that received
+    // them, for every engine: IMediaEngine's input calls are thread-safe by
+    // contract (LiSend* for GameStream, the injector for the native host) and
+    // the relay thread was only a queue in front of them. Kept as a flag so
+    // the two lock sites that exist for it read as what they are.
+    bool m_DirectInput = true;
     /// The receiver's first `linkstats` has arrived (native host): logged once.
     bool m_LinkReportsSeen = false;
 

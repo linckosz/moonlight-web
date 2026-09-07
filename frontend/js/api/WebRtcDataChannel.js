@@ -1315,9 +1315,14 @@ export class WebRtcDataChannel {
         // its missing chunks were given up on by the sender (maxRetransmits)
         // or they would have come first. Declare it lost now rather than
         // 500 ms from now (FRAME_TIMEOUT_MS), which is how long the picture
-        // would otherwise stay one frame behind the one it could show. Only
-        // on the native path: the GameStream path keeps its clock.
-        if (this.healsByInvalidation && this._reassembly.size > 0) {
+        // would otherwise stay one frame behind the one it could show. Every
+        // host, since September 2026: the one that heals by invalidation is
+        // told the id on the next frame, the others get their keyframe request
+        // half a second earlier than the clock would have sent it — the same
+        // request the incomplete-frame path above makes, through the same
+        // throttle (docs/optimisations-existant.md).
+        if (this._reassembly.size > 0) {
+            let overtaken = 0;
             for (const [id, older] of this._reassembly) {
                 if (id >= frameId || older.completed) continue;
                 this.stats.framesDropped++;
@@ -1337,6 +1342,14 @@ export class WebRtcDataChannel {
                 }
                 if (this.onFrameLoss) this.onFrameLoss(id, older.keyframe);
                 this._reassembly.delete(id);
+                overtaken++;
+            }
+            // One request for the batch: the throttle would coalesce them
+            // anyway, and the reason names how many frames the hole spans.
+            if (overtaken > 0 && !this.healsByInvalidation) {
+                this._requestIdrFrame(
+                    overtaken + ' frame(s) overtaken by #' + frameId + ' (ordered channel)',
+                );
             }
         }
 
