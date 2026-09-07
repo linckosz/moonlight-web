@@ -88,6 +88,14 @@ private:
     /// Release everything still recorded as held. Called by stop().
     void releaseAll();
 
+    /// Say when the focused window is one Windows will not let us inject into
+    /// (UIPI), and when that ends. Called from inject(), self rate-limited.
+    void watchForeground();
+
+    void* m_LastForeground = nullptr; ///< HWND, kept opaque: no windows.h here
+    bool m_ForegroundBlocks = false;
+    int64_t m_NextForegroundCheckUs = 0;
+
     /// Not const: the display can be re-resolved under a running session (see
     /// setDisplayRect). Written and read under the caller's own serialisation.
     capture::DesktopRect m_DisplayRect;

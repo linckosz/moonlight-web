@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -68,11 +69,10 @@ bool isExtendedKey(int vk)
 
 /// Send one batch, reporting the first refusal and then staying quiet.
 ///
-/// The failure that matters is UIPI: an unelevated process cannot inject into
-/// an elevated window, so input stops working the moment such a window takes
-/// focus — Task Manager, an installer, a game launched as administrator. It
-/// looks exactly like a frozen session from the browser, so it has to be said
-/// once, plainly, rather than left to be guessed.
+/// The failure that matters — UIPI, see foregroundBlocksInput — is NOT one
+/// SendInput reports: Windows drops the events and returns success, as its
+/// documentation says outright. What is caught here is the rest: a desktop
+/// that went away, a malformed batch.
 void sendBatch(INPUT* inputs, int count)
 {
     if (count <= 0) return;
@@ -83,14 +83,87 @@ void sendBatch(INPUT* inputs, int count)
     bool expected = false;
     if (!reported.compare_exchange_strong(expected, true)) return;
 
-    const DWORD err = ::GetLastError();
-    if (err == ERROR_ACCESS_DENIED) {
-        log::warning("[native] input refused by Windows (UIPI) — the focused window runs at a "
-                     "higher integrity level than MoonlightWeb; run MoonlightWeb elevated to "
-                     "control it");
-    } else {
-        log::warning("[native] SendInput refused an event (error " + std::to_string(err) + ")");
+    log::warning("[native] SendInput refused an event (error " + std::to_string(::GetLastError()) +
+                 ")");
+}
+
+/// Integrity level of a process — the RID of its mandatory label (0x1000 low,
+/// 0x2000 medium, 0x3000 high, 0x4000 system) — or -1 when Windows will not
+/// say, which for a protected process it will not.
+int integrityLevel(HANDLE process)
+{
+    HANDLE token = nullptr;
+    if (!::OpenProcessToken(process, TOKEN_QUERY, &token)) return -1;
+
+    int level = -1;
+    DWORD size = 0;
+    ::GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &size);
+    if (size > 0) {
+        std::vector<uint8_t> buffer(size);
+        if (::GetTokenInformation(token, TokenIntegrityLevel, buffer.data(), size, &size)) {
+            auto* label = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(buffer.data());
+            PSID sid = label->Label.Sid;
+            const DWORD count = *::GetSidSubAuthorityCount(sid);
+            if (count > 0) level = static_cast<int>(*::GetSidSubAuthority(sid, count - 1));
+        }
     }
+    ::CloseHandle(token);
+    return level;
+}
+
+/// Our own level, computed once: it cannot change for the life of the process.
+int ownIntegrityLevel()
+{
+    static const int level = integrityLevel(::GetCurrentProcess());
+    return level;
+}
+
+std::string narrow(const wchar_t* wide)
+{
+    if (!wide || !*wide) return {};
+    const int len = ::WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1) return {};
+    std::string out(static_cast<size_t>(len - 1), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, wide, -1, out.data(), len, nullptr, nullptr);
+    return out;
+}
+
+/// Whether the foreground window belongs to a process Windows will not let us
+/// inject into, and a name for it when it does.
+///
+/// UIPI: an unelevated process cannot inject into an elevated window, so input
+/// stops working the moment such a window takes focus — Task Manager, an
+/// installer, a game launched as administrator, a Hyper-V console. SendInput
+/// says nothing, the events simply vanish, and from the browser it looks
+/// exactly like a frozen session. So it is looked for rather than waited for.
+bool foregroundBlocksInput(HWND foreground, std::string& who)
+{
+    who.clear();
+    if (!foreground) return false;
+
+    DWORD pid = 0;
+    ::GetWindowThreadProcessId(foreground, &pid);
+    if (pid == 0 || pid == ::GetCurrentProcessId()) return false;
+
+    HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return false;
+    const int theirs = integrityLevel(process);
+    const int ours = ownIntegrityLevel();
+    const bool blocks = theirs > 0 && ours > 0 && theirs > ours;
+
+    if (blocks) {
+        wchar_t title[256] = {};
+        ::GetWindowTextW(foreground, title, 256);
+        wchar_t image[MAX_PATH] = {};
+        DWORD imageLen = MAX_PATH;
+        ::QueryFullProcessImageNameW(process, 0, image, &imageLen);
+        const std::string path = narrow(image);
+        const size_t slash = path.find_last_of('\\');
+        const std::string exe = slash == std::string::npos ? path : path.substr(slash + 1);
+        who = "\"" + narrow(title) + "\" (" + exe + ", pid " + std::to_string(pid) + ")";
+    }
+    ::CloseHandle(process);
+    return blocks;
 }
 
 void sendOne(INPUT& input)
@@ -326,6 +399,8 @@ void Win32Input::inject(const InputEvent& event)
         log::info(std::string("[native] input: first ") + describe(event.type) + " injected");
     m_Injected.fetch_add(1, std::memory_order_relaxed);
 
+    watchForeground();
+
     switch (event.type) {
     case InputEvent::Type::KeyDown: injectKey(event, true); break;
     case InputEvent::Type::KeyUp: injectKey(event, false); break;
@@ -440,6 +515,34 @@ void Win32Input::injectMouseMove(int deltaX, int deltaY)
     input.mi.dy = deltaY;
     input.mi.dwFlags = MOUSEEVENTF_MOVE;
     sendOne(input);
+}
+
+void Win32Input::watchForeground()
+{
+    // Once a second at most, and only when the window changed: a token query
+    // per event would cost more than the injection it guards.
+    const int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
+    if (nowUs < m_NextForegroundCheckUs) return;
+    m_NextForegroundCheckUs = nowUs + 1000000;
+
+    HWND foreground = ::GetForegroundWindow();
+    if (foreground == static_cast<HWND>(m_LastForeground)) return;
+    m_LastForeground = foreground;
+
+    std::string who;
+    const bool blocks = foregroundBlocksInput(foreground, who);
+    if (blocks == m_ForegroundBlocks) return;
+    m_ForegroundBlocks = blocks;
+
+    if (blocks) {
+        log::warning("[native] input refused by Windows (UIPI): the focused window " + who +
+                     " runs elevated and MoonlightWeb does not — nothing reaches it until "
+                     "another window takes focus, or MoonlightWeb runs elevated");
+    } else {
+        log::info("[native] input: the focused window is reachable again");
+    }
 }
 
 void Win32Input::bringCursorOntoDisplay()
