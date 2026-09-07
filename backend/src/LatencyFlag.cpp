@@ -19,6 +19,7 @@
 
 #include <QtGlobal>
 #include <QDebug>
+#include <QString>
 
 #if defined(Q_OS_WIN) && defined(QT_DEBUG)
 #define MW_LATENCY_FLAG_SUPPORTED 1
@@ -32,12 +33,14 @@
 
 #include <atomic>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
-constexpr UINT kMsgClick = WM_APP + 0x4C; // an injected left button went down
-constexpr UINT_PTR kHideTimer = 1;
+constexpr UINT kMsgClick = WM_APP + 0x4C;   // an injected left button went down
+constexpr UINT kMsgRebuild = WM_APP + 0x4D; // the set of monitors changed
 constexpr const wchar_t* kClassName = L"MoonlightWebLatencyFlag";
 
 // All of this belongs to the overlay thread once it runs; g_Mutex only guards
@@ -46,7 +49,10 @@ std::mutex g_Mutex;
 std::thread g_Thread;
 std::atomic<bool> g_Running{false};
 std::atomic<DWORD> g_ThreadId{0};
-HWND g_Hwnd = nullptr;
+// One flag per monitor — see createWindows(). The first one is the only window
+// that gets messages of its own; the rest are painted surfaces and nothing else.
+std::vector<HWND> g_Windows;
+UINT_PTR g_HideTimer = 0;
 HHOOK g_Hook = nullptr;
 
 // Runs on the overlay thread, synchronously inside Windows' input delivery: do
@@ -58,7 +64,7 @@ LRESULT CALLBACK mouseHookProc(int code, WPARAM wParam, LPARAM lParam)
     if (code == HC_ACTION && wParam == WM_LBUTTONDOWN) {
         const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
         const bool injected = info && (info->flags & LLMHF_INJECTED);
-        if (injected && g_Hwnd) PostMessageW(g_Hwnd, kMsgClick, 0, 0);
+        if (injected && !g_Windows.empty()) PostMessageW(g_Windows.front(), kMsgClick, 0, 0);
         // One line per injected click, so a run can be matched against the
         // browser's table (and a hook that never fires shows as silence).
         if (injected)
@@ -89,31 +95,120 @@ void paintFlag(HWND hwnd)
     EndPaint(hwnd, &ps);
 }
 
+void showAll()
+{
+    for (HWND w : g_Windows) {
+        // Show without stealing focus from whatever the click landed on, and
+        // re-assert topmost in case a game raised itself above us since.
+        SetWindowPos(w, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        // Paint now rather than at the next idle: the capture may run before
+        // this loop gets back to WM_PAINT otherwise.
+        UpdateWindow(w);
+    }
+}
+
+void hideAll()
+{
+    for (HWND w : g_Windows)
+        ShowWindow(w, SW_HIDE);
+}
+
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg) {
     case kMsgClick:
-        // Show without stealing focus from whatever the click landed on, and
-        // re-assert topmost in case a game raised itself above us since.
-        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        // Paint now rather than at the next idle: the capture may run before
-        // this loop gets back to WM_PAINT otherwise.
-        UpdateWindow(hwnd);
-        // A second click inside the window restarts the countdown.
-        SetTimer(hwnd, kHideTimer, LatencyFlag::kShowMs, nullptr);
+        showAll();
+        // A second click inside the window restarts the countdown. The timer
+        // belongs to the thread, not to a window: the windows are rebuilt
+        // under it when a monitor comes or goes.
+        g_HideTimer = SetTimer(nullptr, g_HideTimer, LatencyFlag::kShowMs, nullptr);
         return 0;
-    case WM_TIMER:
-        if (wParam == kHideTimer) {
-            KillTimer(hwnd, kHideTimer);
-            ShowWindow(hwnd, SW_HIDE);
-        }
+    case WM_DISPLAYCHANGE:
+        // A virtual display driver arriving or leaving moves every rectangle
+        // we computed. Rebuilding destroys this window, so it cannot happen
+        // inside its own wndProc — hand it to the message loop. Windows
+        // broadcasts to every top-level window: only one of ours asks.
+        if (!g_Windows.empty() && hwnd == g_Windows.front())
+            PostThreadMessageW(GetCurrentThreadId(), kMsgRebuild, 0, 0);
         return 0;
     case WM_PAINT: paintFlag(hwnd); return 0;
     case WM_ERASEBKGND: return 1; // the bands cover everything
     case WM_DESTROY: return 0;
     default: return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
+}
+
+BOOL CALLBACK addMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM lParam)
+{
+    MONITORINFO mi = {};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(monitor, &mi)) return TRUE;
+
+    // The monitor's own rectangle in virtual-desktop coordinates: the flag is
+    // the same fraction of every screen, so the browser needs no handshake to
+    // know where to look whichever one the session captures.
+    const RECT& r = mi.rcMonitor;
+    const int mw = r.right - r.left;
+    const int mh = r.bottom - r.top;
+    if (mw <= 0 || mh <= 0) return TRUE;
+    const int x = r.left + static_cast<int>(mw * LatencyFlag::kLeft);
+    const int y = r.top + static_cast<int>(mh * LatencyFlag::kTop);
+    const int w = static_cast<int>(mw * (LatencyFlag::kRight - LatencyFlag::kLeft));
+    const int h = static_cast<int>(mh * (LatencyFlag::kBottom - LatencyFlag::kTop));
+
+    // Layered + transparent: the flag never takes a click meant for the app
+    // under it. Tool window: no taskbar button, no Alt-Tab entry. NoActivate:
+    // showing it must not move keyboard focus.
+    HWND hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+                                    WS_EX_LAYERED | WS_EX_TRANSPARENT,
+                                kClassName, L"MoonlightWeb latency flag", WS_POPUP, x, y, w, h,
+                                nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!hwnd) {
+        qWarning() << "[LatencyFlag] CreateWindowEx failed:" << GetLastError();
+        return TRUE;
+    }
+    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+    g_Windows.push_back(hwnd);
+
+    auto* description = reinterpret_cast<std::wstring*>(lParam);
+    description->append(description->empty() ? L"" : L", ");
+    description->append(std::to_wstring(w) + L"x" + std::to_wstring(h) + L" at " +
+                        std::to_wstring(x) + L"," + std::to_wstring(y) + L" on a " +
+                        std::to_wstring(mw) + L"x" + std::to_wstring(mh) + L" screen");
+    return TRUE;
+}
+
+void destroyWindows()
+{
+    for (HWND w : g_Windows)
+        DestroyWindow(w);
+    g_Windows.clear();
+}
+
+/**
+ * One flag per monitor, each at the same fraction of its own screen.
+ *
+ * The primary screen alone is not enough: the session streams whichever
+ * display the viewer picked, and a flag drawn on another one is simply absent
+ * from the picture — the probe then times out on every click with no way to
+ * tell that from a pipeline that never delivered. Bench machines with virtual
+ * display adapters (a headless host, a VDD) make that the normal case, not the
+ * exception. Painting all of them costs nothing: the windows are hidden except
+ * for kShowMs after an injected click.
+ */
+void createWindows()
+{
+    destroyWindows();
+    std::wstring description;
+    EnumDisplayMonitors(nullptr, nullptr, addMonitor, reinterpret_cast<LPARAM>(&description));
+    if (g_Windows.empty()) {
+        qWarning() << "[LatencyFlag] no monitor to draw on";
+        return;
+    }
+    qInfo() << "[LatencyFlag] armed on" << static_cast<int>(g_Windows.size())
+            << "screen(s):" << QString::fromStdWString(description) << "— shown"
+            << LatencyFlag::kShowMs << "ms per injected click";
 }
 
 void overlayThread()
@@ -130,52 +225,51 @@ void overlayThread()
     // still there from the first one.
     RegisterClassW(&wc);
 
-    // Primary screen geometry. Under DPI virtualisation these are the
-    // virtualised sizes, and so is the window — still the same fraction of the
-    // screen, which is all the browser relies on.
-    const int screenW = GetSystemMetrics(SM_CXSCREEN);
-    const int screenH = GetSystemMetrics(SM_CYSCREEN);
-    const int x = static_cast<int>(screenW * LatencyFlag::kLeft);
-    const int y = static_cast<int>(screenH * LatencyFlag::kTop);
-    const int w = static_cast<int>(screenW * (LatencyFlag::kRight - LatencyFlag::kLeft));
-    const int h = static_cast<int>(screenH * (LatencyFlag::kBottom - LatencyFlag::kTop));
-
-    // Layered + transparent: the flag never takes a click meant for the app
-    // under it. Tool window: no taskbar button, no Alt-Tab entry. NoActivate:
-    // showing it must not move keyboard focus.
-    g_Hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED |
-                                 WS_EX_TRANSPARENT,
-                             kClassName, L"MoonlightWeb latency flag", WS_POPUP, x, y, w, h,
-                             nullptr, nullptr, inst, nullptr);
-    if (!g_Hwnd) {
-        qWarning() << "[LatencyFlag] CreateWindowEx failed:" << GetLastError();
+    // Under DPI virtualisation the monitor rectangles are the virtualised
+    // sizes, and so are the windows — still the same fraction of each screen,
+    // which is all the browser relies on.
+    createWindows();
+    if (g_Windows.empty()) {
         g_Running = false;
         return;
     }
-    SetLayeredWindowAttributes(g_Hwnd, 0, 255, LWA_ALPHA);
 
     g_Hook = SetWindowsHookExW(WH_MOUSE_LL, mouseHookProc, inst, 0);
     if (!g_Hook) {
         qWarning() << "[LatencyFlag] SetWindowsHookEx(WH_MOUSE_LL) failed:" << GetLastError();
-        DestroyWindow(g_Hwnd);
-        g_Hwnd = nullptr;
+        destroyWindows();
         g_Running = false;
         return;
     }
 
-    qInfo() << "[LatencyFlag] armed:" << w << "x" << h << "at" << x << "," << y << "on a" << screenW
-            << "x" << screenH << "screen, shown" << LatencyFlag::kShowMs << "ms per injected click";
-
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        // Thread messages carry no window: the hide timer and the rebuild
+        // request are handled here rather than in a wndProc, because both of
+        // them outlive the windows they act on.
+        if (msg.hwnd == nullptr) {
+            if (msg.message == WM_TIMER && msg.wParam == g_HideTimer) {
+                KillTimer(nullptr, g_HideTimer);
+                g_HideTimer = 0;
+                hideAll();
+                continue;
+            }
+            if (msg.message == kMsgRebuild) {
+                createWindows();
+                continue;
+            }
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
 
     UnhookWindowsHookEx(g_Hook);
     g_Hook = nullptr;
-    DestroyWindow(g_Hwnd);
-    g_Hwnd = nullptr;
+    if (g_HideTimer) {
+        KillTimer(nullptr, g_HideTimer);
+        g_HideTimer = 0;
+    }
+    destroyWindows();
     g_ThreadId = 0;
     qInfo() << "[LatencyFlag] stopped";
 }

@@ -33,9 +33,15 @@
  *     drawn into the captured texture or a shader pass: nothing is added to the
  *     capture → encode pipeline, so the measurement does not perturb what it
  *     measures. The window is only ever created while the setting is on.
- *   - It sits at the TOP of the primary screen, at a fixed place whatever the
- *     click position. With tearing allowed the top rows of a frame are the
- *     newest scanned out, so the flag lands in the freshest picture.
+ *   - It sits at the TOP of the screen, at a fixed place whatever the click
+ *     position. With tearing allowed the top rows of a frame are the newest
+ *     scanned out, so the flag lands in the freshest picture.
+ *   - There is one flag per monitor, each at the same fraction of its own
+ *     screen. The session streams whichever display the viewer picked, so a
+ *     flag on the primary screen alone is simply absent from the picture on
+ *     any other one — and an absent flag reads exactly like a pipeline that
+ *     never delivered. Machines with a virtual display adapter make that the
+ *     normal case. The set is rebuilt on WM_DISPLAYCHANGE.
  *   - Three flat bands, pure blue / white / red, wide enough to survive 4:2:0
  *     chroma and a downscale to 720p — the browser classifies three pixels,
  *     one per band. Geometry is shared with the frontend as screen fractions
@@ -54,8 +60,8 @@
  */
 namespace LatencyFlag {
 
-/// Flag rectangle as fractions of the primary screen. Mirrored in
-/// LatencyProbe.js — change both or neither.
+/// Flag rectangle as fractions of a screen — of every screen, since there is
+/// one flag each. Mirrored in LatencyProbe.js — change both or neither.
 constexpr double kLeft = 0.44;
 constexpr double kRight = 0.56;
 constexpr double kTop = 0.0;

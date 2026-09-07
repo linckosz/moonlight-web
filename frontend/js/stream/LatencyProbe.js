@@ -37,7 +37,8 @@
  *     await mwLatency.run(10, 1500)  // 10 clicks, 1.5 s apart
  *     mwLatencyResults               // every entry ever measured, in order
  *
- * Each entry: { ts, latencyMs, fromMarkMs, ok, reason }
+ * Each entry: { ts, latencyMs, fromMarkMs, ok, reason } plus, when it failed,
+ * { saw, via } — the pixels the probe actually read and where it read them.
  *   ts         — click moment, microseconds since the Unix epoch (integer)
  *   latencyMs  — click → flag presented, or null when the flag never showed
  *   fromMarkMs — same, counted from the frame the grey mark was painted in
@@ -97,6 +98,21 @@ export function looksLikeFlag(px) {
     return blue && white && red;
 }
 
+/**
+ * The three sampled pixels, written out. A timeout says nothing on its own —
+ * the flag may be absent from the picture (drawn on a screen the session does
+ * not capture), the picture may not be what we think we are sampling, or the
+ * readback may be handing back a surface that was never drawn into. All three
+ * look identical in the results table unless the colours are shown.
+ * @param {Uint8ClampedArray|number[]|null|undefined} px
+ * @returns {string|null}
+ */
+export function describePixels(px) {
+    if (!px || px.length < 12) return null;
+    const one = (i) => px[i * 4] + ',' + px[i * 4 + 1] + ',' + px[i * 4 + 2];
+    return 'blue?' + one(0) + ' white?' + one(1) + ' red?' + one(2);
+}
+
 /** Median and 90th percentile of a list of numbers (empty → nulls). */
 export function summarize(values) {
     const v = values.filter((x) => typeof x === 'number' && isFinite(x)).sort((a, b) => a - b);
@@ -126,6 +142,9 @@ export class LatencyProbe {
      *        canvas; `null` = armed but no frame drawn yet; else 12 RGBA values.
      * @param {((on: boolean) => void)|null} [deps.setProbing] arm/disarm that
      *        renderer-side read around each measurement.
+     * @param {(() => string)|null} [deps.describeSource] what is being
+     *        sampled, for a failed measurement to name (renderer kind and
+     *        surface size). Never called while nothing is being measured.
      */
     constructor({
         source,
@@ -135,6 +154,7 @@ export class LatencyProbe {
         results = [],
         samplePixels = null,
         setProbing = null,
+        describeSource = null,
     }) {
         this._source = source;
         this._sendClick = sendClick;
@@ -142,7 +162,11 @@ export class LatencyProbe {
         this._requestFrameEvents = requestFrameEvents;
         this._samplePixels = samplePixels;
         this._setProbing = setProbing;
+        this._describeSource = describeSource;
         this.results = results;
+        /** Last pixels read, and how — reported when a measurement fails. */
+        this._lastPx = null;
+        this._lastVia = null;
         /** @type {null | {t0: number, ts: number, tMark: number, resolve: Function, timer: any, raf: number}} */
         this._pending = null;
         this._running = false;
@@ -194,6 +218,16 @@ export class LatencyProbe {
                 (dropped ? ` · ${dropped} dropped` : '') +
                 ' — see mwLatencyResults',
         );
+        // Every click dropped: say what was under the probe rather than
+        // leaving the table to be opened. This is the case that used to be
+        // unreadable — see describePixels.
+        const firstMiss = entries.find((e) => !e.ok);
+        if (s.n === 0 && firstMiss)
+            console.warn(
+                `[LatencyProbe] nothing measured (${firstMiss.reason}) · sampled ` +
+                    `${firstMiss.via} · ${firstMiss.saw || 'no pixels'} — if the host's screen is ` +
+                    'not those colours at the moment of the click, the flag is not in this picture',
+            );
         if (typeof console.table === 'function' && entries.length) console.table(entries);
         return entries;
     }
@@ -208,6 +242,8 @@ export class LatencyProbe {
         // Renderers that read their own pixels need a frame drawn after being
         // armed before they have anything to show; give them a moment.
         if (this._setProbing) this._setProbing(true);
+        this._lastPx = null;
+        this._lastVia = null;
         let first = this._sample();
         if (first === null && this._samplePixels && this._samplePixels() === null) {
             await this._waitUntil(() => this._sample() !== null, 300);
@@ -302,6 +338,15 @@ export class LatencyProbe {
             ok,
             reason: reason || null,
         };
+        // A hit needs no explanation; a miss is worthless without one. `saw`
+        // is the last thing sampled before giving up — grey where the host's
+        // screen is white means the picture is not the screen the flag is on.
+        if (!ok) {
+            entry.saw = describePixels(this._lastPx);
+            entry.via =
+                (this._lastVia || 'nothing sampled') +
+                (this._describeSource ? ' · ' + this._describeSource() : '');
+        }
         this.results.push(entry);
         return entry;
     }
@@ -317,7 +362,11 @@ export class LatencyProbe {
         if (this._samplePixels) {
             const px = this._samplePixels();
             if (px === null) return null;
-            if (px !== undefined) return looksLikeFlag(px);
+            if (px !== undefined) {
+                this._lastPx = px;
+                this._lastVia = 'renderer';
+                return looksLikeFlag(px);
+            }
         }
         const el = this._source();
         if (!el) return null;
@@ -347,6 +396,8 @@ export class LatencyProbe {
             // Fully transparent everywhere: the surface gave nothing back
             // (a context that cannot be read after present) — not "no flag".
             if (!any) return null;
+            this._lastPx = px;
+            this._lastVia = 'canvas readback';
             return looksLikeFlag(px);
         } catch (e) {
             return null;

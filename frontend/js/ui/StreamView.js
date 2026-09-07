@@ -7578,6 +7578,16 @@ export class StreamView {
             setProbing: (on) => {
                 if (this._renderer) this._renderer.probeActive = on;
             },
+            // Named in a failed measurement, so a miss says which surface was
+            // read and at what size instead of only "timeout".
+            describeSource: () => {
+                const el =
+                    this.videoEl && this.videoEl.style.display === 'block' ? null : this.canvas;
+                const kind = this._renderer ? this._renderer.kind : 'video sink';
+                const w = el ? el.width : this.videoEl && this.videoEl.videoWidth;
+                const h = el ? el.height : this.videoEl && this.videoEl.videoHeight;
+                return `${kind} ${w || '?'}x${h || '?'}`;
+            },
             results,
         });
         // Standby views measure nothing; the visible one owns the console handle.

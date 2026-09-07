@@ -1506,6 +1506,29 @@ d'aucun tone-map côté navigateur — la piste « ACES WebGL2 pour hôte HDR �
 SDR » (F0d(2)) ne vaut que pour une capture qui ne sait pas rendre le SDR d'un
 bureau HDR, ce qui n'existe sur aucune plateforme livrée.
 
+**✅ F0d(2) fermée le 07/09/2026 — sans objet, et pour trois raisons qui se
+recoupent.** L'item restait ouvert « à rouvrir avec un banc hôte macOS/Linux
+HDR » ; ce banc existe depuis le 06/09 (§20.10), et la relecture des trois
+plateformes le referme :
+
+1. **Aucun hôte natif ne produit le cas.** C'est la négociation qui décide, pas
+   l'état de l'écran. Windows : capture `BGRA8` et DXGI livre le rendu SDR du
+   compositeur (mesuré juste au-dessus). macOS : `SckCapture` demande
+   `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` + `kCGColorSpaceSRGB` +
+   matrice BT.709 quand la session est SDR — c'est le compositeur qui rend le
+   SDR, même mécanisme que Windows. Linux : il n'y a pas de HDR du tout
+   (`LinuxProbe` pose `hdrActive = false`, la capture lit du XRGB 8 bits).
+2. **Le client ne demande jamais le HDR sur un écran SDR.** `app.js` efface
+   `hdr_enabled` au lancement quand `hdrClientCapability()` refuse — écran en
+   mode HDR **et** adaptateur WebGPU **et** décodeur 10 bits. La combinaison
+   « flux HDR sur écran SDR » n'est donc pas atteignable par le chemin normal.
+3. **Forcée en debug (`mw_hdr_request=1`), elle est déjà servie** : HEVC prend
+   le mode `browser` (le tone-map du navigateur), AV1 le mode `tonemap` (ACES
+   sur WebGPU, livré en F0e). Il ne resterait à couvrir que « AV1 HDR + écran
+   SDR + pas de WebGPU » — or la garde du point 2 exige justement WebGPU, donc
+   ce triplet ne s'atteint qu'en contournant volontairement la garde sur une
+   machine sans WebGPU. Pas de shader à écrire pour ça.
+
 ## 17. Windows.Graphics.Capture, le repli (04/09/2026)
 
 Deuxième morceau de la phase I. Desktop Duplication répond
@@ -2791,6 +2814,34 @@ les 1,5 s qui suivent un clic. Elles rendent toutes **R = G = B autour de 140**,
 alors que le haut de l'écran de l'hôte est à ce moment-là une page blanche. Ce
 que la sonde échantillonne ne correspond donc pas au haut de l'image de l'hôte,
 quel que soit le drapeau. C'est une piste **client**, indépendante d'Intel.
+
+#### ⚠️ Élucidé le 07/09 au soir — et ce n'était ni Intel ni le client
+
+Le drapeau n'était créé que sur l'écran **principal**. La session, elle, streame
+l'écran que le spectateur a choisi : sur tout autre écran le drapeau n'était pas
+dans l'image du tout. Le banc Intel a **deux adaptateurs d'écran virtuels** en
+plus du sien, et un stream peut atterrir sur le mauvais — le gris uniforme lu par
+la sonde était le haut d'un autre
+écran que celui qu'on regardait, et la page blanche était sur le principal.
+
+Prouvé sur bench-desk avec un harnais qui exerce le vrai `LatencyFlag` et relit
+chaque sortie en Desktop Duplication : avant, l'écran secondaire rendait
+`rgb(1,64,108) rgb(2,66,112) rgb(1,67,115)` — trois valeurs voisines et banales,
+la même signature que le « 140 gris » du banc ; après, les deux écrans rendent
+bleu/blanc/rouge. Détail dans `docs/design/glass-to-glass.md` §5 bis.
+
+Le même harnais répond à la question laissée ouverte deux paragraphes plus haut :
+**le drapeau est bien peint, et la Desktop Duplication le capture**. `BitBlt` ne
+voyait rien parce qu'il ne voit pas une fenêtre *layered*, pas parce qu'il n'y
+avait rien à voir.
+
+Côté sonde, un échantillon écarté porte désormais `saw` et `via` : les pixels
+lus et la surface qui les a rendus. Les trois causes possibles d'un `timeout`
+(drapeau absent, mauvaise image, surface non dessinée) se lisaient toutes
+« timeout » — c'est ce qui a coûté deux fausses pistes.
+
+**Reste** : le relevé clic→photon sur le banc Intel lui-même, à refaire avec ce
+correctif.
 
 ### 21.10 HDR sur Intel : FP16 scRGB → P010 → HEVC Main10 (07/09/2026)
 

@@ -98,7 +98,7 @@ Principe :
 1. **Hôte** (`backend/src/LatencyFlag.cpp`) : un hook souris bas niveau
    (`WH_MOUSE_LL`, clics *injectés* seulement) sur son propre thread ; à chaque
    clic gauche, une fenêtre Win32 topmost, click-through, en haut au centre de
-   l'écran principal (44 %–56 % de la largeur × 0–5 % de la hauteur) affiche
+   **chaque** écran (44 %–56 % de la largeur × 0–5 % de la hauteur) affiche
    trois bandes pleines bleu / blanc / rouge pendant 100 ms. C'est une fenêtre
    OS, pas un ajout dans la texture capturée : rien n'est ajouté au pipeline
    capture → encodage. En haut, parce qu'avec le tearing autorisé ce sont les
@@ -123,6 +123,42 @@ await mwLatency.run();          // 3 clics espacés de 2 s, résumé médiane/p9
 await mwLatency.run(10, 1500);  // 10 clics, 1,5 s
 mwLatencyResults;               // toutes les entrées : {ts (µs epoch), latencyMs, fromMarkMs, ok, reason}
 ```
+
+Une entrée **écartée** porte en plus `saw` et `via` : les trois pixels réellement
+lus (`blue?140,140,140 white?…`) et la surface qui les a rendus
+(`renderer · canvas2d 1920x1080`). Sans eux, un `timeout` ne distingue pas un
+drapeau absent de l'image, une image qui n'est pas celle qu'on croit
+échantillonner, et une surface qu'on relit sans qu'elle ait été dessinée — les
+trois se lisent « timeout ». Si les couleurs ne sont pas celles de l'écran de
+l'hôte au moment du clic, le drapeau n'est **pas** dans cette image, et c'est là
+qu'il faut chercher, pas dans le pipeline.
+
+### ⚠️ Un drapeau par écran (07/09/2026)
+
+Le drapeau n'était créé que sur l'écran **principal** (`SM_CXSCREEN`), alors que
+la session streame l'écran que le spectateur a choisi. Sur tout autre écran il
+était donc simplement **absent de l'image**, et un drapeau absent se lit
+exactement comme un pipeline qui n'a rien livré : la sonde expirait à chaque
+clic sans rien dire de plus. C'est ce qui a fait passer pour un problème Intel,
+puis pour un problème client, une géométrie côté hôte. Les machines à écran
+virtuel (hôte headless, VDD, banc Intel qui en a deux) en font le cas normal.
+
+Mesuré sur bench-desk (harnais de scratchpad : `LatencyFlag` réel + Desktop
+Duplication sur chaque sortie, clic injecté par `SendInput`) :
+
+| | DISPLAY1 (principal, 2560×1440) | DISPLAY11 (1920×1080) |
+|---|---|---|
+| Avant | bleu/blanc/rouge | `rgb(1,64,108) rgb(2,66,112) rgb(1,67,115)` — rien |
+| Après | bleu/blanc/rouge | bleu/blanc/rouge |
+
+Le même harnais tranche la question restée ouverte du 07/09 (« le drapeau
+est-il seulement peint ? ») : **oui, et la Desktop Duplication le capture**. La
+capture d'écran de contrôle ne prouvait rien parce que `BitBlt` ne voit pas une
+fenêtre *layered* ; le chemin réel de la capture, lui, la voit. Piège du
+harnais, pas du produit : une trame `AcquireNextFrame` dont
+`LastPresentTime == 0` est une mise à jour de **pointeur seul** et ne porte pas
+d'image de bureau à jour — l'échantillonner rendait une couleur plate et faisait
+croire à l'absence du drapeau sur un écran qui l'avait.
 
 `latencyMs` compte depuis l'envoi du clic, `fromMarkMs` depuis la frame où le
 cercle gris a été peint (ce qu'une caméra sur l'écran client verrait). Les

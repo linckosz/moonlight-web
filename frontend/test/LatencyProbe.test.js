@@ -21,6 +21,7 @@ import {
     LatencyProbe,
     looksLikeFlag,
     summarize,
+    describePixels,
     FLAG_REGION,
     FLAG_TIMEOUT_MS,
 } from '../js/stream/LatencyProbe.js';
@@ -67,6 +68,19 @@ describe('summarize', () => {
     it('ignores nulls and gives nulls back for an empty set', () => {
         expect(summarize([null, undefined, NaN]).n).toBe(0);
         expect(summarize([]).median).toBeNull();
+    });
+});
+
+describe('describePixels', () => {
+    it('writes the three samples out, in band order', () => {
+        expect(describePixels(px([0, 0, 255], [255, 255, 255], [255, 0, 0]))).toBe(
+            'blue?0,0,255 white?255,255,255 red?255,0,0',
+        );
+    });
+
+    it('gives nothing back when there is nothing to describe', () => {
+        expect(describePixels(null)).toBeNull();
+        expect(describePixels(new Uint8ClampedArray(4))).toBeNull();
     });
 });
 
@@ -185,6 +199,36 @@ describe('LatencyProbe.run', () => {
         expect(entries).toHaveLength(3);
         expect(entries.every((e) => e.ok && e.latencyMs === 32)).toBe(true);
         expect(results).toHaveLength(3);
+    });
+
+    it('a dropped sample says what it read and where', async () => {
+        // What the Intel bench saw: a uniform grey where the host's screen is
+        // white. Without these two fields the entry is just "timeout" and the
+        // picture cannot be told apart from a pipeline that never delivered.
+        const grey = px([140, 140, 140], [140, 140, 140], [140, 140, 140]);
+        const probe = new LatencyProbe({
+            source: () => ({}),
+            sendClick: vi.fn(),
+            samplePixels: () => grey,
+            describeSource: () => 'canvas2d 1920x1080',
+        });
+        const p = probe.measureOnce();
+        for (let i = 0; i < 30; i++) await tick(10);
+        const entry = await p;
+        expect(entry.ok).toBe(false);
+        expect(entry.reason).toBe('timeout');
+        expect(entry.saw).toBe('blue?140,140,140 white?140,140,140 red?140,140,140');
+        expect(entry.via).toBe('renderer · canvas2d 1920x1080');
+    });
+
+    it('a successful sample carries no explanation', async () => {
+        const { probe } = makeProbe(16);
+        const p = probe.measureOnce();
+        for (let i = 0; i < 6; i++) await tick(8);
+        const entry = await p;
+        expect(entry.ok).toBe(true);
+        expect(entry.saw).toBeUndefined();
+        expect(entry.via).toBeUndefined();
     });
 
     it('records nothing usable when there is no picture to sample', async () => {
