@@ -17,6 +17,7 @@
 
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
+#include "../../encode/OpenH264Encoder.h"
 #include "../../encode/windows/MfCapabilities.h"
 #include "../../input/windows/VigemGamepad.h"
 #include "WindowsEncoderProbe.h"
@@ -486,11 +487,17 @@ void probeFallbackEncoders(Capabilities& caps)
         log::info("[native] no Media Foundation encoder: " + mf.diagnostic);
     }
 
-    // OpenH264 on the CPU is the last resort below Media Foundation and is not
-    // wired yet — it lands with the encoder itself. Its place in the order is
-    // already decided: after every transform above, because Microsoft's own
-    // software transform at least runs inside the OS's own pipeline, and because
-    // a CPU encoder is the one case that has to watch whether it is keeping up.
+    // OpenH264 on the CPU, last: after every transform above, because even
+    // Microsoft's software transform runs inside the OS's own pipeline, and
+    // because a CPU encoder is the one case that has to watch whether it is
+    // keeping up. Always available — it is compiled in — so a Windows machine
+    // with Media Foundation missing entirely (an N edition) still streams.
+    FallbackEncoder cpu;
+    cpu.api = EncoderApi::Software;
+    cpu.codecs = {Codec::H264};
+    cpu.hardware = false;
+    cpu.name = encode::OpenH264Encoder::version();
+    caps.fallbacks.push_back(std::move(cpu));
 }
 
 VirtualGamepad probeVirtualGamepad()

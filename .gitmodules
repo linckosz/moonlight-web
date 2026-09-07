@@ -19,3 +19,7 @@
 	path = backend/native-host/third_party/opus
 	url = https://github.com/xiph/opus.git
 	ignore = all
+[submodule "backend/native-host/third_party/openh264"]
+	path = backend/native-host/third_party/openh264
+	url = https://github.com/cisco/openh264.git
+	ignore = all

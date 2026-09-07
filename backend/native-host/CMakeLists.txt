@@ -62,6 +62,7 @@ if(WIN32)
         src/encode/windows/MfApi.cpp
         src/encode/windows/MfCapabilities.cpp
         src/encode/windows/MfEncoder.cpp
+        src/encode/windows/SoftwareEncoder.cpp
         src/audio/windows/WasapiLoopback.cpp
     )
 
@@ -204,6 +205,20 @@ endif()
 
 message(STATUS "mw-native-host: platform backend = ${MW_NATIVE_PLATFORM}")
 
+# ── The CPU encoder ─────────────────────────────────────────────────────────
+# OpenH264, the last rung of the fallback tier on Windows and the only encoder
+# a Linux machine without a render node has. Built from the pinned submodule
+# by third_party/openh264.cmake (encoder only, SIMD kernels when an assembler
+# is there). Not built for macOS: VideoToolbox is the OS's encoder and has its
+# own software fall-back inside the same API (MacProbe.mm says why).
+if(WIN32 OR (UNIX AND NOT APPLE))
+    include(third_party/openh264.cmake)
+    target_sources(mw-native-host PRIVATE src/encode/OpenH264Encoder.cpp)
+    target_link_libraries(mw-native-host PRIVATE mw-openh264)
+    # PUBLIC so the tests know whether to expect the encoder.
+    target_compile_definitions(mw-native-host PUBLIC MW_NATIVE_OPENH264=1)
+endif()
+
 # ── Audio ───────────────────────────────────────────────────────────────────
 # The encoder and the pacing sink are platform-neutral and compiled wherever
 # there is a capture to feed them: Windows (WASAPI loopback, its own thread),
@@ -304,6 +319,7 @@ if(MW_BUILD_TESTS)
         tests/test_mac_keymap.cpp
         tests/test_mac_session.cpp
         tests/test_vpl_params.cpp
+        tests/test_openh264.cpp
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp
         tests/test_frame_cadence.cpp

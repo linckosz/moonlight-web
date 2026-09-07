@@ -30,6 +30,7 @@
 #include "../../encode/windows/AmfEncoder.h"
 #include "../../encode/windows/MfEncoder.h"
 #include "../../encode/windows/NvencEncoder.h"
+#include "../../encode/windows/SoftwareEncoder.h"
 #include "../../encode/windows/VplEncoder.h"
 #include "../../input/windows/Win32Input.h"
 #include "CrossGpuBridge.h"
@@ -655,6 +656,7 @@ private:
         case EncoderApi::Amf: m_Encoder = std::make_unique<encode::AmfEncoder>(); break;
         case EncoderApi::Vpl: m_Encoder = std::make_unique<encode::VplEncoder>(); break;
         case EncoderApi::MediaFoundation: m_Encoder = std::make_unique<encode::MfEncoder>(); break;
+        case EncoderApi::Software: m_Encoder = std::make_unique<encode::SoftwareEncoder>(); break;
         default:
             error =
                 std::string("no encoder implementation for ") + toString(m_Target.encoder) + " yet";

@@ -27,6 +27,7 @@ void run_linux_session_tests();
 void run_mac_keymap_tests();
 void run_mac_session_tests();
 void run_vpl_params_tests();
+void run_openh264_tests();
 void run_ds4_mapping_tests();
 void run_stage_stats_tests();
 void run_frame_cadence_tests();
@@ -58,6 +59,9 @@ int main()
     run_capabilities_tests();
     run_selector_tests();
     run_vpl_params_tests();
+#ifdef MW_NATIVE_OPENH264
+    run_openh264_tests();
+#endif
     run_ds4_mapping_tests();
     run_stage_stats_tests();
     run_frame_cadence_tests();
