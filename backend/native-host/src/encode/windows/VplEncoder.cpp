@@ -481,19 +481,20 @@ bool VplEncoder::setBitrate(int bitrateKbps, std::string& error)
     // because the desktop was only moving at half the stream's rate — twice a
     // second, each one refused with a warning.
     //
-    // The answer is not to cap the request but to buy the room up front:
-    // init() sizes the bitstream buffer for budgetCeilingKbps(), which is what
-    // Reset validates a raise against. This is the last line of defence — a
-    // request beyond even that ceiling is capped rather than lost, because a
-    // refused Reset would leave the rate exactly where it was.
+    // The room CAN be bought up front, by sizing the bitstream buffer for the
+    // raise — but that buffer is also the VBV, so it is bought with latency.
+    // kBudgetHeadroom says why this engine does not buy it. What is left is to
+    // CAP the request rather than let it be refused: a refused Reset leaves the
+    // rate exactly where it was, so capping is what keeps the governor's own
+    // changes — the ones that matter on a suffering link — working.
     int wanted = bitrateKbps;
     if (wanted > m_CeilingKbps) {
         if (!m_CeilingSeen) {
             m_CeilingSeen = true;
-            log::info("[native] oneVPL: the per-frame budget is capped at " +
+            log::info("[native] oneVPL: the per-frame budget stays at the stream's " +
                       std::to_string(m_CeilingKbps) +
-                      " kbps, twice the stream's rate — see "
-                      "budgetCeilingKbps for what the rest costs");
+                      " kbps — raising it here would mean a bigger VBV, and latency comes first "
+                      "(see kBudgetHeadroom)");
         }
         wanted = m_CeilingKbps;
         const int multiplier =

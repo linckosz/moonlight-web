@@ -591,6 +591,52 @@ ne voit pas une fenêtre *layered*, donc « rien vu » n'y prouve rien. Deux bug
 réels ont été trouvés en montant cette mesure (§21.8), mais **le chiffre lui-même
 n'est pas acquis**, et il ne faut pas en inventer un.
 
+## 8f. Ce que coûte le VBV sur Intel, et pourquoi la marge a été retirée (07/09/2026)
+
+Le §21.6 du design explique comment le budget par image *peut* monter sur Intel :
+en dimensionnant le tampon de bitstream à l'init, parce que c'est ce que `Reset`
+valide. Reste à savoir ce que ce tampon coûte, puisqu'il est aussi le VBV.
+
+**Mesure.** Texte défilant plein écran (mouvement sur toute l'image, à chaque
+frame — le pire cas d'un flux de bureau), HEVC 1080p60, 20 Mbit/s,
+intra-refresh. `vbv=<n>` demande exactement n images au débit du flux ; sans clé,
+la règle du moteur.
+
+| Réglage | VBV | Ko/frame moy | p95 | p99 | occupation du lien (p95) |
+|---|---|---|---|---|---|
+| `vbv=1` | 85 Ko | 40,6 | 60,0 | 64,0 | **24 ms** |
+| `vbv=2` | 85 Ko | 40,8 | 64,0 | 66,2 | 26 ms |
+| `vbv=3` | 125 Ko | 41,9 | 88,0 | 96,0 | 35 ms |
+| `vbv=6` | 250 Ko | 56,2 | 112,0 | 156,5 | **45 ms** |
+| marge ×2 (250 Ko) | 250 Ko | 55,4 | 104,0 | 154,6 | **42 ms** |
+
+**Lecture.** La marge fait exactement ce qu'elle promet — 40,6 → 55,4 Ko par
+image, soit **+37 % de bits pour le même débit sur le fil** quand l'écran bouge
+moins vite que le flux. Et elle le fait payer là où ça compte : le pic par image
+passe de 60-64 Ko à 104-155 Ko, c'est-à-dire de **~26 ms à ~42 ms** d'occupation
+du lien pour une seule image à 20 Mbit/s.
+
+**Décision de Bruno, appliquée** : « qualité légèrement moindre sur écran fixe
+acceptable ; aucune augmentation volontaire de la latence pour gagner en
+netteté ». `kBudgetHeadroom = 1` : le VBV revient à la règle partagée (85 Ko,
+une image au débit du flux), le pic redescend à 64 Ko au p99, et le budget par
+image ne monte pas. Une marge ×3 aurait demandé 375 Ko, soit ~150 ms de lien
+pour une image — jamais envisagée.
+
+⚠️ Ce qui est perdu est la moitié **montante** de E4 sur Intel seulement : une
+image lente n'y dépense pas les bits que ses frames auraient valus. La moitié
+descendante — celle qui compte quand un lien souffre — fonctionne exactement
+comme ailleurs, et surtout **les demandes sont maintenant plafonnées au lieu
+d'être refusées** : avant le 07/09 un `Reset` refusé laissait le débit là où il
+était, warning à l'appui.
+
+⚠️ La voie qui donnerait les deux — gros tampon pour autoriser la hausse,
+`MaxFrameSizeP` pour borner l'image — **n'existe qu'en VBR** (« used in VBR based
+bitrate control modes and ignored in others »). Elle demanderait de changer le
+mode de contrôle de débit de ce chemin ; à instruire séparément si le sujet
+revient.
+
+
 ## 9. Pour l'A/B
 
 Le banc encode vers un puits ; l'A/B se fait sur un vrai flux. Une session

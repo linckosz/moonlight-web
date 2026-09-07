@@ -2607,13 +2607,19 @@ flux à 60. `budgetCeilingKbps()` le calcule, `budgetBufferKbps()` dit de combie
 le tampon doit dépasser ce plafond pour que `Reset` l'accepte (trois fois,
 mesuré), et `setBitrate` plafonne au lieu de se faire refuser.
 
-Vérifié au banc : sans ce dimensionnement, chaque demande de E4 était refusée et
-l'image faisait **40,7 Ko**. Avec, aucun refus et **71,3 Ko** — le débit sur le
-fil, lui, n'a pas bougé d'un octet.
+⚠️ **Et cette marge a été RETIRÉE le jour même, après mesure.** Elle fait ce
+qu'elle promet — 40,6 → 55,4 Ko par image, +37 % de bits pour le même débit sur
+le fil — mais le tampon est aussi le VBV : le pic par image passe de 60-64 Ko à
+104-155 Ko, soit **26 → 42 ms d'occupation du lien** pour une seule image à
+20 Mbit/s (banc §8f). Règle de Bruno : « qualité légèrement moindre sur écran
+fixe acceptable ; aucune augmentation volontaire de la latence pour gagner en
+netteté ». Donc `kBudgetHeadroom = 1` : le VBV revient à la règle partagée, le
+budget par image ne monte pas, et `setBitrate` **plafonne** au lieu de se faire
+refuser — ce qui reste strictement meilleur que le point de départ, où un
+`Reset` refusé laissait le débit là où il était.
 
-⚠️ Ce qui reste hors d'atteinte est le ×3 de la rafale de raffinement sur écran
-fixe : il est plafonné, pas refusé.
-
+L'arithmétique de la marge est conservée entière, parce que c'est un arbitrage et
+non un fait : `kBudgetHeadroom` porte la mesure et ce qu'un changement coûte.
 ### 21.6b Invalidation de référence — Intel est le plus simple des trois
 
 `NumRefFrame` valait **1**, ce qui rendait la réparation par delta impossible par

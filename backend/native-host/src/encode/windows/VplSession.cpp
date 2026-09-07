@@ -344,12 +344,12 @@ int budgetCeilingKbps(int bitrateKbps, int fps)
     // What is left is to size the bitstream buffer for the raise at init, since
     // that is what Reset checks against. But the buffer IS the latency
     // constraint (RateControl.h): a frame may occupy as much of the link as the
-    // buffer allows. So the headroom is not "whatever anyone might ask for" —
-    // that would be six times the rate, six frame times for one picture — but
-    // exactly the range EffectiveCadence works in, which is the case that
-    // actually improves the picture: a screen moving at half the stream's rate,
-    // whose frames may then be twice the size. The refinement burst's ×3 on a
-    // still screen stays out of reach, and is capped rather than refused.
+    // buffer allows.
+    //
+    // ⚠️ And that is why this returns the stream's own rate today: kBudgetHeadroom
+    // is 1, so nothing is bought and nothing is paid. The arithmetic below is
+    // kept whole because the trade is a judgement, not a fact — see
+    // kBudgetHeadroom for what raising it costs, measured.
     const int headroom = fps / EffectiveCadence::kMinFps;
     const int capped = headroom < 1 ? 1 : (headroom > kBudgetHeadroom ? kBudgetHeadroom : headroom);
     return bitrateKbps * capped;
@@ -357,13 +357,21 @@ int budgetCeilingKbps(int bitrateKbps, int fps)
 
 int budgetBufferKbps(int bitrateKbps, int fps)
 {
-    // The buffer Reset measures a raise against is not "one frame at the new
-    // rate" — measured on an N95, a raise to 40000 was refused with an 85 KB
-    // buffer and accepted with 250 KB, which is three frames at 40000. So the
-    // buffer this asks for is the ceiling times that factor; anything less and
-    // the ceiling is decorative.
+    const int ceiling = budgetCeilingKbps(bitrateKbps, fps);
+
+    // No headroom asked for, no buffer bought: the VBV goes back to the rule
+    // every vendor shares (RateControl.h), one frame's worth at the stream's
+    // rate. This is the branch kBudgetHeadroom = 1 takes, and it is the one
+    // that runs today.
+    if (ceiling <= bitrateKbps) return bitrateKbps;
+
+    // Otherwise: the buffer Reset measures a raise against is not "one frame at
+    // the new rate" — measured on an N95, a raise to 40000 was refused with an
+    // 85 KB buffer and accepted with 250 KB, three frames at 40000. So the
+    // buffer is the ceiling times that factor; anything less and the ceiling is
+    // decorative. ⚠️ It is also the VBV, which is why the headroom is 1.
     constexpr int kResetBufferFrames = 3;
-    return budgetCeilingKbps(bitrateKbps, fps) * kResetBufferFrames;
+    return ceiling * kResetBufferFrames;
 }
 
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,

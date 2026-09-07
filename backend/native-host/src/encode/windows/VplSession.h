@@ -156,9 +156,26 @@ int budgetBufferKbps(int bitrateKbps, int fps);
 /// asked for another number. See VplSession.cpp for why it is not one.
 constexpr int kDefaultRefFrames = 4;
 
-/// How many times the stream's rate a single frame's budget may reach. Two,
-/// because that is the whole range EffectiveCadence works in (its floor is half
-/// of a 60 fps stream), and because each step costs a frame time of VBV.
-constexpr int kBudgetHeadroom = 2;
+/// How many times the stream's rate a single frame's budget may reach.
+///
+/// ⚠️ **One — that is, none — and it is a decision, not an oversight.**
+///
+/// Two was tried and measured (07/09/2026, bench §8e). It works: the per-frame
+/// budget rises with EffectiveCadence and a slow-moving screen gets 37 % more
+/// bits at the same rate on the wire. But on this vendor the only way to buy it
+/// is to enlarge the bitstream buffer, and that buffer IS the VBV — measured on
+/// scrolling text at 20 Mbit/s, the p95 frame went from 60-64 KB to 104 KB,
+/// which is 26 ms of link occupancy becoming 42.
+///
+/// Bruno's rule decides it: "a slightly softer still screen is acceptable; a
+/// deliberate increase in latency to gain sharpness is not." So the budget does
+/// not rise on Intel, the buffer stays at one frame's worth, and setBitrate
+/// caps requests instead of having them refused — which is still strictly
+/// better than where this path started, where every raise was answered with -14
+/// and the rate stayed put.
+///
+/// Three would have cost ~150 ms of link for a single frame. It was never on
+/// the table.
+constexpr int kBudgetHeadroom = 1;
 
 } // namespace mw::native::encode

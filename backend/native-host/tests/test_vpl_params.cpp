@@ -152,31 +152,34 @@ void run_vpl_params_tests()
         CHECK(p.mfx.GopPicSize >= 0xFFFF);
     }
 
-    // ── The per-frame budget may rise, and that is what the buffer buys ─────
+    // ── The per-frame budget does NOT rise, and that is the decision ────────
     //
-    // Measured on an N95: a raise to twice the rate is refused with a buffer
-    // sized for the rate and accepted with one sized well above the ceiling.
-    // Asserted here so that shrinking the buffer "because the VBV should be one
-    // frame" cannot silently take the budget headroom with it.
+    // On this vendor the only way to let it rise is to enlarge the bitstream
+    // buffer, which is also the VBV: measured on an N95, going to twice the
+    // budget took the p95 frame from ~62 to ~104 KB — 26 ms of link occupancy
+    // becoming 42. Latency comes before sharpness here, so the headroom is one.
+    //
+    // These checks exist so that "let us just give it a little more room"
+    // cannot slip back in without someone reading kBudgetHeadroom first.
     {
-        CHECK_EQ(encode::budgetCeilingKbps(20000, 60), 40000);
-        // A 30 fps stream has no room to give: its cadence floor IS its rate.
+        CHECK_EQ(encode::kBudgetHeadroom, 1);
+        CHECK_EQ(encode::budgetCeilingKbps(20000, 60), 20000);
         CHECK_EQ(encode::budgetCeilingKbps(20000, 30), 20000);
-        // And the headroom is capped, however fast the stream.
-        CHECK_EQ(encode::budgetCeilingKbps(20000, 240), 40000);
-        // The buffer is sized above the ceiling, or the ceiling is decorative.
-        CHECK(encode::budgetBufferKbps(20000, 60) > encode::budgetCeilingKbps(20000, 60));
+        CHECK_EQ(encode::budgetCeilingKbps(20000, 240), 20000);
+        // And with no headroom asked for, no buffer is bought.
+        CHECK_EQ(encode::budgetBufferKbps(20000, 60), 20000);
 
-        mfxVideoParam wide = {};
-        CHECK(encode::fillEncodeParams(wide, Codec::Hevc, 1920, 1080, 60, 20000));
-        // The buffer really is bigger than one frame at the stream's own rate —
-        // that difference IS the headroom, and it is what a raise needs.
+        mfxVideoParam p = {};
+        CHECK(encode::fillEncodeParams(p, Codec::Hevc, 1920, 1080, 60, 20000));
+        // The VBV is the shared rule, one frame's worth at the stream's rate —
+        // exactly what it was before the Intel budget work, and what every
+        // other vendor gets.
         const int oneFrameKb = 20000 / 60 / 8;
-        CHECK(static_cast<int>(wide.mfx.BufferSizeInKB) * wide.mfx.BRCParamMultiplier > oneFrameKb);
+        CHECK_EQ(static_cast<int>(p.mfx.BufferSizeInKB) * p.mfx.BRCParamMultiplier, oneFrameKb);
 
         // And more than one reference, or a lost frame can only ever be
         // answered with a keyframe — the state this path was in until 07/09.
-        CHECK(wide.mfx.NumRefFrame > 1);
+        CHECK(p.mfx.NumRefFrame > 1);
     }
 
     // ── HDR: the format, the profile, and the three integers of the VUI ─────
