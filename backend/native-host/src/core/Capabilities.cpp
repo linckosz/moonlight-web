@@ -80,6 +80,16 @@ bool GpuInfo::supports444(Codec codec) const
     return std::find(codecs444.begin(), codecs444.end(), codec) != codecs444.end();
 }
 
+bool Capabilities::anyGpuEncodes() const
+{
+    for (const GpuInfo& gpu : gpus) {
+        // An encoder that can produce no codec is no encoder at all — see
+        // Selector::firstEncodingGpu for the machine that taught us that.
+        if (!gpu.encoders.empty() && !gpu.codecs.empty()) return true;
+    }
+    return false;
+}
+
 const GpuInfo* Capabilities::gpuFor(const DisplayInfo& display) const
 {
     for (const GpuInfo& gpu : gpus) {

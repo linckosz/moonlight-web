@@ -59,6 +59,19 @@ bool isOsSupported();
 /// failure, or Unavailability::None on success. Must not throw.
 Unavailability enumerate(Capabilities& caps);
 
+/// Fill `caps.fallbacks` with the encoders this OS can offer when no GPU has
+/// one: a hardware Media Foundation transform, the OS's own software transform,
+/// OpenH264 on the CPU — whatever this platform actually has.
+///
+/// Called by probe() **only** when no GPU can encode, because it is allowed to
+/// be expensive (enumerating transforms, instantiating a codec) where the rest
+/// of the probe is not — it runs on every host-list refresh.
+///
+/// Contract: push best first, hardware before CPU. A platform with nothing to
+/// offer leaves the vector empty, which is a clean "this machine cannot stream"
+/// rather than a failure. Must not throw.
+void probeFallbackEncoders(Capabilities& caps);
+
 /// Whether a virtual gamepad can be created on this machine right now, asked of
 /// the driver rather than of the registry (see VirtualGamepad).
 ///

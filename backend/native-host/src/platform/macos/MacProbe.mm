@@ -295,6 +295,24 @@ Unavailability enumerate(Capabilities& caps)
     return Unavailability::None;
 }
 
+void probeFallbackEncoders(Capabilities& caps)
+{
+    // Left empty on purpose, and it is a finding rather than an omission.
+    //
+    // VideoToolbox is not a GPU encoder in the sense the other platforms use the
+    // word: it is the OS's encoder, and on every Mac this engine supports
+    // (macOS 12.3+, so 2017 hardware at the oldest) it is backed by fixed
+    // function silicon — and where it is not, VideoToolbox falls back to its own
+    // software encoder inside the same API, without telling us and without
+    // needing to. So the branch that leads here cannot be reached by a Mac that
+    // could have streamed: if MacProbe found no encoder, adding OpenH264 would
+    // not change the verdict, it would only move the failure later.
+    //
+    // If a Mac ever turns up where VideoToolbox genuinely refuses H.264, this is
+    // where OpenH264 goes — the CPU path exists and is platform-neutral.
+    (void)caps;
+}
+
 VirtualGamepad probeVirtualGamepad()
 {
     // supported = false: presenting a gamepad to macOS takes a DriverKit

@@ -50,6 +50,13 @@ Unavailability enumerate(Capabilities& caps)
     return Unavailability::ArchNotSupported;
 }
 
+void probeFallbackEncoders(Capabilities& caps)
+{
+    // Unreachable in practice — enumerate() already refused this build — but the
+    // seam is implemented rather than left to link by luck.
+    (void)caps;
+}
+
 VirtualGamepad probeVirtualGamepad()
 {
     // supported = false, not "present = false": there is nothing to install

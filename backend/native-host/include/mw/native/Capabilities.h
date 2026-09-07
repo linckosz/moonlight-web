@@ -51,8 +51,8 @@ enum class EncoderApi
     Vpl,             ///< Intel oneVPL / libvpl
     VaApi,           ///< Linux, AMD + Intel
     VideoToolbox,    ///< Apple
-    MediaFoundation, ///< Windows ARM64 (planned)
-    Software,        ///< OpenH264 — only when a probe proved it keeps up
+    MediaFoundation, ///< Windows, whatever encoder the OS exposes without a vendor SDK
+    Software,        ///< OpenH264, on the CPU
 };
 
 const char* toString(EncoderApi a);
@@ -114,6 +114,43 @@ struct GpuInfo
     bool supportsAny444() const { return !codecs444.empty(); }
 };
 
+/// An encoder that belongs to the machine rather than to a GPU.
+///
+/// Two very different things wear this shape, and deliberately so: an encoder
+/// the OS exposes without a vendor SDK (a Media Foundation transform, which may
+/// well be driving fixed-function silicon we have no SDK for — Qualcomm's, say)
+/// and an encoder that runs on the CPU (OpenH264). What they have in common is
+/// the only thing the Selector needs: neither is tied to an adapter, so reaching
+/// one never costs a cross-GPU copy, and neither is ever *preferred* over a GPU
+/// that can encode.
+///
+/// That last point is the whole reason this is not simply appended to
+/// GpuInfo::encoders. The Selector's rule is "the display's own GPU, unless it
+/// cannot encode"; a software entry on the iGPU's list would make that rule
+/// choose the CPU over an NVENC sitting in the same machine. Kept apart, the
+/// fallback tier is unreachable until every GPU has been ruled out, and every
+/// existing selection is byte-for-byte what it was.
+struct FallbackEncoder
+{
+    EncoderApi api = EncoderApi::None;
+
+    /// Codecs this fallback can actually produce. Usually H.264 alone: it is the
+    /// codec every browser decodes in hardware, which is the point — a host too
+    /// weak to encode in hardware must not also make the client decode in
+    /// software.
+    std::vector<Codec> codecs;
+
+    /// True when the OS handed us fixed-function hardware after all (a hardware
+    /// Media Foundation transform). Load-bearing for ordering — hardware first,
+    /// always — and worth saying out loud in the log, because "no encoder on any
+    /// GPU, and yet not encoding on the CPU" is otherwise a confusing line.
+    bool hardware = false;
+
+    /// What answered, for the log and the stats overlay, e.g. "Qualcomm H.264
+    /// Encoder MFT" or "OpenH264 2.6.0". English, never shown as a choice.
+    std::string name;
+};
+
 /// A display, as the OS enumerates it. This is what the user picks from — and
 /// the ONLY thing they are ever asked to pick (§13 of the mission).
 struct DisplayInfo
@@ -162,7 +199,7 @@ enum class Unavailability
     NoDisplay,            ///< headless: nothing attached (no virtual display in v1)
     NoCaptureApi,         ///< Windows: DDA and WGC both failed · Linux: no portal
     CapturePermission,    ///< macOS Screen Recording (TCC) not granted
-    NoEncoder,            ///< no encoder this engine can drive (there is no software fallback)
+    NoEncoder,            ///< no encoder at all: no GPU, and no fallback either
     NoInteractiveSession, ///< Windows service with nobody logged in (§13)
     OsTooOld,             ///< Win10 < 2004 · macOS < 12.3 · Linux without PipeWire
     ArchNotSupported,     ///< no platform backend compiled in (platform/Unimplemented.cpp)
@@ -181,6 +218,12 @@ struct Capabilities
     std::vector<GpuInfo> gpus;
     std::vector<DisplayInfo> displays;
 
+    /// Encoders of last resort, best first — hardware transforms before CPU
+    /// ones. Empty on a machine where every GPU encodes, because nothing looks
+    /// for them there: probing costs a transform enumeration or a codec
+    /// instantiation, and probe() runs on every host-list refresh.
+    std::vector<FallbackEncoder> fallbacks;
+
     /// The capture API that answered. Recorded so a session that silently fell
     /// back from DDA to WGC says so somewhere.
     CaptureApi capture = CaptureApi::None;
@@ -189,6 +232,12 @@ struct Capabilities
     std::string diagnostic;
 
     const GpuInfo* gpuFor(const DisplayInfo& display) const;
+
+    /// Whether any GPU can genuinely encode — an encoder API AND a codec it can
+    /// produce. The condition that gates the whole fallback tier, shared between
+    /// probe() and select() so the two can never disagree about which world they
+    /// are in.
+    bool anyGpuEncodes() const;
 };
 
 /// Whether a gamepad can be presented to the OS right now.

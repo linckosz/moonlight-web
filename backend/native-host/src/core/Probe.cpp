@@ -72,27 +72,37 @@ Capabilities probe()
     // An encoder that can encode nothing we can send is no encoder at all, and
     // counting it here would offer the user a host that fails the moment they
     // click it — worse than offering none.
-    bool anyEncoder = false;
-    for (const GpuInfo& gpu : caps.gpus) {
-        if (!gpu.encoders.empty() && !gpu.codecs.empty()) {
-            anyEncoder = true;
-            break;
+    if (!caps.anyGpuEncodes()) {
+        // No GPU encoder anywhere. Before refusing the machine, ask what the OS
+        // itself can encode with — the tier that exists precisely for the
+        // machines this branch used to turn away: a Windows-on-ARM laptop whose
+        // Adreno we have no SDK for, and a virtual machine whose display adapter
+        // exposes no render node at all (bench-vm, hyperv_drm, 07/09/2026).
+        //
+        // Asked ONLY here, and that is deliberate: enumerating transforms or
+        // instantiating a codec costs real time, and probe() runs on every
+        // host-list refresh. On a machine with a GPU encoder nothing below ever
+        // executes.
+        platform::probeFallbackEncoders(caps);
+
+        if (caps.fallbacks.empty()) {
+            caps.reason = Unavailability::NoEncoder;
+            // Says only what was actually looked for. An earlier wording ("...and
+            // software encoding was not fast enough for this display") described
+            // a measurement that never happened; the wording after it said there
+            // was no fallback at all, which stopped being true on 07/09/2026.
+            // What is true now is that everything was asked and nothing answered.
+            caps.diagnostic = "no video encoder on any GPU (NVIDIA NVENC, AMD AMF, Intel Quick "
+                              "Sync), and no fallback encoder either";
+            log::info("[native] unavailable: " + caps.diagnostic);
+            return caps;
         }
-    }
-    if (!anyEncoder) {
-        caps.reason = Unavailability::NoEncoder;
-        // Says only what was actually looked for. The previous wording ("...and
-        // software encoding was not fast enough for this display") described a
-        // measurement that never happens: this engine has no software encoder to
-        // fall back to — NVENC, AMF and oneVPL are the whole list — so nothing
-        // was timed and found wanting. Read on a Windows-on-ARM machine
-        // (Snapdragon/Adreno, 06/09/2026) it invited the user to go looking for a
-        // speed setting that does not exist, when the honest answer is that this
-        // GPU has no encoder we can drive.
-        caps.diagnostic = "no video encoder this engine can drive on any GPU "
-                          "(NVIDIA NVENC, AMD AMF or Intel Quick Sync)";
-        log::info("[native] unavailable: " + caps.diagnostic);
-        return caps;
+
+        if (log::enabled(log::Info)) {
+            const FallbackEncoder& best = caps.fallbacks.front();
+            log::info(std::string("[native] no GPU encoder — fallback available: ") + best.name +
+                      (best.hardware ? " (hardware, via the OS)" : " (on the CPU)"));
+        }
     }
 
     caps.available = true;

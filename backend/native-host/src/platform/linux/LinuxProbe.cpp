@@ -279,6 +279,21 @@ Unavailability enumerate(Capabilities& caps)
     return Unavailability::None;
 }
 
+void probeFallbackEncoders(Capabilities& caps)
+{
+    // Linux has exactly one fallback and it is OpenH264 on the CPU: there is no
+    // OS-level encoder API here the way Media Foundation is one on Windows —
+    // VA-API *is* the vendor path, and reaching this function means it answered
+    // nothing.
+    //
+    // Not yet filled: the encoder lands with the CPU pipeline it needs. The
+    // machine this is for (bench-vm, hyperv_drm) has no render node at all, so
+    // it is missing more than an encoder — capture and colour conversion have no
+    // device either, and offering a fallback encoder before that path exists
+    // would promise a stream that dies one stage earlier instead.
+    (void)caps;
+}
+
 VirtualGamepad probeVirtualGamepad()
 {
     VirtualGamepad result;

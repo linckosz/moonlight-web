@@ -46,6 +46,28 @@ bool gpuHasCodec(const GpuInfo& gpu, Codec codec)
     return std::find(gpu.codecs.begin(), gpu.codecs.end(), codec) != gpu.codecs.end();
 }
 
+/// The fallback tier's best entry: hardware before CPU, and within each the
+/// order the platform probe established.
+///
+/// "Hardware first" is not a preference, it is the difference between a stream
+/// and a slideshow on the machines this tier exists for. A Media Foundation
+/// transform backed by fixed-function silicon costs the CPU nothing; OpenH264
+/// costs it every macroblock, on a machine that by definition had no encoder to
+/// spare.
+const FallbackEncoder* bestFallback(const Capabilities& caps)
+{
+    const FallbackEncoder* best = nullptr;
+    for (const FallbackEncoder& fb : caps.fallbacks) {
+        if (fb.api == EncoderApi::None || fb.codecs.empty()) continue;
+        if (!best) {
+            best = &fb;
+            continue;
+        }
+        if (fb.hardware && !best->hardware) best = &fb;
+    }
+    return best;
+}
+
 /// The first GPU that can genuinely encode. Only reached when the display's own
 /// GPU cannot — see Selection::crossGpuCopy.
 ///
@@ -60,6 +82,11 @@ const GpuInfo* firstEncodingGpu(const Capabilities& caps)
         if (!gpu.encoders.empty() && !gpu.codecs.empty()) return &gpu;
     }
     return nullptr;
+}
+
+bool hasCodec(const std::vector<Codec>& codecs, Codec codec)
+{
+    return std::find(codecs.begin(), codecs.end(), codec) != codecs.end();
 }
 
 } // namespace
@@ -90,6 +117,10 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     out.gpu = caps.gpuFor(*out.display);
     out.crossGpuCopy = false;
 
+    /// Set only on the last-resort path below; null means the codec walk reads
+    /// the GPU's list, as it always has.
+    const FallbackEncoder* fallback = nullptr;
+
     // The bench may name the encoder's GPU outright — that is how an encoder
     // that drives no display (an iGPU beside a discrete card) gets measured at
     // all. A real session never sets this. The copy it costs is declared, and
@@ -119,18 +150,37 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     // so a display whose GPU is in that state must look elsewhere rather than
     // fail codec negotiation a few lines later.
     if (!out.gpu || out.gpu->encoders.empty() || out.gpu->codecs.empty()) {
-        const GpuInfo* fallback = firstEncodingGpu(caps);
-        if (!fallback) {
-            error = "no GPU on this machine has a usable encoder";
-            return false;
+        const GpuInfo* other = firstEncodingGpu(caps);
+        if (other) {
+            // Deliberate, and always worth saying out loud: this is the one case
+            // where the zero-copy promise is given up, and a silent regression
+            // here would look like "the engine just got slower".
+            out.crossGpuCopy = (out.gpu != nullptr);
+            log::warning(std::string("[native] display's GPU cannot encode — falling back to '") +
+                         other->name + "' with a cross-GPU copy per frame");
+            out.gpu = other;
+        } else {
+            // ── Nothing in this machine encodes. The fallback tier ───────────
+            //
+            // Reached only here, which is the whole design: while any GPU can
+            // encode, this branch does not exist and every selection is what it
+            // always was.
+            //
+            // `out.gpu` deliberately stays the display's own adapter, null or
+            // not. Capture and colour conversion still run there — it is only
+            // the encoder that moved off it — and pretending otherwise would
+            // send capture to the wrong adapter on a multi-GPU machine whose
+            // cards happen to be encoder-less.
+            fallback = bestFallback(caps);
+            if (!fallback) {
+                error = "no GPU on this machine has a usable encoder, and no fallback "
+                        "encoder is available either";
+                return false;
+            }
+            out.fallbackEncoder = true;
+            out.cpuEncoder = !fallback->hardware;
+            out.crossGpuCopy = false;
         }
-        // Deliberate, and always worth saying out loud: this is the one case
-        // where the zero-copy promise is given up, and a silent regression here
-        // would look like "the engine just got slower".
-        out.crossGpuCopy = (out.gpu != nullptr);
-        log::warning(std::string("[native] display's GPU cannot encode — falling back to '") +
-                     fallback->name + "' with a cross-GPU copy per frame");
-        out.gpu = fallback;
     }
 
     // ── Codec: the client's preference order, filtered by the GPU ────────────
@@ -146,10 +196,23 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     // with the chroma silently dropped — the setting exists for text, and a
     // stream that ignores it looks broken. Only when no shared codec has 4:4:4
     // does the walk fall back to the plain one, and the session says 4:2:0.
+    //
+    // Whose list is walked is the only thing the fallback tier changes here. It
+    // is named once, so every rule below — the preference order, the 4:4:4
+    // narrowing, the "no codec in common" refusal — is the same code on both
+    // paths and cannot drift.
+    const std::vector<Codec>& available = fallback ? fallback->codecs : out.gpu->codecs;
+    const std::string encoderName = fallback ? fallback->name : (out.gpu ? out.gpu->name : "");
+
     bool found = false;
     out.yuv444 = false;
     if (config.yuv444) {
         for (Codec candidate : config.clientCodecs) {
+            // A fallback encoder carries no 4:4:4: Media Foundation's H.264
+            // transforms take NV12 and OpenH264 encodes 4:2:0 only. So this
+            // narrowing pass simply finds nothing and the plain walk below
+            // decides — which is the honest outcome, not a special case.
+            if (fallback) break;
             if (!gpuHasCodec(*out.gpu, candidate) || !out.gpu->supports444(candidate)) continue;
             out.codec = candidate;
             out.yuv444 = true;
@@ -159,31 +222,47 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     }
     for (Codec candidate : config.clientCodecs) {
         if (found) break;
-        if (!gpuHasCodec(*out.gpu, candidate)) continue;
+        if (!hasCodec(available, candidate)) continue;
         out.codec = candidate;
         found = true;
     }
     if (!found) {
-        error = "this GPU and this browser have no video codec in common";
+        error = fallback ? "this browser decodes no codec the fallback encoder can produce"
+                         : "this GPU and this browser have no video codec in common";
         return false;
     }
     if (config.yuv444 && !out.yuv444) {
         log::info(std::string("[native] 4:4:4 requested but no codec this browser and '") +
-                  out.gpu->name + "' share can carry it — streaming 4:2:0 " + toString(out.codec));
+                  encoderName + "' share can carry it — streaming 4:2:0 " + toString(out.codec));
     } else if (out.yuv444 && out.codec != config.clientCodecs.front() &&
                gpuHasCodec(*out.gpu, config.clientCodecs.front())) {
         log::info(std::string("[native] 4:4:4 steers the codec to ") + toString(out.codec) + " — " +
                   toString(config.clientCodecs.front()) + " has no 4:4:4 on this encoder");
     }
 
-    out.encoder = out.gpu->encoders.front();
+    out.encoder = fallback ? fallback->api : out.gpu->encoders.front();
+
+    if (fallback) {
+        // Said out loud, once, at the only moment it can be said accurately.
+        // This is a machine that would have been refused a native stream
+        // altogether until now, so the line has to name what saved it and at
+        // what cost — a reader who sees "software" and no explanation will go
+        // looking for the setting that turned the GPU off.
+        log::warning(std::string("[native] no GPU on this machine can encode — falling back to ") +
+                     fallback->name +
+                     (fallback->hardware ? " (hardware, via the OS)" : " (on the CPU)"));
+    }
 
     // ── HDR: only when it is real all the way through ────────────────────────
     //
     // Asked for is not the same as achievable. Rather than fail — the user
     // asked to stream, not to negotiate — the session runs SDR and reports it,
     // and the stats overlay is where the difference shows.
-    out.hdr = config.hdr && out.display->hdrActive && out.gpu->supports10Bit &&
+    //
+    // The fallback tier never carries it: 10-bit is a second reason for a weak
+    // machine to fall behind, and a browser that is handed PQ it cannot place
+    // shows a washed-out picture rather than an error (§21.10).
+    out.hdr = config.hdr && !fallback && out.display->hdrActive && out.gpu->supports10Bit &&
               (out.codec == Codec::Hevc || out.codec == Codec::Av1);
     if (config.hdr && !out.hdr) {
         log::info("[native] HDR requested but not achievable here — streaming SDR");

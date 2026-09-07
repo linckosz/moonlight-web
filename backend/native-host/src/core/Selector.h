@@ -53,6 +53,21 @@ struct Selection
     /// cross-GPU copy (§6). Only ever true when the display's own GPU has no
     /// encoder at all.
     bool crossGpuCopy = false;
+
+    /// No GPU in this machine could encode, so `encoder` names a machine-level
+    /// fallback (Capabilities::fallbacks) rather than something on `gpu`.
+    ///
+    /// `gpu` still points at the display's own adapter when there is one: it is
+    /// what capture and colour conversion run on, and on a Media Foundation
+    /// hardware transform it is also where the frames stay. Only the encoder
+    /// moved. Never true while any GPU can encode.
+    bool fallbackEncoder = false;
+
+    /// True when that fallback is really running on the CPU, rather than on
+    /// fixed-function silicon the OS lent us without a vendor SDK. The one thing
+    /// the difference changes downstream is what a session may promise: a CPU
+    /// encoder is the case that has to watch whether it is keeping up.
+    bool cpuEncoder = false;
 };
 
 /// Resolve a SessionConfig against what the machine has.

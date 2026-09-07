@@ -17,6 +17,7 @@
 
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
+#include "../../encode/windows/MfCapabilities.h"
 #include "../../input/windows/VigemGamepad.h"
 #include "WindowsEncoderProbe.h"
 
@@ -464,6 +465,32 @@ Unavailability enumerate(Capabilities& caps)
     }
 
     return Unavailability::None;
+}
+
+void probeFallbackEncoders(Capabilities& caps)
+{
+    // Media Foundation is asked first and it is not merely "the software one":
+    // on a machine whose GPU we have no SDK for — a Snapdragon laptop, above
+    // all — this is how its fixed-function encoder is reached at all. So a
+    // hardware transform found here outranks anything on the CPU, and the
+    // capability query says which it got.
+    const encode::MfCaps mf = encode::queryMfCapabilities();
+    if (mf.usable) {
+        FallbackEncoder fb;
+        fb.api = EncoderApi::MediaFoundation;
+        fb.codecs = mf.codecs;
+        fb.hardware = mf.hardware;
+        fb.name = mf.name;
+        caps.fallbacks.push_back(std::move(fb));
+    } else {
+        log::info("[native] no Media Foundation encoder: " + mf.diagnostic);
+    }
+
+    // OpenH264 on the CPU is the last resort below Media Foundation and is not
+    // wired yet — it lands with the encoder itself. Its place in the order is
+    // already decided: after every transform above, because Microsoft's own
+    // software transform at least runs inside the OS's own pipeline, and because
+    // a CPU encoder is the one case that has to watch whether it is keeping up.
 }
 
 VirtualGamepad probeVirtualGamepad()

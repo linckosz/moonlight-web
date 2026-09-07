@@ -535,4 +535,160 @@ void run_selector_tests()
         CHECK_EQ(sel.gpu->id, 0);
         CHECK(!sel.crossGpuCopy);
     }
+
+    SECTION("Selector — the fallback encoder tier");
+
+    // The two machines this tier exists for, in the shape the probe reports
+    // them: a GPU is present and enumerated, it simply has no encoder we can
+    // drive (bench-arm's Adreno; bench-vm's hyperv_drm, which has no render node
+    // at all).
+    const auto encoderlessMachine = []() {
+        Capabilities caps;
+        caps.available = true;
+        caps.reason = Unavailability::None;
+        caps.capture = CaptureApi::DxgiDuplication;
+        caps.gpus = {makeGpu(0, "Qualcomm(R) Adreno(TM) 618 GPU", {}, {}, false)};
+        caps.displays = {makeDisplay(0, 0, 1920, 1080, 60000, true, false)};
+        return caps;
+    };
+
+    // ── Nothing offered: the refusal still happens, and says both halves ──────
+    //
+    // The guard that used to read "no GPU on this machine has a usable encoder"
+    // must not become "and therefore we streamed anyway" the moment a fallback
+    // vector exists but is empty.
+    {
+        const Capabilities caps = encoderlessMachine();
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.clientCodecs = {Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(!select(caps, cfg, sel, err));
+        CHECK(err.find("fallback") != std::string::npos);
+    }
+
+    // ── A fallback is taken, and it costs no cross-GPU copy ──────────────────
+    //
+    // The display's own adapter is KEPT: capture and colour conversion still run
+    // there, and only the encoder moved off it.
+    {
+        Capabilities caps = encoderlessMachine();
+        caps.fallbacks.push_back({EncoderApi::Software, {Codec::H264}, false, "OpenH264"});
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.clientCodecs = {Codec::Av1, Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK(sel.fallbackEncoder);
+        CHECK(sel.cpuEncoder);
+        CHECK(!sel.crossGpuCopy);
+        CHECK_EQ(sel.encoder, EncoderApi::Software);
+        CHECK_EQ(sel.codec, Codec::H264); // the only one offered, whatever the client prefers
+        CHECK_EQ(sel.gpu->id, 0);         // still the display's own adapter
+    }
+
+    // ── Hardware outranks the CPU, whatever order the probe pushed them in ────
+    //
+    // On a Snapdragon this is the difference between a stream and a slideshow:
+    // the OS lends us fixed-function silicon we have no SDK for.
+    {
+        Capabilities caps = encoderlessMachine();
+        caps.fallbacks.push_back({EncoderApi::Software, {Codec::H264}, false, "OpenH264"});
+        caps.fallbacks.push_back(
+            {EncoderApi::MediaFoundation, {Codec::H264}, true, "Qualcomm H264 Encoder MFT"});
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.clientCodecs = {Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.encoder, EncoderApi::MediaFoundation);
+        CHECK(sel.fallbackEncoder);
+        CHECK(!sel.cpuEncoder); // hardware, so nothing downstream has to watch it keep up
+    }
+
+    // ── A fallback is NEVER preferred over a GPU that can encode ─────────────
+    //
+    // The whole reason this tier lives beside GpuInfo::encoders rather than in
+    // it. A software entry that could outrank an RTX would be a silent and total
+    // performance regression on a perfectly good machine.
+    {
+        Capabilities caps = hybridMachine();
+        caps.fallbacks.push_back(
+            {EncoderApi::MediaFoundation, {Codec::H264}, true, "some hardware MFT"});
+        SessionConfig cfg;
+        cfg.displayId = 1;
+        cfg.clientCodecs = {Codec::Av1, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.encoder, EncoderApi::Nvenc);
+        CHECK(!sel.fallbackEncoder);
+        CHECK_EQ(sel.codec, Codec::Av1);
+    }
+
+    // ── An encoder-less display still looks at real GPUs before the tier ─────
+    //
+    // A cross-GPU copy is expensive; it is nowhere near as expensive as encoding
+    // on the CPU, so the older fallback keeps winning over this one.
+    {
+        Capabilities caps = hybridMachine();
+        caps.gpus[0].encoders.clear();
+        caps.gpus[0].codecs.clear();
+        caps.fallbacks.push_back({EncoderApi::Software, {Codec::H264}, false, "OpenH264"});
+        SessionConfig cfg;
+        cfg.displayId = 0; // the panel on the now encoder-less iGPU
+        cfg.clientCodecs = {Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.encoder, EncoderApi::Nvenc);
+        CHECK(sel.crossGpuCopy);
+        CHECK(!sel.fallbackEncoder);
+    }
+
+    // ── No HDR and no 4:4:4 on the fallback, whatever was asked ──────────────
+    //
+    // Both would be a second reason for an already-struggling machine to fall
+    // behind, and a browser handed PQ it cannot place shows a washed-out picture
+    // rather than an error.
+    {
+        Capabilities caps = encoderlessMachine();
+        caps.displays[0].hdrActive = true;
+        caps.fallbacks.push_back(
+            {EncoderApi::MediaFoundation, {Codec::H264, Codec::Hevc}, true, "a hardware MFT"});
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.hdr = true;
+        cfg.yuv444 = true;
+        cfg.clientCodecs = {Codec::Hevc, Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK(!sel.hdr);
+        CHECK(!sel.yuv444);
+        CHECK_EQ(sel.codec, Codec::Hevc); // the client's own preference still decides
+    }
+
+    // ── A client that decodes none of what the fallback makes is refused ─────
+    {
+        Capabilities caps = encoderlessMachine();
+        caps.fallbacks.push_back({EncoderApi::Software, {Codec::H264}, false, "OpenH264"});
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.clientCodecs = {Codec::Av1};
+
+        Selection sel;
+        std::string err;
+        CHECK(!select(caps, cfg, sel, err));
+        CHECK(err.find("fallback encoder") != std::string::npos);
+    }
 }

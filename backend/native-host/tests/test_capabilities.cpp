@@ -6,6 +6,10 @@
 
 #include "mw/native/NativeHost.h"
 
+#ifdef _WIN32
+#include "encode/windows/MfCapabilities.h"
+#endif
+
 #include <string>
 #include <vector>
 
@@ -153,6 +157,39 @@ void run_capabilities_tests()
         for (const DisplayInfo& d : caps.displays)
             CHECK(caps.gpuFor(d) != nullptr);
     }
+
+#ifdef _WIN32
+    SECTION("Capabilities — what Media Foundation offers this machine");
+
+    {
+        // The fallback tier is unreachable on a machine with a GPU encoder, so
+        // on every bench here probe() never calls this. Asked directly, it stops
+        // being code that ships untested until someone turns up with a
+        // Snapdragon: if MFTEnumEx were being called wrongly, this is where it
+        // shows, on hardware that exists today.
+        //
+        // Not an assertion about WHAT is found — that is a property of the
+        // machine, not of the code. The assertion is that the answer is
+        // coherent: usable implies a codec and a name, unusable implies a
+        // reason.
+        const encode::MfCaps mf = encode::queryMfCapabilities();
+        std::fprintf(stderr, "  media foundation: %s%s%s\n",
+                     mf.usable ? (mf.hardware ? "hardware — " : "software — ") : "unusable — ",
+                     mf.usable ? mf.name.c_str() : mf.diagnostic.c_str(),
+                     mf.usable && mf.codecs.size() > 1 ? " (+HEVC)" : "");
+
+        if (mf.usable) {
+            CHECK(!mf.codecs.empty());
+            CHECK(!mf.name.empty());
+            // H.264 is the floor and the reason the tier is worth having: a host
+            // too weak to encode in hardware must not also push the client into
+            // a software decoder.
+            CHECK(mf.codecs.front() == Codec::H264);
+        } else {
+            CHECK(!mf.diagnostic.empty());
+        }
+    }
+#endif
 
     SECTION("Capabilities — the log sink is optional");
 
