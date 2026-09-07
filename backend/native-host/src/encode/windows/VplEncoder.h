@@ -77,6 +77,7 @@ private:
     mfxExtCodingOption m_CodingOption = {};
     mfxExtCodingOption2 m_CodingOption2 = {};
     mfxExtCodingOption3 m_CodingOption3 = {};
+    mfxExtVideoSignalInfo m_SignalInfo = {};
     std::vector<mfxExtBuffer*> m_ExtBuffers;
     bool m_IntraRefresh = false;
 

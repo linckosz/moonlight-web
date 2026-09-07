@@ -108,14 +108,11 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         error = "4:4:4 is not implemented on the Intel encoder path";
         return false;
     }
-    if (hdr) {
-        // Same shape as 4:4:4: the silicon has 10-bit, this path does not, and
-        // the capability query is made to say so (see VplCapabilities.cpp).
-        // ⚠️ 07/09/2026: the 8-bit path is now verified on real Intel hardware
-        // (N95 / UHD Graphics), but nothing has ever run a P010 frame through
-        // it — claiming HDR here would be exactly the kind of unwatched colour
-        // pipeline that makes a stream subtly wrong for a year.
-        error = "HDR is not implemented on the Intel encoder path";
+    if (hdr && codec != Codec::Hevc) {
+        // Main10 is the only 10-bit profile this path knows. AV1 would do it
+        // too, but no Intel chip here encodes AV1 at all (§21.7), so claiming
+        // it would be a promise nothing has ever kept.
+        error = "HDR needs HEVC on the Intel encoder path";
         return false;
     }
 
@@ -129,7 +126,7 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
 
     if (!m_Session.open(device, error)) return false;
 
-    if (!fillEncodeParams(m_Params, codec, width, height, m_Fps, bitrateKbps, m_Tuning)) {
+    if (!fillEncodeParams(m_Params, codec, width, height, m_Fps, bitrateKbps, m_Tuning, hdr)) {
         error = "no oneVPL codec for this format";
         stop();
         return false;
@@ -168,8 +165,8 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     }
 
     m_IntraRefresh = false;
-    attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_CodingOption3, m_ExtBuffers,
-                        m_Fps, intraRefresh, m_Tuning);
+    attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_CodingOption3, m_SignalInfo,
+                        m_ExtBuffers, m_Fps, intraRefresh, m_Tuning, hdr);
 
     mfxStatus started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
 
@@ -183,7 +180,7 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         log::warning(std::string("[native] oneVPL declined intra-refresh (") +
                      VplApi::statusToString(started) + ") — falling back to keyframes");
         attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_CodingOption3,
-                            m_ExtBuffers, m_Fps, false, m_Tuning);
+                            m_SignalInfo, m_ExtBuffers, m_Fps, false, m_Tuning, hdr);
         started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
     }
 
@@ -248,7 +245,8 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     const std::string overrides = tuning.describe();
     log::info(
         "[native] oneVPL ready: " + std::to_string(width) + "x" + std::to_string(height) + "@" +
-        std::to_string(m_Fps) + " " + toString(codec) + " 4:2:0 CBR " +
+        std::to_string(m_Fps) + " " + toString(codec) +
+        (hdr ? " HDR (Main10, BT.2020 PQ) 4:2:0 CBR " : " 4:2:0 CBR ") +
         std::to_string(bitrateKbps) + " kbps, VBV " +
         std::to_string(m_Params.mfx.BufferSizeInKB * m_Params.mfx.BRCParamMultiplier) + " KB" +
         (m_IntraRefresh

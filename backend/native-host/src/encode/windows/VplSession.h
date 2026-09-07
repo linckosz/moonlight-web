@@ -100,8 +100,13 @@ private:
 ///
 /// Returns false when the codec has no oneVPL FourCC (nothing does today, but
 /// the enum can grow).
+/// @p hdr switches the input to P010 and the profile to HEVC Main10. The
+/// COLOUR description that goes with it is a separate extension buffer — see
+/// attachEncodeOptions — because a 10-bit stream whose VUI still says BT.709
+/// sRGB is displayed washed out rather than refused.
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, const EncoderTuning& tuning = EncoderTuning{});
+                      int bitrateKbps, const EncoderTuning& tuning = EncoderTuning{},
+                      bool hdr = false);
 
 /// Chain the extension buffers this pipeline always wants onto @p params, plus
 /// intra-refresh when @p intraRefresh is set.
@@ -120,8 +125,9 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
 /// what makes that ownership impossible to get wrong.
 void attachEncodeOptions(mfxVideoParam& params, mfxExtCodingOption& option1,
                          mfxExtCodingOption2& option2, mfxExtCodingOption3& option3,
-                         std::vector<mfxExtBuffer*>& buffers, int fps, bool intraRefresh,
-                         const EncoderTuning& tuning = EncoderTuning{});
+                         mfxExtVideoSignalInfo& signal, std::vector<mfxExtBuffer*>& buffers,
+                         int fps, bool intraRefresh, const EncoderTuning& tuning = EncoderTuning{},
+                         bool hdr = false);
 
 /// Write the rate-control fields — and only those — into an existing block.
 ///

@@ -283,10 +283,16 @@ void applyRateControl(mfxVideoParam& params, int fps, int bitrateKbps, const Enc
     // exactly for the rate is a session whose per-frame budget can never move.
     // The price is that it is also the VBV: budgetCeilingKbps() says why the
     // headroom is two and not more.
-    const int frameKb =
-        static_cast<int>(vbvBits(static_cast<uint32_t>(budgetBufferKbps(bitrateKbps, fps)), fps,
-                                 tuning.vbvFrames)) /
-        8;
+    //
+    // ⚠️ The bench's `vbv=<frames>` means what it says on every vendor —
+    // exactly N frames at the STREAM's rate — so it bypasses the headroom
+    // entirely. Feeding it the padded rate instead would have made the one key
+    // that measures the VBV unable to measure it, which is how a cost gets
+    // assumed instead of counted.
+    const uint32_t vbvRate = tuning.vbvFrames > 0
+                                 ? static_cast<uint32_t>(bitrateKbps)
+                                 : static_cast<uint32_t>(budgetBufferKbps(bitrateKbps, fps));
+    const int frameKb = static_cast<int>(vbvBits(vbvRate, fps, tuning.vbvFrames)) / 8;
     const int bufferKb = frameKb > 0 ? frameKb : 1;
     params.mfx.BufferSizeInKB =
         static_cast<mfxU16>((bufferKb / multiplier) > 0 ? (bufferKb / multiplier) : 1);
@@ -361,7 +367,7 @@ int budgetBufferKbps(int bitrateKbps, int fps)
 }
 
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,
-                      int bitrateKbps, const EncoderTuning& tuning)
+                      int bitrateKbps, const EncoderTuning& tuning, bool hdr)
 {
     std::memset(&params, 0, sizeof(params));
 
@@ -411,7 +417,20 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
     params.mfx.NumRefFrame =
         static_cast<mfxU16>(tuning.dpbFrames > 0 ? tuning.dpbFrames : kDefaultRefFrames);
 
-    params.mfx.FrameInfo.FourCC = MFX_FOURCC_NV12;
+    if (hdr) {
+        // The conversion pass hands over P010: 10 bits in the high end of each
+        // 16-bit sample, which is what Shift says. Main10 is the only HEVC
+        // profile that takes it, and naming it here rather than leaving the
+        // runtime to guess is what keeps a 10-bit stream from being encoded as
+        // if it were 8.
+        params.mfx.FrameInfo.FourCC = MFX_FOURCC_P010;
+        params.mfx.FrameInfo.BitDepthLuma = 10;
+        params.mfx.FrameInfo.BitDepthChroma = 10;
+        params.mfx.FrameInfo.Shift = 1;
+        params.mfx.CodecProfile = MFX_PROFILE_HEVC_MAIN10;
+    } else {
+        params.mfx.FrameInfo.FourCC = MFX_FOURCC_NV12;
+    }
     params.mfx.FrameInfo.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
     params.mfx.FrameInfo.PicStruct = MFX_PICSTRUCT_PROGRESSIVE;
     params.mfx.FrameInfo.FrameRateExtN = static_cast<mfxU32>(fps);
@@ -430,8 +449,8 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
 
 void attachEncodeOptions(mfxVideoParam& params, mfxExtCodingOption& option1,
                          mfxExtCodingOption2& option2, mfxExtCodingOption3& option3,
-                         std::vector<mfxExtBuffer*>& buffers, int fps, bool intraRefresh,
-                         const EncoderTuning& tuning)
+                         mfxExtVideoSignalInfo& signal, std::vector<mfxExtBuffer*>& buffers,
+                         int fps, bool intraRefresh, const EncoderTuning& tuning, bool hdr)
 {
     auto onOff = [](EncoderTuning::Choice c) {
         return c == EncoderTuning::Choice::On ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_OFF;
@@ -513,6 +532,25 @@ void attachEncodeOptions(mfxVideoParam& params, mfxExtCodingOption& option1,
         }
 
         buffers.push_back(reinterpret_cast<mfxExtBuffer*>(&option3));
+    }
+
+    if (hdr) {
+        std::memset(&signal, 0, sizeof(signal));
+        signal.Header.BufferId = MFX_EXTBUFF_VIDEO_SIGNAL_INFO;
+        signal.Header.BufferSz = sizeof(signal);
+
+        // ⚠️ Three integers, and without them HDR is not an error — it is a
+        // washed-out grey picture that reads as a shader bug. A decoder told
+        // nothing assumes BT.709 with an sRGB curve and runs it on PQ samples.
+        // Same reasoning, same values, as the NVENC and AMF paths.
+        signal.VideoFormat = 5;    // unspecified, as every path here writes
+        signal.VideoFullRange = 0; // limited, which is what the shader produces
+        signal.ColourDescriptionPresent = 1;
+        signal.ColourPrimaries = 9;          // BT.2020
+        signal.TransferCharacteristics = 16; // SMPTE ST 2084 (PQ)
+        signal.MatrixCoefficients = 9;       // BT.2020 non-constant luminance
+
+        buffers.push_back(reinterpret_cast<mfxExtBuffer*>(&signal));
     }
 
     params.ExtParam = buffers.data();

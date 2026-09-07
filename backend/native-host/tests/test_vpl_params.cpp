@@ -119,8 +119,9 @@ void run_vpl_params_tests()
         mfxExtCodingOption option1 = {};
         mfxExtCodingOption2 option2 = {};
         mfxExtCodingOption3 option3 = {};
+        mfxExtVideoSignalInfo signal = {};
         std::vector<mfxExtBuffer*> buffers;
-        encode::attachEncodeOptions(p, option1, option2, option3, buffers, 60, true);
+        encode::attachEncodeOptions(p, option1, option2, option3, signal, buffers, 60, true);
         CHECK_EQ(p.NumExtParam, static_cast<mfxU16>(2));
         p.mfx.TargetUsage = 4; // as if the runtime had corrected it
 
@@ -176,6 +177,48 @@ void run_vpl_params_tests()
         // And more than one reference, or a lost frame can only ever be
         // answered with a keyframe — the state this path was in until 07/09.
         CHECK(wide.mfx.NumRefFrame > 1);
+    }
+
+    // ── HDR: the format, the profile, and the three integers of the VUI ─────
+    //
+    // A 10-bit stream whose colour description still says BT.709 sRGB is not
+    // refused by anything — it is displayed washed out, which reads as a shader
+    // bug. So the description is asserted here beside the pixel format.
+    {
+        mfxVideoParam p = {};
+        CHECK(encode::fillEncodeParams(p, Codec::Hevc, 1920, 1080, 60, 20000, EncoderTuning{},
+                                       /*hdr=*/true));
+        CHECK_EQ(p.mfx.FrameInfo.FourCC, static_cast<mfxU32>(MFX_FOURCC_P010));
+        CHECK_EQ(p.mfx.FrameInfo.BitDepthLuma, static_cast<mfxU16>(10));
+        CHECK_EQ(p.mfx.FrameInfo.BitDepthChroma, static_cast<mfxU16>(10));
+        // P010 keeps its ten bits in the HIGH end of each 16-bit sample.
+        CHECK_EQ(p.mfx.FrameInfo.Shift, static_cast<mfxU16>(1));
+        CHECK_EQ(p.mfx.CodecProfile, static_cast<mfxU16>(MFX_PROFILE_HEVC_MAIN10));
+
+        mfxExtCodingOption o1 = {};
+        mfxExtCodingOption2 o2 = {};
+        mfxExtCodingOption3 o3 = {};
+        mfxExtVideoSignalInfo signal = {};
+        std::vector<mfxExtBuffer*> buffers;
+        encode::attachEncodeOptions(p, o1, o2, o3, signal, buffers, 60, true, EncoderTuning{},
+                                    /*hdr=*/true);
+        CHECK_EQ(signal.ColourDescriptionPresent, static_cast<mfxU16>(1));
+        CHECK_EQ(signal.ColourPrimaries, static_cast<mfxU16>(9));          // BT.2020
+        CHECK_EQ(signal.TransferCharacteristics, static_cast<mfxU16>(16)); // PQ
+        CHECK_EQ(signal.MatrixCoefficients, static_cast<mfxU16>(9));
+        // Limited range, which is what the conversion shader writes.
+        CHECK_EQ(signal.VideoFullRange, static_cast<mfxU16>(0));
+        // And it really is in the chain the encoder will read.
+        bool chained = false;
+        for (auto* b : buffers)
+            if (b == reinterpret_cast<mfxExtBuffer*>(&signal)) chained = true;
+        CHECK(chained);
+
+        // SDR asks for none of it.
+        mfxVideoParam sdr = {};
+        CHECK(encode::fillEncodeParams(sdr, Codec::Hevc, 1920, 1080, 60, 20000));
+        CHECK_EQ(sdr.mfx.FrameInfo.FourCC, static_cast<mfxU32>(MFX_FOURCC_NV12));
+        CHECK_EQ(sdr.mfx.FrameInfo.Shift, static_cast<mfxU16>(0));
     }
 
     // ── Geometry: aligned surface, exact crop ───────────────────────────────

@@ -2689,8 +2689,10 @@ Prouvé sur le banc, le 07/09/2026 :
 
 Pas prouvé, et à ne pas supposer :
 
-- **HDR et 4:4:4** restent refusés par construction sur ce chemin (P010 jamais
-  encodé ici, AYUV pas une entrée oneVPL) ;
+- ⚠️ **HDR : plus vrai depuis le §21.10** — le P010 Main10 BT.2020 PQ est
+  livré et vérifié le jour même. Le **4:4:4** reste refusé, pour une raison
+  qu'aucun matériel ne change : la conversion produit de l'AYUV, qu'oneVPL ne
+  prend pas en entrée d'encodeur ;
 - **les chiffres de latence** viennent d'un N95 à 4 cœurs qui encodait, décodait
   et servait la page en même temps. Ils disent que le chemin tient 60 fps en
   1080p et en 1440p ; ils ne disent rien d'un Intel de bureau ou d'un Arc.
@@ -2742,3 +2744,49 @@ capture d'écran sur le banc n'a rien vu, **mais elle ne prouve rien** — `BitB
 Desktop Duplication, elle, la capturerait. La prochaine étape utile est donc de
 regarder l'écran du banc autrement (Desktop Duplication, ou l'œil), pas de
 recommencer la même mesure.
+
+### 21.10 HDR sur Intel : FP16 scRGB → P010 → HEVC Main10 (07/09/2026)
+
+Le §21 disait « HDR refusé par construction ». Corrigé le même jour : la chaîne
+existait déjà des deux côtés — la passe de conversion sait produire du P010
+BT.2020 PQ depuis la capture FP16 (§16), et le runtime Intel dit oui au 10 bits.
+Il ne manquait que le chemin entre les deux.
+
+**Trois choses, et pas une de plus** :
+
+- `FrameInfo` en `MFX_FOURCC_P010`, `BitDepthLuma/Chroma = 10`, `Shift = 1` (le
+  P010 range ses dix bits dans le HAUT de chaque échantillon 16 bits) ;
+- `CodecProfile = MFX_PROFILE_HEVC_MAIN10`, nommé plutôt que laissé au runtime ;
+- `mfxExtVideoSignalInfo` chaîné : `ColourPrimaries = 9` (BT.2020),
+  `TransferCharacteristics = 16` (PQ), `MatrixCoefficients = 9`,
+  `VideoFullRange = 0`. ⚠️ **Ces trois entiers ne sont pas un détail** : un flux
+  10 bits dont la VUI dit encore BT.709 sRGB n'est refusé par personne, il est
+  *affiché délavé* — ce qui se lit comme un bug de shader. Mêmes valeurs, même
+  raisonnement, que les chemins NVENC et AMF.
+
+La sonde de capacités demande maintenant le 10 bits **au runtime**, et seulement
+pour HEVC : c'est le seul codec pour lequel ce chemin a un profil Main10, et
+aucune puce Intel du banc n'encode l'AV1 (§21.7). `supports10Bit` répond `true`
+sur l'UHD Graphics de l'N95.
+
+**Vérifié en vrai, HDR Windows activé sur le M27Q du banc (HDMI)** :
+
+- sonde : `[HDR]` sur le display, `hdrActive:true`, `supports10Bit:true` ;
+- banc : `duplication started: 2560x1440 (HDR, FP16)` →
+  `colour conversion: FP16 scRGB -> 1920x1080 P010 4:2:0 (BT.2020 PQ, limited)` →
+  `oneVPL ready: HEVC HDR (Main10, BT.2020 PQ)`, keyframe 41 Ko, 131 images ;
+- flux réel depuis bench-desk : le navigateur configure
+  **`hvc1.2.144.L123.B0`** — profil 2 = Main10 — `descLen=115`, `hdr=true`,
+  première image décodée 1920×1080. Le client sait donc que c'est du PQ BT.2020
+  parce que le flux le lui dit.
+
+⚠️ **Coût mesuré** : l'encodage 1080p60 passe de ~11 à **18,7 ms** par image sur
+cette puce. Le 10 bits n'est pas gratuit sur un iGPU d'entrée de gamme.
+
+⚠️ **Ce qui n'est PAS prouvé** : l'image sur un écran client HDR. Le M27Q est
+partagé — HDMI vers le banc Intel, DisplayPort vers bench-desk — et n'affiche
+qu'une entrée à la fois, donc le client était sur écran SDR : Chrome a annoncé
+`hdrMode=browser` et a ramené le PQ à la main, ce qui donne l'image plate et
+délavée attendue dans ce cas. Structure, couleurs et géométrie sont justes ; le
+rendu HDR final demande de basculer l'entrée du moniteur et d'y activer le HDR,
+ce qui est la manœuvre de Bruno, pas la mienne.
