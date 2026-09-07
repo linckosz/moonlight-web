@@ -684,6 +684,8 @@ export class StreamView {
             /* storage unavailable */
         }
         this._rawPointer = false;
+        this._lastRawPointerMs = 0; // last pointerrawupdate seen — see _rawPointerLive
+        this._mediaRectWarned = false; // one line when the media rect fell back
         this.pointerLocked = false;
         // ── Host pointer, drawn by US ──────────────────────────────────────
         // The native host can hand over the pointer's shape instead of burning
@@ -2328,8 +2330,9 @@ export class StreamView {
             return;
         }
 
-        const applyConfig = (cfg, noDescription = false) => {
-            // Try hardware-accelerated decoder first (GPU decoding on Android)
+        const applyConfig = (cfg, noDescription = false, hw = true) => {
+            // `hw` is what the probe in tryCodecs found out: a hardware decoder
+            // is asked for only when isConfigSupported said one exists.
             const _doConfigure = (config, hwAccel) => {
                 let cfgToUse;
                 if (this._hdrYuv) {
@@ -2392,7 +2395,7 @@ export class StreamView {
 
             try {
                 // Phase 1: try with hardware acceleration
-                return _doConfigure(cfg, true);
+                return _doConfigure(cfg, hw);
             } catch (hwErr) {
                 // Phase 2: fallback to software when prefer-hardware is not supported
                 console.warn(
@@ -2412,28 +2415,67 @@ export class StreamView {
 
             const cfg = configs[index];
             const noDescription = cfg._noDescription === true;
-            // Probe what _doConfigure will actually configure: the readback
-            // paths force prefer-software, and e.g. Chrome has no software HEVC —
-            // the plain config would probe "supported", then configure() would
-            // fail asynchronously (3 decoder errors before the codec fallback
-            // kicks in).
-            const probeCfg = this._hdrYuv
-                ? { ...cfg, hardwareAcceleration: 'prefer-software' }
-                : cfg;
-            VideoDecoder.isConfigSupported(probeCfg)
-                .then((result) => {
-                    if (result.supported) {
-                        if (!applyConfig(cfg, noDescription)) {
-                            tryCodecs(configs, index + 1, onExhausted);
-                        }
-                    } else {
-                        console.warn(
-                            '[StreamView] Config NOT supported: codec=' +
-                                cfg.codec +
-                                ', trying next',
+            const next = () => tryCodecs(configs, index + 1, onExhausted);
+            // Probe what _doConfigure will actually configure, preference
+            // included. configure() does not throw for a preference the browser
+            // cannot honour — the decoder fails asynchronously with "Unsupported
+            // configuration", which reads as a decoder error and not as a
+            // config to change: the recovery loop reconfigured the same
+            // prefer-hardware ten times on a Linux Chrome without VA-API, then
+            // gave the whole transport up (decoder_unsupported → the media
+            // transport, which has no client-drawn cursor — issue #15). Two
+            // cases the plain config hid:
+            //   • the readback paths force prefer-software, and e.g. Chrome has
+            //     no software HEVC;
+            //   • prefer-hardware on a machine with no hardware decoder, where
+            //     the plain config probes "supported" through its software one.
+            // So the preference is probed, and when hardware is refused the
+            // same codec is tried in software BEFORE moving to the next codec.
+            if (this._hdrYuv) {
+                VideoDecoder.isConfigSupported({ ...cfg, hardwareAcceleration: 'prefer-software' })
+                    .then((result) => {
+                        if (!result.supported) {
+                            console.warn(
+                                '[StreamView] Config NOT supported: codec=' +
+                                    cfg.codec +
+                                    ', trying next',
+                            );
+                            next();
+                        } else if (!applyConfig(cfg, noDescription, false)) next();
+                    })
+                    .catch((err) => {
+                        console.error(
+                            '[StreamView] isConfigSupported error for codec=' + cfg.codec + ':',
+                            err.message,
+                            err,
                         );
-                        tryCodecs(configs, index + 1, onExhausted);
+                        next();
+                    });
+                return;
+            }
+            VideoDecoder.isConfigSupported({ ...cfg, hardwareAcceleration: 'prefer-hardware' })
+                .then((hwResult) => {
+                    if (hwResult.supported) {
+                        if (!applyConfig(cfg, noDescription, true)) next();
+                        return;
                     }
+                    console.warn(
+                        '[GPU] prefer-hardware not supported for codec=' +
+                            cfg.codec +
+                            ', probing software',
+                    );
+                    return VideoDecoder.isConfigSupported(cfg).then((result) => {
+                        if (result.supported) {
+                            if (!applyConfig(cfg, noDescription, false)) next();
+                        } else {
+                            console.warn(
+                                '[StreamView] Config NOT supported: codec=' +
+                                    cfg.codec +
+                                    ', trying next',
+                            );
+                            next();
+                        }
+                    });
                 })
                 .catch((err) => {
                     console.error(
@@ -6083,8 +6125,7 @@ export class StreamView {
      *  coordinates map to the real picture, not the surrounding black bars. */
     _mediaRect() {
         const el = this._displayEl();
-        const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
-        const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
+        const [iw, ih] = this._surfaceIntrinsic(el);
 
         // Serve from cache when nothing that shapes the rect has changed. The
         // getBoundingClientRect() below is a LAYOUT READ, and the renderer
@@ -6112,9 +6153,52 @@ export class StreamView {
             return c.rect;
         }
 
-        const rect = this._computeMediaRect(el, iw, ih);
+        let rect = this._computeMediaRect(el, iw, ih);
+        // A rect with no area maps NOTHING: every position is "outside", so no
+        // mouse position ever goes out, while clicks still do — the host
+        // pointer sits where it was and every click lands there. Measured on
+        // 2026-09-07 from the Debian bench: the surface designated by
+        // _displayEl() was a hidden <video> (0×0, no frame), the canvas was
+        // the picture, and the host logged 16 events — all clicks, no move.
+        // The picture the viewer is looking at is never degenerate, so measure
+        // whichever surface actually shows it, and say so once.
+        if (!(rect.width > 0) || !(rect.height > 0)) {
+            const other = el === this.videoEl ? this.canvas : this.videoEl;
+            const [ow, oh] = this._surfaceIntrinsic(other);
+            const fallback = other ? this._computeMediaRect(other, ow, oh) : null;
+            if (fallback && fallback.width > 0 && fallback.height > 0) {
+                if (!this._mediaRectWarned) {
+                    this._mediaRectWarned = true;
+                    console.warn(
+                        '[StreamView] Media rect: ' +
+                            (el && el.id) +
+                            ' has no area, mapping input on ' +
+                            (other && other.id),
+                    );
+                }
+                rect = fallback;
+            }
+        }
         this._mediaRectCache = { el, iw, ih, rect, t: performance.now() };
         return rect;
+    }
+
+    /** Intrinsic size of a display surface, with the decoded frame's own size
+     *  as the fallback — a canvas whose control went to a worker reports
+     *  300×150 until the first commit, a <video> reports 0×0 before its first
+     *  frame (see _pictureWidth for the same reasoning). */
+    _surfaceIntrinsic(el) {
+        if (!el) return [0, 0];
+        let w = el === this.videoEl ? el.videoWidth : el.width;
+        let h = el === this.videoEl ? el.videoHeight : el.height;
+        if (!(w > 0) || !(h > 0)) {
+            const m = /^(\d+)×(\d+)/.exec(this._resolution || '');
+            if (m) {
+                w = parseInt(m[1], 10);
+                h = parseInt(m[2], 10);
+            }
+        }
+        return [w > 0 ? w : 0, h > 0 ? h : 0];
     }
 
     /** Drop the cached media rect; the next _mediaRect() re-measures. Called
@@ -6152,7 +6236,7 @@ export class StreamView {
             if (this._mouseFocused) {
                 // Raw mode: every report already went out from _onPointerRaw;
                 // this is the same motion summed up, a frame late.
-                if (this._rawPointer) return;
+                if (this._rawPointerLive()) return;
                 this._sendToHost({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
                 this._lastMouseClientX = e.clientX;
@@ -6618,7 +6702,8 @@ export class StreamView {
 
             // Raw mode: the position already went out from _onPointerRaw, at
             // the device's own rate. Only the cursor bookkeeping above is ours.
-            if (this._rawPointer) return;
+            // Only while raw reports actually arrive — see _rawPointerLive.
+            if (this._rawPointerLive()) return;
 
             // Send absolute position. LiSendMousePositionEvent() on the backend
             // will scale (x, y) from the reference plane to host screen coords.
@@ -6627,6 +6712,16 @@ export class StreamView {
         };
 
         this._onNormalMouseDown = (e) => {
+            // A click is aimed at a point, so it carries that point. Positions
+            // and presses used to travel separately, and a press went out even
+            // for a point the position path refuses to map (a degenerate rect,
+            // the letterbox bars) — the host then clicked wherever its pointer
+            // last was, with nothing on the client to show the gap. Over the
+            // bars there is nothing to aim at: no press either, the release
+            // below still goes out so a button is never left held.
+            const msg = this._absoluteMouseMessage(e.clientX, e.clientY);
+            if (!msg) return;
+            this._sendToHost(msg);
             this.handleMouseDown(e);
         };
 
@@ -7591,6 +7686,7 @@ export class StreamView {
         if (!('onpointerrawupdate' in window)) return;
         this._onPointerRaw = (e) => {
             if (e.pointerType !== 'mouse') return;
+            this._lastRawPointerMs = performance.now();
             if (this._gamingMode) {
                 // Pre-focus, the pointer is free: the mousemove path places the
                 // host cursor and handles the capture click.
@@ -7606,6 +7702,23 @@ export class StreamView {
         this.inputEl.addEventListener('pointerrawupdate', this._onPointerRaw);
         this._rawPointer = true;
         console.log('[StreamView] Mouse: raw report rate (pointerrawupdate, native host)');
+    }
+
+    /**
+     * Whether the raw path is actually delivering right now — not merely
+     * whether the browser has the API.
+     *
+     * The mousemove handlers stand down while raw reports flow, so that the
+     * same motion is not sent twice. They used to stand down on the mere
+     * existence of `onpointerrawupdate`, a promise the browser does not always
+     * keep (the event is gated on document focus, among other things) — and
+     * when it did not, no position went out at all, silently. A report seen
+     * within the last quarter second is the only evidence worth acting on;
+     * past that the ordinary handlers send, a duplicate position being
+     * harmless where a missing one is not.
+     */
+    _rawPointerLive() {
+        return this._rawPointer && performance.now() - this._lastRawPointerMs < 250;
     }
 
     /**

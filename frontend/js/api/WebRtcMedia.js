@@ -617,6 +617,7 @@ export class WebRtcMedia {
                         msg.type === 'rumble' ||
                         msg.type === 'clipboard' ||
                         msg.type === 'clipboardcaps' ||
+                        msg.type === 'cursor' ||
                         msg.type === 'inputgate'
                     ) {
                         if (this.onStats) this.onStats(msg);

@@ -96,6 +96,27 @@ MediaTrackRelay::MediaTrackRelay(IMediaEngine* engine, QObject* parent)
                 } catch (const std::exception&) {}
             });
 
+    // The mouse pointer's shape when the browser draws it (native host, desktop
+    // mode) — same message as DataChannelRelay's, same reasoning there. The
+    // input DC carries it here exactly as it does on the other transport.
+    connect(m_Shim, &IMediaEngine::cursorShapeChanged, this,
+            [this](QByteArray png, int hotspotX, int hotspotY, bool visible, QString kind,
+                   double scale) {
+                if (m_Stopping.load() || !m_InputDc) return;
+                QJsonObject m;
+                m["type"] = "cursor";
+                m["visible"] = visible;
+                m["hotspotX"] = hotspotX;
+                m["hotspotY"] = hotspotY;
+                m["scale"] = scale;
+                if (!kind.isEmpty()) m["kind"] = kind;
+                if (!png.isEmpty()) m["png"] = QString::fromLatin1(png.toBase64());
+                QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+                try {
+                    m_InputDc->send(std::string(j.constData(), j.size()));
+                } catch (const std::exception&) {}
+            });
+
     // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
     // Connected within m_IceTimeoutMs after setRemoteDescription().
     m_IceCheckTimer = new QTimer(this);
@@ -748,6 +769,15 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         // native host only, full reasoning in DataChannelRelay's handler.
         if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
             native->setFrameFloorFps(msg["fps"].toInt(0));
+    } else if (type == "cursormode") {
+        // Who draws the mouse pointer — native host only, full reasoning in
+        // DataChannelRelay's handler. This transport ignored the message until
+        // 2026-09-07: the host kept drawing the pointer into a picture that a
+        // still desktop refreshes at 2 fps, while the client, believing it had
+        // taken the pointer over, hid its own — none under the hand (issue #15,
+        // any browser without a hardware decoder lands here).
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
+            native->setCompositeCursor(msg["composite"].toBool(true), msg["cursorPx"].toInt(0));
     } else if (type == "clientrefresh") {
         // The client's screen changed mid-session — native host only, see
         // DataChannelRelay's handler.

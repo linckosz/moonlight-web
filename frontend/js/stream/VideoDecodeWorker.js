@@ -406,7 +406,8 @@ function configureDecoder() {
         return;
     }
 
-    const applyConfig = (cfg, noDescription = false) => {
+    const applyConfig = (cfg, noDescription = false, hw = true) => {
+        // `hw` is what the probe in tryCodecs found out — see there.
         const _doConfigure = (config, hwAccel) => {
             const cfgToUse = hwAccel
                 ? { ...config, hardwareAcceleration: 'prefer-hardware' }
@@ -439,7 +440,7 @@ function configureDecoder() {
             }
         };
         try {
-            return _doConfigure(cfg, true);
+            return _doConfigure(cfg, hw);
         } catch (hwErr) {
             return _doConfigure(cfg, false);
         }
@@ -452,16 +453,31 @@ function configureDecoder() {
         }
         const cfg = configs[index];
         const noDescription = cfg._noDescription === true;
-        VideoDecoder.isConfigSupported(cfg)
-            .then((result) => {
-                if (result.supported) {
-                    if (!applyConfig(cfg, noDescription))
-                        tryCodecs(configs, index + 1, onExhausted);
-                } else {
-                    tryCodecs(configs, index + 1, onExhausted);
+        const next = () => tryCodecs(configs, index + 1, onExhausted);
+        // The preference is probed too, not just the codec: configure() does
+        // not throw for a prefer-hardware the browser cannot honour, the
+        // decoder fails asynchronously instead, and that read as a decoder
+        // error to recover from — ten identical retries, then the transport
+        // given up (StreamView.tryCodecs has the full story). Hardware refused
+        // → the same codec in software, before the next codec.
+        VideoDecoder.isConfigSupported({ ...cfg, hardwareAcceleration: 'prefer-hardware' })
+            .then((hwResult) => {
+                if (hwResult.supported) {
+                    if (!applyConfig(cfg, noDescription, true)) next();
+                    return;
                 }
+                console.warn(
+                    '[VideoWorker] prefer-hardware not supported for codec=' +
+                        cfg.codec +
+                        ', probing software',
+                );
+                return VideoDecoder.isConfigSupported(cfg).then((result) => {
+                    if (result.supported) {
+                        if (!applyConfig(cfg, noDescription, false)) next();
+                    } else next();
+                });
             })
-            .catch(() => tryCodecs(configs, index + 1, onExhausted));
+            .catch(() => next());
     };
 
     // Detect HDR: HEVC Main10, HEVC RExt only when the SPS says 10-bit (8-bit
