@@ -262,7 +262,10 @@ body.streaming-active::after {
     text-align: center;
     pointer-events: none;
     border: 1px solid rgba(255, 200, 120, 0.35);
-    z-index: 5;
+    /* Above .stream-input-layer (50), which covers the whole picture and would
+       otherwise take the tap meant for the button below. Safe because the strip
+       itself is transparent to the pointer — only the button takes it back. */
+    z-index: 60;
 }
 
 /* The way out, when Windows has frozen the pointer too and clicking elsewhere

@@ -1864,6 +1864,10 @@ export class StreamView {
                 const t = e.target;
                 if (t === this._kbdCapture) return;
                 if (t && t.closest && t.closest('.stream-header')) return;
+                // Same exemption for the input-gate strip: its button is the
+                // only way out of a session where nothing else responds, and
+                // preventDefault here would swallow the tap that opens it.
+                if (t && t.closest && t.closest('.stream-input-gate')) return;
                 e.preventDefault();
             };
             document.addEventListener('touchstart', this._onDocKeepFocus, {
