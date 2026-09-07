@@ -73,6 +73,9 @@ private:
     void injectKey(const InputEvent& event, bool down);
     void injectText(const std::string& utf8);
     void injectMouseMove(int deltaX, int deltaY);
+    /// Warp the pointer to the nearest point of the captured display if it is
+    /// on another screen. A relative move applied from there is visible.
+    void bringCursorOntoDisplay();
     void injectMousePosition(const InputEvent& event);
     /// Applies the press if — and only if — it changes the button's state.
     void injectMouseButton(int button, bool down);

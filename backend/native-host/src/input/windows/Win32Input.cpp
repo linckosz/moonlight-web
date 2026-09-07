@@ -159,23 +159,31 @@ INPUT makeKeyInput(int vk, bool down, bool nonNormalized)
     return input;
 }
 
-/// Map a point on the captured display to SendInput's absolute space.
-///
-/// That space is 0..65535 across the WHOLE virtual desktop, not across one
-/// screen, so the display's origin has to be added before normalising —
-/// otherwise every secondary monitor would be aimed at as if it were the
-/// primary. Both rectangles come from the same DPI-virtualized coordinate
-/// system (see DesktopRect), so no scaling correction belongs here.
-bool toAbsolute(const capture::DesktopRect& rect, int x, int y, int refW, int refH, LONG& outX,
-                LONG& outY)
+/// Map a desktop point to SendInput's absolute space: 0..65535 across the
+/// WHOLE virtual desktop, not across one screen.
+bool desktopToAbsolute(int64_t desktopX, int64_t desktopY, LONG& outX, LONG& outY)
 {
-    if (refW <= 0 || refH <= 0 || !rect.valid()) return false;
-
     const int virtualLeft = ::GetSystemMetrics(SM_XVIRTUALSCREEN);
     const int virtualTop = ::GetSystemMetrics(SM_YVIRTUALSCREEN);
     const int virtualWidth = ::GetSystemMetrics(SM_CXVIRTUALSCREEN);
     const int virtualHeight = ::GetSystemMetrics(SM_CYVIRTUALSCREEN);
     if (virtualWidth <= 1 || virtualHeight <= 1) return false;
+
+    outX = static_cast<LONG>(((desktopX - virtualLeft) * 65535) / (virtualWidth - 1));
+    outY = static_cast<LONG>(((desktopY - virtualTop) * 65535) / (virtualHeight - 1));
+    return true;
+}
+
+/// Map a point on the captured display to SendInput's absolute space.
+///
+/// The display's origin has to be added before normalising — otherwise every
+/// secondary monitor would be aimed at as if it were the primary. Both
+/// rectangles come from the same DPI-virtualized coordinate system (see
+/// DesktopRect), so no scaling correction belongs here.
+bool toAbsolute(const capture::DesktopRect& rect, int x, int y, int refW, int refH, LONG& outX,
+                LONG& outY)
+{
+    if (refW <= 0 || refH <= 0 || !rect.valid()) return false;
 
     // Clamp to the display: a client whose aspect ratio differs slightly can
     // report a point a pixel or two outside, and letting that through would
@@ -187,9 +195,19 @@ bool toAbsolute(const capture::DesktopRect& rect, int x, int y, int refW, int re
     const int64_t clampedY =
         std::min<int64_t>(std::max<int64_t>(onDisplayY, rect.top), rect.bottom - 1);
 
-    outX = static_cast<LONG>(((clampedX - virtualLeft) * 65535) / (virtualWidth - 1));
-    outY = static_cast<LONG>(((clampedY - virtualTop) * 65535) / (virtualHeight - 1));
-    return true;
+    return desktopToAbsolute(clampedX, clampedY, outX, outY);
+}
+
+/// Where the pointer is on the desktop, if Windows will say (it will not from
+/// a desktop we cannot see, in which case injection is pointless anyway).
+bool cursorPosition(POINT& out)
+{
+    return ::GetCursorPos(&out) != FALSE;
+}
+
+bool contains(const capture::DesktopRect& rect, const POINT& p)
+{
+    return p.x >= rect.left && p.x < rect.right && p.y >= rect.top && p.y < rect.bottom;
 }
 
 } // namespace
@@ -399,6 +417,18 @@ void Win32Input::injectMouseMove(int deltaX, int deltaY)
 {
     if (deltaX == 0 && deltaY == 0) return;
 
+    // A delta moves the pointer from wherever it IS — and that may be another
+    // screen, invisible to a viewer who is looking at this one. Left there,
+    // a trackpad client can push forever without ever seeing the cursor:
+    // with a display sitting higher or lower than its neighbour, part of the
+    // shared edge has no screen behind it and Windows simply stops the
+    // pointer at the border. So the pointer is first brought home, to the
+    // nearest point of the captured display, and the delta applied from there.
+    //
+    // Only when a delta arrives, never at session start: a stream that opens
+    // should not touch the host's mouse until the viewer does.
+    bringCursorOntoDisplay();
+
     // Relative motion passes through the pointer speed and acceleration the
     // host has configured, exactly as a local mouse would. That is the right
     // default — a game reading raw input bypasses it anyway, and a desktop user
@@ -410,6 +440,34 @@ void Win32Input::injectMouseMove(int deltaX, int deltaY)
     input.mi.dy = deltaY;
     input.mi.dwFlags = MOUSEEVENTF_MOVE;
     sendOne(input);
+}
+
+void Win32Input::bringCursorOntoDisplay()
+{
+    POINT here = {};
+    if (!m_DisplayRect.valid() || !cursorPosition(here) || contains(m_DisplayRect, here)) return;
+
+    // The nearest point inside, not the centre: a pointer sitting just past
+    // the edge lands where the viewer would expect it, right at that edge.
+    const int64_t x =
+        std::min<int64_t>(std::max<int64_t>(here.x, m_DisplayRect.left), m_DisplayRect.right - 1);
+    const int64_t y =
+        std::min<int64_t>(std::max<int64_t>(here.y, m_DisplayRect.top), m_DisplayRect.bottom - 1);
+
+    LONG absX = 0;
+    LONG absY = 0;
+    if (!desktopToAbsolute(x, y, absX, absY)) return;
+
+    INPUT input = {};
+    input.type = INPUT_MOUSE;
+    input.mi.dx = absX;
+    input.mi.dy = absY;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    sendOne(input);
+
+    log::info("[native] input: pointer was on another screen (" + std::to_string(here.x) + "," +
+              std::to_string(here.y) + "), brought onto the captured display at " +
+              std::to_string(x) + "," + std::to_string(y));
 }
 
 void Win32Input::injectMousePosition(const InputEvent& event)
