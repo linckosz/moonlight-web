@@ -25,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <thread>
 
 namespace mw::native::input {
 
@@ -70,8 +71,12 @@ public:
     void setDisplayRect(int left, int top, int right, int bottom) override;
     void setAllowElevated(bool allow) override;
     void setGateCallback(InputGateCallback callback) override;
+    bool releaseBlock() override;
 
 private:
+    /// The body of releaseBlock, on its own thread — see the .cpp.
+    void runRelease(void* blockerWindow);
+
     void injectKey(const InputEvent& event, bool down);
     void injectText(const std::string& utf8);
     void injectMouseMove(int deltaX, int deltaY);
@@ -111,16 +116,28 @@ private:
     const WindowStanding& cachedStanding(void* window, StandingCache& cache);
     /// "uipi", "policy", or "" when a press aimed at `standing` goes through.
     const char* gateReason(const WindowStanding& standing) const;
-    /// Tell the log and the listener when the gate's state changed.
-    void reportGate(const WindowStanding& standing);
+    /// Tell the log and the listener when the gate's state changed. @p window
+    /// is the HWND `standing` describes, kept so releaseBlock knows what to
+    /// leave minimised. @p force reports even an unchanged state, which is how
+    /// releaseBlock answers a viewer waiting on its own button.
+    void reportGate(const WindowStanding& standing, void* window, bool force = false);
 
     StandingCache m_Focused;     ///< the foreground window — keyboard's target
     StandingCache m_UnderCursor; ///< the window under the pointer — a click's
     bool m_AllowElevated = true;
     InputGateCallback m_OnGate;
+    /// The gate's last reported state, and the window it named. Guarded because
+    /// the unblock thread reports too — see reportGate.
+    std::mutex m_GateMutex;
     bool m_GateBlocked = false;
     std::string m_GateWindow;
+    void* m_GateHwnd = nullptr;
     std::atomic<uint64_t> m_Gated{0}; ///< presses dropped at the gate
+
+    /// releaseBlock's worker: COM into the shell, then a wait, so it cannot run
+    /// on the thread that asked. Joined by stop().
+    std::mutex m_UnblockMutex;
+    std::thread m_UnblockThread;
 
     /// Not const: the display can be re-resolved under a running session (see
     /// setDisplayRect). Written and read under the caller's own serialisation.

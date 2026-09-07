@@ -321,10 +321,18 @@ public:
     /// when the viewer presses Win+D on a keyboard of their own; the window in
     /// the way loses the foreground, and the session comes back to life.
     ///
-    /// Blunt on purpose: everything minimises, the game included. It is the
-    /// button you press when the alternative is ending the session, so it is
-    /// offered only while the gate is closed. Returns false where the platform
-    /// has no such thing, which today is everywhere but Windows.
+    /// Minimising only the offending window would be the polite version and is
+    /// not available: ShowWindow across integrity levels is dropped exactly
+    /// like SendInput, measured on Windows 11 on 07/09/2026. What is done
+    /// instead is to note which windows were up, minimise everything, and put
+    /// back the ones that can be put back — so the desktop comes home minus the
+    /// window in the way, and minus any other elevated window, which cannot be
+    /// restored for the same reason it could not be minimised alone.
+    ///
+    /// The gate is re-reported when it is over, so a viewer who is not touching
+    /// anything still learns whether it worked. Returns false when the gate is
+    /// not closed, and where the platform has no such thing — today, everywhere
+    /// but Windows.
     virtual bool releaseInputBlock() { return false; }
 };
 

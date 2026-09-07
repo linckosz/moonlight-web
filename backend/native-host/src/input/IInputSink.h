@@ -85,6 +85,13 @@ public:
     /// from inject(), on its thread, on change only. A sink that never gates
     /// never calls it.
     virtual void setGateCallback(InputGateCallback callback) { (void)callback; }
+
+    /// Get the viewer out from behind a window they cannot reach past — see
+    /// Session::releaseInputBlock, which this implements. Returns false when
+    /// the gate is not closed, or where the platform has no way to do it.
+    /// Does its work on a thread of its own: the caller is a viewer's control
+    /// message, not something to block on the shell.
+    virtual bool releaseBlock() { return false; }
 };
 
 } // namespace mw::native::input

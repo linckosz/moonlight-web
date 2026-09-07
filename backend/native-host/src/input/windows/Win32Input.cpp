@@ -21,11 +21,15 @@
 #include "UsScanCode.h"
 
 #include <windows.h>
+// IShellDispatch::MinimizeAll — the one lever an unelevated process has over an
+// elevated window. See releaseBlock().
+#include <shldisp.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace mw::native::input {
@@ -387,6 +391,12 @@ bool Win32Input::start(std::string& error)
 void Win32Input::stop()
 {
     if (!m_Started) return;
+    // Before anything else it might report onto: the unblock thread ends by
+    // telling the listener what the gate looks like now.
+    {
+        std::lock_guard<std::mutex> lock(m_UnblockMutex);
+        if (m_UnblockThread.joinable()) m_UnblockThread.join();
+    }
     releaseAll();
     // Unplugged before anything else: a virtual pad that outlived its session
     // would sit in the Windows game controller list forever, and the next game
@@ -458,11 +468,12 @@ void Win32Input::inject(const InputEvent& event)
         const WindowStanding& standing = cachedStanding(target, mouse ? m_UnderCursor : m_Focused);
         if (*gateReason(standing)) {
             m_Gated.fetch_add(1, std::memory_order_relaxed);
-            reportGate(standing);
+            reportGate(standing, target);
             return;
         }
     }
-    reportGate(cachedStanding(::GetForegroundWindow(), m_Focused));
+    HWND foreground = ::GetForegroundWindow();
+    reportGate(cachedStanding(foreground, m_Focused), foreground);
     m_Injected.fetch_add(1, std::memory_order_relaxed);
 
     switch (event.type) {
@@ -617,16 +628,23 @@ const char* Win32Input::gateReason(const WindowStanding& standing) const
     return "";
 }
 
-void Win32Input::reportGate(const WindowStanding& standing)
+void Win32Input::reportGate(const WindowStanding& standing, void* window, bool force)
 {
     const char* reason = gateReason(standing);
     const bool blocked = *reason != '\0';
+    // Locked because releaseBlock's thread reports too, and it is the whole
+    // point of that thread: after it has minimised the window in the way,
+    // nobody is pressing anything, so no injection would come along to notice.
+    // Uncontended on the input path, where the GetForegroundWindow above
+    // already costs more than this does.
+    std::lock_guard<std::mutex> lock(m_GateMutex);
     // Same state, same window: nothing new. The name is compared too, so a
     // gate that moved from one elevated window to another is reported — the
     // viewer is told what is in the way now, not what was.
-    if (blocked == m_GateBlocked && (!blocked || standing.name == m_GateWindow)) return;
+    if (!force && blocked == m_GateBlocked && (!blocked || standing.name == m_GateWindow)) return;
     m_GateBlocked = blocked;
     m_GateWindow = blocked ? standing.name : std::string();
+    m_GateHwnd = blocked ? window : nullptr;
 
     if (blocked) {
         const std::string why =
@@ -646,6 +664,115 @@ void Win32Input::reportGate(const WindowStanding& standing)
     gate.reason = reason;
     gate.window = m_GateWindow;
     m_OnGate(gate);
+}
+
+namespace {
+
+/// Every top-level window a viewer would call "a window", in z-order, front
+/// first. Already-minimised ones are left out: they were away before we
+/// touched anything, and putting them back would be a change nobody asked for.
+BOOL CALLBACK collectRestorable(HWND window, LPARAM param)
+{
+    auto* out = reinterpret_cast<std::vector<HWND>*>(param);
+    if (!::IsWindowVisible(window) || ::IsIconic(window)) return TRUE;
+    if (::GetWindow(window, GW_OWNER)) return TRUE; // a dialog follows its owner
+    if (::GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) return TRUE;
+    if (::GetWindowTextLengthW(window) == 0) return TRUE;
+    out->push_back(window);
+    return TRUE;
+}
+
+/// Win+D, asked for by name. The shell may do to an elevated window what we may
+/// not; this is the whole reason the way out goes through it.
+bool minimiseEverything()
+{
+    const HRESULT init = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    // RPC_E_CHANGED_MODE: COM is already up on this thread under another model,
+    // which is fine — we just must not uninitialise it.
+    const bool owned = SUCCEEDED(init);
+    if (init != RPC_E_CHANGED_MODE && !owned) {
+        log::warning("[native] input unblock: COM refused to start (hr " + std::to_string(init) +
+                     ")");
+        return false;
+    }
+
+    IShellDispatch* shell = nullptr;
+    const HRESULT hr = ::CoCreateInstance(CLSID_Shell, nullptr, CLSCTX_ALL, IID_IShellDispatch,
+                                          reinterpret_cast<void**>(&shell));
+    const bool ok = SUCCEEDED(hr) && shell;
+    if (ok) {
+        shell->MinimizeAll();
+        shell->Release();
+    } else {
+        log::warning("[native] input unblock: no shell to ask (hr " + std::to_string(hr) +
+                     ") — is Explorer running?");
+    }
+    if (owned) ::CoUninitialize();
+    return ok;
+}
+
+} // namespace
+
+bool Win32Input::releaseBlock()
+{
+    HWND blocker = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_GateMutex);
+        if (!m_GateBlocked) return false;
+        blocker = static_cast<HWND>(m_GateHwnd);
+    }
+    std::lock_guard<std::mutex> lock(m_UnblockMutex);
+    // One at a time. The button that asks for this disables itself on the first
+    // press, so a queue here would only ever hold a viewer pressing twice.
+    if (m_UnblockThread.joinable()) m_UnblockThread.join();
+    m_UnblockThread = std::thread([this, blocker] { runRelease(blocker); });
+    return true;
+}
+
+/// Minimise the window in the way, and as little else as can be managed.
+///
+/// Minimising just that one window is what a viewer asks for and what Windows
+/// refuses: ShowWindow across integrity levels is dropped exactly like
+/// SendInput is — measured on this machine on 07/09/2026, where a SW_RESTORE
+/// on an elevated console from an unelevated process changed nothing and
+/// reported nothing. The only lever that reaches such a window is the shell's
+/// own minimise-all.
+///
+/// So the blast radius is narrowed afterwards instead of before: note which
+/// windows were up, minimise everything, then put back the ones we are allowed
+/// to put back. The window in the way is skipped on purpose. Any OTHER elevated
+/// window stays down too — not by choice, but because restoring it is refused
+/// on the same grounds — and that is the honest limit of this.
+void Win32Input::runRelease(void* blockerWindow)
+{
+    HWND blocker = static_cast<HWND>(blockerWindow);
+    std::vector<HWND> restore;
+    ::EnumWindows(collectRestorable, reinterpret_cast<LPARAM>(&restore));
+
+    if (!minimiseEverything()) return;
+
+    // Back to front, so whatever was in front before ends in front again.
+    size_t back = 0;
+    for (auto it = restore.rbegin(); it != restore.rend(); ++it) {
+        if (*it == blocker) continue;
+        if (::ShowWindow(*it, SW_RESTORE)) ++back;
+    }
+    log::info("[native] input unblock: desktop minimised at the viewer's request, " +
+              std::to_string(back) + " of " + std::to_string(restore.size()) +
+              " window(s) put back");
+
+    // Say what came of it, rather than leaving the viewer to find out by
+    // pressing something. Nobody is injecting at this moment — that is the
+    // whole situation — so this thread is the only one that can notice the
+    // foreground changed. The pause lets the shell settle first.
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+    // Forced, so the report goes out even when the answer is "no change":
+    // the viewer's button disabled itself on the press, and if this achieved
+    // nothing they have to be told, or it stays greyed out over a session that
+    // never came back.
+    HWND foreground = ::GetForegroundWindow();
+    reportGate(standingOf(foreground), foreground, true);
 }
 
 void Win32Input::bringCursorOntoDisplay()
