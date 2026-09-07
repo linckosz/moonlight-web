@@ -1501,7 +1501,11 @@ export class StreamView {
                 <div class="stream-click-hint" id="stream-hint">
                     ${t('stream.clickToCapture')}
                 </div>
-                <div class="stream-input-gate" id="stream-input-gate" role="status" hidden></div>
+                <div class="stream-input-gate" id="stream-input-gate" role="status" hidden>
+                    <span id="stream-input-gate-text"></span>
+                    <button type="button" class="stream-input-gate-release"
+                            id="stream-input-gate-release" hidden></button>
+                </div>
             </div>
         `;
         document.getElementById('app').appendChild(el);
@@ -1584,6 +1588,33 @@ export class StreamView {
         this.statusEl = null;
         this.hintEl = /** @type {HTMLElement} */ (el.querySelector('#stream-hint'));
         this._inputGateEl = /** @type {HTMLElement} */ (el.querySelector('#stream-input-gate'));
+        this._inputGateTextEl = /** @type {HTMLElement} */ (
+            el.querySelector('#stream-input-gate-text')
+        );
+        this._inputGateReleaseEl = /** @type {HTMLButtonElement} */ (
+            el.querySelector('#stream-input-gate-release')
+        );
+        if (this._inputGateReleaseEl) {
+            // The strip floats over the picture, so every one of these would
+            // otherwise also read as a click on the host's desktop — which,
+            // while the gate is closed, is precisely the click that goes
+            // nowhere. Swallow them all, and act on the real one.
+            for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart']) {
+                this._inputGateReleaseEl.addEventListener(
+                    type,
+                    (e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                    },
+                    { passive: false },
+                );
+            }
+            this._inputGateReleaseEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                this._releaseInputBlock();
+            });
+        }
 
         const consoleBtn = /** @type {HTMLElement} */ (el.querySelector('#btn-stream-console'));
         if (consoleBtn) {
@@ -5481,7 +5512,13 @@ export class StreamView {
      * picture, not a modal: it fires whenever an administrator window takes
      * focus on the host, which can be often, and the viewer's way out is to
      * click somewhere else on the picture — a modal would be in the way of
-     * exactly that. Moving the pointer still works while it is up.
+     * exactly that.
+     *
+     * Except when it is not. Where the block is Windows' own (reason "uipi"),
+     * the whole injection is refused while that window holds the foreground,
+     * the pointer included: there is no "somewhere else" to click, because the
+     * pointer will not go there. That is a dead end, so the strip carries the
+     * way out of it — see _releaseInputBlock.
      *
      * Kept up for a few seconds at least, even if the host says "open" right
      * after: a dropped click on a window off to the side closes and reopens
@@ -5491,10 +5528,21 @@ export class StreamView {
     _applyInputGate(msg) {
         const el = this._inputGateEl;
         if (!el) return;
+        const textEl = this._inputGateTextEl || el;
+        const btn = this._inputGateReleaseEl;
         if (msg.blocked) {
-            const key =
-                msg.reason === 'uipi' ? 'stream.inputGateHostUnelevated' : 'stream.inputGateAdmin';
-            el.textContent = t(key, { window: msg.window || '' });
+            const stuck = msg.reason === 'uipi';
+            const key = stuck ? 'stream.inputGateHostUnelevated' : 'stream.inputGateAdmin';
+            textEl.textContent = t(key, { window: msg.window || '' });
+            if (btn) {
+                btn.textContent = t('stream.inputGateRelease');
+                btn.disabled = false;
+                // Offered only where the pointer itself is stuck. Under our own
+                // policy the viewer keeps their pointer and can click their way
+                // out, so minimising the host's windows for them would be an
+                // act nobody asked for.
+                btn.hidden = !stuck;
+            }
             el.hidden = false;
             this._inputGateShownAt = performance.now();
             if (this._inputGateHideTimer) {
@@ -5509,10 +5557,32 @@ export class StreamView {
         const hide = () => {
             this._inputGateHideTimer = null;
             el.hidden = true;
+            if (btn) btn.hidden = true;
         };
         if (this._inputGateHideTimer) clearTimeout(this._inputGateHideTimer);
         if (left > 0) this._inputGateHideTimer = setTimeout(hide, left);
         else hide();
+    }
+
+    /**
+     * Ask the host to minimise its desktop, the one way out of a gate closed
+     * by Windows itself.
+     *
+     * The button exists because the alternative is a session the viewer can
+     * only end: while an elevated window holds the foreground, injection is
+     * refused wholesale, so no click and no keystroke of theirs can move the
+     * focus off it. The host does not answer this with input either — it asks
+     * the shell, which is allowed what we are not (see releaseInputBlock in
+     * NativeHost.h). The gate reopens by itself a moment later, over the
+     * normal "open" message, so there is nothing to confirm here.
+     */
+    _releaseInputBlock() {
+        const btn = this._inputGateReleaseEl;
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = t('stream.inputGateReleasing');
+        }
+        this._sendToHost({ type: 'unblockinput' });
     }
 
     _notePeriodicStall(stall) {

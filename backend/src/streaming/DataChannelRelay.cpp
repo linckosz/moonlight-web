@@ -1169,6 +1169,23 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         return;
     }
 
+    if (type == "unblockinput") {
+        // The viewer is locked out — an elevated window holds the foreground
+        // and Windows refuses every event, the pointer's included, so they
+        // cannot click their way to another window. This asks the shell to
+        // minimise the desktop, which is not input and so is not refused.
+        //
+        // Behind the keyboard/mouse policy above, deliberately: it moves the
+        // host's windows about, which is exactly what a view-only guest may
+        // not do. A guest who DOES have keyboard and mouse could reach the
+        // shell's own Show Desktop with the pointer anyway, when the pointer
+        // works — this is that same act, for when it does not.
+        //
+        // Native host only: no remote GameStream host exposes such a thing.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim)) native->releaseInputBlock();
+        return;
+    }
+
     if (type == "framefloor") {
         // How fast the client wants frames to keep coming while nothing on the
         // host's screen moves. It is the side that knows what its situation is

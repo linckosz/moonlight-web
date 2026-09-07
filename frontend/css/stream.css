@@ -265,6 +265,35 @@ body.streaming-active::after {
     z-index: 5;
 }
 
+/* The way out, when Windows has frozen the pointer too and clicking elsewhere
+   is not possible. The strip itself stays transparent to the pointer — only
+   this takes it back, so nothing else about the picture changes. Sized for a
+   thumb: it is pressed on a phone, one-handed, by someone already stuck. */
+.stream-input-gate-release {
+    display: block;
+    margin: 8px auto 0;
+    pointer-events: auto;
+    min-height: 36px;
+    padding: 8px 18px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 220, 160, 0.6);
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.stream-input-gate-release:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.stream-input-gate-release:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
 /* ── Keyboard shortcuts slide (startup overlay) ────────────────────── */
 .stream-shortcuts-slide {
     position: absolute;

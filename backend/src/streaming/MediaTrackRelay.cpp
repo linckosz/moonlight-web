@@ -739,6 +739,10 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
             ClipboardBridge::instance()->pasteFromClient(m_Shim, msg["text"].toString(),
                                                          msg["injectCtrl"].toBool(false));
         }
+    } else if (type == "unblockinput") {
+        // The way out of a closed input gate — native host only, full
+        // reasoning in DataChannelRelay's handler.
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim)) native->releaseInputBlock();
     } else if (type == "framefloor") {
         // How fast the client wants frames while the host's screen is still —
         // native host only, full reasoning in DataChannelRelay's handler.

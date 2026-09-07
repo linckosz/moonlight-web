@@ -210,6 +210,11 @@ public:
     /// then never say it again. Safe at any time.
     void setFrameFloorFps(int fps);
 
+    /// The viewer pressing the way out of a closed input gate — see
+    /// Session::releaseInputBlock. Dropped when no session runs; there is
+    /// nothing to unblock then.
+    void releaseInputBlock();
+
     /// The receiver's report on the link (a `linkstats` message on the input
     /// channel, or the RTP counters of `clientstats`), handed to the engine's
     /// rate governor with the frames our own sender evicted since the last

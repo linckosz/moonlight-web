@@ -532,6 +532,11 @@ void NativeMediaEngine::setFrameFloorFps(int fps)
     if (m_Session) m_Session->setFrameFloorFps(fps);
 }
 
+void NativeMediaEngine::releaseInputBlock()
+{
+    if (m_Session) m_Session->releaseInputBlock();
+}
+
 void NativeMediaEngine::invalidateReference(uint32_t frameNumber)
 {
     if (m_Session) m_Session->invalidateReference(frameNumber);

@@ -37,6 +37,9 @@
 #include <windows.h>
 // AvSetMmThreadCharacteristicsW: the capture loop runs as an MMCSS "Games" task.
 #include <avrt.h>
+// IShellDispatch::MinimizeAll, the way out of a closed input gate — see
+// releaseInputBlock().
+#include <shldisp.h>
 
 #include <atomic>
 #include <chrono>
@@ -410,6 +413,42 @@ public:
         std::lock_guard<std::mutex> lock(m_InputMutex);
         m_OnInputGate = std::move(callback);
         if (m_Input) m_Input->setGateCallback(m_OnInputGate);
+    }
+
+    bool releaseInputBlock() override
+    {
+        // On its own thread, and detached: this is a cross-process call into
+        // Explorer, which can be slow or wedged, and the caller is a viewer's
+        // control message on the network thread. Nothing here touches session
+        // state, so outliving the session costs nothing.
+        std::thread([] {
+            const HRESULT init = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            // RPC_E_CHANGED_MODE: COM is already up on this thread under another
+            // model, which is fine — we just must not uninitialise it.
+            const bool owned = SUCCEEDED(init);
+            if (init != RPC_E_CHANGED_MODE && !owned) {
+                log::warning("[native] input unblock: COM refused to start (hr " +
+                             std::to_string(init) + ")");
+                return;
+            }
+
+            IShellDispatch* shell = nullptr;
+            const HRESULT hr =
+                ::CoCreateInstance(CLSID_Shell, nullptr, CLSCTX_ALL, IID_IShellDispatch,
+                                   reinterpret_cast<void**>(&shell));
+            if (SUCCEEDED(hr) && shell) {
+                // Win+D, asked for by name. The shell may do to the window in
+                // the way what we may not.
+                shell->MinimizeAll();
+                shell->Release();
+                log::info("[native] input unblock: desktop minimised at the viewer's request");
+            } else {
+                log::warning("[native] input unblock: no shell to ask (hr " + std::to_string(hr) +
+                             ") — is Explorer running?");
+            }
+            if (owned) ::CoUninitialize();
+        }).detach();
+        return true;
     }
 
     void setCompositeCursor(bool composite, int cursorFramePx) override

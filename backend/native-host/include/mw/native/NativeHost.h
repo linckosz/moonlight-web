@@ -306,6 +306,26 @@ public:
     /// Only the Windows engine has anything to report today; elsewhere this
     /// is accepted and never called.
     virtual void setInputGateCallback(InputGateCallback callback) { (void)callback; }
+
+    /// Get the viewer out of a closed gate, when they cannot click their way
+    /// out because the pointer itself is stuck.
+    ///
+    /// A window at a higher integrity level takes not just its own input but
+    /// ALL of it: Windows refuses the whole SendInput call while it holds the
+    /// foreground, so the pointer does not move, so the viewer cannot click on
+    /// anything else, so the foreground never changes. That is a dead end, and
+    /// no amount of input can open it — the way out has to not be input.
+    ///
+    /// So this asks the SHELL to minimise the desktop's windows. The shell is
+    /// allowed to do to that window what MoonlightWeb is not, exactly as it is
+    /// when the viewer presses Win+D on a keyboard of their own; the window in
+    /// the way loses the foreground, and the session comes back to life.
+    ///
+    /// Blunt on purpose: everything minimises, the game included. It is the
+    /// button you press when the alternative is ending the session, so it is
+    /// offered only while the gate is closed. Returns false where the platform
+    /// has no such thing, which today is everywhere but Windows.
+    virtual bool releaseInputBlock() { return false; }
 };
 
 /// Entry point to the engine.
