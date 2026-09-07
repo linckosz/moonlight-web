@@ -139,6 +139,11 @@ public:
     /// benefit. Ignored by every path except the native engine.
     void setRideOutLoss(bool enabled) { m_RideOutLoss = enabled; }
 
+    /// Whether the viewer administers MoonlightWeb here — HttpRequest::isLocal
+    /// at /start. Only the native engine acts on it: anyone else is kept out
+    /// of the host's windows that run as administrator (InputGate).
+    void setViewerAdmin(bool admin) { m_ViewerAdmin = admin; }
+
     /// The client's screen, from the /start request: its refresh in
     /// millihertz (0 = it did not measure one) and whether it paints on
     /// vsync (tearing off, or a browser that cannot tear). Only the native
@@ -377,6 +382,11 @@ private:
     /// keyframe. Set from the /start request; only the native engine acts on
     /// it, and only if its encoder really honours intra-refresh.
     bool m_RideOutLoss = false;
+
+    /// See setViewerAdmin. Defaults to the trusting value only because every
+    /// caller sets it; a worker whose parent predates the field is the owner
+    /// path, which is the host's own administrator anyway.
+    bool m_ViewerAdmin = true;
 
     /// The client's screen at /start — see setClientPresentation.
     int m_ClientRefreshMilliHz = 0;

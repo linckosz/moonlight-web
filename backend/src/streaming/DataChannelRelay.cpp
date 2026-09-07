@@ -549,6 +549,22 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
                 } catch (const std::exception&) {}
             });
 
+    // The input gate (native host): the viewer's presses are being dropped,
+    // or no longer are. On change only, so it costs nothing in steady state.
+    connect(m_Shim, &IMediaEngine::inputGateChanged, this,
+            [this](bool blocked, QString reason, QString window) {
+                if (m_Stopping.load() || !m_InputDc) return;
+                QJsonObject m;
+                m["type"] = "inputgate";
+                m["blocked"] = blocked;
+                m["reason"] = reason;
+                m["window"] = window;
+                QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+                try {
+                    m_InputDc->send(std::string(j.constData(), j.size()));
+                } catch (const std::exception&) {}
+            });
+
     // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
     // Connected within m_IceTimeoutMs after setRemoteDescription().
     // Triggers WebSocket fallback when UDP is blocked (corporate firewall).

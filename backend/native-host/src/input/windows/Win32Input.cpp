@@ -128,42 +128,88 @@ std::string narrow(const wchar_t* wide)
     return out;
 }
 
-/// Whether the foreground window belongs to a process Windows will not let us
-/// inject into, and a name for it when it does.
+/// What a window's process runs as: its integrity level, and a name for the
+/// viewer when it turns out to matter.
 ///
-/// UIPI: an unelevated process cannot inject into an elevated window, so input
-/// stops working the moment such a window takes focus — Task Manager, an
-/// installer, a game launched as administrator, a Hyper-V console. SendInput
-/// says nothing, the events simply vanish, and from the browser it looks
-/// exactly like a frozen session. So it is looked for rather than waited for.
-bool foregroundBlocksInput(HWND foreground, std::string& who)
+/// Two things are read off the level, by the caller:
+///
+///  - UIPI: an unelevated process cannot inject into a window of a higher
+///    level, so input stops working the moment such a window takes focus —
+///    Task Manager, an installer, a game launched as administrator, a Hyper-V
+///    console. SendInput says nothing, the events simply vanish, and from the
+///    browser it looks exactly like a frozen session. So it is looked for
+///    rather than waited for.
+///  - Policy: a window at high integrity or above runs as administrator, and
+///    a viewer without that standing on this machine is not let into it even
+///    when the OS would allow it (SessionConfig::allowElevatedInput).
+Win32Input::WindowStanding standingOf(HWND window)
 {
-    who.clear();
-    if (!foreground) return false;
+    Win32Input::WindowStanding standing;
+    if (!window) return standing;
 
     DWORD pid = 0;
-    ::GetWindowThreadProcessId(foreground, &pid);
-    if (pid == 0 || pid == ::GetCurrentProcessId()) return false;
+    ::GetWindowThreadProcessId(window, &pid);
+    if (pid == 0 || pid == ::GetCurrentProcessId()) return standing;
 
     HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!process) return false;
-    const int theirs = integrityLevel(process);
-    const int ours = ownIntegrityLevel();
-    const bool blocks = theirs > 0 && ours > 0 && theirs > ours;
+    if (!process) return standing;
+    standing.level = integrityLevel(process);
 
-    if (blocks) {
+    if (standing.level >= SECURITY_MANDATORY_HIGH_RID) {
         wchar_t title[256] = {};
-        ::GetWindowTextW(foreground, title, 256);
+        ::GetWindowTextW(window, title, 256);
         wchar_t image[MAX_PATH] = {};
         DWORD imageLen = MAX_PATH;
         ::QueryFullProcessImageNameW(process, 0, image, &imageLen);
         const std::string path = narrow(image);
         const size_t slash = path.find_last_of('\\');
         const std::string exe = slash == std::string::npos ? path : path.substr(slash + 1);
-        who = "\"" + narrow(title) + "\" (" + exe + ", pid " + std::to_string(pid) + ")";
+        standing.name = "\"" + narrow(title) + "\" (" + exe + ", pid " + std::to_string(pid) + ")";
     }
     ::CloseHandle(process);
-    return blocks;
+    return standing;
+}
+
+/// The top-level window under the pointer: what a click would land on.
+HWND windowUnderCursor()
+{
+    POINT p = {};
+    if (!::GetCursorPos(&p)) return nullptr;
+    HWND hit = ::WindowFromPoint(p);
+    return hit ? ::GetAncestor(hit, GA_ROOT) : nullptr;
+}
+
+int64_t steadyNowUs()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+/// Presses change the host; releases only ever undo one, and dropping a
+/// release is how a key gets stuck. Motion changes nothing by itself. So the
+/// gate is on presses, text and scrolling, and on nothing else.
+bool isPress(InputEvent::Type type)
+{
+    switch (type) {
+    case InputEvent::Type::KeyDown:
+    case InputEvent::Type::Utf8Text:
+    case InputEvent::Type::MouseButtonDown:
+    case InputEvent::Type::MouseScrollVertical:
+    case InputEvent::Type::MouseScrollHorizontal:
+    case InputEvent::Type::LockKeySync: return true;
+    default: return false;
+    }
+}
+
+bool isMouse(InputEvent::Type type)
+{
+    switch (type) {
+    case InputEvent::Type::MouseButtonDown:
+    case InputEvent::Type::MouseScrollVertical:
+    case InputEvent::Type::MouseScrollHorizontal: return true;
+    default: return false;
+    }
 }
 
 void sendOne(INPUT& input)
@@ -346,8 +392,10 @@ void Win32Input::stop()
     // would sit in the Windows game controller list forever, and the next game
     // to start would see a controller nobody is holding.
     m_Gamepad.reset();
+    const uint64_t gated = m_Gated.load(std::memory_order_relaxed);
     log::info("[native] input: " + std::to_string(m_Injected.load(std::memory_order_relaxed)) +
-              " event(s) injected this session");
+              " event(s) injected this session" +
+              (gated ? ", " + std::to_string(gated) + " press(es) dropped at the gate" : ""));
     m_Started = false;
 }
 
@@ -397,9 +445,25 @@ void Win32Input::inject(const InputEvent& event)
     const uint32_t bit = 1u << static_cast<int>(event.type);
     if ((m_SeenTypes.fetch_or(bit, std::memory_order_relaxed) & bit) == 0)
         log::info(std::string("[native] input: first ") + describe(event.type) + " injected");
+    // The gate — see InputGate in NativeHost.h. Keyboard goes to the focused
+    // window; a click or a scroll goes to whatever is under the pointer, which
+    // is not always the same window, and is exactly how a viewer shut out of
+    // an administrator window still clicks on any other. Both are looked up
+    // through a one-second cache, so the token queries cost nothing next to
+    // the injection. Reported once per change, not once per drop.
+    if (isPress(event.type)) {
+        const bool mouse = isMouse(event.type);
+        HWND target = mouse ? windowUnderCursor() : nullptr;
+        if (!target) target = ::GetForegroundWindow();
+        const WindowStanding& standing = cachedStanding(target, mouse ? m_UnderCursor : m_Focused);
+        if (*gateReason(standing)) {
+            m_Gated.fetch_add(1, std::memory_order_relaxed);
+            reportGate(standing);
+            return;
+        }
+    }
+    reportGate(cachedStanding(::GetForegroundWindow(), m_Focused));
     m_Injected.fetch_add(1, std::memory_order_relaxed);
-
-    watchForeground();
 
     switch (event.type) {
     case InputEvent::Type::KeyDown: injectKey(event, true); break;
@@ -517,32 +581,71 @@ void Win32Input::injectMouseMove(int deltaX, int deltaY)
     sendOne(input);
 }
 
-void Win32Input::watchForeground()
+void Win32Input::setAllowElevated(bool allow)
 {
-    // Once a second at most, and only when the window changed: a token query
-    // per event would cost more than the injection it guards.
-    const int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                              std::chrono::steady_clock::now().time_since_epoch())
-                              .count();
-    if (nowUs < m_NextForegroundCheckUs) return;
-    m_NextForegroundCheckUs = nowUs + 1000000;
+    m_AllowElevated = allow;
+}
 
-    HWND foreground = ::GetForegroundWindow();
-    if (foreground == static_cast<HWND>(m_LastForeground)) return;
-    m_LastForeground = foreground;
+void Win32Input::setGateCallback(InputGateCallback callback)
+{
+    m_OnGate = std::move(callback);
+}
 
-    std::string who;
-    const bool blocks = foregroundBlocksInput(foreground, who);
-    if (blocks == m_ForegroundBlocks) return;
-    m_ForegroundBlocks = blocks;
-
-    if (blocks) {
-        log::warning("[native] input refused by Windows (UIPI): the focused window " + who +
-                     " runs elevated and MoonlightWeb does not — nothing reaches it until "
-                     "another window takes focus, or MoonlightWeb runs elevated");
-    } else {
-        log::info("[native] input: the focused window is reachable again");
+const Win32Input::WindowStanding& Win32Input::cachedStanding(void* window, StandingCache& cache)
+{
+    // Same window within the second: what we already know. A process does not
+    // change integrity level while it runs, so the only thing that can go
+    // stale is the HWND itself being reused, which the second bounds.
+    const int64_t nowUs = steadyNowUs();
+    if (window != cache.window || nowUs >= cache.expiresUs) {
+        cache.window = window;
+        cache.standing = standingOf(static_cast<HWND>(window));
+        cache.expiresUs = nowUs + 1000000;
     }
+    return cache.standing;
+}
+
+const char* Win32Input::gateReason(const WindowStanding& standing) const
+{
+    if (standing.level < 0) return "";
+    const int ours = ownIntegrityLevel();
+    // The OS's refusal first: it applies whatever the policy says, and naming
+    // it tells the operator what to change (run elevated), where "policy"
+    // would tell them to grant a right that would change nothing.
+    if (ours > 0 && standing.level > ours) return "uipi";
+    if (!m_AllowElevated && standing.level >= SECURITY_MANDATORY_HIGH_RID) return "policy";
+    return "";
+}
+
+void Win32Input::reportGate(const WindowStanding& standing)
+{
+    const char* reason = gateReason(standing);
+    const bool blocked = *reason != '\0';
+    // Same state, same window: nothing new. The name is compared too, so a
+    // gate that moved from one elevated window to another is reported — the
+    // viewer is told what is in the way now, not what was.
+    if (blocked == m_GateBlocked && (!blocked || standing.name == m_GateWindow)) return;
+    m_GateBlocked = blocked;
+    m_GateWindow = blocked ? standing.name : std::string();
+
+    if (blocked) {
+        const std::string why =
+            std::string(reason) == "uipi"
+                ? "runs elevated and MoonlightWeb does not (UIPI) — nothing reaches it until "
+                  "another window takes focus, or MoonlightWeb runs elevated"
+                : "runs as administrator and this viewer is not one here — presses are dropped "
+                  "until another window takes focus";
+        log::warning("[native] input gate closed: the window " + standing.name + " " + why);
+    } else {
+        log::info("[native] input gate open: the focused window is reachable again");
+    }
+
+    if (!m_OnGate) return;
+    InputGate gate;
+    gate.blocked = blocked;
+    gate.reason = reason;
+    gate.window = m_GateWindow;
+    m_OnGate(gate);
 }
 
 void Win32Input::bringCursorOntoDisplay()

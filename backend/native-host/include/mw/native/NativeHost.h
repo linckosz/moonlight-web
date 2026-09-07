@@ -142,6 +142,37 @@ struct CursorUpdate
 
 using CursorCallback = std::function<void(const CursorUpdate& cursor)>;
 
+/// Whether the viewer's keyboard and mouse currently reach the host, and why
+/// not when they do not. Reported on change only.
+///
+/// Two things close the gate, and the viewer cannot tell them apart from the
+/// picture — a frozen cursor looks the same either way — which is why this
+/// exists:
+///
+///  - "policy": the focused window runs elevated (as administrator) and the
+///    session was opened without SessionConfig::allowElevatedInput. The engine
+///    COULD inject and chooses not to: a viewer who is not the machine's
+///    administrator does not get to type into its administrator windows.
+///  - "uipi": the focused window runs elevated and the engine's own process
+///    does not, so the OS drops the injection itself (Windows User Interface
+///    Privilege Isolation). Nothing the engine can do; the process has to run
+///    elevated.
+///
+/// Pointer MOTION is never gated — moving over a window changes nothing on the
+/// host — and neither are releases, so a key held when the gate closed is
+/// still let go. Presses, text, scrolling: gated. A click on another, ordinary
+/// window still lands, and reopens the gate by taking focus away.
+struct InputGate
+{
+    bool blocked = false;
+    /// "policy" or "uipi" when blocked; "" when open. Static storage.
+    const char* reason = "";
+    /// The window in the way, for the viewer: its title and executable.
+    std::string window;
+};
+
+using InputGateCallback = std::function<void(const InputGate& gate)>;
+
 /// The session ended on its own — the display went away, the encoder died, the
 /// user logged out. `reason` is English, for logs. A session that ends this way
 /// never calls stop() on itself; the owner still must.
@@ -267,6 +298,14 @@ public:
     /// rate it was built for. Safe from any thread; ignored when the session
     /// runs at the host's own rate.
     virtual void setClientRefresh(int milliHz, bool vsync) = 0;
+
+    /// Where to hear that the viewer's input stopped reaching the host, or
+    /// started again — see InputGate. Delivered on the thread that injects,
+    /// i.e. the caller's own sendInput() thread, at most once per change.
+    /// Optional: a session with no listener still gates, it just says nothing.
+    /// Only the Windows engine has anything to report today; elsewhere this
+    /// is accepted and never called.
+    virtual void setInputGateCallback(InputGateCallback callback) { (void)callback; }
 };
 
 /// Entry point to the engine.

@@ -545,6 +545,8 @@
         "statRecovery": "Recoveries (decoder · stalls · ride-out)",
         "periodicStallWarning": "Stutter detected: something interrupts this device's Wi-Fi every {{period}}ms, on a timer. On Apple hardware that is almost always AirDrop and Continuity, which share the Wi-Fi chip. Turning AirDrop off for the session usually clears it.",
         "periodicStallDismiss": "Don't show again",
+        "inputGateAdmin": "An administrator window has focus on the host ({window}). Your keyboard and clicks on it are held back — click another window to continue, or unlock admin on this device.",
+        "inputGateHostUnelevated": "An administrator window has focus on the host ({window}). Windows blocks remote input into it until another window takes focus, or MoonlightWeb runs as administrator on the host.",
         "periodicStallTitle": "Stutter detected",
         "periodicStallOk": "Got it",
         "multiSeatInputTitle": "MultiSeat seat",

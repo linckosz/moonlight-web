@@ -60,6 +60,19 @@ StreamRelay::StreamRelay(IMediaEngine* engine, quint16 wsPort, const QSslConfigu
             QString::fromUtf8(QJsonDocument(m).toJson(QJsonDocument::Compact)));
     });
 
+    // The input gate (native host) — see DataChannelRelay for the message.
+    connect(m_Shim, &IMediaEngine::inputGateChanged, this,
+            [this](bool blocked, QString reason, QString window) {
+                if (!m_WsClient || m_WsClient->state() != QAbstractSocket::ConnectedState) return;
+                QJsonObject m;
+                m["type"] = "inputgate";
+                m["blocked"] = blocked;
+                m["reason"] = reason;
+                m["window"] = window;
+                m_WsClient->sendTextMessage(
+                    QString::fromUtf8(QJsonDocument(m).toJson(QJsonDocument::Compact)));
+            });
+
     bool secure = !sslConfig.isNull();
     m_WsServer = new QWebSocketServer(
         QString("Moonlight-Relay"),

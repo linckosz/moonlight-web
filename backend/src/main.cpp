@@ -2834,6 +2834,8 @@ int main(int argc, char* argv[])
             s->setClientPresentation(body["client_refresh_mhz"].toInt(0),
                                      body["client_vsync"].toBool(false));
             s->setClientKind(clientKind);
+            // See the worker path: the administrator-window gate.
+            s->setViewerAdmin(req.isLocal);
             // Which provider drives this host: plain GameStream unless it was
             // registered as a Wolf or MultiSeat backend.
             s->setBackend(std::shared_ptr<IStreamBackend>(
@@ -2949,6 +2951,10 @@ int main(int argc, char* argv[])
             cfg["rideOutLoss"] = body["ride_out_loss"].toBool(false);
             cfg["clientRefreshMilliHz"] = body["client_refresh_mhz"].toInt(0);
             cfg["clientVsync"] = body["client_vsync"].toBool(false);
+            // Whether this browser administers MoonlightWeb here (loopback, the
+            // host-key session, or the LAN admin password). The native host
+            // keeps everyone else out of windows that run as administrator.
+            cfg["viewerAdmin"] = req.isLocal;
             cfg["clientUniqueId"] = reqClientUniqueId;
             cfg["clientKind"] = NetClassify::toString(clientKind);
             cfg["autoMode"] = true;
@@ -3840,6 +3846,9 @@ int main(int argc, char* argv[])
         // What this player may send. Enforced in the worker, where a forged
         // datachannel message cannot get around it.
         cfg["inputPolicy"] = perms.toJson();
+        // An invited player is never this machine's administrator, whatever
+        // the owner ticked: the host's administrator windows stay closed.
+        cfg["viewerAdmin"] = false;
         // Gamepads from different sessions would all arrive as controller 0;
         // offset each player so they land on distinct virtual pads.
         cfg["gamepadOffset"] = slot - kOwnerSlots + 1;

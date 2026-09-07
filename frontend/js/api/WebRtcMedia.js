@@ -616,7 +616,8 @@ export class WebRtcMedia {
                         msg.type === 'pong' ||
                         msg.type === 'rumble' ||
                         msg.type === 'clipboard' ||
-                        msg.type === 'clipboardcaps'
+                        msg.type === 'clipboardcaps' ||
+                        msg.type === 'inputgate'
                     ) {
                         if (this.onStats) this.onStats(msg);
                     } else if (msg.type === 'takeover') {

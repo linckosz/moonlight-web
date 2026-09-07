@@ -1501,6 +1501,7 @@ export class StreamView {
                 <div class="stream-click-hint" id="stream-hint">
                     ${t('stream.clickToCapture')}
                 </div>
+                <div class="stream-input-gate" id="stream-input-gate" role="status" hidden></div>
             </div>
         `;
         document.getElementById('app').appendChild(el);
@@ -1582,6 +1583,7 @@ export class StreamView {
         // statusEl kept for backward compatibility — setStatus() is now a no-op
         this.statusEl = null;
         this.hintEl = /** @type {HTMLElement} */ (el.querySelector('#stream-hint'));
+        this._inputGateEl = /** @type {HTMLElement} */ (el.querySelector('#stream-input-gate'));
 
         const consoleBtn = /** @type {HTMLElement} */ (el.querySelector('#btn-stream-console'));
         if (consoleBtn) {
@@ -5243,6 +5245,10 @@ export class StreamView {
             if (this._gamepadManager) this._gamepadManager.rumble(msg.index, msg.low, msg.high);
             return;
         }
+        if (msg.type === 'inputgate') {
+            this._applyInputGate(msg);
+            return;
+        }
         if (msg.type === 'cursor') {
             // The host's pointer, for us to draw. See _pictureCursor: visible
             // with no image is a real state, not a missing one.
@@ -5469,6 +5475,46 @@ export class StreamView {
      * but only surfaced where there is advice to give and the user has not
      * already said they know.
      */
+    /**
+     * The host stopped applying our presses, or resumed — {type:"inputgate",
+     * blocked, reason, window} from the native host. Shown as a strip over the
+     * picture, not a modal: it fires whenever an administrator window takes
+     * focus on the host, which can be often, and the viewer's way out is to
+     * click somewhere else on the picture — a modal would be in the way of
+     * exactly that. Moving the pointer still works while it is up.
+     *
+     * Kept up for a few seconds at least, even if the host says "open" right
+     * after: a dropped click on a window off to the side closes and reopens
+     * the gate within one event, and a strip that flashed for a frame would
+     * explain nothing.
+     */
+    _applyInputGate(msg) {
+        const el = this._inputGateEl;
+        if (!el) return;
+        if (msg.blocked) {
+            const key =
+                msg.reason === 'uipi' ? 'stream.inputGateHostUnelevated' : 'stream.inputGateAdmin';
+            el.textContent = t(key, { window: msg.window || '' });
+            el.hidden = false;
+            this._inputGateShownAt = performance.now();
+            if (this._inputGateHideTimer) {
+                clearTimeout(this._inputGateHideTimer);
+                this._inputGateHideTimer = null;
+            }
+            console.warn('[StreamView] Input gate closed (' + msg.reason + '): ' + msg.window);
+            return;
+        }
+        const minShownMs = 4000;
+        const left = minShownMs - (performance.now() - (this._inputGateShownAt || 0));
+        const hide = () => {
+            this._inputGateHideTimer = null;
+            el.hidden = true;
+        };
+        if (this._inputGateHideTimer) clearTimeout(this._inputGateHideTimer);
+        if (left > 0) this._inputGateHideTimer = setTimeout(hide, left);
+        else hide();
+    }
+
     _notePeriodicStall(stall) {
         console.warn(
             '[StreamView] Periodic link stall: every ~' +

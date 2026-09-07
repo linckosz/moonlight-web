@@ -586,6 +586,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // paints on vsync — see SessionConfig::clientRefreshMilliHz.
         nativeParams.clientRefreshMilliHz = m_ClientRefreshMilliHz;
         nativeParams.clientVsync = m_ClientVsync;
+        // Who is on the other end, for the administrator-window gate.
+        nativeParams.viewerAdmin = m_ViewerAdmin;
 
         startEngine = [native, nativeParams]() { native->startCapture(nativeParams); };
     } else {

@@ -18,6 +18,7 @@
 #pragma once
 
 #include "mw/native/InputEvent.h"
+#include "mw/native/NativeHost.h"
 
 #include <string>
 
@@ -74,6 +75,16 @@ public:
         (void)right;
         (void)bottom;
     }
+
+    /// Whether presses aimed at an elevated (administrator) window may go
+    /// through — SessionConfig::allowElevatedInput. A sink on an OS with no
+    /// such distinction ignores it. Set before start(), never changed after.
+    virtual void setAllowElevated(bool allow) { (void)allow; }
+
+    /// Where to report the gate opening or closing — see InputGate. Called
+    /// from inject(), on its thread, on change only. A sink that never gates
+    /// never calls it.
+    virtual void setGateCallback(InputGateCallback callback) { (void)callback; }
 };
 
 } // namespace mw::native::input

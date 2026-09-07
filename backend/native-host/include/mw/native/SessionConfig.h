@@ -99,6 +99,16 @@ struct SessionConfig
     /// on: the setting is followed as it is, which is the lowest latency.
     bool clientVsync = false;
 
+    /// Let the viewer act on windows that run elevated (as administrator).
+    ///
+    /// True — the default — is the trusting setting, right for the machine's
+    /// own administrator streaming their own desktop. False is for a viewer
+    /// who was let in without that standing: the engine keeps injecting into
+    /// ordinary windows and drops presses aimed at an elevated one, saying so
+    /// through the InputGateCallback. The OS may refuse elevated windows on its
+    /// own regardless (see InputGate); this flag only ever narrows further.
+    bool allowElevatedInput = true;
+
     // ── Bench-only, below this line ─────────────────────────────────────────
     //
     // Neither field is ever set by a session a browser started. They exist so

@@ -154,6 +154,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.hdr = params.hdr;
     config.yuv444 = params.yuv444;
     config.intraRefresh = params.intraRefresh;
+    config.allowElevatedInput = params.viewerAdmin;
     // The client's screen: what /start carried, unless a `clientrefresh`
     // message already said otherwise (a session that starts after the
     // client's window moved).
@@ -238,6 +239,19 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     // behave like every minute after it.
     if (const int floor = m_FrameFloorFps.load(std::memory_order_acquire); floor > 0)
         m_Session->setFrameFloorFps(floor);
+
+    // The gate speaks from the injecting thread; the relay that forwards it
+    // lives on another and owns a DataChannel that is not thread-safe, so it
+    // is re-emitted as a queued signal, like rumble.
+    m_Session->setInputGateCallback([this](const mw::native::InputGate& gate) {
+        const bool blocked = gate.blocked;
+        const QString reason = QString::fromLatin1(gate.reason ? gate.reason : "");
+        const QString window = QString::fromStdString(gate.window);
+        QMetaObject::invokeMethod(
+            this,
+            [this, blocked, reason, window]() { emit inputGateChanged(blocked, reason, window); },
+            Qt::QueuedConnection);
+    });
 
     const mw::native::SessionInfo& info = m_Session->info();
     m_NegotiatedVideoFormat.store(formatFromSession(info), std::memory_order_release);

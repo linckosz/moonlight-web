@@ -271,6 +271,9 @@ int runStreamWorker(QCoreApplication& app)
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));
     // Absent (an older parent) → off, which is exactly today's behaviour.
     session->setRideOutLoss(cfg["rideOutLoss"].toBool(false));
+    // Absent (an older parent) → not an administrator: the safe reading,
+    // since the only thing it grants is the host's administrator windows.
+    session->setViewerAdmin(cfg["viewerAdmin"].toBool(false));
     session->setClientPresentation(cfg["clientRefreshMilliHz"].toInt(0),
                                    cfg["clientVsync"].toBool(false));
     session->setBackend(backend);

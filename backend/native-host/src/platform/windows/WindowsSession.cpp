@@ -320,9 +320,13 @@ public:
                                                                 if (m_Callbacks.onRumble)
                                                                     m_Callbacks.onRumble(event);
                                                             });
+            sink->setAllowElevated(m_Config.allowElevatedInput);
             std::string inputError;
             if (sink->start(inputError)) {
                 std::lock_guard<std::mutex> lock(m_InputMutex);
+                // A listener registered before start() is handed over here;
+                // one registered later reaches the sink through the setter.
+                sink->setGateCallback(m_OnInputGate);
                 m_Input = std::move(sink);
             } else {
                 log::warning("[native] input unavailable, streaming view-only: " + inputError);
@@ -398,6 +402,14 @@ public:
         // input at all.
         std::lock_guard<std::mutex> lock(m_InputMutex);
         if (m_Input) m_Input->inject(event);
+    }
+
+    void setInputGateCallback(InputGateCallback callback) override
+    {
+        // Under the same lock as inject(): the sink reads the callback there.
+        std::lock_guard<std::mutex> lock(m_InputMutex);
+        m_OnInputGate = std::move(callback);
+        if (m_Input) m_Input->setGateCallback(m_OnInputGate);
     }
 
     void setCompositeCursor(bool composite, int cursorFramePx) override
@@ -1857,6 +1869,9 @@ private:
     /// the network thread.
     std::mutex m_InputMutex;
     std::unique_ptr<input::IInputSink> m_Input;
+    /// See setInputGateCallback. Kept here so a listener registered before the
+    /// sink exists is not lost. Guarded by m_InputMutex.
+    InputGateCallback m_OnInputGate;
 
     /// Optional too: the host's playback, captured and encoded on its own
     /// thread. Null when the consumer asked for none or no device could open.

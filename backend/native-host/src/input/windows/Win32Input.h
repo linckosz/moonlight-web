@@ -68,6 +68,8 @@ public:
     void stop() override;
     void inject(const InputEvent& event) override;
     void setDisplayRect(int left, int top, int right, int bottom) override;
+    void setAllowElevated(bool allow) override;
+    void setGateCallback(InputGateCallback callback) override;
 
 private:
     void injectKey(const InputEvent& event, bool down);
@@ -88,13 +90,37 @@ private:
     /// Release everything still recorded as held. Called by stop().
     void releaseAll();
 
-    /// Say when the focused window is one Windows will not let us inject into
-    /// (UIPI), and when that ends. Called from inject(), self rate-limited.
-    void watchForeground();
+public:
+    /// What a window's process runs as — see standingOf() in the .cpp. Public
+    /// only so the file-local helper can build one.
+    struct WindowStanding
+    {
+        int level = -1;   ///< integrity RID; -1 = unknown (protected process)
+        std::string name; ///< "title" (exe, pid), filled for elevated windows only
+    };
 
-    void* m_LastForeground = nullptr; ///< HWND, kept opaque: no windows.h here
-    bool m_ForegroundBlocks = false;
-    int64_t m_NextForegroundCheckUs = 0;
+private:
+    /// One window's standing, remembered for a second (see cachedStanding).
+    struct StandingCache
+    {
+        void* window = nullptr; ///< HWND, kept opaque: no windows.h here
+        int64_t expiresUs = 0;
+        WindowStanding standing;
+    };
+
+    const WindowStanding& cachedStanding(void* window, StandingCache& cache);
+    /// "uipi", "policy", or "" when a press aimed at `standing` goes through.
+    const char* gateReason(const WindowStanding& standing) const;
+    /// Tell the log and the listener when the gate's state changed.
+    void reportGate(const WindowStanding& standing);
+
+    StandingCache m_Focused;     ///< the foreground window — keyboard's target
+    StandingCache m_UnderCursor; ///< the window under the pointer — a click's
+    bool m_AllowElevated = true;
+    InputGateCallback m_OnGate;
+    bool m_GateBlocked = false;
+    std::string m_GateWindow;
+    std::atomic<uint64_t> m_Gated{0}; ///< presses dropped at the gate
 
     /// Not const: the display can be re-resolved under a running session (see
     /// setDisplayRect). Written and read under the caller's own serialisation.

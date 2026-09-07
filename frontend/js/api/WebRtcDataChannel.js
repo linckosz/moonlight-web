@@ -933,7 +933,8 @@ export class WebRtcDataChannel {
                         msg.type === 'rumble' ||
                         msg.type === 'clipboard' ||
                         msg.type === 'clipboardcaps' ||
-                        msg.type === 'cursor'
+                        msg.type === 'cursor' ||
+                        msg.type === 'inputgate'
                     ) {
                         if (this.onStats) this.onStats(msg);
                     } else if (msg.type === 'takeover') {
@@ -1712,7 +1713,8 @@ export class WebRtcDataChannel {
                         msg.type === 'pong' ||
                         msg.type === 'rumble' ||
                         msg.type === 'clipboard' ||
-                        msg.type === 'clipboardcaps') &&
+                        msg.type === 'clipboardcaps' ||
+                        msg.type === 'inputgate') &&
                     this.onStats
                 ) {
                     this.onStats(msg);
@@ -1786,7 +1788,8 @@ export class WebRtcDataChannel {
                     msg.type === 'pong' ||
                     msg.type === 'rumble' ||
                     msg.type === 'clipboard' ||
-                    msg.type === 'clipboardcaps'
+                    msg.type === 'clipboardcaps' ||
+                    msg.type === 'inputgate'
                 ) {
                     if (this.onStats) this.onStats(msg);
                 } else if (msg.type === 'takeover') {

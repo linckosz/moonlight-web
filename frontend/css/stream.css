@@ -245,6 +245,26 @@ body.streaming-active::after {
     border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
+/* The host is dropping our presses (an administrator window has focus there).
+   A strip, not a dialog: the way out is to click elsewhere on the picture. */
+.stream-input-gate {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: calc(100% - 24px);
+    background: rgba(120, 60, 0, 0.85);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.35;
+    text-align: center;
+    pointer-events: none;
+    border: 1px solid rgba(255, 200, 120, 0.35);
+    z-index: 5;
+}
+
 /* ── Keyboard shortcuts slide (startup overlay) ────────────────────── */
 .stream-shortcuts-slide {
     position: absolute;

@@ -99,6 +99,11 @@ public:
         /// SessionConfig::clientRefreshMilliHz.
         int clientRefreshMilliHz = 0;
         bool clientVsync = false;
+        /// The viewer administers MoonlightWeb on this machine (reached it
+        /// from the host itself, or unlocked the admin password). Anyone
+        /// else is kept out of windows that run as administrator — see
+        /// SessionConfig::allowElevatedInput.
+        bool viewerAdmin = true;
     };
 
     /// One encoded frame, borrowed: `data` is the encoder's own output buffer

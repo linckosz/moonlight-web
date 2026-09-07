@@ -295,4 +295,12 @@ signals:
     /// under a running session, so an update is emitted when it changes alone.
     void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY, bool visible, QString kind,
                             double scale);
+
+    /// The viewer's presses stopped reaching the host, or started again.
+    /// Native host only. `reason` is "policy" (this viewer is not this
+    /// machine's administrator and the focused window runs as one) or "uipi"
+    /// (the host process itself is not elevated and the OS refuses); `window`
+    /// names what is in the way. Forwarded to the browser as-is, so the
+    /// viewer sees why the cursor went dead instead of guessing.
+    void inputGateChanged(bool blocked, QString reason, QString window);
 };
