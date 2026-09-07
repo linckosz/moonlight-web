@@ -18,6 +18,7 @@
 #include "../../capture/linux/KmsCapture.h"
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
+#include "../../encode/OpenH264Encoder.h"
 #include "../../input/linux/UinputGamepad.h"
 
 #include <fcntl.h>
@@ -286,12 +287,19 @@ void probeFallbackEncoders(Capabilities& caps)
     // VA-API *is* the vendor path, and reaching this function means it answered
     // nothing.
     //
-    // Not yet filled: the encoder lands with the CPU pipeline it needs. The
-    // machine this is for (bench-vm, hyperv_drm) has no render node at all, so
-    // it is missing more than an encoder — capture and colour conversion have no
-    // device either, and offering a fallback encoder before that path exists
-    // would promise a stream that dies one stage earlier instead.
-    (void)caps;
+    // The machine this is for (bench-vm, hyperv_drm) has no render node at
+    // all, so it lacks more than an encoder: EGL has no device either. The
+    // session then reads the scanout buffer through a DMA-BUF mmap and converts
+    // on the CPU (CpuConvert) — which needs the buffer to be linear, a fact only
+    // the first frame can prove. Offered here regardless: the alternative is to
+    // refuse the machine outright, and a tiled buffer fails the session with a
+    // sentence that says so.
+    FallbackEncoder cpu;
+    cpu.api = EncoderApi::Software;
+    cpu.codecs = {Codec::H264};
+    cpu.hardware = false;
+    cpu.name = encode::OpenH264Encoder::version();
+    caps.fallbacks.push_back(std::move(cpu));
 }
 
 VirtualGamepad probeVirtualGamepad()

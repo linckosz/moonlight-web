@@ -170,6 +170,7 @@ else()
                 src/platform/linux/LinuxSession.cpp
                 src/capture/linux/KmsCapture.cpp
                 src/convert/linux/GlConvert.cpp
+                src/convert/linux/CpuConvert.cpp
                 src/encode/linux/VaapiEncoder.cpp)
             target_include_directories(mw-native-host SYSTEM PRIVATE ${MW_LINUX_GFX_INCLUDE_DIRS})
             target_link_libraries(mw-native-host PRIVATE ${MW_LINUX_GFX_LIBRARIES})
@@ -320,6 +321,7 @@ if(MW_BUILD_TESTS)
         tests/test_mac_session.cpp
         tests/test_vpl_params.cpp
         tests/test_openh264.cpp
+        tests/test_bgra_to_i420.cpp
         tests/test_ds4_mapping.cpp
         tests/test_stage_stats.cpp
         tests/test_frame_cadence.cpp

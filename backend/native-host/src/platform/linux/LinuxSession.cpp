@@ -24,6 +24,8 @@
 #include "../../core/Session.h"
 #include "../../encode/RateControl.h"
 #include "../../encode/RateGovernor.h"
+#include "../../convert/linux/CpuConvert.h"
+#include "../../encode/OpenH264Encoder.h"
 #include "../../encode/linux/VaapiEncoder.h"
 #include "../../input/linux/UinputGamepad.h"
 #include "../../input/linux/UinputInput.h"
@@ -91,6 +93,149 @@ std::string hzString(int milliHz)
 }
 
 constexpr int kMaxFloorFps = 480;
+
+/// Colour conversion and encoding as ONE object, so the loop is written once.
+///
+/// Two pairs wear this shape. The GPU pair — GlConvert rendering into the
+/// surface VaapiEncoder owns — is the Linux path as it was; the CPU pair —
+/// CpuConvert writing planes OpenH264Encoder reads — is the fallback tier for
+/// a machine with no render node. Who owns the picture between the two halves
+/// is reversed between the pairs (the encoder's surface, the converter's
+/// planes), which is exactly why the loop must not know: it asks for a
+/// conversion, then for an encode, and the pair sorts out the hand-off.
+class VideoPipeline
+{
+public:
+    virtual ~VideoPipeline() = default;
+
+    virtual bool init(const capture::KmsCapture& capture, Codec codec, int outputWidth,
+                      int outputHeight, int fps, int bitrateKbps, bool intraRefresh,
+                      const EncoderTuning& tuning, std::string& error) = 0;
+    virtual bool convert(const capture::KmsFrame& frame, const capture::CursorState& cursor,
+                         const convert::CursorDraw& draw, std::string& error) = 0;
+    virtual bool encode(bool forceKeyframe, uint32_t frameNumber, encode::EncoderOutput& out,
+                        std::string& error) = 0;
+    virtual void releaseOutput() = 0;
+    virtual bool setBitrate(int kbps, std::string& error) = 0;
+    virtual bool intraRefreshEnabled() const = 0;
+    virtual int intraRefreshFrames() const = 0;
+    virtual int outputWidth() const = 0;
+    virtual int outputHeight() const = 0;
+    virtual int copiesPerFrame() const = 0;
+    /// For the session's opening log line: the route and its cost.
+    virtual std::string describe() const = 0;
+    /// The GPU pair's EGL context follows the capture thread; the thread gives
+    /// it back before it ends. The CPU pair has nothing to give back.
+    virtual void detachThread() {}
+};
+
+/// KMS → EGL → VA-API: the encoder owns the NV12 surface, the converter renders
+/// into it. One copy per frame, the bitstream leaving VRAM.
+class GpuPipeline final : public VideoPipeline
+{
+public:
+    bool init(const capture::KmsCapture& capture, Codec codec, int outputWidth, int outputHeight,
+              int fps, int bitrateKbps, bool intraRefresh, const EncoderTuning& tuning,
+              std::string& error) override
+    {
+        m_Converter = std::make_unique<convert::GlConvert>();
+        if (!m_Converter->init(capture.renderNodePath(), capture.fourcc(), capture.width(),
+                               capture.height(), outputWidth, outputHeight, error))
+            return false;
+        m_Encoder = std::make_unique<encode::VaapiEncoder>();
+        if (!m_Encoder->init(capture.renderNodePath(), codec, m_Converter->outputWidth(),
+                             m_Converter->outputHeight(), fps, bitrateKbps, intraRefresh, tuning,
+                             error))
+            return false;
+        return m_Converter->bindTarget(m_Encoder->inputTarget(), error);
+    }
+    bool convert(const capture::KmsFrame& frame, const capture::CursorState& cursor,
+                 const convert::CursorDraw& draw, std::string& error) override
+    {
+        return m_Converter->convert(frame, cursor, draw, error);
+    }
+    bool encode(bool forceKeyframe, uint32_t frameNumber, encode::EncoderOutput& out,
+                std::string& error) override
+    {
+        return m_Encoder->encode(forceKeyframe, frameNumber, out, error);
+    }
+    void releaseOutput() override { m_Encoder->releaseOutput(); }
+    bool setBitrate(int kbps, std::string& error) override
+    {
+        return m_Encoder->setBitrate(kbps, error);
+    }
+    bool intraRefreshEnabled() const override { return m_Encoder->intraRefreshEnabled(); }
+    int intraRefreshFrames() const override { return m_Encoder->intraRefreshFrames(); }
+    int outputWidth() const override { return m_Converter->outputWidth(); }
+    int outputHeight() const override { return m_Converter->outputHeight(); }
+    int copiesPerFrame() const override { return 1; }
+    std::string describe() const override
+    {
+        return "via VA-API — KMS → EGL → VA-API, 1 copy (the bitstream)";
+    }
+    void detachThread() override
+    {
+        if (m_Converter) m_Converter->detachThread();
+    }
+
+private:
+    std::unique_ptr<convert::GlConvert> m_Converter;
+    std::unique_ptr<encode::VaapiEncoder> m_Encoder;
+};
+
+/// KMS → DMA-BUF mmap → CPU → OpenH264: the converter owns the I420 planes, the
+/// encoder reads them. Two copies per frame — the pixels into the planes, the
+/// bitstream out — on a machine that has no other way.
+class CpuPipeline final : public VideoPipeline
+{
+public:
+    bool init(const capture::KmsCapture& capture, Codec codec, int outputWidth, int outputHeight,
+              int fps, int bitrateKbps, bool intraRefresh, const EncoderTuning& tuning,
+              std::string& error) override
+    {
+        (void)intraRefresh; // OpenH264 has none; reported false
+        if (codec != Codec::H264) {
+            error = std::string("OpenH264 encodes H.264 only, not ") + toString(codec);
+            return false;
+        }
+        if (!m_Converter.init(capture.fourcc(), capture.width(), capture.height(), outputWidth,
+                              outputHeight, error))
+            return false;
+        return m_Encoder.init(m_Converter.outputWidth(), m_Converter.outputHeight(), fps,
+                              bitrateKbps, 0, tuning, error);
+    }
+    bool convert(const capture::KmsFrame& frame, const capture::CursorState& cursor,
+                 const convert::CursorDraw& draw, std::string& error) override
+    {
+        return m_Converter.convert(frame, cursor, draw, error);
+    }
+    bool encode(bool forceKeyframe, uint32_t frameNumber, encode::EncoderOutput& out,
+                std::string& error) override
+    {
+        return m_Encoder.encode(m_Converter.picture(), forceKeyframe, frameNumber, out, error);
+    }
+    void releaseOutput() override { m_Encoder.releaseOutput(); }
+    bool setBitrate(int kbps, std::string& error) override
+    {
+        return m_Encoder.setBitrate(kbps, error);
+    }
+    bool intraRefreshEnabled() const override { return false; }
+    int intraRefreshFrames() const override { return 0; }
+    int outputWidth() const override { return m_Converter.outputWidth(); }
+    int outputHeight() const override { return m_Converter.outputHeight(); }
+    int copiesPerFrame() const override { return 2; }
+    std::string describe() const override
+    {
+        return std::string("via ") + encode::OpenH264Encoder::version() +
+               " — KMS → DMA-BUF mmap → CPU → OpenH264, 2 copies (the pixels, the bitstream), " +
+               std::to_string(m_Converter.threads()) + "+" + std::to_string(m_Encoder.threads()) +
+               " threads";
+    }
+
+private:
+    convert::CpuConvert m_Converter;
+    encode::OpenH264Encoder m_Encoder;
+};
 
 class LinuxSession final : public Session
 {
@@ -201,8 +346,8 @@ public:
 
         m_Info = SessionInfo{};
         m_Info.displayId = m_Target.displayId;
-        m_Info.width = m_Converter->outputWidth();
-        m_Info.height = m_Converter->outputHeight();
+        m_Info.width = m_Pipeline->outputWidth();
+        m_Info.height = m_Pipeline->outputHeight();
         m_Info.fps = m_Config.fps;
         m_Info.codec = m_Target.codec;
         m_Info.encoder = m_Target.encoder;
@@ -210,12 +355,13 @@ public:
         m_Info.gpuName = m_Target.encodeGpuName;
         m_Info.hdr = false;
         m_Info.yuv444 = false;
-        m_Info.intraRefresh = m_Encoder->intraRefreshEnabled();
-        m_Info.intraRefreshFrames = m_Encoder->intraRefreshFrames();
+        m_Info.intraRefresh = m_Pipeline->intraRefreshEnabled();
+        m_Info.intraRefreshFrames = m_Pipeline->intraRefreshFrames();
         m_Info.referenceInvalidation = false;
-        // The scanout buffer is read in place and the encoder's surface is
-        // written in place: one copy remains, the bitstream leaving VRAM.
-        m_Info.copiesPerFrame = 1;
+        // GPU pair: the scanout buffer is read in place and the encoder's
+        // surface written in place, one copy remains (the bitstream leaving
+        // VRAM). CPU pair: the pixels into the planes as well.
+        m_Info.copiesPerFrame = m_Pipeline->copiesPerFrame();
         m_Info.crossGpuCopy = false;
 #if defined(MW_NATIVE_LINUX_AUDIO)
         m_Info.audio = static_cast<bool>(m_Audio);
@@ -225,8 +371,8 @@ public:
 
         log::info(std::string("[native] session: ") + m_ConnectorName + " " +
                   std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + "@" +
-                  std::to_string(m_EncodeFps) + " " + toString(m_Info.codec) + " via VA-API on " +
-                  m_Info.gpuName + " — KMS → EGL → VA-API, 1 copy (the bitstream)" +
+                  std::to_string(m_EncodeFps) + " " + toString(m_Info.codec) + " on " +
+                  m_Info.gpuName + " " + m_Pipeline->describe() +
                   (m_Info.audio ? ", with the host's audio (PipeWire, 48 kHz stereo)" : ""));
 
         m_Running.store(true);
@@ -256,9 +402,8 @@ public:
         m_AudioTap.reset();
         m_Audio.reset();
 #endif
-        if (!wasRunning && !m_Encoder && !m_Capture) return;
-        m_Encoder.reset();
-        m_Converter.reset();
+        if (!wasRunning && !m_Pipeline && !m_Capture) return;
+        m_Pipeline.reset();
         m_Capture.reset();
     }
 
@@ -359,24 +504,17 @@ private:
     }
 
     /// Converter and encoder against what the capture is handing out right
-    /// now. The encoder first: it owns the surface the converter renders into.
+    /// now — the pair the Selector chose, not one guessed from the display.
     bool buildPipeline(int outputWidth, int outputHeight, std::string& error)
     {
-        m_Encoder.reset();
-        m_Converter.reset();
-
-        m_Converter = std::make_unique<convert::GlConvert>();
-        if (!m_Converter->init(m_Capture->renderNodePath(), m_Capture->fourcc(), m_Capture->width(),
-                               m_Capture->height(), outputWidth, outputHeight, error))
-            return false;
-
-        m_Encoder = std::make_unique<encode::VaapiEncoder>();
-        if (!m_Encoder->init(m_Capture->renderNodePath(), m_Target.codec,
-                             m_Converter->outputWidth(), m_Converter->outputHeight(), m_EncodeFps,
-                             m_Config.bitrateKbps, m_Config.intraRefresh, m_Config.tuning, error))
-            return false;
-
-        return m_Converter->bindTarget(m_Encoder->inputTarget(), error);
+        m_Pipeline.reset();
+        if (m_Target.encoder == EncoderApi::Software)
+            m_Pipeline = std::make_unique<CpuPipeline>();
+        else
+            m_Pipeline = std::make_unique<GpuPipeline>();
+        return m_Pipeline->init(*m_Capture, m_Target.codec, outputWidth, outputHeight, m_EncodeFps,
+                                m_Config.bitrateKbps, m_Config.intraRefresh, m_Config.tuning,
+                                error);
     }
 
     convert::CursorDraw cursorDraw() const
@@ -386,10 +524,10 @@ private:
         const capture::CursorState& cursor = m_Capture->cursor();
         // Sized on the ink, not the canvas: see CursorState::inkWidth. Scaled
         // by the frame/desktop ratio so the request is in frame pixels.
-        if (wanted > 0 && cursor.inkWidth > 0 && m_Capture->width() > 0 && m_Converter &&
-            m_Converter->outputWidth() > 0) {
+        if (wanted > 0 && cursor.inkWidth > 0 && m_Capture->width() > 0 && m_Pipeline &&
+            m_Pipeline->outputWidth() > 0) {
             const float desktopPerFrame = static_cast<float>(m_Capture->width()) /
-                                          static_cast<float>(m_Converter->outputWidth());
+                                          static_cast<float>(m_Pipeline->outputWidth());
             const float target = static_cast<float>(wanted) * desktopPerFrame;
             const float magnify = target / static_cast<float>(cursor.inkWidth);
             if (magnify > 1.0f) draw.magnify = magnify;
@@ -444,7 +582,7 @@ private:
         }
         // The EGL context followed this thread; give it back so stop(), on
         // the caller's thread, can bind it to tear the converter down.
-        if (m_Converter) m_Converter->detachThread();
+        if (m_Pipeline) m_Pipeline->detachThread();
     }
 
     void runLoop()
@@ -495,7 +633,7 @@ private:
         effective.start(m_EncodeFps, steadyNowUs());
         auto applyBitrate = [&](int kbps) {
             if (kbps <= 0) return;
-            if (!m_Encoder->setBitrate(effective.scaledKbps(kbps), error))
+            if (!m_Pipeline->setBitrate(effective.scaledKbps(kbps), error))
                 log::warning("[native] bitrate change refused: " + error);
         };
         int cadenceLogged = 0;
@@ -560,7 +698,7 @@ private:
         // Re-convert the held frame with the pointer where it is now, and
         // emit. The KMS equivalent of the Windows desktop copy, without one.
         auto reconvertHeld = [&](const FrameStamps& stamps) -> bool {
-            if (!m_Converter->convert(frame, m_Capture->cursor(), cursorDraw(), error)) {
+            if (!m_Pipeline->convert(frame, m_Capture->cursor(), cursorDraw(), error)) {
                 finish("colour conversion failed: " + error);
                 return false;
             }
@@ -706,8 +844,8 @@ private:
             static const capture::CursorState kNoCursor;
             const bool composite = m_CompositeCursor.load();
             m_CursorDirty.store(false);
-            if (!m_Converter->convert(frame, composite ? m_Capture->cursor() : kNoCursor,
-                                      cursorDraw(), error)) {
+            if (!m_Pipeline->convert(frame, composite ? m_Capture->cursor() : kNoCursor,
+                                     cursorDraw(), error)) {
                 finish("colour conversion failed: " + error);
                 return;
             }
@@ -723,7 +861,7 @@ private:
     {
         const bool forceKeyframe = m_ForceKeyframe.exchange(false);
         encode::EncoderOutput encoded;
-        if (!m_Encoder->encode(forceKeyframe, frameNumber, encoded, error)) {
+        if (!m_Pipeline->encode(forceKeyframe, frameNumber, encoded, error)) {
             finish("encode failed: " + error);
             return false;
         }
@@ -750,7 +888,7 @@ private:
             out.encodedUs = steadyNowUs();
             m_Callbacks.onVideo(out);
         }
-        m_Encoder->releaseOutput();
+        m_Pipeline->releaseOutput();
         return true;
     }
 
@@ -858,8 +996,7 @@ private:
     std::atomic<bool> m_ClientRefreshDirty{false};
 
     std::unique_ptr<capture::KmsCapture> m_Capture;
-    std::unique_ptr<convert::GlConvert> m_Converter;
-    std::unique_ptr<encode::VaapiEncoder> m_Encoder;
+    std::unique_ptr<VideoPipeline> m_Pipeline;
 
     std::mutex m_InputMutex;
     std::unique_ptr<input::UinputInput> m_Input;
@@ -904,7 +1041,7 @@ std::unique_ptr<Session> createPlatformSession(const SessionConfig& config,
                                                const SessionCallbacks& callbacks,
                                                std::string& error)
 {
-    if (target.encoder != EncoderApi::VaApi) {
+    if (target.encoder != EncoderApi::VaApi && target.encoder != EncoderApi::Software) {
         error = std::string("no Linux encoder for ") + toString(target.encoder);
         return nullptr;
     }
