@@ -2622,7 +2622,21 @@ Prouvé sur le banc, le 07/09/2026 :
   elle-même, HEVC `hvc1.1.144.L123.B0`, `descLen=111` (VPS/SPS/PPS extraits de
   la keyframe), première image décodée 1920×1080 NV12 en matériel, 65,7 s de
   session, **1689 présents tous portés**, audio 13 142 paquets / 0 jeté, aucune
-  erreur de décodeur, arrêt propre.
+  erreur de décodeur, arrêt propre ;
+- **puis depuis une autre machine, en LAN** (Chrome sur bench-desk → hôte Intel,
+  appairage par PIN, `webrtc-dc-udp`) : **latence affichée 11,4 à 14,2 ms**,
+  deux sessions de 289 s et 320 s, 2327 puis 2558 présents **tous portés**,
+  4831 frames émises, encode 7,05 / 11,26 / 14,34 ms et total hôte
+  8,84 / 13,31 / 18,43 ms (moy/p95/p99), 57 800 paquets audio / 0 jeté,
+  **63 événements d'entrée injectés** (souris et clavier depuis le navigateur
+  distant), arrêt propre. ⚠️ c'est la mesure qui compte : les chiffres en
+  loopback (41 à 55 ms) étaient ceux d'un N95 qui encodait, décodait et servait
+  la page en même temps.
+
+  C'est aussi la seule condition où le gouverneur de lien a pu **remonter** :
+  16000 → 20000 kbps en cinq paliers, toutes les hausses appliquées. En loopback
+  la machine était saturée et il ne faisait que descendre — la moitié montante
+  du correctif de `Reset` n'y était pas prouvée.
 
 Pas prouvé, et à ne pas supposer :
 

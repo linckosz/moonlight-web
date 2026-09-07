@@ -500,6 +500,26 @@ décodeur, arrêt propre. Le gouverneur de lien descend le débit à chaque mont
 de délai (20000 → 4196 kbps) et **toutes** ses baisses sont appliquées — c'était
 l'objet de la correction du HRD.
 
+**Puis depuis une autre machine, ce qui est la vraie mesure.** Chrome sur bench-desk
+→ hôte Intel, en LAN, appairage par PIN, `webrtc-dc-udp` : **latence affichée
+11,4 à 14,2 ms**, deux sessions de 289 s et 320 s, 2327 puis 2558 présents **tous
+portés**, 4831 frames émises, encode 7,05 / 11,26 / 14,34 ms, total hôte
+8,84 / 13,31 / 18,43 ms, 57 800 paquets audio / 0 jeté, **63 événements d'entrée
+injectés** (souris et clavier), arrêt propre. Les 41 à 55 ms du loopback étaient
+ceux d'un N95 qui encodait, décodait et servait la page à la fois — à ignorer.
+
+Et c'est là seulement que le gouverneur a pu **remonter** : 16000 → 20000 kbps en
+cinq paliers, toutes les hausses appliquées. En loopback la machine était saturée
+et il ne faisait que descendre, donc la moitié montante du correctif de `Reset`
+n'y était pas prouvée.
+
+⚠️ **Le banc était injoignable en LAN, et ce n'était pas le pare-feu tiers.** La
+boîte Windows « autoriser cette application ? » s'était ouverte dans la session
+console sans que personne ne la voie, et Windows en avait fait deux règles de
+**blocage** pour le binaire — un blocage l'emporte sur toute règle de port, donc
+les autorisations ajoutées à la main ne servaient à rien. SSH marchait pendant ce
+temps et masquait le problème.
+
 ⚠️ Deux limites propres à Intel, mesurées ici : le débit ne peut pas **monter**
 au-dessus de celui de l'init (`Reset` refuse), donc la moitié montante du budget
 par cadence réelle (E4) est plafonnée ; et il n'y a **pas d'invalidation de
