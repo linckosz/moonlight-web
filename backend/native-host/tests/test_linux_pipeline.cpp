@@ -15,6 +15,8 @@
 #include <va/va.h>
 #include <va/va_drm.h>
 #include <va/va_drmcommon.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
 #endif
 
 #include <cstdio>
@@ -96,6 +98,67 @@ void run_linux_pipeline_tests()
     CHECK(frame.presentUs > 0);
     // A present in the future would poison the link governor (see WgcCapture).
     CHECK(frame.capturedUs >= frame.presentUs);
+
+    // ── The pointer, asked for independently ────────────────────────────────
+    //
+    // A plane's state lives in its properties, and the kernel reports them as
+    // ZERO to a client that did not ask for DRM_CLIENT_CAP_ATOMIC — so a
+    // capture missing that cap decides there is no pointer, for ever and in
+    // silence. It cost two days of "the mouse is invisible on Linux"
+    // (07/09/2026), on every client at once: nothing to composite into the
+    // picture for a phone, no shape to hand a desktop browser. Here the plane
+    // is read a second time, by this test's own fd, and the two answers must
+    // agree. Skipped honestly where the compositor has no cursor plane or has
+    // hidden the pointer — neither is a failure.
+    {
+        const int fd = ::open(target.cardPath.c_str(), O_RDWR | O_CLOEXEC);
+        drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+        drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1);
+        uint64_t cursorFb = 0;
+        bool sawCursorPlane = false;
+        drmModePlaneRes* planes = fd >= 0 ? drmModeGetPlaneResources(fd) : nullptr;
+        for (uint32_t i = 0; planes && i < planes->count_planes; ++i) {
+            drmModePlane* p = drmModeGetPlane(fd, planes->planes[i]);
+            if (!p) continue;
+            if (p->crtc_id == target.crtcId) {
+                drmModeObjectProperties* props =
+                    drmModeObjectGetProperties(fd, p->plane_id, DRM_MODE_OBJECT_PLANE);
+                uint64_t type = 0, fbId = 0;
+                for (uint32_t j = 0; props && j < props->count_props; ++j) {
+                    drmModePropertyRes* prop = drmModeGetProperty(fd, props->props[j]);
+                    if (!prop) continue;
+                    if (std::string(prop->name) == "type") type = props->prop_values[j];
+                    if (std::string(prop->name) == "FB_ID") fbId = props->prop_values[j];
+                    drmModeFreeProperty(prop);
+                }
+                if (props) drmModeFreeObjectProperties(props);
+                if (type == DRM_PLANE_TYPE_CURSOR) {
+                    sawCursorPlane = true;
+                    cursorFb = fbId;
+                }
+            }
+            drmModeFreePlane(p);
+        }
+        if (planes) drmModeFreePlaneResources(planes);
+        if (fd >= 0) ::close(fd);
+
+        if (!sawCursorPlane)
+            std::fprintf(stderr, "  no cursor plane: the pointer is inside the picture\n");
+        else if (!cursorFb)
+            std::fprintf(stderr, "  the compositor has hidden the pointer — nothing to check\n");
+        else {
+            std::fprintf(stderr, "  cursor plane holds fb %llu; capture says %s %dx%d at %d,%d\n",
+                         static_cast<unsigned long long>(cursorFb),
+                         kms.cursor().visible ? "visible" : "INVISIBLE", kms.cursor().width,
+                         kms.cursor().height, kms.cursor().x, kms.cursor().y);
+            CHECK(kms.cursor().visible);
+            CHECK(kms.cursor().width > 0);
+            CHECK(kms.cursor().height > 0);
+            // An all-transparent shape draws nothing, which looks exactly like
+            // the bug this test exists for.
+            CHECK(kms.cursor().inkWidth > 0);
+        }
+    }
 
     // A second acquire on a still desktop: Timeout or PointerOnly, never a
     // duplicate Ok for the same buffer.

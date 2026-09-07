@@ -1779,6 +1779,37 @@ séquence, VUI comprise (`bitstream_restriction` — la leçon B8 — et timing)
 en-têtes empaquetés que FFmpeg envoie ne le sont pas tant qu'une mesure ne montre
 pas qu'il y manque quelque chose.
 
+#### 19.9 Le plan curseur ne se lit qu'en client atomique
+
+Le paragraphe ci-dessus disait que le plan curseur était lu ; il ne l'était pas.
+L'état d'un plan — `FB_ID`, `CRTC_X`, `CRTC_Y` — vit dans ses **propriétés**, et
+le noyau les rapporte à **zéro** à un client qui n'a pas demandé
+`DRM_CLIENT_CAP_ATOMIC`, quoi que le compositeur ait réellement posé dessus.
+`KmsCapture::start()` ne demandait que `UNIVERSAL_PLANES` — qui suffit à *lister*
+les plans, d'où l'illusion : le plan curseur était trouvé et annoncé dans le log,
+et `updateCursor()` lisait ensuite `FB_ID = 0` à chaque tour, donc « pas de
+framebuffer », donc **pointeur invisible, pour toujours et en silence**.
+
+Conséquence pour le spectateur : **aucun client n'avait de souris** sur un hôte
+Linux. Rien à composer dans l'image pour un téléphone (où le pointeur ne peut
+être que gravé, `_sendCursorMode`), et aucune forme à envoyer à un navigateur de
+bureau pour qu'il la dessine. Mesuré sur la 780M sous GNOME le 07/09 : la même
+lecture donne `FB_ID = 0` sans le cap et `FB_ID = 162` (256×256, encre 18×24)
+avec. La correction est la ligne `drmSetClientCap(m_Card,
+DRM_CLIENT_CAP_ATOMIC, 1)` : on ne fait **jamais** de modeset, le cap ne change
+donc que ce qu'on a le droit de *lire*, et un pilote sans atomic le refuse sans
+rien empirer.
+
+Ce que la vérification d'origine avait manqué, et qui est maintenant dans
+`test_linux_pipeline` : le test relit le plan curseur **par son propre fd**, cap
+atomique compris, et exige que les deux réponses concordent — si le compositeur
+a un framebuffer de curseur sur ce CRTC, la capture doit le voir (`visible`,
+taille non nulle, encre non nulle). Sans le correctif il échoue en 4 points,
+avec il passe ; sauté honnêtement si le compositeur n'a pas de plan curseur ou a
+caché le pointeur. La leçon vaut au-delà de ce bug : **une capture qui « trouve »
+un plan ne prouve rien tant que son contenu n'a pas été relu par un second
+chemin.**
+
 ### 19.5 La couture plateforme : `LinuxProbe` et `LinuxSession` (05/09/2026)
 
 `Unimplemented.cpp` ne sert plus sous Linux dès que les bibliothèques graphiques

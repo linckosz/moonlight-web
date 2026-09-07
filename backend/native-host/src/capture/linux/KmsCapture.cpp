@@ -387,6 +387,17 @@ bool KmsCapture::start(std::string& error)
     // objects; without it only overlays are listed and the CRTC's buffer has
     // to be read through the legacy CRTC ioctl, which cannot see the cursor.
     drmSetClientCap(m_Card, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+    // And atomic, for reading only. A plane's state lives in its properties —
+    // FB_ID, CRTC_X, CRTC_Y — and the kernel hands those out as ZERO to a
+    // client that has not asked for atomic, whatever the compositor actually
+    // put on the plane. Measured on a 780M under GNOME (07/09/2026): the same
+    // read returns FB_ID 0 without the cap and FB_ID 162 with it. Without it
+    // updateCursor() therefore sees "no framebuffer" forever, calls the pointer
+    // invisible, and the mouse exists on no client at all — not composited into
+    // the picture on a phone, not handed to a desktop browser to draw. We never
+    // modeset, so the cap only changes what we are allowed to read; a driver
+    // without atomic refuses it and we are no worse off than before.
+    drmSetClientCap(m_Card, DRM_CLIENT_CAP_ATOMIC, 1);
 
     char* render = drmGetRenderDeviceNameFromFd(m_Card);
     m_RenderNode = render ? render : "";

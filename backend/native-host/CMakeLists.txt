@@ -350,6 +350,12 @@ if(MW_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/amf-headers
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpl-headers
     )
+    # Same terms for libdrm, which lives outside the default include path: the
+    # Linux pipeline test asks the kernel about the display's planes itself, so
+    # that what the capture reports can be checked against a second opinion.
+    if(MW_LINUX_GFX_FOUND)
+        target_include_directories(mw-native-tests SYSTEM PRIVATE ${MW_LINUX_GFX_INCLUDE_DIRS})
+    endif()
     # Where the module encodes audio, the session tests decode it back with the
     # same libopus to look at the signal — the only proof this side of a browser
     # that the tap captured sound and not a perfectly paced silence.
