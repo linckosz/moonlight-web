@@ -2805,3 +2805,161 @@ qu'une entrée à la fois, donc le client était sur écran SDR : Chrome a annon
 délavée attendue dans ce cas. Structure, couleurs et géométrie sont justes ; le
 rendu HDR final demande de basculer l'entrée du moniteur et d'y activer le HDR,
 ce qui est la manœuvre de Bruno, pas la mienne.
+
+## 22. L'étage de repli : quand aucun GPU n'encode (07/09/2026)
+
+Jusqu'ici une machine dont aucun GPU n'avait d'encodeur que nous savons piloter
+était refusée (`Unavailability::NoEncoder`, « there is no software fallback »).
+Deux machines de Bruno étaient dans ce cas : le portable **Windows on ARM**
+(Snapdragon 7c, Adreno 618 — aucun SDK constructeur) et la **VM Debian sous
+Hyper-V** (`hyperv_drm`). Demande : un repli automatique, avec la latence la plus
+basse possible, ces machines étant du bas de gamme.
+
+### 22.1 Un étage à côté des GPU, jamais devant
+
+`Capabilities::fallbacks` est une liste de `FallbackEncoder` (API, codecs,
+matériel ou non, nom), **consultée uniquement quand aucun GPU n'encode**
+(`Capabilities::anyGpuEncodes()`, partagé entre `probe()` et `select()`). Elle
+vit à côté de `GpuInfo::encoders` et non dedans, et c'est le point de
+conception : la règle du Selector est « le GPU de l'écran, sauf s'il ne peut pas
+encoder » — une entrée logicielle sur la liste d'un iGPU ferait choisir le CPU
+alors qu'un NVENC dort dans la même machine. Tenu à part, le repli est
+inatteignable tant qu'un GPU répond, et chaque sélection existante est identique
+à l'octet près (six tests le verrouillent).
+
+Garanties : matériel avant CPU quel que soit l'ordre de la sonde ; le GPU de
+l'écran est **conservé** (capture et conversion y tournent, seul l'encodeur a
+bougé — aucune copie inter-GPU introduite) ; ni HDR ni 4:4:4 ; H.264 en tête de
+ce qui est offert (un hôte trop faible pour encoder en matériel ne doit pas
+pousser le client vers un décodeur logiciel) ; et **jamais de suragrandissement**
+— un client réglé en 1440p devant un écran 1080p aurait fait encoder 1,8× les
+pixels pour aucune information (mesuré : 21 ms par image sur le Snapdragon).
+
+Arbitrage de Bruno : « les deux, MF d'abord » — sur Windows, Media Foundation
+matériel → Media Foundation logiciel → OpenH264 ; sur Linux, OpenH264. Chaque
+descente est dite dans le log. Clés de banc `fallback=1|mf|mfsw|mfcpu|cpu`
+(`EncoderTuning::Fallback`) : la machine est mise dans l'état exact où l'étage
+sert — chaque GPU dépouillé de ses encodeurs — plutôt qu'un cas spécial.
+
+### 22.2 Media Foundation : le silicium dont on n'a pas le SDK
+
+`MfEncoder` est deux choses derrière une interface. Énuméré avec
+`MFT_ENUM_FLAG_HARDWARE` c'est le transform d'un constructeur sur son silicium,
+et les textures D3D11 du convertisseur y entrent telles quelles (DXGI device
+manager) ; sans le drapeau c'est le transform logiciel de Microsoft, qui prend de
+la mémoire système — chaque image traverse alors une texture de staging. La
+classe les distingue en interrogeant le transform (`MF_SA_D3D11_AWARE`), jamais
+son nom. `mfplat.dll` est chargé à l'exécution et jamais lié : absent des éditions
+N de Windows, un import statique empêcherait MoonlightWeb de **démarrer**. Seuls
+`mfuuid` et `strmiids` (tables de GUID sans DLL) sont liés.
+
+Latence dans le vocabulaire MF : `AVLowLatencyMode`, aucune B-frame, CBR, VBV
+d'une image (la règle de `RateControl.h`), GOP sans keyframe périodique, keyframe
+à la demande ; chaque refus d'un transform est dit, pas fatal.
+
+Trois pièges mesurés :
+
+- **l'énumération matérielle est machine-entière** : sur l'écran NVIDIA de
+  bench-desk elle rendait `AMDh264Encoder`, qui refusait ensuite tout type de sortie
+  (son device n'est pas le nôtre). `MFTEnum2` + `MFT_ENUM_ADAPTER_LUID` demande
+  le transform de l'adaptateur des images ; NVIDIA n'ayant pas de MFT, la session
+  retombe proprement sur le transform logiciel ;
+- **le transform AMD (H.264 et HEVC) accepte une image puis se tait** — un seul
+  `METransformNeedInput`, jamais de sortie, texture ou mémoire système, 1 s
+  d'attente. Ce n'est pas le pompage d'événements. Il est donc **mis à l'épreuve à
+  l'init** sur une image noire ; muet, il coûte à la machine l'étage suivant au
+  lieu d'une session morte. AMD n'est pas la cible (AMF le sert) ; le garde-fou
+  protège le cas Qualcomm, qui est un asynchrone du même genre ;
+- **le transform Qualcomm annonce 18 `NeedInput` avant sa première sortie** (la
+  profondeur de sa file) ; l'attente de la première image (1 s) l'absorbe.
+
+**Prouvé sur le banc ARM** : `QCOM Hardware Encoder - H264` / `- HEVC` trouvés,
+matériels, asynchrones, D3D-aware. Banc 720p60 8 Mbit/s : 131 images / 8 s,
+12,5 ms de moyenne, p99 16,8 ms. **Flux navigateur réel** depuis bench-desk par le
+rendez-vous : le client préfère HEVC, le transform HEVC répond, 2 650 images
+entrées / 2 650 sorties, encode 20,9 ms de moyenne à 1440p (suragrandi — d'où la
+règle du §22.1), 29,5 ms de latence affichée, bureau du Snapdragon à l'écran.
+Une machine où Sunshine encode en x264 logiciel streame en **matériel**.
+
+### 22.3 OpenH264 : le dernier étage, sur le CPU
+
+Sous-module `cisco/openh264` épinglé v2.6.0 (BSD-2, déjà sur la liste blanche),
+et un CMake écrit par nous — upstream n'a que Makefile et meson —, encodeur seul
+(`third_party/openh264.cmake`, listes de `codec/*/targets.mk`). Noyaux NASM sur
+x86-64 (nasm cherché sur le PATH, dans `MW_NASM` et dans le cache d'outils de
+vcpkg), `.S` NEON sur AArch64 avec gcc/clang, **C pur sous MSVC ARM64** — la
+raison de l'arbitrage « MF d'abord » : sur le Snapdragon on n'aurait eu que le
+C, et l'assembleur GAS d'upstream ne passe pas `armasm64`. Le configure dit fort
+quand il compile sans noyaux.
+
+`OpenH264Encoder` est neutre : il prend une image **I420** en mémoire système
+(pas NV12, seul encodeur ici) et ne sait rien des textures ; chaque plateforme
+possède la copie qui l'y amène. Latence : threads **par tranches** (une image sur
+les cœurs, jamais un pipeline d'images), **aucun saut d'image** — OpenH264
+avertit que sans saut « le débit ne peut pas être contrôlé » : il veut dire qu'une
+image trop grosse dépasse au lieu de disparaître, ce que le gouverneur de lien
+absorbe, alors qu'une image disparue se lit comme un gel —, CAVLC,
+`LOW_COMPLEXITY`, denoise/scène/arrière-plan/AQ éteints, CBR, GOP sans keyframe
+périodique, VUI BT.709 limité.
+
+Deux manies mesurées : le plafond doit être **strictement** supérieur à la cible
+(+1 %, au moins un kilobit) ; et `SPATIAL_LAYER_ALL` n'écrit que le chiffre
+global alors que le contrôle lit la couche 0 — quatre appels pour un nombre, et
+l'ordre dépend du sens (plafond d'abord à la hausse, cible d'abord à la baisse).
+Sans cela la rafale de raffinement et le gouverneur étaient refusés.
+
+`SoftwareEncoder` (Windows) : NV12 texture → staging → Map → trois plans I420 en
+une passe, le chroma entrelacé séparé pendant la lecture. Mesuré sur bench-desk :
+3,3 ms/image synthétique 1080p sur 4 threads, 10,7 ms/image bureau réel
+relecture comprise ; flux navigateur réel 2560×1440 en `avc1.42c033`, 16,3 ms.
+
+### 22.4 Linux sans render node : KMS → DMA-BUF mmap → CPU
+
+La VM Debian n'a que `card0` : pas de VA-API, mais **pas d'EGL non plus** — ni
+conversion ni encodage GPU. ⚠️ Le plan disait « capture X11/XShm » ; c'était
+faux. Mesuré avec une sonde C (`kmsdump`) : le scanout de `hyperv_drm` est
+**XR24 linéaire (modifier 0)**, l'export PRIME passe et le `mmap` du dma-buf rend
+les vrais pixels (8 Mo en 4,2 ms à froid). Sur l'bench-mini le même mmap est refusé
+(amdgpu, tuilé) — la voie CPU est bien celle des machines sans GPU, et seulement
+d'elles. Donc `KmsCapture` reste tel quel — aucun serveur d'affichage requis, la
+même propriété « capture avant le login » que la voie GPU — et ce qui change est
+qui lit le buffer : `CpuConvert` (mmap du premier plan, `DMA_BUF_IOCTL_SYNC`, une
+passe BGRA→I420 BT.709 en bandes de lignes sur 4 threads, `BgraToI420.h` testé
+sous Windows aussi), puis `OpenH264Encoder`. Dans `LinuxSession` la conversion et
+l'encodage deviennent un objet, `VideoPipeline`, parce que les deux paires
+inversent la propriété de l'image (la surface de l'encodeur pour VA-API, les
+plans du convertisseur pour OpenH264).
+
+**Le premier flux a reconstruit la chaîne 5 440 fois en 50 s.** `hyperv_drm` n'a
+pas de vblank (`drmWaitVBlank` → `EOPNOTSUPP`, lu comme « le CRTC s'en va » →
+`Lost`) et n'a **qu'un framebuffer**, dans lequel le compositeur dessine sur
+place : son id ne change jamais. Aucun des deux signaux qu'`acquire()` lit
+n'existe. **Mode scruté** : un refus du vblank au premier `acquire` bascule la
+capture en scrutation à la cadence de l'écran, et c'est le **contenu** qui
+témoigne — le buffer tenu est mappé pour la durée de la tenue et replié en un
+nombre (XOR × premier, chaque mot compte) ; empreinte nouvelle = image nouvelle,
+même empreinte = `Timeout`. ~1 ms par scrutation en 1080p. Le contrat de la boucle
+tient sans qu'elle bouge.
+
+**Prouvé sur la VM** (`.deb` 0.3.0.i10, lanceur avec la capacité) : hôte natif
+levé là où l'ancien build disait « operating system predates… » ; flux navigateur
+depuis bench-desk par le rendez-vous : 1920×1080 `avc1.42c02a` décodé en matériel,
+**8,1 ms** de latence affichée, bureau XFCE à l'écran ; un clic dans le flux
+déplace le pointeur (dans l'image sur ce pilote), le dock apparaît, l'horloge
+avance — l'empreinte détecte le mouvement. Étages hôte sur 291 images : convert
+0,41 / 4,10 / 6,66 ms, encode 5,36 / 15,4 / 18,4 ms (moy./p95/p99).
+
+### 22.5 Ce qui est prouvé, et ce qui ne l'est pas
+
+Prouvé : les trois machines nommées streament en natif (Snapdragon en matériel,
+VM et bench-desk-sans-GPU en CPU) ; aucune machine qui encodait déjà n'a changé
+d'un octet ; la descente MF matériel → MF logiciel → OpenH264 et ses raisons dans
+le log.
+
+Non prouvé, ou non fait : le pointeur n'est pas composé dans l'image sur la voie
+CPU (le client le dessine — défaut bureau ; en mode jeu il manque) ; aucun
+plafond automatique quand le CPU ne suit pas (E4 réduit le budget par image et le
+gouverneur le débit, mais rien ne baisse la résolution — à mesurer sur l'N95) ;
+`/api/native/status` n'affiche pas l'encodeur de repli (codecs vides sur le GPU) ;
+une édition N de Windows sans `mfplat.dll` n'a pas été essayée ; le transform AMD
+muet n'est pas élucidé (sans conséquence : AMF le sert).

@@ -129,3 +129,4 @@ backend/installer/MoonlightWeb/
 
 # Release signing material (macOS code-signing identity); never committed
 .secrets/
+dist-arm64/

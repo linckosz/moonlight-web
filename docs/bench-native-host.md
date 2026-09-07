@@ -710,6 +710,34 @@ budget en jeu — le gain de la marge y serait encore plus proche de zéro, et l
 coût le même.
 
 
+## 8h. L'étage de repli : Media Foundation et OpenH264 (07/09/2026)
+
+Design §22. Toutes les passes H.264 4:2:0, CBR, VBV d'une image ; « encode »
+comprend la relecture GPU→CPU là où il y en a une.
+
+| Machine | Chemin | Contenu | Résolution / débit | encode moy. / p99 (ms) | Ko/img |
+|---|---|---|---|---|---|
+| bench-desk (9900X) | AMF (référence GPU) | bureau fixe | 1080p60 · 20 Mbit/s | 2,83 / 3,34 | 9,6 |
+| bench-desk | MF logiciel `H264 Encoder MFT` (relecture CPU) | bureau fixe | 1080p60 · 20 Mbit/s | 10,5 / 15,4 | 7,0 |
+| bench-desk | OpenH264 (relecture CPU, 4 threads) | bureau fixe | 1080p60 · 20 Mbit/s | 10,7 / — | 9,0 |
+| bench-desk | OpenH264, image synthétique (test) | dégradé mouvant | 1080p60 · 20 Mbit/s | 3,3 / — | 33 |
+| **bench-arm** (Snapdragon 7c) | **`QCOM Hardware Encoder - H264`** (MF matériel, textures D3D11) | bureau | 720p60 · 8 Mbit/s | **12,5 / 16,8** | 8,6 |
+| bench-arm | `QCOM Hardware Encoder - HEVC`, flux réel | bureau | 1440p (suragrandi) | 20,9 / 24,6 | — |
+| **bench-vm** (4 vCPU 9900X) | **KMS scruté → mmap → CPU → OpenH264**, flux réel | bureau XFCE | 1080p · 20 Mbit/s | **5,4 / 18,4** | — |
+
+Flux navigateur réels (Chrome sur bench-desk, par le rendez-vous) : MF logiciel
+HEVC `hev1.1.6.L153.B0` 12,1 ms ; OpenH264 `avc1.42c033` 16,3 ms ; Snapdragon
+HEVC 29,5 ms ; VM Debian `avc1.42c02a` **8,1 ms**. Tous décodés en matériel par
+le client.
+
+Ce que ça dit : sur le Snapdragon, le transform Qualcomm est **le seul encodeur
+matériel** qu'un logiciel de stream y ait jamais utilisé (Sunshine y est en x264
+logiciel) ; à 1440p suragrandi il coûtait 21 ms, d'où la règle « jamais de
+suragrandissement sur le repli ». Sur la VM, 4 cœurs Zen 5 encodent le 1080p en
+5 ms de moyenne — la voie CPU n'est pas une punition sur un CPU moderne ; sur
+l'N95 (§8d) elle le serait, et c'est là qu'un plafond automatique reste à
+mesurer.
+
 ## 9. Pour l'A/B
 
 Le banc encode vers un puits ; l'A/B se fait sur un vrai flux. Une session
