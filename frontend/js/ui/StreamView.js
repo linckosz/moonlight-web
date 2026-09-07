@@ -1595,25 +1595,32 @@ export class StreamView {
             el.querySelector('#stream-input-gate-release')
         );
         if (this._inputGateReleaseEl) {
-            // The strip floats over the picture, so every one of these would
-            // otherwise also read as a click on the host's desktop — which,
-            // while the gate is closed, is precisely the click that goes
-            // nowhere. Swallow them all, and act on the real one.
-            for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart']) {
-                this._inputGateReleaseEl.addEventListener(
-                    type,
-                    (e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                    },
-                    { passive: false },
-                );
+            // The strip floats over the picture, so each of these would
+            // otherwise ALSO read as a gesture on the host's desktop — which,
+            // while the gate is closed, is precisely the gesture that goes
+            // nowhere. stopPropagation is enough for that: the trackpad
+            // handlers sit on an ancestor and never see what stops here.
+            //
+            // What must NOT happen is preventDefault on touchstart. iOS Safari
+            // takes that as "this touch is not a tap" and never synthesises the
+            // click, so the button lit up under Bruno's finger on 07/09 and did
+            // nothing at all. Hence the act on pointerup, which owes nothing to
+            // that synthesis, with click kept for a keyboard's Enter/Space.
+            for (const type of ['pointerdown', 'mousedown', 'mouseup', 'touchstart', 'touchend']) {
+                this._inputGateReleaseEl.addEventListener(type, (e) => e.stopPropagation(), {
+                    passive: false,
+                });
             }
-            this._inputGateReleaseEl.addEventListener('click', (e) => {
+            const press = (e) => {
                 e.stopPropagation();
-                e.preventDefault();
+                // Guarded rather than deduplicated: the button disables itself
+                // on the first press, so a click arriving behind a pointerup
+                // finds it already spent.
+                if (this._inputGateReleaseEl.disabled) return;
                 this._releaseInputBlock();
-            });
+            };
+            this._inputGateReleaseEl.addEventListener('pointerup', press);
+            this._inputGateReleaseEl.addEventListener('click', press);
         }
 
         const consoleBtn = /** @type {HTMLElement} */ (el.querySelector('#btn-stream-console'));
@@ -5586,6 +5593,7 @@ export class StreamView {
             btn.disabled = true;
             btn.textContent = t('stream.inputGateReleasing');
         }
+        console.warn('[StreamView] Asking the host to minimise its windows (input gate)');
         this._sendToHost({ type: 'unblockinput' });
     }
 
