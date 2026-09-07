@@ -637,6 +637,79 @@ mode de contrôle de débit de ce chemin ; à instruire séparément si le sujet
 revient.
 
 
+## 8g. Où la marge de VBV se voit vraiment : la transition, et le jeu (07/09/2026)
+
+Le §8f donne le coût moyen. Il ne dit pas **quand** il se paie, ce qui est la
+seule chose qui compte pour un joueur. Deux contenus, deux moments :
+
+- **`wake.html`** : une page parfaitement immobile qui se met à défiler à un
+  instant connu. C'est le moment où l'on attrape une fenêtre — l'encodeur ronronne
+  sur une image fixe et on lui demande brutalement une image difficile.
+- **le clip Call of Duty** : mouvement soutenu, sans transition.
+
+Chaque passe est rejouée avec `vbv=1` (85 Ko, ce qui est livré) et `vbv=6`
+(250 Ko, la marge de ce matin). HEVC 1080p60, 20 Mbit/s, intra-refresh.
+`link ms` = temps qu'une image met à passer sur un lien exactement au débit
+réglé, calculé depuis les octets du CSV.
+
+### La transition, découpée
+
+| Phase | Réglage | images | Ko moy | **Ko max** | **link ms max** |
+|---|---|---|---|---|---|
+| écran fixe | `vbv=1` | 17 | 38,2 | **40,7** | **16,7** |
+| écran fixe | `vbv=6` | 15 | 40,7 | **135,2** | **55,4** |
+| 30 premières images du mouvement | `vbv=1` | 30 | 32,6 | 59,3 | **24,3** |
+| 30 premières images du mouvement | `vbv=6` | 30 | 38,1 | 148,8 | **60,9** |
+| mouvement soutenu ensuite | `vbv=1` | 185 | 40,3 | 64,9 | **26,6** |
+| mouvement soutenu ensuite | `vbv=6` | 185 | 41,2 | 160,1 | **65,6** |
+
+### Ce que ça dit, moment par moment
+
+**Écran fixe : la marge sert la rafale de raffinement, et rien d'autre.** Avec
+85 Ko chaque passe est plafonnée à ~41 Ko, avec 250 Ko une passe peut mettre
+135 Ko d'un coup. C'est exactement la netteté d'un bureau immobile — et c'est ce
+qui a été accepté comme perte : la rafale converge toujours, en plus de passes.
+Le « 55 ms de lien » de cette ligne ne se ressent pas, personne ne bouge.
+
+**Le moment où l'on attrape une fenêtre : +17 % de bits contre une image à
+61 ms.** La marge donne des premières images un peu plus fines (38,1 contre
+32,6 Ko de moyenne), et fait passer la pire de 24 à **61 ms de lien** — près de
+quatre intervalles de trame à 60 fps. Dans ce moteur, ce qui arrive pendant
+qu'une image occupe le lien n'attend pas : l'émetteur ne garde qu'un delta
+(C5), donc les images produites entre-temps sont **remplacées**. On échange donc
+une image plus nette contre un à-coup et deux ou trois images sautées, au moment
+précis où l'on regarde *où* la fenêtre est arrivée, pas si son texte est net.
+
+**En jeu : quasiment aucun gain, tout le coût.** En mouvement soutenu la moyenne
+est la **même** (40,3 contre 41,2 Ko) — le CBR tient la moyenne, et E4 ne dilate
+plus le budget puisque les images arrivent à la cadence du flux. Ce qui change
+est uniquement la queue : la pire image passe de 64,9 à 160,1 Ko, soit **27 →
+66 ms de lien**. Un jeu produit ces images difficiles en continu (explosions,
+caméra qui balaie), donc le pic se répète — et chaque fois c'est une image en
+retard ou une image sautée, au pire moment.
+
+### La distinction qui explique tout
+
+Ce que l'on a appelé « la marge » ce matin était **deux choses** :
+
+- **le plafond de budget** (`kBudgetHeadroom`) : ce que l'encodeur vise quand
+  les images arrivent moins vite que le flux. C'est lui qui donne les +37 % de
+  bits du §8f, et il ne sert que sur un contenu qui bouge **lentement** ;
+- **le tampon** (le VBV) : de combien une image isolée peut dépasser la moyenne.
+  C'est lui qui coûte les pics ci-dessus.
+
+Sur Intel ils sont indissociables : `Reset` n'accepte de relever le plafond que
+si le tampon a été dimensionné pour. NVENC et AMF acceptent la hausse sans
+toucher au tampon — c'est pourquoi eux gardent le gain de E4 gratuitement, et
+c'est une différence de vendeur, pas de conception.
+
+⚠️ **Limite du banc** : l'N95 ne tient qu'une vingtaine d'images par seconde sur
+ce contenu, donc « mouvement soutenu à pleine cadence » n'est pas vraiment
+éprouvé. Sur une machine qui tient 60 fps, E4 ne dilaterait pas du tout le
+budget en jeu — le gain de la marge y serait encore plus proche de zéro, et le
+coût le même.
+
+
 ## 9. Pour l'A/B
 
 Le banc encode vers un puits ; l'A/B se fait sur un vrai flux. Une session
