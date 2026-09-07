@@ -751,21 +751,41 @@ void Win32Input::runRelease(void* blockerWindow)
 
     if (!minimiseEverything()) return;
 
+    // MinimizeAll is a REQUEST to the shell, not a state change of our own: it
+    // animates, and the windows go down over the frames that follow. Restoring
+    // into that race is what left Bruno's desktop bare on 07/09 — every restore
+    // landed first and the shell's minimise landed on top of it. So wait for it
+    // to finish before putting anything back. A second is generous; the loop
+    // gives up rather than hang if some window never goes down.
+    const auto allDown = [&restore] {
+        for (HWND w : restore)
+            if (!::IsIconic(w)) return false;
+        return true;
+    };
+    for (int waited = 0; waited < 40 && !allDown(); ++waited)
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
     // Back to front, so whatever was in front before ends in front again.
-    size_t back = 0;
     for (auto it = restore.rbegin(); it != restore.rend(); ++it) {
         if (*it == blocker) continue;
-        if (::ShowWindow(*it, SW_RESTORE)) ++back;
+        ::ShowWindow(*it, SW_RESTORE);
+    }
+
+    // Then let the shell settle again before reading the result — and read it
+    // from the windows themselves, never from ShowWindow's return value, which
+    // reports whether the window WAS visible. A minimised window still is, so
+    // that value would have called every refused restore a success.
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    size_t back = 0;
+    size_t eligible = 0;
+    for (HWND w : restore) {
+        if (w == blocker) continue;
+        ++eligible;
+        if (!::IsIconic(w)) ++back;
     }
     log::info("[native] input unblock: desktop minimised at the viewer's request, " +
-              std::to_string(back) + " of " + std::to_string(restore.size()) +
-              " window(s) put back");
-
-    // Say what came of it, rather than leaving the viewer to find out by
-    // pressing something. Nobody is injecting at this moment — that is the
-    // whole situation — so this thread is the only one that can notice the
-    // foreground changed. The pause lets the shell settle first.
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+              std::to_string(back) + " of " + std::to_string(eligible) +
+              " other window(s) put back");
 
     // Forced, so the report goes out even when the answer is "no change":
     // the viewer's button disabled itself on the press, and if this achieved
