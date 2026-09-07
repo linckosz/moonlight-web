@@ -11,12 +11,14 @@
 #pragma once
 
 #include "VplApi.h"
+#include "VplFrameAllocator.h"
 #include "mw/native/Capabilities.h"
 
 #include <d3d11.h>
 
 #include "mw/native/EncoderTuning.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,11 @@ namespace mw::native::encode {
 /// on the adapter that scans out the display — makes the runtime use that
 /// adapter and nothing else. It is the same move AMF's InitDX11 makes, and it
 /// removes a whole class of "answered for the wrong GPU" mistakes.
+///
+/// ⚠️ The device is given to the DISPATCHER, before the session exists, and not
+/// to MFXVideoCORE_SetHandle afterwards: on oneVPL 2.x the dispatcher has
+/// already made a device of its own by then and answers -16, "the same handle
+/// is redefined". See open() — the first real Intel machine cost us that one.
 class VplSession
 {
 public:
@@ -53,11 +60,23 @@ public:
     bool isOpen() const { return m_Session != nullptr; }
     mfxSession handle() const { return m_Session; }
     const VplApi* api() const { return m_Api; }
+    /// The D3D11 device the runtime is really working on — checked at open(),
+    /// so a surface handed to the encoder can be trusted to belong to it.
+    ID3D11Device* device() const { return m_Device; }
+    /// True when that device is the runtime's own rather than the one open()
+    /// was given — the case where a texture from this engine cannot be handed
+    /// to the encoder as it is.
+    bool borrowedDevice() const { return m_BorrowedDevice; }
 
 private:
     const VplApi* m_Api = nullptr;
     mfxLoader m_Loader = nullptr;
     mfxSession m_Session = nullptr;
+    /// Borrowed, never owned — see close() for what releasing it costs.
+    ID3D11Device* m_Device = nullptr;
+    bool m_BorrowedDevice = false;
+    /// Outlives the session by construction: close() drops it last.
+    std::unique_ptr<VplFrameAllocator> m_Allocator;
 };
 
 /// Fill @p params for a low-latency screen stream.
@@ -84,17 +103,24 @@ private:
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,
                       int bitrateKbps, const EncoderTuning& tuning = EncoderTuning{});
 
-/// Attach intra-refresh to @p params, sweeping the picture over two seconds'
-/// worth of frames at @p fps — the same duration the NVENC and AMF paths use
-/// (RateControl.h), so the three vendors behave alike from the receiver's side.
+/// Chain the extension buffers this pipeline always wants onto @p params, plus
+/// intra-refresh when @p intraRefresh is set.
 ///
-/// oneVPL carries it in `mfxExtCodingOption2` (IntRefType / IntRefCycleSize),
-/// which has to be chained onto the parameter block — hence @p option and
-/// @p buffers, which the CALLER must keep alive for as long as @p params is in
-/// use. Taking them by reference rather than allocating here is what makes that
-/// ownership impossible to get wrong: the storage lives with the encoder.
-void attachIntraRefresh(mfxVideoParam& params, mfxExtCodingOption2& option,
-                        std::vector<mfxExtBuffer*>& buffers, int fps);
+/// Always: no HRD conformance (without which the bitrate cannot be changed at
+/// all — see the body), a VUI that asks the receiver to hold one picture, and
+/// no access-unit delimiters or picture-timing SEI. When asked: intra-refresh
+/// sweeping the picture over two seconds' worth of frames at @p fps, the same
+/// duration the NVENC and AMF paths use (RateControl.h), so the three vendors
+/// behave alike from the receiver's side.
+///
+/// @p option1, @p option2 and @p buffers are the CALLER's storage and must stay
+/// alive for as long as @p params is in use — the runtime reads the chain again
+/// on Reset, and a dangling extension buffer there is a use-after-free it
+/// cannot warn about. Taking them by reference rather than allocating here is
+/// what makes that ownership impossible to get wrong.
+void attachEncodeOptions(mfxVideoParam& params, mfxExtCodingOption& option1,
+                         mfxExtCodingOption2& option2, std::vector<mfxExtBuffer*>& buffers, int fps,
+                         bool intraRefresh);
 
 /// Write the rate-control fields — and only those — into an existing block.
 ///
@@ -105,5 +131,9 @@ void attachIntraRefresh(mfxVideoParam& params, mfxExtCodingOption2& option,
 /// through EncodeQuery) on every rate change — and the link governor makes one
 /// about twice a second.
 void applyRateControl(mfxVideoParam& params, int fps, int bitrateKbps, const EncoderTuning& tuning);
+
+/// The subset of that a running encoder will actually accept: the target rate,
+/// and nothing else. See the body for why the buffer must not move.
+void applyBitrateOnly(mfxVideoParam& params, int bitrateKbps);
 
 } // namespace mw::native::encode

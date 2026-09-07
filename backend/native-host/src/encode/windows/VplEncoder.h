@@ -70,6 +70,7 @@ private:
     /// at it. Members rather than locals because oneVPL keeps the pointers: the
     /// parameter block is read again on Reset, and a dangling extension buffer
     /// there is a use-after-free the runtime cannot warn about.
+    mfxExtCodingOption m_CodingOption = {};
     mfxExtCodingOption2 m_CodingOption2 = {};
     std::vector<mfxExtBuffer*> m_ExtBuffers;
     bool m_IntraRefresh = false;
@@ -79,6 +80,13 @@ private:
     std::vector<mfxU8> m_BitstreamData;
     mfxBitstream m_Bitstream = {};
     bool m_OutputHeld = false;
+    /// Said once per session, not once per frame: a GPU at its limit produces
+    /// many of these and a log line per frame would bury everything else.
+    bool m_SlowFrameSeen = false;
+    /// The rate init() sized the encoder for, and the ceiling setBitrate may
+    /// ask for — see there.
+    int m_InitBitrateKbps = 0;
+    bool m_CeilingSeen = false;
 
     Codec m_Codec = Codec::H264;
     int m_Width = 0;

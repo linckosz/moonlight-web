@@ -34,6 +34,11 @@ constexpr mfxU32 kSyncTimeoutMs = 100;
 /// the AMD path read 15.66 ms a frame until it was found.
 constexpr int kBusyRetries = 200;
 
+/// How many times to ask again when the deadline above passes with the frame
+/// still in flight. Ten is a full second, far beyond any frame a working
+/// encoder produces, and short enough that a dead one is still reported.
+constexpr int kSyncAttempts = 10;
+
 } // namespace
 
 VplEncoder::~VplEncoder()
@@ -60,10 +65,11 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     }
     if (hdr) {
         // Same shape as 4:4:4: the silicon has 10-bit, this path does not, and
-        // the capability query is made to say so (see VplCapabilities.cpp). The
-        // whole oneVPL path has never encoded a single frame on real hardware
-        // anyway — adding an unwatched colour pipeline on top of an unwatched
-        // encoder is how a stream ends up subtly wrong for a year.
+        // the capability query is made to say so (see VplCapabilities.cpp).
+        // ⚠️ 07/09/2026: the 8-bit path is now verified on real Intel hardware
+        // (N95 / UHD Graphics), but nothing has ever run a P010 frame through
+        // it — claiming HDR here would be exactly the kind of unwatched colour
+        // pipeline that makes a stream subtly wrong for a year.
         error = "HDR is not implemented on the Intel encoder path";
         return false;
     }
@@ -73,6 +79,9 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     m_Height = height;
     m_Fps = fps > 0 ? fps : 60;
     m_Tuning = tuning;
+    m_InitBitrateKbps = bitrateKbps > 0 ? bitrateKbps : 20000;
+    m_CeilingSeen = false;
+    m_SlowFrameSeen = false;
 
     if (!m_Session.open(device, error)) return false;
 
@@ -88,11 +97,24 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     // copying m_Params wholesale hands it our buffer as both input and output,
     // which some runtimes accept and others do not. Validating the plain
     // parameters and letting Init judge the extension is unambiguous.
+    auto accepted = [](mfxStatus s) {
+        return s == MFX_ERR_NONE || s == MFX_WRN_INCOMPATIBLE_VIDEO_PARAM ||
+               s == MFX_WRN_VIDEO_PARAM_CHANGED;
+    };
+
     mfxVideoParam corrected = m_Params;
-    const mfxStatus queried =
-        m_Session.api()->EncodeQuery(m_Session.handle(), &m_Params, &corrected);
-    if (queried == MFX_ERR_NONE || queried == MFX_WRN_INCOMPATIBLE_VIDEO_PARAM ||
-        queried == MFX_WRN_VIDEO_PARAM_CHANGED) {
+    mfxStatus queried = m_Session.api()->EncodeQuery(m_Session.handle(), &m_Params, &corrected);
+    if (!accepted(queried) && m_Params.mfx.LowPower == MFX_CODINGOPTION_ON) {
+        // No fixed-function engine for this codec on this generation. The
+        // shader-based one still encodes, more slowly; refusing the session
+        // over it would be worse than the extra milliseconds.
+        log::info("[native] oneVPL: no low-power engine for " + std::string(toString(codec)) +
+                  " here (" + VplApi::statusToString(queried) + ") — using the general one");
+        m_Params.mfx.LowPower = MFX_CODINGOPTION_OFF;
+        corrected = m_Params;
+        queried = m_Session.api()->EncodeQuery(m_Session.handle(), &m_Params, &corrected);
+    }
+    if (accepted(queried)) {
         m_Params = corrected;
     } else {
         error = std::string("this GPU cannot encode ") + toString(codec) + ": " +
@@ -101,47 +123,57 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         return false;
     }
 
-    auto initSucceeded = [](mfxStatus s) {
-        return s == MFX_ERR_NONE || s == MFX_WRN_INCOMPATIBLE_VIDEO_PARAM ||
-               s == MFX_WRN_VIDEO_PARAM_CHANGED;
-    };
-
     m_IntraRefresh = false;
-    if (intraRefresh) attachIntraRefresh(m_Params, m_CodingOption2, m_ExtBuffers, m_Fps);
+    attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_ExtBuffers, m_Fps,
+                        intraRefresh);
 
     mfxStatus started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
 
-    if (intraRefresh && initSucceeded(started)) {
+    if (intraRefresh && accepted(started)) {
         m_IntraRefresh = true;
     } else if (intraRefresh) {
         // Intra-refresh is an optimisation, not a requirement. A generation
         // that refuses it must still stream — falling back to keyframes costs
-        // the receiver its self-repair, not its picture.
+        // the receiver its self-repair, not its picture. The rest of the chain
+        // stays: without it the bitrate could not move.
         log::warning(std::string("[native] oneVPL declined intra-refresh (") +
                      VplApi::statusToString(started) + ") — falling back to keyframes");
-        m_ExtBuffers.clear();
-        m_Params.ExtParam = nullptr;
-        m_Params.NumExtParam = 0;
+        attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_ExtBuffers, m_Fps, false);
         started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
     }
 
-    if (!initSucceeded(started)) {
+    if (!accepted(started)) {
         error = std::string("could not initialize the Intel encoder: ") +
                 VplApi::statusToString(started);
         stop();
         return false;
     }
 
-    // Ask the encoder how big a compressed frame can get rather than guessing:
-    // an undersized bitstream buffer fails at the worst moment, on the largest
-    // keyframe.
+    // ── What the encoder actually settled on ────────────────────────────────
+    //
+    // Read back rather than assumed, for two reasons. The compressed buffer has
+    // to be big enough for the largest keyframe, and guessing that fails at the
+    // worst possible moment. And Reset — which the link governor calls about
+    // twice a second — refuses a block that differs from the running
+    // configuration in any field it considers static, including the ones the
+    // runtime filled in for itself at Init (profile, level, reference count).
+    // Rebuilding Reset's input from our pre-Init block is what had every rate
+    // change on the first Intel machine answered with -14.
     mfxVideoParam actual = {};
     actual.mfx.CodecId = m_Params.mfx.CodecId;
-    if (m_Session.api()->EncodeGetVideoParam(m_Session.handle(), &actual) == MFX_ERR_NONE &&
-        actual.mfx.BufferSizeInKB > 0) {
-        const mfxU32 multiplier =
-            actual.mfx.BRCParamMultiplier > 0 ? actual.mfx.BRCParamMultiplier : 1;
-        m_BitstreamData.resize(static_cast<size_t>(actual.mfx.BufferSizeInKB) * multiplier * 1024);
+    if (!m_ExtBuffers.empty()) {
+        actual.ExtParam = m_ExtBuffers.data();
+        actual.NumExtParam = static_cast<mfxU16>(m_ExtBuffers.size());
+    }
+    if (m_Session.api()->EncodeGetVideoParam(m_Session.handle(), &actual) == MFX_ERR_NONE) {
+        if (actual.mfx.BufferSizeInKB > 0) {
+            const mfxU32 multiplier =
+                actual.mfx.BRCParamMultiplier > 0 ? actual.mfx.BRCParamMultiplier : 1;
+            m_BitstreamData.resize(static_cast<size_t>(actual.mfx.BufferSizeInKB) * multiplier *
+                                   1024);
+        }
+        // ExtParam still points into m_ExtBuffers, a member that outlives this.
+        m_Params = actual;
     }
     // A floor regardless: some runtimes report a buffer sized for the average
     // frame, and a keyframe is several times that.
@@ -161,8 +193,7 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
              ? ", intra-refresh over " + std::to_string(intraRefreshPeriodFrames(m_Fps)) + " frames"
              : ", keyframes on demand") +
         ", TU" + std::to_string(m_Params.mfx.TargetUsage) +
-        (overrides.empty() ? "" : " [bench: " + overrides + "]") +
-        " (UNVERIFIED — no Intel hardware has run this path yet)");
+        (overrides.empty() ? "" : " [bench: " + overrides + "]"));
     return true;
 }
 
@@ -229,8 +260,27 @@ bool VplEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
         return false;
     }
 
-    const mfxStatus synced =
-        m_Session.api()->SyncOperation(m_Session.handle(), sync, kSyncTimeoutMs);
+    // ⚠️ A timeout is not a failure, and treating it as one killed the first
+    // real Intel session this engine ever ran.
+    //
+    // SyncOperation answers MFX_WRN_IN_EXECUTION when its deadline passes with
+    // the frame still in the encoder — "ask again", exactly like
+    // MFX_WRN_DEVICE_BUSY above. On an N95 with the browser decoding on the
+    // same four cores, one frame in a few hundred took longer than 100 ms, and
+    // the session ended at that frame with "still executing (1)" after twelve
+    // frames. The deadline stays short so a genuinely dead encoder is still
+    // caught quickly; what changes is that a slow frame gets asked about again.
+    mfxStatus synced = MFX_WRN_IN_EXECUTION;
+    for (int attempt = 0; attempt < kSyncAttempts; ++attempt) {
+        synced = m_Session.api()->SyncOperation(m_Session.handle(), sync, kSyncTimeoutMs);
+        if (synced != MFX_WRN_IN_EXECUTION && synced != MFX_WRN_DEVICE_BUSY) break;
+        if (attempt == 0 && !m_SlowFrameSeen) {
+            m_SlowFrameSeen = true;
+            log::warning("[native] oneVPL: a frame took longer than " +
+                         std::to_string(kSyncTimeoutMs) +
+                         " ms to encode — this GPU is at its limit for this resolution");
+        }
+    }
     if (synced != MFX_ERR_NONE) {
         error =
             std::string("waiting for the encoded frame failed: ") + VplApi::statusToString(synced);
@@ -278,14 +328,49 @@ bool VplEncoder::setBitrate(int bitrateKbps, std::string& error)
     // a second on a moving link, so intra-refresh survived roughly half a
     // second of real streaming. Same shape as bug B4 on AMF — a mid-session
     // re-application that quietly drops what init() had settled.
+    // ⚠️ Upwards, the encoder does not move — and asking anyway ends the call.
+    //
+    // MFXVideoENCODE_Reset refuses (-14, "requires additional memory
+    // allocation") any target above the one Init sized its buffers for, and it
+    // refuses the WHOLE call: the rate stays where it was. Measured on an N95,
+    // where the effective-cadence budget (E4) asked for 32000 on a stream set
+    // to 20000 because the desktop was only moving at half the stream's rate —
+    // twice a second, each one refused with a warning.
+    //
+    // So the ceiling is what init() was given, and what is lost is the upward
+    // half of E4: on Intel a slow-moving picture does not get to spend the
+    // bits its frames would have been worth. The downward half — the one that
+    // matters when a link is suffering — works exactly as it does elsewhere.
+    int wanted = bitrateKbps;
+    if (wanted > m_InitBitrateKbps) {
+        if (!m_CeilingSeen) {
+            m_CeilingSeen = true;
+            log::info("[native] oneVPL: the bitrate cannot rise above the " +
+                      std::to_string(m_InitBitrateKbps) +
+                      " kbps this session started at — asking for more is refused outright, so "
+                      "requests above it are capped");
+        }
+        wanted = m_InitBitrateKbps;
+        const int multiplier =
+            m_Params.mfx.BRCParamMultiplier > 0 ? m_Params.mfx.BRCParamMultiplier : 1;
+        if (static_cast<int>(m_Params.mfx.TargetKbps) * multiplier == wanted) return true;
+    }
+
     mfxVideoParam params = m_Params;
-    applyRateControl(params, m_Fps, bitrateKbps, m_Tuning);
+    applyBitrateOnly(params, wanted);
 
     // Reset keeps the session and its surfaces; only the rate control changes.
     const mfxStatus status = m_Session.api()->EncodeReset(m_Session.handle(), &params);
     if (status != MFX_ERR_NONE && status != MFX_WRN_INCOMPATIBLE_VIDEO_PARAM &&
         status != MFX_WRN_VIDEO_PARAM_CHANGED) {
-        error = std::string("could not change the bitrate: ") + VplApi::statusToString(status);
+        const int multiplier =
+            m_Params.mfx.BRCParamMultiplier > 0 ? m_Params.mfx.BRCParamMultiplier : 1;
+        error = "could not change the bitrate to " + std::to_string(bitrateKbps) + " kbps from " +
+                std::to_string(static_cast<int>(m_Params.mfx.TargetKbps) * multiplier) +
+                " (multiplier " + std::to_string(multiplier) + ", VBV " +
+                std::to_string(static_cast<int>(m_Params.mfx.BufferSizeInKB) * multiplier) +
+                " KB, " + std::to_string(m_Params.NumExtParam) +
+                " ext): " + VplApi::statusToString(status);
         return false;
     }
     // ExtParam still points into m_ExtBuffers, a member that outlives this.

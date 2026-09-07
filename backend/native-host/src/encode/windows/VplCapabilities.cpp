@@ -48,10 +48,14 @@ ComPtr<ID3D11Device> openDeviceOnAdapter(uint64_t adapterLuid)
 
         const D3D_FEATURE_LEVEL wanted[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
         ComPtr<ID3D11Device> device;
-        if (SUCCEEDED(::D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0,
-                                          wanted, static_cast<UINT>(std::size(wanted)),
-                                          D3D11_SDK_VERSION, device.GetAddressOf(), nullptr,
-                                          nullptr)))
+        // VIDEO_SUPPORT is not optional for oneVPL: the runtime asks the device
+        // for its ID3D11VideoDevice, and a device created without the flag has
+        // none. The probe's device must match what the session's device can do,
+        // or the probe answers for a configuration the encoder never gets.
+        if (SUCCEEDED(::D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+                                          D3D11_CREATE_DEVICE_VIDEO_SUPPORT, wanted,
+                                          static_cast<UINT>(std::size(wanted)), D3D11_SDK_VERSION,
+                                          device.GetAddressOf(), nullptr, nullptr)))
             return device;
         return nullptr;
     }

@@ -40,7 +40,12 @@ public:
     const std::string& unavailableReason() const { return m_Reason; }
 
     /// Human-readable form of an mfxStatus, for logs.
-    static const char* statusToString(mfxStatus status);
+    ///
+    /// The numeric code is always appended, named or not: oneVPL has statuses no
+    /// switch here will ever cover, and "unexpected status" on its own is a dead
+    /// end for anyone reading a bug report — the number can at least be looked up
+    /// in mfxdefs.h.
+    static std::string statusToString(mfxStatus status);
 
     // ── The dispatcher's entry points ───────────────────────────────────────
     mfxLoader(MFX_CDECL* Load)() = nullptr;
@@ -52,6 +57,8 @@ public:
 
     // ── Session functions ───────────────────────────────────────────────────
     mfxStatus(MFX_CDECL* SetHandle)(mfxSession, mfxHandleType, mfxHDL) = nullptr;
+    mfxStatus(MFX_CDECL* GetHandle)(mfxSession, mfxHandleType, mfxHDL*) = nullptr;
+    mfxStatus(MFX_CDECL* SetFrameAllocator)(mfxSession, mfxFrameAllocator*) = nullptr;
     mfxStatus(MFX_CDECL* SyncOperation)(mfxSession, mfxSyncPoint, mfxU32) = nullptr;
     mfxStatus(MFX_CDECL* EncodeQuery)(mfxSession, mfxVideoParam*, mfxVideoParam*) = nullptr;
     mfxStatus(MFX_CDECL* EncodeInit)(mfxSession, mfxVideoParam*) = nullptr;

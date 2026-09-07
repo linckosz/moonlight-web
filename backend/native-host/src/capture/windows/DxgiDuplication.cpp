@@ -125,8 +125,12 @@ bool DxgiDuplication::start(std::string& error)
     // copying across GPUs.
     const D3D_FEATURE_LEVEL wanted[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL obtained = {};
+    // VIDEO_SUPPORT is here for the encoder that will share this device: Intel's
+    // oneVPL runtime asks it for an ID3D11VideoDevice, which a device created
+    // without the flag does not have. It costs nothing on a GPU that ignores it.
     HRESULT hr = ::D3D11CreateDevice(
-        adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, wanted,
+        adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, wanted,
         static_cast<UINT>(std::size(wanted)), D3D11_SDK_VERSION, m_Device.ReleaseAndGetAddressOf(),
         &obtained, m_Context.ReleaseAndGetAddressOf());
     if (FAILED(hr)) {

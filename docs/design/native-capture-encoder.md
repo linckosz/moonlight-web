@@ -1197,14 +1197,15 @@ seulement HEVC/H.264.
 coexistent pas — la seconde démolit la première. C'est le take-over délibéré du
 `/start` existant, pas une propriété du moteur natif.
 
-### ⚠️ Intel (oneVPL) — écrit, jamais exécuté
+### Intel (oneVPL) — ⚠️ **exécuté pour la première fois le 07/09/2026**
 
-Le chemin Intel est implémenté (sonde de capacités + encodeur) mais **aucun GPU
-Intel ne l'a jamais exécuté**. Tous les autres encodeurs de cet arbre ont été
-mesurés sur la machine qu'ils visent ; celui-ci non. À considérer comme non
-prouvé jusqu'à ce qu'il encode une frame sur du vrai matériel.
+> ⚠️ Cette section disait « écrit, jamais exécuté ». Elle est corrigée : le
+> chemin Intel a streamé pour de vrai sur le banc `bench-intel` (N95 / UHD
+> Graphics, pilote 32.0.101.7088), et il n'en est **rien sorti d'intact** — cinq
+> défauts, dont trois fatals, décrits au §21. Ce qui suit reste vrai de la
+> conception ; le tableau des choix a été corrigé là où le matériel a tranché.
 
-Ce qui EST vérifié, sans matériel :
+Ce qui était vérifié **avant** tout matériel, et l'est resté :
 
 - **le calcul des paramètres**, qui est la partie la plus facile à se tromper
   en silence. `TargetKbps` est un `mfxU16` : au-delà de 65535 kbps il faut
@@ -1222,7 +1223,9 @@ Choix assumés, notés pour qui reprendra :
 |---|---|
 | Runtime | oneVPL 2.x (`libvpl.dll`) seulement, pas le Media SDK historique |
 | Implémentation | filtrée sur HARDWARE — sinon oneVPL sert son repli logiciel en silence |
-| Choix du GPU | par `MFX_HANDLE_D3D11_DEVICE` sur NOTRE device, comme AMF, plutôt qu'en appariant à la main les énumérations Intel et DXGI |
+| Choix du GPU | par notre device D3D11, comme AMF, plutôt qu'en appariant à la main les énumérations Intel et DXGI. ⚠️ **mais pas par `MFXVideoCORE_SetHandle`** : sur le dispatcher 2.x il faut le donner à la CRÉATION (`mfxHDL` + `mfxHandleType`) — §21.1 |
+| Moteur | `LowPower = ON` (VDENC, le bloc fixe) avec repli automatique sur le moteur général si `Query` le refuse — §21.4 |
+| Débit variable | possible seulement **vers le bas** : `Reset` refuse toute cible au-dessus de celle de l'init — §21.5 |
 | 4:4:4 | non revendiqué : la passe de conversion produit de l'AYUV, qu'oneVPL ne prend pas en entrée d'encodeur |
 | Intra-refresh | demandé par `mfxExtCodingOption2` (`IntRefType = VERTICAL`), avec repli explicite sur les keyframes si `EncodeInit` le refuse — le refus est journalisé, jamais avalé |
 
@@ -2466,3 +2469,168 @@ capturent au premier essai, 2 254/2 254.
 `git bundle` (les commits ne sont pas poussés), l'app complète rebâtie et
 déployée : c'est la première fois que le Mac tourne le code du jour et non un
 `native-host` superposé à un serveur vieux d'une semaine.
+
+## 21. Intel Quick Sync : la première exécution, et ce qu'elle a cassé (07/09/2026)
+
+Le banc `bench-intel` (Intel N95, UHD Graphics 24 EU, pilote 32.0.101.7088,
+Windows 11) est le premier GPU Intel de la flotte. Le chemin oneVPL y a été
+exécuté pour la première fois. Le §14 du plan v2 le disait « écrit, jamais
+exécuté » ; il n'a rien fonctionné du premier coup, et chacun des cinq défauts
+était invisible sans matériel.
+
+Ordre des symptômes, tel que la machine les a donnés — c'est aussi l'ordre dans
+lequel un autre vendeur les redonnera :
+
+### 21.1 « no usable encoder » sur une machine qui a Quick Sync
+
+La sonde répondait `available:false`, « no video encoder this engine can drive
+on any GPU », sur les **trois** adaptateurs Intel que DXGI énumère (un vrai, et
+un par pilote d'écran indirect — Parsec VDD et Virtual Display Driver).
+
+`MFXVideoCORE_SetHandle(MFX_HANDLE_D3D11_DEVICE)` répondait
+`MFX_ERR_UNDEFINED_BEHAVIOR` (-16), documenté « the same handle is redefined …
+or an internal handle has been created before this function call ».
+
+Deux causes empilées, et il fallait les deux :
+
+1. **Le device n'avait pas `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`.** Sans ce
+   drapeau un device D3D11 n'expose pas d'`ID3D11VideoDevice`, et le runtime
+   Intel ne peut rien en faire. Aucun autre encodeur de cet arbre ne l'exigeait,
+   donc personne ne l'avait posé — ni la sonde (`VplCapabilities`) ni la capture
+   (`DxgiDuplication`, qui est le device que l'encodeur reçoit en session
+   réelle). Les deux le posent maintenant ; c'est gratuit sur un GPU qui s'en
+   moque.
+2. **Le device doit être donné au dispatcher, pas à la session.** Sur oneVPL 2.x
+   le dispatcher crée le device lui-même en créant la session, et un `SetHandle`
+   ultérieur arrive trop tard. Les deux propriétés qui le lui donnent à temps
+   — `mfxHDL` et `mfxHandleType` — appartiennent au dispatcher et non à
+   `mfxImplDescription`, donc elles n'apparaissent nulle part dans les en-têtes.
+
+`VplSession::open` essaie les deux routes dans cet ordre et **demande ensuite au
+runtime quel device il utilise** (`GetHandle`), puis compare le LUID de son
+adaptateur à celui demandé. C'est ce qui départage les trois « Intel(R) UHD
+Graphics » de la liste, et c'est ce qui empêcherait une session de tourner en
+silence sur un device dont nos textures ne sont pas.
+
+⚠️ **`MFXVideoCORE_GetHandle` n'incrémente pas le compteur COM**, contrairement à
+ce que sa documentation promet. Relâcher la référence qu'on n'a jamais reçue
+libère le device sous son propriétaire : mesuré comme une violation d'accès dans
+`d3d11!CDevice::Release` à la seconde où la sonde lâchait son propre `ComPtr`.
+Le handle est emprunté, jamais possédé.
+
+### 21.2 La première frame tuait le processus
+
+Corruption de pile (`0xC0000409`), sans log, dès le premier `EncodeFrameAsync`.
+
+En `MFX_IOPATTERN_IN_VIDEO_MEMORY` une surface ne porte pas de pixels : elle
+porte un `Data.MemId`, que le runtime traduit en texture **par l'allocateur de la
+session**. Sans allocateur enregistré, le runtime utilise le sien et lui présente
+notre MemId, qu'il relit comme une de ses propres structures. Ce n'est pas un
+chemin d'erreur, c'est un pointeur sauvage.
+
+`VplFrameAllocator` (nouveau) pose le contrat : **dans ce moteur, un MemId est
+toujours un `mfxHDLPair` {ID3D11Texture2D\*, sous-ressource}**, et `GetHDL` est
+la ligne qui le dit. L'allocateur sert aussi les surfaces que l'encodeur alloue
+pour lui-même (images reconstruites), en `D3D11_BIND_DECODER` comme le fait
+l'allocateur des samples Media SDK, avec repli en RT+SRV.
+
+### 21.3 Le débit ne bougeait jamais
+
+`MFXVideoENCODE_Reset` répondait `MFX_ERR_INCOMPATIBLE_VIDEO_PARAM` (-14) à
+**chaque** changement du gouverneur de lien — soit environ deux fois par seconde
+sur un lien qui souffre. L'encodeur Intel ignorait donc complètement le lien,
+et la seule trace était un avertissement qu'un log de session fait défiler.
+
+Trois causes, toutes réelles :
+
+1. **Le modèle HRD.** Avec `NalHrdConformance` actif, oneVPL traite un changement
+   de débit comme une nouvelle séquence et refuse tout ce qui n'est pas une IDR.
+   Il est désormais explicitement à `OFF` (`mfxExtCodingOption`, chaîné à chaque
+   session, intra-refresh ou pas). L'alternative — forcer la nouvelle séquence —
+   achèterait la conformité au prix d'une keyframe deux fois par seconde, c'est-
+   à-dire exactement le pic de débit qu'un lien congestionné ne peut pas encaisser.
+2. **Le VBV.** Rebâtir `BufferSizeInKB` au nouveau débit est une réallocation, et
+   `Reset` refuse l'appel entier pour ça. `applyBitrateOnly()` ne touche donc que
+   `TargetKbps`/`MaxKbps` ; le VBV reste où l'init l'a mis.
+3. **Le bloc de paramètres.** `Reset` compare au bloc réellement en vigueur, y
+   compris les champs que le runtime a remplis lui-même à l'init (profil, niveau,
+   nombre de références). `init()` relit maintenant ce bloc par
+   `EncodeGetVideoParam` et c'est lui que `Reset` reçoit.
+
+### 21.4 Trop lent de moitié
+
+Premier chiffre mesuré : **16,3 ms** par frame en HEVC 1080p60, TU7. Un stream à
+60 fps ne tient pas dans ça.
+
+`mfx.LowPower = MFX_CODINGOPTION_ON` — le moteur à fonction fixe (VDENC) plutôt
+que celui à shaders — le ramène à **10,5 ms**, et le 1440p de 21,4 à 13,4 ms.
+C'est le même arbitrage que partout ailleurs dans ce moteur : moins de passes,
+moins de latence, quelques bits de plus. Une génération sans VDENC pour ce codec
+le dit à `Query`, et `init()` refait la demande sans — journalisé, jamais avalé.
+
+### 21.5 La session mourait au bout de douze frames
+
+`SyncOperation` répond `MFX_WRN_IN_EXECUTION` (1) quand son délai passe avec la
+frame encore dans l'encodeur — « redemande », exactement comme
+`MFX_WRN_DEVICE_BUSY`. Le code en faisait une erreur fatale : premier flux
+navigateur réel, douze frames, puis `session ended: waiting for the encoded
+frame failed: still executing (1)`. Sur un N95 qui encode, décode et fait tourner
+le navigateur sur les mêmes quatre cœurs, une frame sur quelques centaines
+dépasse 100 ms.
+
+Le délai reste court — un encodeur vraiment mort doit être vu vite — mais il est
+redemandé jusqu'à dix fois, et la première lenteur est dite une fois par session.
+
+### 21.6 Ce que le gouverneur ne peut pas faire sur Intel
+
+`Reset` refuse aussi toute cible **au-dessus** de celle de l'init (« requires
+additional memory allocation »), et refuse l'appel entier. Or le budget par
+cadence réelle (E4) demande légitimement plus que le débit réglé quand l'image
+bouge moins vite que le flux : sur ce banc il demandait 32000 kbps pour un stream
+réglé à 20000, deux fois par seconde.
+
+`setBitrate` plafonne donc à ce que `init()` a reçu, et le dit une fois. Ce qui
+est perdu est la moitié **montante** de E4 — une image lente ne dépense pas les
+bits que ses frames auraient valus. La moitié descendante, celle qui compte quand
+un lien souffre, fonctionne exactement comme ailleurs.
+
+### 21.7 Ce qui est prouvé, et ce qui ne l'est pas
+
+Prouvé sur le banc, le 07/09/2026 :
+
+- sonde : `available:true`, **HEVC et H.264** en matériel, pas d'AV1 (Alder
+  Lake-N décode l'AV1 mais ne l'encode pas) ;
+- banc `--native-bench`, bureau fixe, 20 Mbit/s, intra-refresh, 8 s par passe :
+
+  | Codec | TU | Taille | fps | encode moy / p95 / p99 (ms) |
+  |---|---|---|---|---|
+  | HEVC | 1 | 1920×1080 | 59,6 | 13,33 / 18,43 / 24,58 |
+  | HEVC | 4 | 1920×1080 | 59,8 | 12,59 / 18,43 / 20,48 |
+  | HEVC | 7 | 1920×1080 | 59,7 | **11,46** / 15,36 / 18,43 |
+  | H.264 | 1 | 1920×1080 | 58,1 | 15,53 / 20,48 / 26,62 |
+  | H.264 | 4 | 1920×1080 | 59,8 | 12,61 / 16,38 / 22,53 |
+  | H.264 | 7 | 1920×1080 | 59,7 | 13,38 / 18,43 / 18,43 |
+  | HEVC | 7 | 2560×1440 | 59,6 | 13,43 / 18,43 / 20,48 |
+  | HEVC | 1 | 2560×1440 | 58,3 | 16,47 / 20,48 / 26,62 |
+
+  **Le TargetUsage ne se voit pas** : 1,9 ms d'écart maximum, du même ordre que
+  la dispersion entre passes, et le défaut du moteur (TU7) est déjà le bord
+  rapide. Même verdict que sur AMD — rien à appliquer. ⚠️ le pilote Intel ne
+  rapporte **pas** de QP moyen, donc ce banc n'a aucune mesure objective de
+  qualité, exactement comme AMF (§8c du banc) ;
+- **premier flux navigateur depuis un hôte Intel** : Chrome 152 sur la machine
+  elle-même, HEVC `hvc1.1.144.L123.B0`, `descLen=111` (VPS/SPS/PPS extraits de
+  la keyframe), première image décodée 1920×1080 NV12 en matériel, 65,7 s de
+  session, **1689 présents tous portés**, audio 13 142 paquets / 0 jeté, aucune
+  erreur de décodeur, arrêt propre.
+
+Pas prouvé, et à ne pas supposer :
+
+- **HDR et 4:4:4** restent refusés par construction sur ce chemin (P010 jamais
+  encodé ici, AYUV pas une entrée oneVPL) ;
+- **l'invalidation de référence** n'existe toujours pas sur oneVPL, et
+  `NumRefFrame = 1` la rend impossible par construction : une perte se répare
+  par keyframe, l'intra-refresh amortissant le reste ;
+- **les chiffres de latence** viennent d'un N95 à 4 cœurs qui encodait, décodait
+  et servait la page en même temps. Ils disent que le chemin tient 60 fps en
+  1080p et en 1440p ; ils ne disent rien d'un Intel de bureau ou d'un Arc.

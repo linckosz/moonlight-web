@@ -447,6 +447,65 @@ IDR sans jamais monter la vue), donc le test de perte (`mw_drop_test`, qui vit
 dans `StreamView`) ne s'arme pas. Même angle mort que l'effet visuel de la
 réparation NVENC laissé à l'œil de Bruno au §8b.
 
+## 8d. Intel Quick Sync sur l'UHD Graphics d'un N95 (07/09/2026)
+
+Premier GPU Intel de la flotte (banc `bench-intel`, Intel N95, UHD Graphics 24 EU,
+pilote 32.0.101.7088). Le chemin oneVPL n'avait **jamais encodé une frame** avant
+ce jour ; il a fallu cinq corrections pour qu'il en encode une, puis pour qu'il
+tienne une session. Le détail des cinq est au design §21 — ici, seulement les
+chiffres.
+
+**Ce qui a été mesuré.** Bureau fixe (le seul contenu disponible sur ce banc :
+pas de clip, 5 Go de libre sur le disque), 1 passe de 8 s par ligne, 20 Mbit/s,
+intra-refresh actif, capture DXGI de l'écran 2560×1440 de la machine.
+
+| Codec | TU | Taille | fps | encode moy / p95 / p99 (ms) | convert moy | Ko/frame |
+|---|---|---|---|---|---|---|
+| HEVC | 1 | 1920×1080 | 59,6 | 13,33 / 18,43 / 24,58 | 1,15 | 36,4 |
+| HEVC | 4 | 1920×1080 | 59,8 | 12,59 / 18,43 / 20,48 | 1,37 | 36,4 |
+| HEVC | 7 | 1920×1080 | 59,7 | **11,46** / 15,36 / 18,43 | 1,64 | 36,4 |
+| H.264 | 1 | 1920×1080 | 58,1 | 15,53 / 20,48 / 26,62 | 0,74 | 39,1 |
+| H.264 | 4 | 1920×1080 | 59,8 | 12,61 / 16,38 / 22,53 | 1,49 | 36,5 |
+| H.264 | 7 | 1920×1080 | 59,7 | 13,38 / 18,43 / 18,43 | 1,11 | 36,5 |
+| HEVC | 7 | 2560×1440 | 59,6 | 13,43 / 18,43 / 20,48 | 1,17 | 36,4 |
+| HEVC | 1 | 2560×1440 | 58,3 | 16,47 / 20,48 / 26,62 | 0,43 | 36,4 |
+
+**Verdict : rien à appliquer, et pour la troisième fois.** Le `TargetUsage`
+d'Intel se comporte comme les presets d'AMD : 1,9 ms d'écart entre le bout
+qualité et le bout vitesse, du même ordre que la dispersion entre deux passes du
+même réglage, et le défaut du moteur (TU7) est déjà le bord rapide. Le débit par
+frame ne bouge pas d'un octet (36,4 Ko partout) : en CBR sur un bureau fixe, le
+contenu ne discrimine rien.
+
+⚠️ **Aucune mesure objective de qualité sur ce banc non plus.** Le pilote Intel ne
+rapporte pas de QP moyen, exactement comme AMD (§8c). Un jugement de qualité
+Intel resterait un A/B à l'œil.
+
+**Le seul réglage qui a compté ne se règle pas — il se pose.** `LowPower`
+(le moteur à fonction fixe, VDENC) : HEVC 1080p60 est passé de **16,3 à 10,5 ms**
+et le 1440p de **21,4 à 13,4 ms**. Il est désormais demandé à chaque session,
+avec repli automatique sur le moteur général si la génération ne l'a pas.
+
+**Ce que ça vaut, honnêtement.** Un N95 est un SoC à 4 cœurs sans SMT et 24 EU :
+ces chiffres disent que le chemin **tient 60 fps en 1080p et en 1440p** sur le
+plus petit Intel qui existe, pas ce que vaut un Arc ou un Core de bureau. Et la
+capture, la conversion, l'encodage, le décodage du navigateur et la page
+tournaient tous sur la même machine.
+
+**Flux réel.** Chrome 152 sur la machine elle-même, hôte natif Intel :
+HEVC `hvc1.1.144.L123.B0`, `descLen=111` (VPS/SPS/PPS extraits de la keyframe
+servie), première image décodée 1920×1080 NV12 en matériel, 65,7 s de session,
+**1689 présents tous portés**, audio 13 142 paquets / 0 jeté, zéro erreur de
+décodeur, arrêt propre. Le gouverneur de lien descend le débit à chaque montée
+de délai (20000 → 4196 kbps) et **toutes** ses baisses sont appliquées — c'était
+l'objet de la correction du HRD.
+
+⚠️ Deux limites propres à Intel, mesurées ici : le débit ne peut pas **monter**
+au-dessus de celui de l'init (`Reset` refuse), donc la moitié montante du budget
+par cadence réelle (E4) est plafonnée ; et il n'y a **pas d'invalidation de
+référence** sur oneVPL (`NumRefFrame = 1`), donc une perte se répare par
+keyframe.
+
 ## 9. Pour l'A/B
 
 Le banc encode vers un puits ; l'A/B se fait sur un vrai flux. Une session

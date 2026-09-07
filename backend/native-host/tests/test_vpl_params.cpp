@@ -116,27 +116,33 @@ void run_vpl_params_tests()
 
         // Stand in for what init() adds after building: the intra-refresh chain,
         // plus a correction of the kind EncodeQuery applies in place.
-        mfxExtCodingOption2 option = {};
+        mfxExtCodingOption option1 = {};
+        mfxExtCodingOption2 option2 = {};
         std::vector<mfxExtBuffer*> buffers;
-        encode::attachIntraRefresh(p, option, buffers, 60);
-        CHECK_EQ(p.NumExtParam, static_cast<mfxU16>(1));
+        encode::attachEncodeOptions(p, option1, option2, buffers, 60, true);
+        CHECK_EQ(p.NumExtParam, static_cast<mfxU16>(2));
         p.mfx.TargetUsage = 4; // as if the runtime had corrected it
 
-        const mfxU16 refreshCycle = option.IntRefCycleSize;
+        const mfxU16 refreshCycle = option2.IntRefCycleSize;
         CHECK(refreshCycle > 0);
+        const mfxU16 buffer = p.mfx.BufferSizeInKB;
 
-        encode::applyRateControl(p, 60, 40000, EncoderTuning{});
+        encode::applyBitrateOnly(p, 16000);
 
         // The bitrate moved…
         const int effective = static_cast<int>(p.mfx.TargetKbps) * p.mfx.BRCParamMultiplier;
-        CHECK(effective > 39000);
+        CHECK(effective >= 15000);
+        CHECK(effective <= 16000);
         CHECK_EQ(p.mfx.MaxKbps, p.mfx.TargetKbps);
-        CHECK(p.mfx.BufferSizeInKB > 0);
+
+        // …and the buffer did NOT: moving it is a reallocation, and Reset
+        // refuses the whole call for one (-14, measured on an N95).
+        CHECK_EQ(p.mfx.BufferSizeInKB, buffer);
 
         // …and nothing else did. These three are the ones that were lost.
-        CHECK_EQ(p.NumExtParam, static_cast<mfxU16>(1));
+        CHECK_EQ(p.NumExtParam, static_cast<mfxU16>(2));
         CHECK(p.ExtParam != nullptr);
-        CHECK_EQ(option.IntRefCycleSize, refreshCycle);
+        CHECK_EQ(option2.IntRefCycleSize, refreshCycle);
         CHECK_EQ(p.mfx.TargetUsage, static_cast<mfxU16>(4));
         // And the latency invariants are still the ones init() established.
         CHECK_EQ(p.AsyncDepth, static_cast<mfxU16>(1));

@@ -56,6 +56,7 @@ if(WIN32)
         src/encode/windows/AmfEncoder.cpp
         src/encode/windows/VplApi.cpp
         src/encode/windows/VplSession.cpp
+        src/encode/windows/VplFrameAllocator.cpp
         src/encode/windows/VplCapabilities.cpp
         src/encode/windows/VplEncoder.cpp
         src/audio/windows/WasapiLoopback.cpp
