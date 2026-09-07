@@ -189,6 +189,29 @@ private:
     /// The buffer last handed out, so an unchanged one is a Timeout and not a
     /// duplicate frame.
     uint32_t m_LastFbId = 0;
+
+    // ── Drivers without a vblank ────────────────────────────────────────────
+    //
+    // A virtual display adapter (hyperv_drm, the Hyper-V bench) has no vblank
+    // interrupt to wait on — drmWaitVBlank fails on the first call — and ONE
+    // framebuffer the compositor draws into in place, so its id never changes
+    // either. Neither of the two signals acquire() normally reads exists. What
+    // does exist is the picture: in this mode the capture wakes on its own
+    // clock at the display's rate and folds the mapped buffer into a
+    // fingerprint; a new fingerprint is a new frame, the same one is a Timeout.
+    // About a millisecond per poll for an 8 MB buffer, on a machine that has
+    // no GPU to spare it anyway.
+    bool m_Polled = false;
+    int64_t m_NextPollUs = 0;
+    /// The frame last exported, re-handed out in polled mode when its content
+    /// changed under the same id.
+    KmsFrame m_LastFrame;
+    uint64_t m_LastFingerprint = 0;
+    /// The held buffer's first plane, mapped for the life of the hold.
+    void* m_HeldMap = nullptr;
+    size_t m_HeldMapLength = 0;
+    /// Fold the held mapping into one number; 0 when nothing is mapped.
+    uint64_t fingerprintHeld();
     /// The vblank sequence at start, for converting reply timestamps.
     int64_t m_SteadyOriginUs = 0;
 

@@ -678,6 +678,38 @@ void run_selector_tests()
         CHECK_EQ(sel.codec, Codec::Hevc); // the client's own preference still decides
     }
 
+    // ── The fallback tier never upscales; a GPU encoder still may ────────────
+    {
+        Capabilities caps = encoderlessMachine(); // a 1920×1080 display
+        caps.fallbacks.push_back({EncoderApi::Software, {Codec::H264}, false, "OpenH264"});
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.width = 2560;
+        cfg.height = 1440;
+        cfg.clientCodecs = {Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.width, 1920);
+        CHECK_EQ(sel.height, 1080);
+
+        // Asking for LESS is honoured: downscaling saves the machine work.
+        cfg.width = 1280;
+        cfg.height = 720;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.width, 1280);
+        CHECK_EQ(sel.height, 720);
+
+        // The same request on a GPU encoder is untouched.
+        const Capabilities hybrid = hybridMachine();
+        cfg.displayId = 0; // the 1080p panel
+        cfg.width = 2560;
+        cfg.height = 1440;
+        CHECK(select(hybrid, cfg, sel, err));
+        CHECK_EQ(sel.width, 2560);
+    }
+
     // ── A client that decodes none of what the fallback makes is refused ─────
     {
         Capabilities caps = encoderlessMachine();

@@ -24,8 +24,11 @@
 #include <cstring>
 #include <fcntl.h>
 #include <linux/capability.h>
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <thread>
 #include <unistd.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -593,25 +596,52 @@ AcquireStatus KmsCapture::acquire(int timeoutMs, KmsFrame& frame)
 
     const int64_t deadlineUs = steadyNowUs() + static_cast<int64_t>(timeoutMs) * 1000;
     bool cursorMoved = false;
+    const int64_t periodUs = m_RefreshMilliHz > 0 ? 1000000000LL / m_RefreshMilliHz : 16667;
 
     for (;;) {
-        // Wait for the next vblank on OUR crtc. This is the display's clock:
-        // the compositor flips at vblank, so a new buffer is visible here within
-        // one vblank of being shown — the KMS equivalent of DDA waking the
-        // caller on the present.
-        drmVBlank vbl = {};
-        vbl.request.type =
-            static_cast<drmVBlankSeqType>(DRM_VBLANK_RELATIVE | ((static_cast<unsigned>(m_CrtcIndex)
-                                                                  << DRM_VBLANK_HIGH_CRTC_SHIFT) &
-                                                                 DRM_VBLANK_HIGH_CRTC_MASK));
-        vbl.request.sequence = 1;
-        if (drmWaitVBlank(m_Card, &vbl) != 0) {
-            // EINVAL/EBUSY here is the CRTC going away: a mode change, the
-            // screen turning off. Recoverable through start().
-            return AcquireStatus::Lost;
+        int64_t vblankUs = 0;
+        if (!m_Polled) {
+            // Wait for the next vblank on OUR crtc. This is the display's
+            // clock: the compositor flips at vblank, so a new buffer is visible
+            // here within one vblank of being shown — the KMS equivalent of DDA
+            // waking the caller on the present.
+            drmVBlank vbl = {};
+            vbl.request.type = static_cast<drmVBlankSeqType>(
+                DRM_VBLANK_RELATIVE |
+                ((static_cast<unsigned>(m_CrtcIndex) << DRM_VBLANK_HIGH_CRTC_SHIFT) &
+                 DRM_VBLANK_HIGH_CRTC_MASK));
+            vbl.request.sequence = 1;
+            if (drmWaitVBlank(m_Card, &vbl) != 0) {
+                const int err = errno;
+                // On the FIRST wait of a capture, before any frame was handed
+                // out, a refusal is a driver with no vblank at all (hyperv_drm
+                // answers EOPNOTSUPP) rather than a CRTC going away: switch to
+                // polling — see the header. Later in the session the same
+                // errors mean what they always did.
+                if (m_LastFbId == 0 &&
+                    (err == EOPNOTSUPP || err == ENOTSUP || err == ENOTTY || err == EINVAL)) {
+                    m_Polled = true;
+                    m_NextPollUs = steadyNowUs() + periodUs;
+                    log::info("[native] KMS: this driver has no vblank (" + errnoText() +
+                              ") — polling the scanout buffer at " +
+                              std::to_string(m_RefreshMilliHz / 1000) +
+                              " Hz and fingerprinting its content");
+                    continue;
+                }
+                // EINVAL/EBUSY here is the CRTC going away: a mode change, the
+                // screen turning off. Recoverable through start().
+                return AcquireStatus::Lost;
+            }
+            vblankUs = static_cast<int64_t>(vbl.reply.tval_sec) * 1000000 + vbl.reply.tval_usec;
+        } else {
+            // Our own clock at the display's rate; re-anchored when we fell
+            // behind rather than catching up in a burst.
+            const int64_t now = steadyNowUs();
+            if (m_NextPollUs <= now) m_NextPollUs = now + periodUs;
+            std::this_thread::sleep_for(std::chrono::microseconds(m_NextPollUs - now));
+            m_NextPollUs += periodUs;
+            vblankUs = steadyNowUs();
         }
-        const int64_t vblankUs =
-            static_cast<int64_t>(vbl.reply.tval_sec) * 1000000 + vbl.reply.tval_usec;
 
         cursorMoved |= updateCursor();
 
@@ -650,7 +680,34 @@ AcquireStatus KmsCapture::acquire(int timeoutMs, KmsFrame& frame)
             // client's one-way delay off (arrival − present) — a present in the
             // future has it cut the bitrate on a healthy link.
             if (frame.presentUs > frame.capturedUs) frame.presentUs = frame.capturedUs;
+            m_LastFrame = frame;
+            if (m_Polled) {
+                // Map the held buffer once for the hold, and remember what it
+                // looks like now.
+                const size_t length =
+                    static_cast<size_t>(frame.offsets[0]) +
+                    static_cast<size_t>(frame.pitches[0]) * static_cast<size_t>(frame.height);
+                void* map = ::mmap(nullptr, length, PROT_READ, MAP_SHARED, frame.fds[0], 0);
+                if (map != MAP_FAILED) {
+                    m_HeldMap = map;
+                    m_HeldMapLength = length;
+                }
+                m_LastFingerprint = fingerprintHeld();
+            }
             return AcquireStatus::Ok;
+        }
+
+        if (m_Polled && m_HeldMap) {
+            // Same buffer id. On a single-buffer driver the compositor drew into
+            // it in place, so the id can never say; the content does.
+            const uint64_t now = fingerprintHeld();
+            if (now != m_LastFingerprint) {
+                m_LastFingerprint = now;
+                frame = m_LastFrame;
+                frame.capturedUs = steadyNowUs();
+                frame.presentUs = vblankUs > frame.capturedUs ? frame.capturedUs : vblankUs;
+                return AcquireStatus::Ok;
+            }
         }
 
         if (steadyNowUs() >= deadlineUs)
@@ -658,8 +715,34 @@ AcquireStatus KmsCapture::acquire(int timeoutMs, KmsFrame& frame)
     }
 }
 
+uint64_t KmsCapture::fingerprintHeld()
+{
+    if (!m_HeldMap) return 0;
+    // A fold, not a hash: every word contributes, so a change anywhere in the
+    // picture — a caret, a clock digit — moves the result; the multiply keeps
+    // two swapped words from cancelling. Memory-bound, about a millisecond for
+    // 1080p, and it vectorises.
+    dma_buf_sync sync = {};
+    sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
+    ::ioctl(m_LastFrame.fds[0], DMA_BUF_IOCTL_SYNC, &sync);
+    const auto* words = reinterpret_cast<const uint64_t*>(static_cast<const uint8_t*>(m_HeldMap) +
+                                                          m_LastFrame.offsets[0]);
+    const size_t count =
+        (static_cast<size_t>(m_LastFrame.pitches[0]) * static_cast<size_t>(m_LastFrame.height)) /
+        sizeof(uint64_t);
+    uint64_t acc = 0x9E3779B97F4A7C15ULL;
+    for (size_t i = 0; i < count; ++i)
+        acc = (acc ^ words[i]) * 0x100000001B3ULL;
+    sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+    ::ioctl(m_LastFrame.fds[0], DMA_BUF_IOCTL_SYNC, &sync);
+    return acc;
+}
+
 void KmsCapture::closeFrameFds()
 {
+    if (m_HeldMap) ::munmap(m_HeldMap, m_HeldMapLength);
+    m_HeldMap = nullptr;
+    m_HeldMapLength = 0;
     for (int i = 0; i < m_HeldCount; ++i)
         if (m_HeldFds[i] >= 0) ::close(m_HeldFds[i]);
     m_HeldCount = 0;

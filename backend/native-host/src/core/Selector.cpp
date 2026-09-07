@@ -94,6 +94,11 @@ bool hasCodec(const std::vector<Codec>& codecs, Codec codec)
 bool select(const Capabilities& caps, const SessionConfig& config, Selection& out,
             std::string& error)
 {
+    // Every field is decided below or defaulted here — a Selection handed in
+    // twice must not carry the first answer's fallback flags into the second
+    // (caught by the test suite, 07/09/2026).
+    out = Selection{};
+
     if (config.clientCodecs.empty()) {
         // Not a default we can invent: an empty list would have the engine
         // guessing what the browser can decode, and a wrong guess is a black
@@ -290,6 +295,23 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     // ── Geometry: zero means "native", which is the default ─────────────────
     out.width = config.width > 0 ? config.width : out.display->width;
     out.height = config.height > 0 ? config.height : out.display->height;
+
+    // The fallback tier never upscales. A client whose setting is 1440p asking
+    // a 1080p display would have a machine with no encoder to spare convert and
+    // encode 1.8× the pixels for no information at all — measured: the
+    // Snapdragon's transform took 21 ms a picture at 1440p, the Debian VM's CPU
+    // encoder likewise (07/09/2026). The browser scales the picture up itself,
+    // and does it better than a CPU under load would.
+    if (out.fallbackEncoder && out.display->width > 0 && out.display->height > 0 &&
+        (out.width > out.display->width || out.height > out.display->height)) {
+        log::info("[native] " + std::to_string(out.width) + "x" + std::to_string(out.height) +
+                  " asked of a " + std::to_string(out.display->width) + "x" +
+                  std::to_string(out.display->height) +
+                  " display on the fallback encoder — streaming the display's own size, no "
+                  "upscaling");
+        out.width = out.display->width;
+        out.height = out.display->height;
+    }
 
     if (config.fps > 0) {
         out.fps = config.fps;
