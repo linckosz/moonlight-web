@@ -76,6 +76,29 @@ public:
         (void)bottom;
     }
 
+    /// The bounds of the whole desktop the captured display sits on — the union
+    /// of every active monitor, not just ours.
+    ///
+    /// Only a sink whose absolute pointer is aimed at the DESKTOP rather than at
+    /// one screen needs this, which on the three platforms means uinput alone:
+    /// a kernel device reports a fraction of its own axis and the compositor
+    /// stretches it over everything, so the display's rectangle by itself says
+    /// nothing about where a position lands. Windows asks the OS for the same
+    /// bounds at each injection (SM_CXVIRTUALSCREEN) and macOS works in global
+    /// coordinates throughout, so both ignore this.
+    ///
+    /// Same contract as setDisplayRect: plain integers, serialised against
+    /// inject(), may simply be stored. Never set means "unknown" — a sink must
+    /// still work, treating its own display as the whole desktop, which is what
+    /// a single-monitor host actually is.
+    virtual void setDesktopRect(int left, int top, int right, int bottom)
+    {
+        (void)left;
+        (void)top;
+        (void)right;
+        (void)bottom;
+    }
+
     /// Whether presses aimed at an elevated (administrator) window may go
     /// through — SessionConfig::allowElevatedInput. A sink on an OS with no
     /// such distinction ignores it. Set before start(), never changed after.

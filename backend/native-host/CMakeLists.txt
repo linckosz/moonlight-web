@@ -315,6 +315,7 @@ if(MW_BUILD_TESTS)
         tests/test_win32_cursor.cpp
         tests/test_evdev_keymap.cpp
         tests/test_pointer_clamp.cpp
+        tests/test_absolute_map.cpp
         tests/test_linux_pipeline.cpp
         tests/test_linux_session.cpp
         tests/test_mac_keymap.cpp

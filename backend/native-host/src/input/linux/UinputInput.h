@@ -67,6 +67,7 @@ public:
     void stop() override;
     void inject(const InputEvent& event) override;
     void setDisplayRect(int left, int top, int right, int bottom) override;
+    void setDesktopRect(int left, int top, int right, int bottom) override;
 
 private:
     /// Create one uinput device. @p absolute selects the pointer that reports
@@ -100,17 +101,29 @@ private:
     /// from the libdatachannel thread while stop() runs on another.
     std::mutex m_Mutex;
 
-    /// The captured display's rectangle, for absolute positions. The absolute
-    /// device is created with a fixed 0..32767 range — the convention a tablet
-    /// uses — so the size only scales the incoming reference surface onto it.
+    /// The captured display's rectangle, and the desktop it sits on. Both are
+    /// needed to place an absolute position, and neither is enough alone.
     ///
-    /// The ORIGIN is used by nothing else: an absolute position is expressed in
-    /// the display's own space and needs no offset. It is kept for the warp,
-    /// which speaks the desktop's coordinates rather than the display's.
+    /// The absolute device is created with a fixed 0..32767 range — the
+    /// convention a tablet uses — and the compositor stretches that range over
+    /// the WHOLE desktop, exactly as it would a tablet's surface. So a position
+    /// is scaled onto the display, offset by the display's ORIGIN, and only then
+    /// expressed as a fraction of the desktop. Scaling straight onto the device
+    /// range instead — which is what this did until the multi-monitor case was
+    /// looked at — aims every display as if it were the entire desktop: correct
+    /// on a host with one monitor, and nowhere else.
+    ///
+    /// The desktop is also what the warp speaks, since X reports the pointer in
+    /// root coordinates. Unknown desktop means "one monitor": the display is
+    /// then the desktop, and the mapping reduces to what it always was.
     int m_RectLeft = 0;
     int m_RectTop = 0;
     int m_RectWidth = 0;
     int m_RectHeight = 0;
+    int m_DeskLeft = 0;
+    int m_DeskTop = 0;
+    int m_DeskWidth = 0;
+    int m_DeskHeight = 0;
 
     /// The X pointer, when there is an X server. Absent on Wayland and on a
     /// headless host, where relative motion keeps behaving as it did.

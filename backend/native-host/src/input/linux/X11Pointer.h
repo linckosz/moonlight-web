@@ -42,6 +42,52 @@ inline bool clampIntoRect(int left, int top, int right, int bottom, int x, int y
     return true;
 }
 
+/// Where a point aimed at the captured display lands on the desktop.
+///
+/// The client sends its position inside a reference surface of its own size —
+/// the picture it is showing, in its own pixels. This scales that onto the
+/// display's rectangle and adds the display's ORIGIN, which is the whole point:
+/// without it every secondary monitor would be aimed at as if it were the
+/// primary one. The result is clamped into the display, because a client whose
+/// aspect ratio differs by a pixel must not walk onto the screen next door.
+///
+/// False when there is nothing to map against — no rectangle yet, or a
+/// degenerate reference surface.
+inline bool displayPointToDesktop(int left, int top, int right, int bottom, int x, int y, int refW,
+                                  int refH, int& outX, int& outY)
+{
+    if (right <= left || bottom <= top || refW <= 0 || refH <= 0) return false;
+    const long long onX = left + (static_cast<long long>(x) * (right - left)) / refW;
+    const long long onY = top + (static_cast<long long>(y) * (bottom - top)) / refH;
+    outX = static_cast<int>(onX < left ? left : (onX > right - 1 ? right - 1 : onX));
+    outY = static_cast<int>(onY < top ? top : (onY > bottom - 1 ? bottom - 1 : onY));
+    return true;
+}
+
+/// A desktop point in the fixed value space an absolute pointer reports — 0 to
+/// @p range on both axes.
+///
+/// A kernel device has no idea where anything is: it reports a fraction of its
+/// own axis, and the compositor stretches that across the WHOLE desktop, the way
+/// a graphics tablet covers the whole desk. So the desktop's bounds are the
+/// denominator here, and the display's origin has already been folded in by
+/// displayPointToDesktop. Endpoints map to endpoints, the same convention
+/// Win32Input::desktopToAbsolute uses against SM_CXVIRTUALSCREEN.
+///
+/// False when the desktop is unknown, or a single row or column wide.
+inline bool desktopToAbsoluteRange(int left, int top, int right, int bottom, int x, int y,
+                                   int range, int& outX, int& outY)
+{
+    const long long width = static_cast<long long>(right) - left;
+    const long long height = static_cast<long long>(bottom) - top;
+    if (width <= 1 || height <= 1 || range <= 0) return false;
+    const long long ax = (static_cast<long long>(x - left) * range) / (width - 1);
+    const long long ay = (static_cast<long long>(y - top) * range) / (height - 1);
+    outX = static_cast<int>(ax < 0 ? 0 : (ax > range ? range : ax));
+    outY = static_cast<int>(ay < 0 ? 0 : (ay > range ? range : ay));
+    return true;
+}
+
 /// The X server's pointer — read and moved, without linking to X.
 ///
 /// ── Why this exists ─────────────────────────────────────────────────────────

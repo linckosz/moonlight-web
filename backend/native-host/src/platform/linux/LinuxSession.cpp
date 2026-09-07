@@ -34,6 +34,7 @@
 #include "../../audio/linux/PipeWireCapture.h"
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -297,13 +298,13 @@ public:
         // Either refusing is "no input of that kind this session", never no
         // session — the udev rule is what grants both, and its absence is said
         // in words a user can act on.
+        const InputRects inputRects = readInputRects();
         {
             std::lock_guard<std::mutex> lock(m_InputMutex);
             auto sink = std::make_unique<input::UinputInput>();
             std::string inputError;
             if (sink->start(inputError)) {
-                const capture::DesktopRect rect = m_Capture->desktopRect();
-                sink->setDisplayRect(rect.left, rect.top, rect.right, rect.bottom);
+                applyInputRects(*sink, inputRects);
                 m_Input = std::move(sink);
             } else {
                 log::warning("[native] input: keyboard and mouse unavailable — " + inputError);
@@ -503,6 +504,58 @@ private:
         return m_Capture->start(error);
     }
 
+    /// The two rectangles an absolute pointer needs: the display being captured,
+    /// and the desktop it sits on — the union of every active output.
+    ///
+    /// The union matters because uinput's absolute device reports a fraction of
+    /// its own axis and the compositor spreads that over the whole desktop. With
+    /// the display alone, a second monitor is aimed at as if it were the only
+    /// one, and the pointer lands somewhere else entirely.
+    ///
+    /// Read outside the input lock on purpose: this opens the DRM card, and
+    /// inject() waits on that same lock. Only this card's outputs are counted —
+    /// a desktop spanning two GPUs would need every card, which no host this
+    /// engine runs on has, and getting it wrong there costs the same misplaced
+    /// pointer we are fixing rather than anything worse.
+    struct InputRects
+    {
+        capture::DesktopRect display;
+        capture::DesktopRect desktop;
+    };
+
+    InputRects readInputRects() const
+    {
+        InputRects rects;
+        rects.display = m_Capture->desktopRect();
+        rects.desktop = rects.display;
+
+        std::string listError;
+        bool any = false;
+        for (const capture::KmsOutput& out :
+             capture::KmsCapture::listOutputs(m_CardPath, listError)) {
+            if (!out.active || out.width <= 0 || out.height <= 0) continue;
+            const capture::DesktopRect r{out.x, out.y, out.x + out.width, out.y + out.height};
+            if (!any) {
+                rects.desktop = r;
+                any = true;
+                continue;
+            }
+            rects.desktop.left = std::min(rects.desktop.left, r.left);
+            rects.desktop.top = std::min(rects.desktop.top, r.top);
+            rects.desktop.right = std::max(rects.desktop.right, r.right);
+            rects.desktop.bottom = std::max(rects.desktop.bottom, r.bottom);
+        }
+        return rects;
+    }
+
+    static void applyInputRects(input::UinputInput& sink, const InputRects& rects)
+    {
+        sink.setDisplayRect(rects.display.left, rects.display.top, rects.display.right,
+                            rects.display.bottom);
+        sink.setDesktopRect(rects.desktop.left, rects.desktop.top, rects.desktop.right,
+                            rects.desktop.bottom);
+    }
+
     /// Converter and encoder against what the capture is handing out right
     /// now — the pair the Selector chose, not one guessed from the display.
     bool buildPipeline(int outputWidth, int outputHeight, std::string& error)
@@ -562,9 +615,9 @@ private:
         m_DisplayMilliHz = m_Capture->refreshMilliHz();
         if (!buildPipeline(m_Info.width, m_Info.height, error)) return Restart::Failed;
         {
-            const capture::DesktopRect rect = m_Capture->desktopRect();
+            const InputRects rects = readInputRects();
             std::lock_guard<std::mutex> lock(m_InputMutex);
-            if (m_Input) m_Input->setDisplayRect(rect.left, rect.top, rect.right, rect.bottom);
+            if (m_Input) applyInputRects(*m_Input, rects);
         }
         m_ResendCursor.store(true);
         return Restart::Restarted;

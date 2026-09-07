@@ -266,6 +266,15 @@ void UinputInput::setDisplayRect(int left, int top, int right, int bottom)
     m_RectHeight = bottom - top;
 }
 
+void UinputInput::setDesktopRect(int left, int top, int right, int bottom)
+{
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    m_DeskLeft = left;
+    m_DeskTop = top;
+    m_DeskWidth = right - left;
+    m_DeskHeight = bottom - top;
+}
+
 void UinputInput::bringPointerOntoDisplay()
 {
     // The caller holds m_Mutex, which is also what serialises Xlib here.
@@ -328,18 +337,44 @@ void UinputInput::inject(const InputEvent& event)
     case Type::MouseMoveAbsolute: {
         if (m_Absolute < 0) break;
         // The client sends a position inside a reference surface of its own
-        // size; the device's space is a fixed 0..32767. Scaling straight
-        // between them means a resolution change costs nothing here — which is
-        // why the rectangle is only consulted as a fallback.
+        // size, so a resolution change costs nothing here; the rectangle is
+        // consulted for the reference only as a fallback.
         const int refW = event.referenceWidth > 0 ? event.referenceWidth : m_RectWidth;
         const int refH = event.referenceHeight > 0 ? event.referenceHeight : m_RectHeight;
         if (refW <= 0 || refH <= 0) break;
-        int32_t x = static_cast<int32_t>((static_cast<int64_t>(event.positionX) * kAbsMax) / refW);
-        int32_t y = static_cast<int32_t>((static_cast<int64_t>(event.positionY) * kAbsMax) / refH);
-        x = x < 0 ? 0 : (x > kAbsMax ? kAbsMax : x);
-        y = y < 0 ? 0 : (y > kAbsMax ? kAbsMax : y);
-        emit(m_Absolute, EV_ABS, ABS_X, x);
-        emit(m_Absolute, EV_ABS, ABS_Y, y);
+
+        // Onto the display, origin included, then onto the desktop the
+        // compositor stretches this device across — see the rectangles in the
+        // header. An unknown desktop is a host with one monitor, where the
+        // display IS the desktop.
+        const int deskLeft = m_DeskWidth > 1 ? m_DeskLeft : m_RectLeft;
+        const int deskTop = m_DeskHeight > 1 ? m_DeskTop : m_RectTop;
+        const int deskRight = m_DeskWidth > 1 ? m_DeskLeft + m_DeskWidth : m_RectLeft + m_RectWidth;
+        const int deskBottom =
+            m_DeskHeight > 1 ? m_DeskTop + m_DeskHeight : m_RectTop + m_RectHeight;
+
+        int onDeskX = 0;
+        int onDeskY = 0;
+        int x = 0;
+        int y = 0;
+        const bool mapped = displayPointToDesktop(m_RectLeft, m_RectTop, m_RectLeft + m_RectWidth,
+                                                  m_RectTop + m_RectHeight, event.positionX,
+                                                  event.positionY, refW, refH, onDeskX, onDeskY) &&
+                            desktopToAbsoluteRange(deskLeft, deskTop, deskRight, deskBottom,
+                                                   onDeskX, onDeskY, kAbsMax, x, y);
+        if (!mapped) {
+            // No rectangle at all yet — before the first setDisplayRect, or a
+            // capture that reported nothing. Aim at the device's own space and
+            // let the compositor place it: wrong on a second monitor, but the
+            // alternative is a pointer that does not move at all.
+            const int64_t rawX = (static_cast<int64_t>(event.positionX) * kAbsMax) / refW;
+            const int64_t rawY = (static_cast<int64_t>(event.positionY) * kAbsMax) / refH;
+            x = static_cast<int>(rawX < 0 ? 0 : (rawX > kAbsMax ? kAbsMax : rawX));
+            y = static_cast<int>(rawY < 0 ? 0 : (rawY > kAbsMax ? kAbsMax : rawY));
+        }
+
+        emit(m_Absolute, EV_ABS, ABS_X, static_cast<int32_t>(x));
+        emit(m_Absolute, EV_ABS, ABS_Y, static_cast<int32_t>(y));
         emitSyn(m_Absolute);
         break;
     }

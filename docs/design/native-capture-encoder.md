@@ -1096,6 +1096,7 @@ Périphérique audio virtuel ou équivalent à étudier pour la v0.3.0.
 |---|---|
 | Clavier | **Scancodes**, pas codes virtuels : jeux et DirectInput ne voient que ça. VK direct sur `NON_NORMALIZED` |
 | Souris absolue | Mappée sur l'écran capturé puis sur le bureau **virtuel** (0..65535), avec le rectangle DPI-virtualisé — l'inverse du correctif de §6.1, et c'est voulu |
+| Souris absolue sous Linux | Même chemin, en deux temps explicites : le device uinput rapporte une fraction de son axe que le compositeur étale sur tout le bureau, donc l'origine du display **et** les bornes du bureau entrent dans le calcul (§23.3) |
 | Souris relative | Passe par l'accélération du pointeur de l'hôte, comme une vraie souris |
 | Manette | **Xbox 360 via ViGEmBus**. Les bits étendus Sunshine (paddles, touchpad, Share) sont jetés : un pad X360 n'a pas ces boutons |
 | Bitmask de modificateurs | **Ignoré** : le navigateur envoie déjà un vrai keydown/keyup pour Maj/Ctrl/Alt/Meta |
@@ -2963,3 +2964,111 @@ gouverneur le débit, mais rien ne baisse la résolution — à mesurer sur l'N9
 `/api/native/status` n'affiche pas l'encodeur de repli (codecs vides sur le GPU) ;
 une édition N de Windows sans `mfplat.dll` n'a pas été essayée ; le transform AMD
 muet n'est pas élucidé (sans conséquence : AMF le sert).
+
+---
+
+## 23. Glisser une fenêtre d'un écran streamé à l'autre (07/09/2026)
+
+Deux displays de l'hôte natif streamés en parallèle, un panneau navigateur
+chacun : déplacer la souris de l'un à l'autre donne déjà la sensation de deux
+écrans. La demande était la suite naturelle — prendre la barre de titre d'une
+fenêtre sur le display 1, bouton gauche tenu, la déposer sur le display 2, comme
+on le fait sans y penser sur deux écrans physiques.
+
+Le geste voulu, dans le détail qui compte : hors des deux panneaux **rien ne
+bouge**, les images restent figées ; au survol du second panneau la fenêtre
+reprend sa course ; et un bouton relâché entre les deux panneaux doit être connu
+avant même que le pointeur ne revienne sur une image.
+
+### 23.1 Trois des cinq étapes ne demandaient aucun code
+
+- **Hors image, rien ne part.** `_absoluteMouseMessage()` (`StreamView.js`)
+  renvoie `null` dès que le point sort du rectangle de l'image. Aucune position
+  n'est jamais envoyée depuis un endroit que le spectateur ne regarde pas.
+- **Le bouton tenu survit à la traversée.** Un bouton est un état du *bureau*,
+  pas d'une session : `SendInput` a posé un `LEFTDOWN` global et rien ne le
+  relâche. Le chien de garde (`InputWatchdog`, `kStaleMs = 250`) ne lâche que sur
+  **silence** du client, et le panneau d'origine bat toutes les 100 ms tant qu'un
+  bouton est tenu (`_sendInputState`).
+- **Les deux sessions ne se marchent pas dessus.** Chacune a son `Win32Input`,
+  son `m_HeldButtons` et son watchdog ; un panneau qui pose une position
+  n'enregistre aucun bouton, et son `releaseAll()` de fin de session ne touche
+  pas celui du voisin. La dé-duplication de `Win32Input::sendMouseButton` nommait
+  déjà le cas « deux sessions qui se recouvrent ».
+
+### 23.2 La mesure, et le mur
+
+La seule inconnue était le navigateur, pas nous : une page autonome qui compte
+les événements, ouverte dans deux fenêtres Chrome côte à côte, y répond
+fidèlement et sans build. Elle a répondu trois choses d'un coup :
+
+1. La fenêtre de départ reçoit bien son `mouseup` — 25 s après l'appui, alors que
+   le bouton a été relâché sur le bureau, entre les deux fenêtres. **L'étape 5
+   fonctionne**, et un bouton ne peut pas rester collé.
+2. Survoler l'autre fenêtre ne fait **pas** perdre le focus à celle qui tient le
+   drag. On croyait devoir empêcher `_onWindowBlur` de relâcher les boutons
+   souris en plein vol : faux problème, rien à corriger.
+3. La fenêtre survolée ne reçoit **rien du tout**. Zéro `mousemove`, zéro
+   `mouseover`, pendant toute la durée du drag.
+
+Le troisième point est le mur. Chrome pose une capture souris au niveau de l'OS
+sur la fenêtre où l'appui a eu lieu, et **aucune API web ne permet de la rendre**.
+Le geste est donc inatteignable entre deux fenêtres navigateur indépendantes —
+non par un choix de conception de notre côté.
+
+Deux routes ont été écartées explicitement, et il vaut la peine de dire pourquoi
+plutôt que de les redécouvrir : **prolonger la position hors image** ferait
+apparaître le curseur sur le second écran avant que le pointeur du spectateur n'y
+soit arrivé, ce qui se voit ; **faire dialoguer les onglets** (origines d'écran
+publiées dans les capacités, `BroadcastChannel` entre panneaux) est de la
+machinerie fragile pour ce qu'elle rend.
+
+Reste **une seule forme exacte** : les deux panneaux dans un *même document*. La
+capture reste alors sur le document, le panneau qui tient le drag reçoit les
+positions même au-dessus de son voisin, et il lui délègue la seule position —
+chaque panneau calculant contre son propre `_mediaRect()`. Aucune extrapolation,
+aucun canal entre onglets, aucune origine d'écran à publier, et au-dessus de rien
+il n'y a pas de panneau donc rien n'est envoyé. Décision produit **non prise** :
+cette forme impose les deux flux dans une seule fenêtre navigateur.
+
+### 23.3 ⚠️ Ce que la mesure a trouvé au passage : l'absolu Linux ignorait l'origine
+
+`UinputInput` mettait la position à l'échelle du device absolu — l'espace fixe
+`0..32767` de la convention tablette — **sans jamais ajouter l'origine du
+display**. L'en-tête l'assumait : « an absolute position is expressed in the
+display's own space and needs no offset ».
+
+C'est faux, et le raisonnement l'était de la même façon qu'un curseur de tablette
+l'est : un périphérique noyau ne rapporte qu'une **fraction de son propre axe**,
+et le compositeur l'étale sur le **bureau entier**, exactement comme une tablette
+couvre tout le sous-main. Viser le display capturé revenait donc à viser le
+bureau : correct sur un hôte à un seul écran — d'où l'invisibilité — et faux
+partout ailleurs. Sur un hôte Linux à deux écrans, streamer le second plaçait
+déjà le pointeur n'importe où, sans qu'aucun glissement soit en jeu.
+
+Le correctif est celui que Windows applique depuis toujours, en deux temps
+(`X11Pointer.h`, deux fonctions libres à côté de `clampIntoRect` — arithmétique
+pure, donc testée sur les trois plateformes) :
+
+1. `displayPointToDesktop()` — la surface de référence du client mise à l'échelle
+   du display, **origine comprise**, et clampée dedans pour qu'un client dont le
+   ratio diffère d'un pixel ne marche pas sur l'écran voisin.
+2. `desktopToAbsoluteRange()` — ce point bureau exprimé en fraction du bureau,
+   bornes sur bornes, la convention même de `Win32Input::desktopToAbsolute`
+   contre `SM_CXVIRTUALSCREEN`.
+
+Le bureau vient de l'union des sorties **actives** de la carte
+(`LinuxSession::readInputRects()`, poussée par `IInputSink::setDesktopRect()` au
+démarrage et à chaque redémarrage de capture). Lue **hors du verrou d'entrée** :
+énumérer les connecteurs ouvre le périphérique DRM, et `inject()` attend sur ce
+même verrou. Bureau inconnu = hôte à un écran, où le display *est* le bureau et
+le calcul se réduit à ce qu'il était.
+
+La plage du device reste `0..32767` : elle n'a pas à changer, ce qui évite de
+recréer le périphérique quand la disposition des écrans bouge. Windows et macOS
+n'avaient rien à corriger — `toAbsolute()` ajoute déjà l'origine, et `CgInput`
+interpole entre les bornes du display en coordonnées globales.
+
+Limite assumée : seules les sorties de la carte capturée sont comptées. Un bureau
+étalé sur deux GPU compterait un bureau trop petit — et se tromperait alors du
+même pointeur mal placé qu'on vient de corriger, pas de pire.
