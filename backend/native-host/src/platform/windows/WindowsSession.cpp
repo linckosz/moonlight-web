@@ -28,6 +28,7 @@
 #include "../../encode/RateControl.h"
 #include "../../encode/RateGovernor.h"
 #include "../../encode/windows/AmfEncoder.h"
+#include "../../encode/windows/MfEncoder.h"
 #include "../../encode/windows/NvencEncoder.h"
 #include "../../encode/windows/VplEncoder.h"
 #include "../../input/windows/Win32Input.h"
@@ -653,6 +654,7 @@ private:
         case EncoderApi::Nvenc: m_Encoder = std::make_unique<encode::NvencEncoder>(); break;
         case EncoderApi::Amf: m_Encoder = std::make_unique<encode::AmfEncoder>(); break;
         case EncoderApi::Vpl: m_Encoder = std::make_unique<encode::VplEncoder>(); break;
+        case EncoderApi::MediaFoundation: m_Encoder = std::make_unique<encode::MfEncoder>(); break;
         default:
             error =
                 std::string("no encoder implementation for ") + toString(m_Target.encoder) + " yet";

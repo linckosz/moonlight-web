@@ -143,6 +143,21 @@ struct EncoderTuning
     /// bench compares that rule against.
     int vbvFrames = 0;
 
+    /// Bench only: pretend no GPU in this machine can encode, so the session
+    /// lands on the fallback tier — and, optionally, on ONE named member of it.
+    /// The only way to exercise Media Foundation or the CPU encoder on a bench
+    /// that has NVENC, and to price them against it on the same content.
+    enum class Fallback
+    {
+        None,                    ///< the engine's choice: GPUs first, the tier only without them
+        Tier,                    ///< whatever the tier would pick on an encoder-less machine
+        MediaFoundation,         ///< the Media Foundation transform, hardware or software
+        MediaFoundationSoftware, ///< Microsoft's software transform even where hardware exists
+        MediaFoundationCpuInput, ///< the hardware transform, fed through system memory
+        Cpu                      ///< OpenH264
+    };
+    Fallback fallback = Fallback::None;
+
     bool isDefault() const
     {
         return nvencPreset == 0 && nvencTuning == Latency::Default &&
@@ -152,7 +167,8 @@ struct EncoderTuning
                vplTargetUsage == 0 && vplLowPower == Choice::Default &&
                vplMbBrc == Choice::Default && vplExtBrc == Choice::Default &&
                vplLowDelayBrc == Choice::Default && vplGamingScenario == Choice::Default &&
-               vplWinBrcFrames == 0 && vbvFrames == 0 && dpbFrames == 0;
+               vplWinBrcFrames == 0 && vbvFrames == 0 && dpbFrames == 0 &&
+               fallback == Fallback::None;
     }
 
     /// One line naming every field that is NOT at its default, for the log and
@@ -190,6 +206,11 @@ struct EncoderTuning
         if (vplWinBrcFrames > 0) add("winbrc=" + std::to_string(vplWinBrcFrames) + "f");
         if (vbvFrames > 0) add("vbv=" + std::to_string(vbvFrames) + "f");
         if (dpbFrames > 0) add("dpb=" + std::to_string(dpbFrames));
+        if (fallback == Fallback::Tier) add("fallback=1");
+        if (fallback == Fallback::MediaFoundation) add("fallback=mf");
+        if (fallback == Fallback::MediaFoundationSoftware) add("fallback=mfsw");
+        if (fallback == Fallback::MediaFoundationCpuInput) add("fallback=mfcpu");
+        if (fallback == Fallback::Cpu) add("fallback=cpu");
         return s;
     }
 };

@@ -61,6 +61,7 @@ if(WIN32)
         src/encode/windows/VplEncoder.cpp
         src/encode/windows/MfApi.cpp
         src/encode/windows/MfCapabilities.cpp
+        src/encode/windows/MfEncoder.cpp
         src/audio/windows/WasapiLoopback.cpp
     )
 
@@ -81,12 +82,14 @@ if(WIN32)
     # RoGetActivationFactory, the HSTRING helpers — which is how the WGC
     # fallback reaches Windows.Graphics.Capture without linking a C++/WinRT
     # projection (see WgcCapture.h on why the projection is unwanted here).
-    # mfuuid is the one Media Foundation library linked, and it is safe to link
-    # precisely because it has no DLL behind it: it is a static table of GUID
-    # constants. `mfplat.dll` itself is loaded at run time (MfApi.h) so that an
-    # N edition of Windows — where it is simply absent — still starts.
+    # mfuuid and strmiids are the only Media Foundation libraries linked, and
+    # they are safe to link precisely because they have no DLL behind them: both
+    # are static tables of GUID constants (the media types, and the ICodecAPI
+    # properties). `mfplat.dll` itself is loaded at run time (MfApi.h) so that
+    # an N edition of Windows — where it is simply absent — still starts.
     target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3dcompiler user32 gdi32 setupapi
-                                                 winmm avrt ole32 runtimeobject mfuuid)
+                                                 winmm avrt ole32 oleaut32 runtimeobject mfuuid
+                                                 strmiids)
 elseif(APPLE)
     set(MW_NATIVE_PLATFORM "macos")
     # ScreenCaptureKit → VideoToolbox, with no conversion stage in between:

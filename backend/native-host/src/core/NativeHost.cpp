@@ -55,10 +55,38 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     // Probe again rather than caching: displays are hot-pluggable, and a
     // session built on a display list from minutes ago can name a monitor that
     // has since been unplugged. The probe is cheap by design for this reason.
-    const Capabilities caps = mw::native::probe();
+    Capabilities caps = mw::native::probe();
     if (!caps.available) {
         error = caps.diagnostic.empty() ? toString(caps.reason) : caps.diagnostic;
         return nullptr;
+    }
+
+    // The bench may ask for the machine to be treated as if no GPU encoded —
+    // the only way to exercise the fallback tier on a bench that has NVENC. It
+    // is done by putting the capability set in exactly the state the tier
+    // exists for, rather than by a special case in the Selector: every GPU is
+    // stripped of its encoders, the fallbacks are probed as probe() would have,
+    // and select() takes the path a Snapdragon would. A real session never sets
+    // this.
+    if (config.tuning.fallback != EncoderTuning::Fallback::None) {
+        for (GpuInfo& gpu : caps.gpus) {
+            gpu.encoders.clear();
+            gpu.codecs.clear();
+        }
+        if (caps.fallbacks.empty()) platform::probeFallbackEncoders(caps);
+        if (config.tuning.fallback != EncoderTuning::Fallback::Tier) {
+            // "mf" and "mfsw" both name Media Foundation here; which transform
+            // the session opens is the encoder's business (MfEncoder).
+            const EncoderApi wanted = config.tuning.fallback == EncoderTuning::Fallback::Cpu
+                                          ? EncoderApi::Software
+                                          : EncoderApi::MediaFoundation;
+            std::vector<FallbackEncoder> kept;
+            for (FallbackEncoder& fb : caps.fallbacks)
+                if (fb.api == wanted) kept.push_back(std::move(fb));
+            caps.fallbacks = std::move(kept);
+        }
+        log::warning("[native] bench: every GPU encoder hidden — this session runs the fallback "
+                     "tier");
     }
 
     Selection selection;
@@ -78,12 +106,19 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     // answer, reported back in SessionInfo::intraRefresh.
     resolved.intraRefresh = config.intraRefresh;
 
+    // A fallback session may have no GPU at all behind it (a Linux VM whose
+    // display adapter exposes no render node); the name then says so rather
+    // than dereferencing nothing.
+    const std::string gpuName = selection.gpu ? selection.gpu->name : "no GPU";
     log::info(std::string("[native] session: display ") + std::to_string(resolved.displayId) + " " +
               std::to_string(resolved.width) + "x" + std::to_string(resolved.height) + "@" +
               std::to_string(resolved.fps) + " " + toString(selection.codec) + " via " +
-              toString(selection.encoder) + " on " + selection.gpu->name +
-              (selection.hdr ? " (HDR)" : "") + (selection.yuv444 ? " (4:4:4)" : "") +
-              (selection.crossGpuCopy ? " [cross-GPU copy]" : ""));
+              toString(selection.encoder) + " on " + gpuName + (selection.hdr ? " (HDR)" : "") +
+              (selection.yuv444 ? " (4:4:4)" : "") +
+              (selection.crossGpuCopy ? " [cross-GPU copy]" : "") +
+              (selection.fallbackEncoder
+                   ? (selection.cpuEncoder ? " [fallback, CPU]" : " [fallback, via the OS]")
+                   : ""));
 
     // Hand the decision down rather than let the backend take it again. The
     // backend's simpler answer — "encode on the GPU that drives the display" —
@@ -91,7 +126,7 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     // undoes the work above.
     ResolvedTarget target;
     target.displayId = selection.display->id;
-    target.encodeGpuName = selection.gpu->name;
+    target.encodeGpuName = gpuName;
     target.encoder = selection.encoder;
     target.codec = selection.codec;
     target.crossGpuCopy = selection.crossGpuCopy;
@@ -99,16 +134,16 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     // Granted, not requested: the Selector already moved the codec to one that
     // has 4:4:4, or gave it up. The backend must never re-ask the encoder.
     target.yuv444 = selection.yuv444;
-    target.encodeAdapterHandle = selection.gpu->nativeHandle;
+    target.encodeAdapterHandle = selection.gpu ? selection.gpu->nativeHandle : 0;
 
     // Capture always happens on the adapter that scans the display out; only
     // the encoder may sit elsewhere.
     if (const GpuInfo* displayGpu = caps.gpuFor(*selection.display)) {
         target.captureAdapterHandle = displayGpu->nativeHandle;
     } else {
-        // No association: capture where we encode and accept whatever DXGI
-        // gives us. Rare enough to be worth saying out loud.
-        target.captureAdapterHandle = selection.gpu->nativeHandle;
+        // No association: capture where we encode and accept whatever the
+        // platform gives us. Rare enough to be worth saying out loud.
+        target.captureAdapterHandle = target.encodeAdapterHandle;
         log::warning("[native] display names no GPU — capturing on the encoder's adapter");
     }
 

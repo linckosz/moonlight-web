@@ -59,11 +59,20 @@ public:
     HRESULT(STDAPICALLTYPE* TEnumEx)
     (GUID, UINT32, const MFT_REGISTER_TYPE_INFO*, const MFT_REGISTER_TYPE_INFO*, IMFActivate***,
      UINT32*) = nullptr;
+    /// MFTEnum2 — MFTEnumEx plus an attribute store, which is how a hardware
+    /// transform is asked for on ONE adapter (MFT_ENUM_ADAPTER_LUID). Without it
+    /// the enumeration is machine-wide and hands back whichever vendor's
+    /// transform sorts first, whatever device the frames live on.
+    HRESULT(STDAPICALLTYPE* TEnum2)
+    (GUID, UINT32, const MFT_REGISTER_TYPE_INFO*, const MFT_REGISTER_TYPE_INFO*, IMFAttributes*,
+     IMFActivate***, UINT32*) = nullptr;
     HRESULT(STDAPICALLTYPE* CreateMediaType)(IMFMediaType**) = nullptr;
     HRESULT(STDAPICALLTYPE* CreateAttributes)(IMFAttributes**, UINT32) = nullptr;
     HRESULT(STDAPICALLTYPE* CreateSample)(IMFSample**) = nullptr;
     HRESULT(STDAPICALLTYPE* CreateMemoryBuffer)(DWORD, IMFMediaBuffer**) = nullptr;
     HRESULT(STDAPICALLTYPE* CreateDXGIDeviceManager)(UINT*, IMFDXGIDeviceManager**) = nullptr;
+    HRESULT(STDAPICALLTYPE* CreateDXGISurfaceBuffer)
+    (REFIID, IUnknown*, UINT, BOOL, IMFMediaBuffer**) = nullptr;
 
     /// Human-readable form of an HRESULT, for logs. The numeric code is always
     /// appended: Media Foundation returns codes no switch here will cover, and a

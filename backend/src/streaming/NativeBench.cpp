@@ -105,7 +105,11 @@ const char* const kUsage =
     "  gaming=0|1       oneVPL ScenarioInfo = remote gaming\n"
     "  winbrc=<frames>  oneVPL sliding-window rate cap, in frames\n"
     "  vbv=<frames>     VBV of exactly N frames at the stream rate, no floor\n"
-    "  dpb=<frames>     NVENC decoded picture buffer (default 4, for reference invalidation)\n";
+    "  dpb=<frames>     NVENC decoded picture buffer (default 4, for reference invalidation)\n"
+    "  fallback=1|mf|mfsw|mfcpu|cpu  pretend no GPU encodes: the fallback tier (1), Media\n"
+    "                   Foundation (mf), Microsoft's software transform even where a hardware\n"
+    "                   one exists (mfsw), the hardware transform fed through system memory\n"
+    "                   (mfcpu), or OpenH264 (cpu) — how they get measured beside NVENC\n";
 
 bool parseChoice(const QString& value, mw::native::EncoderTuning::Choice& out)
 {
@@ -149,6 +153,20 @@ bool applyTuningKey(const QString& key, const QString& value, mw::native::Encode
         const int frames = value.toInt(&ok);
         ok = ok && frames >= 1 && frames <= 600;
         tuning.vplWinBrcFrames = frames;
+    } else if (key == "fallback") {
+        using Fallback = mw::native::EncoderTuning::Fallback;
+        if (value == "1" || value.compare("tier", Qt::CaseInsensitive) == 0)
+            tuning.fallback = Fallback::Tier;
+        else if (value.compare("mf", Qt::CaseInsensitive) == 0)
+            tuning.fallback = Fallback::MediaFoundation;
+        else if (value.compare("mfsw", Qt::CaseInsensitive) == 0)
+            tuning.fallback = Fallback::MediaFoundationSoftware;
+        else if (value.compare("mfcpu", Qt::CaseInsensitive) == 0)
+            tuning.fallback = Fallback::MediaFoundationCpuInput;
+        else if (value.compare("cpu", Qt::CaseInsensitive) == 0)
+            tuning.fallback = Fallback::Cpu;
+        else
+            ok = false;
     } else if (key == "lowpower")
         ok = parseChoice(value, tuning.vplLowPower);
     else if (key == "mbbrc")

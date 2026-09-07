@@ -77,11 +77,13 @@ MfApi::MfApi()
     const bool ok = resolve(dll, "MFStartup", Startup, missing) &&
                     resolve(dll, "MFShutdown", Shutdown, missing) &&
                     resolve(dll, "MFTEnumEx", TEnumEx, missing) &&
+                    resolve(dll, "MFTEnum2", TEnum2, missing) &&
                     resolve(dll, "MFCreateMediaType", CreateMediaType, missing) &&
                     resolve(dll, "MFCreateAttributes", CreateAttributes, missing) &&
                     resolve(dll, "MFCreateSample", CreateSample, missing) &&
                     resolve(dll, "MFCreateMemoryBuffer", CreateMemoryBuffer, missing) &&
-                    resolve(dll, "MFCreateDXGIDeviceManager", CreateDXGIDeviceManager, missing);
+                    resolve(dll, "MFCreateDXGIDeviceManager", CreateDXGIDeviceManager, missing) &&
+                    resolve(dll, "MFCreateDXGISurfaceBuffer", CreateDXGISurfaceBuffer, missing);
     if (!ok) {
         m_Reason = "mfplat.dll is present but does not export " + missing;
         return;
