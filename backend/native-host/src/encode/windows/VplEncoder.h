@@ -11,6 +11,7 @@
 #pragma once
 
 #include "IVideoEncoder.h"
+#include "../ReferenceSlots.h"
 #include "VplSession.h"
 
 #include <vector>
@@ -62,6 +63,9 @@ public:
 
     bool intraRefreshEnabled() const override { return m_IntraRefresh; }
 
+    bool supportsReferenceInvalidation() const override { return m_Slots.enabled(); }
+    bool invalidateReference(uint32_t frameNumber, std::string& error) override;
+
 private:
     VplSession m_Session;
     mfxVideoParam m_Params = {};
@@ -72,6 +76,7 @@ private:
     /// there is a use-after-free the runtime cannot warn about.
     mfxExtCodingOption m_CodingOption = {};
     mfxExtCodingOption2 m_CodingOption2 = {};
+    mfxExtCodingOption3 m_CodingOption3 = {};
     std::vector<mfxExtBuffer*> m_ExtBuffers;
     bool m_IntraRefresh = false;
 
@@ -83,10 +88,31 @@ private:
     /// Said once per session, not once per frame: a GPU at its limit produces
     /// many of these and a log line per frame would bury everything else.
     bool m_SlowFrameSeen = false;
-    /// The rate init() sized the encoder for, and the ceiling setBitrate may
-    /// ask for — see there.
-    int m_InitBitrateKbps = 0;
+    /// The highest rate a Reset may ask for: what init() declared as MaxKbps,
+    /// read back from what the runtime actually accepted — see setBitrate().
+    int m_CeilingKbps = 0;
     bool m_CeilingSeen = false;
+
+    // ── Reference invalidation ──────────────────────────────────────────────
+    //
+    /// The long-term references this session marks, and the arithmetic that
+    /// turns "frame N never arrived" into "predict from frame M". Empty — and
+    /// supportsReferenceInvalidation() false — when the runtime says it cannot.
+    ///
+    /// oneVPL is the easiest of the three vendors here: it names pictures by
+    /// FrameOrder, which is the frame number the receiver already knows, so
+    /// there is no slot-index translation to get wrong (the mistake that cost
+    /// the AMD path two rounds on real hardware).
+    ReferenceSlots m_Slots;
+    /// The repair the NEXT picture must carry: predict from m_RepairFrom and
+    /// refuse everything the loss spoiled. Cleared once encoded.
+    bool m_RepairPending = false;
+    uint32_t m_RepairFrom = 0;
+    uint32_t m_RepairLost = 0;
+    /// Per-frame control block. A member because oneVPL reads it during
+    /// EncodeFrameAsync, which outlives any local.
+    mfxExtAVCRefListCtrl m_RefCtrl = {};
+    mfxExtBuffer* m_CtrlBuffers[1] = {nullptr};
 
     Codec m_Codec = Codec::H264;
     int m_Width = 0;

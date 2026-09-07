@@ -101,6 +101,34 @@ struct EncoderTuning
     /// oneVPL: TargetUsage 1 (quality) … 7 (speed). 0 is the engine's own (7).
     int vplTargetUsage = 0;
 
+    // ── The rest of what Intel exposes ──────────────────────────────────────
+    //
+    // Six knobs, none of which this engine sets on its own except the first,
+    // and all of which the Intel matrix measures rather than assumes. They live
+    // here for the same reason every other field does: a benchmark that cannot
+    // vary the setting under test is not one.
+
+    /// The fixed-function encode engine (VDENC) rather than the shader-based
+    /// one. The engine's own answer is ON — measured, it halves the encode time
+    /// — with an automatic fall-back when a generation has none.
+    Choice vplLowPower = Choice::Default;
+    /// Macroblock-level rate control: spends bits where the picture needs them
+    /// rather than evenly. Intel's answer to spatial AQ.
+    Choice vplMbBrc = Choice::Default;
+    /// The alternative bitrate controller. Intel documents it as better on
+    /// low-delay content, which is exactly this pipeline's content.
+    Choice vplExtBrc = Choice::Default;
+    /// The low-delay mode of the bitrate controller — one frame in, one frame
+    /// out, no lookahead budgeting.
+    Choice vplLowDelayBrc = Choice::Default;
+    /// `ScenarioInfo = MFX_SCENARIO_REMOTE_GAMING`, a hint Intel added for this
+    /// exact use. What the driver does with it is not documented, which is why
+    /// it is measured.
+    Choice vplGamingScenario = Choice::Default;
+    /// Sliding-window rate cap, in frames: no window of this many frames may
+    /// average more than the target. A burst limiter, priced in quality.
+    int vplWinBrcFrames = 0;
+
     /// How many reference pictures the encoder keeps for healing a lost frame
     /// by a delta. NVENC: the decoded picture buffer's depth (engine's own: 4
     /// — see NvencEncoder). AMF: the number of long-term reference slots
@@ -121,7 +149,10 @@ struct EncoderTuning
                nvencMultiPass == MultiPass::Default && spatialAq == Choice::Default &&
                temporalAq == Choice::Default && preAnalysis == Choice::Default &&
                amfQuality == AmfQuality::Default && amfLowLatency == Choice::Default &&
-               vplTargetUsage == 0 && vbvFrames == 0 && dpbFrames == 0;
+               vplTargetUsage == 0 && vplLowPower == Choice::Default &&
+               vplMbBrc == Choice::Default && vplExtBrc == Choice::Default &&
+               vplLowDelayBrc == Choice::Default && vplGamingScenario == Choice::Default &&
+               vplWinBrcFrames == 0 && vbvFrames == 0 && dpbFrames == 0;
     }
 
     /// One line naming every field that is NOT at its default, for the log and
@@ -149,6 +180,14 @@ struct EncoderTuning
         if (amfLowLatency != Choice::Default)
             add(std::string("lowlatency=") + choice(amfLowLatency));
         if (vplTargetUsage > 0) add("tu=" + std::to_string(vplTargetUsage));
+        if (vplLowPower != Choice::Default) add(std::string("lowpower=") + choice(vplLowPower));
+        if (vplMbBrc != Choice::Default) add(std::string("mbbrc=") + choice(vplMbBrc));
+        if (vplExtBrc != Choice::Default) add(std::string("extbrc=") + choice(vplExtBrc));
+        if (vplLowDelayBrc != Choice::Default)
+            add(std::string("lowdelaybrc=") + choice(vplLowDelayBrc));
+        if (vplGamingScenario != Choice::Default)
+            add(std::string("gaming=") + choice(vplGamingScenario));
+        if (vplWinBrcFrames > 0) add("winbrc=" + std::to_string(vplWinBrcFrames) + "f");
         if (vbvFrames > 0) add("vbv=" + std::to_string(vbvFrames) + "f");
         if (dpbFrames > 0) add("dpb=" + std::to_string(dpbFrames));
         return s;

@@ -35,9 +35,54 @@ constexpr mfxU32 kSyncTimeoutMs = 100;
 constexpr int kBusyRetries = 200;
 
 /// How many times to ask again when the deadline above passes with the frame
-/// still in flight. Ten is a full second, far beyond any frame a working
-/// encoder produces, and short enough that a dead one is still reported.
-constexpr int kSyncAttempts = 10;
+/// still in flight.
+///
+/// ⚠️ Was ten — one second — on the reasoning that no working frame takes that
+/// long. Measured otherwise on the N95: with a 1440p60 clip playing on the host
+/// AND the browser decoding on the same four cores, single frames went past a
+/// second, then past three, and the session died mid-benchmark each time. A
+/// stream producing one frame a second is unusable, but ENDING it is worse than
+/// being slow — the cadence and the link governor are there to degrade it
+/// gracefully, and the viewer can lower the resolution. A hundred attempts is
+/// ten seconds: nothing a working encoder ever needs, and still a bound, so an
+/// encoder that has genuinely stopped is reported rather than waited on for
+/// ever.
+constexpr int kSyncAttempts = 100;
+
+/// Ask the runtime, in the way its own header prescribes, whether it will take
+/// a reference-list control block at all.
+///
+/// Query mode 1: attach the buffer with the fields of interest set, and see
+/// whether they survive. A runtime without long-term references either fails
+/// the call or zeroes them — either way the answer is no, and the session then
+/// runs exactly as it did before, healing losses with keyframes.
+bool longTermReferencesWork(const VplApi& api, mfxSession session, const mfxVideoParam& base)
+{
+    mfxExtAVCRefListCtrl probe = {};
+    probe.Header.BufferId = MFX_EXTBUFF_AVC_REFLIST_CTRL;
+    probe.Header.BufferSz = sizeof(probe);
+    probe.ApplyLongTermIdx = 1;
+    probe.LongTermRefList[0].FrameOrder = 0;
+    probe.LongTermRefList[0].LongTermIdx = 1;
+
+    mfxExtBuffer* chain[1] = {reinterpret_cast<mfxExtBuffer*>(&probe)};
+
+    mfxVideoParam in = base;
+    in.ExtParam = chain;
+    in.NumExtParam = 1;
+
+    mfxExtAVCRefListCtrl outCtrl = probe;
+    mfxExtBuffer* outChain[1] = {reinterpret_cast<mfxExtBuffer*>(&outCtrl)};
+    mfxVideoParam out = base;
+    out.ExtParam = outChain;
+    out.NumExtParam = 1;
+
+    const mfxStatus status = api.EncodeQuery(session, &in, &out);
+    if (status != MFX_ERR_NONE && status != MFX_WRN_INCOMPATIBLE_VIDEO_PARAM &&
+        status != MFX_WRN_VIDEO_PARAM_CHANGED)
+        return false;
+    return outCtrl.ApplyLongTermIdx != 0;
+}
 
 } // namespace
 
@@ -79,7 +124,6 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     m_Height = height;
     m_Fps = fps > 0 ? fps : 60;
     m_Tuning = tuning;
-    m_InitBitrateKbps = bitrateKbps > 0 ? bitrateKbps : 20000;
     m_CeilingSeen = false;
     m_SlowFrameSeen = false;
 
@@ -124,8 +168,8 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     }
 
     m_IntraRefresh = false;
-    attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_ExtBuffers, m_Fps,
-                        intraRefresh);
+    attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_CodingOption3, m_ExtBuffers,
+                        m_Fps, intraRefresh, m_Tuning);
 
     mfxStatus started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
 
@@ -138,7 +182,8 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
         // stays: without it the bitrate could not move.
         log::warning(std::string("[native] oneVPL declined intra-refresh (") +
                      VplApi::statusToString(started) + ") — falling back to keyframes");
-        attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_ExtBuffers, m_Fps, false);
+        attachEncodeOptions(m_Params, m_CodingOption, m_CodingOption2, m_CodingOption3,
+                            m_ExtBuffers, m_Fps, false, m_Tuning);
         started = m_Session.api()->EncodeInit(m_Session.handle(), &m_Params);
     }
 
@@ -183,6 +228,23 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
     m_Bitstream.Data = m_BitstreamData.data();
     m_Bitstream.MaxLength = static_cast<mfxU32>(m_BitstreamData.size());
 
+    // The highest budget Reset will accept — set by the buffer init() sized.
+    m_CeilingKbps = budgetCeilingKbps(bitrateKbps > 0 ? bitrateKbps : 20000, m_Fps);
+
+    // ── Reference invalidation ──────────────────────────────────────────────
+    //
+    // The pictures kept to predict from, minus the one the codec always needs
+    // for the ordinary delta: those are the ones a repair can fall back on.
+    // Asked of the runtime rather than assumed, and answered honestly to
+    // /start: a receiver told the stream repairs itself will stop asking for
+    // keyframes, so promising it wrongly is worse than not promising it.
+    m_RepairPending = false;
+    const int refs = static_cast<int>(m_Params.mfx.NumRefFrame);
+    const int slots = refs > 1 ? refs - 1 : 0;
+    const bool longTerm =
+        slots > 0 && longTermReferencesWork(*m_Session.api(), m_Session.handle(), m_Params);
+    m_Slots = ReferenceSlots(longTerm ? slots : 0, ReferenceSlots::strideFor(m_Fps, slots));
+
     const std::string overrides = tuning.describe();
     log::info(
         "[native] oneVPL ready: " + std::to_string(width) + "x" + std::to_string(height) + "@" +
@@ -193,15 +255,40 @@ bool VplEncoder::init(ID3D11Device* device, Codec codec, int width, int height, 
              ? ", intra-refresh over " + std::to_string(intraRefreshPeriodFrames(m_Fps)) + " frames"
              : ", keyframes on demand") +
         ", TU" + std::to_string(m_Params.mfx.TargetUsage) +
+        (m_Slots.enabled()
+             ? ", " + std::to_string(m_Slots.count()) + " long-term references every " +
+                   std::to_string(m_Slots.stride()) + " frames (reach " +
+                   std::to_string(m_Slots.reachFrames()) + " frames)"
+             : ", no reference invalidation") +
         (overrides.empty() ? "" : " [bench: " + overrides + "]"));
+    return true;
+}
+
+bool VplEncoder::invalidateReference(uint32_t frameNumber, std::string& error)
+{
+    if (!m_Session.isOpen() || !m_Slots.enabled()) {
+        error = "reference invalidation is not available on this encoder";
+        return false;
+    }
+
+    // Every picture from the lost one on predicts, directly or not, from it:
+    // the repair has to reach further back than the loss, never merely past it.
+    const int clean = m_Slots.cleanSlotBefore(frameNumber);
+    if (clean < 0) {
+        error = "the loss is older than every long-term reference this encoder holds";
+        return false;
+    }
+
+    m_RepairPending = true;
+    m_RepairLost = frameNumber;
+    m_RepairFrom = m_Slots.frameAt(clean);
+    m_Slots.dropFrom(frameNumber);
     return true;
 }
 
 bool VplEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t frameNumber,
                         EncoderOutput& out, std::string& error)
 {
-    // No reference invalidation on this path yet; the number is not needed.
-    (void)frameNumber;
     if (!m_Session.isOpen()) {
         error = "the encoder is not initialized";
         return false;
@@ -225,11 +312,56 @@ bool VplEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
     mfxFrameSurface1 input = {};
     input.Info = m_Params.mfx.FrameInfo;
     input.Data.MemId = static_cast<mfxMemId>(&handles);
+    // The name the receiver will use if this picture never arrives. oneVPL's
+    // reference lists are written in FrameOrder, so this one field is what makes
+    // "frame N was lost" a sentence the encoder understands.
+    input.Data.FrameOrder = frameNumber;
 
     mfxEncodeCtrl ctrl = {};
     mfxEncodeCtrl* ctrlPtr = nullptr;
     if (forceKeyframe) {
         ctrl.FrameType = MFX_FRAMETYPE_I | MFX_FRAMETYPE_IDR | MFX_FRAMETYPE_REF;
+        ctrlPtr = &ctrl;
+    }
+
+    // ── The reference list this picture is encoded against ──────────────────
+    //
+    // Two independent things go in the same block: marking THIS picture as a
+    // long-term reference when its turn comes round, and — after a loss — both
+    // refusing the pictures the loss spoiled and naming the one to predict from
+    // instead. A repair frame does both: it must itself become a reference, or
+    // the next loss would have nothing recent to fall back on.
+    const int markSlot = m_Slots.enabled() ? m_Slots.slotFor(frameNumber, forceKeyframe) : -1;
+    if (markSlot >= 0 || m_RepairPending) {
+        std::memset(&m_RefCtrl, 0, sizeof(m_RefCtrl));
+        m_RefCtrl.Header.BufferId = MFX_EXTBUFF_AVC_REFLIST_CTRL;
+        m_RefCtrl.Header.BufferSz = sizeof(m_RefCtrl);
+        // Every unused entry has to say so explicitly: a zeroed FrameOrder is a
+        // valid picture number, not an empty slot.
+        for (auto& e : m_RefCtrl.PreferredRefList)
+            e.FrameOrder = MFX_FRAMEORDER_UNKNOWN;
+        for (auto& e : m_RefCtrl.RejectedRefList)
+            e.FrameOrder = MFX_FRAMEORDER_UNKNOWN;
+        for (auto& e : m_RefCtrl.LongTermRefList)
+            e.FrameOrder = MFX_FRAMEORDER_UNKNOWN;
+
+        if (markSlot >= 0) {
+            m_RefCtrl.LongTermRefList[0].FrameOrder = frameNumber;
+            m_RefCtrl.LongTermRefList[0].LongTermIdx = static_cast<mfxU16>(markSlot);
+            m_RefCtrl.ApplyLongTermIdx = 1;
+        }
+        if (m_RepairPending) {
+            m_RefCtrl.PreferredRefList[0].FrameOrder = m_RepairFrom;
+            m_RefCtrl.RejectedRefList[0].FrameOrder = m_RepairLost;
+            // One reference, and it is the named one: a list of preferences the
+            // encoder may ignore would leave it free to predict from a picture
+            // the receiver never got, which is the whole failure being repaired.
+            m_RefCtrl.NumRefIdxL0Active = 1;
+        }
+
+        m_CtrlBuffers[0] = reinterpret_cast<mfxExtBuffer*>(&m_RefCtrl);
+        ctrl.ExtParam = m_CtrlBuffers;
+        ctrl.NumExtParam = 1;
         ctrlPtr = &ctrl;
     }
 
@@ -291,6 +423,20 @@ bool VplEncoder::encode(ID3D11Texture2D* surface, bool forceKeyframe, uint32_t f
     out.data = m_Bitstream.Data + m_Bitstream.DataOffset;
     out.size = m_Bitstream.DataLength;
     out.keyframe = (m_Bitstream.FrameType & (MFX_FRAMETYPE_I | MFX_FRAMETYPE_IDR)) != 0;
+
+    // Recorded only once the picture exists. A keyframe empties the decoded
+    // picture buffer, so every long-term reference goes with it — including the
+    // one a repair in flight was about to predict from.
+    if (out.keyframe) {
+        m_Slots.clear();
+        m_RepairPending = false;
+    }
+    if (markSlot >= 0) m_Slots.marked(markSlot, frameNumber);
+    if (m_RepairPending) {
+        log::info("[native] oneVPL healed frame " + std::to_string(m_RepairLost) +
+                  " with a delta against frame " + std::to_string(m_RepairFrom));
+        m_RepairPending = false;
+    }
     return true;
 }
 
@@ -328,29 +474,30 @@ bool VplEncoder::setBitrate(int bitrateKbps, std::string& error)
     // a second on a moving link, so intra-refresh survived roughly half a
     // second of real streaming. Same shape as bug B4 on AMF — a mid-session
     // re-application that quietly drops what init() had settled.
-    // ⚠️ Upwards, the encoder does not move — and asking anyway ends the call.
+    // ⚠️ Upwards, this encoder only moves as far as Init told it it could.
     //
     // MFXVideoENCODE_Reset refuses (-14, "requires additional memory
-    // allocation") any target above the one Init sized its buffers for, and it
-    // refuses the WHOLE call: the rate stays where it was. Measured on an N95,
-    // where the effective-cadence budget (E4) asked for 32000 on a stream set
-    // to 20000 because the desktop was only moving at half the stream's rate —
-    // twice a second, each one refused with a warning.
+    // allocation") any target above what Init was sized for, and it refuses the
+    // WHOLE call: the rate stays where it was. Measured on an N95, where the
+    // effective-cadence budget (E4) asked for 32000 on a stream set to 20000
+    // because the desktop was only moving at half the stream's rate — twice a
+    // second, each one refused with a warning.
     //
-    // So the ceiling is what init() was given, and what is lost is the upward
-    // half of E4: on Intel a slow-moving picture does not get to spend the
-    // bits its frames would have been worth. The downward half — the one that
-    // matters when a link is suffering — works exactly as it does elsewhere.
+    // The answer is not to cap the request but to buy the room up front:
+    // init() sizes the bitstream buffer for budgetCeilingKbps(), which is what
+    // Reset validates a raise against. This is the last line of defence — a
+    // request beyond even that ceiling is capped rather than lost, because a
+    // refused Reset would leave the rate exactly where it was.
     int wanted = bitrateKbps;
-    if (wanted > m_InitBitrateKbps) {
+    if (wanted > m_CeilingKbps) {
         if (!m_CeilingSeen) {
             m_CeilingSeen = true;
-            log::info("[native] oneVPL: the bitrate cannot rise above the " +
-                      std::to_string(m_InitBitrateKbps) +
-                      " kbps this session started at — asking for more is refused outright, so "
-                      "requests above it are capped");
+            log::info("[native] oneVPL: the per-frame budget is capped at " +
+                      std::to_string(m_CeilingKbps) +
+                      " kbps, twice the stream's rate — see "
+                      "budgetCeilingKbps for what the rest costs");
         }
-        wanted = m_InitBitrateKbps;
+        wanted = m_CeilingKbps;
         const int multiplier =
             m_Params.mfx.BRCParamMultiplier > 0 ? m_Params.mfx.BRCParamMultiplier : 1;
         if (static_cast<int>(m_Params.mfx.TargetKbps) * multiplier == wanted) return true;
@@ -380,6 +527,8 @@ bool VplEncoder::setBitrate(int bitrateKbps, std::string& error)
 
 void VplEncoder::stop()
 {
+    m_Slots = ReferenceSlots();
+    m_RepairPending = false;
     releaseOutput();
     if (m_Session.isOpen()) m_Session.api()->EncodeClose(m_Session.handle());
     m_Session.close();

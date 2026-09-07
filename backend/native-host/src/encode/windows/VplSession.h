@@ -119,8 +119,9 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
 /// cannot warn about. Taking them by reference rather than allocating here is
 /// what makes that ownership impossible to get wrong.
 void attachEncodeOptions(mfxVideoParam& params, mfxExtCodingOption& option1,
-                         mfxExtCodingOption2& option2, std::vector<mfxExtBuffer*>& buffers, int fps,
-                         bool intraRefresh);
+                         mfxExtCodingOption2& option2, mfxExtCodingOption3& option3,
+                         std::vector<mfxExtBuffer*>& buffers, int fps, bool intraRefresh,
+                         const EncoderTuning& tuning = EncoderTuning{});
 
 /// Write the rate-control fields — and only those — into an existing block.
 ///
@@ -135,5 +136,23 @@ void applyRateControl(mfxVideoParam& params, int fps, int bitrateKbps, const Enc
 /// The subset of that a running encoder will actually accept: the target rate,
 /// and nothing else. See the body for why the buffer must not move.
 void applyBitrateOnly(mfxVideoParam& params, int bitrateKbps);
+
+/// The most the per-frame budget may rise to during a session, and therefore
+/// what init() must size the bitstream buffer for. See the body: Reset refuses
+/// every cheaper way of raising it.
+int budgetCeilingKbps(int bitrateKbps, int fps);
+
+/// The rate the bitstream buffer must be sized for so that a raise to
+/// budgetCeilingKbps() is accepted at all. Bigger than the ceiling — see body.
+int budgetBufferKbps(int bitrateKbps, int fps);
+
+/// How many pictures the encoder keeps to predict from when the bench has not
+/// asked for another number. See VplSession.cpp for why it is not one.
+constexpr int kDefaultRefFrames = 4;
+
+/// How many times the stream's rate a single frame's budget may reach. Two,
+/// because that is the whole range EffectiveCadence works in (its floor is half
+/// of a 60 fps stream), and because each step costs a frame time of VBV.
+constexpr int kBudgetHeadroom = 2;
 
 } // namespace mw::native::encode

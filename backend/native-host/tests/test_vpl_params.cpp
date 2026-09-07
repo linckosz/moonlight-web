@@ -118,8 +118,9 @@ void run_vpl_params_tests()
         // plus a correction of the kind EncodeQuery applies in place.
         mfxExtCodingOption option1 = {};
         mfxExtCodingOption2 option2 = {};
+        mfxExtCodingOption3 option3 = {};
         std::vector<mfxExtBuffer*> buffers;
-        encode::attachEncodeOptions(p, option1, option2, buffers, 60, true);
+        encode::attachEncodeOptions(p, option1, option2, option3, buffers, 60, true);
         CHECK_EQ(p.NumExtParam, static_cast<mfxU16>(2));
         p.mfx.TargetUsage = 4; // as if the runtime had corrected it
 
@@ -148,6 +149,33 @@ void run_vpl_params_tests()
         CHECK_EQ(p.AsyncDepth, static_cast<mfxU16>(1));
         CHECK_EQ(p.mfx.GopRefDist, static_cast<mfxU16>(1));
         CHECK(p.mfx.GopPicSize >= 0xFFFF);
+    }
+
+    // ── The per-frame budget may rise, and that is what the buffer buys ─────
+    //
+    // Measured on an N95: a raise to twice the rate is refused with a buffer
+    // sized for the rate and accepted with one sized well above the ceiling.
+    // Asserted here so that shrinking the buffer "because the VBV should be one
+    // frame" cannot silently take the budget headroom with it.
+    {
+        CHECK_EQ(encode::budgetCeilingKbps(20000, 60), 40000);
+        // A 30 fps stream has no room to give: its cadence floor IS its rate.
+        CHECK_EQ(encode::budgetCeilingKbps(20000, 30), 20000);
+        // And the headroom is capped, however fast the stream.
+        CHECK_EQ(encode::budgetCeilingKbps(20000, 240), 40000);
+        // The buffer is sized above the ceiling, or the ceiling is decorative.
+        CHECK(encode::budgetBufferKbps(20000, 60) > encode::budgetCeilingKbps(20000, 60));
+
+        mfxVideoParam wide = {};
+        CHECK(encode::fillEncodeParams(wide, Codec::Hevc, 1920, 1080, 60, 20000));
+        // The buffer really is bigger than one frame at the stream's own rate —
+        // that difference IS the headroom, and it is what a raise needs.
+        const int oneFrameKb = 20000 / 60 / 8;
+        CHECK(static_cast<int>(wide.mfx.BufferSizeInKB) * wide.mfx.BRCParamMultiplier > oneFrameKb);
+
+        // And more than one reference, or a lost frame can only ever be
+        // answered with a keyframe — the state this path was in until 07/09.
+        CHECK(wide.mfx.NumRefFrame > 1);
     }
 
     // ── Geometry: aligned surface, exact crop ───────────────────────────────

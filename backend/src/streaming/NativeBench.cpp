@@ -98,6 +98,12 @@ const char* const kUsage =
     "  quality=speed|balanced|quality   AMF quality preset\n"
     "  lowlatency=0|1   AMF internal low-latency mode (H.264/HEVC)\n"
     "  tu=1..7          oneVPL TargetUsage (1 quality .. 7 speed)\n"
+    "  lowpower=0|1     oneVPL fixed-function engine (VDENC); engine's own is on\n"
+    "  mbbrc=0|1        oneVPL macroblock-level rate control\n"
+    "  extbrc=0|1       oneVPL alternative bitrate controller\n"
+    "  lowdelaybrc=0|1  oneVPL low-delay mode of the bitrate controller\n"
+    "  gaming=0|1       oneVPL ScenarioInfo = remote gaming\n"
+    "  winbrc=<frames>  oneVPL sliding-window rate cap, in frames\n"
     "  vbv=<frames>     VBV of exactly N frames at the stream rate, no floor\n"
     "  dpb=<frames>     NVENC decoded picture buffer (default 4, for reference invalidation)\n";
 
@@ -139,7 +145,21 @@ bool applyTuningKey(const QString& key, const QString& value, mw::native::Encode
         const int frames = value.toInt(&ok);
         ok = ok && frames >= 1 && frames <= 16;
         tuning.dpbFrames = frames;
-    } else if (key == "aq")
+    } else if (key == "winbrc") {
+        const int frames = value.toInt(&ok);
+        ok = ok && frames >= 1 && frames <= 600;
+        tuning.vplWinBrcFrames = frames;
+    } else if (key == "lowpower")
+        ok = parseChoice(value, tuning.vplLowPower);
+    else if (key == "mbbrc")
+        ok = parseChoice(value, tuning.vplMbBrc);
+    else if (key == "extbrc")
+        ok = parseChoice(value, tuning.vplExtBrc);
+    else if (key == "lowdelaybrc")
+        ok = parseChoice(value, tuning.vplLowDelayBrc);
+    else if (key == "gaming")
+        ok = parseChoice(value, tuning.vplGamingScenario);
+    else if (key == "aq")
         ok = parseChoice(value, tuning.spatialAq);
     else if (key == "taq")
         ok = parseChoice(value, tuning.temporalAq);

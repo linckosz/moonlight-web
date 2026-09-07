@@ -148,6 +148,15 @@ public:
         return best;
     }
 
+    /// The frame a slot holds. Only meaningful for a slot cleanSlotBefore()
+    /// returned — on a vendor that names pictures by frame number rather than
+    /// by slot index (oneVPL), this is the whole answer.
+    uint32_t frameAt(int slot) const
+    {
+        if (slot < 0 || slot >= m_Count) return 0;
+        return m_Frame[static_cast<size_t>(slot)];
+    }
+
     /// Forget every slot holding a frame from @p lostFrom on: they predict from
     /// the lost picture, and the driver drops them when another slot is forced.
     void dropFrom(uint32_t lostFrom)

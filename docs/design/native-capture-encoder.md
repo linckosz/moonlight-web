@@ -2581,18 +2581,67 @@ dépasse 100 ms.
 Le délai reste court — un encodeur vraiment mort doit être vu vite — mais il est
 redemandé jusqu'à dix fois, et la première lenteur est dite une fois par session.
 
-### 21.6 Ce que le gouverneur ne peut pas faire sur Intel
+### 21.6 Faire monter le budget par image — trois routes, une seule marche
 
 `Reset` refuse aussi toute cible **au-dessus** de celle de l'init (« requires
 additional memory allocation »), et refuse l'appel entier. Or le budget par
 cadence réelle (E4) demande légitimement plus que le débit réglé quand l'image
 bouge moins vite que le flux : sur ce banc il demandait 32000 kbps pour un stream
-réglé à 20000, deux fois par seconde.
+réglé à 20000, deux fois par seconde. Ce n'est **pas** une demande d'envoyer plus
+par seconde — le débit sur le fil ne bouge pas — c'est « cette seconde ne contient
+que 30 images, chacune peut être deux fois plus grosse ».
 
-`setBitrate` plafonne donc à ce que `init()` a reçu, et le dit une fois. Ce qui
-est perdu est la moitié **montante** de E4 — une image lente ne dépense pas les
-bits que ses frames auraient valus. La moitié descendante, celle qui compte quand
-un lien souffre, fonctionne exactement comme ailleurs.
+Trois routes essayées sur l'N95, dans cet ordre :
+
+| Route | Résultat |
+|---|---|
+| Déclarer un `MaxKbps` plus haut à l'init pour laisser de la place | ⛔ en CBR le runtime le rabat aussitôt sur `TargetKbps` — « ignored », comme la doc l'autorise. Vérifié par relecture : `budget up to 20000` alors qu'on avait demandé 120000 |
+| Laisser le débit tranquille et dire à `Reset` que la cadence a baissé (arithmétiquement le même budget) | ⛔ refusé aussi (-14). `Reset` refuse **tout ce qui déplace le budget par image**, quel que soit le champ où c'est écrit |
+| Dimensionner le tampon de bitstream à l'init pour la hausse | ✅ **c'est celle-là**. 20000 → 40000 refusé avec 85 Ko de tampon, accepté avec 250 Ko |
+
+Le tampon est aussi le VBV (§9.x, RateControl.h), donc la marge n'est pas « tout
+ce que quelqu'un pourrait demander » — ce serait six fois le débit, six temps
+d'image pour une seule image — mais **exactement la plage où travaille
+`EffectiveCadence`** : son plancher est 30 fps, donc au plus deux fois pour un
+flux à 60. `budgetCeilingKbps()` le calcule, `budgetBufferKbps()` dit de combien
+le tampon doit dépasser ce plafond pour que `Reset` l'accepte (trois fois,
+mesuré), et `setBitrate` plafonne au lieu de se faire refuser.
+
+Vérifié au banc : sans ce dimensionnement, chaque demande de E4 était refusée et
+l'image faisait **40,7 Ko**. Avec, aucun refus et **71,3 Ko** — le débit sur le
+fil, lui, n'a pas bougé d'un octet.
+
+⚠️ Ce qui reste hors d'atteinte est le ×3 de la rafale de raffinement sur écran
+fixe : il est plafonné, pas refusé.
+
+### 21.6b Invalidation de référence — Intel est le plus simple des trois
+
+`NumRefFrame` valait **1**, ce qui rendait la réparation par delta impossible par
+construction : sans image plus ancienne à laquelle se raccrocher, une perte ne
+pouvait être répondue que par une keyframe. Il vaut maintenant 4, comme le DPB
+NVENC et pour la même raison.
+
+Le mécanisme est `mfxExtAVCRefListCtrl`, attaché **par image** au
+`mfxEncodeCtrl` : `LongTermRefList` marque l'image courante comme référence long
+terme, `RejectedRefList` refuse celle que la perte a gâtée, `PreferredRefList`
+nomme celle sur laquelle prédire, et `NumRefIdxL0Active = 1` fait de cette
+préférence une obligation.
+
+Et c'est là qu'Intel est plus commode que les deux autres : **oneVPL nomme les
+images par `FrameOrder`**, c'est-à-dire par le numéro que le récepteur connaît
+déjà. Pas de traduction index de slot ↔ numéro d'image — la source de deux
+allers-retours sur matériel AMD (§9.10.1). `ReferenceSlots`, écrit pour AMF, se
+réutilise tel quel pour l'arithmétique de portée ; seule la façon de nommer
+change. Le support est **demandé au runtime** (query mode 1 avec le buffer
+attaché, comme son en-tête le prescrit) et non supposé : un runtime qui n'en veut
+pas laisse la session exactement comme avant, keyframes comprises, et `/start`
+répond `ref_invalidation:false`.
+
+✅ **Vérifié en vrai le 07/09** : `mw_drop_test=120` depuis bench-desk sur un flux
+HEVC 1080p de l'hôte Intel — cinq pertes nommées, cinq réparations
+(« oneVPL healed frame 205 with a delta against frame 204 »), **zéro IDR
+demandée, zéro erreur de décodeur**, flux vivant à 16,8 ms. Coût mesuré à
+l'encodage : nul (10,99 ms contre 11,22 sans).
 
 ### 21.7 Ce qui est prouvé, et ce qui ne l'est pas
 
@@ -2642,9 +2691,54 @@ Pas prouvé, et à ne pas supposer :
 
 - **HDR et 4:4:4** restent refusés par construction sur ce chemin (P010 jamais
   encodé ici, AYUV pas une entrée oneVPL) ;
-- **l'invalidation de référence** n'existe toujours pas sur oneVPL, et
-  `NumRefFrame = 1` la rend impossible par construction : une perte se répare
-  par keyframe, l'intra-refresh amortissant le reste ;
 - **les chiffres de latence** viennent d'un N95 à 4 cœurs qui encodait, décodait
   et servait la page en même temps. Ils disent que le chemin tient 60 fps en
   1080p et en 1440p ; ils ne disent rien d'un Intel de bureau ou d'un Arc.
+
+### 21.8 Deux bugs trouvés en montant la mesure clic→photon
+
+Aucun des deux n'est propre à Intel ; les deux étaient invisibles jusqu'ici.
+
+**La vue Réglages plantait dans TOUT build debug.** `SettingsView.render()`
+construisait `veAlgoHtml` — le sélecteur d'algorithme d'Enhancer, qui n'existe
+qu'en debug — en lisant `veCheckboxDisabled`, un `const` déclaré dix lignes plus
+bas. Lire un `const` avant sa déclaration est une exception (zone morte
+temporelle), donc la vue entière mourait sur « Cannot access
+'veCheckboxDisabled' before initialization ». En Release `veAlgoHtml` vaut `''`
+et l'expression n'est jamais évaluée : le bug ne pouvait se voir que là où on
+allait justement chercher la sonde de latence. Les trois déclarations sont
+remontées avant leur usage.
+
+**Une image lente tuait la session.** `SyncOperation` répond
+`MFX_WRN_IN_EXECUTION` quand son délai passe sans que l'image soit prête ; le
+§21.5 avait porté le plafond de 100 ms à une seconde. Avec le clip 1440p60 qui
+joue sur l'hôte **et** le navigateur qui décode sur les mêmes quatre cœurs, des
+images ont dépassé la seconde, puis trois. Le plafond est maintenant de dix
+secondes : un flux à une image par seconde est inutilisable, mais l'arrêter est
+pire que le laisser se dégrader — la cadence, le gouverneur de lien et le
+réglage de résolution du spectateur sont là pour ça.
+
+### 21.9 Le clic→photon n'a pas été obtenu sur ce banc
+
+Demandé, monté, non acquis — et il ne faut pas en inventer un chiffre.
+
+Le drapeau clic→photon (`LatencyFlag`) est gaté sur `Q_OS_WIN && QT_DEBUG`. Un
+vrai build Debug est inutilisable comme banc ici : notre propre passe de
+conversion passe de 0,4 à 10,6 ms et l'acquisition de 0,24 à 7 ms. Un arbre
+Release ne portant que `-DQT_DEBUG` a donc été bâti pour la mesure (jamais
+livré). L'hôte journalise bien chaque clic reçu — « [LatencyFlag] injected click
+at 1711,1056 » — mais la sonde du navigateur ne voit **jamais** les trois bandes
+dans l'image décodée : `timeout` sur toutes les tentatives, avec le clip **comme**
+sur un bureau fixe où le pipeline tourne à 60 fps et 11 ms d'encodage.
+
+Ce qui a été éliminé : la page cliente n'est pas gelée (les premières tentatives
+l'étaient — Chrome dé-priorise une fenêtre occultée et `requestAnimationFrame`
+s'arrête ; relancé avec `--disable-features=CalculateNativeWinOcclusion`) ; le
+clic part et arrive ; la session vit.
+
+Ce qui n'est pas tranché : le drapeau est-il dessiné ? Une vérification par
+capture d'écran sur le banc n'a rien vu, **mais elle ne prouve rien** — `BitBlt`
+(ce qu'utilise `CopyFromScreen`) ne capture pas une fenêtre *layered*, alors que
+Desktop Duplication, elle, la capturerait. La prochaine étape utile est donc de
+regarder l'écran du banc autrement (Desktop Duplication, ou l'œil), pas de
+recommencer la même mesure.

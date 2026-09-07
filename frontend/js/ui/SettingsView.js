@@ -940,6 +940,21 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.latencyFlagDesc')}</span>
                     </div>`
             : '';
+        // HDR + Enhancer: the stream is tone-mapped HDR→SDR in the renderer's
+        // Pass 0, so FSR1/SGSR run on a normal SDR canvas. Show an informational
+        // note while HDR is on (the tone-map costs a software AV1 decode).
+        //
+        // ⚠️ These three are declared BEFORE veAlgoHtml, which reads
+        // veCheckboxDisabled. They used to come after: a `const` read before its
+        // declaration is a TDZ throw, and veAlgoHtml only evaluates it in a
+        // DEBUG build — so release was fine and every debug build died with
+        // "Cannot access 'veCheckboxDisabled' before initialization", losing the
+        // whole settings view. Found on 07/09/2026 on the Intel bench, where the
+        // debug build is the only way to measure click-to-photon.
+        const veLockedClass = this._powerSave ? ' settings-field-locked' : '';
+        const veCheckboxDisabled = this._powerSave ? ' disabled' : '';
+        const veChecked = this._videoEnhancement === 'on' ? 'checked' : '';
+
         const veNote =
             this._debugBuild && webgpuUnavailable
                 ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
@@ -949,13 +964,6 @@ export class SettingsView {
                             ${veAlgoOptions}
                         </select>`
             : '';
-
-        // HDR + Enhancer: the stream is tone-mapped HDR→SDR in the renderer's
-        // Pass 0, so FSR1/SGSR run on a normal SDR canvas. Show an informational
-        // note while HDR is on (the tone-map costs a software AV1 decode).
-        const veLockedClass = this._powerSave ? ' settings-field-locked' : '';
-        const veCheckboxDisabled = this._powerSave ? ' disabled' : '';
-        const veChecked = this._videoEnhancement === 'on' ? 'checked' : '';
         const veHdrNote = this._hdrEnabled
             ? `<div class="settings-note">${t('settings.videoEnhancementHdrNote')}</div>`
             : '';

@@ -267,13 +267,26 @@ void applyRateControl(mfxVideoParam& params, int fps, int bitrateKbps, const Enc
         ++multiplier;
     params.mfx.BRCParamMultiplier = multiplier;
     params.mfx.TargetKbps = static_cast<mfxU16>(bitrateKbps / multiplier);
+    // ⚠️ Not a ceiling one can raise later. Declaring a MaxKbps above the target
+    // to leave room for a future Reset was tried and measured on an N95: in CBR
+    // the runtime flattens it straight back onto TargetKbps, exactly as the
+    // documentation says it may ("ignored"). The buffer below is what actually
+    // decides how far the per-frame budget may later rise.
     params.mfx.MaxKbps = params.mfx.TargetKbps;
 
     // The buffer, in KB, which is what actually enforces the latency: no single
     // frame may be so large that it takes several frame times to transmit. See
     // RateControl.h for why it has a frame-rate floor.
+    //
+    // ⚠️ Sized for the budget CEILING, not for the rate — on this vendor only.
+    // It is the buffer Reset validates a later raise against, so a buffer sized
+    // exactly for the rate is a session whose per-frame budget can never move.
+    // The price is that it is also the VBV: budgetCeilingKbps() says why the
+    // headroom is two and not more.
     const int frameKb =
-        static_cast<int>(vbvBits(static_cast<uint32_t>(bitrateKbps), fps, tuning.vbvFrames)) / 8;
+        static_cast<int>(vbvBits(static_cast<uint32_t>(budgetBufferKbps(bitrateKbps, fps)), fps,
+                                 tuning.vbvFrames)) /
+        8;
     const int bufferKb = frameKb > 0 ? frameKb : 1;
     params.mfx.BufferSizeInKB =
         static_cast<mfxU16>((bufferKb / multiplier) > 0 ? (bufferKb / multiplier) : 1);
@@ -284,7 +297,7 @@ void applyBitrateOnly(mfxVideoParam& params, int bitrateKbps)
 {
     if (bitrateKbps <= 0) return;
 
-    // ⚠️ The buffer is deliberately left where init() put it.
+    // ⚠️ One field is deliberately left where init() put it: the buffer.
     //
     // MFXVideoENCODE_Reset only accepts a change the encoder can make without
     // reallocating. Moving BufferSizeInKB — which is what a re-derived VBV
@@ -294,12 +307,57 @@ void applyBitrateOnly(mfxVideoParam& params, int bitrateKbps)
     // the Intel encoder ignored the link entirely while the log said the
     // bitrate had moved. A VBV a little roomier than the new rate deserves is
     // the cheap half of that trade.
+    //
+    // MaxKbps follows the target, as it does at init: in CBR the runtime
+    // flattens the two together anyway, and leaving them apart would only make
+    // a read-back of the running configuration lie.
     const mfxU16 multiplier = params.mfx.BRCParamMultiplier > 0 ? params.mfx.BRCParamMultiplier : 1;
     int scaled = bitrateKbps / multiplier;
     if (scaled < 1) scaled = 1;
     if (scaled > 65000) scaled = 65000;
     params.mfx.TargetKbps = static_cast<mfxU16>(scaled);
     params.mfx.MaxKbps = params.mfx.TargetKbps;
+}
+
+int budgetCeilingKbps(int bitrateKbps, int fps)
+{
+    if (bitrateKbps <= 0) return bitrateKbps;
+    if (fps <= 0) fps = 60;
+
+    // How much room the per-frame budget is given on this vendor, and why it is
+    // not simply "all of it".
+    //
+    // ⚠️ Two cheaper routes were tried on an N95 and both were refused:
+    //   · declaring a higher MaxKbps at init — CBR flattens it back onto the
+    //     target, exactly as the documentation allows;
+    //   · leaving the rate alone and telling Reset the frame rate is lower,
+    //     which is arithmetically the same budget — refused too (-14). Reset
+    //     turns down anything that moves the per-frame budget, whichever field
+    //     it is written in.
+    //
+    // What is left is to size the bitstream buffer for the raise at init, since
+    // that is what Reset checks against. But the buffer IS the latency
+    // constraint (RateControl.h): a frame may occupy as much of the link as the
+    // buffer allows. So the headroom is not "whatever anyone might ask for" —
+    // that would be six times the rate, six frame times for one picture — but
+    // exactly the range EffectiveCadence works in, which is the case that
+    // actually improves the picture: a screen moving at half the stream's rate,
+    // whose frames may then be twice the size. The refinement burst's ×3 on a
+    // still screen stays out of reach, and is capped rather than refused.
+    const int headroom = fps / EffectiveCadence::kMinFps;
+    const int capped = headroom < 1 ? 1 : (headroom > kBudgetHeadroom ? kBudgetHeadroom : headroom);
+    return bitrateKbps * capped;
+}
+
+int budgetBufferKbps(int bitrateKbps, int fps)
+{
+    // The buffer Reset measures a raise against is not "one frame at the new
+    // rate" — measured on an N95, a raise to 40000 was refused with an 85 KB
+    // buffer and accepted with 250 KB, which is three frames at 40000. So the
+    // buffer this asks for is the ceiling times that factor; anything less and
+    // the ceiling is decorative.
+    constexpr int kResetBufferFrames = 3;
+    return budgetCeilingKbps(bitrateKbps, fps) * kResetBufferFrames;
 }
 
 bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height, int fps,
@@ -335,7 +393,8 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
     // small cost in bits — the trade this engine takes everywhere else too. A
     // generation without it says so at Query, and init() retries without — see
     // VplEncoder::init.
-    params.mfx.LowPower = MFX_CODINGOPTION_ON;
+    params.mfx.LowPower = tuning.vplLowPower == EncoderTuning::Choice::Off ? MFX_CODINGOPTION_OFF
+                                                                           : MFX_CODINGOPTION_ON;
 
     applyRateControl(params, fps, bitrateKbps, tuning);
 
@@ -343,7 +402,14 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
     params.mfx.GopRefDist = 1;
     params.mfx.GopPicSize = 0xFFFF; // effectively infinite
     params.mfx.IdrInterval = 0xFFFF;
-    params.mfx.NumRefFrame = 1;
+    // ⚠️ Was 1, which made reference invalidation impossible by construction:
+    // with a single reference there is no older picture to fall back on, so a
+    // lost frame could only ever be answered with a keyframe. The extra
+    // pictures are what let a loss cost a delta instead — same number, and the
+    // same reason, as the NVENC DPB. The bench can still ask for 1 to measure
+    // what they cost.
+    params.mfx.NumRefFrame =
+        static_cast<mfxU16>(tuning.dpbFrames > 0 ? tuning.dpbFrames : kDefaultRefFrames);
 
     params.mfx.FrameInfo.FourCC = MFX_FOURCC_NV12;
     params.mfx.FrameInfo.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
@@ -363,9 +429,14 @@ bool fillEncodeParams(mfxVideoParam& params, Codec codec, int width, int height,
 }
 
 void attachEncodeOptions(mfxVideoParam& params, mfxExtCodingOption& option1,
-                         mfxExtCodingOption2& option2, std::vector<mfxExtBuffer*>& buffers, int fps,
-                         bool intraRefresh)
+                         mfxExtCodingOption2& option2, mfxExtCodingOption3& option3,
+                         std::vector<mfxExtBuffer*>& buffers, int fps, bool intraRefresh,
+                         const EncoderTuning& tuning)
 {
+    auto onOff = [](EncoderTuning::Choice c) {
+        return c == EncoderTuning::Choice::On ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_OFF;
+    };
+
     std::memset(&option1, 0, sizeof(option1));
     option1.Header.BufferId = MFX_EXTBUFF_CODING_OPTION;
     option1.Header.BufferSz = sizeof(option1);
@@ -393,22 +464,55 @@ void attachEncodeOptions(mfxVideoParam& params, mfxExtCodingOption& option1,
     buffers.clear();
     buffers.push_back(reinterpret_cast<mfxExtBuffer*>(&option1));
 
-    if (intraRefresh) {
+    const bool wantsOption2 = intraRefresh || tuning.vplMbBrc != EncoderTuning::Choice::Default ||
+                              tuning.vplExtBrc != EncoderTuning::Choice::Default;
+    if (wantsOption2) {
         std::memset(&option2, 0, sizeof(option2));
         option2.Header.BufferId = MFX_EXTBUFF_CODING_OPTION2;
         option2.Header.BufferSz = sizeof(option2);
 
-        // Vertical: the wave sweeps by columns of macroblocks. Either axis
-        // works; vertical is the conventional choice and matches what the other
-        // two vendors do by default.
-        option2.IntRefType = MFX_REFRESH_VERTICAL;
-        option2.IntRefCycleSize = static_cast<mfxU16>(intraRefreshPeriodFrames(fps));
-        // Leave the refreshed blocks at the frame's own quality: a positive
-        // delta would make the healing band visibly coarser than what surrounds
-        // it, which is precisely the artefact this is meant to avoid.
-        option2.IntRefQPDelta = 0;
+        if (intraRefresh) {
+            // Vertical: the wave sweeps by columns of macroblocks. Either axis
+            // works; vertical is the conventional choice and matches what the
+            // other two vendors do by default.
+            option2.IntRefType = MFX_REFRESH_VERTICAL;
+            option2.IntRefCycleSize = static_cast<mfxU16>(intraRefreshPeriodFrames(fps));
+            // Leave the refreshed blocks at the frame's own quality: a positive
+            // delta would make the healing band visibly coarser than what
+            // surrounds it, which is precisely the artefact this avoids.
+            option2.IntRefQPDelta = 0;
+        }
+        // Bench only: the engine leaves both to the runtime until the matrix
+        // says otherwise.
+        if (tuning.vplMbBrc != EncoderTuning::Choice::Default)
+            option2.MBBRC = onOff(tuning.vplMbBrc);
+        if (tuning.vplExtBrc != EncoderTuning::Choice::Default)
+            option2.ExtBRC = onOff(tuning.vplExtBrc);
 
         buffers.push_back(reinterpret_cast<mfxExtBuffer*>(&option2));
+    }
+
+    const bool wantsOption3 = tuning.vplLowDelayBrc != EncoderTuning::Choice::Default ||
+                              tuning.vplGamingScenario != EncoderTuning::Choice::Default ||
+                              tuning.vplWinBrcFrames > 0;
+    if (wantsOption3) {
+        std::memset(&option3, 0, sizeof(option3));
+        option3.Header.BufferId = MFX_EXTBUFF_CODING_OPTION3;
+        option3.Header.BufferSz = sizeof(option3);
+
+        if (tuning.vplLowDelayBrc != EncoderTuning::Choice::Default)
+            option3.LowDelayBRC = onOff(tuning.vplLowDelayBrc);
+        if (tuning.vplGamingScenario == EncoderTuning::Choice::On)
+            option3.ScenarioInfo = MFX_SCENARIO_REMOTE_GAMING;
+        if (tuning.vplWinBrcFrames > 0) {
+            option3.WinBRCSize = static_cast<mfxU16>(tuning.vplWinBrcFrames);
+            // The window's cap is the stream's own rate: the point of a window
+            // is that a burst inside it is paid back before the window closes,
+            // not that the average moves.
+            option3.WinBRCMaxAvgKbps = params.mfx.TargetKbps;
+        }
+
+        buffers.push_back(reinterpret_cast<mfxExtBuffer*>(&option3));
     }
 
     params.ExtParam = buffers.data();

@@ -526,6 +526,71 @@ par cadence réelle (E4) est plafonnée ; et il n'y a **pas d'invalidation de
 référence** sur oneVPL (`NumRefFrame = 1`), donc une perte se répare par
 keyframe.
 
+## 8e. Intel : la matrice de paramètres sur du vrai contenu (07/09/2026)
+
+Le §8d mesurait sur un bureau fixe et concluait que le `TargetUsage` ne se voit
+pas. ⚠️ **C'était vrai du bureau fixe et faux du reste** : sur le clip Call of
+Duty, TU1 coûte **trois fois** le temps d'encodage de TU7. Le défaut du moteur ne
+change pas — il était déjà au bon bout de l'échelle — mais le raisonnement, si.
+
+**Protocole.** Clip CoD 1440p60 relancé en kiosque plein écran sur l'écran
+capturé avant **chaque** passe (mêmes secondes du même métrage), stream HEVC
+1080p60, 20 Mbit/s, intra-refresh, 10 s par passe, banc `--native-bench` vers un
+puits.
+
+⚠️ **Ce banc est saturé, et il faut le dire avant les chiffres.** L'N95 décode le
+clip 1440p60 *et* encode 1080p60 sur les mêmes 24 EU. Quatre passes du réglage
+par défaut donnent 51,4 / 60,9 / 70,2 / 77,8 ms — **±20 % de dispersion**. Rien
+en dessous d'un facteur ~1,5 n'est mesurable ici.
+
+| Réglage | fps | encode moy / p95 / p99 (ms) | Ko/frame |
+|---|---|---|---|
+| **(défaut)** | 16,8 | **51,40** / 81,92 / 147,46 | 67,3 |
+| `extbrc=1` | 17,1 | 49,40 / 90,11 / 134,49 | 64,8 |
+| `dpb=1` | 14,4 | 51,72 / 98,30 / 294,91 | 63,5 |
+| `gaming=1` | 13,5 | 54,44 / 106,50 / 196,61 | 62,1 |
+| `vbv=1` | 14,5 | 55,40 / 114,69 / 196,61 | 66,2 |
+| `tu=4` | 14,8 | 57,16 / 114,69 / 183,39 | 65,6 |
+| `mbbrc=1` | 13,1 | 60,65 / 106,50 / 360,45 | 67,8 |
+| `vbv=2` | 12,0 | 67,26 / 122,88 / 524,29 | 65,4 |
+| `lowdelaybrc=1` | 9,3 | 71,94 / 196,61 / 648,94 | 66,6 |
+| `mbbrc=0` | 11,1 | 72,02 / 212,99 / 360,45 | 65,9 |
+| `winbrc=60` | 11,4 | 72,36 / 180,22 / 267,47 | 66,7 |
+| `tu=1` | 6,1 | **141,35** / 245,76 / 965,98 | 69,2 |
+| `lowpower=0` | 4,5 | **185,90** / 393,22 / 633,88 | 65,3 |
+
+**Deux réglages sortent du bruit, et ce sont les deux que le moteur pose déjà.**
+
+- `lowpower=0` — le moteur à shaders au lieu du bloc fixe : **3,6× plus lent**,
+  4,5 fps. VDENC n'est pas une optimisation, c'est la condition d'existence du
+  chemin Intel.
+- `tu=1` — le bout « qualité » du TargetUsage : **2,8× plus lent**, 6 fps, et le
+  débit par image ne bouge pas (69,2 Ko contre 67,3). On paie tout le temps pour
+  rien de visible. TU7, le défaut, est le bon.
+
+**Tout le reste est dans la dispersion du défaut lui-même** (49 à 72 ms, contre
+51–78 pour quatre passes identiques). `extbrc=1` est nominalement le meilleur,
+mais l'écart est plus petit que le bruit : rien à appliquer. Verdict identique à
+NVENC après la campagne du 04/09 et à AMF au §8c — **le moteur était déjà réglé
+juste**, et cette fois on sait aussi *pourquoi* : les deux seuls leviers qui
+comptent sont ceux qu'il pose.
+
+⚠️ `winbrc=60` a fait mourir une passe entière (`still executing`) avant que le
+plafond d'attente ne soit relevé : la fenêtre glissante coûte assez cher pour
+qu'une image dépasse la seconde sur ce matériel.
+
+⚠️ **Le clic→photon n'a pas pu être mesuré sur ce banc.** Le drapeau
+click-to-photon exige un build debug (`LatencyFlag` est gaté sur `QT_DEBUG`) ;
+un vrai build Debug est dix fois trop lent ici (notre passe de conversion passe
+de 0,4 à 10,6 ms), donc un arbre Release portant seulement `QT_DEBUG` a été bâti
+pour la mesure. L'hôte confirme chaque clic (« [LatencyFlag] injected click at
+1711,1056 ») mais la sonde du navigateur ne voit **jamais** le drapeau dans
+l'image décodée — ni sur le clip, ni sur un bureau fixe où le pipeline est sain.
+La contre-vérification par capture d'écran sur le banc ne tranche pas : `BitBlt`
+ne voit pas une fenêtre *layered*, donc « rien vu » n'y prouve rien. Deux bugs
+réels ont été trouvés en montant cette mesure (§21.8), mais **le chiffre lui-même
+n'est pas acquis**, et il ne faut pas en inventer un.
+
 ## 9. Pour l'A/B
 
 Le banc encode vers un puits ; l'A/B se fait sur un vrai flux. Une session
@@ -554,6 +619,8 @@ MoonlightWeb.exe --native-bench display=1,gpu=2,seconds=10,bitrate=40000
 
 Clés d'encodeur : `preset=1..7`, `tuning=ull|ll`, `multipass=off|quarter|full`,
 `aq=0|1`, `taq=0|1`, `preanalysis=0|1`, `quality=speed|balanced|quality`,
-`tu=1..7`, `vbv=<frames>`, `lowlatency=0|1`, `gpu=<id>`. Le contenu est affaire d'opérateur : ici
+`tu=1..7`, `vbv=<frames>`, `lowlatency=0|1`, `gpu=<id>`, et pour Intel
+`lowpower=0|1`, `mbbrc=0|1`, `extbrc=0|1`, `lowdelaybrc=0|1`, `gaming=0|1`,
+`winbrc=<frames>`. Le contenu est affaire d'opérateur : ici
 un Chrome dédié en kiosque sur l'écran capturé (`--user-data-dir` séparé,
 `--kiosk --window-position=<x>,<y>`), relancé avant chaque passe pour le clip.
