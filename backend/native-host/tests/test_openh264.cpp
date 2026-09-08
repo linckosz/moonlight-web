@@ -4,10 +4,16 @@
  */
 #include "native_test_framework.h"
 
+#include <cstdio>
+
+// Only built for Windows and Linux (CMakeLists.txt): macOS uses VideoToolbox,
+// which has its own software fall-back inside the same API, so there is no
+// OpenH264Encoder to link against there — mirrors test_win32_cursor.cpp's
+// pattern for a test whose subject does not exist on every platform.
+#ifdef MW_NATIVE_OPENH264
 #include "encode/OpenH264Encoder.h"
 
 #include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -74,11 +80,15 @@ bool looksLikeAnnexBWithSps(const uint8_t* data, size_t size)
 }
 
 } // namespace
+#endif // MW_NATIVE_OPENH264
 
 void run_openh264_tests()
 {
     SECTION("OpenH264 — the CPU encoder of last resort");
 
+#ifndef MW_NATIVE_OPENH264
+    std::fprintf(stderr, "  skipped: not built on this platform (VideoToolbox covers macOS)\n");
+#else
     // ── Init, first picture is a keyframe with SPS/PPS in band ───────────────
     {
         OpenH264Encoder enc;
@@ -175,4 +185,5 @@ void run_openh264_tests()
             enc.stop();
         }
     }
+#endif // MW_NATIVE_OPENH264
 }
