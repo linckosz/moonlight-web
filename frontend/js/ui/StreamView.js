@@ -718,6 +718,11 @@ export class StreamView {
         this._dragCursor = null;
         this._scaledCursor = null;
         this._scaledCursorPending = null;
+        // The hidden pointer has two spellings, and which one is in use flips
+        // every time the tab comes back. See _hiddenCursor / _applyLocalCursor.
+        this._hideCursorAlt = false;
+        this._hiddenCursorAltCss = null;
+        this._cursorForcePending = false;
         /** Gaming mode focus state: true when pointer lock is active (cursor captured).
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
@@ -6249,9 +6254,7 @@ export class StreamView {
                 // stream, so both showing at once looks like a double cursor.
                 // Keep the arrow over the surrounding letterbox bars.
                 const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
-                if (!IS_TOUCH_DEVICE) {
-                    this.inputEl.style.cursor = inside ? this._pictureCursor() : 'default';
-                }
+                if (!IS_TOUCH_DEVICE) this._applyLocalCursor(inside);
                 // Outside the picture (letterbox bars) → don't move the host cursor.
                 if (!inside) return;
                 const x = Math.round(Math.max(0, Math.min(rawX, rect.width)));
@@ -6312,7 +6315,61 @@ export class StreamView {
         const rawX = clientX - rect.left;
         const rawY = clientY - rect.top;
         const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
+        this._applyLocalCursor(inside);
+    }
+
+    /**
+     * Write the cursor for a point that is (or is not) over the picture.
+     *
+     * The single place that writes it, so the anti-dedupe trick below covers
+     * every path — mousemove, mouseenter, and the focus refresh.
+     *
+     * Chrome remembers the cursor it last APPLIED and ignores a write of that
+     * same value, and it applies nothing at all while the tab is in the
+     * background. Both together are the double cursor after a tab switch: the
+     * hide written while the page was hidden never reached the OS pointer, the
+     * property nonetheless holds 'none', and every mousemove afterwards writes
+     * 'none' again — a no-op. The arrow stays on screen over the host's own
+     * pointer until the session is reloaded.
+     *
+     * So the hidden pointer has two spellings that both hide it (see
+     * _hiddenCursor), and coming back to the tab arms a flip. The flip is spent
+     * on the first write that happens with the window really focused, which
+     * makes that write a genuine value change whenever it lands — the rAF right
+     * after the return if focus is already back, the first mousemove otherwise.
+     */
+    _applyLocalCursor(inside) {
+        if (!this.inputEl) return;
+        if (this._cursorForcePending && document.hasFocus()) {
+            this._cursorForcePending = false;
+            this._hideCursorAlt = !this._hideCursorAlt;
+        }
         this.inputEl.style.cursor = inside ? this._pictureCursor() : 'default';
+    }
+
+    /**
+     * A hidden pointer, in whichever of its two spellings is current.
+     *
+     * `none` and a fully transparent 1×1 bitmap are the same thing on screen
+     * and different strings to the style engine — which is the whole point, see
+     * _applyLocalCursor. The bitmap is drawn rather than pasted in as base64 so
+     * it is transparent by construction: a blank canvas has no pixels set.
+     */
+    _hiddenCursor() {
+        if (!this._hideCursorAlt) return 'none';
+        if (!this._hiddenCursorAltCss) {
+            try {
+                const c = document.createElement('canvas');
+                c.width = 1;
+                c.height = 1;
+                this._hiddenCursorAltCss = `url(${c.toDataURL('image/png')}) 0 0, none`;
+            } catch {
+                // No canvas, no second spelling: the ordinary keyword still
+                // hides the pointer, it just cannot force the transition.
+                this._hiddenCursorAltCss = 'none';
+            }
+        }
+        return this._hiddenCursorAltCss;
     }
 
     /**
@@ -6331,9 +6388,9 @@ export class StreamView {
     _pictureCursor() {
         // The host is drawing it into the frame — showing ours too would be a
         // double cursor.
-        if (!this._hostDrawsCursor) return 'none';
+        if (!this._hostDrawsCursor) return this._hiddenCursor();
         // The host says there is no pointer on that display, or a game hid it.
-        if (!this._hostCursorVisible) return 'none';
+        if (!this._hostCursorVisible) return this._hiddenCursor();
         // The viewer's own pointer, restyled to match what the host is showing.
         // Only when the host could NAME the shape: an application's own artwork
         // has no keyword, and there the bitmap below is the only faithful
@@ -6653,9 +6710,11 @@ export class StreamView {
         // Chrome swallows cursor changes made while the window is unfocused but
         // still caches the value: mousemoves delivered to the unfocused window
         // set 'none' without effect, and every later 'none' is deduplicated, so
-        // the local arrow never hides again (permanent double cursor). Force a
-        // real value transition — visible cursor now, hide decision re-applied
-        // on the next frame — so the update actually reaches the OS cursor.
+        // the local arrow never hides again (permanent double cursor). Arm the
+        // spelling flip so the next write made with focus really back is a value
+        // change the style engine cannot dedupe — see _applyLocalCursor. The
+        // arrow shown meanwhile is what Chrome is drawing anyway.
+        this._cursorForcePending = true;
         this.inputEl.style.cursor = 'default';
         requestAnimationFrame(() => {
             if (this._quitting || !this.inputEl) return;
@@ -6692,9 +6751,7 @@ export class StreamView {
             // after it is applied — which looked exactly like the cursor
             // flashing once and vanishing.
             const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
-            if (!IS_TOUCH_DEVICE) {
-                this.inputEl.style.cursor = inside ? this._pictureCursor() : 'default';
-            }
+            if (!IS_TOUCH_DEVICE) this._applyLocalCursor(inside);
 
             // Over the letterbox bars (outside the picture): leave the host cursor
             // where it is — the client cursor is off the stream surface.
