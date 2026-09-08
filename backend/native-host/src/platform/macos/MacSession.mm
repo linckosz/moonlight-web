@@ -18,6 +18,7 @@
 #include "MacDisplays.h"
 
 #include "../../audio/PacedOpusSink.h"
+#include "../../audio/macos/HostMute.h"
 #include "../../capture/macos/SckCapture.h"
 #include "../../convert/CursorBlend.h"
 #include "../../core/CadenceAlign.h"
@@ -237,6 +238,20 @@ public:
         // gave us somewhere to put it, and never a reason to fail the session.
         // Started BEFORE the capture, because the capture is what feeds it.
         if (m_Callbacks.onAudio) {
+            // Silence the speakers first, on the same terms as Windows: only
+            // when someone is listening at the other end, best effort, and
+            // said in the log either way. Unlike Windows the order carries no
+            // meaning here — the tap is not on the output device's path
+            // (HostMute.h) — but the two platforms stay readable side by side.
+            if (m_Config.muteHostAudio) {
+                std::string how;
+                m_HostMute.engage(how);
+                log::info(std::string("[native] audio: ") + how);
+                // What it achieved is read back into m_Info below: this
+                // function clears m_Info AFTER this point (unlike the Windows
+                // one, which clears it before), so setting the flag here would
+                // be quietly wiped.
+            }
             auto sink = std::make_unique<audio::PacedOpusSink>(m_Callbacks.onAudio);
             std::string audioError;
             if (sink->start("ScreenCaptureKit, 48 kHz stereo", audioError))
@@ -288,6 +303,7 @@ public:
         m_Info.copiesPerFrame = 1;
         m_Info.crossGpuCopy = false;
         m_Info.audio = static_cast<bool>(m_Audio);
+        m_Info.hostMuted = m_HostMute.strategy() != audio::HostMute::Strategy::None;
 
         log::info(std::string("[native] session: ") + m_Display.name + " " +
                   std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + "@" +
@@ -324,12 +340,19 @@ public:
             IOPMAssertionRelease(m_Wake);
             m_Wake = kIOPMNullAssertionID;
         }
-        if (!wasRunning && !m_Encoder && !m_Capture && !m_Audio) return;
+        if (!wasRunning && !m_Encoder && !m_Capture && !m_Audio) {
+            // Nothing was streaming, but a mute may still have been engaged by
+            // a start() that failed after it. The speakers come back either way.
+            m_HostMute.release();
+            return;
+        }
         m_Encoder.reset();
         // The capture goes first: stopping it is what guarantees no audio
         // callback is still in flight when the sink it points at is freed.
         m_Capture.reset();
         m_Audio.reset();
+        // After the capture is closed: the speakers come back.
+        m_HostMute.release();
     }
 
     const SessionInfo& info() const override { return m_Info; }
@@ -1183,6 +1206,10 @@ private:
 
     std::unique_ptr<capture::SckCapture> m_Capture;
     std::unique_ptr<audio::PacedOpusSink> m_Audio;
+    /// The speakers, silenced for the length of the session when the client
+    /// asked for it. Its destructor releases too, so a session torn down by an
+    /// unusual path cannot leave the room mute.
+    audio::HostMute m_HostMute;
     std::unique_ptr<encode::VtEncoder> m_Encoder;
     /// The frame the capture last handed out — the picture the still-screen
     /// floor and the refinement burst re-encode.

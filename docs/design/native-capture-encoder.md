@@ -2938,6 +2938,69 @@ capturent au premier essai, 2 254/2 254.
 déployée : c'est la première fois que le Mac tourne le code du jour et non un
 `native-host` superposé à un serveur vieux d'une semaine.
 
+### 20.14 Couper le son côté hôte : le tap n'est pas sur le chemin (08/09/2026)
+
+Le réglage `mute_host_audio` — coché par défaut chez le client, envoyé depuis
+toujours — n'était lu que par Windows (§24). Sur un Mac, la case ne faisait
+**rien, en silence** : le spectateur entendait le jeu, et la pièce aussi.
+
+**La mesure d'abord, parce que la réponse de Windows ne se transporte pas.** Là-bas
+le loopback WASAPI prélève la sortie du *moteur*, donc le volume principal
+atteint la capture et seul un mute fait par le pilote lui échappe. Le tap de
+ScreenCaptureKit est ailleurs : c'est une seconde sortie du même flux (§20.8),
+alimentée par les applications. Une sonde de banc (une tonalité 440 Hz jouée en
+continu, RMS du tap sur 2,5 s par état) tranche :
+
+| État | RMS du tap |
+|---|---|
+| départ | 0,2997 |
+| point de sortie **muet** | 0,3027 |
+| volume 0,5 | 0,3028 |
+| volume **0** | 0,3029 |
+| restauré | 0,3030 |
+
+Identique au bruit près : **ni le mute ni le volume du périphérique de sortie
+n'est sur le chemin de la capture**. Deux conséquences, et elles simplifient le
+code par rapport à Windows :
+
+- le **volume** est utilisable ici, alors qu'il ne l'a jamais été là-bas ;
+- il n'y a **pas besoin** de la stratégie « router vers un périphérique qui ne
+  pilote aucun haut-parleur » : rien, dans le périphérique de sortie, ne peut
+  retirer le son du flux, donc rendre muet celui que l'utilisateur écoute suffit.
+
+⚠️ La première passe de la sonde avait écrit 0 sur un volume qui **lisait déjà
+0,000** : elle ne prouvait rien du volume, et le tableau ci-dessus est la
+seconde, qui monte à 0,5 avant de redescendre.
+
+**Ce qui est livré.** `audio/macos/HostMute.{h,cpp}` — même forme et même
+contrat que la classe Windows du même nom, deux stratégies : `EndpointMute`
+(`kAudioDevicePropertyMute` sur la sortie par défaut, élément maître ou, à
+défaut, sa paire stéréo) et, pour une sortie qui n'a pas de mute (certains HDMI,
+AirPlay), `VolumeZero`. Déjà muet ou déjà à zéro = revendiqué **sans rien
+sauvegarder**, pour que `release()` ne relève pas un mute qu'il n'a pas posé. Au
+relâchement, un réglage que l'utilisateur a changé entre-temps est laissé tel
+quel. `MacSession` engage avant la capture et relâche après — sur macOS l'ordre
+n'a aucune importance, il n'est là que pour que les deux plateformes se lisent
+côte à côte.
+
+⚠️ Piège attrapé en câblant : `MacSession::start()` remet `m_Info` à zéro
+**après** le bloc audio (l'ordre inverse de Windows), donc le drapeau
+`hostMuted` posé à l'engagement était effacé sans bruit. Il est relu de
+`m_HostMute.strategy()` là où `m_Info.audio` est rempli.
+
+**Vérifié.** `mw-native-tests` 3179/3179 sur le Mac, 3385/3385 sur Windows (le
+test est commun aux deux plateformes depuis ce chapitre). Le test *s'arrange*
+sa précondition : sur une machine déjà muette, il lève le mute pour que la
+branche qui écrit soit celle qui est exercée, et repose ce qu'il a trouvé.
+Et en vrai, sur l'app déployée, l'état lu **de l'extérieur** (`osascript`,
+une fois par seconde) : `muted=false` avant, `true` de la première à la douzième
+seconde de session, `false` à l'instant de l'arrêt et ensuite — pendant que
+l'audio continuait de partir (2 961 paquets, 0 jeté, 29 trames de silence de
+démarrage), une vidéo YouTube jouant sur le Mac.
+
+**Reste** : Linux (rien — `HostMute` n'est inclus que par les sessions Windows
+et macOS), et un worker tué de force laisse le mute posé, comme sous Windows.
+
 ## 21. Intel Quick Sync : la première exécution, et ce qu'elle a cassé (07/09/2026)
 
 Le banc `bench-intel` (Intel N95, UHD Graphics 24 EU, pilote 32.0.101.7088,
@@ -3643,11 +3706,15 @@ hostMuted` dit ce qui a été obtenu, la ligne « streaming … » du moteur por
 
 ### 24.4 Ce qui reste
 
-- **macOS et Linux** : rien. macOS n'a pas de périphérique de boucle du tout (le
-  tap ScreenCaptureKit prélève l'application, §20.8) — couper la sortie revient à
-  changer de périphérique de sortie par défaut, ce que Core Audio permet ;
-  PipeWire permettrait de déplacer les flux vers un sink nul (`mw_null` existe
-  déjà sur le banc). Deux petits chapitres, non ouverts.
+- ~~**macOS et Linux** : rien.~~ ✅ **macOS livré le 08/09 (§20.14)** — et la
+  supposition écrite ici était fausse dans les deux sens : il n'a fallu ni
+  changer de périphérique de sortie par défaut, ni s'inquiéter du volume. Le tap
+  de ScreenCaptureKit n'étant sur le chemin ni du mute ni du volume (mesuré),
+  rendre muette la sortie que l'utilisateur écoute suffit. **Linux reste à
+  faire** : `HostMute` n'est inclus que par les sessions Windows et macOS, donc
+  `mute_host_audio` y est toujours ignoré en silence ; la voie est un sink nul
+  PipeWire où déplacer les flux de lecture — jamais un mute au volume, le
+  moniteur entend ce que le sink joue.
 - La stratégie 2 n'a été vérifiée que par la sonde (Steam Streaming Speakers
   existe sur bench-desk mais le HDMI passe en stratégie 1) : `SetDefaultEndpoint`
   et la remise sont écrits, pas exercés en flux réel.

@@ -120,8 +120,9 @@ struct SessionConfig
     /// GameStream's `localAudioPlayMode=0` does: the viewer hears the game, the
     /// room does not. Best effort — whether the machine has a way to mute its
     /// output without muting the capture is the platform's to find out
-    /// (Windows: audio/windows/HostMute.h), and SessionInfo::hostMuted says
-    /// what happened. False leaves the speakers alone.
+    /// (`audio/windows/HostMute.h`, `audio/macos/HostMute.h`; Linux has none
+    /// yet and says so), and SessionInfo::hostMuted says what happened. False
+    /// leaves the speakers alone.
     bool muteHostAudio = false;
 
     /// A consent the user gave the ScreenCast portal on an earlier session, to

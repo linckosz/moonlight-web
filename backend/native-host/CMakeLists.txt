@@ -105,6 +105,9 @@ elseif(APPLE)
         src/encode/macos/VtEncoder.mm
         src/input/macos/CgInput.mm)
     target_sources(mw-native-host PRIVATE ${MW_NATIVE_MACOS_SOURCES})
+    # Plain C++ against the CoreAudio C API — no Objective-C, hence outside the
+    # ARC list above.
+    target_sources(mw-native-host PRIVATE src/audio/macos/HostMute.cpp)
     set_source_files_properties(${MW_NATIVE_MACOS_SOURCES} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     # ScreenCaptureKit needs macOS 12.3; everything else here is older. The
     # deployment target is the top-level build's business (the .pkg says 12.0
@@ -112,6 +115,7 @@ elseif(APPLE)
     target_link_libraries(mw-native-host PRIVATE
         "-framework ScreenCaptureKit"
         "-framework VideoToolbox"
+        "-framework CoreAudio"
         "-framework CoreMedia"
         "-framework CoreVideo"
         "-framework CoreGraphics"
