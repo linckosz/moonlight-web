@@ -215,6 +215,53 @@ void run_linux_session_tests()
 
     std::fprintf(stderr, "  wrote /tmp/mw-linux-session.h264 — decode it to look at the picture\n");
 
+    // ── And in AV1 ──────────────────────────────────────────────────────────
+    {
+        SECTION("Linux — the same session in AV1");
+        const bool offersAv1 =
+            std::find(gpu->codecs.begin(), gpu->codecs.end(), Codec::Av1) != gpu->codecs.end();
+        if (!offersAv1) {
+            std::fprintf(stderr, "  skipped: this GPU does not offer AV1\n");
+        } else {
+            SessionConfig av1Config = config;
+            av1Config.clientCodecs = {Codec::Av1};
+            std::atomic<int> av1Frames{0};
+            std::atomic<int> av1Keyframes{0};
+            std::ofstream av1Out("/tmp/mw-linux-session.av1", std::ios::binary | std::ios::trunc);
+            std::string av1Ended;
+            std::string av1Error;
+            std::unique_ptr<Session> av1Session = NativeHost::createSession(
+                av1Config,
+                [&](const EncodedFrame& f) {
+                    av1Frames.fetch_add(1);
+                    if (f.keyframe) av1Keyframes.fetch_add(1);
+                    av1Out.write(reinterpret_cast<const char*>(f.data),
+                                 static_cast<std::streamsize>(f.size));
+                },
+                nullptr, nullptr, nullptr, [&](const std::string& reason) { av1Ended = reason; },
+                av1Error);
+            if (!av1Session) {
+                std::fprintf(stderr, "  createSession failed: %s\n", av1Error.c_str());
+                CHECK(false);
+            } else if (!av1Session->start(av1Error)) {
+                std::fprintf(stderr, "  start failed: %s\n", av1Error.c_str());
+                CHECK(false);
+            } else {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                av1Session->requestKeyframe();
+                std::this_thread::sleep_for(std::chrono::milliseconds(700));
+                av1Session->stop();
+                av1Out.close();
+                std::fprintf(stderr, "  %d frame(s), %d keyframe(s)%s\n", av1Frames.load(),
+                             av1Keyframes.load(),
+                             av1Ended.empty() ? "" : (", ended: " + av1Ended).c_str());
+                CHECK(av1Ended.empty());
+                CHECK(av1Frames.load() >= 3);
+                std::fprintf(stderr, "  wrote /tmp/mw-linux-session.av1\n");
+            }
+        }
+    }
+
     // ── The same session again, in HEVC ─────────────────────────────────────
     //
     // Only where the GPU claims it: the probe advertises HEVC exactly when

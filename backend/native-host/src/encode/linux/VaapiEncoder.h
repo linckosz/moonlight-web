@@ -119,6 +119,7 @@ private:
     bool renderRateControl(std::string& error);
     bool renderH264(bool idr, std::string& error);
     bool renderHevc(bool idr, std::string& error);
+    bool renderAv1(bool key, std::string& error);
 
     Codec m_Codec = Codec::H264;
     int m_Width = 0;

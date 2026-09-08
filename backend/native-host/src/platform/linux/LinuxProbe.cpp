@@ -138,10 +138,8 @@ void probeEncoders(const std::string& renderNode, GpuInfo& gpu)
             }
             return false;
         };
-        // Best first, as the Selector expects. Only what VaapiEncoder has a
-        // path for: AV1 is refused there until it has been driven, and a
-        // capability the encoder does not honour is bug B7 — so it is noted for
-        // the log and never claimed.
+        // Best first, as the Selector expects. AV1 is the exception, and the
+        // note below the list says why.
         const bool h264 = encodes(VAProfileH264High) || encodes(VAProfileH264Main) ||
                           encodes(VAProfileH264ConstrainedBaseline);
         const bool hevc = encodes(VAProfileHEVCMain);
@@ -149,9 +147,35 @@ void probeEncoders(const std::string& renderNode, GpuInfo& gpu)
         if (hevc || h264) gpu.encoders.push_back(EncoderApi::VaApi);
         if (hevc) gpu.codecs.push_back(Codec::Hevc);
         if (h264) gpu.codecs.push_back(Codec::H264);
-        log::info("[native] " + gpu.name + ": VA-API " +
-                  (hevc ? (h264 ? "HEVC, H.264" : "HEVC") : (h264 ? "H.264" : "no encoder")) +
-                  (av1 ? ", AV1 (silicon, not yet driven)" : ""));
+        std::string list;
+        for (Codec c : gpu.codecs)
+            list += (list.empty() ? "" : ", ") + std::string(toString(c));
+
+        // ⚠️ AV1 is NOT claimed, and the log says which of the two reasons.
+        //
+        // A profile with an encode entrypoint is not an encoder that can be
+        // configured: the AV1 encoder is described by attributes of its own
+        // (VAConfigAttribEncAV1 and its two extensions), and Mesa 23.2.1 on
+        // gfx1103 answers "not supported" to them while advertising the
+        // profile. Measured 08/09: our own encoder gets as far as
+        // vaEndPicture, and FFmpeg 7.1.1 — a complete AV1 VA-API
+        // implementation, OBU writer and all — fails on the same driver with
+        // "Attribute type:52 is not supported". So the gap is the driver's,
+        // and claiming the codec would be bug B7 (design §19.13).
+        std::string av1Note;
+        if (av1) {
+            VAConfigAttrib av1Attribs[1] = {};
+            av1Attribs[0].type = VAConfigAttribEncAV1;
+            const bool described =
+                vaGetConfigAttributes(display, VAProfileAV1Profile0, VAEntrypointEncSlice,
+                                      av1Attribs, 1) == VA_STATUS_SUCCESS &&
+                av1Attribs[0].value != VA_ATTRIB_NOT_SUPPORTED;
+            av1Note = described ? ", AV1 (silicon and attributes, never driven here)"
+                                : ", AV1 (profile advertised, but this driver has no AV1 encode "
+                                  "attributes — unusable)";
+        }
+        log::info("[native] " + gpu.name + ": VA-API " + (list.empty() ? "no encoder" : list) +
+                  av1Note);
     }
     vaTerminate(display);
     ::close(fd);

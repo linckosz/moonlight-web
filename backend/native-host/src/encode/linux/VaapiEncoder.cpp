@@ -25,6 +25,7 @@
 #include <va/va.h>
 #include <va/va_drm.h>
 #include <va/va_drmcommon.h>
+#include <va/va_enc_av1.h>
 #include <va/va_enc_h264.h>
 #include <va/va_enc_hevc.h>
 
@@ -205,12 +206,7 @@ bool VaapiEncoder::chooseProfile(Codec codec, std::string& error)
         d->profile = pick({VAProfileH264High, VAProfileH264Main, VAProfileH264ConstrainedBaseline});
         break;
     case Codec::Hevc: d->profile = pick({VAProfileHEVCMain}); break;
-    case Codec::Av1:
-        // The driver has it (vainfo lists AV1Profile0 EncSlice on a 780M) and
-        // nothing here has driven it yet. Refused rather than shipped blind —
-        // the capability query does not claim it either.
-        error = "AV1 through VA-API is not implemented yet";
-        return false;
+    case Codec::Av1: d->profile = pick({VAProfileAV1Profile0}); break;
     }
     if (d->profile == VAProfileNone) {
         error = std::string("this GPU has no VA-API encoder for ") + toString(codec);
@@ -773,6 +769,145 @@ bool VaapiEncoder::renderHevc(bool idr, std::string& error)
     return true;
 }
 
+/// AV1, written but unreachable — and the reason is the driver's, not this
+/// code's. `LinuxProbe` never claims AV1 (see the note there), so no session
+/// selects it; what follows is the parameter set a working driver would need,
+/// kept because it is most of the work and because the blockage is measurable
+/// and may lift with a newer Mesa. Where it stops today: init() succeeds,
+/// vaRenderPicture accepts these buffers, and vaEndPicture answers "invalid
+/// VAContextID" — the same wall FFmpeg 7.1.1 hits from the other side with
+/// "Attribute type:52 is not supported" (design §19.13).
+///
+/// What is still missing for a driver that DOES describe its AV1 encoder: the
+/// sequence and frame header OBUs as packed headers, with the bit offsets
+/// (`bit_offset_qindex` and its neighbours) pointing into them so rate control
+/// can patch what it decides. That is a bitstream writer, not a parameter.
+bool VaapiEncoder::renderAv1(bool key, std::string& error)
+{
+    // AV1 counts in superblocks. 64 rather than 128: the smaller block is what
+    // the tile geometry below is written against, and nothing here needs the
+    // compression 128 buys on very large pictures.
+    const uint32_t sbCols = static_cast<uint32_t>((m_Width + 63) / 64);
+    const uint32_t sbRows = static_cast<uint32_t>((m_Height + 63) / 64);
+    const VASurfaceID current = d->recon[d->reconCurrent];
+    const bool predicts = !key && d->referenceSlot >= 0;
+
+    std::vector<VABufferID> buffers;
+    const auto add = [&](VABufferType type, const void* data, unsigned size) {
+        VABufferID id = VA_INVALID_ID;
+        if (vaCreateBuffer(d->display, d->context, type, size, 1, const_cast<void*>(data), &id) !=
+            VA_STATUS_SUCCESS)
+            return false;
+        buffers.push_back(id);
+        return true;
+    };
+
+    if (key) {
+        VAEncSequenceParameterBufferAV1 seq = {};
+        seq.seq_profile = 0; // Main: 8-bit 4:2:0
+        // Levels are indices here, not numbers: 13 is 5.1, the same ceiling the
+        // other two codecs are given.
+        seq.seq_level_idx = 13;
+        seq.seq_tier = 0;
+        seq.intra_period = 0; // no periodic keyframe; the client asks
+        seq.ip_period = 1;    // no B-frames, as everywhere in this engine
+        seq.bits_per_second = static_cast<uint32_t>(m_BitrateKbps) * 1000u;
+        seq.seq_fields.bits.use_128x128_superblock = 0;
+        seq.seq_fields.bits.enable_intra_edge_filter = 1;
+        // Order hints are what let a picture name which reference it predicts
+        // from — the mechanism reference invalidation rides on.
+        seq.seq_fields.bits.enable_order_hint = 1;
+        seq.order_hint_bits_minus_1 = 6; // 7 bits, 128 pictures of range
+        // Deliberately off: every one of these is a tool that costs encode time
+        // for compression this stream does not need, and two of them (warped
+        // motion, ref-frame MVs) make a picture depend on more of the past than
+        // the single reference this engine keeps.
+        seq.seq_fields.bits.enable_filter_intra = 0;
+        seq.seq_fields.bits.enable_interintra_compound = 0;
+        seq.seq_fields.bits.enable_masked_compound = 0;
+        seq.seq_fields.bits.enable_warped_motion = 0;
+        seq.seq_fields.bits.enable_dual_filter = 0;
+        seq.seq_fields.bits.enable_jnt_comp = 0;
+        seq.seq_fields.bits.enable_ref_frame_mvs = 0;
+        seq.seq_fields.bits.enable_superres = 0;
+        seq.seq_fields.bits.enable_cdef = 0;
+        seq.seq_fields.bits.enable_restoration = 0;
+        if (!add(VAEncSequenceParameterBufferType, &seq, sizeof(seq))) {
+            error = "could not create the sequence parameters";
+            return false;
+        }
+    }
+
+    VAEncPictureParameterBufferAV1 pic = {};
+    pic.frame_width_minus_1 = static_cast<uint16_t>(m_Width - 1);
+    pic.frame_height_minus_1 = static_cast<uint16_t>(m_Height - 1);
+    pic.reconstructed_frame = current;
+    pic.coded_buf = d->coded;
+    // The whole ring is the decoded picture buffer; which slot this picture
+    // refreshes is read from reconstructed_frame being one of them.
+    for (int i = 0; i < 8; ++i)
+        pic.reference_frames[i] =
+            i < kReconSurfaces ? d->recon[i] : static_cast<VASurfaceID>(VA_INVALID_SURFACE);
+    // AV1 has seven reference slots to point at; this engine keeps one picture
+    // in flight, so they all point at the same chosen slot and the search is
+    // told to look at LAST only.
+    for (unsigned char& idx : pic.ref_frame_idx)
+        idx = static_cast<uint8_t>(predicts ? d->referenceSlot : 0);
+    pic.ref_frame_ctrl_l0.value = 0;
+    if (predicts) pic.ref_frame_ctrl_l0.fields.search_idx0 = 1; // LAST_FRAME
+    pic.ref_frame_ctrl_l1.value = 0;
+    // Where the probability tables come from: the reference for an inter
+    // picture, nowhere (PRIMARY_REF_NONE) for a key frame.
+    pic.primary_ref_frame = predicts ? 0 : 7;
+    pic.order_hint = static_cast<uint8_t>(m_FrameNum & 0x7F);
+    pic.picture_flags.bits.frame_type = key ? 0 : 1; // KEY : INTER
+    pic.picture_flags.bits.error_resilient_mode = 0;
+    pic.picture_flags.bits.disable_cdf_update = 0;
+    // The frame's own CDF update is dropped: it makes each picture's entropy
+    // state depend only on its reference, which is what keeps a repair after a
+    // named loss self-contained.
+    pic.picture_flags.bits.disable_frame_end_update_cdf = 1;
+    pic.picture_flags.bits.reduced_tx_set = 1;
+    pic.picture_flags.bits.enable_frame_obu = 1;
+    pic.num_tile_groups_minus1 = 0;
+    pic.base_qindex = 128; // a starting point; CBR moves it from here
+    pic.min_base_qindex = 1;
+    pic.max_base_qindex = 255;
+    pic.interpolation_filter = 0;                   // EIGHTTAP
+    pic.mode_control_flags.bits.tx_mode = 2;        // TX_MODE_SELECT
+    pic.mode_control_flags.bits.reference_mode = 0; // SINGLE_REFERENCE
+    // One tile covering the picture: tiles buy parallelism this encoder does
+    // not need and cost compression at the seams.
+    pic.tile_cols = 1;
+    pic.tile_rows = 1;
+    pic.width_in_sbs_minus_1[0] = static_cast<uint16_t>(sbCols - 1);
+    pic.height_in_sbs_minus_1[0] = static_cast<uint16_t>(sbRows - 1);
+    pic.context_update_tile_id = 0;
+    pic.tile_group_obu_hdr_info.bits.obu_has_size_field = 1;
+    if (!add(VAEncPictureParameterBufferType, &pic, sizeof(pic))) {
+        error = "could not create the picture parameters";
+        return false;
+    }
+
+    VAEncTileGroupBufferAV1 tileGroup = {};
+    tileGroup.tg_start = 0;
+    tileGroup.tg_end = 0; // the single tile
+    if (!add(VAEncSliceParameterBufferType, &tileGroup, sizeof(tileGroup))) {
+        error = "could not create the tile group";
+        return false;
+    }
+
+    const VAStatus status =
+        vaRenderPicture(d->display, d->context, buffers.data(), static_cast<int>(buffers.size()));
+    for (VABufferID b : buffers)
+        vaDestroyBuffer(d->display, b);
+    if (status != VA_STATUS_SUCCESS) {
+        error = "the AV1 picture was refused: " + vaText(status);
+        return false;
+    }
+    return true;
+}
+
 bool VaapiEncoder::encode(bool forceKeyframe, uint32_t frameNumber, EncoderOutput& out,
                           std::string& error)
 {
@@ -816,7 +951,9 @@ bool VaapiEncoder::encode(bool forceKeyframe, uint32_t frameNumber, EncoderOutpu
         return false;
     }
     if (m_RateDirty && !renderRateControl(error)) return false;
-    const bool rendered = m_Codec == Codec::H264 ? renderH264(idr, error) : renderHevc(idr, error);
+    const bool rendered = m_Codec == Codec::H264   ? renderH264(idr, error)
+                          : m_Codec == Codec::Hevc ? renderHevc(idr, error)
+                                                   : renderAv1(idr, error);
     if (!rendered) return false;
     status = vaEndPicture(d->display, d->context);
     if (status != VA_STATUS_SUCCESS) {
