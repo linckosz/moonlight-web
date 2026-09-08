@@ -151,11 +151,124 @@
     text-align: center;
     color: var(--text-1);
     text-shadow: 0 0 12px rgba(252, 238, 10, .55);
+    margin: 0;
+  }
+  /* The name and the machine sit on one line, exactly as they do in the
+     application's own header — this page hands over to that one, and the two
+     should not disagree about where the machine's name lives. */
+  .brand-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .75rem;
     margin: 0 0 1.5rem;
+    min-width: 0;
   }
   /* Except when it heads an explanation, where a centred label floating over
      left-aligned prose reads as a mistake. */
-  body[data-state="failed"] .brand { text-align: left; }
+  body[data-state="failed"] .brand-row { justify-content: flex-start; }
+
+  /* ── The machine, and the way to another one ─────────────────────────────
+     A copy of the application's header control, in this page's own palette
+     because this page has no stylesheet to borrow. It is here for the state
+     this page exists to report: the machine did not answer. Without it the
+     failure is a dead end — the owner's OTHER machines are reachable, and
+     nothing on screen would say so.
+
+     Silent when there is nothing to offer: one machine known, or none, and it
+     is a label with no arrow and no hover, because a click that goes nowhere
+     is worse than no click at all. */
+  .instance-menu { position: relative; min-width: 0; }
+  .instance-name {
+    display: block;
+    font-size: .85rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .instance-menu:not(.has-menu) .instance-name { padding: 3px 8px; }
+  .instance-btn {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    max-width: 100%;
+    padding: 3px 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: inherit;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color .12s ease, border-color .12s ease;
+  }
+  .instance-btn:hover,
+  .instance-menu.is-open .instance-btn {
+    background: rgba(255, 255, 255, .06);
+    border-color: var(--border-1);
+  }
+  .instance-btn:hover .instance-name,
+  .instance-menu.is-open .instance-name { color: var(--text-1); }
+  .instance-btn:focus-visible { outline: 1px solid var(--border-2); outline-offset: 1px; }
+  .instance-caret {
+    display: flex;
+    flex-shrink: 0;
+    color: var(--text-3);
+    transition: transform .12s ease, color .12s ease;
+  }
+  .instance-caret svg { width: 14px; height: 14px; }
+  .instance-btn:hover .instance-caret { color: var(--text-2); }
+  .instance-menu.is-open .instance-caret { transform: rotate(180deg); color: var(--text-2); }
+  .instance-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 10;
+    min-width: 220px;
+    max-width: min(320px, calc(100vw - 3rem));
+    padding: 4px;
+    text-align: left;
+    background: var(--surface-2);
+    border: 1px solid var(--border-1);
+    border-radius: 3px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, .5);
+  }
+  .instance-panel-title {
+    margin: 0;
+    padding: 8px 12px 4px;
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .instance-item {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 2px;
+    color: var(--text-1);
+    font-family: inherit;
+    font-size: .85rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .instance-item:hover { background: rgba(255, 255, 255, .06); }
+  .instance-item-icon { display: flex; flex-shrink: 0; color: var(--text-3); }
+  .instance-item-icon svg { width: 15px; height: 15px; }
+  .instance-item-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   h1 {
     font-size: 1.2rem;
     font-weight: 600;
@@ -309,7 +422,13 @@
 <script src="/frame-guard.js"></script>
 <main>
   <div class="inner">
-    <p class="brand">MoonlightWeb</p>
+    <div class="brand-row">
+      <p class="brand">MoonlightWeb</p>
+      <!-- Which machine this address names, and — when this browser knows
+           others — the way to one of them. Filled in by boot.js; hidden until
+           it is, so nothing flashes a placeholder. -->
+      <div class="instance-menu" id="instance-menu" hidden></div>
+    </div>
     <h1 id="stage">Starting…</h1>
     <div class="seal" aria-hidden="true">
       <div class="seal-face">

@@ -738,6 +738,53 @@ export function rememberLastHost(hostId) {
 }
 
 /**
+ * The machines this browser has been to, newest first.
+ *
+ * READ ONLY, and that is the whole relationship: the register is written by the
+ * application (frontend/js/util/instances.js), which is the only code that ever
+ * learns what a machine calls itself — it asks the machine. This page never
+ * reaches one far enough to be told a name, so it can offer the list and must
+ * never add to it or edit it.
+ *
+ * It exists here for the case this page is FOR: the machine did not answer. The
+ * entry page is then the last thing on screen, and without the list it is a dead
+ * end — the owner's other machines are perfectly reachable and nothing on the
+ * page says so. An entry is a name, an identifier already in the address bar,
+ * and a date; there is no credential in any of it.
+ *
+ * Anything malformed is dropped rather than repaired: this is shared storage,
+ * a future version may write fields this one does not know, and a menu that
+ * silently skips a row it cannot read is better than one that renders "undefined".
+ */
+export function knownInstances() {
+    try {
+        const raw = JSON.parse(localStorage.getItem('mw-instances') || '[]');
+        if (!Array.isArray(raw)) return [];
+        return (
+            raw
+                .filter(
+                    (e) =>
+                        e &&
+                        typeof e.id === 'string' &&
+                        ID_SHAPE.test(e.id) &&
+                        typeof e.name === 'string' &&
+                        e.name &&
+                        typeof e.url === 'string' &&
+                        e.url,
+                )
+                // By name, like the application's own copy of this menu. The two are
+                // the same list seen from two pages, and a row that moves between
+                // them is a row that has to be read twice.
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+        );
+    } catch {
+        // No storage, or a value this build cannot parse. The page keeps working
+        // and simply has nothing to offer, which is what it did before.
+        return [];
+    }
+}
+
+/**
  * The identifier this page is bound to, or null.
  *
  * Four places, most specific first, and each earns its place:

@@ -25,6 +25,7 @@ import {
     Tunnel,
     hostIdFromLocation,
     hostKeyFromLocation,
+    knownInstances,
     landingPathFromLocation,
     shareTokenFromLocation,
     rememberLastHost,
@@ -37,6 +38,7 @@ const ui = {
     bar: document.getElementById('bar'),
     status: document.getElementById('status'),
     note: document.getElementById('note'),
+    instances: document.getElementById('instance-menu'),
 };
 
 function say(stage, detail) {
@@ -157,6 +159,164 @@ function fail(message, hint) {
     document.body.dataset.state = 'failed';
     say('Not connected', message);
     if (ui.note) ui.note.textContent = hint || '';
+}
+
+/* ── The machine, and the way to another one ───────────────────────────────
+ *
+ * This page is the one that says "your machine did not answer", and until now
+ * that was where it stopped. It is a bad place to stop: the person reading it
+ * very likely has two or three machines, the other ones are switched on, and
+ * nothing on screen offered a way to any of them. So the register the
+ * application keeps — every machine this browser has actually reached, by name —
+ * is read here and offered beside the product name, in every state, because the
+ * state where it matters most is the one where nothing else works.
+ *
+ * The label is the machine the address names. "No server" when that identifier
+ * matches nothing this browser knows, which is the honest answer to a link that
+ * was mistyped, revoked, or belongs to somebody else — and to the bare address
+ * opened in a browser that has never been anywhere.
+ *
+ * Read-only, always: nothing here writes to that register. Only the application
+ * can, because only the application ever gets close enough to a machine to be
+ * told what it calls itself.
+ */
+
+/** Neither name nor identifier is ours; both are drawn as text, never as HTML. */
+function setText(el, value) {
+    el.textContent = value;
+    return el;
+}
+
+function makeIcon(paths) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const d of paths) {
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('d', d);
+        svg.appendChild(path);
+    }
+    return svg;
+}
+
+const ICON_MONITOR = () =>
+    makeIcon([
+        'M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z',
+        'M8 21h8',
+        'M12 17v4',
+    ]);
+const ICON_CARET = () => makeIcon(['M6 9l6 6 6-6']);
+
+let closeMenu = null;
+
+function paintInstances(hostId) {
+    const mount = ui.instances;
+    if (!mount) return;
+
+    const instances = knownInstances();
+    const current = hostId ? instances.find((e) => e.id === hostId) : null;
+    // An identifier this browser has never reached names nothing it can show.
+    const label = current ? current.name : 'No server';
+    const others = instances.filter((e) => e.id !== hostId);
+
+    if (closeMenu) closeMenu();
+    closeMenu = null;
+    mount.replaceChildren();
+    mount.hidden = false;
+
+    if (others.length === 0) {
+        mount.className = 'instance-menu';
+        const span = setText(document.createElement('span'), label);
+        span.className = 'instance-name';
+        span.title = label;
+        mount.appendChild(span);
+        return;
+    }
+
+    mount.className = 'instance-menu has-menu';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'instance-btn';
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.title = 'Switch to another machine';
+    const name = setText(document.createElement('span'), label);
+    name.className = 'instance-name';
+    btn.appendChild(name);
+    const caret = document.createElement('span');
+    caret.className = 'instance-caret';
+    caret.appendChild(ICON_CARET());
+    btn.appendChild(caret);
+
+    const panel = document.createElement('div');
+    panel.className = 'instance-panel';
+    panel.setAttribute('role', 'menu');
+    panel.hidden = true;
+    const title = setText(document.createElement('p'), 'Your machines');
+    title.className = 'instance-panel-title';
+    panel.appendChild(title);
+
+    for (const entry of others) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'instance-item';
+        item.setAttribute('role', 'menuitem');
+        const icon = document.createElement('span');
+        icon.className = 'instance-item-icon';
+        icon.appendChild(ICON_MONITOR());
+        item.appendChild(icon);
+        const label2 = setText(document.createElement('span'), entry.name);
+        label2.className = 'instance-item-name';
+        item.appendChild(label2);
+        // The identifier is what the address is built from, not the stored URL:
+        // that URL was written by another page and this one is about to
+        // navigate to it. Same origin, same shape, nothing to trust.
+        item.addEventListener('click', () => {
+            location.href = `/${entry.id}`;
+        });
+        panel.appendChild(item);
+    }
+
+    mount.appendChild(btn);
+    mount.appendChild(panel);
+
+    const onDocClick = (e) => {
+        if (!mount.contains(e.target)) closeMenu();
+    };
+    const onKeyDown = (e) => {
+        if (e.key === 'Escape') {
+            closeMenu();
+            btn.focus();
+        }
+    };
+
+    closeMenu = () => {
+        document.removeEventListener('click', onDocClick);
+        document.removeEventListener('keydown', onKeyDown);
+        panel.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+        mount.classList.remove('is-open');
+    };
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!panel.hidden) {
+            closeMenu();
+            return;
+        }
+        panel.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+        mount.classList.add('is-open');
+        document.addEventListener('click', onDocClick);
+        document.addEventListener('keydown', onKeyDown);
+    });
 }
 
 const STAGE_WORDS = {
@@ -283,6 +443,13 @@ async function fetchShell(tunnel, hostId) {
 
 async function main() {
     const hostId = hostIdFromLocation();
+
+    // Before anything is attempted, and regardless of how it goes. Every path
+    // out of this function ends on a page the person is left looking at, and on
+    // most of them the machine in the address is exactly the one that cannot
+    // help them.
+    paintInstances(hostId);
+
     if (!hostId) {
         fail(
             'This address does not name a machine.',
