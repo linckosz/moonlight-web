@@ -23,7 +23,13 @@
  * automatically in the browser on first launch) covers the same ground by
  * talking to /api/setup/{status,apply}.
  *
- * Steps: config (Internet + host choices) → progress (live checklist) → done.
+ * Steps: config → progress (live checklist) → done, where the config step is
+ * shown in two pages (`_page`): the Internet consent alone, then everything
+ * else. The consent is the only question on this screen that has to be answered
+ * before anything can be applied, so it gets a page of its own and stops
+ * greying out a Done button whose reason sits several sections above it. By the
+ * time page two is on screen the answer is already given, and Done is live from
+ * the first paint — every control on that page can be left exactly as it is.
  *
  * Sunshine appears here only on a machine that cannot host itself. Since the
  * native engine reached macOS and Linux (design §19, §20) the usual first
@@ -43,6 +49,10 @@ export class SetupView {
         this.onComplete = onComplete || (() => {});
 
         this._step = 'loading'; // loading | config | progress | done | error
+        // Which page of the config step is on screen: the Internet consent, or
+        // the rest. An instance that has nothing to ask never shows the first
+        // one (see _configPage).
+        this._page = 'internet'; // internet | options
         this._os = 'Unknown';
         // Can this machine stream itself? `possible` covers "it can, once the
         // user grants something" — see the file header. Until the status call
@@ -153,6 +163,9 @@ export class SetupView {
             this._userValue = fresh ? 'admin' : '';
             this._passValue = fresh ? 'admin' : '';
             this._passMasked = !fresh;
+            // An instance whose link is already up opens straight on page 2 —
+            // there is no consent left to ask it for.
+            this._page = this._internetActive ? 'options' : 'internet';
             this._step = 'config';
         } catch (err) {
             console.error('[Setup] status failed:', err);
@@ -201,7 +214,52 @@ export class SetupView {
             </div>`;
     }
 
+    // The page actually on screen. `_page` is a request, not the answer: an
+    // instance whose link is already up has no consent to ask, so it can never
+    // land on the first page — while a user who answered and then pressed
+    // "change" can go back to it, which is why this is not simply
+    // `_internetNeedsAnswer()`.
+    _configPage() {
+        return this._page === 'internet' && !this._internetActive ? 'internet' : 'options';
+    }
+
     _renderConfig() {
+        return this._configPage() === 'internet'
+            ? this._renderInternetPage()
+            : this._renderOptionsPage();
+    }
+
+    // Page 1 — the consent, and nothing else. No Done button here on purpose:
+    // pressing one of the two answers IS what moves the wizard on, so there is
+    // no disabled control to explain and no second thing to read first.
+    _renderInternetPage() {
+        return `
+            <p class="login-subtitle">${t('setup.intro')}</p>
+            <p class="setup-note">${t('setup.stepCount', { current: 1, total: 2 })}</p>
+
+            <div class="setup-section">
+                <h2 class="setup-section-title">${t('setup.internetTitle')}</h2>
+                <p class="setup-note">${t('setup.internetBody')}</p>
+                <p class="consent-highlight">${t('setup.internetOption')}</p>
+                <div class="setup-choice" role="group"
+                     aria-label="${this.esc(t('setup.internetTitle'))}">
+                    <button type="button" id="btn-internet-skip"
+                            class="btn btn-neutral setup-choice-btn${
+                                this._internetAuth === false ? ' is-chosen' : ''
+                            }" aria-pressed="${this._internetAuth === false}">
+                        ${t('setup.internetSkip')}
+                    </button>
+                    <button type="button" id="btn-internet-accept"
+                            class="btn btn-neutral setup-choice-btn${
+                                this._internetAuth === true ? ' is-chosen' : ''
+                            }" aria-pressed="${this._internetAuth === true}">
+                        ${t('setup.internetAccept')}
+                    </button>
+                </div>
+            </div>`;
+    }
+
+    _renderOptionsPage() {
         // What will stream this machine. Two mutually exclusive shapes: either
         // the app itself does (nothing to install — at most a permission to
         // grant), or it cannot here and Sunshine is offered as before.
@@ -220,6 +278,10 @@ export class SetupView {
             </div>`
             : '';
 
+        // The answer given on page 1, restated with a way back to it. A consent
+        // that scrolled off screen is a consent the user can no longer check,
+        // and this one is recorded — so it stays visible and stays changeable
+        // right up to the moment Done sends it.
         const address = this._publicAddress();
         const internetBlock = this._internetActive
             ? this._okNote(
@@ -228,23 +290,14 @@ export class SetupView {
                       : t('setup.internetActiveLan'),
               )
             : `
-                <p class="setup-note">${t('setup.internetBody')}</p>
-                <p class="consent-highlight">${t('setup.internetOption')}</p>
-                <div class="setup-choice" role="group"
-                     aria-label="${this.esc(t('setup.internetTitle'))}">
-                    <button type="button" id="btn-internet-skip"
-                            class="btn btn-neutral setup-choice-btn${
-                                this._internetAuth === false ? ' is-chosen' : ''
-                            }" aria-pressed="${this._internetAuth === false}">
-                        ${t('setup.internetSkip')}
-                    </button>
-                    <button type="button" id="btn-internet-accept"
-                            class="btn btn-neutral setup-choice-btn${
-                                this._internetAuth === true ? ' is-chosen' : ''
-                            }" aria-pressed="${this._internetAuth === true}">
-                        ${t('setup.internetAccept')}
-                    </button>
-                </div>`;
+                ${
+                    this._internetAuth === true
+                        ? this._okNote(t('setup.internetChosenYes'))
+                        : `<p class="setup-note">${t('setup.internetChosenNo')}</p>`
+                }
+                <button type="button" id="btn-internet-back" class="btn btn-link">
+                    ${t('setup.internetChange')}
+                </button>`;
 
         const autostartBlock = this._autostartInstalled
             ? this._okNote(t('setup.autostartInstalled'))
@@ -279,6 +332,11 @@ export class SetupView {
 
         return `
             <p class="login-subtitle">${t('setup.intro')}</p>
+            ${
+                this._internetActive
+                    ? ''
+                    : `<p class="setup-note">${t('setup.stepCount', { current: 2, total: 2 })}</p>`
+            }
 
             <div class="setup-section">
                 <h2 class="setup-section-title">${t('setup.internetTitle')}</h2>
@@ -295,8 +353,12 @@ export class SetupView {
 
             ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
 
+            <!-- Live from the first paint: the only question that had to be
+                 answered was answered on page 1, and nothing else on this page
+                 has to be touched. The disabled state is left for the seconds
+                 the credential check is running. -->
             <button id="btn-setup-start" class="btn btn-neutral login-submit"
-                    ${this._checking || this._internetNeedsAnswer() ? 'disabled' : ''}>
+                    ${this._checking ? 'disabled' : ''}>
                 ${
                     this._checking
                         ? `<span class="tunnel-spinner"></span>${t('setup.checkingCreds')}`
@@ -496,10 +558,12 @@ export class SetupView {
                     this._keepDisplayAwake = chkDisplay.checked;
                 });
             }
-            // The two Internet buttons re-render: the pressed one takes the
-            // chosen style and Start stops being disabled.
+            // Either Internet button records the answer and turns the page:
+            // answering IS the way forward, so there is no third control to
+            // press and no state where the wizard waits without saying why.
             const choose = (value) => {
                 this._internetAuth = value;
+                this._page = 'options';
                 this.render();
                 this.bindEvents();
             };
@@ -507,6 +571,14 @@ export class SetupView {
             if (skipNet) skipNet.addEventListener('click', () => choose(false));
             const acceptNet = this.container.querySelector('#btn-internet-accept');
             if (acceptNet) acceptNet.addEventListener('click', () => choose(true));
+            // …and back, with the previous answer still shown as chosen.
+            const backNet = this.container.querySelector('#btn-internet-back');
+            if (backNet)
+                backNet.addEventListener('click', () => {
+                    this._page = 'internet';
+                    this.render();
+                    this.bindEvents();
+                });
 
             const start = this.container.querySelector('#btn-setup-start');
             if (start) start.addEventListener('click', () => this._apply());
@@ -629,6 +701,9 @@ export class SetupView {
                     error: result.sunshine_error,
                 });
                 this._step = 'config';
+                // Back to the page the error is about — the consent was given
+                // a page ago and asking for it again would be a step backwards.
+                this._page = 'options';
                 this.render();
                 this.bindEvents();
                 return;

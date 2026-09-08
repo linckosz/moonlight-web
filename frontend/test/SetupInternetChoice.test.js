@@ -8,6 +8,10 @@
  * page cannot be applied while the question is unanswered, neither answer is
  * pre-selected, and what is sent as the agreement is the wording that was on
  * screen. A regression here does not throw — it records an answer nobody gave.
+ *
+ * It is also the first of the config step's two pages, and the reason there are
+ * two: the consent is the only thing on this screen that must be answered, so
+ * it is asked alone and everything after it is optional.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -68,27 +72,44 @@ describe('SetupView — the Internet question', () => {
         expect(buttons).toEqual(['btn-internet-skip', 'btn-internet-accept']);
     });
 
-    it('holds Start until the question is answered', async () => {
+    it('asks the question alone, with nothing else on the page to press', async () => {
         showConfig();
-        expect(startBtn().disabled).toBe(true);
+        // Page one carries the consent and no way past it: the guard is the
+        // shape of the page, not a greyed-out button several sections below the
+        // reason it is grey.
+        expect(startBtn()).toBeNull();
+        expect(container.querySelector('#chk-autostart')).toBeNull();
+        expect(container.querySelector('#chk-display-awake')).toBeNull();
 
-        // And refuses to apply even if something reaches _apply() another way.
+        // And it still refuses to apply if something reaches _apply() another way.
         await view._apply();
         expect(BackendClient.applySetup).not.toHaveBeenCalled();
     });
 
-    it('releases Start once either button is pressed', () => {
+    it('turns the page on either answer, with Done live straight away', () => {
         showConfig();
         skipBtn().click();
-        expect(startBtn().disabled).toBe(false);
         expect(view._internetAuth).toBe(false);
+        expect(skipBtn()).toBeNull();
+        expect(startBtn().disabled).toBe(false);
+    });
+
+    it('restates the answer on page two, and lets it be changed', () => {
+        showConfig();
+        acceptBtn().click();
+        expect(container.innerHTML).toContain('text:setup.internetChosenYes');
+
+        container.querySelector('#btn-internet-back').click();
+        // Back on the question, with the previous answer still chosen — going
+        // back must not silently clear a consent that was given.
+        expect(acceptBtn().getAttribute('aria-pressed')).toBe('true');
+        expect(view._internetAuth).toBe(true);
     });
 
     it('sends the agreement text with an accepted answer, and none with a refusal', async () => {
         showConfig();
         acceptBtn().click();
         expect(view._internetAuth).toBe(true);
-        expect(acceptBtn().getAttribute('aria-pressed')).toBe('true');
 
         await view._apply();
         expect(BackendClient.applySetup).toHaveBeenCalledTimes(1);
