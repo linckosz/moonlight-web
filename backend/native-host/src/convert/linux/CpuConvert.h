@@ -19,6 +19,7 @@
 
 #include "../../capture/linux/KmsCapture.h"
 #include "../../encode/OpenH264Encoder.h"
+#include "../CursorBlend.h"
 #include "../CursorDraw.h"
 
 #include <cstdint>
@@ -49,11 +50,25 @@ namespace mw::native::convert {
 /// One pass over the picture, reading the mapping and writing the three planes;
 /// no intermediate copy. Split across cores in row bands (BgraToI420.h).
 ///
-/// ── What it does not do ─────────────────────────────────────────────────────
+/// ── The pointer ─────────────────────────────────────────────────────────────
 ///
-/// The pointer is not drawn into the picture on this path: a client that draws
-/// its own (the desktop default) is unaffected; the composited mode used for
-/// games gets no pointer here for now, said once in the log.
+/// Composited into the planes after the pass, by the same CursorBlend the other
+/// platforms use — the shape is prepared once per change and the per-frame cost
+/// is the footprint only, a few thousand pixels. It is drawn every convert()
+/// rather than saved and restored: unlike macOS, which re-encodes a held
+/// compositor buffer, this converter rewrites the planes from the scanout each
+/// time, so there is nothing of the previous pointer left to undo.
+///
+/// KMS gives ARGB8888, which DRM defines as PREMULTIPLIED — the convention
+/// CursorBlend prepares for. ⚠️ The GL path's shader uses the straight-alpha
+/// formula on the same data (`mix(rgb, cursor.rgb, cursor.a)`), so the two
+/// differ very slightly on antialiased edges. Noted rather than aligned blind:
+/// only a side-by-side on one machine can say which is right, and neither is
+/// visibly wrong.
+///
+/// `CursorState::invert` is ignored, because on this platform it is always
+/// zero: inverting shapes are a Windows GDI notion, and a DRM cursor plane has
+/// no such thing.
 class CpuConvert
 {
 public:
@@ -78,6 +93,10 @@ public:
     int threads() const { return m_Threads; }
 
 private:
+    /// Composite the pointer into the planes just written. Called at the end of
+    /// convert(), never on its own: it assumes the planes hold this frame.
+    void blendPointer(const capture::CursorState& cursor, const CursorDraw& draw);
+
     bool m_RgbOrder = false;
     int m_SourceWidth = 0;
     int m_SourceHeight = 0;
@@ -86,7 +105,13 @@ private:
     int m_Threads = 1;
     std::vector<uint8_t> m_Planes;
     encode::I420Picture m_Picture;
-    bool m_CursorNoted = false;
+
+    /// The pointer, prepared into I420 code values. Rebuilt only when the shape
+    /// changes — CursorState::shapeVersion is what says so, and a moving
+    /// pointer keeps its shape for thousands of frames.
+    PreparedCursor m_Prepared;
+    uint64_t m_PreparedVersion = 0;
+    bool m_PreparedEmpty = true;
 };
 
 } // namespace mw::native::convert

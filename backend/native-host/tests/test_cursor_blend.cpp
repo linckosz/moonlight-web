@@ -74,6 +74,40 @@ struct Picture
     }
 };
 
+/// The same 4:2:0 picture with the chroma in TWO planes — I420, what the CPU
+/// converter writes because that is what OpenH264 reads. 8-bit only: there is
+/// no 10-bit CPU path.
+struct PlanarPicture
+{
+    int width, height;
+    std::vector<uint8_t> y, u, v;
+
+    PlanarPicture(int w, int h, int luma, int chroma)
+        : width(w)
+        , height(h)
+    {
+        y.assign(static_cast<size_t>(w) * h, static_cast<uint8_t>(luma));
+        u.assign(static_cast<size_t>(w / 2) * (h / 2), static_cast<uint8_t>(chroma));
+        v.assign(static_cast<size_t>(w / 2) * (h / 2), static_cast<uint8_t>(chroma));
+    }
+    int luma(int x, int yy) const { return y[static_cast<size_t>(yy) * width + x]; }
+    int cb(int x, int yy) const { return u[static_cast<size_t>(yy / 2) * (width / 2) + x / 2]; }
+    int cr(int x, int yy) const { return v[static_cast<size_t>(yy / 2) * (width / 2) + x / 2]; }
+    PlaneViews views()
+    {
+        PlaneViews p;
+        p.y = y.data();
+        p.yStride = static_cast<size_t>(width);
+        p.uv = u.data();
+        p.uvStride = static_cast<size_t>(width / 2);
+        p.v = v.data();
+        p.vStride = static_cast<size_t>(width / 2);
+        p.width = width;
+        p.height = height;
+        return p;
+    }
+};
+
 /// A solid premultiplied BGRA square of `size` with `margin` transparent
 /// pixels around it (so the canvas is bigger than the ink, like a real arrow).
 std::vector<uint8_t> square(int canvas, int margin, uint8_t b, uint8_t g, uint8_t r, uint8_t a)
@@ -214,5 +248,74 @@ void run_cursor_blend_tests()
         PlaneViews v2 = pic2.views();
         blendCursor(cbk, CursorPlacement{4.0f, 4.0f, 1.0f}, v2);
         CHECK_EQ(pic2.luma(5, 5), 64);
+    }
+
+    // ── I420: two chroma planes instead of one interleaved ───────────────────
+    //
+    // Same colour, different addressing. What these guard is the addressing —
+    // that Cb and Cr land in their own planes at half the column, and not the
+    // interleaved arithmetic applied to a plane half as wide, which would write
+    // past the row and tint the wrong pixels.
+
+    SECTION("CursorBlend — I420: a white square reads the same 235 / 128 as NV12");
+    {
+        const std::vector<uint8_t> px = square(4, 0, 255, 255, 255, 255);
+        const PreparedCursor c = prepareCursor(px.data(), 4, 4, BlendTarget::Nv12Bt709);
+        PlanarPicture pic(32, 32, 16, 128);
+        PlaneViews v = pic.views();
+        CHECK(v.planarChroma());
+        const BlendRect r = blendCursor(c, CursorPlacement{8.0f, 8.0f, 1.0f}, v);
+        CHECK_EQ(r.x, 8);
+        CHECK_EQ(r.width, 4);
+        CHECK_EQ(pic.luma(9, 9), 235);
+        CHECK_EQ(pic.luma(7, 9), 16); // untouched outside
+        CHECK_EQ(pic.luma(12, 9), 16);
+        CHECK_EQ(pic.cb(9, 9), 128); // white is neutral
+        CHECK_EQ(pic.cr(9, 9), 128);
+    }
+
+    SECTION("CursorBlend — I420: pure blue tints Cb and Cr in their own planes");
+    {
+        const std::vector<uint8_t> blue = square(4, 0, 255, 0, 0, 255);
+        const PreparedCursor c = prepareCursor(blue.data(), 4, 4, BlendTarget::Nv12Bt709);
+        PlanarPicture pic(16, 16, 16, 128);
+        PlaneViews v = pic.views();
+        blendCursor(c, CursorPlacement{4.0f, 4.0f, 1.0f}, v);
+        CHECK(std::abs(pic.luma(5, 5) - 32) <= 1);
+        CHECK(std::abs(pic.cb(5, 5) - 240) <= 1);
+        CHECK(std::abs(pic.cr(5, 5) - 118) <= 1);
+        // Outside the footprint both planes are untouched — the check that
+        // catches a stride mistake, which shows up as a smear to the right.
+        CHECK_EQ(pic.cb(15, 5), 128);
+        CHECK_EQ(pic.cr(15, 5), 128);
+        CHECK_EQ(pic.cb(5, 15), 128);
+    }
+
+    SECTION("CursorBlend — I420: save, blend, restore leaves both chroma planes as they were");
+    {
+        const std::vector<uint8_t> px = square(6, 1, 0, 255, 0, 255);
+        const PreparedCursor c = prepareCursor(px.data(), 6, 6, BlendTarget::Nv12Bt709);
+        PlanarPicture pic(24, 24, 100, 90);
+        for (int yy = 0; yy < 24; ++yy)
+            for (int xx = 0; xx < 24; ++xx)
+                pic.y[static_cast<size_t>(yy) * 24 + xx] = static_cast<uint8_t>(40 + xx + yy);
+        for (int i = 0; i < 12 * 12; ++i) {
+            pic.u[static_cast<size_t>(i)] = static_cast<uint8_t>(60 + i % 40);
+            pic.v[static_cast<size_t>(i)] = static_cast<uint8_t>(200 - i % 40);
+        }
+        const std::vector<uint8_t> beforeY = pic.y, beforeU = pic.u, beforeV = pic.v;
+        PlaneViews v = pic.views();
+        const CursorPlacement place{5.0f, 7.0f, 1.5f};
+        PlanePatch patch;
+        savePatch(v, blendFootprint(c, place, v), patch);
+        CHECK(patch.valid());
+        CHECK(!patch.v.empty()); // the Cr plane was saved too
+        blendCursor(c, place, v);
+        CHECK(pic.y != beforeY);
+        CHECK(pic.u != beforeU);
+        restorePatch(v, patch);
+        CHECK(pic.y == beforeY);
+        CHECK(pic.u == beforeU);
+        CHECK(pic.v == beforeV);
     }
 }

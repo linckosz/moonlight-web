@@ -6,11 +6,14 @@
 
 #if defined(MW_NATIVE_LINUX_GFX)
 #include "capture/linux/KmsCapture.h"
+#include "convert/linux/CpuConvert.h"
 #include "convert/linux/GlConvert.h"
 #include "encode/linux/VaapiEncoder.h"
 
+#include <drm_fourcc.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <va/va.h>
 #include <va/va_drm.h>
@@ -20,6 +23,7 @@
 #endif
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 // The Linux capture and conversion against the real display and the real GPU.
@@ -346,5 +350,104 @@ void run_linux_pipeline_tests()
     // Idempotent teardown, as on Windows.
     kms.stop();
     kms.release();
+#endif
+}
+
+// The CPU chain's pointer, on a scanout this test makes itself.
+//
+// The machines the CPU chain exists for have a LINEAR framebuffer, which is
+// exactly what a memfd can be — so unlike the pass above, this one needs no
+// display, no GPU and no privilege, and runs everywhere including CI. What it
+// pins is the wiring rather than the arithmetic (CursorBlend's own tests cover
+// that): that the pointer lands where the placement says after the frame is
+// scaled, around its hotspot, and nowhere else.
+void run_cpu_cursor_tests()
+{
+    SECTION("Linux — the CPU chain draws the pointer into the picture");
+
+#if !defined(MW_NATIVE_LINUX_GFX)
+    std::fprintf(stderr, "  skipped: Linux graphics backend not built\n");
+#else
+    using namespace mw::native;
+
+    constexpr int kW = 320;
+    constexpr int kH = 180;
+    const int fd = ::memfd_create("mw-fake-scanout", 0);
+    if (fd < 0) {
+        std::fprintf(stderr, "  skipped: memfd_create failed\n");
+        return;
+    }
+    const size_t bytes = static_cast<size_t>(kW) * kH * 4;
+    if (::ftruncate(fd, static_cast<off_t>(bytes)) != 0) {
+        std::fprintf(stderr, "  skipped: ftruncate failed\n");
+        ::close(fd);
+        return;
+    }
+    {
+        // Mid grey, so the white pointer has somewhere to be visible.
+        void* map = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (map == MAP_FAILED) {
+            std::fprintf(stderr, "  skipped: the memfd cannot be mapped\n");
+            ::close(fd);
+            return;
+        }
+        std::memset(map, 0x40, bytes);
+        ::munmap(map, bytes);
+    }
+
+    capture::KmsFrame frame;
+    frame.width = kW;
+    frame.height = kH;
+    frame.planeCount = 1;
+    frame.fds[0] = fd;
+    frame.pitches[0] = static_cast<uint32_t>(kW) * 4;
+    frame.offsets[0] = 0;
+
+    convert::CpuConvert cpu;
+    std::string error;
+    // Output at half size, so the placement has a scale to get wrong.
+    if (!cpu.init(DRM_FORMAT_XRGB8888, kW, kH, kW / 2, kH / 2, error)) {
+        std::fprintf(stderr, "  skipped: %s\n", error.c_str());
+        ::close(fd);
+        return;
+    }
+
+    // An opaque white 8×8 square as the shape, its hotspot in the middle.
+    capture::CursorState cursor;
+    cursor.visible = true;
+    cursor.width = cursor.height = 8;
+    cursor.inkWidth = cursor.inkHeight = 8;
+    cursor.x = 100;
+    cursor.y = 60;
+    cursor.pixels.assign(8 * 8 * 4, 0xFF);
+    cursor.invert.assign(8 * 8, 0);
+    cursor.shapeVersion = 1;
+    convert::CursorDraw draw;
+    draw.magnify = 1.0f;
+    draw.hotspotX = draw.hotspotY = 4;
+
+    CHECK(cpu.convert(frame, cursor, draw, error));
+    const encode::I420Picture& pic = cpu.picture();
+    const auto luma = [&](int x, int y) {
+        return static_cast<int>(pic.y[static_cast<size_t>(y) * pic.strideY + x]);
+    };
+    // Grey 0x40 through BT.709 limited is about 71; the white pointer is 235.
+    const int background = luma(5, 5);
+    CHECK(background > 60 && background < 85);
+    // The shape sits at 100,60 in FRAME pixels and the output is half that, so
+    // it covers 50..54, 30..34 — four output pixels of white.
+    CHECK_EQ(luma(51, 31), 235);
+    CHECK_EQ(luma(53, 33), 235);
+    CHECK_EQ(luma(60, 31), background); // clear of it
+    CHECK_EQ(luma(51, 45), background);
+
+    // Hidden again, and the picture comes back clean: the planes are rewritten
+    // from the scanout every time, so nothing of the pointer survives.
+    capture::CursorState gone;
+    CHECK(cpu.convert(frame, gone, draw, error));
+    CHECK_EQ(luma(51, 31), background);
+    CHECK_EQ(luma(53, 33), background);
+
+    ::close(fd);
 #endif
 }

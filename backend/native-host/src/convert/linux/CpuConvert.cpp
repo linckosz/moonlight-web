@@ -125,12 +125,6 @@ bool CpuConvert::convert(const capture::KmsFrame& frame, const capture::CursorSt
         return false;
     }
 
-    if (cursor.visible && !m_CursorNoted) {
-        m_CursorNoted = true;
-        log::info("[native] the pointer is not drawn into the picture on the CPU path — a client "
-                  "that draws its own is unaffected");
-    }
-
     // The whole first plane. Mapped per frame: the fds are per frame (the
     // capture closes them when the next buffer replaces this one), and a
     // mapping costs far less than the pass that follows it.
@@ -186,7 +180,52 @@ bool CpuConvert::convert(const capture::KmsFrame& frame, const capture::CursorSt
     sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
     ::ioctl(frame.fds[0], DMA_BUF_IOCTL_SYNC, &sync);
     ::munmap(map, length);
+
+    blendPointer(cursor, draw);
     return true;
+}
+
+void CpuConvert::blendPointer(const capture::CursorState& cursor, const CursorDraw& draw)
+{
+    if (!cursor.visible || cursor.inkWidth <= 0 || cursor.width <= 0 || cursor.height <= 0) return;
+    if (m_SourceWidth <= 0 || m_SourceHeight <= 0) return;
+
+    if (cursor.shapeVersion != m_PreparedVersion || m_PreparedEmpty) {
+        m_Prepared = prepareCursor(cursor.pixels.data(), cursor.width, cursor.height,
+                                   BlendTarget::Nv12Bt709);
+        m_PreparedVersion = cursor.shapeVersion;
+        m_PreparedEmpty = m_Prepared.empty();
+    }
+    if (m_Prepared.empty()) return;
+
+    // The shape's position is in captured-frame pixels and the planes are in
+    // output pixels, so everything is scaled by the same ratio the colour pass
+    // used. The magnification grows the pointer around its HOTSPOT, so the tip
+    // of an enlarged arrow stays where the real one is — the same arithmetic as
+    // the GL path, written in pixels instead of normalised coordinates.
+    const float sx = static_cast<float>(m_OutputWidth) / static_cast<float>(m_SourceWidth);
+    const float sy = static_cast<float>(m_OutputHeight) / static_cast<float>(m_SourceHeight);
+    const float magnify = draw.magnify > 1.0f ? draw.magnify : 1.0f;
+
+    CursorPlacement place;
+    place.scale = magnify * sx;
+    place.x = (static_cast<float>(cursor.x + draw.hotspotX) -
+               static_cast<float>(draw.hotspotX) * magnify) *
+              sx;
+    place.y = (static_cast<float>(cursor.y + draw.hotspotY) -
+               static_cast<float>(draw.hotspotY) * magnify) *
+              sy;
+
+    PlaneViews planes;
+    planes.y = m_Planes.data();
+    planes.yStride = static_cast<size_t>(m_Picture.strideY);
+    planes.uv = const_cast<uint8_t*>(m_Picture.u);
+    planes.uvStride = static_cast<size_t>(m_Picture.strideU);
+    planes.v = const_cast<uint8_t*>(m_Picture.v);
+    planes.vStride = static_cast<size_t>(m_Picture.strideV);
+    planes.width = m_OutputWidth;
+    planes.height = m_OutputHeight;
+    blendCursor(m_Prepared, place, planes);
 }
 
 } // namespace mw::native::convert

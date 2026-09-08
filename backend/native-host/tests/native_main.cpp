@@ -26,6 +26,7 @@ void run_pointer_clamp_tests();
 void run_xkb_text_map_tests();
 void run_absolute_map_tests();
 void run_linux_pipeline_tests();
+void run_cpu_cursor_tests();
 void run_linux_session_tests();
 void run_mac_keymap_tests();
 void run_mac_session_tests();
@@ -86,6 +87,7 @@ int main()
     run_absolute_map_tests();
     run_mac_keymap_tests();
     run_linux_pipeline_tests();
+    run_cpu_cursor_tests();
     run_linux_session_tests();
     run_mac_session_tests();
 

@@ -47,7 +47,10 @@
 // multiply-add per plane: out = dst × (1 − a) + contribution. Two targets:
 //
 //  - NV12, BT.709 limited range (the SDR stream): luma and chroma from the
-//    gamma-encoded sRGB values, as every SDR pipeline does;
+//    gamma-encoded sRGB values, as every SDR pipeline does. I420 is the SAME
+//    target: identical code values, only the chroma is two planes instead of
+//    one interleaved, which is addressing (PlaneViews::planarChroma) and not
+//    colour;
 //  - P010, BT.2020 PQ limited range (the HDR stream): sRGB → linear light →
 //    BT.2020 primaries → 203 nits for SDR white → PQ → the NCL matrix ON THE PQ
 //    SIGNAL, in that order (design §16.1) — a pointer blended in gamma space on
@@ -90,11 +93,22 @@ struct PlaneViews
 {
     uint8_t* y = nullptr;
     size_t yStride = 0; ///< bytes per row
+    /// Chroma. Interleaved (NV12, P010): `uv` is the CbCr plane and `v` stays
+    /// null. Planar (I420): `uv` is the Cb plane and `v` the Cr plane — which
+    /// is the shape the CPU converter produces, because that is what OpenH264
+    /// reads.
     uint8_t* uv = nullptr;
-    size_t uvStride = 0; ///< bytes per row of the interleaved CbCr plane
-    int width = 0;       ///< picture size in pixels (even)
+    size_t uvStride = 0;
+    uint8_t* v = nullptr;
+    size_t vStride = 0;
+    int width = 0; ///< picture size in pixels (even)
     int height = 0;
     bool tenBit = false; ///< P010: 16-bit words, the code in the top 10 bits
+
+    /// Two chroma planes rather than one interleaved. The distinction changes
+    /// only the addressing: a chroma sample is one code per plane instead of a
+    /// Cb/Cr pair side by side.
+    bool planarChroma() const { return v != nullptr; }
 };
 
 /// Where the pointer goes: the top-left of the scaled shape in picture
@@ -126,7 +140,8 @@ struct PlanePatch
 {
     BlendRect rect;
     std::vector<uint8_t> y;
-    std::vector<uint8_t> uv;
+    std::vector<uint8_t> uv; ///< the CbCr plane, or the Cb plane when planar
+    std::vector<uint8_t> v;  ///< the Cr plane; empty unless planar
     bool valid() const { return !rect.empty(); }
 };
 
@@ -297,6 +312,7 @@ inline void savePatch(const PlaneViews& planes, const BlendRect& rect, PlanePatc
     patch.rect = rect;
     patch.y.clear();
     patch.uv.clear();
+    patch.v.clear();
     if (rect.empty()) return;
     const size_t bpp = planes.tenBit ? 2 : 1;
     const size_t rowBytes = static_cast<size_t>(rect.width) * bpp;
@@ -305,13 +321,22 @@ inline void savePatch(const PlaneViews& planes, const BlendRect& rect, PlanePatc
         std::memcpy(patch.y.data() + row * rowBytes,
                     planes.y + static_cast<size_t>(rect.y + row) * planes.yStride + rect.x * bpp,
                     rowBytes);
-    const size_t uvRowBytes = static_cast<size_t>(rect.width) * bpp; // width/2 samples × 2
+    // Interleaved: width/2 samples of two codes each, so the row is as wide as
+    // the luma one. Planar: half that, per plane.
+    const size_t uvRowBytes =
+        static_cast<size_t>(planes.planarChroma() ? rect.width / 2 : rect.width) * bpp;
+    const size_t uvX = static_cast<size_t>(planes.planarChroma() ? rect.x / 2 : rect.x) * bpp;
     const int uvRows = rect.height / 2;
     patch.uv.resize(uvRowBytes * uvRows);
     for (int row = 0; row < uvRows; ++row)
         std::memcpy(patch.uv.data() + row * uvRowBytes,
-                    planes.uv + static_cast<size_t>(rect.y / 2 + row) * planes.uvStride +
-                        rect.x * bpp,
+                    planes.uv + static_cast<size_t>(rect.y / 2 + row) * planes.uvStride + uvX,
+                    uvRowBytes);
+    if (!planes.planarChroma()) return;
+    patch.v.resize(uvRowBytes * uvRows);
+    for (int row = 0; row < uvRows; ++row)
+        std::memcpy(patch.v.data() + row * uvRowBytes,
+                    planes.v + static_cast<size_t>(rect.y / 2 + row) * planes.vStride + uvX,
                     uvRowBytes);
 }
 
@@ -326,12 +351,18 @@ inline void restorePatch(PlaneViews& planes, const PlanePatch& patch)
     for (int row = 0; row < rect.height; ++row)
         std::memcpy(planes.y + static_cast<size_t>(rect.y + row) * planes.yStride + rect.x * bpp,
                     patch.y.data() + row * rowBytes, rowBytes);
-    const size_t uvRowBytes = static_cast<size_t>(rect.width) * bpp;
+    const size_t uvRowBytes =
+        static_cast<size_t>(planes.planarChroma() ? rect.width / 2 : rect.width) * bpp;
+    const size_t uvX = static_cast<size_t>(planes.planarChroma() ? rect.x / 2 : rect.x) * bpp;
     const int uvRows = rect.height / 2;
     for (int row = 0; row < uvRows; ++row)
-        std::memcpy(planes.uv + static_cast<size_t>(rect.y / 2 + row) * planes.uvStride +
-                        rect.x * bpp,
+        std::memcpy(planes.uv + static_cast<size_t>(rect.y / 2 + row) * planes.uvStride + uvX,
                     patch.uv.data() + row * uvRowBytes, uvRowBytes);
+    if (!planes.planarChroma() || patch.v.size() != uvRowBytes * static_cast<size_t>(uvRows))
+        return;
+    for (int row = 0; row < uvRows; ++row)
+        std::memcpy(planes.v + static_cast<size_t>(rect.y / 2 + row) * planes.vStride + uvX,
+                    patch.v.data() + row * uvRowBytes, uvRowBytes);
 }
 
 /// Draw `cursor` at `placement` into `planes`. Returns the rectangle touched
@@ -383,8 +414,11 @@ inline BlendRect blendCursor(const PreparedCursor& cursor, const CursorPlacement
     }
     // Chroma, one sample per 2×2 block: the block's mean coverage and mean
     // contribution, so an edge that half-covers a block half-tints it.
+    const bool planar = planes.planarChroma();
     for (int row = 0; row < rect.height; row += 2) {
-        uint8_t* line = planes.uv + static_cast<size_t>((rect.y + row) / 2) * planes.uvStride;
+        const size_t chromaRow = static_cast<size_t>((rect.y + row) / 2);
+        uint8_t* cbLine = planes.uv + chromaRow * planes.uvStride;
+        uint8_t* crLine = planar ? planes.v + chromaRow * planes.vStride : cbLine;
         for (int col = 0; col < rect.width; col += 2) {
             float ma = 0.0f, mcb = 0.0f, mcr = 0.0f;
             for (int dy = 0; dy < 2; ++dy)
@@ -398,12 +432,15 @@ inline BlendRect blendCursor(const PreparedCursor& cursor, const CursorPlacement
             if (ma <= 0.0f) continue;
             mcb *= 0.25f;
             mcr *= 0.25f;
-            const int sample = rect.x + col; // interleaved: Cb at sample, Cr at sample + 1
-            const float dcb = static_cast<float>(detail::readCode(planes, line, sample));
-            const float dcr = static_cast<float>(detail::readCode(planes, line, sample + 1));
-            detail::writeCode(planes, line, sample, dcb * (1.0f - ma) + mcb, chromaLo, chromaHi);
-            detail::writeCode(planes, line, sample + 1, dcr * (1.0f - ma) + mcr, chromaLo,
-                              chromaHi);
+            // Interleaved: the Cb/Cr pair sits side by side, and since the
+            // column is even the byte index equals the pixel column. Planar:
+            // one code per plane at half the column.
+            const int cbIndex = planar ? (rect.x + col) / 2 : rect.x + col;
+            const int crIndex = planar ? cbIndex : cbIndex + 1;
+            const float dcb = static_cast<float>(detail::readCode(planes, cbLine, cbIndex));
+            const float dcr = static_cast<float>(detail::readCode(planes, crLine, crIndex));
+            detail::writeCode(planes, cbLine, cbIndex, dcb * (1.0f - ma) + mcb, chromaLo, chromaHi);
+            detail::writeCode(planes, crLine, crIndex, dcr * (1.0f - ma) + mcr, chromaLo, chromaHi);
         }
     }
     return rect;
