@@ -113,10 +113,8 @@ describe('SetupView — a machine that streams itself', () => {
         expect('native_host_enabled' in sent).toBe(false);
     });
 
-    it('offers no way out where there is nothing to escape, and one where there is', async () => {
-        // Self-hosting: the Internet question is already answered by this
-        // fixture, so Done is live and "skip for now" would be a third door to
-        // a state nobody chose.
+    it('has no way out, because nothing on the page traps anyone', async () => {
+        // Self-hosting: one question, already answered by this fixture.
         await start(
             status({
                 native: {
@@ -130,13 +128,22 @@ describe('SetupView — a machine that streams itself', () => {
         expect(container.querySelector('#btn-setup-start').disabled).toBe(false);
         expect(container.querySelector('#btn-setup-skip')).toBeNull();
 
-        // ⚠️ Sunshine branch: that one can DEMAND credentials the user may not
-        // have (an installed-but-unpaired Sunshine cannot be unticked), so
-        // without a way out the wizard is a locked door.
+        // ⚠️ The case that used to need an escape hatch: a Sunshine installed
+        // here but not paired, whose password this user may simply not know.
+        // `needPairing` has no checkbox to untick, so demanding credentials made
+        // the wizard a locked door. Pairing is optional now — leave the fields
+        // empty and DONE goes through, pairing later from the hosts page.
         await start(
             status({ sunshine: { installed: true, paired: false, can_auto_install: true } }),
         );
-        expect(container.querySelector('#btn-setup-skip')).not.toBeNull();
+        expect(container.querySelector('#btn-setup-skip')).toBeNull();
+
+        await view._apply();
+
+        expect(view._error).toBe('');
+        expect(view._step).not.toBe('config');
+        expect(BackendClient.applySetup).toHaveBeenCalled();
+        expect(view._activeSteps).not.toContain('pairing');
     });
 
     it('never asks to install Sunshine, even when one is installed here already', async () => {

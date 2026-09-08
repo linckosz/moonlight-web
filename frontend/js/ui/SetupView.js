@@ -302,25 +302,7 @@ export class SetupView {
                         ? `<span class="tunnel-spinner"></span>${t('setup.checkingCreds')}`
                         : t('setup.done')
                 }
-            </button>
-            ${
-                // ⚠️ "Skip for now" survives on the Sunshine branch ONLY, and it
-                // is not a preference: that branch can DEMAND credentials the
-                // user may not have. An installed-but-unpaired Sunshine sets
-                // `needPairing` with no way to untick it, so _apply() refuses
-                // without a username and password — and with no way out, the
-                // wizard becomes a locked door on the machine of someone who
-                // simply does not know Sunshine's password.
-                //
-                // A machine that hosts itself asks exactly one question (the
-                // Internet link) and it has a "no" button, so there is nothing
-                // to skip past: a third door would only be a way to leave the
-                // machine in a state nobody chose.
-                this._nativePossible
-                    ? ''
-                    : `<button id="btn-setup-skip" class="btn btn-link u-mt-2"
-                    ${this._checking ? 'disabled' : ''}>${t('setup.skip')}</button>`
-            }`;
+            </button>`;
     }
 
     // This machine hosts itself: state it, and name the one thing the app cannot
@@ -528,8 +510,6 @@ export class SetupView {
 
             const start = this.container.querySelector('#btn-setup-start');
             if (start) start.addEventListener('click', () => this._apply());
-            const skip = this.container.querySelector('#btn-setup-skip');
-            if (skip) skip.addEventListener('click', () => this._skip());
         } else if (this._step === 'done') {
             const finish = this.container.querySelector('#btn-setup-finish');
             if (finish) finish.addEventListener('click', () => this._finish());
@@ -575,8 +555,21 @@ export class SetupView {
             !this._nativePossible && this._sunshineInstalled && !this._sunshinePaired;
         const haveCreds = !!user && !!pass;
 
-        // Require credentials when they will actually be used (install or pairing).
-        if ((willInstall || needPairing) && !haveCreds) {
+        // Credentials are required for an INSTALL — we are creating that account,
+        // and creating it without a password is not a thing.
+        //
+        // ⚠️ Pairing is different, and used to be treated the same: an already
+        // installed Sunshine has credentials we do not know, `needPairing` has
+        // no checkbox to untick, and demanding them here made the wizard a door
+        // someone who simply does not know Sunshine's password could not walk
+        // through. That is what "skip for now" was really for, and removing the
+        // button without removing the reason would only have hidden the trap.
+        //
+        // So pairing is now optional: fill the fields to pair on the spot,
+        // leave them empty and pair later from the hosts page — which is where
+        // pairing belongs anyway, on the user's initiative (see the native case
+        // just above, which has always worked that way).
+        if (willInstall && !haveCreds) {
             this._error = t('setup.credsRequired');
             this.render();
             this.bindEvents();
@@ -779,24 +772,22 @@ export class SetupView {
         }
     }
 
-    // Skip the wizard: mark setup complete server-side with no actions, and
-    // dismiss it persistently for this browser (the startup gate re-shows the
-    // wizard while steps are missing unless this flag is set).
+    // ⚠️ There is no _skip() any more, and no "skip for now" button.
     //
-    // Reachable only from the Sunshine branch now — see the button's own note.
-    async _skip() {
-        try {
-            localStorage.setItem('mw_setup_dismissed', '1');
-        } catch (_e) {
-            /* best-effort */
-        }
-        try {
-            await BackendClient.applySetup({ internet_access_authorized: false, sunshine: {} });
-        } catch (_e) {
-            /* best-effort */
-        }
-        this._finish();
-    }
+    // It existed because the page used to make demands rather than offers: it
+    // asked to open the machine to the Internet, and it required Sunshine
+    // credentials to get past. "Skip" was the way out that agreed to nothing —
+    // it marked setup complete, ran no action, and set `mw_setup_dismissed` so
+    // this browser would not be asked again.
+    //
+    // Neither demand is left. The Internet question has its own "no" button,
+    // and pairing an existing Sunshine no longer requires anything (see
+    // _apply): every field on this page can be left alone and DONE still works.
+    // A third button whose only job was to escape questions that no longer trap
+    // anyone would just be one more thing to read.
+    //
+    // `mw_setup_dismissed` is still READ by the startup gate — browsers that
+    // pressed the old button keep their dismissal — and nothing writes it.
 
     _finish() {
         this._stopPolling();
