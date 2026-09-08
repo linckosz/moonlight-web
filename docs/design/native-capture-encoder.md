@@ -1957,9 +1957,10 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 
 ### 19.6 Ce qui reste
 
-Le portail PipeWire en repli — et avec lui l'**AppImage**, qui ne peut porter
-aucune capacité (§19.8) et n'aura de capture que par le portail. **AV1** est
-écrit mais bloqué par le pilote (§19.13), à rouvrir sur un Mesa plus récent.
+Le portail PipeWire en repli — **la poignée de main est faite et vérifiée
+(§19.15)** ; reste le flux PipeWire qui en fait des images, et le rangement du
+jeton de consentement. **AV1** est écrit mais bloqué par le pilote (§19.13), à
+rouvrir sur un Mesa plus récent.
 ~~Le paquet~~ : traité en §19.8 le 05/09 au soir (constaté le même jour : le job
 Linux de `release.yml` n'installait aucune des `-dev`, le `.deb` et le `.rpm`
 publiés embarquaient le stub). ~~HEVC~~ : §19.11. ~~Le premier flux navigateur,
@@ -2001,6 +2002,51 @@ Chrome/Windows, « Negotiated video codec: hevc », décodage matériel, 1920×1
 correctif HEVC du relais les trouve sans avoir à les reconstruire.
 
 Voir §19.13 pour AV1, et §19.14 pour l'invalidation de référence.
+
+### 19.15 Le portail ScreenCast : la poignée de main, et ce que coûte le consentement (08/09/2026)
+
+Le portail est la **seule** route de capture d'une AppImage, qui ne peut porter
+aucune capacité (§19.8). Il n'est joignable que par **D-Bus**, ce qui a imposé
+une décision de licence avant toute ligne de code — voir `native-host/LICENSE.md`
+§ « L'exception sd-bus » : les trois façons de parler D-Bus en C sont copyleft ou
+pires, et **sd-bus (LGPL-2.1+) a été accepté le 08/09 comme exception bornée**, à
+ce seul chemin, plutôt que d'écrire 600 à 1000 lignes de protocole.
+
+**Le piège de la conversation.** Un appel au portail ne rend pas la réponse : il
+rend un **chemin d'objet**, et la réponse arrive plus tard en signal dessus.
+Chaque étape doit donc dériver ce chemin — depuis notre propre nom de bus unique,
+« : » retiré et points en underscores —, s'y abonner, **puis** appeler. Un
+abonnement posé après l'appel rate la réponse et attend indéfiniment.
+
+Ce qui est négocié, et pourquoi : `types=1` (un moniteur, jamais une fenêtre —
+c'est un hôte de bureau) · `cursor_mode=4` **METADATA**, donc le pointeur arrive
+*à côté* de l'image et le client continue de dessiner le sien, comme sur toutes
+les autres plateformes · `persist_mode=2`, qui est ce qui achète le silence.
+
+**Le consentement, mesuré** (bench-mini, portail ScreenCast v4, GNOME 42) :
+
+| Passage | Résultat |
+|---|---|
+| premier, dialogue accepté à la main | nœud 67, 1920×1080, **restore token de 37 octets** |
+| rejoué avec le jeton | **aucun dialogue** |
+| rejoué encore | aucun dialogue — le jeton survit à son usage |
+| **sans** le jeton | **le dialogue revient** |
+
+Donc : **un clic par installation, pas par session**, à condition de ranger le
+jeton. C'est la différence entre un repli acceptable et un produit qui demande la
+permission à chaque lancement — et c'est pour ça que `persist_mode=2` n'est pas
+un détail. ⚠️ Ranger le jeton dans les réglages de l'hôte reste **à faire** avec
+le flux lui-même ; tant que ce n'est pas fait, le dialogue revient à chaque
+session.
+
+⚠️ **Le piège AT_SECURE**, qui a d'abord fait croire à l'absence de portail : une
+capacité de **fichier** met le processus en `AT_SECURE`, et libsystemd refuse
+alors l'adresse du bus venue de l'environnement (`secure_getenv`). Mesuré sur les
+trois cas — sans capacité `AT_SECURE=0`, portail v4 ; capacité sur le binaire
+(le cas de `mw-native-tests`) `AT_SECURE=1`, « No medium found » ; **à travers
+`moonlightweb-launch`, comme le paquet livre, `AT_SECURE=0`, portail v4**. L'app
+livrée est du bon côté parce que le lanceur passe la capacité par un exec qui ne
+gagne rien, ce qui n'est pas un exec sécurisé (§19.8).
 
 ### 19.13 AV1 : écrit, et bloqué par le pilote (08/09/2026)
 
