@@ -1957,8 +1957,9 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 
 ### 19.6 Ce qui reste
 
-**AV1 VA-API** et le portail PipeWire en repli — et avec lui l'**AppImage**, qui
-ne peut porter aucune capacité (§19.8) et n'aura de capture que par le portail.
+Le portail PipeWire en repli — et avec lui l'**AppImage**, qui ne peut porter
+aucune capacité (§19.8) et n'aura de capture que par le portail. **AV1** est
+écrit mais bloqué par le pilote (§19.13), à rouvrir sur un Mesa plus récent.
 ~~Le paquet~~ : traité en §19.8 le 05/09 au soir (constaté le même jour : le job
 Linux de `release.yml` n'installait aucune des `-dev`, le `.deb` et le `.rpm`
 publiés embarquaient le stub). ~~HEVC~~ : §19.11. ~~Le premier flux navigateur,
@@ -1999,11 +2000,66 @@ Chrome/Windows, « Negotiated video codec: hevc », décodage matériel, 1920×1
 60 fps, **8,4 ms**, image juste. Le pilote émet VPS/SPS/PPS à chaque IDR et le
 correctif HEVC du relais les trouve sans avoir à les reconstruire.
 
-⚠️ **AV1 reste refusé** et noté dans le log. Ce n'est pas une limite d'en-têtes —
-`libva 2.14` porte bien `VAEncSequenceParameterBufferAV1` et
-`VAEncPictureParameterBufferAV1`, et `vainfo` liste `AV1Profile0 EncSlice` sur le
-780M — c'est simplement que personne ne l'a piloté, et une capacité que l'encodeur
-n'honore pas est le bug B7.
+Voir §19.13 pour AV1, et §19.14 pour l'invalidation de référence.
+
+### 19.13 AV1 : écrit, et bloqué par le pilote (08/09/2026)
+
+Le jeu de paramètres AV1 est écrit — séquence, image, groupe de tuiles, sur le
+même modèle que les deux autres. Il n'est **pas annoncé** par la sonde, et ce
+n'est pas de la prudence : c'est mesuré.
+
+Un profil avec un point d'entrée d'encodage n'est pas un encodeur configurable.
+L'encodeur AV1 se décrit par des attributs à lui — `VAConfigAttribEncAV1` (52)
+et ses deux extensions — et **Mesa 23.2.1 sur gfx1103 répond « non supporté » à
+ces attributs tout en annonçant le profil**. Les deux bouts le confirment :
+
+| Implémentation | Où elle s'arrête |
+|---|---|
+| la nôtre | `vaEndPicture` → « invalid VAContextID » |
+| **FFmpeg 7.1.1**, complète, écriture des OBU comprise | « Driver does not support some wanted packed headers (wanted 0xb, found 0x3) » puis « **Attribute type:52 is not supported** » |
+
+Qu'une implémentation de référence échoue sur le même pilote est ce qui tranche :
+le manque est **du côté du pilote**, et annoncer le codec serait le bug B7. La
+sonde le dit dans le log en distinguant les deux cas — « profile advertised, but
+this driver has no AV1 encode attributes — unusable » ici, « silicon and
+attributes, never driven here » sur une machine où ils existeraient.
+
+Ce qui resterait à écrire le jour où un pilote les décrit : les **OBU d'en-tête**
+de séquence et d'image en packed headers, avec les décalages de bits
+(`bit_offset_qindex` et ses voisins) pointant dedans pour que le contrôle de
+débit y écrive ce qu'il décide. C'est un écrivain de flux binaire, pas un
+paramètre — et c'est la seule partie qui manque.
+
+### 19.14 Invalidation de référence : une perte coûte un delta (08/09/2026)
+
+`LinuxSession::invalidateReference` forçait une keyframe. Windows répare par un
+delta depuis le 06/09 sur les trois encodeurs (E2) ; Linux était le seul à payer
+une image clé entière à chaque perte — au moment précis où elle coûte le plus
+cher, un lien qui souffre. Or **VA-API donne la liste de références à
+l'application, image par image** : il n'y avait rien à demander au pilote, juste
+un DPB à tenir et un choix à faire.
+
+Cinq surfaces de reconstruction au lieu de deux (quatre références + la
+courante), `max_num_ref_frames = 4`. Chaque slot retient l'image sous **ses deux
+noms** : celui que le récepteur connaît (`EncodedFrame::frameNumber`, le seul
+avec lequel il peut nommer ce qu'il n'a pas reçu) et celui du flux (`frame_num`
+H.264 / POC HEVC, qui repart de la dernière IDR). Toute l'astuce est là :
+l'invalidation parle la première langue, les buffers de paramètres parlent la
+seconde. Invalider `n` invalide **`n` et toute la suite** — chaque image encodée
+après `n` a pu prédire depuis elle.
+
+**Mesuré** (HEVC réel, `mw_drop_test=120`) : 25 pertes nommées, 25 réparations
+par delta, **0 repli sur keyframe**, 0 « Requesting IDR » du client, 0 erreur de
+décodage, **une seule image clé dans toute la session** — celle d'ouverture.
+
+Et la question qui compte vraiment — le pilote honore-t-il la liste, ou fait-il
+comme AMF qu'il fallut juger sur l'image et non sur l'index (§9.10.1) ? Après ces
+25 réparations, l'image du client est **identique à celle d'une IDR fraîche** :
+signature de luma 16×9 en pleine résolution, écart moyen **0,043 niveau**, pire
+cellule 0,2. Aucune dérive.
+
+⚠️ La paire CPU (OpenH264) répond `false` : elle écrit sa propre liste de
+références, et `SessionInfo` le dit au client comme avant.
 
 ### 19.12 Le premier flux navigateur depuis un hôte Linux : le son (08/09/2026)
 
