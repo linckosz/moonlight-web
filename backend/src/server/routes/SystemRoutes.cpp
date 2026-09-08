@@ -573,16 +573,35 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                         gpu = &g;
                         break;
                     }
-            if (gpu) {
-                o["gpu"] = QString::fromStdString(gpu->name);
-                if (!gpu->encoders.empty())
-                    o["encoder"] = QString::fromUtf8(mw::native::toString(gpu->encoders.front()));
-                QString codecs;
-                for (mw::native::Codec c : gpu->codecs)
-                    codecs += (codecs.isEmpty() ? QString() : QStringLiteral(", ")) +
-                              QString::fromUtf8(mw::native::toString(c));
-                o["codecs"] = codecs;
+            if (gpu) o["gpu"] = QString::fromStdString(gpu->name);
+            // What would actually encode this display. A GPU with an encoder
+            // answers for itself; when no GPU in the machine has one, the
+            // machine-level fallback tier does — and it must be NAMED, because
+            // "available: true" beside an empty codec list reads as a host that
+            // cannot stream, which is exactly the machine this tier exists for.
+            const bool gpuEncodes = gpu && !gpu->encoders.empty();
+            const mw::native::FallbackEncoder* fallback =
+                gpuEncodes ? nullptr : mw::native::bestFallback(caps);
+            static const std::vector<mw::native::Codec> kNone;
+            const std::vector<mw::native::Codec>& codecList =
+                gpuEncodes ? gpu->codecs : (fallback ? fallback->codecs : kNone);
+            if (gpuEncodes)
+                o["encoder"] = QString::fromUtf8(mw::native::toString(gpu->encoders.front()));
+            else if (fallback) {
+                o["encoder"] = QString::fromUtf8(mw::native::toString(fallback->api));
+                // The transform's own name, and whether it reached silicon
+                // after all: "no encoder on any GPU" and "encoding on the CPU"
+                // are different answers to the user's real question, which is
+                // whether this machine will keep up.
+                o["encoder_name"] = QString::fromStdString(fallback->name);
+                o["encoder_hardware"] = fallback->hardware;
+                o["encoder_is_fallback"] = true;
             }
+            QString codecs;
+            for (mw::native::Codec c : codecList)
+                codecs += (codecs.isEmpty() ? QString() : QStringLiteral(", ")) +
+                          QString::fromUtf8(mw::native::toString(c));
+            o["codecs"] = codecs;
             displays.append(o);
         }
         obj["displays"] = displays;

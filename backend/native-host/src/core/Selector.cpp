@@ -46,28 +46,6 @@ bool gpuHasCodec(const GpuInfo& gpu, Codec codec)
     return std::find(gpu.codecs.begin(), gpu.codecs.end(), codec) != gpu.codecs.end();
 }
 
-/// The fallback tier's best entry: hardware before CPU, and within each the
-/// order the platform probe established.
-///
-/// "Hardware first" is not a preference, it is the difference between a stream
-/// and a slideshow on the machines this tier exists for. A Media Foundation
-/// transform backed by fixed-function silicon costs the CPU nothing; OpenH264
-/// costs it every macroblock, on a machine that by definition had no encoder to
-/// spare.
-const FallbackEncoder* bestFallback(const Capabilities& caps)
-{
-    const FallbackEncoder* best = nullptr;
-    for (const FallbackEncoder& fb : caps.fallbacks) {
-        if (fb.api == EncoderApi::None || fb.codecs.empty()) continue;
-        if (!best) {
-            best = &fb;
-            continue;
-        }
-        if (fb.hardware && !best->hardware) best = &fb;
-    }
-    return best;
-}
-
 /// The first GPU that can genuinely encode. Only reached when the display's own
 /// GPU cannot — see Selection::crossGpuCopy.
 ///
@@ -90,6 +68,27 @@ bool hasCodec(const std::vector<Codec>& codecs, Codec codec)
 }
 
 } // namespace
+
+/// Hardware before software, then the platform probe's own order.
+///
+/// "Hardware first" is not a preference, it is the difference between a stream
+/// and a slideshow on the machines this tier exists for. A Media Foundation
+/// transform backed by fixed-function silicon costs the CPU nothing; OpenH264
+/// costs it every macroblock, on a machine that by definition had no encoder to
+/// spare.
+const FallbackEncoder* bestFallback(const Capabilities& caps)
+{
+    const FallbackEncoder* best = nullptr;
+    for (const FallbackEncoder& fb : caps.fallbacks) {
+        if (fb.api == EncoderApi::None || fb.codecs.empty()) continue;
+        if (!best) {
+            best = &fb;
+            continue;
+        }
+        if (fb.hardware && !best->hardware) best = &fb;
+    }
+    return best;
+}
 
 bool select(const Capabilities& caps, const SessionConfig& config, Selection& out,
             std::string& error)

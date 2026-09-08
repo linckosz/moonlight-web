@@ -240,6 +240,16 @@ struct Capabilities
     bool anyGpuEncodes() const;
 };
 
+/// The fallback encoder a session would use if it got that far — hardware
+/// before software, then the platform probe's own order. Null when the tier is
+/// empty, and meaningless unless anyGpuEncodes() is false.
+///
+/// Public because two callers must agree: the Selector chooses with it, and
+/// /api/native/status NAMES the result. A status page answering from its own
+/// idea of the order would be a second policy, and the first machine where the
+/// two disagreed would be a machine whose status page lies.
+const FallbackEncoder* bestFallback(const Capabilities& caps);
+
 /// Whether a gamepad can be presented to the OS right now.
 ///
 /// Deliberately NOT a field of Capabilities: a missing gamepad bus never makes

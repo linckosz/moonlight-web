@@ -591,6 +591,42 @@ void run_selector_tests()
         CHECK_EQ(sel.gpu->id, 0);         // still the display's own adapter
     }
 
+    // ── bestFallback() and select() name the SAME encoder ────────────────────
+    //
+    // The status page answers with the first, the session runs on the second.
+    // They are one function now; this is what keeps them one, because the day
+    // they disagree is the day /api/native/status tells a user their machine
+    // will encode on hardware it will not actually use.
+    {
+        Capabilities caps = encoderlessMachine();
+        caps.fallbacks.push_back({EncoderApi::Software, {Codec::H264}, false, "OpenH264"});
+        caps.fallbacks.push_back(
+            {EncoderApi::MediaFoundation, {Codec::H264}, true, "Qualcomm H264 Encoder MFT"});
+        SessionConfig cfg;
+        cfg.displayId = 0;
+        cfg.clientCodecs = {Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        const FallbackEncoder* named = bestFallback(caps);
+        CHECK(named != nullptr);
+        if (named) {
+            CHECK_EQ(named->api, sel.encoder);
+            CHECK_EQ(named->hardware, !sel.cpuEncoder);
+            CHECK_EQ(named->name, std::string("Qualcomm H264 Encoder MFT"));
+        }
+    }
+
+    // An empty tier names nothing rather than the first junk entry: an entry
+    // with no codec is not an encoder, and the machine is simply unable.
+    {
+        Capabilities caps = encoderlessMachine();
+        CHECK(bestFallback(caps) == nullptr);
+        caps.fallbacks.push_back({EncoderApi::Software, {}, false, "OpenH264"});
+        CHECK(bestFallback(caps) == nullptr);
+    }
+
     // ── Hardware outranks the CPU, whatever order the probe pushed them in ────
     //
     // On a Snapdragon this is the difference between a stream and a slideshow:
