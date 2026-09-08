@@ -461,27 +461,13 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                 const bool internetAuth = body.value("internet_access_authorized").toBool(false);
                 const bool autostart = body.value("autostart").toBool(false);
                 const bool keepAwake = body.value("keep_display_awake").toBool(false);
-                // Whether this machine offers its own screen. ABSENT means the
-                // wizard never asked — a machine that cannot host itself — and
-                // the setting is left exactly as it was: recording a "no"
-                // nobody said would switch the host off for good on a box that
-                // may gain the ability later (a driver, a macOS permission).
-                //
-                // This is the only place the answer is written from the UI:
-                // `native_host_enabled` is otherwise a settings.json setting,
-                // edited by hand. The wizard asks the question once, at the one
-                // moment the user is being asked things anyway.
-                if (body.contains("native_host_enabled")) {
-                    appSettings.setNativeHostEnabled(
-                        body.value("native_host_enabled").toBool(true));
-                    // Take the card down (or put it up) now rather than at the
-                    // next restart. The probe service deliberately stays silent
-                    // when the host is switched off — it will not spawn a probe
-                    // for an engine nobody is offered — so there is no signal to
-                    // wait for, and the wizard's next screen would otherwise
-                    // still list a host the user just declined.
-                    computerManager.refreshNativeHost();
-                }
+                // ⚠️ `native_host_enabled` is deliberately NOT accepted here,
+                // nor anywhere else the application can reach. It is true on
+                // every install and is turned off only by an administrator
+                // editing settings.json — documented in the wiki, mentioned
+                // nowhere in the app or the installer. A route that wrote it
+                // would be the first step towards a control that asks every
+                // user a question almost none of them has a reason to answer.
                 const QJsonObject sun = body.value("sunshine").toObject();
                 const bool wantInstall = sun.value("install").toBool(false);
                 const QString user = sun.value("username").toString();
