@@ -140,16 +140,6 @@ export class SettingsView {
         this._statsAvailable = false;
         this._statsGranted = false;
         this._statsWritable = false;
-
-        // "Stream this computer" — the first-run answer, changeable here.
-        // `_supported` is false only when the machine is currently offering
-        // itself AND the engine turns out to be unusable; a machine that is
-        // switched OFF always shows the switch, because otherwise turning it
-        // back on would be impossible from the UI — and an off switch cannot
-        // tell us what the engine could have done.
-        this._nativeHostSupported = false;
-        this._nativeHostEnabled = true;
-        this._nativeHostWritable = false;
     }
 
     async start() {
@@ -163,7 +153,6 @@ export class SettingsView {
         this._chroma444Capability = await chroma444ClientCapability();
         this._canLogout = await this._checkSession();
         await this._loadStatsConsent();
-        await this._loadNativeHost();
         this.render();
         this.bindEvents();
     }
@@ -219,31 +208,6 @@ export class SettingsView {
     }
 
     /**
-     * Turn this machine's own host card on or off. Reverted on failure rather
-     * than left showing a state the backend does not hold — the same rule the
-     * consent switch above follows, and it matters more here: a checkbox that
-     * says "not offered" while the card is still up would send someone looking
-     * for a bug that is only in the UI.
-     */
-    async _setNativeHost(checkbox) {
-        const enabled = checkbox.checked;
-        checkbox.disabled = true;
-        try {
-            await BackendClient.saveStreamingSettings({ native_host_enabled: enabled });
-            this._nativeHostEnabled = enabled;
-            Toast.success(
-                enabled ? t('settings.nativeHostTurnedOn') : t('settings.nativeHostTurnedOff'),
-            );
-        } catch (err) {
-            console.warn('[Settings] could not save the native host choice:', err);
-            checkbox.checked = !enabled;
-            Toast.error(t('stats.choiceSaveFailed'));
-        } finally {
-            checkbox.disabled = false;
-        }
-    }
-
-    /**
      * The privacy block: what leaves this machine, and the switch that stops
      * it. Absent only when the backend would not say — claiming "nothing is
      * sent" without having asked would be the one unacceptable answer.
@@ -273,78 +237,6 @@ export class SettingsView {
                     <h3 class="settings-section-title">${t('stats.settingsTitle')}</h3>
                     ${control}
                     ${noticeDetailsHtml()}
-                </div>`;
-    }
-
-    /**
-     * Read this machine's "stream this computer" answer, and decide whether the
-     * switch is worth showing at all. Never throws: a backend that will not
-     * answer yields no section, which is the same shape the privacy block uses.
-     */
-    async _loadNativeHost() {
-        // Only the machine itself may change it — the settings POST is
-        // localhost-only, so anywhere else the control is shown disabled with
-        // the reason rather than pretending to work.
-        const host = window.location.hostname;
-        this._nativeHostWritable = host === 'localhost' || host === '127.0.0.1';
-        try {
-            const settings = await BackendClient.getStreamingSettings();
-            if (!settings || settings.native_host_enabled === undefined) return;
-            this._nativeHostEnabled = settings.native_host_enabled === true;
-        } catch (_e) {
-            return; // no section rather than a switch showing a guessed state
-        }
-        if (!this._nativeHostEnabled) {
-            // Switched off: always offer the way back. Nothing can tell us what
-            // the engine would do, because we asked it not to look.
-            this._nativeHostSupported = true;
-            return;
-        }
-        try {
-            const native = await BackendClient.getNativeStatus();
-            // `available` is the plain yes; a macOS box waiting on Screen
-            // Recording is a yes that has not happened yet, and both are
-            // machines whose owner has a real choice to make here.
-            this._nativeHostSupported =
-                !!native && (native.available === true || native.reason === 'CapturePermission');
-        } catch (_e) {
-            this._nativeHostSupported = false;
-        }
-    }
-
-    /**
-     * Whether this machine offers its own screen as a host — the answer given
-     * at first run, changeable here so "no" is never a one-way door.
-     *
-     * A machine setting, like the statistics one above and shown the same way:
-     * every browser sees the state, only the machine itself can change it (the
-     * settings POST is localhost-only). A remote viewer gets the checkbox
-     * disabled with the reason rather than a control that would silently do
-     * nothing.
-     *
-     * ⚠️ Not offered at all on a machine that cannot host itself: a switch for
-     * an engine that would not run either way is a question with one true
-     * answer, which is worse than no question.
-     */
-    _renderNativeHostSection() {
-        if (!this._nativeHostSupported) return '';
-        return `
-                <div class="settings-section" id="settings-section-native-host">
-                    <h3 class="settings-section-title">${t('settings.nativeHostTitle')}</h3>
-                    <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-native-host"
-                                   ${this._nativeHostEnabled ? 'checked' : ''}
-                                   ${this._nativeHostWritable ? '' : 'disabled'} />
-                            <span class="settings-checkbox-text">${t('settings.nativeHostToggle')}</span>
-                        </label>
-                        <p class="setting-desc">${t('settings.nativeHostDesc')}</p>
-                        ${
-                            this._nativeHostWritable
-                                ? ''
-                                : `<p class="setting-desc">${t('stats.ownerOnly')}</p>`
-                        }
-                    </div>
                 </div>`;
     }
 
@@ -1333,13 +1225,6 @@ export class SettingsView {
                      operable from the machine itself. -->
                 ${this._renderPrivacySection()}
 
-                <!-- ── This computer ───────────────────────────────────────────
-                     Beside the privacy switch, and shown the same way, because
-                     it is the same kind of answer: about this machine, not
-                     about how this browser watches. It is where a first-run
-                     "no" can be taken back. -->
-                ${this._renderNativeHostSection()}
-
                 <!-- ── Reset ───────────────────────────────────────────────── -->
                 <div class="settings-section">
                     <button class="btn btn-neutral" id="btn-settings-reset">
@@ -1388,14 +1273,6 @@ export class SettingsView {
         const statsChk = this.container.querySelector('#settings-stats-consent');
         if (statsChk) {
             statsChk.addEventListener('change', () => this._setStatsConsent(statsChk));
-        }
-
-        // "Stream this computer": saved on the spot like the consent above, not
-        // through _autoSave() — this is the machine's setting, not one of the
-        // per-browser streaming preferences that block writes back.
-        const nativeChk = this.container.querySelector('#settings-native-host');
-        if (nativeChk) {
-            nativeChk.addEventListener('change', () => this._setNativeHost(nativeChk));
         }
 
         const codecSelect = this.container.querySelector('#settings-video-codec');

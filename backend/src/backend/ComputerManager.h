@@ -197,10 +197,11 @@ public:
     /// layout changes.
     ///
     /// Public because the answer can also change for a reason the probe never
-    /// sees: the owner turning `native_host_enabled` off. The probe service
-    /// stays quiet then — by design, it will not spawn a probe for an engine
-    /// nobody is offered — so the settings route calls this directly and the
-    /// card goes away on the same click instead of at the next restart.
+    /// sees: the owner answering "no" to `native_host_enabled` in the first-run
+    /// wizard. The probe service stays quiet then — by design, it will not
+    /// spawn a probe for an engine nobody is offered — so /api/setup/apply
+    /// calls this directly and the card goes away with the answer, instead of
+    /// at the next restart.
     void refreshNativeHost();
 
 private:
