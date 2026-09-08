@@ -207,7 +207,8 @@ else()
                 pkg_check_modules(MW_LINUX_PORTAL libsystemd)
                 if(MW_LINUX_PORTAL_FOUND)
                     message(STATUS "mw-native-host: ScreenCast portal ON (sd-bus ${MW_LINUX_PORTAL_VERSION}, LGPL — see LICENSE.md)")
-                    target_sources(mw-native-host PRIVATE src/capture/linux/PortalScreenCast.cpp)
+                    target_sources(mw-native-host PRIVATE src/capture/linux/PortalScreenCast.cpp
+                                                          src/capture/linux/PortalCapture.cpp)
                     target_include_directories(mw-native-host SYSTEM PRIVATE ${MW_LINUX_PORTAL_INCLUDE_DIRS})
                     target_link_libraries(mw-native-host PRIVATE ${MW_LINUX_PORTAL_LIBRARIES})
                     # PUBLIC so the tests know whether the route is built.

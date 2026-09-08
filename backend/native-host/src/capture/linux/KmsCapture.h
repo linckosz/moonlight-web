@@ -63,32 +63,10 @@
 
 namespace mw::native::capture {
 
-/// One scanout framebuffer, exported as DMA-BUF planes. Borrowed: the fds
-/// belong to the capture and are valid only until release().
-struct KmsFrame
-{
-    int width = 0;
-    int height = 0;
-    /// DRM fourcc of the buffer, e.g. DRM_FORMAT_XRGB8888.
-    uint32_t fourcc = 0;
-    /// Layout of the memory, DRM_FORMAT_MOD_*. Tiled on every real desktop, and
-    /// the whole reason the frame goes to EGL rather than straight to VA-API.
-    uint64_t modifier = 0;
-
-    /// Planes as GETFB2 reports them. A DCC-compressed AMD buffer has three:
-    /// the pixels, then two of compression metadata — and an importer that is
-    /// only told about the first gets EGL_BAD_MATCH, not a picture.
-    int planeCount = 0;
-    int fds[4] = {-1, -1, -1, -1};
-    uint32_t offsets[4] = {};
-    uint32_t pitches[4] = {};
-
-    /// When the display scanned this frame out — the vblank that presented it,
-    /// on the engine's steady clock. A real measurement, like DDA's
-    /// LastPresentTime, not the moment we noticed.
-    int64_t presentUs = 0;
-    int64_t capturedUs = 0;
-};
+// KmsFrame has moved to CaptureTypes.h: two captures produce it now — this one
+// and PortalCapture — so it belongs with the rest of the vocabulary the session
+// is written against rather than in one producer's header. The name is kept
+// because it is what every converter and the whole Linux session already say.
 
 /// One display as KMS sees it, for the probe and for choosing what to capture.
 struct KmsOutput

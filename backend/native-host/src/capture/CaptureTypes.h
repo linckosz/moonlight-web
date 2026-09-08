@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -30,6 +31,49 @@
 // the session loop are written against these answers once.
 
 namespace mw::native::capture {
+
+/// One Linux frame, as DMA-BUF planes or as mapped memory. Borrowed: the fds
+/// and the pointer belong to the capture and are valid only until release().
+///
+/// Named for KMS because that is where it started and what every converter and
+/// the Linux session already say, but it is produced by BOTH Linux captures now
+/// — the scanout reader and the portal's PipeWire stream — which is why it
+/// lives here with the rest of the shared vocabulary.
+struct KmsFrame
+{
+    int width = 0;
+    int height = 0;
+    /// DRM fourcc of the buffer, e.g. DRM_FORMAT_XRGB8888.
+    uint32_t fourcc = 0;
+    /// Layout of the memory, DRM_FORMAT_MOD_*. Tiled on every real desktop, and
+    /// the whole reason a scanout frame goes to EGL rather than straight to
+    /// VA-API.
+    uint64_t modifier = 0;
+
+    /// Planes as GETFB2 reports them. A DCC-compressed AMD buffer has three:
+    /// the pixels, then two of compression metadata — and an importer that is
+    /// only told about the first gets EGL_BAD_MATCH, not a picture.
+    int planeCount = 0;
+    int fds[4] = {-1, -1, -1, -1};
+    uint32_t offsets[4] = {};
+    uint32_t pitches[4] = {};
+
+    /// Already-mapped pixels, when the producer has them and there is no fd to
+    /// map — which happens on the PORTAL route, where a compositor may hand
+    /// over shared memory rather than a DMA-BUF. Null on the KMS route, always:
+    /// a scanout buffer is a dma-buf or it is nothing.
+    ///
+    /// A consumer that can take either should prefer this when it is set: it is
+    /// the same pixels without the mmap.
+    const uint8_t* mapped = nullptr;
+    size_t mappedSize = 0;
+
+    /// When the display scanned this frame out — the vblank that presented it,
+    /// on the engine's steady clock. A real measurement, like DDA's
+    /// LastPresentTime, not the moment we noticed.
+    int64_t presentUs = 0;
+    int64_t capturedUs = 0;
+};
 
 /// What one acquire() attempt produced.
 enum class AcquireStatus
