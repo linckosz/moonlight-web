@@ -183,6 +183,25 @@ public:
     /// concurrent sessions). File-only kill switch, default true.
     bool streamWorkerEnabled() const;
 
+    // ── Native host ───────────────────────────────────────────────────────────
+    //
+    // Whether this machine offers ITSELF as a host — the
+    // "<hostname> — MoonlightWeb Host" card. Stored as JSON bool
+    // "native_host_enabled", DEFAULT true, file-only and seeded at startup.
+    //
+    // It gates visibility, not installation: the engine stays installed and
+    // intact, it is simply not offered. Set it to false to run MoonlightWeb as
+    // a pure front end for other hosts — Sunshine, Wolf, a private cloud-gaming
+    // rig — where a card pointing at the machine that merely serves the page
+    // would be an invitation to stream the wrong thing.
+    //
+    // Reading it as a positive ("enabled") with a true default means an absent
+    // key, an unreadable file and a fresh install all mean the same thing: the
+    // host is offered, exactly as before this setting existed.
+
+    bool nativeHostEnabled() const;
+    void setNativeHostEnabled(bool enabled);
+
     // ── Update relay ──────────────────────────────────────────────────────────
     //
     // Whether the periodic update check goes through the project's relay

@@ -68,8 +68,17 @@ public:
     /// The single seat this backend has: the machine itself.
     static QString seatId() { return QStringLiteral("self"); }
 
-    /// Whether the native engine can run on this machine right now. Cheap; safe
-    /// to call from a poll. Used to decide whether the host card exists at all.
+    /// Whether the owner of this machine wants it offered as a host at all —
+    /// settings.json "native_host_enabled", default true. A false here is not a
+    /// capability verdict: the engine is installed and would work, it is simply
+    /// not put in anyone's list (someone using MoonlightWeb as a front end for
+    /// other hosts). Checked before the probe on purpose, so a machine that has
+    /// opted out never spawns one.
+    static bool isEnabled();
+
+    /// Whether the native engine can run on this machine right now — enabled by
+    /// the owner AND capable. Cheap; safe to call from a poll. Used to decide
+    /// whether the host card exists at all.
     static bool isAvailable();
 
     /// Why it cannot run, in English, for logs — never shown to a user, who

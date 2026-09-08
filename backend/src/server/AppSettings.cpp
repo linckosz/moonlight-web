@@ -189,6 +189,24 @@ bool AppSettings::streamWorkerEnabled() const
     return obj.value("stream_worker_enabled").toBool(true);
 }
 
+// ── Native host ──────────────────────────────────────────────────────────────
+// Whether this machine offers itself as a host. False hides the native host
+// card without touching the engine: MoonlightWeb then only shows the hosts the
+// user added (Sunshine, Wolf, …).
+
+bool AppSettings::nativeHostEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("native_host_enabled").toBool(true);
+}
+
+void AppSettings::setNativeHostEnabled(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["native_host_enabled"] = enabled;
+    writeAll(obj);
+}
+
 // ── Update relay ─────────────────────────────────────────────────────────────
 // Routes the update check through https://updates.{MW_DOMAIN}, which mirrors the
 // GitHub release and counts installed versions in aggregate. Opt-out, file-only;
@@ -282,6 +300,10 @@ void AppSettings::seedDocumentedDefaults()
     }
     if (!obj.contains("stream_worker_enabled")) {
         obj["stream_worker_enabled"] = true;
+        changed = true;
+    }
+    if (!obj.contains("native_host_enabled")) {
+        obj["native_host_enabled"] = true;
         changed = true;
     }
     if (!obj.contains("update_relay_enabled")) {

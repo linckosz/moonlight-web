@@ -19,6 +19,7 @@
 
 #include "NativeCapabilitiesJson.h"
 #include "../../common/Logger.h"
+#include "../../server/AppSettings.h"
 #include "mw/native/NativeHost.h"
 
 #include <QCoreApplication>
@@ -96,6 +97,13 @@ qint64 NativeProbeService::snapshotAgeMs() const
 void NativeProbeService::refresh()
 {
     if (!m_Remote || m_Probe) return;
+
+    // Nobody will be offered this machine (settings.json native_host_enabled):
+    // spawning a probe in the console session to find out what it could have
+    // done would be a process launched for an answer no one reads. The stale
+    // snapshot stays as it is — every caller that could look at it is behind
+    // the same switch.
+    if (!AppSettings().nativeHostEnabled()) return;
 
     m_Console = ConsoleSession::query();
     if (!m_Console.userPresent) {

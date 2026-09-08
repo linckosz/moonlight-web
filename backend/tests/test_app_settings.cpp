@@ -216,6 +216,22 @@ void run_app_settings_tests()
     // Documented file-only defaults are idempotently seeded.
     s.seedDocumentedDefaults();
     s.audioTimeStretch(); // exercised (value documented as true by default)
+    CHECK(s.readAll().contains("native_host_enabled"));
+
+    // The native host is offered unless someone says otherwise — and an absent
+    // key says nothing, which is the state every install before this setting is
+    // in. Only an explicit false hides the card.
+    {
+        QJsonObject obj = s.readAll();
+        obj.remove("native_host_enabled");
+        s.writeAll(obj);
+        CHECK(s.nativeHostEnabled());
+
+        s.setNativeHostEnabled(false);
+        CHECK(!s.nativeHostEnabled());
+        s.setNativeHostEnabled(true);
+        CHECK(s.nativeHostEnabled());
+    }
 
     // Low-level access.
     QJsonObject all = s.readAll();

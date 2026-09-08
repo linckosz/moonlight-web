@@ -18,6 +18,7 @@
 #include "NativeHostBackend.h"
 
 #include "../../common/Logger.h"
+#include "../../server/AppSettings.h"
 
 extern "C" {
 #include "Limelight.h"
@@ -58,13 +59,22 @@ int appIdToDisplayId(int appId)
 
 } // namespace
 
+bool NativeHostBackend::isEnabled()
+{
+    return AppSettings().nativeHostEnabled();
+}
+
 bool NativeHostBackend::isAvailable()
 {
-    return probeEngine().available;
+    // The owner's answer comes first, and short-circuits: a machine that has
+    // opted out must not pay for a probe — nor, as a service, spawn one in the
+    // console session — to be told about an engine nobody will be offered.
+    return isEnabled() && probeEngine().available;
 }
 
 QString NativeHostBackend::unavailableReason()
 {
+    if (!isEnabled()) return QStringLiteral("disabled by native_host_enabled in settings.json");
     const mw::native::Capabilities caps = probeEngine();
     if (caps.available) return QString();
     return caps.diagnostic.empty() ? QString::fromUtf8(mw::native::toString(caps.reason))

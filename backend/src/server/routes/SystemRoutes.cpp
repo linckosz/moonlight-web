@@ -28,6 +28,7 @@
 #include "backend/GamepadDriver.h"
 #include "backend/SunshineInstaller.h"
 #include "backend/SunshineRestClient.h"
+#include "backend/streambackend/NativeHostBackend.h"
 #include "backend/streambackend/NativeProbeService.h"
 #include "streaming/ConsoleSession.h"
 #include "mw/native/Capabilities.h"
@@ -299,15 +300,30 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // user can give it? Every other reason (no capture API, no encoder, an
         // OS too old, a build with no backend — the AppImage, which can carry no
         // capability) means this machine genuinely needs a host beside it.
+        //
+        // An owner who turned the native host off (native_host_enabled) is
+        // answered as if the machine could not host itself: `possible` false
+        // sends the wizard down the "install a host beside it" branch, which is
+        // precisely the setup that person is building.
         {
-            const mw::native::Capabilities caps = NativeProbeService::instance().snapshot();
             QJsonObject nat;
-            nat["available"] = caps.available;
-            nat["reason"] = QString::fromUtf8(mw::native::toString(caps.reason));
-            nat["needs_permission"] = caps.reason == mw::native::Unavailability::CapturePermission;
-            nat["possible"] = caps.available ||
-                              caps.reason == mw::native::Unavailability::CapturePermission ||
-                              caps.reason == mw::native::Unavailability::NoInteractiveSession;
+            if (!NativeHostBackend::isEnabled()) {
+                nat["available"] = false;
+                nat["enabled"] = false;
+                nat["reason"] = QStringLiteral("Disabled");
+                nat["needs_permission"] = false;
+                nat["possible"] = false;
+            } else {
+                const mw::native::Capabilities caps = NativeProbeService::instance().snapshot();
+                nat["available"] = caps.available;
+                nat["enabled"] = true;
+                nat["reason"] = QString::fromUtf8(mw::native::toString(caps.reason));
+                nat["needs_permission"] =
+                    caps.reason == mw::native::Unavailability::CapturePermission;
+                nat["possible"] = caps.available ||
+                                  caps.reason == mw::native::Unavailability::CapturePermission ||
+                                  caps.reason == mw::native::Unavailability::NoInteractiveSession;
+            }
             obj["native"] = nat;
         }
 
@@ -555,11 +571,28 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // also reports where the desktop is and who is on it, which is the whole
     // difference between "no encoder" and "nobody is logged in yet".
     server.router()->get("/api/native/status", [](const HttpRequest& req) {
-        const mw::native::Capabilities caps = NativeProbeService::instance().snapshot();
         const bool local = req.isLocal && !req.viaTunnel;
+
+        // Switched off in settings.json: the honest answer is "not offered",
+        // and nothing below it applies — there is no probe to report, and the
+        // machine's hardware is none of the caller's business when the engine
+        // is not on offer in the first place.
+        if (!NativeHostBackend::isEnabled()) {
+            QJsonObject off;
+            off["available"] = false;
+            off["enabled"] = false;
+            off["reason"] = QStringLiteral("Disabled");
+            if (local)
+                off["diagnostic"] =
+                    QStringLiteral("disabled by native_host_enabled in settings.json");
+            return HttpResponse::json(off);
+        }
+
+        const mw::native::Capabilities caps = NativeProbeService::instance().snapshot();
 
         QJsonObject obj;
         obj["available"] = caps.available;
+        obj["enabled"] = true;
         obj["reason"] = QString::fromUtf8(mw::native::toString(caps.reason));
         // Where the engine lives, so the page can say "log in at the PC" rather
         // than "unsupported" when that is the actual state.
