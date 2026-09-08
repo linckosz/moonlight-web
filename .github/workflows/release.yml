@@ -681,7 +681,22 @@ jobs:
           security create-keychain -p "" "$KC"
           security set-keychain-settings -lut 21600 "$KC"
           security unlock-keychain -p "" "$KC"
-          echo "$MACOS_SIGN_P12" | base64 --decode > "$RUNNER_TEMP/sign.p12"
+          # macOS's base64 refuses anything outside the alphabet in the stream,
+          # and says only "error decoding base64 input stream" about it. A
+          # secret pasted from Windows (CRLF), wrapped at 64/76 columns by
+          # `openssl base64`, or produced by `certutil -encode` (which frames it
+          # in -----BEGIN----- lines) all land there. Drop the frame, drop every
+          # blank, and let openssl — which is tolerant of both — do the decode.
+          printf '%s' "$MACOS_SIGN_P12" | sed '/^-----/d' | tr -d '[:space:]' |
+            openssl base64 -d -A -out "$RUNNER_TEMP/sign.p12"
+          # A PKCS#12 is an ASN.1 SEQUENCE: it starts 30 82. Checking those two
+          # bytes turns "the secret holds something that is not a .p12" into a
+          # sentence, instead of the unreadable error security(1) gives.
+          if [ ! -s "$RUNNER_TEMP/sign.p12" ] ||
+             [ "$(head -c 2 "$RUNNER_TEMP/sign.p12" | od -An -tx1 | tr -d ' ')" != "3082" ]; then
+            echo "::error title=macOS signing identity unusable::MACOS_SIGN_P12 decoded to something that is not a PKCS#12. Re-export the identity and put the base64 of the .p12 file itself in the secret, e.g. openssl base64 -A -in sign.p12."
+            exit 1
+          fi
           security import "$RUNNER_TEMP/sign.p12" -k "$KC" -P "$MACOS_SIGN_PASSWORD" -T /usr/bin/codesign -A
           rm -f "$RUNNER_TEMP/sign.p12"
           # Let codesign use the key without a UI prompt, and let it FIND the
