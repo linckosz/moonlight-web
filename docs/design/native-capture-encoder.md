@@ -1957,12 +1957,72 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 
 ### 19.6 Ce qui reste
 
-HEVC et AV1 VA-API, le portail PipeWire en repli — et avec lui l'**AppImage**, qui
-ne peut porter aucune capacité (§19.8) et n'aura de capture que par le portail —,
-et le premier flux vers un vrai navigateur depuis un hôte Linux, image et son.
+**AV1 VA-API** et le portail PipeWire en repli — et avec lui l'**AppImage**, qui
+ne peut porter aucune capacité (§19.8) et n'aura de capture que par le portail.
 ~~Le paquet~~ : traité en §19.8 le 05/09 au soir (constaté le même jour : le job
 Linux de `release.yml` n'installait aucune des `-dev`, le `.deb` et le `.rpm`
-publiés embarquaient le stub).
+publiés embarquaient le stub). ~~HEVC~~ : §19.11. ~~Le premier flux navigateur,
+image et son~~ : §19.12.
+
+### 19.11 HEVC par VA-API (08/09/2026)
+
+`renderHevc()` était un refus écrit d'avance, et `LinuxProbe` n'annonçait donc que
+H.264 en le disant — « HEVC (silicon, not yet driven) ». Le silicium du 780M
+encode HEVC depuis toujours ; il manquait le jeu de paramètres. Écrit en miroir
+des choix déjà mesurés sur H.264 (pas de B-frames, une référence, GOP infini,
+CBR au VBV d'une image), avec cinq différences qui ne sont pas cosmétiques :
+
+| Point | H.264 | HEVC | Pourquoi ça compte |
+|---|---|---|---|
+| Unité de bloc | macrobloc 16 | **CTB 64** | la bande d'intra-refresh se compte dedans |
+| Horloge VUI | tick = un **champ** (`time_scale = 2·fps`) | tick = une **image** (`= fps`) | un facteur 2 sur la cadence annoncée au décodeur |
+| `slice_type` | I 2, P 0 | **I 2, P 1** | la numérotation est inversée entre les deux specs |
+| Recadrage | fenêtre de crop dans la séquence | **rien** | la taille codée doit être un entier de blocs minimaux |
+| MV temporels | — | éteints, `collocated_ref_pic_index = 0xFF` | prédire depuis l'image collocated casse de plus quand une référence se perd, or ce flux répare en **nommant** l'image perdue (E2) |
+
+Le recadrage absent est le seul point qui change un comportement visible : le
+buffer de séquence VA-API HEVC n'a pas de fenêtre de crop **et** c'est le pilote
+qui écrit le SPS, donc `init()` aligne la taille codée à 8 **vers le bas** pour ce
+codec et le journalise. Toute résolution courante en est déjà un multiple —
+1920×1080 compris — donc ça ne coûte rien là où ça ne coûte rien, et ça perd au
+pire 7 colonnes ou lignes là où l'alternative serait de donner au décodeur une
+taille que le flux ne sait pas exprimer.
+
+La VUI porte `bitstream_restriction` comme sur H.264 : c'est la leçon B8 (200 ms
+de latence de décodage sur NVENC faute de ce drapeau) et elle vaut pour tout codec
+remis au décodeur matériel d'un navigateur.
+
+**Mesuré sur l'bench-mini** (Radeon 780M, Mesa 23.2.1, libva 1.14) : test de session
+84 images / 2 keyframes / première image clé 26 Ko, relues par `ffprobe` en
+`hevc / Main / 1920×1080 / 84 images` ; **flux navigateur réel** depuis
+Chrome/Windows, « Negotiated video codec: hevc », décodage matériel, 1920×1080 à
+60 fps, **8,4 ms**, image juste. Le pilote émet VPS/SPS/PPS à chaque IDR et le
+correctif HEVC du relais les trouve sans avoir à les reconstruire.
+
+⚠️ **AV1 reste refusé** et noté dans le log. Ce n'est pas une limite d'en-têtes —
+`libva 2.14` porte bien `VAEncSequenceParameterBufferAV1` et
+`VAEncPictureParameterBufferAV1`, et `vainfo` liste `AV1Profile0 EncSlice` sur le
+780M — c'est simplement que personne ne l'a piloté, et une capacité que l'encodeur
+n'honore pas est le bug B7.
+
+### 19.12 Le premier flux navigateur depuis un hôte Linux : le son (08/09/2026)
+
+L'image était prouvée deux fois (VM Debian par la chaîne CPU, bench-mini par
+VA-API) ; **le son ne l'avait jamais été dans un navigateur**, seulement en test
+unitaire par libopus. Relevé le 08/09 sur l'bench-mini, tonalité 440 Hz d'amplitude
+0,25 jouée dans le sink par défaut, mesure par `AnalyserNode` sur le `MediaStream`
+que la page joue réellement :
+
+| Tonalité côté hôte | Crête | RMS | Fondamentale |
+|---|---|---|---|
+| jouée | **0,2538** | 0,1732 | **445 Hz** (bin de 11,7 Hz) |
+| **coupée** | **0** | **0** | — |
+| rejouée | 0,2539 | 0,1764 | 445 Hz |
+
+Une sinusoïde d'amplitude 0,25 a une RMS de 0,177 : ce qui sort du décodeur du
+navigateur est le signal de l'hôte, pas un artefact de mesure — et l'A/B/A le
+prouve mieux qu'une seule lecture, parce qu'une chaîne qui invente du bruit ne
+sait pas se taire sur commande.
 
 ### 19.7 Le son : le moniteur de la sortie par défaut, par PipeWire (05/09/2026)
 
