@@ -1964,10 +1964,11 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 
 ### 19.6 Ce qui reste
 
-Le portail PipeWire en repli — **la poignée de main est faite et vérifiée
-(§19.15)** ; reste le flux PipeWire qui en fait des images, et le rangement du
-jeton de consentement. **AV1** est écrit mais bloqué par le pilote (§19.13), à
-rouvrir sur un Mesa plus récent.
+~~Le portail PipeWire en repli~~ : **fait et vérifié (§19.15)** — une machine
+sans capacité streame. Reste **le rangement du jeton de consentement** côté
+serveur, sans quoi le dialogue revient à chaque session au lieu d'une fois par
+installation. **AV1** est écrit mais bloqué par le pilote (§19.13), à rouvrir
+sur un Mesa plus récent.
 ~~Le paquet~~ : traité en §19.8 le 05/09 au soir (constaté le même jour : le job
 Linux de `release.yml` n'installait aucune des `-dev`, le `.deb` et le `.rpm`
 publiés embarquaient le stub). ~~HEVC~~ : §19.11. ~~Le premier flux navigateur,
@@ -2045,6 +2046,33 @@ permission à chaque lancement — et c'est pour ça que `persist_mode=2` n'est 
 un détail. ⚠️ Ranger le jeton dans les réglages de l'hôte reste **à faire** avec
 le flux lui-même ; tant que ce n'est pas fait, le dialogue revient à chaque
 session.
+
+**La route complète, et ce qu'elle décide en chemin.** `IScreenCapture` sépare
+les deux sources — le lecteur de scanout et le portail — parce que la session
+pose les mêmes questions aux deux ; tout ce qui est propre à une route (chemin
+de carte et connecteur pour KMS, jeton de consentement pour le portail) reste
+sur la classe concrète. La sonde décide (`caps.capture`), `ResolvedTarget` le
+porte, la session obéit : une règle, un endroit.
+
+⚠️ **La liste d'écrans se réduit à une entrée sur la route portail**, et ce n'est
+pas une simplification : le portail ne laisse pas l'application choisir un
+moniteur, c'est l'utilisateur qui le fait dans le dialogue. Offrir les trois
+écrans énumérés serait offrir trois boutons qui font la même chose.
+
+⚠️ **Et une décision qui ne peut pas être prise avant la négociation** : le
+compositeur peut donner de la **mémoire partagée** plutôt qu'un DMA-BUF, et EGL
+ne sait pas importer ça. La paire GPU devient alors impossible quoi que le
+Selector ait choisi, et la session bascule sur la paire CPU en le disant — donc
+**H.264 seulement**. GNOME 42 fait exactement ça sur le banc. `SessionInfo`
+rapporte l'encodeur **réel**, pas celui choisi, pour que le client ne se voie pas
+promettre un codec qu'il ne recevra pas.
+
+**Mesuré, les deux routes** :
+
+| Route | Comment | Résultat |
+|---|---|---|
+| KMS | binaire avec la capacité | 3508/3508, trois passages, session VA-API inchangée |
+| **Portail** | **une copie du binaire, donc sans capacité — l'AppImage exactement** | bascule automatique, nœud ouvert **sans dialogue**, mémoire partagée détectée, paire CPU, **446 708 octets de H.264 1920×1080, 16 images relues par ffprobe**. 3521/3521 |
 
 ⚠️ **Le piège AT_SECURE**, qui a d'abord fait croire à l'absence de portail : une
 capacité de **fichier** met le processus en `AT_SECURE`, et libsystemd refuse
