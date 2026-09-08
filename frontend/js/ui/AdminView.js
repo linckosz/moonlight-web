@@ -109,13 +109,6 @@ export class AdminView {
         this._rdvPollTimer = null;
         this._awaitingRdv = false;
 
-        // Sunshine (local streaming server) state — from /api/setup/status.
-        this._sunshineInstalled = false;
-        this._sunshineCanAutoInstall = false;
-        this._sunshineRunning = false;
-        this._sunshineChecked = false; // status fetched at least once
-        this._os = ''; // 'Windows' | 'macOS' | 'Linux' — gates host-only actions
-
         // Auth / PIN state (default "------" = no valid PIN, 6 digits)
         this._pin = '------';
         this._pinConsumed = false; // true when PIN was used by remote client
@@ -163,7 +156,6 @@ export class AdminView {
         await this._loadState();
         await this._loadInternetState();
         await this._loadSessions();
-        await this._loadSunshineState();
         this.render();
         this.bindEvents();
         // Provisioning may have started Internet Access before the page opened;
@@ -379,115 +371,6 @@ export class AdminView {
         }
         this.render();
         this.bindEvents();
-    }
-
-    // Sunshine install status (localhost only). Reuses the setup wizard's status
-    // endpoint so the admin page can offer a Sunshine install to users who
-    // skipped it (or whose install failed) during first-run setup.
-    async _loadSunshineState() {
-        if (!this._isLocalhost()) return;
-        try {
-            const status = await BackendClient.getSetupStatus();
-            this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
-            this._sunshineCanAutoInstall = !!(status.sunshine && status.sunshine.can_auto_install);
-            this._sunshineRunning = !!(status.sunshine && status.sunshine.running);
-            this._os = status.os || '';
-            this._sunshineChecked = true;
-        } catch (err) {
-            console.warn('[Admin] Failed to load Sunshine status:', err);
-        }
-    }
-
-    // Install Sunshine on demand. Reuses /api/setup/apply with only the Sunshine
-    // step (no Internet/autostart changes). The OS asks for the account password
-    // in a native polkit/authorization dialog; a wrong password surfaces as
-    // sunshine_error (HTTP 200), so we show that rather than a generic failure.
-    async _installSunshine() {
-        const userEl = this.container.querySelector('#admin-sunshine-user');
-        const passEl = this.container.querySelector('#admin-sunshine-pass');
-        const btn = this.container.querySelector('#btn-install-sunshine');
-        const user = (userEl?.value || '').trim();
-        const pass = passEl?.value || '';
-        if (!user || !pass) {
-            Toast.warning(t('admin.sunshineCredsRequired'));
-            return;
-        }
-        if (btn) {
-            btn.disabled = true;
-            btn.classList.add('btn-loading');
-            btn.textContent = t('admin.installingSunshine');
-        }
-        try {
-            const result = await BackendClient.applySetup({
-                internet_access_authorized: false,
-                autostart: false,
-                sunshine: { install: true, username: user, password: pass },
-            });
-            if (result.sunshine_error) {
-                Toast.error(t('admin.sunshineInstallFailed', { message: result.sunshine_error }));
-            } else {
-                Toast.success(t('admin.sunshineInstalledOk'));
-                await this._loadSunshineState();
-                this.render();
-                this.bindEvents();
-                return;
-            }
-        } catch (err) {
-            console.error('[Admin] Failed to install Sunshine:', err);
-            Toast.error(t('admin.sunshineInstallFailed', { message: err.message }));
-        } finally {
-            const b = this.container.querySelector('#btn-install-sunshine');
-            if (b) {
-                b.disabled = false;
-                b.classList.remove('btn-loading');
-                b.textContent = t('admin.installSunshine');
-            }
-        }
-    }
-
-    // Stop the local Sunshine server (host machine). The button only renders on
-    // localhost (see _renderSunshineSection); the endpoint is localhost-only too.
-    async _stopSunshine() {
-        const btn = this.container.querySelector('#btn-stop-sunshine');
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = t('admin.stoppingSunshine');
-        }
-        try {
-            const res = await BackendClient.stopSunshine();
-            if (res.status === 'stopped') Toast.success(t('admin.sunshineStopped'));
-            else Toast.info(t('admin.sunshineNotRunning'));
-        } catch (err) {
-            console.error('[Admin] Failed to stop Sunshine:', err);
-            Toast.error(t('admin.sunshineStopFailed', { message: err.message }));
-        } finally {
-            // Refresh from the real process state and re-render so the button
-            // flips to Start (or stays Stop if it's still up).
-            await this._loadSunshineState();
-            this.render();
-            this.bindEvents();
-        }
-    }
-
-    // Start the local Sunshine server (host machine). Localhost-only, like stop.
-    async _startSunshine() {
-        const btn = this.container.querySelector('#btn-start-sunshine');
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = t('admin.startingSunshine');
-        }
-        try {
-            const res = await BackendClient.startSunshine();
-            if (res.status === 'started') Toast.success(t('admin.sunshineStarted'));
-            else Toast.error(t('admin.sunshineStartFailed', { message: '' }));
-        } catch (err) {
-            console.error('[Admin] Failed to start Sunshine:', err);
-            Toast.error(t('admin.sunshineStartFailed', { message: err.message }));
-        } finally {
-            await this._loadSunshineState();
-            this.render();
-            this.bindEvents();
-        }
     }
 
     async _loadSessions() {
@@ -1131,89 +1014,10 @@ export class AdminView {
                         </div>
                     </div>
                 </div>
-
-                ${this._renderSunshineSection()}
             </div>
         `;
 
         this._markClean();
-    }
-
-    // Sunshine install/status section (localhost only). Lets a user who skipped
-    // Sunshine during setup — or whose install failed — install it from here.
-    _renderSunshineSection() {
-        if (!this._isLocalhost() || !this._sunshineChecked) return '';
-
-        let body;
-        if (this._sunshineInstalled) {
-            // Stop button on macOS/Linux only: there Sunshine runs as a user
-            // process pkill can signal. On Windows it's the LocalSystem
-            // SunshineService (respawns sunshine.exe, and killing it needs
-            // elevation MoonlightWeb's non-elevated logon task doesn't have) —
-            // Windows users manage it from Sunshine's tray / Services instead.
-            // Start/Stop control on macOS/Linux only: there Sunshine runs as a
-            // user process we can pgrep/pkill/launch. On Windows it's the
-            // LocalSystem SunshineService (respawns sunshine.exe, and killing it
-            // needs elevation MoonlightWeb's non-elevated logon task doesn't have)
-            // — Windows users manage it from Sunshine's tray / Services instead.
-            const canControl = this._os && this._os !== 'Windows';
-            let controlBtn = '';
-            if (canControl) {
-                controlBtn = this._sunshineRunning
-                    ? `<button class="btn btn-danger u-mt-2" id="btn-stop-sunshine">
-                            ${t('admin.stopSunshine')}
-                        </button>
-                        <p class="settings-hint">${t('admin.stopSunshineHint')}</p>`
-                    : `<button class="btn btn-neutral u-mt-2" id="btn-start-sunshine">
-                            ${t('admin.startSunshine')}
-                        </button>
-                        <p class="settings-hint">${t('admin.startSunshineHint')}</p>`;
-            }
-            // Reflect the live run state in the status line (running vs stopped).
-            const stateLabel = this._sunshineRunning
-                ? t('admin.sunshineRunning')
-                : t('admin.sunshineStopped2');
-            const stateCls = this._sunshineRunning ? 'setup-ok' : 'setup-warn';
-            const stateMark = this._sunshineRunning ? '<span class="setup-ok-check">✓</span> ' : '';
-            // Sunshine has no desktop window (menu-bar/tray agent) — its settings
-            // live in its own web UI on the local machine (https, port 47990).
-            // Expose a link so users can reach it; this section is localhost-only,
-            // and Sunshine binds that UI to localhost, so the URL is reachable here.
-            const configLink = `
-                <a class="btn btn-neutral u-mt-2" href="https://localhost:47990"
-                   target="_blank" rel="noopener noreferrer" id="link-sunshine-config">
-                    ${t('admin.openSunshineConfig')}
-                </a>
-                <p class="settings-hint">${t('admin.openSunshineConfigHint')}</p>`;
-            body = `<p class="setting-desc ${stateCls}">${stateMark}${this.esc(stateLabel)}</p>
-                    ${controlBtn}
-                    ${configLink}`;
-        } else if (this._sunshineCanAutoInstall) {
-            body = `
-                <p class="setting-desc">${t('admin.sunshineNotInstalled')}</p>
-                <div class="settings-field u-pt-0">
-                    <label class="settings-label" for="admin-sunshine-user">${t('admin.sunshineUsername')}</label>
-                    <input type="text" id="admin-sunshine-user" class="settings-input"
-                           autocomplete="off" value="admin" />
-                </div>
-                <div class="settings-field u-pt-0">
-                    <label class="settings-label" for="admin-sunshine-pass">${t('admin.sunshinePassword')}</label>
-                    <input type="password" id="admin-sunshine-pass" class="settings-input"
-                           autocomplete="off" />
-                </div>
-                <button class="btn btn-neutral u-mt-2" id="btn-install-sunshine">
-                    ${t('admin.installSunshine')}
-                </button>
-                <p class="settings-hint">${t('admin.sunshineInstallHint')}</p>`;
-        } else {
-            body = `<p class="setting-desc">${t('admin.sunshineManual')}</p>`;
-        }
-
-        return `
-            <div class="settings-section">
-                <h3 class="settings-section-title">${t('admin.sunshine')}</h3>
-                <div class="settings-field u-pt-0">${body}</div>
-            </div>`;
     }
 
     // Text shown in each sortable cell. Sorting reads the same values, so the
@@ -1908,24 +1712,6 @@ export class AdminView {
 
         // Sortable column headers of the sessions table
         this._bindSessionSortHeaders(this.container);
-
-        // Install Sunshine button (localhost only)
-        const installSunBtn = this.container.querySelector('#btn-install-sunshine');
-        if (installSunBtn) {
-            installSunBtn.addEventListener('click', () => this._installSunshine());
-        }
-
-        // Stop Sunshine button (localhost only, shown when running)
-        const stopSunBtn = this.container.querySelector('#btn-stop-sunshine');
-        if (stopSunBtn) {
-            stopSunBtn.addEventListener('click', () => this._stopSunshine());
-        }
-
-        // Start Sunshine button (localhost only, shown when installed but stopped)
-        const startSunBtn = this.container.querySelector('#btn-start-sunshine');
-        if (startSunBtn) {
-            startSunBtn.addEventListener('click', () => this._startSunshine());
-        }
 
         // Close button
         const closeBtn = this.container.querySelector('#btn-admin-close');
