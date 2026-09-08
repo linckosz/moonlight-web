@@ -257,6 +257,9 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
         } else if (type == QLatin1String("hostIpTtl")) {
             const int ttl = event["ttl"].toInt();
             if (ttl > 0) emit hostIpTtlObserved(ttl);
+        } else if (type == QLatin1String("portalGrant")) {
+            const QString token = event["token"].toString();
+            if (!token.isEmpty()) emit portalGrantReceived(token);
         } else if (!line.trimmed().isEmpty()) {
             qWarning() << "[StreamWorkerHost] Unknown worker event:" << line.constData();
         }

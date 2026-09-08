@@ -591,6 +591,14 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // The "mute host audio" stream setting, honoured here as the GameStream
         // path honours it through localAudioPlayMode.
         nativeParams.muteHostAudio = m_Config.muteHostAudio;
+        // The portal consent this installation already holds. Only a machine
+        // that captures through the portal has one at all.
+        nativeParams.portalRestoreToken = m_PortalRestoreToken;
+
+        // Forwarded rather than acted on here: whoever owns this session owns
+        // the settings file, and in a worker that is another process entirely.
+        connect(native, &NativeMediaEngine::portalGrantReceived, this,
+                &StreamSession::portalGrantReceived);
 
         startEngine = [native, nativeParams]() { native->startCapture(nativeParams); };
     } else {

@@ -134,8 +134,24 @@ void run_linux_session_tests()
         CHECK(false);
         return;
     }
+    // Registered before start(), which is where the grant happens. Nothing is
+    // EXPECTED here: this run replays a stored token, so the portal raises no
+    // dialog and has no new consent to hand back. What is checked is the other
+    // half — that a session which asked for nothing does not report a grant,
+    // because a host that trusted a spurious one would overwrite a token that
+    // works with one that may not.
+    std::atomic<int> grants{0};
+    std::string grantedToken;
+    session->setPortalGrantCallback([&](const std::string& token) {
+        grants.fetch_add(1);
+        grantedToken = token;
+    });
+
     CHECK(session->start(error));
     if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
+    if (grants.load() > 0)
+        std::fprintf(stderr, "  portal granted a NEW consent (%zu bytes)\n", grantedToken.size());
+    CHECK_EQ(grants.load(), 0);
 
     const SessionInfo& info = session->info();
     std::fprintf(stderr, "  session: %dx%d %s via %s on %s, intra-refresh %s, capture %s\n",
@@ -324,7 +340,49 @@ void run_linux_session_tests()
             // The GPU offers HEVC; the ROUTE cannot use it. A portal that hands
             // over shared memory keeps the frame out of EGL's reach, so the CPU
             // pair encodes — and it does H.264 only.
-            std::fprintf(stderr, "  skipped: this route encodes H.264 only (CPU pair)\n");
+            //
+            // So what is checked here is the DOWNGRADE, not HEVC: a browser
+            // that prefers HEVC and also decodes H.264 (every browser) must get
+            // a session in H.264, not a refusal. Left to itself the Selector
+            // picks HEVC — the GPU really does offer it — and the CPU pair then
+            // answers "OpenH264 encodes H.264 only" and the session dies before
+            // a single frame. That is what happened on the first real browser
+            // session through the portal, 08/09/2026.
+            std::fprintf(stderr, "  the CPU pair encodes H.264 only — checking the downgrade\n");
+            SessionConfig mixed = config;
+            mixed.clientCodecs = {Codec::Hevc, Codec::H264};
+            std::atomic<int> mixedFrames{0};
+            std::string mixedError;
+            std::unique_ptr<Session> mixedSession = NativeHost::createSession(
+                mixed, [&](const EncodedFrame&) { mixedFrames.fetch_add(1); }, nullptr, nullptr,
+                nullptr, nullptr, mixedError);
+            CHECK(mixedSession != nullptr);
+            if (mixedSession) {
+                const bool started = mixedSession->start(mixedError);
+                if (!started) std::fprintf(stderr, "  start failed: %s\n", mixedError.c_str());
+                CHECK(started);
+                // The client is told what it will really receive, never what
+                // the GPU could have done.
+                CHECK(mixedSession->info().codec == Codec::H264);
+                CHECK(mixedSession->info().encoder == EncoderApi::Software);
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                std::fprintf(stderr, "  downgraded to %s, %d frame(s)\n",
+                             toString(mixedSession->info().codec), mixedFrames.load());
+                CHECK(mixedFrames.load() > 0);
+                mixedSession->stop();
+            }
+
+            // And the honest refusal: a client that named HEVC and nothing else
+            // cannot be served by this route, and must be told so rather than
+            // sent a stream it cannot decode.
+            SessionConfig hevcOnly = config;
+            hevcOnly.clientCodecs = {Codec::Hevc};
+            std::string refusal;
+            std::unique_ptr<Session> refused = NativeHost::createSession(
+                hevcOnly, [](const EncodedFrame&) {}, nullptr, nullptr, nullptr, nullptr, refusal);
+            const bool refusedAtStart = refused && !refused->start(refusal);
+            CHECK((refused == nullptr || refusedAtStart));
+            std::fprintf(stderr, "  HEVC-only client refused: %s\n", refusal.c_str());
         } else if (!offersHevc) {
             std::fprintf(stderr, "  skipped: this GPU does not offer HEVC\n");
         } else {

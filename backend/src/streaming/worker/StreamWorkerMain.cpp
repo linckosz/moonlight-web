@@ -274,6 +274,9 @@ int runStreamWorker(QCoreApplication& app)
     // Absent (an older parent) → not an administrator: the safe reading,
     // since the only thing it grants is the host's administrator windows.
     session->setViewerAdmin(cfg["viewerAdmin"].toBool(false));
+    // Absent (an older parent, or a machine that never met a portal) → empty,
+    // and the user is asked. Never a failure: a dialog is the fallback.
+    session->setPortalRestoreToken(cfg["portalRestoreToken"].toString());
     session->setClientPresentation(cfg["clientRefreshMilliHz"].toInt(0),
                                    cfg["clientVsync"].toBool(false));
     session->setBackend(backend);
@@ -311,6 +314,14 @@ int runStreamWorker(QCoreApplication& app)
         emitEvent(
             {{QStringLiteral("event"), QStringLiteral("hostIpTtl")}, {QStringLiteral("ttl"), ttl}});
     });
+    // The desktop portal's consent, on its way to the settings file — which
+    // only the parent has. Sent as it arrives rather than at the end of the
+    // session: a worker that is killed still leaves the user's click banked.
+    QObject::connect(session, &StreamSession::portalGrantReceived, session,
+                     [](const QString& token) {
+                         emitEvent({{QStringLiteral("event"), QStringLiteral("portalGrant")},
+                                    {QStringLiteral("token"), token}});
+                     });
 
     session->setGamepadOffset(cfg["gamepadOffset"].toInt(0));
     if (!cfg["explicitWsUrl"].toString().isEmpty())

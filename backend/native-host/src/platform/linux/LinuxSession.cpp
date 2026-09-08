@@ -388,7 +388,10 @@ public:
         m_FullWidth = m_Info.width;
         m_FullHeight = m_Info.height;
         m_Info.fps = m_Config.fps;
-        m_Info.codec = m_Target.codec;
+        // What the pipeline was really built with — see buildPipeline: a CPU
+        // pair forced by the portal's shared memory carries the codec down with
+        // it, and the client is told H.264 rather than promised HEVC.
+        m_Info.codec = m_Codec;
         // The encoder the pipeline actually built, not the one chosen on paper:
         // the portal's shared memory forces the CPU pair whatever the Selector
         // picked, and the client is told what it is really getting.
@@ -532,6 +535,15 @@ public:
         }
     }
 
+    /// Assigned into the callback bundle rather than kept beside it: openCapture
+    /// already reads m_Callbacks.onPortalGrant, and two places to look for one
+    /// listener is how one of them ends up stale. Registering after start() is
+    /// a no-op by construction — openCapture has already run.
+    void setPortalGrantCallback(PortalGrantCallback callback) override
+    {
+        m_Callbacks.onPortalGrant = std::move(callback);
+    }
+
     void setClientRefresh(int milliHz, bool vsync) override
     {
         if (milliHz < 1000) milliHz = 0;
@@ -646,11 +658,47 @@ private:
                       "which is the only route that can read it");
         }
         m_UsingCpuPair = m_Target.encoder == EncoderApi::Software || sharedMemory;
+
+        // ⚠️ The codec has to follow the pair. The Selector picked HEVC because
+        // the GPU offers it, and it was right about the GPU — but a pair that
+        // encodes on the CPU encodes with OpenH264, which does H.264 and
+        // nothing else. Left alone, a browser that prefers HEVC (Chrome does)
+        // gets "OpenH264 encodes H.264 only" and no session at all: measured on
+        // 08/09/2026, the first real browser session through the portal.
+        //
+        // Not a decision that could have been taken at selection time, for the
+        // same reason the pair could not: whether the compositor hands over a
+        // DMA-BUF or shared memory is known only once the stream has
+        // negotiated, and on a DMA-BUF the Selector's HEVC is exactly right.
+        m_Codec = m_Target.codec;
+        if (m_UsingCpuPair && m_Codec != Codec::H264) {
+            // Asked, not assumed. Every browser decodes H.264 and the list is
+            // never empty here (the Selector rejects that before a session
+            // exists), but a route that silently sends a codec the client did
+            // not name is how a black picture with no error happens.
+            const bool clientTakesH264 =
+                std::find(m_Config.clientCodecs.begin(), m_Config.clientCodecs.end(),
+                          Codec::H264) != m_Config.clientCodecs.end();
+            if (!clientTakesH264) {
+                error = std::string("this route encodes on the CPU, which can only produce H.264, "
+                                    "and the client asked for ") +
+                        toString(m_Codec) + " without it";
+                return false;
+            }
+            if (!m_LoggedCodecDowngrade) {
+                m_LoggedCodecDowngrade = true;
+                log::info(std::string("[native] ") + toString(m_Codec) +
+                          " was chosen for the GPU, but this route encodes on the CPU — "
+                          "streaming H.264, which is what OpenH264 produces");
+            }
+            m_Codec = Codec::H264;
+        }
+
         if (m_UsingCpuPair)
             m_Pipeline = std::make_unique<CpuPipeline>();
         else
             m_Pipeline = std::make_unique<GpuPipeline>();
-        return m_Pipeline->init(*m_Capture, m_Target.codec, outputWidth, outputHeight, m_EncodeFps,
+        return m_Pipeline->init(*m_Capture, m_Codec, outputWidth, outputHeight, m_EncodeFps,
                                 m_Config.bitrateKbps, m_Config.intraRefresh, m_Config.tuning,
                                 error);
     }
@@ -1234,6 +1282,14 @@ private:
     /// route, which is always DMA-BUF.
     bool m_PortalDmabuf = false;
     bool m_LoggedSharedMemory = false;
+    /// The codec the pipeline was really built with. Starts as the Selector's
+    /// choice and is lowered to H.264 when the portal forces the CPU pair —
+    /// see buildPipeline. Read by SessionInfo, so the client is never promised
+    /// a codec the route cannot produce.
+    Codec m_Codec = Codec::H264;
+    /// Said once per session, like the shared-memory line beside it.
+    bool m_LoggedCodecDowngrade = false;
+
     /// Which pair buildPipeline actually made. Not derivable from m_Target: the
     /// portal can force the CPU pair on a machine whose GPU could have encoded.
     bool m_UsingCpuPair = false;

@@ -156,6 +156,10 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.intraRefresh = params.intraRefresh;
     config.allowElevatedInput = params.viewerAdmin;
     config.muteHostAudio = params.muteHostAudio;
+    // The consent this machine was already given, replayed. Empty on the very
+    // first session of an install that captures through the portal, which is
+    // the one time the user sees a dialog.
+    config.portalRestoreToken = params.portalRestoreToken.toStdString();
     // The client's screen: what /start carried, unless a `clientrefresh`
     // message already said otherwise (a session that starts after the
     // client's window moved).
@@ -225,6 +229,16 @@ void NativeMediaEngine::startCapture(const StartParams& params)
         emit connectionFailed(QString::fromStdString(error));
         return;
     }
+
+    // Registered BEFORE start(), unlike every other listener here: asking the
+    // portal for a screencast is what raises the dialog, so the grant comes
+    // back from inside start() and a listener attached after it has missed the
+    // only call there will ever be. Emitted directly — the callback runs on
+    // this thread, and the connection this signal reaches is queued or not by
+    // its own receiver's affinity.
+    m_Session->setPortalGrantCallback([this](const std::string& token) {
+        emit portalGrantReceived(QString::fromStdString(token));
+    });
 
     if (!m_Session->start(error)) {
         qWarning() << "[NativeMediaEngine] could not start session:"

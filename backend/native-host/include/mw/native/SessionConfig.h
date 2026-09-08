@@ -55,6 +55,12 @@ struct SessionConfig
     ///
     /// Empty is a programming error, not a default: an empty list would leave
     /// the engine guessing what the client can decode.
+    ///
+    /// Stays the client's WHOLE list all the way to the platform backend: the
+    /// codec that was picked travels separately (ResolvedTarget::codec), and a
+    /// backend that has to change its mind late — the Linux portal route
+    /// discovers only mid-start that it must encode on the CPU, in H.264 —
+    /// needs to know what else the client would accept.
     std::vector<Codec> clientCodecs;
 
     /// Ask for HDR. Honoured only when the display is actually in an HDR mode

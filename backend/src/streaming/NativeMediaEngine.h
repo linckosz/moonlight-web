@@ -107,6 +107,11 @@ public:
         /// Silence the host's speakers while the session runs — the same
         /// stream setting GameStream hosts receive as localAudioPlayMode.
         bool muteHostAudio = true;
+        /// The desktop portal consent this machine was granted last time, if
+        /// any — see SessionConfig::portalRestoreToken. Empty means the user
+        /// will be asked; whatever comes back arrives as portalGrantReceived().
+        /// Ignored on every route but the Linux portal one.
+        QString portalRestoreToken;
     };
 
     /// One encoded frame, borrowed: `data` is the encoder's own output buffer
@@ -277,6 +282,16 @@ public:
     /// the stream does not intra-refresh or no session has started. The
     /// browser sizes its ride-out watchdog on it, in frames it receives.
     int intraRefreshFrames() const;
+
+signals:
+    /// The desktop portal issued a consent worth keeping — store it and hand
+    /// it back as StartParams::portalRestoreToken on the next session, and the
+    /// user is never asked again.
+    ///
+    /// Emitted at most once per session, from inside startCapture(), and only
+    /// when the grant is new. Nothing depends on it: ignoring the token costs
+    /// one dialog per session, it does not break the stream.
+    void portalGrantReceived(const QString& token);
 
 private:
     void onEncodedFrame(const mw::native::EncodedFrame& frame);

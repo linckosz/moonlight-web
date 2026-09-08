@@ -305,6 +305,26 @@ public:
     QString uniqueId() const;
     void setUniqueId(const QString& id);
 
+    // ── Desktop portal consent ───────────────────────────────────────────────
+    //
+    // The token xdg-desktop-portal handed back the one time it asked the user
+    // whether MoonlightWeb may record the screen. Replaying it is what turns
+    // that dialog into a once-per-installation event instead of a once-per-
+    // session one, so it is worth persisting even though nothing breaks
+    // without it — the fallback for a lost token is simply being asked again.
+    //
+    // Stored as JSON string "portal_restore_token", file-only: it is never
+    // read by any route and never leaves this machine. Opaque by contract —
+    // it means something to the portal that issued it and to nothing else, so
+    // it is written and handed back verbatim, never parsed.
+    //
+    // Empty on every machine but a Linux host that captures through the portal
+    // (no capability to read the scanout: an AppImage). Cleared on its own the
+    // day the portal refuses it — a stale token is answered with a dialog, and
+    // the fresh grant overwrites this one.
+    QString portalRestoreToken() const;
+    void setPortalRestoreToken(const QString& token);
+
     // ── Instance name ────────────────────────────────────────────────────────
     //
     // What this install calls itself in the header of every browser that has

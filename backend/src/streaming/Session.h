@@ -144,6 +144,13 @@ public:
     /// of the host's windows that run as administrator (InputGate).
     void setViewerAdmin(bool admin) { m_ViewerAdmin = admin; }
 
+    /// The desktop portal consent this installation already holds, replayed so
+    /// the user is not asked again. Only the native engine acts on it, and only
+    /// on the Linux portal route; empty everywhere else, which simply means the
+    /// dialog comes up once. Whatever the portal grants back leaves through
+    /// portalGrantReceived().
+    void setPortalRestoreToken(const QString& token) { m_PortalRestoreToken = token; }
+
     /// The client's screen, from the /start request: its refresh in
     /// millihertz (0 = it did not measure one) and whether it paints on
     /// vsync (tearing off, or a browser that cannot tear). Only the native
@@ -237,6 +244,11 @@ signals:
     // host list — so the NEXT session on this host starts out knowing its OS
     // instead of spending its first seconds quantizing scroll it need not.
     void hostIpTtlObserved(int ttl);
+    // A desktop-portal consent worth keeping, from the native engine. Travels
+    // the same road as the TTL above and for the same reason — only the parent
+    // process owns settings — but unlike the TTL this one IS persisted: it is
+    // what makes the AppImage ask once per installation instead of per session.
+    void portalGrantReceived(const QString& token);
 
 private slots:
     void onShimConnectionStarted();
@@ -387,6 +399,10 @@ private:
     /// caller sets it; a worker whose parent predates the field is the owner
     /// path, which is the host's own administrator anyway.
     bool m_ViewerAdmin = true;
+
+    /// See setPortalRestoreToken. Empty is the honest default: a session that
+    /// does not know of a consent asks for one.
+    QString m_PortalRestoreToken;
 
     /// The client's screen at /start — see setClientPresentation.
     int m_ClientRefreshMilliHz = 0;

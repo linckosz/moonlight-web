@@ -178,6 +178,11 @@ using InputGateCallback = std::function<void(const InputGate& gate)>;
 /// never calls stop() on itself; the owner still must.
 using SessionEndedCallback = std::function<void(const std::string& reason)>;
 
+/// A consent to remember — see Session::setPortalGrantCallback. The string is
+/// opaque: it means something to the desktop portal that issued it and to
+/// nothing else, so it is stored and handed back verbatim.
+using PortalGrantCallback = std::function<void(const std::string& token)>;
+
 /// One live capture → encode → deliver pipeline for one display.
 ///
 /// Created through NativeHost::createSession(), which is the only way to get
@@ -306,6 +311,23 @@ public:
     /// Only the Windows engine has anything to report today; elsewhere this
     /// is accepted and never called.
     virtual void setInputGateCallback(InputGateCallback callback) { (void)callback; }
+
+    /// Where to hear that the desktop portal issued a consent worth keeping.
+    ///
+    /// ⚠️ Must be set BEFORE start(), because that is where the grant happens:
+    /// asking for a screencast is what raises the dialog, and the token comes
+    /// back with the user's answer. A listener registered afterwards is not
+    /// late by a little, it has missed the only call there will ever be.
+    ///
+    /// Called at most once per session, on the thread that called start(), and
+    /// only when the grant is NEW — a session that replayed a stored token
+    /// raised no dialog and has nothing to report. Store the token and hand it
+    /// back in SessionConfig::portalRestoreToken next time; that is the whole
+    /// difference between one dialog per installation and one per session.
+    ///
+    /// Optional, and today only the Linux engine on the portal route ever
+    /// calls it. Everywhere else this is accepted and ignored.
+    virtual void setPortalGrantCallback(PortalGrantCallback callback) { (void)callback; }
 
     /// Get the viewer out of a closed gate, when they cannot click their way
     /// out because the pointer itself is stuck.

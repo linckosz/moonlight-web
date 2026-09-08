@@ -5,6 +5,8 @@
 #include "server/AppSettings.h"
 
 #include <QTemporaryDir>
+#include <QFile>
+#include <QJsonDocument>
 #include <QJsonObject>
 
 void run_app_settings_tests()
@@ -76,6 +78,50 @@ void run_app_settings_tests()
     CHECK_EQ(s.transportMode(), QString("webrtc-dc-udp"));
     s.setUniqueId("abcd1234");
     CHECK_EQ(s.uniqueId(), QString("abcd1234"));
+
+    // The desktop portal's consent. Empty until one is granted — that emptiness
+    // is what makes the very first session raise a dialog, so it is the answer
+    // this getter has to give on a fresh install, not a placeholder.
+    CHECK_EQ(s.portalRestoreToken(), QString());
+    s.setPortalRestoreToken("portal-token-1");
+    CHECK_EQ(s.portalRestoreToken(), QString("portal-token-1"));
+    // Stored verbatim, never parsed: the token means something to the portal
+    // that issued it and to nothing else, so anything it hands back survives
+    // the round trip unchanged.
+    s.setPortalRestoreToken("a/b+c=~ \xC3\xA9");
+    CHECK_EQ(s.portalRestoreToken(), QString::fromUtf8("a/b+c=~ \xC3\xA9"));
+    // Re-granted: a portal that asked again wins over what was remembered.
+    s.setPortalRestoreToken("portal-token-2");
+    CHECK_EQ(s.portalRestoreToken(), QString("portal-token-2"));
+    // Writing the same value again is a no-op, not a rewrite of settings.json:
+    // every session on the portal route would otherwise touch the file for a
+    // token that did not change. Proved by re-writing the very same object by
+    // hand in COMPACT form — writeAll() always indents, so a file that gained
+    // newlines is a file that was written.
+    {
+        QFile f(s.m_FilePath);
+        CHECK(f.open(QIODevice::ReadOnly));
+        const QJsonObject same = QJsonDocument::fromJson(f.readAll()).object();
+        f.close();
+        CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(QJsonDocument(same).toJson(QJsonDocument::Compact));
+        f.close();
+
+        s.setPortalRestoreToken("portal-token-2");
+        CHECK(f.open(QIODevice::ReadOnly));
+        CHECK(!f.readAll().contains('\n'));
+        f.close();
+        CHECK_EQ(s.portalRestoreToken(), QString("portal-token-2"));
+
+        // The positive control, without which the check above passes for a
+        // getter that does nothing at all: a DIFFERENT token does write.
+        s.setPortalRestoreToken("portal-token-3");
+        CHECK(f.open(QIODevice::ReadOnly));
+        CHECK(f.readAll().contains('\n'));
+        f.close();
+        CHECK_EQ(s.portalRestoreToken(), QString("portal-token-3"));
+    }
+
     s.setPublicIp("1.2.3.4");
     CHECK_EQ(s.publicIp(), QString("1.2.3.4"));
     s.setCertPem("MW_CERT_PEM");

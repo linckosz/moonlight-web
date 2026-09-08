@@ -2831,6 +2831,16 @@ int main(int argc, char* argv[])
             s->setClientKind(clientKind);
             // See the worker path: the administrator-window gate.
             s->setViewerAdmin(req.isLocal);
+            // The desktop portal consent this installation already holds, and
+            // where a fresh one goes. In-process, so the settings file is right
+            // here; the worker path does the same trip through a JSON event.
+            s->setPortalRestoreToken(appSettings.portalRestoreToken());
+            QObject::connect(s, &StreamSession::portalGrantReceived, qApp,
+                             [&appSettings](const QString& token) {
+                                 appSettings.setPortalRestoreToken(token);
+                                 qInfo() << "[Session] Desktop portal consent stored — this "
+                                            "machine will not ask again";
+                             });
             // Which provider drives this host: plain GameStream unless it was
             // registered as a Wolf or MultiSeat backend.
             s->setBackend(std::shared_ptr<IStreamBackend>(
@@ -2950,6 +2960,10 @@ int main(int argc, char* argv[])
             // host-key session, or the LAN admin password). The native host
             // keeps everyone else out of windows that run as administrator.
             cfg["viewerAdmin"] = req.isLocal;
+            // The consent the desktop portal already gave this installation.
+            // Empty on every machine that reads its own scanout — which is all
+            // of them but a Linux host with no capability (an AppImage).
+            cfg["portalRestoreToken"] = appSettings.portalRestoreToken();
             cfg["clientUniqueId"] = reqClientUniqueId;
             cfg["clientKind"] = NetClassify::toString(clientKind);
             cfg["autoMode"] = true;
@@ -2997,6 +3011,15 @@ int main(int argc, char* argv[])
                              [&computerManager, hostUuidCopy](int ttl) {
                                  NvComputer* h = computerManager.getHost(hostUuidCopy);
                                  if (h) h->observedIpTtl = ttl;
+                             });
+            // The user clicked "Share" in the desktop portal's dialog. Unlike
+            // the TTL above this IS persisted — it is a decision the person
+            // made, and losing it means asking them again for nothing.
+            QObject::connect(worker, &StreamWorkerHost::portalGrantReceived, qApp,
+                             [&appSettings](const QString& token) {
+                                 appSettings.setPortalRestoreToken(token);
+                                 qInfo() << "[Session] Desktop portal consent stored — this "
+                                            "machine will not ask again";
                              });
             QObject::connect(
                 worker, &StreamWorkerHost::responseReady, qApp,
@@ -3844,6 +3867,10 @@ int main(int argc, char* argv[])
         // An invited player is never this machine's administrator, whatever
         // the owner ticked: the host's administrator windows stay closed.
         cfg["viewerAdmin"] = false;
+        // See the owner path. The consent belongs to the MACHINE, not to the
+        // viewer, so an invited player's session replays it too — otherwise
+        // the host's own screen would raise a dialog nobody is there to answer.
+        cfg["portalRestoreToken"] = appSettings.portalRestoreToken();
         // Gamepads from different sessions would all arrive as controller 0;
         // offset each player so they land on distinct virtual pads.
         cfg["gamepadOffset"] = slot - kOwnerSlots + 1;
@@ -3870,6 +3897,14 @@ int main(int argc, char* argv[])
                          [&computerManager, hostUuid](int ttl) {
                              NvComputer* h = computerManager.getHost(hostUuid);
                              if (h) h->observedIpTtl = ttl;
+                         });
+
+        // See the owner path: a grant is persisted wherever it turns up.
+        QObject::connect(worker, &StreamWorkerHost::portalGrantReceived, qApp,
+                         [&appSettings](const QString& token) {
+                             appSettings.setPortalRestoreToken(token);
+                             qInfo() << "[Session] Desktop portal consent stored — this "
+                                        "machine will not ask again";
                          });
 
         QObject::connect(worker, &StreamWorkerHost::responseReady, qApp,

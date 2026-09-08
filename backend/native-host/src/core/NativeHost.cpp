@@ -101,7 +101,19 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     resolved.fps = selection.fps;
     resolved.hdr = selection.hdr;
     resolved.yuv444 = selection.yuv444;
-    resolved.clientCodecs = {selection.codec};
+    // ⚠️ NOT narrowed to {selection.codec}, which is what this line used to do.
+    // The choice already travels — ResolvedTarget::codec is where a backend
+    // reads it — so overwriting the list here bought nothing and cost the truth:
+    // it made the config claim the client decodes exactly one codec, when what
+    // the field means is what the client CAN decode.
+    //
+    // That difference is not academic. On Linux the portal may hand over shared
+    // memory, which forces the CPU pair, which encodes H.264 and nothing else —
+    // a fact known only after the stream has negotiated, long after this. The
+    // session then has to ask "will this client take H.264 instead?", and with
+    // the list narrowed the only answer available was "it asked for HEVC", so
+    // the session died on a machine whose browser decodes H.264 perfectly well.
+    resolved.clientCodecs = config.clientCodecs;
     // Carried through unchanged: whether the encoder can honour it is its own
     // answer, reported back in SessionInfo::intraRefresh.
     resolved.intraRefresh = config.intraRefresh;

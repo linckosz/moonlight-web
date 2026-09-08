@@ -545,6 +545,25 @@ void AppSettings::setUniqueId(const QString& id)
     writeAll(obj);
 }
 
+// ── Desktop portal consent ───────────────────────────────────────────────────
+
+QString AppSettings::portalRestoreToken() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("portal_restore_token").toString();
+}
+
+void AppSettings::setPortalRestoreToken(const QString& token)
+{
+    QJsonObject obj = readAll();
+    // Rewriting the same token would be a settings file written on every
+    // session for nothing. The portal only issues a new one when it actually
+    // asked, so equality here is the normal case on a machine that is working.
+    if (obj.value("portal_restore_token").toString() == token) return;
+    obj["portal_restore_token"] = token;
+    writeAll(obj);
+}
+
 // ── Instance name ────────────────────────────────────────────────────────────
 
 QString AppSettings::instanceName() const

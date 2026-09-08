@@ -86,6 +86,12 @@ signals:
     // The IP TTL a host's own packets arrived with — the only thing on the wire
     // that names its OS family. See HostOsProbe.h for what it decides.
     void hostIpTtlObserved(int ttl);
+    /// The desktop portal granted this installation a consent to remember, so
+    /// the next session opens without a dialog. At most once per worker, and
+    /// only on a machine that captures through the portal (Linux, no capability
+    /// to read the scanout — an AppImage). Persisted by the supervisor: the
+    /// worker has no settings file of its own.
+    void portalGrantReceived(const QString& token);
     /// The child process fully exited (ports are certainly free) — exactly
     /// once, always after ended(). Serialization barrier for slot reuse.
     void exited();
