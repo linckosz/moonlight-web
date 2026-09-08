@@ -85,6 +85,15 @@ double braces, wrap it so Caddy doesn't try to evaluate it (see the Caddy
 `templates` docs). Plain-text files (`robots.txt`, `llms.txt`, the verification
 token) are not templated.
 
+The bootstrap on `stream.{MW_DOMAIN}` uses no query stamp — it cannot, since it
+is also published byte-identical to GitHub Pages and every path there must serve
+the same page. It is sent with `Cache-Control: no-cache` instead, so a browser
+revalidates the handful of files before reusing them. Without it, a browser is
+free to guess a freshness lifetime from `Last-Modified` and will happily hold a
+redeployed entry page for days, which no ordinary reload clears. Note this means
+a redeploy that *adds* the header does not fix the copies cached before it: those
+were stored without one, and still need a hard reload once.
+
 ## Website analytics (Umami)
 
 The stack ships a self-hosted **Umami** instance — privacy-friendly, cookieless

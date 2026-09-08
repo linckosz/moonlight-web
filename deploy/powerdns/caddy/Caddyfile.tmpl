@@ -154,6 +154,22 @@ stream.@MW_DOMAIN@ {
 			# This one IS a document, so it gets the page-shaped protections the
 			# API block has no use for.
 			X-Frame-Options "DENY"
+			# Always ask before reusing. With no Cache-Control the browser is free
+			# to guess a freshness lifetime from Last-Modified, and it guesses
+			# generously: a file that has sat on disk a while is held for days.
+			# Wrong for THIS handful of files, because they are the entry point —
+			# a redeploy a browser refuses to see leaves the person on an old page
+			# with no way to know it, and the only cure is a hard reload nobody
+			# thinks to try.
+			#
+			# "no-cache" still stores the copy, it only revalidates before reusing
+			# it, so the ordinary case is a 304 on a few kilobytes. The bootstrap
+			# is deliberately tiny; this is part of what that buys.
+			#
+			# The interface itself is unaffected: it never comes from here. It
+			# arrives over the tunnel and lives in the service worker's cache,
+			# stamped with the host and version (see boot.js).
+			Cache-Control "no-cache"
 			# Kept in step with the <meta> CSP inside index.html, which is what
 			# protects the copy published to GitHub Pages (Pages serves no
 			# headers of its own). The two are enforced independently and
