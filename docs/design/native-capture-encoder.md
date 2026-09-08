@@ -3972,10 +3972,45 @@ différentes, donc deux octrois différents — l'app installée en demande un, 
 fois**, et le garde ensuite d'une mise à jour à l'autre puisque la racine, elle,
 ne bouge plus. Le message de la sonde dit exactement quelle case cocher.
 
-**Non vérifié, et honnêtement hors de portée d'ici** : le volet Internet *à
-l'écran*. `installer` en ligne de commande n'exécute aucun volet (d'où
-`internet=false` et un consentement vide dans `provisioning.json`), et piloter
-Installer.app à distance échoue sur ce banc — `osascript` n'a pas l'accès
-assistif (−1719) et la fenêtre n'apparaît pas dans `screencapture`. Le volet est
-prouvé *présent et bien indexé* dans le paquet (ci-dessus) ; le voir demande un
-double-clic humain.
+#### ⛔ Le volet Internet est dans le paquet et **ne s'affiche pas** (08/09/2026)
+
+Bruno ayant accordé l'accès assistif au banc, Installer.app a pu être piloté pour
+de vrai. Le verdict est négatif, et il corrige ce que la section ci-dessus
+laissait espérer : **l'InstallerPlugin est livré correctement et macOS 15.6.1 ne
+le charge pas.** Quatre constats indépendants, tous convergents :
+
+1. **Le parcours ne compte pas le volet.** Deux « Continue » suffisent pour
+   arriver au bouton `Install` : Introduction → Licence (feuille « Agree ») →
+   Install. Avec le volet il en faudrait trois.
+2. **Le processus n'a jamais ouvert notre bundle.** `lsof` sur Installer ne
+   montre que des bundles système ; aucun `MoonlightWebInstaller`.
+3. **Le volet n'a rien écrit.** `MWInternetPane` dépose
+   `/tmp/moonlightweb-provisioning.plist` en quittant le volet ; le fichier
+   n'existe pas. C'est la trace que le volet laisserait s'il avait tourné, et
+   c'est une meilleure preuve qu'une capture d'écran.
+4. **Le journal système ne mentionne rien** — pas même une erreur de chargement.
+   Installer n'a pas essayé.
+
+Conséquence produit : à l'installation, l'utilisateur n'est **pas** interrogé sur
+le lien Internet, `provisioning.json` reçoit `internet_access_authorized: false`
+et un consentement vide — exactement ce que produit une installation en ligne de
+commande. Ce n'est pas un trou de sécurité (le défaut sûr est « pas de lien »),
+c'est une fonctionnalité absente : le consentement se donne alors dans
+l'assistant de l'app, au premier lancement.
+
+⚠️ **Hypothèse à instruire, pas une conclusion** : le `Info.plist` du bundle
+déclare `NSPrincipalClass = InstallerSection`, c'est-à-dire la classe **de base**
+du framework et non une sous-classe à nous. Le contrat d'Apple attend une
+sous-classe ; un bundle qui n'en fournit pas peut être ignoré en silence, ce qui
+correspondrait au constat 4. `InstallerPlugins.framework` est par ailleurs
+déprécié, et il n'est pas exclu que macOS 15 ne charge plus aucun volet tiers —
+les deux pistes se testent en changeant une seule ligne.
+
+**Deux pièges de banc à retenir**, qui ont coûté plusieurs passes chacun :
+`screencapture` lancé depuis une session SSH n'a pas l'enregistrement d'écran, et
+macOS lui rend alors le fond d'écran et la barre de menus **en effaçant les
+fenêtres des autres applications** — les captures paraissent montrer un bureau
+vide alors que la fenêtre est bien là (position et taille lues par l'API
+d'accessibilité). Et le premier écran d'Installer est une **feuille modale** de
+macOS (« this package will run a program… », bouton **Allow**, pas « Agree ») :
+tant qu'elle n'est pas acquittée, aucun clic « Continue » n'avance.
