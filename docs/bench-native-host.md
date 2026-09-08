@@ -736,7 +736,46 @@ logiciel) ; à 1440p suragrandi il coûtait 21 ms, d'où la règle « jamais de
 suragrandissement sur le repli ». Sur la VM, 4 cœurs Zen 5 encodent le 1080p en
 5 ms de moyenne — la voie CPU n'est pas une punition sur un CPU moderne ; sur
 l'N95 (§8d) elle le serait, et c'est là qu'un plafond automatique reste à
-mesurer.
+mesurer — §8i le mesure.
+
+## 8i. Quand le CPU ne suit pas : ce que baisser la résolution rapporte (08/09/2026)
+
+Le seul banc où la voie CPU souffre vraiment : l'**N95** (4 cœurs Alder Lake-N,
+pas de SMT), encodeur OpenH264 4 threads, contenu réel (le clip Call of Duty en
+kiosque, comme §8e), H.264 CBR 20 Mbit/s, 10 s par passe.
+
+| Résolution | encode moy. / p95 / p99 (ms) | Cadence atteinte | Ko/img |
+|---|---|---|---|
+| **1920×1080** | **39,71 / 73,73 / 81,92** | **24,7 fps** | 57,5 |
+| 1280×720 | 33,54 / 53,25 / 131,07 | 29,1 fps | — |
+| **960×540** | **19,78 / 36,86 / 40,96** | **48,8 fps** | 35,1 |
+
+Trois choses que ces chiffres disent, et une qu'ils ne disent pas :
+
+1. **Baisser la résolution rapporte, mais pas proportionnellement.** De 1080p à
+   540p il y a **4× moins de pixels** et seulement **2× moins de temps** : une
+   part fixe du coût (les threads par tranches, le contrôle de débit, la
+   recherche de mouvement par macrobloc) ne suit pas la surface. Le palier
+   intermédiaire est le pire marché : 720p ne gagne que **16 %** sur 1080p.
+2. **Aucune résolution n'atteint 60 fps.** Même à 540p l'encodage coûte 19,8 ms
+   quand l'intervalle en vaut 16,7. Un plafond de résolution ne rend donc pas
+   cette machine capable de 60 fps ; il déplace le plafond de cadence de **25 à
+   49 fps**.
+3. **Le p99 de 720p (131 ms) est une anomalie**, pas une tendance — une image
+   isolée trois fois plus chère que la moyenne, là où 1080p et 540p ont un p99
+   proche du double de leur moyenne. À reproduire avant d'en conclure quoi que
+   ce soit.
+
+Ce qu'ils ne disent pas : **lequel des deux plafonds un joueur préfère.** Pacer
+à la cadence que la machine tient (25 fps en 1080p net) et baisser la résolution
+pour gagner de la fluidité (49 fps en 540p flou) sont deux réponses également
+défendables, et le choix est une question de perception, pas de mesure — c'est
+la règle 0.2.2 : les chiffres, une recommandation, puis confirmation.
+
+⚠️ La passe 1080p **à 30 fps forcés** n'a rien rendu (le banc sort sans écrire
+ses statistiques, sans plantage) — non élucidé, et sans conséquence pour la
+lecture ci-dessus : le temps d'encodage d'une image ne dépend pas de la cadence
+à laquelle on les demande.
 
 ## 9. Pour l'A/B
 
