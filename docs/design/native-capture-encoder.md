@@ -3998,13 +3998,39 @@ commande. Ce n'est pas un trou de sécurité (le défaut sûr est « pas de lien
 c'est une fonctionnalité absente : le consentement se donne alors dans
 l'assistant de l'app, au premier lancement.
 
-⚠️ **Hypothèse à instruire, pas une conclusion** : le `Info.plist` du bundle
-déclare `NSPrincipalClass = InstallerSection`, c'est-à-dire la classe **de base**
-du framework et non une sous-classe à nous. Le contrat d'Apple attend une
-sous-classe ; un bundle qui n'en fournit pas peut être ignoré en silence, ce qui
-correspondrait au constat 4. `InstallerPlugins.framework` est par ailleurs
-déprécié, et il n'est pas exclu que macOS 15 ne charge plus aucun volet tiers —
-les deux pistes se testent en changeant une seule ligne.
+⚠️ **Hypothèse instruite le 09/09 : l'anomalie est réelle, sa conséquence reste à
+prouver.** Le `Info.plist` du bundle déclare `NSPrincipalClass =
+InstallerSection`, c'est-à-dire la classe **de base** du framework et non une
+sous-classe à nous, alors que le contrat d'Apple attend une sous-classe. Vérifié
+en chargeant les deux bundles dans le runtime Objective-C (`NSBundle` +
+`principalClass`, hors de tout Installer.app) :
+
+| | livré par la CI | patché |
+|---|---|---|
+| `NSPrincipalClass` déclaré | `InstallerSection` | `MWInternetSection` |
+| le bundle se charge | oui | oui |
+| classe principale résolue | `InstallerSection` | `MWInternetSection` |
+| **est la classe de base elle-même** | **OUI** | non |
+| **est une sous-classe** | **non** | **OUI** |
+| `MWInternetPane` enregistrée | oui | oui |
+
+Deux enseignements. D'abord **notre binaire n'est pas en cause** : il se charge,
+et sa classe de volet est bien enregistrée — ce qui écarte « le plugin est
+cassé » et déplace le soupçon sur la découverte des plugins par Installer.
+Ensuite le correctif candidat (ajouter une vraie sous-classe et la nommer comme
+classe principale) compile, se charge et satisfait le contrat.
+
+**Ce qui reste non prouvé** : qu'Installer affiche alors le volet. Un paquet de
+test complet a été fabriqué pour ça — `~/mw-pkg/test/test.pkg` sur le banc,
+identique au paquet livré à cette seule ligne près, et validé par
+`installer -showChoicesXML` — mais Installer.app a cessé de présenter la moindre
+fenêtre dans cette session pilotée à distance (`windows=0`, **pour le paquet
+d'origine aussi**, donc ce n'est pas le paquet de test qui est en cause). La
+conclusion demande deux double-clics humains : ouvrir `~/mw-pkg/new.pkg` puis
+`~/mw-pkg/test/test.pkg` et regarder si une étape « Internet » apparaît dans le
+second. Si oui, le correctif est celui-là ; si non, c'est que
+`InstallerPlugins.framework`, déprécié, n'est plus chargé du tout par macOS 15 et
+il faut retirer le volet plutôt que d'embarquer du code mort.
 
 **Deux pièges de banc à retenir**, qui ont coûté plusieurs passes chacun :
 `screencapture` lancé depuis une session SSH n'a pas l'enregistrement d'écran, et
