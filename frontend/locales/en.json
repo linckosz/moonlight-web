@@ -19,7 +19,9 @@
     },
     "header": {
         "serverSettings": "Server Settings",
-        "streamingSettings": "Streaming Settings"
+        "streamingSettings": "Streaming Settings",
+        "instances": "Your machines",
+        "instanceSwitch": "Switch to another machine"
     },
     "setup": {
         "title": "Welcome to MoonlightWeb",
@@ -393,6 +395,10 @@
         "localAccessHint": "Access this server from other devices on your local network.",
         "localAccessMulti": "The first address is the one on your shared network; the others belong to virtual adapters and only reach their own virtual machines.",
         "serverConfig": "Server Configuration",
+        "instanceName": "Instance Name",
+        "instanceNameDesc": "How this machine names itself in the header of every browser paired with it, and in the menu those browsers use to switch between your machines.",
+        "instanceNameHint": "Leave it empty to use this PC's own name ({{name}}).",
+        "instanceNameSaved": "This machine is now called {{name}}",
         "transportMode": "Transport Mode",
         "transportLanIpOnly": "Via LAN IP only",
                 "transportAuto": "Auto (prefer UDP)",

@@ -72,6 +72,10 @@ export const Icons = {
     ),
     // Pencil — rename a row on the sharing board
     pencil: svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+    // Chevron down — the header's instance name is a menu, not a label. This is
+    // the only thing on screen that says so before it is hovered, so it appears
+    // exactly when there is somewhere else to go and never otherwise.
+    chevronDown: svg('<polyline points="6 9 12 15 18 9"/>'),
     // Refresh — mint a new link and PIN, killing the old pair
     refresh: svg(
         '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>' +

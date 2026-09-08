@@ -22,11 +22,16 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QHostInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QStandardPaths>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 AppSettings::AppSettings()
 {
@@ -538,6 +543,60 @@ void AppSettings::setUniqueId(const QString& id)
     QJsonObject obj = readAll();
     obj["unique_id"] = id;
     writeAll(obj);
+}
+
+// ── Instance name ────────────────────────────────────────────────────────────
+
+QString AppSettings::instanceName() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("instance_name").toString().trimmed();
+}
+
+void AppSettings::setInstanceName(const QString& name)
+{
+    // Collapsed and clipped rather than rejected. What arrives here is a person
+    // typing a label for their own machine, and a name that is merely too long
+    // or padded is not a mistake worth refusing — it is one worth tidying. Line
+    // breaks and control characters go because this is drawn in a header.
+    QString clean;
+    clean.reserve(name.size());
+    for (const QChar c : name) {
+        if (c.isSpace())
+            clean.append(QLatin1Char(' '));
+        else if (c.category() != QChar::Other_Control)
+            clean.append(c);
+    }
+    clean = clean.simplified().left(kInstanceNameMaxLength).trimmed();
+
+    QJsonObject obj = readAll();
+    // Empty is a value, not an absence: it is how the owner says "go back to
+    // whatever this PC is called", and the key stays so the file shows the
+    // setting exists.
+    obj["instance_name"] = clean;
+    writeAll(obj);
+}
+
+QString AppSettings::machineName()
+{
+#ifdef Q_OS_WIN
+    // GetComputerNameW rather than QHostInfo: on Windows the NetBIOS name is
+    // what the machine is called in every other place its owner sees it, and it
+    // is not always what DNS answers with.
+    wchar_t buf[256];
+    DWORD sz = static_cast<DWORD>(sizeof(buf) / sizeof(wchar_t));
+    if (GetComputerNameW(buf, &sz)) return QString::fromWCharArray(buf, static_cast<int>(sz));
+    return qEnvironmentVariable("COMPUTERNAME", QStringLiteral("PC"));
+#else
+    const QString name = QHostInfo::localHostName();
+    return name.isEmpty() ? QStringLiteral("PC") : name;
+#endif
+}
+
+QString AppSettings::displayName() const
+{
+    const QString chosen = instanceName();
+    return chosen.isEmpty() ? machineName() : chosen;
 }
 
 bool AppSettings::isValidFqdn(const QString& domain)

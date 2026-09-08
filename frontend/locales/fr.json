@@ -19,7 +19,9 @@
     },
     "header": {
         "serverSettings": "Paramètres serveur",
-        "streamingSettings": "Paramètres de streaming"
+        "streamingSettings": "Paramètres de streaming",
+        "instances": "Vos machines",
+        "instanceSwitch": "Passer à une autre machine"
     },
     "setup": {
         "title": "Bienvenue dans MoonlightWeb",
@@ -393,6 +395,10 @@
         "localAccessHint": "Accédez à ce serveur depuis d'autres appareils de votre réseau local.",
         "localAccessMulti": "La première adresse est celle de votre réseau partagé ; les suivantes appartiennent à des cartes virtuelles et ne sont joignables que depuis leurs machines virtuelles.",
         "serverConfig": "Configuration du serveur",
+        "instanceName": "Nom de l'instance",
+        "instanceNameDesc": "Le nom que cette machine se donne dans l'en-tête de chaque navigateur appairé avec elle, et dans le menu qui permet à ces navigateurs de passer d'une de vos machines à l'autre.",
+        "instanceNameHint": "Laissez vide pour utiliser le nom du PC ({{name}}).",
+        "instanceNameSaved": "Cette machine s'appelle maintenant {{name}}",
         "transportMode": "Mode de transport",
         "transportLanIpOnly": "via IP LAN uniquement",
                 "transportAuto": "Auto (préférer UDP)",

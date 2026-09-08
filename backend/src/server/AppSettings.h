@@ -305,6 +305,36 @@ public:
     QString uniqueId() const;
     void setUniqueId(const QString& id);
 
+    // ── Instance name ────────────────────────────────────────────────────────
+    //
+    // What this install calls itself in the header of every browser that has
+    // paired with it, and in the switcher listing the other ones. Stored as JSON
+    // string "instance_name"; EMPTY is the normal value and means "the name of
+    // this PC" — resolved at the route, not here, because the machine name is a
+    // platform question and this class holds a file.
+    //
+    // Editable because the PC name is frequently not a name: "DESKTOP-4K7N2QA"
+    // tells nobody which machine they are about to stream from, and the whole
+    // point of putting it in the header is that the answer is legible at a
+    // glance.
+
+    QString instanceName() const;
+    void setInstanceName(const QString& name);
+
+    /// This machine's own name, as the operating system knows it — the value
+    /// the setting above falls back to, and the placeholder the admin field
+    /// shows. Static because it asks the OS, not the file.
+    static QString machineName();
+
+    /// What to actually put on screen: the chosen name, or the machine's own.
+    /// The one function every caller should use, so no surface can accidentally
+    /// display an empty header.
+    QString displayName() const;
+
+    /// Longest name kept. A header is one line; anything past this is a
+    /// sentence, and a sentence pushes everything else out of the bar.
+    static constexpr int kInstanceNameMaxLength = 32;
+
     /// The FQDN this host serves, or empty — which is the normal case, since
     /// nothing registers a name any more.
     ///

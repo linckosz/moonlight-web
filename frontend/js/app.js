@@ -79,6 +79,8 @@ import {
 } from './net/tunnelBridge.js';
 import { SecuringOverlay } from './ui/SecuringOverlay.js';
 import { ourStunHost } from './api/IceServers.js';
+import { InstanceMenu } from './ui/InstanceMenu.js';
+import { currentInstanceRef, rememberInstance } from './util/instances.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
 window.addEventListener('error', (evt) => {
@@ -130,6 +132,9 @@ const MoonlightApp = {
     adminView: null,
     loginView: null,
     setupView: null,
+    // The machine name in the header. Outlives every view — it belongs to the
+    // shell, not to what is currently drawn inside it.
+    instanceMenu: null,
 
     // ── HEVC fallback guard ─────────────────────────────────────────────────
     // Counts consecutive HEVC→H.264 fallback attempts to prevent infinite
@@ -215,6 +220,14 @@ const MoonlightApp = {
 
         // Reload the app if a newer build is deployed while it stays open.
         VersionGuard.start();
+
+        // The admin page can rename this machine. When it does, the header above
+        // it and the register behind that header are both out of date, and the
+        // owner should see the name they just chose without reloading.
+        window.addEventListener('mw-instance-renamed', (e) => {
+            const name = /** @type {CustomEvent} */ (e).detail?.name;
+            if (name) this._showInstanceName(name);
+        });
 
         // ── Hide admin/settings buttons upfront for non-localhost ─────────
         // They will be revealed by _initNavButtons() if authenticated.
@@ -976,6 +989,13 @@ const MoonlightApp = {
                     versionEl.hidden = false;
                 }
             }
+            // The name this machine calls itself, from the same answer. Written
+            // to the register first and drawn from it second, so the menu
+            // includes the machine it is being drawn on — and so a machine
+            // renamed in its admin page is renamed in this browser's menu the
+            // next time the browser visits it, which is the only moment the new
+            // name can be learned.
+            if (health && health.name) this._showInstanceName(health.name);
         } catch (err) {
             console.warn('[MW] Server health check failed:', err);
         }
@@ -986,6 +1006,25 @@ const MoonlightApp = {
         // build able to report); until it is answered the backend reports
         // nothing, and either answer leaves the application identical.
         ConsentBar.maybeShow({ isHostLocal: () => this._isHostLocal() });
+    },
+
+    /**
+     * Put this machine's name in the header, and make it a menu if there is
+     * anywhere to go.
+     *
+     * Both steps in one place because the order matters: the register is
+     * written before the menu is drawn, so the machine on screen appears in its
+     * own list — ticked — rather than being the one entry missing from it.
+     */
+    _showInstanceName(name) {
+        const mount = document.getElementById('instance-menu');
+        if (!mount) return;
+
+        const ref = currentInstanceRef(tunnelHostId());
+        rememberInstance({ ...ref, name });
+
+        if (!this.instanceMenu) this.instanceMenu = new InstanceMenu(mount);
+        this.instanceMenu.render(ref.id, name);
     },
 
     // =========================================================================

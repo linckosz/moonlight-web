@@ -49,6 +49,12 @@
         <div id="app">
             <header class="app-header">
                 <h1>MoonlightWeb</h1>
+                <!-- The machine this page is talking to. Empty and hidden until
+                     the instance answers with its name (InstanceMenu), so the
+                     header never flashes a placeholder or a stale one. It turns
+                     into a dropdown by itself once this browser knows a second
+                     machine. -->
+                <div class="instance-menu" id="instance-menu" hidden></div>
                 <span class="version" hidden></span>
                 <div class="header-actions">
                     <!-- Both entry points start hidden and are revealed by

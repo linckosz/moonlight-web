@@ -2007,10 +2007,15 @@ int main(int argc, char* argv[])
     }
 
     // Register API routes
-    server.router()->get("/api/health", [](const HttpRequest&) {
+    server.router()->get("/api/health", [&appSettings](const HttpRequest&) {
         QJsonObject obj;
         obj["status"] = "ok";
         obj["version"] = QCoreApplication::applicationVersion();
+        // What this install calls itself, for the header and for the switcher
+        // that lists the other machines a browser has paired with. Public, like
+        // the rest of this route and like /api/server/hostname next door, which
+        // has always answered the same question to anyone who asked.
+        obj["name"] = appSettings.displayName();
         return HttpResponse::json(obj);
     });
 
@@ -2105,25 +2110,15 @@ int main(int argc, char* argv[])
     // GET /api/server/hostname — returns the server's hostname and OS info
     server.router()->get("/api/server/hostname", [](const HttpRequest&) {
         QJsonObject obj;
+        obj["hostname"] = AppSettings::machineName();
 #ifdef Q_OS_WIN
-        // Use Windows API GetComputerNameW() for the real NetBIOS name
-        wchar_t buf[256];
-        DWORD sz = static_cast<DWORD>(sizeof(buf) / sizeof(wchar_t));
-        if (GetComputerNameW(buf, &sz)) {
-            obj["hostname"] = QString::fromWCharArray(buf, static_cast<int>(sz));
-        } else {
-            obj["hostname"] = qEnvironmentVariable("COMPUTERNAME", "PC");
-        }
         obj["os"] = "Windows";
-#else
-        obj["hostname"] = QHostInfo::localHostName();
-#ifdef Q_OS_MACOS
+#elif defined(Q_OS_MACOS)
         obj["os"] = "macOS";
 #elif defined(Q_OS_LINUX)
         obj["os"] = "Linux";
 #else
         obj["os"] = "Unknown";
-#endif
 #endif
         return HttpResponse::json(obj);
     });

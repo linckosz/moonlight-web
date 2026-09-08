@@ -127,6 +127,13 @@ export class AdminView {
         // through the native host. Server-side setting: the tray obeys it, and
         // the tray may live in another process.
         this._streamNotifications = true;
+        // The name this install shows in the header of every browser paired with
+        // it — and in the switcher those browsers use to reach the others.
+        // Empty means "whatever this PC is called", which is the default and,
+        // for most people, the permanent answer.
+        this._instanceName = '';
+        this._defaultInstanceName = '';
+        this._instanceNameMax = 32;
 
         // Dirty tracking: snapshot of values at load time
         this._cleanState = {};
@@ -201,6 +208,13 @@ export class AdminView {
             this._httpPort = admin.http_port || 80;
             this._certAuthEnabled = admin.cert_auth_enabled || false;
             this._streamNotifications = admin.stream_notifications !== false;
+            // Two values, not one: what was chosen (often nothing) and what the
+            // PC is called. The field shows the first and offers the second as
+            // its placeholder, so an empty box reads as "this machine's own
+            // name" rather than as a missing setting.
+            this._instanceName = admin.instance_name || '';
+            this._defaultInstanceName = admin.default_instance_name || '';
+            this._instanceNameMax = admin.instance_name_max || 32;
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
@@ -1061,6 +1075,28 @@ export class AdminView {
                     <h3 class="settings-section-title">${t('admin.serverConfig')}</h3>
 
                     <div class="settings-field">
+                        <label class="settings-label" for="admin-instance-name">
+                            ${t('admin.instanceName')}
+                        </label>
+                        <span class="setting-desc">
+                            ${t('admin.instanceNameDesc')}
+                        </span>
+                        <div class="u-row">
+                            <input type="text" id="admin-instance-name" class="settings-input u-grow"
+                                   autocomplete="off" spellcheck="false"
+                                   maxlength="${this._instanceNameMax}"
+                                   placeholder="${this.esc(this._defaultInstanceName)}"
+                                   value="${this.esc(this._instanceName)}" />
+                            <button class="btn btn-save u-shrink-0" id="btn-instance-name-save" disabled>
+                                ${t('common.save')}
+                            </button>
+                        </div>
+                        <p class="settings-hint">
+                            ${t('admin.instanceNameHint', { name: this._defaultInstanceName })}
+                        </p>
+                    </div>
+
+                    <div class="settings-field">
                         <label class="settings-label" for="select-transport-mode">
                             ${t('admin.transportMode')}
                         </label>
@@ -1699,6 +1735,64 @@ export class AdminView {
                     Toast.error(t('admin.saveFailed', { message: err.message }));
                     notifyChk.checked = !enabled; // revert
                 }
+            });
+        }
+
+        // ── Instance name ──────────────────────────────────────────────────
+        // Its own SAVE rather than save-on-blur: this name travels to every
+        // browser that has paired with this machine, and a value that commits
+        // itself halfway through being typed would show up in someone else's
+        // header as "DUAL".
+        const nameInput = /** @type {HTMLInputElement|null} */ (
+            this.container.querySelector('#admin-instance-name')
+        );
+        const nameSave = /** @type {HTMLButtonElement|null} */ (
+            this.container.querySelector('#btn-instance-name-save')
+        );
+        if (nameInput && nameSave) {
+            // The comparison is against the trimmed value on both sides, so
+            // typing a space and deleting it does not leave SAVE lit.
+            const isDirty = () => nameInput.value.trim() !== this._instanceName;
+            const syncSave = () => {
+                nameSave.disabled = !isDirty();
+            };
+            syncSave();
+            nameInput.addEventListener('input', syncSave);
+
+            const save = async () => {
+                if (nameSave.disabled) return;
+                const wanted = nameInput.value.trim();
+                nameSave.disabled = true;
+                try {
+                    const result = await BackendClient.saveAdminSettings({
+                        instance_name: wanted,
+                    });
+                    // The server's answer, not what was typed: it trims and
+                    // clips, and the field has to show what was actually kept.
+                    this._instanceName = result.instance_name || '';
+                    nameInput.value = this._instanceName;
+                    const shown = result.display_name || this._defaultInstanceName;
+                    // The header above this page is showing the old name, and
+                    // so is the register behind it. Announce rather than reach
+                    // in: the shell owns both, and it is the shell that knows
+                    // which entry in the register this machine is.
+                    window.dispatchEvent(
+                        new CustomEvent('mw-instance-renamed', { detail: { name: shown } }),
+                    );
+                    Toast.success(t('admin.instanceNameSaved', { name: shown }));
+                } catch (err) {
+                    console.error('[Admin] Failed to save instance name:', err);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
+                } finally {
+                    syncSave();
+                }
+            };
+
+            nameSave.addEventListener('click', save);
+            nameInput.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                save();
             });
         }
 
