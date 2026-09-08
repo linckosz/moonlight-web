@@ -1964,15 +1964,25 @@ banc, pour regarder le flux : le paquet n'en dépend pas.
 
 ### 19.6 Ce qui reste
 
-~~Le portail PipeWire en repli~~ : **fait et vérifié (§19.15)** — une machine
-sans capacité streame. Reste **le rangement du jeton de consentement** côté
-serveur, sans quoi le dialogue revient à chaque session au lieu d'une fois par
-installation. **AV1** est écrit mais bloqué par le pilote (§19.13), à rouvrir
-sur un Mesa plus récent.
+~~Le portail PipeWire en repli~~ : **fait, câblé et vérifié en flux navigateur
+réel (§19.15)** — une machine sans capacité streame, et le jeton de consentement
+est rangé, donc **un clic par installation**.
 ~~Le paquet~~ : traité en §19.8 le 05/09 au soir (constaté le même jour : le job
 Linux de `release.yml` n'installait aucune des `-dev`, le `.deb` et le `.rpm`
 publiés embarquaient le stub). ~~HEVC~~ : §19.11. ~~Le premier flux navigateur,
-image et son~~ : §19.12.
+image et son~~ : §19.12. ~~L'invalidation de référence~~ : §19.14.
+
+**Ce qui reste pour une prochaine version**, par ordre de ce que l'utilisateur
+sent — le détail et le pourquoi de chacun sont en §19.16 :
+
+| # | Manque | État |
+|---|---|---|
+| 1 | **Couper le son côté hôte** | rien d'écrit ; `HostMute` est Windows seulement, donc `mute_host_audio` — coché par défaut chez le client — est ignoré en silence et le son joue dans la pièce |
+| 2 | **Le clic de consentement rejoué** | le sens serveur → worker est prouvé en flux réel ; le sens retour (un grant **neuf** jusqu'à `settings.json`) attend un dialogue humain |
+| 3 | **AV1** | écrit, ⛔ bloqué par le pilote (§19.13) ; à rouvrir sur un Mesa plus récent, ce qui demande de mettre à jour le banc |
+| 4 | **Le multi-écran absolu** | corrigé et testé unitairement (§23.3), **jamais exécuté sur un vrai hôte Linux à deux écrans** |
+| 5 | **HDR** | inexistant : `LinuxProbe` pose `hdrActive = false` en dur, la capture est XRGB 8 bits, rien en aval n'existe |
+| 6 | **Wayland et le pointeur relatif** | ⛔ sans solution par conception — aucun client Wayland ne peut lire ni déplacer le pointeur d'un autre |
 
 ### 19.11 HEVC par VA-API (08/09/2026)
 
@@ -2043,9 +2053,47 @@ les autres plateformes · `persist_mode=2`, qui est ce qui achète le silence.
 Donc : **un clic par installation, pas par session**, à condition de ranger le
 jeton. C'est la différence entre un repli acceptable et un produit qui demande la
 permission à chaque lancement — et c'est pour ça que `persist_mode=2` n'est pas
-un détail. ⚠️ Ranger le jeton dans les réglages de l'hôte reste **à faire** avec
-le flux lui-même ; tant que ce n'est pas fait, le dialogue revient à chaque
-session.
+un détail.
+
+**Où le jeton est rangé, et par quel chemin (08/09/2026).** Le worker n'a pas de
+fichier de réglages : il en est un processus séparé, et sur une install en
+service il ne tourne même pas sous le même jeton. Le jeton fait donc l'aller-
+retour que fait déjà le TTL de l'hôte, à ceci près qu'il est **persisté** :
+
+```
+AppSettings["portal_restore_token"]
+  → cfg["portalRestoreToken"]            (la ligne de configuration du worker)
+  → StreamSession::setPortalRestoreToken
+  → NativeMediaEngine::StartParams
+  → SessionConfig::portalRestoreToken
+  → PortalCapture::setRestoreToken       → aucun dialogue
+
+et au retour, seulement si le portail a VRAIMENT demandé :
+  Session::setPortalGrantCallback        (posé AVANT start(), voir plus bas)
+  → NativeMediaEngine::portalGrantReceived
+  → StreamSession::portalGrantReceived
+  → événement JSON {"event":"portalGrant"} sur stdout
+  → StreamWorkerHost::portalGrantReceived
+  → AppSettings::setPortalRestoreToken
+```
+
+⚠️ **Le rappel se pose avant `start()`**, pas après comme tous les autres :
+demander un screencast **est** ce qui lève le dialogue, donc le consentement
+revient de l'intérieur de `start()`. Un écouteur posé ensuite n'est pas en retard
+d'un peu, il a manqué le seul appel qu'il y aura jamais.
+
+⚠️ **Et le grant n'est signalé que s'il est nouveau.** Mesuré le 08/09 : GNOME 42
+**ne fait pas tourner le jeton** — rejouer un jeton valide rend exactement la même
+chaîne (md5 identique avant/après). Sans la garde `granted != stocké`, chaque
+session réécrirait `settings.json` pour rien. Un jeton identique est donc le cas
+**normal** d'une machine qui marche, et `setPortalRestoreToken` ne réécrit pas le
+fichier quand la valeur ne change pas (vérifié par un test qui réécrit le fichier
+en JSON compact et regarde s'il a été ré-indenté).
+
+Le consentement est rangé **où qu'il apparaisse** : la session du propriétaire et
+celle d'un joueur invité le remontent toutes les deux, parce qu'il appartient à
+la **machine** et non au spectateur — sans quoi l'écran de l'hôte lèverait un
+dialogue que personne n'est là pour répondre.
 
 **La route complète, et ce qu'elle décide en chemin.** `IScreenCapture` sépare
 les deux sources — le lecteur de scanout et le portail — parce que la session
@@ -2067,12 +2115,44 @@ Selector ait choisi, et la session bascule sur la paire CPU en le disant — don
 rapporte l'encodeur **réel**, pas celui choisi, pour que le client ne se voie pas
 promettre un codec qu'il ne recevra pas.
 
+#### 19.15.1 ⚠️ Le codec doit suivre la paire (08/09/2026)
+
+Trouvé au **premier vrai flux navigateur** par le portail, et c'est le genre de
+défaut qu'aucun test unitaire n'aurait attrapé parce que le test choisissait son
+codec : Chrome préfère HEVC, le Selector le lui accorde — le GPU offre bien HEVC
+—, puis la paire CPU répond « OpenH264 encodes H.264 only, not HEVC » et la
+session meurt avant la première image. Sur une AppImage, c'est **toute** première
+session de tout utilisateur.
+
+Le correctif est en deux endroits, et le second est le vrai :
+
+1. `buildPipeline` abaisse le codec **avec** la paire : si la mémoire partagée
+   force le CPU et que le codec choisi n'est pas H.264, la session encode en
+   H.264 et le journalise. `SessionInfo::codec` rapporte alors H.264 — le client
+   apprend ce qu'il va recevoir, jamais ce que le GPU aurait pu faire.
+2. ⚠️ **`NativeHost::createSession` ne réduit plus `clientCodecs` au codec
+   choisi.** Cette ligne (`resolved.clientCodecs = {selection.codec}`) était une
+   normalisation bien intentionnée — « le backend ne rejoue pas la politique » —
+   mais le choix voyage déjà par `ResolvedTarget::codec`, donc elle n'achetait
+   rien et coûtait la vérité : elle faisait dire à la configuration que le client
+   ne décode qu'un seul codec. Avec la liste réduite, la seule réponse
+   disponible à « ce client prendrait-il du H.264 ? » était « il a demandé du
+   HEVC », et la session mourait sur une machine dont le navigateur décode le
+   H.264 parfaitement.
+
+La règle générale, qui vaut au-delà de Linux : **une contrainte découverte tard
+doit pouvoir être arbitrée tard**, et pour ça les faits sur le client (ce qu'il
+décode) doivent survivre jusqu'au backend — seules les *décisions* se
+normalisent. Un client qui n'aurait nommé que HEVC est refusé explicitement,
+avec la raison ; il n'est pas servi un flux qu'il ne peut pas décoder.
+
 **Mesuré, les deux routes** :
 
 | Route | Comment | Résultat |
 |---|---|---|
-| KMS | binaire avec la capacité | 3508/3508, trois passages, session VA-API inchangée |
-| **Portail** | **une copie du binaire, donc sans capacité — l'AppImage exactement** | bascule automatique, nœud ouvert **sans dialogue**, mémoire partagée détectée, paire CPU, **446 708 octets de H.264 1920×1080, 16 images relues par ffprobe**. 3521/3521 |
+| KMS | binaire avec la capacité | 3587/3587, session VA-API HEVC inchangée |
+| **Portail** | **une copie du binaire, donc sans capacité — l'AppImage exactement** | bascule automatique, nœud ouvert **sans dialogue**, mémoire partagée détectée, paire CPU, codec abaissé, **3535/3535** dont la descente HEVC→H.264 et le refus d'un client HEVC-seul |
+| **Portail, vrai navigateur** | Chrome/Windows → l'app complète sur le banc, jeton lu dans `settings.json` | ouverture **sans dialogue**, `CODEC: H264`, **1920×1080, 8,1 ms**, le bureau GNOME du banc à l'écran |
 
 ⚠️ **Le piège AT_SECURE**, qui a d'abord fait croire à l'absence de portail : une
 capacité de **fichier** met le processus en `AT_SECURE`, et libsystemd refuse
@@ -2370,6 +2450,67 @@ banc est Qt 6.11 à la place de 6.6.3 ; et le **premier flux navigateur** depuis
 hôte (§19.6), qui est la prochaine étape.
 
 ---
+
+### 19.16 Ce qui manque encore à la plateforme Linux (08/09/2026)
+
+Écrit après le premier flux navigateur complet par le portail, quand la
+plateforme est utilisable de bout en bout : image, son, clavier, souris, manette,
+réparation sans keyframe, et une route pour les machines qui ne peuvent pas lire
+leur scanout. Ce qui suit n'est pas une liste de bugs, c'est ce qu'un hôte Linux
+ne sait **pas encore** faire, et pourquoi.
+
+**1. Couper le son côté hôte — rien n'est écrit.** `HostMute` n'est inclus que par
+`WindowsSession.cpp`. Le réglage `mute_host_audio`, coché par défaut dans le
+client et honoré par tous les hôtes GameStream, est donc **ignoré en silence**
+sur un hôte Linux : le son du jeu sort aussi des haut-parleurs de la pièce. C'est
+le manque que l'utilisateur remarque en premier.
+
+La voie est celle que Windows appelle sa stratégie 2 (§24) et elle est plus
+facile ici : le son est déjà capté sur le **moniteur d'un sink** PipeWire
+(§19.7). Créer un sink nul, y déplacer les flux de lecture le temps de la
+session, capter son moniteur, et tout remettre à la fin — c'est du graphe
+PipeWire, pas un pilote à signer. ⚠️ Attention au piège symétrique de Windows :
+couper le sink par défaut au **volume** couperait aussi la capture, puisque le
+moniteur entend ce que le sink joue.
+
+**2. Le consentement du portail, dans le sens du retour.** Le trajet
+`settings.json` → worker → portail est prouvé en flux navigateur réel : le jeton
+est relu, rejoué, et la session s'ouvre sans dialogue (§19.15). Le trajet inverse
+— un grant **neuf** qui remonte jusqu'à `settings.json` — est écrit, testé
+unitairement, et ne peut être exercé qu'en levant un vrai dialogue, donc en
+cliquant à la main sur la machine. C'est une vérification, pas un doute : sans
+elle, le pire cas est que le dialogue revienne, ce qui est le comportement
+d'avant.
+
+**3. AV1 — bloqué ailleurs que chez nous.** §19.13. Rien à corriger ici ; il faut
+un pilote qui décrive ses attributs d'encodage AV1, donc un banc plus récent
+qu'Ubuntu 22.04 / Mesa 23.2.
+
+**4. Le multi-écran absolu, jamais vu tourner.** `displayPointToDesktop()` et
+`desktopToAbsoluteRange()` (§23.3) sont justes par construction et couverts par
+`test_absolute_map.cpp`, mais aucun hôte Linux à deux écrans n'a jamais exécuté
+ce code — le banc n'en a qu'un. Un test unitaire prouve l'arithmétique, pas la
+convention du compositeur.
+
+**5. HDR : inexistant, et ce n'est pas un oubli.** `LinuxProbe` pose
+`hdrActive = false` en dur, la capture est XRGB 8 bits, et rien en aval ne sait
+produire du P010 ni du Main10 par VA-API. C'est le chantier de §16 à refaire
+entièrement côté Linux. ⚠️ Et le banc ne pourra rien en juger sans un écran HDR
+branché dessus.
+
+**6. Wayland et le pointeur relatif — ⛔ sans solution.** `X11Pointer` est chargé
+en `dlopen` ; sur une session Wayland il ne trouve rien, et le rapatriement du
+pointeur entre écrans n'a pas lieu. Ce n'est pas un manque à combler : **aucun
+client Wayland ne peut lire ni déplacer le pointeur d'un autre**, par conception
+du protocole. L'injection, elle, marche partout — uinput est un périphérique
+noyau, que le compositeur voit comme une vraie souris.
+
+**Et une contrainte assumée, à ne pas relire comme un manque** : PipeWire est
+**requis** pour le son. Sur une machine encore sous PulseAudio pur, le graphe n'a
+aucune sortie, le flux est refusé, la session streame en silence avec un journal
+explicite et réessaie toutes les 2 s. C'est une décision de licence — libpulse
+est LGPL, hors de la liste blanche de `backend/native-host/LICENSE.md` — pas un
+défaut.
 
 ## 20. macOS : ScreenCaptureKit → VideoToolbox, sans étage de conversion (05/09/2026)
 
