@@ -228,6 +228,7 @@ def histogram(samples, width=760, height=190, bins=18):
 def analyse(results_dir):
     inventory = read_json(os.path.join(results_dir, "inventory.json"), {}) or {}
     matrix = read_json(os.path.join(results_dir, "matrix.json"), {}) or {}
+    provenance = read_json(os.path.join(results_dir, "provenance.json"), {}) or {}
     bench = read_csv(os.path.join(results_dir, "native-bench.csv"))
     probes = read_jsonl(os.path.join(results_dir, "probe-results.jsonl"))
     browser = read_jsonl(os.path.join(results_dir, "passes.jsonl"))
@@ -361,7 +362,7 @@ def analyse(results_dir):
                              f"The reference drifted {drift * 100:.0f}% across the matrix",
                              f"head {a:.2f} ms, tail {b:.2f} ms encode mean")
 
-    return inventory, matrix, passes, anomalies, drift, perf_meaningful
+    return inventory, matrix, passes, anomalies, drift, perf_meaningful, provenance
 
 
 # ── Rendering ───────────────────────────────────────────────────────────────
@@ -416,7 +417,8 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.85em 
 """
 
 
-def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, out_path):
+def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provenance,
+           out_path):
     esc = html.escape
     disp = matrix.get("display") or {}
     parts = [f"<style>{CSS}</style>", '<div class="wrap">']
@@ -424,6 +426,25 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, out_pat
     parts.append("<h1>MoonlightWeb — bench campaign</h1>")
     parts.append(f'<p class="sub">{esc(datetime.now().strftime("%d/%m/%Y %H:%M"))} · '
                  f'commit <code>{esc(str(inventory.get("commit") or "?"))}</code></p>')
+
+    # Which binary produced these numbers, said before anything else. A campaign
+    # of record runs on the CI artifact installed the way a user installs it; a
+    # local build is for diagnosis. Both are legitimate, they are NOT comparable,
+    # and a report that does not say which is a report nobody can trust twice.
+    tier = provenance.get("tier")
+    if tier:
+        label = {
+            "artifact": ("CI artifact — as a user gets it", GREEN),
+            "installed": ("installed build — as a user runs it", GREEN),
+            "local-build": ("local build — diagnosis, not a campaign of record", YELLOW),
+        }.get(tier, (tier, GREY))
+        parts.append(f'<div class="card"><span class="dot dot--{label[1]}"></span>'
+                     f'<b>{esc(label[0])}</b><div class="meta" style="margin-top:10px">'
+                     f'<div><b>Binary</b><code>{esc(str(provenance.get("exe") or "?"))}</code></div>'
+                     f'<div><b>Digest</b><code>{esc(str(provenance.get("sha256") or "?"))}</code></div>'
+                     f'<div><b>Version</b>{esc(str(provenance.get("fileVersion") or "?"))}</div>'
+                     f'<div><b>Clip</b><code>{esc(str(provenance.get("clipSha256") or "none"))}</code></div>'
+                     f'</div></div>')
 
     # ── The fleet, as it actually was ──
     parts.append('<div class="card"><div class="meta">')
@@ -571,8 +592,8 @@ def main():
     ap.add_argument("--out", default=os.path.join(here, "..", "..", "bench-out", "report.html"))
     ns = ap.parse_args()
 
-    inventory, matrix, passes, anomalies, drift, perf = analyse(ns.results)
-    path = render(inventory, matrix, passes, anomalies, drift, perf, ns.out)
+    inventory, matrix, passes, anomalies, drift, perf, prov = analyse(ns.results)
+    path = render(inventory, matrix, passes, anomalies, drift, perf, prov, ns.out)
     print(f"report written to {os.path.abspath(path)}")
     print(f"  {len(passes)} passes, {len(anomalies)} anomalies")
 

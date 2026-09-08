@@ -170,6 +170,39 @@ $matrix = [ordered]@{
 $matrixPath = Join-Path $ResultsDir 'matrix.json'
 $matrix | ConvertTo-Json -Depth 8 | Set-Content -Path $matrixPath -Encoding UTF8
 
+# ── Provenance: WHICH binary produced these numbers ─────────────────────────
+#
+# A campaign of record runs on the CI artifact, installed the way a user
+# installs it; a diagnosis run uses the local build. Both are legitimate and
+# they are not comparable, so the report has to say which one it was — mixing
+# the two in silence is exactly what makes two campaigns incomparable.
+#
+# The hash, not the version string: the displayed version comes from a CMake
+# cache and has been seen surviving a rebuild, so it does not prove which code
+# is running. A digest of the file does.
+$exeItem = Get-Item $Exe -ErrorAction SilentlyContinue
+$provenance = [ordered]@{
+    exe        = $Exe
+    tier       = if ($Exe -like '*\build\*' -or $Exe -like '*/build/*') { 'local-build' }
+                 elseif ($Exe -like '*Program Files*') { 'installed' }
+                 else { 'artifact' }
+    sha256     = if ($exeItem) { (Get-FileHash -Path $Exe -Algorithm SHA256).Hash.Substring(0, 16) } else { $null }
+    fileVersion = if ($exeItem) { $exeItem.VersionInfo.FileVersion } else { $null }
+    builtAt    = if ($exeItem) { $exeItem.LastWriteTime.ToString('o') } else { $null }
+    commit     = $inventory.commit
+    clipSha256 = $null
+}
+$clipForHash = Join-Path $env:USERPROFILE '.mw-bench\content\cod.webm'
+if (Test-Path $clipForHash) {
+    $provenance.clipSha256 = (Get-FileHash -Path $clipForHash -Algorithm SHA256).Hash.Substring(0, 16)
+}
+$provenance | ConvertTo-Json | Set-Content -Path (Join-Path $ResultsDir 'provenance.json') -Encoding UTF8
+Write-Host ""
+Write-Host "binary: $($provenance.tier) · $($provenance.fileVersion) · sha $($provenance.sha256)"
+if ($provenance.tier -eq 'local-build') {
+    Write-Host "        (a campaign of record runs on the CI artifact — see docs/bench-campaign.md §11)"
+}
+
 Write-Host ""
 Write-Host "matrix: $($passes.Count) passes ($(@($passes | Where-Object { $_.skip }).Count) skipped)"
 $passes | ForEach-Object {

@@ -277,3 +277,68 @@ comparable with a real campaign.
 | Reference clip | `~/.mw-bench/content/cod.webm` — **outside the repository**, 263 MB |
 | Past verdicts | `docs/bench-native-host.md` |
 | Probe internals | `docs/design/glass-to-glass.md` §5 bis |
+
+## 11. Two tiers: the campaign of record, and the diagnosis loop
+
+A number is only as trustworthy as the binary that produced it, and the binary a
+user installs is not the one a developer builds. The bench therefore has two
+tiers, and **the report says which one it was** — mixing them in silence is what
+makes two campaigns incomparable.
+
+| | Campaign of record | Diagnosis |
+|---|---|---|
+| Binary | the **CI artifact**, installed as a user installs it | the local `build\` |
+| Answers | what a user actually gets | what a change did |
+| Report card | green | **yellow**, "not a campaign of record" |
+
+`run-campaign.ps1` writes `results/provenance.json` — the binary's path, a digest
+of the file, its version and the digest of the clip — and the report prints it
+above everything else. The **digest, not the version string**: the displayed
+version comes from a CMake cache and has been seen surviving a rebuild, so it
+does not prove which code is running.
+
+### Why the artifact, concretely
+
+Three gaps a local build cannot close, all of them already known:
+
+- **Windows ARM64** — the cross-compiled OpenSSL is broken (every client TLS
+  handshake crashes in `libssl!tls_parse_all_extensions`). Only the CI's native
+  `windows-arm64` job produces a sound binary.
+- **macOS** — the `.pkg` cannot be assembled on the bench: `ibtool` needs a full
+  Xcode and the bench has only the Command Line Tools. The signing identity and
+  the TCC behaviour of the shipped app are also not those of a hand-built one.
+- **Linux** — the bench builds against Qt 6.6.3, the CI against 6.11.
+
+And it is a chapter 0 consequence that this is possible at all: until the flag
+left `QT_DEBUG`, a release binary could not be measured for click-to-photon.
+
+### Getting the artifacts, without cutting a release
+
+No tag is needed. `ci.yml` runs the full packaging as its last stage, and **a
+manual run on a branch only uploads workflow artifacts** — the version is
+`<last tag>-<3-char sha>`, nothing is published.
+
+1. Push the commits (Bruno's gesture; `ci.yml` has no branch push trigger on
+   purpose, so the multi-platform matrix is never spent by accident).
+2. Run `ci.yml` manually on `main` — or `release.yml` directly, which takes a
+   `platform` input (`all`, `windows-x64`, `windows-arm64`, `linux`, `macos`)
+   when only one bench needs refreshing.
+3. Collect what each bench needs:
+
+| Artifact | For |
+|---|---|
+| `MoonlightWeb-windows-x64-v<ver>` | the Inno installer — installs like a user |
+| `unsigned-payload-x64` | **the bare `MoonlightWeb.exe`** — the encoder half without touching an existing install |
+| `MoonlightWeb-windows-arm64-v<ver>` | bench-arm, the only sound ARM64 build |
+| `moonlightweb-linux-x64-v<ver>` | `.deb` / `.rpm` / AppImage |
+| `moonlightweb-macos-arm64-v<ver>` | the `.pkg` |
+
+4. `run-campaign.ps1 -Exe <path to the artifact's exe>`; the report will say
+   `CI artifact` in green.
+
+### When to stay local
+
+The loop through CI is long: push, a multi-platform build, a reinstall on five
+machines, a replay. When the campaign **finds** something, diagnose it against
+the local build — that is what the yellow tier is for — and only re-run the
+campaign of record once the fix has landed and been packaged.
