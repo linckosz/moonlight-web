@@ -3719,9 +3719,30 @@ et les machines sans encodeur voient l'assistant d'avant, mot pour mot.
   l'assistant d'avant ; un `status` **sans** objet `native` est traité comme
   « ne peut pas se diffuser » (un serveur plus ancien aide au lieu de se taire).
   584 tests front au total.
-- ⚠️ **Non compilé ici** : le plugin `MWInternetPane.m` (Objective-C, SDK macOS)
-  et le `.pkg`. Le banc Mac était éteint ; la validation est le job `installers`
-  de la CI, comme pour le `.iss`.
-- ⚠️ **Non vu à l'écran** : l'assistant lui-même ne s'affiche pas sous Windows,
-  donc le rendu réel de la section « Diffuser cet ordinateur » (et de la phrase
-  de permission macOS) reste à regarder sur le Mac ou le banc Linux.
+### 25.4 Vu à l'écran, sur le banc Mac (08/09/2026)
+
+Les deux réserves du §25.3 sont levées, l'une entièrement, l'autre à moitié.
+
+**L'assistant.** App au commit de l'assistant en deux pages, bâtie et déployée sur
+le M1 (identité « MoonlightWeb Dev », donc les octrois TCC tiennent), puis parcourue
+par Bruno : « l'assistant fonctionne bien ». Deux drapeaux ont dû être remis pour
+qu'il y ait quelque chose à voir — `setup_completed`, évidemment, mais aussi
+`internet_access_enabled` : **une machine dont le lien est déjà actif ne voit jamais
+la page 1**, `_configPage()` l'envoie droit sur la seconde. Le raccourci est voulu ;
+il cache simplement la moitié du parcours à qui veut le relire.
+
+Ce que ce passage prouve au-delà du rendu : le consentement enregistré dans
+`settings.json` est **mot pour mot ce qui était à l'écran** — 967 caractères, le
+corps du texte suivi de `/ Allow the Internet link (recommended)`, la phrase même
+que le bouton Accepter engage. C'était jusqu'ici la propriété d'un test unitaire
+sur des clés `text:setup.*` ; elle est maintenant vérifiée de bout en bout, du
+navigateur au fichier, sur une vraie machine.
+
+**Le `.pkg`, à moitié.** `MWInternetPane.m` compile propre sur le banc en
+`-Wall -Wextra` (bundle Mach-O arm64), `postinstall` passe le contrôle de syntaxe,
+le `.xib` référence bien la classe renommée, et les seules occurrences de
+« Sunshine » qui restent sous `installer/macos` sont de la prose (« client des hôtes
+Sunshine, Apollo et Wolf ») et des commentaires d'historique — plus une ligne de
+logique. ⚠️ **L'assemblage lui-même reste non fait** : `xcrun ibtool` demande Xcode
+complet et ce banc n'a que les Command Line Tools, donc la compilation du `.xib` et
+`productbuild` attendent le job `installers` de la CI, comme pour le `.iss`.
