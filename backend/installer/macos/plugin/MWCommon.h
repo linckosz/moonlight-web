@@ -17,22 +17,38 @@
 // script's HANDOFF variable.
 static NSString *const kMWHandoffPath = @"/tmp/moonlightweb-provisioning.plist";
 
-// The Internet opt-in checkbox label. Single source of truth: displayed in the
-// pane AND handed to the server as the consent text of its versioned consent
-// record — so it has to say what enabling actually does, and what it does not.
+// The Internet opt-in agreement, in the two blocks it is TYPESET as — the
+// checkbox's own line, then the explanation under it — and, joined by a single
+// space, the one string handed to the server as the consent text of its
+// versioned consent record.
 //
-// Shorter than the same agreement on Windows and in the web wizard: the pane's
-// content view is 470x240 points. It must name every party that learns
-// something — the router, the peer, the introduction server, the STUN server —
-// because what is recorded has to be what was read.
-static inline NSString *MWInternetConsentText(void)
+// Split for legibility, not for meaning: a checkbox whose title ran to six
+// wrapped lines was the shape that shipped first, and it read badly. The web
+// wizard already lays the same agreement out this way (body, then the line the
+// user ticks). What is recorded stays byte for byte what is displayed, which is
+// the whole point of having one source of truth here.
+//
+// It must name every party that learns something — the router, the peer, the
+// introduction server, the STUN server — because what is recorded has to be
+// what was read.
+static inline NSString *MWInternetConsentLead(void)
 {
-    return @"Allow the Internet link (recommended). The router is asked (UPnP) to open one "
+    return @"Allow the Internet link (recommended).";
+}
+
+static inline NSString *MWInternetConsentBody(void)
+{
+    return @"The router is asked (UPnP) to open one "
            @"UDP port per session; it carries nothing but the encrypted stream, and every "
            @"connection on it authenticates first. A rendezvous server introduces the two "
            @"sides, so this Mac's public IP is seen only by that server and by whoever holds "
            @"the link; a MoonlightWeb STUN server is asked what that address is. No DNS "
            @"record, no certificate, ports 80/443 stay closed.";
+}
+
+static inline NSString *MWInternetConsentText(void)
+{
+    return [NSString stringWithFormat:@"%@ %@", MWInternetConsentLead(), MWInternetConsentBody()];
 }
 
 // True when a prior install already authorized the public Internet link: the

@@ -26,6 +26,7 @@
  */
 #import "MWInternetPane.h"
 #import "MWCommon.h"
+#import "MWInternetPaneContent.h"
 
 @implementation MWInternetPane {
     BOOL _built;
@@ -36,20 +37,10 @@
 // above the content area.
 - (NSString *)title { return @"Internet"; }
 
-- (NSTextField *)labelAt:(CGFloat)y height:(CGFloat)h text:(NSString *)s in:(NSView *)view
-{
-    NSTextField *l = [[NSTextField alloc] initWithFrame:NSMakeRect(0, y, 470, h)];
-    l.stringValue = s;
-    l.bezeled = NO; l.drawsBackground = NO; l.editable = NO; l.selectable = NO;
-    // Explicit wrapping: the explanatory blurbs run over several lines.
-    l.usesSingleLineMode = NO;
-    l.lineBreakMode = NSLineBreakByWordWrapping;
-    [view addSubview:l];
-    return l;
-}
-
 // The nib provides an empty contentView (real InstallerPane IBOutlet); populate
-// it once. Outlets are connected before awakeFromNib fires.
+// it once. Outlets are connected before awakeFromNib fires. The layout itself
+// lives in MWInternetPaneContent.h so a preview tool can render exactly these
+// views offscreen — see that header.
 - (void)awakeFromNib
 {
     [super awakeFromNib];
@@ -58,36 +49,13 @@
     if (!view) return;
     _built = YES;
 
-    [self labelAt:170
-            height:56
-              text:@"MoonlightWeb streams this Mac itself — there is nothing else to "
-                   @"install.\n\nOne question before it does:"
-                in:view];
-
+    _internetCheck = MWBuildInternetPaneContent(view);
     // Pre-ticked only when a previous install already authorized Internet access
     // (settings.json) — a re-install must not silently forget the prior opt-in.
     // First install stays unchecked: opening the machine to the Internet
-    // (per-session UPnP mapping) requires an explicit opt-in click. The label IS
-    // the recorded consent, so it wraps over several lines to say what enabling
-    // does and does not do; a discreet positive green tint draws the eye.
-    //
-    // The whole band the credentials used to occupy is its own now, which is the
-    // one improvement this simplification buys the user: the agreement they are
-    // recorded as having read is no longer squeezed into 46 points.
-    _internetCheck = [[NSButton alloc] initWithFrame:NSMakeRect(0, 30, 470, 130)];
-    [_internetCheck setButtonType:NSButtonTypeSwitch];
-    NSMutableParagraphStyle *wrap = [[NSMutableParagraphStyle alloc] init];
-    wrap.lineBreakMode = NSLineBreakByWordWrapping;
-    _internetCheck.attributedTitle = [[NSAttributedString alloc]
-        initWithString:MWInternetConsentText()
-            attributes:@{
-                NSForegroundColorAttributeName : [NSColor systemGreenColor],
-                NSFontAttributeName : [NSFont systemFontOfSize:11],
-                NSParagraphStyleAttributeName : wrap
-            }];
+    // (per-session UPnP mapping) requires an explicit opt-in click.
     _internetCheck.state =
         MWInternetAlreadyAuthorized() ? NSControlStateValueOn : NSControlStateValueOff;
-    [view addSubview:_internetCheck];
 }
 
 // Everything the postinstall needs. Written on the way out, and again from

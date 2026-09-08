@@ -3972,38 +3972,31 @@ différentes, donc deux octrois différents — l'app installée en demande un, 
 fois**, et le garde ensuite d'une mise à jour à l'autre puisque la racine, elle,
 ne bouge plus. Le message de la sonde dit exactement quelle case cocher.
 
-#### ⛔ Le volet Internet est dans le paquet et **ne s'affiche pas** (08/09/2026)
+#### ✅ Le volet Internet s'affiche — et deux défauts d'apparence (09/09/2026)
 
-Bruno ayant accordé l'accès assistif au banc, Installer.app a pu être piloté pour
-de vrai. Le verdict est négatif, et il corrige ce que la section ci-dessus
-laissait espérer : **l'InstallerPlugin est livré correctement et macOS 15.6.1 ne
-le charge pas.** Quatre constats indépendants, tous convergents :
+**Vu à l'écran par Bruno, sur le paquet livré tel quel** : la barre latérale
+d'Installer.app affiche Introduction · License · Destination Select ·
+Installation Type · **Internet** · Installation · Summary, et le volet montre sa
+phrase et sa case cochée. Le volet fonctionne, sur macOS 15.6.1, sans correctif.
 
-1. **Le parcours ne compte pas le volet.** Deux « Continue » suffisent pour
-   arriver au bouton `Install` : Introduction → Licence (feuille « Agree ») →
-   Install. Avec le volet il en faudrait trois.
-2. **Le processus n'a jamais ouvert notre bundle.** `lsof` sur Installer ne
-   montre que des bundles système ; aucun `MoonlightWebInstaller`.
-3. **Le volet n'a rien écrit.** `MWInternetPane` dépose
-   `/tmp/moonlightweb-provisioning.plist` en quittant le volet ; le fichier
-   n'existe pas. C'est la trace que le volet laisserait s'il avait tourné, et
-   c'est une meilleure preuve qu'une capture d'écran.
-4. **Le journal système ne mentionne rien** — pas même une erreur de chargement.
-   Installer n'a pas essayé.
+⚠️ **Ce paragraphe remplace une conclusion fausse, et la méthode qui l'a produite
+mérite d'être retenue.** Piloter Installer.app par SSH avait donné quatre
+« signaux » convergents — parcours trop court, bundle absent de `lsof`, pas de
+fichier de transmission, journal muet — tous **artefacts du même blocage** : une
+feuille modale de macOS (« this package will run a program… », bouton **Allow**)
+arrêtait le parcours au premier écran. Le volet n'était donc jamais atteint : il
+n'avait aucune raison d'écrire son fichier, et le processus interrogé n'y était
+pas encore arrivé. Quatre observations tirées d'un même montage cassé ne sont pas
+quatre preuves indépendantes — c'est une seule erreur, comptée quatre fois. La
+seule mesure qui tranchait était l'œil d'un humain devant la machine.
 
-Conséquence produit : à l'installation, l'utilisateur n'est **pas** interrogé sur
-le lien Internet, `provisioning.json` reçoit `internet_access_authorized: false`
-et un consentement vide — exactement ce que produit une installation en ligne de
-commande. Ce n'est pas un trou de sécurité (le défaut sûr est « pas de lien »),
-c'est une fonctionnalité absente : le consentement se donne alors dans
-l'assistant de l'app, au premier lancement.
-
-⚠️ **Hypothèse instruite le 09/09 : l'anomalie est réelle, sa conséquence reste à
-prouver.** Le `Info.plist` du bundle déclare `NSPrincipalClass =
-InstallerSection`, c'est-à-dire la classe **de base** du framework et non une
-sous-classe à nous, alors que le contrat d'Apple attend une sous-classe. Vérifié
-en chargeant les deux bundles dans le runtime Objective-C (`NSBundle` +
-`principalClass`, hors de tout Installer.app) :
+**Sur `NSPrincipalClass`, qui n'était donc pas le problème.** Le `Info.plist`
+déclare `NSPrincipalClass = InstallerSection`, la classe **de base** du
+framework et non une sous-classe — ce qui s'écarte du contrat d'Apple, et ce que
+la mesure ci-dessous confirme. Mais puisque le volet s'affiche, macOS l'accepte :
+c'est une entorse sans conséquence, à laisser telle quelle plutôt qu'à
+« corriger » sur du code qui marche. Relevé en chargeant les deux bundles dans le
+runtime Objective-C (`NSBundle` + `principalClass`, hors de tout Installer.app) :
 
 | | livré par la CI | patché |
 |---|---|---|
@@ -4014,23 +4007,23 @@ en chargeant les deux bundles dans le runtime Objective-C (`NSBundle` +
 | **est une sous-classe** | **non** | **OUI** |
 | `MWInternetPane` enregistrée | oui | oui |
 
-Deux enseignements. D'abord **notre binaire n'est pas en cause** : il se charge,
-et sa classe de volet est bien enregistrée — ce qui écarte « le plugin est
-cassé » et déplace le soupçon sur la découverte des plugins par Installer.
-Ensuite le correctif candidat (ajouter une vraie sous-classe et la nommer comme
-classe principale) compile, se charge et satisfait le contrat.
+⚠️ **L'expérience était viciée, et le montage l'a montré tout seul.** Le paquet
+patché, ouvert par Bruno, ne montrait plus le volet — mais un second paquet,
+assemblé de la même façon et dont le `Info.plist` n'avait **pas** été touché, ne
+le montrait pas davantage. Le point commun n'est donc pas la classe principale,
+c'est **la manière de réassembler le paquet** : `pkgutil --expand` → remplacer le
+blob `PlugIns` → `pkgutil --flatten` perd la section des plugins, alors même que
+le blob se relit correctement. Un paquet ne se rebricole pas à la main ; il
+s'assemble avec `productbuild --plugins`, ce que fait `build-pkg.sh`, et ce qu'il
+faut faire aussi pour tout paquet de banc (la recette sans Xcode : `pkgutil
+--flatten` sur le *composant* seul pour le remettre à plat, puis `productbuild`
+avec la Distribution, les Resources et le dossier de plugins).
 
-**Ce qui reste non prouvé** : qu'Installer affiche alors le volet. Un paquet de
-test complet a été fabriqué pour ça — `~/mw-pkg/test/test.pkg` sur le banc,
-identique au paquet livré à cette seule ligne près, et validé par
-`installer -showChoicesXML` — mais Installer.app a cessé de présenter la moindre
-fenêtre dans cette session pilotée à distance (`windows=0`, **pour le paquet
-d'origine aussi**, donc ce n'est pas le paquet de test qui est en cause). La
-conclusion demande deux double-clics humains : ouvrir `~/mw-pkg/new.pkg` puis
-`~/mw-pkg/test/test.pkg` et regarder si une étape « Internet » apparaît dans le
-second. Si oui, le correctif est celui-là ; si non, c'est que
-`InstallerPlugins.framework`, déprécié, n'est plus chargé du tout par macOS 15 et
-il faut retirer le volet plutôt que d'embarquer du code mort.
+Conclusion sur `NSPrincipalClass` : **non tranchée, et sans intérêt pratique**.
+Ce qui est livré marche ; l'entorse au contrat d'Apple est réelle mais sans
+conséquence observable, donc on n'y touche pas. Le paquet de test a par ailleurs
+échoué à l'installation faute de privilèges — encore un symptôme du même
+réassemblage bricolé, pas du paquet de la CI, qui s'installe.
 
 **Deux pièges de banc à retenir**, qui ont coûté plusieurs passes chacun :
 `screencapture` lancé depuis une session SSH n'a pas l'enregistrement d'écran, et
