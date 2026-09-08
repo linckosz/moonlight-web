@@ -2998,6 +2998,11 @@ seconde de session, `false` à l'instant de l'arrêt et ensuite — pendant que
 l'audio continuait de partir (2 961 paquets, 0 jeté, 29 trames de silence de
 démarrage), une vidéo YouTube jouant sur le Mac.
 
+**Confirmé à l'oreille par Bruno, devant la machine** (« le son est bien coupé,
+ça fonctionne ») : c'est la seule moitié de ce chapitre qu'aucune sonde ne peut
+produire. Un `kAudioDevicePropertyMute` à 1 dit ce que l'OS a enregistré, pas ce
+que la pièce entend.
+
 **Reste** : Linux (rien — `HostMute` n'est inclus que par les sessions Windows
 et macOS), et un worker tué de force laisse le mute posé, comme sous Windows.
 
