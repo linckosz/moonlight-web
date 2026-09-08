@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "The SHAPE of a bench fleet — not a fleet. This file carries the ports a",
+    "backend answers on and the one machine every campaign has, the one it runs",
+    "on. Your own machines are declared in hosts.local.json, which is not",
+    "committed; copy hosts.local.example.json to start one.",
+    "",
+    "The split is not only about credentials. A bench fleet is a description of",
+    "one room: these GPUs, that dual boot, a mini PC on a shelf. It is true there",
+    "and false everywhere else, so a repository is the wrong place for it —",
+    "somebody cloning this harness wants the machinery, never someone else's",
+    "hardware. discover.ps1 merges the two on the id: a known id is completed",
+    "field by field, an unknown one is simply a new machine.",
+    "",
+    "A machine entry, all fields optional but id:",
+    "",
+    "  id              short name, used in results and as the merge key",
+    "  label           one line for a human; never shown in a shared report",
+    "  kind            how it is reached: local | ssh | wsl-sshpass | plink",
+    "  roles           what it can be in a campaign: host, client, or both",
+    "  perfMeaningful  false on a VM, a machine with no GPU or a software",
+    "                  encoder — the report then never fails it on latency",
+    "  dualBoot        present when one address answers under two systems; the",
+    "                  TTL of a ping decides which one is up today",
+    "  expect          what you believe is there, so discover can say 'gone'",
+    "                  rather than silently shrinking the matrix",
+    "  address         where it lives — hosts.local.json ONLY",
+    "  user, password  how to log in — hosts.local.json ONLY",
+    "  sshAlias        an entry of ~/.ssh/config, better than a password",
+    "",
+    "Everything a local file declares is a HINT, never a fact: leases move,",
+    "the same address can be two different machines, and a box can be off.",
+    "discover.ps1 probes every field it can and writes what it actually found."
+  ],
+
+  "machines": [
+    {
+      "id": "local",
+      "label": "the machine running the campaign",
+      "kind": "local",
+      "roles": ["host", "client"]
+    }
+  ],
+
+  "ports": {
+    "_comment": "The products' own defaults, and probed rather than assumed. Wolf impersonates GameStream and answers on the same pair, so a site running both on one machine rebases one of them — put that, and any other local shift, in the \"ports\" block of hosts.local.json. A dev instance in particular almost never sits where you expect: read its log or netstat, never the default.",
+    "gamestreamHttp": 47989,
+    "gamestreamHttps": 47984,
+    "sunshineWeb": 47990,
+    "multiseatApi": 9550,
+    "wolfHttp": 47989,
+    "wolfHttps": 47984,
+    "devHttp": 48080,
+    "devHttps": 48443
+  }
+}

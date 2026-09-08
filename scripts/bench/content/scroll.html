@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>bench — scrolling text</title>
+<style>
+  html, body { margin: 0; background: #fff; overflow: hidden; height: 100%; cursor: none; }
+  #col { font: 28px/1.5 Georgia, 'Times New Roman', serif; color: #111; column-count: 3;
+         column-gap: 48px; padding: 24px 48px; will-change: transform; }
+</style>
+</head>
+<body>
+<div id="col"></div>
+<script>
+// The opposite pole from the game clip: sharp, high-contrast edges moving at a
+// constant speed. It is the content where a slower encoder preset visibly buys
+// quality (+5 of QP at P1 against P4), which the game clip does not show at
+// all — so the pair together says whether a finding is about the encoder or
+// about the footage.
+//
+// One frame per refresh, driven by requestAnimationFrame, so the host has
+// something new to encode on every single vsync: this is the content that
+// makes a display run at its full refresh rate.
+const col = document.getElementById("col");
+const words = ("the quick brown fox jumps over the lazy dog while distant thunder rolls across " +
+  "an empty plain and the lantern gutters in a wind that smells of rain and iron ").split(" ");
+let text = "";
+for (let i = 0; i < 4000; i++) text += words[i % words.length] + " ";
+col.textContent = text;
+
+const speed = Number(new URLSearchParams(location.search).get("px") ?? 600); // px/s
+let y = 0, last = 0;
+function frame(t) {
+  if (last) y = (y + speed * (t - last) / 1000) % (col.scrollHeight || 1);
+  last = t;
+  col.style.transform = "translateY(" + (-y) + "px)";
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

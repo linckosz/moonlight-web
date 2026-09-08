@@ -39,6 +39,20 @@ backend/debug/
 *.log
 /tmp/
 
+# Bench campaign output. The harness in scripts/bench/ is committed; what it
+# PRODUCES never is — the report names machines, addresses and the state of one
+# desk on one afternoon, and the raw CSVs are hundreds of files per campaign.
+# The clip itself lives outside the repository entirely (~/.mw-bench/content).
+bench-out/
+scripts/bench/results/
+scripts/bench/.chrome-bench/
+scripts/bench/kiosk-verify.png
+
+# One desk's half of the fleet table: how each machine is reached from here.
+# hosts.json declares what a machine IS and is committed; this one describes a
+# single site and stays on it. hosts.local.example.json is the shape.
+scripts/bench/hosts.local.json
+
 # Certificates (generated at runtime)
 backend/certs/
 

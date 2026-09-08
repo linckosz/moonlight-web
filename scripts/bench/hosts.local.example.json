@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Copy to hosts.local.json (gitignored) and declare your own bench fleet.",
+    "This is where a fleet lives: hosts.json carries the shape and the ports and",
+    "travels with the repository, this file describes one room and stays in it.",
+    "",
+    "Entries merge over hosts.json on 'id': the id 'local' completes the machine",
+    "running the campaign, any other id adds a machine. Every field except 'id'",
+    "is optional — see the field list at the top of hosts.json.",
+    "",
+    "Prefer 'sshAlias', pointing at an entry of ~/.ssh/config, over a password",
+    "written in a file, wherever the machine allows it."
+  ],
+
+  "machines": [
+    {
+      "id": "local",
+      "label": "the workstation this campaign runs from",
+      "expect": { "os": "windows", "encoders": ["nvenc"], "native": true }
+    },
+    {
+      "id": "a-laptop",
+      "label": "laptop on the bench, hardware encoder",
+      "kind": "ssh",
+      "address": "10.0.0.2",
+      "sshAlias": "a-laptop",
+      "roles": ["host", "client"],
+      "expect": { "os": "macos", "encoders": ["videotoolbox"], "native": true }
+    },
+    {
+      "id": "a-vm",
+      "label": "VM with no GPU — compatibility only, never perf",
+      "kind": "ssh",
+      "address": "10.0.0.3",
+      "user": "bench",
+      "password": "…",
+      "roles": ["host"],
+      "perfMeaningful": false,
+      "expect": { "os": "linux", "encoders": ["openh264"] }
+    }
+  ],
+
+  "ports": {
+    "_comment": "Optional. Only the keys a site actually shifts; the rest keep the defaults of hosts.json. Wolf answers where GameStream does, so a machine running both rebases one.",
+    "wolfHttp": 51989,
+    "wolfHttps": 51984
+  }
+
+}

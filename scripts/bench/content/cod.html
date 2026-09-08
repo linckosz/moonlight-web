@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>bench — Call of Duty, looped</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; height: 100%; cursor: none; }
+  video { width: 100vw; height: 100vh; object-fit: fill; display: block; }
+  #err { position: fixed; inset: 0; display: none; place-content: center; color: #f66;
+         font: 16px/1.6 system-ui, sans-serif; text-align: center; padding: 4rem; }
+</style>
+</head>
+<body>
+<video id="v" muted playsinline preload="auto" loop></video>
+<div id="err"></div>
+<script>
+// The bench's reference content: Call of Duty gameplay, 1440p60, from the
+// moment the action starts. This is the hardest case of the whole campaign —
+// it costs QP 25 at 40 Mbit/s where a platformer clip holds 18 — and it is the
+// one that matters, because it is what the target player is actually looking at.
+//
+// Two properties the measurements depend on:
+//   - LOOPED, so a long series of clicks never runs off the end of the clip and
+//     starts measuring a black screen;
+//   - playback begins a fixed 3 s after load, and the runner starts its pass
+//     3.5 s after opening this page, so every setting is measured on the same
+//     seconds of the same footage. Without that the comparison between two
+//     settings is a comparison between two different explosions.
+//
+// ?t=<seconds> moves the start, ?src=<url> points at a different file.
+const v = document.getElementById("v");
+const q = new URLSearchParams(location.search);
+const start = Number(q.get("t") ?? 37);
+// The clip is ~260 MB and does not belong in a git repository: fetch-content.ps1
+// puts it in the local cache and passes its file:// URL here.
+v.src = q.get("src") ?? "cod.webm";
+v.addEventListener("loadedmetadata", () => { v.currentTime = start; });
+// `loop` restarts at 0; the interesting seconds start at `start`, so seek back
+// there rather than watching the menu screens on every lap.
+v.addEventListener("seeked", () => {}, { once: true });
+v.addEventListener("timeupdate", () => { if (v.currentTime < start - 1) v.currentTime = start; });
+v.addEventListener("error", () => {
+  const e = document.getElementById("err");
+  e.style.display = "grid";
+  e.textContent = "No clip at " + v.src + " — run fetch-content.ps1 first.";
+});
+setTimeout(() => v.play().catch(e => console.log("play refused: " + e)), 3000);
+</script>
+</body>
+</html>

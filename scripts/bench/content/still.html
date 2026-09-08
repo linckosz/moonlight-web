@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>bench — still</title>
+<style>
+  html, body { margin: 0; background: #fff; overflow: hidden; height: 100%; cursor: none; }
+  #col { font: 28px/1.5 Georgia, 'Times New Roman', serif; color: #111; column-count: 3;
+         column-gap: 48px; padding: 24px 48px; }
+</style>
+</head>
+<body>
+<div id="col"></div>
+<script>
+// The same page as scroll.html with nothing moving. Two things only this
+// content shows: the first keyframe and the refinement burst that follows it,
+// and what a host does when there is no damage at all — which is where a
+// click-to-photon distribution goes bimodal, the flag falling either side of
+// the next capture deadline. A campaign that only ever measures motion never
+// sees either.
+const col = document.getElementById("col");
+const words = ("the quick brown fox jumps over the lazy dog while distant thunder rolls across " +
+  "an empty plain and the lantern gutters in a wind that smells of rain and iron ").split(" ");
+let text = "";
+for (let i = 0; i < 4000; i++) text += words[i % words.length] + " ";
+col.textContent = text;
+</script>
+</body>
+</html>
