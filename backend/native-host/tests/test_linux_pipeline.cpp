@@ -4,6 +4,10 @@
  */
 #include "native_test_framework.h"
 
+#if defined(MW_NATIVE_LINUX_PORTAL)
+#include "capture/linux/PortalScreenCast.h"
+#endif
+
 #if defined(MW_NATIVE_LINUX_GFX)
 #include "capture/linux/KmsCapture.h"
 #include "convert/linux/CpuConvert.h"
@@ -350,6 +354,64 @@ void run_linux_pipeline_tests()
     // Idempotent teardown, as on Windows.
     kms.stop();
     kms.release();
+#endif
+}
+
+// The ScreenCast portal, as far as a test may go without a human.
+//
+// ⚠️ What is NOT tested here, and cannot be: Start. It raises a dialog and
+// waits for someone to accept it, so an automated run would hang for its whole
+// timeout and then report a failure that means nothing. What IS tested is
+// everything that decides whether the route is even worth trying — the presence
+// answer, and that it is a clean yes/no with a reason rather than a crash or a
+// hang on a machine with no portal, which is every CI runner and every service.
+//
+// ⚠️ And a trap worth knowing before reading this suite's output: on a bench
+// where the test binary carries `cap_sys_admin+p` as a FILE capability, the
+// kernel sets AT_SECURE, and libsystemd then refuses the bus address the
+// environment offers (it reads it with secure_getenv). So the answer here is
+// "no session bus" on exactly the machine that has a portal. Measured
+// 08/09/2026, all three cases: no capability → AT_SECURE 0, portal version 4;
+// capability on the binary → AT_SECURE 1, "No medium found"; **through
+// moonlightweb-launch, the way the package ships it → AT_SECURE 0, portal
+// version 4**. The product is on the right side of that line — the launcher
+// hands the capability over an exec that gains nothing, which is not a secure
+// exec (§19.8) — and only the test binary is on the wrong one.
+void run_portal_tests()
+{
+    SECTION("Linux — the ScreenCast portal answers, or says why not");
+
+#if !defined(MW_NATIVE_LINUX_PORTAL)
+    std::fprintf(stderr, "  skipped: the portal route is not built (no libsystemd-dev)\n");
+#else
+    using namespace mw::native::capture;
+
+    std::string reason;
+    const bool there = PortalScreenCast::available(reason);
+    std::fprintf(stderr, "  %s: %s\n", there ? "available" : "unavailable", reason.c_str());
+    // Whatever the answer, it comes with a sentence: "no portal" and "no
+    // session bus" are different problems for whoever reads the log.
+    CHECK(!reason.empty());
+
+    // Constructing and destroying without a handshake must not leave a session
+    // behind or trip over a null bus — the path a machine with no portal takes
+    // on every probe.
+    {
+        PortalScreenCast idle;
+        idle.stop();
+        idle.stop(); // idempotent, as everywhere else in this engine
+    }
+
+    if (!there) {
+        // A start with no portal has to fail fast and say so, not block.
+        PortalScreenCast cast;
+        PortalStream stream;
+        std::string error;
+        CHECK(!cast.start(std::string(), 2000, stream, error));
+        CHECK(!error.empty());
+        CHECK(!stream.valid());
+        std::fprintf(stderr, "  refused as expected: %s\n", error.c_str());
+    }
 #endif
 }
 

@@ -194,6 +194,27 @@ else()
                 target_compile_options(mw-native-host PRIVATE ${MW_LINUX_AUDIO_CFLAGS_OTHER})
                 # PUBLIC so the session test knows whether to expect audio.
                 target_compile_definitions(mw-native-host PUBLIC MW_NATIVE_LINUX_AUDIO=1)
+
+                # The ScreenCast portal — the only capture route an AppImage
+                # can have, since it carries no capability (§19.8). It needs
+                # both PipeWire (already found, for the stream) and D-Bus (for
+                # the handshake), which is why it sits inside the audio block.
+                #
+                # ⚠️ sd-bus is LGPL-2.1+, the ONE exception to this module's
+                # permissive-only rule, decided 08/09/2026 and bounded to this
+                # path. LICENSE.md § "L'exception sd-bus" has the reasoning and
+                # what it costs; do not widen it without re-reading that.
+                pkg_check_modules(MW_LINUX_PORTAL libsystemd)
+                if(MW_LINUX_PORTAL_FOUND)
+                    message(STATUS "mw-native-host: ScreenCast portal ON (sd-bus ${MW_LINUX_PORTAL_VERSION}, LGPL — see LICENSE.md)")
+                    target_sources(mw-native-host PRIVATE src/capture/linux/PortalScreenCast.cpp)
+                    target_include_directories(mw-native-host SYSTEM PRIVATE ${MW_LINUX_PORTAL_INCLUDE_DIRS})
+                    target_link_libraries(mw-native-host PRIVATE ${MW_LINUX_PORTAL_LIBRARIES})
+                    # PUBLIC so the tests know whether the route is built.
+                    target_compile_definitions(mw-native-host PUBLIC MW_NATIVE_LINUX_PORTAL=1)
+                else()
+                    message(WARNING "mw-native-host: ScreenCast portal OFF — install libsystemd-dev to build it")
+                endif()
             else()
                 message(WARNING "mw-native-host: Linux audio OFF — install libpipewire-0.3-dev to build it")
             endif()
