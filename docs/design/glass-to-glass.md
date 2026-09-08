@@ -133,6 +133,43 @@ trois se lisent « timeout ». Si les couleurs ne sont pas celles de l'écran de
 l'hôte au moment du clic, le drapeau n'est **pas** dans cette image, et c'est là
 qu'il faut chercher, pas dans le pipeline.
 
+### Ce que la compression fait aux trois bandes
+
+Le détecteur ne compare pas des couleurs, il **classe** : bleu = `b ≥ 120` et
+`b − r ≥ 60` et `b − g ≥ 60`, blanc = les trois `≥ 170`, rouge symétrique. Les
+seuils sont vérifiés par un aller-retour Y′CbCr calculé dans les tests
+(`LatencyProbe.test.js`) plutôt que par des valeurs supposées :
+
+| Cas | bleu | blanc | rouge |
+|---|---|---|---|
+| Aller-retour BT.709 limité | 1,0,255 | 255,255,255 | 255,1,0 |
+| Encodé BT.709, décodé BT.601 | 3,0,245 | 255,255,255 | 233,0,2 |
+| Encodé BT.601, décodé BT.709 | 0,15,255 | 255,255,255 | 255,24,0 |
+| Limité lu en pleine plage | 16,16,240 | 235,235,235 | 239,15,15 |
+| + quantification pas 80 | 0,0,218 | 255,237,255 | 255,25,0 |
+
+Trois primaires saturées en aplat : une erreur de matrice ou de plage déplace la
+teinte de quelques pour cent sans jamais rendre le bleu moins bleu que le rouge,
+et un aplat est ce qu'un codec conserve le mieux (le bruit de quantification
+frappe les contours, pas l'intérieur d'une bande).
+
+⚠️ **La marge la plus mince n'est pas la compression, c'est la géométrie.** Sur
+la frontière entre deux bandes, le 4:2:0 moyenne la chroma des deux et le bleu
+tombe à `b = 137` contre un seuil de 120. Ce qui protège, c'est de lire au
+**centre** de chaque bande : une bande fait 4 % de la largeur, le point de
+lecture est à 1,5 % de la largeur de la frontière la plus proche — 28 px en
+1920, 9,6 px même en 640 de large — contre les ~2 px que décale le
+sous-échantillonnage de chroma. Ne pas déplacer les points d'échantillonnage
+vers les bords des bandes en croyant gagner en robustesse.
+
+⚠️ **Ce qui n'est pas couvert** : c'est un modèle (matrice, plage,
+quantification), pas une mesure du vrai encodeur — les pixels du drapeau chez
+l'hôte n'ont jamais été comparés aux pixels décodés d'un flux réel. Et le mode
+`tonemap` (ACES) est le seul où ces seuils sont douteux : l'ACES désature
+délibérément les couleurs très saturées et abaisse le blanc. Sans conséquence
+aujourd'hui, ce mode n'étant atteignable qu'en forçant `mw_hdr_request=1`
+(§16.5 du design).
+
 ### ⚠️ Un drapeau par écran (07/09/2026)
 
 Le drapeau n'était créé que sur l'écran **principal** (`SM_CXSCREEN`), alors que

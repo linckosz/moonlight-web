@@ -28,13 +28,124 @@ import {
 
 const px = (b, w, r) => new Uint8ClampedArray([...b, 255, ...w, 255, ...r, 255]);
 
+/**
+ * A model of what the video pipeline does to a colour, so the tolerance of
+ * looksLikeFlag is checked against a round trip rather than against numbers
+ * someone thought looked plausible.
+ *
+ * Covers what actually alters the flag's colours between the host's window and
+ * the browser's canvas: the limited-range Y'CbCr conversion, the two matrix and
+ * range mismatches that happen in the wild, quantisation, and the chroma a
+ * sample near a band boundary would share with its neighbour. It is a model,
+ * not a measurement of a real encoder — but the three bands are flat saturated
+ * primaries, which is the case a codec preserves best.
+ */
+const MATRIX = {
+    bt709: { kr: 0.2126, kb: 0.0722 },
+    bt601: { kr: 0.299, kb: 0.114 },
+};
+const clamp255 = (v) => Math.max(0, Math.min(255, Math.round(v)));
+
+/** RGB 0..255 → limited-range 8-bit Y'CbCr. */
+function encode([r, g, b], { kr, kb }) {
+    const kg = 1 - kr - kb;
+    const y = (kr * r + kg * g + kb * b) / 255;
+    return [
+        16 + 219 * y,
+        128 + 224 * ((b / 255 - y) / (2 * (1 - kb))),
+        128 + 224 * ((r / 255 - y) / (2 * (1 - kr))),
+    ].map(clamp255);
+}
+
+/** Limited-range 8-bit Y'CbCr → RGB 0..255. `full` reads it as if full range. */
+function decode([Y, Cb, Cr], { kr, kb }, full = false) {
+    const y = full ? Y / 255 : (Y - 16) / 219;
+    const cb = (Cb - 128) / (full ? 255 : 224);
+    const cr = (Cr - 128) / (full ? 255 : 224);
+    const r = y + 2 * (1 - kr) * cr;
+    const b = y + 2 * (1 - kb) * cb;
+    const g = (y - kr * r - kb * b) / (1 - kr - kb);
+    return [r, g, b].map((v) => clamp255(v * 255));
+}
+
+const BANDS = { blue: [0, 0, 255], white: [255, 255, 255], red: [255, 0, 0] };
+
+/** Run every band of `bands` through `through`, and pack the result for the test. */
+const roundTrip = (through, bands = BANDS) =>
+    px(through(bands.blue), through(bands.white), through(bands.red));
+
 describe('looksLikeFlag', () => {
     it('accepts pure blue / white / red', () => {
         expect(looksLikeFlag(px([0, 0, 255], [255, 255, 255], [255, 0, 0]))).toBe(true);
     });
 
-    it('accepts the bands after a lossy encode and chroma subsampling', () => {
-        expect(looksLikeFlag(px([18, 12, 231], [238, 240, 236], [226, 20, 30]))).toBe(true);
+    it('accepts the bands after a limited-range BT.709 round trip', () => {
+        const c = (rgb) => decode(encode(rgb, MATRIX.bt709), MATRIX.bt709);
+        expect(c(BANDS.blue)).toEqual([1, 0, 255]);
+        expect(c(BANDS.red)).toEqual([255, 1, 0]);
+        expect(looksLikeFlag(roundTrip(c))).toBe(true);
+    });
+
+    it('accepts them through a matrix mismatch, either way round', () => {
+        // The classic production mismatch: encoded BT.709, decoded BT.601 or
+        // the reverse. It shifts the hue by a few percent and never makes the
+        // blue band less blue than the red one.
+        for (const [enc, dec] of [
+            [MATRIX.bt709, MATRIX.bt601],
+            [MATRIX.bt601, MATRIX.bt709],
+        ])
+            expect(looksLikeFlag(roundTrip((rgb) => decode(encode(rgb, enc), dec)))).toBe(true);
+    });
+
+    it('accepts them when limited-range data is read as full range', () => {
+        const c = (rgb) => decode(encode(rgb, MATRIX.bt709), MATRIX.bt709, true);
+        // White lands on 235 rather than 255 — still well over the threshold.
+        expect(c(BANDS.white)).toEqual([235, 235, 235]);
+        expect(looksLikeFlag(roundTrip(c))).toBe(true);
+    });
+
+    it('survives quantisation far coarser than any usable stream', () => {
+        const quant = (v, q) => clamp255(Math.round(v / q) * q);
+        for (const q of [8, 16, 32, 48, 64, 80]) {
+            const c = (rgb) =>
+                decode(
+                    encode(rgb, MATRIX.bt709).map((v) => quant(v, q)),
+                    MATRIX.bt709,
+                );
+            expect(looksLikeFlag(roundTrip(c)), `quantisation step ${q}`).toBe(true);
+        }
+    });
+
+    it('still holds if a sample drifts onto a band boundary in 4:2:0', () => {
+        // The tightest case of all, and the reason the probe samples the CENTRE
+        // of each band: on a boundary the chroma is the average of two bands,
+        // and the blue reading falls to b=137 against a threshold of 120. The
+        // geometry keeps the samples 1.5 % of the picture width away from any
+        // boundary (28 px at 1920, 9.6 px at 640) against the ~2 px that
+        // chroma subsampling shifts, so this is margin, not the operating point.
+        const smeared = (rgb, neighbour) => {
+            const self = encode(rgb, MATRIX.bt709);
+            const other = encode(neighbour, MATRIX.bt709);
+            // Luma keeps its own resolution; only the chroma pair is shared.
+            return decode(
+                [self[0], (self[1] + other[1]) / 2, (self[2] + other[2]) / 2],
+                MATRIX.bt709,
+            );
+        };
+        const blue = smeared(BANDS.blue, BANDS.white);
+        expect(blue[2]).toBeGreaterThan(120);
+        expect(
+            looksLikeFlag(
+                px(blue, smeared(BANDS.white, BANDS.blue), smeared(BANDS.red, BANDS.white)),
+            ),
+        ).toBe(true);
+    });
+
+    it('does not turn a plain desktop into a flag through the same round trip', () => {
+        // The model would be worthless if it made everything pass.
+        const c = (rgb) => decode(encode(rgb, MATRIX.bt709), MATRIX.bt709);
+        const desktop = { blue: [60, 60, 60], white: [255, 255, 255], red: [60, 60, 60] };
+        expect(looksLikeFlag(roundTrip(c, desktop))).toBe(false);
     });
 
     it('rejects a plain desktop (grey, white, grey)', () => {
