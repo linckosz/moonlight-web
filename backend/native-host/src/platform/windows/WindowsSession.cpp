@@ -26,6 +26,7 @@
 #include "../../core/Probe.h"
 #include "../../core/RestartBackoff.h"
 #include "../../core/Session.h"
+#include "../../encode/EncodeLoadCap.h"
 #include "../../encode/RateControl.h"
 #include "../../encode/RateGovernor.h"
 #include "../../encode/windows/AmfEncoder.h"
@@ -280,6 +281,9 @@ public:
         m_Info.displayId = display->id;
         m_Info.width = m_Converter->outputWidth();
         m_Info.height = m_Converter->outputHeight();
+        // What the cap scales from, fixed for the session.
+        m_FullWidth = m_Info.width;
+        m_FullHeight = m_Info.height;
         m_Info.fps = m_Config.fps;
         m_Info.codec = m_Target.codec;
         m_Info.encoder = m_Target.encoder;
@@ -1182,6 +1186,7 @@ private:
         };
 
         m_LoopStartUs = steadyNowUs();
+        m_LoadCap.start(m_LoopStartUs);
         while (m_Running.load()) {
             if (const int kbps = m_PendingBitrate.exchange(0); kbps > 0) {
                 // The ladder moves the CEILING, not the still-screen budget.
@@ -1248,6 +1253,9 @@ private:
                                           ? static_cast<int>(idleIntervalUs / 1000)
                                           : kAcquireTimeoutMs;
             const int timeoutMs = refineSoon ? refineTimeoutMs : idleTimeoutMs;
+
+            // Between frames, so the encoder is not holding anything.
+            if (m_PendingResize.exchange(false)) applyLoadCap();
 
             capture::CapturedFrame frame;
             const capture::AcquireStatus status = m_Capture->acquire(timeoutMs, frame);
@@ -1533,9 +1541,56 @@ private:
             // returning. The buffer is unlocked immediately after, which is
             // what keeps the GPU→CPU copy at exactly one per frame.
             m_Callbacks.onVideo(out);
+            noteEncodeLoad(out.convertedUs, out.encodedUs);
         }
         m_Encoder->releaseOutput();
         return true;
+    }
+
+    /// How long the encoder took, given to the cap — on the CPU tier only.
+    ///
+    /// Silent on every hardware encoder: a few milliseconds against a frame
+    /// interval is never the problem there, and E4 and the link governor own
+    /// that space. It is the machine that fell all the way to OpenH264 where
+    /// the encode duration IS the latency, and where trading pixels for it is
+    /// the right bargain (EncodeLoadCap.h says why that way round).
+    void noteEncodeLoad(int64_t convertedUs, int64_t encodedUs)
+    {
+        if (m_Target.encoder != EncoderApi::Software) return;
+        if (encodedUs <= convertedUs) return;
+        if (m_LoadCap.note(encodedUs - convertedUs, m_Cadence.intervalUs(), encodedUs))
+            m_PendingResize.store(true);
+    }
+
+    /// Rebuild at the size the cap now asks for. Between frames, never inside
+    /// emit(): the encoder there is still holding a bitstream.
+    void applyLoadCap()
+    {
+        const int width = encode::EncodeLoadCap::scaled(m_FullWidth, m_LoadCap.percent());
+        const int height = encode::EncodeLoadCap::scaled(m_FullHeight, m_LoadCap.percent());
+        if (width == m_Info.width && height == m_Info.height) return;
+
+        std::string error;
+        const int wasWidth = m_Info.width;
+        const int wasHeight = m_Info.height;
+        if (!buildPipeline(width, height, error)) {
+            // Keep streaming at the size that worked rather than ending the
+            // session over an optimisation.
+            log::warning("[native] cpu cap: cannot encode at " + std::to_string(width) + "x" +
+                         std::to_string(height) + " (" + error + ") — staying at " +
+                         std::to_string(wasWidth) + "x" + std::to_string(wasHeight));
+            if (!buildPipeline(wasWidth, wasHeight, error))
+                finish("encoder restart failed: " + error);
+            return;
+        }
+        m_Info.width = m_Converter->outputWidth();
+        m_Info.height = m_Converter->outputHeight();
+        m_ForceKeyframe.store(true);
+        log::info("[native] cpu cap: " + std::to_string(wasWidth) + "x" +
+                  std::to_string(wasHeight) + " -> " + std::to_string(m_Info.width) + "x" +
+                  std::to_string(m_Info.height) + " (" + std::to_string(m_LoadCap.percent()) +
+                  "% of the display) — the CPU encoder sets the latency, so pixels give way "
+                  "before frames");
     }
 
     /// Tell the client what the pointer looks like, when the client is the one
@@ -1942,6 +1997,13 @@ private:
     std::vector<uint8_t> m_CursorScratch;
     /// Zero means "no change pending". Exchanged by the loop each iteration.
     std::atomic<int> m_PendingBitrate{0};
+
+    /// The size the session was opened at, which the cap scales FROM — never
+    /// from the current one, or a run of reductions would compound.
+    int m_FullWidth = 0;
+    int m_FullHeight = 0;
+    encode::EncodeLoadCap m_LoadCap;
+    std::atomic<bool> m_PendingResize{false};
     /// Frames the receiver reported lost, waiting for the capture thread to
     /// tell the encoder — see invalidateReference(). Bounded: past the DPB's
     /// reach a keyframe is the honest answer.
