@@ -715,7 +715,28 @@ jobs:
             echo "::error title=macOS signing identity unusable::MACOS_SIGN_P12 did not decode to a PKCS#12 (secret ${RAW} chars, ${STRIPPED} once stripped, ${ALIEN} outside the base64 alphabet; decoded ${SIZE} bytes starting${HEAD} — a .p12 starts 30 82). Put the base64 of the .p12 FILE in the secret: openssl base64 -A -in sign.p12 | pbcopy."
             exit 1
           fi
-          security import "$RUNNER_TEMP/sign.p12" -k "$KC" -P "$MACOS_SIGN_PASSWORD" -T /usr/bin/codesign -A
+          # The password came through the same paste as the .p12, so it can carry
+          # the same BOM — and a BOM in front of a password is just a wrong
+          # password, which security(1) reports as "MAC verification failed".
+          # The as-is attempt comes FIRST so a legitimate password is never
+          # altered behind the maintainer's back; the cleaned one is only a
+          # fallback, and it says so out loud when it is what worked.
+          import_p12() {
+              security import "$RUNNER_TEMP/sign.p12" -k "$KC" -P "$1" \
+                  -T /usr/bin/codesign -A >/dev/null 2>&1
+          }
+          BOM=$'\xef\xbb\xbf'
+          PW_CLEAN=${MACOS_SIGN_PASSWORD#"$BOM"}
+          PW_CLEAN=${PW_CLEAN%$'\n'}
+          PW_CLEAN=${PW_CLEAN%$'\r'}
+          if import_p12 "$MACOS_SIGN_PASSWORD"; then
+            :
+          elif [ "$PW_CLEAN" != "$MACOS_SIGN_PASSWORD" ] && import_p12 "$PW_CLEAN"; then
+            echo "::warning title=MACOS_SIGN_PASSWORD carried a BOM or a trailing newline::It opened the .p12 once removed. Re-set the secret from the password alone to stop relying on this."
+          else
+            echo "::error title=macOS signing identity unusable::The .p12 decoded fine, but MACOS_SIGN_PASSWORD does not open it (MAC verification failed) - with or without a BOM. Either the password is not the one the .p12 was exported with, or the two secrets come from different exports."
+            exit 1
+          fi
           rm -f "$RUNNER_TEMP/sign.p12"
           # Let codesign use the key without a UI prompt, and let it FIND the
           # key: a keychain named with --keychain but absent from the search
