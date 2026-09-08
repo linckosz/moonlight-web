@@ -139,19 +139,18 @@ void probeEncoders(const std::string& renderNode, GpuInfo& gpu)
             return false;
         };
         // Best first, as the Selector expects. Only what VaapiEncoder has a
-        // path for: HEVC and AV1 are refused there until they have been driven,
-        // and a capability the encoder does not honour is bug B7 — so H.264
-        // alone is claimed, and the others are noted for the log.
+        // path for: AV1 is refused there until it has been driven, and a
+        // capability the encoder does not honour is bug B7 — so it is noted for
+        // the log and never claimed.
         const bool h264 = encodes(VAProfileH264High) || encodes(VAProfileH264Main) ||
                           encodes(VAProfileH264ConstrainedBaseline);
         const bool hevc = encodes(VAProfileHEVCMain);
         const bool av1 = encodes(VAProfileAV1Profile0);
-        if (h264) {
-            gpu.encoders.push_back(EncoderApi::VaApi);
-            gpu.codecs.push_back(Codec::H264);
-        }
-        log::info("[native] " + gpu.name + ": VA-API " + (h264 ? "H.264" : "no H.264") +
-                  (hevc ? ", HEVC (silicon, not yet driven)" : "") +
+        if (hevc || h264) gpu.encoders.push_back(EncoderApi::VaApi);
+        if (hevc) gpu.codecs.push_back(Codec::Hevc);
+        if (h264) gpu.codecs.push_back(Codec::H264);
+        log::info("[native] " + gpu.name + ": VA-API " +
+                  (hevc ? (h264 ? "HEVC, H.264" : "HEVC") : (h264 ? "H.264" : "no encoder")) +
                   (av1 ? ", AV1 (silicon, not yet driven)" : ""));
     }
     vaTerminate(display);

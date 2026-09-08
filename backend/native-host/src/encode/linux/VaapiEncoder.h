@@ -48,7 +48,7 @@
 //
 // ── What the driver writes for us ───────────────────────────────────────────
 //
-// SPS/PPS and slice headers are the driver's: Mesa's radeonsi (and Intel's iHD)
+// VPS/SPS/PPS and slice headers are the driver's: Mesa's radeonsi (and Intel's iHD)
 // generate them from the sequence and picture parameters, and re-emit the
 // parameter sets on every IDR — which is what a browser that joins late or
 // loses the first keyframe needs. Packed headers supplied by the application

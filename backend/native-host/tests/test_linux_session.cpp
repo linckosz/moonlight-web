@@ -194,5 +194,73 @@ void run_linux_session_tests()
 #endif
 
     std::fprintf(stderr, "  wrote /tmp/mw-linux-session.h264 — decode it to look at the picture\n");
+
+    // ── The same session again, in HEVC ─────────────────────────────────────
+    //
+    // Only where the GPU claims it: the probe advertises HEVC exactly when
+    // VaapiEncoder has a path for it, so if this section is skipped the codec
+    // was never offered to a client either. What it proves is the part a unit
+    // test can prove — that the driver accepts the sequence, picture and slice
+    // parameters and returns a bitstream in decode order. Whether a browser
+    // decodes the result is a bench question, not this one.
+    {
+        SECTION("Linux — the same session in HEVC");
+        const bool offersHevc =
+            std::find(gpu->codecs.begin(), gpu->codecs.end(), Codec::Hevc) != gpu->codecs.end();
+        if (!offersHevc) {
+            std::fprintf(stderr, "  skipped: this GPU does not offer HEVC\n");
+        } else {
+            SessionConfig hevcConfig = config;
+            hevcConfig.clientCodecs = {Codec::Hevc};
+
+            std::atomic<int> hevcFrames{0};
+            std::atomic<int> hevcKeyframes{0};
+            std::atomic<bool> hevcFirstWasKeyframe{false};
+            std::atomic<bool> hevcOrderOk{true};
+            std::atomic<uint32_t> hevcLast{0};
+            std::ofstream hevcOut("/tmp/mw-linux-session.hevc", std::ios::binary | std::ios::trunc);
+            std::string hevcEnded;
+            std::string hevcError;
+
+            std::unique_ptr<Session> hevcSession = NativeHost::createSession(
+                hevcConfig,
+                [&](const EncodedFrame& f) {
+                    const int n = hevcFrames.fetch_add(1);
+                    if (f.keyframe) hevcKeyframes.fetch_add(1);
+                    if (n == 0) hevcFirstWasKeyframe.store(f.keyframe);
+                    if (n > 0 && f.frameNumber != hevcLast.load() + 1) hevcOrderOk.store(false);
+                    hevcLast.store(f.frameNumber);
+                    hevcOut.write(reinterpret_cast<const char*>(f.data),
+                                  static_cast<std::streamsize>(f.size));
+                },
+                nullptr, nullptr, nullptr, [&](const std::string& reason) { hevcEnded = reason; },
+                hevcError);
+            if (!hevcSession) {
+                std::fprintf(stderr, "  createSession failed: %s\n", hevcError.c_str());
+                CHECK(false);
+            } else {
+                CHECK(hevcSession->start(hevcError));
+                const SessionInfo& hevcInfo = hevcSession->info();
+                std::fprintf(stderr, "  session: %dx%d %s via %s\n", hevcInfo.width,
+                             hevcInfo.height, toString(hevcInfo.codec), toString(hevcInfo.encoder));
+                CHECK_EQ(static_cast<int>(hevcInfo.codec), static_cast<int>(Codec::Hevc));
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                hevcSession->requestKeyframe();
+                std::this_thread::sleep_for(std::chrono::milliseconds(700));
+                hevcSession->stop();
+                hevcOut.close();
+
+                std::fprintf(stderr, "  %d frame(s), %d keyframe(s)%s\n", hevcFrames.load(),
+                             hevcKeyframes.load(),
+                             hevcEnded.empty() ? "" : (", ended: " + hevcEnded).c_str());
+                CHECK(hevcEnded.empty());
+                CHECK(hevcFrames.load() >= 3);
+                CHECK(hevcKeyframes.load() >= 2);
+                CHECK(hevcFirstWasKeyframe.load());
+                CHECK(hevcOrderOk.load());
+                std::fprintf(stderr, "  wrote /tmp/mw-linux-session.hevc\n");
+            }
+        }
+    }
 #endif
 }

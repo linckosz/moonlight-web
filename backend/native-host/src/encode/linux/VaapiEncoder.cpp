@@ -69,6 +69,22 @@ bool createMisc(VADisplay display, VAContextID context, VAEncMiscParameterType t
                           &out) == VA_STATUS_SUCCESS;
 }
 
+/// One frame's band of the rolling intra-refresh wave. The unit is the codec's
+/// own block — macroblocks for H.264, CTBs for HEVC — which is why the caller
+/// passes the width already counted in them, and why this is shared: the wave
+/// itself is the same idea on both, and one copy keeps it that way.
+VABufferID refreshBand(VADisplay display, VAContextID context, int position, int bandWidth)
+{
+    VAEncMiscParameterRIR rir = {};
+    rir.rir_flags.bits.enable_rir_column = 1;
+    rir.intra_insertion_location = static_cast<uint32_t>(position);
+    rir.intra_insert_size = static_cast<uint32_t>(bandWidth);
+    rir.qp_delta_for_inserted_intra = 0;
+    VABufferID id = VA_INVALID_ID;
+    if (!createMisc(display, context, VAEncMiscParameterTypeRIR, rir, id)) return VA_INVALID_ID;
+    return id;
+}
+
 } // namespace
 
 struct VaapiEncoder::Impl
@@ -239,6 +255,26 @@ bool VaapiEncoder::init(const std::string& renderNode, Codec codec, int width, i
     m_Codec = codec;
     m_Width = width & ~1;
     m_Height = height & ~1;
+    // H.264 carries a cropping window in its sequence parameters, so a picture
+    // that is not a whole number of macroblocks is padded and cropped back.
+    // HEVC's VA-API sequence buffer has no such field and the driver writes the
+    // SPS, so the only honest coded size is a whole number of minimum coding
+    // blocks: round DOWN to 8 and encode that. Every common resolution already
+    // is one — 1920×1080 included — so this costs nothing where it costs
+    // nothing, and loses at most 7 columns or rows where it would otherwise
+    // hand the decoder a size the bitstream cannot express.
+    if (codec == Codec::Hevc) {
+        const int alignedWidth = m_Width & ~7;
+        const int alignedHeight = m_Height & ~7;
+        if (alignedWidth != m_Width || alignedHeight != m_Height)
+            log::info("[native] VA-API HEVC: " + std::to_string(m_Width) + "x" +
+                      std::to_string(m_Height) +
+                      " is not a whole number of 8-pixel blocks — "
+                      "encoding " +
+                      std::to_string(alignedWidth) + "x" + std::to_string(alignedHeight));
+        m_Width = alignedWidth;
+        m_Height = alignedHeight;
+    }
     m_Fps = fps > 0 ? fps : 60;
     m_BitrateKbps = bitrateKbps > 0 ? bitrateKbps : 20000;
     m_Tuning = tuning;
@@ -483,13 +519,9 @@ bool VaapiEncoder::renderH264(bool idr, std::string& error)
         // replaces the periodic keyframe, as on the three Windows encoders.
         const int bandWidth = static_cast<int>((widthMbs + m_IntraRefreshPeriod - 1) /
                                                static_cast<uint32_t>(m_IntraRefreshPeriod));
-        VAEncMiscParameterRIR rir = {};
-        rir.rir_flags.bits.enable_rir_column = 1;
-        rir.intra_insertion_location = static_cast<uint32_t>(m_RefreshPosition);
-        rir.intra_insert_size = static_cast<uint32_t>(bandWidth);
-        rir.qp_delta_for_inserted_intra = 0;
-        VABufferID refresh = VA_INVALID_ID;
-        if (!createMisc(d->display, d->context, VAEncMiscParameterTypeRIR, rir, refresh)) {
+        const VABufferID refresh =
+            refreshBand(d->display, d->context, m_RefreshPosition, bandWidth);
+        if (refresh == VA_INVALID_ID) {
             error = "could not create the intra-refresh parameters";
             return false;
         }
@@ -535,13 +567,176 @@ bool VaapiEncoder::renderH264(bool idr, std::string& error)
     return true;
 }
 
-bool VaapiEncoder::renderHevc(bool /*idr*/, std::string& error)
+bool VaapiEncoder::renderHevc(bool idr, std::string& error)
 {
-    // Next: the HEVC parameter set is a different shape (CTBs, log2 sizes, a
-    // VPS) and gets its own pass once H.264 has been watched decode in a
-    // browser. Refused rather than approximated.
-    error = "HEVC through VA-API is not written yet";
-    return false;
+    // HEVC counts in coding tree blocks, not macroblocks. 64 is the CTB every
+    // encoder in this class uses: log2 min CB 8 (minus3 = 0) plus a difference
+    // of 3. The picture is a whole number of min-CBs by construction — init()
+    // aligns it to 8 for this codec, because unlike H.264 the sequence
+    // parameters carry no cropping window and the driver writes the SPS.
+    const uint32_t ctbWidth = static_cast<uint32_t>((m_Width + 63) / 64);
+    const uint32_t ctbHeight = static_cast<uint32_t>((m_Height + 63) / 64);
+    const VASurfaceID current = d->recon[d->reconCurrent];
+    const VASurfaceID previous = d->recon[(d->reconCurrent + 1) % kReconSurfaces];
+
+    std::vector<VABufferID> buffers;
+    const auto add = [&](VABufferType type, const void* data, unsigned size) {
+        VABufferID id = VA_INVALID_ID;
+        if (vaCreateBuffer(d->display, d->context, type, size, 1, const_cast<void*>(data), &id) !=
+            VA_STATUS_SUCCESS)
+            return false;
+        buffers.push_back(id);
+        return true;
+    };
+
+    if (idr) {
+        VAEncSequenceParameterBufferHEVC seq = {};
+        seq.general_profile_idc = 1; // Main
+        // Levels are 30× the number, so 5.1 — the same ceiling H.264 is given
+        // here, and enough for 4K30 or 1440p60.
+        seq.general_level_idc = 153;
+        seq.general_tier_flag = 0;
+        // No periodic keyframe, exactly as on H.264: the IDR the client asks
+        // for is forced per picture, below.
+        seq.intra_period = 0;
+        seq.intra_idr_period = 0;
+        seq.ip_period = 1;
+        seq.bits_per_second = static_cast<uint32_t>(m_BitrateKbps) * 1000u;
+        seq.pic_width_in_luma_samples = static_cast<uint16_t>(m_Width);
+        seq.pic_height_in_luma_samples = static_cast<uint16_t>(m_Height);
+        seq.seq_fields.bits.chroma_format_idc = 1; // 4:2:0
+        seq.seq_fields.bits.bit_depth_luma_minus8 = 0;
+        seq.seq_fields.bits.bit_depth_chroma_minus8 = 0;
+        seq.seq_fields.bits.strong_intra_smoothing_enabled_flag = 1;
+        seq.seq_fields.bits.amp_enabled_flag = 1;
+        seq.seq_fields.bits.sample_adaptive_offset_enabled_flag = 1;
+        // Temporal MV prediction off: it predicts motion from the collocated
+        // picture, which is one more thing that breaks when a reference is lost
+        // — and this stream heals by naming lost frames, not by keyframes.
+        seq.seq_fields.bits.sps_temporal_mvp_enabled_flag = 0;
+        // I and P only, no random-access B: says out loud what ip_period = 1
+        // already means, and lets the rate control treat the GOP as flat.
+        seq.seq_fields.bits.low_delay_seq = 1;
+        seq.log2_min_luma_coding_block_size_minus3 = 0;
+        seq.log2_diff_max_min_luma_coding_block_size = 3; // CTB 64
+        seq.log2_min_transform_block_size_minus2 = 0;
+        seq.log2_diff_max_min_transform_block_size = 3;
+        seq.max_transform_hierarchy_depth_inter = 2;
+        seq.max_transform_hierarchy_depth_intra = 2;
+        // The VUI, and in it bitstream_restriction — the B8 lesson, which cost
+        // 200 ms of decode latency on NVENC H.264 and applies to every codec a
+        // browser hands to a hardware decoder: without it the decoder assumes a
+        // DPB's worth of reordering on a stream that has none.
+        seq.vui_parameters_present_flag = 1;
+        seq.vui_fields.bits.vui_timing_info_present_flag = 1;
+        seq.vui_fields.bits.bitstream_restriction_flag = 1;
+        seq.vui_fields.bits.motion_vectors_over_pic_boundaries_flag = 1;
+        seq.vui_fields.bits.restricted_ref_pic_lists_flag = 1;
+        seq.vui_fields.bits.log2_max_mv_length_horizontal = 15;
+        seq.vui_fields.bits.log2_max_mv_length_vertical = 15;
+        // Unlike H.264, where the tick counts fields, an HEVC clock tick is a
+        // frame: time_scale over num_units_in_tick IS the frame rate.
+        seq.vui_num_units_in_tick = 1;
+        seq.vui_time_scale = static_cast<uint32_t>(m_Fps);
+        if (!add(VAEncSequenceParameterBufferType, &seq, sizeof(seq))) {
+            error = "could not create the sequence parameters";
+            return false;
+        }
+    }
+
+    VAEncPictureParameterBufferHEVC pic = {};
+    pic.decoded_curr_pic.picture_id = current;
+    pic.decoded_curr_pic.pic_order_cnt = static_cast<int32_t>(m_FrameNum);
+    pic.decoded_curr_pic.flags = 0;
+    for (auto& ref : pic.reference_frames) {
+        ref.picture_id = VA_INVALID_SURFACE;
+        ref.flags = VA_PICTURE_HEVC_INVALID;
+    }
+    if (!idr && m_HaveReference) {
+        pic.reference_frames[0].picture_id = previous;
+        pic.reference_frames[0].pic_order_cnt = static_cast<int32_t>(m_FrameNum - 1);
+        pic.reference_frames[0].flags = 0;
+    }
+    pic.coded_buf = d->coded;
+    // 0xFF is the "there is no collocated picture" value the header asks for
+    // when slice_temporal_mvp_enabled_flag is 0.
+    pic.collocated_ref_pic_index = 0xFF;
+    pic.last_picture = 0;
+    pic.pic_init_qp = 26;
+    pic.diff_cu_qp_delta_depth = 0;
+    pic.num_ref_idx_l0_default_active_minus1 = 0;
+    pic.num_ref_idx_l1_default_active_minus1 = 0;
+    pic.slice_pic_parameter_set_id = 0;
+    // IDR_W_RADL for a keyframe, TRAIL_R for a referenced delta.
+    pic.nal_unit_type = idr ? 19 : 1;
+    pic.pic_fields.bits.idr_pic_flag = idr ? 1 : 0;
+    pic.pic_fields.bits.coding_type = idr ? 1 : 2; // I : P
+    pic.pic_fields.bits.reference_pic_flag = 1;
+    // Per-CU QP deltas are what lets a bitrate-driven encoder spend unevenly
+    // inside a picture; without them CBR can only move the whole frame.
+    pic.pic_fields.bits.cu_qp_delta_enabled_flag = 1;
+    pic.log2_parallel_merge_level_minus2 = 0;
+    pic.ctu_max_bitsize_allowed = 0;
+    if (!add(VAEncPictureParameterBufferType, &pic, sizeof(pic))) {
+        error = "could not create the picture parameters";
+        return false;
+    }
+
+    if (m_IntraRefresh) {
+        const int bandWidth = static_cast<int>((ctbWidth + m_IntraRefreshPeriod - 1) /
+                                               static_cast<uint32_t>(m_IntraRefreshPeriod));
+        const VABufferID refresh =
+            refreshBand(d->display, d->context, m_RefreshPosition, bandWidth);
+        if (refresh == VA_INVALID_ID) {
+            error = "could not create the intra-refresh parameters";
+            return false;
+        }
+        buffers.push_back(refresh);
+        m_RefreshPosition += bandWidth;
+        if (m_RefreshPosition >= static_cast<int>(ctbWidth)) m_RefreshPosition = 0;
+    }
+
+    VAEncSliceParameterBufferHEVC slice = {};
+    slice.slice_segment_address = 0;
+    slice.num_ctu_in_slice = ctbWidth * ctbHeight;
+    // HEVC numbers its slice types the other way round from H.264: B 0, P 1, I 2.
+    slice.slice_type = idr ? 2 : 1;
+    slice.slice_pic_parameter_set_id = 0;
+    slice.num_ref_idx_l0_active_minus1 = 0;
+    slice.num_ref_idx_l1_active_minus1 = 0;
+    for (auto& ref : slice.ref_pic_list0) {
+        ref.picture_id = VA_INVALID_SURFACE;
+        ref.flags = VA_PICTURE_HEVC_INVALID;
+    }
+    for (auto& ref : slice.ref_pic_list1) {
+        ref.picture_id = VA_INVALID_SURFACE;
+        ref.flags = VA_PICTURE_HEVC_INVALID;
+    }
+    if (!idr && m_HaveReference) slice.ref_pic_list0[0] = pic.reference_frames[0];
+    slice.max_num_merge_cand = 5;
+    slice.slice_qp_delta = 0;
+    slice.slice_fields.bits.last_slice_of_pic_flag = 1;
+    // SAO is on in the sequence, so it has to be allowed in the slice too, or
+    // the filter the SPS promised never runs.
+    slice.slice_fields.bits.slice_sao_luma_flag = 1;
+    slice.slice_fields.bits.slice_sao_chroma_flag = 1;
+    slice.slice_fields.bits.slice_temporal_mvp_enabled_flag = 0;
+    slice.slice_fields.bits.num_ref_idx_active_override_flag = 0;
+    slice.slice_fields.bits.collocated_from_l0_flag = 1;
+    if (!add(VAEncSliceParameterBufferType, &slice, sizeof(slice))) {
+        error = "could not create the slice parameters";
+        return false;
+    }
+
+    const VAStatus status =
+        vaRenderPicture(d->display, d->context, buffers.data(), static_cast<int>(buffers.size()));
+    for (VABufferID b : buffers)
+        vaDestroyBuffer(d->display, b);
+    if (status != VA_STATUS_SUCCESS) {
+        error = "the HEVC picture was refused: " + vaText(status);
+        return false;
+    }
+    return true;
 }
 
 bool VaapiEncoder::encode(bool forceKeyframe, uint32_t frameNumber, EncoderOutput& out,
