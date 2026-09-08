@@ -38,10 +38,18 @@ std::string vaText(VAStatus status)
     return vaErrorStr(status);
 }
 
-/// Two reconstructed pictures: the one being written and the one referenced.
-/// With a single reference and no B-frames that is all a stream ever needs, and
-/// a third would be VRAM for nothing.
-constexpr int kReconSurfaces = 2;
+/// Five reconstructed pictures: the one being written and four that may still
+/// be referenced. Two would be enough for a stream that always predicts from
+/// the previous frame — but a receiver that names a frame it never got needs
+/// the encoder to reach FURTHER BACK, to a picture it still has, and the depth
+/// of that reach is the number of frames a loss report may lag behind. Four is
+/// what the three Windows encoders were measured with (design §9.10), and the
+/// cost there was nil: no B-frames and no lookahead means nothing waits.
+constexpr int kReconSurfaces = 5;
+
+/// How many of them a picture may choose between — the DPB the sequence
+/// announces.
+constexpr int kMaxReferences = kReconSurfaces - 1;
 
 /// A coded buffer sized for the worst frame, not the average: an I-frame at a
 /// high bitrate on a busy desktop. Undersizing this fails on exactly that frame.
@@ -96,9 +104,28 @@ struct VaapiEncoder::Impl
     VAContextID context = VA_INVALID_ID;
 
     VASurfaceID input = VA_INVALID_SURFACE;
-    VASurfaceID recon[kReconSurfaces] = {VA_INVALID_SURFACE, VA_INVALID_SURFACE};
+    VASurfaceID recon[kReconSurfaces] = {};
     int reconCurrent = 0;
     VABufferID coded = VA_INVALID_ID;
+
+    /// What each reconstruction surface holds. `engineFrame` is the number the
+    /// RECEIVER knows a picture by (EncodedFrame::frameNumber) — the only name
+    /// it can use to say which one it never got; `picNum` is the number the
+    /// BITSTREAM knows it by (frame_num for H.264, POC for HEVC), which counts
+    /// from the last IDR. Keeping both is the whole trick: invalidation speaks
+    /// the first language and the parameter buffers speak the second.
+    struct ReconState
+    {
+        uint32_t engineFrame = 0;
+        uint32_t picNum = 0;
+        bool valid = false;
+    };
+    ReconState reconState[kReconSurfaces] = {};
+
+    /// The slot the picture being encoded predicts from, chosen by encode()
+    /// before the parameters are built. -1 for an IDR, which predicts from
+    /// nothing.
+    int referenceSlot = -1;
 
     /// The exported DMA-BUF descriptor of the input surface: the fds are ours
     /// to close at stop().
@@ -420,7 +447,9 @@ bool VaapiEncoder::renderH264(bool idr, std::string& error)
     const uint32_t widthMbs = static_cast<uint32_t>((m_Width + 15) / 16);
     const uint32_t heightMbs = static_cast<uint32_t>((m_Height + 15) / 16);
     const VASurfaceID current = d->recon[d->reconCurrent];
-    const VASurfaceID previous = d->recon[(d->reconCurrent + 1) % kReconSurfaces];
+    const bool predicts = !idr && d->referenceSlot >= 0;
+    const VASurfaceID reference = predicts ? d->recon[d->referenceSlot] : VA_INVALID_SURFACE;
+    const uint32_t referencePicNum = predicts ? d->reconState[d->referenceSlot].picNum : 0;
 
     std::vector<VABufferID> buffers;
     const auto add = [&](VABufferType type, const void* data, unsigned size) {
@@ -442,7 +471,10 @@ bool VaapiEncoder::renderH264(bool idr, std::string& error)
         seq.intra_idr_period = 0;
         seq.ip_period = 1;
         seq.bits_per_second = static_cast<uint32_t>(m_BitrateKbps) * 1000u;
-        seq.max_num_ref_frames = 1;
+        // The DPB the decoder must keep. One would do for a stream that always
+        // predicts from the previous picture; four is what lets a picture reach
+        // back past a frame the receiver lost and heal with a delta.
+        seq.max_num_ref_frames = kMaxReferences;
         seq.picture_width_in_mbs = static_cast<uint16_t>(widthMbs);
         seq.picture_height_in_mbs = static_cast<uint16_t>(heightMbs);
         seq.seq_fields.bits.chroma_format_idc = 1;
@@ -490,11 +522,11 @@ bool VaapiEncoder::renderH264(bool idr, std::string& error)
         ref.picture_id = VA_INVALID_SURFACE;
         ref.flags = VA_PICTURE_H264_INVALID;
     }
-    if (!idr && m_HaveReference) {
-        pic.ReferenceFrames[0].picture_id = previous;
-        pic.ReferenceFrames[0].frame_idx = m_FrameNum - 1;
+    if (predicts) {
+        pic.ReferenceFrames[0].picture_id = reference;
+        pic.ReferenceFrames[0].frame_idx = referencePicNum;
         pic.ReferenceFrames[0].flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
-        pic.ReferenceFrames[0].TopFieldOrderCnt = static_cast<int32_t>(2 * (m_FrameNum - 1));
+        pic.ReferenceFrames[0].TopFieldOrderCnt = static_cast<int32_t>(2 * referencePicNum);
         pic.ReferenceFrames[0].BottomFieldOrderCnt = pic.ReferenceFrames[0].TopFieldOrderCnt;
     }
     pic.coded_buf = d->coded;
@@ -550,7 +582,7 @@ bool VaapiEncoder::renderH264(bool idr, std::string& error)
         ref.picture_id = VA_INVALID_SURFACE;
         ref.flags = VA_PICTURE_H264_INVALID;
     }
-    if (!idr && m_HaveReference) slice.RefPicList0[0] = pic.ReferenceFrames[0];
+    if (predicts) slice.RefPicList0[0] = pic.ReferenceFrames[0];
     if (!add(VAEncSliceParameterBufferType, &slice, sizeof(slice))) {
         error = "could not create the slice parameters";
         return false;
@@ -577,7 +609,9 @@ bool VaapiEncoder::renderHevc(bool idr, std::string& error)
     const uint32_t ctbWidth = static_cast<uint32_t>((m_Width + 63) / 64);
     const uint32_t ctbHeight = static_cast<uint32_t>((m_Height + 63) / 64);
     const VASurfaceID current = d->recon[d->reconCurrent];
-    const VASurfaceID previous = d->recon[(d->reconCurrent + 1) % kReconSurfaces];
+    const bool predicts = !idr && d->referenceSlot >= 0;
+    const VASurfaceID reference = predicts ? d->recon[d->referenceSlot] : VA_INVALID_SURFACE;
+    const uint32_t referencePicNum = predicts ? d->reconState[d->referenceSlot].picNum : 0;
 
     std::vector<VABufferID> buffers;
     const auto add = [&](VABufferType type, const void* data, unsigned size) {
@@ -652,9 +686,9 @@ bool VaapiEncoder::renderHevc(bool idr, std::string& error)
         ref.picture_id = VA_INVALID_SURFACE;
         ref.flags = VA_PICTURE_HEVC_INVALID;
     }
-    if (!idr && m_HaveReference) {
-        pic.reference_frames[0].picture_id = previous;
-        pic.reference_frames[0].pic_order_cnt = static_cast<int32_t>(m_FrameNum - 1);
+    if (predicts) {
+        pic.reference_frames[0].picture_id = reference;
+        pic.reference_frames[0].pic_order_cnt = static_cast<int32_t>(referencePicNum);
         pic.reference_frames[0].flags = 0;
     }
     pic.coded_buf = d->coded;
@@ -712,7 +746,7 @@ bool VaapiEncoder::renderHevc(bool idr, std::string& error)
         ref.picture_id = VA_INVALID_SURFACE;
         ref.flags = VA_PICTURE_HEVC_INVALID;
     }
-    if (!idr && m_HaveReference) slice.ref_pic_list0[0] = pic.reference_frames[0];
+    if (predicts) slice.ref_pic_list0[0] = pic.reference_frames[0];
     slice.max_num_merge_cand = 5;
     slice.slice_qp_delta = 0;
     slice.slice_fields.bits.last_slice_of_pic_flag = 1;
@@ -742,7 +776,6 @@ bool VaapiEncoder::renderHevc(bool idr, std::string& error)
 bool VaapiEncoder::encode(bool forceKeyframe, uint32_t frameNumber, EncoderOutput& out,
                           std::string& error)
 {
-    (void)frameNumber; // no reference invalidation on this path yet
     if (!d->display || d->context == VA_INVALID_ID) {
         error = "the encoder is not initialized";
         return false;
@@ -752,11 +785,29 @@ bool VaapiEncoder::encode(bool forceKeyframe, uint32_t frameNumber, EncoderOutpu
         return false;
     }
 
-    const bool idr = forceKeyframe || !m_HaveReference;
+    // The newest picture the receiver is still known to have. Normally that is
+    // the one just encoded; after an invalidation it is older, and the delta
+    // that reaches back over the hole is what saves a keyframe.
+    d->referenceSlot = -1;
+    uint32_t newest = 0;
+    for (int i = 0; i < kReconSurfaces; ++i) {
+        if (i == d->reconCurrent || !d->reconState[i].valid) continue;
+        if (d->referenceSlot < 0 || d->reconState[i].picNum >= newest) {
+            newest = d->reconState[i].picNum;
+            d->referenceSlot = i;
+        }
+    }
+
+    const bool idr = forceKeyframe || d->referenceSlot < 0;
     if (idr) {
         m_FrameNum = 0;
         ++m_IdrPicId;
         m_RateDirty = true; // the sequence goes out with the IDR, the rate with it
+        d->referenceSlot = -1;
+        // An IDR resets the decoder's whole picture buffer: nothing older
+        // survives it, so nothing older may be referenced afterwards.
+        for (int i = 0; i < kReconSurfaces; ++i)
+            d->reconState[i].valid = false;
     }
 
     VAStatus status = vaBeginPicture(d->display, d->context, d->input);
@@ -800,10 +851,40 @@ bool VaapiEncoder::encode(bool forceKeyframe, uint32_t frameNumber, EncoderOutpu
     out.keyframe = idr;
     out.avgQp = -1;
 
-    // The reconstruction of this frame is the next frame's reference.
+    // This reconstruction is now a picture the receiver has — remembered under
+    // BOTH names, the receiver's and the bitstream's.
+    d->reconState[d->reconCurrent].engineFrame = frameNumber;
+    d->reconState[d->reconCurrent].picNum = m_FrameNum;
+    d->reconState[d->reconCurrent].valid = true;
     d->reconCurrent = (d->reconCurrent + 1) % kReconSurfaces;
     ++m_FrameNum;
     m_HaveReference = true;
+    return true;
+}
+
+bool VaapiEncoder::invalidateReference(uint32_t frameNumber, std::string& error)
+{
+    if (!d->display) {
+        error = "the encoder is not initialized";
+        return false;
+    }
+    // The named frame never arrived, and every picture encoded after it may
+    // have predicted from it — so the whole tail goes, not just the one. What
+    // is left is a picture the receiver demonstrably has, and the next delta
+    // predicts from that.
+    int survivors = 0;
+    for (int i = 0; i < kReconSurfaces; ++i) {
+        if (!d->reconState[i].valid) continue;
+        if (d->reconState[i].engineFrame >= frameNumber)
+            d->reconState[i].valid = false;
+        else
+            ++survivors;
+    }
+    if (survivors == 0) {
+        error = "no reconstruction older than frame " + std::to_string(frameNumber) +
+                " is still held — a keyframe is the only repair";
+        return false;
+    }
     return true;
 }
 

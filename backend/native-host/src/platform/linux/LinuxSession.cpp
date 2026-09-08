@@ -55,8 +55,10 @@
 //    held by its fd, not a copy (KmsCapture::acquire);
 //  - the encoder owns the NV12 surface and the converter renders into it
 //    (VaapiEncoder::inputTarget), the reverse of D3D11;
-//  - no reference invalidation and no intra-refresh on radeonsi 23.2: a lost
-//    frame costs a keyframe, and SessionInfo says so;
+//  - no intra-refresh on radeonsi 23.2 (SessionInfo says so), but reference
+//    invalidation IS available: VA-API hands the reference list to us picture
+//    by picture, so a lost frame heals with a delta on the GPU pair. Not on the
+//    CPU pair — OpenH264 writes its own list;
 //  - the sound comes from PipeWire (the default output's monitor), a push
 //    source like ScreenCaptureKit's tap, so it goes through PacedOpusSink
 //    rather than owning its thread the way WASAPI does — and it is built only
@@ -120,6 +122,15 @@ public:
     virtual bool setBitrate(int kbps, std::string& error) = 0;
     virtual bool intraRefreshEnabled() const = 0;
     virtual int intraRefreshFrames() const = 0;
+    /// Whether a frame the receiver lost can be healed by a delta rather than a
+    /// keyframe. False on the CPU pair: OpenH264 writes its own reference list.
+    virtual bool supportsReferenceInvalidation() const { return false; }
+    virtual bool invalidateReference(uint32_t frameNumber, std::string& error)
+    {
+        (void)frameNumber;
+        error = "reference invalidation is not available on this encoder";
+        return false;
+    }
     virtual int outputWidth() const = 0;
     virtual int outputHeight() const = 0;
     virtual int copiesPerFrame() const = 0;
@@ -167,6 +178,14 @@ public:
     }
     bool intraRefreshEnabled() const override { return m_Encoder->intraRefreshEnabled(); }
     int intraRefreshFrames() const override { return m_Encoder->intraRefreshFrames(); }
+    bool supportsReferenceInvalidation() const override
+    {
+        return m_Encoder->supportsReferenceInvalidation();
+    }
+    bool invalidateReference(uint32_t frameNumber, std::string& error) override
+    {
+        return m_Encoder->invalidateReference(frameNumber, error);
+    }
     int outputWidth() const override { return m_Converter->outputWidth(); }
     int outputHeight() const override { return m_Converter->outputHeight(); }
     int copiesPerFrame() const override { return 1; }
@@ -358,7 +377,7 @@ public:
         m_Info.yuv444 = false;
         m_Info.intraRefresh = m_Pipeline->intraRefreshEnabled();
         m_Info.intraRefreshFrames = m_Pipeline->intraRefreshFrames();
-        m_Info.referenceInvalidation = false;
+        m_Info.referenceInvalidation = m_Pipeline->supportsReferenceInvalidation();
         // GPU pair: the scanout buffer is read in place and the encoder's
         // surface written in place, one copy remains (the bitstream leaving
         // VRAM). CPU pair: the pixels into the planes as well.
@@ -455,10 +474,20 @@ public:
 
     void invalidateReference(uint32_t frameNumber) override
     {
-        // No reference invalidation through VA-API yet: the receiver's lost
-        // frame costs a keyframe, which is what SessionInfo promised it.
-        (void)frameNumber;
-        m_ForceKeyframe.store(true);
+        if (!m_Info.referenceInvalidation) {
+            // The CPU pair, or a pipeline that has not started: the receiver's
+            // lost frame costs a keyframe, which is what SessionInfo promised.
+            m_ForceKeyframe.store(true);
+            return;
+        }
+        // Stored as +1 so that zero can mean "nothing pending" — frame 0 is a
+        // real frame number. When several losses arrive before the next
+        // picture, the OLDEST wins: it is the stricter of the two, and healing
+        // against a picture older than both is correct for both.
+        const uint32_t wanted = frameNumber + 1;
+        uint32_t seen = m_PendingInvalidation.load();
+        while ((seen == 0 || wanted < seen) &&
+               !m_PendingInvalidation.compare_exchange_weak(seen, wanted)) {}
     }
 
     void setTargetBitrate(int kbps) override { m_PendingBitrate.store(kbps); }
@@ -614,6 +643,9 @@ private:
                       (failures > 1 ? "s" : ""));
         m_DisplayMilliHz = m_Capture->refreshMilliHz();
         if (!buildPipeline(m_Info.width, m_Info.height, error)) return Restart::Failed;
+        // A new encoder holds no reconstructions: a loss named against the old
+        // one means nothing, and the first picture is a keyframe regardless.
+        m_PendingInvalidation.store(0);
         {
             const InputRects rects = readInputRects();
             std::lock_guard<std::mutex> lock(m_InputMutex);
@@ -912,6 +944,20 @@ private:
 
     bool emit(uint32_t& frameNumber, const FrameStamps& stamps, std::string& error)
     {
+        // Losses are named by the relay thread and applied here, on the thread
+        // that owns the encoder — the same shape as the keyframe request, and
+        // for the same reason: the reference list is encoder state.
+        if (const uint32_t lost = m_PendingInvalidation.exchange(0); lost > 0) {
+            std::string why;
+            if (m_Pipeline->invalidateReference(lost - 1, why)) {
+                log::info("[native] reference invalidated: frame " + std::to_string(lost - 1) +
+                          " never reached the receiver, healing with a delta");
+            } else {
+                log::info("[native] cannot heal frame " + std::to_string(lost - 1) +
+                          " with a delta (" + why + ") — sending a keyframe");
+                m_ForceKeyframe.store(true);
+            }
+        }
         const bool forceKeyframe = m_ForceKeyframe.exchange(false);
         encode::EncoderOutput encoded;
         if (!m_Pipeline->encode(forceKeyframe, frameNumber, encoded, error)) {
@@ -1069,6 +1115,8 @@ private:
     std::atomic<bool> m_CursorDirty{false};
     std::atomic<bool> m_ResendCursor{false};
     std::atomic<int> m_PendingBitrate{0};
+    /// The frame the receiver says it never got, plus one; 0 means none.
+    std::atomic<uint32_t> m_PendingInvalidation{0};
 
     std::mutex m_LinkMutex;
     LinkFeedback m_LinkFeedback;

@@ -79,7 +79,19 @@ public:
 
     /// Encode whatever the converter last wrote into the input surface.
     /// Blocking: returns with the bitstream ready.
+    /// @param frameNumber the number this frame goes out under, and the name
+    ///                    the receiver will use if it never gets it.
     bool encode(bool forceKeyframe, uint32_t frameNumber, EncoderOutput& out, std::string& error);
+
+    /// Whether invalidateReference() does anything here. True on every VA-API
+    /// encoder: the reference list is ours to write, picture by picture.
+    bool supportsReferenceInvalidation() const { return true; }
+
+    /// The frame numbered @p frameNumber never reached the receiver: encode the
+    /// next pictures against older ones only, so the stream heals with an
+    /// ordinary delta instead of a keyframe. Returns false when nothing old
+    /// enough is still held — the caller then forces a keyframe.
+    bool invalidateReference(uint32_t frameNumber, std::string& error);
 
     /// Release the buffer handed out by the last encode(). Must be called
     /// before the next encode().

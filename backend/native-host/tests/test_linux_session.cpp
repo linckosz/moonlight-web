@@ -123,11 +123,31 @@ void run_linux_session_tests()
     CHECK_EQ(info.width, display->width);
     CHECK_EQ(info.height, display->height);
     CHECK_EQ(static_cast<int>(info.encoder), static_cast<int>(EncoderApi::VaApi));
+    // VA-API hands the reference list to the application picture by picture, so
+    // every encoder on this path can heal a named loss with a delta. What the
+    // driver DOES with that list is a bench question (§19.13); that the session
+    // offers it, and therefore that /start promises it to the client, is this
+    // one's.
+    CHECK(info.referenceInvalidation);
 
     // Two seconds. A still desktop yields the first frame plus the floor at
     // 2 fps, plus whatever the refinement burst adds; anything moving yields
     // more. Either way there are frames, and the first is a keyframe.
     std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    // Name a frame as lost and check the stream does NOT answer with a
+    // keyframe: the point of reference invalidation is that the repair is an
+    // ordinary delta. The count is taken before and after, around a window long
+    // enough for several pictures.
+    const int keyframesBefore = keyframes.load();
+    const uint32_t lost = lastNumber.load();
+    session->invalidateReference(lost);
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    const int keyframesAfterInvalidation = keyframes.load() - keyframesBefore;
+    std::fprintf(stderr, "  named frame %u as lost — %d keyframe(s) followed\n", lost,
+                 keyframesAfterInvalidation);
+    CHECK_EQ(keyframesAfterInvalidation, 0);
+
     session->requestKeyframe();
     std::this_thread::sleep_for(std::chrono::milliseconds(700));
     session->stop();
