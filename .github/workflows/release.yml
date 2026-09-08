@@ -694,7 +694,16 @@ jobs:
           # sentence, instead of the unreadable error security(1) gives.
           if [ ! -s "$RUNNER_TEMP/sign.p12" ] ||
              [ "$(head -c 2 "$RUNNER_TEMP/sign.p12" | od -An -tx1 | tr -d ' ')" != "3082" ]; then
-            echo "::error title=macOS signing identity unusable::MACOS_SIGN_P12 decoded to something that is not a PKCS#12. Re-export the identity and put the base64 of the .p12 file itself in the secret, e.g. openssl base64 -A -in sign.p12."
+            # Say what the secret IS, not just what it is not — none of this
+            # discloses it: a length, a count of characters outside the base64
+            # alphabet, and the four header bytes every .p12 shares anyway.
+            RAW=$(printf '%s' "$MACOS_SIGN_P12" | wc -c | tr -d ' ')
+            STRIPPED=$(printf '%s' "$MACOS_SIGN_P12" | sed '/^-----/d' | tr -d '[:space:]' | wc -c | tr -d ' ')
+            ALIEN=$(printf '%s' "$MACOS_SIGN_P12" | sed '/^-----/d' | tr -d '[:space:]' |
+                    tr -d 'A-Za-z0-9+/=' | wc -c | tr -d ' ')
+            SIZE=$(wc -c < "$RUNNER_TEMP/sign.p12" | tr -d ' ')
+            HEAD=$(head -c 4 "$RUNNER_TEMP/sign.p12" | od -An -tx1 | tr -s ' ')
+            echo "::error title=macOS signing identity unusable::MACOS_SIGN_P12 did not decode to a PKCS#12 (secret ${RAW} chars, ${STRIPPED} once stripped, ${ALIEN} outside the base64 alphabet; decoded ${SIZE} bytes starting${HEAD} — a .p12 starts 30 82). Put the base64 of the .p12 FILE in the secret: openssl base64 -A -in sign.p12 | pbcopy."
             exit 1
           fi
           security import "$RUNNER_TEMP/sign.p12" -k "$KC" -P "$MACOS_SIGN_PASSWORD" -T /usr/bin/codesign -A
