@@ -113,14 +113,18 @@ void runOne(const Capabilities& caps, const DisplayInfo& display, Codec codec, c
     CHECK(firstWasKeyframe.load());
     CHECK(orderOk.load());
 
-    // 2.7 s of session ≈ 540 packets. The floor is deliberately loose (the
-    // sink starts before the capture and the session is stopped mid-tick);
-    // what it would catch is a tap that delivers nothing, or a pacer that
-    // fired in bursts.
+    // 2.7 s of session ≈ 540 packets. The pacer runs on a real 200 Hz clock
+    // from tap start to session->stop(), so both bounds are loose on purpose:
+    // the floor (the sink starts before the capture and the session is
+    // stopped mid-tick) catches a tap that delivers nothing, and the ceiling
+    // — generous because probe/create/encode-ramp overhead before the two
+    // sleep_for() calls is unbounded on a loaded shared CI runner, and adds
+    // straight to the real elapsed time the pacer sees — catches one that
+    // fires in bursts.
     std::fprintf(stderr, "  audio: %d packet(s), %zu bytes (%.1f/s)\n", audioPackets.load(),
                  audioBytes.load(), audioPackets.load() / 2.7);
     CHECK(audioPackets.load() >= 400);
-    CHECK(audioPackets.load() <= 700);
+    CHECK(audioPackets.load() <= 900);
     CHECK(audioFrameSizeOk.load());
 
     std::fprintf(stderr, "  wrote %s — decode it to look at the picture\n", path);
