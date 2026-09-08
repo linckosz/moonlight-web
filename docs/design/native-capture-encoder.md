@@ -2459,19 +2459,12 @@ réparation sans keyframe, et une route pour les machines qui ne peuvent pas lir
 leur scanout. Ce qui suit n'est pas une liste de bugs, c'est ce qu'un hôte Linux
 ne sait **pas encore** faire, et pourquoi.
 
-**1. Couper le son côté hôte — rien n'est écrit.** `HostMute` n'est inclus que par
-`WindowsSession.cpp`. Le réglage `mute_host_audio`, coché par défaut dans le
-client et honoré par tous les hôtes GameStream, est donc **ignoré en silence**
-sur un hôte Linux : le son du jeu sort aussi des haut-parleurs de la pièce. C'est
-le manque que l'utilisateur remarque en premier.
-
-La voie est celle que Windows appelle sa stratégie 2 (§24) et elle est plus
-facile ici : le son est déjà capté sur le **moniteur d'un sink** PipeWire
-(§19.7). Créer un sink nul, y déplacer les flux de lecture le temps de la
-session, capter son moniteur, et tout remettre à la fin — c'est du graphe
-PipeWire, pas un pilote à signer. ⚠️ Attention au piège symétrique de Windows :
-couper le sink par défaut au **volume** couperait aussi la capture, puisque le
-moniteur entend ce que le sink joue.
+**1. ~~Couper le son côté hôte — rien n'est écrit.~~** ✅ **livré le 08/09, voir
+§19.17.** Ce paragraphe est conservé parce qu'il se trompait, et sur le point qui
+décidait de tout : « couper le sink par défaut au **volume** couperait aussi la
+capture, puisque le moniteur entend ce que le sink joue ». C'est la sémantique de
+**PulseAudio**. PipeWire fait l'inverse par défaut, et la mesure le dit ; le
+sink nul, annoncé ici comme la seule voie, n'est en fait que le repli.
 
 **2. Le consentement du portail, dans le sens du retour.** Le trajet
 `settings.json` → worker → portail est prouvé en flux navigateur réel : le jeton
@@ -2511,6 +2504,125 @@ aucune sortie, le flux est refusé, la session streame en silence avec un journa
 explicite et réessaie toutes les 2 s. C'est une décision de licence — libpulse
 est LGPL, hors de la liste blanche de `backend/native-host/LICENSE.md` — pas un
 défaut.
+
+### 19.17 Couper le son côté hôte : le moniteur est en amont du volume (08/09/2026)
+
+Troisième et dernière plateforme à recevoir `HostMute`, et la troisième réponse
+différente à la même question — *où est le tap, par rapport au réglage qui fait
+taire les haut-parleurs ?* Windows le prélève sur le moteur audio (§24), macOS sur
+le flux applicatif (§20.14), Linux sur le **moniteur d'un sink** (§19.7). Aucune
+des deux réponses précédentes ne se transporte, et celle que §19.16 avait écrite
+d'avance était fausse.
+
+#### La mesure, avant d'écrire
+
+Banc bench-mini, WirePlumber 0.4.8 sur PipeWire 0.3.48, une tonalité 440 Hz à 0,25
+jouée en continu, RMS de ce que rend le moniteur, 2 s par état. Deux sinks
+mesurés côte à côte, le vrai et un nul :
+
+| état | vraie sortie ALSA | sink nul |
+|---|---|---|
+| départ | 0,1755 | 0,1755 |
+| sink **muet** | **0,1755** | **0,0000** |
+| volume 0 % | **0,1755** | **0,0000** |
+| restauré | 0,1755 | 0,1755 |
+| `monitor.channel-volumes` | *absent* | `true` |
+
+Une sinusoïde d'amplitude 0,25 a une RMS de 0,177 : le moniteur de la vraie
+sortie rend le signal **entier**, muet ou pas.
+
+La propriété est toute l'explication. `monitor.channel-volumes` décide si
+l'adaptateur applique le volume et le mute du nœud à ses ports moniteur ; elle
+vaut **false par défaut**. Sur toute sortie réelle — ALSA, HDMI, USB, Bluetooth —
+le moniteur est donc pris **en amont** du volume, et un mute n'atteint jamais la
+capture. Les seuls sinks qui la posent à `true` sont les sinks virtuels créés par
+la couche de compatibilité PulseAudio, qui gardent exprès la sémantique de
+Pulse — celle que §19.16 avait prise pour la règle générale.
+
+#### Deux stratégies, choisies en lisant cette propriété
+
+1. **SinkMute** — `monitor.channel-volumes` n'est pas vrai : on coupe la sortie
+   par défaut. Rien ne bouge dans le graphe de l'utilisateur, son niveau de
+   volume est intact, et ce qu'il voit est l'icône de haut-parleur barrée. C'est
+   le cas de tout bureau ordinaire.
+2. **NullSink** — le moniteur porte bien le volume, donc couper tuerait la
+   capture avec (mesuré ci-dessus). Une sortie qui ne joue nulle part est créée
+   (`support.null-audio-sink`, nœud `moonlightweb-host-muted`) et devient la
+   sortie par défaut de la session : le gestionnaire de session **déplace les
+   flux en cours** dessus, la pièce se tait, et le tap — qui suit la sortie par
+   défaut — atterrit sur son moniteur.
+3. **None** — l'hôte s'entend, et le journal dit pourquoi.
+
+`engage()` avant l'ouverture du tap (la stratégie 2 déplace la sortie à laquelle
+le tap s'attache), `release()` après sa fermeture (sinon le gestionnaire de
+session ramènerait un tap encore vivant sur la vraie sortie).
+
+#### Le piège qui a coûté deux passes : où s'écrit un mute
+
+Le premier jet écrivait `SPA_PROP_mute` sur le **nœud** du sink. Vérifié de
+l'extérieur pendant une vraie session, le résultat était : `node.mute=True`
+pendant, `False` après — et `pactl get-sink-mute` répondait **`no`** tout du
+long. Un mute que le bureau ne voit pas.
+
+Ce que fait le bureau, lu au même endroit :
+
+| | `pactl` | `node.mute` | `node.softMute` |
+|---|---|---|---|
+| au repos | no | False | False |
+| après `pactl set-sink-mute 1` | **yes** | True | True |
+| notre 1ʳᵉ version | no | True | False |
+| notre version livrée | **yes** | True | True |
+
+Un mute vit sur la **route de la carte** (`SPA_PARAM_Route`, avec l'index et le
+`card.profile.device` du sink), pas sur le nœud : c'est là que les réglages du
+système l'écrivent, là que l'icône le lit, là qu'une carte munie d'un mute
+matériel l'applique en matériel. Le démon le répercute ensuite **lui-même** sur
+le nœud, `softMute` compris — d'où la dernière ligne du tableau, obtenue par une
+seule écriture. Un sink sans carte (virtuel) n'a pas de route : celui-là est
+coupé sur son nœud, en écrivant les deux propriétés à la main.
+
+⚠️ Ce détour n'est pas cosmétique. `softMute` est l'étage qui retire réellement
+les échantillons envoyés au périphérique ; `mute` seul annonçait une sourdine que
+personne n'appliquait. Et écrire là où le bureau écrit donne la seule preuve
+disponible sur une machine sans oreilles : **l'état obtenu est identique, propriété
+par propriété, à celui que produit le mute de l'utilisateur**. Le silence des
+haut-parleurs n'est pas observable en logiciel — le seul consommateur de la sortie
+d'un sink est le matériel — donc l'équivalence est la preuve, et c'est pour ça
+qu'elle vaut le code qu'elle coûte.
+
+#### Ce qui a été vérifié, et comment
+
+- **Stratégie 1, vraie session** (sonde de banc, session KMS + VA-API complète) :
+  `hostMuted=true`, `pactl` passe à `yes` pendant et revient à `no` après, le
+  moniteur reste à **0,1767** pendant la sourdine, et l'audio encodé porte
+  **80,5 octets/paquet** contre 3,0 en silence — la capture entend tout.
+- **Stratégie 2, vraie session**, en forçant le cas (sortie par défaut = un sink
+  nul, donc `monitor.channel-volumes = true`) : `moonlightweb-host-muted`
+  apparaît, devient la sortie par défaut, **le flux déjà en cours migre dessus**
+  (sink 44 → 2802), le son continue de partir à 80,4 o/paquet, et à l'arrêt la
+  sortie par défaut est rendue **et notre sink a disparu**.
+- Tests : **3610/3610** sur le banc Linux, **3431/3431** sous Windows.
+- Ce que ni l'un ni l'autre ne prouve : que la pièce se tait. Le banc n'a pas
+  d'enceinte branchée, et aucun logiciel ne peut écouter la sortie d'un sink.
+  C'est le seul point qui attend une oreille, comme sur macOS (§20.14).
+
+#### Deux propriétés qui tombent en prime
+
+Le sink nul est créé avec `object.linger = false` : il meurt avec notre
+connexion, donc **un worker tué ne laisse pas la machine sur une sortie
+silencieuse** — ce que la version Windows, elle, ne garantit pas (§24). En
+revanche un mute de stratégie 1 survit à un worker tué, exactement comme sous
+Windows ; l'utilisateur le défait d'un clic, puisque c'est son propre mute.
+
+#### Ce dont ça dépend
+
+D'un gestionnaire de session qui publie l'objet metadata `default` — c'est ce qui
+nomme la sortie par défaut. WirePlumber le fait, sur tous les bureaux actuels. Le
+banc tournait encore sous `pipewire-media-session` 0.4.1, retiré depuis, qui ne
+le fait pas : là, `pactl set-default-sink` sort en erreur, il n'y a aucune
+metadata à lire, et `HostMute` répond `None` avec ces mots plutôt que de couper
+un sink dont il ne peut pas prouver que c'est celui que l'utilisateur écoute. Le
+banc a été basculé sur WirePlumber pour cette raison.
 
 ## 20. macOS : ScreenCaptureKit → VideoToolbox, sans étage de conversion (05/09/2026)
 
@@ -3715,11 +3827,14 @@ hostMuted` dit ce qui a été obtenu, la ligne « streaming … » du moteur por
   supposition écrite ici était fausse dans les deux sens : il n'a fallu ni
   changer de périphérique de sortie par défaut, ni s'inquiéter du volume. Le tap
   de ScreenCaptureKit n'étant sur le chemin ni du mute ni du volume (mesuré),
-  rendre muette la sortie que l'utilisateur écoute suffit. **Linux reste à
-  faire** : `HostMute` n'est inclus que par les sessions Windows et macOS, donc
-  `mute_host_audio` y est toujours ignoré en silence ; la voie est un sink nul
-  PipeWire où déplacer les flux de lecture — jamais un mute au volume, le
-  moniteur entend ce que le sink joue.
+  rendre muette la sortie que l'utilisateur écoute suffit. ✅ **Linux livré le
+  08/09 (§19.17)** — et là aussi la phrase écrite ici (« jamais un mute au
+  volume, le moniteur entend ce que le sink joue ») était fausse : c'est vrai de
+  PulseAudio, pas de PipeWire, dont les ports moniteur sont pris **en amont** du
+  volume sauf sur les sinks virtuels. Le mute est donc la stratégie 1 et le sink
+  nul le repli, à l'envers de ce qui était prévu. Les trois plateformes ont
+  maintenant un `HostMute`, et **aucune des trois n'a la même réponse** — la
+  seule règle qui se transporte est de mesurer avant d'écrire.
 - La stratégie 2 n'a été vérifiée que par la sonde (Steam Streaming Speakers
   existe sur bench-desk mais le HDMI passe en stratégie 1) : `SetDefaultEndpoint`
   et la remise sont écrits, pas exercés en flux réel.

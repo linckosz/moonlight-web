@@ -192,7 +192,11 @@ else()
             pkg_check_modules(MW_LINUX_AUDIO libpipewire-0.3)
             if(MW_LINUX_AUDIO_FOUND)
                 message(STATUS "mw-native-host: Linux audio (PipeWire ${MW_LINUX_AUDIO_VERSION}) ON")
-                target_sources(mw-native-host PRIVATE src/audio/linux/PipeWireCapture.cpp)
+                # Silencing the speakers is the same library and the same
+                # graph, so it lives or dies with the tap (src/audio/linux/
+                # HostMute.h has the measurement that shaped it).
+                target_sources(mw-native-host PRIVATE src/audio/linux/PipeWireCapture.cpp
+                                                      src/audio/linux/HostMute.cpp)
                 target_include_directories(mw-native-host SYSTEM PRIVATE ${MW_LINUX_AUDIO_INCLUDE_DIRS})
                 target_link_libraries(mw-native-host PRIVATE ${MW_LINUX_AUDIO_LIBRARIES})
                 target_compile_options(mw-native-host PRIVATE ${MW_LINUX_AUDIO_CFLAGS_OTHER})

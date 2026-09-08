@@ -35,6 +35,7 @@
 #include "../../input/linux/UinputInput.h"
 #if defined(MW_NATIVE_LINUX_AUDIO)
 #include "../../audio/PacedOpusSink.h"
+#include "../../audio/linux/HostMute.h"
 #include "../../audio/linux/PipeWireCapture.h"
 #endif
 
@@ -362,6 +363,17 @@ public:
         // record is the capture's business (it retries); no daemon at all is
         // "no audio this session", said here.
         if (m_Callbacks.onAudio) {
+            if (m_Config.muteHostAudio) {
+                // Before the tap opens: the "silent output" strategy moves the
+                // default sink, and the tap attaches to whatever is default
+                // when IT starts.
+                std::string how;
+                m_HostMute.engage(how);
+                log::info(std::string("[native] audio: ") + how);
+                // What it achieved is read back into m_Info below: this
+                // function clears m_Info AFTER this point (as the macOS one
+                // does), so setting the flag here would be quietly wiped.
+            }
             auto sink = std::make_unique<audio::PacedOpusSink>(m_Callbacks.onAudio);
             std::string audioError;
             if (!sink->start("PipeWire, the default output's monitor, 48 kHz stereo", audioError)) {
@@ -411,6 +423,7 @@ public:
         m_Info.crossGpuCopy = false;
 #if defined(MW_NATIVE_LINUX_AUDIO)
         m_Info.audio = static_cast<bool>(m_Audio);
+        m_Info.hostMuted = m_HostMute.strategy() != audio::HostMute::Strategy::None;
 #else
         m_Info.audio = false;
 #endif
@@ -449,6 +462,9 @@ public:
         // callback is still in flight when the sink it pushes into is freed.
         m_AudioTap.reset();
         m_Audio.reset();
+        // After the tap, never before: releasing puts the default output back,
+        // and the session manager would walk a running tap onto it.
+        m_HostMute.release();
 #endif
         if (!wasRunning && !m_Pipeline && !m_Capture) return;
         m_Pipeline.reset();
@@ -1263,6 +1279,9 @@ private:
 #if defined(MW_NATIVE_LINUX_AUDIO)
     std::unique_ptr<audio::PacedOpusSink> m_Audio;
     std::unique_ptr<audio::PipeWireCapture> m_AudioTap;
+    /// Releases in its destructor too, so a session torn down without stop()
+    /// does not leave the machine silent.
+    audio::HostMute m_HostMute;
 #endif
 
     std::thread m_Thread;
