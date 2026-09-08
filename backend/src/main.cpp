@@ -4340,9 +4340,9 @@ int main(int argc, char* argv[])
     trayManager.setActivityProvider(streamActivity);
     if (hasGuiSession()) trayManager.init();
 
-    // Click-to-photon latency flag (debug builds on Windows): the overlay and
-    // its mouse hook live on their own thread, only while the setting is on,
-    // and only where there is a screen to draw on — see LatencyFlag.h.
+    // Click-to-photon latency flag: the overlay and its click source live on
+    // their own thread, only while the setting is on, and only where there is a
+    // screen to draw on — see LatencyFlag.h.
     LatencyFlag::setEnabled(hasGuiSession() && appSettings.latencyFlagEnabled());
 
     // The hairpin verdict decides between the domain and loopback, and it can

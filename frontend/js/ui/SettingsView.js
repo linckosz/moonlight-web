@@ -109,10 +109,14 @@ export class SettingsView {
         this._gamepadProfile = 'auto';
         // Click-to-photon latency flag: a host-side switch (the host raises a
         // flag on every click, the stream measures the delay). Shown only when
-        // the server can honour it — debug builds on Windows — and read from
-        // the server, never from this device's copy: it is the host's state.
+        // the server can honour it, and read from the server, never from this
+        // device's copy: it is the host's state. _latencyFlagReason carries what
+        // still stands in the way when the host has the backend but not the
+        // permission — on macOS, Input Monitoring — because a flag that never
+        // rises is indistinguishable from a pipeline that delivers nothing.
         this._latencyFlag = false;
         this._latencyFlagSupported = false;
+        this._latencyFlagReason = '';
 
         // Power Saving mode (mobile only): forces the lightest pipeline.
         // _powerSaveBackup holds the values present before enabling, so unchecking
@@ -288,6 +292,8 @@ export class SettingsView {
             this._debugBuild = data.debug_build === true;
             this._latencyFlagSupported = data.latency_flag_supported === true;
             this._latencyFlag = this._latencyFlagSupported && data.latency_flag_enabled === true;
+            this._latencyFlagReason =
+                typeof data.latency_flag_reason === 'string' ? data.latency_flag_reason : '';
 
             if (!stored) {
                 this._applySettings(data);
@@ -924,9 +930,11 @@ export class SettingsView {
                         </select>
                     </div>`
             : '';
-        // Click-to-photon latency flag — debug builds on a Windows host only.
-        // A host-side switch (the overlay lives on the host's screen), saved
-        // through the same form; the server takes it only from localhost.
+        // Click-to-photon latency flag — a host-side switch (the overlay lives
+        // on the host's screen), saved through the same form; the server takes
+        // it only from localhost. The reason line appears only when the host
+        // reports something still in the way: it is the host's own English
+        // sentence, not a translated string, because it names an OS setting.
         const latencyFlagHtml = this._latencyFlagSupported
             ? `
                     <div class="settings-field">
@@ -938,6 +946,13 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.latencyFlagDesc')}</span>
+                        ${
+                            this._latencyFlagReason
+                                ? `<span class="setting-desc setting-desc--warn">⚠️ ${escapeHtml(
+                                      this._latencyFlagReason,
+                                  )}</span>`
+                                : ''
+                        }
                     </div>`
             : '';
         // HDR + Enhancer: the stream is tone-mapped HDR→SDR in the renderer's

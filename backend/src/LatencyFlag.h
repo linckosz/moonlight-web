@@ -49,14 +49,36 @@
  *   - It stays kShowMs: long enough to be in at least one captured frame even
  *     if the first one after the click is skipped or lost.
  *
- * The click is caught with a low-level mouse hook (WH_MOUSE_LL) on a dedicated
- * thread, so it fires whichever host injects it — Sunshine/Apollo on this
- * machine, or our own native host — at the moment Windows delivers it. Only
- * injected clicks (LLMHF_INJECTED) count: a physical click on the host during a
- * run would otherwise be mistaken for the browser's.
+ * The click is caught at the OS level, on a dedicated thread, so it fires
+ * whichever host injects it — Sunshine/Apollo/MultiSeat on this machine, or our
+ * own native host — at the moment the system delivers it. Only *injected*
+ * clicks count: a physical click on the host during a run would otherwise be
+ * mistaken for the browser's. Each platform has its own way of telling the two
+ * apart:
  *
- * Debug builds on Windows only, and only from a desktop session (session 0 has
- * no screen to draw on). Everywhere else every function is an inert stub.
+ *   - Windows: a low-level mouse hook (WH_MOUSE_LL), flag LLMHF_INJECTED.
+ *   - macOS: a listen-only CGEventTap on the session, and kCGEventSourceStateID
+ *     — a physical click carries kCGEventSourceStateHIDSystemState, a posted one
+ *     never does.
+ *   - Linux: the /dev/input node itself. Every host injects through uinput, and
+ *     a uinput device hangs off /sys/devices/virtual/ while a real mouse hangs
+ *     off its bus. Reading only the virtual pointers is the exact equivalent of
+ *     LLMHF_INJECTED, and it needs no X server — it works under Wayland too,
+ *     even where the *overlay* cannot be shown.
+ *
+ * Availability is a runtime question, not a build-time one (isSupported()):
+ *
+ *   - Windows: always, from a desktop session (session 0 has no screen).
+ *   - macOS: needs Input Monitoring for this binary, or the tap is created and
+ *     silently never fires. The preflight is what isSupported() answers.
+ *   - Linux: needs an X11 session. Under Wayland no client may draw above
+ *     everything else nor be told where another client's window is, so the flag
+ *     cannot be put on screen at all — run the bench in an X11 session.
+ *   - Everywhere else: an inert stub.
+ *
+ * unsupportedReason() carries that verdict in one English sentence, so a bench
+ * report can print WHY a machine has no click-to-photon figure instead of
+ * showing a hole that reads like a failure.
  */
 namespace LatencyFlag {
 
@@ -70,8 +92,17 @@ constexpr double kBottom = 0.05;
 /// How long the flag stays up after a click, in milliseconds.
 constexpr int kShowMs = 100;
 
-/// True when this build can show the flag: debug build on Windows.
+/// True when this build *and* this session can show the flag. Cheap and
+/// cacheable: it never opens a display nor creates a window.
 bool isSupported();
+
+/// What stands between this machine and a click-to-photon figure, as one
+/// English sentence for the log, the API payload and the bench report — empty
+/// when nothing does. Usually the counterpart of isSupported() being false, but
+/// not always: on macOS the switch can be offered (the backend is there) while
+/// Input Monitoring is still to be granted, and that sentence is the only thing
+/// that tells an operator which checkbox to tick.
+const char* unsupportedReason();
 
 /// Start (create the window + hook on their own thread) or stop the probe.
 /// Idempotent; a no-op when unsupported.

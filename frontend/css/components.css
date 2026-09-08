@@ -275,6 +275,13 @@
     margin-bottom: var(--space-2);
 }
 
+/* A description that reports something standing in the way of the setting it
+   sits under — an OS permission still to be granted, say. Same size and rhythm
+   as the description it follows; only the colour says "act on this". */
+.setting-desc--warn {
+    color: var(--warning);
+}
+
 .settings-input,
 .login-input,
 .login-pin-input {

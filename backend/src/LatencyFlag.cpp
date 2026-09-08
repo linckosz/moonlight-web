@@ -21,13 +21,27 @@
 #include <QDebug>
 #include <QString>
 
-#if defined(Q_OS_WIN) && defined(QT_DEBUG)
-#define MW_LATENCY_FLAG_SUPPORTED 1
+// Windows lives here; macOS is LatencyFlagMac.mm and X11 is LatencyFlagX11.cpp,
+// each added to the target only on its own platform (see CMakeLists.txt, which
+// defines MW_LATENCY_FLAG_MAC / MW_LATENCY_FLAG_X11 when it adds them). When no
+// backend was compiled in, the stub at the bottom of this file is the whole
+// implementation.
+//
+// Until 08/09/2026 this was also gated on QT_DEBUG. That cost more than it
+// bought: a real debug build is roughly ten times slower in the convert stage
+// (0,4 → 10,6 ms, docs/bench-native-host.md §8), so measuring click-to-photon
+// meant maintaining a Release tree carrying only QT_DEBUG — a recipe nobody
+// could reproduce and which no CI binary could ever satisfy. The runtime guard
+// was always the real one: latency_flag_enabled defaults to false and is
+// writable from localhost only, so nothing is created, hooked or drawn until
+// somebody deliberately turns it on.
+#if defined(Q_OS_WIN)
+#define MW_LATENCY_FLAG_WINDOWS 1
 #else
-#define MW_LATENCY_FLAG_SUPPORTED 0
+#define MW_LATENCY_FLAG_WINDOWS 0
 #endif
 
-#if MW_LATENCY_FLAG_SUPPORTED
+#if MW_LATENCY_FLAG_WINDOWS
 
 #include <windows.h>
 
@@ -283,6 +297,11 @@ bool isSupported()
     return true;
 }
 
+const char* unsupportedReason()
+{
+    return "";
+}
+
 bool isEnabled()
 {
     return g_Running.load();
@@ -311,13 +330,28 @@ void setEnabled(bool enabled)
 
 } // namespace LatencyFlag
 
-#else // !MW_LATENCY_FLAG_SUPPORTED
+#elif !defined(MW_LATENCY_FLAG_MAC) && !defined(MW_LATENCY_FLAG_X11)
 
+// No backend for this platform — every function is inert. This is also what a
+// Linux build gets when the X11 headers were absent at configure time, which is
+// why the reason names them: a package built on a machine without libx11-dev
+// looks exactly like a machine that cannot show the flag, and only this line
+// tells the two apart.
 namespace LatencyFlag {
 
 bool isSupported()
 {
     return false;
+}
+
+const char* unsupportedReason()
+{
+#if defined(Q_OS_LINUX)
+    return "this build has no click-to-photon backend — it was configured without the X11 "
+           "development headers (libx11-dev)";
+#else
+    return "click-to-photon is implemented on Windows, macOS and Linux/X11 only";
+#endif
 }
 
 bool isEnabled()
@@ -327,7 +361,7 @@ bool isEnabled()
 
 void setEnabled(bool enabled)
 {
-    if (enabled) qInfo() << "[LatencyFlag] not available: needs a debug build on Windows";
+    if (enabled) qInfo() << "[LatencyFlag] not available:" << unsupportedReason();
 }
 
 } // namespace LatencyFlag

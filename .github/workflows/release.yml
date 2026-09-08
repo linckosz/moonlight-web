@@ -402,6 +402,11 @@ jobs:
           # Build step below refuses to package that stub again.
           sudo apt-get install -y libdrm-dev libva-dev libegl1-mesa-dev \
             libgles2-mesa-dev libgbm-dev libpipewire-0.3-dev
+          # The click-to-photon flag's X11 overlay (LatencyFlag.h). Optional in
+          # the same way: without these CMake builds the stub, and the shipped
+          # binary would simply report that it has no backend — which on a
+          # machine that does run X11 would be a lie the operator cannot fix.
+          sudo apt-get install -y libx11-dev libxrandr-dev libxext-dev
           # fpm turns the staged tree into .deb + .rpm (see make-packages.sh);
           # appstream provides appstreamcli, which validates the metainfo file
           # there before a broken one reaches anyone's software centre.

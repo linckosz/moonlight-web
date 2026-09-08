@@ -1017,11 +1017,13 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
         // Audio time-stretch (WSOLA) — file-only setting, default false.
         obj["audio_time_stretch"] = appSettings.audioTimeStretch();
-        // Click-to-photon latency flag: the stored wish, and whether this build
-        // can honour it (debug on Windows). The UI shows the switch only when
-        // it can — see LatencyFlag.h.
+        // Click-to-photon latency flag: the stored wish, whether this machine
+        // can honour it, and — when it cannot — the one sentence that says why.
+        // The UI shows the switch only when it can, and the bench report prints
+        // the reason instead of leaving a hole that reads like a failure.
         obj["latency_flag_enabled"] = appSettings.latencyFlagEnabled();
         obj["latency_flag_supported"] = LatencyFlag::isSupported();
+        obj["latency_flag_reason"] = QString::fromUtf8(LatencyFlag::unsupportedReason());
         // Debug build flag: the UI exposes the enhancement algo selector only in
         // debug builds (Qt Creator); production forces 'auto'.
 #ifdef QT_DEBUG
@@ -1068,10 +1070,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             hadChange = true;
         }
 
-        // Only a build that can show the flag takes the switch: a release
-        // build (or a non-Windows host) has nothing to arm, and storing a
-        // dangling "on" would make the browser probe wait for a flag that
-        // never comes. The overlay follows the setting live — no restart.
+        // Only a machine that can show the flag takes the switch: a Wayland
+        // session (or a build without the X11 headers) has nothing to arm, and
+        // storing a dangling "on" would make the browser probe wait for a flag
+        // that never comes. The overlay follows the setting live — no restart.
         if (body.contains("latency_flag_enabled") && LatencyFlag::isSupported()) {
             bool enabled = body["latency_flag_enabled"].toBool();
             appSettings.setLatencyFlagEnabled(enabled);

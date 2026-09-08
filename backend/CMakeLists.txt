@@ -266,6 +266,46 @@ if(APPLE)
     target_sources(mw-server PRIVATE src/common/MacActivity.mm)
 endif()
 
+# ── Click-to-photon flag: the per-platform backends ────────────────────────
+# Windows lives in LatencyFlag.cpp itself. macOS and Linux/X11 are separate
+# files, added only where they compile; LatencyFlag.cpp falls back to an inert
+# stub when neither define is set. See LatencyFlag.h.
+if(APPLE)
+    target_sources(mw-server PRIVATE src/LatencyFlagMac.mm)
+    target_compile_definitions(mw-server PRIVATE MW_LATENCY_FLAG_MAC)
+    # CGEventTap + NSWindow. Foundation/Security are already linked below.
+    target_link_libraries(mw-server PRIVATE "-framework AppKit" "-framework ApplicationServices")
+elseif(UNIX)
+    # Optional, like the native host's own Linux dependencies: without the X11
+    # headers CMake still builds — the stub, whose unsupportedReason() names the
+    # missing package rather than claiming the machine cannot show a flag.
+    find_package(X11)
+    if(X11_FOUND)
+        target_sources(mw-server PRIVATE src/LatencyFlagX11.cpp)
+        target_compile_definitions(mw-server PRIVATE MW_LATENCY_FLAG_X11)
+        target_include_directories(mw-server PRIVATE ${X11_INCLUDE_DIR})
+        target_link_libraries(mw-server PRIVATE ${X11_LIBRARIES})
+        # RandR enumerates monitors and reports a display arriving or leaving;
+        # Xshape makes the flag click-through. Both are refinements, not
+        # requirements: without RandR the flag covers the whole X screen as one,
+        # without Xshape it would swallow a click landing on it.
+        if(X11_Xrandr_FOUND)
+            target_compile_definitions(mw-server PRIVATE MW_HAVE_XRANDR)
+            target_link_libraries(mw-server PRIVATE ${X11_Xrandr_LIB})
+        else()
+            message(STATUS "LatencyFlag: no libXrandr — the flag will not follow a monitor change")
+        endif()
+        if(X11_Xshape_FOUND)
+            target_compile_definitions(mw-server PRIVATE MW_HAVE_XSHAPE)
+            target_link_libraries(mw-server PRIVATE ${X11_Xext_LIB})
+        else()
+            message(STATUS "LatencyFlag: no Xshape — the flag will not be click-through")
+        endif()
+    else()
+        message(STATUS "LatencyFlag: no X11 headers — click-to-photon will report itself absent")
+    endif()
+endif()
+
 # Windows release builds run windowless (no console): logs go to a file next to
 # the exe (see main.cpp). Debug keeps the console for development. WIN32_EXECUTABLE
 # switches to /SUBSYSTEM:WINDOWS, so Qt6::EntryPoint must provide WinMain->main.
