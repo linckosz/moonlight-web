@@ -78,6 +78,12 @@ void runOne(const Capabilities& caps, const DisplayInfo& display, Codec codec, c
         CHECK(false);
         return;
     }
+    // Before start(), not after: the pacer anchors its clock inside the audio
+    // setup, so a slow start() is time the pacer counts and a window opened
+    // afterwards would not. Bracketing the call keeps the measured window a
+    // superset of the pacer's, which is what makes the rate below an upper
+    // bound rather than a guess.
+    const auto sessionOpened = std::chrono::steady_clock::now();
     CHECK(session->start(error));
     if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
 
@@ -102,6 +108,7 @@ void runOne(const Capabilities& caps, const DisplayInfo& display, Codec codec, c
     session->requestKeyframe();
     std::this_thread::sleep_for(std::chrono::milliseconds(700));
     session->stop();
+    const auto sessionClosed = std::chrono::steady_clock::now();
     out.close();
 
     std::fprintf(stderr, "  %d frame(s), %d keyframe(s), %zu bytes, worst host latency %.2f ms%s\n",
@@ -113,18 +120,25 @@ void runOne(const Capabilities& caps, const DisplayInfo& display, Codec codec, c
     CHECK(firstWasKeyframe.load());
     CHECK(orderOk.load());
 
-    // 2.7 s of session ≈ 540 packets. The pacer runs on a real 200 Hz clock
-    // from tap start to session->stop(), so both bounds are loose on purpose:
-    // the floor (the sink starts before the capture and the session is
-    // stopped mid-tick) catches a tap that delivers nothing, and the ceiling
-    // — generous because probe/create/encode-ramp overhead before the two
-    // sleep_for() calls is unbounded on a loaded shared CI runner, and adds
-    // straight to the real elapsed time the pacer sees — catches one that
-    // fires in bursts.
-    std::fprintf(stderr, "  audio: %d packet(s), %zu bytes (%.1f/s)\n", audioPackets.load(),
-                 audioBytes.load(), audioPackets.load() / 2.7);
-    CHECK(audioPackets.load() >= 400);
-    CHECK(audioPackets.load() <= 900);
+    // The contract is a CADENCE — one 5 ms frame every 5 ms, 200 packets a
+    // second, silence included, whether the Mac plays anything or not — so it
+    // is measured against the clock and not against a count. A fixed count
+    // assumes how long the session lasted, and that assumption is what broke
+    // here: on a paravirtualised runner the FIRST session of the two paid ~2.3
+    // extra seconds of ScreenCaptureKit start-up, the pacer counted them (it
+    // anchors inside start()), and 998 packets — a perfectly correct 4.99 s of
+    // clock — read as a burst against a budget written for 2.7 s.
+    //
+    // Measured over a window that contains the pacer's own, the rate can only
+    // come out at or below 200: above it means packets went out faster than the
+    // clock, which is the burst the count was meant to catch, and far below it
+    // means the clock stalled.
+    const double seconds = std::chrono::duration<double>(sessionClosed - sessionOpened).count();
+    const double rate = audioPackets.load() / seconds;
+    std::fprintf(stderr, "  audio: %d packet(s), %zu bytes over %.2f s (%.1f/s, contract 200)\n",
+                 audioPackets.load(), audioBytes.load(), seconds, rate);
+    CHECK(rate <= 210.0);
+    CHECK(rate >= 120.0);
     CHECK(audioFrameSizeOk.load());
 
     std::fprintf(stderr, "  wrote %s — decode it to look at the picture\n", path);
