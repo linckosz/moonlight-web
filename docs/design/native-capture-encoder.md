@@ -3954,3 +3954,28 @@ demande Xcode complet, que le banc n'a pas, mais le runner l'a. Le `.pkg` produi
 des plugins comme un **fichier** `PlugIns` — un blob gzip+cpio, même forme que
 `Payload`. Vu de loin il ressemble à un dossier vide, et j'ai d'abord conclu que le
 volet manquait. `xar -tf` puis `gunzip -dc | cpio -i` montrent le contenu réel.
+
+**Et installé pour de vrai, sur le banc** (08/09, artefact du run `34280361028`,
+`sudo installer -pkg … -target /`) : « The upgrade was successful », la charge
+utile arrive dans `/Applications` appartenant à root, `codesign --verify --deep
+--strict` passe sur l'app posée, et le `postinstall` fait ce qu'il annonce —
+`provisioning.json` écrit, LaunchAgent réécrit vers `/Applications`, données
+utilisateur rendues à l'utilisateur, **règle de pare-feu ajoutée**. L'app démarre,
+sert `/api/health` en 80 et 46152, et découvre les hôtes du LAN.
+
+⚠️ **Ce que l'installation apprend sur TCC, et qu'il faut lire correctement** :
+l'app installée répond `available: false — Screen Recording is not granted`. Ce
+n'est pas une régression, c'est l'arithmétique des identités : le banc signe avec
+« MoonlightWeb Dev » (`certificate leaf = H"d88095f4…"`) et la CI avec l'identité
+de release (`certificate root = H"d051d7d8…"`). Deux exigences désignées
+différentes, donc deux octrois différents — l'app installée en demande un, **une
+fois**, et le garde ensuite d'une mise à jour à l'autre puisque la racine, elle,
+ne bouge plus. Le message de la sonde dit exactement quelle case cocher.
+
+**Non vérifié, et honnêtement hors de portée d'ici** : le volet Internet *à
+l'écran*. `installer` en ligne de commande n'exécute aucun volet (d'où
+`internet=false` et un consentement vide dans `provisioning.json`), et piloter
+Installer.app à distance échoue sur ce banc — `osascript` n'a pas l'accès
+assistif (−1719) et la fenêtre n'apparaît pas dans `screencapture`. Le volet est
+prouvé *présent et bien indexé* dans le paquet (ci-dessus) ; le voir demande un
+double-clic humain.
