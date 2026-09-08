@@ -4,7 +4,7 @@
 #
 #  Compiles the Installer.app plugin, packs MoonlightWeb.app into a component
 #  package (with the postinstall script), then wraps it in a productbuild archive
-#  that shows the Introduction / License / Sunshine (plugin) / Install / Summary
+#  that shows the Introduction / License / Internet (plugin) / Install / Summary
 #  flow.
 #
 #  Usage (run on macOS):
@@ -32,9 +32,9 @@ BUNDLE="$WORK/plugins/MoonlightWebInstaller.bundle"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$HERE/plugin/Info.plist" "$BUNDLE/Contents/Info.plist"
 # Installer.app instantiates the framework's InstallerSection (NSPrincipalClass),
-# which loads NSMainNibFile; the nib wires section.firstPane -> MWSunshinePane.
-xcrun ibtool --compile "$BUNDLE/Contents/Resources/MWSunshinePane.nib" \
-    "$HERE/plugin/MWSunshinePane.xib"
+# which loads NSMainNibFile; the nib wires section.firstPane -> MWInternetPane.
+xcrun ibtool --compile "$BUNDLE/Contents/Resources/MWInternetPane.nib" \
+    "$HERE/plugin/MWInternetPane.xib"
 # InstallerPlugins.framework is deprecated and header-stripped in the SDK, so we
 # self-declare its InstallerPane API (see plugin/MWInstallerPane.h) and only LINK
 # the framework binary. Do NOT add -F /System/Library/Frameworks: that points at
@@ -45,7 +45,7 @@ xcrun clang -bundle -fobjc-arc -mmacosx-version-min=12.0 \
     -framework InstallerPlugins -framework Cocoa -framework Foundation \
     -I "$HERE/plugin" \
     -o "$BUNDLE/Contents/MacOS/MoonlightWebInstaller" \
-    "$HERE/plugin/MWSunshinePane.m"
+    "$HERE/plugin/MWInternetPane.m"
 codesign --force --timestamp=none -s - "$BUNDLE" || true
 # productbuild --plugins expects the sections list beside the bundle(s).
 cp "$HERE/plugins/InstallerSections.plist" "$WORK/plugins/InstallerSections.plist"

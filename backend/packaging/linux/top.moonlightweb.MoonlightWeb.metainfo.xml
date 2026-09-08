@@ -28,17 +28,18 @@
   <description>
     <p>
       MoonlightWeb turns your gaming PC into a stream any browser can open. It
-      pairs with a Sunshine host, then serves the picture over WebRTC to
-      whatever device is at hand — a laptop, a tablet, a phone, a TV — with no
-      client to install on the other end.
+      captures and encodes this machine's own screen, and also pairs with the
+      Sunshine, Apollo and Wolf hosts on your network, then serves the picture
+      over WebRTC to whatever device is at hand — a laptop, a tablet, a phone,
+      a TV — with no client to install on the other end.
     </p>
     <p>Features:</p>
     <ul>
       <li>Play from any browser: nothing to install on the device you play from</li>
+      <li>Streams this machine itself: no second streaming server to set up</li>
       <li>Hardware-accelerated H.264 and HEVC, up to 4K and 120 FPS</li>
       <li>Gamepad, keyboard, mouse and touch controls, including on-screen gamepad</li>
       <li>Optional Internet access for playing away from home</li>
-      <li>Installs and configures Sunshine for you on first run</li>
     </ul>
   </description>
 

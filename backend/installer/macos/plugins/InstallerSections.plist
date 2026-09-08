@@ -4,7 +4,7 @@
   Section order for Installer.app. The built-in section names are fixed; a
   custom section is referenced by its bundle FILE NAME (with the .bundle
   extension), NOT by its InstallerSectionTitle. The sidebar label shown for it
-  comes from InstallerSectionTitle in the bundle's Info.plist ("Sunshine").
+  comes from InstallerSectionTitle in the bundle's Info.plist ("Internet").
   This file sits alongside the .bundle in the productbuild plugins directory.
 -->
 <plist version="1.0">

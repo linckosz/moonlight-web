@@ -787,11 +787,12 @@ jobs:
       - name: Build interactive .pkg installer
         env:
           VERSION: ${{ needs.setup.outputs.version }}
-        # Compiles the Installer.app plugin (Sunshine credentials + Internet
-        # toggle + Sunshine download progress), packs the signed app + the
-        # postinstall (installs Sunshine, writes provisioning.json, LaunchAgent,
-        # launches the app) into the component pkg, and wraps it in a guided
-        # productbuild archive. Pairing runs in the app on first launch
+        # Compiles the Installer.app plugin (one pane: the Internet-link
+        # opt-in), packs the signed app + the postinstall (writes
+        # provisioning.json, LaunchAgent, launches the app) into the component
+        # pkg, and wraps it in a guided productbuild archive. No streaming
+        # server is installed — the app captures this Mac itself. Internet
+        # Access is brought up by the app on first launch
         # (Provisioning::applyOnce). The .pkg itself is unsigned: a package
         # signature needs a Developer ID Installer certificate to mean anything
         # to installer(8), and the app inside carries its own (see above).

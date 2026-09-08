@@ -240,10 +240,11 @@ if [ -z "$started" ] && command -v systemctl >/dev/null 2>&1 && [ -d /run/system
         # this package) — enabling is the whole install step.
         systemctl daemon-reload >/dev/null 2>&1 || true
         if systemctl enable --now moonlightweb.service >/dev/null 2>&1; then
-            # Sunshine is deliberately absent: it captures a display and encodes
-            # on a GPU, neither of which exists here. The app detects that on its
-            # own (mw::hasDesktopSession) and never offers to install it — this
-            # box is a relay to Sunshine/GameStream hosts elsewhere on the LAN.
+            # Nothing here can host a stream: capturing a display and encoding
+            # on a GPU needs both, and this box has neither. The app detects
+            # that on its own (mw::hasDesktopSession) and offers no host of its
+            # own — it is a relay to Sunshine/GameStream hosts elsewhere on the
+            # LAN.
             cat <<'BANNER'
 
 MoonlightWeb is installed and running as a system service (headless mode).
@@ -253,8 +254,8 @@ MoonlightWeb is installed and running as a system service (headless mode).
   Publish it on the internet:    moonlightweb --enable-internet
 
 On your LAN there is nothing else to configure — open https://<this-machine-ip>
-from any browser. Sunshine was not installed: this host has no display to
-capture and no GPU to encode with; add your streaming hosts by IP instead.
+from any browser. This host cannot stream itself: no display to capture and no
+GPU to encode with; add your streaming hosts by IP instead.
 
 BANNER
         else

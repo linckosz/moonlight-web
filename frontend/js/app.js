@@ -1137,9 +1137,9 @@ const MoonlightApp = {
     /**
      * On localhost, check whether setup is pending and, if so, render the
      * SetupView. Shown on first run, but also on later launches whenever an
-     * essential step is missing (Sunshine not installed / not paired — e.g.
-     * stale settings from a previous install), with the completed steps
-     * pre-checked. "Skip for now" dismisses it persistently for this browser.
+     * essential step is missing (no host on this machine at all — e.g. stale
+     * settings from a previous install), with the completed steps pre-checked.
+     * "Skip for now" dismisses it persistently for this browser.
      * Returns true when the wizard was shown (init() should stop; the wizard
      * reloads the page when finished). Best-effort: any error just lets normal
      * init continue.
@@ -1161,14 +1161,24 @@ const MoonlightApp = {
             // SSH tunnel to localhost, so just stay out of the way.
             if (status.headless) return false;
             const firstRun = status.setup_completed === false;
-            // Only Sunshine's *installed* state gates a re-show: `paired` is
-            // discovered asynchronously (mDNS host list), so at cold start a
-            // fully set-up machine often reports paired=false for a moment — which
-            // used to re-pop the wizard on every launch. If Sunshine is installed
-            // but momentarily unpaired, the hosts page handles pairing itself.
-            const sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
+            // Past the first run, the wizard only comes back when this machine
+            // has no host of its own. A machine that streams itself has one
+            // (design §19, §20) and must never be re-asked — otherwise every
+            // launch would re-pop the wizard on a perfectly set-up Mac or Linux
+            // box that simply has no Sunshine installed, which is now the
+            // normal shape rather than a broken install.
+            //
+            // For the Sunshine machines, only its *installed* state gates the
+            // re-show: `paired` is discovered asynchronously (mDNS host list),
+            // so at cold start a fully set-up machine often reports paired=false
+            // for a moment — which used to re-pop the wizard on every launch. If
+            // Sunshine is installed but momentarily unpaired, the hosts page
+            // handles pairing itself.
+            const hasHost =
+                !!(status.native && status.native.possible) ||
+                !!(status.sunshine && status.sunshine.installed);
             const dismissed = localStorage.getItem('mw_setup_dismissed') === '1';
-            if (!firstRun && (sunshineInstalled || dismissed)) return false;
+            if (!firstRun && (hasHost || dismissed)) return false;
         } catch (err) {
             console.warn('[MW] Setup status check failed:', err);
             return false;

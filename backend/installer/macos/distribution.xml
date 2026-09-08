@@ -8,12 +8,12 @@
   Install phase fail with "there was no software found to install"; system-wide
   install now relies on rootVolumeOnly alone.
 
-  The custom "Sunshine" pane (credentials, Internet toggle, download progress)
-  is an InstallerPlugin loaded through the plugins directory; see
-  plugins/InstallerSections.plist. Sunshine install + credentials happen in the
-  component's postinstall script (root); pairing + the public A-record are done
-  by MoonlightWeb.app on first launch (Provisioning::applyOnce), which is why
-  they are NOT installer panes.
+  The custom "Internet" pane (the Internet-link opt-in, and nothing else — the
+  app streams this Mac itself, so no streaming server is installed) is an
+  InstallerPlugin loaded through the plugins directory; see
+  plugins/InstallerSections.plist. The public A-record is brought up by
+  MoonlightWeb.app on first launch (Provisioning::applyOnce), which is why it is
+  NOT an installer pane.
 
   Built by backend/installer/macos/build-pkg.sh (and the release.yml macos job),
   which substitutes @MW_VERSION@ and runs productbuild with this distribution

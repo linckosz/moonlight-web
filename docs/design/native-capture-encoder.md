@@ -1352,6 +1352,13 @@ disque**. `Provisioning::applyOnce` lit un objet absent comme `auto_pair=false` 
 marque l'étape « skipped », si bien qu'un serveur plus ancien recevant ce fichier
 se comporte exactement comme si l'utilisateur avait cliqué sur Ignorer.
 
+> ⚠️ **Périmé depuis le 08/09/2026 — voir §25.** Ce qui suit était vrai le 04/09
+> et a cessé de l'être en deux jours : macOS (§20) et Linux (§19) ont eu leur
+> moteur natif les 05 et 06, si bien que « ces plates-formes n'ont pas de moteur »
+> ne justifie plus rien. Sunshine est sorti de l'assistant et de l'installeur
+> macOS le 08/09, sur la même règle qu'ici : seulement là où la machine peut se
+> diffuser elle-même.
+
 Ce qui **ne** bouge **pas** : `SunshineInstaller` en entier, et la page Sunshine
 du `SetupView`. ⚠️ **le plan disait « retrait de Sunshine de l'installeur *et* de
 `SetupView` », c'est faux** : `SetupView` ne s'affiche jamais sous Windows
@@ -3477,3 +3484,75 @@ hostMuted` dit ce qui a été obtenu, la ligne « streaming … » du moteur por
   et la remise sont écrits, pas exercés en flux réel.
 - Un endpoint qui **dit** matériel et refuse `SetMute` retombe sur la stratégie
   2 puis 3 — chemin écrit, jamais vu.
+
+## 25. Sunshine sort aussi de l'installation macOS/Linux (08/09/2026)
+
+Constat de Bruno sur une capture d'écran de l'assistant : « je pensais que
+Sunshine ne faisait plus partie du processus d'installation ». Il avait raison,
+et §15.5 avait cessé d'être vraie. Le 04/09, retirer Sunshine du seul installeur
+Windows était le geste **complet** : macOS et Linux répondaient « no backend for
+this platform in this build », et le leur retirer les aurait privées de tout
+hôte. Le 05 et le 06, ces deux plates-formes ont eu leur moteur (§19, §20). La
+raison est tombée, la page est restée.
+
+### 25.1 Le verdict n'est pas « disponible », c'est « possible »
+
+Trois endroits demandaient Sunshine : l'assistant in-app (`SetupView`), le pane
+« Sunshine » du `.pkg` macOS, et le postinstall macOS qui téléchargeait un DMG et
+écrivait `sunshine --creds`. Aucun ne pouvait simplement être supprimé : une
+machine qui ne peut pas se diffuser doit continuer d'être aidée — **l'AppImage**
+en premier, qui ne porte aucune capacité et n'a donc aucune capture (§19.8).
+
+`/api/setup/status` gagne donc un objet `native`, et le champ sur lequel
+l'assistant branche n'est **pas** `available` :
+
+```json
+"native": { "available": false, "reason": "…", "needs_permission": true, "possible": true }
+```
+
+`possible` = `available`, ou l'une des deux raisons qui veulent dire « le moteur
+est là, il attend quelque chose que l'utilisateur peut donner » :
+`CapturePermission` et `NoInteractiveSession`. C'est le piège que la première
+version aurait eu : **macOS répond `available: false` jusqu'à ce que
+l'enregistrement d'écran soit coché** (`CGPreflightScreenCaptureAccess`, §20.4),
+et c'est exactement l'état d'un premier lancement. Un assistant qui branche sur
+`available` enverrait chaque nouveau Mac installer un second serveur de streaming
+au moment précis où il est à une case à cocher de se diffuser lui-même. Toutes
+les autres raisons — pas d'API de capture, aucun encodeur, OS trop vieux, build
+sans backend — veulent dire que cette machine a besoin d'un hôte à côté d'elle,
+et Sunshine y est offert exactement comme avant.
+
+### 25.2 Ce qui change pour l'utilisateur, écran par écran
+
+| Où | Avant | Après |
+|---|---|---|
+| Assistant, section « Sunshine » | identifiants + case « installer automatiquement » | section « Diffuser cet ordinateur » : une ligne verte « cet ordinateur peut diffuser son propre écran » ; sur un Mac sans permission, la phrase qui dit quoi cocher et qu'il faut **relancer** l'app |
+| Assistant, réapparition | revenait tant que Sunshine n'était pas installé | ne revient que si la machine n'a **aucun** hôte : `native.possible` compte autant que `sunshine.installed` |
+| Assistant, écran final (macOS) | « ouvrez Sunshine et accordez-lui… » | la même phrase pour **MoonlightWeb**, et seulement quand la permission manque vraiment |
+| `.pkg` macOS, pane latéral | « Sunshine » : identifiants, téléchargement du DMG, bouton Skip, sonde Basic-Auth | « Internet » : la seule question, et le texte de consentement récupère toute la bande que les identifiants occupaient |
+| `.pkg` macOS, postinstall | montait un DMG, copiait `Sunshine.app`, lançait `--creds`, écrivait le mot de passe en clair dans `provisioning.json` et dans `/tmp` | plus rien de tout ça — **aucun mot de passe en clair n'est écrit sur ce disque** |
+| `install.sh`, `.deb`/`.rpm` | « Sunshine n'a pas été installé : cet hôte n'a pas d'écran » | « cet hôte ne peut pas se diffuser lui-même » — la même chose, sans nommer un logiciel qui n'était pas en cause |
+
+Ce qui **ne** bouge **pas** : `SunshineInstaller` en entier, `/api/setup/
+sunshine-check`, et tout le chemin Sunshine/Apollo/Wolf. Sunshine reste un hôte
+de plein droit partout, découvert et appairé depuis la page des hôtes ; l'AppImage
+et les machines sans encodeur voient l'assistant d'avant, mot pour mot.
+
+### 25.3 Vérifié, et ce qui attend la CI
+
+- `/api/setup/status` sur bench-desk : `{"available": true, "needs_permission":
+  false, "possible": true, "reason": "available"}`. Backend TNR 1082, sécurité
+  405, build vert.
+- Front : 5 tests neufs (`SetupNativeHost.test.js`) — la machine qui se diffuse
+  ne montre aucun champ Sunshine ; un Sunshine installé **à côté** du moteur
+  n'est plus ni installé ni appairé par l'assistant ; le cas permission macOS
+  montre la phrase et pas l'offre Sunshine ; une machine sans moteur garde
+  l'assistant d'avant ; un `status` **sans** objet `native` est traité comme
+  « ne peut pas se diffuser » (un serveur plus ancien aide au lieu de se taire).
+  584 tests front au total.
+- ⚠️ **Non compilé ici** : le plugin `MWInternetPane.m` (Objective-C, SDK macOS)
+  et le `.pkg`. Le banc Mac était éteint ; la validation est le job `installers`
+  de la CI, comme pour le `.iss`.
+- ⚠️ **Non vu à l'écran** : l'assistant lui-même ne s'affiche pas sous Windows,
+  donc le rendu réel de la section « Diffuser cet ordinateur » (et de la phrase
+  de permission macOS) reste à regarder sur le Mac ou le banc Linux.

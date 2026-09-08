@@ -4,7 +4,7 @@
   Info.plist for the MoonlightWeb Installer.app plugin bundle. Mirrors Apple's
   "Installer Plug-in" Xcode template: NSPrincipalClass is the framework's own
   InstallerSection, which loads NSMainNibFile; the nib's File's Owner wires its
-  firstPane outlet to our MWSunshinePane (and the pane's contentView to a view).
+  firstPane outlet to our MWInternetPane (and the pane's contentView to a view).
   InstallerSectionTitle is only the sidebar label; the section itself is
   referenced by bundle file name in plugins/InstallerSections.plist.
 -->
@@ -19,7 +19,7 @@
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>NSPrincipalClass</key><string>InstallerSection</string>
-    <key>NSMainNibFile</key><string>MWSunshinePane</string>
-    <key>InstallerSectionTitle</key><string>Sunshine</string>
+    <key>NSMainNibFile</key><string>MWInternetPane</string>
+    <key>InstallerSectionTitle</key><string>Internet</string>
 </dict>
 </plist>

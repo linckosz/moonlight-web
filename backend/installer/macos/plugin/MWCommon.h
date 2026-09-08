@@ -1,10 +1,14 @@
 /*
  * MoonlightWeb — macOS Installer.app plugin, shared helpers.
  *
- * The single "Sunshine" InstallerPane collects the same choices the Windows Inno
- * installer does, then hands them to the .pkg postinstall (which runs as root)
- * through a plist in /tmp: username, password, internet flag, and the path of
- * the Sunshine DMG the pane downloaded in the background.
+ * The single "Internet" InstallerPane asks the one question the Windows Inno
+ * installer asks, then hands the answer to the .pkg postinstall (which runs as
+ * root) through a plist in /tmp: the internet flag and the exact wording it was
+ * given for.
+ *
+ * It used to carry a Sunshine username and password through that same file, in
+ * plaintext, plus the path of a DMG the pane had downloaded. None of it exists
+ * any more: the app captures and encodes this Mac itself (design §20).
  */
 #import <Cocoa/Cocoa.h>
 
@@ -13,32 +17,14 @@
 // script's HANDOFF variable.
 static NSString *const kMWHandoffPath = @"/tmp/moonlightweb-provisioning.plist";
 
-// Sunshine release asset for the running CPU (arm64 pkg today; future-proofed).
-static inline NSString *MWSunshineArch(void)
-{
-#if defined(__x86_64__)
-    return @"x86_64";
-#else
-    return @"arm64";
-#endif
-}
-
-static inline NSString *MWSunshineDmgURL(void)
-{
-    return [NSString stringWithFormat:@"https://github.com/LizardByte/Sunshine/releases/latest/"
-                                      @"download/Sunshine-macOS-%@.dmg",
-                                      MWSunshineArch()];
-}
-
 // The Internet opt-in checkbox label. Single source of truth: displayed in the
 // pane AND handed to the server as the consent text of its versioned consent
 // record — so it has to say what enabling actually does, and what it does not.
 //
-// Shorter than the same agreement on Windows and in the web wizard, and that is
-// a constraint rather than a choice: the pane's content view is 470x240 points
-// and this label shares it with the Sunshine credentials. It must still name
-// every party that learns something — the router, the peer, the introduction
-// server, the STUN server — because what is recorded has to be what was read.
+// Shorter than the same agreement on Windows and in the web wizard: the pane's
+// content view is 470x240 points. It must name every party that learns
+// something — the router, the peer, the introduction server, the STUN server —
+// because what is recorded has to be what was read.
 static inline NSString *MWInternetConsentText(void)
 {
     return @"Allow the Internet link (recommended). The router is asked (UPnP) to open one "
@@ -71,107 +57,9 @@ static inline BOOL MWInternetAlreadyAuthorized(void)
     return [[(NSDictionary *)json objectForKey:@"internet_access_enabled"] boolValue];
 }
 
-// Path of the Sunshine binary already installed on this machine, or nil. Same
-// lookup order as the .pkg postinstall's sunshine_bin().
-static inline NSString *MWSunshineInstalledPath(void)
-{
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *p in @[
-             @"/Applications/Sunshine.app/Contents/MacOS/sunshine",
-             @"/opt/homebrew/bin/sunshine",
-             @"/usr/local/bin/sunshine",
-         ]) {
-        if ([fm isExecutableFileAtPath:p])
-            return p;
-    }
-    return nil;
-}
-
-// This Mac's short host name ("MacBook-Pro"), the name Sunshine advertises by
-// default and the one the server stores for a locally discovered host.
-static inline NSString *MWLocalHostName(void)
-{
-    NSString *name = [[NSProcessInfo processInfo] hostName] ?: @"";
-    if ([name hasSuffix:@".local"])
-        name = [name substringToIndex:name.length - 6];
-    return name;
-}
-
-// Does this settings dictionary hold a host entry that is (a) paired and (b) the
-// Sunshine on THIS machine? Qt flattens/nests its persisted host array
-// differently per platform, so match on the key SUFFIX and recurse: that covers
-// both a flat "hosts.1.pairState" key and a nested hosts → 1 → pairState tree.
-static inline BOOL MWDictHasPairedLocalHost(NSDictionary *d, NSString *localName)
-{
-    static NSString *const kPairState = @"pairState";
-    for (NSString *key in d) {
-        id value = d[key];
-        if ([value isKindOfClass:[NSDictionary class]]) {
-            if (MWDictHasPairedLocalHost((NSDictionary *)value, localName))
-                return YES;
-            continue;
-        }
-        if ([value isKindOfClass:[NSArray class]]) {
-            for (id item in (NSArray *)value)
-                if ([item isKindOfClass:[NSDictionary class]] &&
-                    MWDictHasPairedLocalHost((NSDictionary *)item, localName))
-                    return YES;
-            continue;
-        }
-        if (![key hasSuffix:kPairState] || ![value isKindOfClass:[NSString class]] ||
-            ![(NSString *)value isEqualToString:@"paired"])
-            continue;
-
-        // Sibling keys share this entry's prefix ("" when nested, "hosts.1."
-        // when flattened).
-        NSString *prefix = [key substringToIndex:key.length - kPairState.length];
-        id manual = d[[prefix stringByAppendingString:@"manualaddress"]];
-        if ([manual isKindOfClass:[NSString class]] &&
-            ([manual isEqualToString:@"127.0.0.1"] || [manual isEqualToString:@"::1"] ||
-             [[manual lowercaseString] isEqualToString:@"localhost"]))
-            return YES;
-        id host = d[[prefix stringByAppendingString:@"hostname"]];
-        if (localName.length > 0 && [host isKindOfClass:[NSString class]] &&
-            [(NSString *)host caseInsensitiveCompare:localName] == NSOrderedSame)
-            return YES;
-    }
-    return NO;
-}
-
-// True when a previous MoonlightWeb run already paired with the local Sunshine.
-// The server persists its host list through QSettings (ComputerManager::
-// saveHosts / NvComputer::serialize); on macOS that lands in a CFPreferences
-// plist under ~/Library/Preferences whose name carries the application name —
-// the exact domain Qt derives from the organization is an implementation detail,
-// so match the file name instead of hardcoding it. Nothing readable → NO, which
-// simply falls back to the normal "ask for credentials" pane.
-static inline BOOL MWLocalSunshinePaired(void)
-{
-    NSArray<NSString *> *base =
-        NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES);
-    if (base.count == 0)
-        return NO;
-    NSString *prefs = [base.firstObject stringByAppendingPathComponent:@"Preferences"];
-    NSArray<NSString *> *entries =
-        [[NSFileManager defaultManager] contentsOfDirectoryAtPath:prefs error:nil];
-    NSString *localName = MWLocalHostName();
-
-    for (NSString *entry in entries) {
-        if (![entry.pathExtension isEqualToString:@"plist"] ||
-            [entry rangeOfString:@"MoonlightWeb" options:NSCaseInsensitiveSearch].location ==
-                NSNotFound)
-            continue;
-        NSDictionary *d = [NSDictionary
-            dictionaryWithContentsOfFile:[prefs stringByAppendingPathComponent:entry]];
-        if (d && MWDictHasPairedLocalHost(d, localName))
-            return YES;
-    }
-    return NO;
-}
-
 // Merge key/values into the hand-off plist (created if absent), preserving keys
-// written earlier. 0600: it carries the Sunshine password in plaintext until the
-// postinstall (root) reads and deletes it.
+// written earlier. 0600 out of habit rather than need now that no credential
+// travels through it: the postinstall (root) reads and deletes it.
 static inline void MWHandoffMerge(NSDictionary *values)
 {
     NSMutableDictionary *d =

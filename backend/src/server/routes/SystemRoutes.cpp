@@ -285,6 +285,32 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // screen or encode on a GPU. The install script reads the same flag.
         obj["headless"] = !mw::hasDesktopSession();
 
+        // Can this machine host itself? Since the native engine reached macOS
+        // and Linux (design §19, §20), a first launch there usually has nothing
+        // to install: the app captures and encodes this desktop. The wizard
+        // only offers Sunshine where it cannot.
+        //
+        // `available` alone would be the wrong question to ask on a first run.
+        // macOS answers false until Screen Recording is granted, and that is the
+        // one permission an installer is forbidden to grant — a machine one
+        // checkbox away from streaming itself must not be sent to install a
+        // second streaming server. So `possible` is the verdict the wizard
+        // branches on: is the engine here, or only waiting for something the
+        // user can give it? Every other reason (no capture API, no encoder, an
+        // OS too old, a build with no backend — the AppImage, which can carry no
+        // capability) means this machine genuinely needs a host beside it.
+        {
+            const mw::native::Capabilities caps = NativeProbeService::instance().snapshot();
+            QJsonObject nat;
+            nat["available"] = caps.available;
+            nat["reason"] = QString::fromUtf8(mw::native::toString(caps.reason));
+            nat["needs_permission"] = caps.reason == mw::native::Unavailability::CapturePermission;
+            nat["possible"] = caps.available ||
+                              caps.reason == mw::native::Unavailability::CapturePermission ||
+                              caps.reason == mw::native::Unavailability::NoInteractiveSession;
+            obj["native"] = nat;
+        }
+
         SunshineInstaller::DetectResult sun = SunshineInstaller::detect();
         QJsonObject sunObj;
         sunObj["installed"] = sun.installed;
@@ -298,10 +324,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         //
         // The native card is excluded even though it is local and paired: this
         // key says whether the wizard's Sunshine step is settled, and a machine
-        // that streams itself has not installed Sunshine. Moot on Windows (the
-        // wizard never runs there) and there is no native engine on the
-        // platforms where it does — but the name has to keep meaning what it
-        // says, for the day Phase I changes that.
+        // that streams itself has not installed Sunshine. That distinction is no
+        // longer theoretical — the native engine reached macOS and Linux, so the
+        // machines this route answers for are exactly the ones that can have
+        // both a native card and no Sunshine at all.
         bool paired = false;
         const QJsonArray hosts = computerManager.getHostsJson();
         for (const QJsonValue& v : hosts) {
@@ -818,6 +844,15 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             obj["cert_auth_enabled"] = authManager.certAuthEnabled();
             // Whether the desktop is told when someone streams this screen.
             obj["stream_notifications"] = appSettings.streamNotifications();
+            // The name this install shows in the header of every browser paired
+            // with it. Both halves are reported, and the difference is what the
+            // field on screen needs: the stored one is what goes in the input
+            // (empty when nothing was chosen), the machine's own is what goes in
+            // the placeholder, so clearing the box visibly means "back to the PC
+            // name" rather than "no name at all".
+            obj["instance_name"] = appSettings.instanceName();
+            obj["default_instance_name"] = AppSettings::machineName();
+            obj["instance_name_max"] = AppSettings::kInstanceNameMaxLength;
             // Host machine only: the current host key, so the
             // admin page can carry its session over to the
             // public-domain URL after Internet activation. Not
@@ -855,6 +890,19 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["stream_notifications"].toBool();
             appSettings.setStreamNotifications(enabled);
             obj["stream_notifications"] = enabled;
+            hadChange = true;
+        }
+
+        // ── Instance name ────────────────────────────────────────────────
+        // Trimmed, clipped and echoed back, so the field on screen shows what
+        // was actually kept rather than what was typed. An empty value is a
+        // deliberate reset to the machine's own name, which is why the
+        // response carries both halves the way the GET does.
+        if (body.contains("instance_name")) {
+            appSettings.setInstanceName(body["instance_name"].toString());
+            obj["instance_name"] = appSettings.instanceName();
+            obj["default_instance_name"] = AppSettings::machineName();
+            obj["display_name"] = appSettings.displayName();
             hadChange = true;
         }
 

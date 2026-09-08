@@ -19,12 +19,13 @@
 #  appears in GNOME Software / KDE Discover / App Center. Distros without one
 #  of those package managers fall back to the AppImage.
 #
-#  The packages themselves are unchanged — same postinstall (Sunshine,
-#  pairing, service registration), only the clicking is skipped. On macOS the
-#  installer's GUI panes are bypassed, so the postinstall uses its documented
-#  CLI defaults (install Sunshine, admin/admin credentials, Internet Access
-#  off) and the in-app wizard finishes the configuration. Internet Access is
-#  the one pane this script asks for itself — see ask_internet below.
+#  The packages themselves are unchanged — same postinstall (service
+#  registration, LaunchAgent, provisioning.json), only the clicking is skipped.
+#  No streaming server is installed on any platform: the app captures and
+#  encodes this machine itself. On macOS the installer's GUI pane is bypassed,
+#  so the postinstall uses its documented CLI default (Internet Access off) and
+#  the in-app wizard finishes the configuration. Internet Access is the one
+#  question this script asks for itself — see ask_internet below.
 #
 #  Environment overrides:
 #    MW_VERSION=0.2.4   pin a version (macOS and the AppImage fallback only;
@@ -305,10 +306,11 @@ enable_internet() {
 }
 
 # No desktop on this machine: no browser to open the setup wizard in, and no
-# display to capture — so no Sunshine either. The package's postinstall reaches
-# the same conclusion on its own (it installs and starts the systemd service
-# instead of launching into a graphical session); this only decides how to
-# report it, and hands over to the app's own operator command for the details.
+# display to capture — so this box relays other hosts rather than streaming
+# itself. The package's postinstall reaches the same conclusion on its own (it
+# installs and starts the systemd service instead of launching into a graphical
+# session); this only decides how to report it, and hands over to the app's own
+# operator command for the details.
 #
 # `systemctl get-default` is the discriminator rather than $DISPLAY alone: this
 # script is very often run over SSH on a machine that does have a desktop.
@@ -375,8 +377,8 @@ done_banner_headless() {
         say "  ${dim}(server still starting — run 'moonlightweb --status')${reset}"
     fi
 
-    say "  ${dim}Sunshine was not installed: this host has no display to capture and no${reset}"
-    say "  ${dim}GPU to encode with. Add your streaming hosts by IP from the web UI.${reset}"
+    say "  ${dim}This host cannot stream itself: no display to capture and no GPU to${reset}"
+    say "  ${dim}encode with. Add your streaming hosts by IP from the web UI.${reset}"
     say ""
     cli_hint
     [ -d /run/systemd/system ] &&
@@ -426,9 +428,10 @@ install_macos() {
     enable_internet
 
     done_banner
-    say "  ${dim}macOS cannot grant screen capture programmatically: the installer opened${reset}"
-    say "  ${dim}System Settings → Privacy & Security → Screen Recording — turn Sunshine on${reset}"
-    say "  ${dim}there, then quit and reopen Sunshine (macOS applies it on relaunch only).${reset}"
+    say "  ${dim}macOS cannot grant screen capture programmatically, and this Mac cannot${reset}"
+    say "  ${dim}stream its own screen without it: allow MoonlightWeb in System Settings →${reset}"
+    say "  ${dim}Privacy & Security → Screen Recording, then quit and reopen MoonlightWeb${reset}"
+    say "  ${dim}(macOS applies it on relaunch only).${reset}"
     say ""
 }
 

@@ -18,12 +18,20 @@
 /**
  * MoonlightWeb — First-run setup wizard (macOS / Linux)
  *
- * Windows ships a native Inno Setup installer that authorizes Internet Access
- * and installs + pairs the local Sunshine. macOS/Linux ship a bare app bundle,
- * so this in-app wizard (opened automatically in the browser on first launch)
- * covers the same steps by talking to /api/setup/{status,apply}.
+ * Windows ships a native Inno Setup installer that authorizes Internet Access;
+ * macOS/Linux ship a bare app bundle, so this in-app wizard (opened
+ * automatically in the browser on first launch) covers the same ground by
+ * talking to /api/setup/{status,apply}.
  *
- * Steps: config (Internet + Sunshine choices) → progress (live checklist) → done.
+ * Steps: config (Internet + host choices) → progress (live checklist) → done.
+ *
+ * Sunshine appears here only on a machine that cannot host itself. Since the
+ * native engine reached macOS and Linux (design §19, §20) the usual first
+ * launch has nothing to install — the app captures and encodes this desktop —
+ * and the wizard says so instead of asking for a second streaming server's
+ * credentials. `status.native.possible` is the whole switch, and it is
+ * deliberately not `available`: macOS says false until Screen Recording is
+ * granted, which is a checkbox to point at, not a reason to install Sunshine.
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
@@ -36,6 +44,14 @@ export class SetupView {
 
         this._step = 'loading'; // loading | config | progress | done | error
         this._os = 'Unknown';
+        // Can this machine stream itself? `possible` covers "it can, once the
+        // user grants something" — see the file header. Until the status call
+        // answers, assume it cannot: that is the shape this wizard had before
+        // the native engine existed, and it offers help rather than withholding
+        // it if the field is ever missing (an older server, a failed probe).
+        this._nativePossible = false;
+        this._nativeAvailable = false;
+        this._nativeNeedsPermission = false;
         this._sunshineInstalled = false;
         this._sunshinePaired = false;
         this._autostartInstalled = false;
@@ -106,6 +122,9 @@ export class SetupView {
         try {
             const status = await BackendClient.getSetupStatus();
             this._os = status.os || 'Unknown';
+            this._nativePossible = !!(status.native && status.native.possible);
+            this._nativeAvailable = !!(status.native && status.native.available);
+            this._nativeNeedsPermission = !!(status.native && status.native.needs_permission);
             this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
             this._sunshinePaired = !!(status.sunshine && status.sunshine.paired);
             this._autostartInstalled = !!status.autostart_installed;
@@ -122,9 +141,11 @@ export class SetupView {
             // The backend says whether it can auto-install Sunshine here (macOS
             // DMG, or Linux .deb on Debian/Ubuntu-family distros with polkit).
             this._canAutoInstall = !!(status.sunshine && status.sunshine.can_auto_install);
-            // Default the install checkbox off when Sunshine is already present or
-            // cannot be auto-installed on this OS.
-            this._installSunshine = this._canAutoInstall && !this._sunshineInstalled;
+            // Default the install checkbox off when Sunshine is already present,
+            // cannot be auto-installed on this OS, or is simply not needed
+            // because this machine hosts itself.
+            this._installSunshine =
+                this._canAutoInstall && !this._sunshineInstalled && !this._nativePossible;
             // Prefill only when we are the ones creating the account. An already
             // installed Sunshine has credentials we don't know, so those fields
             // start empty — and masked, since nothing is there to be read.
@@ -181,28 +202,23 @@ export class SetupView {
     }
 
     _renderConfig() {
-        // Sunshine block: "installed & paired" (nothing to do), "installed but
-        // unpaired" (creds to pair), an auto-install checkbox (macOS), or a
-        // manual-install hint (other OS).
-        let sunshineBlock;
-        if (this._sunshineInstalled && this._sunshinePaired) {
-            sunshineBlock = this._okNote(t('setup.sunshinePaired'));
-        } else if (this._sunshineInstalled) {
-            sunshineBlock = `
-                <p class="setup-note">${t('setup.sunshineInstalled')}</p>
-                ${this._credsFields()}`;
-        } else if (this._canAutoInstall) {
-            sunshineBlock = `
-                <p class="setup-note">${t('setup.sunshineNotDetected')}</p>
-                <label class="setup-check">
-                    <input type="checkbox" id="chk-install" ${this._installSunshine ? 'checked' : ''} />
-                    <span>${t('setup.installSunshine')}</span>
-                </label>
-                ${this._credsFields()}`;
-        } else {
-            sunshineBlock = `
-                <p class="setup-note">${t('setup.sunshineManual')}</p>`;
-        }
+        // What will stream this machine. Two mutually exclusive shapes: either
+        // the app itself does (nothing to install — at most a permission to
+        // grant), or it cannot here and Sunshine is offered as before.
+        const hostBlock = this._nativePossible
+            ? this._renderNativeBlock()
+            : this._renderSunshineBlock();
+        // A block with nothing to say takes its title with it, rather than
+        // leaving a bare heading over an empty band.
+        const hostSection = hostBlock
+            ? `
+            <div class="setup-section">
+                <h2 class="setup-section-title">${
+                    this._nativePossible ? t('setup.hostTitle') : t('setup.sunshineTitle')
+                }</h2>
+                ${hostBlock}
+            </div>`
+            : '';
 
         const address = this._publicAddress();
         const internetBlock = this._internetActive
@@ -269,10 +285,7 @@ export class SetupView {
                 ${internetBlock}
             </div>
 
-            <div class="setup-section">
-                <h2 class="setup-section-title">${t('setup.sunshineTitle')}</h2>
-                ${sunshineBlock}
-            </div>
+            ${hostSection}
             ${displayBlock}
 
             <div class="setup-section">
@@ -292,6 +305,45 @@ export class SetupView {
             </button>
             <button id="btn-setup-skip" class="btn btn-link u-mt-2"
                     ${this._checking ? 'disabled' : ''}>${t('setup.skip')}</button>`;
+    }
+
+    // This machine hosts itself: state it, and name the one thing the app cannot
+    // grant for the user. macOS withholds screen capture until it is ticked by
+    // hand, and the app has to be relaunched for TCC to apply it — a sentence
+    // here beats a host card that never appears with nothing to explain it.
+    _renderNativeBlock() {
+        if (this._nativeAvailable) return this._okNote(t('setup.hostNative'));
+        if (this._nativeNeedsPermission)
+            return `<p class="setup-note setup-warn">${t('setup.hostPermission')}</p>`;
+        // `possible` without either flag is the Windows service case, which this
+        // wizard never runs in. Say nothing rather than guess.
+        return '';
+    }
+
+    _renderSunshineBlock() {
+        // Sunshine block: "installed & paired" (nothing to do), "installed but
+        // unpaired" (creds to pair), an auto-install checkbox (macOS), or a
+        // manual-install hint (other OS).
+        let sunshineBlock;
+        if (this._sunshineInstalled && this._sunshinePaired) {
+            sunshineBlock = this._okNote(t('setup.sunshinePaired'));
+        } else if (this._sunshineInstalled) {
+            sunshineBlock = `
+                <p class="setup-note">${t('setup.sunshineInstalled')}</p>
+                ${this._credsFields()}`;
+        } else if (this._canAutoInstall) {
+            sunshineBlock = `
+                <p class="setup-note">${t('setup.sunshineNotDetected')}</p>
+                <label class="setup-check">
+                    <input type="checkbox" id="chk-install" ${this._installSunshine ? 'checked' : ''} />
+                    <span>${t('setup.installSunshine')}</span>
+                </label>
+                ${this._credsFields()}`;
+        } else {
+            sunshineBlock = `
+                <p class="setup-note">${t('setup.sunshineManual')}</p>`;
+        }
+        return sunshineBlock;
     }
 
     // Green "already done" row shown in place of a step's controls.
@@ -360,13 +412,21 @@ export class SetupView {
             this._internetActive && address
                 ? `<p class="setup-note">${t('setup.doneDomain', { domain: this.esc(address) })}</p>`
                 : '';
-        // TCC permissions hint only when Sunshine was actually touched this run
-        // (a fully-paired setup revisit has nothing left to grant).
-        const permsLine =
-            this._os === 'macOS' &&
-            (this._activeSteps.includes('install') || this._activeSteps.includes('pairing'))
-                ? `<p class="setup-note setup-warn">${t('setup.donePermissions')}</p>`
-                : '';
+        // macOS TCC hint, for whichever program is going to capture this screen:
+        // the app itself when it hosts this Mac (the permission it is still
+        // missing is the only thing between here and a working host card), or
+        // Sunshine when it was actually touched this run — a fully-paired setup
+        // revisit has nothing left to grant.
+        let permsLine = '';
+        if (this._os === 'macOS') {
+            if (this._nativePossible && this._nativeNeedsPermission)
+                permsLine = `<p class="setup-note setup-warn">${t('setup.donePermissionsNative')}</p>`;
+            else if (
+                !this._nativePossible &&
+                (this._activeSteps.includes('install') || this._activeSteps.includes('pairing'))
+            )
+                permsLine = `<p class="setup-note setup-warn">${t('setup.donePermissions')}</p>`;
+        }
         // The display setting is silent when it worked (the checkbox said what it
         // would do) but must speak up when it didn't: the user would otherwise
         // hit the 503 capture dialog later believing it was handled.
@@ -479,9 +539,17 @@ export class SetupView {
         const user = (this.container.querySelector('#setup-user')?.value || '').trim();
         const pass = this.container.querySelector('#setup-pass')?.value || '';
 
+        // A machine that hosts itself was never shown the Sunshine block, so
+        // there is nothing to install and nothing to pair — not even when a
+        // Sunshine happens to be installed here: pairing it is the hosts page's
+        // job, on the user's initiative, not a first-run step.
         const willInstall =
-            this._installSunshine && this._canAutoInstall && !this._sunshineInstalled;
-        const needPairing = this._sunshineInstalled && !this._sunshinePaired;
+            !this._nativePossible &&
+            this._installSunshine &&
+            this._canAutoInstall &&
+            !this._sunshineInstalled;
+        const needPairing =
+            !this._nativePossible && this._sunshineInstalled && !this._sunshinePaired;
         const haveCreds = !!user && !!pass;
 
         // Require credentials when they will actually be used (install or pairing).
