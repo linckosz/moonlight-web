@@ -74,6 +74,16 @@ export class SetupView {
         // from a question nobody read, and this answer is recorded and stored —
         // it has to be one somebody actually gave.
         this._internetAuth = null;
+        // Whether this machine offers its own screen as a host — the answer that
+        // becomes `native_host_enabled`. null until one of the two buttons is
+        // pressed, exactly like the Internet question above and for the same
+        // reason: this is recorded, so it has to be an answer somebody gave.
+        //
+        // ⚠️ Saying no removes this machine's own host card and NOTHING else.
+        // MoonlightWeb goes on finding and relaying the other hosts on the
+        // network — a person who does not want their desktop streamed may still
+        // want to reach their gaming PC from this browser.
+        this._nativeAuth = null;
         this._installSunshine = true;
         this._autoStart = true;
         // Keeping the display awake rewrites the user's own power settings, so it
@@ -296,28 +306,48 @@ export class SetupView {
             ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
 
             <button id="btn-setup-start" class="btn btn-neutral login-submit"
-                    ${this._checking || this._internetNeedsAnswer() ? 'disabled' : ''}>
+                    ${this._checking || this._needsAnswer() ? 'disabled' : ''}>
                 ${
                     this._checking
                         ? `<span class="tunnel-spinner"></span>${t('setup.checkingCreds')}`
-                        : t('setup.start')
+                        : t('setup.done')
                 }
-            </button>
-            <button id="btn-setup-skip" class="btn btn-link u-mt-2"
-                    ${this._checking ? 'disabled' : ''}>${t('setup.skip')}</button>`;
+            </button>`;
     }
 
-    // This machine hosts itself: state it, and name the one thing the app cannot
-    // grant for the user. macOS withholds screen capture until it is ticked by
-    // hand, and the app has to be relaunched for TCC to apply it — a sentence
-    // here beats a host card that never appears with nothing to explain it.
+    // This machine CAN host itself — so it is asked whether it should, rather
+    // than told that it will. Streaming one's own desktop is not a detail to
+    // discover afterwards from a card that appeared on its own.
+    //
+    // The macOS permission line rides along: the app cannot grant screen capture
+    // for the user, and a sentence here beats a host card that never appears
+    // with nothing to explain it. It is shown only once the answer is yes —
+    // pointing at a checkbox in System Settings would be noise for someone who
+    // just said they do not want this machine streamed.
     _renderNativeBlock() {
-        if (this._nativeAvailable) return this._okNote(t('setup.hostNative'));
-        if (this._nativeNeedsPermission)
-            return `<p class="setup-note setup-warn">${t('setup.hostPermission')}</p>`;
-        // `possible` without either flag is the Windows service case, which this
-        // wizard never runs in. Say nothing rather than guess.
-        return '';
+        const permission =
+            this._nativeAuth === true && !this._nativeAvailable && this._nativeNeedsPermission
+                ? `<p class="setup-note setup-warn">${t('setup.hostPermission')}</p>`
+                : '';
+        return `
+                <p class="setup-note">${t('setup.hostBody')}</p>
+                <p class="consent-highlight">${t('setup.hostOption')}</p>
+                <div class="setup-choice" role="group"
+                     aria-label="${this.esc(t('setup.hostTitle'))}">
+                    <button type="button" id="btn-host-skip"
+                            class="btn btn-neutral setup-choice-btn${
+                                this._nativeAuth === false ? ' is-chosen' : ''
+                            }" aria-pressed="${this._nativeAuth === false}">
+                        ${t('setup.hostSkip')}
+                    </button>
+                    <button type="button" id="btn-host-accept"
+                            class="btn btn-neutral setup-choice-btn${
+                                this._nativeAuth === true ? ' is-chosen' : ''
+                            }" aria-pressed="${this._nativeAuth === true}">
+                        ${t('setup.hostAccept')}
+                    </button>
+                </div>
+                ${permission}`;
     }
 
     _renderSunshineBlock() {
@@ -503,10 +533,21 @@ export class SetupView {
             const acceptNet = this.container.querySelector('#btn-internet-accept');
             if (acceptNet) acceptNet.addEventListener('click', () => choose(true));
 
+            // Same shape as the Internet pair: pressing one takes the chosen
+            // style, and Done stops being disabled once both questions have an
+            // answer.
+            const chooseHost = (value) => {
+                this._nativeAuth = value;
+                this.render();
+                this.bindEvents();
+            };
+            const skipHost = this.container.querySelector('#btn-host-skip');
+            if (skipHost) skipHost.addEventListener('click', () => chooseHost(false));
+            const acceptHost = this.container.querySelector('#btn-host-accept');
+            if (acceptHost) acceptHost.addEventListener('click', () => chooseHost(true));
+
             const start = this.container.querySelector('#btn-setup-start');
             if (start) start.addEventListener('click', () => this._apply());
-            const skip = this.container.querySelector('#btn-setup-skip');
-            if (skip) skip.addEventListener('click', () => this._skip());
         } else if (this._step === 'done') {
             const finish = this.container.querySelector('#btn-setup-finish');
             if (finish) finish.addEventListener('click', () => this._finish());
@@ -523,8 +564,23 @@ export class SetupView {
         return !this._internetActive && this._internetAuth === null;
     }
 
+    // Same, for "should this computer be streamable". Only asked on a machine
+    // that could host itself; where it cannot, Sunshine is offered instead and
+    // there is no question to hold the page.
+    _hostNeedsAnswer() {
+        return this._nativePossible && this._nativeAuth === null;
+    }
+
+    // Every question this page asks that has not been answered yet. This is what
+    // greys out Done — and the reason there is no "skip for now" any more: both
+    // questions can be answered with a no, so leaving without answering is not a
+    // thing a user needs. Nothing is assumed on their behalf.
+    _needsAnswer() {
+        return this._internetNeedsAnswer() || this._hostNeedsAnswer();
+    }
+
     async _apply() {
-        if (this._internetNeedsAnswer()) return;
+        if (this._needsAnswer()) return;
         // Steps already satisfied are rendered as "✓ done" (no controls) and
         // must not run again: their flags are forced off here.
         this._internetAuth = !this._internetActive && this._internetAuth === true;
@@ -589,6 +645,12 @@ export class SetupView {
                     : '',
                 autostart: this._autoStart,
                 keep_display_awake: this._keepDisplayAwake,
+                // Sent only when the question was actually asked. On a machine
+                // that cannot host itself the field is absent, and the server
+                // leaves the setting alone rather than recording a "no" nobody
+                // said — the machine may gain the ability later (a GPU driver,
+                // a macOS permission) and must not find itself switched off.
+                ...(this._nativePossible ? { native_host_enabled: this._nativeAuth } : {}),
                 sunshine: {
                     install: willInstall,
                     username: user,
@@ -756,22 +818,13 @@ export class SetupView {
         }
     }
 
-    // Skip the wizard: mark setup complete server-side with no actions, and
-    // dismiss it persistently for this browser (the startup gate re-shows the
-    // wizard while steps are missing unless this flag is set).
-    async _skip() {
-        try {
-            localStorage.setItem('mw_setup_dismissed', '1');
-        } catch (_e) {
-            /* best-effort */
-        }
-        try {
-            await BackendClient.applySetup({ internet_access_authorized: false, sunshine: {} });
-        } catch (_e) {
-            /* best-effort */
-        }
-        this._finish();
-    }
+    // ⚠️ There is no _skip() any more. It existed because the page used to make
+    // claims the user could only accept — "install Sunshine", "open to the
+    // Internet" — and needed a way out that agreed to nothing. Both are
+    // questions now, each answerable with a no, so a third door would only be a
+    // way to leave the machine in a state nobody chose. `mw_setup_dismissed` is
+    // still READ by the startup gate: browsers that pressed the old button keep
+    // their dismissal, and nothing writes it again.
 
     _finish() {
         this._stopPolling();

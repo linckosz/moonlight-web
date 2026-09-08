@@ -461,6 +461,14 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                 const bool internetAuth = body.value("internet_access_authorized").toBool(false);
                 const bool autostart = body.value("autostart").toBool(false);
                 const bool keepAwake = body.value("keep_display_awake").toBool(false);
+                // Whether this machine offers its own screen. ABSENT means the
+                // wizard never asked — a machine that cannot host itself — and
+                // the setting is left exactly as it was: recording a "no"
+                // nobody said would switch the host off for good on a box that
+                // may gain the ability later (a driver, a macOS permission).
+                if (body.contains("native_host_enabled"))
+                    appSettings.setNativeHostEnabled(
+                        body.value("native_host_enabled").toBool(true));
                 const QJsonObject sun = body.value("sunshine").toObject();
                 const bool wantInstall = sun.value("install").toBool(false);
                 const QString user = sun.value("username").toString();
@@ -1005,6 +1013,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["stream_fps"] = appSettings.streamFps();
         obj["hdr_enabled"] = appSettings.hdrEnabled();
         obj["mute_host_audio"] = appSettings.muteHostAudio();
+        // Whether this machine offers its own screen as a host. A machine
+        // setting, not a viewing preference — every browser reads the same
+        // answer, and only the machine itself may change it (the POST below is
+        // localhost-only, like the wizard that first asks the question).
+        obj["native_host_enabled"] = appSettings.nativeHostEnabled();
         obj["chroma_444_enabled"] = appSettings.chroma444Enabled();
         obj["video_enhancement"] = appSettings.videoEnhancement();
         obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
@@ -1025,7 +1038,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         return HttpResponse::json(obj);
     });
 
-    server.router()->post("/api/settings/streaming", [&appSettings](const HttpRequest& req) {
+    // `computerManager` joins the capture for one setting only: turning this
+    // machine's own host card off has to take the card down now, and the probe
+    // service deliberately stays silent in that direction (see below).
+    server.router()->post("/api/settings/streaming", [&appSettings,
+                                                      &computerManager](const HttpRequest& req) {
         // Only localhost can modify server-side streaming settings
         if (!req.isLocal)
             return HttpResponse::error(403,
@@ -1125,6 +1142,22 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["mute_host_audio"].toBool();
             appSettings.setMuteHostAudio(enabled);
             obj["mute_host_audio"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        // Turning this machine's own host card on or off. Takes effect at the
+        // next host-list refresh — NativeHostBackend::isAvailable() reads the
+        // setting every time, so nothing is cached behind it.
+        if (body.contains("native_host_enabled")) {
+            bool enabled = body["native_host_enabled"].toBool();
+            appSettings.setNativeHostEnabled(enabled);
+            // Now, not at the next restart. The probe service deliberately says
+            // nothing when the host is switched off, so there is no signal to
+            // wait for — the card would otherwise sit there until something
+            // else happened to rebuild the list.
+            computerManager.refreshNativeHost();
+            obj["native_host_enabled"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
         }

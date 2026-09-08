@@ -191,10 +191,19 @@ private slots:
 private:
     void loadHosts();
 
+public:
     /// Add, refresh or remove the synthetic host backed by this machine's own
     /// capture engine. Called at startup; safe to call again when the display
     /// layout changes.
+    ///
+    /// Public because the answer can also change for a reason the probe never
+    /// sees: the owner turning `native_host_enabled` off. The probe service
+    /// stays quiet then — by design, it will not spawn a probe for an engine
+    /// nobody is offered — so the settings route calls this directly and the
+    /// card goes away on the same click instead of at the next restart.
     void refreshNativeHost();
+
+private:
     // The address the next poll of this host should use — see m_PollAddrIndex.
     NvAddress pollAddressFor(const NvComputer* host) const;
     // allowEmpty guards the one destructive case: writing an empty array wipes

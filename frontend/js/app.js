@@ -1213,7 +1213,15 @@ const MoonlightApp = {
             // for a moment — which used to re-pop the wizard on every launch. If
             // Sunshine is installed but momentarily unpaired, the hosts page
             // handles pairing itself.
+            // ⚠️ A deliberate "no" counts as a host decision, not as a broken
+            // install. Someone who answered that this computer must not stream
+            // itself has `native.possible === false` for the best of reasons,
+            // and without this line a machine with no Sunshine beside it would
+            // be asked the same question at every single launch — the exact
+            // nagging loop the paragraph above exists to prevent.
+            const hostAnswered = !!(status.native && status.native.enabled === false);
             const hasHost =
+                hostAnswered ||
                 !!(status.native && status.native.possible) ||
                 !!(status.sunshine && status.sunshine.installed);
             const dismissed = localStorage.getItem('mw_setup_dismissed') === '1';

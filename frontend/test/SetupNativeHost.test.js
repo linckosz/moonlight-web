@@ -70,7 +70,7 @@ describe('SetupView — a machine that streams itself', () => {
         container = document.getElementById('setup');
     });
 
-    it('says the machine hosts itself, and asks nothing about Sunshine', async () => {
+    it('ASKS whether the machine should stream itself, and nothing about Sunshine', async () => {
         await start(
             status({
                 native: {
@@ -82,11 +82,75 @@ describe('SetupView — a machine that streams itself', () => {
             }),
         );
 
-        expect(html()).toContain('text:setup.hostNative');
+        // A question, not a statement: streaming one's own desktop is not
+        // something to discover afterwards from a card that appeared on its own.
+        expect(html()).toContain('text:setup.hostOption');
+        expect(container.querySelector('#btn-host-accept')).not.toBeNull();
+        expect(container.querySelector('#btn-host-skip')).not.toBeNull();
+
         expect(html()).not.toContain('text:setup.sunshineTitle');
         expect(container.querySelector('#setup-user')).toBeNull();
         expect(container.querySelector('#setup-pass')).toBeNull();
         expect(container.querySelector('#chk-install')).toBeNull();
+    });
+
+    it('holds Done until the question is answered, either way', async () => {
+        await start(
+            status({
+                native: {
+                    available: true,
+                    reason: 'available',
+                    needs_permission: false,
+                    possible: true,
+                },
+            }),
+        );
+
+        const done = () => container.querySelector('#btn-setup-start');
+        expect(done().disabled).toBe(true);
+        // And there is no way around it: the old "skip for now" is gone,
+        // because both questions can now be answered with a no.
+        expect(container.querySelector('#btn-setup-skip')).toBeNull();
+
+        container.querySelector('#btn-host-skip').click();
+        expect(done().disabled).toBe(false);
+        expect(view._nativeAuth).toBe(false);
+
+        container.querySelector('#btn-host-accept').click();
+        expect(view._nativeAuth).toBe(true);
+        expect(done().disabled).toBe(false);
+    });
+
+    it('sends the answer as native_host_enabled — including the no', async () => {
+        await start(
+            status({
+                native: {
+                    available: true,
+                    reason: 'available',
+                    needs_permission: false,
+                    possible: true,
+                },
+            }),
+        );
+
+        container.querySelector('#btn-host-skip').click();
+        await view._apply();
+
+        expect(BackendClient.applySetup.mock.calls[0][0].native_host_enabled).toBe(false);
+    });
+
+    it('says nothing about it where the machine cannot host itself', async () => {
+        // ⚠️ The field is ABSENT, not false: the server must leave the setting
+        // alone. A machine that gains the ability later (a driver, a macOS
+        // permission) must not find itself switched off by a question it was
+        // never asked.
+        await start(status());
+
+        container.querySelector('#btn-internet-skip')?.click();
+        await view._apply();
+
+        const sent = BackendClient.applySetup.mock.calls[0][0];
+        expect('native_host_enabled' in sent).toBe(false);
     });
 
     it('never asks to install Sunshine, even when one is installed here already', async () => {
@@ -106,6 +170,7 @@ describe('SetupView — a machine that streams itself', () => {
         );
 
         expect(container.querySelector('#setup-pass')).toBeNull();
+        container.querySelector('#btn-host-accept').click();
         await view._apply();
 
         expect(BackendClient.checkSunshineCredentials).not.toHaveBeenCalled();
@@ -131,7 +196,12 @@ describe('SetupView — a machine that streams itself', () => {
             }),
         );
 
+        // Not before the answer: pointing at a checkbox in System Settings
+        // would be noise for someone who has just said no.
+        expect(html()).not.toContain('text:setup.hostPermission');
+        container.querySelector('#btn-host-accept').click();
         expect(html()).toContain('text:setup.hostPermission');
+
         expect(html()).not.toContain('text:setup.sunshineNotDetected');
         expect(container.querySelector('#chk-install')).toBeNull();
 
