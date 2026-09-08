@@ -16,6 +16,9 @@
  */
 
 #include "../../capture/linux/KmsCapture.h"
+#if defined(MW_NATIVE_LINUX_PORTAL)
+#include "../../capture/linux/PortalCapture.h"
+#endif
 #include "../../convert/linux/GlConvert.h"
 #include "../../core/CadenceAlign.h"
 #include "../../core/FrameCadence.h"
@@ -112,7 +115,7 @@ class VideoPipeline
 public:
     virtual ~VideoPipeline() = default;
 
-    virtual bool init(const capture::KmsCapture& capture, Codec codec, int outputWidth,
+    virtual bool init(const capture::IScreenCapture& capture, Codec codec, int outputWidth,
                       int outputHeight, int fps, int bitrateKbps, bool intraRefresh,
                       const EncoderTuning& tuning, std::string& error) = 0;
     virtual bool convert(const capture::KmsFrame& frame, const capture::CursorState& cursor,
@@ -135,8 +138,12 @@ public:
     virtual int outputWidth() const = 0;
     virtual int outputHeight() const = 0;
     virtual int copiesPerFrame() const = 0;
-    /// For the session's opening log line: the route and its cost.
-    virtual std::string describe() const = 0;
+    /// For the session's opening log line: the route and its cost. @p source
+    /// names where the pixels came from, because the pair cannot know — the
+    /// same CPU pair reads a scanout buffer on one machine and a portal's
+    /// shared memory on another, and a line that says the wrong one is worse
+    /// than no line.
+    virtual std::string describe(const char* source) const = 0;
     /// The GPU pair's EGL context follows the capture thread; the thread gives
     /// it back before it ends. The CPU pair has nothing to give back.
     virtual void detachThread() {}
@@ -147,9 +154,9 @@ public:
 class GpuPipeline final : public VideoPipeline
 {
 public:
-    bool init(const capture::KmsCapture& capture, Codec codec, int outputWidth, int outputHeight,
-              int fps, int bitrateKbps, bool intraRefresh, const EncoderTuning& tuning,
-              std::string& error) override
+    bool init(const capture::IScreenCapture& capture, Codec codec, int outputWidth,
+              int outputHeight, int fps, int bitrateKbps, bool intraRefresh,
+              const EncoderTuning& tuning, std::string& error) override
     {
         m_Converter = std::make_unique<convert::GlConvert>();
         if (!m_Converter->init(capture.renderNodePath(), capture.fourcc(), capture.width(),
@@ -190,9 +197,9 @@ public:
     int outputWidth() const override { return m_Converter->outputWidth(); }
     int outputHeight() const override { return m_Converter->outputHeight(); }
     int copiesPerFrame() const override { return 1; }
-    std::string describe() const override
+    std::string describe(const char* source) const override
     {
-        return "via VA-API — KMS → EGL → VA-API, 1 copy (the bitstream)";
+        return std::string("via VA-API — ") + source + " → EGL → VA-API, 1 copy (the bitstream)";
     }
     void detachThread() override
     {
@@ -210,9 +217,9 @@ private:
 class CpuPipeline final : public VideoPipeline
 {
 public:
-    bool init(const capture::KmsCapture& capture, Codec codec, int outputWidth, int outputHeight,
-              int fps, int bitrateKbps, bool intraRefresh, const EncoderTuning& tuning,
-              std::string& error) override
+    bool init(const capture::IScreenCapture& capture, Codec codec, int outputWidth,
+              int outputHeight, int fps, int bitrateKbps, bool intraRefresh,
+              const EncoderTuning& tuning, std::string& error) override
     {
         (void)intraRefresh; // OpenH264 has none; reported false
         if (codec != Codec::H264) {
@@ -245,10 +252,12 @@ public:
     int outputWidth() const override { return m_Converter.outputWidth(); }
     int outputHeight() const override { return m_Converter.outputHeight(); }
     int copiesPerFrame() const override { return 2; }
-    std::string describe() const override
+    std::string describe(const char* source) const override
     {
-        return std::string("via ") + encode::OpenH264Encoder::version() +
-               " — KMS → DMA-BUF mmap → CPU → OpenH264, 2 copies (the pixels, the bitstream), " +
+        // "mapped" covers both ways in: an mmap of a DMA-BUF on the scanout
+        // route, memory the portal already mapped on the other.
+        return std::string("via ") + encode::OpenH264Encoder::version() + " — " + source +
+               " → mapped → CPU → OpenH264, 2 copies (the pixels, the bitstream), " +
                std::to_string(m_Converter.threads()) + "+" + std::to_string(m_Encoder.threads()) +
                " threads";
     }
@@ -279,7 +288,11 @@ public:
         // the same contract DXGI's "output index within its adapter" fills on
         // Windows. Resolved back to a connector id here.
         m_CardPath = "/dev/dri/card" + std::to_string(m_Target.captureAdapterHandle);
-        {
+        // Only the scanout route has a connector to resolve. The portal route
+        // has no monitor to name — the user picks one in its dialog — so there
+        // is nothing here for it to find, and looking would fail on exactly the
+        // machine that cannot read the card in the first place.
+        if (m_Target.capture != CaptureApi::PipeWire) {
             std::string listError;
             unsigned index = 0;
             bool found = false;
@@ -299,6 +312,8 @@ public:
                         (listError.empty() ? "" : " (" + listError + ")");
                 return false;
             }
+        } else {
+            m_ConnectorName = "portal";
         }
 
         if (!openCapture(error)) return false;
@@ -374,8 +389,12 @@ public:
         m_FullHeight = m_Info.height;
         m_Info.fps = m_Config.fps;
         m_Info.codec = m_Target.codec;
-        m_Info.encoder = m_Target.encoder;
-        m_Info.capture = CaptureApi::Kms;
+        // The encoder the pipeline actually built, not the one chosen on paper:
+        // the portal's shared memory forces the CPU pair whatever the Selector
+        // picked, and the client is told what it is really getting.
+        m_Info.encoder = m_UsingCpuPair ? EncoderApi::Software : m_Target.encoder;
+        m_Info.capture =
+            m_Target.capture == CaptureApi::PipeWire ? CaptureApi::PipeWire : CaptureApi::Kms;
         m_Info.gpuName = m_Target.encodeGpuName;
         m_Info.hdr = false;
         m_Info.yuv444 = false;
@@ -393,11 +412,13 @@ public:
         m_Info.audio = false;
 #endif
 
-        log::info(std::string("[native] session: ") + m_ConnectorName + " " +
-                  std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + "@" +
-                  std::to_string(m_EncodeFps) + " " + toString(m_Info.codec) + " on " +
-                  m_Info.gpuName + " " + m_Pipeline->describe() +
-                  (m_Info.audio ? ", with the host's audio (PipeWire, 48 kHz stereo)" : ""));
+        log::info(
+            std::string("[native] session: ") + m_ConnectorName + " " +
+            std::to_string(m_Info.width) + "x" + std::to_string(m_Info.height) + "@" +
+            std::to_string(m_EncodeFps) + " " + toString(m_Info.codec) + " on " + m_Info.gpuName +
+            " " +
+            m_Pipeline->describe(m_Target.capture == CaptureApi::PipeWire ? "portal" : "KMS") +
+            (m_Info.audio ? ", with the host's audio (PipeWire, 48 kHz stereo)" : ""));
 
         m_Running.store(true);
         m_Thread = std::thread([this] { run(); });
@@ -533,6 +554,24 @@ private:
 
     bool openCapture(std::string& error)
     {
+#if defined(MW_NATIVE_LINUX_PORTAL)
+        if (m_Target.capture == CaptureApi::PipeWire) {
+            auto portal = std::make_unique<capture::PortalCapture>();
+            portal->setRestoreToken(m_Config.portalRestoreToken);
+            if (!portal->start(error)) return false;
+            // A grant only comes back from a start that raised the dialog.
+            // Handing it up is what spares the user every later one — the
+            // consumer stores it and passes it back in SessionConfig.
+            if (m_Callbacks.onPortalGrant) {
+                const std::string granted = portal->restoreToken();
+                if (!granted.empty() && granted != m_Config.portalRestoreToken)
+                    m_Callbacks.onPortalGrant(granted);
+            }
+            m_PortalDmabuf = portal->dmabuf();
+            m_Capture = std::move(portal);
+            return true;
+        }
+#endif
         m_Capture = std::make_unique<capture::KmsCapture>(m_CardPath, m_ConnectorId);
         return m_Capture->start(error);
     }
@@ -594,7 +633,20 @@ private:
     bool buildPipeline(int outputWidth, int outputHeight, std::string& error)
     {
         m_Pipeline.reset();
-        if (m_Target.encoder == EncoderApi::Software)
+        // ⚠️ The portal may hand over SHARED MEMORY rather than a DMA-BUF —
+        // which compositor and which driver decides, not us. EGL cannot import
+        // that, so the GPU pair is impossible whatever the Selector chose on
+        // paper, and the CPU pair is the only one that can read those pixels.
+        // Deciding here rather than at selection time because the answer is not
+        // known until the stream has negotiated.
+        const bool sharedMemory = m_Target.capture == CaptureApi::PipeWire && !m_PortalDmabuf;
+        if (sharedMemory && m_Target.encoder != EncoderApi::Software && !m_LoggedSharedMemory) {
+            m_LoggedSharedMemory = true;
+            log::info("[native] the portal gives shared memory, not DMA-BUF — encoding on the CPU, "
+                      "which is the only route that can read it");
+        }
+        m_UsingCpuPair = m_Target.encoder == EncoderApi::Software || sharedMemory;
+        if (m_UsingCpuPair)
             m_Pipeline = std::make_unique<CpuPipeline>();
         else
             m_Pipeline = std::make_unique<GpuPipeline>();
@@ -1151,7 +1203,9 @@ private:
     std::atomic<bool> m_ClientVsync{false};
     std::atomic<bool> m_ClientRefreshDirty{false};
 
-    std::unique_ptr<capture::KmsCapture> m_Capture;
+    /// Whichever route is giving us pictures — the scanout reader, or the
+    /// portal on a machine that may not read it (IScreenCapture.h).
+    std::unique_ptr<capture::IScreenCapture> m_Capture;
     std::unique_ptr<VideoPipeline> m_Pipeline;
 
     std::mutex m_InputMutex;
@@ -1174,6 +1228,15 @@ private:
     std::atomic<int> m_PendingBitrate{0};
     /// The frame the receiver says it never got, plus one; 0 means none.
     std::atomic<uint32_t> m_PendingInvalidation{0};
+
+    /// Whether the portal handed over DMA-BUF (the GPU pair can import it) or
+    /// shared memory (only the CPU pair can read it). Meaningless on the KMS
+    /// route, which is always DMA-BUF.
+    bool m_PortalDmabuf = false;
+    bool m_LoggedSharedMemory = false;
+    /// Which pair buildPipeline actually made. Not derivable from m_Target: the
+    /// portal can force the CPU pair on a machine whose GPU could have encoded.
+    bool m_UsingCpuPair = false;
 
     /// The size the session was opened at, which the cap scales FROM — never
     /// from the current one, or a run of reductions would compound.

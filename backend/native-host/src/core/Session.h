@@ -19,6 +19,7 @@
 
 #include "mw/native/NativeHost.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -33,6 +34,13 @@ struct SessionCallbacks
     RumbleCallback onRumble;
     CursorCallback onCursor;
     SessionEndedCallback onEnded;
+
+    /// The ScreenCast portal issued a consent to remember (Linux, portal route
+    /// only). Called at most once per session, from start(), and only when the
+    /// grant is NEW — store it and hand it back in SessionConfig next time, and
+    /// the user is never asked again. Ignoring it is legal and costs one dialog
+    /// per session.
+    std::function<void(const std::string&)> onPortalGrant;
 };
 
 /// What the Selector decided, in plain values a platform backend can act on.
@@ -56,6 +64,13 @@ struct ResolvedTarget
     /// The output's index WITHIN its own adapter, which is what DXGI wants and
     /// is not the global display id on a multi-GPU machine.
     unsigned outputIndex = 0;
+
+    /// How the picture will be obtained — the probe's answer, carried rather
+    /// than re-derived. It matters on Linux, where a machine that may not read
+    /// the scanout (an AppImage: no capability) falls back to the ScreenCast
+    /// portal, and the session must open the route the probe already decided
+    /// was the usable one.
+    CaptureApi capture = CaptureApi::None;
 
     /// The adapter that scans the display out — where capture must happen.
     uint64_t captureAdapterHandle = 0;

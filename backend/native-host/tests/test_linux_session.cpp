@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -43,7 +44,12 @@ void run_linux_session_tests()
                      caps.diagnostic.c_str());
         return;
     }
-    CHECK_EQ(static_cast<int>(caps.capture), static_cast<int>(CaptureApi::Kms));
+    // Either route is legitimate, and which one appears says something about
+    // the machine: KMS when this process may read the scanout, PipeWire when it
+    // may not and a portal answers instead — the AppImage's situation, and the
+    // one a plain copy of this binary reproduces exactly (no file capability).
+    const bool viaPortal = caps.capture == CaptureApi::PipeWire;
+    CHECK((caps.capture == CaptureApi::Kms || viaPortal));
     CHECK(!caps.displays.empty());
     CHECK(!caps.gpus.empty());
 
@@ -66,6 +72,21 @@ void run_linux_session_tests()
     config.bitrateKbps = 20000;
     config.clientCodecs = {Codec::H264};
     config.intraRefresh = true; // asked; the driver decides, and SessionInfo says
+
+    // The portal route needs a consent. A real host stores the grant it was
+    // given and replays it; a test has nowhere to store one, so it takes it
+    // from the environment — and without it there is nothing to test but a
+    // dialog nobody will answer, which would hang rather than fail.
+    if (viaPortal) {
+        const char* token = std::getenv("MW_PORTAL_RESTORE_TOKEN");
+        if (!token || !*token) {
+            std::fprintf(stderr, "  skipped: the portal would raise a consent dialog — set "
+                                 "MW_PORTAL_RESTORE_TOKEN to a grant from an earlier run\n");
+            return;
+        }
+        config.portalRestoreToken = token;
+        std::fprintf(stderr, "  portal route, replaying a stored grant\n");
+    }
 
     std::atomic<int> frames{0};
     std::atomic<int> keyframes{0};
@@ -122,13 +143,26 @@ void run_linux_session_tests()
                  info.gpuName.c_str(), info.intraRefresh ? "on" : "off", toString(info.capture));
     CHECK_EQ(info.width, display->width);
     CHECK_EQ(info.height, display->height);
-    CHECK_EQ(static_cast<int>(info.encoder), static_cast<int>(EncoderApi::VaApi));
-    // VA-API hands the reference list to the application picture by picture, so
-    // every encoder on this path can heal a named loss with a delta. What the
-    // driver DOES with that list is a bench question (§19.13); that the session
-    // offers it, and therefore that /start promises it to the client, is this
-    // one's.
-    CHECK(info.referenceInvalidation);
+    if (viaPortal) {
+        // ⚠️ The portal route reports what it ENDED UP with, which is not what
+        // the Selector chose: a compositor that hands over shared memory rather
+        // than a DMA-BUF makes the GPU pair impossible, and the session falls to
+        // the CPU one. Measured on the bench, GNOME 42 does exactly that.
+        CHECK_EQ(static_cast<int>(info.capture), static_cast<int>(CaptureApi::PipeWire));
+        // OpenH264 writes its own reference list, so a lost frame costs a
+        // keyframe here — and SessionInfo says so rather than promising a
+        // repair the client would wait for in vain.
+        if (info.encoder == EncoderApi::Software) CHECK(!info.referenceInvalidation);
+    } else {
+        CHECK_EQ(static_cast<int>(info.capture), static_cast<int>(CaptureApi::Kms));
+        CHECK_EQ(static_cast<int>(info.encoder), static_cast<int>(EncoderApi::VaApi));
+        // VA-API hands the reference list to the application picture by picture,
+        // so every encoder on this path can heal a named loss with a delta. What
+        // the driver DOES with that list is a bench question (§19.13); that the
+        // session offers it, and therefore that /start promises it to the
+        // client, is this one's.
+        CHECK(info.referenceInvalidation);
+    }
 
     // Two seconds. A still desktop yields the first frame plus the floor at
     // 2 fps, plus whatever the refinement burst adds; anything moving yields
@@ -146,7 +180,10 @@ void run_linux_session_tests()
     const int keyframesAfterInvalidation = keyframes.load() - keyframesBefore;
     std::fprintf(stderr, "  named frame %u as lost — %d keyframe(s) followed\n", lost,
                  keyframesAfterInvalidation);
-    CHECK_EQ(keyframesAfterInvalidation, 0);
+    // Only where the session promised a delta repair. Where it did not — the
+    // CPU pair — a keyframe is the correct answer and demanding zero would be
+    // testing the opposite of what SessionInfo told the client.
+    if (info.referenceInvalidation) CHECK_EQ(keyframesAfterInvalidation, 0);
 
     session->requestKeyframe();
     std::this_thread::sleep_for(std::chrono::milliseconds(700));
@@ -215,12 +252,21 @@ void run_linux_session_tests()
 
     std::fprintf(stderr, "  wrote /tmp/mw-linux-session.h264 — decode it to look at the picture\n");
 
+    // Whether this machine's route can encode anything but H.264 at all. The
+    // portal handing over shared memory forces the CPU pair, and OpenH264 does
+    // H.264 only — so the codec sections below have nothing to test, and a
+    // failure there would be the test disagreeing with what the session just
+    // told the client.
+    const bool h264Only = info.encoder == EncoderApi::Software;
+
     // ── And in AV1 ──────────────────────────────────────────────────────────
     {
         SECTION("Linux — the same session in AV1");
-        const bool offersAv1 =
-            std::find(gpu->codecs.begin(), gpu->codecs.end(), Codec::Av1) != gpu->codecs.end();
-        if (!offersAv1) {
+        const bool offersAv1 = !h264Only && std::find(gpu->codecs.begin(), gpu->codecs.end(),
+                                                      Codec::Av1) != gpu->codecs.end();
+        if (h264Only) {
+            std::fprintf(stderr, "  skipped: this route encodes H.264 only (CPU pair)\n");
+        } else if (!offersAv1) {
             std::fprintf(stderr, "  skipped: this GPU does not offer AV1\n");
         } else {
             SessionConfig av1Config = config;
@@ -272,9 +318,14 @@ void run_linux_session_tests()
     // decodes the result is a bench question, not this one.
     {
         SECTION("Linux — the same session in HEVC");
-        const bool offersHevc =
-            std::find(gpu->codecs.begin(), gpu->codecs.end(), Codec::Hevc) != gpu->codecs.end();
-        if (!offersHevc) {
+        const bool offersHevc = !h264Only && std::find(gpu->codecs.begin(), gpu->codecs.end(),
+                                                       Codec::Hevc) != gpu->codecs.end();
+        if (h264Only) {
+            // The GPU offers HEVC; the ROUTE cannot use it. A portal that hands
+            // over shared memory keeps the frame out of EGL's reach, so the CPU
+            // pair encodes — and it does H.264 only.
+            std::fprintf(stderr, "  skipped: this route encodes H.264 only (CPU pair)\n");
+        } else if (!offersHevc) {
             std::fprintf(stderr, "  skipped: this GPU does not offer HEVC\n");
         } else {
             SessionConfig hevcConfig = config;

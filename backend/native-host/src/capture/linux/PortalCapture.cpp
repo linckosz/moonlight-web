@@ -110,6 +110,8 @@ struct PortalCapture::Impl
 
     CursorState cursor;
     bool cursorFresh = false;
+    /// An earlier grant to replay, so start() raises no dialog.
+    std::string restore;
 
     int64_t nowUs() const
     {
@@ -290,11 +292,16 @@ PortalCapture::~PortalCapture()
     stop();
 }
 
-bool PortalCapture::start(const std::string& restoreToken, std::string& error)
+void PortalCapture::setRestoreToken(std::string token)
+{
+    d->restore = std::move(token);
+}
+
+bool PortalCapture::start(std::string& error)
 {
     ensurePipeWire();
 
-    if (!d->portal.start(restoreToken, 0, d->granted, error)) return false;
+    if (!d->portal.start(d->restore, 0, d->granted, error)) return false;
     if (!d->granted.valid()) {
         error = "the portal granted nothing usable";
         return false;

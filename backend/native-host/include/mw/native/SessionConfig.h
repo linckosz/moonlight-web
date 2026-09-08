@@ -21,6 +21,7 @@
 #include "EncoderTuning.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace mw::native {
@@ -116,6 +117,16 @@ struct SessionConfig
     /// (Windows: audio/windows/HostMute.h), and SessionInfo::hostMuted says
     /// what happened. False leaves the speakers alone.
     bool muteHostAudio = false;
+
+    /// A consent the user gave the ScreenCast portal on an earlier session, to
+    /// be replayed so it is not asked for again.
+    ///
+    /// Linux only, and only on the machines that fall back to the portal at all
+    /// (an AppImage: no capability to read the scanout). Empty on a first run,
+    /// which is the one time the user sees a dialog — the grant that comes back
+    /// arrives through SessionCallbacks::onPortalGrant, and whoever stores it
+    /// hands it back here next time. Ignored everywhere else.
+    std::string portalRestoreToken;
 
     // ── Bench-only, below this line ─────────────────────────────────────────
     //

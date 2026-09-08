@@ -94,7 +94,7 @@ bool CpuConvert::init(uint32_t sourceFourcc, int sourceWidth, int sourceHeight, 
               std::to_string(sourceHeight) + " " + fourccName(sourceFourcc) + " -> " +
               std::to_string(m_OutputWidth) + "x" + std::to_string(m_OutputHeight) +
               " I420 4:2:0 (BT.709 limited) on the CPU, " + std::to_string(m_Threads) +
-              " thread(s), from a DMA-BUF mapping");
+              " thread(s)");
     return true;
 }
 
@@ -102,7 +102,11 @@ bool CpuConvert::convert(const capture::KmsFrame& frame, const capture::CursorSt
                          const CursorDraw& draw, std::string& error)
 {
     (void)draw;
-    if (frame.planeCount < 1 || frame.fds[0] < 0) {
+    // Two ways in. The portal may hand over pixels ALREADY MAPPED — shared
+    // memory it wrote itself — and then there is no fd and nothing to map;
+    // the scanout route always has an fd and never a pointer.
+    const bool alreadyMapped = frame.mapped != nullptr && frame.mappedSize > 0;
+    if (!alreadyMapped && (frame.planeCount < 1 || frame.fds[0] < 0)) {
         error = "the frame has no plane to read";
         return false;
     }
@@ -130,21 +134,24 @@ bool CpuConvert::convert(const capture::KmsFrame& frame, const capture::CursorSt
     // mapping costs far less than the pass that follows it.
     const size_t length = static_cast<size_t>(frame.offsets[0]) +
                           static_cast<size_t>(frame.pitches[0]) * static_cast<size_t>(frame.height);
-    void* map = ::mmap(nullptr, length, PROT_READ, MAP_SHARED, frame.fds[0], 0);
-    if (map == MAP_FAILED) {
-        error = "the scanout buffer cannot be mapped by the CPU (" + std::string(strerror(errno)) +
-                ") — a tiled or device-local buffer";
-        return false;
+    void* map = MAP_FAILED;
+    if (!alreadyMapped) {
+        map = ::mmap(nullptr, length, PROT_READ, MAP_SHARED, frame.fds[0], 0);
+        if (map == MAP_FAILED) {
+            error = "the scanout buffer cannot be mapped by the CPU (" +
+                    std::string(strerror(errno)) + ") — a tiled or device-local buffer";
+            return false;
+        }
+
+        // Coherency with whoever wrote the buffer: best effort, the exporter may
+        // not implement it, and a linear shmem buffer needs nothing.
+        dma_buf_sync sync = {};
+        sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
+        ::ioctl(frame.fds[0], DMA_BUF_IOCTL_SYNC, &sync);
     }
 
-    // Coherency with whoever wrote the buffer: best effort, the exporter may
-    // not implement it, and a linear shmem buffer needs nothing.
-    dma_buf_sync sync = {};
-    sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
-    ::ioctl(frame.fds[0], DMA_BUF_IOCTL_SYNC, &sync);
-
     BgraToI420Params p;
-    p.src = static_cast<const uint8_t*>(map) + frame.offsets[0];
+    p.src = alreadyMapped ? frame.mapped : static_cast<const uint8_t*>(map) + frame.offsets[0];
     p.srcPitch = frame.pitches[0];
     p.srcWidth = m_SourceWidth;
     p.srcHeight = m_SourceHeight;
@@ -177,9 +184,12 @@ bool CpuConvert::convert(const capture::KmsFrame& frame, const capture::CursorSt
             w.join();
     }
 
-    sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
-    ::ioctl(frame.fds[0], DMA_BUF_IOCTL_SYNC, &sync);
-    ::munmap(map, length);
+    if (!alreadyMapped) {
+        dma_buf_sync done = {};
+        done.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+        ::ioctl(frame.fds[0], DMA_BUF_IOCTL_SYNC, &done);
+        ::munmap(map, length);
+    }
 
     blendPointer(cursor, draw);
     return true;

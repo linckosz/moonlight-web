@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../CaptureTypes.h"
+#include "IScreenCapture.h"
 #include "PortalScreenCast.h"
 
 #include <cstddef>
@@ -56,45 +57,52 @@
 
 namespace mw::native::capture {
 
-class PortalCapture
+class PortalCapture final : public IScreenCapture
 {
 public:
     PortalCapture();
-    ~PortalCapture();
+    ~PortalCapture() override;
 
     PortalCapture(const PortalCapture&) = delete;
     PortalCapture& operator=(const PortalCapture&) = delete;
 
+    /// The grant to replay so the consent dialog never returns. Set before
+    /// start(); it is the one thing this route needs that KMS does not, which
+    /// is why it is here and not on the interface.
+    void setRestoreToken(std::string token);
+
     /// Ask the portal, connect to the node it names, and wait for the first
-    /// negotiated format. ⚠️ Raises the portal's dialog unless @p restoreToken
-    /// replays an earlier grant — see PortalScreenCast::start.
+    /// negotiated format. ⚠️ Raises the portal's dialog unless a restore token
+    /// was set — see PortalScreenCast::start.
     ///
     /// On success the size, fourcc and buffer kind are known and stable until
     /// the compositor renegotiates.
-    bool start(const std::string& restoreToken, std::string& error);
+    bool start(std::string& error) override;
 
-    /// The grant to store and hand back next time, so the dialog never returns.
-    /// Empty when the portal issued none.
+    /// The grant to store, after a start that raised the dialog. Empty when the
+    /// portal issued none — in which case it will ask again next time.
     std::string restoreToken() const;
 
     /// The last buffer that arrived, if there is a new one. Timeout when the
     /// screen has not changed — the same contract KmsCapture offers, and what
     /// lets the session's still-screen floor work unchanged.
-    AcquireStatus acquire(int timeoutMs, KmsFrame& frame);
-    void release();
-    void stop();
+    AcquireStatus acquire(int timeoutMs, KmsFrame& frame) override;
+    void release() override;
+    void stop() override;
 
-    int width() const;
-    int height() const;
-    int refreshMilliHz() const;
-    uint32_t fourcc() const;
+    int width() const override;
+    int height() const override;
+    int refreshMilliHz() const override;
+    uint32_t fourcc() const override;
     /// True when buffers arrive as DMA-BUF and the GPU pipeline can import
     /// them; false when they are shared memory and only the CPU pair can.
+    /// Not on the interface: it is the one thing the session must ask THIS
+    /// route, to know which pipeline pair can take its frames.
     bool dmabuf() const;
     /// Empty: the portal names no render node. The GPU pipeline picks one.
-    std::string renderNodePath() const;
-    DesktopRect desktopRect() const;
-    const CursorState& cursor() const;
+    std::string renderNodePath() const override;
+    DesktopRect desktopRect() const override;
+    const CursorState& cursor() const override;
 
 private:
     struct Impl;

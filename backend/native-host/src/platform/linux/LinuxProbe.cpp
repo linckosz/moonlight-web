@@ -16,6 +16,9 @@
  */
 
 #include "../../capture/linux/KmsCapture.h"
+#if defined(MW_NATIVE_LINUX_PORTAL)
+#include "../../capture/linux/PortalScreenCast.h"
+#endif
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
 #include "../../encode/OpenH264Encoder.h"
@@ -283,8 +286,7 @@ Unavailability enumerate(Capabilities& caps)
     if (!anyPrimary) caps.displays.front().primary = true;
 
     // The privilege check, once, so the host list can say why rather than a
-    // session failing at the click. Reported as a capture-API failure: KMS is
-    // the API, and it is unusable without the capability.
+    // session failing at the click.
     for (const std::string& card : cards) {
         std::string why;
         if (capture::KmsCapture::canReadFramebuffers(card, why)) {
@@ -293,7 +295,49 @@ Unavailability enumerate(Capabilities& caps)
         }
         caps.diagnostic = why;
     }
-    if (caps.capture != CaptureApi::Kms) return Unavailability::NoCaptureApi;
+
+#if defined(MW_NATIVE_LINUX_PORTAL)
+    // No capability to read the scanout — the AppImage's situation, since FUSE
+    // mounts it nosuid and no capability can travel with it (§19.8). The
+    // ScreenCast portal asks the compositor instead, and needs nothing.
+    //
+    // ⚠️ The display list collapses to ONE entry here, and that is not a
+    // simplification: the portal does not let the application choose a monitor,
+    // the USER does, in the dialog it raises. Offering the three we enumerated
+    // would be offering three buttons that all do the same thing and none of
+    // them what they say. The size shown is the primary output's, as a
+    // reasonable guess — the real one arrives when the compositor negotiates.
+    if (caps.capture != CaptureApi::Kms) {
+        std::string reason;
+        if (capture::PortalScreenCast::available(reason)) {
+            const DisplayInfo* hint = nullptr;
+            for (const DisplayInfo& d : caps.displays)
+                if (d.primary) hint = &d;
+            if (!hint && !caps.displays.empty()) hint = &caps.displays.front();
+
+            DisplayInfo portal;
+            portal.id = 0;
+            portal.gpuId = hint ? hint->gpuId : (caps.gpus.empty() ? -1 : caps.gpus.front().id);
+            portal.width = hint ? hint->width : 0;
+            portal.height = hint ? hint->height : 0;
+            portal.refreshMilliHz = hint ? hint->refreshMilliHz : 60000;
+            portal.hdrActive = false;
+            portal.primary = true;
+            portal.label = "Screen";
+            portal.detail = "chosen when the stream starts \xE2\x80\x94 " + reason;
+            caps.displays.clear();
+            caps.displays.push_back(portal);
+            caps.capture = CaptureApi::PipeWire;
+            log::info("[native] no capability to read the scanout (" + caps.diagnostic +
+                      ") \xE2\x80\x94 falling back to the ScreenCast portal, which asks the user "
+                      "once");
+            caps.diagnostic.clear();
+        }
+    }
+#endif
+
+    if (caps.capture != CaptureApi::Kms && caps.capture != CaptureApi::PipeWire)
+        return Unavailability::NoCaptureApi;
 
     for (const DisplayInfo& display : caps.displays) {
         const GpuInfo* gpu = caps.gpuFor(display);

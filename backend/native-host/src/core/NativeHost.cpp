@@ -135,6 +135,9 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     // has 4:4:4, or gave it up. The backend must never re-ask the encoder.
     target.yuv444 = selection.yuv444;
     target.encodeAdapterHandle = selection.gpu ? selection.gpu->nativeHandle : 0;
+    // The probe already decided which route can give a picture on this machine;
+    // the session obeys rather than asking again. One rule, one place.
+    target.capture = caps.capture;
 
     // Capture always happens on the adapter that scans the display out; only
     // the encoder may sit elsewhere.

@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../CaptureTypes.h"
+#include "IScreenCapture.h"
 
 #include <cstdint>
 #include <string>
@@ -84,7 +85,7 @@ struct KmsOutput
     bool active = false; ///< has a CRTC with a framebuffer — something is shown
 };
 
-class KmsCapture
+class KmsCapture final : public IScreenCapture
 {
 public:
     /// Every connector of one card, connected or not. Cheap; no capability
@@ -102,34 +103,34 @@ public:
     KmsCapture(const KmsCapture&) = delete;
     KmsCapture& operator=(const KmsCapture&) = delete;
 
-    bool start(std::string& error);
+    bool start(std::string& error) override;
 
     /// Wait up to @p timeoutMs for a NEW scanout buffer. Blocks on the CRTC's
     /// vblank, not on a timer: the compositor page-flips at vblank, so this
     /// wakes on the display's own clock and sees the new buffer within one
     /// vblank of it being shown. A still desktop flips nothing and answers
     /// Timeout — or PointerOnly when only the cursor plane moved.
-    AcquireStatus acquire(int timeoutMs, KmsFrame& frame);
+    AcquireStatus acquire(int timeoutMs, KmsFrame& frame) override;
 
     /// Close the frame's fds early. Optional: acquire() closes the previous
     /// frame itself when a new buffer replaces it, and a caller that wants to
     /// re-convert the last picture (pointer moved, screen did not) simply keeps
     /// it. Call this to give the buffer back sooner than that.
-    void release();
-    void stop();
+    void release() override;
+    void stop() override;
 
     /// The DRM card fd, for callers that need the same device — the render
     /// node path is what EGL and VA-API want, and it is derived from this.
     int cardFd() const { return m_Card; }
-    std::string renderNodePath() const { return m_RenderNode; }
+    std::string renderNodePath() const override { return m_RenderNode; }
 
-    int width() const { return m_Width; }
-    int height() const { return m_Height; }
-    int refreshMilliHz() const { return m_RefreshMilliHz; }
-    uint32_t fourcc() const { return m_Fourcc; }
-    DesktopRect desktopRect() const { return m_Rect; }
+    int width() const override { return m_Width; }
+    int height() const override { return m_Height; }
+    int refreshMilliHz() const override { return m_RefreshMilliHz; }
+    uint32_t fourcc() const override { return m_Fourcc; }
+    DesktopRect desktopRect() const override { return m_Rect; }
 
-    const CursorState& cursor() const { return m_Cursor; }
+    const CursorState& cursor() const override { return m_Cursor; }
 
 private:
     /// Resolve connector → encoder → CRTC → the primary and cursor planes
