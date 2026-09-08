@@ -27,6 +27,7 @@
 #include <linux/uinput.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <vector>
 
 namespace mw::native::input {
 namespace {
@@ -257,6 +258,70 @@ void UinputInput::injectButton(const InputEvent& event, bool down)
         m_HeldButtons.erase(code);
 }
 
+void UinputInput::injectText(const std::string& utf8)
+{
+    if (utf8.empty()) return;
+
+    // The map is built on the first character ever typed, not at start(): a
+    // viewer on a desktop browser sends key positions and never comes through
+    // here, and there is no reason to compile somebody's keymap for them.
+    if (!m_TextMapTried) {
+        m_TextMapTried = true;
+        if (m_TextMap.open())
+            log::info("[native] input: typing text with the host layout " +
+                      m_TextMap.description() + ", " + std::to_string(m_TextMap.size()) +
+                      " characters reachable");
+    }
+    if (!m_TextMap.isOpen()) return;
+
+    std::vector<char32_t> points;
+    decodeUtf8(utf8, points);
+
+    for (char32_t cp : points) {
+        // One stroke for a character with a key of its own, two when it is built
+        // from a dead key — and the second is typed only because the first was.
+        XkbStroke strokes[2];
+        int strokeCount = 0;
+        if (!m_TextMap.find(cp, strokes, strokeCount)) {
+            if (!m_UntypableLogged) {
+                m_UntypableLogged = true;
+                log::info("[native] input: U+" + std::to_string(static_cast<uint32_t>(cp)) +
+                          " has no key on the host layout " + m_TextMap.description() +
+                          " — characters this layout cannot type are dropped");
+            }
+            continue;
+        }
+
+        for (int s = 0; s < strokeCount; ++s) {
+            const XkbStroke& stroke = strokes[s];
+
+            // Only the modifiers the viewer is not already holding, and only
+            // those are released afterwards: a Shift latched on the client's
+            // toolbar must still be down when this returns, or the next key
+            // would come out lower case. The held set is the one stop() lifts,
+            // so nothing pressed here is left behind by a session that ends
+            // mid-word.
+            uint16_t pressed[2] = {0, 0};
+            int count = 0;
+            for (uint16_t mod : stroke.mods) {
+                if (mod == 0 || m_HeldKeys.count(mod)) continue;
+                emit(m_Keyboard, EV_KEY, mod, 1);
+                pressed[count++] = mod;
+            }
+            if (count > 0) emitSyn(m_Keyboard);
+
+            emit(m_Keyboard, EV_KEY, stroke.code, 1);
+            emitSyn(m_Keyboard);
+            emit(m_Keyboard, EV_KEY, stroke.code, 0);
+            emitSyn(m_Keyboard);
+
+            for (int i = count - 1; i >= 0; --i)
+                emit(m_Keyboard, EV_KEY, pressed[i], 0);
+            if (count > 0) emitSyn(m_Keyboard);
+        }
+    }
+}
+
 void UinputInput::setDisplayRect(int left, int top, int right, int bottom)
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
@@ -317,6 +382,7 @@ void UinputInput::inject(const InputEvent& event)
     switch (event.type) {
     case Type::KeyDown: injectKey(event, true); break;
     case Type::KeyUp: injectKey(event, false); break;
+    case Type::Utf8Text: injectText(event.text); break;
     case Type::MouseButtonDown: injectButton(event, true); break;
     case Type::MouseButtonUp: injectButton(event, false); break;
 
@@ -395,10 +461,10 @@ void UinputInput::inject(const InputEvent& event)
         }
         break;
 
-    // Not this sink's business: the gamepad has its own device
-    // (UinputGamepad), and text and lock-key sync need a layout-aware path that
-    // does not exist on Linux yet. Ignored rather than approximated.
-    case Type::Utf8Text:
+    // Not this sink's business: the gamepad has its own device (UinputGamepad),
+    // and aligning the host's lock keys would mean toggling CapsLock and NumLock
+    // on somebody's real desktop from a state the client only thinks it knows.
+    // Ignored rather than approximated.
     case Type::LockKeySync:
     case Type::ControllerArrival:
     case Type::ControllerState:

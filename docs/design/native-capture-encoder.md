@@ -1701,7 +1701,9 @@ Le navigateur envoie la **position** de la touche, exprimée comme la touche
 virtuelle que cette position porte sur un clavier US. Les codes evdev sont des
 positions aussi : c'est donc une correspondance position → position, et la
 disposition de l'hôte ne doit pas y entrer. Un hôte français tape français depuis
-un client AZERTY sans que cette table sache rien de l'un ni de l'autre.
+un client AZERTY sans que cette table sache rien de l'un ni de l'autre. (La seule
+entrée qui échappe à cette règle est le **texte** d'un clavier tactile, qui n'est
+pas une position et doit connaître la disposition de l'hôte — §19.10.)
 
 Les valeurs sont des **littéraux** et non des macros `KEY_*`, pour que l'en-tête
 compile — et soit **testable** — sur une machine sans en-tête Linux, ce qu'est
@@ -1832,6 +1834,79 @@ avec il passe ; sauté honnêtement si le compositeur n'a pas de plan curseur ou
 caché le pointeur. La leçon vaut au-delà de ce bug : **une capture qui « trouve »
 un plan ne prouve rien tant que son contenu n'a pas été relu par un second
 chemin.**
+
+#### 19.10 Le texte : la seule entrée qui doive connaître la disposition (08/09/2026)
+
+Le §19.2 dit que la disposition de l'hôte ne doit pas entrer dans la table des
+touches, et c'est vrai — pour les **positions**. Il existe une entrée qui n'est
+pas une position : `Type::Utf8Text`, ce qu'envoie le clavier tactile d'un
+téléphone, qui n'a aucune position à envoyer. Elle tombait dans le `break` vide
+de `UinputInput::inject`, avec pour commentaire « needs a layout-aware path that
+does not exist on Linux yet ». Résultat pour le spectateur : **sur un hôte Linux,
+un mobile ne tapait rien** — pas un caractère — pendant que les flèches, Échap et
+Retour arrière du bandeau passaient, eux, parce que ce sont des positions.
+
+Windows et macOS injectent le **caractère** (`KEYEVENTF_UNICODE`,
+`CGEventKeyboardSetUnicodeString`) : l'hôte n'a besoin d'aucune touche capable de
+le produire. Linux n'a pas d'équivalent. uinput rapporte une position, et c'est
+le compositeur qui la lit à travers la disposition de l'utilisateur. Pour faire
+apparaître un `a` il faut donc savoir quelle touche produit un `a` **ici** — sur
+l'hôte AZERTY de référence, celle qu'un clavier US appelle Q. Une table US aurait
+tapé `q`.
+
+`XkbTextMap` compile la disposition avec **libxkbcommon** et parcourt une fois
+chaque touche, niveau par niveau (`xkb_keymap_key_get_syms_by_level`), pour bâtir
+`caractère → touche + modificateurs`. Trois décisions valent d'être écrites :
+
+- **Quels modificateurs on accepte de tenir** : Shift et Mod5 (AltGr), rien
+  d'autre. `xkb_keymap_key_get_mods_for_level` peut proposer un masque contenant
+  Lock ; atteindre une majuscule en basculant le Verr. Maj. laisserait le clavier
+  de l'hôte dans un état que le spectateur n'a pas demandé et ne voit pas. Un
+  masque qu'on refuse est un niveau qu'on n'utilise pas.
+- **D'où vient la disposition** : `XKB_DEFAULT_*` si la session la pose, sinon
+  `/etc/default/keyboard`, sinon le défaut de libxkbcommon. Les noms sont passés
+  explicitement plutôt que laissés à libxkbcommon, qui lit l'environnement par
+  `secure_getenv` — vide pour un processus porteur d'une capacité ambiante
+  (§19.8). Le résultat est **journalisé** (« fr+azerty (from /etc/default/keyboard),
+  115 caractères atteignables ») : c'est une supposition sur le bureau de
+  quelqu'un, et si un hôte tape la mauvaise lettre, la ligne dit en un coup d'œil
+  quelle disposition a été crue. ⚠️ GNOME garde sa propre copie du réglage dans
+  dconf ; un utilisateur qui change de disposition **après** l'installation peut
+  la faire diverger du fichier. La lire voudrait dire lancer `gsettings` en fils
+  d'un processus qui porte `CAP_SYS_ADMIN` — pire échange que de se tromper sur
+  un hôte qui peut poser `XKB_DEFAULT_LAYOUT`.
+- **Le repli pour ce qui n'est sur aucun niveau** : les touches mortes. Un `ê` n'a
+  pas de touche sur un clavier français, et une personne le tape en deux temps —
+  accent circonflexe, puis `e`. La carte fait pareil : les keysyms morts, que le
+  parcours ignore puisqu'ils ne portent aucun caractère, sont gardés à part, et
+  une table des précomposés Latin-1 les recompose. Les deux moitiés doivent être
+  atteignables, sinon on ne tape rien : la moitié d'un caractère est pire que
+  rien. Pour ce qui reste hors d'atteinte — un emoji, un idéogramme — il n'y a
+  **pas** de repli : uinput n'a pas de mode Unicode, et la séquence
+  Ctrl+Maj+U d'IBus n'existe que dans certaines applications, où la manquer
+  écrirait `u` suivi de chiffres dans le champ visé. Le caractère est abandonné,
+  et une ligne de log le dit une fois.
+
+libxkbcommon est chargée par `dlopen`, jamais liée — la propriété du §19.1 tient
+donc toujours : le moteur compile sur un Linux sans le moindre paquet `-dev`, et
+un hôte sans la bibliothèque garde exactement le comportement d'avant (le texte
+est ignoré, les touches marchent). Le garde-fou « chargée mais n'exporte pas les
+appels » n'est pas décoratif : il a attrapé, à la première exécution,
+`xkb_keymap_min_key_code` — qui s'appelle en réalité `xkb_keymap_min_keycode`.
+
+⚠️ `Type::LockKeySync` reste ignoré sous Linux, **sciemment** : aligner les
+verrous de l'hôte reviendrait à basculer Verr. Maj. et Verr. Num. sur un vrai
+bureau depuis un état que le client croit connaître.
+
+Vérifié sur l'bench-mini (GNOME Wayland, `fr+azerty`) : `a` → touche 16 (le Q d'un
+clavier US), `q` → 30, `1` → touche 2 + Shift (les chiffres sont en niveau haut
+sur AZERTY), `@` → touche 0 + AltGr, `é` en direct sur la touche 2, `ê` = touche
+morte 26 **puis** touche 18. `test_xkb_text_map` tient les deux moitiés : le
+décodage UTF-8 et la lecture de `/etc/default/keyboard` sont testés partout
+(octets tronqués, séquence à quatre octets, valeurs non guillemetées), la carte
+réelle seulement là où il y a une libxkbcommon — et elle exige l'alphabet dans
+les deux casses, les chiffres, l'espace, la majuscule **sur la même touche** que
+la minuscule plus un modificateur, et aucun modificateur hors Shift/AltGr.
 
 ### 19.5 La couture plateforme : `LinuxProbe` et `LinuxSession` (05/09/2026)
 

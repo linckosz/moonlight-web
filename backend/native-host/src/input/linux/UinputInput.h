@@ -19,6 +19,7 @@
 
 #include "../IInputSink.h"
 #include "X11Pointer.h"
+#include "XkbTextMap.h"
 
 #include <mutex>
 #include <set>
@@ -83,6 +84,12 @@ private:
     void injectKey(const InputEvent& event, bool down);
     void injectButton(const InputEvent& event, bool down);
 
+    /// Type a string the way a person would: for each character, the key that
+    /// produces it on the HOST's layout, held modifiers included. See
+    /// XkbTextMap for why Linux needs a layout here when Windows and macOS can
+    /// inject the character itself.
+    void injectText(const std::string& utf8);
+
     /// Bring the pointer back onto the captured display before a delta is
     /// applied from it — X11 only, and a no-op everywhere else. See X11Pointer.
     void bringPointerOntoDisplay();
@@ -128,6 +135,15 @@ private:
     /// The X pointer, when there is an X server. Absent on Wayland and on a
     /// headless host, where relative motion keeps behaving as it did.
     X11Pointer m_X11;
+    /// The host's keyboard layout, read once and only if a client ever sends
+    /// text: a viewer on a desktop browser sends keys, and never pays for this.
+    XkbTextMap m_TextMap;
+    bool m_TextMapTried = false;
+    /// Whether a character with no key on this layout has already been reported.
+    /// One line names the layout and the character; a hundred would only repeat
+    /// it, once per keystroke.
+    bool m_UntypableLogged = false;
+
     /// Whether a warp has already been reported this session. The first one is
     /// worth an info line; the rest are not, and a display rectangle that does
     /// not match the X root would otherwise log on every single movement.
