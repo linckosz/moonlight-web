@@ -3930,6 +3930,27 @@ navigateur au fichier, sur une vraie machine.
 le `.xib` référence bien la classe renommée, et les seules occurrences de
 « Sunshine » qui restent sous `installer/macos` sont de la prose (« client des hôtes
 Sunshine, Apollo et Wolf ») et des commentaires d'historique — plus une ligne de
-logique. ⚠️ **L'assemblage lui-même reste non fait** : `xcrun ibtool` demande Xcode
-complet et ce banc n'a que les Command Line Tools, donc la compilation du `.xib` et
-`productbuild` attendent le job `installers` de la CI, comme pour le `.iss`.
+logique. ~~⚠️ **L'assemblage lui-même reste non fait**~~ ✅ **fait par la CI le
+08/09** (run `34273892962`, job « Package macOS arm64 », 4 min 45) : `xcrun ibtool`
+demande Xcode complet, que le banc n'a pas, mais le runner l'a. Le `.pkg` produit a
+été ouvert et vérifié :
+
+- `MWInternetPane.nib` **compilé** est dans le bundle, avec le binaire
+  `MoonlightWebInstaller` (Mach-O arm64, signé), `NSMainNibFile = MWInternetPane`
+  et `NSPrincipalClass = InstallerSection` ;
+- `InstallerSections.plist` place le volet entre `PackageSelection` et `Install`,
+  donc l'utilisateur le voit avant que quoi que ce soit ne s'installe ;
+- l'app à l'intérieur est signée `com.moonlightweb.server` avec **l'exigence
+  désignée attendue** — `certificate root = H"d051d7d8…"`, la constante de §20.13 —
+  et `codesign --verify --deep --strict` passe : les octrois TCC survivront donc
+  bien aux mises à jour, ce qui n'avait jamais été vérifié sur un artefact de CI ;
+- le `.pkg` lui-même est **sans signature**, comme décidé (Developer ID Installer
+  seulement) ;
+- le `postinstall` ne contient aucun secret : les trois occurrences de
+  « sunshine / password / creds » sont les commentaires qui expliquent leur
+  disparition.
+
+⚠️ **Piège de lecture, à ne pas refaire** : `pkgutil --expand` écrit le répertoire
+des plugins comme un **fichier** `PlugIns` — un blob gzip+cpio, même forme que
+`Payload`. Vu de loin il ressemble à un dossier vide, et j'ai d'abord conclu que le
+volet manquait. `xar -tf` puis `gunzip -dc | cpio -i` montrent le contenu réel.
