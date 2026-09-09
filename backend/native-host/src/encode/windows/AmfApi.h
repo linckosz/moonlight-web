@@ -41,8 +41,9 @@ public:
 
     amf::AMFFactory* factory() const { return m_Factory; }
 
-    /// Human-readable form of an AMF_RESULT, for logs.
-    static const char* resultToString(AMF_RESULT result);
+    /// Human-readable form of an AMF_RESULT, for logs. A code with no name
+    /// falls back to its number rather than to "unknown error".
+    static std::string resultToString(AMF_RESULT result);
 
 private:
     AmfApi();

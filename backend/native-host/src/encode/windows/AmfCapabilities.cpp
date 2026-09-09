@@ -73,7 +73,14 @@ AmfCaps queryUncached(uint64_t adapterLuid)
     }
 
     ComPtr<ID3D11Device> device = openDeviceOnAdapter(adapterLuid);
-    if (!device) return caps;
+    if (!device) {
+        // Silent until 09/09, and it should not have been: this and the two
+        // refusals below all surfaced as the same "no usable encoder", so a
+        // Radeon that answers nothing was indistinguishable from one whose
+        // driver would not even open a device.
+        log::info("[native] AMF: no D3D11 device on this adapter — cannot ask it anything");
+        return caps;
+    }
 
     amf::AMFContextPtr context;
     AMF_RESULT result = api->factory()->CreateContext(&context);
@@ -97,20 +104,58 @@ AmfCaps queryUncached(uint64_t adapterLuid)
     {
         Codec codec;
         const wchar_t* component;
+        const wchar_t* usage;
+        amf_int64 usageUltraLowLatency;
+        const wchar_t* frameSize;
     } wanted[] = {
-        {Codec::Av1, AMFVideoEncoder_AV1},
-        {Codec::Hevc, AMFVideoEncoder_HEVC},
-        {Codec::H264, AMFVideoEncoderVCE_AVC},
+        {Codec::Av1, AMFVideoEncoder_AV1, AMF_VIDEO_ENCODER_AV1_USAGE,
+         AMF_VIDEO_ENCODER_AV1_USAGE_ULTRA_LOW_LATENCY, AMF_VIDEO_ENCODER_AV1_FRAMESIZE},
+        {Codec::Hevc, AMFVideoEncoder_HEVC, AMF_VIDEO_ENCODER_HEVC_USAGE,
+         AMF_VIDEO_ENCODER_HEVC_USAGE_ULTRA_LOW_LATENCY, AMF_VIDEO_ENCODER_HEVC_FRAMESIZE},
+        {Codec::H264, AMFVideoEncoderVCE_AVC, AMF_VIDEO_ENCODER_USAGE,
+         AMF_VIDEO_ENCODER_USAGE_ULTRA_LOW_LATENCY, AMF_VIDEO_ENCODER_FRAMESIZE},
     };
+
+    // The size the trial below brings the encoder up at. Every AMD encoder here
+    // handles more, and a real session is whatever the display measures — so
+    // this asks whether the component can be STARTED at all, which is where the
+    // silicon and the driver disagree, not where a resolution limit would be.
+    constexpr amf_int32 kTrialWidth = 1920;
+    constexpr amf_int32 kTrialHeight = 1080;
 
     for (const auto& candidate : wanted) {
         amf::AMFComponentPtr encoder;
-        // Creating the component IS the question: an encoder the silicon does
-        // not have refuses here, which is how an RDNA2 card declines AV1 while
-        // an RX 7600 accepts it — with no device-id table to maintain.
-        if (api->factory()->CreateComponent(context, candidate.component, &encoder) != AMF_OK ||
-            !encoder)
+        // An encoder the silicon does not have refuses here, which is how an
+        // RDNA2 card declines AV1 while an RX 7600 accepts it — with no
+        // device-id table to maintain.
+        const AMF_RESULT created =
+            api->factory()->CreateComponent(context, candidate.component, &encoder);
+        if (created != AMF_OK || !encoder) {
+            log::info(std::string("[native] AMF: no ") + toString(candidate.codec) +
+                      " encoder on this GPU (" + AmfApi::resultToString(created) + ")");
             continue;
+        }
+
+        // ⚠️ Creating the component is NOT the whole question, and believing it
+        // was is what the RX 7600 caught on 08/09: AV1 was created here, listed,
+        // preferred by the Selector, and then AmfEncoder::init answered
+        // "not supported" — the session died at the click, on a codec this
+        // probe had promised. So the trial goes as far as the engine's own
+        // first two steps: the ultra-low-latency usage (the one thing every
+        // other property here is documented to "depend on") and Init on NV12.
+        //
+        // Same rule as the 10-bit note below and as bug B7: a capability means
+        // "this pipeline can carry it", never "this chip could".
+        encoder->SetProperty(candidate.usage, candidate.usageUltraLowLatency);
+        encoder->SetProperty(candidate.frameSize, ::AMFConstructSize(kTrialWidth, kTrialHeight));
+        const AMF_RESULT started = encoder->Init(amf::AMF_SURFACE_NV12, kTrialWidth, kTrialHeight);
+        if (started != AMF_OK) {
+            log::info(std::string("[native] AMF: ") + toString(candidate.codec) +
+                      " exists on this GPU but will not start (" + AmfApi::resultToString(started) +
+                      ") — not offering it");
+            encoder->Terminate();
+            continue;
+        }
 
         caps.codecs.push_back(candidate.codec);
 

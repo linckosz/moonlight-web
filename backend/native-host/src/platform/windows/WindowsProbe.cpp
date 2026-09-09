@@ -73,6 +73,29 @@ struct DisplayMode
     std::string monitorName;
 };
 
+/// Which of two paths sharing one source describes the display better.
+///
+/// A source with several active paths is a CLONE GROUP: one desktop framebuffer
+/// scanned out to several monitors. Measured on bench-desk, where a 164.802 Hz
+/// M27Q is cloned with a 60 Hz virtual display driver — QueryDisplayConfig
+/// returns two active paths for `\\.\DISPLAY5`, and keeping whichever came last
+/// described that desktop as a 60 Hz "VDD by MTT": wrong rate AND wrong monitor
+/// name, on the panel the user is actually looking at.
+///
+/// The framebuffer is one, so both paths agree on size; only the scan-out
+/// cadence and the monitor's identity differ. The fastest target is the one
+/// that decides how often a new desktop image exists — capture measured ~135
+/// images/s here against the 164 Hz path while the mode said 60 — so it is the
+/// rate the pipeline must pace against, and naming ITS monitor keeps the label
+/// and the rate describing the same screen. A tie falls to the target with an
+/// EDID name, a real panel identifying a display better than a virtual one.
+bool describesBetter(const DisplayMode& candidate, const DisplayMode& current)
+{
+    if (candidate.refreshMilliHz != current.refreshMilliHz)
+        return candidate.refreshMilliHz > current.refreshMilliHz;
+    return !candidate.monitorName.empty() && current.monitorName.empty();
+}
+
 /// The true mode of each output, keyed by GDI device name ("\\\\.\\DISPLAY1").
 ///
 /// Two things make this worth a second enumeration on top of DXGI's:
@@ -148,7 +171,22 @@ std::unordered_map<std::string, DisplayMode> realDisplayModes()
             mode.height = static_cast<int>(modes[sourceIdx].sourceMode.height);
         }
 
-        byDevice[narrow(source.viewGdiDeviceName)] = mode;
+        const std::string device = narrow(source.viewGdiDeviceName);
+        const auto existing = byDevice.find(device);
+        if (existing == byDevice.end()) {
+            byDevice.emplace(device, std::move(mode));
+            continue;
+        }
+
+        // Second active path on the same source: a clone group. Say so, because
+        // one entry then stands for several monitors and the label names only
+        // the one that sets the cadence.
+        if (describesBetter(mode, existing->second)) existing->second = std::move(mode);
+        const DisplayMode& kept = existing->second;
+        log::info("[native] " + device + " is cloned to more than one monitor — describing it as " +
+                  (kept.monitorName.empty() ? std::string("its fastest target")
+                                            : "\"" + kept.monitorName + "\"") +
+                  " at " + std::to_string((kept.refreshMilliHz + 500) / 1000) + " Hz");
     }
     return byDevice;
 }

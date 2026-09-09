@@ -18,7 +18,7 @@
 
 namespace mw::native::encode {
 
-const char* AmfApi::resultToString(AMF_RESULT result)
+std::string AmfApi::resultToString(AMF_RESULT result)
 {
     switch (result) {
     case AMF_OK: return "ok";
@@ -33,9 +33,33 @@ const char* AmfApi::resultToString(AMF_RESULT result)
     case AMF_INPUT_FULL: return "encoder input full";
     case AMF_REPEAT: return "output not ready yet";
     case AMF_EOF: return "end of stream";
+    // The rest are here because "unknown error" is what a Radeon that refuses
+    // every codec used to report, and a bare name is the difference between a
+    // bug report and a shrug.
+    case AMF_ACCESS_DENIED: return "access denied";
+    case AMF_OUT_OF_RANGE: return "out of range";
+    case AMF_INVALID_POINTER: return "invalid pointer";
+    case AMF_NO_INTERFACE: return "no such interface";
+    case AMF_NOT_FOUND: return "not found";
+    case AMF_ALREADY_INITIALIZED: return "already initialized";
+    case AMF_WRONG_STATE: return "wrong state";
+    case AMF_DIRECTX_FAILED: return "DirectX call failed";
+    case AMF_INVALID_RESOLUTION: return "invalid resolution";
+    case AMF_SURFACE_FORMAT_NOT_SUPPORTED: return "surface format not supported";
+    case AMF_SURFACE_MUST_BE_SHARED: return "surface must be shared";
+    case AMF_DECODER_NOT_PRESENT: return "no decoder on this GPU";
+    case AMF_UNEXPECTED: return "unexpected";
+    case AMF_NOT_IMPLEMENTED: return "not implemented";
+    case AMF_INVALID_DATA_TYPE: return "invalid data type";
+    // What an RX 7600 answered for all three codecs on 09/09, where the old
+    // table said "unknown error" — the driver declining the codec outright,
+    // which is a different thing from the component failing to start.
+    case AMF_CODEC_NOT_SUPPORTED: return "codec not supported";
     default: break;
     }
-    return "unknown error";
+    // Not a name we know, so hand over the number: it is the only thing that
+    // lets a reader look the code up in AMF's Result.h.
+    return "AMF_RESULT " + std::to_string(static_cast<int>(result));
 }
 
 AmfApi::AmfApi()

@@ -214,8 +214,13 @@ bool MfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, i
             stop();
             return false;
         }
+        const std::string module = describeModule();
         log::warning("[native] " + m_Name + " is not usable (" + error +
-                     ") — trying the software transform instead");
+                     ") — trying the software transform instead" +
+                     (module.empty() ? ""
+                                     : ". That transform is " + module +
+                                           " — if it is much older than this machine's "
+                                           "graphics driver, update the driver"));
         teardownTransform();
         m_SkipHardware = true;
         if (!bringUp(codec, width, height, bitrateKbps, tuning, error)) {
@@ -294,6 +299,50 @@ bool MfEncoder::bringUp(Codec codec, int width, int height, int bitrateKbps,
     }
 
     return proveWithOnePicture(error);
+}
+
+std::string MfEncoder::describeModule() const
+{
+    // Only ever called on the failure path, which is what makes a registry read
+    // and a file stat affordable here.
+    //
+    // ⚠️ Why this exists at all (09/09/2026): "AMDh264Encoder took one picture
+    // and went silent" read for two days as an unexplained transform bug. It
+    // was a mixed driver stack on the bench — that transform's DLL is dated
+    // December 2023 while the machine's AMF runtime is from August 2026, the
+    // discrete Radeon still running its 2023 driver beside a 2026 one on the
+    // iGPU. A friendly name cannot say that. A path and a date can.
+    if (::IsEqualGUID(m_Clsid, GUID{})) return {};
+
+    wchar_t guid[64] = {};
+    if (::StringFromGUID2(m_Clsid, guid, static_cast<int>(std::size(guid))) == 0) return {};
+    const std::wstring key = std::wstring(L"CLSID\\") + guid + L"\\InprocServer32";
+
+    wchar_t path[MAX_PATH] = {};
+    DWORD bytes = sizeof(path);
+    if (::RegGetValueW(HKEY_CLASSES_ROOT, key.c_str(), nullptr,
+                       RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, path,
+                       &bytes) != ERROR_SUCCESS)
+        return {};
+
+    const int needed = ::WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+    if (needed <= 1) return {};
+    std::string out(static_cast<size_t>(needed - 1), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, path, -1, out.data(), needed, nullptr, nullptr);
+
+    WIN32_FILE_ATTRIBUTE_DATA attrs = {};
+    if (::GetFileAttributesExW(path, GetFileExInfoStandard, &attrs)) {
+        FILETIME local = {};
+        SYSTEMTIME when = {};
+        if (::FileTimeToLocalFileTime(&attrs.ftLastWriteTime, &local) &&
+            ::FileTimeToSystemTime(&local, &when)) {
+            char stamp[24] = {};
+            std::snprintf(stamp, sizeof(stamp), ", dated %04u-%02u-%02u", when.wYear, when.wMonth,
+                          when.wDay);
+            out += stamp;
+        }
+    }
+    return out;
 }
 
 bool MfEncoder::proveWithOnePicture(std::string& error)
@@ -421,6 +470,11 @@ bool MfEncoder::openTransform(Codec codec, std::string& error)
             ::CoTaskMemFree(wname);
         }
         if (m_Name.empty()) m_Name = "unnamed transform";
+        // Kept now because the activation object is freed three lines down, and
+        // it is the only thing that leads back to the DLL. Read, never used,
+        // unless the transform then misbehaves.
+        if (FAILED(activates[0]->GetGUID(MFT_TRANSFORM_CLSID_Attribute, &m_Clsid)))
+            m_Clsid = GUID{};
 
         const HRESULT act = activates[0]->ActivateObject(IID_PPV_ARGS(&m_Transform));
         for (UINT32 i = 0; i < count; ++i)

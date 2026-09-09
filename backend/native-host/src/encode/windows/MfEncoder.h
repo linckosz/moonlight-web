@@ -107,6 +107,9 @@ private:
                  std::string& error);
     /// Encode a black picture and insist on getting something back.
     bool proveWithOnePicture(std::string& error);
+    /// The DLL behind the current transform and its date, for the one message
+    /// where that is the whole answer: "" when it cannot be resolved.
+    std::string describeModule() const;
     void teardownTransform();
     bool openTransform(Codec codec, std::string& error);
     bool configureTypes(Codec codec, int width, int height, int fps, int bitrateKbps,
@@ -141,6 +144,9 @@ private:
     Microsoft::WRL::ComPtr<IMFMediaBuffer> m_OutBuffer;
 
     std::string m_Name;
+    /// The transform's class id, kept from the activation object so the module
+    /// behind it can be named if it misbehaves. See describeModule().
+    GUID m_Clsid = {};
     bool m_Hardware = false;
     bool m_Async = false;
     bool m_D3dAware = false;
