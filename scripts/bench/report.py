@@ -376,6 +376,20 @@ def analyse(results_dir):
                 flag_anomaly("probe-unavailable", "No click-to-photon on this machine",
                              m["native"].get("latencyFlagReason") or "reason not reported",
                              owner="Fable")
+            elif (m["native"].get("latencyFlagEnabled")
+                  and not m["native"].get("latencyFlagActive")):
+                flag_anomaly(
+                    "probe-not-armed", "The flag is asked for but not armed",
+                    "settings.json says latency_flag_enabled, yet no overlay is running: "
+                    "the file was edited without restarting the server. Every click will "
+                    "time out and read like a broken pipeline. Restart it.",
+                    owner="Bruno")
+            elif not m["native"].get("latencyFlagEnabled"):
+                flag_anomaly(
+                    "probe-off", "Click-to-photon is switched off",
+                    "This machine can raise the flag but latency_flag_enabled is false in "
+                    "settings.json. It is a file-only setting: set it and restart.",
+                    owner="Bruno")
 
     # Pair every planned pass with whatever was measured for it.
     passes = []

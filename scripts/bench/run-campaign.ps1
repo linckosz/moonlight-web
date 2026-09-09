@@ -103,8 +103,45 @@ Write-Host "click-to-photon    : supported=$(Get-Prop $local.native 'latencyFlag
 # every other bench. -KioskRect still overrides, for a window that must sit
 # somewhere else.
 if (-not $KioskRect) {
-    $KioskRect = "0,0,$($displayInfo.width),$($displayInfo.height)"
-    Write-Host "kiosk rect         : $KioskRect (from the captured display)"
+    # The SIZE comes from the display we are about to capture; the ORIGIN has to
+    # come from Windows. A campaign that keeps 0,0 puts the kiosk on the primary
+    # screen while capturing another one, and then measures a motionless desktop
+    # — 14 KB a frame, QP 10, and numbers that look wonderful.
+    #
+    # /api/native/status carries no origin, so the two lists are paired here:
+    # inventory.monitors is EnumDisplayMonitors' order, native displays are the
+    # engine's, and both have been observed to agree. Trust that only when the
+    # sizes match; otherwise fall back to the first monitor of the right size,
+    # and say so rather than silently measuring the wrong screen.
+    $monitors = @()
+    foreach ($line in @(Get-Prop $inventory 'monitors' @())) {
+        if ($line -match '^(\S+)\s+(-?\d+),(-?\d+)\s+(\d+)x(\d+)') {
+            $monitors += [pscustomobject]@{
+                device = $Matches[1]; x = [int]$Matches[2]; y = [int]$Matches[3]
+                w = [int]$Matches[4]; h = [int]$Matches[5]
+            }
+        }
+    }
+    $w = [int]$displayInfo.width; $h = [int]$displayInfo.height
+    $match = $null
+    if ($Display -ge 0 -and $Display -lt $monitors.Count -and
+        $monitors[$Display].w -eq $w -and $monitors[$Display].h -eq $h) {
+        $match = $monitors[$Display]
+    } else {
+        $match = $monitors | Where-Object { $_.w -eq $w -and $_.h -eq $h } | Select-Object -First 1
+        if ($match) {
+            Write-Warning ("display $Display did not line up with monitor $Display; " +
+                           "using $($match.device) at $($match.x),$($match.y) on its size alone")
+        }
+    }
+    if (-not $match) {
+        Write-Warning ("no monitor measures ${w}x${h}: falling back to 0,0, which is the " +
+                       "primary screen. VERIFY the kiosk covers the captured display, or " +
+                       "pass -KioskRect — a wrong one measures a motionless desktop.")
+        $match = [pscustomobject]@{ device = '(unknown)'; x = 0; y = 0; w = $w; h = $h }
+    }
+    $KioskRect = "$($match.x),$($match.y),$w,$h"
+    Write-Host "kiosk rect         : $KioskRect (display $Display = $($match.device))"
 }
 
 # ── 2. The matrix ───────────────────────────────────────────────────────────

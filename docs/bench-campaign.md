@@ -376,13 +376,42 @@ manual run on a branch only uploads workflow artifacts** — the version is
 | Artifact | For |
 |---|---|
 | `MoonlightWeb-windows-x64-v<ver>` | the Inno installer — installs like a user |
-| `unsigned-payload-x64` | **the bare `MoonlightWeb.exe`** — the encoder half without touching an existing install |
+| `unsigned-payload-x64` | **the bare `MoonlightWeb.exe`** — the encoder half without touching an existing install. Bare means bare: see below |
 | `MoonlightWeb-windows-arm64-v<ver>` | bench-arm, the only sound ARM64 build |
 | `moonlightweb-linux-x64-v<ver>` | `.deb` / `.rpm` / AppImage |
 | `moonlightweb-macos-arm64-v<ver>` | the `.pkg` |
 
 4. `run-campaign.ps1 -Exe <path to the artifact's exe>`; the report will say
    `CI artifact` in green.
+
+### The bare exe is not a payload
+
+`unsigned-payload-x64` is one file. Run it on its own and it dies with
+`0xC0000135` — no Qt beside it, and the bench's own Qt does not satisfy it,
+because CI does not build against the version installed here. It needs a
+directory around it, and that directory has to be assembled with care:
+
+- **The Qt runtime and OpenSSL** can be borrowed from an existing install —
+  copy the install directory, then drop the artifact's exe into the copy. Copy
+  it: writing into `C:\Program Files\MoonlightWeb` is exactly the "installed as
+  a user installs it" tier, and it takes the production service down with it.
+- **`frontend/` must come from the same commit as the exe.** This is the one
+  that bites, because nothing announces it. A borrowed install brings the
+  frontend of *its own* version, the server serves it happily, and the campaign
+  measures a client that may be months older than the binary. On 09/09 that
+  cost an evening: the backend answered `latency_flag: true`, the 0.2.4
+  frontend it was serving carried no probe at all, and every click-to-photon
+  reading came back a timeout that read like a broken pipeline.
+  Stage it the way CI does — `cmake --install <build> --prefix <dir>` — and take
+  `<dir>/frontend`. Never copy `frontend/` straight from the checkout: the
+  install step is what applies the excludes.
+
+Two checks before trusting a payload, worth the ten seconds:
+
+```powershell
+& <payload>\MoonlightWeb.exe --help                    # the exe runs at all
+Select-String -Path <payload>\frontend\js\ui\StreamView.js -Pattern mwLatency -Quiet
+```
 
 ### When to stay local
 

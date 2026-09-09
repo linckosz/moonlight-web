@@ -46,6 +46,7 @@ backend/debug/
 bench-out/
 scripts/bench/results/
 scripts/bench/.chrome-bench/
+scripts/bench/.chrome-client/
 scripts/bench/kiosk-verify.png
 
 # One desk's half of the fleet table: how each machine is reached from here.

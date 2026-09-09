@@ -135,7 +135,10 @@ foreach ($spec in $Specs) {
     $outPath = [IO.Path]::ChangeExtension($csv, '.out')
     Start-Process -FilePath $Exe -ArgumentList @('--native-bench', $full) `
         -NoNewWindow -Wait -RedirectStandardOutput $outPath -RedirectStandardError $errPath
-    $stdout = if (Test-Path $outPath) { Get-Content $outPath -Raw } else { '' }
+    # -Encoding UTF8 for the same reason as the stderr read below: the engine
+    # writes UTF-8, and without it Get-Content decodes as ANSI and the middot
+    # of the negotiated line lands in the report as a double-encoded 'A-tilde'.
+    $stdout = if (Test-Path $outPath) { Get-Content $outPath -Raw -Encoding UTF8 } else { '' }
 
     $row = New-Row $spec
     $row.csv = $csv

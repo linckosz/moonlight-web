@@ -1020,11 +1020,17 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // Click-to-photon latency flag: read-only here. It has no switch in the
         // UI and no write route — it is armed by hand in settings.json and read
         // at startup, because it paints a tricolour band on the host's screen at
-        // every click. What the API reports is whether the overlay is actually
-        // running, whether this machine could run it at all, and — when it
-        // cannot — the one sentence that says why, so the bench report prints a
-        // reason instead of a hole that reads like a failure.
-        obj["latency_flag_enabled"] = LatencyFlag::isEnabled();
+        // every click.
+        //
+        // Two fields, because they answer two questions and conflating them
+        // costs an afternoon: _enabled is what the FILE says (the wish, which a
+        // hand edit changes at once), _active is whether the overlay thread is
+        // actually running (the fact, which only a restart changes). A bench
+        // that reads "on" while nothing is armed measures clicks that never
+        // raise a flag, and every sample comes back as a timeout that looks
+        // like a broken pipeline.
+        obj["latency_flag_enabled"] = appSettings.latencyFlagEnabled();
+        obj["latency_flag_active"] = LatencyFlag::isEnabled();
         obj["latency_flag_supported"] = LatencyFlag::isSupported();
         obj["latency_flag_reason"] = QString::fromUtf8(LatencyFlag::unsupportedReason());
         // Debug build flag: the UI exposes the enhancement algo selector only in

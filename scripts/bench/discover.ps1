@@ -176,6 +176,11 @@ function Get-LocalNativeStatus {
                 displays            = $status.displays
                 capture             = $status.capture
                 latencyFlagSupported = $settings.latency_flag_supported
+                # The wish (what settings.json says) and the fact (whether the
+                # overlay thread is running). A machine where they disagree has
+                # been edited without a restart: it will time out every click.
+                latencyFlagEnabled  = $settings.latency_flag_enabled
+                latencyFlagActive   = $settings.latency_flag_active
                 latencyFlagReason   = $settings.latency_flag_reason
                 debugBuild          = $settings.debug_build
             }

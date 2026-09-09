@@ -26,7 +26,7 @@
 param(
     [Parameter(Mandatory = $true)] [string] $Url,
     [int] $X = 0, [int] $Y = 0, [int] $W = 2560, [int] $H = 1440,
-    [string] $ChromeProfile = "$PSScriptRoot\.chrome-bench",
+    [string] $ChromeProfile = '',
     [int] $DebugPort = 0,
     [switch] $Verify
 )
@@ -62,6 +62,25 @@ public class Kiosk {
 "@
 # Per-monitor v2 (-4): the rectangle is physical on a display whose scale differs from the primary's.
 if (-not [Kiosk]::SetProcessDpiAwarenessContext([IntPtr](-4))) { [Kiosk]::SetProcessDPIAware() | Out-Null }
+
+# The profile is resolved HERE, not as a parameter default: $PSScriptRoot has
+# been seen coming back empty while binding this script's parameters, which made
+# the path collapse to \.chrome-bench at the root of whatever drive was current.
+# Chrome then started, found nothing it owned there, exited 0 without ever
+# opening a window, and every pass of a campaign measured a motionless desktop.
+# In the body $PSScriptRoot is reliable.
+# Content and client are two kiosks that must live side by side, and the launch
+# below kills every Chrome holding THIS profile. Sharing one profile therefore
+# made the second kiosk kill the first: the client came up and the reference
+# clip vanished from the captured screen, which is indistinguishable from a
+# campaign that simply measured a desktop. -DebugPort is what separates them
+# (only the client is driven over CDP), so it picks the profile too.
+if (-not $ChromeProfile) {
+    $ChromeProfile = Join-Path $PSScriptRoot ($(if ($DebugPort -gt 0) { '.chrome-client' } else { '.chrome-bench' }))
+}
+if (-not [System.IO.Path]::IsPathRooted($ChromeProfile)) {
+    $ChromeProfile = Join-Path $PSScriptRoot $ChromeProfile
+}
 
 $profileTag = Split-Path $ChromeProfile -Leaf
 Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |
