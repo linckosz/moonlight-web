@@ -32,6 +32,7 @@
 #include <QHostAddress>
 #include <QJsonDocument>
 #include <QMetaObject>
+#include <QStringList>
 #include <QTimer>
 #include <QUdpSocket>
 #include <QUrl>
@@ -39,6 +40,8 @@
 #include <QWebSocket>
 
 #include <rtc/rtc.hpp>
+
+#include <utility>
 
 namespace {
 
@@ -111,7 +114,18 @@ constexpr int kMaxInFlightRequests = 24;
 /// laptop, an admin tab — and each connection binds its own socket. Beyond four,
 /// the extra ones fall back to an ephemeral port; they are no worse off than
 /// every tunnel was before this existed.
-constexpr uint16_t kTunnelPortBase = 3478;
+///
+/// 5349-5352 is the same range's TLS half (TURNS), and it exists here for the
+/// SECOND MoonlightWeb host on one LAN. Without somewhere else to go it would
+/// ask for the very same four entries as the first, and a router does not
+/// refuse that — measured on a Livebox, 09/09/2026: it silently repoints all
+/// four at the newcomer. The first host is not told, keeps advertising
+/// 82.67.150.202:3478 as its public address, and every connectivity check aimed
+/// at it lands on the other machine. Its tunnel then works from a permissive
+/// network, where the reflexive path alone carries it, and dies on exactly the
+/// corporate networks these ports were chosen for. Both hosts renew every half
+/// hour, so the theft alternates and the symptom comes and goes.
+constexpr uint16_t kTunnelPorts[] = {3478, 3479, 3480, 3481, 5349, 5350, 5351, 5352};
 constexpr int kTunnelPortCount = 4;
 
 /// Half the lease, so a mapping is refreshed well before it lapses.
@@ -180,26 +194,7 @@ void ControlTunnel::setupUpnp()
     m_PublicIP = upnp->getExternalIPAddress();
     m_Upnp = upnp;
 
-    for (int i = 0; i < kTunnelPortCount; ++i) {
-        const uint16_t port = static_cast<uint16_t>(kTunnelPortBase + i);
-        if (!portIsFree(port)) {
-            Logger::info(
-                QStringLiteral("[Tunnel] Port %1 is taken on this machine — skipped").arg(port));
-            continue;
-        }
-        if (!m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "UDP")) {
-            // A router that refuses a leased mapping often accepts a permanent
-            // one, and one that refuses both has nothing more to give.
-            if (!m_Upnp->addPortMapping(port, port, 0, "MoonlightWeb tunnel", "UDP")) continue;
-            m_UpnpLeaseSec = 0;
-        }
-        // Best effort, and only useful where UDP is blocked outright: the
-        // connections enable ICE-TCP, but a browser only ever opens those
-        // outbound, so reaching this machine needs the inbound hole too.
-        m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "TCP");
-        m_MappedPorts.append(port);
-        m_FreePorts.append(port);
-    }
+    acquirePorts();
 
     if (m_MappedPorts.isEmpty()) {
         Logger::warning(QStringLiteral("[Tunnel] The router mapped none of the tunnel ports — "
@@ -213,10 +208,98 @@ void ControlTunnel::setupUpnp()
     connect(m_UpnpRenew, &QTimer::timeout, this, &ControlTunnel::renewUpnp);
     m_UpnpRenew->start(kUpnpRenewIntervalMs);
 
+    // The ports by name, not just how many: they are no longer a fixed range —
+    // a second host on this LAN pushes this one onto the TLS half — and the
+    // first thing anyone diagnosing a dead tunnel needs is which entry in the
+    // router's table is supposed to be ours.
+    QStringList names;
+    names.reserve(m_MappedPorts.size());
+    for (const uint16_t port : std::as_const(m_MappedPorts))
+        names << QString::number(port);
     Logger::info(QStringLiteral("[Tunnel] Router holes open on %1 (public %2), lease %3 s")
-                     .arg(m_MappedPorts.size())
-                     .arg(QString::fromStdString(m_PublicIP))
+                     .arg(names.join(QLatin1Char(',')), QString::fromStdString(m_PublicIP))
                      .arg(m_UpnpLeaseSec));
+}
+
+void ControlTunnel::acquirePorts()
+{
+    for (const uint16_t port : kTunnelPorts) {
+        if (m_MappedPorts.size() >= kTunnelPortCount) return;
+        if (m_MappedPorts.contains(port)) continue;
+        acquirePort(port);
+    }
+}
+
+bool ControlTunnel::acquirePort(uint16_t port)
+{
+    if (!portIsFree(port)) {
+        Logger::info(
+            QStringLiteral("[Tunnel] Port %1 is taken on this machine — skipped").arg(port));
+        return false;
+    }
+
+    // Someone else's entry is left alone.
+    //
+    // The router would let us overwrite it — that is the whole bug this guards
+    // against — and taking it would break the other machine's tunnel exactly
+    // the way ours was broken, until it renews and breaks ours back. There are
+    // other ports; a fight over this one has no winner.
+    const QString lan = QString::fromStdString(m_Upnp->lanAddress());
+    const QString before = mappingOwner(port);
+    if (!before.isEmpty() && before != lan) {
+        Logger::info(QStringLiteral("[Tunnel] Port %1 is forwarded to %2 on this network — "
+                                    "leaving it alone")
+                         .arg(port)
+                         .arg(before));
+        return false;
+    }
+
+    if (!m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "UDP")) {
+        // A router that refuses a leased mapping often accepts a permanent
+        // one, and one that refuses both has nothing more to give.
+        if (!m_Upnp->addPortMapping(port, port, 0, "MoonlightWeb tunnel", "UDP")) return false;
+        m_UpnpLeaseSec = 0;
+    }
+
+    // And the write is read back, because "added successfully" is the router's
+    // opinion of the request, not of the table. An entry that answers with
+    // another machine's address is a hole that leads somewhere else, and
+    // advertising it would aim every connectivity check at that machine.
+    const QString after = mappingOwner(port);
+    if (!after.isEmpty() && after != lan) {
+        Logger::warning(QStringLiteral("[Tunnel] The router kept port %1 pointed at %2 — not "
+                                       "using it")
+                            .arg(port)
+                            .arg(after));
+        return false;
+    }
+
+    // Best effort, and only useful where UDP is blocked outright: the
+    // connections enable ICE-TCP, but a browser only ever opens those
+    // outbound, so reaching this machine needs the inbound hole too.
+    m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "TCP");
+    m_MappedPorts.append(port);
+    m_FreePorts.append(port);
+    return true;
+}
+
+QString ControlTunnel::mappingOwner(uint16_t port)
+{
+    if (!m_Upnp) return {};
+    std::string client;
+    std::string internalPort;
+    if (!m_Upnp->getExistingPortMapping(port, "UDP", client, internalPort)) return {};
+    return QString::fromStdString(client);
+}
+
+void ControlTunnel::dropMappedPort(uint16_t port, const QString& owner)
+{
+    Logger::warning(QStringLiteral("[Tunnel] Port %1 now forwards to %2 — dropped, this machine "
+                                   "will stop offering it")
+                        .arg(port)
+                        .arg(owner));
+    m_MappedPorts.removeAll(port);
+    m_FreePorts.removeAll(port);
 }
 
 void ControlTunnel::renewUpnp()
@@ -224,10 +307,27 @@ void ControlTunnel::renewUpnp()
     if (!m_Upnp) return;
 
     bool ok = true;
-    for (const uint16_t port : std::as_const(m_MappedPorts)) {
+    // Checked after the write, once per half hour, because a machine that comes
+    // online later takes these entries silently: nothing in the renewal's own
+    // answer says the table stopped pointing here. The list is copied since
+    // dropMappedPort() edits it.
+    const QString lan = QString::fromStdString(m_Upnp->lanAddress());
+    QList<std::pair<uint16_t, QString>> lost;
+    const QList<uint16_t> held = m_MappedPorts;
+    for (const uint16_t port : held) {
         if (!m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "UDP"))
             ok = false;
         m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "TCP");
+        const QString owner = mappingOwner(port);
+        if (!owner.isEmpty() && owner != lan) lost.append({port, owner});
+    }
+    if (!lost.isEmpty()) {
+        for (const auto& [port, owner] : lost)
+            dropMappedPort(port, owner);
+        // Somewhere else in the list, most likely: this is the moment the
+        // second host on the LAN appeared, and it is holding what used to be
+        // ours. Ephemeral ports are the floor, not the destination.
+        acquirePorts();
     }
     if (ok) {
         m_UpnpRenewFailures = 0;

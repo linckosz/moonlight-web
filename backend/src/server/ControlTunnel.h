@@ -212,6 +212,21 @@ private:
     void renewUpnp();
     void teardownUpnp();
 
+    /// Take one hole from the candidate list, or leave it alone and say why.
+    /// Refuses a port another machine on this LAN holds, and — separately —
+    /// refuses one the router hands to someone else despite our write.
+    bool acquirePort(uint16_t port);
+    /// Fill the pool up to kTunnelPortCount from the candidates not yet held.
+    void acquirePorts();
+    /// The address the router says an entry points at, empty when it has no
+    /// entry for that port OR cannot answer the question. Both are reported as
+    /// "nobody" on purpose: an IGD that does not implement the query must not
+    /// make us throw away mappings that are working.
+    QString mappingOwner(uint16_t port);
+    /// Give up a hole that now leads to another machine: it is worse than no
+    /// hole at all, because ICE would still advertise it.
+    void dropMappedPort(uint16_t port, const QString& owner);
+
     /// A mapped port for one connection, or 0 when none is free — in which case
     /// the connection falls back to an ephemeral port and its reflexive
     /// candidate, exactly as it behaved before any of this existed.
