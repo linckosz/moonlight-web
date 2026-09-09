@@ -41,7 +41,9 @@ param(
     # the reference clip, so they are not comparable with a real campaign.
     [switch] $NoKiosk,
     [switch] $SkipDiscover,
-    [int]    $Display = 1,
+    # -1 picks the PRIMARY screen, which is the physical one on every bench
+    # here. Click-to-photon needs that: see the monitor pairing below.
+    [int]    $Display = -1,
     [ValidateSet('cod', 'scroll', 'still')] [string] $Content = 'cod',
     [string] $KioskRect = '',
     [string] $Exe = "$PSScriptRoot\..\..\build\MoonlightWeb.exe"
@@ -75,12 +77,56 @@ function Get-Prop {
     return $Default
 }
 
+# The monitors as Windows enumerates them, parsed once: the origin of the kiosk
+# rectangle comes from here, and so does the primary/virtual verdict below.
+# /api/native/status carries neither.
+$monitors = @()
+foreach ($line in @(Get-Prop $inventory 'monitors' @())) {
+    if ($line -match '^(\S+)\s+(-?\d+),(-?\d+)\s+(\d+)x(\d+)(\s+primary)?') {
+        $monitors += [pscustomobject]@{
+            device = $Matches[1]; x = [int]$Matches[2]; y = [int]$Matches[3]
+            w = [int]$Matches[4]; h = [int]$Matches[5]; primary = [bool]$Matches[6]
+        }
+    }
+}
+
+# Which display to measure. -Display -1 means "the primary one", and that is the
+# default because click-to-photon does not work anywhere else here: the flag is
+# a layered topmost window, and on a VIRTUAL display (a VDD / dummy plug) it is
+# never painted, while the content Chrome puts on the same screen captures
+# perfectly. The result is a campaign whose encoder half looks flawless and
+# whose every click comes back a timeout — measured 09/09/2026, on a physical
+# screen the three bands read 0,0,255 / 255,255,255 / 255,0,0 exactly.
+if ($Display -lt 0) {
+    $primaryIdx = -1
+    for ($i = 0; $i -lt $monitors.Count; $i++) { if ($monitors[$i].primary) { $primaryIdx = $i; break } }
+    $Display = if ($primaryIdx -ge 0 -and
+                   ($local.native.displays | Where-Object { $_.id -eq $primaryIdx })) { $primaryIdx } else { 0 }
+    Write-Host "display            : $Display (primary — pass -Display to override)"
+}
+
 # The display the campaign measures, and what it can do.
 $displayInfo = $local.native.displays | Where-Object { $_.id -eq $Display } | Select-Object -First 1
 if (-not $displayInfo) {
     Write-Warning "no display with id $Display; available:"
     $local.native.displays | Format-Table id, label, width, height, refresh_mhz, hdr_active, encoder_name -AutoSize
     throw "pick one with -Display"
+}
+
+# A virtual screen cannot carry the flag (see above), and the campaign should
+# say so BEFORE it spends twenty minutes rather than after. The test is the
+# monitor description the engine reports, which is the EDID name: a dummy plug
+# or a driver-made screen announces itself there ("VDD by MTT", "IddSampleDriver"
+# and friends). It is a heuristic on a string, so it only warns — the reliable
+# signal is the one the probe itself gives, three grey pixels where the bands
+# should be.
+$displayDetail = "$(Get-Prop $displayInfo 'detail' '') $(Get-Prop $displayInfo 'label' '')"
+$looksVirtual = $displayDetail -match '(?i)\b(vdd|virtual|idd|dummy|phantom)\b'
+if ($looksVirtual) {
+    Write-Warning ("display $Display looks like a VIRTUAL screen ($($displayDetail.Trim())). " +
+                   "The encoder half is valid there, but the click-to-photon flag is never " +
+                   "painted on such a screen: every sample will time out. Measure a physical " +
+                   "one, or read the probe's cases as grey and not as a failure.")
 }
 # /api/native/status sends `codecs` as one comma-separated string ("AV1, HEVC,
 # H.264"), not as an array — treating it as a list gives a single element that
@@ -113,15 +159,6 @@ if (-not $KioskRect) {
     # engine's, and both have been observed to agree. Trust that only when the
     # sizes match; otherwise fall back to the first monitor of the right size,
     # and say so rather than silently measuring the wrong screen.
-    $monitors = @()
-    foreach ($line in @(Get-Prop $inventory 'monitors' @())) {
-        if ($line -match '^(\S+)\s+(-?\d+),(-?\d+)\s+(\d+)x(\d+)') {
-            $monitors += [pscustomobject]@{
-                device = $Matches[1]; x = [int]$Matches[2]; y = [int]$Matches[3]
-                w = [int]$Matches[4]; h = [int]$Matches[5]
-            }
-        }
-    }
     $w = [int]$displayInfo.width; $h = [int]$displayInfo.height
     $match = $null
     if ($Display -ge 0 -and $Display -lt $monitors.Count -and

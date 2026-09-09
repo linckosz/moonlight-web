@@ -78,11 +78,19 @@ LRESULT CALLBACK mouseHookProc(int code, WPARAM wParam, LPARAM lParam)
     if (code == HC_ACTION && wParam == WM_LBUTTONDOWN) {
         const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
         const bool injected = info && (info->flags & LLMHF_INJECTED);
-        if (injected && !g_Windows.empty()) PostMessageW(g_Windows.front(), kMsgClick, 0, 0);
         // One line per injected click, so a run can be matched against the
         // browser's table (and a hook that never fires shows as silence).
-        if (injected)
+        // Under the SAME guard as the post, deliberately: a line that says
+        // "injected click" while g_Windows is empty claims a flag was raised
+        // when none exists, and sends whoever reads it hunting the pipeline
+        // instead of the overlay. Silence in both directions, or nothing.
+        if (injected && !g_Windows.empty()) {
+            PostMessageW(g_Windows.front(), kMsgClick, 0, 0);
             qInfo() << "[LatencyFlag] injected click at" << info->pt.x << "," << info->pt.y;
+        } else if (injected) {
+            qWarning() << "[LatencyFlag] injected click at" << info->pt.x << "," << info->pt.y
+                       << "but no flag window exists — nothing was raised";
+        }
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }

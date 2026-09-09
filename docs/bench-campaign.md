@@ -92,7 +92,7 @@ watches the decoded picture for the flag. Since 08/09/2026 this works on:
 
 | Host | Click source | Overlay | Needs |
 |---|---|---|---|
-| Windows | `WH_MOUSE_LL`, flag `LLMHF_INJECTED` | layered topmost window | a desktop session |
+| Windows | `WH_MOUSE_LL`, flag `LLMHF_INJECTED` | layered topmost window | a desktop session, and a **physical** screen |
 | macOS | listen-only `CGEventTap`, `kCGEventSourceStateID` | `NSWindow` at shielding level | **Input Monitoring** granted to the binary |
 | Linux | `/dev/input/event*`, virtual devices only | override-redirect X windows | an **X11 session**, and the user in the `input` group |
 
@@ -103,6 +103,21 @@ could satisfy. The runtime guard was always the real one: `latency_flag_enabled`
 defaults to false. It is a **file-only** setting — no switch in the UI, no write
 route — so arming a bench machine means editing its `settings.json` and
 restarting the server. Nothing on a player's machine can turn it on by accident.
+
+**A virtual display cannot carry the flag.** Measured 09/09/2026 and worth the
+paragraph, because everything about it says the opposite is true. On a VDD or a
+dummy plug the overlay is created, the hook fires, the log says the click was
+injected — and the bands are never painted. Content Chrome puts on that same
+screen captures perfectly, so the encoder half looks flawless while every single
+click-to-photon sample comes back `timeout` with three grey pixels where the
+flag should be. On a physical screen the same code reads `0,0,255` /
+`255,255,255` / `255,0,0` exactly.
+
+Capture a physical screen for this chapter. `run-campaign.ps1` defaults to the
+primary one and warns when the display it is about to measure looks virtual;
+when only a virtual screen is available, the probe's cases are **grey with that
+reason**, never red. The same goes for a very small screen: on 800×600 the flag
+is 96×30 px, which does not survive a downscale to 720p.
 
 **Wolf is grey by design**: it injects into the uinput of a container with its
 own compositor, so no flag placed on the host is in its picture. A Wayland
@@ -239,6 +254,29 @@ wherever the machine allows it.
 
 ## 9. The playbook — what each failure means
 
+### Before anything: is the kiosk on the captured screen?
+
+- **Every pass reports ~0,2 fps of capture, 14 KB a frame, QP 10.** The kiosk is
+  not where the encoder is looking. `run-campaign.ps1` prints the rectangle and
+  names the monitor it chose, e.g. `DISPLAY43`; check that line
+  before reading a single number.
+- **`kiosk window never appeared`.** Chrome started and exited 0 without a
+  window, which is what it does when `--user-data-dir` points somewhere it does
+  not own. Look at the profile path the script actually passed.
+- **The reference clip vanished when the client kiosk came up.** Two kiosks
+  sharing one Chrome profile: the launch kills every Chrome of its profile.
+  `-DebugPort` now picks the profile, so the two roles no longer collide.
+
+### Launching a pass
+
+- **The tile is clicked and nothing starts, no error.** Streaming this machine
+  to itself asks "Streaming your own PC?" first; the card stays in
+  `app-card--launching` until `.self-stream-go` — labelled **"Stream anyway 🚀"**,
+  emoji included — is clicked. Every later click is swallowed until then.
+- **The wrong host launched.** The native host names its tiles after the
+  display — "Display 1", "Display 3" — not "Desktop". Several paired hosts each
+  own a "Desktop" tile, and the first one on the page wins.
+
 ### Reaching the fleet
 
 - **SSH works, the service port does not.** The "allow this app?" dialog opened
@@ -318,6 +356,7 @@ wherever the machine allows it.
 | | |
 |---|---|
 | Harness | `scripts/bench/` (committed) |
+| The two halves | `run-campaign.ps1` (inventory + encoder) then `run-browser.ps1` (the same matrix through a real stream) |
 | Fleet shape and ports | `scripts/bench/hosts.json` — no fleet, just the shape |
 | Your fleet | `scripts/bench/hosts.local.json` (**ignored**), shape in `hosts.local.example.json` |
 | Raw results | `scripts/bench/results/` (ignored) — unscrubbed, unlike the report |
