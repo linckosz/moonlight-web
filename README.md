@@ -5,8 +5,8 @@
 # Moonlight‑Web
 
 **Stream your PC games from any browser.**\
-A 100% web [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream client\
-Nothing to install on the client, just a URL.\
+Install it on the gaming PC — it captures and encodes that machine **itself**, no second streaming server to set up.\
+Nothing to install on the client either: just a URL, from your LAN or from anywhere.\
 Under **20 ms** glass‑to‑glass over Wi‑Fi on a LAN, ~**25 ms** over the Internet.
 
 **🌐 Website: [moonlightweb.top](https://moonlightweb.top/)** — screenshots, [install guides](https://moonlightweb.top/guides/windows.html) & [FAQ](https://moonlightweb.top/faq.html)
@@ -23,21 +23,21 @@ Under **20 ms** glass‑to‑glass over Wi‑Fi on a LAN, ~**25 ms** over the In
 
 ## What it does
 
-Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, phone, TV) into a streaming client for your Sunshine‑powered gaming PC — **with nothing to install**.
+Moonlight‑Web turns your gaming PC into a stream, and **any device with a modern browser** (PC, Mac, tablet, phone, TV) into the client — **with nothing to install on either end but the server itself**.
 
-- 🎮 **Low‑latency streaming** up to 4K HDR, 240 FPS, **H.264 / HEVC / AV1** codecs.
+- 🖥️ **Its own capture & encode engine** — the machine it runs on is a host straight away: no Sunshine, no pairing, no PIN. One card per display, one click. Windows, Linux and macOS.
+- 🎮 **Low‑latency streaming** up to 4K HDR, 240 FPS, **H.264 / HEVC / AV1** codecs, on **NVENC · AMF · Quick Sync · VA‑API · VideoToolbox** (software fallback when no GPU will encode).
 - 🌐 **WebRTC transport** (DataChannels + RTP media tracks), automatic WSS fallback.
-- 🔊 **Opus audio** decoded in the browser (adaptive jitter buffer, surround).
+- 🔊 **Opus audio** encoded on the host, decoded in the browser (adaptive jitter buffer, surround).
 - ⌨️🖱️🎮 **Full input**: keyboard, mouse (pointer‑lock), touch trackpad, **Xbox/PS gamepads** with rumble.
-- 🔎 **Auto‑discovery** of Sunshine hosts on the LAN (mDNS) + manual IP add.
-- 🔐 Secure **pairing**, multi‑host, persistent sessions.
+- 🤝 **Pairs with other hosts too** — Sunshine/Apollo, Wolf (Games‑on‑Whales), MultiSeat: [see below](#other-hosts-it-can-pair-with). Auto‑discovery on the LAN (mDNS) + manual IP add, secure PIN pairing, multi‑host, persistent sessions.
 - 🌍 **Internet access** opt‑in: reached from anywhere at a `stream.moonlightweb.top/「id」` address, over WebRTC, with nothing published in your name. Installs that already hold a sub‑domain keep it until February 2027.
 - 🪄 **Video Enhancement** (bonus): GPU upscaling & sharpening in the browser.
 - 👥 **Session sharing**: invite up to 3 people into your stream, as viewer, gamepad player, or full control.
 
 <div align="center">
 
-![Home — Sunshine host list](docs/screenshots/home.png)
+![Home — the host list](docs/screenshots/home.png)
 
 | 🖥️ Desktop | 📱 Mobile |
 |:---:|:---:|
@@ -49,13 +49,15 @@ Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, pho
 
 ## How it works
 
-1. **Run the server** on any machine on the same LAN as Sunshine (the Sunshine PC itself is ideal, but not required).
-2. **Open a browser** at `https://localhost` (or the PC's LAN IP — or your own domain if you [configured one](#ssl--your-own-domain--certificate)).
-3. The server **discovers your Sunshine hosts** (mDNS) — or add an IP manually.
-4. **Pair** the host (PIN), pick an app, **stream**.
+1. **Install the server on the gaming PC** — the machine you want to play *on*.
+2. **Open a browser** at `https://localhost`, at the PC's LAN IP from any other device, or at your own [entry link](#internet-access) from outside the house.
+3. **The PC is already in the list**, as `<hostname> — MoonlightWeb Host`. Nothing to pair: there are no two parties to authenticate, the app is asking itself. Each display is a card.
+4. **Click a display and stream.** Other hosts on the LAN (Sunshine, Wolf, MultiSeat) are discovered next to it and can be [paired and streamed too](#other-hosts-it-can-pair-with).
 
-The C++/Qt backend embeds `moonlight-common-c`: it speaks GameStream (RTSP/RTP/ENet) to Sunshine and relays video/audio/input to the browser over WebRTC, with a WSS fallback.\
+**The native engine** captures a GPU surface and hands it straight to the GPU encoder in the same process that already holds the WebRTC PeerConnection: `capture → encode (zero‑copy) → SCTP/DTLS → browser`. There is no loopback network hop, no RTSP, no RTP, no FEC and no second layer of AES on a link DTLS already encrypts — on an RTX 5060 Ti at 1440p that is **0.06 ms** to acquire a frame and **3.46 ms** to encode it, with **one** memory copy per frame.\
 Video decodes in **WebCodecs + WebGPU/canvas**, audio in **AudioWorklet**.
+
+> The engine also runs when MoonlightWeb is installed as a Windows service: the service starts the capture in the console session, as the logged‑on user. If it cannot run at all (headless machine, no usable encoder, Windows ARM64), the card simply does not appear and the app offers you a host to pair with instead.
 
 ### Stream settings
 
@@ -70,6 +72,33 @@ From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (7
 | ![Stream settings](docs/screenshots/settings.png) | ![Advanced options (mobile)](docs/screenshots/advanced.png) |
 
 </div>
+
+---
+
+## Other hosts it can pair with
+
+The native engine streams **the machine MoonlightWeb runs on**. Everything else on your network is still reachable the way it always was: Moonlight‑Web remains a full GameStream client, and a host you pair with is streamed through the embedded `moonlight-common-c` exactly as before.
+
+```
+  MoonlightWeb server (C++/Qt)                   A paired host on your LAN
+┌─────────────────────────────────┐  HTTPS   ┌──────────────────────────────┐
+│  moonlight-common-c (embedded)  │◄────────►│  GameStream API              │
+│  RTSP / RTP / ENet  →  relay    │   RTSP   │  /serverinfo /applist /pair  │
+│  re-packetised onto WebRTC      │◄════════►│  GPU encoder                 │
+└─────────────────────────────────┘  RTP/UDP └──────────────────────────────┘
+```
+
+| Host | What it is | How it pairs |
+|---|---|---|
+| **[Sunshine](https://github.com/LizardByte/Sunshine)** · **Apollo** | The reference GameStream host, and its fork | Found by mDNS, or added by IP. PIN pairing — the PIN is the one the host shows. |
+| **[Wolf](https://games-on-whales.github.io/wolf/)** (Games‑on‑Whales) | Containerised host: profiles, the Docker catalogue, lobbies and co‑op | GameStream media, Wolf's `/api/v1` for the rest. **No human in the loop** — MoonlightWeb posts the PIN itself. Each device gets its own certificate, so two players are two Wolf clients. |
+| **MultiSeat** | One Windows box split into several independent seats — an account, a virtual display, its own audio and its own Apollo per seat | Seats are enumerated and provisioned through MultiSeat's key‑authenticated API; each seat is then paired on its own, with its own certificate. |
+
+Both integrations are documented in [`docs/integration-multiseat-wolf.md`](docs/integration-multiseat-wolf.md).
+
+> ⚠️ MultiSeat's per‑seat stream path is written against MultiSeat's source but **not yet exercised end to end** — provisioning a seat needs a free Windows session, which the bench cannot offer.
+
+Using MoonlightWeb purely as a front end for other hosts? Set `"native_host_enabled": false` in [`settings.json`](#advanced-config--settingsjson): the card for this machine disappears and the engine stays installed and idle.
 
 ---
 
@@ -165,14 +194,13 @@ everyone.
 
 Grab the installer for your OS from the **[latest release](https://github.com/linckosz/moonlight-web/releases/latest)** — or from **[moonlightweb.top](https://moonlightweb.top/#download)**, which picks the right file for you. Step‑by‑step guides with screenshots: [Windows](https://moonlightweb.top/guides/windows.html) · [macOS](https://moonlightweb.top/guides/macos.html) · [Linux](https://moonlightweb.top/guides/linux.html).
 
-> ✅ **Sunshine is handled for you.** The installers detect it, install it if missing and pair it
-> automatically — you don't have to install it beforehand. (On Linux that step happens in the
-> in‑app setup wizard rather than in the package; see below.)
+> ✅ **Nothing else to install.** MoonlightWeb captures and encodes the machine it is installed
+> on, so a normal first launch has no second streaming server to set up and nothing to pair.
+> Install it **on the gaming PC** — that is the whole setup.
 
-> ℹ️ Moonlight‑Web runs on **any machine on the same LAN as Sunshine** — it doesn't have
-> to be the Sunshine PC. **Installing it on the Sunshine machine is ideal** (minimal latency
-> via localhost, instant mDNS discovery, simpler port forwarding, one‑click Sunshine setup),
-> but not required — in that case just skip the Sunshine step and pair by IP.
+> ℹ️ It also runs happily on **another machine on the LAN** (a NAS, a mini PC, a container) and
+> streams the hosts you pair with from there. You lose the native engine — that box has no game
+> to capture — and gain a hop; the [host list](#other-hosts-it-can-pair-with) works the same.
 
 ### Windows 10 / 11
 
@@ -183,16 +211,18 @@ Double‑click it — the wizard (English / Français / 简体中文) does every
 | Step | What it does |
 |---|---|
 | **Install** | App + Start‑Menu/Desktop shortcuts, firewall rule, optional **start at logon**. |
+| **Gamepad driver** | ViGEmBus installed silently — what lets a browser's gamepad appear as a real controller on this PC. |
 | **Internet link** | Opt‑in (unchecked by default): allows remote streaming sessions (per‑session router port via UPnP). |
-| **Sunshine** | Detected, or **installed silently** for you (official LizardByte installer), then **paired automatically** with the credentials you enter. |
-| **Checklist** | Live progress (Sunshine → pairing → Internet link), then opens the admin page. |
+| **Checklist** | Live progress, then opens the admin page. |
+
+Since September 2026 the Windows installer **no longer installs Sunshine**: the app hosts this machine itself. A PC that already runs Sunshine keeps working — it is discovered and paired from the hosts page like any other.
 
 **Updates** reuse the same installer: a single *Update* confirmation page, settings, Internet link and pairing kept. In‑app one‑click update works too (no UAC prompt — an elevated scheduled task is registered at install).\
 **Service (optional):** `backend/packaging/windows/install-service.bat` installs a session‑0 service via NSSM (server available before any user logs in).
 
 ### macOS (Apple Silicon)
 
-**`moonlightweb-<version>-macos-arm64.pkg`** — native installer: *Introduction → License → **Sunshine** → Install*. The Sunshine page detects or downloads and installs Sunshine for you; the app lands in `/Applications` with an optional **start at login** (LaunchAgent).
+**`moonlightweb-<version>-macos-arm64.pkg`** — native installer: *Introduction → License → **Internet link** → Install*. Nothing else is installed: the app captures and encodes this Mac's screen itself. It lands in `/Applications` with an optional **start at login** (LaunchAgent).
 
 **Skip the Gatekeeper prompt.** The `.pkg` isn't notarized (an Apple Developer ID costs $99/yr, with no free or open‑source tier), so a *downloaded* one is refused with *"cannot be opened because it is from an unidentified developer"*. That check only applies to files a browser downloaded — either of these installs the exact same package without it:
 
@@ -203,7 +233,7 @@ curl -fsSL https://moonlightweb.top/install.sh | bash
 
 Both hand the `.pkg` to `installer(8)`, which never consults Gatekeeper. Keeping the downloaded file instead? On **macOS 15 Sequoia+**, double‑click it, let it be refused, then *System Settings → Privacy & Security → **Open Anyway*** (the old Control‑click → Open shortcut is gone) — or `xattr -dr com.apple.quarantine ~/Downloads/moonlightweb-*.pkg`.
 
-⚠️ macOS cannot grant screen capture programmatically: allow **Sunshine** in *System Settings → Privacy & Security → Screen Recording* at its first launch. The in‑app wizard (`https://localhost/setup`) opens that pane for you and finishes anything the installer couldn't.\
+⚠️ macOS cannot grant screen capture programmatically: allow **MoonlightWeb** in *System Settings → Privacy & Security → Screen Recording* at its first launch — without it this Mac cannot stream its own screen. The in‑app wizard (`https://localhost/setup`) opens that pane for you and finishes anything the installer couldn't.\
 *Intel Macs:* no prebuilt package — [build from source](#fork--build).
 
 ### Linux (x64)
@@ -231,10 +261,12 @@ Or pick the package for your distro family directly. All of them are **self‑co
 > (`sudo apt install libfuse2t64`, or `libfuse2` before 24.04; alternatively run it with
 > `--appimage-extract-and-run`). The `.deb` has none of these caveats.
 
-**Sunshine on Linux** is *not* shipped in the package. On first launch the app opens
-`https://localhost/setup`, which installs the official Sunshine package for you (apt / dnf /
-zypper / pacman families, via a single polkit password prompt) and pairs it. On other distros,
-install Sunshine yourself, then pair from the UI.
+**Nothing else to install on Linux either.** The native engine captures through **KMS** (zero‑copy
+DMA‑BUF → VA‑API) and falls back to the **ScreenCast portal** on Wayland compositors that need it;
+audio comes from PipeWire, input goes through `uinput` (a udev rule ships with the package). On
+first launch the app opens `https://localhost/setup`, which asks the one question that is left —
+the Internet link — and points at anything the desktop still has to grant. Sunshine is only
+offered there on a machine that cannot host itself.
 
 **Autostart** uses an XDG autostart entry; for a headless/server install use the systemd unit in
 [`backend/packaging/systemd/`](backend/packaging/systemd/).
@@ -274,18 +306,18 @@ caveats).
 | | |
 |---|---|
 | **Tags** | `latest` · `0.2.4` · `0.2` · `sha-<commit>`. Release tags only — no `edge`, no nightly, so `latest` can never be work in progress. |
-| **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (HTTP→HTTPS redirect). WebRTC media takes **48010‑48014/udp** when UPnP maps it, an ephemeral UDP port otherwise. Sunshine is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
+| **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (HTTP→HTTPS redirect). WebRTC media takes **48010‑48014/udp** when UPnP maps it, an ephemeral UDP port otherwise. A GameStream host is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
 | **Volume** | `/data` — settings, TLS material, paired hosts and the **client identity**. Losing it un‑pairs every host. |
 | **Env** | `MW_HTTPS_PORT` · `MW_HTTP_PORT` · `MW_UPNP` · `TZ` |
-| **GPU** | **None required.** The server never decodes or re‑encodes: Sunshine encodes on its GPU, the browser decodes on the viewer's. No `/dev/dri`, no NVIDIA runtime, no VA‑API. Gamepad/keyboard/mouse arrive over the data channel — no `/dev/input`, no privileged container. |
+| **GPU** | **None required.** A container has no desktop to capture, so the native engine does not run here and the server never decodes or re‑encodes: the paired host encodes on its GPU, the browser decodes on the viewer's. No `/dev/dri`, no NVIDIA runtime, no VA‑API. Gamepad/keyboard/mouse arrive over the data channel — no `/dev/input`, no privileged container. |
 
 > ⚠️ **Use `--network host`.** WebRTC binds an ephemeral UDP port (unpublishable), mDNS host
 > discovery is multicast, and UPnP needs SSDP — all three stop at a bridge. The bridged compose
 > file still works, but you add hosts by IP and the stream may fall back to its higher‑latency
 > TCP transport.
 
-**Sunshine cannot run in this image** — a container has no display to capture. Keep Sunshine on
-the gaming PC and add it here by IP.
+**This image cannot host a screen** — a container has no display to capture, so there is no
+`— MoonlightWeb Host` card here. Keep the gaming PC where it is and add it from the hosts page.
 
 Full reference — every port, the volume layout, backups, non‑root operation, a systemd unit for
 the Compose project, and troubleshooting: **[`docker/README.md`](docker/README.md)**.
@@ -296,7 +328,7 @@ the Compose project, and troubleshooting: **[`docker/README.md`](docker/README.m
 2. Open **`https://localhost`** in a recent Chrome / Edge / Safari.
    - Default ports: **HTTP :80** (redirected) and **HTTPS :443**.
    - The certificate is **self‑signed** — accept the browser warning (normal on LAN).
-3. **Pair** your host (PIN shown by Sunshine) and stream. From another LAN device: `https://<PC-LAN-IP>`. For access from outside the LAN, see [Internet access](#internet-access).
+3. **This machine is already in the list** — click a display and stream. From another LAN device: `https://<PC-LAN-IP>`. For access from outside the LAN, see [Internet access](#internet-access). To stream a *different* machine, [pair it](#other-hosts-it-can-pair-with) with the PIN it shows.
 
 Prefer to build it yourself? See [Fork & build](#fork--build).
 
@@ -355,19 +387,42 @@ What the browser loads from that server is a few kilobytes of entry page. It ope
 ## Architecture
 
 ```
-   BROWSER (any device)                  MoonlightWeb SERVER (C++/Qt)            Sunshine HOST
- ┌───────────────────────────┐      ┌──────────────────────────────┐      ┌──────────────────┐
- │  Web App (Vanilla JS)     │ REST │  HTTP :80 → HTTPS :443       │HTTPS │  GameStream API  │
- │  Hosts / apps / pairing   │◄────►│  Static files + REST API     │◄────►│  /serverinfo     │
- │  Video : WebCodecs+WebGPU │      │  Proxy to Sunshine           │      │  /applist/launch │
- │  Audio : Opus/AudioWorklet│WebRTC│  ┌────────────────────────┐  │ RTSP │  /pair           │
- │  Input : kbd/mouse/gamepad│◄════►│  │  moonlight-common-c    │  │ RTP  │  GPU encoder     │
- │  Video Enhancement (GPU)  │ (WSS │  │  RTSP/RTP/ENet → Relay │  │◄════►│  (NVENC/AMF/QSV) │
- └───────────────────────────┘ fall)└──────────────────────────────┘ UDP  └──────────────────┘
+      BROWSER (any device, anywhere)                RENDEZVOUS SERVER
+ ┌────────────────────────────────────┐        ┌────────────────────────────┐
+ │  Entry page (a few KB)             │ https  │  stream.moonlightweb.top   │
+ │  Web App (Vanilla JS)              │◄──────►│  · serves the entry page   │
+ │  Video : WebCodecs + WebGPU        │  SDP   │  · passes SDP / ICE along  │
+ │  Audio : Opus / AudioWorklet       │  ICE   │  · never sees your video   │
+ │  Input : kbd / mouse / gamepad     │        └─────────────┬──────────────┘
+ │  Video Enhancement (GPU)           │                      │ ONE outgoing
+ └─────────────────┬──────────────────┘                      │ connection,
+                   │                                         │ held open by
+                   │  WebRTC — peer to peer, DTLS encrypted  │ your PC. No
+                   │  video · audio · input · the whole REST │ open port, no
+                   │  API. WSS fallback on hostile networks. │ DNS record.
+                   ▼                                         ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │  YOUR GAMING PC — MoonlightWeb server (C++/Qt)                         │
+ │  HTTP :80 → HTTPS :443 · static files · REST API · session manager     │
+ │                                                                        │
+ │  ┌──────────────────────────────┐    ┌──────────────────────────────┐  │
+ │  │  NATIVE ENGINE (default)     │    │  moonlight-common-c          │  │
+ │  │  capture  DXGI · WGC         │    │  for the hosts you PAIR with │  │
+ │  │           KMS · ScreenCast   │ or │  RTSP / RTP / ENet  ────────►│  │
+ │  │           ScreenCaptureKit   │    │  Sunshine · Wolf · MultiSeat │  │
+ │  │  encode   NVENC · AMF · QSV  │    └──────────────────────────────┘  │
+ │  │           VA-API · VideoTB   │                                      │
+ │  │  audio    WASAPI · PipeWire  │    zero-copy: capture → encode →     │
+ │  │           SCK tap   → Opus   │    fragment → DTLS → browser         │
+ │  └──────────────────────────────┘    (no loopback, no RTP, no FEC)     │
+ └────────────────────────────────────────────────────────────────────────┘
 ```
 
-The server is a **web server** (frontend + REST API), a **proxy** to Sunshine's API, and a **streaming bridge** embedding `moonlight-common-c`. Video (H.264/HEVC/AV1) and Opus audio are relayed over **WebRTC** (DataChannels + RTP tracks), with **WSS** fallback.\
-Input is encrypted (AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. A decoupled **DNS stack** ([`deploy/powerdns/`](deploy/powerdns/)) still serves the sub‑domains of existing installs until February 2027 — that's the server your tips help keep alive.
+The server is a **web server** (frontend + REST API), a **streaming engine** for its own machine, and a **bridge** to the GameStream hosts you pair with (embedding `moonlight-common-c`). Video (H.264/HEVC/AV1) and Opus audio reach the browser over **WebRTC** (DataChannels + RTP tracks), with **WSS** fallback.
+
+**The rendezvous server is an introduction, not a route.** Your PC keeps one outgoing connection to it; a visitor loads a few kilobytes of entry page from it, then opens a WebRTC connection **straight to your machine** and pulls the interface — and every API call after it — down that connection. Nothing of yours is published: no DNS record, no certificate, no port open to the interface. On the LAN a browser can skip all of it and open `https://<PC-LAN-IP>` directly. A decoupled **DNS stack** ([`deploy/powerdns/`](deploy/powerdns/)) serves that domain, and still answers for the per‑instance sub‑domains of existing installs until February 2027 — that's the server your tips help keep alive.
+
+On the paired‑host path, input is encrypted (AES‑128‑GCM) and sent over the **ENet** control channel, as GameStream requires. The native engine drops that second layer: DTLS already encrypts the link, and there is no network hop to protect.
 
 ---
 
