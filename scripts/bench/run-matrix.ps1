@@ -10,7 +10,7 @@
 #   .\run-matrix.ps1 -Display 1 -Specs @('codec=hevc','codec=h264','codec=av1')
 #                    [-Base 'seconds=10,bitrate=20000']
 #                    [-Exe ..\..\build\MoonlightWeb.exe]
-#                    [-Relaunch -ContentUrl <url> -KioskRect '0,0,2560,1440']
+#                    [-Relaunch -ContentUrl <url> -KioskRect '<x,y,w,h>']
 #                    [-ResultsDir <path>]
 #
 # -Relaunch restarts the content kiosk before every pass and waits -SettleMs, so
@@ -33,7 +33,7 @@ param(
     [string] $ResultsDir = "$PSScriptRoot\results",
     [switch] $Relaunch,
     [string] $ContentUrl,
-    [string] $KioskRect = '0,0,2560,1440',
+    [string] $KioskRect = '',
     [int] $SettleMs = 3500
 )
 
@@ -117,6 +117,7 @@ foreach ($spec in $Specs) {
     $full = "display=$Display,$Base,$spec,out=$csv"
 
     if ($Relaunch -and $ContentUrl) {
+        if (-not $KioskRect) { throw "-Relaunch needs -KioskRect '<x,y,w,h>'; run-campaign derives it from the captured display" }
         $r = $KioskRect -split ','
         & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $ContentUrl `
             -X ([int]$r[0]) -Y ([int]$r[1]) -W ([int]$r[2]) -H ([int]$r[3]) | Out-Null

@@ -43,7 +43,7 @@ param(
     [switch] $SkipDiscover,
     [int]    $Display = 1,
     [ValidateSet('cod', 'scroll', 'still')] [string] $Content = 'cod',
-    [string] $KioskRect = '0,0,2560,1440',
+    [string] $KioskRect = '',
     [string] $Exe = "$PSScriptRoot\..\..\build\MoonlightWeb.exe"
 )
 
@@ -97,6 +97,15 @@ if (Get-Prop $displayInfo 'encoder_is_fallback' $false) {
 Write-Host ""
 Write-Host "host display $Display : $($displayInfo.width)x$($displayInfo.height) $encoder codecs=$($hostCodecs -join ',') hdr_active=$(Get-Prop $displayInfo 'hdr_active' $false)"
 Write-Host "click-to-photon    : supported=$(Get-Prop $local.native 'latencyFlagSupported' $false) $(Get-Prop $local.native 'latencyFlagReason' '')"
+
+# The kiosk must cover the display being captured, and that display just told us
+# how big it is — no reason to carry a screen size as a default and be wrong on
+# every other bench. -KioskRect still overrides, for a window that must sit
+# somewhere else.
+if (-not $KioskRect) {
+    $KioskRect = "0,0,$($displayInfo.width),$($displayInfo.height)"
+    Write-Host "kiosk rect         : $KioskRect (from the captured display)"
+}
 
 # ── 2. The matrix ───────────────────────────────────────────────────────────
 
