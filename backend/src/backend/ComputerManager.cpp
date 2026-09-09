@@ -128,14 +128,25 @@ private slots:
 
     void handleResolvedTimeout()
     {
-        if (!m_Addresses.isEmpty())
+        // Every path that emits resolvedHost() ends in ComputerManager::onMdnsResolved(),
+        // which is the only place that removes us from m_PendingResolutions before
+        // calling deleteLater() — so it is also the only place allowed to schedule our
+        // deletion. A retry must return without deleting: this object is still the
+        // target of the QMdnsEngine::Resolver and QTimer::singleShot that resolve()
+        // just armed, and it is still sitting in m_PendingResolutions. A trailing,
+        // unconditional deleteLater() here used to fire on the retry that brought
+        // m_Retries to 0 — orphaning a pointer in m_PendingResolutions that
+        // ComputerManager::stopMdnsDiscovery()'s qDeleteAll() would later delete a
+        // second time, crashing with a pure virtual call on the freed object.
+        if (!m_Addresses.isEmpty()) {
             emit resolvedHost(this, m_Addresses);
-        else if (m_Retries-- > 0)
+            return;
+        }
+        if (m_Retries-- > 0) {
             resolve();
-        else
-            emit resolvedHost(this, m_Addresses); // empty → host unreachable
-
-        if (m_Addresses.isEmpty() && m_Retries <= 0) deleteLater();
+            return;
+        }
+        emit resolvedHost(this, m_Addresses); // empty → host unreachable
     }
 
 private:
