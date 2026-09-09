@@ -49,7 +49,6 @@
         '<a href="/faq.html" data-i18n="nav.faq">FAQ</a> · ' +
         '<a href="/contact.html" data-i18n="nav.contact">Contact</a> · ' +
         '<a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a> · ' +
-        '<a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> · ' +
         '<a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="footer" data-i18n="nav.support">☕ Coffee</a>' +
       '</span>' +
     '</div>';

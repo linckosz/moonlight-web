@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>MoonlightWeb — Your gaming PC, in any browser</title>
-<meta name="description" content="MoonlightWeb is a 100% web Sunshine / GameStream client. Stream your PC games to any device with a browser — up to 4K HDR, 240 fps, under 20 ms Wi-Fi latency. Nothing to install, just a URL.">
+<meta name="description" content="MoonlightWeb streams your PC games to any device with a browser — up to 4K HDR, 240 fps, under 20 ms Wi-Fi latency. Install once on the gaming PC, play from anywhere. Nothing to install on the client, just a URL.">
 <meta name="author" content="Bruno Martin">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="theme-color" content="#05080d">
 <!-- Open Graph -->
 <meta property="og:site_name" content="MoonlightWeb">
 <meta property="og:title" content="MoonlightWeb — Your gaming PC, in any browser">
-<meta property="og:description" content="A 100% web Sunshine / GameStream client. Up to 4K HDR, 240 fps, <20 ms Wi-Fi latency. Nothing to install on the client, just a URL.">
+<meta property="og:description" content="A 100% web game-streaming client. Up to 4K HDR, 240 fps, <20 ms Wi-Fi latency. Nothing to install on the client, just a URL.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://moonlightweb.top/">
 <meta property="og:image" content="https://moonlightweb.top/assets/desktop.jpg">
@@ -19,7 +19,7 @@
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MoonlightWeb — Your gaming PC, in any browser">
-<meta name="twitter:description" content="A 100% web Sunshine / GameStream client. Nothing to install on the client, just a URL.">
+<meta name="twitter:description" content="A 100% web game-streaming client. Nothing to install on the client, just a URL.">
 <meta name="twitter:image" content="https://moonlightweb.top/assets/desktop.jpg">
 <link rel="canonical" href="https://moonlightweb.top/">
 <!-- Favicon shown in Google Search: a square icon that is a multiple of 48px
@@ -56,10 +56,10 @@
   "name": "MoonlightWeb",
   "url": "https://moonlightweb.top/",
   "image": "https://moonlightweb.top/assets/desktop.jpg",
-  "description": "A 100% web Sunshine / GameStream client. Stream your PC games to any device with a browser — up to 4K HDR, 240 fps, under 20 ms Wi-Fi latency. Nothing to install on the client, just a URL.",
+  "description": "A 100% web game-streaming client. Stream your PC games to any device with a browser — up to 4K HDR, 240 fps, under 20 ms Wi-Fi latency. Nothing to install on the client, just a URL.",
   "applicationCategory": "GameApplication",
   "operatingSystem": "Windows, macOS, Linux",
-  "softwareRequirements": "Sunshine host on the gaming PC; any modern browser as client (Chrome, Edge, Safari, Firefox)",
+  "softwareRequirements": "MoonlightWeb installed on the gaming PC; any modern browser as client (Chrome, Edge, Safari, Firefox)",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "license": "https://www.gnu.org/licenses/gpl-3.0.html",
   "downloadUrl": "https://github.com/linckosz/moonlight-web/releases",
@@ -70,7 +70,7 @@
     "Under 20 ms latency over Wi-Fi (WebRTC UDP)",
     "GPU Video Enhancement: SGSRv1 and FSR1 upscaling in WebGPU",
     "Keyboard, mouse, touch trackpad, Xbox and PlayStation gamepads with rumble",
-    "mDNS auto-discovery of Sunshine hosts, PIN pairing",
+    "mDNS auto-discovery of gaming PCs, PIN pairing",
     "Direct peer-to-peer WebRTC streams; opt-in Internet access",
     "Session sharing: invite up to 3 players into one running game, local co-op from anywhere"
   ]
@@ -506,7 +506,7 @@
   <div class="wrap">
     <span class="kicker" data-i18n="hero.kicker">100% web · open source · self‑hosted</span>
     <h1 data-i18n-html="hero.h1">Your gaming PC.<br><span class="grad">Streamed to any browser.</span></h1>
-    <p class="lead" data-i18n-html="hero.lead">MoonlightWeb streams your <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> gaming rig
+    <p class="lead" data-i18n-html="hero.lead">MoonlightWeb streams your gaming rig
       to any device with a browser — phone, tablet, laptop, TV.<br>
       <strong>Free and open source. Nothing to install on the client. Just a URL.</strong></p>
     <div class="cta cta-hero">
@@ -587,7 +587,7 @@
         </svg>
         <h3 data-i18n="card5.h3">Full input, full rumble</h3><p data-i18n="card5.p">Keyboard, pointer‑lock mouse, touch trackpad, virtual keyboard — and Xbox &amp; PlayStation controllers with rumble.</p>
       </div>
-      <div class="card cyb reveal"><div class="ico">🔎</div><h3 data-i18n="card6.h3">Zero‑config discovery</h3><p data-i18n="card6.p">Sunshine hosts appear automatically via mDNS. PIN pairing, multi‑host, persistent sessions.</p></div>
+      <div class="card cyb reveal"><div class="ico">🔎</div><h3 data-i18n="card6.h3">Zero‑config discovery</h3><p data-i18n="card6.p">Your gaming PCs appear automatically via mDNS. PIN pairing, multi‑host, persistent sessions.</p></div>
       <div class="card cyb reveal"><div class="ico">🌍</div><h3 data-i18n="card7.h3">Peer‑to‑peer by design</h3><p data-i18n="card7.p">Streams go straight from your PC to your browser — no cloud in the middle. A remote entry link reaches your PC from anywhere without exposing a single web port.</p></div>
       <div class="card cyb reveal"><div class="ico">🛟</div><h3 data-i18n="card8.h3">Never drops you</h3><p data-i18n="card8.p">Transport auto‑fallback (UDP → TCP) rides through hostile networks and strict firewalls.</p></div>
       <div class="card cyb reveal"><div class="ico">👥</div><h3 data-i18n="card9.h3">Up to 4‑player co‑op</h3><p data-i18n="card9.p">Invite up to three friends into the game already running on your PC — four players in one session. One save, one screen each: they play from their own device, with their own gamepad, as if they were sitting next to you.</p></div>
@@ -609,7 +609,7 @@
       <div class="txt reveal">
         <span class="kicker" data-i18n="s1.kicker">01 · Discover</span>
         <h3 data-i18n-html="s1.h3">All your rigs.<br>One URL.</h3>
-        <p data-i18n="s1.p">Open the page and your Sunshine machines are already there — discovered on the LAN, sorted, remembered.</p>
+        <p data-i18n="s1.p">Open the page and your gaming machines are already there — discovered on the LAN, sorted, remembered.</p>
         <ul>
           <li data-i18n-html="s1.li1"><strong>mDNS auto‑discovery</strong> — no IP hunting, hosts just show up</li>
           <li data-i18n-html="s1.li2"><strong>PIN pairing</strong> — secure handshake in seconds</li>
@@ -618,7 +618,7 @@
       </div>
       <figure class="media reveal">
         <div class="glow" style="background:radial-gradient(55% 55% at 50% 50%, rgba(25,211,255,.16), transparent 70%)"></div>
-        <img class="shot crop-home" src="assets/home.jpg" width="1191" height="876" alt="MoonlightWeb app library — Sunshine hosts discovered automatically, ready to pair" loading="lazy">
+        <img class="shot crop-home" src="assets/home.jpg" width="1191" height="876" alt="MoonlightWeb app library — gaming PCs discovered automatically, ready to pair" loading="lazy">
         <figcaption data-i18n="s1.cap">APP LIBRARY — hosts found via mDNS, one click from pairing</figcaption>
       </figure>
     </div>
@@ -716,20 +716,19 @@
 <section id="how" aria-label="How it works">
   <div class="wrap">
     <div class="sec-head reveal">
-      <span class="kicker" data-i18n="how.kicker">Setup</span>
-      <h2 data-i18n="how.h2">Play in 60 seconds</h2>
-      <p data-i18n="how.p">One small server on the gaming PC. Browsers everywhere else.</p>
+      <span class="kicker" data-i18n="how.kicker">Getting started</span>
+      <h2 data-i18n="how.h2">Playing remotely is now easy</h2>
+      <p data-i18n="how.p">Three steps, one installer, zero networking homework.</p>
     </div>
     <div class="steps">
-      <div class="step cyb reveal"><h3 data-i18n="step1.h3">Run the server</h3><p data-i18n="step1.p">On the machine where Sunshine runs. A tray icon appears — that's it for the install.</p></div>
-      <div class="step cyb reveal"><h3 data-i18n="step2.h3">Open a browser</h3><p data-i18n-html="step2.p">At <code>https://localhost</code>, your LAN IP, or your own private link from any device.</p></div>
-      <div class="step cyb reveal"><h3 data-i18n="step3.h3">Pair once</h3><p data-i18n="step3.p">Your hosts are already listed. Enter the PIN Sunshine shows — done forever.</p></div>
-      <div class="step cyb reveal"><h3 data-i18n="step4.h3">Press play</h3><p data-i18n="step4.p">Pick a game or the full desktop. Fullscreen, gamepad in hand, go.</p></div>
+      <div class="step cyb reveal"><h3 data-i18n="step1.h3">Install</h3><p data-i18n="step1.p">One installer on the gaming PC. The wizard sets everything up — including Internet access — and leaves a tray icon behind. Nothing to install on the devices you play from.</p></div>
+      <div class="step cyb reveal"><h3 data-i18n="step2.h3">Pair</h3><p data-i18n="step2.p">Open the page on any device: your PC is already listed. Type the PIN it shows, once. That device is now trusted for good.</p></div>
+      <div class="step cyb reveal"><h3 data-i18n="step3.h3">Play remotely!</h3><p data-i18n="step3.p">Your private link works from anywhere — hotel Wi‑Fi, a friend's couch, 4G. Pick a game or the whole desktop, gamepad in hand, go.</p></div>
     </div>
 
     <p class="muted reveal" style="text-align:center; max-width:760px; margin:3rem auto 0" data-i18n-html="how.under">
       Under the hood: a C++/Qt backend embeds <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>,
-      speaks GameStream (RTSP/RTP/ENet) to Sunshine, and relays video, audio and input to the browser over WebRTC —
+      speaks GameStream (RTSP/RTP/ENet) to the host, and relays video, audio and input to the browser over WebRTC —
       with automatic UDP-to-TCP fallback. Decoding happens in WebCodecs, rendering in WebGPU, audio in an AudioWorklet.
     </p>
     <div class="chips reveal">
@@ -758,7 +757,7 @@
       <div class="dl-card cyb reveal">
         <svg class="os" viewBox="0 0 24 24" role="img" aria-label="Windows logo"><path d="M0 3.449 9.75 2.1v9.451H0zM10.949 1.949 24 0v11.4H10.949zM0 12.6h9.75v9.451L0 20.699zM10.949 12.6H24V24l-13.051-1.801z"/></svg>
         <h3>Windows</h3>
-        <p data-i18n="dl.win">Guided installer — Sunshine &amp; Internet access included in the wizard.</p>
+        <p data-i18n="dl.win">Guided installer — everything set up in the wizard, Internet access included.</p>
         <div class="fmt">
           <a data-asset="win-x64" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="win-x64">x64 .exe</a>
           <a data-asset="win-arm64" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="win-arm64">arm64 .exe</a>
@@ -1034,7 +1033,7 @@
 
     'hero.kicker':'100% web · open source · auto‑hébergé',
     'hero.h1':'Votre PC gamer.<br><span class="grad">Streamé dans le navigateur.</span>',
-    'hero.lead':'MoonlightWeb streame votre PC <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> vers n’importe quel appareil doté d’un navigateur<br>téléphone, tablette, ordinateur, TV. <strong>Gratuit et open source. Rien à installer côté client. Juste une URL.</strong>',
+    'hero.lead':'MoonlightWeb streame votre PC gamer vers n’importe quel appareil doté d’un navigateur<br>téléphone, tablette, ordinateur, TV. <strong>Gratuit et open source. Rien à installer côté client. Juste une URL.</strong>',
     'hero.cta1':'Télécharger gratuitement', 'hero.cta2':'☕ Offrez‑moi un café',
     'hud.k1':'Latence Wi‑Fi', 'hud.k2':'Résolution', 'hud.k3':'Fréquence',
     'hud.k4':'Codecs', 'hud.k5':'Install. client', 'hud.v3':'jusqu’à 240fps',
@@ -1055,7 +1054,7 @@
     'card5.h3':'Toutes les commandes, vibrations comprises',
     'card5.p':'Clavier, souris en pointer‑lock, trackpad tactile, clavier virtuel, et manettes Xbox & PlayStation avec vibrations.',
     'card6.h3':'Découverte sans configuration',
-    'card6.p':'Les hôtes Sunshine apparaissent automatiquement via mDNS. Appairage par PIN, multi‑hôtes, sessions persistantes.',
+    'card6.p':'Vos PC gamer apparaissent automatiquement via mDNS. Appairage par PIN, multi‑hôtes, sessions persistantes.',
     'card7.h3':'Pair‑à‑pair par conception',
     'card7.p':'Le flux va droit de votre PC à votre navigateur — aucun cloud au milieu. Un lien d’accès distant rejoint votre PC de n’importe où, sans exposer le moindre port web.',
     'card8.h3':'Ne vous lâche jamais',
@@ -1066,7 +1065,7 @@
     'show.kicker':'En images', 'show.h2':'Voyez‑le en action',
     'show.p':'Même PC, mêmes jeux, sur tous les écrans de la maison (et au‑delà).',
     's1.kicker':'01 · Découvrir', 's1.h3':'Tous vos PC.<br>Une seule URL.',
-    's1.p':'Ouvrez la page : vos machines Sunshine sont déjà là, découvertes sur le réseau local, triées, mémorisées.',
+    's1.p':'Ouvrez la page : vos machines de jeu sont déjà là, découvertes sur le réseau local, triées, mémorisées.',
     's1.li1':'<strong>Découverte mDNS</strong> — plus de chasse aux IP, les hôtes apparaissent seuls',
     's1.li2':'<strong>Appairage par PIN</strong> — connexion sécurisée en quelques secondes',
     's1.li3':'<strong>Multi‑hôtes</strong> — PC de bureau, PC du salon, serveur maison',
@@ -1096,21 +1095,19 @@
     's5.li3':'<strong>Auto‑hébergé</strong> — vos jeux ne touchent jamais le cloud de qui que ce soit',
     's5.cap':'ADMIN — accès Internet activé en un clic',
 
-    'how.kicker':'Installation', 'how.h2':'Jouez en 60 secondes',
-    'how.p':'Un petit serveur sur le PC gamer. Des navigateurs partout ailleurs.',
-    'step1.h3':'Lancez le serveur',
-    'step1.p':'Sur la machine où tourne Sunshine. Une icône apparaît dans la zone de notification — et l’installation est terminée.',
-    'step2.h3':'Ouvrez un navigateur',
-    'step2.p':'Sur <code>https://localhost</code>, votre IP locale, ou votre lien privé personnel depuis n’importe quel appareil.',
-    'step3.h3':'Appairez une fois',
-    'step3.p':'Vos hôtes sont déjà listés. Saisissez le PIN affiché par Sunshine — et c’est réglé pour de bon.',
-    'step4.h3':'Appuyez sur play',
-    'step4.p':'Choisissez un jeu ou le bureau complet. Plein écran, manette en main, c’est parti.',
-    'how.under':'Sous le capot : un backend C++/Qt embarque <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>, dialogue en GameStream (RTSP/RTP/ENet) avec Sunshine, et relaie vidéo, audio et entrées vers le navigateur via WebRTC — avec bascule UDP vers TCP automatique. Le décodage se fait en WebCodecs, le rendu en WebGPU, l’audio dans un AudioWorklet.',
+    'how.kicker':'Pour démarrer', 'how.h2':'Jouer à distance, c’est enfin simple',
+    'how.p':'Trois étapes, un seul installeur, aucun devoir de réseau à faire.',
+    'step1.h3':'Installez',
+    'step1.p':'Un installeur sur le PC gamer. L’assistant configure tout — accès Internet compris — et laisse une icône dans la zone de notification. Rien à installer sur les appareils depuis lesquels vous jouez.',
+    'step2.h3':'Appairez',
+    'step2.p':'Ouvrez la page depuis n’importe quel appareil : votre PC est déjà listé. Saisissez le PIN affiché, une seule fois. Cet appareil est approuvé pour de bon.',
+    'step3.h3':'Jouez à distance !',
+    'step3.p':'Votre lien privé fonctionne de partout — Wi‑Fi d’hôtel, canapé d’un ami, 4G. Choisissez un jeu ou le bureau complet, manette en main, c’est parti.',
+    'how.under':'Sous le capot : un backend C++/Qt embarque <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>, dialogue en GameStream (RTSP/RTP/ENet) avec l’hôte, et relaie vidéo, audio et entrées vers le navigateur via WebRTC — avec bascule UDP vers TCP automatique. Le décodage se fait en WebCodecs, le rendu en WebGPU, l’audio dans un AudioWorklet.',
 
     'dl.kicker':'Télécharger', 'dl.h2':'Récupérez le serveur. Amenez les jeux.',
     'dl.p':'Un seul téléchargement, sur le PC gamer uniquement. Tous les autres appareils ouvrent juste un navigateur.',
-    'dl.win':'Installeur guidé — Sunshine et accès Internet inclus dans l’assistant.',
+    'dl.win':'Installeur guidé — tout est configuré dans l’assistant, accès Internet compris.',
     'dl.mac':'Installeur Apple Silicon avec un assistant de configuration guidé.',
     'dl.mac.brew':'Homebrew', 'dl.mac.curl':'Terminal',
     'dl.linux':'.deb pour Debian et Ubuntu, .rpm pour Fedora et openSUSE, AppImage pour Arch, SteamOS et le reste.',
@@ -1130,7 +1127,7 @@
 
     'hero.kicker':'100% 网页 · 开源 · 自托管',
     'hero.h1':'你的游戏 PC。<br><span class="grad">串流到任意浏览器。</span>',
-    'hero.lead':'MoonlightWeb 将你的 <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> 游戏主机串流到任何带浏览器的设备<br>手机、平板、笔记本、电视。<strong>免费开源。客户端无需安装。只需一个网址。</strong>',
+    'hero.lead':'MoonlightWeb 将你的游戏主机串流到任何带浏览器的设备<br>手机、平板、笔记本、电视。<strong>免费开源。客户端无需安装。只需一个网址。</strong>',
     'hero.cta1':'免费下载', 'hero.cta2':'☕ 请我喝杯咖啡',
     'hud.k1':'Wi‑Fi 延迟', 'hud.k2':'分辨率', 'hud.k3':'帧率',
     'hud.k4':'编解码器', 'hud.k5':'客户端安装', 'hud.v3':'最高 240fps',
@@ -1151,7 +1148,7 @@
     'card5.h3':'完整输入，完整震动',
     'card5.p':'键盘、指针锁定鼠标、触摸触控板、虚拟键盘，以及带震动的 Xbox 和 PlayStation 手柄。',
     'card6.h3':'零配置发现',
-    'card6.p':'Sunshine 主机通过 mDNS 自动出现。PIN 码配对、多主机、持久会话。',
+    'card6.p':'你的游戏 PC 通过 mDNS 自动出现。PIN 码配对、多主机、持久会话。',
     'card7.h3':'天生点对点',
     'card7.p':'串流从你的 PC 直达浏览器——中间没有任何云。远程接入链接让你从任何地方连到自己的 PC，无需暴露任何 Web 端口。',
     'card8.h3':'从不掉线',
@@ -1162,7 +1159,7 @@
     'show.kicker':'实拍', 'show.h2':'亲眼见证',
     'show.p':'同一台主机，同样的游戏——覆盖家中每块屏幕（乃至更远）。',
     's1.kicker':'01 · 发现', 's1.h3':'你所有的主机。<br>一个网址。',
-    's1.p':'打开页面，你的 Sunshine 机器就已在此——在局域网中被发现、排序、记住。',
+    's1.p':'打开页面，你的游戏机器就已在此——在局域网中被发现、排序、记住。',
     's1.li1':'<strong>mDNS 自动发现</strong> — 无需查找 IP，主机自动出现',
     's1.li2':'<strong>PIN 码配对</strong> — 数秒内完成安全握手',
     's1.li3':'<strong>多主机</strong> — 台式机、客厅 PC、家庭服务器',
@@ -1192,21 +1189,19 @@
     's5.li3':'<strong>自托管</strong> — 你的游戏从不经过任何人的云',
     's5.cap':'管理页 — 一键启用互联网访问',
 
-    'how.kicker':'安装', 'how.h2':'60 秒即可开玩',
-    'how.p':'游戏 PC 上装一个小服务器。其他一切都用浏览器。',
-    'step1.h3':'运行服务器',
-    'step1.p':'在运行 Sunshine 的机器上。托盘中会出现一个图标——安装到此为止。',
-    'step2.h3':'打开浏览器',
-    'step2.p':'在 <code>https://localhost</code>、你的局域网 IP，或从任意设备访问你的专属链接。',
-    'step3.h3':'配对一次',
-    'step3.p':'你的主机已列出。输入 Sunshine 显示的 PIN 码——从此一劳永逸。',
-    'step4.h3':'按下开始',
-    'step4.p':'选择一款游戏或完整桌面。全屏、手柄在手，开玩。',
-    'how.under':'底层原理：一个 C++/Qt 后端内嵌 <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>，用 GameStream（RTSP/RTP/ENet）与 Sunshine 通信，并通过 WebRTC 将视频、音频和输入转发到浏览器——并在 UDP 不可用时自动回退到 TCP。解码在 WebCodecs 中完成，渲染在 WebGPU 中，音频在 AudioWorklet 中。',
+    'how.kicker':'开始使用', 'how.h2':'远程畅玩，从此变得简单',
+    'how.p':'三个步骤，一个安装程序，无需任何网络配置功课。',
+    'step1.h3':'安装',
+    'step1.p':'在游戏 PC 上运行一个安装程序。向导会配置好一切——包括互联网访问——并在托盘留下一个图标。你用来游玩的设备无需安装任何东西。',
+    'step2.h3':'配对',
+    'step2.p':'在任意设备上打开页面：你的 PC 已经列在那里。输入它显示的 PIN 码，仅需一次。该设备从此获得信任。',
+    'step3.h3':'远程开玩！',
+    'step3.p':'你的专属链接在任何地方都能用——酒店 Wi‑Fi、朋友家的沙发、4G。选择一款游戏或完整桌面，手柄在手，开玩。',
+    'how.under':'底层原理：一个 C++/Qt 后端内嵌 <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>，用 GameStream（RTSP/RTP/ENet）与主机通信，并通过 WebRTC 将视频、音频和输入转发到浏览器——并在 UDP 不可用时自动回退到 TCP。解码在 WebCodecs 中完成，渲染在 WebGPU 中，音频在 AudioWorklet 中。',
 
     'dl.kicker':'下载', 'dl.h2':'装好服务器，带上你的游戏。',
     'dl.p':'仅在游戏 PC 上下载一次。其他所有设备只需打开浏览器。',
-    'dl.win':'向导式安装程序——Sunshine 与互联网访问已包含在向导中。',
+    'dl.win':'向导式安装程序——一切都在向导中配置好，包括互联网访问。',
     'dl.mac':'Apple Silicon 安装程序，附带向导式配置。',
     'dl.mac.brew':'Homebrew', 'dl.mac.curl':'终端',
     'dl.linux':'Debian/Ubuntu 用 .deb，Fedora/openSUSE 用 .rpm，Arch、SteamOS 及其他用 AppImage。',
