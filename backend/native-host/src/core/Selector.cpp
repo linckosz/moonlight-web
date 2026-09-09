@@ -127,10 +127,18 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
 
     // The bench may name the encoder's GPU outright — that is how an encoder
     // that drives no display (an iGPU beside a discrete card) gets measured at
-    // all. A real session never sets this. The copy it costs is declared, and
-    // the GPU still has to be able to encode: forcing a GPU without an encoder
-    // would fail at init with a vendor error that says nothing.
-    if (config.encodeGpuId >= 0) {
+    // all. A real session never sets this. The copy it costs is declared.
+    //
+    // Whether the forced GPU still has to be able to encode depends on what the
+    // machine looks like: with some other GPU encoding, forcing an encoder-less
+    // one is a bench mistake worth refusing outright, because the session would
+    // otherwise die at init with a vendor error that says nothing. With NO GPU
+    // encoding, the fallback tier below is what will run, and "which adapter"
+    // is exactly the question the bench is asking — a Media Foundation
+    // transform is enumerated per adapter LUID, so this is the only way to tell
+    // one vendor's transform from another's on a multi-GPU machine.
+    const bool forcedEncodeGpu = config.encodeGpuId >= 0;
+    if (forcedEncodeGpu) {
         const GpuInfo* forced = nullptr;
         for (const GpuInfo& gpu : caps.gpus)
             if (gpu.id == config.encodeGpuId) forced = &gpu;
@@ -138,7 +146,8 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
             error = "GPU " + std::to_string(config.encodeGpuId) + " does not exist";
             return false;
         }
-        if (forced->encoders.empty() || forced->codecs.empty()) {
+        const bool anyGpuEncodes = firstEncodingGpu(caps) != nullptr;
+        if ((forced->encoders.empty() || forced->codecs.empty()) && anyGpuEncodes) {
             error = "GPU " + std::to_string(config.encodeGpuId) + " ('" + forced->name +
                     "') has no usable encoder";
             return false;
@@ -171,10 +180,12 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
             // always was.
             //
             // `out.gpu` deliberately stays the display's own adapter, null or
-            // not. Capture and colour conversion still run there — it is only
-            // the encoder that moved off it — and pretending otherwise would
-            // send capture to the wrong adapter on a multi-GPU machine whose
-            // cards happen to be encoder-less.
+            // not, UNLESS the bench named another one. Capture and colour
+            // conversion run on the display's adapter either way (NativeHost
+            // takes `captureAdapterHandle` from the display's GPU, never from
+            // this one), so moving `out.gpu` moves the encoder alone — which is
+            // what a cross-GPU copy is for, and what lets one machine's two
+            // vendors' fallback transforms be compared.
             fallback = bestFallback(caps);
             if (!fallback) {
                 error = "no GPU on this machine has a usable encoder, and no fallback "
@@ -183,7 +194,9 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
             }
             out.fallbackEncoder = true;
             out.cpuEncoder = !fallback->hardware;
-            out.crossGpuCopy = false;
+            // Kept only when the bench asked for it: on its own the fallback
+            // tier encodes where it captures and costs no copy at all.
+            out.crossGpuCopy = forcedEncodeGpu && out.crossGpuCopy;
         }
     }
 
