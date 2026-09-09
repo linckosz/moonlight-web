@@ -93,6 +93,70 @@ body.streaming-active::after {
     flex-shrink: 0;
 }
 
+/* ── The mark on the bar: which machine, which version ────────────────────
+   The stream hides the shell entirely, so for as long as a session lasts the
+   two questions the application's header answers at a glance stop being
+   answerable — and somebody with three machines is never more likely to ask
+   them than while looking at one of the three. The bar's left half was empty;
+   this is what fills it.
+
+   Information only, and it says so twice over: aria-hidden, because the shell
+   already announces both strings to a screen reader and a second copy would
+   just be read out again; and pointer-events:none, because every pixel of this
+   overlay that is not a control is a trackpad, and a caption is not a control.
+
+   Hidden below a tablet's width. It is optional by nature, and where the bar is
+   tight the buttons — which ARE the interface — take the room. margin-right
+   rather than a change of justify-content: with the mark gone, the buttons must
+   stay exactly where they were. */
+.stream-brand {
+    display: none;
+    align-items: baseline;
+    gap: 14px;
+    min-width: 0;
+    /* The fullscreen button is absolutely centred in this bar (.btn-stream-fs)
+       and takes no space in the flow, so growing until the quit button would
+       slide the mark straight under it. Stopping well short of the middle is
+       what keeps the two apart, whatever a machine is called. */
+    max-width: 40%;
+    margin-right: auto;
+    pointer-events: none;
+}
+@media (min-width: 768px) {
+    .stream-brand {
+        display: flex;
+    }
+}
+.stream-brand-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--text-1);
+    /* No text-shadow, unlike the shell's title: this one sits a few pixels from
+       moving video, and a glow there reads as a compression artefact. */
+    white-space: nowrap;
+}
+.stream-brand-host {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-2);
+    /* The elastic one — a machine may be called anything, the rest is fixed.
+       min-width:0 is what lets it shrink below its text at all: a flex item's
+       floor is its content otherwise, and the name would push the version out
+       of the bar instead of ellipsising. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.stream-brand-version {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
 /* Header controls revealed only once the stream is really on screen
    (see StreamView._revealStreamControls). Stop stays visible throughout — it
    is the only way out while the connection is still being negotiated. */

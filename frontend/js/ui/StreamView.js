@@ -189,6 +189,30 @@ const multiSeatNoticeShown = new Set();
 const multiSeatMuteKey = (uuid) => `mw_multiseat_input_notice:${uuid}`;
 
 /**
+ * What the application's own header says about this machine, read back out of
+ * it rather than fetched again.
+ *
+ * The stream covers the shell completely, so the two things the header answers
+ * at a glance — WHICH machine this is and which version it runs — stop being
+ * answerable for as long as a session lasts, which is exactly the time somebody
+ * with three machines is most likely to wonder. The stream's own bar has an
+ * empty left half; this is what goes in it.
+ *
+ * Read from the shell's DOM on purpose. These strings are already on screen
+ * (app.js writes both from /api/health), so this keeps one source of truth, no
+ * second request, and no way for the two bars to disagree. Empty is a perfectly
+ * good answer: the version has not arrived yet, or this browser was never told
+ * the machine's name — the bar then simply carries less.
+ */
+function shellIdentity() {
+    const read = (selector) => document.querySelector(selector)?.textContent?.trim() || '';
+    return {
+        name: read('.app-header #instance-menu .instance-name'),
+        version: read('.app-header .version'),
+    };
+}
+
+/**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
  * VideoFrame drawn to a Canvas2D via drawImage(VideoFrame) reads the NV12
  * UV plane from uninitialized GPU memory, producing a green image.
@@ -1476,8 +1500,22 @@ export class StreamView {
             // the promote can swap on an already-flowing surface.
             el.style.visibility = 'hidden';
         }
+        const shell = shellIdentity();
         el.innerHTML = `
             <div class="stream-header">
+                <div class="stream-brand" aria-hidden="true">
+                    <span class="stream-brand-name">MoonlightWeb</span>
+                    ${
+                        shell.name
+                            ? `<span class="stream-brand-host">${escapeHtml(shell.name)}</span>`
+                            : ''
+                    }
+                    ${
+                        shell.version
+                            ? `<span class="stream-brand-version">${escapeHtml(shell.version)}</span>`
+                            : ''
+                    }
+                </div>
                 ${
                     // Wolf's console is reached with Ctrl+Alt+Shift+W, which a
                     // browser can swallow before it ever leaves the page. A
