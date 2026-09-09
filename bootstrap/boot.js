@@ -159,6 +159,10 @@ function fail(message, hint) {
     document.body.dataset.state = 'failed';
     say('Not connected', message);
     if (ui.note) ui.note.textContent = hint || '';
+    // Every path into here ends on a page the person is left looking at, and on
+    // most of them the machine in the address is exactly the one that cannot
+    // help them. This is the moment the caption becomes a way out.
+    paintInstances(true);
 }
 
 /* ── The machine, and the way to another one ───────────────────────────────
@@ -168,13 +172,28 @@ function fail(message, hint) {
  * very likely has two or three machines, the other ones are switched on, and
  * nothing on screen offered a way to any of them. So the register the
  * application keeps — every machine this browser has actually reached, by name —
- * is read here and offered beside the product name, in every state, because the
- * state where it matters most is the one where nothing else works.
+ * is read here and offered beside the product name.
  *
- * The label is the machine the address names. "No server" when that identifier
- * matches nothing this browser knows, which is the honest answer to a link that
- * was mistyped, revoked, or belongs to somebody else — and to the bare address
- * opened in a browser that has never been anywhere.
+ * It has two modes, and which one is showing says something true about the page.
+ *
+ *   READING, while the connection is being made. A caption, nothing more: no
+ *      arrow, no hover, nothing that invites a click. Leaving here is not on
+ *      offer yet because arriving has not failed yet, and a control that says
+ *      "go somewhere else" over a progress bar reads as "this is not working" a
+ *      second and a half before anyone knows whether it is. The label is the
+ *      machine the address names, and NOTHING AT ALL when this browser has
+ *      never met it — an empty caption is the honest one, since at this point
+ *      the identifier is a perfectly good address that simply has not answered
+ *      yet. Saying "No server" over a working connection is a lie with a timer
+ *      on it.
+ *
+ *   CHOOSING, once it has failed. Now leaving is the only useful thing left, so
+ *      the caption becomes a menu — provided there is somewhere to go, which is
+ *      exactly `others.length` and covers both shapes of the rule: a named
+ *      machine needs a second one to be worth a menu, an unknown identifier
+ *      needs only one. "No server" belongs here and only here: on a page that
+ *      has already said it could not connect, it is the honest answer to a link
+ *      mistyped, revoked, or belonging to somebody else.
  *
  * Read-only, always: nothing here writes to that register. Only the application
  * can, because only the application ever gets close enough to a machine to be
@@ -214,23 +233,35 @@ const ICON_MONITOR = () =>
 const ICON_CARET = () => makeIcon(['M6 9l6 6 6-6']);
 
 let closeMenu = null;
+/* The machine this page is for, so that a repaint after the outcome is known
+   does not have to be handed it again from wherever the failure happened. */
+let paintedHostId = null;
 
-function paintInstances(hostId) {
+/**
+ * @param {boolean} choosing  false while connecting (a caption), true once that
+ *                            has failed (a menu, if there is anywhere to go).
+ */
+function paintInstances(choosing) {
     const mount = ui.instances;
     if (!mount) return;
 
     const instances = knownInstances();
-    const current = hostId ? instances.find((e) => e.id === hostId) : null;
-    // An identifier this browser has never reached names nothing it can show.
-    const label = current ? current.name : 'No server';
-    const others = instances.filter((e) => e.id !== hostId);
+    const current = paintedHostId ? instances.find((e) => e.id === paintedHostId) : null;
+    const others = instances.filter((e) => e.id !== paintedHostId);
 
     if (closeMenu) closeMenu();
     closeMenu = null;
     mount.replaceChildren();
-    mount.hidden = false;
 
-    if (others.length === 0) {
+    if (!choosing || others.length === 0) {
+        // An identifier this browser has never reached names nothing it can
+        // show — and only a page that has given up may say so out loud.
+        const label = current ? current.name : choosing ? 'No server' : '';
+        if (!label) {
+            mount.hidden = true;
+            return;
+        }
+        mount.hidden = false;
         mount.className = 'instance-menu';
         const span = setText(document.createElement('span'), label);
         span.className = 'instance-name';
@@ -238,6 +269,9 @@ function paintInstances(hostId) {
         mount.appendChild(span);
         return;
     }
+
+    const label = current ? current.name : 'No server';
+    mount.hidden = false;
 
     mount.className = 'instance-menu has-menu';
 
@@ -444,11 +478,11 @@ async function fetchShell(tunnel, hostId) {
 async function main() {
     const hostId = hostIdFromLocation();
 
-    // Before anything is attempted, and regardless of how it goes. Every path
-    // out of this function ends on a page the person is left looking at, and on
-    // most of them the machine in the address is exactly the one that cannot
-    // help them.
-    paintInstances(hostId);
+    // The caption first — the name of the machine being called, when this
+    // browser knows it. fail() is what turns it into a way out; nothing else
+    // has to, because every ending that is not a failure is a handover.
+    paintedHostId = hostId;
+    paintInstances(false);
 
     if (!hostId) {
         fail(
