@@ -190,6 +190,44 @@ python scripts\bench\report.py      # -> bench-out\report.html
 machinery on a machine somebody is sitting in front of, but the numbers are not
 comparable with a real campaign.
 
+### What the report may say about the fleet
+
+The report is local — `bench-out/` is ignored — but "local" is a policy, not a
+property. A report is one self-contained HTML file, which is exactly the shape of
+thing that ends up attached to an issue or pasted into a release note. So it is
+**scrubbed on the way out**, by default:
+
+| Removed | Kept |
+|---|---|
+| addresses (v4, v6, MAC) | `127.0.0.1` — half the advice is unreadable without it |
+| machine names, labels, SSH aliases | the OS, the backends, the encoder, the GPU |
+| the account name, home directories | the rest of the path |
+| rendezvous host and id, UUIDs, any hex run of 32+ | the 16-character **binary digest** — it identifies a build, which is the opposite of confidential |
+
+The fleet is renumbered `host-1 … host-N` in the order of `hosts.json`, plus
+`this machine`: decipherable by whoever owns the fleet, and by nobody else. A
+banner at the top of the report says which of the two versions it is.
+
+`python scripts\bench\report.py --no-redact` writes the raw one, for reading
+alone at one's desk. It carries a red banner and should not leave the machine.
+
+The scrubbing is applied in `report.py` at the single escaper every string goes
+through, not at each interpolation site. That is deliberate: a rule that has to
+be remembered forty times is forgotten on the forty-first, and the string that
+leaks is always the one nobody thought carried an address — a driver's error
+message, a path in the provenance card, a note written by `discover.ps1`.
+
+### Where the fleet's addresses live
+
+`hosts.json` is committed and says what each machine **is**. `hosts.local.json`
+sits next to it, is **git-ignored**, and says how to **reach** it — address,
+account, password. `discover.ps1` merges the second over the first on the `id`
+key; a machine absent from it is still declared, still appears in the report, and
+is reported as "declared but not reachable from here".
+
+Copy `hosts.local.example.json` to start. Prefer an `sshAlias` pointing at
+`~/.ssh/config` over a password in a file, wherever the machine allows it.
+
 ## 9. The playbook — what each failure means
 
 ### Reaching the fleet
@@ -272,7 +310,8 @@ comparable with a real campaign.
 |---|---|
 | Harness | `scripts/bench/` (committed) |
 | Fleet table | `scripts/bench/hosts.json` — hints only, `discover.ps1` probes everything |
-| Raw results | `scripts/bench/results/` (ignored) |
+| Addresses and accounts | `scripts/bench/hosts.local.json` (**ignored**), shape in `hosts.local.example.json` |
+| Raw results | `scripts/bench/results/` (ignored) — unscrubbed, unlike the report |
 | Report | `bench-out/report.html` (ignored) |
 | Reference clip | `~/.mw-bench/content/cod.webm` — **outside the repository**, 263 MB |
 | Past verdicts | `docs/bench-native-host.md` |

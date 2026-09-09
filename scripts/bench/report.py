@@ -8,8 +8,15 @@ with no external resource of any kind: the charts are inline SVG computed here,
 so the report opens on a machine with no network, which is what a bench report
 has to do.
 
-The report is LOCAL. It is never committed (bench-out/ is in .gitignore): it
-names machines, addresses and the state of somebody's desk on one afternoon.
+The report is LOCAL — bench-out/ is in .gitignore — but "local" is a policy, not
+a property: a report is a single self-contained file, which is exactly the shape
+of thing that gets attached to an issue, dropped in a chat or pasted into a
+release note. So it is also SCRUBBED, by default and on the way out (see the
+Redactor below): no address, no machine name, no account name, no home
+directory, no rendezvous id, no token. What is left is what a bench report is
+actually about — a codec, an encoder, a resolution and a number of milliseconds.
+
+  --no-redact  writes the raw thing instead, for reading alone at one's desk.
 
 Its point is not the numbers, it is the last section. Every anomaly the rules
 below can recognise is printed with the evidence that triggered it and with a
@@ -21,8 +28,120 @@ import csv
 import html
 import json
 import os
+import re
+import socket
 import statistics
 from datetime import datetime
+
+# ── Scrubbing ───────────────────────────────────────────────────────────────
+#
+# Every string on its way into the HTML goes through Redactor.text(), and the
+# only escaper this module exposes (esc) calls it. That is deliberate: a rule
+# that has to be remembered at each of forty interpolation sites is a rule that
+# will be forgotten at the forty-first, and the one that leaks is always the one
+# nobody thought carried an address — a driver's error message, the path in a
+# provenance card, a note written by discover.ps1.
+#
+# Order matters below. A MAC address is read before an IPv6 one (they overlap),
+# and home directories are rewritten before the account name is hunted on its
+# own, so that C:\Users\someone\... does not become C:\Users\<user>\... twice.
+_LOOPBACK = {"127.0.0.1", "0.0.0.0", "255.255.255.255", "::1"}
+
+_RULES = [
+    # Home directories, both spellings — the path is the point, the account is not.
+    (re.compile(r"(?i)([A-Z]:[\\/]Users[\\/])[^\\/\s\"'<>|]+"), r"\1<user>"),
+    (re.compile(r"(/(?:home|Users)/)[^/\s\"'<>|]+"), r"\1<user>"),
+    # Hardware and network addresses. MAC first: it also matches as IPv6.
+    (re.compile(r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b"), "<mac>"),
+    # Two IPv6 shapes. The compressed one is matched on its "::", which no clock
+    # or version string carries; the long one needs four colon-separated groups,
+    # which keeps 12:34:56 a timestamp.
+    (re.compile(r"(?<![\w:.])(?:[0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{0,4}::"
+                r"(?:[0-9a-fA-F]{1,4}:?)*[0-9a-fA-F]{0,4}(?![\w:.])"), "<ipv6>"),
+    (re.compile(r"(?<![\w:.])(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}(?![\w:.])"), "<ipv6>"),
+    # Rendezvous: the host in the URL and the Crockford-32 id of 26 characters.
+    (re.compile(r"\b[\w-]+\.moonlightweb\.top\b"), "<rendezvous-host>"),
+    (re.compile(r"\b[0-9A-HJKMNP-TV-Z]{26}\b"), "<rendezvous-id>"),
+    # Anything long enough to be a key, a token or a pairing secret. The cut is
+    # at 32 so the 16-character binary digest of the provenance card survives:
+    # that one identifies a build, which is the opposite of confidential.
+    (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "<uuid>"),
+    (re.compile(r"\b[0-9a-fA-F]{32,}\b"), "<token>"),
+]
+
+_IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?\b")
+
+
+def _ipv4_sub(m):
+    """Loopback and the wildcard say nothing about anybody's network, and
+    blanking them would make half the diagnostic advice unreadable."""
+    text = m.group(0)
+    return text if text.split("/")[0] in _LOOPBACK else "<ip>"
+
+
+class Redactor:
+    """Rewrites the identifying parts of a string. Built once from the
+    inventory, because the machine names are only knowable from it."""
+
+    def __init__(self, enabled=True, inventory=None):
+        self.enabled = enabled
+        self.aliases = {}
+        self._names = []
+
+        # The fleet is renamed by position, which keeps the report readable
+        # without naming anything: the order is the order of hosts.json, so the
+        # person who owns the fleet can still map it and nobody else can.
+        machines = (inventory or {}).get("machines") or []
+        for i, m in enumerate(machines, 1):
+            alias = "this machine" if m.get("kind") == "local" else f"host-{i}"
+            self.aliases[str(m.get("id"))] = alias
+            for field in ("id", "label", "sshAlias"):
+                value = m.get(field)
+                if isinstance(value, str) and len(value) >= 3:
+                    # A label is a sentence: only its head is the name.
+                    head = re.split(r"\s+[—-]\s+", value)[0].strip()
+                    for candidate in {value, head}:
+                        if len(candidate) >= 3:
+                            self._names.append((candidate, alias))
+
+        # This machine's own name, and the account running the campaign.
+        for name in (socket.gethostname(), socket.gethostname().split(".")[0]):
+            if name:
+                self._names.append((name, "<host>"))
+        for var in ("USERNAME", "USER", "LOGNAME"):
+            who = os.environ.get(var)
+            if who and len(who) >= 3:
+                self._names.append((who, "<user>"))
+
+        # Longest first, so "bench-mac-bench" is not half-replaced by "bench-mac".
+        self._names.sort(key=lambda pair: -len(pair[0]))
+        self._names = [(re.compile(re.escape(n), re.IGNORECASE), a)
+                       for n, a in self._names]
+
+    def alias(self, machine_id):
+        return self.aliases.get(str(machine_id), str(machine_id)) if self.enabled \
+            else str(machine_id)
+
+    def text(self, value):
+        s = str(value)
+        if not self.enabled or not s:
+            return s
+        for pattern, replacement in _RULES:
+            s = pattern.sub(replacement, s)
+        s = _IPV4.sub(_ipv4_sub, s)
+        for pattern, alias in self._names:
+            s = pattern.sub(alias, s)
+        return s
+
+
+# Set by render(); the module-level escaper reads it. Nothing reaches the HTML
+# without passing here.
+REDACTOR = Redactor(enabled=False)
+
+
+def esc(value):
+    return html.escape(REDACTOR.text(value))
 
 # ── Thresholds ──────────────────────────────────────────────────────────────
 #
@@ -172,7 +291,7 @@ def bar_chart(series, unit="ms", width=760, bar_h=26, threshold=None):
         y = 24 + i * (bar_h + 8)
         w = plot * (value / peak)
         out.append(f'<text x="{left - 10}" y="{y + bar_h * 0.7:.0f}" class="lbl" '
-                   f'text-anchor="end">{html.escape(label)}</text>')
+                   f'text-anchor="end">{esc(label)}</text>')
         out.append(f'<rect x="{left}" y="{y}" width="{w:.1f}" height="{bar_h}" '
                    f'rx="3" class="bar bar--{flag}"/>')
         if hi:
@@ -411,6 +530,8 @@ th { color:var(--ink2); font-weight:600 }
   color:var(--ink2); background:var(--bg); padding:8px 10px; border-radius:6px; margin:8px 0;
   overflow-x:auto; white-space:pre-wrap }
 .anom .own { font-size:.78rem; color:var(--ink2) }
+.privacy { font-size:.84rem; color:var(--ink2); border-left:3px solid var(--green) }
+.privacy--raw { border-left-color:var(--red) }
 .empty { color:var(--ink2); font-style:italic; font-size:.86rem }
 .note { color:var(--ink2); font-size:.8rem }
 code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.85em }
@@ -418,14 +539,29 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.85em 
 
 
 def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provenance,
-           out_path):
-    esc = html.escape
+           out_path, redact=True):
+    global REDACTOR
+    REDACTOR = Redactor(enabled=redact, inventory=inventory)
     disp = matrix.get("display") or {}
     parts = [f"<style>{CSS}</style>", '<div class="wrap">']
 
     parts.append("<h1>MoonlightWeb — bench campaign</h1>")
     parts.append(f'<p class="sub">{esc(datetime.now().strftime("%d/%m/%Y %H:%M"))} · '
                  f'commit <code>{esc(str(inventory.get("commit") or "?"))}</code></p>')
+
+    # Said up front, because the reader has to know which of the two files this
+    # is before deciding what may be done with it.
+    if redact:
+        parts.append('<div class="card privacy"><b>Scrubbed for sharing.</b> Addresses, '
+                     'machine and account names, home directories, rendezvous ids and '
+                     'tokens are removed. The fleet is numbered in the order of '
+                     '<code>hosts.json</code>, which is decipherable by whoever owns the '
+                     'fleet and by nobody else.</div>')
+    else:
+        parts.append('<div class="card privacy privacy--raw"><b>Raw report — do not share.</b> '
+                     'It carries addresses, machine names and paths. Re-run '
+                     '<code>report.py</code> without <code>--no-redact</code> to get a '
+                     'version fit to attach to anything.</div>')
 
     # Which binary produced these numbers, said before anything else. A campaign
     # of record runs on the CI artifact installed the way a user installs it; a
@@ -463,7 +599,8 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
     for m in inventory.get("machines", []):
         flag = GREEN if m.get("reachable") else BLACK
         parts.append(
-            f'<tr><td><span class="dot dot--{flag}"></span>{esc(str(m.get("id")))}</td>'
+            f'<tr><td><span class="dot dot--{flag}"></span>'
+            f'{esc(REDACTOR.alias(m.get("id")))}</td>'
             f'<td>{"yes" if m.get("reachable") else "no"}</td>'
             f'<td>{esc(str(m.get("os")))}</td>'
             f'<td>{esc(", ".join(m.get("backends") or []) or "—")}</td>'
@@ -571,8 +708,10 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
                      f'rule <code>{esc(a["kind"])}</code></p>')
         parts.append("</div>")
 
-    parts.append('<p class="note" style="margin-top:40px">Local report — never committed. '
-                 'It names machines, addresses and the state of one desk on one afternoon.</p>')
+    parts.append('<p class="note" style="margin-top:40px">Bench report — never committed '
+                 '(<code>bench-out/</code> is ignored). It describes the state of one fleet '
+                 'on one afternoon; the scrubbing above is what makes it safe to hand to '
+                 'somebody, and it is worth a read before doing so.</p>')
     parts.append("</div>")
 
     doc = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -590,12 +729,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=os.path.join(here, "results"))
     ap.add_argument("--out", default=os.path.join(here, "..", "..", "bench-out", "report.html"))
+    ap.add_argument("--no-redact", dest="redact", action="store_false",
+                    help="keep addresses, machine names and paths (for reading alone)")
     ns = ap.parse_args()
 
     inventory, matrix, passes, anomalies, drift, perf, prov = analyse(ns.results)
-    path = render(inventory, matrix, passes, anomalies, drift, perf, prov, ns.out)
+    path = render(inventory, matrix, passes, anomalies, drift, perf, prov, ns.out,
+                  redact=ns.redact)
     print(f"report written to {os.path.abspath(path)}")
-    print(f"  {len(passes)} passes, {len(anomalies)} anomalies")
+    print(f"  {len(passes)} passes, {len(anomalies)} anomalies, "
+          f"{'scrubbed' if ns.redact else 'RAW — do not share'}")
 
 
 if __name__ == "__main__":
