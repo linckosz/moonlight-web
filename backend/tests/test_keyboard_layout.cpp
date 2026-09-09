@@ -82,28 +82,43 @@ void run_keyboard_layout_tests()
         const KeyPlan plan = resolveKey(key(kVkQ, "KeyQ", "A"), KeyboardMode::SunshineWindows);
         CHECK_EQ(plan.keyCode, static_cast<short>(kVkA));
     }
+
+    // ── The rule that keeps games working: never trade a key for text ────────
+    //
+    // A digit is not a letter, and text would type it exactly — but text has no
+    // key state, and the divergence above is measured against the US layout,
+    // not against the HOST's. On a host whose layout already matches the
+    // client's, the position was ALREADY producing "&": correcting it would
+    // trade a working key for a stateless one and stop a shooter's weapon slots
+    // answering, for a character that was never wrong. So it stays positional.
     {
-        // A digit is NOT a letter: which shift state reaches "&" differs from
-        // one layout to the next, so its VK says nothing about the character
-        // and text is the only exact channel left.
         const KeyPlan plan = resolveKey(key(kVk1, "Digit1", "&"), KeyboardMode::SunshineWindows);
-        CHECK(plan.isText());
-        CHECK_EQ(plan.text.toStdString(), std::string("&"));
+        CHECK(!plan.isText());
+        CHECK_EQ(plan.keyCode, static_cast<short>(kVk1));
+        CHECK_EQ(plan.flags, static_cast<char>(0));
     }
     {
-        // Same for an accented letter: no US key carries it at all.
+        // An accented letter is not a letter either as far as the VK path goes:
+        // no US virtual key carries it. Positional, for the same reason.
         const KeyPlan plan = resolveKey(key(kVk1, "Digit2", "é"), KeyboardMode::SunshineWindows);
-        CHECK(plan.isText());
+        CHECK(!plan.isText());
     }
 
     // ── Sunshine on macOS ────────────────────────────────────────────────────
     //
-    // It ignores the non-normalized flag outright, so even a letter has to be
-    // typed as text.
+    // It ignores the non-normalized flag outright, so a letter cannot be both
+    // exact and a real key: text is the only exact channel, and it is taken —
+    // a macOS GameStream host is a machine people type on.
     {
         const KeyPlan plan = resolveKey(key(kVkQ, "KeyQ", "a"), KeyboardMode::SunshineMacos);
         CHECK(plan.isText());
         CHECK_EQ(plan.text.toStdString(), std::string("a"));
+    }
+    {
+        // Everything else stays positional there too.
+        const KeyPlan plan = resolveKey(key(kVk1, "Digit1", "&"), KeyboardMode::SunshineMacos);
+        CHECK(!plan.isText());
+        CHECK_EQ(plan.keyCode, static_cast<short>(kVk1));
     }
 
     // ── The native host ──────────────────────────────────────────────────────
@@ -163,18 +178,21 @@ void run_keyboard_layout_tests()
         QJsonObject beat;
         QJsonArray keys;
         keys.append(key(kVkQ, "KeyQ", "a"));   // → a real VK on Windows
-        keys.append(key(kVk1, "Digit1", "&")); // → text, must not be reported
+        keys.append(key(kVk1, "Digit1", "&")); // → positional on Windows
         keys.append(key(kVkQ, "KeyE"));        // → agreeing key, untouched
         beat["keys"] = keys;
 
+        // Nothing resolves to text on a Windows host, so the whole set is
+        // reported — a held movement key still gets re-asserted after a stall.
         const QVector<IMediaEngine::HeldKey> held =
             InputMsg::parseHeldKeys(beat, KeyboardMode::SunshineWindows);
-        CHECK_EQ(held.size(), 2);
+        CHECK_EQ(held.size(), 3);
         CHECK_EQ(held[0].keyCode, static_cast<short>(kVkA));
         CHECK_EQ(held[0].flags, static_cast<char>(SS_KBE_FLAG_NON_NORMALIZED));
-        CHECK_EQ(held[1].keyCode, static_cast<short>(kVkQ));
+        CHECK_EQ(held[1].keyCode, static_cast<short>(kVk1));
+        CHECK_EQ(held[2].keyCode, static_cast<short>(kVkQ));
 
-        // On the native host every character is a character, so only the
+        // On the native host every character IS a character, so only the
         // agreeing key survives the filter.
         const QVector<IMediaEngine::HeldKey> nativeHeld =
             InputMsg::parseHeldKeys(beat, KeyboardMode::Native);

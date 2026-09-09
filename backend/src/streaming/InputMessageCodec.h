@@ -67,7 +67,14 @@ inline void filterHeldState(const Policy& p, QVector<IMediaEngine::HeldKey>& key
 //    next, so their VK says nothing about the character.
 //  - SunshineMacos — maps the VK through a fixed table and ignores the flag
 //    entirely (it is #ifdef _WIN32 — virtualhid_input.cpp:314), so text
-//    injection is the only exact path.
+//    injection is the only exact path. Letters only, same as above.
+//
+// The rule the two Sunshine modes share: NEVER trade a real key press for text.
+// Text has no key state, and a divergence is measured against the US layout
+// rather than the host's — so on a host that already matched the client, the
+// position was producing the right character and text would only take the key
+// away. Correcting what can be corrected for free, and leaving the rest exactly
+// as it was, is what makes this change cost nothing to anyone.
 
 /// Name for the log line the session writes once per stream.
 inline const char* keyboardModeName(KeyboardMode mode)
@@ -75,7 +82,7 @@ inline const char* keyboardModeName(KeyboardMode mode)
     switch (mode) {
     case KeyboardMode::Native: return "native host, resolved in the host's own layout";
     case KeyboardMode::SunshineWindows: return "Sunshine/Windows, letters as non-normalized VKs";
-    case KeyboardMode::SunshineMacos: return "Sunshine/macOS, characters as text";
+    case KeyboardMode::SunshineMacos: return "Sunshine/macOS, letters as text";
     case KeyboardMode::Positional: break;
     }
     return "off — key positions, host layout decides";
@@ -143,16 +150,30 @@ inline KeyPlan resolveKey(const QJsonObject& msg, KeyboardMode mode)
         plan.text = ch;
         break;
     case KeyboardMode::SunshineWindows:
+        // Letters, and only letters. Their VK is exact here AND stays a real key
+        // press, so the correction costs nothing.
+        //
+        // A digit or a punctuation mark is left POSITIONAL on purpose, even
+        // though text would type it exactly. Text carries no key state, and the
+        // divergence that got us here is measured against the US layout, not
+        // against the HOST's — which we cannot know. So on a host whose layout
+        // already matches the client's, the position was ALREADY producing the
+        // right character, and swapping it for text would trade a working key
+        // for a stateless one: weapon slots 1-5 in a shooter stop answering,
+        // for a character that was never wrong. Being mistyped on a mismatched
+        // host is the pre-existing behaviour; breaking a key that worked is not.
         if (const short vk = letterVk(ch)) {
-            // A real key press that still types the right letter: strictly
-            // better than injecting text, which would have no key state.
             plan.keyCode = vk;
             plan.flags = SS_KBE_FLAG_NON_NORMALIZED;
-        } else {
-            plan.text = ch;
         }
         break;
-    case KeyboardMode::SunshineMacos: plan.text = ch; break;
+    case KeyboardMode::SunshineMacos:
+        // macOS ignores the non-normalized flag, so a letter cannot be both
+        // exact and a real key here — text is the only exact channel. Taken for
+        // letters, because a macOS GameStream host is a machine people type on;
+        // refused for the rest, for the reason spelled out just above.
+        if (letterVk(ch)) plan.text = ch;
+        break;
     case KeyboardMode::Positional: break; // handled above
     }
     return plan;
