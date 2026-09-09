@@ -5075,17 +5075,35 @@ export class StreamView {
                 }
                 rows.push(legRow(label, value));
             }
+            // WHICH machine produced everything under this heading. First,
+            // above the encoder, because it is the outermost fact: every number
+            // below belongs to one PC, and a report that names the milliseconds
+            // without naming the machine is a report about nobody. Read from the
+            // shell's header for the same reason the stream's own bar is — one
+            // source, and it cannot disagree with what the user just read.
+            {
+                const machine = shellIdentity().name;
+                if (machine) {
+                    rows.push(legRow(escapeHtml(t('stream.statMachine')), escapeHtml(machine)));
+                }
+            }
             // Which encoder produced these stages. Named here rather than in
             // the compact block above because it explains the numbers under it
-            // and never changes mid-session. Only the native host knows it.
-            if (this._nativeEncoderLabel) {
-                rows.push(
-                    legRow(
-                        escapeHtml(t('stream.statEncoder')),
-                        escapeHtml(this._nativeEncoderLabel),
-                    ),
-                );
-            }
+            // and never changes mid-session.
+            //
+            // ALWAYS a row, even with nothing to put in it. Only the native host
+            // can name its encoder — it is the only one running on this very
+            // machine — so on every other host this value is empty, and the row
+            // used to vanish silently. A missing row reads as "the question does
+            // not apply here", when the truth is that it applies exactly as much
+            // and nobody answered it. Saying so is the difference between a user
+            // reporting "encoder: not reported" and a user reporting nothing.
+            rows.push(
+                legRow(
+                    escapeHtml(t('stream.statEncoder')),
+                    escapeHtml(this._nativeEncoderLabel || t('stream.statEncoderUnknown')),
+                ),
+            );
             // The host's stages, shown but not added: the total leg above
             // already holds their sum. These say WHICH stage moved.
             if (hostStages) {
