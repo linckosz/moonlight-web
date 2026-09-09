@@ -158,8 +158,18 @@ foreach ($pass in $passes) {
     Write-Host "=== $($pass.id) ($($pass.factor)) ==="
 
     Stop-Stream
-    $settings = $pass.settings | ConvertTo-Json -Compress
-    Cdp settings $settings | Out-Null
+    # Through a FILE, never as an inline argument: PowerShell strips the double
+    # quotes before python sees them, cdp.py's Object.assign then throws, the
+    # page reloads with the settings it already had, and the pass measures the
+    # reference while claiming to measure a factor. Twelve passes came back as
+    # 1080p HEVC that way — the log line "Per-request streaming settings" is
+    # what gives it away, so it is checked below.
+    $settingsPath = Join-Path $ResultsDir "settings-$($pass.id).json"
+    ($pass.settings | ConvertTo-Json -Compress) | Set-Content -Path $settingsPath -Encoding UTF8
+    $applied = Cdp settingsfile $settingsPath
+    if ($applied -notmatch [regex]::Escape($pass.settings.video_codec)) {
+        Write-Warning "  settings did not take: $($applied.Trim())"
+    }
     Start-Sleep -Seconds 2
 
     # Twice if the first only hovered, then the self-stream confirmation.

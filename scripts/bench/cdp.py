@@ -4,6 +4,8 @@
 
     settings '{"video_codec":"hevc","stream_height":1080,...}'
                           patch localStorage['mw-streaming-settings'] and reload
+    settingsfile <path>   the same, JSON read from a file — use this from
+                          PowerShell, which eats the quotes of an inline arg
     launch "Display 1"    click the tile whose text is that, by real coordinates
     fullscreen            click the app's Fullscreen button
     exitfs                Ctrl+Alt+Shift+X
@@ -135,6 +137,17 @@ def main():
 
     c = Cdp(ns.port)
     cmd, args = ns.command, ns.args
+
+    if cmd == "settingsfile":
+        # Same as `settings`, with the JSON read from a file. Windows PowerShell
+        # eats the double quotes of an inline argument before python ever sees
+        # them, so {"video_codec":"hevc"} arrives as {video_codec:hevc}: the
+        # Object.assign below then throws, the page reloads with the PREVIOUS
+        # settings, and every pass of a matrix silently measures the reference.
+        # Twelve passes came back as 1080p HEVC that way on 10/09/2026.
+        with open(args[0], encoding="utf-8") as f:
+            args = [f.read().strip()] + args[1:]
+        cmd = "settings"
 
     if cmd == "settings":
         # The client reads its settings from localStorage at launch, so the
