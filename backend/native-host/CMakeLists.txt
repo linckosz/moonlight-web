@@ -125,6 +125,14 @@ elseif(APPLE)
         "-framework Metal"
         "-framework IOKit"
         "-framework IOSurface"
+        # Carbon, for the Text Input Sources API only: CgInput.mm asks the
+        # current keyboard layout what character a virtual key produces
+        # (TISCopyCurrentKeyboardLayoutInputSource, kTISPropertyUnicodeKeyLayoutData
+        # and UCKeyTranslate), which is the sole way to type into a host whose
+        # layout is not the viewer's. It used to link without being named, by
+        # way of ApplicationServices re-exporting HIToolbox; recent SDKs dropped
+        # that re-export and the link then fails on those symbols alone.
+        "-framework Carbon"
         "-framework Security")
     # PUBLIC so the tests can tell whether the backend exists.
     target_compile_definitions(mw-native-host PUBLIC MW_NATIVE_MACOS=1)
