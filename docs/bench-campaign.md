@@ -244,9 +244,9 @@ wherever the machine allows it.
   binary. A block beats any port rule.
   `Get-NetFirewallRule -Direction Inbound -Enabled True -Action Block`, remove
   them, add a `-Program` rule.
-- **The address answers but the machine behaves wrongly.** Two routers hand out
-  `10.0.0.0/24` here (gateways `.254` and `.1`). Compare gateways; a Windows
-  target replying `TTL=64` is a different device.
+- **The address answers but the machine behaves wrongly.** Two routers handing
+  out the same private range is enough to make one address mean two machines.
+  Compare gateways; a Windows target replying `TTL=64` is a different device.
 - **`--native-probe` says "no interactive desktop session".** SSH lands in
   session 0. Anything touching the display goes through a scheduled task with
   `-LogonType Interactive`.

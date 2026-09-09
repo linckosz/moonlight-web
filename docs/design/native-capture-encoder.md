@@ -1736,7 +1736,7 @@ divergence, pour qu'une seconde, elle, échoue.
 ### 19.3 ⚠️ La route de capture : KMS d'abord, portail en repli
 
 Écrit le 04/09 quand aucune machine Linux n'existait ; **caduc le soir même** :
-Bruno a redémarré l'bench-mini sous Ubuntu 22.04 avec sa Radeon 780M, et a tranché
+Bruno a redémarré le bench-mini sous Ubuntu 22.04 avec sa Radeon 780M, et a tranché
 « les deux, KMS puis portail ». Ce qui suit est mesuré sur cette machine.
 
 Le plan disait PipeWire. La reconnaissance a pesé autrement : GNOME en
@@ -1905,7 +1905,7 @@ appels » n'est pas décoratif : il a attrapé, à la première exécution,
 verrous de l'hôte reviendrait à basculer Verr. Maj. et Verr. Num. sur un vrai
 bureau depuis un état que le client croit connaître.
 
-Vérifié sur l'bench-mini (GNOME Wayland, `fr+azerty`) : `a` → touche 16 (le Q d'un
+Vérifié sur le bench-mini (GNOME Wayland, `fr+azerty`) : `a` → touche 16 (le Q d'un
 clavier US), `q` → 30, `1` → touche 2 + Shift (les chiffres sont en niveau haut
 sur AZERTY), `@` → touche 0 + AltGr, `é` en direct sur la touche 2, `ê` = touche
 morte 26 **puis** touche 18. `test_xkb_text_map` tient les deux moitiés : le
@@ -2012,7 +2012,7 @@ La VUI porte `bitstream_restriction` comme sur H.264 : c'est la leçon B8 (200 m
 de latence de décodage sur NVENC faute de ce drapeau) et elle vaut pour tout codec
 remis au décodeur matériel d'un navigateur.
 
-**Mesuré sur l'bench-mini** (Radeon 780M, Mesa 23.2.1, libva 1.14) : test de session
+**Mesuré sur le bench-mini** (Radeon 780M, Mesa 23.2.1, libva 1.14) : test de session
 84 images / 2 keyframes / première image clé 26 Ko, relues par `ffprobe` en
 `hevc / Main / 1920×1080 / 84 images` ; **flux navigateur réel** depuis
 Chrome/Windows, « Negotiated video codec: hevc », décodage matériel, 1920×1080 à
@@ -2226,7 +2226,7 @@ références, et `SessionInfo` le dit au client comme avant.
 
 L'image était prouvée deux fois (VM Debian par la chaîne CPU, bench-mini par
 VA-API) ; **le son ne l'avait jamais été dans un navigateur**, seulement en test
-unitaire par libopus. Relevé le 08/09 sur l'bench-mini, tonalité 440 Hz d'amplitude
+unitaire par libopus. Relevé le 08/09 sur le bench-mini, tonalité 440 Hz d'amplitude
 0,25 jouée dans le sink par défaut, mesure par `AnalyserNode` sur le `MediaStream`
 que la page joue réellement :
 
@@ -2271,7 +2271,7 @@ propre thread, quand le graphe tourne : c'est une API *push* comme le tap de
 ScreenCaptureKit, donc la cadence vit dans `PacedOpusSink` (§20.8), et libopus se
 construit maintenant sous Linux aussi.
 
-**Mesuré sur l'bench-mini** (Ubuntu 22.04 basculé sur `pipewire-pulse` 0.3.48 pour
+**Mesuré sur le bench-mini** (Ubuntu 22.04 basculé sur `pipewire-pulse` 0.3.48 pour
 l'occasion, sink nul `mw_null` en sortie par défaut, une sinusoïde 440 Hz à −12 dBFS
 en boucle dedans ; `test_linux_session`, 2,8 s) : format négocié **F32 entrelacé,
 2 canaux, 48 000 Hz** ; **128 échantillons par tampon** (2,7 ms — le graphe a donné
@@ -2329,7 +2329,7 @@ binaire, comme Sunshine ». Un binaire qui *gagne* une capacité à l'exec est l
 par glibc en **mode sécurisé** (`AT_SECURE`), et dans ce mode `$ORIGIN` n'est
 développé que si le binaire vit dans un répertoire système (`/usr/lib`…). Notre
 `MoonlightWeb` vit sous `/opt/moonlightweb/bin` et trouve son Qt embarqué par
-`RUNPATH=$ORIGIN/../lib`, réécrit par linuxdeploy. Reproduit sur l'bench-mini avec
+`RUNPATH=$ORIGIN/../lib`, réécrit par linuxdeploy. Reproduit sur le bench-mini avec
 un programme de trois lignes et sa bibliothèque à côté :
 
 ```
@@ -2768,7 +2768,7 @@ entitlement Apple), `probeVirtualGamepad` répond `supported = false`.
 ### 20.6 Le premier flux (05/09/2026)
 
 Chrome 152 sur bench-desk → rendez-vous (`stream.moonlightweb.top/<id>`, ICE en LAN
-`10.0.0.34:48010`) → l'app complète construite sur le Mac (Qt 6.10.3, OpenSSL
+sur le port media du banc) → l'app complète construite sur le Mac (Qt 6.10.3, OpenSSL
 statique, signée avec l'identité de banc). Session `Built-in Retina Display
 2560x1440@60 HEVC via VideoToolbox on Apple M1 Pro`, VBV 666 kbit, décodeur
 Chrome `hev1.1.176.L153.B0` matériel, première image décodée en NV12, écran de
@@ -3595,7 +3595,7 @@ La VM Debian n'a que `card0` : pas de VA-API, mais **pas d'EGL non plus** — ni
 conversion ni encodage GPU. ⚠️ Le plan disait « capture X11/XShm » ; c'était
 faux. Mesuré avec une sonde C (`kmsdump`) : le scanout de `hyperv_drm` est
 **XR24 linéaire (modifier 0)**, l'export PRIME passe et le `mmap` du dma-buf rend
-les vrais pixels (8 Mo en 4,2 ms à froid). Sur l'bench-mini le même mmap est refusé
+les vrais pixels (8 Mo en 4,2 ms à froid). Sur le bench-mini le même mmap est refusé
 (amdgpu, tuilé) — la voie CPU est bien celle des machines sans GPU, et seulement
 d'elles. Donc `KmsCapture` reste tel quel — aucun serveur d'affichage requis, la
 même propriété « capture avant le login » que la voie GPU — et ce qui change est
