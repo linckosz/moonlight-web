@@ -31,6 +31,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { noticeDetailsHtml, plainText } from './PrivacyNotice.js';
 import {
     SUPPORTS_CANVAS_TEARING,
@@ -1251,7 +1252,7 @@ export class SettingsView {
                 ${
                     this._canLogout
                         ? `
-                <!-- ── Session (last: it ends the visit) ──────────────────── -->
+                <!-- ── Session (last action: it ends the visit) ───────────── -->
                 <div class="settings-section settings-section-logout">
                     <h3 class="settings-section-title">${t('settings.session')}</h3>
                     <button class="btn btn-danger" id="btn-settings-logout">
@@ -1261,6 +1262,19 @@ export class SettingsView {
                 </div>`
                         : ''
                 }
+
+                <!-- ── In-stream controls (reference, nothing to set) ──────────
+                     The same list the slide flashes over the stream at startup,
+                     which auto-hides after 5s — this is where you read it when
+                     it went by too fast. Kept truly last: it is the one section
+                     with no control in it. -->
+                <div class="settings-section settings-section-shortcuts">
+                    <h3 class="settings-section-title">${escapeHtml(
+                        shortcutsTitle(this._helpOpts()),
+                    )}</h3>
+                    <span class="setting-desc">${t('settings.shortcutsDesc')}</span>
+                    ${shortcutsGridHtml(this._helpOpts())}
+                </div>
             </div>
         `;
 
@@ -1281,6 +1295,31 @@ export class SettingsView {
                 sensLabel.textContent = parseFloat(sensSlider.value).toFixed(1);
             });
         }
+    }
+
+    /**
+     * What the in-stream cheat-sheet should show on THIS device: the gestures
+     * where there is touch and no keyboard to press a combo on, the key combos
+     * otherwise — the same call the stream slide makes, so the settings page
+     * can never teach a control the stream does not obey.
+     */
+    _helpOpts() {
+        return {
+            touch: IS_TOUCH_DEVICE,
+            touchScreen: this._touchScreen,
+            isMac: /Mac/.test(navigator.platform),
+        };
+    }
+
+    /** Rebuild the in-stream cheat-sheet in place, after a setting changed it. */
+    _refreshShortcutsSection() {
+        const section = this.container.querySelector('.settings-section-shortcuts');
+        if (!section) return;
+        const opts = this._helpOpts();
+        const title = section.querySelector('.settings-section-title');
+        if (title) title.textContent = shortcutsTitle(opts);
+        const grid = section.querySelector('.shortcuts-slide-grid');
+        if (grid) grid.outerHTML = shortcutsGridHtml(opts);
     }
 
     bindEvents() {
@@ -1352,7 +1391,18 @@ export class SettingsView {
         if (gamingCheck) gamingCheck.addEventListener('change', () => this._autoSave());
 
         const touchScreenCheck = this.container.querySelector('#settings-touch-screen');
-        if (touchScreenCheck) touchScreenCheck.addEventListener('change', () => this._autoSave());
+        if (touchScreenCheck)
+            touchScreenCheck.addEventListener('change', () => {
+                this._autoSave();
+                // Touch-screen mode changes what one finger does, so the
+                // gesture list below is no longer the right one. The field is
+                // set here because _autoSave is debounced — it would still hold
+                // the old value. Refreshed in place rather than through
+                // render(), which would throw the page back to the top
+                // mid-scroll.
+                this._touchScreen = touchScreenCheck.checked;
+                this._refreshShortcutsSection();
+            });
 
         const perfCheck = this.container.querySelector('#settings-show-perf-stats');
         if (perfCheck) perfCheck.addEventListener('change', () => this._autoSave());

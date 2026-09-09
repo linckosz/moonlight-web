@@ -73,6 +73,7 @@ import { t } from '../i18n/i18n.js';
 
 /** @typedef {import('../types/transport.js').StreamTransport} StreamTransport */
 import { escapeHtml } from '../util/escapeHtml.js';
+import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { Icons } from './icons.js';
 import { ShareMenu } from './ShareMenu.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
@@ -1023,6 +1024,11 @@ export class StreamView {
         // — the token turns that late release into a no-op instead of an
         // unmatched key-up on the host.
         this._metaTapCodes = new Set();
+        // e.code of the modifiers sendDesktopSwitch() released on the host to
+        // clear the way for its synthetic chord. The user is still physically
+        // holding them, so their real keyup is still coming — and would land on
+        // the host as a release with no press behind it.
+        this._swallowKeyUpCodes = new Set();
         // Mouse buttons currently held (1-based, as sent to the host). Same
         // reason as above, plus it feeds the held-input heartbeat below.
         this._heldMouseButtons = new Set();
@@ -1107,6 +1113,12 @@ export class StreamView {
         this._pinchPrevCx = null; // previous centroid (of all touches)
         this._pinchPrevCy = null;
         this._twoFingerMode = null; // locked gesture for the current 2-finger sequence: 'zoom' | 'scroll'
+        // Three-finger horizontal swipe at base zoom → host desktop switch.
+        // Accumulated over the gesture (a single frame's delta is a few px),
+        // and latched so one swipe moves exactly one desktop.
+        this._threeFingerDx = 0;
+        this._threeFingerDy = 0;
+        this._threeFingerSwitched = false;
         this._lastMoveFingerCount = 0; // finger count of the last touchmove (reseed trackers on change)
         // Scroll (two-finger drag, or one finger in touch-screen mode): both axes,
         // amplified, with an inertial (momentum) glide after release.
@@ -7334,6 +7346,18 @@ export class StreamView {
                 return;
             }
 
+            // Switch host desktop: Ctrl+Alt+Shift+Left/Right (Win, Linux) /
+            // Ctrl+Option+Cmd+Left/Right (Mac). Tested on e.code, not through
+            // chk(): the arrows carry no layout label, and chk() only ever
+            // resolves letters.
+            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+                e.preventDefault();
+                // Auto-repeat would run through every desktop on the host for
+                // one held arrow. One press, one desktop.
+                if (!e.repeat) this.sendDesktopSwitch(e.code === 'ArrowLeft' ? -1 : 1);
+                return;
+            }
+
             // Block ANY other triple-modifier combo from reaching the host.
             // Ctrl+Alt+Shift (Win) / Cmd+Option+Ctrl (Mac) combos that are NOT
             // mapped above are still streaming-control territory — they must not
@@ -7405,6 +7429,14 @@ export class StreamView {
             this._forgetHeldKey(e.code);
             return;
         }
+        // A modifier sendDesktopSwitch() released on the host to get a clean
+        // chord: the host has already seen it go up, so the physical release
+        // now arriving must not be sent a second time.
+        if (this._swallowKeyUpCodes && this._swallowKeyUpCodes.delete(e.code)) {
+            e.preventDefault();
+            this._forgetHeldKey(e.code);
+            return;
+        }
         // Cmd coming back up: sweep out anything still held whose keyup macOS
         // ate — keys pressed BEFORE Cmd joined them, which the meta-tap branch
         // never saw. Done here, before Cmd's own release goes out, so the host
@@ -7455,6 +7487,7 @@ export class StreamView {
     _releaseAllPhysKeys() {
         // Nothing stays held, so no late keyup is worth swallowing any more.
         if (this._metaTapCodes) this._metaTapCodes.clear();
+        if (this._swallowKeyUpCodes) this._swallowKeyUpCodes.clear();
         if (this._heldPhysKeys && this._heldPhysKeys.size > 0) {
             for (const payload of this._heldPhysKeys.values()) {
                 this.webrtc.send({
@@ -7604,6 +7637,91 @@ export class StreamView {
         key('keyup', VK_SHIFT);
         key('keyup', VK_MENU);
         key('keyup', VK_CONTROL);
+    }
+
+    /**
+     * The chord that moves one desktop over, by host OS.
+     *
+     * Which keys those are is the host's business, not the client's: Windows
+     * puts virtual desktops on Ctrl+Win+Arrow, GNOME and KDE put workspaces on
+     * Ctrl+Alt+Arrow, macOS puts Spaces on Ctrl+Arrow. The combo the user types
+     * is the same everywhere (Ctrl+Alt+Shift+Arrow, Ctrl+Option+Cmd+Arrow on a
+     * Mac client) — it is intercepted here and never reaches the host.
+     *
+     * An unknown host takes the Windows chord: it is what a GameStream host is
+     * overwhelmingly likely to be running, and a chord the host does not know
+     * is simply ignored there.
+     */
+    static DESKTOP_SWITCH_CHORDS = {
+        windows: { mods: [0x11, 0x5b], ctrlKey: true, metaKey: true }, // Ctrl+Win
+        linux: { mods: [0x11, 0x12], ctrlKey: true, altKey: true }, // Ctrl+Alt
+        macos: { mods: [0x11], ctrlKey: true }, // Ctrl
+    };
+
+    /**
+     * Move the host one desktop to the left (dir < 0) or right (dir > 0).
+     *
+     * Unlike sendConsoleHotkey(), which starts from a click, this one starts
+     * from a key chord the user is still holding: Ctrl, Alt and Shift (or Cmd)
+     * went out as ordinary keystrokes long before the arrow arrived and the
+     * host believes they are down. Sending Ctrl+Win+Right on top of that would
+     * reach the host as Ctrl+Alt+Shift+Win+Right, which is nothing at all. So
+     * the held modifiers are released first, and their physical keyup — still
+     * to come, whenever the user lets go — is marked to be swallowed.
+     *
+     * @param {number} dir negative for the previous desktop, positive for the next
+     */
+    sendDesktopSwitch(dir) {
+        const VK_LEFT = 0x25;
+        const VK_RIGHT = 0x27;
+
+        const os = (this.host?.hostOs || '').toLowerCase();
+        const chord =
+            StreamView.DESKTOP_SWITCH_CHORDS[os] || StreamView.DESKTOP_SWITCH_CHORDS.windows;
+
+        this._releaseHeldModifiers();
+
+        const mods = {
+            ctrlKey: !!chord.ctrlKey,
+            shiftKey: false,
+            altKey: !!chord.altKey,
+            metaKey: !!chord.metaKey,
+        };
+        const key = (type, keyCode) =>
+            this._sendKeyEvent({ type, keyCode, code: '', key: '', ...mods });
+
+        for (const vk of chord.mods) key('keydown', vk);
+        const arrow = dir < 0 ? VK_LEFT : VK_RIGHT;
+        key('keydown', arrow);
+        key('keyup', arrow);
+        for (let i = chord.mods.length - 1; i >= 0; i--) key('keyup', chord.mods[i]);
+    }
+
+    /**
+     * Release every modifier the host still believes is down, and remember to
+     * swallow the physical keyup that will follow.
+     *
+     * For the synthetic chords that must be seen alone. Toolbar-synthesised
+     * presses (numeric ids) are left alone: they have no physical release to
+     * miss, and a latched touch modifier is meant to stay down.
+     */
+    _releaseHeldModifiers() {
+        if (!this._heldPhysKeys || this._heldPhysKeys.size === 0) return;
+        // Snapshot: _sendKeyEvent deletes from the map we are iterating.
+        for (const [id, payload] of [...this._heldPhysKeys]) {
+            if (typeof id !== 'string' || !StreamView.MODIFIER_CODES.has(id)) continue;
+            this._sendKeyEvent({
+                type: 'keyup',
+                keyCode: payload.keyCode,
+                code: payload.code,
+                key: payload.key,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+            });
+            if (this._swallowKeyUpCodes) this._swallowKeyUpCodes.add(id);
+        }
     }
 
     _sendKeyEvent(msg) {
@@ -8191,92 +8309,25 @@ export class StreamView {
     // =========================================================================
 
     /**
-     * Build the shortcuts-slide HTML content, adapting modifier key labels
-     * to the current platform (Windows vs macOS).
+     * Build the shortcuts-slide content: the key combos, or — on a device with
+     * touch, which has no physical keyboard to press them on — the gestures.
+     *
+     * The rows themselves live in util/shortcutsHelp.js, because the settings
+     * page shows the same list: this slide auto-hides after 5s, and that is
+     * where you go when it went by too fast.
      */
     _buildShortcutsSlideContent() {
-        // Touch devices have no physical keyboard: show a gesture cheat-sheet
-        // (the trackpad model) instead of the keyboard-shortcut combos.
-        if (IS_TOUCH_DEVICE) {
-            this._buildTouchHelpContent();
-            return;
-        }
-        const isMac = /Mac/.test(navigator.platform);
-        const modA = isMac ? 'Cmd' : 'Ctrl'; // Primary modifier
-        const modB = isMac ? 'Option' : 'Alt'; // Secondary modifier
-        const modC = isMac ? 'Ctrl' : 'Shift'; // Tertiary modifier
-
-        // Win order: Shift + Ctrl + Alt + ?
-        // Mac order: Ctrl  + Option + Cmd + ?
-        const comboWin = [modC, modA, modB];
-        const comboMac = [modC, modB, modA];
-        const comboMods = isMac ? comboMac : comboWin;
-
-        const rows = [
-            [t('stream.scQuit'), ...comboMods, 'Q'],
-            [t('stream.scFullscreen'), ...comboMods, 'X'],
-            [t('stream.scRelease'), ...comboMods, 'Z'],
-            [t('stream.scMouseMode'), ...comboMods, 'M'],
-        ];
-
-        let html = '<div class="shortcuts-slide-title">' + t('stream.shortcutsTitle') + '</div>';
-        html += '<div class="shortcuts-slide-grid">';
-        for (const [action, ...keys] of rows) {
-            html += '<div class="shortcut-row">';
-            html += '<span class="shortcut-action">' + action + '</span>';
-            html += '<span class="shortcut-keys">';
-            for (let i = 0; i < keys.length; i++) {
-                if (i > 0) html += '<span class="shortcut-plus">+</span>';
-                html += '<kbd>' + keys[i] + '</kbd>';
-            }
-            html += '</span></div>';
-        }
-        html += '</div>';
-        this._shortcutsSlide.innerHTML = html;
-    }
-
-    /**
-     * Build the touch gesture cheat-sheet (mobile/tablet). Mirrors the
-     * trackpad input model implemented in the touch handlers: relative
-     * cursor, taps for clicks, multi-finger drags for scroll/zoom/pan.
-     */
-    _buildTouchHelpContent() {
-        // Touch-screen mode changes the 1-finger meaning from a relative
-        // trackpad move to a direct, absolute touch — and the drag that follows
-        // scrolls the content (any direction) instead of moving the cursor.
-        const rows = this._touchScreen
-            ? [
-                  [t('stream.tcMoveCursor'), t('stream.tsMoveCursorVal')],
-                  [t('stream.tcLeftClick'), t('stream.tsLeftClickVal')],
-                  [t('stream.tcRightClick'), t('stream.tcRightClickVal')],
-                  [t('stream.tcDrag'), t('stream.tsDragVal')],
-                  [t('stream.tcScroll'), t('stream.tsScrollVal')],
-                  [t('stream.tcZoom'), t('stream.tcZoomVal')],
-                  [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
-                  [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
-              ]
-            : [
-                  [t('stream.tcMoveCursor'), t('stream.tcMoveCursorVal')],
-                  [t('stream.tcLeftClick'), t('stream.tcLeftClickVal')],
-                  [t('stream.tcRightClick'), t('stream.tcRightClickVal')],
-                  [t('stream.tcDrag'), t('stream.tcDragVal')],
-                  [t('stream.tcScroll'), t('stream.tcScrollVal')],
-                  [t('stream.tcZoom'), t('stream.tcZoomVal')],
-                  [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
-                  [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
-              ];
-
-        const title = this._touchScreen ? t('stream.touchScreenTitle') : t('stream.touchTitle');
-        let html = '<div class="shortcuts-slide-title">' + title + '</div>';
-        html += '<div class="shortcuts-slide-grid">';
-        for (const [action, gesture] of rows) {
-            html += '<div class="shortcut-row">';
-            html += '<span class="shortcut-action">' + action + '</span>';
-            html += '<span class="shortcut-keys"><kbd class="gesture">' + gesture + '</kbd></span>';
-            html += '</div>';
-        }
-        html += '</div>';
-        this._shortcutsSlide.innerHTML = html;
+        const touch = IS_TOUCH_DEVICE;
+        const opts = {
+            touch,
+            touchScreen: this._touchScreen,
+            isMac: /Mac/.test(navigator.platform),
+        };
+        this._shortcutsSlide.innerHTML =
+            '<div class="shortcuts-slide-title">' +
+            escapeHtml(shortcutsTitle(opts)) +
+            '</div>' +
+            shortcutsGridHtml(opts);
     }
 
     /**

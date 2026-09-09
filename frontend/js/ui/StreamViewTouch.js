@@ -79,6 +79,9 @@ export class StreamViewTouch {
             this._touchScrollAnchored = false;
             this._scrollSamples.length = 0;
             this._panSamples.length = 0;
+            this._threeFingerDx = 0;
+            this._threeFingerDy = 0;
+            this._threeFingerSwitched = false;
             const t = e.touches[0];
             this._touchStartX = t.clientX;
             this._touchStartY = t.clientY;
@@ -469,7 +472,10 @@ export class StreamViewTouch {
             this._pinchPrevCx = cx;
             this._pinchPrevCy = cy;
         } else if (count >= 3) {
-            // Three fingers: pan the zoomed display (no effect at base zoom).
+            // Three fingers: pan the zoomed display, or — at base zoom, where
+            // there is nothing to pan — swipe sideways to change desktop on the
+            // host. The gesture a laptop trackpad puts on the same three
+            // fingers, aimed at the machine being streamed instead of this one.
             this._clearLongPress();
             let cx = 0,
                 cy = 0;
@@ -492,6 +498,24 @@ export class StreamViewTouch {
                 this._panSamples.push({ t: now, x: cx, y: cy });
                 while (this._panSamples.length > 2 && now - this._panSamples[0].t > 120) {
                     this._panSamples.shift();
+                }
+            } else if (!this._threeFingerSwitched) {
+                // Travel is accumulated because a single touchmove carries only
+                // a few pixels. 60px is well past the 24px tap tolerance above,
+                // so the 3-finger tap that opens the keyboard is untouched; the
+                // 1.5x dominance keeps a diagonal drag from switching desktop.
+                this._threeFingerDx += dCx;
+                this._threeFingerDy += dCy;
+                if (
+                    Math.abs(this._threeFingerDx) > 60 &&
+                    Math.abs(this._threeFingerDx) > Math.abs(this._threeFingerDy) * 1.5
+                ) {
+                    this._threeFingerSwitched = true;
+                    // Not a tap any more: the release must not open the keyboard.
+                    this._touchMoved = true;
+                    // Fingers left → the desktop to the right comes in, as on a
+                    // laptop trackpad.
+                    this.sendDesktopSwitch(this._threeFingerDx < 0 ? 1 : -1);
                 }
             }
             this._pinchPrevCx = cx;
