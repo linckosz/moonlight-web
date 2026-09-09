@@ -15,6 +15,9 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { Toast } from './Toast.js';
+import { t } from '../i18n/i18n.js';
+
 /** How much of the bottom of the layout viewport the soft keyboard hides
  *  before we consider it open (an accessory bar alone is smaller than this). */
 const KB_OPEN_THRESHOLD = 120;
@@ -53,6 +56,48 @@ function publishKbdInset(px) {
  */
 export class StreamViewKeyboard {
     /**
+     * Send typed text to the host, warning once when it may arrive as garbage.
+     *
+     * Why the warning exists
+     * ----------------------
+     * Reported from an iPhone against Sunshine on Ubuntu: typing "cyberpunk"
+     * arrived as `èç-(èà-eéà`. Those are the HEX DIGITS of each code point,
+     * landing on the top row of an AZERTY session — Sunshine and Wolf enter a
+     * Unicode character with the GTK/IBus sequence (Ctrl+Shift+U, hex, space),
+     * and with no input method listening in the host's session the prefix is
+     * swallowed and the digits are typed bare.
+     *
+     * The defect is on the host, and nothing we send can work around it: the
+     * alternative — sending key events instead of text — needs the host's
+     * KEYBOARD LAYOUT, which no part of the GameStream protocol carries. So the
+     * honest thing is to say it, once, to the person who is about to be
+     * confused by it.
+     *
+     * Who gets warned, and who deliberately does not
+     * ----------------------------------------------
+     *  - MoonlightWeb's own host: never. Its Linux backend resolves the
+     *    character in the session's real layout (XkbTextMap), so text works.
+     *  - A host positively identified as Windows or macOS: never. Both inject
+     *    text directly. HostOsProbe names Windows from its IP TTL, from
+     *    MultiSeat, and from the original NVIDIA software.
+     *  - Everything else — Linux, and Unknown: warned. Unknown is mostly Linux
+     *    or macOS (a TTL of 64 cannot separate them), and a false warning on a
+     *    rare macOS host costs one sentence, while staying silent costs a user
+     *    a keyboard that types nonsense with no explanation.
+     *
+     * @param {string} text the characters the soft keyboard produced
+     */
+    _sendTextInput(text) {
+        if (!this._textInputHostWarned) {
+            this._textInputHostWarned = true;
+            const os = (this.host?.hostOs || '').toLowerCase();
+            const mayMangle = !this._nativeHost && os !== 'windows' && os !== 'macos';
+            if (mayMangle) Toast.warning(t('stream.textInputNeedsIme'), { durationMs: 10000 });
+        }
+        this.webrtc.send({ type: 'textinput', text });
+    }
+
+    /**
      * Wire the hidden capture <textarea>:
      *   - input: diff the textarea value against a filler sentinel and forward
      *     inserted text (UTF-8 event) / removed chars (Backspace). Diffing on
@@ -90,7 +135,7 @@ export class StreamViewKeyboard {
                 }
             }
             if (it === 'insertText' && e.data != null) {
-                this.webrtc.send({ type: 'textinput', text: e.data });
+                this._sendTextInput(e.data);
                 this._resetKbdCapture();
                 return;
             }
@@ -105,7 +150,7 @@ export class StreamViewKeyboard {
                 return;
             }
             if ((it === 'insertFromPaste' || it === 'insertReplacementText') && e.data != null) {
-                this.webrtc.send({ type: 'textinput', text: e.data });
+                this._sendTextInput(e.data);
                 this._resetKbdCapture();
                 return;
             }
@@ -132,7 +177,7 @@ export class StreamViewKeyboard {
                 if (inserted === '\n' || inserted === '\r' || inserted === '\r\n') {
                     this._sendKey(0x0d); // Enter
                 } else {
-                    this.webrtc.send({ type: 'textinput', text: inserted });
+                    this._sendTextInput(inserted);
                 }
             }
             // Restore the sentinel so the next keystroke diffs cleanly.

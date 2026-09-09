@@ -616,8 +616,39 @@ DataChannelRelay::~DataChannelRelay()
     DataChannelRelay::stop();
 }
 
+/// Make `bufferedAmount` mean something, once per process.
+///
+/// usrsctp's send buffer defaults to 1 MiB, and `bufferedAmount` counts only
+/// what libdatachannel keeps AFTER usrsctp refuses — so with the default,
+/// nothing is visible until a megabyte is already queued and every backlog
+/// measurement starts a megabyte late. Shrinking the buffer moves that backlog
+/// from a place we cannot see into one we can; the bytes in flight are the
+/// same, the blindness is not.
+///
+/// 256 KiB and not less: usrsctp still has to keep the congestion window fed,
+/// and the bandwidth-delay product of the worst case we care about — a gigabit
+/// LAN at a millisecond of round trip — is about 125 KB. Half of the buffer is
+/// therefore still headroom on the fastest link we serve, while the invisible
+/// share of a backlog drops fourfold.
+void applySctpSettingsOnce()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+        rtc::SctpSettings settings;
+        settings.sendBufferSize = 256 * 1024;
+        rtc::SetSctpSettings(settings);
+        qInfo() << "[DataChannelRelay] SCTP send buffer set to 256 KiB so bufferedAmount "
+                   "reflects the real backlog";
+    });
+}
+
 bool DataChannelRelay::prepare(const rtc::Configuration& config, bool isInternet)
 {
+    // Before any peer connection, since usrsctp reads this at SCTP init. One
+    // session per stream-worker process, so the first relay here is the only
+    // one that matters.
+    applySctpSettingsOnce();
+
     if (m_Pc) {
         qWarning() << "[DataChannelRelay] already prepared";
         return false;
@@ -1425,14 +1456,16 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         }
     }
 
-    // Backpressure: drop delta frames when the SCTP send buffer is full.
-    // Without this check, dc->send() blocks the main thread (Qt event loop)
-    // until the buffer drains, causing micro-freezes in audio/video processing.
-    // Keyframes are always sent because losing a keyframe would stall the
-    // browser decoder until the next IDR request.
+    // Backpressure: drop delta frames when the transport has been unable to
+    // drain for longer than SendBacklog::kToleranceMs. ⚠️ the old comment here
+    // said this existed to stop dc->send() blocking the Qt event loop — it does
+    // not block, the SCTP socket is non-blocking and libdatachannel queues.
+    // What this actually bounds is LATENCY, which is why it is now measured in
+    // time; see SendBacklog.h.
+    const int64_t backlogNowMs = QDateTime::currentMSecsSinceEpoch();
     if (!isKeyframe) {
         size_t bufAmt = dc->bufferedAmount();
-        if (bufAmt > kHighWatermark) {
+        if (m_Backlog.note(bufAmt, backlogNowMs)) {
             m_DeltaDroppedCount++;
             m_BackpressureDropCount++;
 
@@ -1452,8 +1485,10 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
             }
 
             if (m_DeltaDroppedCount <= 3 || m_DeltaDroppedCount % 120 == 0) {
-                qInfo() << "[DataChannelRelay] Dropped delta frame (SCTP full)"
-                        << "bufferedAmount=" << bufAmt << "totalDropped=" << m_DeltaDroppedCount;
+                qInfo() << "[DataChannelRelay] Dropped delta frame (link not draining)"
+                        << "bufferedAmount=" << bufAmt
+                        << "backlogMs=" << m_Backlog.ageMs(backlogNowMs)
+                        << "totalDropped=" << m_DeltaDroppedCount;
             }
             return;
         }
@@ -1471,11 +1506,12 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         // goes through fresh. This caps the buffer at ~watermark + one keyframe,
         // bounding latency to well under a second instead of letting it run away.
         size_t bufAmt = dc->bufferedAmount();
-        if (bufAmt > kHighWatermark) {
+        if (m_Backlog.note(bufAmt, backlogNowMs)) {
             m_KeyframeBackpressureWarnings++;
             if (m_KeyframeBackpressureWarnings <= 5) {
-                qInfo() << "[DataChannelRelay] Dropped keyframe (SCTP buffer not drained)"
+                qInfo() << "[DataChannelRelay] Dropped keyframe (link not draining)"
                         << "bufferedAmount=" << bufAmt
+                        << "backlogMs=" << m_Backlog.ageMs(backlogNowMs)
                         << "warnCount=" << m_KeyframeBackpressureWarnings;
             }
             m_AwaitingIdr = true;
@@ -1488,6 +1524,9 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         m_BackpressureDropCount = 0;
         m_IdrOutstanding = false;
         m_IdrCooldownMs = kIdrCooldownBaseMs;
+        // A keyframe that got through IS the fresh start: whatever backlog the
+        // recovery built up stops counting against the next frames.
+        m_Backlog.reset();
     }
 
     // Video-only path now (audio is a native RTP Opus track, not fragmented over

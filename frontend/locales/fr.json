@@ -485,6 +485,7 @@
         "codecUnsupported": "Codec non pris en charge par le navigateur",
         "streamDisconnected": "Flux déconnecté",
         "gamepadIgnored": "« {{name}} » ignorée : disposition inconnue. Passez-la en mode XInput si elle en a un, ou utilisez un outil de remappage.",
+        "textInputNeedsIme": "Clavier tactile : sur un hôte Linux, le texte passe par IBus. Sans méthode de saisie active dans la session de l'hôte, rien d'utilisable n'est tapé.",
         "webrtcError": "Erreur de connexion WebRTC",
         "degradeBitrate": "Réseau instable — débit réduit à {{mbps}} Mbps",
         "degradeBitrateFps": "Réseau instable — débit réduit à {{mbps}} Mbps, limité à 60 fps",

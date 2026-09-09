@@ -485,6 +485,7 @@
         "codecUnsupported": "Codec not supported by browser",
         "streamDisconnected": "Stream disconnected",
         "gamepadIgnored": "\"{{name}}\" ignored: unknown layout. Switch it to XInput mode if it has one, or use a remapping tool.",
+        "textInputNeedsIme": "Touch keyboard: on a Linux host, text is entered through IBus. Without an input method running in the host's session, nothing usable is typed.",
         "webrtcError": "WebRTC connection error",
         "degradeBitrate": "Unstable network — bitrate reduced to {{mbps}} Mbps",
         "degradeBitrateFps": "Unstable network — bitrate reduced to {{mbps}} Mbps, capped at 60 fps",

@@ -18,6 +18,7 @@
 #pragma once
 
 #include "RelayBase.h"
+#include "SendBacklog.h"
 #include "FrameSender.h"
 #include <QByteArray>
 #include <QElapsedTimer>
@@ -194,13 +195,11 @@ private:
     static constexpr int kFragHeaderSize = 17;
     static constexpr int kMaxPayloadSize = 16000;
 
-    // Backpressure: if the SCTP send buffer exceeds this threshold, drop
-    // incoming delta frames to prevent main-thread blocking on dc->send().
-    // Keyframes always pass through. Must exceed the largest expected HEVC
-    // keyframe (~165KB): a lower threshold made every keyframe trip the
-    // backpressure drop on following deltas, re-arming m_AwaitingIdr and
-    // looping IDR requests at the 300ms throttle (3-4 fps).
-    static constexpr size_t kHighWatermark = 256 * 1024;
+    // Backpressure is measured in TIME, not bytes — see SendBacklog.h for why
+    // a byte threshold could only ever be too late or too trigger-happy, and
+    // for the correction to the old claim that dc->send() blocks the event
+    // loop (it does not; libdatachannel's SCTP socket is non-blocking).
+    SendBacklog m_Backlog;
     // Deltas a GameStream engine may leave waiting on the sender thread before
     // the oldest is evicted (the native engine keeps one). See the constructor.
     static constexpr size_t kGameStreamQueuedDeltas = 2;
