@@ -24,6 +24,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <unordered_map>
 
 // Keyboard and mouse injection on macOS, through Quartz events (CGEventPost).
 //
@@ -73,6 +74,17 @@ public:
 private:
     void injectKey(const InputEvent& event, bool down);
     void injectText(const std::string& utf8);
+
+    /// One character the client's layout produced, pressed and released as the
+    /// real key of the HOST's layout that carries it — a genuine key event,
+    /// unlike injectText's Unicode string, which is the fallback here when no
+    /// local key can reach the character.
+    void injectChar(const std::string& utf8, bool down);
+
+    /// Build (or rebuild) m_CharMap from the active keyboard layout. Cheap
+    /// after the first call: it only rebuilds when the input source changed.
+    bool ensureCharMap();
+
     void injectMouseMove(int deltaX, int deltaY);
     void injectMousePosition(const InputEvent& event);
     void injectMouseButton(int button, bool down);
@@ -94,6 +106,19 @@ private:
     std::set<int> m_HeldKeys;    ///< virtual keys held, for release at stop()
     std::set<int> m_HeldButtons; ///< browser button numbers held
     uint64_t m_Modifiers = 0;    ///< CGEventFlags of the modifiers held
+
+    /// A character and the key of the host's layout that types it.
+    struct CharKey
+    {
+        uint16_t code = 0;  ///< CGKeyCode
+        uint64_t flags = 0; ///< CGEventFlags the key needs at that level
+    };
+    /// Reverse of the active layout, built lazily by ensureCharMap(). Empty
+    /// until a client whose layout disagrees with this host's types something.
+    std::unordered_map<uint16_t, CharKey> m_CharMap;
+    /// Input-source id m_CharMap was built from, so a layout switch mid-stream
+    /// rebuilds it instead of typing the old layout's characters.
+    std::string m_CharMapSource;
 
     /// Where the pointer is, in points — our own account, moved by every
     /// event we post. Read from the OS once at start.

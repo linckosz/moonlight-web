@@ -173,6 +173,7 @@ public:
     void sendKeyEvent(short keyCode, bool down, char modifiers, char flags,
                       bool hold = false) override;
     void sendUtf8Text(const QString& text) override;
+    void sendKeyChar(const QString& ch, bool down) override;
     void sendMouseMove(short deltaX, short deltaY) override;
     void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight) override;
     void sendMouseButton(bool down, int button, bool hold = false) override;

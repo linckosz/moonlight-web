@@ -90,6 +90,16 @@ private:
     /// inject the character itself.
     void injectText(const std::string& utf8);
 
+    /// One character the client's layout produced, HELD as the host key that
+    /// carries it rather than typed and let go — so it is a real key with a
+    /// real repeat, unlike injectText. Falls back to injectText for a character
+    /// only a dead-key pair can reach, which no single key can hold.
+    void injectChar(const std::string& utf8, bool down);
+
+    /// Compile the host's keymap on first use. False when it is unreadable, in
+    /// which case nothing character-based can be typed at all.
+    bool ensureTextMap();
+
     /// Bring the pointer back onto the captured display before a delta is
     /// applied from it — X11 only, and a no-op everywhere else. See X11Pointer.
     void bringPointerOntoDisplay();

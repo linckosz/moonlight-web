@@ -21,6 +21,7 @@
 #include "MacKeyMap.h"
 
 #include <ApplicationServices/ApplicationServices.h>
+#include <Carbon/Carbon.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/hidsystem/IOHIDLib.h>
 #include <IOKit/hidsystem/IOHIDParameter.h>
@@ -47,6 +48,8 @@ const char* describe(InputEvent::Type type)
     switch (type) {
     case InputEvent::Type::KeyDown: return "key press";
     case InputEvent::Type::KeyUp: return "key release";
+    case InputEvent::Type::CharDown: return "character press";
+    case InputEvent::Type::CharUp: return "character release";
     case InputEvent::Type::Utf8Text: return "text";
     case InputEvent::Type::MouseMoveRelative: return "relative mouse move";
     case InputEvent::Type::MouseMoveAbsolute: return "absolute mouse move";
@@ -206,6 +209,8 @@ void CgInput::inject(const InputEvent& event)
     switch (event.type) {
     case InputEvent::Type::KeyDown: injectKey(event, true); break;
     case InputEvent::Type::KeyUp: injectKey(event, false); break;
+    case InputEvent::Type::CharDown: injectChar(event.text, true); break;
+    case InputEvent::Type::CharUp: injectChar(event.text, false); break;
     case InputEvent::Type::Utf8Text: injectText(event.text); break;
     case InputEvent::Type::MouseMoveRelative: injectMouseMove(event.deltaX, event.deltaY); break;
     case InputEvent::Type::MouseMoveAbsolute: injectMousePosition(event); break;
@@ -254,6 +259,101 @@ void CgInput::injectKey(const InputEvent& event, bool down)
         CGEventSetType(key, kCGEventFlagsChanged);
     }
     CGEventSetFlags(key, static_cast<CGEventFlags>(m_Modifiers));
+    post(key);
+}
+
+bool CgInput::ensureCharMap()
+{
+    // Rebuilt whenever the active input source changes, because the viewer — or
+    // the host's own user — can switch layouts mid-stream and every key code in
+    // the map would then mean a different character.
+    TISInputSourceRef source = TISCopyCurrentKeyboardLayoutInputSource();
+    if (!source) return !m_CharMap.empty();
+
+    std::string id;
+    if (auto* name = static_cast<CFStringRef>(
+            TISGetInputSourceProperty(source, kTISPropertyInputSourceID))) {
+        char buffer[256] = {};
+        if (CFStringGetCString(name, buffer, sizeof(buffer), kCFStringEncodingUTF8)) id = buffer;
+    }
+    if (!id.empty() && id == m_CharMapSource) {
+        CFRelease(source);
+        return !m_CharMap.empty();
+    }
+
+    auto* data =
+        static_cast<CFDataRef>(TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData));
+    if (!data) {
+        CFRelease(source);
+        return false;
+    }
+    const auto* layout = reinterpret_cast<const UCKeyboardLayout*>(CFDataGetBytePtr(data));
+
+    m_CharMap.clear();
+    m_CharMapSource = id;
+    // The four levels a single key can carry on a Mac layout. Listed cheapest
+    // first so a character reachable without modifiers wins over the same
+    // character behind Option — first writer keeps the slot.
+    static constexpr struct
+    {
+        uint32_t carbon; ///< UCKeyTranslate's modifier field (already >> 8)
+        CGEventFlags flags;
+    } kLevels[] = {
+        {0, 0},
+        {shiftKey >> 8, kCGEventFlagMaskShift},
+        {optionKey >> 8, kCGEventFlagMaskAlternate},
+        {(shiftKey | optionKey) >> 8, kCGEventFlagMaskShift | kCGEventFlagMaskAlternate},
+    };
+
+    for (uint16_t code = 0; code < 128; ++code) {
+        for (const auto& level : kLevels) {
+            UInt32 deadState = 0;
+            UniChar chars[4] = {};
+            UniCharCount length = 0;
+            if (UCKeyTranslate(layout, code, kUCKeyActionDown, level.carbon, LMGetKbdType(),
+                               kUCKeyTranslateNoDeadKeysBit, &deadState, 4, &length,
+                               chars) != noErr)
+                continue;
+            // One unit only: a dead key produces none, and anything longer is
+            // not something a single key press expresses.
+            if (length != 1 || chars[0] < 0x20 || chars[0] == 0x7f) continue;
+            m_CharMap.emplace(chars[0], CharKey{code, level.flags});
+        }
+    }
+    CFRelease(source);
+    log::info("[native] input: host keyboard layout " +
+              (id.empty() ? std::string("(unnamed)") : id) + ", " +
+              std::to_string(m_CharMap.size()) + " characters reachable as real keys");
+    return !m_CharMap.empty();
+}
+
+void CgInput::injectChar(const std::string& utf8, bool down)
+{
+    if (utf8.empty()) return;
+
+    CFStringRef text =
+        CFStringCreateWithBytes(kCFAllocatorDefault, reinterpret_cast<const UInt8*>(utf8.data()),
+                                static_cast<CFIndex>(utf8.size()), kCFStringEncodingUTF8, false);
+    if (!text) return;
+    const bool single = CFStringGetLength(text) == 1;
+    const UniChar unit = single ? CFStringGetCharacterAtIndex(text, 0) : 0;
+    CFRelease(text);
+
+    const auto it = single && ensureCharMap() ? m_CharMap.find(unit) : m_CharMap.end();
+    if (it == m_CharMap.end()) {
+        // No key on this layout carries the character — type it as Unicode
+        // instead, which needs no key at all. The press does it; the release
+        // has nothing left to do.
+        if (down) injectText(utf8);
+        return;
+    }
+
+    CGEventRef key = CGEventCreateKeyboardEvent(nullptr, it->second.code, down);
+    if (!key) return;
+    // The layout's own level modifiers ride on top of whatever the viewer is
+    // really holding — on macOS a modifier is a flag on the event, so nothing
+    // has to be pressed or released around it.
+    CGEventSetFlags(key, static_cast<CGEventFlags>(m_Modifiers) | it->second.flags);
     post(key);
 }
 

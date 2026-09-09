@@ -41,6 +41,13 @@ struct InputEvent
         KeyDown,
         KeyUp,
         Utf8Text, ///< virtual/soft keyboard — a whole string at once
+        /// One key the client's layout puts a different character on than its
+        /// US position would. Unlike Utf8Text these are a real press and
+        /// release: the platform layer looks the character up in the host's own
+        /// layout and holds THAT key, so the scancode is genuine and games,
+        /// Raw Input and typematic all still see a key.
+        CharDown,
+        CharUp,
         MouseMoveRelative,
         MouseMoveAbsolute,
         MouseButtonDown,
@@ -62,7 +69,8 @@ struct InputEvent
     /// Modifier bitmask, matching the browser's existing encoding.
     uint8_t modifiers = 0;
     uint8_t keyFlags = 0;
-    /// UTF-8 payload for Type::Utf8Text.
+    /// UTF-8 payload for Type::Utf8Text, and the single character for
+    /// Type::CharDown / Type::CharUp.
     std::string text;
 
     // ── Mouse ────────────────────────────────────────────────────────────────

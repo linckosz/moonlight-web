@@ -7124,6 +7124,120 @@ export class StreamView {
         return map[code] !== undefined ? map[code] : 0;
     }
 
+    // What the US layout prints on each printable key: e.code → [plain, shifted].
+    //
+    // This is NOT used to type anything. It is used to answer one question —
+    // "did the client's layout produce the same character the host would get
+    // from this position?" — because the whole protocol below us is positional:
+    // codeToWindowsVk() sends the POSITION, and the host resolves it through
+    // ITS OWN layout, which is US-normalized by contract (Limelight.h:704).
+    //
+    // When the answer is yes (every key of a US client, and most keys of an
+    // AZERTY one), the message stays exactly what it was before layout fidelity
+    // existed and the host path is untouched. Only a genuinely divergent key —
+    // AZERTY's A/Z/Q/W/M, its digit row, its punctuation — carries a character
+    // and takes the new path. That is what keeps this change from costing
+    // anything to the people it cannot help.
+    static US_LAYOUT_CHARS = {
+        KeyA: ['a', 'A'],
+        KeyB: ['b', 'B'],
+        KeyC: ['c', 'C'],
+        KeyD: ['d', 'D'],
+        KeyE: ['e', 'E'],
+        KeyF: ['f', 'F'],
+        KeyG: ['g', 'G'],
+        KeyH: ['h', 'H'],
+        KeyI: ['i', 'I'],
+        KeyJ: ['j', 'J'],
+        KeyK: ['k', 'K'],
+        KeyL: ['l', 'L'],
+        KeyM: ['m', 'M'],
+        KeyN: ['n', 'N'],
+        KeyO: ['o', 'O'],
+        KeyP: ['p', 'P'],
+        KeyQ: ['q', 'Q'],
+        KeyR: ['r', 'R'],
+        KeyS: ['s', 'S'],
+        KeyT: ['t', 'T'],
+        KeyU: ['u', 'U'],
+        KeyV: ['v', 'V'],
+        KeyW: ['w', 'W'],
+        KeyX: ['x', 'X'],
+        KeyY: ['y', 'Y'],
+        KeyZ: ['z', 'Z'],
+        Digit1: ['1', '!'],
+        Digit2: ['2', '@'],
+        Digit3: ['3', '#'],
+        Digit4: ['4', '$'],
+        Digit5: ['5', '%'],
+        Digit6: ['6', '^'],
+        Digit7: ['7', '&'],
+        Digit8: ['8', '*'],
+        Digit9: ['9', '('],
+        Digit0: ['0', ')'],
+        Minus: ['-', '_'],
+        Equal: ['=', '+'],
+        BracketLeft: ['[', '{'],
+        BracketRight: [']', '}'],
+        Backslash: ['\\', '|'],
+        Semicolon: [';', ':'],
+        Quote: ["'", '"'],
+        Backquote: ['`', '~'],
+        Comma: [',', '<'],
+        Period: ['.', '>'],
+        Slash: ['/', '?'],
+        Space: [' ', ' '],
+        // The numpad prints digits on every layout, and its VKs (VK_NUMPAD0…)
+        // are position-free already — never divergent, never worth a character.
+        NumpadDivide: ['/', '/'],
+        NumpadMultiply: ['*', '*'],
+        NumpadSubtract: ['-', '-'],
+        NumpadAdd: ['+', '+'],
+        NumpadDecimal: ['.', '.'],
+    };
+
+    /**
+     * The character this keystroke must produce on the host, or null when the
+     * positional path already produces it.
+     *
+     * Returning null is the common case and means "send exactly what we always
+     * sent". A non-null result is a request the backend fulfils with whatever
+     * the host supports (see InputMsg::resolveKey) — we deliberately do not
+     * pick the mechanism here: only the backend knows the host's OS.
+     *
+     * @param {KeyboardEvent} e
+     * @returns {string|null}
+     */
+    static clientChar(e) {
+        const key = e.key;
+        // Anything with a name rather than a character: Enter, ArrowUp, F1,
+        // Shift, and the 'Dead' of a pending dead key (whose composed result
+        // arrives as a plain character on the NEXT keydown, and is handled
+        // there for free).
+        if (typeof key !== 'string' || [...key].length !== 1) return null;
+
+        // AltGr is a layout feature, not a chord: € ~ # @ on AZERTY, and the US
+        // position has no character for it at all. Always divergent.
+        // (Windows reports AltGr as Ctrl+Alt, so this check must come before
+        // the chord exclusion below or those keys would never be corrected.)
+        let altGraph = false;
+        try {
+            altGraph = typeof e.getModifierState === 'function' && e.getModifierState('AltGraph');
+        } catch {
+            altGraph = false;
+        }
+        if (altGraph) return key;
+
+        // A real Ctrl/Meta chord: e.key is still the layout's character, so the
+        // comparison below applies unchanged — Ctrl+A on AZERTY reads 'a' and
+        // diverges from the US 'q' at that position, which is precisely the
+        // bug we are fixing. Alt alone is left to the positional path: it is a
+        // menu accelerator, addressed by position on every host.
+        const us = StreamView.US_LAYOUT_CHARS[e.code];
+        if (!us) return key; // a key US has no character for (IntlBackslash, …)
+        return key === us[e.shiftKey ? 1 : 0] ? null : key;
+    }
+
     // Cache navigator.keyboard.getLayoutMap() to resolve a physical key code
     // (e.code) to its printed label for the active layout. Used by combo
     // detection so Cmd+Option+Ctrl+{Q,X,Z,M} matches the labelled key on
@@ -7207,6 +7321,10 @@ export class StreamView {
                 keyCode: held.keyCode,
                 code: held.code,
                 key: held.key,
+                // The repeat replays the press the host actually received —
+                // character included, or the host would resolve the repeats
+                // through a different path than the original press.
+                char: held.char,
                 hold: held.hold,
                 ctrlKey: e.ctrlKey,
                 shiftKey: e.shiftKey,
@@ -7376,6 +7494,11 @@ export class StreamView {
         // AZERTY instead of VK_Q), which breaks Sunshine's layout correction.
         // Fall back to e.keyCode only for unmapped codes.
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
+        // …and, when the client's layout puts a DIFFERENT character on that
+        // position than the US layout the host assumes, say which character was
+        // meant. Null for a US client and for every key that agrees, so the
+        // message below is byte-identical to what it has always been.
+        const char = StreamView.clientChar(e);
 
         // ── Cmd+key on an Apple keyboard: send a tap, not a hold ──────────
         // macOS never delivers the keyup of a key pressed while Cmd is down.
@@ -7392,6 +7515,7 @@ export class StreamView {
                 keyCode: vkCode,
                 code: e.code,
                 key: e.key,
+                char,
                 ctrlKey: e.ctrlKey,
                 shiftKey: e.shiftKey,
                 altKey: e.altKey,
@@ -7412,6 +7536,7 @@ export class StreamView {
             // Keep e.code for backend to detect IntlBackslash/IntlRo
             code: e.code,
             key: e.key,
+            char,
             hold: this._holdsThroughStall(e.code),
             ctrlKey: e.ctrlKey,
             shiftKey: e.shiftKey,
@@ -7475,6 +7600,13 @@ export class StreamView {
             keyCode: vkCode,
             code: e.code,
             key: e.key,
+            // Replay the press's character, never recompute it from this event:
+            // releasing Shift before the letter changes what e.key reads, and a
+            // release resolved differently from its press leaves the key held on
+            // the host — Sunshine identifies a key by (keyCode, flags), so a
+            // normalized press and a non-normalized release are two keys, and
+            // the first one never comes back up.
+            char: this._heldPhysKeys.get(e.code)?.char ?? null,
             ctrlKey: e.ctrlKey,
             shiftKey: e.shiftKey,
             altKey: e.altKey,
@@ -7579,6 +7711,7 @@ export class StreamView {
                 keyCode: payload.keyCode,
                 code: payload.code,
                 key: payload.key,
+                char: payload.char ?? null,
                 ctrlKey: false,
                 shiftKey: false,
                 altKey: false,
@@ -7735,6 +7868,7 @@ export class StreamView {
                 keyCode: msg.keyCode,
                 code: msg.code,
                 key: msg.key,
+                char: msg.char ?? null,
                 hold: !!msg.hold,
             });
         } else {
@@ -7886,6 +8020,9 @@ export class StreamView {
             keys.push({
                 keyCode: payload.keyCode,
                 code: payload.code,
+                // Same reason as the keyup: a re-press the watchdog resolves
+                // differently from the original press would strand a key.
+                char: payload.char ?? null,
                 hold: !!payload.hold,
                 ...mods,
             });

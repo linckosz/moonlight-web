@@ -83,6 +83,25 @@ public:
 
     bool latencyFlagEnabled() const;
 
+    // ── Keyboard layout fidelity ──────────────────────────────────────────────
+    //
+    // On: what the host types is the character the CLIENT's keyboard layout
+    // produced, whatever layout the host itself runs — an AZERTY viewer types
+    // "azerty" on a QWERTY host and reads "azerty". The mechanism, and what each
+    // kind of host can honour, is documented in InputMessageCodec.h.
+    //
+    // Off: the historical behaviour of every Moonlight client — the key's
+    // physical POSITION is sent and the host's own layout decides the character.
+    //
+    // File-only setting (no UI, no write route): stored as JSON bool
+    // "keyboard_layout_fidelity", DEFAULT true, read at each stream start. The
+    // escape hatch matters for one case: on a Sunshine host, a divergent key
+    // that is not a letter is typed as text and so carries no key state, which a
+    // game reading the raw keyboard cannot see. Turn it off and every keystroke
+    // is a key press again, at the cost of the wrong characters.
+
+    bool keyboardLayoutFidelity() const;
+
     // ── Stream bitrate ────────────────────────────────────────────────────────
     //
     // Target bitrate in kbps. Stored as JSON int "stream_bitrate", default 20000.

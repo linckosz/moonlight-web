@@ -197,6 +197,7 @@ bool isPress(InputEvent::Type type)
 {
     switch (type) {
     case InputEvent::Type::KeyDown:
+    case InputEvent::Type::CharDown:
     case InputEvent::Type::Utf8Text:
     case InputEvent::Type::MouseButtonDown:
     case InputEvent::Type::MouseScrollVertical:
@@ -227,6 +228,8 @@ const char* describe(InputEvent::Type type)
     switch (type) {
     case InputEvent::Type::KeyDown: return "key press";
     case InputEvent::Type::KeyUp: return "key release";
+    case InputEvent::Type::CharDown: return "character press";
+    case InputEvent::Type::CharUp: return "character release";
     case InputEvent::Type::Utf8Text: return "text";
     case InputEvent::Type::MouseMoveRelative: return "relative mouse move";
     case InputEvent::Type::MouseMoveAbsolute: return "absolute mouse move";
@@ -479,6 +482,8 @@ void Win32Input::inject(const InputEvent& event)
     switch (event.type) {
     case InputEvent::Type::KeyDown: injectKey(event, true); break;
     case InputEvent::Type::KeyUp: injectKey(event, false); break;
+    case InputEvent::Type::CharDown: injectChar(event.text, true); break;
+    case InputEvent::Type::CharUp: injectChar(event.text, false); break;
     case InputEvent::Type::Utf8Text: injectText(event.text); break;
     case InputEvent::Type::MouseMoveRelative: injectMouseMove(event.deltaX, event.deltaY); break;
     case InputEvent::Type::MouseMoveAbsolute: injectMousePosition(event); break;
@@ -527,6 +532,69 @@ void Win32Input::injectKey(const InputEvent& event, bool down)
     // input watchdog already owns reconciling what is still held.
     INPUT input = makeKeyInput(vk, down, (event.keyFlags & kFlagNonNormalized) != 0);
     sendOne(input);
+}
+
+void Win32Input::injectChar(const std::string& utf8, bool down)
+{
+    // One character the client's layout produced, which its US key position
+    // would not produce here. VkKeyScanExW answers in the layout of the FOREGROUND
+    // window's thread — the layout the character will actually be interpreted
+    // in, which is the whole point, and which is also why it is read on every
+    // keystroke rather than cached: the user can switch layouts mid-stream.
+    if (utf8.empty()) return;
+    wchar_t wide[2] = {};
+    const int units =
+        ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), wide, 2);
+    // A single UTF-16 unit only: a surrogate pair has no key on any layout, and
+    // an emoji is not something a key press can express.
+    if (units != 1) {
+        if (down) injectText(utf8);
+        return;
+    }
+
+    const HKL layout =
+        ::GetKeyboardLayout(::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr));
+    const SHORT scan = ::VkKeyScanExW(wide[0], layout);
+    const int vk = scan & 0xFF;
+    const int needed = (scan >> 8) & 0xFF;
+    if (scan == -1 || vk == 0) {
+        // The host's layout cannot reach this character with any combination.
+        // Fall back to the Unicode path, which needs no key at all — the
+        // character still appears, it simply is not a key press.
+        if (down) injectText(utf8);
+        return;
+    }
+
+    // Bits of the high byte: 1 Shift, 2 Ctrl, 4 Alt. Press only what is missing,
+    // and release on the way back out in reverse order, so a modifier the viewer
+    // is genuinely holding is left exactly as it was.
+    static constexpr struct
+    {
+        int bit;
+        int vk;
+    } kNeeded[] = {{1, VK_SHIFT}, {2, VK_CONTROL}, {4, VK_MENU}};
+
+    std::vector<INPUT> inputs;
+    inputs.reserve(4);
+    {
+        std::lock_guard<std::mutex> lock(m_HeldMutex);
+        for (const auto& mod : kNeeded) {
+            if (!(needed & mod.bit)) continue;
+            if (m_HeldKeys.count(mod.vk)) continue; // the viewer is holding it for real
+            inputs.push_back(makeKeyInput(mod.vk, down, false));
+        }
+        if (down)
+            m_HeldKeys.insert(vk);
+        else
+            m_HeldKeys.erase(vk);
+    }
+    // The character's own key sits inside the modifiers: pressed after they go
+    // down, released before they come back up.
+    if (down)
+        inputs.push_back(makeKeyInput(vk, true, false));
+    else
+        inputs.insert(inputs.begin(), makeKeyInput(vk, false, false));
+    sendBatch(inputs.data(), static_cast<int>(inputs.size()));
 }
 
 void Win32Input::injectText(const std::string& utf8)

@@ -258,13 +258,12 @@ void UinputInput::injectButton(const InputEvent& event, bool down)
         m_HeldButtons.erase(code);
 }
 
-void UinputInput::injectText(const std::string& utf8)
+bool UinputInput::ensureTextMap()
 {
-    if (utf8.empty()) return;
-
     // The map is built on the first character ever typed, not at start(): a
-    // viewer on a desktop browser sends key positions and never comes through
-    // here, and there is no reason to compile somebody's keymap for them.
+    // viewer on a desktop browser whose layout matches ours sends key positions
+    // and never comes through here, and there is no reason to compile
+    // somebody's keymap for them.
     if (!m_TextMapTried) {
         m_TextMapTried = true;
         if (m_TextMap.open())
@@ -272,7 +271,68 @@ void UinputInput::injectText(const std::string& utf8)
                       m_TextMap.description() + ", " + std::to_string(m_TextMap.size()) +
                       " characters reachable");
     }
-    if (!m_TextMap.isOpen()) return;
+    return m_TextMap.isOpen();
+}
+
+void UinputInput::injectChar(const std::string& utf8, bool down)
+{
+    if (utf8.empty() || !ensureTextMap()) return;
+
+    std::vector<char32_t> points;
+    decodeUtf8(utf8, points);
+    if (points.size() != 1) return;
+
+    XkbStroke strokes[2];
+    int strokeCount = 0;
+    if (!m_TextMap.find(points[0], strokes, strokeCount)) {
+        if (!m_UntypableLogged) {
+            m_UntypableLogged = true;
+            log::info("[native] input: U+" + std::to_string(static_cast<uint32_t>(points[0])) +
+                      " has no key on the host layout " + m_TextMap.description() +
+                      " — characters this layout cannot type are dropped");
+        }
+        return;
+    }
+    // A dead-key character is two taps that must follow each other; there is no
+    // single key to hold down for it. Type it whole on the press and let the
+    // release do nothing — an accented letter is never a movement key.
+    if (strokeCount != 1) {
+        if (down) injectText(utf8);
+        return;
+    }
+
+    const XkbStroke& stroke = strokes[0];
+    // Only the modifiers the viewer is not already holding — same rule as
+    // injectText, and for the same reason: a Shift they are genuinely holding
+    // must still be down when this returns. The stroke's own key goes inside
+    // them: pressed after they go down, released before they come back up.
+    uint16_t mine[2] = {0, 0};
+    int count = 0;
+    for (uint16_t mod : stroke.mods) {
+        if (mod == 0 || m_HeldKeys.count(mod)) continue;
+        mine[count++] = mod;
+    }
+
+    if (down) {
+        for (int i = 0; i < count; ++i)
+            emit(m_Keyboard, EV_KEY, mine[i], 1);
+        if (count > 0) emitSyn(m_Keyboard);
+        emit(m_Keyboard, EV_KEY, stroke.code, 1);
+        emitSyn(m_Keyboard);
+        m_HeldKeys.insert(stroke.code);
+    } else {
+        emit(m_Keyboard, EV_KEY, stroke.code, 0);
+        emitSyn(m_Keyboard);
+        m_HeldKeys.erase(stroke.code);
+        for (int i = count - 1; i >= 0; --i)
+            emit(m_Keyboard, EV_KEY, mine[i], 0);
+        if (count > 0) emitSyn(m_Keyboard);
+    }
+}
+
+void UinputInput::injectText(const std::string& utf8)
+{
+    if (utf8.empty() || !ensureTextMap()) return;
 
     std::vector<char32_t> points;
     decodeUtf8(utf8, points);
@@ -382,6 +442,8 @@ void UinputInput::inject(const InputEvent& event)
     switch (event.type) {
     case Type::KeyDown: injectKey(event, true); break;
     case Type::KeyUp: injectKey(event, false); break;
+    case Type::CharDown: injectChar(event.text, true); break;
+    case Type::CharUp: injectChar(event.text, false); break;
     case Type::Utf8Text: injectText(event.text); break;
     case Type::MouseButtonDown: injectButton(event, true); break;
     case Type::MouseButtonUp: injectButton(event, false); break;

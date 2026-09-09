@@ -735,6 +735,13 @@ void MoonlightShim::sendUtf8Text(const QString& text)
     LiSendUtf8TextEvent(utf8.constData(), static_cast<unsigned int>(utf8.size()));
 }
 
+void MoonlightShim::sendKeyChar(const QString& ch, bool down)
+{
+    // Only the press: the text event types the character outright, so acting on
+    // the release too would double every keystroke.
+    if (down) sendUtf8Text(ch);
+}
+
 int MoonlightShim::hostIpTtl() const
 {
     return LiGetHostIpTtl();

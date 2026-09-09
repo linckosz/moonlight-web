@@ -588,17 +588,20 @@ void StreamRelay::onWsTextMessage(const QString& message)
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
-        short keyCode;
-        char flags = 0;
-        // Shared codec, so this transport now resolves IntlBackslash/IntlRo
-        // like the others instead of passing the raw VK through.
-        InputMsg::resolveHostKey(msg["keyCode"].toInt(0), msg["code"].toString(), keyCode, flags);
-        m_Shim->sendKeyEvent(keyCode, down, InputMsg::modifierMask(msg), flags,
-                             msg["hold"].toBool(false));
+        // Shared codec, so this transport resolves IntlBackslash/IntlRo and the
+        // client's keyboard layout like the others instead of passing the raw
+        // VK through.
+        const InputMsg::KeyPlan plan = InputMsg::resolveKey(msg, m_Shim->keyboardMode());
+        if (plan.isText()) {
+            m_Shim->sendKeyChar(plan.text, down);
+        } else {
+            m_Shim->sendKeyEvent(plan.keyCode, down, InputMsg::modifierMask(msg), plan.flags,
+                                 msg["hold"].toBool(false));
+        }
     } else if (type == "inputstate") {
         // Client heartbeat of its held-input state — full contract in
         // IMediaEngine's input-watchdog contract.
-        m_Shim->syncHeldInputs(InputMsg::parseHeldKeys(msg),
+        m_Shim->syncHeldInputs(InputMsg::parseHeldKeys(msg, m_Shim->keyboardMode()),
                                static_cast<quint32>(msg["buttons"].toInt(0)),
                                msg["buttonsHold"].toBool(false));
     } else if (type == "mousemove") {

@@ -22,9 +22,27 @@
 #include <QObject>
 #include <QString>
 #include <QVector>
+#include <atomic>
 #include <cstdint>
 
 class FrameSentSink;
+
+/**
+ * How this host can be made to type the character the client's keyboard layout
+ * produced, rather than whatever its own layout puts at that key's position.
+ *
+ * It lives here, next to the engine, for the same reason scroll quantization
+ * does: it is a property of the host that the session establishes once and the
+ * input path then reads. What each value means, and why the host's source code
+ * says so, is documented on the enum in InputMessageCodec.h.
+ */
+enum class KeyboardMode
+{
+    Positional,
+    Native,
+    SunshineWindows,
+    SunshineMacos,
+};
 
 /**
  * @brief What produces a stream's video, audio and input, whatever the source.
@@ -133,6 +151,16 @@ public:
     virtual void sendKeyEvent(short keyCode, bool down, char modifiers, char flags,
                               bool hold = false) = 0;
     virtual void sendUtf8Text(const QString& text) = 0;
+
+    /// One key whose character the host must honour instead of its position,
+    /// because the client's keyboard layout disagrees with the US layout the
+    /// protocol assumes (see InputMessageCodec.h). `down` is the real key
+    /// transition: an engine that can press a character as a key uses both
+    /// edges, one that can only inject text acts on the press and ignores the
+    /// release. Distinct from sendUtf8Text, which carries a whole string from
+    /// a soft keyboard and has no key transition at all.
+    virtual void sendKeyChar(const QString& ch, bool down) = 0;
+
     virtual void sendMouseMove(short deltaX, short deltaY) = 0;
     virtual void sendMousePosition(short x, short y, short referenceWidth,
                                    short referenceHeight) = 0;
@@ -232,6 +260,16 @@ public:
     /// sub-notch amounts. Meaningless when we inject the scroll ourselves.
     virtual void setScrollQuantization(bool enabled) { Q_UNUSED(enabled); }
 
+    /// How far this host can be pushed to honour the client's keyboard layout.
+    /// Set once per session from the host's OS, and read by the input path on
+    /// every keystroke. Defaults to Positional — the behaviour every Moonlight
+    /// client has always had — so an engine that says nothing loses nothing.
+    virtual void setKeyboardMode(KeyboardMode mode)
+    {
+        m_KeyboardMode.store(mode, std::memory_order_relaxed);
+    }
+    KeyboardMode keyboardMode() const { return m_KeyboardMode.load(std::memory_order_relaxed); }
+
     /// Snapshot the host's real lock-key state. Only possible when the streamed
     /// host IS this machine — which is always true for a native engine and
     /// conditional for GameStream, hence the parameter.
@@ -303,4 +341,9 @@ signals:
     /// names what is in the way. Forwarded to the browser as-is, so the
     /// viewer sees why the cursor went dead instead of guessing.
     void inputGateChanged(bool blocked, QString reason, QString window);
+
+protected:
+    /// Written once by the session thread at stream start, read on every
+    /// keystroke by whichever thread owns the input channel — hence atomic.
+    std::atomic<KeyboardMode> m_KeyboardMode{KeyboardMode::Positional};
 };

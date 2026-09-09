@@ -24,6 +24,7 @@
 #include "StreamRelay.h"
 #include "MoonlightShim.h"
 #include "NativeMediaEngine.h"
+#include "InputMessageCodec.h"
 #include "../backend/NvHTTP.h"
 #include "../backend/NvComputer.h"
 #include "../backend/IdentityManager.h"
@@ -648,6 +649,20 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
                 << (quantize ? "quantized to whole notches" : "sent at full resolution");
     }
 
+    // Keyboard: how far this host can be pushed to type the character the
+    // client's layout produced rather than whatever its own layout puts at that
+    // key's position. Same shape as the scroll decision above and for the same
+    // reason — it is a property of the host, established once, read on every
+    // keystroke. Everything the values mean is in InputMessageCodec.h.
+    //
+    // A host we could not identify stays Positional, which is what every
+    // Moonlight client has always done: being wrong about the layout only
+    // mistypes, while text-injecting at a host that cannot receive it (Linux,
+    // Wolf) types nothing usable at all. Not final either — the TTL sample can
+    // still name the OS once the host's packets arrive, and sampleHostIpTtl()
+    // applies this again from there.
+    applyKeyboardMode(m_Host->hostOs());
+
     // Concurrent sessions each start their controller numbering at 0, which on
     // the host collapses every player's gamepad onto the same virtual pad.
     m_Engine->setControllerOffset(m_GamepadOffset);
@@ -898,6 +913,28 @@ void StreamSession::applyInputPolicy(const InputMsg::Policy& policy)
 // host that is slow to send anything must not cost us the answer for the whole
 // session. Giving up is normal — a platform that cannot report a TTL leaves it
 // at 0 forever, and the safe default already covers that.
+void StreamSession::applyKeyboardMode(HostOsProbe::HostOs os)
+{
+    if (!m_Engine) return;
+
+    KeyboardMode mode = KeyboardMode::Positional;
+    if (!AppSettings().keyboardLayoutFidelity()) {
+        mode = KeyboardMode::Positional; // opted out in the settings file
+    } else if (qobject_cast<NativeMediaEngine*>(m_Engine)) {
+        // Our own host, whatever the OS: it resolves the character in its own
+        // layout and presses the key that carries it.
+        mode = KeyboardMode::Native;
+    } else {
+        switch (os) {
+        case HostOsProbe::HostOs::Windows: mode = KeyboardMode::SunshineWindows; break;
+        case HostOsProbe::HostOs::MacOs: mode = KeyboardMode::SunshineMacos; break;
+        default: mode = KeyboardMode::Positional; break;
+        }
+    }
+    m_Engine->setKeyboardMode(mode);
+    qInfo() << "[Session] Keyboard layout fidelity:" << InputMsg::keyboardModeName(mode);
+}
+
 void StreamSession::sampleHostIpTtl()
 {
     if (!m_Engine) return;
@@ -927,6 +964,9 @@ void StreamSession::sampleHostIpTtl()
     const bool quantize = !HostOsProbe::keepsSubNotchScroll(os);
     m_Host->observedIpTtl = ttl;
     m_Engine->setScrollQuantization(quantize);
+    // The keyboard rides on the same verdict: a host only named here started the
+    // session positional, and a Windows one can honour the client's layout.
+    applyKeyboardMode(os);
     qInfo() << "[Session] Host IP TTL" << ttl << "- host is" << HostOsProbe::toString(os)
             << "- scroll now" << (quantize ? "quantized to whole notches" : "at full resolution");
 }

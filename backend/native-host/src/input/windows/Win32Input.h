@@ -78,6 +78,11 @@ private:
     void runRelease(void* blockerWindow);
 
     void injectKey(const InputEvent& event, bool down);
+    /// One character the client's layout produced, pressed and released as the
+    /// real key of the HOST's layout that carries it — so the scancode exists
+    /// and games see a key, unlike injectText's Unicode path (which is the
+    /// fallback here for a character no local key can reach).
+    void injectChar(const std::string& utf8, bool down);
     void injectText(const std::string& utf8);
     void injectMouseMove(int deltaX, int deltaY);
     /// Warp the pointer to the nearest point of the captured display if it is

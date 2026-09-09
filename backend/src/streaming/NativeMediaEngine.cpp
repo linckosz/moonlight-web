@@ -644,6 +644,21 @@ void NativeMediaEngine::sendUtf8Text(const QString& text)
     m_Session->sendInput(event);
 }
 
+void NativeMediaEngine::sendKeyChar(const QString& ch, bool down)
+{
+    if (!m_Session) return;
+    // The one host where a character can stay a real key: the platform layer
+    // resolves it in the machine's own layout and presses THAT key, so the
+    // scancode is real and Raw Input, DirectInput and typematic all still see
+    // it. Deliberately outside the watchdog — a re-press of a character during
+    // a stall would type it again rather than re-assert it.
+    mw::native::InputEvent event;
+    event.type =
+        down ? mw::native::InputEvent::Type::CharDown : mw::native::InputEvent::Type::CharUp;
+    event.text = ch.toStdString();
+    m_Session->sendInput(event);
+}
+
 void NativeMediaEngine::sendMouseMove(short deltaX, short deltaY)
 {
     if (!m_Session) return;

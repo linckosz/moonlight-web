@@ -30,6 +30,7 @@
 #include "../server/NetClassify.h"
 
 #include "../backend/streambackend/IStreamBackend.h"
+#include "../backend/streambackend/HostOsProbe.h"
 
 #include <memory>
 
@@ -257,6 +258,12 @@ private slots:
     void onShimConnectionFailed(const QString& error);
 
 private:
+    /// Tell the engine how far this host can honour the client's keyboard
+    /// layout. Called at stream start, and again if the TTL sample names an OS
+    /// the control plane could not — a Windows host identified only there would
+    /// otherwise keep typing by position for the whole session.
+    void applyKeyboardMode(HostOsProbe::HostOs os);
+
     void doLaunchApp();
     void doResumeApp();
 

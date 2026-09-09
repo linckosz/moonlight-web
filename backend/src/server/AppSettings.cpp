@@ -302,6 +302,10 @@ void AppSettings::seedDocumentedDefaults()
         obj["latency_flag_enabled"] = false;
         changed = true;
     }
+    if (!obj.contains("keyboard_layout_fidelity")) {
+        obj["keyboard_layout_fidelity"] = true;
+        changed = true;
+    }
     if (!obj.contains("stream_worker_enabled")) {
         obj["stream_worker_enabled"] = true;
         changed = true;
@@ -476,6 +480,12 @@ bool AppSettings::latencyFlagEnabled() const
 {
     QJsonObject obj = readAll();
     return obj.value("latency_flag_enabled").toBool(false);
+}
+
+bool AppSettings::keyboardLayoutFidelity() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("keyboard_layout_fidelity").toBool(true);
 }
 
 // ── STUN server ──────────────────────────────────────────────────────────────────

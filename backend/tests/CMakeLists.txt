@@ -76,6 +76,7 @@ add_executable(run_tests
     test_session_metrics.cpp
     test_us_scancode.cpp
     test_input_watchdog.cpp
+    test_keyboard_layout.cpp
     test_native_capabilities_json.cpp
     # In-scope production units (+ their real deps)
     # The probe result as it crosses from the console session to the service.

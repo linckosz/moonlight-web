@@ -1289,18 +1289,24 @@ void DataChannelRelay::onInputMessage(const std::string& message)
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
-        short keyCode;
-        char flags = 0;
-        InputMsg::resolveHostKey(msg["keyCode"].toInt(0), msg["code"].toString(), keyCode, flags);
-        // `hold`: a movement key the client wants kept down through a brief
-        // stall instead of released at the short grace period (see the shim).
-        m_Shim->sendKeyEvent(keyCode, down, InputMsg::modifierMask(msg), flags,
-                             msg["hold"].toBool(false));
+        const InputMsg::KeyPlan plan = InputMsg::resolveKey(msg, m_Shim->keyboardMode());
+        if (plan.isText()) {
+            // The client's layout puts a character here that this key's US
+            // position would not produce. The engine decides what it can do
+            // with that: a real press/release on the native host, a one-shot
+            // text injection on Sunshine (where the release has nothing to do).
+            m_Shim->sendKeyChar(plan.text, down);
+        } else {
+            // `hold`: a movement key the client wants kept down through a brief
+            // stall instead of released at the short grace period (see the shim).
+            m_Shim->sendKeyEvent(plan.keyCode, down, InputMsg::modifierMask(msg), plan.flags,
+                                 msg["hold"].toBool(false));
+        }
     } else if (type == "inputstate") {
         // Client heartbeat: its authoritative held-input state, sent while (and
         // only while) something is held. Re-presses whatever the watchdog
         // released during a stall but the user is genuinely still holding.
-        QVector<IMediaEngine::HeldKey> held = InputMsg::parseHeldKeys(msg);
+        QVector<IMediaEngine::HeldKey> held = InputMsg::parseHeldKeys(msg, m_Shim->keyboardMode());
         quint32 buttons = static_cast<quint32>(msg["buttons"].toInt(0));
         InputMsg::filterHeldState(m_InputPolicy, held, buttons);
         m_Shim->syncHeldInputs(held, buttons, msg["buttonsHold"].toBool(false));

@@ -109,6 +109,12 @@ public:
     void syncLockKeys(bool numLock, bool capsLock, bool scrollLock) override;
     // Send UTF-8 text (virtual/soft keyboard input) to the host.
     void sendUtf8Text(const QString& text) override;
+    // A key the client's layout gives a different character than its US
+    // position would. GameStream carries no layout, so the only exact channel
+    // left here is the UTF-8 text event — which has no key state, hence the
+    // release doing nothing. Letters never reach this on a Windows host: they
+    // stay real key presses through SS_KBE_FLAG_NON_NORMALIZED.
+    void sendKeyChar(const QString& ch, bool down) override;
     void sendMouseMove(short deltaX, short deltaY) override;
     void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight) override;
     void sendMouseButton(bool down, int button, bool hold = false) override;

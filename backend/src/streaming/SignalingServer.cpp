@@ -24,6 +24,7 @@ extern "C" {
 #include "Limelight.h"
 }
 #include "IMediaEngine.h"
+#include "InputMessageCodec.h"
 #include "SdpFingerprint.h"
 #include "common/PairingCrypto.h"
 #include "network/UPNPClient.h"
@@ -810,32 +811,15 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
     // Same input handling as DataChannelRelay::onInputMessage
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
-        int vk = msg["keyCode"].toInt(0);
-        QString code = msg["code"].toString();
-        char mods = 0;
-        if (msg["ctrlKey"].toBool(false)) mods |= 0x02;
-        if (msg["shiftKey"].toBool(false)) mods |= 0x01;
-        if (msg["altKey"].toBool(false)) mods |= 0x04;
-        if (msg["metaKey"].toBool(false)) mods |= 0x08;
-
-        short keyCode;
-        char flags = 0;
-
-        // International keys without standard US VK equivalents:
-        // IntlBackslash (ISO key next to left Shift) and IntlRo (JIS \ key)
-        // need NON_NORMALIZED mode: Sunshine injects the keyCode as a raw VK
-        // (not a US-layout scancode), so the host's active layout resolves it.
-        if (code == "IntlBackslash") {
-            keyCode = 0xE2; // VK_OEM_102 — Sunshine injects NON_NORMALIZED as a VK
-            flags = SS_KBE_FLAG_NON_NORMALIZED;
-        } else if (code == "IntlRo") {
-            keyCode = 0xC1; // VK_ABNT_C1 (JIS Ro) — injected as a VK
-            flags = SS_KBE_FLAG_NON_NORMALIZED;
+        // The shared codec, like the other three transports: this copy used to
+        // reimplement the international-key rules by hand and would have missed
+        // the client's keyboard layout entirely.
+        const InputMsg::KeyPlan plan = InputMsg::resolveKey(msg, m_Shim->keyboardMode());
+        if (plan.isText()) {
+            m_Shim->sendKeyChar(plan.text, down);
         } else {
-            keyCode = static_cast<short>(vk);
-            flags = 0;
+            m_Shim->sendKeyEvent(plan.keyCode, down, InputMsg::modifierMask(msg), plan.flags);
         }
-        m_Shim->sendKeyEvent(keyCode, down, mods, flags);
     } else if (type == "mousemove") {
         short dx = static_cast<short>(msg["dx"].toInt(0));
         short dy = static_cast<short>(msg["dy"].toInt(0));
