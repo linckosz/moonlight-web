@@ -217,16 +217,23 @@ be remembered forty times is forgotten on the forty-first, and the string that
 leaks is always the one nobody thought carried an address — a driver's error
 message, a path in the provenance card, a note written by `discover.ps1`.
 
-### Where the fleet's addresses live
+### Where the fleet is declared
 
-`hosts.json` is committed and says what each machine **is**. `hosts.local.json`
-sits next to it, is **git-ignored**, and says how to **reach** it — address,
-account, password. `discover.ps1` merges the second over the first on the `id`
-key; a machine absent from it is still declared, still appears in the report, and
-is reported as "declared but not reachable from here".
+`hosts.json` is committed and carries the **shape** of a fleet: the ports a
+backend answers on, the fields a machine entry may have, and the one machine
+every campaign has — the one it runs on, under the id `local`.
 
-Copy `hosts.local.example.json` to start. Prefer an `sshAlias` pointing at
-`~/.ssh/config` over a password in a file, wherever the machine allows it.
+**Your machines are declared in `hosts.local.json`**, which is **git-ignored**.
+`discover.ps1` merges it on the `id` key: `local` completes the built-in entry,
+any other id adds a machine. Copy `hosts.local.example.json` to start one.
+
+That split is not only about credentials. A bench fleet is a description of one
+room — these GPUs, that dual boot, a mini PC on a shelf. It is true there and
+false everywhere else, so a repository is the wrong place for it: somebody
+cloning this harness wants the machinery, never someone else's hardware.
+
+Prefer an `sshAlias` pointing at `~/.ssh/config` over a password in a file,
+wherever the machine allows it.
 
 ## 9. The playbook — what each failure means
 
@@ -309,8 +316,8 @@ Copy `hosts.local.example.json` to start. Prefer an `sshAlias` pointing at
 | | |
 |---|---|
 | Harness | `scripts/bench/` (committed) |
-| Fleet table | `scripts/bench/hosts.json` — hints only, `discover.ps1` probes everything |
-| Addresses and accounts | `scripts/bench/hosts.local.json` (**ignored**), shape in `hosts.local.example.json` |
+| Fleet shape and ports | `scripts/bench/hosts.json` — no fleet, just the shape |
+| Your fleet | `scripts/bench/hosts.local.json` (**ignored**), shape in `hosts.local.example.json` |
 | Raw results | `scripts/bench/results/` (ignored) — unscrubbed, unlike the report |
 | Report | `bench-out/report.html` (ignored) |
 | Reference clip | `~/.mw-bench/content/cod.webm` — **outside the repository**, 263 MB |
