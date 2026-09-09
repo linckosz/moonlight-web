@@ -4,6 +4,7 @@
 # viz limit. .gitignore already excludes build/, node_modules/, etc.
 backend/third_party/
 backend/libs/
+backend/native-host/third_party/
 
 # Don't graph graphify's own output.
 graphify-out/
