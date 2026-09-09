@@ -111,8 +111,14 @@ body.streaming-active::after {
    stay exactly where they were. */
 .stream-brand {
     display: none;
-    align-items: baseline;
-    gap: 14px;
+    /* Same metrics as .app-header, and the three items inside carry the shell's
+       own classes (.stream-brand-title shares the h1 rule in layout.css;
+       .instance-menu/.instance-name and .version ARE the header's). Nothing here
+       restyles them: "the same as the header" is only true if it is the same
+       rule, and a second set of numbers that merely looked right would drift the
+       first time one of them changed. */
+    align-items: center;
+    gap: var(--space-3);
     min-width: 0;
     /* The fullscreen button is absolutely centred in this bar (.btn-stream-fs)
        and takes no space in the flow, so growing until the quit button would
@@ -127,33 +133,9 @@ body.streaming-active::after {
         display: flex;
     }
 }
-.stream-brand-name {
-    font-size: 0.95rem;
-    font-weight: 700;
-    letter-spacing: 2px;
-    color: var(--text-1);
-    /* No text-shadow, unlike the shell's title: this one sits a few pixels from
-       moving video, and a glow there reads as a compression artefact. */
-    white-space: nowrap;
-}
-.stream-brand-host {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-2);
-    /* The elastic one — a machine may be called anything, the rest is fixed.
-       min-width:0 is what lets it shrink below its text at all: a flex item's
-       floor is its content otherwise, and the name would push the version out
-       of the bar instead of ellipsising. */
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.stream-brand-version {
-    flex-shrink: 0;
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: var(--text-3);
+/* The title is styled with the header's h1 (layout.css); it only needs the one
+   thing an h1 gets from being a block. */
+.stream-brand-title {
     white-space: nowrap;
 }
 

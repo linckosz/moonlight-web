@@ -20,10 +20,17 @@
     z-index: 100;
 }
 
-.app-header h1 {
+/* The product name, here and on the stream's own bar (.stream-brand-title in
+   stream.css). ONE rule for both, not two that look alike: the stream bar exists
+   to carry the same three facts the header carries, and a reader who sees them
+   set differently reads two different things. text-transform is spelled out
+   because base.css gives it to h1 and the stream's copy is not one. */
+.app-header h1,
+.stream-brand-title {
     font-size: var(--fs-lg);
     font-weight: 700;
     letter-spacing: 2px;
+    text-transform: uppercase;
     color: var(--text-1);
     text-shadow: 0 0 12px var(--accent-ring);
 }

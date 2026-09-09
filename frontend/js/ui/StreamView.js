@@ -1516,17 +1516,20 @@ export class StreamView {
         el.innerHTML = `
             <div class="stream-header">
                 <div class="stream-brand" aria-hidden="true">
-                    <span class="stream-brand-name">MoonlightWeb</span>
+                    <span class="stream-brand-title">MoonlightWeb</span>
                     ${
+                        // The shell's own classes, and its own nesting: the name
+                        // sits inside .instance-menu because that is where its
+                        // padding and its right to shrink come from. No caret and
+                        // no button — the switcher is a control, and this bar
+                        // carries the information, not the control.
                         shell.name
-                            ? `<span class="stream-brand-host">${escapeHtml(shell.name)}</span>`
+                            ? `<span class="instance-menu"><span class="instance-name">${escapeHtml(
+                                  shell.name,
+                              )}</span></span>`
                             : ''
                     }
-                    ${
-                        shell.version
-                            ? `<span class="stream-brand-version">${escapeHtml(shell.version)}</span>`
-                            : ''
-                    }
+                    ${shell.version ? `<span class="version">${escapeHtml(shell.version)}</span>` : ''}
                 </div>
                 ${
                     // Wolf's console is reached with Ctrl+Alt+Shift+W, which a
