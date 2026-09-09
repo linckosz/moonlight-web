@@ -157,18 +157,31 @@ function Test-SunshineRest {
 
 # ── The local machine: the one place we can ask the product itself ──────────
 #
+# Invoke-RestMethod, but decoded as UTF-8. Windows PowerShell 5.1 falls back to
+# ISO-8859-1 whenever a response carries no charset in its Content-Type, so a
+# monitor called "M27Q — 2560×1440" came back as "M27Q â€” 2560Ã—1440" and that
+# is what landed in inventory.json, then in the report. Read the bytes and
+# decode them ourselves.
+function Invoke-JsonUtf8 {
+    param([string] $Uri, [hashtable] $Headers = @{}, [int] $TimeoutSec = 5)
+    $resp = Invoke-WebRequest -Uri $Uri -Headers $Headers -TimeoutSec $TimeoutSec `
+                              -UseBasicParsing -ErrorAction Stop
+    $bytes = if ($resp.RawContentStream) { $resp.RawContentStream.ToArray() }
+             else { [System.Text.Encoding]::UTF8.GetBytes($resp.Content) }
+    [System.Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
+}
+
 # /api/native/status is the source of truth for capabilities — displays, live
 # HDR state, GPU, encoder, per-codec support — and it answers only a local
 # caller. Anything else is guesswork.
 function Get-LocalNativeStatus {
     foreach ($port in @(8080, 48080, 49080, 80)) {
         try {
-            $token = (Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/admin/token" `
-                        -TimeoutSec 3 -ErrorAction Stop).token
-            $status = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/native/status" `
-                        -Headers @{ 'X-MW-Admin-Key' = $token } -TimeoutSec 5 -ErrorAction Stop
-            $settings = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/settings/streaming" `
-                        -Headers @{ 'X-MW-Admin-Key' = $token } -TimeoutSec 5 -ErrorAction Stop
+            $token = (Invoke-JsonUtf8 -Uri "http://127.0.0.1:$port/api/admin/token" -TimeoutSec 3).token
+            $status = Invoke-JsonUtf8 -Uri "http://127.0.0.1:$port/api/native/status" `
+                        -Headers @{ 'X-MW-Admin-Key' = $token }
+            $settings = Invoke-JsonUtf8 -Uri "http://127.0.0.1:$port/api/settings/streaming" `
+                        -Headers @{ 'X-MW-Admin-Key' = $token }
             return [pscustomobject]@{
                 port                = $port
                 available           = $status.available
