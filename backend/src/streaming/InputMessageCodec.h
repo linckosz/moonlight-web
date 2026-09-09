@@ -142,11 +142,21 @@ inline KeyPlan resolveKey(const QJsonObject& msg, KeyboardMode mode)
 
     const QString ch = msg["char"].toString();
     if (ch.isEmpty() || mode == KeyboardMode::Positional) return plan;
+    // Whether the client's character differs from the one the US layout puts at
+    // this position. Only the Sunshine modes care: see below.
+    const bool nonUs = msg["nonUs"].toBool(false);
 
     switch (mode) {
     case KeyboardMode::Native:
-        // Every character, because the native host turns each one back into a
-        // real key of the host's layout — so nothing is lost by asking.
+        // EVERY printable character, agreeing ones included. The native host
+        // resolves it in its own real layout and presses the key that carries
+        // it, so when the two layouts already match the resolution lands back on
+        // the very key the viewer pressed — nothing changes — and when they do
+        // not, the right key is pressed instead. Gating this on "differs from
+        // US" was wrong in the mirror case: a US-layout viewer on a French host
+        // presses the key marked A, means `q`, and diverges from nothing at all
+        // — yet the position types `a`. The comparison that matters is against
+        // the HOST's layout, which only the host can make.
         plan.text = ch;
         break;
     case KeyboardMode::SunshineWindows:
@@ -162,9 +172,18 @@ inline KeyPlan resolveKey(const QJsonObject& msg, KeyboardMode mode)
         // for a stateless one: weapon slots 1-5 in a shooter stop answering,
         // for a character that was never wrong. Being mistyped on a mismatched
         // host is the pre-existing behaviour; breaking a key that worked is not.
-        if (const short vk = letterVk(ch)) {
-            plan.keyCode = vk;
-            plan.flags = SS_KBE_FLAG_NON_NORMALIZED;
+        //
+        // And only when the character differs from the US one. Sunshine derives
+        // the scancode for a non-normalized VK from ITS OWN thread's layout
+        // (MapVirtualKeyW, windows_backend.cpp:1433), where the normalized path
+        // is a fixed table — so asking for it when the client is already US
+        // would trade a deterministic scancode for one we cannot predict, and
+        // buy nothing.
+        if (nonUs) {
+            if (const short vk = letterVk(ch)) {
+                plan.keyCode = vk;
+                plan.flags = SS_KBE_FLAG_NON_NORMALIZED;
+            }
         }
         break;
     case KeyboardMode::SunshineMacos:
@@ -172,7 +191,7 @@ inline KeyPlan resolveKey(const QJsonObject& msg, KeyboardMode mode)
         // exact and a real key here — text is the only exact channel. Taken for
         // letters, because a macOS GameStream host is a machine people type on;
         // refused for the rest, for the reason spelled out just above.
-        if (letterVk(ch)) plan.text = ch;
+        if (nonUs && letterVk(ch)) plan.text = ch;
         break;
     case KeyboardMode::Positional: break; // handled above
     }

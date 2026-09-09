@@ -174,9 +174,20 @@ void CgInput::releaseAll()
     // The caller holds m_Mutex.
     std::set<int> keys;
     std::set<int> buttons;
+    std::set<uint16_t> charCodes;
     keys.swap(m_HeldKeys);
     buttons.swap(m_HeldButtons);
-    if (keys.empty() && buttons.empty()) return;
+    charCodes.swap(m_HeldCharCodes);
+    if (keys.empty() && buttons.empty() && charCodes.empty()) return;
+
+    // Characters first: they were pressed as real keys of the host's layout and
+    // would otherwise stay down, and their release wants the modifiers still in
+    // the state they were pressed under.
+    for (uint16_t code : charCodes) {
+        CGEventRef up = CGEventCreateKeyboardEvent(nullptr, code, false);
+        CGEventSetFlags(up, static_cast<CGEventFlags>(m_Modifiers));
+        post(up);
+    }
 
     for (int vk : keys) {
         const uint16_t code = macKeyCode(vk);
@@ -192,8 +203,8 @@ void CgInput::releaseAll()
     for (int button : buttons)
         postButton(button, false, m_X, m_Y);
     m_Modifiers = 0;
-    log::info("[native] input: released " + std::to_string(keys.size()) + " key(s) and " +
-              std::to_string(buttons.size()) + " button(s) at session end");
+    log::info("[native] input: released " + std::to_string(keys.size() + charCodes.size()) +
+              " key(s) and " + std::to_string(buttons.size()) + " button(s) at session end");
 }
 
 void CgInput::inject(const InputEvent& event)
@@ -355,6 +366,11 @@ void CgInput::injectChar(const std::string& utf8, bool down)
     // has to be pressed or released around it.
     CGEventSetFlags(key, static_cast<CGEventFlags>(m_Modifiers) | it->second.flags);
     post(key);
+
+    if (down)
+        m_HeldCharCodes.insert(it->second.code);
+    else
+        m_HeldCharCodes.erase(it->second.code);
 }
 
 void CgInput::injectText(const std::string& utf8)

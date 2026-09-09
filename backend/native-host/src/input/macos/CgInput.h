@@ -116,6 +116,11 @@ private:
     /// Reverse of the active layout, built lazily by ensureCharMap(). Empty
     /// until a client whose layout disagrees with this host's types something.
     std::unordered_map<uint16_t, CharKey> m_CharMap;
+    /// Key codes pressed through injectChar and not yet released. Separate from
+    /// m_HeldKeys, which holds VIRTUAL keys: a character resolves to a physical
+    /// CGKeyCode of the host's layout, which no virtual key names. Without it a
+    /// viewer who vanishes mid-press leaves the key down on the desktop.
+    std::set<uint16_t> m_HeldCharCodes;
     /// Input-source id m_CharMap was built from, so a layout switch mid-stream
     /// rebuilds it instead of typing the old layout's characters.
     std::string m_CharMapSource;

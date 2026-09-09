@@ -11,11 +11,10 @@ import { StreamView } from '../js/ui/StreamView.js';
  * the wrong characters the moment the two layouts disagree — an AZERTY viewer
  * on a QWERTY host presses "azerty" and reads "qwerty".
  *
- * The fix adds one optional field, `char`: the character the client's layout
- * actually produced. It is present ONLY when that character differs from what
- * the US layout puts at the same position, so a US client and every agreeing
- * key of any other client keep the exact message they have always sent — which
- * is the property these tests exist to hold.
+ * The client answers with two things it can actually know: `char`, the
+ * character its layout produced, and `nonUs`, whether the US layout puts
+ * something else at that position. It picks no mechanism — only the backend
+ * knows what kind of host is listening (see InputMsg::resolveKey).
  */
 
 const VK_Q = 0x51;
@@ -73,10 +72,24 @@ function ev(code, key, mods = {}) {
     };
 }
 
-describe('clientChar — which keystrokes need correcting at all', () => {
-    it('says nothing for a US client, on every printable key', () => {
-        // The anti-regression case: a viewer whose layout matches the one the
-        // protocol assumes must produce the byte-identical message it always did.
+describe('clientChar — what the client says it meant', () => {
+    it('says nothing for a key that has a name rather than a character', () => {
+        for (const key of ['Enter', 'ArrowUp', 'F1', 'Shift', 'Escape', 'Dead'])
+            expect(StreamView.clientChar(ev('Whatever', key))).toBeNull();
+    });
+
+    it('reports the character on every printable key, a US client included', () => {
+        // The native host resolves the CHARACTER in its own layout, so it needs
+        // one even when nothing diverges: a US viewer on a French host presses
+        // the key marked A, means 'q', and the position types 'a'. Nothing
+        // about that keystroke differs from US, and it is wrong all the same.
+        expect(StreamView.clientChar(ev('KeyQ', 'q'))).toEqual({ char: 'q', nonUs: false });
+        expect(StreamView.clientChar(ev('Digit1', '1'))).toEqual({ char: '1', nonUs: false });
+        expect(StreamView.clientChar(ev('Space', ' '))).toEqual({ char: ' ', nonUs: false });
+    });
+
+    it('marks a US client as agreeing, on every printable key', () => {
+        // `nonUs` is what keeps the Sunshine path off a US viewer's keystrokes.
         for (const [code, plain, shifted] of [
             ['KeyQ', 'q', 'Q'],
             ['KeyA', 'a', 'A'],
@@ -84,40 +97,35 @@ describe('clientChar — which keystrokes need correcting at all', () => {
             ['Slash', '/', '?'],
             ['Backquote', '`', '~'],
         ]) {
-            expect(StreamView.clientChar(ev(code, plain))).toBeNull();
-            expect(StreamView.clientChar(ev(code, shifted, { shiftKey: true }))).toBeNull();
+            expect(StreamView.clientChar(ev(code, plain)).nonUs).toBe(false);
+            expect(StreamView.clientChar(ev(code, shifted, { shiftKey: true })).nonUs).toBe(false);
         }
     });
 
-    it('says nothing for a key that has a name rather than a character', () => {
-        for (const key of ['Enter', 'ArrowUp', 'F1', 'Shift', 'Escape', 'Dead'])
-            expect(StreamView.clientChar(ev('Whatever', key))).toBeNull();
+    it('marks an AZERTY key that disagrees with its US position', () => {
+        expect(StreamView.clientChar(ev('KeyQ', 'a'))).toEqual({ char: 'a', nonUs: true });
+        expect(StreamView.clientChar(ev('KeyW', 'z'))).toEqual({ char: 'z', nonUs: true });
+        expect(StreamView.clientChar(ev('KeyA', 'q'))).toEqual({ char: 'q', nonUs: true });
+        // The digit row is where AZERTY diverges the hardest: unshifted it types
+        // symbols, and the shift state that reaches them differs per layout.
+        expect(StreamView.clientChar(ev('Digit1', '&'))).toEqual({ char: '&', nonUs: true });
+        expect(StreamView.clientChar(ev('Digit1', '1', { shiftKey: true }))).toEqual({
+            char: '1',
+            nonUs: true,
+        });
     });
 
-    it('names the character on an AZERTY key that disagrees with its US position', () => {
-        expect(StreamView.clientChar(ev('KeyQ', 'a'))).toBe('a');
-        expect(StreamView.clientChar(ev('KeyW', 'z'))).toBe('z');
-        expect(StreamView.clientChar(ev('KeyA', 'q'))).toBe('q');
-        // The digit row is where AZERTY diverges the hardest: unshifted it
-        // types symbols, and the shift state that reaches them differs per
-        // layout, so the position alone can never get there.
-        expect(StreamView.clientChar(ev('Digit1', '&'))).toBe('&');
-        expect(StreamView.clientChar(ev('Digit1', '1', { shiftKey: true }))).toBe('1');
-    });
-
-    it('leaves the keys AZERTY shares with US alone', () => {
-        // Most of the keyboard agrees, and every one of those keeps the
-        // untouched path — including Space, which no layout moves.
+    it('leaves the keys AZERTY shares with US marked as agreeing', () => {
         for (const [code, key] of [
             ['KeyE', 'e'],
             ['KeyR', 'r'],
             ['KeyT', 't'],
             ['Space', ' '],
         ])
-            expect(StreamView.clientChar(ev(code, key))).toBeNull();
+            expect(StreamView.clientChar(ev(code, key)).nonUs).toBe(false);
     });
 
-    it('always names an AltGr character, which no US position carries', () => {
+    it('always marks an AltGr character, which no US position carries', () => {
         // Windows reports AltGr as Ctrl+Alt, so this has to be decided before
         // anything treats the keystroke as a chord.
         const e = ev('KeyE', '€', {
@@ -125,18 +133,21 @@ describe('clientChar — which keystrokes need correcting at all', () => {
             altKey: true,
             getModifierState: (name) => name === 'AltGraph',
         });
-        expect(StreamView.clientChar(e)).toBe('€');
+        expect(StreamView.clientChar(e)).toEqual({ char: '€', nonUs: true });
     });
 
-    it('names the letter of a Ctrl chord, which is the bug users actually hit', () => {
+    it('marks the letter of a Ctrl chord, which is the bug users actually hit', () => {
         // Ctrl+A on AZERTY sits at the US Q position: sent positionally it
         // reaches the host as Ctrl+Q.
-        expect(StreamView.clientChar(ev('KeyQ', 'a', { ctrlKey: true }))).toBe('a');
+        expect(StreamView.clientChar(ev('KeyQ', 'a', { ctrlKey: true }))).toEqual({
+            char: 'a',
+            nonUs: true,
+        });
     });
 });
 
 describe('the wire message', () => {
-    it('carries the character on a divergent key and the position as before', () => {
+    it('carries the character and the divergence flag on a divergent key', () => {
         const v = keySink();
         v.handleKeyDown(ev('KeyQ', 'a'));
 
@@ -147,13 +158,22 @@ describe('the wire message', () => {
         // only be addressed positionally.
         expect(v.sent[0].keyCode).toBe(VK_Q);
         expect(v.sent[0].char).toBe('a');
+        expect(v.sent[0].nonUs).toBe(true);
     });
 
-    it('carries no character on an agreeing key', () => {
+    it('carries the character on an agreeing key too, flagged as agreeing', () => {
         const v = keySink();
         v.handleKeyDown(ev('KeyE', 'e'));
         expect(v.sent[0].keyCode).toBe(VK_E);
+        expect(v.sent[0].char).toBe('e');
+        expect(v.sent[0].nonUs).toBe(false);
+    });
+
+    it('carries no character at all for a named key', () => {
+        const v = keySink();
+        v.handleKeyDown(ev('ArrowUp', 'ArrowUp'));
         expect(v.sent[0].char).toBeNull();
+        expect(v.sent[0].nonUs).toBe(false);
     });
 
     it('replays the press character on the release, never the release event', () => {
@@ -171,6 +191,7 @@ describe('the wire message', () => {
         expect(v.sent[0].type).toBe('keyup');
         expect(v.sent[0].keyCode).toBe(VK_1);
         expect(v.sent[0].char).toBe('1');
+        expect(v.sent[0].nonUs).toBe(true);
     });
 
     it('repeats the press the host received, character included', () => {
@@ -180,7 +201,12 @@ describe('the wire message', () => {
 
         v.handleKeyDown(ev('KeyQ', 'a', { repeat: true }));
         expect(v.sent).toHaveLength(1);
-        expect(v.sent[0]).toMatchObject({ type: 'keydown', keyCode: VK_Q, char: 'a' });
+        expect(v.sent[0]).toMatchObject({
+            type: 'keydown',
+            keyCode: VK_Q,
+            char: 'a',
+            nonUs: true,
+        });
     });
 
     it('reports the character in the held-input heartbeat', () => {
@@ -196,8 +222,8 @@ describe('the wire message', () => {
         const state = v.sent[0];
         expect(state.type).toBe('inputstate');
         expect(state.keys).toEqual([
-            expect.objectContaining({ keyCode: VK_Q, char: 'a' }),
-            expect.objectContaining({ keyCode: VK_SPACE, char: null }),
+            expect.objectContaining({ keyCode: VK_Q, char: 'a', nonUs: true }),
+            expect.objectContaining({ keyCode: VK_SPACE, char: ' ', nonUs: false }),
         ]);
     });
 });
