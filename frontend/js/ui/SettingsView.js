@@ -108,17 +108,6 @@ export class SettingsView {
         // production the right behaviour is to guess correctly, and a visible
         // switch turns a detection bug into a question asked of the user.
         this._gamepadProfile = 'auto';
-        // Click-to-photon latency flag: a host-side switch (the host raises a
-        // flag on every click, the stream measures the delay). Shown only when
-        // the server can honour it, and read from the server, never from this
-        // device's copy: it is the host's state. _latencyFlagReason carries what
-        // still stands in the way when the host has the backend but not the
-        // permission — on macOS, Input Monitoring — because a flag that never
-        // rises is indistinguishable from a pipeline that delivers nothing.
-        this._latencyFlag = false;
-        this._latencyFlagSupported = false;
-        this._latencyFlagReason = '';
-
         // Power Saving mode (mobile only): forces the lightest pipeline.
         // _powerSaveBackup holds the values present before enabling, so unchecking
         // can restore the ones the user didn't manually change in the meantime.
@@ -291,10 +280,6 @@ export class SettingsView {
             const data = await BackendClient.getStreamingSettings();
             this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
             this._debugBuild = data.debug_build === true;
-            this._latencyFlagSupported = data.latency_flag_supported === true;
-            this._latencyFlag = this._latencyFlagSupported && data.latency_flag_enabled === true;
-            this._latencyFlagReason =
-                typeof data.latency_flag_reason === 'string' ? data.latency_flag_reason : '';
 
             if (!stored) {
                 this._applySettings(data);
@@ -415,8 +400,6 @@ export class SettingsView {
             power_save: this._powerSave,
             power_save_backup: this._powerSaveBackup,
             gamepad_profile: this._gamepadProfile,
-            // Host-side switch: the server ignores it unless it can honour it.
-            latency_flag_enabled: this._latencyFlag,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -606,9 +589,6 @@ export class SettingsView {
             // which is 'auto' unless someone once ran a debug build here.
             const gpProfileEl = this.container.querySelector('#settings-gamepad-profile');
             const gamepadProfile = gpProfileEl ? gpProfileEl.value : this._gamepadProfile;
-            const latencyFlag =
-                this.container.querySelector('#settings-latency-flag')?.checked ??
-                this._latencyFlag;
 
             // Update internal state
             this._videoCodec = codec;
@@ -627,7 +607,6 @@ export class SettingsView {
             this._videoEnhancement = videoEnhancement;
             this._videoEnhancementAlgo = videoEnhancementAlgo;
             this._gamepadProfile = gamepadProfile;
-            this._latencyFlag = latencyFlag;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
@@ -931,31 +910,6 @@ export class SettingsView {
                         </select>
                     </div>`
             : '';
-        // Click-to-photon latency flag — a host-side switch (the overlay lives
-        // on the host's screen), saved through the same form; the server takes
-        // it only from localhost. The reason line appears only when the host
-        // reports something still in the way: it is the host's own English
-        // sentence, not a translated string, because it names an OS setting.
-        const latencyFlagHtml = this._latencyFlagSupported
-            ? `
-                    <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-latency-flag"
-                                ${this._latencyFlag ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">
-                                <strong>${t('settings.latencyFlag')}</strong>
-                            </span>
-                        </label>
-                        <span class="setting-desc">${t('settings.latencyFlagDesc')}</span>
-                        ${
-                            this._latencyFlagReason
-                                ? `<span class="setting-desc setting-desc--warn">⚠️ ${escapeHtml(
-                                      this._latencyFlagReason,
-                                  )}</span>`
-                                : ''
-                        }
-                    </div>`
-            : '';
         // HDR + Enhancer: the stream is tone-mapped HDR→SDR in the renderer's
         // Pass 0, so FSR1/SGSR run on a normal SDR canvas. Show an informational
         // note while HDR is on (the tone-map costs a software AV1 decode).
@@ -1123,7 +1077,6 @@ export class SettingsView {
                         ${chroma444Note}
                     </div>
                     ${gamepadProfileHtml}
-                    ${latencyFlagHtml}
 
                     ${
                         IS_TOUCH_DEVICE

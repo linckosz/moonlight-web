@@ -111,10 +111,15 @@ Principe :
    voisin. Premier échantillon « bleu, blanc, rouge » = drapeau affiché. Rien
    après 200 ms = échantillon écarté (perte réseau probable).
 
-Activation : Réglages → « Drapeau de latence clic → image (debug) », visible
-seulement si le serveur répond `latency_flag_supported` ; enregistré depuis
-localhost ; l'overlay suit le réglage à chaud. La réponse de lancement porte
-`latency_flag: true`, et seulement alors le StreamView installe la sonde.
+Activation : `"latency_flag_enabled": true` dans `settings.json`, puis
+redémarrage du serveur. Il n'y a **ni case dans les Réglages, ni route
+d'écriture** : c'est un instrument de mesure, pas une préférence — allumé, il
+pose une bande tricolore sur l'écran de l'hôte à chaque clic, ce qu'un joueur ne
+veut jamais. `GET /api/settings/streaming` le rend en lecture seule
+(`latency_flag_enabled` = l'overlay tourne vraiment, `latency_flag_supported` +
+`latency_flag_reason` = ce que cette machine peut en faire). La réponse de
+lancement porte `latency_flag: true`, et seulement alors le StreamView installe
+la sonde.
 
 Usage, console du navigateur pendant un stream :
 

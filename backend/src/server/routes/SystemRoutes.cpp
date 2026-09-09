@@ -1017,11 +1017,14 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
         // Audio time-stretch (WSOLA) — file-only setting, default false.
         obj["audio_time_stretch"] = appSettings.audioTimeStretch();
-        // Click-to-photon latency flag: the stored wish, whether this machine
-        // can honour it, and — when it cannot — the one sentence that says why.
-        // The UI shows the switch only when it can, and the bench report prints
-        // the reason instead of leaving a hole that reads like a failure.
-        obj["latency_flag_enabled"] = appSettings.latencyFlagEnabled();
+        // Click-to-photon latency flag: read-only here. It has no switch in the
+        // UI and no write route — it is armed by hand in settings.json and read
+        // at startup, because it paints a tricolour band on the host's screen at
+        // every click. What the API reports is whether the overlay is actually
+        // running, whether this machine could run it at all, and — when it
+        // cannot — the one sentence that says why, so the bench report prints a
+        // reason instead of a hole that reads like a failure.
+        obj["latency_flag_enabled"] = LatencyFlag::isEnabled();
         obj["latency_flag_supported"] = LatencyFlag::isSupported();
         obj["latency_flag_reason"] = QString::fromUtf8(LatencyFlag::unsupportedReason());
         // Debug build flag: the UI exposes the enhancement algo selector only in
@@ -1066,19 +1069,6 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["show_performance_stats"].toBool();
             appSettings.setShowPerformanceStats(enabled);
             obj["show_performance_stats"] = enabled;
-            obj["status"] = "saved";
-            hadChange = true;
-        }
-
-        // Only a machine that can show the flag takes the switch: a Wayland
-        // session (or a build without the X11 headers) has nothing to arm, and
-        // storing a dangling "on" would make the browser probe wait for a flag
-        // that never comes. The overlay follows the setting live — no restart.
-        if (body.contains("latency_flag_enabled") && LatencyFlag::isSupported()) {
-            bool enabled = body["latency_flag_enabled"].toBool();
-            appSettings.setLatencyFlagEnabled(enabled);
-            LatencyFlag::setEnabled(enabled && mw::hasDesktopSession());
-            obj["latency_flag_enabled"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
         }

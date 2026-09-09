@@ -266,8 +266,6 @@
         "chroma444BrowserUnsupported": "Ce navigateur ne décode pas un flux 4:4:4.",
         "gamepadProfile": "Manette présentée aux jeux (debug)",
         "gamepadProfileDesc": "La manette virtuelle que l'hôte branche pour la vôtre. Automatique suit celle que vous tenez ; forcer un profil sert à distinguer un problème de détection d'un problème de correspondance des boutons.",
-        "latencyFlag": "Drapeau de latence clic → image",
-        "latencyFlagDesc": "L'hôte affiche un drapeau français en haut de son écran pendant 100 ms à chaque clic, et le stream chronomètre l'aller-retour du clic au drapeau. Hôtes Windows et macOS, et Linux en session X11 ; lancer mwLatency.run() dans la console du navigateur pendant le stream.",
         "gamepadProfileAuto": "Automatique",
         "gamepadProfileX360": "Toujours Xbox 360",
         "gamepadProfileDs4": "Toujours DualShock 4",

@@ -298,6 +298,10 @@ void AppSettings::seedDocumentedDefaults()
         obj["audio_time_stretch"] = true;
         changed = true;
     }
+    if (!obj.contains("latency_flag_enabled")) {
+        obj["latency_flag_enabled"] = false;
+        changed = true;
+    }
     if (!obj.contains("stream_worker_enabled")) {
         obj["stream_worker_enabled"] = true;
         changed = true;
@@ -472,13 +476,6 @@ bool AppSettings::latencyFlagEnabled() const
 {
     QJsonObject obj = readAll();
     return obj.value("latency_flag_enabled").toBool(false);
-}
-
-void AppSettings::setLatencyFlagEnabled(bool enabled)
-{
-    QJsonObject obj = readAll();
-    obj["latency_flag_enabled"] = enabled;
-    writeAll(obj);
 }
 
 // ── STUN server ──────────────────────────────────────────────────────────────────

@@ -100,7 +100,9 @@ It is no longer restricted to debug builds: the compile-time gate was removed
 because a real debug build is ten times slower in the convert stage, so the only
 way to measure was a Release tree carrying `QT_DEBUG` — a recipe no CI binary
 could satisfy. The runtime guard was always the real one: `latency_flag_enabled`
-defaults to false and is writable **from localhost only**.
+defaults to false. It is a **file-only** setting — no switch in the UI, no write
+route — so arming a bench machine means editing its `settings.json` and
+restarting the server. Nothing on a player's machine can turn it on by accident.
 
 **Wolf is grey by design**: it injects into the uinput of a container with its
 own compositor, so no flag placed on the host is in its picture. A Wayland

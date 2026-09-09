@@ -68,16 +68,20 @@ public:
     bool showPerformanceStats() const;
     void setShowPerformanceStats(bool enabled);
 
-    // ── Click-to-photon latency flag (debug builds on Windows only) ───────────
+    // ── Click-to-photon latency flag ──────────────────────────────
     //
     // When enabled, the host shows a French flag at the top of its screen for
     // 100 ms on every injected click, and the browser measures the time from
     // its click to the flag's appearance in the decoded picture — see
-    // LatencyFlag.h and frontend/js/stream/LatencyProbe.js. Stored as JSON bool
-    // "latency_flag_enabled", default false. Ignored outside supported builds.
+    // LatencyFlag.h and frontend/js/stream/LatencyProbe.js.
+    //
+    // File-only setting (no UI, no write route): stored as JSON bool
+    // "latency_flag_enabled", DEFAULT false, read at startup. It is a measuring
+    // instrument and not a preference — it puts a tricolour band on the host's
+    // screen at every click, which is the last thing a player wants. Edit the
+    // file and restart the server; documented in the README.
 
     bool latencyFlagEnabled() const;
-    void setLatencyFlagEnabled(bool enabled);
 
     // ── Stream bitrate ────────────────────────────────────────────────────────
     //
