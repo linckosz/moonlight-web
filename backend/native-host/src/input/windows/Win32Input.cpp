@@ -565,6 +565,35 @@ void Win32Input::injectChar(const std::string& utf8, bool down)
         return;
     }
 
+    // The scancode MUST come from the same layout the virtual key came from.
+    //
+    // makeKeyInput's usScanCode() is deliberately US: it is fed virtual keys the
+    // BROWSER normalized to a US position, and only the US table leads back to
+    // that position. Here the virtual key came out of VkKeyScanExW, which speaks
+    // the HOST's layout — so the two tables must not be mixed. They were, and on
+    // a French host it typed the character's US neighbour: 'a' resolved to VK_A,
+    // whose US scancode is 0x1E, which a French layout reads as 'q'. The exact
+    // bug this whole path exists to fix, inverted.
+    const auto hostKeyInput = [layout](int keyVk, bool press) {
+        INPUT input = {};
+        input.type = INPUT_KEYBOARD;
+        input.ki.dwFlags = press ? 0 : KEYEVENTF_KEYUP;
+        const UINT mapped =
+            ::MapVirtualKeyExW(static_cast<UINT>(keyVk), MAPVK_VK_TO_VSC_EX, layout);
+        const UINT prefix = (mapped >> 8) & 0xFF;
+        const UINT scan = mapped & 0xFF;
+        if (scan == 0) {
+            // No position for it on this layout — let the virtual key carry it
+            // and Windows work the scancode out on its own.
+            input.ki.wVk = static_cast<WORD>(keyVk);
+            return input;
+        }
+        input.ki.wScan = static_cast<WORD>(scan);
+        input.ki.dwFlags |= KEYEVENTF_SCANCODE;
+        if (prefix == 0xE0 || isExtendedKey(keyVk)) input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+        return input;
+    };
+
     // Bits of the high byte: 1 Shift, 2 Ctrl, 4 Alt. Press only what is missing,
     // and release on the way back out in reverse order, so a modifier the viewer
     // is genuinely holding is left exactly as it was.
@@ -581,7 +610,7 @@ void Win32Input::injectChar(const std::string& utf8, bool down)
         for (const auto& mod : kNeeded) {
             if (!(needed & mod.bit)) continue;
             if (m_HeldKeys.count(mod.vk)) continue; // the viewer is holding it for real
-            inputs.push_back(makeKeyInput(mod.vk, down, false));
+            inputs.push_back(hostKeyInput(mod.vk, down));
         }
         if (down)
             m_HeldKeys.insert(vk);
@@ -591,9 +620,9 @@ void Win32Input::injectChar(const std::string& utf8, bool down)
     // The character's own key sits inside the modifiers: pressed after they go
     // down, released before they come back up.
     if (down)
-        inputs.push_back(makeKeyInput(vk, true, false));
+        inputs.push_back(hostKeyInput(vk, true));
     else
-        inputs.insert(inputs.begin(), makeKeyInput(vk, false, false));
+        inputs.insert(inputs.begin(), hostKeyInput(vk, false));
     sendBatch(inputs.data(), static_cast<int>(inputs.size()));
 }
 
