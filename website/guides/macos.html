@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install MoonlightWeb on macOS — stream your Mac to any browser</title>
-<meta name="description" content="Step-by-step guide: install the MoonlightWeb server on your Apple Silicon Mac and stream your Sunshine games to any device with a browser — iPhone, iPad, laptop, TV. Nothing to install on the client.">
+<meta name="description" content="Step-by-step guide: install the MoonlightWeb server on your Apple Silicon Mac and stream your games to any device with a browser — iPhone, iPad, laptop, TV. It captures and encodes that Mac itself; nothing to install on the client.">
 <meta name="author" content="Bruno Martin">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="theme-color" content="#05080d">
@@ -45,16 +45,16 @@
     {
       "@type": "HowTo",
       "name": "Install MoonlightWeb on macOS and stream your Mac to any browser",
-      "description": "Install the MoonlightWeb server on an Apple Silicon Mac running Sunshine, and play from any device with a browser.",
+      "description": "Install the MoonlightWeb server on an Apple Silicon Mac — it captures and encodes that Mac itself — and play from any device with a browser.",
       "totalTime": "PT5M",
       "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"},
-      "supply": [{"@type": "HowToSupply", "name": "Apple Silicon Mac running Sunshine"}],
+      "supply": [{"@type": "HowToSupply", "name": "Apple Silicon Mac (M1 or newer)"}],
       "tool": [{"@type": "HowToTool", "name": "A modern browser on any client device (Chrome, Edge, Safari, Firefox)"}],
       "step": [
         {"@type": "HowToStep", "name": "Download the installer", "text": "Download the Apple Silicon .pkg from the MoonlightWeb releases page.", "url": "https://moonlightweb.top/guides/macos.html#step-download"},
-        {"@type": "HowToStep", "name": "Run the guided installer", "text": "Run the .pkg on the Mac that runs your games. The setup wizard walks you through the configuration, including one-click Internet access.", "url": "https://moonlightweb.top/guides/macos.html#step-install"},
+        {"@type": "HowToStep", "name": "Run the guided installer", "text": "Run the .pkg on the Mac that runs your games. The setup wizard walks you through the configuration, including one-click Internet access, and macOS asks you to allow Screen Recording for MoonlightWeb.", "url": "https://moonlightweb.top/guides/macos.html#step-install"},
         {"@type": "HowToStep", "name": "Open a browser on any device", "text": "Go to https://localhost on the Mac itself, or your LAN IP from another device on your network.", "url": "https://moonlightweb.top/guides/macos.html#step-open"},
-        {"@type": "HowToStep", "name": "Pair once with a PIN", "text": "Your Sunshine hosts are auto-discovered. Enter the PIN Sunshine shows — pairing is remembered forever.", "url": "https://moonlightweb.top/guides/macos.html#step-pair"},
+        {"@type": "HowToStep", "name": "Your Mac is already there", "text": "The Mac is listed straight away, with one card per screen — no pairing, no PIN. Other hosts on the network (Sunshine, Wolf, MultiSeat) are discovered too and pair with a PIN.", "url": "https://moonlightweb.top/guides/macos.html#step-pair"},
         {"@type": "HowToStep", "name": "Press play", "text": "Pick a game or the full desktop and play from any browser in the house — or anywhere.", "url": "https://moonlightweb.top/guides/macos.html#step-play"}
       ]
     }
@@ -73,14 +73,13 @@
   <span class="kicker" data-i18n="kicker">Install guide · macOS</span>
   <h1 data-i18n="h1">Stream your Mac to any browser</h1>
   <p class="lead" data-i18n-html="lead">MoonlightWeb is a free, open-source (GPL-3.0) server that streams your
-    <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> machine to any
-    device with a browser. <strong>One download on the Mac that runs the games.
+    Mac to any device with a browser. <strong>One download on the Mac that runs the games.
     Every other device just opens a URL.</strong></p>
 
   <h2 data-i18n="need.h">What you need</h2>
   <ul>
     <li data-i18n-html="need.1">An <strong>Apple Silicon Mac</strong> (M1 or newer) — the machine that runs your games.</li>
-    <li data-i18n-html="need.2"><strong>Sunshine</strong> as the streaming host. Don't have it yet? The installer's Sunshine step sets it up for you.</li>
+    <li data-i18n-html="need.2"><strong>Nothing else.</strong> MoonlightWeb captures and encodes this Mac itself (ScreenCaptureKit → VideoToolbox) — no second streaming server to install. Already running Sunshine, Wolf or MultiSeat somewhere? Those machines are paired from the same page.</li>
     <li data-i18n="need.3">Any device with a modern browser as the client: Safari, Chrome, Edge or Firefox. No app, no account.</li>
   </ul>
 
@@ -95,6 +94,8 @@
       <h3 data-i18n="step2.h">Run the guided installer — on the Mac that runs your games</h3>
       <p data-i18n="step2.p">The setup wizard walks you through the configuration, including the optional Internet link
          (remote streaming sessions, off by default). When it finishes, the server is running.</p>
+      <p data-i18n-html="step2.p2">macOS will then ask you to allow <strong>Screen Recording</strong> for MoonlightWeb —
+         without it, this Mac cannot stream its own screen. The wizard opens that settings pane for you.</p>
     </div>
     <div class="gstep cyb" id="step-open">
       <h3 data-i18n="step3.h">Open a browser on any device</h3>
@@ -102,13 +103,14 @@
          Playing from outside your network: turn on Internet access and the app gives you a remote entry link straight to this machine. You can also bring your own domain and certificate.</p>
     </div>
     <div class="gstep cyb" id="step-pair">
-      <h3 data-i18n="step4.h">Pair once with a PIN</h3>
-      <p data-i18n="step4.p">Your Sunshine hosts are already listed — discovered automatically on the LAN via mDNS.
-         Enter the PIN Sunshine displays, and the pairing is remembered forever.</p>
+      <h3 data-i18n="step4.h">Your Mac is already there</h3>
+      <p data-i18n="step4.p">This Mac is listed straight away, with one card per screen — nothing to pair, no PIN.
+         Other hosts on your network (Sunshine, Wolf, MultiSeat) are discovered by mDNS next to it: those pair once
+         with the PIN they display, and the pairing is remembered forever.</p>
     </div>
     <div class="gstep cyb" id="step-play">
       <h3 data-i18n="step5.h">Press play</h3>
-      <p data-i18n="step5.p">Pick a game or the full desktop. iPhone, iPad, another laptop, a TV —
+      <p data-i18n="step5.p">Pick a screen, a game or the full desktop. iPhone, iPad, another laptop, a TV —
          anything with a browser becomes a client.</p>
     </div>
   </div>
@@ -149,7 +151,7 @@
   <h2 data-i18n="read.h">Keep reading</h2>
   <div class="xlinks">
     <a class="cyb" href="/faq.html"><strong data-i18n="x.faq.t">FAQ</strong><span data-i18n="x.faq.d">Latency, codecs, security, Internet play — all the common questions.</span></a>
-    <a class="cyb" href="/guides/windows.html"><strong data-i18n="x.win.t">Install on Windows</strong><span data-i18n="x.win.d">Guided installer — Sunshine included in the wizard.</span></a>
+    <a class="cyb" href="/guides/windows.html"><strong data-i18n="x.win.t">Install on Windows</strong><span data-i18n="x.win.d">Guided installer — one wizard, nothing else to set up.</span></a>
     <a class="cyb" href="/guides/linux.html"><strong data-i18n="x.lin.t">Install on Linux</strong><span data-i18n="x.lin.d">.deb, .rpm or portable AppImage.</span></a>
   </div>
 </div>
@@ -167,22 +169,23 @@ window.MW_DICTS = {
     'crumbs':'<a href="/">Accueil</a> / <a href="/guides/">Guides</a> / macOS',
     'kicker':'Guide d’installation · macOS',
     'h1':'Streamez votre Mac vers n’importe quel navigateur',
-    'lead':'MoonlightWeb est un serveur gratuit et open source (GPL-3.0) qui streame votre machine <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> vers n’importe quel appareil doté d’un navigateur. <strong>Un seul téléchargement sur le Mac qui fait tourner les jeux. Tous les autres appareils ouvrent simplement une URL.</strong>',
+    'lead':'MoonlightWeb est un serveur gratuit et open source (GPL-3.0) qui streame votre Mac vers n’importe quel appareil doté d’un navigateur. <strong>Un seul téléchargement sur le Mac qui fait tourner les jeux. Tous les autres appareils ouvrent simplement une URL.</strong>',
     'need.h':'Ce qu’il vous faut',
     'need.1':'Un <strong>Mac Apple Silicon</strong> (M1 ou plus récent) — la machine qui fait tourner vos jeux.',
-    'need.2':'<strong>Sunshine</strong> comme hôte de streaming. Vous ne l’avez pas encore ? L’étape Sunshine de l’installateur s’en charge pour vous.',
+    'need.2':'<strong>Rien d’autre.</strong> MoonlightWeb capture et encode ce Mac lui-même (ScreenCaptureKit → VideoToolbox) — aucun second serveur de streaming à installer. Vous avez déjà un Sunshine, un Wolf ou un MultiSeat quelque part ? Ces machines s’appairent depuis la même page.',
     'need.3':'N’importe quel appareil avec un navigateur moderne comme client : Safari, Chrome, Edge ou Firefox. Pas d’application, pas de compte.',
     'steps.h':'Installation, étape par étape',
     'step1.h':'Téléchargez l’installateur',
     'step1.p':'Récupérez le <code>arm64 .pkg</code> depuis la <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">page des versions</a>.',
     'step2.h':'Lancez l’installateur guidé — sur le Mac qui fait tourner vos jeux',
     'step2.p':'L’assistant de configuration vous guide pas à pas, y compris le lien Internet optionnel (sessions de streaming à distance, désactivé par défaut). À la fin, le serveur tourne.',
+    'step2.p2':'macOS vous demandera ensuite d’autoriser l’<strong>enregistrement de l’écran</strong> pour MoonlightWeb — sans quoi ce Mac ne peut pas streamer son propre écran. L’assistant ouvre ce panneau des réglages pour vous.',
     'step3.h':'Ouvrez un navigateur sur n’importe quel appareil',
     'step3.p':'Sur le Mac lui-même : <code>https://localhost</code>. Depuis un autre appareil de votre réseau : votre IP locale. Jouer depuis l’extérieur de votre réseau : activez l’accès Internet et l’application vous donne un lien d’accès distant qui mène droit à cette machine. Vous pouvez aussi utiliser votre propre domaine et certificat.',
-    'step4.h':'Appairez une fois avec un code PIN',
-    'step4.p':'Vos hôtes Sunshine sont déjà listés — découverts automatiquement sur le réseau local via mDNS. Saisissez le code PIN affiché par Sunshine, et l’appairage est mémorisé pour toujours.',
+    'step4.h':'Votre Mac est déjà là',
+    'step4.p':'Ce Mac est listé d’emblée, une carte par écran — rien à appairer, aucun code PIN. Les autres hôtes de votre réseau (Sunshine, Wolf, MultiSeat) sont découverts à côté via mDNS : ceux-là s’appairent une fois avec le PIN qu’ils affichent, et c’est mémorisé pour toujours.',
     'step5.h':'Appuyez sur play',
-    'step5.p':'Choisissez un jeu ou le bureau complet. iPhone, iPad, un autre ordinateur portable, une TV — tout ce qui a un navigateur devient un client.',
+    'step5.p':'Choisissez un écran, un jeu ou le bureau complet. iPhone, iPad, un autre ordinateur portable, une TV — tout ce qui a un navigateur devient un client.',
     'dl.btn':'⬇ Télécharger pour macOS',
     'cli.h':'Une seule commande — et plus d’avertissement',
     'cli.p':'MoonlightWeb est gratuit et open source, ce qui veut aussi dire qu’il n’est pas signé avec un Apple Developer ID payant. macOS accueille donc un <code>.pkg</code> <em>téléchargé</em> par « <strong>impossible à ouvrir car il provient d’un développeur non identifié</strong> ». Ce contrôle ne s’applique qu’aux fichiers récupérés par un navigateur : chacune de ces deux commandes installe exactement le même paquet, sans rien à contourner :',
@@ -199,7 +202,7 @@ window.MW_DICTS = {
     'note':'<strong>Réseau restrictif ?</strong> MoonlightWeb bascule automatiquement (UDP → TCP), et continue donc de fonctionner à travers les pare-feu stricts et le Wi-Fi d’hôtel hostile.',
     'read.h':'À lire ensuite',
     'x.faq.t':'FAQ', 'x.faq.d':'Latence, codecs, sécurité, jeu sur Internet — toutes les questions fréquentes.',
-    'x.win.t':'Installer sur Windows', 'x.win.d':'Installateur guidé — Sunshine inclus dans l’assistant.',
+    'x.win.t':'Installer sur Windows', 'x.win.d':'Installateur guidé — un assistant, rien d’autre à configurer.',
     'x.lin.t':'Installer sur Linux', 'x.lin.d':'.deb, .rpm ou AppImage portable.',
   },
   zh: {
@@ -207,22 +210,23 @@ window.MW_DICTS = {
     'crumbs':'<a href="/">首页</a> / <a href="/guides/">指南</a> / macOS',
     'kicker':'安装指南 · macOS',
     'h1':'把你的 Mac 串流到任何浏览器',
-    'lead':'MoonlightWeb 是一个免费、开源（GPL-3.0）的服务器，把你的 <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> 机器串流到任何带浏览器的设备。<strong>在运行游戏的那台 Mac 上下载一次。其他每台设备只要打开一个网址。</strong>',
+    'lead':'MoonlightWeb 是一个免费、开源（GPL-3.0）的服务器，把你的 Mac 串流到任何带浏览器的设备。<strong>在运行游戏的那台 Mac 上下载一次。其他每台设备只要打开一个网址。</strong>',
     'need.h':'你需要什么',
     'need.1':'一台 <strong>Apple Silicon Mac</strong>（M1 或更新）——运行你游戏的那台机器。',
-    'need.2':'<strong>Sunshine</strong> 作为串流主机。还没有？安装程序的 Sunshine 步骤会帮你装好。',
+    'need.2':'<strong>不需要别的。</strong>MoonlightWeb 自己捕获并编码这台 Mac（ScreenCaptureKit → VideoToolbox）——无需再装第二个串流服务器。已经在别处跑着 Sunshine、Wolf 或 MultiSeat？那些机器可以在同一个页面里配对。',
     'need.3':'任何带现代浏览器的设备都可作客户端：Safari、Chrome、Edge 或 Firefox。无需应用、无需账户。',
     'steps.h':'逐步安装',
     'step1.h':'下载安装程序',
     'step1.p':'从<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">发布页面</a>获取 <code>arm64 .pkg</code>。',
     'step2.h':'运行向导式安装程序——在运行游戏的那台 Mac 上',
     'step2.p':'安装向导会带你完成配置，包括可选的互联网连接（远程串流会话，默认关闭）。完成后，服务器即在运行。',
+    'step2.p2':'随后 macOS 会请你为 MoonlightWeb 允许<strong>屏幕录制</strong>——没有它，这台 Mac 无法串流自己的屏幕。向导会为你打开该设置面板。',
     'step3.h':'在任何设备上打开浏览器',
     'step3.p':'在 Mac 本机上：<code>https://localhost</code>。从你网络上的其他设备：你的局域网 IP。要从网络之外游玩：启用互联网访问，应用便会给你一个直达这台机器的远程接入链接。你也可以使用自己的域名和证书。',
-    'step4.h':'用 PIN 码配对一次',
-    'step4.p':'你的 Sunshine 主机已经列出——通过 mDNS 在局域网自动发现。输入 Sunshine 显示的 PIN 码，配对将被永久记住。',
+    'step4.h':'你的 Mac 已经在那里',
+    'step4.p':'这台 Mac 一开始就列在那里，每块屏幕一张卡片——无需配对，也没有 PIN 码。你网络上的其他主机（Sunshine、Wolf、MultiSeat）会通过 mDNS 出现在旁边：那些只需用它们显示的 PIN 码配对一次，之后永久记住。',
     'step5.h':'按下开始',
-    'step5.p':'选择一款游戏或完整桌面。iPhone、iPad、另一台笔记本、一台电视——任何带浏览器的东西都能成为客户端。',
+    'step5.p':'选择一块屏幕、一款游戏或完整桌面。iPhone、iPad、另一台笔记本、一台电视——任何带浏览器的东西都能成为客户端。',
     'dl.btn':'⬇ 下载 macOS 版',
     'cli.h':'一条命令搞定——而且没有警告',
     'cli.p':'MoonlightWeb 免费且开源，这也意味着它没有用付费的 Apple Developer ID 签名。因此 macOS 会对<em>下载来的</em> <code>.pkg</code> 提示“<strong>无法打开，因为它来自身份不明的开发者</strong>”。这项检查只针对浏览器下载的文件，所以下面任意一条命令都能安装完全相同的软件包，无需任何额外点击：',
@@ -239,7 +243,7 @@ window.MW_DICTS = {
     'note':'<strong>网络受限？</strong>MoonlightWeb 会自动回退（UDP → TCP），因此在严格防火墙和恶劣的酒店 Wi-Fi 下也能继续工作。',
     'read.h':'继续阅读',
     'x.faq.t':'常见问题', 'x.faq.d':'延迟、编解码器、安全、互联网远程游玩——所有常见问题。',
-    'x.win.t':'在 Windows 上安装', 'x.win.d':'向导式安装程序——Sunshine 已包含在向导中。',
+    'x.win.t':'在 Windows 上安装', 'x.win.d':'向导式安装程序——一个向导，别的都不用配。',
     'x.lin.t':'在 Linux 上安装', 'x.lin.d':'.deb、.rpm 或便携 AppImage。',
   },
 };

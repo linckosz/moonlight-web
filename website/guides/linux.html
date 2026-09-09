@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Install MoonlightWeb on Linux — stream your PC to any browser</title>
-<meta name="description" content="Step-by-step guide: install the MoonlightWeb server on your Linux gaming PC (.deb, .rpm or portable AppImage) and stream your Sunshine games to any device with a browser. Nothing to install on the client.">
+<meta name="description" content="Step-by-step guide: install the MoonlightWeb server on your Linux gaming PC (.deb, .rpm or portable AppImage) and stream your games to any device with a browser. It captures and encodes that PC itself; nothing to install on the client.">
 <meta name="author" content="Bruno Martin">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="theme-color" content="#05080d">
@@ -45,17 +45,17 @@
     {
       "@type": "HowTo",
       "name": "Install MoonlightWeb on Linux and stream your PC to any browser",
-      "description": "Install the MoonlightWeb server on a Linux gaming PC running Sunshine, and play from any device with a browser.",
+      "description": "Install the MoonlightWeb server on a Linux gaming PC — it captures and encodes that machine itself — and play from any device with a browser.",
       "totalTime": "PT5M",
       "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"},
-      "supply": [{"@type": "HowToSupply", "name": "Linux gaming PC (x64) running Sunshine"}],
+      "supply": [{"@type": "HowToSupply", "name": "Linux gaming PC (x64) with a GPU capable of hardware encoding"}],
       "tool": [{"@type": "HowToTool", "name": "A modern browser on any client device (Chrome, Edge, Safari, Firefox)"}],
       "step": [
         {"@type": "HowToStep", "name": "Download a package", "text": "Download the .deb (Debian, Ubuntu, Mint, Pop!_OS), the .rpm (Fedora, RHEL, Rocky, Alma, openSUSE) or the portable AppImage (Arch, SteamOS and the rest) from the MoonlightWeb releases page.", "url": "https://moonlightweb.top/guides/linux.html#step-download"},
-        {"@type": "HowToStep", "name": "Install and launch the server", "text": "Install the package with your package manager, or make the AppImage executable and run it, on the machine that runs Sunshine.", "url": "https://moonlightweb.top/guides/linux.html#step-install"},
-        {"@type": "HowToStep", "name": "Let the wizard install Sunshine", "text": "On first launch the setup wizard at https://localhost/setup installs the official Sunshine package for your distribution and pairs it automatically.", "url": "https://moonlightweb.top/guides/linux.html#step-sunshine"},
+        {"@type": "HowToStep", "name": "Install and launch the server", "text": "Install the package with your package manager, or make the AppImage executable and run it, on the gaming PC.", "url": "https://moonlightweb.top/guides/linux.html#step-install"},
+        {"@type": "HowToStep", "name": "Answer the setup wizard", "text": "On first launch the setup wizard at https://localhost/setup asks about the optional Internet link. Nothing else is installed: the app captures and encodes this desktop itself.", "url": "https://moonlightweb.top/guides/linux.html#step-setup"},
         {"@type": "HowToStep", "name": "Open a browser on any device", "text": "Go to https://localhost on the PC itself, or your LAN IP from another device on your network.", "url": "https://moonlightweb.top/guides/linux.html#step-open"},
-        {"@type": "HowToStep", "name": "Pair once with a PIN", "text": "Your Sunshine hosts are auto-discovered. Enter the PIN Sunshine shows — pairing is remembered forever.", "url": "https://moonlightweb.top/guides/linux.html#step-pair"},
+        {"@type": "HowToStep", "name": "Your PC is already there", "text": "The gaming PC is listed straight away, with one card per screen — no pairing, no PIN. Other hosts on the network (Sunshine, Wolf, MultiSeat) are discovered too and pair with a PIN.", "url": "https://moonlightweb.top/guides/linux.html#step-pair"},
         {"@type": "HowToStep", "name": "Press play", "text": "Pick a game or the full desktop and play from any browser in the house — or anywhere.", "url": "https://moonlightweb.top/guides/linux.html#step-play"}
       ]
     }
@@ -74,14 +74,13 @@
   <span class="kicker" data-i18n="kicker">Install guide · Linux</span>
   <h1 data-i18n="h1">Stream your Linux gaming PC to any browser</h1>
   <p class="lead" data-i18n-html="lead">MoonlightWeb is a free, open-source (GPL-3.0) server that streams your
-    <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> gaming rig to any
-    device with a browser. <strong>One package on the gaming PC.
+    gaming rig to any device with a browser. <strong>One package on the gaming PC.
     Every other device just opens a URL.</strong></p>
 
   <h2 data-i18n="need.h">What you need</h2>
   <ul>
     <li data-i18n="need.1">A Linux gaming PC (x64) with a GPU capable of hardware encoding — the machine that runs your games.</li>
-    <li data-i18n-html="need.2"><strong>Sunshine</strong> as the streaming host. Don't have it yet? MoonlightWeb's setup wizard installs and pairs it for you.</li>
+    <li data-i18n-html="need.2"><strong>Nothing else to install</strong> — MoonlightWeb captures the desktop itself (KMS, or the ScreenCast portal on Wayland) and encodes it through VA-API. It needs <strong>PipeWire</strong> for sound: on a machine still running pure PulseAudio the stream is silent, and says so in the log. Already running Sunshine, Wolf or MultiSeat somewhere? Those machines are paired from the same page.</li>
     <li data-i18n="need.3">Any device with a modern browser as the client: Chrome, Edge, Safari or Firefox. No app, no account.</li>
     <li data-i18n-html="need.4">A distribution no older than <strong>Ubuntu 22.04</strong>, <strong>Debian 12</strong> or <strong>Fedora 36</strong> (glibc 2.34+). Qt and OpenSSL are bundled, but the system C runtime never can be — on an older distro the package installs and the app then refuses to start.</li>
   </ul>
@@ -111,7 +110,8 @@ paru -S moonlightweb-bin</code></pre>
   <h2 id="docker" data-i18n="docker.h">Prefer Docker? Headless servers, NAS and mini PCs</h2>
   <p data-i18n-html="docker.p">Official multi-arch images (<code>amd64</code> + <code>arm64</code>) are published to the GitHub
      Container Registry. One command on any Linux host with Docker — <code>--network host</code> puts the
-     container straight on your LAN so it discovers your Sunshine machines:</p>
+     container straight on your LAN so it discovers the hosts on it. A container has no desktop to capture,
+     so this one streams the machines you pair with, not itself:</p>
   <pre><code>docker run -d --name moonlightweb --network host \
   -v mw-data:/data --restart unless-stopped \
   ghcr.io/linckosz/moonlight-web:latest</code></pre>
@@ -133,7 +133,7 @@ paru -S moonlightweb-bin</code></pre>
          Every package is self-contained (Qt and OpenSSL bundled — no dependencies to install).</p>
     </div>
     <div class="gstep cyb" id="step-install">
-      <h3 data-i18n="step2.h">Install and launch — on the machine that runs Sunshine</h3>
+      <h3 data-i18n="step2.h">Install and launch — on the gaming PC</h3>
       <pre><code># Debian / Ubuntu / Mint / Pop!_OS — double-clicking the .deb works too
 sudo apt install ./moonlightweb-*-linux-x64.deb
 
@@ -148,13 +148,16 @@ chmod +x moonlightweb-*-linux-x64.AppImage
 ./moonlightweb-*-linux-x64.AppImage</code></pre>
       <p data-i18n-html="step2.p">The package installs to <code>/opt/moonlightweb</code>, adds a menu entry and a
          <code>moonlightweb</code> command, opens the firewall ports it needs, and starts the server right away.</p>
+      <p data-i18n-html="step2.p3"><strong>To host this machine, use the .deb, the .rpm or the AUR package.</strong>
+         Screen capture needs a file capability, which cannot survive inside an AppImage — a portable AppImage still
+         streams the Sunshine, Wolf and MultiSeat hosts on your network, but never its own screen.</p>
     </div>
-    <div class="gstep cyb" id="step-sunshine">
-      <h3 data-i18n="stepS.h">Let the wizard install Sunshine</h3>
-      <p data-i18n-html="stepS.p">On its first launch MoonlightWeb opens <code>https://localhost/setup</code>. If Sunshine isn't
-         installed yet, the wizard downloads the official package for your distro (apt, dnf, zypper or pacman family),
-         installs it behind a single password prompt, and pairs it for you — nothing to do by hand. On other
-         distributions, install Sunshine yourself and pair from the interface.</p>
+    <div class="gstep cyb" id="step-setup">
+      <h3 data-i18n="stepS.h">Answer the setup wizard</h3>
+      <p data-i18n-html="stepS.p">On its first launch MoonlightWeb opens <code>https://localhost/setup</code>, which asks the one
+         question that is left: whether to allow the Internet link (remote streaming sessions, off by default).
+         Nothing else is installed — this desktop is captured by the app itself. On a Wayland session the first
+         stream raises the compositor's screen-sharing dialog once; the grant is remembered afterwards.</p>
     </div>
     <div class="gstep cyb" id="step-open">
       <h3 data-i18n="step3.h">Open a browser on any device</h3>
@@ -162,14 +165,15 @@ chmod +x moonlightweb-*-linux-x64.AppImage
          Playing from outside your network: turn on Internet access and the app gives you a remote entry link straight to this machine. You can also bring your own domain and certificate.</p>
     </div>
     <div class="gstep cyb" id="step-pair">
-      <h3 data-i18n="step4.h">Pair once with a PIN</h3>
-      <p data-i18n="step4.p">Your Sunshine hosts are already listed — discovered automatically on the LAN via mDNS.
-         Enter the PIN Sunshine displays, and the pairing is remembered forever.</p>
+      <h3 data-i18n="step4.h">Your PC is already there</h3>
+      <p data-i18n="step4.p">This machine is listed straight away, with one card per screen — nothing to pair, no PIN.
+         Other hosts on your network (Sunshine, Wolf, MultiSeat) are discovered by mDNS next to it: those pair once
+         with the PIN they display, and the pairing is remembered forever.</p>
     </div>
     <div class="gstep cyb" id="step-play">
       <h3 data-i18n="step5.h">Press play</h3>
-      <p data-i18n="step5.p">Pick a game or the full desktop. Fullscreen, gamepad in hand — up to 4K HDR at 240 fps,
-         with under 20 ms latency over Wi-Fi.</p>
+      <p data-i18n="step5.p">Pick a screen, a game or the full desktop. Fullscreen, gamepad in hand — up to 4K at 240 fps,
+         with under 20 ms latency over Wi-Fi. (HDR from a Linux host is not implemented yet.)</p>
     </div>
   </div>
 
@@ -206,7 +210,7 @@ chmod +x moonlightweb-*-linux-x64.AppImage
   <h2 data-i18n="read.h">Keep reading</h2>
   <div class="xlinks">
     <a class="cyb" href="/faq.html"><strong data-i18n="x.faq.t">FAQ</strong><span data-i18n="x.faq.d">Latency, codecs, security, Internet play — all the common questions.</span></a>
-    <a class="cyb" href="/guides/windows.html"><strong data-i18n="x.win.t">Install on Windows</strong><span data-i18n="x.win.d">Guided installer — Sunshine included in the wizard.</span></a>
+    <a class="cyb" href="/guides/windows.html"><strong data-i18n="x.win.t">Install on Windows</strong><span data-i18n="x.win.d">Guided installer — one wizard, nothing else to set up.</span></a>
     <a class="cyb" href="/guides/macos.html"><strong data-i18n="x.mac.t">Install on macOS</strong><span data-i18n="x.mac.d">Apple Silicon guide with the .pkg installer.</span></a>
   </div>
 </div>
@@ -224,10 +228,10 @@ window.MW_DICTS = {
     'crumbs':'<a href="/">Accueil</a> / <a href="/guides/">Guides</a> / Linux',
     'kicker':'Guide d’installation · Linux',
     'h1':'Streamez votre PC gamer Linux vers n’importe quel navigateur',
-    'lead':'MoonlightWeb est un serveur gratuit et open source (GPL-3.0) qui streame votre PC <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> vers n’importe quel appareil doté d’un navigateur. <strong>Un seul paquet sur le PC gamer. Tous les autres appareils ouvrent simplement une URL.</strong>',
+    'lead':'MoonlightWeb est un serveur gratuit et open source (GPL-3.0) qui streame votre PC gamer vers n’importe quel appareil doté d’un navigateur. <strong>Un seul paquet sur le PC gamer. Tous les autres appareils ouvrent simplement une URL.</strong>',
     'need.h':'Ce qu’il vous faut',
     'need.1':'Un PC gamer Linux (x64) avec un GPU capable d’encodage matériel — la machine qui fait tourner vos jeux.',
-    'need.2':'<strong>Sunshine</strong> comme hôte de streaming. Vous ne l’avez pas encore ? L’assistant de configuration de MoonlightWeb l’installe et l’appaire pour vous.',
+    'need.2':'<strong>Rien d’autre à installer</strong> — MoonlightWeb capture le bureau lui-même (KMS, ou le portail ScreenCast sous Wayland) et l’encode par VA-API. Il lui faut <strong>PipeWire</strong> pour le son : sur une machine encore en PulseAudio pur, le flux est muet et le journal le dit. Vous avez déjà un Sunshine, un Wolf ou un MultiSeat quelque part ? Ces machines s’appairent depuis la même page.',
     'need.3':'N’importe quel appareil avec un navigateur moderne comme client : Chrome, Edge, Safari ou Firefox. Pas d’application, pas de compte.',
     'need.4':'Une distribution pas plus ancienne qu’<strong>Ubuntu 22.04</strong>, <strong>Debian 12</strong> ou <strong>Fedora 36</strong> (glibc 2.34+). Qt et OpenSSL sont embarqués, mais la bibliothèque C du système ne peut jamais l’être : sur une distribution plus ancienne, le paquet s’installe puis l’application refuse de démarrer.',
     'repo.h':'La voie rapide : une commande, et les mises à jour en prime',
@@ -235,22 +239,23 @@ window.MW_DICTS = {
     'repo.manual':'Vous préférez le faire à la main ? Ce sont exactement ces étapes :',
     'repo.rest':'SteamOS, Bazzite et les autres systèmes immuables n’ont pas de gestionnaire de paquets auquel ajouter un dépôt : ils gardent l’AppImage portable, que la même commande télécharge pour vous. La méthode manuelle ci-dessous reste valable partout.',
     'docker.h':'Vous préférez Docker ? Serveurs headless, NAS et mini-PC',
-    'docker.p':'Des images officielles multi-arch (<code>amd64</code> + <code>arm64</code>) sont publiées sur le GitHub Container Registry. Une seule commande sur n’importe quel hôte Linux avec Docker — <code>--network host</code> place le conteneur directement sur votre réseau local, pour qu’il découvre vos machines Sunshine :',
+    'docker.p':'Des images officielles multi-arch (<code>amd64</code> + <code>arm64</code>) sont publiées sur le GitHub Container Registry. Une seule commande sur n’importe quel hôte Linux avec Docker — <code>--network host</code> place le conteneur directement sur votre réseau local, pour qu’il découvre les hôtes qui s’y trouvent. Un conteneur n’a pas de bureau à capturer : celui-ci streame donc les machines que vous appairez, pas lui-même :',
     'docker.p2':'Un conteneur n’a pas de navigateur local de confiance : définissez donc une fois un code PIN d’accès, puis ouvrez <code>https://&lt;ip-du-serveur&gt;</code> et saisissez-le :',
     'docker.rest':'Mettez à jour avec <code>docker pull</code> puis recréez le conteneur — le volume conserve vos appairages et votre certificat. Le fichier Compose, le tableau des ports, macvlan et l’accès Internet en un clic sont tous dans <a href="https://github.com/linckosz/moonlight-web/blob/main/docker/README.md" target="_blank" rel="noopener">le guide Docker</a>.',
     'steps.h':'Installation, étape par étape',
     'step1.h':'Téléchargez un paquet',
     'step1.p':'Depuis la <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">page des versions</a>, choisissez selon votre famille de distribution : <code>.deb</code> pour <strong>Debian, Ubuntu, Mint, Pop!_OS, elementary, Zorin</strong> ; <code>.rpm</code> pour <strong>Fedora, RHEL, CentOS Stream, Rocky, Alma, Nobara, openSUSE</strong> ; un <code>.AppImage</code> portable pour <strong>Arch, Manjaro, SteamOS, Bazzite</strong> et tout le reste. Chaque paquet est autonome (Qt et OpenSSL embarqués — aucune dépendance à installer).',
-    'step2.h':'Installez et lancez — sur la machine qui fait tourner Sunshine',
+    'step2.h':'Installez et lancez — sur le PC gamer',
     'step2.p':'Le paquet s’installe dans <code>/opt/moonlightweb</code>, ajoute une entrée de menu et une commande <code>moonlightweb</code>, ouvre les ports nécessaires dans le pare-feu, et démarre le serveur immédiatement.',
-    'stepS.h':'Laissez l’assistant installer Sunshine',
-    'stepS.p':'Au premier lancement, MoonlightWeb ouvre <code>https://localhost/setup</code>. Si Sunshine n’est pas encore installé, l’assistant télécharge le paquet officiel correspondant à votre distribution (famille apt, dnf, zypper ou pacman), l’installe derrière une simple demande de mot de passe, et l’appaire pour vous — rien à faire à la main. Sur les autres distributions, installez Sunshine vous-même puis appairez depuis l’interface.',
+    'step2.p3':'<strong>Pour héberger cette machine, prenez le .deb, le .rpm ou le paquet AUR.</strong> La capture d’écran a besoin d’une capability de fichier, qui ne survit pas dans une AppImage : une AppImage portable streame toujours les hôtes Sunshine, Wolf et MultiSeat de votre réseau, mais jamais son propre écran.',
+    'stepS.h':'Répondez à l’assistant',
+    'stepS.p':'Au premier lancement, MoonlightWeb ouvre <code>https://localhost/setup</code>, qui pose la seule question restante : autorisez-vous le lien Internet (sessions de streaming à distance, désactivé par défaut) ? Rien d’autre n’est installé — ce bureau est capturé par l’application elle-même. Sur une session Wayland, le premier stream fait apparaître une fois la boîte de partage d’écran du compositeur ; l’autorisation est ensuite mémorisée.',
     'step3.h':'Ouvrez un navigateur sur n’importe quel appareil',
     'step3.p':'Sur le PC lui-même : <code>https://localhost</code>. Depuis un autre appareil de votre réseau : votre IP locale. Jouer depuis l’extérieur de votre réseau : activez l’accès Internet et l’application vous donne un lien d’accès distant qui mène droit à cette machine. Vous pouvez aussi utiliser votre propre domaine et certificat.',
-    'step4.h':'Appairez une fois avec un code PIN',
-    'step4.p':'Vos hôtes Sunshine sont déjà listés — découverts automatiquement sur le réseau local via mDNS. Saisissez le code PIN affiché par Sunshine, et l’appairage est mémorisé pour toujours.',
+    'step4.h':'Votre PC est déjà là',
+    'step4.p':'Cette machine est listée d’emblée, une carte par écran — rien à appairer, aucun code PIN. Les autres hôtes de votre réseau (Sunshine, Wolf, MultiSeat) sont découverts à côté via mDNS : ceux-là s’appairent une fois avec le PIN qu’ils affichent, et c’est mémorisé pour toujours.',
     'step5.h':'Appuyez sur play',
-    'step5.p':'Choisissez un jeu ou le bureau complet. Plein écran, manette en main — jusqu’à 4K HDR à 240 fps, avec moins de 20 ms de latence en Wi-Fi.',
+    'step5.p':'Choisissez un écran, un jeu ou le bureau complet. Plein écran, manette en main — jusqu’à 4K à 240 fps, avec moins de 20 ms de latence en Wi-Fi. (Le HDR depuis un hôte Linux n’est pas encore implémenté.)',
     'dl.btn':'⬇ Télécharger pour Linux',
     'tr.h':'Dépannage',
     'trOld.h':'Il s’installe très bien, mais cliquer sur l’application ne fait absolument rien',
@@ -266,7 +271,7 @@ window.MW_DICTS = {
     'note':'<strong>Réseau restrictif ?</strong> MoonlightWeb bascule automatiquement (UDP → TCP), et continue donc de fonctionner à travers les pare-feu stricts et le Wi-Fi d’hôtel hostile.',
     'read.h':'À lire ensuite',
     'x.faq.t':'FAQ', 'x.faq.d':'Latence, codecs, sécurité, jeu sur Internet — toutes les questions fréquentes.',
-    'x.win.t':'Installer sur Windows', 'x.win.d':'Installateur guidé — Sunshine inclus dans l’assistant.',
+    'x.win.t':'Installer sur Windows', 'x.win.d':'Installateur guidé — un assistant, rien d’autre à configurer.',
     'x.mac.t':'Installer sur macOS', 'x.mac.d':'Guide Apple Silicon avec l’installateur .pkg.',
   },
   zh: {
@@ -274,10 +279,10 @@ window.MW_DICTS = {
     'crumbs':'<a href="/">首页</a> / <a href="/guides/">指南</a> / Linux',
     'kicker':'安装指南 · Linux',
     'h1':'把你的 Linux 游戏 PC 串流到任何浏览器',
-    'lead':'MoonlightWeb 是一个免费、开源（GPL-3.0）的服务器，把你的 <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> 游戏主机串流到任何带浏览器的设备。<strong>在游戏 PC 上装一个软件包。其他每台设备只要打开一个网址。</strong>',
+    'lead':'MoonlightWeb 是一个免费、开源（GPL-3.0）的服务器，把你的游戏主机串流到任何带浏览器的设备。<strong>在游戏 PC 上装一个软件包。其他每台设备只要打开一个网址。</strong>',
     'need.h':'你需要什么',
     'need.1':'一台 Linux 游戏 PC（x64），配备支持硬件编码的 GPU——也就是运行你游戏的那台机器。',
-    'need.2':'<strong>Sunshine</strong> 作为串流主机。还没有？MoonlightWeb 的设置向导会帮你装好并自动配对。',
+    'need.2':'<strong>不需要安装别的</strong>——MoonlightWeb 自己捕获桌面（KMS，或 Wayland 下的 ScreenCast 门户）并通过 VA-API 编码。声音需要 <strong>PipeWire</strong>：在仍然使用纯 PulseAudio 的机器上，串流会没有声音，日志中会说明。已经在别处跑着 Sunshine、Wolf 或 MultiSeat？那些机器可以在同一个页面里配对。',
     'need.3':'任何带现代浏览器的设备都可作客户端：Chrome、Edge、Safari 或 Firefox。无需应用、无需账户。',
     'need.4':'发行版不低于 <strong>Ubuntu 22.04</strong>、<strong>Debian 12</strong> 或 <strong>Fedora 36</strong>（glibc 2.34+）。Qt 和 OpenSSL 已内置，但系统的 C 运行库永远无法内置：在更旧的发行版上，软件包能装上，应用却拒绝启动。',
     'repo.h':'捷径：一条命令，还自带更新',
@@ -285,22 +290,23 @@ window.MW_DICTS = {
     'repo.manual':'想手动操作？那正是下面这些步骤：',
     'repo.rest':'SteamOS、Bazzite 及其他不可变系统没有可以添加软件源的包管理器——它们继续使用便携的 AppImage，同一条命令也会帮你下载。下面的手动方式在任何系统上依然有效。',
     'docker.h':'更喜欢 Docker？无头服务器、NAS 与迷你 PC',
-    'docker.p':'官方多架构镜像（<code>amd64</code> + <code>arm64</code>）已发布到 GitHub Container Registry。在任何装有 Docker 的 Linux 主机上一条命令即可——<code>--network host</code> 让容器直接处于你的局域网中，从而发现你的 Sunshine 机器：',
+    'docker.p':'官方多架构镜像（<code>amd64</code> + <code>arm64</code>）已发布到 GitHub Container Registry。在任何装有 Docker 的 Linux 主机上一条命令即可——<code>--network host</code> 让容器直接处于你的局域网中，从而发现网络上的主机。容器没有桌面可供捕获：因此它串流的是你配对的机器，而不是它自己：',
     'docker.p2':'容器没有可信任的本地浏览器，因此先设置一次访问 PIN 码，然后打开 <code>https://&lt;服务器-IP&gt;</code> 并输入：',
     'docker.rest':'用 <code>docker pull</code> 更新并重建容器——数据卷会保留你的配对和证书。Compose 文件、端口表、macvlan 以及一键互联网访问都在 <a href="https://github.com/linckosz/moonlight-web/blob/main/docker/README.md" target="_blank" rel="noopener">Docker 指南</a>中。',
     'steps.h':'逐步安装',
     'step1.h':'下载一个软件包',
     'step1.p':'从<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">发布页面</a>按你的发行版系列选择：<strong>Debian、Ubuntu、Mint、Pop!_OS、elementary、Zorin</strong> 用 <code>.deb</code>；<strong>Fedora、RHEL、CentOS Stream、Rocky、Alma、Nobara、openSUSE</strong> 用 <code>.rpm</code>；<strong>Arch、Manjaro、SteamOS、Bazzite</strong> 及其他一切用便携的 <code>.AppImage</code>。每个软件包都是自包含的（内置 Qt 和 OpenSSL——无需安装任何依赖）。',
-    'step2.h':'安装并启动——在运行 Sunshine 的那台机器上',
+    'step2.h':'安装并启动——在游戏 PC 上',
     'step2.p':'软件包安装到 <code>/opt/moonlightweb</code>，添加菜单项和 <code>moonlightweb</code> 命令，打开所需的防火墙端口，并立即启动服务器。',
-    'stepS.h':'让向导安装 Sunshine',
-    'stepS.p':'首次启动时，MoonlightWeb 会打开 <code>https://localhost/setup</code>。如果尚未安装 Sunshine，向导会下载适配你发行版的官方软件包（apt、dnf、zypper 或 pacman 系），只需输入一次密码即可完成安装，并自动配对——无需手动操作。在其他发行版上，请自行安装 Sunshine，然后在界面中配对。',
+    'step2.p3':'<strong>要让这台机器当主机，请使用 .deb、.rpm 或 AUR 软件包。</strong>屏幕捕获需要文件 capability，而它无法在 AppImage 内保留：便携 AppImage 仍能串流你网络上的 Sunshine、Wolf 和 MultiSeat 主机，但永远无法串流它自己的屏幕。',
+    'stepS.h':'回答设置向导',
+    'stepS.p':'首次启动时，MoonlightWeb 会打开 <code>https://localhost/setup</code>，它只问剩下的这一个问题：是否允许互联网连接（远程串流会话，默认关闭）。别的什么都不装——这个桌面由应用自己捕获。在 Wayland 会话中，第一次串流会弹出一次合成器的屏幕共享对话框；之后授权会被记住。',
     'step3.h':'在任何设备上打开浏览器',
     'step3.p':'在 PC 本机上：<code>https://localhost</code>。从你网络上的其他设备：你的局域网 IP。要从网络之外游玩：启用互联网访问，应用便会给你一个直达这台机器的远程接入链接。你也可以使用自己的域名和证书。',
-    'step4.h':'用 PIN 码配对一次',
-    'step4.p':'你的 Sunshine 主机已经列出——通过 mDNS 在局域网自动发现。输入 Sunshine 显示的 PIN 码，配对将被永久记住。',
+    'step4.h':'你的 PC 已经在那里',
+    'step4.p':'这台机器一开始就列在那里，每块屏幕一张卡片——无需配对，也没有 PIN 码。你网络上的其他主机（Sunshine、Wolf、MultiSeat）会通过 mDNS 出现在旁边：那些只需用它们显示的 PIN 码配对一次，之后永久记住。',
     'step5.h':'按下开始',
-    'step5.p':'选择一款游戏或完整桌面。全屏、手柄在手——最高 4K HDR、240 fps，Wi-Fi 下延迟低于 20 毫秒。',
+    'step5.p':'选择一块屏幕、一款游戏或完整桌面。全屏、手柄在手——最高 4K、240 fps，Wi-Fi 下延迟低于 20 毫秒。（Linux 主机的 HDR 尚未实现。）',
     'dl.btn':'⬇ 下载 Linux 版',
     'tr.h':'疑难解答',
     'trOld.h':'安装很顺利，但点击应用毫无反应',
@@ -316,7 +322,7 @@ window.MW_DICTS = {
     'note':'<strong>网络受限？</strong>MoonlightWeb 会自动回退（UDP → TCP），因此在严格防火墙和恶劣的酒店 Wi-Fi 下也能继续工作。',
     'read.h':'继续阅读',
     'x.faq.t':'常见问题', 'x.faq.d':'延迟、编解码器、安全、互联网远程游玩——所有常见问题。',
-    'x.win.t':'在 Windows 上安装', 'x.win.d':'向导式安装程序——Sunshine 已包含在向导中。',
+    'x.win.t':'在 Windows 上安装', 'x.win.d':'向导式安装程序——一个向导，别的都不用配。',
     'x.mac.t':'在 macOS 上安装', 'x.mac.d':'Apple Silicon 指南，附 .pkg 安装程序。',
   },
 };

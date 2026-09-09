@@ -261,6 +261,10 @@ Or pick the package for your distro family directly. All of them are **self‑co
 > (`sudo apt install libfuse2t64`, or `libfuse2` before 24.04; alternatively run it with
 > `--appimage-extract-and-run`). The `.deb` has none of these caveats.
 
+> ⚠️ **To host *this* machine, use the `.deb`, the `.rpm` or the AUR package.** Screen capture needs a file
+> capability, and one cannot survive inside an AppImage (its FUSE mount is `nosuid`). A portable AppImage still
+> streams the hosts you pair with — it just never offers its own screen.
+
 **Nothing else to install on Linux either.** The native engine captures through **KMS** (zero‑copy
 DMA‑BUF → VA‑API) and falls back to the **ScreenCast portal** on Wayland compositors that need it;
 audio comes from PipeWire, input goes through `uinput` (a udev rule ships with the package). On

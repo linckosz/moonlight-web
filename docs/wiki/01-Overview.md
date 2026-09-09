@@ -4,29 +4,31 @@
 
 # 1. Overview — MoonlightWeb from the outside
 
-MoonlightWeb turns **any device with a modern browser** (PC, Mac, tablet, phone, TV) into a low-latency game-streaming client for a [Sunshine](https://github.com/LizardByte/Sunshine)-powered PC — with nothing to install on the client side. The server runs on any machine on the same LAN as Sunshine (ideally the Sunshine PC itself) and serves the whole experience as a web app.
+MoonlightWeb turns a gaming PC into a stream and **any device with a modern browser** (PC, Mac, tablet, phone, TV) into the client — with nothing to install on the client side. It is installed on the gaming PC itself, where it **captures and encodes that machine directly**; it is also a full GameStream client, so the Sunshine, Wolf and MultiSeat hosts on the network are paired and streamed from the same page.
 
 Headline capabilities:
 
-- **Low-latency streaming** up to 4K HDR, 120+ FPS, with **H.264 / HEVC / AV1**.
+- **Its own capture & encode engine** — the machine the server runs on is a host with no pairing, no PIN and no second streaming server: one card per display. Windows, Linux and macOS (design doc: `docs/design/native-capture-encoder.md`).
+- **Low-latency streaming** up to 4K HDR, 120+ FPS, with **H.264 / HEVC / AV1**, on NVENC · AMF · Quick Sync · VA-API · VideoToolbox, with a software stage when no GPU will encode.
 - **WebRTC transport** (DataChannels + RTP media tracks) with automatic WSS fallback — a five-step fallback chain guarantees a connection on almost any network.
-- **Opus audio** decoded in the browser with an adaptive jitter buffer.
+- **Opus audio** encoded on the host, decoded in the browser with an adaptive jitter buffer.
 - **Full input**: keyboard, mouse (pointer-lock), touch trackpad, Xbox/PS **gamepads** with rumble, bidirectional **clipboard**.
-- **Auto-discovery** of Sunshine hosts on the LAN (mDNS) + manual IP add.
+- **Other hosts too** — Sunshine/Apollo, Wolf (Games-on-Whales) and MultiSeat, found on the LAN by mDNS or added by IP.
 - **Internet access** (opt-in consent): per-session UPnP media mapping for remote streams, plus the **remote entry link** — one outgoing connection to an introduction server, which is how the instance is reached from outside without publishing anything: no DNS record, no certificate in its name, no open web port.
 - **Video Enhancement**: GPU upscaling & sharpening (FSR1 / SGSRv1 via WebGPU) in the browser.
 
 ## 1.1 The User's journey
 
-### Discover, pair, stream
+### Open, click, stream
 
-The home page lists every Sunshine host found on the LAN (mDNS) plus any manually added IP. Each host box carries its own app grid inline — an app is launched directly from its host box.
+The home page opens on **this machine**, listed as `<hostname> — MoonlightWeb Host`, with one card per display. Beside it sit every GameStream host found on the LAN (mDNS) plus any manually added IP. Each host box carries its own app grid inline — an app is launched directly from its host box.
 
-![Home — Sunshine host list](../screenshots/home.png)
+![Home — the host list](../screenshots/home.png)
 
-1. **Discovery** — the server scans the LAN via mDNS (`_nvstream._tcp`); hosts can also be added by IP.
-2. **Pairing** — click *Pair*, a PIN dialog appears; type that PIN into Sunshine's web UI (or let the installer auto-pair the local Sunshine). Pairing uses the standard GameStream challenge-response with a generated RSA identity (see [Security](06-Security.md)).
-3. **Streaming** — pick an app (or *Desktop*); the browser goes fullscreen into the stream overlay.
+1. **This machine, straight away** — no discovery, no pairing, no PIN: the native host answers `ensurePaired()` immediately, because there are no two parties to authenticate. Its "app list" is its displays.
+2. **Discovery** — the server scans the LAN via mDNS (`_nvstream._tcp`); hosts can also be added by IP.
+3. **Pairing** (other hosts only) — click *Pair*, a PIN dialog appears; type that PIN into the host's web UI. Pairing uses the standard GameStream challenge-response with a generated RSA identity (see [Security](06-Security.md)). Wolf is paired without a human in the loop — MoonlightWeb posts the PIN itself.
+4. **Streaming** — pick a display, an app or *Desktop*; the browser goes fullscreen into the stream overlay.
 
 ### The stream
 
@@ -66,7 +68,8 @@ The admin page controls:
 - **Sessions table** — every authenticated device with IP, geolocation (city/country), last-seen, streaming flag; sessions can be renamed or revoked (revoking a streaming session kills the stream immediately).
 - **Certificate authentication** — download/regenerate a token file that remote users can upload instead of typing a PIN.
 - **HTTPS port** (rebinds live; the HTTP port is displayed only), **transport mode** (auto or forced), and the **Internet Access** toggle.
-- **Sunshine management** — install/start/stop the local Sunshine when needed.
+- **Stream notifications** — a desktop notification when someone starts or stops streaming *this* screen through the native host (server-side setting; the tray obeys it, and the tray may live in another process).
+- **Instance name** — the name this install shows in the header of every browser paired with it, and in the switcher those browsers use to reach the others.
 
 ### Internet access
 
@@ -87,8 +90,8 @@ Known limitations are detected and reported in the UI: UPnP disabled (manual for
 
 ### First-run setup
 
-- **Windows**: the Inno Setup installer wizard collects the Internet-access consent and Sunshine credentials, then drops a `provisioning.json` the server consumes on first boot (see [Installers](09-Installers-and-Packaging.md)).
-- **macOS / Linux**: an in-app **setup wizard** (`/setup`) opens automatically on first launch and performs the same steps via `/api/setup/{status,apply}`.
+- **Windows**: the Inno Setup installer wizard collects the Internet-access consent, then drops a `provisioning.json` the server consumes on first boot (see [Installers](09-Installers-and-Packaging.md)). Since September 2026 it no longer installs Sunshine — the app hosts the machine itself.
+- **macOS / Linux**: an in-app **setup wizard** (`/setup`) opens automatically on first launch and performs the same steps via `/api/setup/{status,apply}`. It asks about Sunshine **only** on a machine that cannot host itself (`status.native.possible` is the whole switch); on macOS it points at the Screen Recording permission instead.
 
 ### Day-2 operations
 
@@ -102,9 +105,10 @@ Known limitations are detected and reported in the UI: UPnP disabled (manual for
 
 | Piece | Runs on | Distribution |
 |---|---|---|
-| **MoonlightWeb server** | Any machine on Sunshine's LAN (ideally the Sunshine PC) | Native installers per platform |
+| **MoonlightWeb server** | The gaming PC (it hosts that machine itself); or any machine on the LAN, as a front end for paired hosts | Native installers per platform |
+| **Native capture engine** | Inside the server process, on the machine being streamed | Ships with the server — nothing to install or enable |
 | **Web app** | The client browser | Served by the MoonlightWeb server itself |
-| **Sunshine** | The gaming PC | Third-party; installable through MoonlightWeb's wizard |
+| **Sunshine · Wolf · MultiSeat** | Any other host on the LAN, optional | Third-party; found by mDNS or added by IP, then paired |
 | **Bootstrap entry page** | The client browser, for its first few kilobytes only | Served at `stream.{domain}/{id}`; it opens the tunnel and then fetches the app from the user's own machine |
 | **Infrastructure stack** (introduction server, STUN, DNS, relay) | A small Linux VM with a public IP | `deploy/powerdns/` Docker stack — no media ever crosses it; a fork can run its own (see [Infrastructure Stack](10-Infrastructure-Stack.md)) |
 

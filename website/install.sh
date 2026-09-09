@@ -506,7 +506,7 @@ install_appimage() {
 [Desktop Entry]
 Type=Application
 Name=MoonlightWeb
-Comment=Sunshine streaming client for the browser
+Comment=Stream this PC to any browser
 Exec=$DEST/MoonlightWeb.AppImage
 Icon=moonlightweb
 Categories=Network;Game;

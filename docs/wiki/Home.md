@@ -1,6 +1,6 @@
 # MoonlightWeb — Technical Wiki
 
-> **Stream your PC games from any browser.** MoonlightWeb is a 100% web [Sunshine](https://github.com/LizardByte/Sunshine)/GameStream client: a C++/Qt server that speaks the GameStream protocol to Sunshine and relays video/audio/input to any modern browser over WebRTC. Nothing to install on the client — just a URL.
+> **Stream your PC games from any browser.** MoonlightWeb is a C++/Qt server installed on the gaming PC: it **captures and encodes that machine itself** and relays video/audio/input to any modern browser over WebRTC. It is also a full GameStream client, so [Sunshine](https://github.com/LizardByte/Sunshine), Wolf and MultiSeat hosts are paired and streamed from the same page. Nothing to install on the client — just a URL.
 
 This wiki is the canonical technical documentation for contributors and for AI coding agents. It only covers what is committed to this repository. Every chapter is self-contained, cross-linked, and written so that both a human developer preparing a pull request and an LLM ingesting the repo can build an accurate mental model of the system.
 
@@ -15,7 +15,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 | # | Chapter | What it covers |
 |---|---------|----------------|
 | 1 | [Overview](01-Overview.md) | The product from the User and Administrator point of view, with screenshots |
-| 2 | [Architecture](02-Architecture.md) | System diagram, tech stack & rationale, repository layout, browser ↔ MoonlightWeb ↔ Sunshine exchange |
+| 2 | [Architecture](02-Architecture.md) | System diagram, tech stack & rationale, repository layout, browser ↔ MoonlightWeb ↔ host exchange |
 | 3 | [Backend](03-Backend.md) | C++/Qt server: modules, code architecture, HTTP/HTTPS server, session lifecycle |
 | 4 | [Frontend](04-Frontend.md) | Vanilla JS app: views/overlays, renderers, audio pipeline, input, i18n |
 | 5 | [Streaming & Transports](05-Streaming-and-Transports.md) | Transport fallback chain, video/audio/input mechanics, canvas vs `<video>`, HDR limitations, workarounds |
@@ -45,5 +45,5 @@ This wiki is the canonical technical documentation for contributors and for AI c
 ## Conventions used throughout
 
 - File references are repo-relative, e.g. `backend/src/streaming/Session.cpp`.
-- "Host" = the Sunshine gaming PC. "Server" = the MoonlightWeb process. "Client" = the browser.
+- "Host" = the machine being streamed — this one through the native engine, or a paired GameStream host (Sunshine, Wolf, MultiSeat). "Server" = the MoonlightWeb process. "Client" = the browser.
 - Code comments in the repo are always English; commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
