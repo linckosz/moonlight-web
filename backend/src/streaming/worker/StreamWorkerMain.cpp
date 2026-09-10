@@ -18,6 +18,9 @@
 #include "StreamWorkerMain.h"
 
 #include "../Session.h"
+#include "../InputMessageCodec.h"
+#include "../../server/AppSettings.h"
+#include "mw/native/NativeHost.h"
 #include "CoopSessionResolver.h"
 #include "../../backend/streambackend/StreamBackendRegistry.h"
 #include "../../backend/streambackend/StreamBackendSetup.h"
@@ -169,6 +172,18 @@ int runStreamWorker(QCoreApplication& app)
 {
     Q_UNUSED(app);
     qInfo() << "[StreamWorker] Worker process started, waiting for config on stdin";
+
+    // Keyboard diagnostics, armed HERE and not only in main(): a keystroke is
+    // handled by the relays this process builds, and main() sets the flag well
+    // after `return runStreamWorker(app)` — so in worker mode, which is the
+    // default, the switch was on in the one process that never sees a key.
+    // Same trap, same shape as the latency flag: anything an input or capture
+    // path reads has to be read again on this side of the fork.
+    if (AppSettings().keyboardDebug()) {
+        InputMsg::setDebug(true);
+        mw::native::NativeHost::setKeyboardDiagnostics(true);
+        qInfo() << "[KBD] keyboard diagnostics on in the worker";
+    }
 
     // ── First stdin line = session config ────────────────────────────────────
     std::string configLine;
