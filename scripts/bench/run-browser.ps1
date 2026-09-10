@@ -184,6 +184,23 @@ function Stop-Stream {
     }
 }
 
+# ── Wait for the app to actually have tiles ─────────────────────────────────
+# The client kiosk starts a COLD Chrome on a single-page app: the shell loads,
+# the service worker answers, the host list arrives, and only then does a tile
+# exist. Two seconds was enough on a warm profile and not on a cold one, and the
+# failure is a throw on the FIRST pass - "no element with text 'Display 1'" -
+# which is indistinguishable from a host that is not paired at all.
+$ready = $false
+for ($i = 0; $i -lt 40; $i++) {
+    $txt = Cdp eval "JSON.stringify(document.body ? document.body.innerText : '')"
+    if ($txt -match [regex]::Escape($Tile)) { $ready = $true; break }
+    Start-Sleep -Seconds 2
+}
+if (-not $ready) {
+    throw "the app at $AppUrl never showed a tile named '$Tile' - is the host paired in THIS instance? (cdp.py --port $DebugPort tiles says what is on the page)"
+}
+Write-Host "app ready    : tile '$Tile' is on the page"
+
 $out = @()
 $jsonl = Join-Path $ResultsDir 'browser.jsonl'
 if (Test-Path $jsonl) { Remove-Item $jsonl }

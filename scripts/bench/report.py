@@ -96,7 +96,15 @@ class Redactor:
         for i, m in enumerate(machines, 1):
             alias = "this machine" if m.get("kind") == "local" else f"host-{i}"
             self.aliases[str(m.get("id"))] = alias
-            for field in ("id", "label", "sshAlias"):
+            fields = ("id", "label", "sshAlias")
+            # The local machine's id is a ROLE ("local"), not a name: it hides
+            # nothing and it matches ordinary English. Substituting it turned
+            # every AppData\Local\Temp path in the report into
+            # AppData\this machine\Temp. Its label is still a name and is
+            # still scrubbed.
+            if m.get("kind") == "local":
+                fields = ("label", "sshAlias")
+            for field in fields:
                 value = m.get(field)
                 if isinstance(value, str) and len(value) >= 3:
                     # A label is a sentence: only its head is the name.
@@ -285,6 +293,13 @@ def read_csv(path):
 
 
 def num(v):
+    # native-bench.csv is written by PowerShell, which formats numbers in the
+    # machine's culture: on a French Windows every value in it is "3,47", not
+    # "3.47". float() then refuses all of them, num() returns None for the whole
+    # column, and the entire Encoder section renders "no data" while the table
+    # right beside it shows the numbers as text.
+    if isinstance(v, str) and "," in v and "." not in v:
+        v = v.replace(",", ".")
     try:
         return float(v)
     except (TypeError, ValueError):
@@ -379,8 +394,26 @@ def analyse(results_dir):
                or read_jsonl(os.path.join(results_dir, "passes.jsonl")))
     keyboard = read_jsonl(os.path.join(results_dir, "keyboard.jsonl"))
 
+    # probe-results.jsonl is APPENDED to and never truncated, so it holds every
+    # series this machine has ever measured. Joining it to the matrix by label
+    # alone therefore hands a skipped pass the number an OLDER campaign got for
+    # the same label - codec-av1 was reported at 77 ms on a run where av1 was
+    # never encoded at all. Keep only what this campaign measured.
+    campaign_start = None
+    _built = provenance.get("builtAt")
+    if isinstance(_built, str):
+        try:
+            # PowerShell writes seven fractional digits; fromisoformat takes six.
+            _iso = re.sub(r"(\.\d{6})\d+", lambda m: m.group(1), _built)
+            campaign_start = datetime.fromisoformat(_iso).timestamp() * 1000
+        except Exception:
+            campaign_start = None
+
     probe_by_label = {}
     for p in probes:
+        ts = p.get("ts")
+        if campaign_start and isinstance(ts, (int, float)) and ts < campaign_start:
+            continue
         probe_by_label.setdefault(p.get("label"), []).append(p)
     browser_by_label = {b.get("id") or b.get("label"): b for b in browser}
 
@@ -722,7 +755,12 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
     parts.append('<div class="card"><div class="meta">')
     parts.append(f'<div><b>Captured display</b>{disp.get("width")}x{disp.get("height")} · '
                  f'{esc(str(disp.get("encoder_name") or "?"))}</div>')
-    parts.append(f'<div><b>Codecs</b>{esc(", ".join(disp.get("codecs") or []) or "?")}</div>')
+    _codecs = disp.get("codecs") or []
+    # /api/native/status sends this as "HEVC, H.264" - one string. Joining a
+    # string joins its CHARACTERS, and the card read "H, E, V, C, ,, ...".
+    if isinstance(_codecs, str):
+        _codecs = [c.strip() for c in _codecs.split(",") if c.strip()]
+    parts.append(f'<div><b>Codecs</b>{esc(", ".join(_codecs) or "?")}</div>')
     parts.append(f'<div><b>HDR live</b>{"yes" if disp.get("hdr_active") else "no"}</div>')
     ref = matrix.get("reference", {})
     parts.append(f'<div><b>Reference</b>{ref.get("stream_height")}p{ref.get("stream_fps")} · '

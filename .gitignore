@@ -45,6 +45,8 @@ backend/debug/
 # The clip itself lives outside the repository entirely (~/.mw-bench/content).
 bench-out/
 scripts/bench/results/
+# A side chapter - another display, another encoder - gets its own -ResultsDir.
+scripts/bench/results-*/
 scripts/bench/.chrome-bench/
 scripts/bench/.chrome-client/
 scripts/bench/kiosk-verify.png
