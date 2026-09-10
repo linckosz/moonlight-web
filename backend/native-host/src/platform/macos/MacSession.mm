@@ -871,13 +871,9 @@ private:
 
             NSCursor* cursor = [NSCursor currentSystemCursor];
             CursorShape shape;
-            // CGCursorIsVisible is deprecated without a replacement that a
-            // process other than the cursor's owner can call; it still answers.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            const bool visible =
-                cursor && rasterize(cursor, backingScale(), shape) && CGCursorIsVisible();
-#pragma clang diagnostic pop
+            // A pointer AppKit can draw is a pointer: see pointerNow for why
+            // macOS is not asked whether it is on screen.
+            const bool visible = cursor && rasterize(cursor, backingScale(), shape);
             if (!forced && visible == m_ReportedVisible &&
                 (!visible || shape.hash == m_ReportedHash))
                 return;
@@ -934,10 +930,29 @@ private:
         const double x = at.x - m_Display.left;
         const double y = at.y - m_Display.top;
         if (x < 0 || y < 0 || x >= w || y >= h) return p;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        p.visible = CGCursorIsVisible();
-#pragma clang diagnostic pop
+        // On this display, so: shown. macOS offers no working way to ask
+        // whether the pointer is hidden. CGCursorIsVisible() was that way, and
+        // it was measured dead on macOS 15.6 (10/09/2026): it answers false
+        // forever, in the app's own signed bundle as in a plain binary, in the
+        // GUI session as over SSH, with the pointer moving and the display
+        // awake — and it keeps answering false while the asking process hides
+        // and unhides the pointer itself, which is what proves the getter and
+        // not the pointer. Its deprecation note says as much ("no longer
+        // supported"), and there is no replacement a process other than the
+        // cursor's owner can call.
+        //
+        // Trusting it cost the pointer everywhere on a macOS host: the phone's
+        // magnified pointer was never painted, and the desktop client was told
+        // the pointer was gone and drew nothing over a picture that had none
+        // either — a viewer with no pointer at all, on both paths.
+        //
+        // So the pointer counts as visible whenever AppKit hands us a shape.
+        // What that gives up: an application that hides the pointer for real —
+        // a fullscreen game, a video player after a few still seconds — still
+        // gets one drawn for the viewer. A pointer that should not be there is
+        // a smaller loss than no pointer at all, and gaming mode is unaffected
+        // (the compositor draws that one, and it disappears with the real one).
+        p.visible = true;
         p.fx = static_cast<float>(x * m_Info.width / w);
         p.fy = static_cast<float>(y * m_Info.height / h);
         return p;
