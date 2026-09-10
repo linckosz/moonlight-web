@@ -781,35 +781,62 @@ void Win32Input::injectChar(const std::string& utf8, bool down)
         return input;
     };
 
-    // Bits of the high byte: 1 Shift, 2 Ctrl, 4 Alt. Press only what is missing,
-    // and release on the way back out in reverse order, so a modifier the viewer
-    // is genuinely holding is left exactly as it was.
-    static constexpr struct
-    {
-        int bit;
-        int vk;
-    } kNeeded[] = {{1, VK_SHIFT}, {2, VK_CONTROL}, {4, VK_MENU}};
+    // Bits of the high byte: 1 Shift, 2 Ctrl, 4 Alt — the LEVEL modifiers the
+    // character needs on THIS layout. They are the layout's decision, not the
+    // viewer's hand's: the viewer pressed Shift for their own layout, where "1"
+    // on AZERTY is Shift+&, and on a US host that same character is VK_1 with
+    // nothing held. Left in place, the viewer's Shift turned every AZERTY digit
+    // into a US symbol on the way through — "!" for "1", "@" for "2". So a level
+    // modifier the viewer holds and the character does not need is lifted for
+    // the key's duration and put back afterwards, if the viewer still holds it
+    // then: m_HeldKeys knows, because nothing pressed here is ever recorded in
+    // it. AltGr is Ctrl+Alt to Windows and is treated as one level modifier —
+    // lifted only when both are held and neither is wanted. A Ctrl or an Alt
+    // held ALONE is a chord (Ctrl+A) and stays exactly as it is: the character
+    // keeps its own key, the chord keeps its modifier.
+    const bool needShift = (needed & 1) != 0;
+    const bool needCtrl = (needed & 2) != 0;
+    const bool needAlt = (needed & 4) != 0;
 
-    std::vector<INPUT> inputs;
-    inputs.reserve(4);
+    // What surrounds the key: on a press these go out before it, on a release
+    // they are undone after it, in reverse. `press` is the direction for a
+    // modifier the character needs; a lifted one goes the other way.
+    std::vector<INPUT> around;
+    around.reserve(5);
     {
         std::lock_guard<std::mutex> lock(m_HeldMutex);
-        for (const auto& mod : kNeeded) {
-            if (!(needed & mod.bit)) continue;
-            if (m_HeldKeys.count(mod.vk)) continue; // the viewer is holding it for real
-            inputs.push_back(hostKeyInput(mod.vk, down));
+        const auto held = [this](int a, int b, int c) {
+            return m_HeldKeys.count(a) || m_HeldKeys.count(b) || m_HeldKeys.count(c);
+        };
+        const bool viewerShift = held(VK_SHIFT, VK_LSHIFT, VK_RSHIFT);
+        const bool viewerCtrl = held(VK_CONTROL, VK_LCONTROL, VK_RCONTROL);
+        const bool viewerAlt = held(VK_MENU, VK_LMENU, VK_RMENU);
+
+        if (viewerShift && !needShift) around.push_back(hostKeyInput(VK_SHIFT, !down));
+        if (viewerCtrl && viewerAlt && !needCtrl && !needAlt) {
+            around.push_back(hostKeyInput(VK_CONTROL, !down));
+            around.push_back(hostKeyInput(VK_MENU, !down));
         }
+        if (needShift && !viewerShift) around.push_back(hostKeyInput(VK_SHIFT, down));
+        if (needCtrl && !viewerCtrl) around.push_back(hostKeyInput(VK_CONTROL, down));
+        if (needAlt && !viewerAlt) around.push_back(hostKeyInput(VK_MENU, down));
+
         if (down)
             m_HeldKeys.insert(vk);
         else
             m_HeldKeys.erase(vk);
     }
-    // The character's own key sits inside the modifiers: pressed after they go
-    // down, released before they come back up.
-    if (down)
+    // The character's own key sits inside the modifiers: pressed after they are
+    // set up, released before they are put back.
+    std::vector<INPUT> inputs;
+    inputs.reserve(around.size() + 1);
+    if (down) {
+        inputs = around;
         inputs.push_back(hostKeyInput(vk, true));
-    else
-        inputs.insert(inputs.begin(), hostKeyInput(vk, false));
+    } else {
+        inputs.push_back(hostKeyInput(vk, false));
+        inputs.insert(inputs.end(), around.rbegin(), around.rend());
+    }
     sendBatch(inputs.data(), static_cast<int>(inputs.size()));
 
     if (down && keyboardDiagnostics())

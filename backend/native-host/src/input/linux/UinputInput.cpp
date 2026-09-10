@@ -415,11 +415,29 @@ void UinputInput::injectChar(const std::string& utf8, bool down)
     }
 
     const XkbStroke& stroke = strokes[0];
-    // Only the modifiers the viewer is not already holding — same rule as
-    // injectText, and for the same reason: a Shift they are genuinely holding
-    // must still be down when this returns. The stroke's own key goes inside
-    // them: pressed after they go down, released before they come back up.
-    uint16_t mine[2] = {0, 0};
+    // The stroke's modifiers are the LEVEL modifiers the character needs on
+    // THIS layout — Shift, and AltGr, which is Right Alt here. They are the
+    // layout's decision, not the viewer's hand's: the viewer pressed Shift for
+    // their own layout, where "1" on AZERTY is Shift+&, and on a US host that
+    // character wants no Shift at all. Left in place, the viewer's Shift turned
+    // every AZERTY digit into a US symbol. So a level modifier the viewer holds
+    // and the stroke does not need is lifted around the key and put back after,
+    // if the viewer still holds it then — m_HeldKeys knows, because nothing
+    // pressed here is recorded in it. Ctrl and Left Alt are chords and stay.
+    // The stroke's own key goes inside all of it: pressed after the modifiers
+    // are set up, released before they are put back.
+    const auto wants = [&stroke](uint16_t mod) {
+        return stroke.mods[0] == mod || stroke.mods[1] == mod;
+    };
+    uint16_t lift[3] = {0, 0, 0}; // held by the viewer, unwanted by the stroke
+    int lifts = 0;
+    if (!wants(KEY_LEFTSHIFT)) {
+        if (m_HeldKeys.count(KEY_LEFTSHIFT)) lift[lifts++] = KEY_LEFTSHIFT;
+        if (m_HeldKeys.count(KEY_RIGHTSHIFT)) lift[lifts++] = KEY_RIGHTSHIFT;
+    }
+    if (!wants(KEY_RIGHTALT) && m_HeldKeys.count(KEY_RIGHTALT)) lift[lifts++] = KEY_RIGHTALT;
+
+    uint16_t mine[2] = {0, 0}; // wanted by the stroke, not held by the viewer
     int count = 0;
     for (uint16_t mod : stroke.mods) {
         if (mod == 0 || m_HeldKeys.count(mod)) continue;
@@ -427,9 +445,11 @@ void UinputInput::injectChar(const std::string& utf8, bool down)
     }
 
     if (down) {
+        for (int i = 0; i < lifts; ++i)
+            emit(m_Keyboard, EV_KEY, lift[i], 0);
         for (int i = 0; i < count; ++i)
             emit(m_Keyboard, EV_KEY, mine[i], 1);
-        if (count > 0) emitSyn(m_Keyboard);
+        if (lifts + count > 0) emitSyn(m_Keyboard);
         emit(m_Keyboard, EV_KEY, stroke.code, 1);
         emitSyn(m_Keyboard);
         m_HeldKeys.insert(stroke.code);
@@ -450,7 +470,11 @@ void UinputInput::injectChar(const std::string& utf8, bool down)
         m_HeldKeys.erase(stroke.code);
         for (int i = count - 1; i >= 0; --i)
             emit(m_Keyboard, EV_KEY, mine[i], 0);
-        if (count > 0) emitSyn(m_Keyboard);
+        // `lift` was computed from what the viewer holds NOW, so a Shift they
+        // let go of during the press is not put back under their fingers.
+        for (int i = lifts - 1; i >= 0; --i)
+            emit(m_Keyboard, EV_KEY, lift[i], 1);
+        if (lifts + count > 0) emitSyn(m_Keyboard);
     }
 }
 

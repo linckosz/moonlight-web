@@ -448,10 +448,16 @@ void CgInput::injectChar(const std::string& utf8, bool down)
 
     CGEventRef key = CGEventCreateKeyboardEvent(nullptr, it->second.code, down);
     if (!key) return;
-    // The layout's own level modifiers ride on top of whatever the viewer is
-    // really holding — on macOS a modifier is a flag on the event, so nothing
-    // has to be pressed or released around it.
-    CGEventSetFlags(key, static_cast<CGEventFlags>(m_Modifiers) | it->second.flags);
+    // The LEVEL modifiers — Shift and Option — are the layout's decision, not
+    // the viewer's hand's: the viewer pressed Shift for their own layout, where
+    // "1" on AZERTY is Shift+&, and on a US host that character wants no Shift
+    // at all. Left in the flags, the viewer's Shift turned every AZERTY digit
+    // into a US symbol. So the viewer's level flags are replaced by the map's,
+    // and only those: Command and Control are chords (Cmd+A) and ride through
+    // untouched. On macOS a modifier is a flag on the event, so nothing has to
+    // be pressed or released around the key — and nothing has to be put back.
+    constexpr CGEventFlags kLevel = kCGEventFlagMaskShift | kCGEventFlagMaskAlternate;
+    CGEventSetFlags(key, (static_cast<CGEventFlags>(m_Modifiers) & ~kLevel) | it->second.flags);
     post(key);
 
     if (down)
