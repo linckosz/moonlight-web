@@ -202,6 +202,7 @@ if (-not $ready) {
 Write-Host "app ready    : tile '$Tile' is on the page"
 
 $out = @()
+$first = $true
 $jsonl = Join-Path $ResultsDir 'browser.jsonl'
 if (Test-Path $jsonl) { Remove-Item $jsonl }
 
@@ -278,6 +279,19 @@ try {
             $row.probe = $probe.Trim()
             $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
             if ($line) { Write-Host "  probe      : $($line.Trim())" }
+            # Every sample of the very first series timing out is not a slow
+            # pipeline, it is no flag at all - and it costs an hour to find that
+            # out at the end of a matrix. The flag is armed when the host STARTS:
+            # writing latency_flag_enabled into settings.json while it runs
+            # changes nothing, which is exactly how a whole campaign came back
+            # empty on 10/09. Stop on the first pass and say so.
+            if ($first -and $line -and ($line -match '"n":\s*0')) {
+                throw ("every click-to-photon sample timed out on the first pass. That is the flag, " +
+                       "not the pipeline: check latency_flag_enabled in the settings the HOST reads, " +
+                       "then RESTART the host - the flag is armed at startup and its log says " +
+                       "'[LatencyFlag] armed on N screen(s)'. Use -NoProbe to run the matrix without it.")
+            }
+            $first = $false
         }
 
         $out += [pscustomobject]$row

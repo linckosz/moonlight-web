@@ -225,6 +225,13 @@ MITIGATIONS = {
         "keeping up — the encode p99 against the frame budget says which. Note that the declared "
         "refresh rate is not evidence: /api/native/status has been seen reporting 60 Hz for a "
         "display Windows drives at 164 Hz.",
+    "cadence-capped-by-content":
+        "This one is the bench, not the pipeline. The reference clip is 60 fps, and a capture "
+        "only produces a frame when the screen changes: played against it, a 120 fps pass can "
+        "never exceed 60 no matter how fast the encoder or the display is. Replay the cadence "
+        "sweep with content that paints on every present - `run-campaign.ps1 -Content scroll`, "
+        "on a screen actually refreshing that fast - before reading anything into these rows. "
+        "Measured here on 10/09: with scroll at 165 Hz the same three passes delivered 119 fps.",
     "encoder-refused":
         "The engine advertised the codec and then refused to initialise it. That gap between the "
         "capability table and the encoder is a real defect and the .err file next to the CSV has "
@@ -562,10 +569,17 @@ def analyse(results_dir):
         if asked_fps and got_fps and got_fps < asked_fps * 0.9:
             flag = YELLOW if flag == GREEN else flag
             e["notes"].append(f"asked {asked_fps:.0f} fps, captured {got_fps:.0f}")
-            flag_anomaly("cadence-short",
+            # A 60 fps clip cannot be captured faster than 60 fps, so a 120 fps
+            # pass played against it is measuring the content. Naming the real
+            # cause matters: the generic advice sends the reader hunting for an
+            # encoder that is not late.
+            capped = (matrix.get("content") in (None, "", "cod")) and asked_fps > 60
+            flag_anomaly("cadence-capped-by-content" if capped else "cadence-short",
                          f"{e['id']}: asked {asked_fps:.0f} fps, the capture delivered {got_fps:.0f}",
-                         f"encode p99 {(b or {}).get('encodeP99')} ms, "
-                         f"{(b or {}).get('frames')} frames")
+                         (f"content = {matrix.get('content') or 'cod'} (a 60 fps clip)"
+                          if capped else
+                          f"encode p99 {(b or {}).get('encodeP99')} ms, "
+                          f"{(b or {}).get('frames')} frames"))
 
         if pr:
             n, of = pr.get("n") or 0, pr.get("of") or 0

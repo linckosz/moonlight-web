@@ -268,6 +268,12 @@ $matrix = [ordered]@{
     generatedAt = (Get-Date).ToString('o')
     commit      = $inventory.commit
     display     = $displayInfo
+    # Which content was on the captured screen. The cadence sweep cannot be read
+    # without it: the reference clip is 60 fps, so a 120 fps pass played against
+    # it captures 60 and looks like a pipeline that cannot keep up. Only content
+    # that paints on every present - scroll, driven by rAF - can answer that
+    # question, and only on a screen refreshing that fast.
+    content     = $Content
     reference   = $reference
     passes      = $passes
 }
