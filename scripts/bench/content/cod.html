@@ -8,11 +8,22 @@
   video { width: 100vw; height: 100vh; object-fit: fill; display: block; }
   #err { position: fixed; inset: 0; display: none; place-content: center; color: #f66;
          font: 16px/1.6 system-ui, sans-serif; text-align: center; padding: 4rem; }
+  /* The way out, said once. This window is borderless, TOPMOST and has no
+     close button, so the shortcut is the only thing that tells whoever is at
+     the machine how to get their screen back. It lives entirely inside the 3 s
+     before playback starts — the runner begins its pass at 3.5 s — so it is
+     never in a frame the campaign measures. */
+  #out { position: fixed; left: 50%; bottom: 8%; transform: translateX(-50%);
+         color: #ddd; background: rgba(0,0,0,.72); border: 1px solid #444;
+         border-radius: 8px; padding: .9rem 1.4rem; font: 15px/1.5 system-ui, sans-serif;
+         text-align: center; transition: opacity .4s; }
+  #out b { color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
 <video id="v" muted playsinline preload="auto" loop></video>
 <div id="err"></div>
+<div id="out">bench content &mdash; <b>Ctrl+Alt+Shift+M</b> to minimise, <b>Ctrl+Alt+Shift+Q</b> to close</div>
 <script>
 // The bench's reference content: Call of Duty gameplay, 1440p60, from the
 // moment the action starts. This is the hardest case of the whole campaign —
@@ -44,6 +55,10 @@ v.addEventListener("error", () => {
   e.style.display = "grid";
   e.textContent = "No clip at " + v.src + " — run fetch-content.ps1 first.";
 });
+// Gone before the first measured frame: faded at 2.4 s, removed at 2.9 s,
+// playback at 3 s. Nothing of it survives into the encoder's input.
+setTimeout(() => { document.getElementById("out").style.opacity = "0"; }, 2400);
+setTimeout(() => { document.getElementById("out").remove(); }, 2900);
 setTimeout(() => v.play().catch(e => console.log("play refused: " + e)), 3000);
 </script>
 </body>

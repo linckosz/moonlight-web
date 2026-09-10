@@ -39,7 +39,14 @@ param(
     [int]    $DebugPort = 9333,
     [int]    $Clicks = 10,
     [int]    $SpacingMs = 1500,
-    [switch] $NoProbe
+    [switch] $NoProbe,
+    # The kiosks are borderless, TOPMOST and have no close button: whoever is at
+    # the machine cannot get rid of them by hand. So this script owns their
+    # lifetime and takes them down on the way out, however it leaves — the end
+    # of the matrix, a throw, or an operator saying stop. -KeepKiosks is for
+    # inspecting a finished pass; the way out is then Ctrl+Alt+Shift+Q, or
+    # kiosk-close.ps1.
+    [switch] $KeepKiosks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -152,9 +159,9 @@ if (Test-Path $clip) {
 & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $AppUrl -X $cx -Y $cy -W $cw -H $ch `
     -DebugPort $DebugPort | Out-Host
 
-# -like '*click-target*' matches the killing shell's own command line: exclude $PID.
+# -like '*click-target.ps1*' matches the killing shell's own command line: exclude $PID.
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
-    Where-Object { $_.CommandLine -like '*click-target*' -and $_.ProcessId -ne $PID } |
+    Where-Object { $_.CommandLine -like '*click-target.ps1*' -and $_.ProcessId -ne $PID } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Process powershell -WindowStyle Hidden -ArgumentList @(
     '-NoProfile', '-File', "$PSScriptRoot\click-target.ps1",
@@ -181,82 +188,95 @@ $out = @()
 $jsonl = Join-Path $ResultsDir 'browser.jsonl'
 if (Test-Path $jsonl) { Remove-Item $jsonl }
 
-foreach ($pass in $passes) {
-    $skip = Get-Prop $pass 'skip' ''
-    if ($skip) {
-        Write-Host "[SKIP] $($pass.id) — $skip"
-        $out += [pscustomobject]@{ id = $pass.id; factor = $pass.factor; skipped = $skip }
-        continue
-    }
-    Write-Host ""
-    Write-Host "=== $($pass.id) ($($pass.factor)) ==="
+# The kiosks are on screen from here until the finally below, whatever
+# happens in between. Before this try existed, an interrupted campaign left
+# a borderless TOPMOST video on the machine with no way to close it.
+try {
+    foreach ($pass in $passes) {
+        $skip = Get-Prop $pass 'skip' ''
+        if ($skip) {
+            Write-Host "[SKIP] $($pass.id) — $skip"
+            $out += [pscustomobject]@{ id = $pass.id; factor = $pass.factor; skipped = $skip }
+            continue
+        }
+        Write-Host ""
+        Write-Host "=== $($pass.id) ($($pass.factor)) ==="
 
-    Stop-Stream
-    # Through a FILE, never as an inline argument: PowerShell strips the double
-    # quotes before python sees them, cdp.py's Object.assign then throws, the
-    # page reloads with the settings it already had, and the pass measures the
-    # reference while claiming to measure a factor. Twelve passes came back as
-    # 1080p HEVC that way — the log line "Per-request streaming settings" is
-    # what gives it away, so it is checked below.
-    $settingsPath = Join-Path $ResultsDir "settings-$($pass.id).json"
-    ($pass.settings | ConvertTo-Json -Compress) | Set-Content -Path $settingsPath -Encoding UTF8
-    $applied = Cdp settingsfile $settingsPath
-    if ($applied -notmatch [regex]::Escape($pass.settings.video_codec)) {
-        Write-Warning "  settings did not take: $($applied.Trim())"
-    }
-    Start-Sleep -Seconds 2
+        Stop-Stream
+        # Through a FILE, never as an inline argument: PowerShell strips the double
+        # quotes before python sees them, cdp.py's Object.assign then throws, the
+        # page reloads with the settings it already had, and the pass measures the
+        # reference while claiming to measure a factor. Twelve passes came back as
+        # 1080p HEVC that way — the log line "Per-request streaming settings" is
+        # what gives it away, so it is checked below.
+        $settingsPath = Join-Path $ResultsDir "settings-$($pass.id).json"
+        ($pass.settings | ConvertTo-Json -Compress) | Set-Content -Path $settingsPath -Encoding UTF8
+        $applied = Cdp settingsfile $settingsPath
+        if ($applied -notmatch [regex]::Escape($pass.settings.video_codec)) {
+            Write-Warning "  settings did not take: $($applied.Trim())"
+        }
+        Start-Sleep -Seconds 2
 
-    # Twice if the first only hovered, then the self-stream confirmation.
-    Cdp launch $Tile | Out-Null
-    Start-Sleep -Seconds 3
-    $state = Cdp eval "JSON.stringify({selfGo:!!document.querySelector('.self-stream-go'),canvas:!!document.querySelector('canvas')})"
-    if ($state -match '"selfGo":true') {
-        Cdp launch 'Stream anyway 🚀' | Out-Null
-        Start-Sleep -Seconds 8
-    } elseif ($state -notmatch '"canvas":true') {
+        # Twice if the first only hovered, then the self-stream confirmation.
         Cdp launch $Tile | Out-Null
-        Start-Sleep -Seconds 6
-        if ((Cdp eval "!!document.querySelector('.self-stream-go')") -match 'True|true') {
+        Start-Sleep -Seconds 3
+        $state = Cdp eval "JSON.stringify({selfGo:!!document.querySelector('.self-stream-go'),canvas:!!document.querySelector('canvas')})"
+        if ($state -match '"selfGo":true') {
             Cdp launch 'Stream anyway 🚀' | Out-Null
             Start-Sleep -Seconds 8
+        } elseif ($state -notmatch '"canvas":true') {
+            Cdp launch $Tile | Out-Null
+            Start-Sleep -Seconds 6
+            if ((Cdp eval "!!document.querySelector('.self-stream-go')") -match 'True|true') {
+                Cdp launch 'Stream anyway 🚀' | Out-Null
+                Start-Sleep -Seconds 8
+            }
         }
-    }
 
-    $row = [ordered]@{ id = $pass.id; factor = $pass.factor }
-    if ((Cdp eval "!!document.querySelector('canvas')") -notmatch 'True|true') {
-        Write-Warning "  the stream never started"
-        $row.error = 'stream never started'
+        $row = [ordered]@{ id = $pass.id; factor = $pass.factor }
+        if ((Cdp eval "!!document.querySelector('canvas')") -notmatch 'True|true') {
+            Write-Warning "  the stream never started"
+            $row.error = 'stream never started'
+            $out += [pscustomobject]$row
+            ($row | ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            continue
+        }
+
+        Cdp fullscreen | Out-Null
+        Start-Sleep -Seconds 2
+
+        # The NEGOTIATED settings, which are not always the ones asked for. Read off
+        # the overlay rows rather than the request: a HEVC that became H.264 and a
+        # 4:4:4 that fell back to 4:2:0 are exactly what the campaign looks for.
+        $rows = Cdp eval "JSON.stringify(Object.fromEntries([...document.querySelectorAll('.stats-row')].map(r=>[r.querySelector('.stats-label')?.textContent.trim(),r.querySelector('.stats-value')?.textContent.trim()])))"
+        $row.negotiated = $rows.Trim()
+        Write-Host "  negotiated : $($row.negotiated)"
+
+        $row.perf = (Cdp perf 20).Trim()
+
+        if (-not $NoProbe) {
+            $probe = & powershell -NoProfile -File "$PSScriptRoot\probe-run.ps1" `
+                -Label $pass.id -Clicks $Clicks -SpacingMs $SpacingMs `
+                -ParkX $parkX -ParkY $parkY -DebugPort $DebugPort -ResultsDir $ResultsDir 2>&1 | Out-String
+            $row.probe = $probe.Trim()
+            $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
+            if ($line) { Write-Host "  probe      : $($line.Trim())" }
+        }
+
         $out += [pscustomobject]$row
-        ($row | ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
-        continue
+        ($row | ConvertTo-Json -Compress -Depth 6) | Add-Content -Path $jsonl -Encoding UTF8
     }
 
-    Cdp fullscreen | Out-Null
-    Start-Sleep -Seconds 2
-
-    # The NEGOTIATED settings, which are not always the ones asked for. Read off
-    # the overlay rows rather than the request: a HEVC that became H.264 and a
-    # 4:4:4 that fell back to 4:2:0 are exactly what the campaign looks for.
-    $rows = Cdp eval "JSON.stringify(Object.fromEntries([...document.querySelectorAll('.stats-row')].map(r=>[r.querySelector('.stats-label')?.textContent.trim(),r.querySelector('.stats-value')?.textContent.trim()])))"
-    $row.negotiated = $rows.Trim()
-    Write-Host "  negotiated : $($row.negotiated)"
-
-    $row.perf = (Cdp perf 20).Trim()
-
-    if (-not $NoProbe) {
-        $probe = & powershell -NoProfile -File "$PSScriptRoot\probe-run.ps1" `
-            -Label $pass.id -Clicks $Clicks -SpacingMs $SpacingMs `
-            -ParkX $parkX -ParkY $parkY -DebugPort $DebugPort -ResultsDir $ResultsDir 2>&1 | Out-String
-        $row.probe = $probe.Trim()
-        $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
-        if ($line) { Write-Host "  probe      : $($line.Trim())" }
-    }
-
-    $out += [pscustomobject]$row
-    ($row | ConvertTo-Json -Compress -Depth 6) | Add-Content -Path $jsonl -Encoding UTF8
+    Stop-Stream
 }
-
-Stop-Stream
+finally {
+    if ($KeepKiosks) {
+        Write-Host ''
+        Write-Host 'kiosks left open (-KeepKiosks): Ctrl+Alt+Shift+M to minimise, Ctrl+Alt+Shift+Q to close.'
+    } else {
+        & powershell -NoProfile -File "$PSScriptRoot\kiosk-close.ps1" | Out-Host
+    }
+}
 Write-Host ""
 Write-Host "browser half written to $jsonl"
 Write-Host "then: python report.py  ->  bench-out\report.html"

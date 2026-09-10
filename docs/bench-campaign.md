@@ -275,9 +275,41 @@ scripts\bench\probe-run.ps1 -Label ref-head
 # 4 bis. the keyboard check, once per host — needs "keyboard_debug": true
 scripts\bench\keyboard-check.ps1 -Profiles fr-azerty,us-qwerty
 
+# 4 ter. give the machine back to whoever is sitting at it
+scripts\bench\kiosk-close.ps1
+
 # 5. the report
 python scripts\bench\report.py      # -> bench-out\report.html
 ```
+
+### Getting the screen back
+
+The two kiosks are borderless `--kiosk` Chromes pinned `HWND_TOPMOST`. That is
+deliberate — anything else on the captured display is what the encoder would be
+measuring — but it means they have no close button, and `Alt+F4` closes the
+window that holds the *focus*, which is behind the overlay. Somebody sitting at
+the machine used to have no way to get rid of the video at all.
+
+Three ways out, in order of what they survive:
+
+| | |
+|---|---|
+| `Ctrl+Alt+Shift+M` | un-pins every bench kiosk and minimises it — the campaign's Chrome stays alive and the pass can go on |
+| `Ctrl+Alt+Shift+Q` | closes the kiosks and their helpers |
+| `scripts\bench\kiosk-close.ps1` | the same, from a shell — works when the hotkey watchdog is dead or its combination is already taken |
+
+The hotkeys are system-wide (`RegisterHotKey`), so they work whatever holds the
+focus. `kiosk-hotkeys.ps1` registers them; `kiosk.ps1` starts it on the first
+kiosk, and it exits ten seconds after the last one goes. Three modifiers on
+purpose: a streamed game presses `Q`, `M`, `Ctrl+Q` and `Alt+M`, and the content
+page has no key handler at all — a keystroke arriving from the stream must never
+be able to stop a bench mid-pass. Whether the registration succeeded is written
+to `%TEMP%\mw-kiosk-hotkeys.log`, because the watchdog runs hidden and a warning
+it prints to a console goes nowhere.
+
+`run-browser.ps1` owns the kiosks' lifetime and closes them on its way out — the
+end of the matrix, a `throw`, or an operator saying stop. `-KeepKiosks` leaves
+them up for inspection.
 
 `-NoKiosk` measures whatever is already on the display: useful to exercise the
 machinery on a machine somebody is sitting in front of, but the numbers are not

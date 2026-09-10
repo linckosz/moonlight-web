@@ -124,6 +124,20 @@ $r = New-Object KRECT
 [Kiosk]::GetWindowRect($h, [ref]$r) | Out-Null
 "kiosk window $h at $($r.Left),$($r.Top) -> $($r.Right),$($r.Bottom), topmost"
 
+# A borderless TOPMOST window with no close button is a window the person
+# sitting at the machine cannot get rid of: Alt+F4 goes to whatever holds the
+# focus, which is behind the overlay. Give it a way out that does not depend on
+# the page, on Chrome answering, or on the campaign reaching its end.
+# One watchdog for both kiosks - it acts on every bench Chrome, so a second
+# launch must not start a second one.
+$hotkeysUp = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*kiosk-hotkeys.ps1*' }
+if (-not $hotkeysUp) {
+    Start-Process powershell -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile', '-File', "$PSScriptRoot\kiosk-hotkeys.ps1")
+}
+"way out: Ctrl+Alt+Shift+M minimise, Ctrl+Alt+Shift+Q close, or kiosk-close.ps1"
+
 if ($Verify) {
     Add-Type -AssemblyName System.Drawing
     Start-Sleep -Seconds 4
