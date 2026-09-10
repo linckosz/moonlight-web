@@ -41,14 +41,28 @@ import urllib.request
 import websocket  # websocket-client
 
 
-def page_ws(port):
-    tabs = json.load(urllib.request.urlopen(f"http://localhost:{port}/json"))
+# Nothing here may wait for ever. A campaign is a dozen passes of a dozen calls,
+# unattended, and every one of those calls used to have three unbounded waits in
+# it: the /json fetch, the WebSocket handshake, and the reply. On 10/09/2026 one
+# of them stopped answering mid-matrix and the whole run simply stood still —
+# for eight minutes, with no message, while the same evaluation typed by hand
+# answered instantly. A campaign must fail loudly or not at all: a bounded wait
+# turns a silent stall into an error the caller can see and retry.
+HTTP_TIMEOUT = 10       # Chrome's DevTools HTTP endpoint
+CONNECT_TIMEOUT = 10    # the WebSocket handshake
+REPLY_TIMEOUT = 30      # one Runtime.evaluate — generous: the page may be busy
+
+
+def page_ws(port, connect_timeout=CONNECT_TIMEOUT):
+    with urllib.request.urlopen(f"http://localhost:{port}/json", timeout=HTTP_TIMEOUT) as r:
+        tabs = json.load(r)
     pages = [t for t in tabs if t["type"] == "page" and "moonlightweb" in t["url"]]
     if not pages:
         pages = [t for t in tabs if t["type"] == "page"]
     if not pages:
         raise SystemExit(f"no page on the debugging port {port} — is the kiosk Chrome running?")
-    return websocket.create_connection(pages[0]["webSocketDebuggerUrl"], suppress_origin=True)
+    return websocket.create_connection(pages[0]["webSocketDebuggerUrl"], suppress_origin=True,
+                                       timeout=connect_timeout)
 
 
 class Cdp:
@@ -60,8 +74,21 @@ class Cdp:
     def call(self, method, **params):
         self.n += 1
         self.ws.send(json.dumps({"id": self.n, "method": method, "params": params}))
+        # Events for other subscriptions arrive on the same socket and are
+        # skipped, so the deadline is on the WHOLE reply, not on one frame:
+        # a chatty page must not be able to extend the wait indefinitely.
+        deadline = time.time() + REPLY_TIMEOUT
+        self.ws.settimeout(REPLY_TIMEOUT)
         while True:
-            msg = json.loads(self.ws.recv())
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise SystemExit(f"{method} did not answer in {REPLY_TIMEOUT}s on port "
+                                 f"{self.port} — the page or the DevTools endpoint is stuck")
+            self.ws.settimeout(remaining)
+            try:
+                msg = json.loads(self.ws.recv())
+            except websocket.WebSocketTimeoutException:
+                continue
             if msg.get("id") == self.n:
                 if "error" in msg:
                     raise RuntimeError(msg["error"])
@@ -227,7 +254,7 @@ def main():
         seconds = float(args[0]) if args else 10.0
         c.eval("localStorage.setItem('mw_perf_diag','1')")
         c.call("Runtime.enable")
-        c.ws.settimeout(0.5)
+        c.ws.settimeout(0.5)  # restored by the next call()
         end = time.time() + seconds
         while time.time() < end:
             try:

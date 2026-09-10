@@ -35,6 +35,7 @@ param(
     [string] $AppUrl = 'https://127.0.0.1:8443/',
     [string] $ApiUrl = 'http://127.0.0.1:8080',
     [string] $Tile = '',
+    [string] $ClientRect = '',
     [int]    $DebugPort = 9333,
     [int]    $Clicks = 10,
     [int]    $SpacingMs = 1500,
@@ -83,6 +84,39 @@ if (-not $KioskRect) {
 $rect = $KioskRect -split ','
 $kx = [int]$rect[0]; $ky = [int]$rect[1]; $kw = [int]$rect[2]; $kh = [int]$rect[3]
 
+# ── Where the CLIENT kiosk goes: anywhere but the captured screen ───────────
+# It used to be a hard-coded 0,0,2560,1440, which worked only as long as the
+# captured display was somewhere else. The moment the campaign started taking
+# the PRIMARY screen — which is at 0,0 — the client kiosk landed exactly on top
+# of the content one, and the pass captured the client watching itself: an
+# infinite mirror instead of the reference clip, encoding beautifully and
+# measuring nothing. Pick the largest monitor that does not overlap the
+# captured rectangle, and say so when there is none.
+if (-not $ClientRect) {
+    $allMons = @()
+    foreach ($line in @(Get-Prop (Get-Content (Join-Path $ResultsDir 'inventory.json') -Raw -Encoding UTF8 | ConvertFrom-Json) 'monitors' @())) {
+        if ($line -match '^(\S+)\s+(-?\d+),(-?\d+)\s+(\d+)x(\d+)') {
+            $allMons += [pscustomobject]@{ device = $Matches[1]
+                                           x = [int]$Matches[2]; y = [int]$Matches[3]
+                                           w = [int]$Matches[4]; h = [int]$Matches[5] }
+        }
+    }
+    $free = @($allMons | Where-Object {
+        -not ($_.x -lt ($kx + $kw) -and ($_.x + $_.w) -gt $kx -and
+              $_.y -lt ($ky + $kh) -and ($_.y + $_.h) -gt $ky)
+    } | Sort-Object { $_.w * $_.h } -Descending)
+    if ($free.Count -eq 0) {
+        throw ("every monitor overlaps the captured screen ($KioskRect): the client kiosk " +
+               "would cover the content and the pass would film itself. Pass -ClientRect, or " +
+               "capture a display that is not the only screen.")
+    }
+    $c = $free[0]
+    $ClientRect = "$($c.x),$($c.y),$($c.w),$($c.h)"
+    Write-Host "client rect  : $ClientRect ($($c.device))"
+}
+$crect = $ClientRect -split ','
+$cx = [int]$crect[0]; $cy = [int]$crect[1]; $cw = [int]$crect[2]; $ch = [int]$crect[3]
+
 # The flag occupies 44%..56% x 0..5% of the captured screen (LatencyFlag.h).
 # The pointer parks well below it, centred, and the inert target is drawn there:
 # a click inside the flag would be measuring the overlay's own window.
@@ -115,7 +149,7 @@ if (Test-Path $clip) {
     $content += '?src=' + [uri]::EscapeDataString('file:///' + ($clip -replace '\\', '/'))
 }
 & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $content -X $kx -Y $ky -W $kw -H $kh | Out-Host
-& powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $AppUrl -X 0 -Y 0 -W 2560 -H 1440 `
+& powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $AppUrl -X $cx -Y $cy -W $cw -H $ch `
     -DebugPort $DebugPort | Out-Host
 
 # -like '*click-target*' matches the killing shell's own command line: exclude $PID.
