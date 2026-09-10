@@ -721,8 +721,74 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.85em 
 """
 
 
+# ── Extra chapters, and the fleet ───────────────────────────────────────────
+#
+# A campaign is not one matrix any more. One afternoon produced the star matrix
+# twice (60 Hz then 165 Hz), an HDR chapter, an encoder chapter on the other
+# GPU, a control run on different content, and a reduced matrix on four remote
+# machines - six directories, each perfectly readable and none of them next to
+# the others. Six reports is not a report: nobody compares six tabs, and the one
+# question a campaign answers ("is this build all right?") spans all of them.
+#
+# So every chapter renders here, under the main matrix, in the same vocabulary,
+# and every chapter's anomalies join the same list at the end - prefixed with
+# where they came from, because "4:4:4 fell back" means something different on
+# an AMD desktop and on a MacBook.
+
+def chapter_table(passes):
+    """One chapter, compactly: what was asked, what came back, and the numbers."""
+    rows = []
+    for e in passes:
+        b, pr = e.get("bench") or {}, e.get("probe") or {}
+        neg = e.get("negotiated") or {}
+        if e.get("skip"):
+            got = f'<i>{esc(e["skip"])}</i>'
+        else:
+            got = esc(" · ".join(str(v) for k, v in neg.items()
+                                 if k in ("Resolution", "Framerate", "Codec", "Enhancer")) or "?")
+        enc = b.get("encodeMean")
+        fps = b.get("captureFps")
+        med = pr.get("median")
+        rows.append(
+            f'<tr><td><span class="dot dot--{e.get("flag", "grey")}"></span>'
+            f'{esc(str(e.get("id")))}</td>'
+            f'<td>{got}</td>'
+            f'<td>{esc(str(enc)) if enc else "—"}</td>'
+            f'<td>{esc(str(fps)) if fps else "—"}</td>'
+            f'<td>{esc(f"{med:.1f}") if med else "—"}</td></tr>')
+    return ('<table><thead><tr><th>Pass</th><th>Negotiated</th><th>encode ms</th>'
+            '<th>capture fps</th><th>photon median</th></tr></thead><tbody>'
+            + "".join(rows) + "</tbody></table>")
+
+
+def fleet_table(path):
+    """The reduced fleet matrix: one host per file, four passes each."""
+    rows = []
+    for rec in read_jsonl(path):
+        if rec.get("failed"):
+            rows.append(f'<tr><td>{esc(str(rec.get("id")))}</td>'
+                        f'<td colspan="4"><i>{esc(str(rec["failed"]))}</i></td></tr>')
+            continue
+        neg = rec.get("negotiated")
+        if isinstance(neg, str):
+            try:
+                neg = json.loads(neg).get("rows", {})
+            except Exception:
+                neg = {}
+        neg = {k.rstrip(":"): v for k, v in (neg or {}).items()}
+        rows.append(
+            f'<tr><td>{esc(str(rec.get("id")))}</td>'
+            f'<td>{esc(str(neg.get("Codec", "?")))}</td>'
+            f'<td>{esc(str(neg.get("Resolution", "?")))} · {esc(str(neg.get("Framerate", "?")))}</td>'
+            f'<td>{esc(str(neg.get("Latency", "?")))}</td>'
+            f'<td>{esc(str(neg.get("Enhancer", "—")))}</td></tr>')
+    return ('<table><thead><tr><th>Pass</th><th>Codec</th><th>Resolution · fps</th>'
+            '<th>Latency</th><th>Enhancer</th></tr></thead><tbody>'
+            + "".join(rows) + "</tbody></table>")
+
+
 def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provenance,
-           keyboard, out_path, redact=True):
+           keyboard, out_path, redact=True, chapters=(), fleet=()):
     global REDACTOR
     REDACTOR = Redactor(enabled=redact, inventory=inventory)
     disp = matrix.get("display") or {}
@@ -949,6 +1015,27 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
         parts.append('<div class="card"><p class="empty">Nothing tripped a rule. That is a '
                      'result, not an absence of one — but read the pass table anyway: the rules '
                      'only know what they were taught.</p></div>')
+    # ── The other chapters of the same campaign ─────────────────────────────
+    if chapters or fleet:
+        parts.append("<h2>The rest of the campaign</h2>")
+        parts.append('<p class="note">Everything below was measured in the same session, on the '
+                     'same binary, and is kept apart only because each chapter answers a '
+                     'different question. Their anomalies are in the list at the end, named '
+                     'after the chapter they came from.</p>')
+    for label, prov, ps in chapters:
+        parts.append('<div class="card">')
+        parts.append(f"<h3>{esc(label)}</h3>")
+        tier = str((prov or {}).get("tier") or "?")
+        sha = str((prov or {}).get("sha256") or "?")
+        parts.append(f'<p class="note">binary: {esc(tier)} · digest <code>{esc(sha)}</code></p>')
+        parts.append(chapter_table(ps))
+        parts.append("</div>")
+    for label, path in fleet:
+        parts.append('<div class="card">')
+        parts.append(f"<h3>{esc(label)}</h3>")
+        parts.append(fleet_table(path))
+        parts.append("</div>")
+
     for a in anomalies:
         parts.append('<div class="card anom">')
         parts.append(f'<h3>{esc(a["title"])}</h3>')
@@ -982,13 +1069,40 @@ def main():
     ap.add_argument("--out", default=os.path.join(here, "..", "..", "bench-out", "report.html"))
     ap.add_argument("--no-redact", dest="redact", action="store_false",
                     help="keep addresses, machine names and paths (for reading alone)")
+    # A campaign is several chapters in several directories; one report has to
+    # carry all of them or nobody reads any of them.
+    ap.add_argument("--chapter", action="append", default=[], metavar="LABEL=DIR",
+                    help="another results directory to fold in (repeatable)")
+    ap.add_argument("--fleet", action="append", default=[], metavar="DIR",
+                    help="a run-fleet.ps1 results directory (one .jsonl per host)")
     ns = ap.parse_args()
 
     inventory, matrix, passes, anomalies, drift, perf, prov, keyboard = analyse(ns.results)
+
+    chapters = []
+    for spec in ns.chapter:
+        label, _, d = spec.partition("=")
+        if not d:
+            label, d = os.path.basename(spec.rstrip("/\\")), spec
+        inv2, mat2, ps2, an2, _, _, prov2, _ = analyse(d)
+        chapters.append((label, prov2, ps2))
+        # An anomaly is only readable next to the chapter it came from: the same
+        # rule fires for very different reasons on an AMD desktop and a MacBook.
+        for a in an2:
+            a["title"] = f"[{label}] {a['title']}"
+            anomalies.append(a)
+
+    fleet = []
+    for d in ns.fleet:
+        for name in sorted(os.listdir(d)):
+            if name.endswith(".jsonl"):
+                fleet.append((f"fleet · {name[:-6]}", os.path.join(d, name)))
+
     path = render(inventory, matrix, passes, anomalies, drift, perf, prov, keyboard, ns.out,
-                  redact=ns.redact)
+                  redact=ns.redact, chapters=chapters, fleet=fleet)
     print(f"report written to {os.path.abspath(path)}")
-    print(f"  {len(passes)} passes, {len(anomalies)} anomalies, "
+    print(f"  {len(passes)} passes in the main matrix, {len(chapters)} extra chapter(s), "
+          f"{len(fleet)} fleet host(s), {len(anomalies)} anomalies, "
           f"{'scrubbed' if ns.redact else 'RAW — do not share'}")
 
 
