@@ -539,6 +539,24 @@ def analyse(results_dir):
                 flag_anomaly("reference-drift",
                              f"The reference drifted {drift * 100:.0f}% across the matrix",
                              f"head {a:.2f} ms, tail {b:.2f} ms encode mean")
+    # The same witness on the OTHER instrument. Encode time is the steadiest
+    # number a campaign produces — it held to 5% on the very matrix whose
+    # click-to-photon reference moved 18% — so testing only that one lets a
+    # matrix pass its own reproducibility check while the figure the campaign
+    # exists to publish is the one that drifted.
+    if head and tail and head["probe"] and tail["probe"]:
+        a, b = num(head["probe"].get("median")), num(tail["probe"].get("median"))
+        if a and b:
+            probe_drift = abs(b - a) / a
+            if probe_drift > THRESHOLDS["reference_drift"]:
+                flag_anomaly("reference-drift-probe",
+                             f"Click-to-photon drifted {probe_drift * 100:.0f}% "
+                             "between the head and tail reference",
+                             f"head {a:.1f} ms, tail {b:.1f} ms median. Over "
+                             f"{THRESHOLDS['reference_drift'] * 100:.0f}% the matrix is not "
+                             "reproducible: do not publish these latencies, replay it.",
+                             owner="Bruno")
+                drift = max(drift or 0, probe_drift)
 
     return inventory, matrix, passes, anomalies, drift, perf_meaningful, provenance
 
