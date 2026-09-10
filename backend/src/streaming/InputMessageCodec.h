@@ -59,7 +59,8 @@ inline void filterHeldState(const Policy& p, QVector<IMediaEngine::HeldKey>& key
 //    better: Sunshine on Linux and Wolf (both type Unicode through the GTK/IBus
 //    Ctrl+Shift+U sequence, which arrives as garbage with no input method
 //    listening), GeForce Experience (drops the flags byte outright —
-//    InputStream.c:947), and an OS we could not identify.
+//    InputStream.c:947), an OS we could not identify — and Sunshine on macOS,
+//    for the reason given below.
 //  - Native — the MoonlightWeb native host: we own the injection, so a
 //    character is resolved in the host's real layout and pressed as a real key.
 //  - SunshineWindows — SS_KBE_FLAG_NON_NORMALIZED makes Sunshine inject the VK
@@ -68,16 +69,29 @@ inline void filterHeldState(const Policy& p, QVector<IMediaEngine::HeldKey>& key
 //    that letter on any layout AND stays a real key press. Only letters: digits
 //    and punctuation sit behind different shift states from one layout to the
 //    next, so their VK says nothing about the character.
-//  - SunshineMacos — maps the VK through a fixed table and ignores the flag
-//    entirely (it is #ifdef _WIN32 — virtualhid_input.cpp:314), so text
-//    injection is the only exact path. Letters only, same as above.
 //
-// The rule the two Sunshine modes share: NEVER trade a real key press for text.
-// Text has no key state, and a divergence is measured against the US layout
-// rather than the host's — so on a host that already matched the client, the
-// position was producing the right character and text would only take the key
-// away. Correcting what can be corrected for free, and leaving the rest exactly
-// as it was, is what makes this change cost nothing to anyone.
+// Sunshine on macOS gets no mode of its own, and that is a decision, not an
+// omission. Its keyboard maps the VK through a fixed table and ignores the
+// non-normalized flag (#ifdef _WIN32 — virtualhid_input.cpp:314), so the one
+// exact channel there would be text. And text is exactly what a Sunshine older
+// than 2026.824 cannot type on a Mac: its unicode() logged "Unicode input not
+// yet implemented for MacOS" and dropped the packet on the floor (libvirtualhid
+// brought the real thing in 687e12d0, 2026-08-16). A letter sent as text to
+// such a host is not mistyped, it is LOST — an AZERTY viewer on a QWERTY Mac
+// watched "q" and "a" vanish while "p" typed, which is how this was found. And
+// nothing on the wire says which Sunshine is listening: serverinfo's appversion
+// is the GameStream-compat constant "7.1.431.-1" on every Sunshine, and the
+// feature flags carry pen/touch bits only. The position gives a swapped letter,
+// which is the pre-existing behaviour and at least a keystroke; text gives
+// either the right letter or nothing, and no way to know which. The day
+// Sunshine advertises text support, a mode goes back here.
+//
+// The rule on every Sunshine host: NEVER trade a real key press for text. Text
+// has no key state, and a divergence is measured against the US layout rather
+// than the host's — so on a host that already matched the client, the position
+// was producing the right character and text would only take the key away.
+// Correcting what can be corrected for free, and leaving the rest exactly as it
+// was, is what makes this change cost nothing to anyone.
 
 /// Name for the log line the session writes once per stream.
 inline const char* keyboardModeName(KeyboardMode mode)
@@ -85,7 +99,6 @@ inline const char* keyboardModeName(KeyboardMode mode)
     switch (mode) {
     case KeyboardMode::Native: return "native host, resolved in the host's own layout";
     case KeyboardMode::SunshineWindows: return "Sunshine/Windows, letters as non-normalized VKs";
-    case KeyboardMode::SunshineMacos: return "Sunshine/macOS, letters as text";
     case KeyboardMode::Positional: break;
     }
     return "off — key positions, host layout decides";
@@ -188,13 +201,6 @@ inline KeyPlan resolveKey(const QJsonObject& msg, KeyboardMode mode)
                 plan.flags = SS_KBE_FLAG_NON_NORMALIZED;
             }
         }
-        break;
-    case KeyboardMode::SunshineMacos:
-        // macOS ignores the non-normalized flag, so a letter cannot be both
-        // exact and a real key here — text is the only exact channel. Taken for
-        // letters, because a macOS GameStream host is a machine people type on;
-        // refused for the rest, for the reason spelled out just above.
-        if (nonUs && letterVk(ch)) plan.text = ch;
         break;
     case KeyboardMode::Positional: break; // handled above
     }

@@ -52,7 +52,7 @@ void run_keyboard_layout_tests()
     using InputMsg::resolveKey;
 
     const auto allModes = {KeyboardMode::Positional, KeyboardMode::Native,
-                           KeyboardMode::SunshineWindows, KeyboardMode::SunshineMacos};
+                           KeyboardMode::SunshineWindows};
 
     // ── A key with no character at all ───────────────────────────────────────
     //
@@ -131,26 +131,28 @@ void run_keyboard_layout_tests()
 
     // ── Sunshine on macOS ────────────────────────────────────────────────────
     //
-    // It ignores the non-normalized flag outright, so a letter cannot be both
-    // exact and a real key: text is the only exact channel, and it is taken —
-    // a macOS GameStream host is a machine people type on.
+    // There is no mode for it, and the session maps a macOS Sunshine host to
+    // Positional on purpose. It used to have one — "letters as text", since a
+    // Mac ignores the non-normalized flag and text was the only exact channel.
+    // Then an AZERTY viewer on a QWERTY Mac running Sunshine 2026.516 watched
+    // "q" and "a" vanish while "p" typed: that Sunshine's unicode() logs
+    // "Unicode input not yet implemented for MacOS" and drops the packet, and
+    // nothing on the wire says which Sunshine is listening. A letter that goes
+    // out as text is either right or gone; as a position it is at worst
+    // swapped, which is what every Moonlight client has always done there.
+    //
+    // What is pinned: the exact keystrokes that vanished leave as positions,
+    // never as text, under the mode a macOS host now gets.
     {
-        const KeyPlan plan = resolveKey(key(kVkQ, "KeyQ", "a", true), KeyboardMode::SunshineMacos);
-        CHECK(plan.isText());
-        CHECK_EQ(plan.text.toStdString(), std::string("a"));
-    }
-    {
-        // An agreeing letter, and everything that is not a letter, stay
-        // positional there too.
-        const KeyPlan agreeing =
-            resolveKey(key(kVkQ, "KeyQ", "q", false), KeyboardMode::SunshineMacos);
-        CHECK(!agreeing.isText());
-        CHECK_EQ(agreeing.keyCode, static_cast<short>(kVkQ));
+        const KeyPlan a = resolveKey(key(kVkQ, "KeyQ", "a", true), KeyboardMode::Positional);
+        CHECK(!a.isText());
+        CHECK_EQ(a.keyCode, static_cast<short>(kVkQ));
+        CHECK_EQ(a.flags, static_cast<char>(0));
 
-        const KeyPlan digit =
-            resolveKey(key(kVk1, "Digit1", "&", true), KeyboardMode::SunshineMacos);
-        CHECK(!digit.isText());
-        CHECK_EQ(digit.keyCode, static_cast<short>(kVk1));
+        const KeyPlan q = resolveKey(key(kVkA, "KeyA", "q", true), KeyboardMode::Positional);
+        CHECK(!q.isText());
+        CHECK_EQ(q.keyCode, static_cast<short>(kVkA));
+        CHECK_EQ(q.flags, static_cast<char>(0));
     }
 
     // ── The native host ──────────────────────────────────────────────────────
@@ -300,9 +302,14 @@ void run_keyboard_layout_tests()
     {
         // Text on a remote host types the character perfectly and presses
         // nothing. Always warned: that half is lost and cannot be recovered.
+        // No policy produces such a plan any more (the macOS one that did was
+        // withdrawn), so the plan is built by hand: the diagnostic's contract
+        // is pinned on its own, not through whichever policy happens to reach
+        // the branch today.
         const QJsonObject msg = key(kVkQ, "KeyQ", "a", true);
-        const InputMsg::KeyDiag diag = describeKey(msg, KeyboardMode::SunshineMacos,
-                                                   resolveKey(msg, KeyboardMode::SunshineMacos));
+        KeyPlan text;
+        text.text = QStringLiteral("a");
+        const InputMsg::KeyDiag diag = describeKey(msg, KeyboardMode::SunshineWindows, text);
         CHECK(diag.warn);
         CHECK(diag.line.contains(QStringLiteral("Notepad: OK 'a'")));
         CHECK(diag.line.contains(QStringLiteral("Game: KO")));

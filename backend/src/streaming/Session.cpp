@@ -927,7 +927,10 @@ void StreamSession::applyKeyboardMode(HostOsProbe::HostOs os)
     } else {
         switch (os) {
         case HostOsProbe::HostOs::Windows: mode = KeyboardMode::SunshineWindows; break;
-        case HostOsProbe::HostOs::MacOs: mode = KeyboardMode::SunshineMacos; break;
+        // macOS lands in the default on purpose: a Sunshine older than 2026.824
+        // drops text on a Mac instead of typing it, nothing on the wire says
+        // which Sunshine is listening, and a lost keystroke is worse than the
+        // swapped one the position gives — see InputMessageCodec.h.
         default: mode = KeyboardMode::Positional; break;
         }
     }

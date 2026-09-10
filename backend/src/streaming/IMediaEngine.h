@@ -41,7 +41,8 @@ enum class KeyboardMode
     Positional,
     Native,
     SunshineWindows,
-    SunshineMacos,
+    // No SunshineMacos: a Sunshine host on macOS stays Positional, on purpose.
+    // InputMessageCodec.h says why.
 };
 
 /**
