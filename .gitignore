@@ -47,9 +47,12 @@ bench-out/
 scripts/bench/results/
 # A side chapter - another display, another encoder - gets its own -ResultsDir.
 scripts/bench/results-*/
-scripts/bench/.chrome-bench/
-scripts/bench/.chrome-client/
+# Throwaway Chrome profiles. Named one by one until a run needed a fresh one
+# and its profile showed up in `git status` — there is no reason to name them,
+# a browser profile is never source.
+scripts/bench/.chrome-*/
 scripts/bench/kiosk-verify.png
+scripts/bench/__pycache__/
 
 # One desk's half of the fleet table: how each machine is reached from here.
 # hosts.json declares what a machine IS and is committed; this one describes a
