@@ -371,6 +371,10 @@ export class StreamView {
         // YUV 4:4:4 chroma negotiated by the backend (vs default 4:2:0). Used
         // only to annotate the codec in the stats overlay.
         this._yuv444 = yuv444 === true;
+        // ... and, when it was asked for and not obtained, why not, in a few
+        // words. A refused 4:4:4 used to look exactly like a 4:2:0 nobody asked
+        // for: same overlay, same codec name, no notice anywhere.
+        this._yuv444Declined = opts.chroma444Declined || null;
         // HDR mode requested by the user. Actual HDR depends on both the
         // user's preference and Sunshine's negotiated format (HEVC Main10 /
         // AV1 10-bit). _hdrNegotiated is set after codec detection.
@@ -4914,6 +4918,11 @@ export class StreamView {
         // actually presents in HDR (rgba16float accepted); no '*' means the
         // decode is HDR but the canvas fell back to SDR.
         let codecLabel = codec.toUpperCase() + (this._yuv444 ? ' 4:4:4' : '');
+        // Same voice as the enhancer's '(auto)' and 'OFF (WebGL unavailable)':
+        // when a setting did not take, the overlay says so where the setting
+        // would have shown.
+        if (!this._yuv444 && this._yuv444Declined)
+            codecLabel += ' 4:2:0 (4:4:4: ' + this._yuv444Declined + ')';
         if (this._hdrEnabled) {
             // HDR→SDR when the stream is tone-mapped for an SDR output (ACES, or
             // the browser's own on import); HDR* when the canvas or the <video>

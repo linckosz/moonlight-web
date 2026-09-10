@@ -1413,6 +1413,10 @@ const MoonlightApp = {
             return;
         }
 
+        // Why 4:4:4 was not asked of the host this time, if it was not. Set by
+        // the two places below that drop it, read by _createStreamView.
+        this._chroma444Declined = null;
+
         // Streaming your own PC: browser + MoonlightWeb + Sunshine all on ONE
         // machine (host flagged local AND this browser is on the host). Fun
         // "Inception" loop, but pointless — warn once and let the user proceed
@@ -1524,6 +1528,9 @@ const MoonlightApp = {
             // the way back to plain 8-bit 4:2:0 H.264 for maximum compatibility.
             if (codecOverride === 'h264') {
                 streamingSettings.hdr_enabled = false;
+                // Remember that the user had asked for it: the overlay says so.
+                if (streamingSettings.chroma_444_enabled)
+                    this._chroma444Declined = 'dropped with the codec';
                 streamingSettings.chroma_444_enabled = false;
             }
         }
@@ -1568,6 +1575,7 @@ const MoonlightApp = {
             const cap = await chroma444ClientCapability();
             if (!cap.decode) {
                 console.log('[MW] 4:4:4 preference ignored: this browser decodes no 4:4:4 profile');
+                this._chroma444Declined = 'this browser decodes none';
                 streamingSettings.chroma_444_enabled = false;
             }
         }
@@ -2123,6 +2131,19 @@ const MoonlightApp = {
             // What /start told the host this screen refreshes at, so the view
             // only speaks up again when the number changes.
             clientRefreshMilliHz: currentRefreshMilliHz(),
+            // 4:4:4 asked for and not obtained, and by whom. Three different
+            // things end the same way - the browser decodes no 4:4:4 profile, a
+            // codec fallback dropped it along with the codec, or the host simply
+            // does not encode it (AMF and oneVPL never do, NVENC not in AV1) -
+            // and until now all three ended in silence: the overlay showed a
+            // plain codec name and the viewer had no way to tell a granted 4:2:0
+            // from a refused 4:4:4. The two client-side reasons are recorded at
+            // the moment of the drop; what is left is the host's answer.
+            chroma444Declined:
+                this._chroma444Declined ||
+                (streamingSettings.chroma_444_enabled === true && result.yuv444 !== true
+                    ? 'the host does not encode it'
+                    : null),
         };
         // The degradation ladder stands down for the native host — see
         // _onStreamCongested.
