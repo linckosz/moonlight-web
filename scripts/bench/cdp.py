@@ -12,6 +12,8 @@
     stop                  click "Stop streaming"
     stats                 one snapshot of the overlay's numbers, as JSON
     perf <seconds>        collect the once-a-second "[perf] ..." console lines
+    keys <path>           type the keystrokes of a JSON file, as a chosen
+                          client layout — see keyboard-check.ps1
     eval "<js>"           evaluate and print
     evalfile <path>       evaluate JS read from a file
     call <Method> [json]  raw CDP call
@@ -85,6 +87,17 @@ class Cdp:
         }})()"""
         pos = self.eval(js)
         if not pos:
+            # Fall back to a prefix match. Some buttons carry an emoji the
+            # caller cannot type: a bench script written in pure ASCII (because
+            # PowerShell 5.1 needs a BOM to read anything else, and that BOM
+            # then escapes into whatever the script writes) has no way to spell
+            # "Stream anyway 🚀" exactly.
+            js_prefix = js.replace(".textContent.trim() === ",
+                                   ".textContent.trim().startsWith(")
+            js_prefix = js_prefix.replace(json.dumps(text) + ");",
+                                          json.dumps(text) + "));")
+            pos = self.eval(js_prefix)
+        if not pos:
             raise SystemExit(f"no element with text {text!r} — try `tiles` to see what is there")
         self.click(*pos)
         return pos
@@ -94,6 +107,34 @@ class Cdp:
         for phase in ("keyDown", "keyUp"):
             self.call("Input.dispatchKeyEvent", type=phase, key=key, code=code, modifiers=mods,
                       windowsVirtualKeyCode=ord(key.upper()))
+
+    def type_key(self, code, key, vk, shift=False):
+        """One press and release of the physical key `code`, carrying the
+        character `key`.
+
+        The two are dispatched independently on purpose: that is the whole
+        point. The client sends the POSITION it was pressed at and the
+        CHARACTER the viewer's layout puts there, and a keystroke goes wrong
+        exactly when those two stop agreeing. Setting both here simulates any
+        client layout from a machine that runs another one — no OS keyboard is
+        installed, no session is logged out, and the same table replays
+        identically on every bench of the fleet.
+
+        AltGr is the one thing this cannot simulate: the CDP modifier bitmask
+        has no bit for it, and StreamView.clientChar reads it through
+        getModifierState. The AltGr row of a layout is therefore out of scope
+        (see keyboard-check.ps1's table, which does not list any).
+        """
+        mods = 8 if shift else 0
+        for phase in ("keyDown", "keyUp"):
+            params = dict(type=phase, key=key, code=code, modifiers=mods,
+                          windowsVirtualKeyCode=vk, nativeVirtualKeyCode=vk)
+            # `text` is what makes it a real character press rather than a raw
+            # key event; only on the press, and never under a chord.
+            if phase == "keyDown" and len(key) == 1 and key.isprintable():
+                params["text"] = key
+            self.call("Input.dispatchKeyEvent", **params)
+            time.sleep(0.02)
 
 
 # The overlay is the only place the NEGOTIATED truth is visible: which codec was
@@ -199,6 +240,24 @@ def main():
                             for a in msg["params"].get("args", []))
             if "[perf]" in text:
                 print(text)
+    elif cmd == "keys":
+        # The page must be the foreground window and the canvas must own the
+        # focus: a keystroke dispatched at a hidden tab is delivered, but the
+        # host is then being typed at by a page nobody is looking at, and a
+        # local <input> would swallow it before StreamView ever sees it
+        # (isLocalKeyboardTarget). Both are asserted rather than assumed.
+        with open(args[0], encoding="utf-8") as f:
+            plan = json.load(f)
+        c.call("Page.bringToFront")
+        focus = c.eval("document.activeElement && document.activeElement.tagName")
+        if focus in ("INPUT", "TEXTAREA"):
+            raise SystemExit(f"a local {focus} has the focus — the stream would never see a key")
+        gap = float(plan.get("gapMs", 120)) / 1000.0
+        for k in plan["keys"]:
+            c.type_key(k["code"], k["key"], int(k.get("vk", 0)), bool(k.get("shift")))
+            print(json.dumps({"code": k["code"], "key": k["key"],
+                              "shift": bool(k.get("shift")), "us": k.get("us", "")}))
+            time.sleep(gap)
     elif cmd == "eval":
         print(c.eval(args[0]))
     elif cmd == "evalfile":

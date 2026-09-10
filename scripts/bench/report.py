@@ -222,6 +222,29 @@ MITIGATIONS = {
         "capability table and the encoder is a real defect and the .err file next to the CSV has "
         "the driver's own words. Check whether it is the codec alone or the codec at that "
         "resolution, by re-running the same spec at the display's native size.",
+    "keyboard-game":
+        "A key the player presses to play reached the host as a DIFFERENT physical key. That is "
+        "layout fidelity working as designed and costing what it costs: the host resolves the "
+        "character in its own layout and presses the key that carries it, which on an AZERTY "
+        "client is not the key that was pressed — weapon slot 1 is typed as & and answers as "
+        "7, forward is typed as z and walks sideways. Two ways out, and the campaign should say "
+        "which is wanted: keyboard_layout_fidelity=false gives every position back and mistypes "
+        "in a text field instead, or the resolution learns to leave a key alone when the "
+        "character it carries is not what a game reads. Nothing here is a crash; it is a trade, "
+        "and it has to be made on purpose.",
+    "keyboard-note":
+        "A printable key could not be typed as the character the viewer meant. Read the host line "
+        "for that key: `no key on this layout` means the character has no key at all there and "
+        "went out as Unicode (exact in a text field, invisible to a game), while `this layout "
+        "types 'x'` means a key was pressed and it was the wrong one. On a Sunshine host the KO "
+        "may also read `only if the host runs the client's layout`, which is not a failure but an "
+        "unknown: the protocol carries no way to read a remote layout.",
+    "keyboard-not-armed":
+        "Not one [KBD] line while keys were being typed. The instrument is read by the process "
+        "that HANDLES the keys, and in worker mode — the default — that is the stream "
+        "worker, not the server that answers the API. Check `keyboard_debug` in the settings.json "
+        "the host really reads, then look in moonlightweb-worker-<pid>.log rather than "
+        "moonlightweb.log.",
     "no-native":
         "No MoonlightWeb answered on loopback: start one with --dev before a campaign. The dev "
         "instance starts empty, so each host has to be paired again in it, and its ports are "
@@ -354,6 +377,7 @@ def analyse(results_dir):
     # is the older shape and still read, so an archived campaign renders.
     browser = (read_jsonl(os.path.join(results_dir, "browser.jsonl"))
                or read_jsonl(os.path.join(results_dir, "passes.jsonl")))
+    keyboard = read_jsonl(os.path.join(results_dir, "keyboard.jsonl"))
 
     probe_by_label = {}
     for p in probes:
@@ -558,7 +582,42 @@ def analyse(results_dir):
                              owner="Bruno")
                 drift = max(drift or 0, probe_drift)
 
-    return inventory, matrix, passes, anomalies, drift, perf_meaningful, provenance
+    # ── Key to interpretation ────────────────────────────────────────────────
+    # Two verdicts that fail separately, so two rules. A game-critical key that
+    # arrived as another physical key is the finding worth a campaign; a
+    # mistyped character on a key nobody games with is worth a line, not an
+    # alarm. Which is which comes from the table's own `role`, because only the
+    # person who wrote the table knows what the key is for.
+    for run in keyboard:
+        if run.get("error"):
+            flag_anomaly("keyboard-not-armed",
+                         f"{run.get('profile')}: no keyboard diagnostic came back",
+                         str(run["error"]), owner="Opus")
+            continue
+        rows = run.get("keys") or []
+        bad_game = [r for r in rows
+                    if r.get("gameOk") is False and r.get("role") in ("cs", "both")]
+        bad_note = [r for r in rows if r.get("noteOk") is False]
+        if bad_game:
+            ev = "; ".join(f"{r['code']} ('{r['key']}') was pressed as "
+                           f"{r.get('gameKey') or 'nothing'}, not {r['us']}"
+                           for r in bad_game[:6])
+            flag_anomaly("keyboard-game",
+                         f"{run.get('profile')}: {len(bad_game)} game key(s) reached the host "
+                         "as another key",
+                         f"keyboard_layout_fidelity={run.get('fidelity')} — {ev}",
+                         owner="Bruno")
+        if bad_note:
+            ev = "; ".join(f"{r['code']} ('{r['key']}'): {r.get('note', '')}"
+                           for r in bad_note[:6])
+            flag_anomaly("keyboard-note",
+                         f"{run.get('profile')}: {len(bad_note)} key(s) will not type what the "
+                         "viewer meant",
+                         f"keyboard_layout_fidelity={run.get('fidelity')} — {ev}",
+                         owner="Opus")
+
+    return (inventory, matrix, passes, anomalies, drift, perf_meaningful, provenance,
+            keyboard)
 
 
 # ── Rendering ───────────────────────────────────────────────────────────────
@@ -616,7 +675,7 @@ code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.85em 
 
 
 def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provenance,
-           out_path, redact=True):
+           keyboard, out_path, redact=True):
     global REDACTOR
     REDACTOR = Redactor(enabled=redact, inventory=inventory)
     disp = matrix.get("display") or {}
@@ -725,6 +784,65 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
                      'campaign. Where the host cannot raise the flag that is expected, not a '
                      'failure — the reason is in the fleet table above.</p></div>')
 
+    # ── Key to interpretation ──
+    # Not a curve: a keystroke is right or it is not. Two columns because the
+    # two contexts fail separately, and a table that collapsed them into one
+    # verdict would hide the only interesting result — the case where typing is
+    # perfect and the game is unplayable.
+    parts.append("<h2>Key to interpretation</h2>")
+    if keyboard:
+        parts.append('<div class="card"><p class="note">What the host made of each key, read '
+                     'from its own log rather than guessed at. <b>Note</b> is the character a '
+                     'text field will show; <b>CS</b> is the physical key a game reading the raw '
+                     'keyboard sees, named by its US label. They fail separately: Unicode '
+                     'injection types the character perfectly and presses no key at all, and '
+                     'resolving a character on the host’s own layout presses a real key that '
+                     'is not the one the player pressed.</p></div>')
+    for run in keyboard:
+        parts.append(f'<h3>{esc(str(run.get("layout") or run.get("profile")))} '
+                     f'<span class="note">(keyboard_layout_fidelity = '
+                     f'{esc(str(run.get("fidelity")))})</span></h3>')
+        if run.get("error"):
+            parts.append(f'<div class="card"><p class="empty">{esc(str(run["error"]))}</p></div>')
+            continue
+        parts.append('<div class="card scroll"><table>')
+        parts.append("<tr><th>Key pressed</th><th>Character</th><th>On the wire</th>"
+                     "<th>Note</th><th>CS</th><th>What it is for</th></tr>")
+        for r in run.get("keys") or []:
+            def dot(ok, critical):
+                if ok is None:
+                    return f'<span class="dot dot--{GREY}"></span>?'
+                if ok:
+                    return f'<span class="dot dot--{GREEN}"></span>OK'
+                return (f'<span class="dot dot--{RED if critical else YELLOW}"></span>KO')
+            game_for_this_key = r.get("role") in ("cs", "both")
+            pressed = r.get("gameKey") or "—"
+            shift = "Shift+" if r.get("shift") else ""
+            parts.append(
+                "<tr>"
+                f'<td><code>{shift}{esc(str(r.get("code")))}</code>'
+                f'<div class="note">US {esc(str(r.get("us")))}</div></td>'
+                f'<td><code>{esc(str(r.get("key")))}</code></td>'
+                f'<td class="note">{esc(str(r.get("sent") or r.get("error") or ""))}</td>'
+                f'<td>{dot(r.get("noteOk"), not game_for_this_key)}'
+                f'<div class="note">{esc(str(r.get("note") or ""))}</div></td>'
+                f'<td>{dot(r.get("gameOk"), game_for_this_key)}'
+                f'<div class="note">pressed {esc(str(pressed))}</div></td>'
+                f'<td class="note">{esc(str(r.get("why") or ""))}</td>'
+                "</tr>")
+        parts.append("</table>")
+        summ = run.get("summary") or {}
+        parts.append(f'<p class="note">{summ.get("noteKo", "?")} of {summ.get("total", "?")} '
+                     f'keys will not type what the viewer meant; {summ.get("csKo", "?")} reached '
+                     f'the host as another physical key, {summ.get("csKoCritical", "?")} of them '
+                     'on a key a player actually plays with.</p></div>')
+    if not keyboard:
+        parts.append('<div class="card"><p class="empty">No keyboard check in this campaign. '
+                     'Run <code>keyboard-check.ps1</code> against a live stream with '
+                     '<code>"keyboard_debug": true</code> on the host — it is the only '
+                     'instrument that says whether the right thing happened at all, rather than '
+                     'how fast it happened.</p></div>')
+
     parts.append("<h2>Encoder</h2>")
     enc = [(e["id"], num((e["bench"] or {}).get("encodeMean")),
             num((e["bench"] or {}).get("encodeP99")), e["flag"])
@@ -814,8 +932,8 @@ def main():
                     help="keep addresses, machine names and paths (for reading alone)")
     ns = ap.parse_args()
 
-    inventory, matrix, passes, anomalies, drift, perf, prov = analyse(ns.results)
-    path = render(inventory, matrix, passes, anomalies, drift, perf, prov, ns.out,
+    inventory, matrix, passes, anomalies, drift, perf, prov, keyboard = analyse(ns.results)
+    path = render(inventory, matrix, passes, anomalies, drift, perf, prov, keyboard, ns.out,
                   redact=ns.redact)
     print(f"report written to {os.path.abspath(path)}")
     print(f"  {len(passes)} passes, {len(anomalies)} anomalies, "

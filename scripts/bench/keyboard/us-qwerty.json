@@ -1,0 +1,89 @@
+{
+  "profile": "us-qwerty",
+  "layout": "US QWERTY",
+  "description": "The control. Every character already sits where the protocol assumes it does, so both verdicts must come back OK on every host — and when they do not, what the run found is a harness fault or a host whose own layout is not US, never a layout-fidelity bug.",
+  "gapMs": 150,
+  "keys": [
+    {
+      "code": "Digit1",
+      "vk": 49,
+      "us": "1",
+      "key": "1",
+      "shift": false,
+      "role": "cs",
+      "why": "weapon slot 1"
+    },
+    {
+      "code": "Digit2",
+      "vk": 50,
+      "us": "2",
+      "key": "2",
+      "shift": false,
+      "role": "cs",
+      "why": "weapon slot 2"
+    },
+    {
+      "code": "KeyW",
+      "vk": 87,
+      "us": "W",
+      "key": "w",
+      "shift": false,
+      "role": "cs",
+      "why": "forward"
+    },
+    {
+      "code": "KeyA",
+      "vk": 65,
+      "us": "A",
+      "key": "a",
+      "shift": false,
+      "role": "cs",
+      "why": "strafe left"
+    },
+    {
+      "code": "KeyS",
+      "vk": 83,
+      "us": "S",
+      "key": "s",
+      "shift": false,
+      "role": "cs",
+      "why": "back"
+    },
+    {
+      "code": "KeyD",
+      "vk": 68,
+      "us": "D",
+      "key": "d",
+      "shift": false,
+      "role": "cs",
+      "why": "strafe right"
+    },
+    {
+      "code": "KeyQ",
+      "vk": 81,
+      "us": "Q",
+      "key": "q",
+      "shift": false,
+      "role": "note",
+      "why": "a letter"
+    },
+    {
+      "code": "Semicolon",
+      "vk": 186,
+      "us": ";",
+      "key": ";",
+      "shift": false,
+      "role": "note",
+      "why": "punctuation"
+    },
+    {
+      "code": "Slash",
+      "vk": 191,
+      "us": "/",
+      "key": "/",
+      "shift": false,
+      "role": "note",
+      "why": "punctuation"
+    }
+  ]
+}

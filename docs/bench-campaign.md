@@ -71,7 +71,7 @@ drives at 164 Hz**, and advertises **AV1 on an AMF GPU that then refuses to
 initialise it**. Nothing is skipped on the strength of a declared capability
 except the codec list itself.
 
-## 4. The two instruments
+## 4. The three instruments
 
 **`--native-bench`** (host side, encoder only, into a sink — no network, no
 browser). One CSV row per frame:
@@ -83,6 +83,11 @@ prose is not.
 
 **The real stream through a browser** — click-to-photon plus the client legs.
 This is the only instrument that measures what a player feels.
+
+**The keyboard check** (§5 bis) — the odd one out: it does not measure how fast
+anything came back, it measures whether the right thing happened at all. A
+stream can be perfect on both other instruments and still put the wrong weapon
+in the player's hands.
 
 ## 5. Click to photon
 
@@ -138,6 +143,73 @@ A bimodal distribution is **normal**: it is the capture cadence, the flag
 falling either side of the next deadline. Read the histogram, not just the
 median.
 
+## 5 bis. Key to interpretation
+
+A keystroke has **two jobs that fail separately**, and no single verdict can
+cover both:
+
+| | |
+|---|---|
+| **Note** | the character a text field shows — what a typist means by the key working |
+| **CS** | the physical key a game reading the raw keyboard sees, named by its US label — weapon slots 1‑5, and everything the player moves with |
+
+They pull in opposite directions, which is exactly why both are measured.
+Injecting the character as Unicode types it perfectly and **no game ever knows
+a key was pressed**. Resolving the character on the host's own layout keeps the
+key real — but on an AZERTY client the key that carries `&` is the US `7`, so
+weapon slot 1 answers as slot 7, and the `z` a player presses to walk forward
+is pressed as the US `Z` and walks sideways.
+
+That trade is the finding this instrument exists to produce. It is not a crash
+and it is not a regression: it is `keyboard_layout_fidelity` doing precisely
+what it was built to do, at a price that has to be paid on purpose rather than
+discovered in a match.
+
+**How it runs.** `keyboard-check.ps1` types a fixed table of keys through a live
+stream and reads the host's own `[KBD]` lines back:
+
+```powershell
+# needs "keyboard_debug": true on the host — see below
+.\keyboard-check.ps1 -Profiles fr-azerty,us-qwerty
+```
+
+Three things make it a measurement rather than an anecdote:
+
+- **The client layout is simulated, not installed.** `cdp.py keys` dispatches
+  the *position* and the *character* independently, which is the whole shape of
+  the bug class: a keystroke goes wrong exactly when those two stop agreeing.
+  An AZERTY client replays identically from a machine running anything, with
+  nobody logging out to switch a keyboard. Its one limit is **AltGr** — the CDP
+  modifier bitmask has no bit for it and `StreamView.clientChar` reads it
+  through `getModifierState` — so no table lists an AltGr key.
+- **The host says which key it pressed; the bench decides whether that was the
+  right one.** The log line names the key it resolved to, in US labels. Only
+  the bench knows which position was pressed at the other end, so only the
+  bench can compare them — which is what turns "the host pressed US 7" into
+  "weapon slot 1 is broken".
+- **The tables carry a `role`.** A wrong physical key on `Digit1` or `KeyW` is
+  red; the same fault on a punctuation key nobody games with is a yellow line.
+  `scripts/bench/keyboard/*.json` — add a layout by adding a file.
+
+**Arming it.** `keyboard_debug` is an instrument, not a preference: it is
+**not seeded** into `settings.json` and there is no UI for it. Add the key by
+hand, and the *next stream* picks it up — the worker reads the file when it
+starts, so no restart is needed. `-WriteSettings` lets the script add and remove
+it itself, restoring the file byte for byte on the way out; without that switch
+it refuses to touch a production configuration and prints the line to add.
+
+**Where the lines are.** In the **worker** log —
+`moonlightweb-worker-<pid>.log`, not `moonlightweb.log`. Keys are handled by
+the process that owns the session, and in worker mode (the default) that is not
+the server answering the API. Anything an input or capture path reads has to be
+read again on that side of the fork; the latency flag has the same shape, and
+so did the bug where the diagnostic was armed only in the parent.
+
+**What good looks like.** `us-qwerty` is the control: every character already
+sits where the protocol assumes, so both verdicts must come back OK on every
+host. A KO there is a harness fault or a host whose own layout is not US —
+never a layout-fidelity bug.
+
 ## 6. Metrics collected
 
 | Source | What it gives |
@@ -149,6 +221,7 @@ median.
 | the `/start` reply | negotiated `videoCodec`, `yuv444`, `native_encoder`, `ref_invalidation`, `latency_flag`, `codecOverridden` |
 | the host log | `[Session] Per-request streaming settings:` — the proof a setting was taken |
 | `--native-bench` CSV | encode mean/p95/p99, KB per frame, average QP, achieved capture rate |
+| the worker log's `[KBD]` lines (`keyboard_debug`) | how the host resolved each key: the character a text field gets, and the physical key a game sees |
 
 Two the overlay does not give and the campaign adds: **presented over decoded**
 (a pipeline presenting two thirds of what it decodes still reads "60 fps"), and
@@ -198,6 +271,9 @@ python scripts\bench\cdp.py launch "Display 1"
 python scripts\bench\cdp.py fullscreen
 python scripts\bench\cdp.py stats
 scripts\bench\probe-run.ps1 -Label ref-head
+
+# 4 bis. the keyboard check, once per host — needs "keyboard_debug": true
+scripts\bench\keyboard-check.ps1 -Profiles fr-azerty,us-qwerty
 
 # 5. the report
 python scripts\bench\report.py      # -> bench-out\report.html
@@ -321,6 +397,30 @@ wherever the machine allows it.
 - **`fromMarkMs == latencyMs`.** rAF is frozen (hidden tab): the measurement
   still stands, the camera pairing does not.
 
+### The keyboard
+
+- *Not one `[KBD]` line while keys were typed* → look in the **worker** log,
+  not `moonlightweb.log`: keys are handled by the process that owns the
+  session. Then check `keyboard_debug` in the `settings.json` the host really
+  reads — a `--dev` instance has its own.
+- *The verdicts are all about the wrong key* → the table went out of step
+  because one entry logged nothing. Only **printable** keys produce a line by
+  design (an arrow, an F-key, a modifier depends on no layout and would be
+  noise), so a non-printable entry in a table shifts everything after it. The
+  script says `log out of step` rather than reporting a shifted table.
+- *`Note` OK and `CS` KO on a movement or digit key* → not a bug: layout
+  fidelity resolved the character on the host's layout and pressed the key that
+  carries it, which is a different key. This is the trade §5 bis exists
+  to surface, and the campaign's job is to report it, not to fix it on the spot.
+- *`Note` KO reading `only if the host runs the client's layout`* → an unknown,
+  not a failure. A Sunshine host cannot be asked what layout it runs; only the
+  MoonlightWeb host can answer, and it does, on the line that follows.
+- *`us-qwerty` comes back with any KO at all* → suspect the harness or a host
+  whose own layout is not US before suspecting the feature. That profile is the
+  control precisely because nothing in it diverges.
+- *An AltGr character has to be checked* → it cannot be, from here: CDP has no
+  AltGr modifier bit. Type it by hand on a real keyboard and read the log.
+
 ### Picture and codec
 
 - **Black picture, "NOT a keyframe! Cannot extract SPS/PPS".** The parameters are
@@ -363,6 +463,7 @@ wherever the machine allows it.
 | Report | `bench-out/report.html` (ignored) |
 | Reference clip | `~/.mw-bench/content/cod.webm` — **outside the repository**, 263 MB |
 | Past verdicts | `docs/bench-native-host.md` |
+| Keyboard check | `keyboard-check.ps1` + the layout tables in `scripts/bench/keyboard/` |
 | Probe internals | `docs/design/glass-to-glass.md` §5 bis |
 
 ## 11. Two tiers: the campaign of record, and the diagnosis loop

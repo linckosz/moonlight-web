@@ -1,0 +1,161 @@
+{
+  "profile": "fr-azerty",
+  "layout": "French AZERTY",
+  "description": "The layout the reference bench's owner types on, and the one that makes the two contexts disagree: every letter of ZQSD sits at a different position than WASD, and every digit needs Shift. A host that gets the character right can only get it right by pressing another key, which is exactly what a game must not see.",
+  "gapMs": 150,
+  "keys": [
+    {
+      "code": "Digit1",
+      "vk": 49,
+      "us": "1",
+      "key": "&",
+      "shift": false,
+      "role": "cs",
+      "why": "weapon slot 1 — the key CS reads, unshifted on AZERTY it types &"
+    },
+    {
+      "code": "Digit2",
+      "vk": 50,
+      "us": "2",
+      "key": "é",
+      "shift": false,
+      "role": "cs",
+      "why": "weapon slot 2"
+    },
+    {
+      "code": "Digit3",
+      "vk": 51,
+      "us": "3",
+      "key": "\"",
+      "shift": false,
+      "role": "cs",
+      "why": "weapon slot 3"
+    },
+    {
+      "code": "KeyW",
+      "vk": 87,
+      "us": "W",
+      "key": "z",
+      "shift": false,
+      "role": "cs",
+      "why": "forward — the AZERTY Z sits on the US W"
+    },
+    {
+      "code": "KeyA",
+      "vk": 65,
+      "us": "A",
+      "key": "q",
+      "shift": false,
+      "role": "cs",
+      "why": "strafe left — the AZERTY Q sits on the US A"
+    },
+    {
+      "code": "KeyS",
+      "vk": 83,
+      "us": "S",
+      "key": "s",
+      "shift": false,
+      "role": "both",
+      "why": "back — the one movement key the two layouts agree on"
+    },
+    {
+      "code": "KeyD",
+      "vk": 68,
+      "us": "D",
+      "key": "d",
+      "shift": false,
+      "role": "both",
+      "why": "strafe right — agrees too"
+    },
+    {
+      "code": "KeyR",
+      "vk": 82,
+      "us": "R",
+      "key": "r",
+      "shift": false,
+      "role": "cs",
+      "why": "reload — agrees, and proves an agreeing key is left alone"
+    },
+    {
+      "code": "Digit1",
+      "vk": 49,
+      "us": "1",
+      "key": "1",
+      "shift": true,
+      "role": "note",
+      "why": "how a digit is actually typed on AZERTY: Shift and the same key"
+    },
+    {
+      "code": "KeyQ",
+      "vk": 81,
+      "us": "Q",
+      "key": "a",
+      "shift": false,
+      "role": "note",
+      "why": "the letter A, at the US Q"
+    },
+    {
+      "code": "KeyZ",
+      "vk": 90,
+      "us": "Z",
+      "key": "w",
+      "shift": false,
+      "role": "note",
+      "why": "the letter W, at the US Z"
+    },
+    {
+      "code": "KeyM",
+      "vk": 77,
+      "us": "M",
+      "key": ",",
+      "shift": false,
+      "role": "note",
+      "why": "a comma where US has a letter"
+    },
+    {
+      "code": "Semicolon",
+      "vk": 186,
+      "us": ";",
+      "key": "m",
+      "shift": false,
+      "role": "note",
+      "why": "the letter M, where US has a semicolon"
+    },
+    {
+      "code": "Comma",
+      "vk": 188,
+      "us": ",",
+      "key": ";",
+      "shift": false,
+      "role": "note",
+      "why": "punctuation swapped with the row above"
+    },
+    {
+      "code": "Period",
+      "vk": 190,
+      "us": ".",
+      "key": ":",
+      "shift": false,
+      "role": "note",
+      "why": "punctuation"
+    },
+    {
+      "code": "Slash",
+      "vk": 191,
+      "us": "/",
+      "key": "!",
+      "shift": false,
+      "role": "note",
+      "why": "punctuation"
+    },
+    {
+      "code": "IntlBackslash",
+      "vk": 226,
+      "us": "VK 0xe2",
+      "key": "<",
+      "shift": false,
+      "role": "note",
+      "why": "the ISO key beside left Shift — US has no key there at all"
+    }
+  ]
+}
