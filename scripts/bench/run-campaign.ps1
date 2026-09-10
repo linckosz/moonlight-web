@@ -97,12 +97,37 @@ foreach ($line in @(Get-Prop $inventory 'monitors' @())) {
 # perfectly. The result is a campaign whose encoder half looks flawless and
 # whose every click comes back a timeout — measured 09/09/2026, on a physical
 # screen the three bands read 0,0,255 / 255,255,255 / 255,0,0 exactly.
+#
+# The two lists are NOT in the same order, and taking one's index for the
+# other's id is how a campaign ends up on the wrong screen entirely. Measured
+# 10/09/2026: EnumDisplayMonitors returned the primary LAST (index 3) while
+# /api/native/status calls that same screen id 0, so "the primary" resolved to
+# an 800x600 virtual display — a whole matrix at 800x600 with every click
+# timing out, and an encoder half that would have looked perfectly healthy.
+# Geometry is the only thing both lists agree about, so pair on that.
+function Find-DisplayForMonitor {
+    param($Monitor, $Displays)
+    if (-not $Monitor) { return $null }
+    $same = @($Displays | Where-Object { [int]$_.width -eq $Monitor.w -and [int]$_.height -eq $Monitor.h })
+    if ($same.Count -gt 1) {
+        Write-Warning ("$($same.Count) displays measure $($Monitor.w)x$($Monitor.h) — taking id " +
+                       "$($same[0].id). Pass -Display to name another.")
+    }
+    if ($same.Count -ge 1) { return $same[0] }
+    return $null
+}
+
+$primaryMonitor = $monitors | Where-Object { $_.primary } | Select-Object -First 1
 if ($Display -lt 0) {
-    $primaryIdx = -1
-    for ($i = 0; $i -lt $monitors.Count; $i++) { if ($monitors[$i].primary) { $primaryIdx = $i; break } }
-    $Display = if ($primaryIdx -ge 0 -and
-                   ($local.native.displays | Where-Object { $_.id -eq $primaryIdx })) { $primaryIdx } else { 0 }
-    Write-Host "display            : $Display (primary — pass -Display to override)"
+    $primaryDisplay = Find-DisplayForMonitor $primaryMonitor $local.native.displays
+    if ($primaryDisplay) {
+        $Display = [int]$primaryDisplay.id
+        Write-Host "display            : $Display (primary, $($primaryMonitor.device) — pass -Display to override)"
+    } else {
+        $Display = 0
+        Write-Warning ("no display matches the primary monitor; falling back to display 0. " +
+                       "Pass -Display, and check the kiosk really covers the captured screen.")
+    }
 }
 
 # The display the campaign measures, and what it can do.
@@ -154,22 +179,18 @@ if (-not $KioskRect) {
     # screen while capturing another one, and then measures a motionless desktop
     # — 14 KB a frame, QP 10, and numbers that look wonderful.
     #
-    # /api/native/status carries no origin, so the two lists are paired here:
-    # inventory.monitors is EnumDisplayMonitors' order, native displays are the
-    # engine's, and both have been observed to agree. Trust that only when the
-    # sizes match; otherwise fall back to the first monitor of the right size,
-    # and say so rather than silently measuring the wrong screen.
+    # /api/native/status carries no origin, so the two lists are paired on the
+    # only thing they agree about: the rectangle's size. Never on the position
+    # in the list — see Find-DisplayForMonitor.
     $w = [int]$displayInfo.width; $h = [int]$displayInfo.height
+    # Same pairing rule as above, in the same direction: never by index. When
+    # the chosen display IS the primary one, take the primary monitor rather
+    # than the first of that size, so two identical screens cannot be swapped.
     $match = $null
-    if ($Display -ge 0 -and $Display -lt $monitors.Count -and
-        $monitors[$Display].w -eq $w -and $monitors[$Display].h -eq $h) {
-        $match = $monitors[$Display]
+    if ($primaryMonitor -and $primaryMonitor.w -eq $w -and $primaryMonitor.h -eq $h) {
+        $match = $primaryMonitor
     } else {
         $match = $monitors | Where-Object { $_.w -eq $w -and $_.h -eq $h } | Select-Object -First 1
-        if ($match) {
-            Write-Warning ("display $Display did not line up with monitor $Display; " +
-                           "using $($match.device) at $($match.x),$($match.y) on its size alone")
-        }
     }
     if (-not $match) {
         Write-Warning ("no monitor measures ${w}x${h}: falling back to 0,0, which is the " +

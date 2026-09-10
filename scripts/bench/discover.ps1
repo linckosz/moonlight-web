@@ -174,8 +174,26 @@ function Invoke-JsonUtf8 {
 # /api/native/status is the source of truth for capabilities — displays, live
 # HDR state, GPU, encoder, per-codec support — and it answers only a local
 # caller. Anything else is guesswork.
+# Which TCP ports a live MoonlightWeb is actually listening on. Guessing has
+# never worked: 48080, 49080, 8080, 18080, 80 have all been the right answer on
+# one machine or another, because the port lives in a settings.json that every
+# instance carries its own copy of. Ask the process instead, and keep the fixed
+# list only as a fallback for a host this cannot see (a service in session 0).
+function Get-ListeningPorts {
+    try {
+        $pids = @(Get-CimInstance Win32_Process -Filter "Name='MoonlightWeb.exe'" |
+                  Select-Object -ExpandProperty ProcessId)
+        if (-not $pids) { return @() }
+        return @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
+                 Where-Object { $pids -contains $_.OwningProcess } |
+                 Select-Object -ExpandProperty LocalPort -Unique |
+                 Sort-Object)
+    } catch { return @() }
+}
+
 function Get-LocalNativeStatus {
-    foreach ($port in @(8080, 48080, 49080, 80)) {
+    $candidates = @(Get-ListeningPorts) + @(8080, 48080, 49080, 18080, 80)
+    foreach ($port in ($candidates | Select-Object -Unique)) {
         try {
             $token = (Invoke-JsonUtf8 -Uri "http://127.0.0.1:$port/api/admin/token" -TimeoutSec 3).token
             $status = Invoke-JsonUtf8 -Uri "http://127.0.0.1:$port/api/native/status" `
