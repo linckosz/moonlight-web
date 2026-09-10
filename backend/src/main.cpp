@@ -104,6 +104,9 @@
 #include "network/UpdateChecker.h"
 #include "TrayManager.h"
 #include "LatencyFlag.h"
+#include "streaming/InputMessageCodec.h"
+
+#include "mw/native/NativeHost.h"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -4344,6 +4347,18 @@ int main(int argc, char* argv[])
     // their own thread, only while the setting is on, and only where there is a
     // screen to draw on — see LatencyFlag.h.
     LatencyFlag::setEnabled(hasGuiSession() && appSettings.latencyFlagEnabled());
+
+    // Keyboard diagnostics: one line per printable key press saying how it was
+    // resolved and what the host makes of it. Off unless "keyboard_debug" was
+    // added to settings.json by hand — see AppSettings::keyboardDebug(). Both
+    // halves are set here because they answer different halves of the question:
+    // the codec knows what went on the wire, the native module knows what its
+    // own layout did with it, and neither can speak for the other.
+    if (appSettings.keyboardDebug()) {
+        InputMsg::setDebug(true);
+        mw::native::NativeHost::setKeyboardDiagnostics(true);
+        qInfo() << "[KBD] keyboard diagnostics on — one line per printable key press";
+    }
 
     // The hairpin verdict decides between the domain and loopback, and it can
     // flip long after startup (router reconfigured, periodic re-test): rebuild

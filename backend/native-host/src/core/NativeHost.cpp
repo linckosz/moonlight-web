@@ -17,6 +17,7 @@
 
 #include "mw/native/NativeHost.h"
 
+#include "../input/IInputSink.h"
 #include "Log.h"
 #include "Probe.h"
 #include "Selector.h"
@@ -183,6 +184,16 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
 void NativeHost::setLogSink(std::function<void(int level, const std::string& message)> sink)
 {
     log::setSink(std::move(sink));
+}
+
+void NativeHost::setKeyboardDiagnostics(bool on)
+{
+    input::keyboardDiagnosticsFlag().store(on, std::memory_order_relaxed);
+}
+
+bool NativeHost::keyboardDiagnostics()
+{
+    return input::keyboardDiagnostics();
 }
 
 const char* NativeHost::version()

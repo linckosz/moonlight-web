@@ -242,4 +242,104 @@ void run_keyboard_layout_tests()
         CHECK_EQ(nativeHeld.size(), 1);
         CHECK_EQ(nativeHeld[0].keyCode, static_cast<short>(kVkUp));
     }
+
+    // ── The diagnostic line ──────────────────────────────────────────────────
+    //
+    // A keystroke that comes out wrong looks identical from the browser however
+    // it went wrong. `keyboard_debug` turns on one line per press saying which
+    // link broke, and the line answers two questions that fail separately: the
+    // character a text field shows (Notepad) and the physical key a game
+    // reading raw scancodes sees (Game).
+    //
+    // What is pinned here is the VERDICTS, not the wording: a line that claims
+    // OK where the character is not guaranteed is worse than no line at all,
+    // because it sends whoever reads it looking somewhere else.
+    using InputMsg::describeKey;
+
+    {
+        // Nothing about an arrow depends on a layout. Diagnosing it would put a
+        // line under every keystroke of a game and bury the ones that matter.
+        for (KeyboardMode mode : allModes)
+            CHECK(describeKey(key(kVkUp, "ArrowUp"), mode, resolveKey(key(kVkUp, "ArrowUp"), mode))
+                      .line.isEmpty());
+    }
+    {
+        // A corrected letter on Sunshine/Windows: exact AND still a real key.
+        // The one case where both answers are yes, so no warning.
+        const QJsonObject msg = key(kVkQ, "KeyQ", "a", true);
+        const InputMsg::KeyDiag diag = describeKey(msg, KeyboardMode::SunshineWindows,
+                                                   resolveKey(msg, KeyboardMode::SunshineWindows));
+        CHECK(!diag.warn);
+        CHECK(diag.line.contains(QStringLiteral("Notepad: OK 'a'")));
+        CHECK(diag.line.contains(QStringLiteral("Game: OK real key")));
+        CHECK(diag.line.contains(QStringLiteral("non-normalized")));
+    }
+    {
+        // A divergent digit left positional: the host's layout decides, and
+        // nothing here can read it. Warned, because this is the case the
+        // fidelity feature exists for and could not fix.
+        const QJsonObject msg = key(kVk1, "Digit1", "&", true);
+        const InputMsg::KeyDiag diag = describeKey(msg, KeyboardMode::SunshineWindows,
+                                                   resolveKey(msg, KeyboardMode::SunshineWindows));
+        CHECK(diag.warn);
+        CHECK(diag.line.contains(QStringLiteral("Notepad: KO")));
+        // The key a game sees is named in US terms, which is the vocabulary
+        // bindings are written in — the physical key is right even here.
+        CHECK(diag.line.contains(QStringLiteral("Game: OK real key, US '1'")));
+    }
+    {
+        // A key that agrees with US is the assumption the protocol has always
+        // run on. Reported, not warned: flagging it would put a warning under
+        // every keystroke of a US viewer and drown the lines that matter.
+        const QJsonObject msg = key(kVkQ, "KeyQ", "q", false);
+        const InputMsg::KeyDiag diag = describeKey(msg, KeyboardMode::SunshineWindows,
+                                                   resolveKey(msg, KeyboardMode::SunshineWindows));
+        CHECK(!diag.warn);
+        CHECK(diag.line.contains(QStringLiteral("Notepad: OK 'q'")));
+    }
+    {
+        // Text on a remote host types the character perfectly and presses
+        // nothing. Always warned: that half is lost and cannot be recovered.
+        const QJsonObject msg = key(kVkQ, "KeyQ", "a", true);
+        const InputMsg::KeyDiag diag = describeKey(msg, KeyboardMode::SunshineMacos,
+                                                   resolveKey(msg, KeyboardMode::SunshineMacos));
+        CHECK(diag.warn);
+        CHECK(diag.line.contains(QStringLiteral("Notepad: OK 'a'")));
+        CHECK(diag.line.contains(QStringLiteral("Game: KO")));
+    }
+    {
+        // The native host resolves the character in its own real layout and
+        // reports what it actually did on the next line. A verdict here would
+        // be a guess competing with an answer, so there is none — and no
+        // warning either, since nothing has been found wrong.
+        const QJsonObject msg = key(kVkQ, "KeyQ", "a", true);
+        const InputMsg::KeyDiag diag =
+            describeKey(msg, KeyboardMode::Native, resolveKey(msg, KeyboardMode::Native));
+        CHECK(!diag.warn);
+        CHECK(diag.line.contains(QStringLiteral("host verdict below")));
+        CHECK(!diag.line.contains(QStringLiteral("OK")));
+        CHECK(!diag.line.contains(QStringLiteral("KO")));
+    }
+    {
+        // The line names the physical key the client pressed, which the native
+        // host never learns — it is handed a character, not a position. That is
+        // what makes the two lines worth reading together.
+        const QJsonObject msg = key(kVkQ, "KeyQ", "a", true);
+        CHECK(describeKey(msg, KeyboardMode::Native, resolveKey(msg, KeyboardMode::Native))
+                  .line.contains(QStringLiteral("KeyQ")));
+    }
+    {
+        // Off by default, and nothing turns it on but the settings file.
+        CHECK(!InputMsg::debugEnabled());
+        InputMsg::setDebug(true);
+        CHECK(InputMsg::debugEnabled());
+        InputMsg::setDebug(false);
+        CHECK(!InputMsg::debugEnabled());
+    }
+    {
+        CHECK_EQ(InputMsg::usKeyLabel(kVk1).toStdString(), std::string("1"));
+        CHECK_EQ(InputMsg::usKeyLabel(kVkQ).toStdString(), std::string("Q"));
+        CHECK_EQ(InputMsg::usKeyLabel(0xBF).toStdString(), std::string("/"));
+        CHECK_EQ(InputMsg::usKeyLabel(0x20).toStdString(), std::string("Space"));
+    }
 }

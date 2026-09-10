@@ -285,6 +285,177 @@ INPUT makeKeyInput(int vk, bool down, bool nonNormalized)
     return input;
 }
 
+// ── Keyboard diagnostics ────────────────────────────────────────────────────
+//
+// Everything below runs only when NativeHost::setKeyboardDiagnostics(true) was
+// called, and only on a key DOWN. It answers the one question no client can:
+// how did THIS host's layout read the key we just injected?
+//
+// Two verdicts, because a keystroke has two jobs and they fail separately:
+//   Notepad — the character a text field will show. Checked for real, by
+//             reading the key we are about to press back through the host's
+//             layout: if it does not come back as the character the client
+//             asked for, the resolution is wrong and the line says what the
+//             layout types instead.
+//   Game    — the physical key a title reading raw scancodes sees, named by
+//             its US label because that is how bindings are written. A real
+//             key press scores OK; Unicode text scores KO, and always will —
+//             it types the character perfectly and presses nothing.
+
+std::string toUtf8(const std::wstring& text)
+{
+    if (text.empty()) return std::string();
+    const int size = static_cast<int>(text.size());
+    const int needed =
+        ::WideCharToMultiByte(CP_UTF8, 0, text.data(), size, nullptr, 0, nullptr, nullptr);
+    if (needed <= 0) return std::string();
+    std::string out(static_cast<size_t>(needed), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, text.data(), size, out.data(), needed, nullptr, nullptr);
+    return out;
+}
+
+std::string hexByte(unsigned value)
+{
+    static const char kDigits[] = "0123456789ABCDEF";
+    std::string out = "0x";
+    out += kDigits[(value >> 4) & 0xF];
+    out += kDigits[value & 0xF];
+    return out;
+}
+
+/// VkKeyScanEx's modifier byte, spelled out. 1 Shift, 2 Ctrl, 4 Alt — and
+/// Ctrl+Alt together is how Windows reports AltGr.
+std::string modifierText(int needed)
+{
+    std::string out;
+    if (needed & 1) out += "+Shift";
+    if ((needed & 6) == 6)
+        out += "+AltGr";
+    else {
+        if (needed & 2) out += "+Ctrl";
+        if (needed & 4) out += "+Alt";
+    }
+    return out;
+}
+
+/// The US label of the key at @p mapped (a MAPVK_VK_TO_VSC_EX value, prefix
+/// included). Found by searching the US table rather than storing a second one
+/// the two could drift apart on — this runs once per keystroke, in a debug mode.
+std::string usKeyLabel(UINT mapped)
+{
+    if ((mapped & 0xFF) == 0) return "no US key";
+    for (int vk = 0x08; vk <= 0xFE; ++vk) {
+        if (usScanCode(vk) != mapped) continue;
+        if ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z'))
+            return std::string(1, static_cast<char>(vk));
+        switch (vk) {
+        case VK_SPACE: return "Space";
+        case VK_RETURN: return "Enter";
+        case VK_TAB: return "Tab";
+        case VK_BACK: return "Backspace";
+        case 0xBA: return ";";
+        case 0xBB: return "=";
+        case 0xBC: return ",";
+        case 0xBD: return "-";
+        case 0xBE: return ".";
+        case 0xBF: return "/";
+        case 0xC0: return "`";
+        case 0xDB: return "[";
+        case 0xDC: return "\\";
+        case 0xDD: return "]";
+        case 0xDE: return "'";
+        default: return "VK " + hexByte(static_cast<unsigned>(vk));
+        }
+    }
+    return "sc " + hexByte(mapped & 0xFF);
+}
+
+/// What @p layout types for @p vk held with @p neededMods. Empty when the key
+/// produces nothing (a modifier, an arrow); the bare accent for a dead key.
+std::wstring hostCharacter(int vk, UINT scanCode, int neededMods, HKL layout)
+{
+    BYTE state[256] = {};
+    if (neededMods & 1) state[VK_SHIFT] = 0x80;
+    if (neededMods & 2) state[VK_CONTROL] = 0x80;
+    if (neededMods & 4) state[VK_MENU] = 0x80;
+
+    wchar_t buffer[8] = {};
+    // Bit 2 of wFlags: answer the question WITHOUT touching the layout's own
+    // dead-key state. Asking what a key types must never change what the next
+    // real keystroke does — leave it out and typing "^" then "e" stops giving
+    // "ê" the moment diagnostics are on. Windows 10 1607 and later; older
+    // builds ignore the bit, which is the pre-existing behaviour.
+    const int written =
+        ::ToUnicodeEx(static_cast<UINT>(vk), scanCode, state, buffer, 8, 0x4, layout);
+    if (written > 0) return std::wstring(buffer, static_cast<size_t>(written));
+    if (written < 0) return std::wstring(buffer, 1); // dead key: the accent alone
+    return std::wstring();
+}
+
+/// A character injected as a real key: did the host's layout give it back?
+///
+/// The check walks the chain the HOST will walk, not the one we walked to get
+/// here. We resolved character → virtual key → scancode; Windows will resolve
+/// the injected scancode back into a virtual key through the active layout and
+/// only then produce a character. Verifying the virtual key we started from
+/// would leave the scancode step unchecked — which is exactly where the bug
+/// fixed in 986bf929 lived: the virtual key came from the host's layout and the
+/// scancode from the US table, so on a French host 'a' typed 'q' while every
+/// intermediate value looked right. Starting from the scancode catches it, and
+/// says nothing on a US host, which is why nobody saw it.
+void reportChar(wchar_t wanted, int vk, UINT mapped, int neededMods, HKL layout)
+{
+    const UINT scanByte = mapped & 0xFF;
+    std::string sent;
+    std::wstring got;
+    if (scanByte != 0) {
+        const UINT hostVk = ::MapVirtualKeyExW(scanByte, MAPVK_VSC_TO_VK_EX, layout);
+        got = hostCharacter(static_cast<int>(hostVk), scanByte, neededMods, layout);
+        sent = ", scancode " + hexByte(scanByte);
+    } else {
+        // No position for it on this layout: the virtual key was sent as-is and
+        // Windows works the scancode out on its own, so that is what to check.
+        got = hostCharacter(vk, 0, neededMods, layout);
+        sent = ", no scancode (virtual key sent as-is)";
+    }
+    const bool ok = got.size() == 1 && got[0] == wanted;
+
+    const std::string line =
+        "[KBD] host '" + toUtf8(std::wstring(1, wanted)) + "' -> VK " +
+        hexByte(static_cast<unsigned>(vk)) + modifierText(neededMods) + sent +
+        " | Notepad: " + (ok ? "OK" : "KO this layout types '" + toUtf8(got) + "'") +
+        " | Game: OK real key, US '" + usKeyLabel(mapped) + "'";
+    if (ok)
+        log::info(line);
+    else
+        log::warning(line);
+}
+
+/// A character no key of this layout can reach, so it went out as Unicode.
+void reportCharAsText(const std::string& utf8)
+{
+    log::warning("[KBD] host '" + utf8 +
+                 "' -> no key on this layout | Notepad: OK as Unicode text | Game: KO nothing was "
+                 "pressed");
+}
+
+/// A key sent by POSITION — layout fidelity off, or a key that has no character
+/// to correct. There is no client character to check against here, so no
+/// verdict: what this reports is the interpretation itself, which read next to
+/// the transport's own line for the same keystroke is the whole answer.
+void reportPosition(int vk, UINT mapped, HKL layout)
+{
+    const UINT scan = mapped & 0xFF;
+    const UINT hostVk = ::MapVirtualKeyExW(scan, MAPVK_VSC_TO_VK_EX, layout);
+    const std::wstring got = hostCharacter(static_cast<int>(hostVk), scan, 0, layout);
+    if (got.empty()) return; // a modifier, an arrow, an F-key: no layout involved
+
+    log::info("[KBD] host position VK " + hexByte(static_cast<unsigned>(vk)) + " (US '" +
+              usKeyLabel(mapped) + "') -> this layout types '" + toUtf8(got) +
+              "' | Notepad: no client character to check against | Game: OK real key, US '" +
+              usKeyLabel(mapped) + "'");
+}
+
 /// Map a desktop point to SendInput's absolute space: 0..65535 across the
 /// WHOLE virtual desktop, not across one screen.
 bool desktopToAbsolute(int64_t desktopX, int64_t desktopY, LONG& outX, LONG& outY)
@@ -530,8 +701,18 @@ void Win32Input::injectKey(const InputEvent& event, bool down)
     // real keydown/keyup for Shift, Ctrl, Alt and Meta like any other key, so
     // pressing them again from the mask would double them — and the session's
     // input watchdog already owns reconciling what is still held.
-    INPUT input = makeKeyInput(vk, down, (event.keyFlags & kFlagNonNormalized) != 0);
+    const bool nonNormalized = (event.keyFlags & kFlagNonNormalized) != 0;
+    INPUT input = makeKeyInput(vk, down, nonNormalized);
     sendOne(input);
+
+    if (down && keyboardDiagnostics() && !nonNormalized) {
+        // Positional path: the key's US position went out untouched and the
+        // host's layout decides. What it decided is exactly what the viewer
+        // wants to know when the wrong character appears.
+        reportPosition(
+            vk, usScanCode(vk),
+            ::GetKeyboardLayout(::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr)));
+    }
 }
 
 void Win32Input::injectChar(const std::string& utf8, bool down)
@@ -548,7 +729,10 @@ void Win32Input::injectChar(const std::string& utf8, bool down)
     // A single UTF-16 unit only: a surrogate pair has no key on any layout, and
     // an emoji is not something a key press can express.
     if (units != 1) {
-        if (down) injectText(utf8);
+        if (down) {
+            injectText(utf8);
+            if (keyboardDiagnostics()) reportCharAsText(utf8);
+        }
         return;
     }
 
@@ -561,7 +745,10 @@ void Win32Input::injectChar(const std::string& utf8, bool down)
         // The host's layout cannot reach this character with any combination.
         // Fall back to the Unicode path, which needs no key at all — the
         // character still appears, it simply is not a key press.
-        if (down) injectText(utf8);
+        if (down) {
+            injectText(utf8);
+            if (keyboardDiagnostics()) reportCharAsText(utf8);
+        }
         return;
     }
 
@@ -624,6 +811,11 @@ void Win32Input::injectChar(const std::string& utf8, bool down)
     else
         inputs.insert(inputs.begin(), hostKeyInput(vk, false));
     sendBatch(inputs.data(), static_cast<int>(inputs.size()));
+
+    if (down && keyboardDiagnostics())
+        reportChar(wide[0], vk,
+                   ::MapVirtualKeyExW(static_cast<UINT>(vk), MAPVK_VK_TO_VSC_EX, layout), needed,
+                   layout);
 }
 
 void Win32Input::injectText(const std::string& utf8)

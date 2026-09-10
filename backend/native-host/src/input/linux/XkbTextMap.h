@@ -204,6 +204,16 @@ public:
     /// types it). False when the layout cannot produce the character at all.
     bool find(char32_t cp, XkbStroke out[2], int& count) const;
 
+    /// The unmodified character this layout puts on @p code, or 0 when the key
+    /// types nothing (a modifier, an arrow) or is not in the table.
+    ///
+    /// find() read backwards, and deliberately by scan rather than by a second
+    /// index: it exists only for the keyboard diagnostics, which run on a key
+    /// down in a debug mode, over a table of a few hundred entries. A permanent
+    /// reverse index would be a second thing to keep in step for a line nobody
+    /// reads in normal use.
+    char32_t characterAt(uint16_t code) const;
+
     /// "fr+azerty (pc105)" — for the log line, and for a human deciding whether
     /// the host guessed right.
     const std::string& description() const { return m_Description; }

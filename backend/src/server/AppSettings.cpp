@@ -488,6 +488,12 @@ bool AppSettings::keyboardLayoutFidelity() const
     return obj.value("keyboard_layout_fidelity").toBool(true);
 }
 
+bool AppSettings::keyboardDebug() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("keyboard_debug").toBool(false);
+}
+
 // ── STUN server ──────────────────────────────────────────────────────────────────
 
 QString AppSettings::stunServer() const

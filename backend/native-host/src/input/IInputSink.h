@@ -20,9 +20,24 @@
 #include "mw/native/InputEvent.h"
 #include "mw/native/NativeHost.h"
 
+#include <atomic>
 #include <string>
 
 namespace mw::native::input {
+
+/// The switch behind NativeHost::setKeyboardDiagnostics(), read by every
+/// platform's key injection. A plain relaxed atomic: the value changes once at
+/// startup and is read on the input path, where a mutex would be absurd and a
+/// stale read for one keystroke would cost a log line.
+inline std::atomic<bool>& keyboardDiagnosticsFlag()
+{
+    static std::atomic<bool> flag{false};
+    return flag;
+}
+inline bool keyboardDiagnostics()
+{
+    return keyboardDiagnosticsFlag().load(std::memory_order_relaxed);
+}
 
 /// Injects browser input into the local OS.
 ///

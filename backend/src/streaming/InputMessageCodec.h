@@ -27,10 +27,13 @@
 #include "InputPolicy.h"
 #include "IMediaEngine.h"
 
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <QVector>
+
+#include <atomic>
 
 extern "C" {
 #include "Limelight.h"
@@ -234,6 +237,165 @@ inline QVector<IMediaEngine::HeldKey> parseHeldKeys(const QJsonObject& msg, Keyb
         keys.append(held);
     }
     return keys;
+}
+
+// ── Diagnostics ─────────────────────────────────────────────────────────────
+//
+// A keystroke that comes out wrong looks the same from the browser whatever
+// went wrong: the character on screen is simply not the one that was typed.
+// This says which of the three links broke — what the client meant, what was
+// put on the wire, and what the host will make of it — as one line per press.
+//
+// The verdicts answer the only two questions a user has, and they are NOT the
+// same question:
+//
+//   Notepad — the character that appears in a text field. What a typist cares
+//             about, and the one the protocol makes hard.
+//   Game    — the physical key a title reading raw scancodes sees. Text
+//             injection scores OK on the first and KO on the second: it types
+//             the character perfectly and no game ever knows a key was pressed.
+//
+// OK means guaranteed. KO means "cannot be guaranteed from here", which on a
+// remote host covers "depends on a layout we have no way to read" as well as
+// "definitely lost" — both are the cases worth looking at, and the line says
+// which one it is. Warning level for either, so failures stand out.
+//
+// On the MoonlightWeb native host the verdict is deliberately NOT given here:
+// the host resolves the character in its own real layout and can say what it
+// actually did, which no prediction from this side can match. Its own line
+// follows this one (Win32Input::injectChar and the other two platforms).
+
+/// Process-wide, set once at startup from AppSettings::keyboardDebug(). Same
+/// shape as LatencyFlag: an instrument, off unless someone asked for it.
+inline std::atomic<bool>& debugFlag()
+{
+    static std::atomic<bool> flag{false};
+    return flag;
+}
+inline void setDebug(bool on)
+{
+    debugFlag().store(on, std::memory_order_relaxed);
+}
+inline bool debugEnabled()
+{
+    return debugFlag().load(std::memory_order_relaxed);
+}
+
+/// How a game will name the key carrying this US virtual key — its label on a
+/// US keyboard, which is the vocabulary key bindings are written in. Only
+/// printable keys reach the diagnostic, so the table stops there.
+inline QString usKeyLabel(short vk)
+{
+    if ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z'))
+        return QString(QChar(static_cast<char>(vk)));
+    switch (static_cast<int>(vk) & 0xFF) {
+    case 0x20: return QStringLiteral("Space");
+    case 0xBA: return QStringLiteral(";");
+    case 0xBB: return QStringLiteral("=");
+    case 0xBC: return QStringLiteral(",");
+    case 0xBD: return QStringLiteral("-");
+    case 0xBE: return QStringLiteral(".");
+    case 0xBF: return QStringLiteral("/");
+    case 0xC0: return QStringLiteral("`");
+    case 0xDB: return QStringLiteral("[");
+    case 0xDC: return QStringLiteral("\\");
+    case 0xDD: return QStringLiteral("]");
+    case 0xDE: return QStringLiteral("'");
+    default: break;
+    }
+    return QStringLiteral("VK 0x%1").arg(static_cast<int>(vk) & 0xFF, 2, 16, QLatin1Char('0'));
+}
+
+/// One keystroke's diagnostic: the line, and whether anything in it is a KO.
+struct KeyDiag
+{
+    QString line;
+    bool warn = false;
+};
+
+/// Describe what @p plan will do to @p msg's key on a host running @p mode.
+/// Returns an empty line for a key with no character — an arrow, an F-key, a
+/// modifier: nothing about them depends on a layout, so there is nothing to
+/// diagnose and every one of them would be noise.
+inline KeyDiag describeKey(const QJsonObject& msg, KeyboardMode mode, const KeyPlan& plan)
+{
+    KeyDiag diag;
+    const QString ch = msg["char"].toString();
+    if (ch.isEmpty()) return diag;
+
+    const bool nonUs = msg["nonUs"].toBool(false);
+    const short posVk = static_cast<short>(msg["keyCode"].toInt(0));
+
+    QString sent, notepad, game;
+    if (plan.keyCode != 0 && plan.flags != 0 && plan.keyCode != letterVk(ch)) {
+        // An international key — the ISO one beside left Shift, the JIS Ro —
+        // sent as its own raw virtual key because no US position names it. That
+        // is not a character correction and never was: whether the host has such
+        // a key at all is its layout's business, and the ordinary US-layout
+        // board this protocol assumes does not have one.
+        sent = QStringLiteral("VK 0x%1 non-normalized, international key")
+                   .arg(static_cast<int>(plan.keyCode) & 0xFF, 2, 16, QLatin1Char('0'));
+        notepad = QStringLiteral("KO '%1' only if the host layout has this key").arg(ch);
+        game = QStringLiteral("OK real key");
+        diag.warn = true;
+    } else if (plan.isText() && mode == KeyboardMode::Native) {
+        // The host is us. It reads the character in its own layout and presses
+        // the key that carries it, then says so on the next line — a verdict
+        // here would only be a guess competing with an answer.
+        sent = QStringLiteral("character, host resolves");
+        notepad = QStringLiteral("-- host verdict below");
+        game = QStringLiteral("-- host verdict below");
+    } else if (plan.isText()) {
+        // Unicode injection on a remote host: exact, and invisible to anything
+        // reading the keyboard rather than the text field.
+        sent = QStringLiteral("text");
+        notepad = QStringLiteral("OK '%1'").arg(ch);
+        game = QStringLiteral("KO no key state at all");
+        diag.warn = true;
+    } else if (plan.flags != 0) {
+        // A non-normalized virtual key: Windows resolves it through the host's
+        // ACTIVE layout, so the character is exact, and it stays a real press.
+        sent = QStringLiteral("VK 0x%1 non-normalized")
+                   .arg(static_cast<int>(plan.keyCode) & 0xFF, 2, 16, QLatin1Char('0'));
+        notepad = QStringLiteral("OK '%1'").arg(ch);
+        game = QStringLiteral("OK real key, at the host layout's own position");
+    } else {
+        // The position, untouched. What the host types depends on ITS layout,
+        // which nothing in the protocol lets us read — so neither verdict here
+        // is ever a certainty. The warning is spent where it earns its keep:
+        // on a key whose character the client's layout does NOT put at its US
+        // position, because that is the one this whole feature exists to fix
+        // and did not. A key that agrees with US is the assumption the protocol
+        // has always run on; flagging it would put a warning under every
+        // keystroke of a US viewer and drown the lines that matter.
+        sent = QStringLiteral("position VK 0x%1")
+                   .arg(static_cast<int>(plan.keyCode) & 0xFF, 2, 16, QLatin1Char('0'));
+        notepad = nonUs
+                      ? QStringLiteral("KO '%1' only if the host runs the client's layout").arg(ch)
+                      : QStringLiteral("OK '%1' unless the host layout is not US").arg(ch);
+        game = QStringLiteral("OK real key, US '%1'").arg(usKeyLabel(posVk));
+        diag.warn = nonUs;
+    }
+
+    diag.line = QStringLiteral("[KBD] %1 client '%2'%3 -> %4 | Notepad: %5 | Game: %6")
+                    .arg(msg["code"].toString(), ch,
+                         nonUs ? QStringLiteral(" (non-US)") : QString(), sent, notepad, game);
+    return diag;
+}
+
+/// Write @p msg's diagnostic, if diagnostics are on and the key has one. Called
+/// by each transport on a key DOWN only: a release resolves identically by
+/// construction (the client replays the press's character), so logging it again
+/// would double every line for nothing.
+inline void logKey(const QJsonObject& msg, KeyboardMode mode, const KeyPlan& plan, bool down)
+{
+    if (!down || !debugEnabled()) return;
+    const KeyDiag diag = describeKey(msg, mode, plan);
+    if (diag.line.isEmpty()) return;
+    if (diag.warn)
+        qWarning().noquote() << diag.line;
+    else
+        qInfo().noquote() << diag.line;
 }
 
 } // namespace InputMsg

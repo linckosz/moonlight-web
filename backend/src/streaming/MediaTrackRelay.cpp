@@ -706,6 +706,7 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
         const InputMsg::KeyPlan plan = InputMsg::resolveKey(msg, m_Shim->keyboardMode());
+        InputMsg::logKey(msg, m_Shim->keyboardMode(), plan, down);
         if (plan.isText()) {
             m_Shim->sendKeyChar(plan.text, down);
         } else {

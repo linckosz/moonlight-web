@@ -399,6 +399,22 @@ public:
     /// `level`: 0 = debug, 1 = info, 2 = warning, 3 = error.
     static void setLogSink(std::function<void(int level, const std::string& message)> sink);
 
+    /// Report, for every printable key injected, how THIS host's own keyboard
+    /// layout read it: the character a text field will show, the physical key a
+    /// game will see, and whether the character the client asked for is the one
+    /// that comes back out.
+    ///
+    /// Only this module can answer that question — the layout is the host's,
+    /// and a client can at best predict. Off by default: it is one log line per
+    /// keystroke, for a bench session, not for a stream someone is playing on.
+    ///
+    /// Process-wide rather than per session: it is set once from the settings
+    /// file at startup, like the rest of the module's diagnostics, and a knob
+    /// that had to be threaded through SessionConfig would have to be threaded
+    /// through three platform sessions to reach the one place that can use it.
+    static void setKeyboardDiagnostics(bool on);
+    static bool keyboardDiagnostics();
+
     /// Version of this module, independent of MoonlightWeb's — it may one day
     /// ship on its own.
     static const char* version();

@@ -426,4 +426,15 @@ bool XkbTextMap::find(char32_t cp, XkbStroke out[2], int& count) const
     return false;
 }
 
+char32_t XkbTextMap::characterAt(uint16_t code) const
+{
+    for (const auto& entry : m_Table) {
+        // Unmodified only: the same key appears in the table once per level it
+        // reaches, and the one a viewer means when they press it alone is the
+        // level with no modifier held.
+        if (entry.second.code == code && entry.second.mods[0] == 0) return entry.first;
+    }
+    return 0;
+}
+
 } // namespace mw::native::input

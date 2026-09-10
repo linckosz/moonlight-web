@@ -102,6 +102,24 @@ public:
 
     bool keyboardLayoutFidelity() const;
 
+    // ── Keyboard diagnostics ──────────────────────────────────────────────────
+    //
+    // On: every printable keystroke writes one line saying how it was resolved
+    // and what the host will make of it — the character that reaches a text
+    // editor ("Note"), and the physical key a game reading raw scancodes sees
+    // ("CS"), each with a verdict. A key whose character cannot be guaranteed is
+    // a warning, so the failures stand out in a log full of successes.
+    //
+    // File-only setting, and DELIBERATELY NOT SEEDED into settings.json: it is
+    // an instrument for a bench session, not a preference, and a knob nobody
+    // needs is a knob that invites being turned. Add "keyboard_debug": true by
+    // hand, restart, type — the README says so. Default false.
+    //
+    // Read once at startup rather than per keystroke: a settings file re-read on
+    // every key press would put disk I/O on the input path.
+
+    bool keyboardDebug() const;
+
     // ── Stream bitrate ────────────────────────────────────────────────────────
     //
     // Target bitrate in kbps. Stored as JSON int "stream_bitrate", default 20000.

@@ -1290,6 +1290,7 @@ void DataChannelRelay::onInputMessage(const std::string& message)
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
         const InputMsg::KeyPlan plan = InputMsg::resolveKey(msg, m_Shim->keyboardMode());
+        InputMsg::logKey(msg, m_Shim->keyboardMode(), plan, down);
         if (plan.isText()) {
             // The client's layout puts a character here that this key's US
             // position would not produce. The engine decides what it can do

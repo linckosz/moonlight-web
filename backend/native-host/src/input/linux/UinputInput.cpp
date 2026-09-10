@@ -64,6 +64,95 @@ static_assert(evdevKeyCode(0x2E) == KEY_DELETE, "the block above the arrows");
 static_assert(evdevKeyCode(0x90) == KEY_NUMLOCK, "lock keys");
 static_assert(evdevKeyCode(0xE2) == KEY_102ND, "the 102-key extra");
 
+// ── Keyboard diagnostics ────────────────────────────────────────────────────
+//
+// Only when NativeHost::setKeyboardDiagnostics(true) was called, only on a key
+// down. Two verdicts, because a keystroke has two jobs that fail separately:
+// Notepad (the character a text field shows) and Game (the physical key a title
+// reading raw evdev sees, named by its US label, which is how bindings read).
+//
+// Unlike Windows there is no round trip to make here. XkbTextMap is built
+// FORWARD — it walks the host's own keymap and records what each key produces —
+// so a character that came back out of find() is one this layout really types
+// at that key. The resolution cannot be wrong; what the line is for is saying
+// WHICH key it landed on, which is the half a game cares about.
+
+/// The US label of an evdev key code, found by searching the US table rather
+/// than storing a second one that could drift from it.
+std::string usKeyLabel(uint16_t code)
+{
+    for (int vk = 0x08; vk <= 0xFE; ++vk) {
+        if (evdevKeyCode(vk) != code) continue;
+        if ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z'))
+            return std::string(1, static_cast<char>(vk));
+        switch (vk) {
+        case 0x20: return "Space";
+        case 0x0D: return "Enter";
+        case 0x09: return "Tab";
+        case 0x08: return "Backspace";
+        case 0xBA: return ";";
+        case 0xBB: return "=";
+        case 0xBC: return ",";
+        case 0xBD: return "-";
+        case 0xBE: return ".";
+        case 0xBF: return "/";
+        case 0xC0: return "`";
+        case 0xDB: return "[";
+        case 0xDC: return "\\";
+        case 0xDD: return "]";
+        case 0xDE: return "'";
+        case 0xE2: return "ISO <>";
+        default: break;
+        }
+        break;
+    }
+    return "evdev " + std::to_string(code);
+}
+
+/// The modifier keys a stroke holds, spelled out. AltGr is named apart from Alt
+/// because on the layouts this feature exists for it is a different key with a
+/// different job.
+std::string modifierText(const uint16_t mods[2])
+{
+    std::string out;
+    for (int i = 0; i < 2; ++i) {
+        switch (mods[i]) {
+        case 0: continue;
+        case KEY_LEFTSHIFT:
+        case KEY_RIGHTSHIFT: out += "+Shift"; break;
+        case KEY_RIGHTALT: out += "+AltGr"; break;
+        case KEY_LEFTALT: out += "+Alt"; break;
+        case KEY_LEFTCTRL:
+        case KEY_RIGHTCTRL: out += "+Ctrl"; break;
+        default: out += "+evdev " + std::to_string(mods[i]); break;
+        }
+    }
+    return out;
+}
+
+/// One code point as UTF-8, for a log line.
+std::string encodeUtf8(char32_t cp)
+{
+    std::string out;
+    const uint32_t value = static_cast<uint32_t>(cp);
+    if (value < 0x80) {
+        out += static_cast<char>(value);
+    } else if (value < 0x800) {
+        out += static_cast<char>(0xC0 | (value >> 6));
+        out += static_cast<char>(0x80 | (value & 0x3F));
+    } else if (value < 0x10000) {
+        out += static_cast<char>(0xE0 | (value >> 12));
+        out += static_cast<char>(0x80 | ((value >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (value & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (value >> 18));
+        out += static_cast<char>(0x80 | ((value >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((value >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (value & 0x3F));
+    }
+    return out;
+}
+
 /// The browser's button numbering (1 left, 2 middle, 3 right, 4/5 side) to
 /// evdev's. Not contiguous and not in the same order, which is exactly the kind
 /// of thing that silently swaps middle-click and right-click.
@@ -244,6 +333,21 @@ void UinputInput::injectKey(const InputEvent& event, bool down)
         m_HeldKeys.insert(code);
     else
         m_HeldKeys.erase(code);
+
+    if (down && keyboardDiagnostics() && ensureTextMap()) {
+        // Positional path: the key's US position went out and the host's layout
+        // decides. What it decided is what the viewer wants to know when the
+        // wrong character appears. No verdict — there is no client character
+        // here to check it against; the transport's line for the same keystroke
+        // carries that, and the two read together.
+        const char32_t cp = m_TextMap.characterAt(code);
+        if (cp != 0)
+            log::info(
+                "[KBD] host position evdev " + std::to_string(code) + " (US '" + usKeyLabel(code) +
+                "') -> " + m_TextMap.description() + " types '" + encodeUtf8(cp) +
+                "' | Notepad: no client character to check against | Game: OK real key, US '" +
+                usKeyLabel(code) + "'");
+    }
 }
 
 void UinputInput::injectButton(const InputEvent& event, bool down)
@@ -291,13 +395,22 @@ void UinputInput::injectChar(const std::string& utf8, bool down)
                       " has no key on the host layout " + m_TextMap.description() +
                       " — characters this layout cannot type are dropped");
         }
+        if (down && keyboardDiagnostics())
+            log::warning("[KBD] host '" + utf8 + "' -> no key on " + m_TextMap.description() +
+                         " | Notepad: KO dropped | Game: KO nothing was pressed");
         return;
     }
     // A dead-key character is two taps that must follow each other; there is no
     // single key to hold down for it. Type it whole on the press and let the
     // release do nothing — an accented letter is never a movement key.
     if (strokeCount != 1) {
-        if (down) injectText(utf8);
+        if (down) {
+            injectText(utf8);
+            if (keyboardDiagnostics())
+                log::warning("[KBD] host '" + utf8 + "' -> dead key then base key on " +
+                             m_TextMap.description() +
+                             " | Notepad: OK | Game: KO two taps, no single key held");
+        }
         return;
     }
 
@@ -320,6 +433,17 @@ void UinputInput::injectChar(const std::string& utf8, bool down)
         emit(m_Keyboard, EV_KEY, stroke.code, 1);
         emitSyn(m_Keyboard);
         m_HeldKeys.insert(stroke.code);
+
+        if (keyboardDiagnostics()) {
+            // No round trip to make: XkbTextMap is built by walking the host's
+            // own keymap and recording what each key produces, so a character
+            // that came back out of find() is one this layout really types
+            // there. The line's job is naming the key it landed on.
+            const std::string label = usKeyLabel(stroke.code);
+            log::info("[KBD] host '" + utf8 + "' -> evdev " + std::to_string(stroke.code) +
+                      modifierText(stroke.mods) + " on " + m_TextMap.description() +
+                      " | Notepad: OK | Game: OK real key, US '" + label + "'");
+        }
     } else {
         emit(m_Keyboard, EV_KEY, stroke.code, 0);
         emitSyn(m_Keyboard);

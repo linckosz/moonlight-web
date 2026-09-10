@@ -592,6 +592,7 @@ void StreamRelay::onWsTextMessage(const QString& message)
         // client's keyboard layout like the others instead of passing the raw
         // VK through.
         const InputMsg::KeyPlan plan = InputMsg::resolveKey(msg, m_Shim->keyboardMode());
+        InputMsg::logKey(msg, m_Shim->keyboardMode(), plan, down);
         if (plan.isText()) {
             m_Shim->sendKeyChar(plan.text, down);
         } else {

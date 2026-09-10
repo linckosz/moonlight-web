@@ -815,6 +815,7 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
         // reimplement the international-key rules by hand and would have missed
         // the client's keyboard layout entirely.
         const InputMsg::KeyPlan plan = InputMsg::resolveKey(msg, m_Shim->keyboardMode());
+        InputMsg::logKey(msg, m_Shim->keyboardMode(), plan, down);
         if (plan.isText()) {
             m_Shim->sendKeyChar(plan.text, down);
         } else {

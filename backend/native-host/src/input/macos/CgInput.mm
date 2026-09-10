@@ -65,6 +65,71 @@ const char* describe(InputEvent::Type type)
     return "event";
 }
 
+// ── Keyboard diagnostics ────────────────────────────────────────────────────
+//
+// Only when NativeHost::setKeyboardDiagnostics(true) was called, only on a key
+// down. Two verdicts, because a keystroke has two jobs that fail separately:
+// Notepad (the character a text field shows) and Game (the physical key a title
+// reading raw HID sees, named by its US label, which is how bindings read).
+//
+// As on Linux and unlike Windows, there is no round trip to make: m_CharMap is
+// built FORWARD, by asking UCKeyTranslate what each key code of the active
+// layout produces, so a character found in it is one this layout really types
+// there. What the line adds is which key it landed on.
+
+/// The US label of a CGKeyCode, found by searching the US table rather than
+/// storing a second one the two could drift apart on.
+std::string usKeyLabel(uint16_t code)
+{
+    for (int vk = 0x08; vk <= 0xFE; ++vk) {
+        if (macKeyCode(vk) != code) continue;
+        if ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z'))
+            return std::string(1, static_cast<char>(vk));
+        switch (vk) {
+        case 0x20: return "Space";
+        case 0x0D: return "Return";
+        case 0x09: return "Tab";
+        case 0x08: return "Delete";
+        case 0xBA: return ";";
+        case 0xBB: return "=";
+        case 0xBC: return ",";
+        case 0xBD: return "-";
+        case 0xBE: return ".";
+        case 0xBF: return "/";
+        case 0xC0: return "`";
+        case 0xDB: return "[";
+        case 0xDC: return "\\";
+        case 0xDD: return "]";
+        case 0xDE: return "'";
+        default: break;
+        }
+        break;
+    }
+    return "key code " + std::to_string(code);
+}
+
+/// One UTF-16 unit as UTF-8, for a log line.
+std::string utf8Of(uint16_t unit)
+{
+    const UniChar value = unit;
+    CFStringRef text = CFStringCreateWithCharacters(kCFAllocatorDefault, &value, 1);
+    if (!text) return std::string();
+    char buffer[8] = {};
+    const bool ok = CFStringGetCString(text, buffer, sizeof(buffer), kCFStringEncodingUTF8);
+    CFRelease(text);
+    return ok ? std::string(buffer) : std::string();
+}
+
+/// The level modifiers a character's key needs, spelled out.
+std::string modifierText(uint64_t flags)
+{
+    std::string out;
+    if (flags & kCGEventFlagMaskShift) out += "+Shift";
+    if (flags & kCGEventFlagMaskAlternate) out += "+Option";
+    if (flags & kCGEventFlagMaskControl) out += "+Control";
+    return out;
+}
+
 /// The modifier flag a virtual key sets, or 0 for an ordinary key.
 CGEventFlags modifierFlag(int vk)
 {
@@ -271,6 +336,22 @@ void CgInput::injectKey(const InputEvent& event, bool down)
     }
     CGEventSetFlags(key, static_cast<CGEventFlags>(m_Modifiers));
     post(key);
+
+    if (down && keyboardDiagnostics() && ensureCharMap()) {
+        // Positional path: the key's US position went out and the host's layout
+        // decides. No verdict — there is no client character here to check it
+        // against; the transport's line for the same keystroke carries that,
+        // and the two read together.
+        for (const auto& entry : m_CharMap) {
+            if (entry.second.code != code || entry.second.flags != 0) continue;
+            log::info(
+                "[KBD] host position key code " + std::to_string(code) + " (US '" +
+                usKeyLabel(code) + "') -> " + m_CharMapSource + " types '" + utf8Of(entry.first) +
+                "' | Notepad: no client character to check against | Game: OK real key, US '" +
+                usKeyLabel(code) + "'");
+            break;
+        }
+    }
 }
 
 bool CgInput::ensureCharMap()
@@ -355,7 +436,13 @@ void CgInput::injectChar(const std::string& utf8, bool down)
         // No key on this layout carries the character — type it as Unicode
         // instead, which needs no key at all. The press does it; the release
         // has nothing left to do.
-        if (down) injectText(utf8);
+        if (down) {
+            injectText(utf8);
+            if (keyboardDiagnostics())
+                log::warning("[KBD] host '" + utf8 +
+                             "' -> no key on this layout | Notepad: OK as Unicode text | Game: KO "
+                             "nothing was pressed");
+        }
         return;
     }
 
@@ -371,6 +458,13 @@ void CgInput::injectChar(const std::string& utf8, bool down)
         m_HeldCharCodes.insert(it->second.code);
     else
         m_HeldCharCodes.erase(it->second.code);
+
+    if (down && keyboardDiagnostics()) {
+        const std::string label = usKeyLabel(it->second.code);
+        log::info("[KBD] host '" + utf8 + "' -> key code " + std::to_string(it->second.code) +
+                  modifierText(it->second.flags) + " on " + m_CharMapSource +
+                  " | Notepad: OK | Game: OK real key, US '" + label + "'");
+    }
 }
 
 void CgInput::injectText(const std::string& utf8)
