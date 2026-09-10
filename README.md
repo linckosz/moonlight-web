@@ -9,8 +9,10 @@ Install it on the gaming PC — it captures and encodes that machine **itself**,
 Nothing to install on the client either: just a URL, from your LAN or from anywhere.\
 Under **20 ms** glass‑to‑glass over Wi‑Fi on a LAN, ~**25 ms** over the Internet.
 
-**🌐 Website: [moonlightweb.top](https://moonlightweb.top/)** — screenshots, [install guides](https://moonlightweb.top/guides/windows.html) & [FAQ](https://moonlightweb.top/faq.html)
+**🌐 Website: [moonlightweb.top](https://moonlightweb.top/)** — screenshots, [install guides](https://moonlightweb.top/guides/windows.html) & [FAQ](https://moonlightweb.top/faq.html)\
+**💬 Community: [Discord](https://discord.gg/wfbesPx4UB)** — questions, help and new‑release announcements
 
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/wfbesPx4UB)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Qt](https://img.shields.io/badge/Qt-6.11-41CD52?logo=qt&logoColor=white)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
@@ -565,6 +567,6 @@ See [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT) for third‑party component li
 
 <div align="center">
 
-**Like this project?** Leave a ⭐ and [buy the servers a coffee](#support) ☕
+**Like this project?** Leave a ⭐, [join the Discord](https://discord.gg/wfbesPx4UB) 💬 and [buy the servers a coffee](#support) ☕
 
 </div>
