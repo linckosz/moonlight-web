@@ -312,23 +312,40 @@ foreach ($m in $fleet.machines) {
     $ttl = Get-PingTtl $address
     $entry.ttl = $ttl
     if ($null -eq $ttl) {
-        $entry.notes += 'did not answer today — DHCP lease may have moved, or the machine is off'
-        Write-Host ' unreachable'
-        $machines += [pscustomobject]$entry
-        continue
+        # A silent ping is not evidence of a dead machine. Windows drops echo
+        # requests by default, so a perfectly healthy bench reads as 'off' and the
+        # matrix quietly loses it: mw-arm was declared gone twice an hour apart
+        # while its SSH and its GameStream ports were both open, and the note even
+        # blamed a DHCP lease. Ask TCP before believing ICMP.
+        $alive = @()
+        foreach ($p in @(22, 3389, 445, $fleet.ports.gamestreamHttp, $fleet.ports.gamestreamHttps)) {
+            if ($p -and (Test-Port $address $p)) { $alive += $p }
+        }
+        if (-not $alive) {
+            $entry.notes += 'did not answer today — DHCP lease may have moved, or the machine is off'
+            Write-Host ' unreachable'
+            $machines += [pscustomobject]$entry
+            continue
+        }
+        # Up, but the OS verdict rode on the TTL and there is no TTL. Say that
+        # rather than guessing: on a dual-boot machine the guess decides which
+        # half of the campaign is played.
+        $entry.notes += "no answer to ping, but TCP $($alive -join ', ') answered — ICMP is filtered here, so the TTL verdict on the OS is not available"
+        $entry.reachable = $true
+    }
+    else {
+        $entry.reachable = $true
+        $entry.os = Get-OsFromTtl $ttl
     }
 
-    $entry.reachable = $true
-    $entry.os = Get-OsFromTtl $ttl
-
     # The dual-boot verdict, and the two-router alarm, both fall out of the TTL.
-    if ($m.PSObject.Properties.Name -contains 'dualBoot') {
+    if (($null -ne $ttl) -and ($m.PSObject.Properties.Name -contains 'dualBoot')) {
         if ($entry.os -eq 'windows') {
             $entry.notes += 'booted under WINDOWS today: MultiSeat + AMF available, Wolf and the Linux native host are NOT'
         } else {
             $entry.notes += 'booted under LINUX today: Wolf + the Linux native host available, MultiSeat is NOT (Bruno must reboot)'
         }
-    } elseif (($m.PSObject.Properties.Name -contains 'expect') -and
+    } elseif (($null -ne $ttl) -and ($m.PSObject.Properties.Name -contains 'expect') -and
               ($m.expect.PSObject.Properties.Name -contains 'os')) {
         $expected = if ($m.expect.os -like 'windows*') { 'windows' } else { 'unix' }
         if ($entry.os -ne $expected) {
