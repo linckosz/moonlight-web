@@ -184,16 +184,22 @@ function fail(message, hint) {
  *      machine the address names, and NOTHING AT ALL when this browser has
  *      never met it — an empty caption is the honest one, since at this point
  *      the identifier is a perfectly good address that simply has not answered
- *      yet. Saying "No server" over a working connection is a lie with a timer
- *      on it.
+ *      yet. Saying "No server found" over a working connection is a lie with a
+ *      timer on it.
  *
  *   CHOOSING, once it has failed. Now leaving is the only useful thing left, so
  *      the caption becomes a menu — provided there is somewhere to go, which is
  *      exactly `others.length` and covers both shapes of the rule: a named
  *      machine needs a second one to be worth a menu, an unknown identifier
- *      needs only one. "No server" belongs here and only here: on a page that
- *      has already said it could not connect, it is the honest answer to a link
- *      mistyped, revoked, or belonging to somebody else.
+ *      needs only one.
+ *
+ * An unknown identifier gets a label in both modes, and it is not the same one,
+ * because a label describes what the control is rather than what went wrong —
+ * the page has already said "Not connected" once and does not need to say it
+ * twice. With nothing to switch to, the caption is dead text and "No server
+ * found" is the whole truth of it. With a menu under it, that sentence would be
+ * a plain contradiction of the machines listed a centimetre below, so the button
+ * says what pressing it does: "Choose a machine".
  *
  * Read-only, always: nothing here writes to that register. Only the application
  * can, because only the application ever gets close enough to a machine to be
@@ -256,7 +262,7 @@ function paintInstances(choosing) {
     if (!choosing || others.length === 0) {
         // An identifier this browser has never reached names nothing it can
         // show — and only a page that has given up may say so out loud.
-        const label = current ? current.name : choosing ? 'No server' : '';
+        const label = current ? current.name : choosing ? 'No server found' : '';
         if (!label) {
             mount.hidden = true;
             return;
@@ -270,7 +276,7 @@ function paintInstances(choosing) {
         return;
     }
 
-    const label = current ? current.name : 'No server';
+    const label = current ? current.name : 'Choose a machine';
     mount.hidden = false;
 
     mount.className = 'instance-menu has-menu';
