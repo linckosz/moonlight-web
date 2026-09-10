@@ -1318,13 +1318,32 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
         height: 52px;
     }
 }
+
+/* Where it actually hangs in the application: from the footer, not from the
+   window. The shell is a flex column whose middle pane is the only thing that
+   scrolls, so the footer bar is always pinned to the bottom of the window —
+   and a button anchored to the viewport lands ON it. Anchored to the footer at
+   `bottom: 100%` it floats just above the bar instead, at whatever height that
+   bar happens to be, with nothing to measure and nothing to re-tune the day the
+   footer gains a line or a safe-area inset grows.
+   The footer only becomes the reference frame; it does not clip or repaint. */
+.app-footer {
+    position: relative;
+}
+.app-footer .discord-fab {
+    position: absolute;
+    bottom: calc(100% + var(--space-4));
+}
 /* The consent question owns the bottom strip while it is up, and it asks
    something about this machine — it does not compete with a link to a chat. */
 body:has(.consent-bar) .discord-fab {
     display: none;
 }
-/* Toasts appear above the button instead of on it. 70px = the circle's 58px
-   plus a gap; the stack keeps its own keyboard inset on top of that. */
+/* Toasts appear above the button instead of on it. The stack is anchored to the
+   window while the button hangs off the footer, so this clearance is measured,
+   not derived: ~35px of footer bar, the 16px gap above it, the 58px circle and a
+   last gap. Too generous costs nothing — a toast a little higher is still read —
+   while too tight puts text on the button. The keyboard inset stacks on top. */
 body:has(.discord-fab) #toast-container {
-    bottom: calc(var(--space-5) + var(--kbd-inset, 0px) + 70px);
+    bottom: calc(var(--space-5) + var(--kbd-inset, 0px) + 95px);
 }

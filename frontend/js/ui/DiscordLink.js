@@ -52,7 +52,17 @@ const DISCORD_GLYPH =
 
 export class DiscordLink {
     /**
-     * Draw the button, once, at the end of <body>.
+     * Draw the button, once, inside the footer.
+     *
+     * The footer is where it hangs FROM, not where it sits: the shell is a flex
+     * column whose middle pane scrolls, so the footer is pinned to the bottom of
+     * the window, and a child positioned at `bottom: 100%` therefore floats just
+     * above it whatever height it happens to have — no measuring, and nothing to
+     * re-tune the day the footer gains a line. A viewport-anchored button landed
+     * on top of that bar instead.
+     *
+     * Falls back to <body> if the footer is missing, and the CSS keeps it
+     * viewport-anchored in that case.
      *
      * Silent when no invite is configured, and idempotent: a second call finds
      * the element already there and does nothing.
@@ -70,6 +80,6 @@ export class DiscordLink {
         a.title = t('header.community');
         a.setAttribute('aria-label', t('header.community'));
         a.innerHTML = DISCORD_GLYPH;
-        document.body.appendChild(a);
+        (document.querySelector('.app-footer') || document.body).appendChild(a);
     }
 }
