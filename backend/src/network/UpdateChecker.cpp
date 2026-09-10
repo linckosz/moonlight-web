@@ -30,6 +30,8 @@
 #include <QUrl>
 #include <QUrlQuery>
 
+#include <algorithm>
+
 namespace {
 
 // The public MoonlightWeb repository whose Releases carry the installers built
@@ -308,6 +310,12 @@ bool UpdateChecker::isNewer(const QString& latest, const QString& current)
     const QList<int> a = parse(latest);
     const QList<int> b = parse(current);
     if (a.isEmpty()) return false; // unparseable latest — never nag
+
+    // A build with no version of its own (0.0.0-dev, the untagged fallback) is
+    // never out of date. Every published release outranks 0.0.0, so without
+    // this a source build would be told to "update" — and taking that offer
+    // would install an older release over newer code.
+    if (std::all_of(b.cbegin(), b.cend(), [](int v) { return v == 0; })) return false;
 
     const int n = qMax(a.size(), b.size());
     for (int i = 0; i < n; ++i) {

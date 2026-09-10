@@ -10,14 +10,21 @@
 # OpenSSL: system package on Linux/macOS, prebuilt under libs/windows on Windows.
 # ============================================================================
 cmake_minimum_required(VERSION 3.21)
-project(moonlightweb-backend VERSION 0.2.1 LANGUAGES C CXX)
+project(moonlightweb-backend VERSION 0.0.0 LANGUAGES C CXX)
 
 # Single source of truth for the shipped version string. Priority:
 #   1. -DMW_VERSION=x.y.z on the command line (release CI passes the v* tag)
 #   2. `git describe` against the latest v* tag (local/dev builds; a build
 #      past the tag reports e.g. 0.1.1.3.g6f79dad — dots, not dashes, so the
 #      string stays legal for rpm and parses as newer in UpdateChecker)
-#   3. the project() version above (tarball builds without git)
+#   3. 0.0.0-dev, and nothing else. There is deliberately no literal release
+#      number to fall back on: such a literal stops being true the day the
+#      next release ships, and a build carrying it then claims to BE that
+#      release. That is not hypothetical — a bench machine built from sources
+#      without tags reported 0.2.1 long after 0.2.4 was out, wore it in the
+#      header, and was offered an "update" that would have rolled it back.
+#      0.0.0-dev cannot be mistaken for a release, by a reader or by
+#      UpdateChecker, which refuses to nag a build that has no version.
 set(MW_VERSION "" CACHE STRING "Application version override (empty = derive from git tag)")
 if(NOT MW_VERSION)
     find_package(Git QUIET)
@@ -43,7 +50,15 @@ if(NOT MW_VERSION)
             endif()
         endforeach()
     else()
-        set(MW_VERSION "${PROJECT_VERSION}")
+        # Said out loud at configure time, because this is the one path where
+        # the version is not derived from anything — and discovering that from
+        # a wrong number in an already-running build costs far more than a
+        # warning here does.
+        set(MW_VERSION "0.0.0-dev")
+        message(WARNING
+            "No v* tag found (git missing, or sources copied without .git / "
+            "cloned without tags): this build reports ${MW_VERSION} rather "
+            "than a version. Pass -DMW_VERSION=x.y.z if it needs a real one.")
     endif()
 endif()
 message(STATUS "MW_VERSION: ${MW_VERSION}")
@@ -518,7 +533,11 @@ endif()
 set(CPACK_PACKAGE_NAME "moonlightweb")
 set(CPACK_PACKAGE_VENDOR "moonlightweb")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Sunshine streaming client for the browser")
-set(CPACK_PACKAGE_VERSION "${MW_VERSION}")
+# rpm forbids '-' in a version field, and the untagged fallback is the only
+# string that can carry one. Same treatment as the git-describe branch above:
+# dashes become dots.
+string(REPLACE "-" "." _mw_package_version "${MW_VERSION}")
+set(CPACK_PACKAGE_VERSION "${_mw_package_version}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "moonlightweb")
 if(WIN32)
     set(CPACK_GENERATOR "ZIP")

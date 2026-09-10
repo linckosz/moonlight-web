@@ -28,7 +28,7 @@
 // Baked in by CMake (target_compile_definitions). Fallback keeps non-CMake /
 // tooling builds compiling; real builds always override it.
 #ifndef MW_VERSION
-#define MW_VERSION "0.0.0"
+#define MW_VERSION "0.0.0-dev"
 #endif
 
 // Format a QDateTime as an HTTP-date (RFC 7231), e.g. "Sun, 06 Nov 1994
