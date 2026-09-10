@@ -52,9 +52,24 @@ function Cdp {
 # that ends in the stream view - or a reload that lands slowly - otherwise
 # fails the NEXT launch on "no element with text 'Display 1'", which reads
 # like a host that went away rather than a page that is simply elsewhere.
+# Unlocking, as its own step because it happens more than once: a reload can
+# drop the session, and the page that comes back is the login page, not the
+# library. Ticking "keep me signed in" is what makes the session survive one -
+# without it the matrix dies on the first settings reload, and the error says
+# the library never came back, which sounds like the host went away.
+function Invoke-Unlock {
+    if (-not $Pin) { return $false }
+    if ((Cdp eval "JSON.stringify(!!document.getElementById('login-pin-input'))") -notmatch 'true') { return $false }
+    $js = "(()=>{const set=(el,v)=>{const p=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;p.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};set(document.getElementById('login-machine-input'),'$MachineName');set(document.getElementById('login-pin-input'),'$Pin');const k=document.getElementById('login-remember');if(k&&!k.checked){k.click();}const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Unlock');if(!b)return 'no Unlock button';b.click();return 'submitted';})()"
+    Write-Host "unlock       : $((Cdp eval $js).Trim())"
+    Start-Sleep -Seconds 8
+    return $true
+}
+
 function Wait-Library {
     param([int] $Tries = 30, [switch] $Renavigate)
     for ($w = 0; $w -lt $Tries; $w++) {
+        if (Invoke-Unlock) { continue }
         if ((Cdp eval "JSON.stringify(document.body ? document.body.innerText : '')") -match [regex]::Escape($Tile)) { return $true }
         Start-Sleep -Seconds 2
     }
@@ -100,14 +115,7 @@ try {
     # the library, and every later step then fails on "no element with text
     # 'Display 1'" — which reads like an unpaired host rather than a locked one.
     Start-Sleep -Seconds 8
-    if ((Cdp eval "JSON.stringify(!!document.getElementById('login-pin-input'))") -match 'true') {
-        if (-not $Pin) {
-            throw "$AppUrl asks for a PIN and none was given (-Pin). Mint one ON that machine, on its loopback: GET /api/admin/token, then POST /api/admin/pin/generate with that value in X-MW-Admin-Key."
-        }
-        $js = "(()=>{const set=(el,v)=>{const p=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;p.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};set(document.getElementById('login-machine-input'),'$MachineName');set(document.getElementById('login-pin-input'),'$Pin');const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Unlock');if(!b)return 'no Unlock button';b.click();return 'submitted';})()"
-        Write-Host "unlock       : $((Cdp eval $js).Trim())"
-        Start-Sleep -Seconds 8
-    }
+    [void](Invoke-Unlock)
 
     # ── Wait for the library, as run-browser.ps1 does ───────────────────────
     $ready = $false
@@ -167,7 +175,28 @@ try {
                 Cdp launch 'Stream anyway' | Out-Null
                 Start-Sleep -Seconds 4
             }
-            Cdp fullscreen | Out-Null
+            # Wait for the stream to actually BE one before measuring it, and keep how
+            # long it took: a codec that needs twenty seconds to show its first image is
+            # a finding, not a timeout. Until now the pass went straight to fullscreen,
+            # and a stream that had not come up yet killed the whole matrix with "no
+            # element with text 'Fullscreen'" - which says nothing about the codec.
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $live = $false
+            for ($t = 0; $t -lt 30; $t++) {
+                if ((Cdp stats) -match '"streaming":\s*true') { $live = $true; break }
+                Start-Sleep -Seconds 2
+            }
+            $sw.Stop()
+            if (-not $live) {
+                Write-Host "  NO STREAM  : nothing came up in $([int]$sw.Elapsed.TotalSeconds)s - recorded and moving on"
+                ([pscustomobject]@{ label = $Label; id = $id; asked = "1080p60 $codec 4:2:0 SDR enhancer=$enh";
+                                    failed = "the stream never came up" } | ConvertTo-Json -Compress) |
+                    Add-Content -Path $jsonl -Encoding UTF8
+                continue
+            }
+            Write-Host "  first image: $([int]$sw.Elapsed.TotalSeconds)s after the click"
+            # Fullscreen is cosmetic for these numbers: never fatal.
+            try { Cdp fullscreen | Out-Null } catch { Write-Host '  (fullscreen refused - measuring windowed)' }
             Start-Sleep -Seconds $SettleSec
 
             $row = [ordered]@{
