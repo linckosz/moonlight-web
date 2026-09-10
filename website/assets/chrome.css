@@ -99,6 +99,49 @@ header nav a[aria-current="page"]{color:var(--cyan)}
   .lang select{font-size:.66rem; padding:.32rem 1.35rem .32rem .45rem}
 }
 
+/* ───── Floating Discord button ───── */
+/* The live-chat launcher shape every visitor already knows from e-commerce
+   sites: a round button in the bottom right corner, one icon, no label. The
+   grammar is borrowed on purpose — a reader who has never heard of this site
+   still knows, without reading anything, that this is where you go to talk to
+   someone. Discord blurple, deliberately NOT the site's cyan, so it reads as
+   "somewhere else" rather than as one more page control.
+
+   Round means the site's notched corners are dropped here: the notch is the
+   MoonlightWeb signature for panels and buttons that belong to the page, and
+   this one deliberately does not.
+
+   The shadow is two layers — a soft dark drop that lifts the circle off the
+   dark background, and a faint blurple halo that keeps the edge from dying
+   against it. safe-area-inset keeps it clear of the iOS home indicator. */
+.discord-fab{
+  position:fixed; z-index:30;
+  right:calc(22px + env(safe-area-inset-right, 0px));
+  bottom:calc(22px + env(safe-area-inset-bottom, 0px));
+  width:58px; height:58px; border-radius:50%;
+  display:inline-flex; align-items:center; justify-content:center;
+  color:#fff; background:#5865f2; border:1px solid rgba(255,255,255,.16);
+  box-shadow:0 8px 24px rgba(0,0,0,.5), 0 2px 8px rgba(88,101,242,.45);
+  transition:transform .18s, background .18s, box-shadow .18s;
+}
+.discord-fab:hover{text-decoration:none; color:#fff}
+@media(hover:hover){
+  .discord-fab:hover{
+    background:#4752c4; transform:translateY(-3px) scale(1.05);
+    box-shadow:0 14px 30px rgba(0,0,0,.55), 0 3px 14px rgba(88,101,242,.6);
+  }
+}
+.discord-fab:active{transform:translateY(-1px) scale(.98)}
+.discord-fab:focus-visible{outline:2px solid #fff; outline-offset:3px}
+/* Phones: same shape, one size down, tighter to the corner. */
+@media(max-width:640px){
+  .discord-fab{
+    right:calc(16px + env(safe-area-inset-right, 0px));
+    bottom:calc(16px + env(safe-area-inset-bottom, 0px));
+    width:52px; height:52px;
+  }
+}
+
 /* ───── Footer ───── */
 footer{border-top:1px solid var(--line); padding:36px 0; color:var(--muted); font-size:.9rem}
 footer .wrap{display:flex; gap:16px; flex-wrap:wrap; align-items:center; justify-content:space-between; max-width:1160px}

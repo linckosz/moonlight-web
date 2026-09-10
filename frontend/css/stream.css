@@ -3,10 +3,15 @@
 /* While a stream is active, the overlay owns the screen. Hide the underlying
    app (header, content, footer) so pinch-zoom/pan or the iOS virtual keyboard
    pushing the viewport can never reveal the apps grid, settings or buttons
-   beneath the stream — the stream has absolute visual priority. */
+   beneath the stream — the stream has absolute visual priority.
+
+   The floating Discord button is part of that shell: pinned to the viewport it
+   would otherwise survive the overlay and float over the game, one misclick
+   away from throwing the player out of their session into a browser tab. */
 body.streaming-active .app-header,
 body.streaming-active #main-content,
-body.streaming-active .app-footer {
+body.streaming-active .app-footer,
+body.streaming-active .discord-fab {
     display: none !important;
 }
 

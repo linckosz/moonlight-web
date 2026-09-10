@@ -55,6 +55,7 @@ import { PlayerJoinView } from './ui/PlayerJoinView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { ConsentBar } from './ui/ConsentBar.js';
+import { DiscordLink } from './ui/DiscordLink.js';
 import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
 import { VersionGuard } from './util/VersionGuard.js';
 import {
@@ -3223,5 +3224,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // markup (header buttons / footer) that exists in index.html.
     await i18nInit();
     applyDOM(document);
+    // The community button lives outside every view — drawn once here, after
+    // the catalogs are in so its label is not the English one for a French
+    // reader, and left alone from then on. The stream hides it in CSS.
+    DiscordLink.mount();
     MoonlightApp.init();
 });

@@ -21,7 +21,8 @@
         "serverSettings": "Paramètres serveur",
         "streamingSettings": "Paramètres de streaming",
         "instances": "Vos machines",
-        "instanceSwitch": "Passer à une autre machine"
+        "instanceSwitch": "Passer à une autre machine",
+        "community": "Rejoindre la communauté sur Discord — aide et nouvelles versions"
     },
     "setup": {
         "title": "Bienvenue dans MoonlightWeb",

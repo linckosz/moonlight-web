@@ -21,7 +21,8 @@
         "serverSettings": "服务器设置",
         "streamingSettings": "串流设置",
         "instances": "您的设备",
-        "instanceSwitch": "切换到其他设备"
+        "instanceSwitch": "切换到其他设备",
+        "community": "加入 Discord 社区 — 获取帮助与版本更新"
     },
     "setup": {
         "title": "欢迎使用 MoonlightWeb",

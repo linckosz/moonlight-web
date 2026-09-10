@@ -546,6 +546,8 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
        than no toast at all. */
     bottom: calc(var(--space-5) + var(--kbd-inset, 0px));
     right: var(--space-5);
+    /* Note: when the floating Discord button is on screen the stack is lifted
+       over it — see the `body:has(.discord-fab)` rule at the end of this file. */
     z-index: 2000;
     display: flex;
     flex-direction: column;
@@ -1243,4 +1245,86 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
 }
 .u-pt-3 {
     padding-top: var(--space-3);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Floating Discord button
+
+   The live-chat launcher shape every user already knows from e-commerce
+   sites: a round button in the bottom right corner, one icon, no label. The
+   grammar is borrowed on purpose — it says "talk to someone" before anything
+   is read. Blurple, deliberately not the app's cyan, so it reads as
+   "somewhere else" rather than as one more control of this page.
+
+   Round means no notch here: the notched corner is the MoonlightWeb signature
+   for the panels and buttons that belong to the app, and this one does not.
+
+   Two shadow layers — a soft dark drop that lifts the circle off the dark
+   surface, and a faint blurple halo so the edge does not die against it.
+
+   It shares the corner with the toast stack, which is lifted above it (see
+   the rule at the end of this block): a toast landing on top of the button
+   would hide both. The stream hides the whole thing — see css/stream.css.
+   ════════════════════════════════════════════════════════════════════════ */
+.discord-fab {
+    position: fixed;
+    z-index: 1800;
+    right: calc(var(--space-5) + env(safe-area-inset-right, 0px));
+    bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    background-color: #5865f2;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow:
+        0 8px 24px rgba(0, 0, 0, 0.5),
+        0 2px 8px rgba(88, 101, 242, 0.45);
+    text-decoration: none;
+    transition:
+        transform 0.18s,
+        background-color 0.18s,
+        box-shadow 0.18s;
+}
+.discord-fab:hover {
+    color: #fff;
+    text-decoration: none;
+}
+@media (hover: hover) {
+    .discord-fab:hover {
+        background-color: #4752c4;
+        transform: translateY(-3px) scale(1.05);
+        box-shadow:
+            0 14px 30px rgba(0, 0, 0, 0.55),
+            0 3px 14px rgba(88, 101, 242, 0.6);
+    }
+}
+.discord-fab:active {
+    transform: translateY(-1px) scale(0.98);
+}
+.discord-fab:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 3px;
+}
+/* Phones: same shape, one size down, tighter to the corner. */
+@media (max-width: 640px) {
+    .discord-fab {
+        right: calc(var(--space-3) + env(safe-area-inset-right, 0px));
+        bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+        width: 52px;
+        height: 52px;
+    }
+}
+/* The consent question owns the bottom strip while it is up, and it asks
+   something about this machine — it does not compete with a link to a chat. */
+body:has(.consent-bar) .discord-fab {
+    display: none;
+}
+/* Toasts appear above the button instead of on it. 70px = the circle's 58px
+   plus a gap; the stack keeps its own keyboard inset on top of that. */
+body:has(.discord-fab) #toast-container {
+    bottom: calc(var(--space-5) + var(--kbd-inset, 0px) + 70px);
 }
