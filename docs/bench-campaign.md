@@ -290,10 +290,11 @@ measuring — but it means they have no close button, and `Alt+F4` closes the
 window that holds the *focus*, which is behind the overlay. Somebody sitting at
 the machine used to have no way to get rid of the video at all.
 
-Three ways out, in order of what they survive:
+Four ways out, in order of what they survive:
 
 | | |
 |---|---|
+| the **✕** in the top-right corner | a close button on the content page itself — the one that needs nothing known in advance |
 | `Ctrl+Alt+Shift+M` | un-pins every bench kiosk and minimises it — the campaign's Chrome stays alive and the pass can go on |
 | `Ctrl+Alt+Shift+Q` | closes the kiosks and their helpers |
 | `scripts\bench\kiosk-close.ps1` | the same, from a shell — works when the hotkey watchdog is dead or its combination is already taken |
@@ -306,6 +307,27 @@ page has no key handler at all — a keystroke arriving from the stream must nev
 be able to stop a bench mid-pass. Whether the registration succeeded is written
 to `%TEMP%\mw-kiosk-hotkeys.log`, because the watchdog runs hidden and a warning
 it prints to a console goes nowhere.
+
+The button (`content/escape.js`, pulled in by all three content pages) is the
+one that shapes the page, because **the page is the measurement**: anything it
+draws, the host encodes and the campaign scores. So it is not on screen. It is
+armed only while the pointer is actually inside the top-right 200×160 px, and a
+campaign parks the host pointer motionless in the inert click target at 50 % ×
+72 % of the screen — far outside that corner, and not moving. Hovering is a
+deliberate act a pass cannot perform by accident; verified by parking and
+clicking at the park point, where the button stays at `opacity: 0`,
+`pointer-events: none`, cursor hidden.
+
+The corner is the top **right** because the click-to-photon flag is painted
+across 44 %–56 % × 0–5 % — the top *middle*. A control over the flag would be
+measured as part of it. And there is deliberately no key handler anywhere in
+the content pages: a keystroke arriving from the stream must never be able to
+stop a bench mid-pass. The mouse is safe here in a way the keyboard is not.
+
+`window.close()` does work on these windows — verified in `--kiosk`, where
+`history.length` is 1 and the tab was opened by the browser rather than by
+script. If it is ever refused, the button says so and names the shortcut
+instead of leaving somebody clicking a dead control.
 
 `run-browser.ps1` owns the kiosks' lifetime and closes them on its way out — the
 end of the matrix, a `throw`, or an operator saying stop. `-KeepKiosks` leaves
