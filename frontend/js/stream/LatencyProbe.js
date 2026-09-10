@@ -92,10 +92,37 @@ export function looksLikeFlag(px) {
     const r2 = px[8],
         g2 = px[9],
         b2 = px[10];
-    const blue = b0 >= 120 && r0 <= 110 && g0 <= 110 && b0 - r0 >= 60 && b0 - g0 >= 60;
-    const white = r1 >= 170 && g1 >= 170 && b1 >= 170;
-    const red = r2 >= 120 && g2 <= 110 && b2 <= 110 && r2 - g2 >= 60 && r2 - b2 >= 60;
-    return blue && white && red;
+    // Everything below is a RATIO between channels, never a level, because the
+    // flag's brightness is not ours to promise. Measured 10/09/2026: the same
+    // window that reads 0,0,255 / 255,255,255 / 255,0,0 on an idle screen reads
+    // 0,0,141 / 141,141,141 / 141,0,1 while a video plays fullscreen on it —
+    // the bands are intact, the whole flag is at 55 %. The old `white >= 170`
+    // rejected that, so twelve passes of a campaign came back as timeouts and
+    // read like a dead pipeline. Bands are what identifies a flag; how bright
+    // the screen renders it is the screen's business.
+    const white = (r1 + g1 + b1) / 3;
+    const level = Math.max(b0, r2, white);
+    // One absolute floor, and only one: in a dark picture the ratios below are
+    // three noisy channels arguing over a handful of levels.
+    if (level < 60) return false;
+    // A band is its colour when its own channel stands well clear of the other
+    // two — 70 % of itself. That is what separates the real thing from a dim,
+    // desaturated triple: the overlay paints pure primaries, so its dead
+    // channels sit at 0 and clearance is ~100 %, while a bluish-grey pixel
+    // clears about 64 %. The margin survives the worst 4:2:0 smearing measured
+    // at a band boundary (~93 % on blue, ~83 % on red), which is why the probe
+    // samples band centres.
+    const dominates = (own, a, b) => own - Math.max(a, b) >= 0.7 * own;
+    const isBlue = dominates(b0, r0, g0);
+    const isRed = dominates(r2, g2, b2);
+    // Neutral, not bright: white is the band whose three channels agree.
+    const spread = Math.max(r1, g1, b1) - Math.min(r1, g1, b1);
+    const isWhite = spread <= 0.25 * Math.max(r1, g1, b1);
+    // And the three are ONE flag, lit by one screen: a band at a fraction of
+    // the others is a coincidence — a blue sky over a grey wall over a red
+    // car — not the overlay we raised.
+    const evenlyLit = Math.min(b0, r2, white) >= 0.4 * level;
+    return isBlue && isWhite && isRed && evenlyLit;
 }
 
 /**

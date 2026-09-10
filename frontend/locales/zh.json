@@ -606,7 +606,8 @@
         "appGone": "“{{name}}” 已不在此主机上——列表已刷新",
         "timeout": "服务器无响应——已取消启动",
         "hevcH264Unsupported": "浏览器同时不支持 HEVC 和 H.264",
-        "hdrFallback": "HDR 不可用——已切换到不含 HDR 的 {{to}}"
+        "hdrFallback": "HDR 不可用——已切换到不含 HDR 的 {{to}}",
+        "chroma444Fallback": "不支持 4:4:4 — 已切换为 H.264 4:2:0"
     },
     "permission": {
         "videoCapture": {

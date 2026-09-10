@@ -2457,6 +2457,28 @@ const MoonlightApp = {
     },
 
     /**
+     * Same, for the 4:4:4 preference the H.264 fallback drops (see launchApp:
+     * H.264 4:4:4 is profile 244, less decodable than what already failed).
+     * Without this the checkbox keeps claiming 4:4:4 while every stream is
+     * 4:2:0, which is how a bench measured "4:4:4" twelve times and got H.264.
+     * @returns {boolean} whether 4:4:4 was actually on, so the caller can tell
+     *   a real loss from a no-op.
+     */
+    _persistChroma444Disabled() {
+        try {
+            const stored = localStorage.getItem('mw-streaming-settings');
+            const settings = stored ? JSON.parse(stored) : {};
+            const was = settings.chroma_444_enabled === true;
+            settings.chroma_444_enabled = false;
+            localStorage.setItem('mw-streaming-settings', JSON.stringify(settings));
+            return was;
+        } catch (e) {
+            console.warn('[MW] Failed to persist 4:4:4 fallback to localStorage:', e);
+            return false;
+        }
+    },
+
+    /**
      * Tear down the current StreamView and relaunch the same app with the next
      * transport index. The backend recomputes the (identical) chain and attempts
      * the requested index.
@@ -3127,6 +3149,13 @@ const MoonlightApp = {
             if (fallbackTarget.hdr === false) {
                 this._persistHdrDisabled();
                 Toast.warning(t('launch.hdrFallback', { to: fallbackTarget.codec.toUpperCase() }));
+            }
+            // The H.264 fallback silently drops 4:4:4 as well (launchApp), and
+            // that loss had no voice at all: the overlay reads "H264" with no
+            // mention of chroma, so a viewer who asked for 4:4:4 has no way to
+            // learn they are watching 4:2:0. Say it exactly like HDR.
+            if (fallbackTarget.codec === 'h264' && this._persistChroma444Disabled()) {
+                Toast.warning(t('launch.chroma444Fallback'));
             }
 
             // Keep the full-screen loader up across teardown + relaunch so the

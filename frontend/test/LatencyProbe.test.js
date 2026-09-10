@@ -79,6 +79,29 @@ describe('looksLikeFlag', () => {
         expect(looksLikeFlag(px([0, 0, 255], [255, 255, 255], [255, 0, 0]))).toBe(true);
     });
 
+    it('accepts a flag the screen dimmed, bands intact', () => {
+        // Measured on the bench, 10/09/2026: a display that renders the overlay
+        // at 0,0,255 while idle renders it at 0,0,141 once a video plays
+        // fullscreen on it. The bands are untouched, the whole flag is at 55 %,
+        // and a threshold on white alone turned every click of a campaign into
+        // a timeout that read like a broken pipeline.
+        expect(looksLikeFlag(px([0, 0, 141], [141, 141, 141], [141, 0, 1]))).toBe(true);
+        // The same at a quarter brightness, which the ratios still identify.
+        expect(looksLikeFlag(px([0, 0, 70], [70, 70, 70], [70, 0, 0]))).toBe(true);
+    });
+
+    it('refuses to read a flag out of a dark picture', () => {
+        // Below the floor the ratios are three noisy channels arguing over a
+        // handful of levels, and everything looks like everything.
+        expect(looksLikeFlag(px([0, 0, 40], [40, 40, 40], [40, 0, 0]))).toBe(false);
+    });
+
+    it('rejects three bands that are not lit by the same screen', () => {
+        // A blue sky, a grey wall and a red car each dominate their own pixel;
+        // what they never do is share one brightness.
+        expect(looksLikeFlag(px([0, 0, 250], [120, 120, 120], [60, 0, 0]))).toBe(false);
+    });
+
     it('accepts the bands after a limited-range BT.709 round trip', () => {
         const c = (rgb) => decode(encode(rgb, MATRIX.bt709), MATRIX.bt709);
         expect(c(BANDS.blue)).toEqual([1, 0, 255]);

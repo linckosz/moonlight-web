@@ -606,7 +606,8 @@
         "appGone": "« {{name}} » n'est plus sur cet hôte — la liste a été actualisée",
         "timeout": "Le serveur ne répond pas — démarrage annulé",
         "hevcH264Unsupported": "HEVC et H.264 non pris en charge par le navigateur",
-        "hdrFallback": "HDR indisponible — bascule en {{to}} sans HDR"
+        "hdrFallback": "HDR indisponible — bascule en {{to}} sans HDR",
+        "chroma444Fallback": "4:4:4 indisponible — bascule en H.264 4:2:0"
     },
     "permission": {
         "videoCapture": {

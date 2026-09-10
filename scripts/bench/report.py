@@ -350,12 +350,15 @@ def analyse(results_dir):
     provenance = read_json(os.path.join(results_dir, "provenance.json"), {}) or {}
     bench = read_csv(os.path.join(results_dir, "native-bench.csv"))
     probes = read_jsonl(os.path.join(results_dir, "probe-results.jsonl"))
-    browser = read_jsonl(os.path.join(results_dir, "passes.jsonl"))
+    # run-browser.ps1 writes browser.jsonl keyed on "id"; passes.jsonl/"label"
+    # is the older shape and still read, so an archived campaign renders.
+    browser = (read_jsonl(os.path.join(results_dir, "browser.jsonl"))
+               or read_jsonl(os.path.join(results_dir, "passes.jsonl")))
 
     probe_by_label = {}
     for p in probes:
         probe_by_label.setdefault(p.get("label"), []).append(p)
-    browser_by_label = {b.get("label"): b for b in browser}
+    browser_by_label = {b.get("id") or b.get("label"): b for b in browser}
 
     anomalies = []
 
@@ -409,6 +412,48 @@ def analyse(results_dir):
         if series:
             entry["probe"] = series[-1]
         passes.append(entry)
+
+    # Asked for vs NEGOTIATED. The three findings a campaign exists to catch are
+    # all silent — a HEVC that became H.264, a 4:4:4 that fell back to 4:2:0, an
+    # HDR that came back SDR — and the overlay states the result without ever
+    # saying it is not what was requested.
+    for e in passes:
+        br = e.get("browser") or {}
+        neg_raw = br.get("negotiated")
+        if not neg_raw:
+            continue
+        try:
+            neg = json.loads(neg_raw) if isinstance(neg_raw, str) else dict(neg_raw)
+        except Exception:
+            continue
+        e["negotiated"] = {k.rstrip(":"): v for k, v in neg.items()}
+        want = e.get("settings") or {}
+        got = e["negotiated"]
+        asked_codec = str(want.get("video_codec", "")).lower()
+        got_codec = str(got.get("Codec", "")).lower().replace(".", "")
+        if asked_codec and got_codec and not got_codec.startswith(asked_codec.replace(".", "")):
+            e["notes"].append(f"codec asked {asked_codec.upper()}, negotiated {got_codec.upper()}")
+            flag_anomaly(
+                f"codec-fallback-{e['id']}",
+                f"{asked_codec.upper()} was asked for and {got_codec.upper()} was streamed",
+                "The client could not decode what the host negotiated and relaunched on the "
+                "fallback chain. The encoder half proves the host can produce it, so the loss "
+                "is on the browser side of the pipeline.",
+                owner="Opus")
+        if want.get("chroma_444_enabled") and "4:4:4" not in str(got):
+            e["notes"].append("4:4:4 asked, not reported by the stream")
+            flag_anomaly(
+                f"chroma-fallback-{e['id']}",
+                "4:4:4 was asked for and the stream did not carry it",
+                "An H.264 fallback drops chroma_444_enabled with the codec (app.js), so a "
+                "viewer who asked for 4:4:4 watches 4:2:0 with nothing on screen saying so.",
+                owner="Opus")
+        if want.get("hdr_enabled") and "hdr" not in str(got).lower():
+            e["notes"].append("HDR asked, stream is SDR")
+        asked_h = want.get("stream_height")
+        res = str(got.get("Resolution", ""))
+        if asked_h and res and str(asked_h) not in res:
+            e["notes"].append(f"height asked {asked_h}, streamed {res}")
 
     for e in passes:
         if e["skip"]:
@@ -624,12 +669,16 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
     # ── Dashboard ──
     parts.append("<h2>Every pass at a glance</h2>")
     parts.append('<div class="scroll"><table><tr><th>Pass</th><th>Factor</th><th>Status</th>'
-                 "<th>What was seen</th></tr>")
+                 "<th>Negotiated</th><th>What was seen</th></tr>")
     for e in passes:
         detail = e["skip"] or "; ".join(e["notes"]) or FLAG_LABEL[e["flag"]]
+        neg = e.get("negotiated") or {}
+        shown = " · ".join(str(neg[k]) for k in ("Resolution", "Framerate", "Codec", "Enhancer")
+                           if neg.get(k))
         parts.append(f'<tr><td><span class="dot dot--{e["flag"]}"></span>'
                      f'<code>{esc(e["id"])}</code></td><td>{esc(e["factor"])}</td>'
                      f'<td>{FLAG_LABEL[e["flag"]]}</td>'
+                     f'<td class="note">{esc(shown) if shown else "—"}</td>'
                      f'<td class="note">{esc(detail)}</td></tr>')
     parts.append("</table>")
     parts.append('<div class="legend">' + "".join(
