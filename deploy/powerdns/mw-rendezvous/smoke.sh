@@ -74,6 +74,14 @@ check "GET / does not redirect" "" "$(curl_ -o /dev/null -w '%{redirect_url}' "$
 contains "entry page is the bootstrap" "MoonlightWeb" "$(curl_ "$BASE/$ID")"
 
 echo
+echo "never indexed (an address here names a machine, not a page)"
+contains "X-Robots-Tag says noindex" "noindex" \
+    "$(curl_ -sI "$BASE/$ID" | tr -d '\r' | awk 'tolower($1)=="x-robots-tag:"{print $2}')"
+# The robots.txt itself, not the entry page answering for it.
+contains "robots.txt shuts crawlers out" "Disallow: /" "$(curl_ "$BASE/robots.txt")"
+contains "robots.txt names the AI crawlers" "GPTBot" "$(curl_ "$BASE/robots.txt")"
+
+echo
 echo "scripts under /v1/ (the protocol shape), root names kept as aliases"
 check "GET /v1/boot.js" 200 "$(status "$BASE/v1/boot.js")"
 # Not the entry page with a 200: a browser asking for a script must get a 404.

@@ -352,9 +352,14 @@ the only box. Two rules follow, and the layout below is what makes them hold:
   from that checkout, plain HTTP, no published port. Production's Caddy fronts
   it with one fixed `reverse_proxy` block over the `mw-edge` network and lends
   it the certificate. STUN needs nothing: `stream.dev.` resolves to the same
-  address and coturn listens on the host. The name is sent with
-  `X-Robots-Tag: noindex…` and a `robots.txt` that names the AI crawlers; it is
-  in DNS and in the CT logs regardless, so it is unlisted, not hidden.
+  address and coturn listens on the host.
+
+Only the presentation website (apex + `www.`) is meant to be found. Every other
+host — `stream.`, `stream.dev.`, `api.`, `dnsapi.`, `updates.`, `stats.` — is
+sent with `X-Robots-Tag: noindex…` and answers a `robots.txt` that shuts every
+crawler out, naming the AI ones (`(no_index)` in `Caddyfile.tmpl`); the entry
+page carries the same in a `<meta>`. The names are in DNS and in the CT logs
+regardless: unlisted, not hidden.
 
 A change to the rendezvous, the bootstrap or the Caddy site body is tested by
 rebuilding the **dev** project alone: nothing in production restarts, no held

@@ -5,6 +5,10 @@
 #   - stream.dev.{MW_DOMAIN} the STAGING copy of the above, proxied to the
 #                            dev compose project (docker-compose.dev.yml)
 #
+# Only the presentation website may be indexed. Every other host imports
+# (no_index) below: they are APIs, a dashboard, and addresses that name a
+# machine — none of them is a page anyone should find in a search.
+#
 # Rendered at boot by the caddy entrypoint:
 #   @MW_DOMAIN@       → parent domain
 #   @TLS_LINE@        → empty for automatic Let's Encrypt, or a "tls ..."
@@ -23,43 +27,50 @@
 # the same thing. Defined in its own file for that reason alone.
 import /etc/caddy/stream.caddy
 
-# For a name that exists to be tested on, never found. Robots that read
-# robots.txt are told to stay out, and every response says the same in a
-# header for the ones that only read those — including the AI crawlers, named
-# so that a policy of "we obey a specific opt-out only" still applies to them.
+# For every host that is not the presentation website. Robots that read
+# robots.txt are told to stay out, and every response says the same in a header
+# for the ones that only read those — including the AI crawlers, named so that a
+# policy of "we obey a specific opt-out only" still applies to them.
 #
-# Be precise about what this buys: the name is not a secret. It is in public
-# DNS and, the moment its certificate is issued, in the Certificate
-# Transparency logs, so anyone who looks for it will find it. What this does is
-# keep it out of the places nobody looks for it — search results and the
+# robots.txt is answered inside a `handle`, not with a bare `respond`: Caddy runs
+# every `handle` before `respond`, so on stream.* the entry page's catch-all
+# (try_files … /index.html) would answer /robots.txt with the bootstrap page
+# first. A `handle` on a path is sorted ahead of stream_site's own.
+#
+# Be precise about what this buys: the names are not secrets. They are in public
+# DNS and, the moment their certificates are issued, in the Certificate
+# Transparency logs, so anyone who looks for them will find them. What this does
+# is keep them out of the places nobody looks for them — search results and the
 # training sets behind the answers people get instead of search results.
 (no_index) {
 	header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noimageindex"
-	@robots path /robots.txt
-	respond @robots <<ROBOTS
-		User-agent: *
-		Disallow: /
+	handle /robots.txt {
+		respond <<ROBOTS
+			User-agent: *
+			Disallow: /
 
-		User-agent: GPTBot
-		User-agent: OAI-SearchBot
-		User-agent: ChatGPT-User
-		User-agent: ClaudeBot
-		User-agent: Claude-SearchBot
-		User-agent: Claude-User
-		User-agent: Google-Extended
-		User-agent: PerplexityBot
-		User-agent: Perplexity-User
-		User-agent: CCBot
-		User-agent: Bytespider
-		User-agent: Applebot-Extended
-		User-agent: meta-externalagent
-		User-agent: Amazonbot
-		Disallow: /
-		ROBOTS 200
+			User-agent: GPTBot
+			User-agent: OAI-SearchBot
+			User-agent: ChatGPT-User
+			User-agent: ClaudeBot
+			User-agent: Claude-SearchBot
+			User-agent: Claude-User
+			User-agent: Google-Extended
+			User-agent: PerplexityBot
+			User-agent: Perplexity-User
+			User-agent: CCBot
+			User-agent: Bytespider
+			User-agent: Applebot-Extended
+			User-agent: meta-externalagent
+			User-agent: Amazonbot
+			Disallow: /
+			ROBOTS 200
+	}
 }
 
 api.@MW_DOMAIN@ {
 	@TLS_LINE@
+	import no_index
 	rate_limit {
 		zone mw_api {
 			key {remote_host}
@@ -79,6 +90,7 @@ api.@MW_DOMAIN@ {
 # Gets its own certificate (never the api-only user cert): @SITE_TLS_LINE@.
 dnsapi.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
+	import no_index
 	rate_limit {
 		zone mw_dnsapi {
 			key {remote_host}
@@ -97,6 +109,7 @@ dnsapi.@MW_DOMAIN@ {
 # when this host is unreachable, so an outage here delays nothing.
 updates.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
+	import no_index
 	rate_limit {
 		zone mw_updates {
 			key {remote_host}
@@ -124,9 +137,11 @@ updates.@MW_DOMAIN@ {
 # the update path — which must keep working — is untouched.
 
 # Analytics dashboard — self-hosted Umami (privacy-friendly, cookieless).
-# Serves both the tracker script (/script.js) and the admin dashboard.
+# Serves both the tracker script (/script.js) and the admin dashboard. Not
+# indexed: the only page here is a login form.
 stats.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
+	import no_index
 	encode zstd gzip
 	reverse_proxy umami:3000
 }
@@ -150,10 +165,15 @@ stats.@MW_DOMAIN@ {
 # serves the entry page and the API, and the address the user sees is the address
 # they stay on.
 #
+# Never indexed: every address here names somebody's machine. The bootstrap page
+# carries <meta name="robots" content="noindex"> as well, which also covers its
+# GitHub Pages copy, where no header can be set.
+#
 # The body is in stream.caddy — the routes, the headers, the rate limit — so
 # that the staging copy below serves exactly the same thing.
 stream.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
+	import no_index
 	import stream_site
 }
 
@@ -165,7 +185,8 @@ stream.@MW_DOMAIN@ {
 # block only lends them the certificate: it proxies to that Caddy over the
 # shared `mw-edge` network and touches nothing else, so it is written once and
 # never edited for a change on the dev side — which is exactly what keeps a dev
-# rebuild from ever being a reason to rebuild THIS container.
+# rebuild from ever being a reason to rebuild THIS container. Its no_index is
+# here, in the fixed block, so it cannot depend on what the dev side serves.
 #
 # `dev.` is a label of its own so that MW_DOMAIN=dev.@MW_DOMAIN@ on a host moves
 # everything the host derives from the domain at once: the line it holds, the
@@ -179,7 +200,8 @@ stream.dev.@MW_DOMAIN@ {
 	reverse_proxy mw-dev-caddy:80
 }
 
-# Presentation website — apex + www both serve the static ./site folder.
+# Presentation website — apex + www both serve the static ./site folder. The
+# ONE host that is meant to be found: no no_index here.
 @MW_DOMAIN@, www.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
 	# Redirect www visitors to the canonical apex.
