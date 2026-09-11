@@ -26,7 +26,11 @@
 #
 # The whole script is a function called on the last line, so bash has parsed
 # all of it before `git checkout` replaces this very file on disk.
-set -euo pipefail
+set -Eeuo pipefail
+# A failed command ends the script (set -e); say which one. -E carries the trap
+# into main(). Without it, a git or docker failure that prints nothing — a
+# --quiet fetch refusing a tag did exactly that — reads like a hang.
+trap 'echo "deploy-prod.sh: stopped at line $LINENO — \"$BASH_COMMAND\" failed (exit $?)" >&2' ERR
 
 main() {
     local ref="${1:-}" mode="${2:-}"
@@ -73,8 +77,13 @@ main() {
         exit 1
     fi
 
+    # --force: origin is the only authority on what a tag names. A tag moved
+    # there after this box last fetched it is otherwise refused ("would clobber
+    # existing tag"), and --quiet hides that refusal: the fetch fails without a
+    # word and set -e ends the script right after "fetching tags…" — which is
+    # exactly what the first run on the real box did.
     echo "fetching tags…"
-    git fetch --quiet --tags origin
+    git fetch --quiet --force --tags origin
 
     local target current
     if ! target="$(git rev-parse --verify --quiet "${ref}^{commit}")"; then

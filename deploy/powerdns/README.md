@@ -368,19 +368,26 @@ line drops, the production entry page does not change.
 ### One-time setup
 
 ```bash
+# 0. the domain and address, read once and trimmed: compose ignores a stray
+#    space after a value in .env, pdnsutil does not ("Zone 'example.top\032'
+#    does not exist" — seen on the real box). Check the brackets hug the values.
+D=$(grep ^MW_DOMAIN= ~/moonlight-web/deploy/powerdns/.env | cut -d= -f2 | tr -d '[:space:]')
+IP=$(grep ^MW_PUBLIC_IP= ~/moonlight-web/deploy/powerdns/.env | cut -d= -f2 | tr -d '[:space:]')
+echo "domain=[$D] ip=[$IP]"
+
 # 1. the dev clone, with a .env that pins compose to the DEV project
 git clone https://github.com/linckosz/moonlight-web ~/moonlight-web-dev
 cd ~/moonlight-web-dev/deploy/powerdns
 printf 'COMPOSE_FILE=docker-compose.dev.yml\nCOMPOSE_PROJECT_NAME=mw-dev\nMW_DOMAIN=%s\nMW_RDV_OWNER_SECRET=%s\n' \
-  "$(grep ^MW_DOMAIN= ~/moonlight-web/deploy/powerdns/.env | cut -d= -f2)" "$(openssl rand -hex 32)" > .env
+  "$D" "$(openssl rand -hex 32)" > .env
 cd ~
 
 # 2. the DNS name (in the running pdns, no restart; the zone is DNSSEC-signed → rectify).
 #    -T and </dev/null: without them `exec` reads the terminal and swallows the
 #    lines pasted after it (seen in the rehearsal — the rectify never ran).
 cd ~/moonlight-web/deploy/powerdns
-docker compose exec -T pdns pdnsutil --config-dir=/etc/powerdns add-record "$(grep ^MW_DOMAIN= .env | cut -d= -f2)" stream.dev A "$(grep ^MW_PUBLIC_IP= .env | cut -d= -f2)" </dev/null
-docker compose exec -T pdns pdnsutil --config-dir=/etc/powerdns rectify-zone "$(grep ^MW_DOMAIN= .env | cut -d= -f2)" </dev/null
+docker compose exec -T pdns pdnsutil --config-dir=/etc/powerdns add-record "$D" stream.dev A "$IP" </dev/null
+docker compose exec -T pdns pdnsutil --config-dir=/etc/powerdns rectify-zone "$D" </dev/null
 cd ~
 
 # 3a. production onto the first tag that carries this layout (v0.3.0 here, or a
