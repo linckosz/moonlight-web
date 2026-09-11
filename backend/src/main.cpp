@@ -80,6 +80,7 @@
 #include "common/PairingCrypto.h"
 #include "common/CrashHandler.h"
 #include "common/DesktopSession.h"
+#include "common/Edition.h"
 #include "backend/ComputerManager.h"
 #include "backend/IdentityManager.h"
 #include "backend/SunshineInstaller.h"
@@ -255,14 +256,17 @@ static void writeAdminShortcut(const QString& url)
     Q_UNUSED(url);
     const QString exe = QCoreApplication::applicationFilePath();
     // Legacy name used before 2026-07 — remove it so only the "MoonlightWeb"
-    // entry below remains on the desktop.
+    // entry below remains on the desktop. A DEV identity writes its own
+    // "MoonlightWebDev" entry beside it, never over it.
     QFile::remove(desktop + "/MoonlightWeb Admin.desktop");
-    const QString path = desktop + "/MoonlightWeb.desktop";
+    const QString name = mw::edition::displayName();
+    const QString icon = mw::edition::isDevBuild() ? QStringLiteral("moonlightweb-dev")
+                                                   : QStringLiteral("moonlightweb");
+    const QString path = desktop + "/" + name + ".desktop";
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    f.write(("[Desktop Entry]\nVersion=1.0\nType=Application\nName=MoonlightWeb\n"
-             "Exec=\"" +
-             exe + "\"\nIcon=moonlightweb\nTerminal=false\n")
+    f.write(("[Desktop Entry]\nVersion=1.0\nType=Application\nName=" + name + "\nExec=\"" + exe +
+             "\"\nIcon=" + icon + "\nTerminal=false\n")
                 .toUtf8());
     f.close();
     // Owner rwx + group/other r-x: launchable and (re)writable on the next port
@@ -286,7 +290,7 @@ static void writeAdminShortcut(const QString& url)
     // pointer on the Desktop as a convenience. Remove the legacy "MoonlightWeb
     // Admin.url" name used before 2026-07.
     QFile::remove(desktop + "/MoonlightWeb Admin.url");
-    QFile f(desktop + "/MoonlightWeb.url");
+    QFile f(desktop + "/" + mw::edition::displayName() + ".url");
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     f.write(("[InternetShortcut]\r\nURL=" + url + "\r\n").toUtf8());
     f.close();
@@ -1188,13 +1192,10 @@ static QStringList filterTransportsByCodec(const QStringList& transports, VideoC
     return result;
 }
 
-// Default ports for --dev, chosen to stay clear of the production 80/443 and of
-// the GameStream ranges (47984-48010 stock, 48100+ for MultiSeat seats).
-static constexpr quint16 kDevHttpPort = 48080;
-static constexpr quint16 kDevHttpsPort = 48443;
-// Signaling base for --dev. It also seeds the control channel (+2) and the
-// per-slot worker ports (+10 * slot), so it has to move as a block.
-static constexpr quint16 kDevSignalingPort = 48501;
+// Default ports of a DEV identity (the DEV build, or --dev): see Edition.h.
+using mw::edition::kDevHttpPort;
+using mw::edition::kDevHttpsPort;
+using mw::edition::kDevSignalingPort;
 // WebRTC media UDP port base (all modes). Each concurrent slot binds a distinct
 // port (base + slot) so simultaneous streams never collide on it, and UPnP maps
 // exactly that port. Slot 0 keeps the historical 48010; mirrors
@@ -1276,16 +1277,16 @@ int main(int argc, char* argv[])
     // every piece of state lives (settings.json, the single-instance lock, logs,
     // the QSettings host list and client identity), and it must be set before any
     // of them is touched — long before QCommandLineParser runs.
-    const bool devMode = [argc, argv]() {
-        for (int i = 1; i < argc; ++i)
-            if (qstrcmp(argv[i], "--dev") == 0) return true;
-        return false;
-    }();
+    mw::edition::init(argc, argv);
+    // A DEV identity (the DEV build, or --dev) — ports, staging server, icons.
+    const bool devMode = mw::edition::isDev();
 
-    // A dev instance gets its own name, so AppDataLocation and QSettings both
-    // move as one: it can never read or corrupt the installed service's state.
-    QCoreApplication::setApplicationName(devMode ? "MoonlightWeb-dev" : "MoonlightWeb");
-    QCoreApplication::setApplicationVersion(QStringLiteral(MW_VERSION));
+    // Each identity gets its own name, so AppDataLocation and QSettings both move
+    // as one: a DEV build or a --dev instance can never read or corrupt the
+    // installed production state. The version wears "-dev" in DEV, and every
+    // place that reports it reads it from here.
+    QCoreApplication::setApplicationName(mw::edition::dataName());
+    QCoreApplication::setApplicationVersion(mw::edition::version());
     QCoreApplication::setOrganizationName("MoonlightWeb");
 
     // Dock (macOS) / taskbar icon fallback: without this the Dock shows an
@@ -1525,12 +1526,15 @@ int main(int argc, char* argv[])
     // nobody can see); and before seedDocumentedDefaults(), so querying the
     // service as a different user than it runs as does not leave a stray
     // settings.json behind in that user's home.
-    if (parser.isSet(statusOption)) return runStatusCommand(appSettings.httpsPort(443));
-    if (parser.isSet(newPinOption)) return runNewPinCommand(appSettings.httpsPort(443));
+    if (parser.isSet(statusOption))
+        return runStatusCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()));
+    if (parser.isSet(newPinOption))
+        return runNewPinCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()));
     if (parser.isSet(setAdminPasswordOption))
-        return runSetAdminPasswordCommand(appSettings.httpsPort(443));
+        return runSetAdminPasswordCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()));
     if (parser.isSet(enableInternetOption))
-        return runEnableInternetCommand(appSettings.httpsPort(443), parser.isSet(yesOption));
+        return runEnableInternetCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
+                                        parser.isSet(yesOption));
 
     appSettings.seedDocumentedDefaults(); // write documented file-only keys if absent
     quint16 httpPort = appSettings.httpPort(devMode ? kDevHttpPort : 80);
@@ -1544,14 +1548,16 @@ int main(int argc, char* argv[])
     QLockFile instanceLock(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                            "/moonlightweb.lock");
     instanceLock.setStaleLockTime(0); // stale detection by PID liveness only
-    // A dev instance deliberately runs beside the installed one; it holds its own
-    // lock file anyway (isolated state), so this only skips the "surface the
-    // running admin page and exit" path.
-    if (!devMode && !instanceLock.tryLock(100)) {
+    // A --dev instance deliberately runs beside the installed one; it holds its
+    // own lock file anyway (isolated state), so this only skips the "surface the
+    // running admin page and exit" path. The DEV build keeps the lock: it is an
+    // installed application, and a second launch has to surface the first.
+    if (!mw::edition::devFlag() && !instanceLock.tryLock(100)) {
         Logger::info("Another instance is already running");
         if (!hasGuiSession()) return 0;
         if (!parser.isSet(autostartOption)) {
-            quint16 p = appSettings.httpsPort(443); // running instance persisted its port
+            quint16 p = appSettings.httpsPort(
+                mw::edition::defaultHttpsPort()); // running instance persisted its port
             const QString base = p == 443 ? QStringLiteral("https://localhost")
                                           : QStringLiteral("https://localhost:%1").arg(p);
             // Prefer redirecting an already-open tab (no duplicate). Only when the
@@ -1569,7 +1575,8 @@ int main(int argc, char* argv[])
 #else
         const bool ownerHidden = false;
 #endif
-        return runTrayClient(app, appSettings.httpsPort(443), ownerHidden);
+        return runTrayClient(app, appSettings.httpsPort(mw::edition::defaultHttpsPort()),
+                             ownerHidden);
     }
 
     HttpServer server(httpPort);

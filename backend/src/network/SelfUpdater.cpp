@@ -17,6 +17,7 @@
 
 #include "SelfUpdater.h"
 #include "UpdateChecker.h"
+#include "common/Edition.h"
 #include "common/Logger.h"
 
 #include <QCoreApplication>
@@ -45,13 +46,18 @@ namespace {
 #ifdef Q_OS_WIN
 // Registered by the installer (which runs elevated) with RunLevel=HighestAvailable
 // and no trigger; `schtasks /Run` on it elevates without a UAC prompt.
-const char* kUpdateTaskName = "MoonlightWeb Update";
+// Named after the edition, like everything the installer registers: a DEV
+// install beside a production one must never start the other's task.
+QString updateTaskName()
+{
+    return mw::edition::productName() + QStringLiteral(" Update");
+}
 
 bool updateTaskExists()
 {
     QProcess p;
-    p.start(QStringLiteral("schtasks.exe"), {QStringLiteral("/Query"), QStringLiteral("/TN"),
-                                             QString::fromLatin1(kUpdateTaskName)});
+    p.start(QStringLiteral("schtasks.exe"),
+            {QStringLiteral("/Query"), QStringLiteral("/TN"), updateTaskName()});
     if (!p.waitForFinished(10000)) {
         p.kill();
         return false;
@@ -62,7 +68,10 @@ bool updateTaskExists()
 // Transient task used by the "service" path to get the installer OUT of our
 // process tree. Recreated (/F) on every attempt, so a leftover is harmless — it
 // points at a staged file the next startup deletes.
-const char* kServiceTaskName = "MoonlightWeb Update (service)";
+QString serviceTaskName()
+{
+    return mw::edition::productName() + QStringLiteral(" Update (service)");
+}
 
 QString xmlEscape(const QString& s)
 {
@@ -131,8 +140,8 @@ SelfUpdater::SelfUpdater(UpdateChecker* checker, QObject* parent)
     // only be dropped once the update it was running is over. Detached — a
     // startup must not wait on schtasks.
     QProcess::startDetached(QStringLiteral("schtasks.exe"),
-                            {QStringLiteral("/Delete"), QStringLiteral("/TN"),
-                             QString::fromLatin1(kServiceTaskName), QStringLiteral("/F")});
+                            {QStringLiteral("/Delete"), QStringLiteral("/TN"), serviceTaskName(),
+                             QStringLiteral("/F")});
 #endif
 }
 
@@ -141,8 +150,11 @@ QString SelfUpdater::stagingDir()
 #ifdef Q_OS_WIN
     // Per-user, NOT %ProgramData%: this directory holds an executable we run
     // elevated, so it must not be writable by other local accounts.
+    // Under the edition's own name: the installer's elevated task runs a fixed
+    // path, and a DEV install must never stage into production's.
     const QString base = qEnvironmentVariable("LOCALAPPDATA");
-    if (!base.isEmpty()) return base + QStringLiteral("/MoonlightWeb/update");
+    if (!base.isEmpty())
+        return base + QLatin1Char('/') + mw::edition::productName() + QStringLiteral("/update");
     // A service inherits the SCM's *system* environment block, which carries no
     // LOCALAPPDATA at all. Falling back to the temp directory would put the
     // installer in C:\Windows\Temp — a directory every local account can write
@@ -492,7 +504,7 @@ QString SelfUpdater::startViaSystemTask(const QString& program, const QStringLis
     f.write(reinterpret_cast<const char*>(body.data()), qint64(body.size() * 2));
     f.close();
 
-    const QString name = QString::fromLatin1(kServiceTaskName);
+    const QString name = serviceTaskName();
     QProcess reg;
     reg.start(QStringLiteral("schtasks.exe"),
               {QStringLiteral("/Create"), QStringLiteral("/TN"), name, QStringLiteral("/XML"),
@@ -551,8 +563,7 @@ void SelfUpdater::runInstaller()
     if (m_method == QLatin1String("scheduled-task")) {
         // The task's action already carries the installer path + silent switches.
         program = QStringLiteral("schtasks.exe");
-        args = {QStringLiteral("/Run"), QStringLiteral("/TN"),
-                QString::fromLatin1(kUpdateTaskName)};
+        args = {QStringLiteral("/Run"), QStringLiteral("/TN"), updateTaskName()};
     }
 
     // A tracked child rather than startDetached: an installer that declines to

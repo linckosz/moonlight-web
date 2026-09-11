@@ -11,6 +11,9 @@ REM
 REM  Optional overrides (set before running):
 REM      set QTDIR=C:\Qt\6.11.0\msvc2022_64    Qt kit, if not auto-detected
 REM      set BUILD_DIR=build                   build directory (default: build)
+REM      set MW_EDITION=dev                    the DEV edition (MoonlightWebDev.exe,
+REM                                            see src/common/Edition.h) — give it
+REM                                            its own BUILD_DIR, e.g. build-devedition
 REM ============================================================================
 setlocal enabledelayedexpansion
 
@@ -85,10 +88,16 @@ REM  Failures are tested with `neq 0`, never `if errorlevel 1`: the latter is a
 REM  signed >= comparison, and cmake returns -1 when the link step fails (a
 REM  locked MoonlightWeb.exe gives LNK1104 -> -1). That slipped straight through
 REM  and the script went on to announce a successful build.
+REM  MW_EDITION is passed only when set: an existing build directory keeps the
+REM  edition it was configured with (the CMake cache holds it).
+set "EDITION_ARG="
+if defined MW_EDITION set "EDITION_ARG=-DMW_EDITION=%MW_EDITION%"
+set "MW_EXE=MoonlightWeb.exe"
+if /i "%MW_EDITION%"=="dev" set "MW_EXE=MoonlightWebDev.exe"
 echo [BUILD] Configuring (Ninja, Release)...
 cmake -S "%ROOT%\backend" -B "%BUILD_DIR%" -G Ninja ^
     -DCMAKE_BUILD_TYPE=Release ^
-    -DCMAKE_PREFIX_PATH="%QTDIR%"
+    -DCMAKE_PREFIX_PATH="%QTDIR%" %EDITION_ARG%
 if !errorlevel! neq 0 (
     echo [ERROR] CMake configuration failed
     exit /b 1
@@ -103,12 +112,12 @@ if !errorlevel! neq 0 (
 
 REM  Belt and braces: whatever a future generator returns, [OK] is only ever
 REM  printed over a binary that is actually there.
-if not exist "%BUILD_DIR%\MoonlightWeb.exe" (
-    echo [ERROR] Build reported success but %BUILD_DIR%\MoonlightWeb.exe is missing
+if not exist "%BUILD_DIR%\%MW_EXE%" (
+    echo [ERROR] Build reported success but %BUILD_DIR%\%MW_EXE% is missing
     exit /b 1
 )
 
 echo.
-echo [OK] Built: %BUILD_DIR%\MoonlightWeb.exe
+echo [OK] Built: %BUILD_DIR%\%MW_EXE%
 echo      Run it, then open https://localhost
 endlocal

@@ -16,6 +16,7 @@
  */
 
 #include "UpdateChecker.h"
+#include "common/Edition.h"
 #include "common/Logger.h"
 
 #include <QFile>
@@ -134,6 +135,18 @@ void UpdateChecker::setRelayEnabled(bool enabled)
 
 QJsonObject UpdateChecker::statusJson()
 {
+    // A DEV build is a pre-release taken from a CI run, and the only release it
+    // could be offered is a production one — which installs a different
+    // application beside it rather than updating it. Nothing to check, then;
+    // "channel" says why, for whoever reads the answer.
+    if (mw::edition::isDevBuild()) {
+        QJsonObject obj;
+        obj["current"] = m_current;
+        obj["update_available"] = false;
+        obj["channel"] = QStringLiteral("dev");
+        return obj;
+    }
+
     // Serve the cache; refresh in the background when stale (never blocks the
     // HTTP handler — the first caller just gets update_available=false).
     const bool stale = !m_lastCheck.isValid() ||
@@ -164,6 +177,8 @@ void UpdateChecker::doFetch()
     // outgoing request every six hours to a third party — not what someone who
     // set that variable was asking for. Nothing to check means no check.
     if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY")) return;
+    // A DEV build answers without asking anyone (see statusJson).
+    if (mw::edition::isDevBuild()) return;
 
     // The relay when this build has one, GitHub otherwise. Either way a single
     // release JSON comes back in the same shape, so nothing downstream cares

@@ -25,6 +25,8 @@
 #include <QDateTime>
 #include <QLocale>
 
+#include "common/Edition.h"
+
 // Baked in by CMake (target_compile_definitions). Fallback keeps non-CMake /
 // tooling builds compiling; real builds always override it.
 #ifndef MW_VERSION
@@ -37,6 +39,29 @@ static QString httpDate(const QDateTime& dt)
 {
     return QLocale::c().toString(dt.toUTC(), QStringLiteral("ddd, dd MMM yyyy HH:mm:ss")) +
            QStringLiteral(" GMT");
+}
+
+// The icons a browser shows for this application — the tab, the home-screen
+// shortcut — are the ones a DEV identity has to wear in blue. They are swapped
+// here, under their usual names, rather than in index.html: the page and the
+// manifest stay byte for byte what production serves, and a browser reaching
+// this host through the introduction server gets the same answer as one on
+// loopback (there, the tab's document is this host's index.html, served back by
+// the service worker). The blue copies live in assets/dev/, which is kept out of
+// the file list: nothing ever asks for them by that name.
+static const QStringList kSwappedIcons = {
+    QStringLiteral("assets/favicon.ico"),
+    QStringLiteral("assets/icon-180.png"),
+    QStringLiteral("assets/icon-192.png"),
+    QStringLiteral("assets/icon-512.png"),
+};
+
+// Relative path of the file that answers `relative` (no leading slash).
+static QString servedPath(const QString& rootDir, const QString& relative)
+{
+    if (!mw::edition::isDev() || !kSwappedIcons.contains(relative)) return relative;
+    const QString swapped = mw::edition::iconAsset(relative.mid(int(qstrlen("assets/"))));
+    return QFileInfo::exists(rootDir + swapped) ? swapped : relative;
 }
 
 QMap<QString, QString> StaticFileHandler::s_MimeTypes = {
@@ -96,6 +121,10 @@ QStringList StaticFileHandler::listFiles() const
                         [](const QString& s) { return s.startsWith(QLatin1Char('.')); }))
             continue;
         if (kDevOnlyDirs.contains(segments.first())) continue;
+        // The DEV icons are served under the production names (servedPath).
+        if (segments.size() > 1 && segments[0] == QLatin1String("assets") &&
+            segments[1] == QLatin1String("dev"))
+            continue;
 
         // A source map is served on request, for whoever opens the debugger. It
         // has no business in the set every visitor downloads first.
@@ -114,7 +143,8 @@ QString StaticFileHandler::contentTag() const
     // it is stamped on.
     QCryptographicHash hash(QCryptographicHash::Md5);
     for (const QString& path : listFiles()) {
-        const QFileInfo info(m_RootDir + path.mid(1));
+        // The bytes actually served under that name — a swapped icon included.
+        const QFileInfo info(m_RootDir + servedPath(m_RootDir, path.mid(1)));
         hash.addData(path.toUtf8());
         hash.addData(QByteArray::number(info.lastModified().toUTC().toSecsSinceEpoch()));
         hash.addData(QByteArray::number(info.size()));
@@ -135,7 +165,7 @@ HttpResponse StaticFileHandler::serveFile(const QString& requestPath,
     // Remove leading slash
     if (safePath.startsWith('/')) safePath = safePath.mid(1);
 
-    QString filePath = m_RootDir + safePath;
+    QString filePath = m_RootDir + servedPath(m_RootDir, safePath);
     QFileInfo fileInfo(filePath);
 
     if (!fileInfo.exists() || !fileInfo.isFile())
@@ -181,6 +211,11 @@ HttpResponse StaticFileHandler::serveFile(const QString& requestPath,
     // `?v=1.2.3`. The query string changes with every release, guaranteeing a
     // fresh fetch of each stylesheet even where ETag revalidation is skipped.
     if (ext == "html") resp.body.replace("__MW_VERSION__", m_Version.toUtf8());
+
+    // The name a home-screen shortcut takes: a DEV identity's must say so, like
+    // its desktop and tray entries. The page itself keeps its title.
+    if (ext == "webmanifest" && mw::edition::isDev())
+        resp.body.replace("\"MoonlightWeb\"", "\"MoonlightWebDev\"");
 
     resp.headers["ETag"] = etag;
     resp.headers["Last-Modified"] = httpDate(lastModified);

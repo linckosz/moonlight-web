@@ -17,6 +17,7 @@
 
 #include "Autostart.h"
 
+#include "common/Edition.h"
 #include "common/Logger.h"
 
 #include <QCoreApplication>
@@ -31,7 +32,10 @@ namespace Autostart {
 
 namespace {
 
-const QString kLabel = QStringLiteral("com.moonlightweb.agent");
+// The DEV build has its own agent, the one its installer writes (postinstall):
+// sharing the label would have each edition overwrite the other's login item.
+const QString kLabel = mw::edition::isDevBuild() ? QStringLiteral("com.moonlightweb.agent.dev")
+                                                 : QStringLiteral("com.moonlightweb.agent");
 
 QString plistPath()
 {
@@ -114,8 +118,11 @@ namespace {
 // every desktop implementing the Desktop Application Autostart spec.
 QString entryPath()
 {
+    // Per edition, for the same reason as the macOS label: two editions must
+    // not overwrite each other's login item.
     return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
-           QStringLiteral("/autostart/moonlightweb.desktop");
+           (mw::edition::isDevBuild() ? QStringLiteral("/autostart/moonlightweb-dev.desktop")
+                                      : QStringLiteral("/autostart/moonlightweb.desktop"));
 }
 
 } // namespace
@@ -127,15 +134,18 @@ bool installLoginItem()
     QString exe = qEnvironmentVariable("APPIMAGE");
     if (exe.isEmpty()) exe = QCoreApplication::applicationFilePath();
 
+    // The icon name is the one the package installed in the hicolor theme.
     const QString entry = QStringLiteral("[Desktop Entry]\n"
                                          "Type=Application\n"
-                                         "Name=MoonlightWeb\n"
+                                         "Name=%2\n"
                                          "Comment=Sunshine streaming client for the browser\n"
                                          "Exec=\"%1\" --autostart\n"
-                                         "Icon=moonlightweb\n"
+                                         "Icon=%3\n"
                                          "Terminal=false\n"
                                          "X-GNOME-Autostart-enabled=true\n")
-                              .arg(exe);
+                              .arg(exe, mw::edition::displayName(),
+                                   mw::edition::isDevBuild() ? QStringLiteral("moonlightweb-dev")
+                                                             : QStringLiteral("moonlightweb"));
 
     const QString path = entryPath();
     QDir().mkpath(QFileInfo(path).absolutePath());

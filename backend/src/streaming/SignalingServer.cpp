@@ -26,6 +26,7 @@ extern "C" {
 #include "IMediaEngine.h"
 #include "InputMessageCodec.h"
 #include "SdpFingerprint.h"
+#include "common/Edition.h"
 #include "common/PairingCrypto.h"
 #include "network/UPNPClient.h"
 #include "server/NetClassify.h"
@@ -1046,14 +1047,15 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
     if (upnpMappedPort > 0) {
         config.portRangeBegin = upnpMappedPort;
         config.portRangeEnd = upnpMappedPort;
-    } else if (QCoreApplication::applicationName() == QLatin1String("MoonlightWeb-dev")) {
+    } else if (mw::edition::devFlag()) {
         // In --dev (LAN, no UPnP), libdatachannel would otherwise bind an
         // ephemeral UDP port, and each fresh test build listening on a new port
         // triggers a Windows Defender Firewall popup. Pin to this slot's fixed
         // media port — distinct per slot (base + slot), so concurrent streams
         // never collide — which the local firewall rule already allows (see
-        // scripts/dev-firewall-allow.ps1) so tests never prompt. The installed
-        // instance is unaffected: its applicationName is "MoonlightWeb".
+        // scripts/dev-firewall-allow.ps1) so tests never prompt. Installed
+        // builds, DEV or production, are unaffected: their firewall rule is
+        // program-scoped, written by the installer.
         config.portRangeBegin = mediaPort;
         config.portRangeEnd = mediaPort;
         qInfo() << "[SignalingServer] --dev: pinned UDP media port" << mediaPort;

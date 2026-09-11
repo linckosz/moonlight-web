@@ -214,6 +214,7 @@ add_executable(mw-server
     src/common/Logger.cpp
     src/common/CrashHandler.cpp
     src/common/DesktopSession.cpp
+    src/common/Edition.cpp
     src/common/LinuxCapabilities.cpp
     src/common/RendezvousId.cpp
     src/network/RendezvousClient.cpp
@@ -273,8 +274,28 @@ add_executable(mw-server
     src/streaming/worker/CoopSessionResolver.cpp
 )
 
-# Ship the binary as "MoonlightWeb(.exe)" regardless of the CMake target name.
-set_target_properties(mw-server PROPERTIES OUTPUT_NAME MoonlightWeb)
+# ── Edition ────────────────────────────────────────────────────────────────
+# prod: what a v* tag ships, "MoonlightWeb". dev: every other CI build,
+# "MoonlightWebDev" — an installable pre-release that must sit beside a
+# production install without touching it, so it differs wherever an operating
+# system keys something on a name (firewall rules, TCC grants, services,
+# packages) and in its state, ports, introduction server, icons and version.
+# See src/common/Edition.h. Local builds default to prod so the binary name the
+# scripts and skills launch does not move; they get the DEV look with --dev.
+set(MW_EDITION "prod" CACHE STRING "Edition to build: prod (MoonlightWeb) or dev (MoonlightWebDev)")
+set_property(CACHE MW_EDITION PROPERTY STRINGS prod dev)
+if(MW_EDITION STREQUAL "dev")
+    set(MW_APP_NAME "MoonlightWebDev")
+    target_compile_definitions(mw-server PRIVATE MW_EDITION_DEV)
+elseif(MW_EDITION STREQUAL "prod")
+    set(MW_APP_NAME "MoonlightWeb")
+else()
+    message(FATAL_ERROR "MW_EDITION must be prod or dev (got '${MW_EDITION}')")
+endif()
+message(STATUS "MW_EDITION: ${MW_EDITION} (${MW_APP_NAME})")
+
+# Ship the binary under the edition's name regardless of the CMake target name.
+set_target_properties(mw-server PROPERTIES OUTPUT_NAME ${MW_APP_NAME})
 
 # App Nap suppression during streaming (Objective-C++, macOS only).
 if(APPLE)
@@ -329,9 +350,14 @@ if(WIN32)
     if(TARGET Qt6::EntryPoint)
         target_link_libraries(mw-server PRIVATE Qt6::EntryPoint)
     endif()
-    # Embed the app icon so Explorer / taskbar / shortcuts show the logo.
+    # Embed the app icon so Explorer / taskbar / shortcuts show the logo — the
+    # blue one for the DEV edition (scripts/make-dev-icons.py).
     enable_language(RC)
-    set(MW_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../frontend/assets/favicon.ico")
+    if(MW_EDITION STREQUAL "dev")
+        set(MW_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../frontend/assets/dev/favicon.ico")
+    else()
+        set(MW_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../frontend/assets/favicon.ico")
+    endif()
     configure_file(app_icon.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc" @ONLY)
     target_sources(mw-server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc")
 endif()
@@ -428,6 +454,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     enable_language(C)
     add_executable(moonlightweb-launch packaging/linux/moonlightweb-launch.c)
     target_compile_options(moonlightweb-launch PRIVATE -Wall -Wextra)
+    target_compile_definitions(moonlightweb-launch PRIVATE MW_LAUNCH_TARGET="${MW_APP_NAME}")
 endif()
 
 # ── Debug symbols in Release (for crash minidump symbolization) ─────────────

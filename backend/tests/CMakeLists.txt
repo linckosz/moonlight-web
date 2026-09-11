@@ -78,7 +78,11 @@ add_executable(run_tests
     test_input_watchdog.cpp
     test_keyboard_layout.cpp
     test_native_capabilities_json.cpp
+    test_edition.cpp
     # In-scope production units (+ their real deps)
+    # Which MoonlightWeb this is: the names, ports and version a DEV build
+    # must answer to so it can sit beside a production install.
+    ${_src}/src/common/Edition.cpp
     # The probe result as it crosses from the console session to the service.
     # Capabilities.cpp is the engine's plain-C++ enum/lookup file: no Windows
     # header, no D3D, so it comes along on any platform.

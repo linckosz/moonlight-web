@@ -16,6 +16,7 @@
  */
 
 #include "TrayManager.h"
+#include "common/Edition.h"
 #include "server/HttpServer.h"
 
 #include <QApplication>
@@ -44,12 +45,17 @@ QIcon TrayManager::loadAppIcon()
     // executable-relative bundle paths (installed artifact / macOS bundle).
     // PNG before .ico: QtGui decodes PNG natively, while .ico needs the
     // imageformats plugin which is not always deployed on Linux.
+    // A DEV identity wears the blue variant, so a DEV install or a --dev
+    // instance cannot be taken for the production one in the tray; the
+    // production icon stays as a last resort rather than no icon at all.
     const QStringList roots = {
         QStringLiteral(FRONTEND_DIR),
         QCoreApplication::applicationDirPath() + QStringLiteral("/frontend/"),
         QCoreApplication::applicationDirPath() + QStringLiteral("/../Resources/frontend/"),
     };
-    const QStringList names = {QStringLiteral("assets/icon-512.png"),
+    const QStringList names = {mw::edition::iconAsset(QStringLiteral("icon-512.png")),
+                               mw::edition::iconAsset(QStringLiteral("favicon.ico")),
+                               QStringLiteral("assets/icon-512.png"),
                                QStringLiteral("assets/favicon.ico")};
     for (const QString& root : roots) {
         for (const QString& name : names) {
@@ -175,7 +181,7 @@ bool TrayManager::init()
 void TrayManager::refreshTooltip(int count)
 {
     if (!m_TrayIcon) return;
-    QString tip = QStringLiteral("MoonlightWeb");
+    QString tip = mw::edition::displayName();
     if (count > 0) tip += QLatin1Char('\n') + tr("Streaming (%1)").arg(count);
     m_TrayIcon->setToolTip(tip);
 }
@@ -220,7 +226,7 @@ void TrayManager::pollActivity()
         for (const StreamViewer& v : activity.viewers) {
             if (m_Viewers.contains(v.id)) continue;
             qInfo() << "[TrayManager] Notifying: arrival of" << viewerName(v);
-            m_TrayIcon->showMessage(QStringLiteral("MoonlightWeb"),
+            m_TrayIcon->showMessage(mw::edition::displayName(),
                                     tr("%1 started streaming this screen").arg(viewerName(v)),
                                     QSystemTrayIcon::Information, 5000);
         }
@@ -229,7 +235,7 @@ void TrayManager::pollActivity()
         for (const StreamViewer& v : m_LastViewers) {
             if (ids.contains(v.id)) continue;
             qInfo() << "[TrayManager] Notifying: departure of" << viewerName(v);
-            m_TrayIcon->showMessage(QStringLiteral("MoonlightWeb"),
+            m_TrayIcon->showMessage(mw::edition::displayName(),
                                     tr("%1 stopped streaming this screen").arg(viewerName(v)),
                                     QSystemTrayIcon::Information, 5000);
         }
@@ -345,7 +351,7 @@ void TrayManager::onRestart()
         }
         qInfo() << "[TrayManager] Asking the server to restart...";
         if (m_TrayIcon)
-            m_TrayIcon->showMessage(QStringLiteral("MoonlightWeb"), tr("Restarting the server…"),
+            m_TrayIcon->showMessage(mw::edition::displayName(), tr("Restarting the server…"),
                                     QSystemTrayIcon::Information, 3000);
         m_RestartServer();
         return;

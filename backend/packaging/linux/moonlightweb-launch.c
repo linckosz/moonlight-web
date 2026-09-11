@@ -69,7 +69,12 @@
 #define PR_CAP_AMBIENT_RAISE 2
 #endif
 
-static const char kTarget[] = "MoonlightWeb";
+/* The binary this launcher execs, next to it: MoonlightWeb, or MoonlightWebDev
+ * for the DEV edition (set by CMake from MW_EDITION). */
+#ifndef MW_LAUNCH_TARGET
+#define MW_LAUNCH_TARGET "MoonlightWeb"
+#endif
+static const char kTarget[] = MW_LAUNCH_TARGET;
 
 /* Move @p cap from this process's permitted set into its ambient set, so the
  * exec below carries it. Raw syscalls: no libcap, nothing to bundle. Returns 0

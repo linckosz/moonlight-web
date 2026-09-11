@@ -17,6 +17,7 @@
 
 #include "StreamWorkerHost.h"
 #include "ConsoleSession.h"
+#include "common/Edition.h"
 #include "common/LinuxCapabilities.h"
 
 #include <QCoreApplication>
@@ -47,9 +48,9 @@ bool StreamWorkerHost::start(const QJsonObject& config)
     // Carry --dev into the child. The flag drives the application name, which
     // is what moves the settings, logs and — the part that matters here — the
     // client identity the worker presents to the host. Without it a dev run
-    // would launch streams as the installed instance.
-    if (QCoreApplication::applicationName().endsWith(QStringLiteral("-dev")))
-        args << QStringLiteral("--dev");
+    // would launch streams as the installed instance. (The DEV build needs
+    // nothing here: the child is the same binary, its edition compiled in.)
+    if (mw::edition::devFlag()) args << QStringLiteral("--dev");
     const QByteArray configLine = QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
 
     // The native engine captures the desktop, and a service has none: its
