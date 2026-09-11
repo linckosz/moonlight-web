@@ -149,6 +149,25 @@ Ports, volume layout, backups, non-root operation and troubleshooting: [`docker/
 | Auto-update application | `SelfUpdater` (`/api/update/start`) downloads the resolved asset and runs it unattended. The banner only offers the one-click path when the host machine is **paired with its local Sunshine** — the marker that the installer has nothing left to ask — otherwise it just says "update the host PC". |
 | Browser auto-open | Manual GUI launches open `/setup` (first run, macOS/Linux) or `/admin`; `--autostart`/headless launches stay silent. |
 
+## 9.4bis Editions — PROD and DEV side by side
+
+Every installer comes in two editions, decided by `release.yml`: a `v*` tag builds **PROD** (`MoonlightWeb`), every other run — a CI dispatch on `main`, say — builds **DEV** (`MoonlightWebDev`). DEV is how a pre-release reaches a tester who may also run the release: it installs **beside** production, never over it. Operating systems key firewall rules, TCC grants, services and packages on names, so everything a system knows an install by differs (`-DMW_EDITION=dev`, [`backend/src/common/Edition.h`](../../backend/src/common/Edition.h)):
+
+| | PROD | DEV |
+|---|---|---|
+| Launcher | `MoonlightWeb.exe` / `MoonlightWeb.app` / `/opt/moonlightweb` | `MoonlightWebDev.exe` / `MoonlightWebDev.app` / `/opt/moonlightweb-dev` |
+| Windows | AppId `{6F2C9E4A-…}`, service, logon + update tasks, firewall rule `MoonlightWeb` | own AppId `{5B1E7A8C-…}`, all of those named `MoonlightWebDev`; no update task |
+| macOS | `com.moonlightweb.server`, LaunchAgent `com.moonlightweb.agent` | `com.moonlightweb.server.dev`, `com.moonlightweb.agent.dev` — TCC asks for its grants once, separately |
+| Linux | package `moonlightweb`, unit `moonlightweb.service`, `/usr/bin/moonlightweb` | `moonlightweb-dev` for all three; udev/modules-load files renamed (no two owners); firewall opens its TCP ports only |
+| State | `…/MoonlightWeb/MoonlightWeb` (settings.json, QSettings) | `…/MoonlightWeb/MoonlightWebDev` |
+| Ports | 80 / 443 | 48080 / 48443, signaling 48501 — the `--dev` block |
+| Introduction server | `stream.moonlightweb.top` | `stream.dev.moonlightweb.top` (staging) |
+| Icons (exe, tray, tab, shortcuts) | steel grey | cobalt `#3D6BFF` (`scripts/make-dev-icons.py`); logos and website unchanged |
+| Version shown | `0.3.0` | `0.3.0-b7c-dev` |
+| In-app update | yes | no — the only release it could be offered is PROD, a different app |
+
+The app itself is otherwise identical: same pages, same logos, the version string is the one visible difference. `--dev` on any build borrows the DEV look, ports and staging server while keeping its own state name (`MoonlightWeb-dev`), so a scratch instance cannot be mistaken for the installed one either. Uninstalling one edition with "delete my configuration" erases only that edition's state — the parent `HKCU\Software\MoonlightWeb` key holds the other's pairings too.
+
 ## 9.5 Workarounds catalog (installers)
 
 | Problem | Workaround |
