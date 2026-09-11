@@ -221,8 +221,9 @@ jobs:
   # Reuses release.yml verbatim, so what lands in this run's artifacts is the
   # exact installer a v* tag would publish — Inno Setup .exe (Windows x64 +
   # ARM64), .deb/.rpm/.AppImage (Linux) and the guided .pkg (macOS), each
-  # wrapped in a zip by upload-artifact. Untagged runs stamp
-  # <last tag>-<3-char sha> (e.g. 0.2.1-b7c) and publish nothing: the
+  # wrapped in a zip by upload-artifact. Untagged runs build the DEV edition
+  # (MoonlightWebDev: installs beside a production MoonlightWeb, never over it),
+  # stamp <last tag>-<3-char sha> (e.g. 0.2.1-b7c) and publish nothing: the
   # gh-release steps in release.yml are gated on refs/tags — and on a v* tag run
   # they see the tag ref, so this is also the path that publishes the release.
   #

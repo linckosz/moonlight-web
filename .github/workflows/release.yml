@@ -9,8 +9,13 @@
 #
 # CI (ci.yml) calls this same workflow as its last stage, so untagged installers
 # can be downloaded from a manual CI run's artifacts and tested before a tag is
-# cut. Only the version differs: a v* tag ships `1.2.3`, any other run ships
-# `<last tag>-<3-char sha>` (e.g. 0.2.1-b7c).
+# cut. The version differs: a v* tag ships `1.2.3`, any other run ships
+# `<last tag>-<3-char sha>` (e.g. 0.2.1-b7c). And so does the edition: a v* tag
+# builds MoonlightWeb (PROD), any other run MoonlightWebDev (DEV) — a
+# pre-release that installs BESIDE a production MoonlightWeb instead of over it,
+# under its own name, state, ports, staging server and blue icons
+# (backend/src/common/Edition.h). Someone testing a CI build never touches the
+# release they may also have installed.
 name: release
 
 # NO tag trigger here on purpose. A v* tag fires ci.yml, which validates the
@@ -60,6 +65,9 @@ jobs:
       macos: ${{ steps.sel.outputs.macos }}
       version: ${{ steps.ver.outputs.version }}
       pkg_version: ${{ steps.ver.outputs.pkg_version }}
+      edition: ${{ steps.edition.outputs.edition }}
+      app: ${{ steps.edition.outputs.app }}
+      pkg: ${{ steps.edition.outputs.pkg }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -102,6 +110,20 @@ jobs:
           # dotted variant (0.2.1-b7c → 0.2.1.b7c). Identical on a tag build.
           echo "pkg_version=${v//-/.}" >> "$GITHUB_OUTPUT"
           echo "Version: $v" >> "$GITHUB_STEP_SUMMARY"
+
+      # PROD only on a v* tag — the build users install. `app` is the launcher's
+      # name (MoonlightWeb / MoonlightWebDev), `pkg` the lower-case one the file
+      # names and Linux packages use. Every name below derives from these; the
+      # tag-only jobs (release assets, Homebrew, APT/DNF, AUR) only ever see PROD.
+      - id: edition
+        run: |
+          if [ "$GITHUB_REF" != "${GITHUB_REF#refs/tags/v}" ]; then
+            e=prod; app=MoonlightWeb; pkg=moonlightweb
+          else
+            e=dev; app=MoonlightWebDev; pkg=moonlightweb-dev
+          fi
+          { echo "edition=$e"; echo "app=$app"; echo "pkg=$pkg"; } >> "$GITHUB_OUTPUT"
+          echo "Edition: $e ($app)" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Windows (x64 + ARM64) ────────────────────────────────────────────────
   windows:
@@ -153,7 +175,8 @@ jobs:
           MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
         run: |
           $args = @("-S","backend","-B","build","-G","Ninja","-DCMAKE_BUILD_TYPE=Release",
-                    "-DMW_VERSION=${{ needs.setup.outputs.version }}")
+                    "-DMW_VERSION=${{ needs.setup.outputs.version }}",
+                    "-DMW_EDITION=${{ needs.setup.outputs.edition }}")
           if ("${{ matrix.arch }}" -eq "arm64") {
             $args += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
             $args += "-DVCPKG_TARGET_TRIPLET=arm64-windows"
@@ -172,15 +195,15 @@ jobs:
       - name: Archive debug symbols (PDB)
         uses: actions/upload-artifact@v6
         with:
-          name: MoonlightWeb-pdb-${{ matrix.arch }}-${{ needs.setup.outputs.version }}
-          path: build/MoonlightWeb.pdb
+          name: ${{ needs.setup.outputs.app }}-pdb-${{ matrix.arch }}-${{ needs.setup.outputs.version }}
+          path: build/${{ needs.setup.outputs.app }}.pdb
           if-no-files-found: error
 
       - name: Stage bundle
         run: cmake --install build --prefix dist
 
       - name: Deploy Qt runtime
-        run: windeployqt --release dist/MoonlightWeb.exe
+        run: windeployqt --release dist/${{ needs.setup.outputs.app }}.exe
 
       # windeployqt ships only the schannel/certonly TLS backends. Force-copy the
       # OpenSSL backend plugin so QSslSocket::setActiveBackend("openssl") (main.cpp)
@@ -242,7 +265,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: unsigned-payload-${{ matrix.arch }}
-          path: dist/MoonlightWeb.exe
+          path: dist/${{ needs.setup.outputs.app }}.exe
           if-no-files-found: error
           retention-days: 1
 
@@ -276,9 +299,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $signed = "signed-payload\MoonlightWeb.exe"
+          $signed = "signed-payload\${{ needs.setup.outputs.app }}.exe"
           if (-not (Test-Path $signed)) { throw "SignPath returned no $signed" }
-          Copy-Item $signed dist\MoonlightWeb.exe -Force
+          Copy-Item $signed dist\${{ needs.setup.outputs.app }}.exe -Force
 
       # Interactive installer: stepped wizard (Internet authorization, ViGEmBus,
       # Desktop admin shortcut). It is the only Windows artifact shipped (no raw
@@ -296,12 +319,13 @@ jobs:
         # at the top of moonlightweb.iss); the installer is signed below.
         run: |
           $ErrorActionPreference = "Stop"
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
-            "/DSourceDir=$(Resolve-Path dist)" `
-            "/DMyArch=${{ matrix.arch }}" `
-            "/DMyAppVersion=${{ needs.setup.outputs.version }}" `
-            "/O$(Get-Location)" `
-            backend\installer\moonlightweb.iss
+          $iscc = @("/DSourceDir=$(Resolve-Path dist)",
+                    "/DMyArch=${{ matrix.arch }}",
+                    "/DMyAppVersion=${{ needs.setup.outputs.version }}",
+                    "/O$(Get-Location)")
+          # The DEV edition: its own AppId, names and icon (see the .iss header).
+          if ("${{ needs.setup.outputs.edition }}" -eq "dev") { $iscc += "/DDevEdition" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" @iscc backend\installer\moonlightweb.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
       - name: Upload installer for signing
@@ -310,7 +334,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: unsigned-installer-${{ matrix.arch }}
-          path: MoonlightWeb-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe
+          path: ${{ needs.setup.outputs.app }}-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe
           if-no-files-found: error
           retention-days: 1
 
@@ -336,7 +360,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $name = "MoonlightWeb-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe"
+          $name = "${{ needs.setup.outputs.app }}-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe"
           $signed = Join-Path "signed-installer" $name
           if (-not (Test-Path $signed)) { throw "SignPath returned no $signed" }
           Copy-Item $signed $name -Force
@@ -356,14 +380,14 @@ jobs:
       # workflow_dispatch with no tag).
       - uses: actions/upload-artifact@v6
         with:
-          name: MoonlightWeb-windows-${{ matrix.arch }}-v${{ needs.setup.outputs.version }}
-          path: MoonlightWeb-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe
+          name: ${{ needs.setup.outputs.app }}-windows-${{ matrix.arch }}-v${{ needs.setup.outputs.version }}
+          path: ${{ needs.setup.outputs.app }}-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe
 
       # Published to the GitHub Release only on a v* tag push.
       - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: MoonlightWeb-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe
+          files: ${{ needs.setup.outputs.app }}-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe
 
   # ── Linux x64 (.deb + .rpm + AppImage) ───────────────────────────────────
   # One linuxdeploy AppDir (bundled Qt, $ORIGIN rpaths) feeds all three outputs:
@@ -432,7 +456,8 @@ jobs:
         run: |
           set -o pipefail
           cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DMW_VERSION=${{ needs.setup.outputs.pkg_version }} | tee configure.log
+            -DMW_VERSION=${{ needs.setup.outputs.pkg_version }} \
+            -DMW_EDITION=${{ needs.setup.outputs.edition }} | tee configure.log
           # The native backend is optional at configure time (a WARNING, not an
           # error, so a developer without the -dev packages can still build).
           # A release is not a developer: a package that silently carries the
@@ -455,12 +480,21 @@ jobs:
       # the binary it execs, in the AppImage too (where, with no capability to
       # hand over, it is a plain exec).
       - name: Assemble AppDir
+        env:
+          APP: ${{ needs.setup.outputs.app }}
+          EDITION: ${{ needs.setup.outputs.edition }}
         run: |
           cmake --install build --prefix stage
           mkdir -p AppDir/usr/bin
-          cp build/MoonlightWeb build/moonlightweb-launch AppDir/usr/bin/
+          cp "build/$APP" build/moonlightweb-launch AppDir/usr/bin/
           cp -r stage/frontend AppDir/usr/bin/frontend
-          cp frontend/assets/icon-512.png AppDir/MoonlightWeb.png
+          # The DEV edition wears the blue icon (scripts/make-dev-icons.py).
+          icon=frontend/assets/icon-512.png
+          if [ "$EDITION" = dev ]; then icon=frontend/assets/dev/icon-512.png; fi
+          cp "$icon" "AppDir/$APP.png"
+          # The menu entry linuxdeploy embeds, under the edition's name.
+          sed -e "s/^Name=.*/Name=$APP/" -e "s/^Exec=.*/Exec=$APP/" -e "s/^Icon=.*/Icon=$APP/" \
+            backend/packaging/moonlightweb.desktop > "build/$APP.desktop"
 
       - name: Deploy Qt into AppDir
         # EXTRA_PLATFORM_PLUGINS adds the offscreen QPA plugin next to the xcb one
@@ -472,6 +506,7 @@ jobs:
         # neither DISPLAY nor WAYLAND_DISPLAY is set.
         env:
           EXTRA_PLATFORM_PLUGINS: libqoffscreen.so
+          APP: ${{ needs.setup.outputs.app }}
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
@@ -487,9 +522,9 @@ jobs:
           # and the whole set is asserted absent below so a list change upstream
           # cannot quietly bundle one of them.
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
-            -e build/MoonlightWeb \
-            -d backend/packaging/moonlightweb.desktop \
-            -i AppDir/MoonlightWeb.png \
+            -e "build/$APP" \
+            -d "build/$APP.desktop" \
+            -i "AppDir/$APP.png" \
             --exclude-library 'libva.so.*' \
             --exclude-library 'libva-drm.so.*' \
             --exclude-library 'libGLESv2.so.*' \
@@ -510,7 +545,7 @@ jobs:
           # on Ubuntu 22.04, 05/09/2026). Dispatch to the driver's GLES goes
           # through glvnd either way.
           for lib in libdrm.so.2 libva.so.2 libEGL.so.1 libgbm.so.1 libpipewire-0.3.so.0; do
-            readelf -d AppDir/usr/bin/MoonlightWeb | grep -q "NEEDED.*$lib" \
+            readelf -d "AppDir/usr/bin/$APP" | grep -q "NEEDED.*$lib" \
               || { echo "::error::MoonlightWeb does not link $lib — the native Linux backend is not in this build"; exit 1; }
           done
 
@@ -536,31 +571,31 @@ jobs:
       - name: Build AppImage
         run: |
           ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
-          mv MoonlightWeb*.AppImage moonlightweb-${{ needs.setup.outputs.pkg_version }}-linux-x64.AppImage
+          mv ${{ needs.setup.outputs.app }}*.AppImage ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.AppImage
 
       # Native packages: double-click installs via the distro's GUI installer
       # (no chmod needed). .deb → Debian/Ubuntu/Mint, .rpm → Fedora/RHEL/Nobara.
       - name: Build .deb + .rpm
         run: |
           chmod +x backend/packaging/linux/make-packages.sh
-          backend/packaging/linux/make-packages.sh AppDir ${{ needs.setup.outputs.pkg_version }} .
+          backend/packaging/linux/make-packages.sh AppDir ${{ needs.setup.outputs.pkg_version }} . ${{ needs.setup.outputs.edition }}
 
       # Downloadable on every run (incl. the CI call on main, which never tags).
       - uses: actions/upload-artifact@v6
         with:
-          name: moonlightweb-linux-x64-v${{ needs.setup.outputs.pkg_version }}
+          name: ${{ needs.setup.outputs.pkg }}-linux-x64-v${{ needs.setup.outputs.pkg_version }}
           path: |
-            moonlightweb-${{ needs.setup.outputs.pkg_version }}-linux-x64.deb
-            moonlightweb-${{ needs.setup.outputs.pkg_version }}-linux-x64.rpm
-            moonlightweb-${{ needs.setup.outputs.pkg_version }}-linux-x64.AppImage
+            ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.deb
+            ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.rpm
+            ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.AppImage
 
       - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            moonlightweb-${{ needs.setup.outputs.pkg_version }}-linux-x64.deb
-            moonlightweb-${{ needs.setup.outputs.pkg_version }}-linux-x64.rpm
-            moonlightweb-${{ needs.setup.outputs.pkg_version }}-linux-x64.AppImage
+            ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.deb
+            ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.rpm
+            ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.AppImage
 
   # ── macOS arm64 (.pkg) ───────────────────────────────────────────────────
   macos:
@@ -600,7 +635,8 @@ jobs:
           MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
         run: |
           cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DMW_VERSION=${{ needs.setup.outputs.version }}
+            -DMW_VERSION=${{ needs.setup.outputs.version }} \
+            -DMW_EDITION=${{ needs.setup.outputs.edition }}
           cmake --build build -j
 
       # Same gate the CI build job applies; packaging is the only build on a
@@ -611,10 +647,15 @@ jobs:
       - name: Assemble .app bundle
         env:
           VERSION: ${{ needs.setup.outputs.version }}
+          APP_NAME: ${{ needs.setup.outputs.app }}
+          EDITION: ${{ needs.setup.outputs.edition }}
+          # Its own bundle id: TCC keeps the DEV edition's grants apart, and
+          # installer(8) does not take one edition for an upgrade of the other.
+          IDENT: ${{ needs.setup.outputs.edition == 'dev' && 'com.moonlightweb.server.dev' || 'com.moonlightweb.server' }}
         run: |
-          APP=MoonlightWeb.app
+          APP="$APP_NAME.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-          cp build/MoonlightWeb "$APP/Contents/MacOS/MoonlightWeb"
+          cp "build/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
           # Frontend assets go in Resources/, NOT MacOS/: codesign treats every
           # file under Contents/MacOS as code and rejects non-code assets. The
           # backend falls back to ../Resources/frontend at runtime. `cmake
@@ -626,24 +667,26 @@ jobs:
           # App icon: Finder/Dock ignore the bundle without a real .icns, so
           # derive the iconset from the 512px PNG (skip the 1024 @2x variant —
           # upscaling the 512 source buys nothing).
+          ICON=frontend/assets/icon-512.png
+          if [ "$EDITION" = dev ]; then ICON=frontend/assets/dev/icon-512.png; fi
           mkdir icon.iconset
           for s in 16 32 128 256; do
-            sips -z $s $s frontend/assets/icon-512.png --out icon.iconset/icon_${s}x${s}.png >/dev/null
+            sips -z $s $s "$ICON" --out icon.iconset/icon_${s}x${s}.png >/dev/null
             d=$((s * 2))
-            sips -z $d $d frontend/assets/icon-512.png --out icon.iconset/icon_${s}x${s}@2x.png >/dev/null
+            sips -z $d $d "$ICON" --out icon.iconset/icon_${s}x${s}@2x.png >/dev/null
           done
-          sips -z 512 512 frontend/assets/icon-512.png --out icon.iconset/icon_512x512.png >/dev/null
-          iconutil -c icns icon.iconset -o "$APP/Contents/Resources/MoonlightWeb.icns"
+          sips -z 512 512 "$ICON" --out icon.iconset/icon_512x512.png >/dev/null
+          iconutil -c icns icon.iconset -o "$APP/Contents/Resources/$APP_NAME.icns"
 
           cat > "$APP/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
-            <key>CFBundleExecutable</key><string>MoonlightWeb</string>
-            <key>CFBundleIdentifier</key><string>com.moonlightweb.server</string>
-            <key>CFBundleName</key><string>MoonlightWeb</string>
+            <key>CFBundleExecutable</key><string>${APP_NAME}</string>
+            <key>CFBundleIdentifier</key><string>${IDENT}</string>
+            <key>CFBundleName</key><string>${APP_NAME}</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleIconFile</key><string>MoonlightWeb</string>
+            <key>CFBundleIconFile</key><string>${APP_NAME}</string>
             <key>CFBundleShortVersionString</key><string>${VERSION}</string>
             <key>CFBundleVersion</key><string>${VERSION}</string>
             <key>LSMinimumSystemVersion</key><string>12.0</string>
@@ -754,10 +797,12 @@ jobs:
       - name: Deploy Qt + sign bundle
         env:
           IDENTITY: ${{ steps.sign.outputs.identity }}
+          APP_NAME: ${{ needs.setup.outputs.app }}
+          IDENT: ${{ needs.setup.outputs.edition == 'dev' && 'com.moonlightweb.server.dev' || 'com.moonlightweb.server' }}
           KEYCHAIN_FLAG: ${{ steps.sign.outputs.keychain_flag }}
         run: |
           # Deploy the Qt frameworks into the bundle.
-          macdeployqt MoonlightWeb.app
+          macdeployqt "$APP_NAME.app"
 
           # Re-sign with the identity above ("-" = ad hoc when the secret is
           # unset). Either way it stops Gatekeeper flagging the bundle as
@@ -773,21 +818,21 @@ jobs:
           # then the app bundle last, forcing every signature to the one identity.
           # $KEYCHAIN_FLAG is deliberately unquoted: two words, or none.
           SIGN=(codesign --force --timestamp=none $KEYCHAIN_FLAG -s "$IDENTITY")
-          find MoonlightWeb.app/Contents/Frameworks \
+          find "$APP_NAME.app/Contents/Frameworks" \
             \( -name '*.dylib' -o -name '*.framework' \) -print0 |
             xargs -0 -I {} "${SIGN[@]}" {}
           # Any plugins deployed alongside (platforms, tls, imageformats, ...).
-          find MoonlightWeb.app/Contents/PlugIns -name '*.dylib' -print0 2>/dev/null |
+          find "$APP_NAME.app/Contents/PlugIns" -name '*.dylib' -print0 2>/dev/null |
             xargs -0 -I {} "${SIGN[@]}" {} || true
           # Main executable — with the bundle's identifier, so the requirement
           # TCC records names the app and not the file — then the whole bundle
           # (seals everything above).
-          "${SIGN[@]}" --identifier com.moonlightweb.server MoonlightWeb.app/Contents/MacOS/MoonlightWeb
-          "${SIGN[@]}" MoonlightWeb.app
+          "${SIGN[@]}" --identifier "$IDENT" "$APP_NAME.app/Contents/MacOS/$APP_NAME"
+          "${SIGN[@]}" "$APP_NAME.app"
           # Verify the seal is internally consistent (no Team-ID mismatch), and
           # print the requirement the grants will be keyed on.
-          codesign --verify --deep --strict --verbose=2 MoonlightWeb.app
-          codesign -d -r- MoonlightWeb.app 2>&1 | grep designated | tee -a "$GITHUB_STEP_SUMMARY"
+          codesign --verify --deep --strict --verbose=2 "$APP_NAME.app"
+          codesign -d -r- "$APP_NAME.app" 2>&1 | grep designated | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Build interactive .pkg installer
         env:
@@ -802,19 +847,20 @@ jobs:
         # signature needs a Developer ID Installer certificate to mean anything
         # to installer(8), and the app inside carries its own (see above).
         run: |
-          APP="$PWD/MoonlightWeb.app" \
-          OUT="$PWD/moonlightweb-${{ needs.setup.outputs.version }}-macos-arm64.pkg" \
+          EDITION=${{ needs.setup.outputs.edition }} \
+          APP="$PWD/${{ needs.setup.outputs.app }}.app" \
+          OUT="$PWD/${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.version }}-macos-arm64.pkg" \
             bash backend/installer/macos/build-pkg.sh
 
       - uses: actions/upload-artifact@v6
         with:
-          name: moonlightweb-macos-arm64-v${{ needs.setup.outputs.version }}
-          path: moonlightweb-${{ needs.setup.outputs.version }}-macos-arm64.pkg
+          name: ${{ needs.setup.outputs.pkg }}-macos-arm64-v${{ needs.setup.outputs.version }}
+          path: ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.version }}-macos-arm64.pkg
 
       - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: moonlightweb-${{ needs.setup.outputs.version }}-macos-arm64.pkg
+          files: ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.version }}-macos-arm64.pkg
 
   # ── Homebrew tap ─────────────────────────────────────────────────────────
   # Publishes the cask that makes `brew install --cask linckosz/tap/moonlightweb`
@@ -855,7 +901,7 @@ jobs:
         if: steps.tap.outputs.enabled == 'true'
         uses: actions/download-artifact@v6
         with:
-          name: moonlightweb-macos-arm64-v${{ needs.setup.outputs.version }}
+          name: ${{ needs.setup.outputs.pkg }}-macos-arm64-v${{ needs.setup.outputs.version }}
 
       - name: Render the cask
         if: steps.tap.outputs.enabled == 'true'
@@ -981,7 +1027,7 @@ jobs:
         if: steps.sign.outputs.enabled == 'true'
         uses: actions/download-artifact@v6
         with:
-          name: moonlightweb-linux-x64-v${{ needs.setup.outputs.pkg_version }}
+          name: ${{ needs.setup.outputs.pkg }}-linux-x64-v${{ needs.setup.outputs.pkg_version }}
 
       - name: Import the signing key
         if: steps.sign.outputs.enabled == 'true'
@@ -1085,7 +1131,7 @@ jobs:
         if: steps.aur.outputs.enabled == 'true'
         uses: actions/download-artifact@v6
         with:
-          name: moonlightweb-linux-x64-v${{ needs.setup.outputs.pkg_version }}
+          name: ${{ needs.setup.outputs.pkg }}-linux-x64-v${{ needs.setup.outputs.pkg_version }}
 
       # Both files are rendered from the same two values, because the AUR reads
       # .SRCINFO and makepkg reads the PKGBUILD — a mismatch between them is the
