@@ -370,10 +370,12 @@ printf 'COMPOSE_FILE=docker-compose.dev.yml\nCOMPOSE_PROJECT_NAME=mw-dev\nMW_DOM
   "$(grep ^MW_DOMAIN= ~/moonlight-web/deploy/powerdns/.env | cut -d= -f2)" "$(openssl rand -hex 32)" > .env
 cd ~
 
-# 2. the DNS name (in the running pdns, no restart; the zone is DNSSEC-signed → rectify)
+# 2. the DNS name (in the running pdns, no restart; the zone is DNSSEC-signed → rectify).
+#    -T and </dev/null: without them `exec` reads the terminal and swallows the
+#    lines pasted after it (seen in the rehearsal — the rectify never ran).
 cd ~/moonlight-web/deploy/powerdns
-docker compose exec pdns pdnsutil --config-dir=/etc/powerdns add-record "$(grep ^MW_DOMAIN= .env | cut -d= -f2)" stream.dev A "$(grep ^MW_PUBLIC_IP= .env | cut -d= -f2)"
-docker compose exec pdns pdnsutil --config-dir=/etc/powerdns rectify-zone "$(grep ^MW_DOMAIN= .env | cut -d= -f2)"
+docker compose exec -T pdns pdnsutil --config-dir=/etc/powerdns add-record "$(grep ^MW_DOMAIN= .env | cut -d= -f2)" stream.dev A "$(grep ^MW_PUBLIC_IP= .env | cut -d= -f2)" </dev/null
+docker compose exec -T pdns pdnsutil --config-dir=/etc/powerdns rectify-zone "$(grep ^MW_DOMAIN= .env | cut -d= -f2)" </dev/null
 cd ~
 
 # 3a. production onto the first tag that carries this layout (v0.3.0 here, or a
