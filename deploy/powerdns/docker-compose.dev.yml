@@ -1,0 +1,83 @@
+# MoonlightWeb — the STAGING rendezvous: where `main` runs, on the same box as
+# production, without ever touching it.
+#
+#   mw-rendezvous  a second introduction server, its own claim store and secret
+#   caddy          renders stream.caddy from THIS checkout, plain HTTP, no port
+#                  published — production's Caddy proxies stream.dev.{domain}
+#                  to it over the shared `mw-edge` network and owns the cert
+#
+# Nothing else. STUN is coturn from production (stream.dev.* resolves to the
+# same address, and coturn listens on the host); DNS, the site, the update
+# relay and analytics have no staging copy, and a dev build without the baked
+# MW_PDNS_TOKEN never calls the relays anyway.
+#
+# How it is meant to be run — from a SEPARATE clone, on main:
+#
+#   ~/moonlight-web-dev/deploy/powerdns/.env:
+#     COMPOSE_FILE=docker-compose.dev.yml
+#     COMPOSE_PROJECT_NAME=mw-dev
+#     MW_DOMAIN=…                  (the same parent domain as production)
+#     MW_RDV_OWNER_SECRET=…        (its OWN secret — openssl rand -hex 32)
+#
+# The first two lines are what make the reflex `docker compose up -d --build`
+# safe in that directory: without them, compose would pick up the production
+# file that sits beside this one and — same container names — replace
+# production with whatever main holds. The `name:` below, the container names
+# and the image tags are the second layer of the same guard.
+#
+# A host is pointed here with MW_DOMAIN=dev.{domain}; a `--dev` instance does
+# that by itself (main.cpp).
+
+name: mw-dev
+
+services:
+  mw-rendezvous:
+    build: ./mw-rendezvous
+    image: moonlight-mw-rendezvous-dev:latest
+    container_name: mw-dev-rendezvous
+    restart: unless-stopped
+    environment:
+      MW_RDV_OWNER_SECRET: ${MW_RDV_OWNER_SECRET}
+      MW_RDV_MAX_NEW_PER_HOUR: ${MW_RDV_MAX_NEW_PER_HOUR:-20}
+      MW_RDV_MAX_PEER_PER_MIN: ${MW_RDV_MAX_PEER_PER_MIN:-30}
+      MW_RDV_MAX_SESSIONS: ${MW_RDV_MAX_SESSIONS:-4}
+      MW_RDV_MIN_PROTO: ${MW_RDV_MIN_PROTO:-1}
+    volumes:
+      - mwrdv_data:/data                            # mw-dev_mwrdv_data, not production's
+    networks: [devnet]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 200
+    mem_limit: 128m
+
+  caddy:
+    build: ./caddy
+    image: moonlight-caddy-dev:latest
+    # This name is what production's Caddyfile proxies to. Change both or
+    # neither.
+    container_name: mw-dev-caddy
+    restart: unless-stopped
+    depends_on: [mw-rendezvous]
+    environment:
+      MW_DOMAIN: ${MW_DOMAIN}
+      MW_CADDYFILE_TMPL: /etc/caddy/Caddyfile.dev.tmpl
+    # No ports. It is reachable from production's Caddy over mw-edge and from
+    # nowhere else.
+    volumes:
+      - ../../bootstrap:/srv/bootstrap:ro            # THIS checkout's bootstrap
+    networks: [devnet, mw-edge]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    pids_limit: 200
+    mem_limit: 128m
+
+volumes:
+  mwrdv_data:
+
+networks:
+  devnet:
+    driver: bridge
+  mw-edge:
+    external: true
+    name: mw-edge

@@ -1,6 +1,9 @@
 # Caddy — HTTPS for the public-facing parts of the DNS stack:
 #   - api.{MW_DOMAIN}        reverse proxy to the PowerDNS REST API
 #   - {MW_DOMAIN} + www.*    static presentation website (./site)
+#   - stream.{MW_DOMAIN}     the entry page + the rendezvous API (stream.caddy)
+#   - stream.dev.{MW_DOMAIN} the STAGING copy of the above, proxied to the
+#                            dev compose project (docker-compose.dev.yml)
 #
 # Rendered at boot by the caddy entrypoint:
 #   @MW_DOMAIN@       → parent domain
@@ -14,6 +17,45 @@
 
 {
 	order rate_limit before reverse_proxy
+}
+
+# The body of the stream.* site, shared with the staging Caddy so the two serve
+# the same thing. Defined in its own file for that reason alone.
+import /etc/caddy/stream.caddy
+
+# For a name that exists to be tested on, never found. Robots that read
+# robots.txt are told to stay out, and every response says the same in a
+# header for the ones that only read those — including the AI crawlers, named
+# so that a policy of "we obey a specific opt-out only" still applies to them.
+#
+# Be precise about what this buys: the name is not a secret. It is in public
+# DNS and, the moment its certificate is issued, in the Certificate
+# Transparency logs, so anyone who looks for it will find it. What this does is
+# keep it out of the places nobody looks for it — search results and the
+# training sets behind the answers people get instead of search results.
+(no_index) {
+	header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noimageindex"
+	@robots path /robots.txt
+	respond @robots <<ROBOTS
+		User-agent: *
+		Disallow: /
+
+		User-agent: GPTBot
+		User-agent: OAI-SearchBot
+		User-agent: ChatGPT-User
+		User-agent: ClaudeBot
+		User-agent: Claude-SearchBot
+		User-agent: Claude-User
+		User-agent: Google-Extended
+		User-agent: PerplexityBot
+		User-agent: Perplexity-User
+		User-agent: CCBot
+		User-agent: Bytespider
+		User-agent: Applebot-Extended
+		User-agent: meta-externalagent
+		User-agent: Amazonbot
+		Disallow: /
+		ROBOTS 200
 }
 
 api.@MW_DOMAIN@ {
@@ -107,91 +149,34 @@ stats.@MW_DOMAIN@ {
 # on the site with nothing behind it. Nothing redirects any more: this host
 # serves the entry page and the API, and the address the user sees is the address
 # they stay on.
+#
+# The body is in stream.caddy — the routes, the headers, the rate limit — so
+# that the staging copy below serves exactly the same thing.
 stream.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
+	import stream_site
+}
 
-	header {
-		X-Content-Type-Options "nosniff"
-		# The identifier is in the path, so it would otherwise ride along in the
-		# Referer of every outbound link and asset.
-		Referrer-Policy "no-referrer"
-		Strict-Transport-Security "max-age=31536000"
-		-Server
-	}
-
-	# Signalling API: /v1/claim, /v1/host and /v1/peer. Matched ahead of the page
-	# handler below, and the only reason an identifier can safely be a bare path
-	# segment: "v1" is not 26 Crockford characters, so the two can never collide.
-	handle /v1/* {
-		# The budget that matters is inside mw-rendezvous, which distinguishes a
-		# new claim from a host reconnecting and a browser from either. This one
-		# is the coarse outer bound on connection attempts — and unlike the
-		# redirect-only host this replaces, the block ends in a reverse_proxy, so
-		# the global `order rate_limit before reverse_proxy` puts the limiter
-		# where it will actually run.
-		#
-		# It counts connection ATTEMPTS, not traffic: a held line is one request
-		# that then stays open for days, so a host is charged once per reconnect.
-		rate_limit {
-			zone mw_rendezvous {
-				key {remote_host}
-				events 120
-				window 1m
-			}
-		}
-		reverse_proxy mw-rendezvous:8090
-	}
-
-	# Everything else is the bootstrap: a few kilobytes of HTML and JavaScript
-	# that install a Service Worker, run the MW-BIND-v1 handshake and then fetch
-	# the actual interface from the user's own machine over WebRTC.
-	#
-	# Every path serves the same page — /{id} is read by the page from its own
-	# location, so there is nothing per-identifier on disk and no redirect in the
-	# way. try_files, not rewrite, so a real asset still wins over the fallback.
-	handle {
-		header {
-			# This one IS a document, so it gets the page-shaped protections the
-			# API block has no use for.
-			X-Frame-Options "DENY"
-			# Always ask before reusing. With no Cache-Control the browser is free
-			# to guess a freshness lifetime from Last-Modified, and it guesses
-			# generously: a file that has sat on disk a while is held for days.
-			# Wrong for THIS handful of files, because they are the entry point —
-			# a redeploy a browser refuses to see leaves the person on an old page
-			# with no way to know it, and the only cure is a hard reload nobody
-			# thinks to try.
-			#
-			# "no-cache" still stores the copy, it only revalidates before reusing
-			# it, so the ordinary case is a 304 on a few kilobytes. The bootstrap
-			# is deliberately tiny; this is part of what that buys.
-			#
-			# The interface itself is unaffected: it never comes from here. It
-			# arrives over the tunnel and lives in the service worker's cache,
-			# stamped with the host and version (see boot.js).
-			Cache-Control "no-cache"
-			# Kept in step with the <meta> CSP inside index.html, which is what
-			# protects the copy published to GitHub Pages (Pages serves no
-			# headers of its own). The two are enforced independently and
-			# intersect, so a directive relaxed in one place and not the other
-			# silently becomes the strictest of the pair — change both together.
-			# connect-src names the wss: scheme as well as 'self'. CSP3 says
-			# 'self' already covers a WebSocket back to the same origin, and
-			# WebKit has not always agreed — this page's only outbound
-			# connection is exactly that WebSocket, so relying on the disputed
-			# reading would break the entry page on iOS and nowhere else.
-			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-		}
-		encode zstd gzip
-		root * /srv/bootstrap
-		try_files {path} /index.html
-		# CNAME only means something to GitHub Pages, which serves the reference
-		# copy of these same files. Serving it here would just publish that
-		# host's name to anyone who asks.
-		file_server {
-			hide CNAME
-		}
-	}
+# stream.dev.@MW_DOMAIN@ — the STAGING rendezvous, where `main` runs.
+#
+# Same entry page, same API, served by a second, independent pair of containers
+# (docker-compose.dev.yml: its own mw-rendezvous with its own claim store and
+# secret, its own Caddy rendering stream.caddy from the dev checkout). This
+# block only lends them the certificate: it proxies to that Caddy over the
+# shared `mw-edge` network and touches nothing else, so it is written once and
+# never edited for a change on the dev side — which is exactly what keeps a dev
+# rebuild from ever being a reason to rebuild THIS container.
+#
+# `dev.` is a label of its own so that MW_DOMAIN=dev.@MW_DOMAIN@ on a host moves
+# everything the host derives from the domain at once: the line it holds, the
+# address it hands out, and STUN — the browser asks stream.dev.…:3478, which is
+# this same box, so coturn needs no second name.
+#
+# When the dev project is down this answers 502, and that is the right answer.
+stream.dev.@MW_DOMAIN@ {
+	@SITE_TLS_LINE@
+	import no_index
+	reverse_proxy mw-dev-caddy:80
 }
 
 # Presentation website — apex + www both serve the static ./site folder.

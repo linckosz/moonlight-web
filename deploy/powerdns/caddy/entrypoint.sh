@@ -2,13 +2,17 @@
 # Render the Caddyfile from env, then run Caddy. User cert files take priority
 # over automatic Let's Encrypt.
 #
-#   MW_DOMAIN     parent domain (API served at api.{MW_DOMAIN})   [required]
-#   MW_TLS_CERT   path to a user TLS cert (PEM, fullchain)        [optional]
-#   MW_TLS_KEY    path to the matching private key (PEM)          [optional]
-#   MW_TLS_EMAIL  ACME account email for Let's Encrypt            [optional]
+#   MW_DOMAIN          parent domain (API served at api.{MW_DOMAIN})   [required]
+#   MW_TLS_CERT        path to a user TLS cert (PEM, fullchain)        [optional]
+#   MW_TLS_KEY         path to the matching private key (PEM)          [optional]
+#   MW_TLS_EMAIL       ACME account email for Let's Encrypt            [optional]
+#   MW_CADDYFILE_TMPL  template to render (default: the production one;
+#                      docker-compose.dev.yml points it at
+#                      /etc/caddy/Caddyfile.dev.tmpl)                  [optional]
 set -eu
 
 : "${MW_DOMAIN:?MW_DOMAIN is required (parent domain, e.g. example.top)}"
+TEMPLATE="${MW_CADDYFILE_TMPL:-/etc/caddy/Caddyfile.tmpl}"
 
 # TLS for the API host: user cert wins, else ACME (email if provided).
 TLS_LINE=""
@@ -30,7 +34,7 @@ fi
 sed -e "s|@MW_DOMAIN@|${MW_DOMAIN}|g" \
     -e "s|@TLS_LINE@|${TLS_LINE}|g" \
     -e "s|@SITE_TLS_LINE@|${SITE_TLS_LINE}|g" \
-    /etc/caddy/Caddyfile.tmpl > /etc/caddy/Caddyfile
+    "$TEMPLATE" > /etc/caddy/Caddyfile
 
-echo "[mw-caddy] Starting Caddy"
+echo "[mw-caddy] Starting Caddy ($TEMPLATE)"
 exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile

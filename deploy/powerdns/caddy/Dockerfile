@@ -8,8 +8,13 @@ RUN XCADDY_GO_BUILD_FLAGS="-v" xcaddy build --with github.com/mholt/caddy-rateli
 
 FROM caddy:2
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
-COPY Caddyfile.tmpl /etc/caddy/Caddyfile.tmpl
-COPY entrypoint.sh  /usr/local/bin/mw-caddy-entrypoint.sh
+# Both templates go in: the same image serves production (Caddyfile.tmpl) and
+# the staging rendezvous (Caddyfile.dev.tmpl, selected by MW_CADDYFILE_TMPL).
+# stream.caddy is the site body they share.
+COPY Caddyfile.tmpl     /etc/caddy/Caddyfile.tmpl
+COPY Caddyfile.dev.tmpl /etc/caddy/Caddyfile.dev.tmpl
+COPY stream.caddy       /etc/caddy/stream.caddy
+COPY entrypoint.sh      /usr/local/bin/mw-caddy-entrypoint.sh
 RUN chmod +x /usr/local/bin/mw-caddy-entrypoint.sh
 # The presentation website (repo-root ./website) is bind-mounted at /srv/site
 # by docker-compose — see the caddy service volumes.

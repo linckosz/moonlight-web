@@ -17,6 +17,17 @@
 #   docker compose up -d --build
 #
 # Point your registrar's glue/NS records at MW_PUBLIC_IP (see README.md).
+#
+# This is PRODUCTION. It follows a release tag, never main — deploy-prod.sh is
+# how it moves. The staging copy of the rendezvous (docker-compose.dev.yml) is
+# a separate compose project fed from a separate checkout; see README.md
+# §"Production and staging on one box".
+
+# Pinned, because the name is what the volumes are prefixed with
+# (powerdns_mwrdv_data holds every identifier claim). It is the name the
+# directory already implied; writing it down stops a checkout under another
+# directory name — or a stray -p — from starting a second, empty production.
+name: powerdns
 
 services:
   # ── PowerDNS authoritative server (internal only) ──────────────────────────
@@ -114,6 +125,10 @@ services:
       MW_RDV_MAX_PEER_PER_MIN: ${MW_RDV_MAX_PEER_PER_MIN:-30}
       # Concurrent browsers per host.
       MW_RDV_MAX_SESSIONS: ${MW_RDV_MAX_SESSIONS:-4}
+      # Lowest protocol revision still served (see hub.go, protoCurrent).
+      # Raising it retires old clients with a code they can show, instead of
+      # a failure that looks like the network. Decide on the version census.
+      MW_RDV_MIN_PROTO: ${MW_RDV_MIN_PROTO:-1}
     volumes:
       - mwrdv_data:/data                            # identifier claims persist
     networks: [mwnet]
@@ -220,7 +235,10 @@ services:
       # ./bootstrap). Same files the pages.yml workflow publishes to GitHub
       # Pages, which stays as the digest-stamped reference copy.
       - ../../bootstrap:/srv/bootstrap:ro
-    networks: [mwnet]
+    # mw-edge as well: stream.dev.${MW_DOMAIN} is proxied to the staging
+    # project's Caddy (mw-dev-caddy), which joins that network from its own
+    # compose file. Nothing else crosses it.
+    networks: [mwnet, mw-edge]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     cap_add: ["NET_BIND_SERVICE"]                   # bind :80 / :443
@@ -288,3 +306,10 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/24
+  # The one link between production and staging: production's Caddy proxies
+  # stream.dev.* across it. Owned (created) here, joined as `external` by
+  # docker-compose.dev.yml — so production comes up on its own, and the dev
+  # project needs production to exist first, which is the right dependency.
+  mw-edge:
+    driver: bridge
+    name: mw-edge

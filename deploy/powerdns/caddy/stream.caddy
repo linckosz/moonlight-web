@@ -1,0 +1,143 @@
+# The body of the stream.{domain} site, as a snippet.
+#
+# Two Caddy processes serve it: the production one, under its own TLS name
+# (Caddyfile.tmpl), and the staging one behind it, on plain HTTP inside the
+# compose network (Caddyfile.dev.tmpl, reached as stream.dev.{domain} through a
+# fixed reverse_proxy block in production). One file so that what is tested on
+# staging is what production runs — a route or header changed here reaches
+# staging on the next `up --build` of the DEV project alone, and reaches
+# production with the next tag. Production's own Caddyfile never needs to change
+# for it, which is the point: rebuilding production's Caddy restarts nothing but
+# Caddy, and doing it for a staging experiment was how the held host lines used
+# to get dropped.
+#
+# Imported by both templates with `import /etc/caddy/stream.caddy` at top level,
+# then `import stream_site` inside the site block. The site block itself — the
+# name, the `tls` line — stays in the template, since that is what differs.
+
+# Response headers for everything that is a document or a script of the entry
+# page. Shared by the two file-serving handles below.
+(bootstrap_headers) {
+	header {
+		# The entry page IS a document, so it gets the page-shaped protections
+		# the API block has no use for.
+		X-Frame-Options "DENY"
+		# Always ask before reusing. With no Cache-Control the browser is free
+		# to guess a freshness lifetime from Last-Modified, and it guesses
+		# generously: a file that has sat on disk a while is held for days.
+		# Wrong for THIS handful of files, because they are the entry point —
+		# a redeploy a browser refuses to see leaves the person on an old page
+		# with no way to know it, and the only cure is a hard reload nobody
+		# thinks to try.
+		#
+		# "no-cache" still stores the copy, it only revalidates before reusing
+		# it, so the ordinary case is a 304 on a few kilobytes. The bootstrap
+		# is deliberately tiny; this is part of what that buys.
+		#
+		# The interface itself is unaffected: it never comes from here. It
+		# arrives over the tunnel and lives in the service worker's cache,
+		# stamped with the host and version (see v1/boot.js).
+		Cache-Control "no-cache"
+		# Kept in step with the <meta> CSP inside index.html, which is what
+		# protects the copy published to GitHub Pages (Pages serves no
+		# headers of its own). The two are enforced independently and
+		# intersect, so a directive relaxed in one place and not the other
+		# silently becomes the strictest of the pair — change both together.
+		# connect-src names the wss: scheme as well as 'self'. CSP3 says
+		# 'self' already covers a WebSocket back to the same origin, and
+		# WebKit has not always agreed — this page's only outbound
+		# connection is exactly that WebSocket, so relying on the disputed
+		# reading would break the entry page on iOS and nowhere else.
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+	}
+}
+
+(stream_site) {
+	header {
+		X-Content-Type-Options "nosniff"
+		# The identifier is in the path, so it would otherwise ride along in the
+		# Referer of every outbound link and asset.
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	root * /srv/bootstrap
+
+	# The root names the scripts were first published under. Every application
+	# a 0.3.0 machine serves imports /tunnel.js by that name, and those machines
+	# are reached through this very page for as long as they run — so these
+	# four aliases are permanent, and they stay pinned to v1 the day a v2
+	# exists beside it. `rewrite` runs before `handle`, so the rewritten path
+	# then takes the /v1/ branch below like any other.
+	rewrite /boot.js /v1/boot.js
+	rewrite /tunnel.js /v1/tunnel.js
+	rewrite /pairing.js /v1/pairing.js
+	rewrite /frame-guard.js /v1/frame-guard.js
+
+	# /v1/ is the shape of the protocol: the three signalling endpoints, and the
+	# scripts that speak to them. A breaking change ships as /v2/ beside it, and
+	# this block is copied for it — both are served until the version census
+	# says the old one is empty. The prefix is not 26 Crockford characters, so
+	# it can never collide with an identifier in the path.
+	handle /v1/* {
+		# The three endpoints, by exact name, and nothing else on the prefix:
+		# an unknown /v1/ path must be a file lookup, not a request the
+		# introduction server has to refuse.
+		@api path /v1/claim /v1/host /v1/peer
+		handle @api {
+			# The budget that matters is inside mw-rendezvous, which
+			# distinguishes a new claim from a host reconnecting and a browser
+			# from either. This one is the coarse outer bound on connection
+			# attempts — and since the block ends in a reverse_proxy, the global
+			# `order rate_limit before reverse_proxy` puts the limiter where it
+			# will actually run.
+			#
+			# It counts connection ATTEMPTS, not traffic: a held line is one
+			# request that then stays open for days, so a host is charged once
+			# per reconnect.
+			#
+			# {client_ip}, not {remote_host}: identical in production, where no
+			# proxy is trusted; on staging it is the address the front proxy
+			# forwarded, which is the only one worth budgeting.
+			rate_limit {
+				zone mw_rendezvous {
+					key {client_ip}
+					events 120
+					window 1m
+				}
+			}
+			reverse_proxy mw-rendezvous:8090
+		}
+
+		# Any other /v1/ path is a script of that shape. A missing one is a
+		# 404, never the entry page: a browser asking for a file must not be
+		# handed HTML with a 200 and a JavaScript MIME type it cannot run.
+		handle {
+			import bootstrap_headers
+			encode zstd gzip
+			file_server {
+				hide CNAME
+			}
+		}
+	}
+
+	# Everything else is the entry page: a few kilobytes of HTML that install a
+	# Service Worker, run the MW-BIND-v1 handshake and then fetch the actual
+	# interface from the user's own machine over WebRTC.
+	#
+	# Every path serves the same page — /{id} is read by the page from its own
+	# location, so there is nothing per-identifier on disk and no redirect in the
+	# way. try_files, not rewrite, so a real asset still wins over the fallback.
+	handle {
+		import bootstrap_headers
+		encode zstd gzip
+		try_files {path} /index.html
+		# CNAME only means something to GitHub Pages, which serves the reference
+		# copy of these same files. Serving it here would just publish that
+		# host's name to anyone who asks.
+		file_server {
+			hide CNAME
+		}
+	}
+}

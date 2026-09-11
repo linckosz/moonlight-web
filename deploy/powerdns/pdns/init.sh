@@ -71,6 +71,10 @@ ensure_a updates # updates — update relay / version census (mw-proxy, 0.3.0+)
 # No `metrics` record: the session census is off until someone turns it on, and
 # it takes BOTH this record and a site block in the Caddyfile (README).
 ensure_a stream # stream — rendezvous host: bootstrap page + /v1 API (0.3.0+)
+# stream.dev — the staging rendezvous (docker-compose.dev.yml), same address:
+# production's Caddy fronts it. A label of its own so MW_DOMAIN=dev.{domain} on
+# a host moves rendezvous, STUN and the handed-out address together.
+ensure_a stream.dev
 
 # Zones created before default-soa-content was set (zz-mw.conf) carry the image
 # placeholder SOA ("a.misconfigured.dns.server.invalid"); swap in a real one.

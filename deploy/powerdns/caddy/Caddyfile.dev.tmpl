@@ -1,0 +1,34 @@
+# Caddy for the STAGING rendezvous (docker-compose.dev.yml) — the site body of
+# stream.{domain}, served on plain HTTP to the production Caddy, which fronts it
+# as https://stream.dev.{domain} and owns the certificate.
+#
+# This file is deliberately tiny: everything that decides what the entry page
+# and the signalling API look like lives in stream.caddy, shared with
+# production. Rebuilding THIS container is how a change to it gets tested, and
+# nothing in production restarts for that.
+#
+# Rendered by the same entrypoint as the production template (MW_CADDYFILE_TMPL
+# selects it). It carries no @MW_DOMAIN@ placeholder: the name is production's
+# business, this process only ever answers to the proxy in front of it.
+
+{
+	# Plain HTTP on purpose: TLS terminates in the production Caddy, and this
+	# process must never try to order a certificate for a name it does not own.
+	auto_https off
+	order rate_limit before reverse_proxy
+	servers {
+		# The production Caddy sits in front on the compose network and
+		# forwards the real client address in X-Forwarded-For. Without this,
+		# Caddy would treat that header as untrusted and REPLACE it with the
+		# proxy's own address when it proxies onward — and mw-rendezvous,
+		# which budgets on the first address in the header, would put every
+		# browser on Earth in one bucket.
+		trusted_proxies static private_ranges
+	}
+}
+
+import /etc/caddy/stream.caddy
+
+:80 {
+	import stream_site
+}
