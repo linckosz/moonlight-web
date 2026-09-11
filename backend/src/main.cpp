@@ -834,6 +834,12 @@ static int runSetAdminPasswordCommand(quint16 persistedHttpsPort)
 static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
 {
     QTextStream out(stdout);
+    // Before the agreement is shown: there is nothing here to agree to.
+    if (mw::edition::lanOnly()) {
+        out << mw::edition::lanOnlyRefusal() << "\n";
+        out.flush();
+        return 1;
+    }
     const QString base = findRunningInstance(persistedHttpsPort);
     if (base.isEmpty()) {
         out << "MoonlightWeb is not running — start it first "
@@ -1371,13 +1377,17 @@ int main(int argc, char* argv[])
     // MW_DOMAIN or MW_RENDEZVOUS_URL in the environment wins — that is how a
     // dev build is pointed at production to check compatibility — while the
     // domain CI bakes into a release binary must not.
-    if (devMode && qEnvironmentVariableIsEmpty("MW_DOMAIN") &&
+    // A LAN-only instance talks to no introduction server, staging included.
+    if (devMode && !mw::edition::lanOnly() && qEnvironmentVariableIsEmpty("MW_DOMAIN") &&
         qEnvironmentVariableIsEmpty("MW_RENDEZVOUS_URL")) {
         qputenv("MW_DOMAIN", "dev.moonlightweb.top");
         Logger::info("[--dev] MW_DOMAIN defaulted to dev.moonlightweb.top (staging); set "
                      "MW_DOMAIN=moonlightweb.top to target production");
     }
     applyEmbeddedEnvDefaults();
+    if (mw::edition::lanOnly())
+        Logger::info("[LAN-only] MW_LAN_ONLY is set: no rendezvous line, no STUN, no UPnP, no "
+                     "update check — Internet Access requests are refused");
 
     // Parse command line
     QCommandLineParser parser;
@@ -1611,7 +1621,8 @@ int main(int argc, char* argv[])
     quint16 httpsPort = appSettings.httpsPort(devMode ? kDevHttpsPort : 443);
     VideoCodec preferredCodec = appSettings.videoCodec();
     bool upnpEnabled = appSettings.upnpEnabled();
-    QString stunServer = appSettings.stunServer();
+    QString stunServer =
+        mw::edition::lanOnly() ? QStringLiteral("(none, LAN-only)") : appSettings.stunServer();
     Logger::info("[main] Settings: http_port=" + QString::number(httpPort) +
                  ", https_port=" + QString::number(httpsPort) +
                  ", video_codec=" + AppSettings::videoCodecToString(preferredCodec) +

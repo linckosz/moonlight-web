@@ -16,6 +16,7 @@
  */
 
 #include "AppSettings.h"
+#include "common/Edition.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
 
@@ -556,6 +557,9 @@ void AppSettings::setUpnpEnabled(bool enabled)
 
 bool AppSettings::internetAccessEnabled() const
 {
+    // Off on a LAN-only instance whatever the file says: a settings.json
+    // carried over from an install that had it on must open nothing here.
+    if (mw::edition::lanOnly()) return false;
     QJsonObject obj = readAll();
     return obj.value("internet_access_enabled").toBool(false);
 }

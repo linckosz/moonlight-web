@@ -16,6 +16,7 @@
  */
 
 #include "InternetAccessManager.h"
+#include "common/Edition.h"
 #include "server/AppSettings.h"
 
 #include <QHostAddress>
@@ -72,7 +73,9 @@ InternetAccessManager::InternetAccessManager(AppSettings* settings, QObject* par
 
     // Eager UPnP discovery (deferred, non-blocking) so that upnp_available
     // is correctly reported even if Internet Access has never been enabled.
+    // A LAN-only instance never maps a port, so it has no router to find.
     QTimer::singleShot(2000, this, [this]() {
+        if (mw::edition::lanOnly()) return;
         if (!m_Upnp.isAvailable()) {
             qInfo() << "[InternetAccess] Eager UPnP discovery (2s deferred)";
             m_Upnp.discover(2000);

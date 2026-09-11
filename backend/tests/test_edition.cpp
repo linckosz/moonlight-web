@@ -65,4 +65,23 @@ void run_edition_tests()
 
     // Leave the process as the other suites expect to find it.
     init(1, plain);
+
+    // MW_LAN_ONLY: only an explicit yes turns it on.
+    CHECK(lanOnlyFrom("1"));
+    CHECK(lanOnlyFrom("true"));
+    CHECK(lanOnlyFrom(" YES "));
+    CHECK(lanOnlyFrom("on"));
+    CHECK(!lanOnlyFrom(""));
+    CHECK(!lanOnlyFrom("0"));
+    CHECK(!lanOnlyFrom("false"));
+    CHECK(!lanOnlyFrom("off"));
+
+    // The runner embeds nothing, so the environment alone decides.
+    qputenv("MW_LAN_ONLY", "1");
+    CHECK(lanOnly());
+    CHECK(lanOnlyRefusal().contains(QStringLiteral("MW_LAN_ONLY")));
+    qputenv("MW_LAN_ONLY", "0");
+    CHECK(!lanOnly());
+    qunsetenv("MW_LAN_ONLY");
+    CHECK(!lanOnly());
 }

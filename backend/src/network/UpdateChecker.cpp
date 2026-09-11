@@ -177,8 +177,9 @@ void UpdateChecker::doFetch()
     // outgoing request every six hours to a third party — not what someone who
     // set that variable was asking for. Nothing to check means no check.
     if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY")) return;
-    // A DEV build answers without asking anyone (see statusJson).
-    if (mw::edition::isDevBuild()) return;
+    // A DEV build answers without asking anyone (see statusJson), and so does a
+    // LAN-only instance: the only release it could be offered is an official one.
+    if (mw::edition::isDevBuild() || mw::edition::lanOnly()) return;
 
     // The relay when this build has one, GitHub otherwise. Either way a single
     // release JSON comes back in the same shape, so nothing downstream cares

@@ -14,6 +14,10 @@ REM      set BUILD_DIR=build                   build directory (default: build)
 REM      set MW_EDITION=dev                    the DEV edition (MoonlightWebDev.exe,
 REM                                            see src/common/Edition.h) — give it
 REM                                            its own BUILD_DIR, e.g. build-devedition
+REM      set BUILD_JOBS=2                      cap the parallel compile (a machine
+REM                                            with little RAM or few cores)
+REM      set MW_LAN_ONLY=1                     bake a LAN-only binary (see
+REM                                            CLAUDE-LAN-DEV-SETUP.md)
 REM ============================================================================
 setlocal enabledelayedexpansion
 
@@ -104,7 +108,11 @@ if !errorlevel! neq 0 (
 )
 
 echo [BUILD] Compiling...
-cmake --build "%BUILD_DIR%" -j
+REM  A bare -j lets Ninja run one compiler per core and then some; MSVC needs
+REM  ~1-2 GB each, so a small machine runs out of heap (C1060) or swaps.
+set "JOBS_ARG=-j"
+if defined BUILD_JOBS set "JOBS_ARG=-j %BUILD_JOBS%"
+cmake --build "%BUILD_DIR%" %JOBS_ARG%
 if !errorlevel! neq 0 (
     echo [ERROR] Build failed
     exit /b 1

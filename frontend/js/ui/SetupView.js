@@ -708,6 +708,17 @@ export class SetupView {
                 this.bindEvents();
                 return;
             }
+            // A LAN-only instance (MW_LAN_ONLY) refuses the Internet link: say so
+            // on the page that asked, with the question open again.
+            if (result.internet_error) {
+                this._error = result.internet_error;
+                this._internetAuth = null;
+                this._step = 'config';
+                this._page = 'internet';
+                this.render();
+                this.bindEvents();
+                return;
+            }
             // The A record is published but the TLS certificate order is still
             // running — it only gets the backend's event loop back now that
             // /apply has returned. Keep the checklist live until the domain is

@@ -302,14 +302,17 @@ void SignalingServer::onNewWsConnection()
     const int iceTimeoutMs =
         isInternet ? RelayBase::kIceTimeoutInternetMs : RelayBase::kIceTimeoutLocalMs;
     // Same condition buildIceConfig uses below, so the two ends of the
-    // connection never disagree about whether STUN is in play.
-    sendIceConfig(isInternet || m_ForceIceTcp, iceTimeoutMs);
+    // connection never disagree about whether STUN is in play. A LAN-only
+    // instance asks no STUN server at all, on either end (Edition.h).
+    const bool lanOnly = mw::edition::lanOnly();
+    sendIceConfig((isInternet || m_ForceIceTcp) && !lanOnly, iceTimeoutMs);
 
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port
     // m_ForceIceTcp controls whether ICE-TCP candidates are generated
     // (true = UDP + TCP, false = UDP only).
     rtc::Configuration config =
-        buildIceConfig(isInternet, m_UpnpMappedPort, m_MediaPort, m_StunServerUrl, m_ForceIceTcp);
+        buildIceConfig(isInternet, m_UpnpMappedPort, m_MediaPort,
+                       lanOnly ? QString() : m_StunServerUrl, m_ForceIceTcp);
 
     // If UPnP is active, tell the relay to rewrite host candidates with the
     // public IP and mapped port so the browser sees a "host" candidate at
@@ -1066,7 +1069,7 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
         // fallback path if UDP is blocked by a restrictive firewall.
         // STUN is included to discover srflx addresses as well.
         config.enableIceTcp = true;
-        config.iceServers.emplace_back(stunServerUrl.toStdString());
+        if (!stunServerUrl.isEmpty()) config.iceServers.emplace_back(stunServerUrl.toStdString());
 
         qInfo() << "[SignalingServer] ICE config: TCP mode"
                 << (upnpMappedPort > 0 ? "+ UPnP port=" + QString::number(upnpMappedPort) : "")
@@ -1077,7 +1080,8 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
         // STUN discovers the public srflx address.
         config.enableIceTcp = false;
 
-        config.iceServers.emplace_back(stunServerUrl.toStdString());
+        // Empty on a LAN-only instance: host candidates only.
+        if (!stunServerUrl.isEmpty()) config.iceServers.emplace_back(stunServerUrl.toStdString());
 
         if (upnpMappedPort > 0) {
             qInfo() << "[SignalingServer] Internet ICE (UDP-only): UPnP port=" << upnpMappedPort

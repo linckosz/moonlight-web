@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 #include <QtGlobal>
 
@@ -96,5 +97,22 @@ quint16 defaultHttpsPort();
 /// Frontend-relative path of an icon: the blue variant under assets/dev/ for a
 /// DEV identity, the production one under assets/ otherwise.
 QString iconAsset(const QString& file);
+
+// ── LAN-only (MW_LAN_ONLY) ───────────────────────────────────────────────────
+//
+// For a fork developing on its own LAN (CLAUDE-LAN-DEV-SETUP.md): the process
+// reaches none of the project's servers — no rendezvous line, no STUN, no UPnP
+// mapping, no update check, no census — and anything asking to turn Internet
+// Access on is answered with lanOnlyRefusal() instead.
+
+/// 1 / true / yes / on (any case) turn it on; anything else leaves it off.
+bool lanOnlyFrom(const QByteArray& value);
+
+/// MW_LAN_ONLY from the environment (.env included); when unset, the value a
+/// build configured with MW_LAN_ONLY in its environment embedded.
+bool lanOnly();
+
+/// The error every refused Internet Access request answers with.
+QString lanOnlyRefusal();
 
 } // namespace mw::edition

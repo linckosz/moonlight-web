@@ -411,6 +411,15 @@ foreach(_mw_var MW_DOMAIN MW_PDNS_TOKEN)
     endif()
 endforeach()
 
+# MW_LAN_ONLY=1 in the configure environment bakes a LAN-only binary: no
+# rendezvous, no STUN, no UPnP, Internet Access refused (src/common/Edition.h).
+# For forks developing on their LAN — see CLAUDE-LAN-DEV-SETUP.md. A runtime
+# MW_LAN_ONLY (.env included) still wins.
+if(DEFINED ENV{MW_LAN_ONLY} AND NOT "$ENV{MW_LAN_ONLY}" STREQUAL "")
+    target_compile_definitions(mw-server PRIVATE MW_LAN_ONLY="$ENV{MW_LAN_ONLY}")
+    message(STATUS "MW_LAN_ONLY embedded at build time")
+endif()
+
 target_link_libraries(mw-server PRIVATE
     Qt6::Core Qt6::Network Qt6::WebSockets Qt6::Widgets
     mw-native-host

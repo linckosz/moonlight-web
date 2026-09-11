@@ -62,6 +62,11 @@ void run_app_settings_tests()
     CHECK_EQ(s.autoIpDetection(), false);
     s.setInternetAccessEnabled(true);
     CHECK_EQ(s.internetAccessEnabled(), true);
+    // A LAN-only instance reads it as off, whatever the file says.
+    qputenv("MW_LAN_ONLY", "1");
+    CHECK_EQ(s.internetAccessEnabled(), false);
+    qunsetenv("MW_LAN_ONLY");
+    CHECK_EQ(s.internetAccessEnabled(), true);
     s.setCertAuthEnabled(true);
     CHECK_EQ(s.certAuthEnabled(), true);
 

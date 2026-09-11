@@ -120,4 +120,26 @@ QString iconAsset(const QString& file)
     return (isDev() ? QStringLiteral("assets/dev/") : QStringLiteral("assets/")) + file;
 }
 
+bool lanOnlyFrom(const QByteArray& value)
+{
+    const QByteArray v = value.trimmed().toLower();
+    return v == "1" || v == "true" || v == "yes" || v == "on";
+}
+
+bool lanOnly()
+{
+    QByteArray value = qgetenv("MW_LAN_ONLY");
+#ifdef MW_LAN_ONLY
+    // Embedded at configure time (backend/CMakeLists.txt); the environment wins.
+    if (value.isEmpty()) value = QByteArray(MW_LAN_ONLY);
+#endif
+    return lanOnlyFrom(value);
+}
+
+QString lanOnlyRefusal()
+{
+    return QStringLiteral("This instance is LAN-only (MW_LAN_ONLY is set): Internet access "
+                          "cannot be enabled. Open it at its LAN address instead.");
+}
+
 } // namespace mw::edition

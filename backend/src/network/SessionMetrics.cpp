@@ -16,6 +16,7 @@
  */
 
 #include "SessionMetrics.h"
+#include "common/Edition.h"
 #include "common/Logger.h"
 
 #include <QJsonDocument>
@@ -57,7 +58,7 @@ QString archToken()
 // level, by a user at their firewall — without touching the update path.
 QString buildEndpoint()
 {
-    if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY")) return {};
+    if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY") || mw::edition::lanOnly()) return {};
 
     const QString domain = QString::fromUtf8(qgetenv("MW_DOMAIN")).trimmed();
     const QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN")).trimmed();
