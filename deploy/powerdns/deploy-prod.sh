@@ -95,13 +95,16 @@ main() {
         echo "note    : this is a ROLLBACK — $ref is older than what is running"
     fi
 
-    # What changed where it matters. Only these two directories reach the
-    # containers: deploy/powerdns is built or mounted, bootstrap is mounted.
+    # What changed where it matters. Only these directories reach the
+    # containers: deploy/powerdns is built or mounted, bootstrap and website are
+    # mounted. The pathspecs are anchored at the top (":/"): this runs from
+    # deploy/powerdns, where plain ones would match nothing and the list would
+    # read "none" over every change — which the mw-dns rehearsal caught.
+    local -a reach=(':/deploy/powerdns' ':/bootstrap' ':/website')
     echo
     echo "changes reaching this box:"
-    git --no-pager diff --stat "$current" "$target" -- deploy/powerdns bootstrap website \
-        | sed 's/^/  /'
-    [[ -n "$(git diff --name-only "$current" "$target" -- deploy/powerdns bootstrap website)" ]] \
+    git --no-pager diff --stat "$current" "$target" -- "${reach[@]}" | sed 's/^/  /'
+    [[ -n "$(git diff --name-only "$current" "$target" -- "${reach[@]}")" ]] \
         || echo "  (none — the tag only changes the application)"
 
     # Which containers that means. A directory that is COPIED into an image
