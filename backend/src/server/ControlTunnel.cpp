@@ -455,7 +455,7 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
         config.portRangeEnd = p.port;
     }
     // The settings value, which defaults to our own server. This is the host
-    // half of the connection bootstrap/tunnel.js makes: that page refuses
+    // half of the connection bootstrap/v1/tunnel.js makes: that page refuses
     // Google's web fonts so that nobody outside learns who is connecting to
     // whom, and asking Google's STUN server from either end gave that away
     // anyway. Both ends now ask the machine they are already talking to.

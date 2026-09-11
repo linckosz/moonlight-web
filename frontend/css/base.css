@@ -141,6 +141,10 @@ h2,
     color: var(--text-3);
 }
 
+.text-danger {
+    color: var(--c-danger-text);
+}
+
 /* Discreet positive tint on the "Allow Internet access" opt-in labels/links
    (setup wizard, admin page, hosts banner) — draws the eye to the opt-in
    without pre-ticking the box. */

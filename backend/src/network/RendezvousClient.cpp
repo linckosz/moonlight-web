@@ -35,10 +35,21 @@ namespace {
 const char* const kMsgOpen = "open";
 const char* const kMsgMsg = "msg";
 const char* const kMsgClose = "close";
+const char* const kMsgError = "error"; // server → us, before it hangs up
 
 // Error codes from the server's 409s. Must match main.go.
 const char* const kErrIdTaken = "id_taken";
 const char* const kErrOwnerHasOther = "owner_has_other";
+// From a 400 on the claim, or an error frame on the line. Must match hub.go.
+const char* const kErrUnsupportedVersion = "unsupported_version";
+
+// The protocol revision this build speaks INSIDE /v1/ — sent as `?v=` on the
+// claim and on the line. Not the app version: it moves only when this client
+// starts understanding something the introduction server can send, and every
+// such change is additive (a breaking one is a /v2/). Absent means 1 on the
+// server, so a build predating the field is exactly a revision-1 client. Keep
+// in step with hub.go and bootstrap/v1/tunnel.js.
+constexpr int kProto = 1;
 
 // Our own ping cadence. The server pings too (Qt answers those by itself), but
 // its pings only prove the line is alive to the SERVER. This one is how WE find
@@ -142,6 +153,11 @@ void RendezvousClient::start()
     if (m_Running) return;
     m_Running = true;
     m_RetryCount = 0;
+    // A halt belongs to the previous run. Nothing about this build changed, so
+    // it will most likely halt again — but with a fresh log line, which is what
+    // whoever toggled the switch is looking for.
+    m_Halted = false;
+    m_LastError.clear();
 
     ensureIdentity();
     if (m_Settings->rendezvousClaimed())
@@ -187,13 +203,15 @@ void RendezvousClient::ensureIdentity()
 
 void RendezvousClient::claim()
 {
-    if (m_Claiming || !m_Running) return;
+    if (m_Claiming || !m_Running || m_Halted) return;
     m_Claiming = true;
 
     const QString id = m_Settings->rendezvousId();
     const QString token = m_Settings->rendezvousToken();
 
-    QNetworkRequest req{QUrl(baseUrl() + QStringLiteral("/v1/claim"))};
+    QUrl claimUrl(baseUrl() + QStringLiteral("/v1/claim"));
+    claimUrl.setQuery(protoQuery());
+    QNetworkRequest req{claimUrl};
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     req.setRawHeader("X-MW-Owner", token.toLatin1());
 
@@ -266,6 +284,17 @@ void RendezvousClient::claim()
             return;
         }
 
+        if (status == 400 && code == QLatin1String(kErrUnsupportedVersion)) {
+            // Retrying cannot help: nothing about this build changes between
+            // attempts. Stop, say so where the owner will read it, and leave
+            // the identifier alone — it is still ours, just not served.
+            halt(QStringLiteral("this build speaks protocol revision %1, the server serves %2..%3")
+                     .arg(kProto)
+                     .arg(answer.value("min").toInt())
+                     .arg(answer.value("max").toInt()));
+            return;
+        }
+
         // Everything else — no network, server down, 5xx — is transient by
         // assumption. There is no state to repair locally, only a wait.
         qWarning() << "[RDV] claim failed:"
@@ -274,9 +303,16 @@ void RendezvousClient::claim()
     });
 }
 
+QUrlQuery RendezvousClient::protoQuery()
+{
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("v"), QString::number(kProto));
+    return query;
+}
+
 void RendezvousClient::openLine()
 {
-    if (!m_Running) return;
+    if (!m_Running || m_Halted) return;
     if (m_Socket.state() != QAbstractSocket::UnconnectedState) return;
 
     const QString id = m_Settings->rendezvousId();
@@ -290,7 +326,7 @@ void RendezvousClient::openLine()
     QUrl url(baseUrl() + QStringLiteral("/v1/host"));
     url.setScheme(url.scheme() == QLatin1String("http") ? QStringLiteral("ws")
                                                         : QStringLiteral("wss"));
-    QUrlQuery query;
+    QUrlQuery query = protoQuery();
     query.addQueryItem(QStringLiteral("id"), id);
     url.setQuery(query);
 
@@ -333,6 +369,11 @@ void RendezvousClient::onDisconnected()
     // still own the identifier costs nothing — the server answers
     // "claimed": false and charges no budget for it — so the repair is safe to
     // attempt even when the real cause was something else entirely.
+    // A halt is the server having said, in words, that no retry will be
+    // served. It is neither of the two cases above and must not feed them: the
+    // re-claim would only be refused with the same code.
+    if (m_Halted) return;
+
     if (!m_LineEverUp) {
         if (++m_LineFailures >= kReclaimAfterFailures) {
             m_LineFailures = 0;
@@ -344,6 +385,17 @@ void RendezvousClient::onDisconnected()
     }
 
     if (m_Running) scheduleRetry("line dropped");
+}
+
+void RendezvousClient::halt(const QString& why)
+{
+    // Stays m_Running: the switch is still on, the owner still consents. What
+    // stops is the retrying, which only a new build — or a server change — can
+    // make worthwhile, and stop() followed by start() is how either gets tried.
+    m_Halted = true;
+    m_LastError = why;
+    m_RetryTimer.stop();
+    qCritical() << "[RDV] giving up until restart —" << why;
 }
 
 void RendezvousClient::onSocketError(QAbstractSocket::SocketError error)
@@ -432,10 +484,29 @@ void RendezvousClient::onTextMessage(const QString& text)
     const QJsonObject frame = doc.object();
 
     const QString type = frame.value("t").toString();
+
+    // The one frame without a session: the server explaining, just before it
+    // hangs up, why this line is not going to be held. Read it before the
+    // session check below discards it as malformed.
+    if (type == QLatin1String(kMsgError)) {
+        const QString code = frame.value("code").toString();
+        if (code == QLatin1String(kErrUnsupportedVersion)) {
+            halt(QStringLiteral("this build speaks protocol revision %1, which the server "
+                                "no longer serves")
+                     .arg(kProto));
+        } else {
+            qWarning() << "[RDV] server refused the line:" << code;
+        }
+        return;
+    }
+
     const QString session = frame.value("s").toString();
     if (session.isEmpty()) return;
 
     if (type == QLatin1String(kMsgOpen)) {
+        // `v` names the revision of the browser that just arrived; absent
+        // means 1. Nothing reads it yet — it is there so an addition can be
+        // sent only to browsers that understand it, the day there is one.
         emit sessionOpened(session);
     } else if (type == QLatin1String(kMsgMsg)) {
         // The payload is whatever the browser sent. It is NOT trusted here and

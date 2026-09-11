@@ -98,6 +98,7 @@ export class AdminView {
         this._active = false; // the manager is running (IP detected, router asked)
         this._rendezvousUrl = ''; // address this install is reached at, once claimed
         this._rendezvousOnline = false; // the held line is actually up
+        this._rendezvousError = ''; // why the client stopped trying, if it did
         this._lastError = '';
 
         // Activation loader: live step reported by the backend (statusJson.phase).
@@ -239,6 +240,10 @@ export class AdminView {
             // is right and answers to nobody.
             this._rendezvousUrl = status.rendezvous?.url || '';
             this._rendezvousOnline = status.rendezvous?.online === true;
+            // Set only when the client gave up — the server refused this
+            // build's protocol revision. Without it "offline" reads as "it
+            // will come back", and here it will not until an update.
+            this._rendezvousError = status.rendezvous?.error || '';
             this._phase = status.phase || '';
             // The backend refuses to open anything until the user agrees to the
             // current consent wording (the stored record described the retired
@@ -812,9 +817,13 @@ export class AdminView {
                                             type="button">${t('common.copy')}</button>
                                 </div>
                                 <p class="admin-url-note">${
-                                    !this._rendezvousOnline
-                                        ? t('admin.rendezvousOffline')
-                                        : t('admin.rendezvousReady')
+                                    this._rendezvousError
+                                        ? `<span class="text-danger">${t('admin.rendezvousHalted', {
+                                              reason: this.esc(this._rendezvousError),
+                                          })}</span>`
+                                        : !this._rendezvousOnline
+                                          ? t('admin.rendezvousOffline')
+                                          : t('admin.rendezvousReady')
                                 }</p>
                     `
                             : ''

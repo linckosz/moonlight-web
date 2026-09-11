@@ -303,7 +303,7 @@ Two details worth knowing before touching this code:
   now reached through the rendezvous like everybody else, and their signaling
   travels *inside* the control tunnel rather than beside it. That tunnel is bound
   by MW-BIND-v1 with a key held per host identifier
-  (`bootstrap/pairing.js`, trust-on-first-use), so the introduction server sees
+  (`bootstrap/v1/pairing.js`, trust-on-first-use), so the introduction server sees
   DTLS frames and never the SDP it would have to substitute. The relay is out of
   the middle for a guest on that path — which was the whole of why this was
   listed as a phase-2 *blocker*, and it no longer is.

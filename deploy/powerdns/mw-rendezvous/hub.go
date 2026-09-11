@@ -26,6 +26,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -46,26 +47,73 @@ const (
 // must keep covering both: telling them apart would turn this endpoint into an
 // oracle confirming which identifiers exist, defeating the 128-bit id and the
 // per-IP budget in one step.
+//
+// codeUnsupportedVersion is the one code a HOST can receive too, on its own
+// line, and the one code /v1/claim answers with in a 400. Keep in step with
+// RendezvousClient.cpp and bootstrap/v1/tunnel.js.
 const (
-	codeOffline  = "offline"
-	codeBusy     = "busy"
-	codeHostGone = "host-gone" // the line dropped while this session was live
+	codeOffline            = "offline"
+	codeBusy               = "busy"
+	codeHostGone           = "host-gone" // the line dropped while this session was live
+	codeUnsupportedVersion = "unsupported_version"
 )
 
+// ── Protocol revision ───────────────────────────────────────────────────────
+//
+// Two numbers answer two different questions, and neither is the app version.
+//
+// The path prefix (/v1/) is the SHAPE of the API. A change that would break
+// every existing client gets /v2/ beside it, and the production box serves both
+// until the version census says nobody is left on the old one.
+//
+// The `v` query parameter is what a client understands INSIDE that shape: one
+// integer, sent by hosts on /v1/claim and /v1/host and by browsers on /v1/peer.
+// It is absent from every client shipped before it existed, and absent means 1,
+// so those pass exactly as they always did. It buys two things: a client too
+// old to be served is told so in a code it can show instead of failing in a way
+// that looks like a network problem; and an addition only some clients
+// understand can be sent to those and withheld from the rest, because each side
+// is told the other's revision (`v` on the open and ready frames).
+//
+// Bumping protoCurrent is an ADDITIVE change by definition — anything else is a
+// /v2/. Keep in step with RendezvousClient.cpp and bootstrap/v1/tunnel.js.
+const protoCurrent = 1
+
+// protoOf reads the revision a client claims. Absent means 1, the revision every
+// client that predates the field speaks. Anything that is not a positive integer
+// is 0, which no accepted range includes.
+func protoOf(query string) int {
+	if query == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(query)
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
+}
+
 // hostFrame is what travels on the host line, in both directions.
+//
+// V rides only on the open frame: the revision of the browser that just
+// arrived, so the host knows what that session's peer understands.
 type hostFrame struct {
 	T string          `json:"t"`
 	S string          `json:"s"`
 	D json.RawMessage `json:"d,omitempty"`
+	V int             `json:"v,omitempty"`
 }
 
 // peerFrame is what travels on a browser socket. The session id is implicit —
 // a browser has exactly one — so it never appears on the wire, and a browser
 // therefore cannot address a session that is not its own.
+//
+// V rides only on the ready frame: the revision of the host on the line.
 type peerFrame struct {
 	T    string          `json:"t"`
 	D    json.RawMessage `json:"d,omitempty"`
 	Code string          `json:"code,omitempty"`
+	V    int             `json:"v,omitempty"`
 }
 
 // ── Sessions ────────────────────────────────────────────────────────────────
@@ -78,8 +126,9 @@ type session struct {
 // ── Host lines ──────────────────────────────────────────────────────────────
 
 type hostLine struct {
-	id   string
-	conn *wsConn
+	id    string
+	conn  *wsConn
+	proto int // the host's protocol revision, handed to each browser on ready
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -213,7 +262,9 @@ func sendPeer(c *wsConn, f peerFrame) error {
 	return c.WriteText(body)
 }
 
-// refuse tells a browser why no session is coming, then hangs up.
+// refuse tells a browser why no session is coming, then hangs up. A host line
+// refused for its revision gets the same frame: it has no session field, so a
+// host reads it exactly as a browser does.
 //
 // The caller must use the SAME code for "no such id" and "that host is offline".
 // Distinguishing them would turn this endpoint into an oracle that confirms

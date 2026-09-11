@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { encodeFrame, encodeHead } from '../../bootstrap/tunnel.js';
+import { encodeFrame, encodeHead } from '../../bootstrap/v1/tunnel.js';
 
 const FRAME_REQUEST = 0x01;
 const FRAME_END = 0x04;

@@ -22,6 +22,7 @@
 #include <QNetworkAccessManager>
 #include <QString>
 #include <QTimer>
+#include <QUrlQuery>
 #include <QWebSocket>
 
 class AppSettings;
@@ -77,6 +78,13 @@ public:
 
     bool isOnline() const { return m_Online; }
 
+    /// Why this client stopped trying, in one sentence — empty while it is
+    /// still trying or the line is up. Today the only cause is the server
+    /// refusing this build's protocol revision: the admin page shows it,
+    /// because "the address is right and answers to nobody" would otherwise
+    /// look exactly like a network problem.
+    QString lastError() const { return m_LastError; }
+
 signals:
     /// A browser arrived and the server opened a session for it.
     void sessionOpened(const QString& sessionId);
@@ -117,6 +125,11 @@ private:
     void scheduleRetry(const char* why);
     void setOnline(bool online);
     void sendFrame(const QJsonObject& frame);
+    /// Stop retrying for good (until stop()/start()): the server said no retry
+    /// will be served. Records `why` for lastError().
+    void halt(const QString& why);
+    /// `?v=<revision>`, the same on the claim and on the line.
+    static QUrlQuery protoQuery();
 
     AppSettings* m_Settings = nullptr;
     QNetworkAccessManager* m_Net = nullptr;
@@ -130,6 +143,11 @@ private:
     bool m_Online = false;
     bool m_Claiming = false;
     int m_RetryCount = 0;
+
+    /// Set by halt(). Distinct from !m_Running: the switch is still on, the
+    /// retrying is what stopped.
+    bool m_Halted = false;
+    QString m_LastError;
 
     /// Whether the CURRENT attempt ever reached the connected state. It is what
     /// separates "the line was working and dropped" from "the server refuses to

@@ -34,6 +34,7 @@ func testServer(t *testing.T) (*server, *httptest.Server) {
 		maxMessage:  64 * 1024,
 		// Long enough that no test races the keepalive.
 		pingEvery: 60 * time.Second,
+		minProto:  1,
 	}
 	store, err := newClaimStore(cfg.storePath, cfg.secret)
 	if err != nil {
@@ -99,7 +100,7 @@ func TestNormaliseIDFoldsTheFormsAHumanProduces(t *testing.T) {
 	// one canonical form. If host and browser disagreed here, a claim made in
 	// one form would simply never be found again in the other.
 	cases := map[string]string{
-		"ABCDEFGHJKMNPQRSTVWXYZ0123": idA,
+		"ABCDEFGHJKMNPQRSTVWXYZ0123":     idA,
 		"abcde-fghjk-mnpqr-stvwx-yz0123": "abcdefghjkmnpqrstvwxyz0123",
 		"O123456789abcdefghjkmnpqrs":     idB, // letter O → digit zero
 		"0I23456789abcdefghjkmnpqrs":     idB, // letter I → digit one
@@ -583,6 +584,111 @@ func TestClaimsSurviveARestart(t *testing.T) {
 	}
 	if status, body := postClaim(t, ts2, http.MethodPost, tokenA, idA); status != http.StatusOK || body["claimed"] != false {
 		t.Fatalf("owner not recognised after restart: status %d body %v", status, body)
+	}
+}
+
+// Protocol revision ─────────────────────────────────────────────────────────
+//
+// Every test above this line sends no `v` at all. That is not an omission: they
+// are the clients already deployed, and their staying green IS the
+// backward-compatibility check. The tests here cover the field itself.
+
+// An absent revision is revision 1 — and each side is told the other's.
+func TestRevisionAbsentMeansOneAndIsExchanged(t *testing.T) {
+	s, ts := testServer(t)
+	host := claimAndConnect(t, s, ts, tokenA, idA)
+
+	peer, status := dialWS(t, ts.URL, "/v1/peer?id="+idA+"&v=1", nil)
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("peer: status %d", status)
+	}
+	defer peer.Close()
+
+	var open hostFrame
+	host.ReadJSON(t, &open)
+	if open.T != msgOpen || open.V != 1 {
+		t.Fatalf("host got %+v, want an open frame carrying the browser's revision 1", open)
+	}
+	var ready peerFrame
+	peer.ReadJSON(t, &ready)
+	if ready.T != msgReady || ready.V != 1 {
+		t.Fatalf("peer got %+v, want ready carrying the host's revision 1", ready)
+	}
+}
+
+func TestUnsupportedRevisionIsRefusedWithACode(t *testing.T) {
+	s, ts := testServer(t)
+
+	// A claim gets the code in a 400, with the range the server serves.
+	body, _ := json.Marshal(claimRequest{ID: idA})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/claim?v=2", bytes.NewReader(body))
+	req.Header.Set("X-MW-Owner", tokenA)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || out["code"] != codeUnsupportedVersion {
+		t.Fatalf("claim v=2: status %d body %v, want 400 %s", resp.StatusCode, out, codeUnsupportedVersion)
+	}
+	if out["min"] != float64(1) || out["max"] != float64(protoCurrent) {
+		t.Fatalf("claim v=2: bounds %v/%v, want 1/%d", out["min"], out["max"], protoCurrent)
+	}
+	if s.store.count() != 0 {
+		t.Fatal("a refused claim must not be stored")
+	}
+
+	// The host line: the handshake completes, then the code arrives as a
+	// frame — Qt cannot read the body of a refused handshake.
+	postClaim(t, ts, http.MethodPost, tokenA, idA)
+	host, status := dialWS(t, ts.URL, "/v1/host?id="+idA+"&v=2", map[string]string{"X-MW-Owner": tokenA})
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("host v=2: status %d, want 101 then a frame", status)
+	}
+	defer host.Close()
+	var f peerFrame
+	host.ReadJSON(t, &f)
+	if f.T != msgError || f.Code != codeUnsupportedVersion {
+		t.Fatalf("host v=2 got %+v, want an %s error frame", f, codeUnsupportedVersion)
+	}
+	if code := host.ExpectClose(t); code != closePolicy {
+		t.Fatalf("host v=2 closed with %d, want %d", code, closePolicy)
+	}
+	if s.hub.line(idA) != nil {
+		t.Fatal("a refused host must not hold the line")
+	}
+
+	// A browser gets the same frame — and gets it whether or not the id
+	// exists, so the refusal reveals nothing.
+	for _, id := range []string{idA, idB} {
+		peer, _ := dialWS(t, ts.URL, "/v1/peer?id="+id+"&v=2", nil)
+		peer.ReadJSON(t, &f)
+		peer.Close()
+		if f.T != msgError || f.Code != codeUnsupportedVersion {
+			t.Fatalf("peer v=2 (%s) got %+v, want %s", id[:4], f, codeUnsupportedVersion)
+		}
+	}
+
+	// Garbage is not a revision either.
+	peer, _ := dialWS(t, ts.URL, "/v1/peer?id="+idA+"&v=one", nil)
+	peer.ReadJSON(t, &f)
+	peer.Close()
+	if f.Code != codeUnsupportedVersion {
+		t.Fatalf("peer v=one got %+v", f)
+	}
+}
+
+// Raising MW_RDV_MIN_PROTO is how old clients are retired — including the ones
+// that send no `v` at all, which is every client shipped before the field.
+func TestMinRevisionRetiresClientsWithoutOne(t *testing.T) {
+	s, ts := testServer(t)
+	s.cfg.minProto = 2
+
+	if status, body := postClaim(t, ts, http.MethodPost, tokenA, idA); status != http.StatusBadRequest ||
+		body["code"] != codeUnsupportedVersion {
+		t.Fatalf("claim without v under minProto=2: %d %v", status, body)
 	}
 }
 

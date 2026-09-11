@@ -38,7 +38,7 @@ beforeEach(async () => {
     vi.stubGlobal('sessionStorage', memoryStorage());
     vi.stubGlobal('localStorage', memoryStorage());
     vi.resetModules();
-    tunnelModule = await import('../../bootstrap/tunnel.js');
+    tunnelModule = await import('../../bootstrap/v1/tunnel.js');
 });
 
 describe('cookie jar — where a credential is kept follows what the cookie asks', () => {

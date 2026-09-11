@@ -56,6 +56,17 @@ const REQUEST_TIMEOUT_MS = 30000;
 
 /** How long the whole connect sequence may take before it is called failed. */
 const CONNECT_TIMEOUT_MS = 25000;
+
+/**
+ * The protocol revision this page speaks INSIDE /v1/, sent as `?v=` when it
+ * asks for a machine. Not the app version: it moves only when this page starts
+ * understanding something the introduction server can send, and every such
+ * change is additive — a breaking one is a /v2/ beside this file. The server
+ * treats an absent value as 1, so the pages published before the field existed
+ * are exactly revision-1 pages. Keep in step with hub.go and
+ * RendezvousClient.cpp.
+ */
+export const PROTO = 1;
 /** How many of the host's candidates to hold before its offer arrives. */
 const MAX_EARLY_CANDIDATES = 64;
 
@@ -260,6 +271,13 @@ export class Tunnel {
         this.origin = origin;
         this.identity = null;
         this.firstContact = false;
+        /**
+         * The revision the machine on the line speaks, from the ready frame;
+         * 1 when the server predates the field. Nothing reads it yet — it is
+         * what lets an addition be used only with a machine that understands
+         * it, the day there is one.
+         */
+        this.hostProto = 1;
 
         this._ws = null;
         this._pc = null;
@@ -318,6 +336,7 @@ export class Tunnel {
             const wsUrl = new URL('/v1/peer', this.origin);
             wsUrl.protocol = wsUrl.protocol === 'http:' ? 'ws:' : 'wss:';
             wsUrl.searchParams.set('id', this.hostId);
+            wsUrl.searchParams.set('v', String(PROTO));
 
             this._ws = new WebSocket(wsUrl);
             this._ws.onmessage = (ev) => this._onRelayFrame(ev.data, settle);
@@ -371,11 +390,16 @@ export class Tunnel {
                 offline: 'That machine is not online right now.',
                 busy: 'That machine already has as many connections as it accepts.',
                 'host-gone': 'That machine went offline.',
+                // This page is one the server no longer serves. The bytes
+                // came from the network with no-cache, so a reload really
+                // does fetch the current ones — unlike most "reload" advice.
+                unsupported_version: 'This page is out of date — reload it.',
             };
             settle(new Error(said[frame.code] || 'The introduction server refused.'));
             return;
         }
         if (frame.t === 'ready') {
+            this.hostProto = Number.isInteger(frame.v) && frame.v > 0 ? frame.v : 1;
             this._status('binding');
             this._sendSignal(helloMessage(this.identity));
             return;

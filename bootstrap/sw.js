@@ -133,6 +133,11 @@ self.addEventListener('fetch', (event) => {
     // serving them from a cache filled over the tunnel would quietly move them
     // out from under that check.
     //
+    // They live under /v1/ (the protocol shape they speak — a /v2/ would sit
+    // beside them, hence the pattern rather than a list), and the root names
+    // stay for the application: it imports /tunnel.js by that name, and the
+    // server answers it with the v1 file.
+    //
     // `?mw=pick` joins them: it is how a page that found no machine to talk to
     // asks for the entry page back. Answering that from the cache would return
     // the very application it just gave up on.
@@ -142,6 +147,7 @@ self.addEventListener('fetch', (event) => {
         url.pathname === '/tunnel.js' ||
         url.pathname === '/pairing.js' ||
         url.pathname === '/frame-guard.js' ||
+        /^\/v\d+\//.test(url.pathname) ||
         url.searchParams.get('mw') === 'pick' ||
         /^\/[0-9a-z]{26}\/?$/.test(url.pathname)
     )

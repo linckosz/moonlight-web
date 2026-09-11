@@ -59,6 +59,7 @@ type config struct {
 	maxSessions int           // MW_RDV_MAX_SESSIONS       (default 4, per host)
 	maxMessage  int           // MW_RDV_MAX_MESSAGE_BYTES  (default 64 KiB)
 	pingEvery   time.Duration // MW_RDV_PING_SECONDS       (default 45s)
+	minProto    int           // MW_RDV_MIN_PROTO          (default 1; see protoCurrent)
 }
 
 func mustEnv(name string) string {
@@ -100,7 +101,16 @@ func loadConfig() config {
 		maxSessions: envInt("MW_RDV_MAX_SESSIONS", 4, 1, 64),
 		maxMessage:  envInt("MW_RDV_MAX_MESSAGE_BYTES", 64*1024, 1024, 1024*1024),
 		pingEvery:   time.Duration(envInt("MW_RDV_PING_SECONDS", 45, 10, 300)) * time.Second,
+		// Raising this is how clients too old to keep serving are retired: they
+		// get a code that says so, instead of a failure that looks like the
+		// network. Decide it on the version census, never on a hunch.
+		minProto: envInt("MW_RDV_MIN_PROTO", 1, 1, protoCurrent),
 	}
+}
+
+// protoOK is the one place that decides whether a client's revision is served.
+func (s *server) protoOK(proto int) bool {
+	return proto >= s.cfg.minProto && proto <= protoCurrent
 }
 
 // readIdle is how long a socket may stay silent before it is reaped: two ping
@@ -149,10 +159,23 @@ func writeErrCode(w http.ResponseWriter, status int, msg, code string) {
 }
 
 // Machine-readable error codes. Keep in step with RendezvousClient.cpp.
+// codeUnsupportedVersion (hub.go) is the third one a claim can answer with.
 const (
 	errIDTaken       = "id_taken"        // someone else owns this identifier
 	errOwnerHasOther = "owner_has_other" // this credential already holds a different one
 )
+
+// writeUnsupported answers a claim from a revision this server does not serve.
+// The bounds are in the body so the operator reading a host's log knows which
+// side to move.
+func (s *server) writeUnsupported(w http.ResponseWriter) {
+	writeJSON(w, http.StatusBadRequest, map[string]any{
+		"error": "this client speaks a protocol revision this server does not serve",
+		"code":  codeUnsupportedVersion,
+		"min":   s.cfg.minProto,
+		"max":   protoCurrent,
+	})
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -205,6 +228,10 @@ func (s *server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	token, ok := ownerToken(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "X-MW-Owner is missing or too short")
+		return
+	}
+	if !s.protoOK(protoOf(r.URL.Query().Get("v"))) {
+		s.writeUnsupported(w)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
@@ -281,7 +308,18 @@ func (s *server) handleHost(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadIdle(s.cfg.readIdle())
 
-	line := &hostLine{id: id, conn: conn, sessions: map[string]*session{}}
+	// Decided AFTER the upgrade, as a frame rather than a status: Qt's client
+	// surfaces a refused handshake as an opaque error string with the body
+	// discarded, and the whole point of the code is to be read.
+	proto := protoOf(r.URL.Query().Get("v"))
+	if !s.protoOK(proto) {
+		log.Printf("[mw-rendezvous] host line refused: %s… speaks revision %d (serving %d..%d)",
+			id[:8], proto, s.cfg.minProto, protoCurrent)
+		refuse(conn, codeUnsupportedVersion)
+		return
+	}
+
+	line := &hostLine{id: id, conn: conn, proto: proto, sessions: map[string]*session{}}
 	if displaced := s.hub.register(line); displaced != nil {
 		go hangUpLine(displaced, "replaced by a newer connection from the same owner")
 	}
@@ -375,6 +413,14 @@ func (s *server) handlePeer(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadIdle(s.cfg.readIdle())
 
+	// Before the id lookup, so the refusal reveals nothing about the id: a page
+	// this old is refused whether or not the machine it names exists.
+	proto := protoOf(r.URL.Query().Get("v"))
+	if !s.protoOK(proto) {
+		refuse(conn, codeUnsupportedVersion)
+		return
+	}
+
 	line := s.hub.line(id)
 	if line == nil {
 		refuse(conn, codeOffline)
@@ -385,12 +431,14 @@ func (s *server) handlePeer(w http.ResponseWriter, r *http.Request) {
 		refuse(conn, code)
 		return
 	}
-	if err := sendHost(line.conn, hostFrame{T: msgOpen, S: sess.id}); err != nil {
+	// Each side is told the other's revision, and only here: the host learns it
+	// per session, the browser once, and neither has to ask.
+	if err := sendHost(line.conn, hostFrame{T: msgOpen, S: sess.id, V: proto}); err != nil {
 		line.dropSession(sess.id)
 		refuse(conn, codeOffline)
 		return
 	}
-	if err := sendPeer(conn, peerFrame{T: msgReady}); err != nil {
+	if err := sendPeer(conn, peerFrame{T: msgReady, V: line.proto}); err != nil {
 		line.dropSession(sess.id)
 		_ = sendHost(line.conn, hostFrame{T: msgClose, S: sess.id})
 		_ = conn.Close()

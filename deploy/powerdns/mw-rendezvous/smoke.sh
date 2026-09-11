@@ -69,10 +69,21 @@ echo
 echo "entry page (no redirects — the address people see is the one they stay on)"
 check "GET /" 200 "$(status "$BASE/")"
 check "GET /{id}" 200 "$(status "$BASE/$ID")"
-check "GET /bootstrap.js" 200 "$(status "$BASE/bootstrap.js")"
 check "GET /CNAME is hidden" 404 "$(status "$BASE/CNAME")"
 check "GET / does not redirect" "" "$(curl_ -o /dev/null -w '%{redirect_url}' "$BASE/")"
 contains "entry page is the bootstrap" "MoonlightWeb" "$(curl_ "$BASE/$ID")"
+
+echo
+echo "scripts under /v1/ (the protocol shape), root names kept as aliases"
+check "GET /v1/boot.js" 200 "$(status "$BASE/v1/boot.js")"
+# Not the entry page with a 200: a browser asking for a script must get a 404.
+check "GET /v1/missing.js is a 404" 404 "$(status "$BASE/v1/missing.js")"
+for f in boot.js tunnel.js pairing.js frame-guard.js; do
+    check "/$f is /v1/$f byte for byte" \
+        "$(curl_ "$BASE/v1/$f" | cksum)" "$(curl_ "$BASE/$f" | cksum)"
+done
+check "scripts are revalidated (no-cache)" "no-cache" \
+    "$(curl_ -sI "$BASE/v1/tunnel.js" | tr -d '\r' | awk 'tolower($1)=="cache-control:"{print $2}')"
 
 echo
 echo "claim lifecycle"
@@ -95,6 +106,13 @@ check "short credential refused" 401 \
     "$(status -X POST "$BASE/v1/claim" -H 'X-MW-Owner: short' -d "{\"id\":\"$ID\"}")"
 check "malformed id refused" 400 \
     "$(status -X POST "$BASE/v1/claim" -H "X-MW-Owner: $TOKEN" -d '{"id":"nope"}')"
+
+echo
+echo "protocol revision (?v=; absent means 1)"
+body=$(curl_ -X POST "$BASE/v1/claim?v=1" -H "X-MW-Owner: $TOKEN" -d "{\"id\":\"$ID\"}")
+contains "revision 1 is served" '"claimed":false' "$body"
+body=$(curl_ -X POST "$BASE/v1/claim?v=999" -H "X-MW-Owner: $TOKEN" -d "{\"id\":\"$ID\"}")
+contains "a future revision is refused with a code" '"code":"unsupported_version"' "$body"
 
 echo
 echo "held line and signalling sockets"

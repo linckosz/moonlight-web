@@ -167,9 +167,13 @@ export async function startTunnel(onStage) {
     // tries to resolve it at build time: it is not part of this bundle, it is a
     // file the other origin serves, and on a direct connection it is not there
     // at all.
+    //
+    // /v1/ is the shape of the transport this build speaks. Builds before it
+    // import /tunnel.js by its root name, and the server answers both with the
+    // same file — so a /v2/ can appear beside it without breaking either.
     let mod;
     try {
-        mod = await import(new URL('/tunnel.js', location.origin).href);
+        mod = await import(new URL('/v1/tunnel.js', location.origin).href);
     } catch {
         return false;
     }

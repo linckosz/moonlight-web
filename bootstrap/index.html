@@ -419,7 +419,13 @@
 </style>
 </head>
 <body data-state="working">
-<script src="/frame-guard.js"></script>
+<!-- Under /v1/, like every script here except sw.js: the path names the shape
+     of the protocol these files speak, so a breaking change can ship as /v2/
+     beside them while every machine still on the old shape keeps working. The
+     worker stays at the root because its scope has to cover the whole origin.
+     Caddy also answers the old root paths (/boot.js, /tunnel.js…) with the v1
+     files: the application a machine serves imports /tunnel.js by that name. -->
+<script src="/v1/frame-guard.js"></script>
 <main>
   <div class="inner">
     <div class="brand-row">
@@ -446,6 +452,6 @@
     <p id="note"></p>
   </div>
 </main>
-<script type="module" src="/boot.js"></script>
+<script type="module" src="/v1/boot.js"></script>
 </body>
 </html>

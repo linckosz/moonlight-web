@@ -4317,8 +4317,14 @@ int main(int argc, char* argv[])
             // that exists but is not being held is a link that
             // would fail, and showing it as if it worked is
             // worse than showing nothing.
-            return QJsonObject{{QStringLiteral("url"), rendezvous.entryUrl()},
-                               {QStringLiteral("online"), rendezvous.isOnline()}};
+            QJsonObject rdv{{QStringLiteral("url"), rendezvous.entryUrl()},
+                            {QStringLiteral("online"), rendezvous.isOnline()}};
+            // Only when the client gave up: `online: false` alone reads as
+            // "the line is down, it will come back", and this is the case
+            // where it will not.
+            if (const QString err = rendezvous.lastError(); !err.isEmpty())
+                rdv[QStringLiteral("error")] = err;
+            return rdv;
         });
 
     // ── The application, carried to a browser that cannot reach us ───────────

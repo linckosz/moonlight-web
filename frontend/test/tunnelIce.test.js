@@ -41,7 +41,7 @@ beforeEach(async () => {
     vi.stubGlobal('sessionStorage', memoryStorage());
     vi.stubGlobal('localStorage', memoryStorage());
     vi.resetModules();
-    tunnelModule = await import('../../bootstrap/tunnel.js');
+    tunnelModule = await import('../../bootstrap/v1/tunnel.js');
 });
 
 /** A Tunnel with a stand-in for the peer connection, which jsdom has none of. */

@@ -26,7 +26,7 @@
  *
  * Split out of ControlTunnel and kept free of libdatachannel so it can be tested
  * as a unit — which matters more here than usual, because the other half of this
- * format lives in JavaScript (bootstrap/tunnel.js) on a machine we will never
+ * format lives in JavaScript (bootstrap/v1/tunnel.js) on a machine we will never
  * see. Nothing catches a disagreement between the two at compile time; the tests
  * on both sides use the same vectors, and that is what does.
  *
