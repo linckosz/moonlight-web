@@ -6,6 +6,8 @@
 #   MW_TLS_CERT        path to a user TLS cert (PEM, fullchain)        [optional]
 #   MW_TLS_KEY         path to the matching private key (PEM)          [optional]
 #   MW_TLS_EMAIL       ACME account email for Let's Encrypt            [optional]
+#   MW_TLS_INTERNAL    1 = Caddy's internal CA, for a lab domain that no
+#                      public CA certifies (never on a public box)     [optional]
 #   MW_CADDYFILE_TMPL  template to render (default: the production one;
 #                      docker-compose.dev.yml points it at
 #                      /etc/caddy/Caddyfile.dev.tmpl)                  [optional]
@@ -29,6 +31,15 @@ if [ -n "${MW_TLS_EMAIL:-}" ]; then
     SITE_TLS_LINE="tls ${MW_TLS_EMAIL}"
 else
     echo "[mw-caddy] TLS: automatic Let's Encrypt (no account email)"
+fi
+# Lab only: a domain no public CA will ever certify (mw.local on the mw-dns
+# bench) is served under Caddy's own internal CA instead, so the whole stack —
+# stream., stream.dev., the rendez-vous — can be rehearsed off the Internet.
+# Never on a public box: browsers and the app reject that CA.
+if [ "${MW_TLS_INTERNAL:-}" = "1" ]; then
+    echo "[mw-caddy] TLS: Caddy internal CA (MW_TLS_INTERNAL=1 — lab only)"
+    TLS_LINE="tls internal"
+    SITE_TLS_LINE="tls internal"
 fi
 
 sed -e "s|@MW_DOMAIN@|${MW_DOMAIN}|g" \

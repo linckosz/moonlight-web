@@ -223,6 +223,8 @@ services:
       MW_TLS_CERT: ${MW_TLS_CERT:-}
       MW_TLS_KEY: ${MW_TLS_KEY:-}
       MW_TLS_EMAIL: ${MW_TLS_EMAIL:-}
+      # Lab only (mw.local on a bench): Caddy's internal CA, see entrypoint.sh.
+      MW_TLS_INTERNAL: ${MW_TLS_INTERNAL:-}
     ports:
       - "80:80/tcp"      # Let's Encrypt HTTP-01 challenge
       - "443:443/tcp"    # PowerDNS REST API over HTTPS (api.${MW_DOMAIN})
