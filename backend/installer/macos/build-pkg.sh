@@ -12,15 +12,24 @@
 #      bash backend/installer/macos/build-pkg.sh
 #
 #  Defaults: APP=./MoonlightWeb.app, VERSION=0.1.2, OUT=moonlightweb-macos-<arch>.pkg
+#
+#  EDITION=dev packages the DEV edition instead: MoonlightWebDev.app, bundle and
+#  package id com.moonlightweb.server.dev, LaunchAgent com.moonlightweb.agent.dev
+#  — everything a production install is known by, renamed, so the two coexist.
 # ===========================================================================
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ARCH="$(uname -m)"; [ "$ARCH" = "arm64" ] || ARCH="x86_64"
-APP="${APP:-./MoonlightWeb.app}"
+EDITION="${EDITION:-prod}"
+case "$EDITION" in
+    prod) APP_NAME=MoonlightWeb;    IDENT=com.moonlightweb.server;     AGENT_LABEL=com.moonlightweb.agent ;;
+    dev)  APP_NAME=MoonlightWebDev; IDENT=com.moonlightweb.server.dev; AGENT_LABEL=com.moonlightweb.agent.dev ;;
+    *) echo "error: EDITION must be prod or dev (got '$EDITION')" >&2; exit 1 ;;
+esac
+APP="${APP:-./$APP_NAME.app}"
 VERSION="${VERSION:-0.1.2}"
 OUT="${OUT:-moonlightweb-macos-${ARCH}.pkg}"
-IDENT="com.moonlightweb.server"
 
 [ -d "$APP" ] || { echo "error: app bundle not found: $APP" >&2; exit 1; }
 
@@ -53,15 +62,17 @@ cp "$HERE/plugins/InstallerSections.plist" "$WORK/plugins/InstallerSections.plis
 echo "== 2/4 stage app payload =="
 STAGE="$WORK/stage"
 mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/MoonlightWeb.app"
+cp -R "$APP" "$STAGE/$APP_NAME.app"
 
 echo "== 3/4 pkgbuild component =="
 COMPONENTS="$WORK/components"
 mkdir -p "$COMPONENTS"
 # --scripts dir must contain an executable file literally named `postinstall`.
+# It is written for either edition; the names it acts on are filled in here.
 SCRIPTS="$WORK/scripts"
 mkdir -p "$SCRIPTS"
-cp "$HERE/scripts/postinstall" "$SCRIPTS/postinstall"
+sed -e "s/@MW_APP_NAME@/$APP_NAME/g" -e "s/@MW_AGENT_LABEL@/$AGENT_LABEL/g" \
+    "$HERE/scripts/postinstall" > "$SCRIPTS/postinstall"
 chmod +x "$SCRIPTS/postinstall"
 pkgbuild \
     --root "$STAGE" \
@@ -69,10 +80,11 @@ pkgbuild \
     --version "$VERSION" \
     --scripts "$SCRIPTS" \
     --install-location /Applications \
-    "$COMPONENTS/MoonlightWeb-component.pkg"
+    "$COMPONENTS/$APP_NAME-component.pkg"
 
 echo "== 4/4 productbuild archive =="
-sed "s/@MW_VERSION@/$VERSION/g" "$HERE/distribution.xml" > "$WORK/distribution.xml"
+sed -e "s/@MW_VERSION@/$VERSION/g" -e "s/@MW_APP_NAME@/$APP_NAME/g" -e "s/@MW_IDENT@/$IDENT/g" \
+    "$HERE/distribution.xml" > "$WORK/distribution.xml"
 productbuild \
     --distribution "$WORK/distribution.xml" \
     --resources "$HERE/resources" \

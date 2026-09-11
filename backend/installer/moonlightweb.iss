@@ -52,24 +52,43 @@
   #define VigemBusUrl "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe"
 #endif
 
-#define MyAppName "MoonlightWeb"
-#define MyAppExe "MoonlightWeb.exe"
+; Edition. /DDevEdition builds the DEV installer (release.yml, every run that
+; is not a v* tag): MoonlightWebDev, a pre-release that installs BESIDE the
+; production app instead of over it. Everything Windows knows an install by is
+; derived from MyAppName below — the AppId (hence the uninstall entry), the
+; folder, the exe, the service, the scheduled tasks, the firewall rule, the
+; shortcuts and the per-user state under %AppData%\MoonlightWeb\<name> — so the
+; two editions never share one of them. See backend/src/common/Edition.h.
+#ifdef DevEdition
+  #define MyAppName "MoonlightWebDev"
+  #define MyAppId "{5B1E7A8C-8D0E-4F53-8D6F-E1373C70AFE6}"
+  #define MyIconFile "..\..\frontend\assets\dev\favicon.ico"
+  ; The DEV edition listens on the DEV ports (Edition.h), clear of 443.
+  #define MyHttpsSuffix ":48443"
+#else
+  #define MyAppName "MoonlightWeb"
+  #define MyAppId "{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}"
+  #define MyIconFile "..\..\frontend\assets\favicon.ico"
+  #define MyHttpsSuffix ""
+#endif
+#define MyAppExe MyAppName + ".exe"
 ; Provisional admin URL written before first launch. The server rewrites this
 ; Desktop shortcut on startup with the real HTTPS port / public domain.
 #ifndef AdminUrl
-  #define AdminUrl "https://localhost/admin"
+  #define AdminUrl "https://localhost" + MyHttpsSuffix + "/admin"
 #endif
 
 [Setup]
-AppId={{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}
+; "{{" is Inno's escape for a literal brace.
+AppId={#StringChange(MyAppId, "{", "{{")}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=MoonlightWeb
 AppPublisherURL=https://github.com/linckosz/moonlight-web
-DefaultDirName={autopf}\MoonlightWeb
-DefaultGroupName=MoonlightWeb
+DefaultDirName={autopf}\{#MyAppName}
+DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputBaseFilename=MoonlightWeb-installer-{#MyAppVersion}-win-{#MyArch}
+OutputBaseFilename={#MyAppName}-installer-{#MyAppVersion}-win-{#MyArch}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -93,7 +112,7 @@ WizardSizePercent=100,115
 ; SignTool name" unless a signing provider with a local CLI replaces SignPath.
 ; Branding: installer .exe icon + small wizard logo (top-right on inner pages).
 ; Paths are relative to this .iss; PNG wizard images need Inno Setup 6.3+.
-SetupIconFile=..\..\frontend\assets\favicon.ico
+SetupIconFile={#MyIconFile}
 WizardSmallImageFile=..\..\frontend\assets\logo-512.png
 ; Add/Remove Programs entry shows the app icon (embedded in the exe).
 UninstallDisplayIcon={app}\{#MyAppExe}
@@ -124,76 +143,79 @@ Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
 Name: "zh"; MessagesFile: "ChineseSimplified.isl"
 
 [CustomMessages]
+; InternetPageBody keeps the literal product name in both editions: it is the
+; consent the app's own setup wizard shows word for word, and the text recorded
+; as agreed to (frontend/test/InternetConsentText.test.js holds the two together).
 ; --- English ---
-en.AutoStartTask=Start MoonlightWeb at logon
+en.AutoStartTask=Start {#MyAppName} at logon
 en.InternetPageCaption=Internet Link
 en.InternetPageDesc=Allow access from the Internet?
 en.InternetPageBody=MoonlightWeb can allow streaming from outside your local network, in a highly secure way.%n%nStreaming is direct, from this PC to the browser you invited. While a session runs, your router is asked (UPnP) to open a single port for it: UDP, with TCP on the same number for networks that block UDP. It carries nothing but the encrypted stream, every connection on it has to authenticate first, and it closes again when the session ends.%n%nA rendezvous server introduces the two sides, so nothing about this PC is published. No public DNS record is created, no certificate is issued for this machine, and ports 80/443 stay closed. Your public IP address is listed nowhere: only that server and whoever holds the link you sent ever see it. To learn its own public address, this PC asks a MoonlightWeb STUN server, or a public one (Google, Cloudflare) if that one cannot be reached.%n%nYou can turn this off at any time from the Admin page.
 en.InternetPageOption=Allow the Internet link (recommended)
 en.InternetBtnSkip=&Skip
 en.InternetBtnAccept=&Accept
-en.RunApp=Launch MoonlightWeb
+en.RunApp=Launch {#MyAppName}
 en.RunAdmin=Open the admin page
-en.ProvisionPageCaption=Setting up MoonlightWeb
+en.ProvisionPageCaption=Setting up {#MyAppName}
 en.ProvisionPageDesc=Finalizing the installation
-en.ProvisionWorking=Please wait while MoonlightWeb finishes setting up...
+en.ProvisionWorking=Please wait while {#MyAppName} finishes setting up...
 en.ResolveLinkWait=Preparing the link to the admin page...
 en.TaskArecord=Enable the Internet link
 en.ButtonUpdate=&Update
-en.UpdatePageCaption=Update MoonlightWeb
+en.UpdatePageCaption=Update {#MyAppName}
 en.UpdatePageDesc=A newer version will replace the installed one
-en.UpdateReadyMemo=MoonlightWeb %1 is installed and will be updated to %2.%n%nYour settings, the Internet link and your paired hosts are kept as they are. There is nothing to configure.
-en.UpdateReadyMemoFresh=MoonlightWeb will be updated to %1.%n%nYour settings, the Internet link and your paired hosts are kept as they are. There is nothing to configure.
-en.UninstConfigTitle=Uninstall MoonlightWeb
-en.UninstConfigBody=Your configuration is kept by default: if you install MoonlightWeb again, it starts up exactly as you left it.
+en.UpdateReadyMemo={#MyAppName} %1 is installed and will be updated to %2.%n%nYour settings, the Internet link and your paired hosts are kept as they are. There is nothing to configure.
+en.UpdateReadyMemoFresh={#MyAppName} will be updated to %1.%n%nYour settings, the Internet link and your paired hosts are kept as they are. There is nothing to configure.
+en.UninstConfigTitle=Uninstall {#MyAppName}
+en.UninstConfigBody=Your configuration is kept by default: if you install {#MyAppName} again, it starts up exactly as you left it.
 en.UninstConfigOption=Also delete my configuration
 en.UninstConfigDetail=Settings, accounts, certificates and host pairings are erased for good.
 ; --- French ---
-fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
+fr.AutoStartTask=Démarrer {#MyAppName} à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
 fr.InternetPageDesc=Autoriser l'accès depuis Internet ?
 fr.InternetPageBody=MoonlightWeb peut autoriser le streaming depuis l'extérieur de votre réseau local, de façon hautement sécurisée.%n%nLe streaming est direct, de ce PC vers le navigateur que vous avez invité. Pendant une session, votre box se voit demander (UPnP) l'ouverture d'un seul port : en UDP, avec le TCP sur le même numéro pour les réseaux qui bloquent l'UDP. Il ne transporte rien d'autre que le flux chiffré, toute connexion dessus doit d'abord s'authentifier, et il est refermé à la fin de la session.%n%nUn serveur de rendez-vous met les deux côtés en relation, si bien que rien de ce PC n'est publié. Aucun enregistrement DNS public n'est créé, aucun certificat n'est émis pour cette machine, et les ports 80/443 restent fermés. Votre adresse IP publique n'est listée nulle part : seuls ce serveur et la personne à qui vous avez donné le lien la voient. Pour connaître sa propre adresse publique, ce PC interroge un serveur STUN MoonlightWeb, ou un serveur public (Google, Cloudflare) si le premier est injoignable.%n%nDésactivable à tout moment depuis la page admin.
 fr.InternetPageOption=Autoriser le lien Internet (recommandé)
 fr.InternetBtnSkip=&Passer
 fr.InternetBtnAccept=&Accepter
-fr.RunApp=Lancer MoonlightWeb
+fr.RunApp=Lancer {#MyAppName}
 fr.RunAdmin=Ouvrir la page admin
-fr.ProvisionPageCaption=Configuration de MoonlightWeb
+fr.ProvisionPageCaption=Configuration de {#MyAppName}
 fr.ProvisionPageDesc=Finalisation de l'installation
-fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de MoonlightWeb...
+fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de {#MyAppName}...
 fr.ResolveLinkWait=Préparation du lien vers la page admin...
 fr.TaskArecord=Activer le lien Internet
 fr.ButtonUpdate=&Mettre à jour
-fr.UpdatePageCaption=Mise à jour de MoonlightWeb
+fr.UpdatePageCaption=Mise à jour de {#MyAppName}
 fr.UpdatePageDesc=Une version plus récente va remplacer celle installée
-fr.UpdateReadyMemo=MoonlightWeb %1 est installé et va être mis à jour vers %2.%n%nVos réglages, le lien Internet et vos hôtes appairés sont conservés tels quels. Il n'y a rien à configurer.
-fr.UpdateReadyMemoFresh=MoonlightWeb va être mis à jour vers %1.%n%nVos réglages, le lien Internet et vos hôtes appairés sont conservés tels quels. Il n'y a rien à configurer.
-fr.UninstConfigTitle=Désinstallation de MoonlightWeb
-fr.UninstConfigBody=Votre configuration est conservée par défaut : si vous réinstallez MoonlightWeb, il redémarrera exactement dans l'état où vous l'avez laissé.
+fr.UpdateReadyMemo={#MyAppName} %1 est installé et va être mis à jour vers %2.%n%nVos réglages, le lien Internet et vos hôtes appairés sont conservés tels quels. Il n'y a rien à configurer.
+fr.UpdateReadyMemoFresh={#MyAppName} va être mis à jour vers %1.%n%nVos réglages, le lien Internet et vos hôtes appairés sont conservés tels quels. Il n'y a rien à configurer.
+fr.UninstConfigTitle=Désinstallation de {#MyAppName}
+fr.UninstConfigBody=Votre configuration est conservée par défaut : si vous réinstallez {#MyAppName}, il redémarrera exactement dans l'état où vous l'avez laissé.
 fr.UninstConfigOption=Supprimer aussi ma configuration
 fr.UninstConfigDetail=Les réglages, comptes, certificats et appairages d'hôtes seront définitivement effacés.
 ; --- Simplified Chinese ---
-zh.AutoStartTask=登录时启动 MoonlightWeb
+zh.AutoStartTask=登录时启动 {#MyAppName}
 zh.InternetPageCaption=互联网链接
 zh.InternetPageDesc=是否允许从互联网访问？
 zh.InternetPageBody=MoonlightWeb 可以以高度安全的方式，允许从本地网络之外进行串流。%n%n串流是点对点直连的，从这台电脑直接到您邀请的浏览器。会话进行期间，会通过 UPnP 请求路由器只开放一个端口：UDP，并在同一端口号上以 TCP 作为备用（用于封锁 UDP 的网络）。该端口只承载加密后的串流，任何连接都必须先通过身份验证，才会发送第一帧画面，会话结束后端口即被关闭。%n%n由一台会合服务器为双方牵线，因此这台电脑无需公开任何信息。不会创建任何公开 DNS 记录，不会为这台机器签发任何证书，端口 80/443 保持关闭。您的公网 IP 地址不会被列在任何地方：只有该服务器以及持有您所发送链接的人才能看到。为了得知自己的公网地址，这台电脑会向 MoonlightWeb STUN 服务器查询，若无法连接则改用公共服务器（Google、Cloudflare）。%n%n可随时在管理页面关闭。
 zh.InternetPageOption=允许互联网链接（推荐）
 zh.InternetBtnSkip=跳过(&S)
 zh.InternetBtnAccept=接受(&A)
-zh.RunApp=启动 MoonlightWeb
+zh.RunApp=启动 {#MyAppName}
 zh.RunAdmin=打开管理页面
-zh.ProvisionPageCaption=正在设置 MoonlightWeb
+zh.ProvisionPageCaption=正在设置 {#MyAppName}
 zh.ProvisionPageDesc=正在完成安装
-zh.ProvisionWorking=请稍候，MoonlightWeb 正在完成设置...
+zh.ProvisionWorking=请稍候，{#MyAppName} 正在完成设置...
 zh.ResolveLinkWait=正在准备通往管理页面的链接...
 zh.TaskArecord=启用互联网链接
 zh.ButtonUpdate=更新(&U)
-zh.UpdatePageCaption=更新 MoonlightWeb
+zh.UpdatePageCaption=更新 {#MyAppName}
 zh.UpdatePageDesc=较新的版本将替换已安装的版本
-zh.UpdateReadyMemo=已安装 MoonlightWeb %1，将更新到 %2。%n%n您的设置、互联网链接和已配对的主机将保持不变，无需任何配置。
-zh.UpdateReadyMemoFresh=MoonlightWeb 将更新到 %1。%n%n您的设置、互联网链接和已配对的主机将保持不变，无需任何配置。
-zh.UninstConfigTitle=卸载 MoonlightWeb
-zh.UninstConfigBody=默认保留您的配置：如果您再次安装 MoonlightWeb，它将完全按照您离开时的状态启动。
+zh.UpdateReadyMemo=已安装 {#MyAppName} %1，将更新到 %2。%n%n您的设置、互联网链接和已配对的主机将保持不变，无需任何配置。
+zh.UpdateReadyMemoFresh={#MyAppName} 将更新到 %1。%n%n您的设置、互联网链接和已配对的主机将保持不变，无需任何配置。
+zh.UninstConfigTitle=卸载 {#MyAppName}
+zh.UninstConfigBody=默认保留您的配置：如果您再次安装 {#MyAppName}，它将完全按照您离开时的状态启动。
 zh.UninstConfigOption=同时删除我的配置
 zh.UninstConfigDetail=设置、账户、证书和主机配对将被永久删除。
 
@@ -205,14 +227,14 @@ Name: "autostart"; Description: "{cm:AutoStartTask}"; GroupDescription: "{cm:Add
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-; Start-Menu group + Desktop: a single "MoonlightWeb" entry, a .lnk shortcut that
+; Start-Menu group + Desktop: a single "{#MyAppName}" entry, a .lnk shortcut that
 ; LAUNCHES THE EXE (not a URL). The windowless app starts when it is down or, when
 ; already running, surfaces the admin page via its single-instance logic — so one
 ; click always lands on the admin page, launching the app first if needed. The
 ; uninstaller entry lives in the group too.
-Name: "{group}\MoonlightWeb"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
-Name: "{autodesktop}\MoonlightWeb"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
-Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 [Run]
 ; The tray server is already launched during the provisioning checklist (see
@@ -225,14 +247,14 @@ Filename: "{code:GetAdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec p
 [Code]
 const
   // Inno files its uninstall entry under "<AppId>_is1" and exposes no constant
-  // for it to [Code] — KEEP THIS IN SYNC WITH [Setup] AppId above.
-  UninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}_is1';
+  // for it to [Code]; MyAppId is the one source for both.
+  UninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppId}_is1';
   // Trigger-less, elevated task the running (unprivileged) app starts with
   // `schtasks /Run` to apply an update without a UAC prompt nobody could answer
   // from a remote browser. Its action is the fixed staging path SelfUpdater
   // downloads to — the two MUST agree or the task runs nothing.
-  UpdateTaskName = 'MoonlightWeb Update';
-  UpdateStagedExe = '%LocalAppData%\MoonlightWeb\update\MoonlightWeb-update.exe';
+  UpdateTaskName = '{#MyAppName} Update';
+  UpdateStagedExe = '%LocalAppData%\{#MyAppName}\update\MoonlightWeb-update.exe';
   UpdateSilentArgs = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-';
 
 var
@@ -300,7 +322,7 @@ function DetectService(): Boolean;
 var
   rc: Integer;
 begin
-  Result := Exec(ExpandConstant('{sys}\sc.exe'), 'query MoonlightWeb', '', SW_HIDE,
+  Result := Exec(ExpandConstant('{sys}\sc.exe'), 'query {#MyAppName}', '', SW_HIDE,
                  ewWaitUntilTerminated, rc) and (rc = 0);
 end;
 
@@ -309,15 +331,15 @@ function LogonTaskExists(): Boolean;
 var
   rc: Integer;
 begin
-  Result := Exec('schtasks.exe', '/Query /TN "MoonlightWeb"', '', SW_HIDE,
+  Result := Exec('schtasks.exe', '/Query /TN "{#MyAppName}"', '', SW_HIDE,
                  ewWaitUntilTerminated, rc) and (rc = 0);
 end;
 
 // True when a Desktop shortcut created by a previous install is still there.
 function DesktopIconExists(): Boolean;
 begin
-  Result := FileExists(ExpandConstant('{autodesktop}\MoonlightWeb.lnk'))
-         or FileExists(ExpandConstant('{userdesktop}\MoonlightWeb.lnk'));
+  Result := FileExists(ExpandConstant('{autodesktop}\{#MyAppName}.lnk'))
+         or FileExists(ExpandConstant('{userdesktop}\{#MyAppName}.lnk'));
 end;
 
 // "Passer": decline the Internet link and move on. Inno has no API to advance
@@ -342,7 +364,7 @@ var
 begin
   Result := False;
   if not LoadStringFromFile(
-       ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\settings.json'), raw) then
+       ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}\settings.json'), raw) then
     Exit;
   content := raw;
   p := Pos('"' + key + '":', content);
@@ -363,7 +385,7 @@ var
 begin
   Result := False;
   if not LoadStringFromFile(
-       ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\settings.json'), raw) then
+       ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}\settings.json'), raw) then
     Exit;
   content := raw;
   Result := Pos('"' + key + '":', content) > 0;
@@ -655,7 +677,7 @@ begin
     '</Task>' + #13#10;
   xmlPath := ExpandConstant('{tmp}\mw-task.xml');
   if SaveStringToFile(xmlPath, xml, False) then
-    Exec('schtasks.exe', '/Create /TN "MoonlightWeb" /XML "' + xmlPath + '" /F',
+    Exec('schtasks.exe', '/Create /TN "{#MyAppName}" /XML "' + xmlPath + '" /F',
          '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
@@ -712,10 +734,10 @@ var
   rc: Integer;
 begin
   if ServiceInstalled then
-    Exec(ExpandConstant('{sys}\net.exe'), 'stop MoonlightWeb', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\net.exe'), 'stop {#MyAppName}', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
   // End the logon task first so its supervisor cannot relaunch what we kill.
-  Exec('schtasks.exe', '/End /TN "MoonlightWeb"', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Exec('schtasks.exe', '/End /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
   Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, rc);
   // taskkill returns before Windows has actually torn the process down.
   Sleep(2000);
@@ -743,10 +765,10 @@ var
 begin
   exePath := ExpandConstant('{app}\{#MyAppExe}');
   Exec(ExpandConstant('{sys}\netsh.exe'),
-       'advfirewall firewall delete rule name="MoonlightWeb"',
+       'advfirewall firewall delete rule name="{#MyAppName}"',
        '', SW_HIDE, ewWaitUntilTerminated, rc);
   Exec(ExpandConstant('{sys}\netsh.exe'),
-       'advfirewall firewall add rule name="MoonlightWeb" dir=in action=allow'
+       'advfirewall firewall add rule name="{#MyAppName}" dir=in action=allow'
        + ' program="' + exePath + '" enable=yes profile=any',
        '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
@@ -831,7 +853,7 @@ var
 begin
   Result := '{#AdminUrl}';
   if LoadStringFromFile(
-       ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json'), raw) then
+       ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}\provisioning.status.json'), raw) then
   begin
     url := StatusValue(raw, 'admin_url');
     if url <> '' then Result := url;
@@ -977,7 +999,7 @@ begin
   // Bring the server back up. A service install owns its own lifecycle (session
   // 0, no tray) — restarting it is what StopRunningInstance stopped.
   if ServiceInstalled then
-    Exec(ExpandConstant('{sys}\net.exe'), 'start MoonlightWeb', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\net.exe'), 'start {#MyAppName}', '', SW_HIDE,
          ewWaitUntilTerminated, rc)
   // On an update this setup is itself running elevated (started by the app
   // through the "MoonlightWeb Update" task), so Exec'ing the exe here would
@@ -985,7 +1007,7 @@ begin
   // through the logon task instead brings it back at its normal, least
   // privileged level.
   else if UpdateMode and LogonTaskExists() then
-    Exec('schtasks.exe', '/Run /TN "MoonlightWeb"', '', SW_HIDE, ewWaitUntilTerminated, rc)
+    Exec('schtasks.exe', '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc)
   else
     // Start the windowless tray server now so provisioning.json is consumed and
     // pairing + A-record run. ewNoWait: it keeps running after setup exits.
@@ -998,8 +1020,8 @@ begin
   // Either way the server just restarted with the settings it already had.
   if WizardSilent or UpdateMode then Exit;
 
-  // Qt AppDataLocation on Windows: %AppData%\<Org>\<App> = MoonlightWeb\MoonlightWeb.
-  statusPath := ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json');
+  // Qt AppDataLocation on Windows: %AppData%\<Org>\<App> = MoonlightWeb\<MyAppName>.
+  statusPath := ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}\provisioning.status.json');
 
   ProgressPage.SetText(ExpandConstant('{cm:ProvisionWorking}'), '');
   ProgressPage.Show;
@@ -1076,7 +1098,9 @@ begin
   // Register the elevated on-demand task that lets the (unprivileged) server
   // apply the next update by itself, with no UAC prompt. Refreshed on every
   // install so the action always matches the current staging convention.
+#ifndef DevEdition
   RegisterUpdateTask();
+#endif
 
   // provisioning.json — consumed and removed by the server on first run.
   // An update skips it: the server is already provisioned, and replaying a
@@ -1137,10 +1161,12 @@ end;
 // leaves it all behind on purpose — reinstalling then finds the machine exactly
 // as the user left it (that is also what the one-click update relies on). This
 // dialog is the opt-in that wipes it instead:
-//   %AppData%\MoonlightWeb\MoonlightWeb  settings.json, sessions.json, the ACME
+//   %AppData%\MoonlightWeb\<name>       settings.json, sessions.json, the ACME
 //                                        certificate, logs and crash dumps
-//   HKCU\Software\MoonlightWeb           the QSettings hive: paired hosts and
+//   HKCU\Software\MoonlightWeb\<name>   the QSettings hive: paired hosts and
 //                                        the Moonlight client identity
+// <name> is this edition's (MyAppName). The parent keys are shared with the
+// other edition and with --dev instances, whose pairings must survive this.
 // Unchecked by default: losing the pairing certificate means re-pairing every
 // host, which must never happen by accident.
 function AskRemoveConfig(): Boolean;
@@ -1228,20 +1254,20 @@ begin
     // Stop the running server first: remove the logon task (so it cannot be
     // relaunched), end any task-started instance, then force-kill the tray
     // process. Otherwise MoonlightWeb.exe keeps running and locks {app} files.
-    Exec('schtasks.exe', '/End /TN "MoonlightWeb"', '', SW_HIDE,
+    Exec('schtasks.exe', '/End /TN "{#MyAppName}"', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
-    Exec('schtasks.exe', '/Delete /TN "MoonlightWeb" /F', '', SW_HIDE,
+    Exec('schtasks.exe', '/Delete /TN "{#MyAppName}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     // The elevated on-demand update launcher goes too — leaving it behind would
     // keep an elevated task pointing at a path the user can still write to.
     Exec('schtasks.exe', '/Delete /TN "' + UpdateTaskName + '" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
-    DelTree(ExpandConstant('{localappdata}\MoonlightWeb\update'), True, True, True);
+    DelTree(ExpandConstant('{localappdata}\{#MyAppName}\update'), True, True, True);
     Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     // Remove the firewall rule added at install time.
     Exec(ExpandConstant('{sys}\netsh.exe'),
-         'advfirewall firewall delete rule name="MoonlightWeb"', '', SW_HIDE,
+         'advfirewall firewall delete rule name="{#MyAppName}"', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     DeleteFile(ExpandConstant('{group}\MoonlightWeb Admin.url'));
     // Both desktops: the installer wrote the provisional shortcut to the common
@@ -1251,17 +1277,20 @@ begin
     DeleteFile(ExpandConstant('{userdesktop}\MoonlightWeb Admin.url'));
     DeleteFile(ExpandConstant('{app}\provisioning.json'));
     DeleteFile(ExpandConstant('{app}\provisioning.consumed.json'));
-    DeleteFile(ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json'));
+    DeleteFile(ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}\provisioning.status.json'));
 
     // Opt-in wipe. Runs after the server has been killed above: its lock file,
     // logs and settings are only closed once the process is really gone.
     if removeConfig then begin
-      DelTree(ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb'), True, True, True);
+      DelTree(ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}'), True, True, True);
       // Leave the parent MoonlightWeb\ behind only if something else lives in it.
       RemoveDir(ExpandConstant('{userappdata}\MoonlightWeb'));
       // QSettings' hive: hosts\<n>\pairState, the client certificate/key, window
-      // state. Org key and app subkey go together.
-      RegDeleteKeyIncludingSubkeys(HKCU, 'Software\MoonlightWeb');
+      // state. This edition's subkey only — the org key also holds the other
+      // edition's and every --dev instance's pairings — then the org key
+      // itself if nothing else is left in it.
+      RegDeleteKeyIncludingSubkeys(HKCU, 'Software\MoonlightWeb\{#MyAppName}');
+      RegDeleteKeyIfEmpty(HKCU, 'Software\MoonlightWeb');
     end;
   end;
 end;

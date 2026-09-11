@@ -25,8 +25,13 @@
 # ===========================================================================
 set -u
 
-APP="/Applications/MoonlightWeb.app"
-EXE="$APP/Contents/MacOS/MoonlightWeb"
+# Filled in by build-pkg.sh for the edition being packaged: MoonlightWeb, or
+# MoonlightWebDev beside it — its own bundle, LaunchAgent and app-data dir, so a
+# pre-release never touches the production install.
+APP_NAME="@MW_APP_NAME@"
+AGENT_LABEL="@MW_AGENT_LABEL@"
+APP="/Applications/$APP_NAME.app"
+EXE="$APP/Contents/MacOS/$APP_NAME"
 HANDOFF="/tmp/moonlightweb-provisioning" # `defaults` appends .plist
 LOG="/tmp/moonlightweb-postinstall.log"
 exec >>"$LOG" 2>&1
@@ -61,7 +66,7 @@ echo "handoff: internet=$INTERNET"
 
 # ── 1) provisioning.json, consumed and removed by the server on first run
 #    (Provisioning::applyOnce). Written into the console user's Qt
-#    AppDataLocation (~/Library/Application Support/MoonlightWeb/MoonlightWeb),
+#    AppDataLocation (~/Library/Application Support/MoonlightWeb/$APP_NAME),
 #    owned by them.
 #
 #    No "sunshine" object any more: this installer installs no streaming server
@@ -70,7 +75,7 @@ echo "handoff: internet=$INTERNET"
 #    server given this file behaves exactly as if Skip had been clicked — and no
 #    plaintext credential is ever written to disk.
 json_escape() { printf '%s' "$1" | /usr/bin/sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
-APPDATA="$CONSOLE_HOME/Library/Application Support/MoonlightWeb/MoonlightWeb"
+APPDATA="$CONSOLE_HOME/Library/Application Support/MoonlightWeb/$APP_NAME"
 /bin/mkdir -p "$APPDATA"
 cat > "$APPDATA/provisioning.json" <<JSON
 {
@@ -88,12 +93,12 @@ echo "wrote $APPDATA/provisioning.json (internet=$INTERNET)"
 AGENTS="$CONSOLE_HOME/Library/LaunchAgents"
 LOGDIR="$APPDATA/logs"
 /bin/mkdir -p "$AGENTS" "$LOGDIR"
-cat > "$AGENTS/com.moonlightweb.agent.plist" <<PLIST
+cat > "$AGENTS/$AGENT_LABEL.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key><string>com.moonlightweb.agent</string>
+    <key>Label</key><string>$AGENT_LABEL</string>
     <key>ProgramArguments</key>
     <array><string>$EXE</string><string>--autostart</string></array>
     <key>RunAtLoad</key><true/>
@@ -106,7 +111,7 @@ cat > "$AGENTS/com.moonlightweb.agent.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-/usr/sbin/chown "$CONSOLE_USER" "$AGENTS/com.moonlightweb.agent.plist"
+/usr/sbin/chown "$CONSOLE_USER" "$AGENTS/$AGENT_LABEL.plist"
 echo "wrote LaunchAgent"
 
 # ── 2a) Hand the app-data tree to the user. This script runs as root, so every

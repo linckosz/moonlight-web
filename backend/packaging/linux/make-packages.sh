@@ -12,7 +12,14 @@
 #   .rpm → Fedora, RHEL, openSUSE, Nobara...   (GNOME Software / YaST)
 # Arch-based and immutable gaming distros (SteamOS, Bazzite) use the AppImage.
 #
-# Usage: make-packages.sh <AppDir> <version> <outdir>
+# Usage: make-packages.sh <AppDir> <version> <outdir> [prod|dev]
+#
+# dev builds the DEV edition (MoonlightWebDev, from every CI run that is not a
+# v* tag): package moonlightweb-dev under /opt/moonlightweb-dev, installable
+# BESIDE the production package. Every file dpkg/rpm would otherwise see two
+# owners for is renamed, and so is everything a user or systemd addresses it
+# by — the command, the unit, the menu entry, the icon. See
+# backend/src/common/Edition.h.
 # Requires: fpm (gem install fpm) + rpmbuild (apt-get install rpm).
 # ============================================================================
 set -euo pipefail
@@ -20,8 +27,17 @@ set -euo pipefail
 APPDIR=$(realpath "$1")
 VERSION=$2
 OUT=$(realpath "$3")
+EDITION=${4:-prod}
 
-PREFIX=/opt/moonlightweb
+# PORTS: what postinst opens in an active firewall (and prerm closes). The DEV
+# edition listens on its own TCP ports and leaves the UDP stream port alone:
+# production opens it, and a DEV uninstall closing it would cut production off.
+case "$EDITION" in
+    prod) NAME=moonlightweb;     APP=MoonlightWeb;    PORTS="443/tcp 80/tcp 47999/udp" ;;
+    dev)  NAME=moonlightweb-dev; APP=MoonlightWebDev; PORTS="48443/tcp 48080/tcp" ;;
+    *) echo "error: edition must be prod or dev (got '$EDITION')" >&2; exit 1 ;;
+esac
+PREFIX=/opt/$NAME
 ROOT=$(mktemp -d)
 PKG="$ROOT/pkgroot"
 trap 'rm -rf "$ROOT"' EXIT
@@ -53,7 +69,7 @@ EOF
 # shared libraries" on Ubuntu 22.04). moonlightweb-launch links libc only,
 # carries the capability, and execs MoonlightWeb next to it with the capability
 # in the ambient set — see moonlightweb-launch.c. postinst sets it below.
-ln -sfn "$PREFIX/bin/moonlightweb-launch" "$PKG/usr/bin/moonlightweb"
+ln -sfn "$PREFIX/bin/moonlightweb-launch" "$PKG/usr/bin/$NAME"
 
 # systemd unit for headless installs. Vendor directory, not /etc/systemd/system:
 # a unit that merely *exists* there does nothing until something enables it, so
@@ -61,8 +77,9 @@ ln -sfn "$PREFIX/bin/moonlightweb-launch" "$PKG/usr/bin/moonlightweb"
 # file, and /etc stays free for an admin override (systemd's own precedence
 # rules). postinst enables it only when the machine has no desktop.
 mkdir -p "$PKG/usr/lib/systemd/system"
-cp "$(dirname "$0")/../systemd/moonlightweb.service" \
-   "$PKG/usr/lib/systemd/system/moonlightweb.service"
+sed -e "s|/opt/moonlightweb/|$PREFIX/|g" -e "s|^Description=MoonlightWeb |Description=$APP |" \
+    "$(dirname "$0")/../systemd/moonlightweb.service" \
+    > "$PKG/usr/lib/systemd/system/$NAME.service"
 
 # /dev/uinput, for the virtual gamepad. Vendor directories again, for the same
 # reason as the unit above: /etc stays free for an admin to override either file
@@ -73,28 +90,28 @@ cp "$(dirname "$0")/../systemd/moonlightweb.service" \
 # distributions already load for Steam.
 mkdir -p "$PKG/usr/lib/udev/rules.d" "$PKG/usr/lib/modules-load.d"
 cp "$(dirname "$0")/70-moonlightweb-uinput.rules" \
-   "$PKG/usr/lib/udev/rules.d/70-moonlightweb-uinput.rules"
+   "$PKG/usr/lib/udev/rules.d/70-$NAME-uinput.rules"
 cp "$(dirname "$0")/moonlightweb-uinput.conf" \
-   "$PKG/usr/lib/modules-load.d/moonlightweb-uinput.conf"
+   "$PKG/usr/lib/modules-load.d/$NAME-uinput.conf"
 
-cp "$APPDIR/MoonlightWeb.png" \
-   "$PKG/usr/share/icons/hicolor/512x512/apps/moonlightweb.png"
+cp "$APPDIR/$APP.png" \
+   "$PKG/usr/share/icons/hicolor/512x512/apps/$NAME.png"
 
 # Menu entry (absolute Exec: /opt is not on PATH for .desktop resolution).
 # Named after the AppStream component ID so a software centre matches the two
 # without ambiguity; the <launchable> in the metainfo points back here.
-APPID=top.moonlightweb.MoonlightWeb
+APPID=top.moonlightweb.$APP
 cat > "$PKG/usr/share/applications/$APPID.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=MoonlightWeb
+Name=$APP
 Comment=Sunshine streaming client for the browser
 Exec=$PREFIX/bin/moonlightweb-launch
-Icon=moonlightweb
+Icon=$NAME
 Categories=Network;Game;
 Keywords=streaming;sunshine;moonlight;gaming;remote;
 Terminal=false
-StartupWMClass=MoonlightWeb
+StartupWMClass=$APP
 EOF
 
 # AppStream metadata: what GNOME Software / KDE Discover / Ubuntu App Center
@@ -102,7 +119,10 @@ EOF
 # graphical software centre. The same file is compiled into the repository
 # index by the `linux-repo` job (see .github/workflows/release.yml).
 sed -e "s/@MW_VERSION@/$VERSION/g" -e "s/@MW_DATE@/$(date -u +%Y-%m-%d)/g" \
-    "$(dirname "$0")/$APPID.metainfo.xml" \
+    -e "s/top\.moonlightweb\.MoonlightWeb/$APPID/g" \
+    -e "s|^  <name>MoonlightWeb</name>|  <name>$APP</name>|" \
+    -e "s|<binary>moonlightweb</binary>|<binary>$NAME</binary>|" \
+    "$(dirname "$0")/top.moonlightweb.MoonlightWeb.metainfo.xml" \
     > "$PKG/usr/share/metainfo/$APPID.metainfo.xml"
 
 # Catches a malformed template before it reaches a user's software centre.
@@ -308,6 +328,22 @@ fi
 exit 0
 EOF
 
+if [ "$EDITION" = dev ]; then
+    sed -i -e "s|/opt/moonlightweb/bin/MoonlightWeb|$PREFIX/bin/$APP|g" \
+           -e "s|/opt/moonlightweb/|$PREFIX/|g" \
+           -e "s|moonlightweb\.service|$NAME.service|g" \
+           -e "s|443/tcp 80/tcp 47999/udp|$PORTS|g" \
+           -e "s|moonlightweb --|$NAME --|g" \
+           -e "s|enable --now moonlightweb\$|enable --now $NAME|" \
+           -e "s|the moonlightweb service|the $NAME service|" \
+           -e "s|^MoonlightWeb is installed|$APP is installed|" \
+           "$ROOT/postinst.sh" "$ROOT/prerm.sh"
+    if grep -n '/opt/moonlightweb/\|moonlightweb\.service' "$ROOT/postinst.sh" "$ROOT/prerm.sh"; then
+        echo "error: a DEV hook still names the production package (above)" >&2
+        exit 1
+    fi
+fi
+
 # Qt and OpenSSL are bundled, but linuxdeploy deliberately leaves the graphics
 # and font stack to the system — those libraries are driver- and distro-coupled
 # and must never be shipped. They are NEEDED entries of the executable itself,
@@ -359,7 +395,7 @@ rpm_depends=(
 )
 
 common=(
-    -s dir -n moonlightweb -v "$VERSION"
+    -s dir -n "$NAME" -v "$VERSION"
     --license GPL-3.0 --vendor MoonlightWeb
     --url "https://moonlightweb.top/"
     --description "Sunshine streaming client for the browser (self-contained, bundled Qt runtime)"
@@ -370,9 +406,9 @@ common=(
 )
 
 fpm "${common[@]}" "${deb_depends[@]}" \
-    -t deb -a amd64  -p "$OUT/moonlightweb-$VERSION-linux-x64.deb" .
+    -t deb -a amd64  -p "$OUT/$NAME-$VERSION-linux-x64.deb" .
 fpm "${common[@]}" "${rpm_depends[@]}" \
-    -t rpm -a x86_64 -p "$OUT/moonlightweb-$VERSION-linux-x64.rpm" .
+    -t rpm -a x86_64 -p "$OUT/$NAME-$VERSION-linux-x64.rpm" .
 
 echo "Packages written to $OUT:"
-ls -lh "$OUT"/moonlightweb-"$VERSION"-linux-x64.{deb,rpm}
+ls -lh "$OUT"/"$NAME"-"$VERSION"-linux-x64.{deb,rpm}

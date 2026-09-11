@@ -20,7 +20,12 @@
   plus the resources and plugins directories.
 -->
 <installer-gui-script minSpecVersion="1">
-    <title>MoonlightWeb</title>
+    <!-- @MW_APP_NAME@ / @MW_IDENT@: MoonlightWeb / com.moonlightweb.server, or
+         the DEV edition's MoonlightWebDev / com.moonlightweb.server.dev
+         (build-pkg.sh EDITION=dev). A different package id is what lets the
+         two coexist: installer(8) would otherwise treat one as an upgrade of
+         the other. -->
+    <title>@MW_APP_NAME@</title>
     <organization>com.moonlightweb</organization>
 
     <!-- HTML shown on the Introduction / License / Summary panes. -->
@@ -35,13 +40,13 @@
 
     <choices-outline>
         <line choice="default">
-            <line choice="com.moonlightweb.server"/>
+            <line choice="@MW_IDENT@"/>
         </line>
     </choices-outline>
     <choice id="default"/>
-    <choice id="com.moonlightweb.server" visible="false">
-        <pkg-ref id="com.moonlightweb.server"/>
+    <choice id="@MW_IDENT@" visible="false">
+        <pkg-ref id="@MW_IDENT@"/>
     </choice>
 
-    <pkg-ref id="com.moonlightweb.server" version="@MW_VERSION@" onConclusion="none">MoonlightWeb-component.pkg</pkg-ref>
+    <pkg-ref id="@MW_IDENT@" version="@MW_VERSION@" onConclusion="none">@MW_APP_NAME@-component.pkg</pkg-ref>
 </installer-gui-script>
