@@ -42,6 +42,13 @@ main() {
     [[ "$mode" == "--apply" ]] && apply=1
 
     cd "$(dirname "$0")"
+    # Run from outside any checkout, it deploys the production one. That is the
+    # one-time move of a checkout older than this script (README §One-time
+    # setup): the script is taken from the target tag with `git show` into
+    # /tmp, because the running checkout does not have it yet.
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        cd "$HOME/moonlight-web/deploy/powerdns"
+    fi
 
     # Guard: this is for the production checkout and nothing else. The dev
     # clone has an identical copy of this file, and running it there would

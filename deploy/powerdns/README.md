@@ -376,10 +376,21 @@ docker compose exec pdns pdnsutil --config-dir=/etc/powerdns add-record "$(grep 
 docker compose exec pdns pdnsutil --config-dir=/etc/powerdns rectify-zone "$(grep ^MW_DOMAIN= .env | cut -d= -f2)"
 cd ~
 
-# 3. production: the mw-edge network + the stream.dev block — the LAST caddy
-#    rebuild a dev change will ever need. --no-deps, so mw-rendezvous stays up.
+# 3a. production onto the first tag that carries this layout (v0.3.0 here, or a
+#     srv-<date> tag — pushed first). The running checkout predates
+#     deploy-prod.sh, so the script comes from the tag itself, this once. Read:
+cd ~/moonlight-web
+git fetch --tags
+git show v0.3.0:deploy/powerdns/deploy-prod.sh > /tmp/deploy-prod.sh
+bash /tmp/deploy-prod.sh v0.3.0
+cd ~
+
+# 3b. apply: checks the tag out and rebuilds caddy (the stream.dev block, the
+#     mw-edge network — the LAST caddy rebuild a dev change will ever need) and
+#     mw-rendezvous (protocol versioning), each --no-deps. The rendezvous
+#     restarts this one time; hosts reconnect on their own within seconds.
+bash /tmp/deploy-prod.sh v0.3.0 --apply
 cd ~/moonlight-web/deploy/powerdns
-docker compose up -d --no-deps --build caddy
 docker compose logs caddy | grep 'automatic TLS'      # must list stream.dev.
 cd ~
 
