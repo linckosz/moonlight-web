@@ -29,6 +29,8 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { currentInstanceRef, listInstances } from '../util/instances.js';
+import { tunnelHostId } from '../net/tunnelBridge.js';
 
 export class LoginView {
     constructor(container, onAuthenticated) {
@@ -47,6 +49,8 @@ export class LoginView {
         this._certMode = false; // User chose cert upload mode
         this._selectedFileName = '';
         this._localUrl = ''; // https://localhost[:port] — the host machine's way back in
+        // The other machines this browser has already been to (see _renderServerField).
+        this._otherInstances = [];
         // Keep the session across browser restarts. On by default: most people
         // log in from their own device and should never see this page twice.
         // Unchecking it is what someone on a borrowed machine wants — the cookie
@@ -66,6 +70,10 @@ export class LoginView {
 
         // Build default machine name from client OS + browser
         this._suggestMachineName();
+
+        // The machines this browser can leave for, read once per visit to this
+        // screen: nothing writes to that register while a login is on screen.
+        this._otherInstances = this._readOtherInstances();
 
         // Offer the host machine its way back in (see _buildLocalUrl).
         await this._resolveLocalUrl();
@@ -218,6 +226,8 @@ export class LoginView {
             <div class="login-form">
                 <p class="login-subtitle">${t('login.pinSubtitle')}</p>
 
+                ${this._renderServerField()}
+
                 <!-- Machine name -->
                 <div class="login-field">
                     <label class="login-label" for="login-machine-input">${t('login.nameSession')}</label>
@@ -263,6 +273,81 @@ export class LoginView {
     }
 
     /**
+     * Every machine in this browser's register except the one being unlocked.
+     *
+     * The register is written by the application after a machine has answered,
+     * so an entry here means this browser has actually been to that machine —
+     * it is a list of places the person can go, not a list of guesses.
+     *
+     * The address is checked to be http(s) before it is offered. Nothing in the
+     * product writes anything else there, and that is the point: this screen
+     * turns a stored string into a navigation, and the one shape of string that
+     * must never become one is a javascript: URL.
+     */
+    _readOtherInstances() {
+        try {
+            const currentId = currentInstanceRef(tunnelHostId()).id;
+            return listInstances().filter((e) => e.id !== currentId && this._isWebUrl(e.url));
+        } catch {
+            // No storage (private mode, a quota refusal). The login screen is
+            // complete without the offer; it just cannot make it.
+            return [];
+        }
+    }
+
+    /** True for an address a browser may be sent to from here. */
+    _isWebUrl(url) {
+        try {
+            const scheme = new URL(url, window.location.href).protocol;
+            return scheme === 'https:' || scheme === 'http:';
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * "Server selection" — the way to a different machine, from the one screen
+     * that used to be a dead end.
+     *
+     * Someone who runs MoonlightWeb on two PCs and follows a link to the one
+     * that is switched off, or whose session there expired, lands here with no
+     * route to the other except a bookmark they may not have. The register
+     * behind the header menu already holds every machine this browser has
+     * reached, and it costs nothing to offer it before the PIN rather than
+     * after it.
+     *
+     * What it deliberately does NOT say is which machine this is. The name of
+     * the machine being unlocked is not on this screen and must not be put
+     * there: this is the screen shown to whoever holds the link, including
+     * someone who should not have it, and a name is the one thing that turns an
+     * opaque identifier into a machine worth attacking. The rows below name
+     * only machines this browser has already paired with, which tells that
+     * visitor nothing they could not learn by opening any of them — and the
+     * selected row is a neutral label, never the current name.
+     *
+     * Absent entirely when there is nowhere to go, rather than shown empty: a
+     * chooser with one unusable entry is a question with no answer.
+     */
+    _renderServerField() {
+        if (this._otherInstances.length === 0) return '';
+
+        return `
+                <div class="login-field">
+                    <label class="login-label" for="login-server-select">${t('login.serverSelection')}</label>
+                    <select id="login-server-select" class="settings-select login-select">
+                        <option value="" selected>${this.esc(t('login.serverCurrent'))}</option>
+                        ${this._otherInstances
+                            .map(
+                                (e) =>
+                                    `<option value="${this.esc(e.url)}">${this.esc(e.name)}</option>`,
+                            )
+                            .join('')}
+                    </select>
+                </div>
+        `;
+    }
+
+    /**
      * "Remember me", shared by both authentication forms. Checked by default —
      * unchecking is the deliberate act of someone on a machine they are about to
      * walk away from, and the hint spells out what they get for it.
@@ -283,6 +368,8 @@ export class LoginView {
         return `
             <div class="login-form">
                 <p class="login-subtitle">${t('login.certSubtitle')}</p>
+
+                ${this._renderServerField()}
 
                 <!-- Machine name -->
                 <div class="login-field">
@@ -341,6 +428,22 @@ export class LoginView {
         if (rememberCheck) {
             rememberCheck.addEventListener('change', () => {
                 this._remember = rememberCheck.checked;
+            });
+        }
+
+        // "Server selection" — shared by both forms. Picking a machine LEAVES
+        // this one: each install is a separate program on a separate PC with
+        // its own session, so this is a navigation and not a view switch, the
+        // same as the header menu does once inside.
+        const serverSelect = this.container.querySelector('#login-server-select');
+        if (serverSelect) {
+            serverSelect.addEventListener('change', () => {
+                const url = serverSelect.value;
+                // The empty value is the row that is already on screen; putting
+                // the selection back is all it means.
+                if (!url) return;
+                serverSelect.disabled = true;
+                window.location.href = url;
             });
         }
 

@@ -102,6 +102,16 @@
     color: var(--text-3);
 }
 
+/* "Server selection" — the same select as everywhere else in the product, so
+   the one control on this screen that is not a credential does not look like
+   one. Left-aligned and in the body font: the inputs below it are mono and
+   centred because a PIN is read character by character; a machine name is
+   read as a word. */
+.login-select {
+    font-family: inherit;
+    text-align: left;
+}
+
 /* "Remember me" — a checkbox row plus the hint that explains what unchecking
    costs. Tighter than a normal field: it sits between the credential input and
    the submit button and must not push the button below the fold on a phone. */

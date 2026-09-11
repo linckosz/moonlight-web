@@ -209,6 +209,8 @@
     },
     "login": {
         "connecting": "Connecting to server...",
+        "serverSelection": "Server selection",
+        "serverCurrent": "This server",
         "pinSubtitle": "Enter the PIN shown on the server admin page",
         "certSubtitle": "Upload your certificate file to authenticate",
         "nameSession": "Name this session",

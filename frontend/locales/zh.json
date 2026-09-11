@@ -209,6 +209,8 @@
     },
     "login": {
         "connecting": "正在连接服务器…",
+        "serverSelection": "服务器选择",
+        "serverCurrent": "当前服务器",
         "pinSubtitle": "输入服务器管理页面显示的 PIN 码",
         "certSubtitle": "上传你的证书文件以进行身份验证",
         "nameSession": "为此会话命名",
