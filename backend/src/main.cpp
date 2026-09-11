@@ -1358,6 +1358,24 @@ int main(int argc, char* argv[])
     // Load .env file before anything reads environment variables, then fall back
     // to any values baked in at build time (CI secrets) for vars still unset.
     loadEnvFile();
+    // A dev instance talks to the STAGING introduction server. Everything the
+    // project reaches derives from MW_DOMAIN (RendezvousClient::baseUrl, both
+    // STUN lookups, the update relay), so one variable moves it all: the line
+    // is held on stream.dev.{domain}, the address handed out is under it, and
+    // the browser's STUN follows its own hostname. Production keeps serving
+    // only tagged code that way, and a `--dev` build never claims its
+    // identifier on the box every installed 0.3.x is on.
+    //
+    // Between the .env and the embedded defaults on purpose: an explicit
+    // MW_DOMAIN or MW_RENDEZVOUS_URL in the environment wins — that is how a
+    // dev build is pointed at production to check compatibility — while the
+    // domain CI bakes into a release binary must not.
+    if (devMode && qEnvironmentVariableIsEmpty("MW_DOMAIN") &&
+        qEnvironmentVariableIsEmpty("MW_RENDEZVOUS_URL")) {
+        qputenv("MW_DOMAIN", "dev.moonlightweb.top");
+        Logger::info("[--dev] MW_DOMAIN defaulted to dev.moonlightweb.top (staging); set "
+                     "MW_DOMAIN=moonlightweb.top to target production");
+    }
     applyEmbeddedEnvDefaults();
 
     // Parse command line
