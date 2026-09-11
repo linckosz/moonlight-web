@@ -6,17 +6,21 @@
 # is different: hosting it apart from the rendezvous server is the whole point,
 # since it is the only code a browser ever loads from a server.
 #
-# Triggers are scoped on purpose. This repository deliberately does NOT build on
-# every push to main, and this workflow does not change that: it runs only when
-# the bootstrap itself changes, or on demand.
+# Triggers: release tags, and nothing on main. The copy published here is the
+# reference the watchdog (bootstrap-watch.yml) compares the live entry page
+# against, and the live entry page is served from a checkout that follows
+# tags — so this must publish exactly what a tag holds, and publish it when the
+# tag exists, not when main moves. Two tag families: `v*` is an application
+# release; `srv-*` is a server-only correction that ships between releases and
+# deliberately does not trigger release.yml. Anything else is `main`, which now
+# reaches only the staging rendezvous.
 name: bootstrap-pages
 
 on:
   push:
-    branches: [main]
-    paths:
-      - "bootstrap/**"
-      - ".github/workflows/pages.yml"
+    tags:
+      - "v*"
+      - "srv-*"
   workflow_dispatch:
 
 permissions:
@@ -45,7 +49,7 @@ jobs:
       # comparison possible: this log is the record of what was intended.
       - name: Record bootstrap digests
         run: |
-          echo "### Bootstrap digests" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Bootstrap digests (${GITHUB_REF_NAME})" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           find bootstrap -type f ! -name CNAME -print0 \
             | sort -z | xargs -0 sha256sum | tee -a "$GITHUB_STEP_SUMMARY"
