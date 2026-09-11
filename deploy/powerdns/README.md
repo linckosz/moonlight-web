@@ -64,10 +64,12 @@ domain and `www`:
 Both get their own automatic Let's Encrypt certificate (independent of any
 api-only cert you may supply via `MW_TLS_CERT`). The site is plain HTML/CSS with
 the project screenshots under `website/assets/`. It is **bind-mounted** into the
-Caddy container (`../../website → /srv/site`), so edit it freely then
-`docker compose restart caddy` — no rebuild needed. The bootstrap is mounted the
-same way (`../../bootstrap → /srv/bootstrap`). The zone bootstrap adds the `www`
-and `stream` A records automatically; the apex `@` A record already existed.
+Caddy container (`../../website → /srv/site`), so a change on disk is served on
+the next request — no restart, no rebuild. The bootstrap is mounted the same
+way (`../../bootstrap → /srv/bootstrap`), which is exactly why the production
+checkout follows tags rather than `main` (see *Production and staging on one
+box*). The zone bootstrap adds the `www`, `stream` and `stream.dev` A records
+automatically; the apex `@` A record already existed.
 
 **Cache-busting.** The shared assets (`assets/chrome.js`, `chrome.css`,
 `pages.css`, `i18n.js`) are referenced with a `?v=…` query stamped from each
@@ -330,14 +332,141 @@ establish the browser connection counts as its own very short session, so a
 spike in `dur-0-1m` reads as "the first transport is not working here", not as
 "people leave immediately".
 
+## Production and staging on one box
+
+Since 0.3.0 every connection — LAN included — goes through `stream.{MW_DOMAIN}`,
+so this box is production the moment the first instance is installed, and it is
+the only box. Two rules follow, and the layout below is what makes them hold:
+
+- **Production follows a release tag, never `main`.** `~/moonlight-web` is
+  checked out on a tag (detached HEAD) and moves only with `deploy-prod.sh`.
+  Never `git pull` there: the bootstrap is bind-mounted, so a pull alone is a
+  deploy — every browser gets the new entry page on its next request — and
+  `main` would land in front of every installed instance. A server-only fix
+  between two releases is tagged `srv-<date>` (does not trigger `release.yml`,
+  does trigger the Pages publish).
+- **`main` runs on `stream.dev.{MW_DOMAIN}`**, a staging rendezvous on this same
+  box: a second clone and a second compose project (`docker-compose.dev.yml`,
+  project `mw-dev`) with two containers — its own `mw-rendezvous` (own claim
+  store, own secret) and its own Caddy rendering the shared `caddy/stream.caddy`
+  from that checkout, plain HTTP, no published port. Production's Caddy fronts
+  it with one fixed `reverse_proxy` block over the `mw-edge` network and lends
+  it the certificate. STUN needs nothing: `stream.dev.` resolves to the same
+  address and coturn listens on the host. The name is sent with
+  `X-Robots-Tag: noindex…` and a `robots.txt` that names the AI crawlers; it is
+  in DNS and in the CT logs regardless, so it is unlisted, not hidden.
+
+A change to the rendezvous, the bootstrap or the Caddy site body is tested by
+rebuilding the **dev** project alone: nothing in production restarts, no held
+line drops, the production entry page does not change.
+
+### One-time setup
+
+```bash
+# 1. the dev clone, with a .env that pins compose to the DEV project
+git clone https://github.com/linckosz/moonlight-web ~/moonlight-web-dev
+cd ~/moonlight-web-dev/deploy/powerdns
+printf 'COMPOSE_FILE=docker-compose.dev.yml\nCOMPOSE_PROJECT_NAME=mw-dev\nMW_DOMAIN=%s\nMW_RDV_OWNER_SECRET=%s\n' \
+  "$(grep ^MW_DOMAIN= ~/moonlight-web/deploy/powerdns/.env | cut -d= -f2)" "$(openssl rand -hex 32)" > .env
+cd ~
+
+# 2. the DNS name (in the running pdns, no restart; the zone is DNSSEC-signed → rectify)
+cd ~/moonlight-web/deploy/powerdns
+docker compose exec pdns pdnsutil --config-dir=/etc/powerdns add-record "$(grep ^MW_DOMAIN= .env | cut -d= -f2)" stream.dev A "$(grep ^MW_PUBLIC_IP= .env | cut -d= -f2)"
+docker compose exec pdns pdnsutil --config-dir=/etc/powerdns rectify-zone "$(grep ^MW_DOMAIN= .env | cut -d= -f2)"
+cd ~
+
+# 3. production: the mw-edge network + the stream.dev block — the LAST caddy
+#    rebuild a dev change will ever need. --no-deps, so mw-rendezvous stays up.
+cd ~/moonlight-web/deploy/powerdns
+docker compose up -d --no-deps --build caddy
+docker compose logs caddy | grep 'automatic TLS'      # must list stream.dev.
+cd ~
+
+# 4. the dev project
+cd ~/moonlight-web-dev/deploy/powerdns
+docker compose up -d --build
+docker compose ps
+cd ~
+```
+
+The first two lines of the dev `.env` are what make the reflex
+`docker compose up -d --build` safe in that directory: without them compose
+would pick up the production compose file that sits beside the dev one and —
+same container names — replace production with whatever `main` holds.
+
+### DEV — follow `main` on `stream.dev.{MW_DOMAIN}`
+
+```bash
+cd ~/moonlight-web-dev
+git pull --ff-only
+cd deploy/powerdns
+docker compose up -d --build
+docker compose ps
+cd ~
+```
+
+### PROD — move to a release (example: `v0.3.1`)
+
+Read first (writes nothing):
+
+```bash
+cd ~/moonlight-web/deploy/powerdns
+./deploy-prod.sh v0.3.1
+cd ~
+```
+
+Then apply — checks the tag out and rebuilds, `--no-deps`, only the services
+whose directory changed:
+
+```bash
+cd ~/moonlight-web/deploy/powerdns
+./deploy-prod.sh v0.3.1 --apply
+cd ~
+```
+
+Rolling back is the same two blocks with the previous tag. The script refuses
+a dirty tree, refuses to run outside `~/moonlight-web`, and asks nothing
+interactively — a prompt in the middle of a paste would eat the next line.
+
+### Pointing a host at staging
+
+`MW_DOMAIN=dev.{MW_DOMAIN}` moves everything a host derives from the domain at
+once: the line it holds, the address it hands out, both STUN lookups. An
+instance started with `--dev` does this by itself; set
+`MW_DOMAIN={MW_DOMAIN}` explicitly in its environment to point it back at
+production — that is how a build is checked against the deployed server before
+it is released.
+
+### Protocol versioning
+
+Production serves every installed instance at once, so the rendezvous protocol
+carries its own version, in two layers — neither is the app version:
+
+- **`/v1/` is the shape**: the three endpoints and the scripts under
+  `bootstrap/v1/`. A breaking change ships as `/v2/` *beside* it and both are
+  served until the version census (`updates.`) says the old one is empty. The
+  root script names (`/tunnel.js` …) are permanent aliases of the v1 files,
+  because every installed application imports `/tunnel.js` by that name.
+- **`?v=<revision>` is what a client understands inside `/v1/`**; absent means
+  `1`. Each side is told the other's revision (`v` on the `open` and `ready`
+  frames). A revision outside `[MW_RDV_MIN_PROTO, protoCurrent]` gets
+  `unsupported_version` — shown on the host's admin page, "reload" on the page —
+  instead of a failure that looks like the network. Raising `MW_RDV_MIN_PROTO`
+  in `.env` is how old clients are retired; decide it on the census.
+
+Release order: server first (`deploy-prod.sh` on the tag), application second.
+
 ## Contents
 
 ```
 deploy/powerdns/
 ├── install.sh               # one-shot installer (Docker, security, firewall, up)
+├── deploy-prod.sh           # PRODUCTION: move to a tag, rebuild only what it changed
 ├── renew-certs.sh           # re-issue TLS certs once DNS delegation has propagated
-├── docker-compose.yml       # dnsdist + pdns + mw-proxy + mw-rendezvous + coturn
-│                            #   + caddy + umami (+ umami-db)
+├── docker-compose.yml       # PRODUCTION: dnsdist + pdns + mw-proxy + mw-rendezvous
+│                            #   + coturn + caddy + umami (+ umami-db)
+├── docker-compose.dev.yml   # STAGING (stream.dev.): mw-rendezvous + caddy, own project
 ├── mw-proxy/
 │   ├── main.go              # least-privilege filtering gateway (stdlib only)
 │   ├── update.go            # release relay + installed-version census (0.3.0+)
@@ -353,8 +482,11 @@ deploy/powerdns/
 ├── dnsdist/dnsdist.conf     # DNS rate limiting / anti-amplification
 ├── caddy/
 │   ├── Dockerfile           # Caddy + caddy-ratelimit (xcaddy)
-│   ├── entrypoint.sh        # renders the Caddyfile from env, runs Caddy
-│   └── Caddyfile.tmpl       # api → pdns:8081  +  apex/www → static site
+│   ├── entrypoint.sh        # renders a Caddyfile from env, runs Caddy
+│   ├── Caddyfile.tmpl       # PRODUCTION vhosts (api, dnsapi, updates, stats,
+│   │                        #   stream, stream.dev → staging, apex/www)
+│   ├── Caddyfile.dev.tmpl   # STAGING: the stream site body on :80, nothing else
+│   └── stream.caddy         # the stream.* site body, shared by both
 ├── certs/                   # drop your own cert/key here (gitignored)
 └── .env.sample              # copy to .env and fill in
 ```

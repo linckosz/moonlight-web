@@ -27,6 +27,7 @@ Internet ─:53──────► [dnsdist] ──► pdns:5300              
 Internet ─:3478────► [coturn]                              STUN only, host network, no relay
 Internet ─:80/:443─► [caddy] ┬─ stream.{domain}/v1/ ─────► mw-rendezvous:8090  held lines + signalling
                              ├─ stream.{domain}/{id} ────► /srv/bootstrap      the entry page
+                             ├─ stream.dev.{domain} ────► mw-dev-caddy:80      STAGING (its own compose project, §10.14)
                              ├─ updates.{domain} ───────► mw-proxy:8080 ──► GitHub     release relay + census
                              ├─ metrics.{domain} ───────► mw-proxy:8080 ──► umami:3000 session census
                              ├─ dnsapi.{domain} ────────► mw-proxy:8080 ──► pdns:8081  restricted DNS API
@@ -59,7 +60,7 @@ The official image already ships `pdns.conf`, the gsqlite3 schema and the API wi
 
 - **`pdns/zz-mw.conf`** — hardening snippet merged via include-dir: `disable-axfr`, `version-string=anonymous`, default SOA content, internal ports.
 - **`pdns/init.sh`** — idempotent zone bootstrap run as entrypoint (then `exec`s the official wrapper):
-  - creates the zone if absent with A records for `@`, `www`, `stats`, `stream`, `ns1`, `ns2`, `api`, `dnsapi`, `updates`, `metrics` → `MW_PUBLIC_IP`, NS records, then `secure-zone` (DNSSEC) + `rectify-zone`, and **prints the DS record** to submit to the registrar;
+  - creates the zone if absent with A records for `@`, `www`, `stats`, `stream`, `stream.dev`, `ns1`, `ns2`, `api`, `dnsapi`, `updates` → `MW_PUBLIC_IP` (no `metrics`: the session census stays off, §10.11), NS records, then `secure-zone` (DNSSEC) + `rectify-zone`, and **prints the DS record** to submit to the registrar;
   - **backfills** missing records on pre-existing zones (`ensure_a` guards — note: a bare re-`add-record` would duplicate, hence the greps);
   - replaces the image's placeholder SOA when found.
 
@@ -77,12 +78,14 @@ The zone holds the stack's **own** names and nothing else: no instance is named 
 ## 10.4 Caddy (`caddy/`)
 
 - **Dockerfile**: xcaddy build adding the `caddy-ratelimit` plugin (this Go build is why the installer adds swap on 1 GiB VMs).
-- **`entrypoint.sh`** renders `Caddyfile.tmpl` from env at boot: `@MW_DOMAIN@`, `@TLS_LINE@` (api vhost: empty = auto Let's Encrypt, or `tls /certs/...` when `MW_TLS_CERT`+`MW_TLS_KEY` are both set — user files take priority), `@SITE_TLS_LINE@` (site vhosts always get their own ACME cert, never the api-only files).
+- **`entrypoint.sh`** renders `Caddyfile.tmpl` from env at boot: `@MW_DOMAIN@`, `@TLS_LINE@` (api vhost: empty = auto Let's Encrypt, or `tls /certs/...` when `MW_TLS_CERT`+`MW_TLS_KEY` are both set — user files take priority), `@SITE_TLS_LINE@` (site vhosts always get their own ACME cert, never the api-only files). `MW_CADDYFILE_TMPL` selects `Caddyfile.dev.tmpl` instead — that is the staging Caddy (§10.14).
+- **`stream.caddy`** is the body of the `stream.` site as a snippet, imported by both templates, so staging serves exactly what production serves.
 - Certificates persist in the `caddy_data` volume.
 
 | Vhost | Serves |
 |---|---|
-| `stream.` | **The entry host.** `/v1/*` reverse-proxies to `mw-rendezvous` (rate-limited on connection *attempts*: a held line is one request that then stays open for days, so a host is charged once per reconnect). Everything else is the bootstrap (§10.8), with `try_files {path} /index.html` so every `/{id}` serves the same page and a real asset still wins over the fallback. `Referrer-Policy: no-referrer`, because the identifier is in the path and would otherwise ride along in the `Referer` of every outbound link. |
+| `stream.` | **The entry host.** `/v1/claim`, `/v1/host`, `/v1/peer` — by exact name — reverse-proxy to `mw-rendezvous` (rate-limited on connection *attempts*: a held line is one request that then stays open for days, so a host is charged once per reconnect). Any other `/v1/…` is a script of that protocol shape served from `bootstrap/v1/` (a missing one is a 404, never the page). The four root names the scripts were first published under (`/boot.js`, `/tunnel.js`, `/pairing.js`, `/frame-guard.js`) are rewritten to `/v1/…` — permanent aliases, since every installed machine's application imports `/tunnel.js` by that name. Everything else is the bootstrap (§10.8), with `try_files {path} /index.html` so every `/{id}` serves the same page and a real asset still wins over the fallback. `Referrer-Policy: no-referrer`, because the identifier is in the path and would otherwise ride along in the `Referer` of every outbound link. |
+| `stream.dev.` | The **staging** rendezvous (§10.14): a fixed `reverse_proxy` to the dev project's Caddy over the `mw-edge` network, plus `X-Robots-Tag: noindex…` and a `robots.txt` that names the search and AI crawlers. Written once, never edited for a change on the dev side. |
 | `updates.` / `metrics.` / `dnsapi.` | `mw-proxy` (60 req/min/IP), respectively the release relay, the session census and the restricted DNS API. |
 | `stats.` | Umami. |
 | apex + `www.` | The static marketing site (`website/`), `www` 301-redirected to the apex. |
@@ -144,6 +147,15 @@ The stack cannot do these for you:
 | `GET /v1/host` (upgrade) | An instance, continuously | The held line. Authenticated with the same ownership token. Keep-alives both ways; a line that goes quiet is hung up rather than left to rot. |
 | `GET /v1/peer` (upgrade) | A browser | Asks for one identifier, gets a session on that host's line. Rate-limited per client IP (`MW_RDV_MAX_PEER_PER_MIN`, default 30) and capped per host (`MW_RDV_MAX_SESSIONS`, default 4). |
 
+**Versioning — two numbers, neither is the app version.** The production server serves every installed instance at once (0.3.0, 0.3.1, …), so the protocol carries its own version, in two layers:
+
+- **The path, `/v1/`, is the shape.** A change that would break every existing client ships as `/v2/` *beside* it — endpoints and scripts (`bootstrap/v2/`) — and production serves both until the version census (§10.10) says nobody is left on the old one. Inside `/v1/`, changes are **additive only**.
+- **`?v=<revision>` is what a client understands inside that shape.** Hosts send it on `/v1/claim` and `/v1/host`, pages on `/v1/peer`; absent means `1`, which is what every client shipped before the field speaks. The server tells each side the other's revision (`v` on the `open` frame toward the host, on the `ready` frame toward the browser), so an addition only some clients understand is sent to those and withheld from the rest. A revision outside `[MW_RDV_MIN_PROTO, protoCurrent]` is refused with the code `unsupported_version` — HTTP 400 on the claim, an `error` frame after the upgrade on the two sockets, since Qt cannot read the body of a refused handshake. The host stops retrying and shows the reason on its admin page; the page says "reload".
+
+**Retiring old clients** is raising `MW_RDV_MIN_PROTO` in `.env`: they get a message that says what happened instead of a failure that looks like the network. Decide it on the census, never on a hunch. The three constants — `protoCurrent` in `hub.go`, `kProto` in `RendezvousClient.cpp`, `PROTO` in `bootstrap/v1/tunnel.js` — are kept in step by hand and say so in a comment.
+
+**Order of a release**: server first (tag deployed with `deploy-prod.sh`, §10.14), application release second. A client never meets a server older than itself.
+
 **The identifier is a locator, not a secret.** 26 characters of Crockford base32 (`RendezvousId`, `backend/src/common/RendezvousId.{h,cpp}`), lower-case, no `i`/`l`/`o`/`u` so it survives being read aloud or copied off a screen. 128 bits, so the set cannot be walked; and it never rotates, because an address that changes cannot be bookmarked. Holding one grants nothing — what grants access is the pairing signature and the PIN ([Security §6.2](06-Security.md)).
 
 > ⚠️ `RendezvousId::normalise()` and `normaliseID()` in `mw-rendezvous/store.go` **must agree character for character**. The server keys its ownership store on the normalised form: if the two ever disagree, a claim made under one spelling becomes unfindable under the other and an instance silently loses its own identifier. Unit tests on both sides pin the pairs.
@@ -160,8 +172,10 @@ So `stream.{domain}/{id}` serves a few kilobytes of HTML and JavaScript (`bootst
 
 It is small **on purpose** and published **on purpose**: it is the one piece of this project's code a browser ever loads from a server, so the honest mitigation is not "trust us" — it is that these bytes are few enough to read, identical for everyone, and published with their digests.
 
-- `.github/workflows/pages.yml` publishes `bootstrap/` to **GitHub Pages** (the domain in `bootstrap/CNAME`) as the digest-stamped reference copy. Only the bootstrap goes there; the marketing site stays behind Caddy, which can set real headers.
-- `.github/workflows/bootstrap-watch.yml` fetches every bootstrap file from the live entry host **and** from the Pages copy on a schedule and requires them to be byte-identical.
+- `.github/workflows/pages.yml` publishes `bootstrap/` to **GitHub Pages** (the domain in `bootstrap/CNAME`) as the digest-stamped reference copy — **on release tags** (`v*`, `srv-*`), never on a push to `main`, because the live host follows tags too (§10.14). Only the bootstrap goes there; the marketing site stays behind Caddy, which can set real headers.
+- `.github/workflows/bootstrap-watch.yml` fetches every bootstrap file of the latest release tag from the live entry host **and** from the Pages copy on a schedule and requires them to be byte-identical; it also checks that the four root aliases (`/tunnel.js` …) serve the same bytes as their `/v1/` files.
+
+The scripts live in `bootstrap/v1/` (`index.html` and `sw.js` stay at the root: the page is always the current one, and a service worker's scope must cover the whole origin). The directory is the protocol shape the scripts speak, see §10.7.
 
 Be precise about what that buys: it catches a box serving modified bytes **to everyone**, within the watch interval. It does not catch a box serving the good bytes to whoever is checking and different ones to a chosen victim — nothing an outsider can run catches that. It covers the untargeted case, which is nearly all of them, and it is not a guarantee. A mismatch is also more likely a deploy caught halfway than an attack, which is why the watcher retries before it shouts.
 
@@ -232,12 +246,32 @@ Explicit non-goals: **volumetric DDoS** absorption (needs upstream scrubbing/any
 ```bash
 docker compose logs -f pdns|mw-proxy|mw-rendezvous|caddy|dnsdist|coturn   # logs
 docker compose exec pdns pdnsutil --config-dir=/etc/powerdns list-zone <domain>
-docker compose restart caddy                      # after editing website/ or bootstrap/ (bind-mounted)
-docker compose up -d --build                      # after editing .env
+./deploy-prod.sh v0.3.1            # PRODUCTION: dry run — what a tag would change
+./deploy-prod.sh v0.3.1 --apply    # …then move to it, rebuilding only what it touched
+docker compose up -d --no-deps --force-recreate mw-proxy   # after editing .env for ONE service
 ./renew-certs.sh                                  # reissue certs once DNS is live
 ```
 
+⚠️ `docker compose up -d --build caddy` **restarts `mw-rendezvous` too** (caddy `depends_on` it), which drops every held host line. Always `--no-deps` on this box; `deploy-prod.sh` does it for you. And `git pull` in the production checkout is a deploy in itself (the bootstrap is bind-mounted) — production follows tags, §10.14.
+
 Persistence: zone DB in `pdns_data`, proxy store in `mwproxy_data`, **identifier claims in `mwrdv_data`**, certs in `caddy_data`, analytics in `umami_db` — rebuilding keeps them; remove the volumes to start fresh. Removing `mwrdv_data` is the one that hurts: every instance loses the claim on its own identifier, and every bookmark and share link pointing at it stops resolving to that machine. `pdns/init.sh` is idempotent, restarts are safe.
+
+## 10.14 Production and staging on one box
+
+Since 0.3.0 every connection — LAN included — goes through `stream.{domain}`, so the box is production the moment the first instance is installed. It is also the only box (a second one was ruled out on cost). Two things follow, and the layout below is what makes them true:
+
+- **Production follows a release tag, never `main`.** `~/moonlight-web` on the box is checked out on a tag (detached HEAD); it moves only with `deploy-prod.sh <tag> [--apply]`, which shows the diff that reaches the containers, then rebuilds — with `--no-deps` — only the services whose directory changed. `git pull` is never run there: with the bootstrap bind-mounted, a pull alone would put unreleased code in front of every installed instance. A server-only correction between releases is tagged `srv-<date>` (does not trigger `release.yml`, does trigger `pages.yml`).
+- **`main` runs on `stream.dev.{domain}`**, a staging rendezvous on the same box: a second clone (`~/moonlight-web-dev`) and a second compose project (`docker-compose.dev.yml`, project `mw-dev`) with exactly two containers — its own `mw-rendezvous` (own claim store, own `MW_RDV_OWNER_SECRET`) and its own Caddy rendering the shared `stream.caddy` from that checkout, on plain HTTP, no port published. Production's Caddy fronts it with one fixed `reverse_proxy` block over the `mw-edge` network and lends it the certificate. STUN needs nothing: `stream.dev.` resolves to the same address and coturn listens on the host.
+
+What that buys: a change to the rendezvous, the bootstrap **or the Caddy site body** is tested by rebuilding the *dev* project alone. Production's containers do not restart, its held lines are not dropped, its entry page does not change. The one exception is a change to the fixed `stream.dev.` block itself, which is deliberately tiny.
+
+**Pointing a host at staging**: `MW_DOMAIN=dev.{domain}` moves everything derived from the domain at once — the line, the address handed out, both STUN lookups. A `--dev` instance does it by itself ([Settings §7.3](07-Settings-Reference.md#73-env--environment-configuration)); an explicit `MW_DOMAIN=moonlightweb.top` in its environment points it back at production, which is how compatibility with the deployed server is checked before a release.
+
+**Not indexed**: the `stream.dev.` block adds `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex` to every response and answers `robots.txt` with `Disallow: /` for everyone, naming the AI crawlers explicitly. Be precise about the limit: the name is not a secret — it is in public DNS and in the Certificate Transparency logs from the moment its certificate is issued — it is merely kept out of search results and training sets by robots that obey.
+
+**Guards against deploying the wrong tree.** The dev clone contains the production compose file too, in a directory also named `powerdns`; a bare `docker compose up` there would start *production's* project with `main`'s code. Three things prevent it: the dev clone's `.env` carries `COMPOSE_FILE=docker-compose.dev.yml` and `COMPOSE_PROJECT_NAME=mw-dev` (so the reflex command is safe there), the dev compose file names its project, containers and images distinctly, and `deploy-prod.sh` refuses to run outside `~/moonlight-web`.
+
+**Procedures** — from `root@powerdns:~` (see `deploy/powerdns/README.md` for the copy-paste blocks): dev = `cd ~/moonlight-web-dev && git pull --ff-only && cd deploy/powerdns && docker compose up -d --build`; prod = `cd ~/moonlight-web/deploy/powerdns && ./deploy-prod.sh vX.Y.Z` (read), then `--apply`.
 
 ---
 

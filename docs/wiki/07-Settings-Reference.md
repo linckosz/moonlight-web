@@ -94,8 +94,8 @@ Loaded at startup by `loadEnvFile()` (`.env` next to the executable, else the pr
 
 | Variable | Required for | Description |
 |---|---|---|
-| `MW_DOMAIN` | Internet Access | The project domain everything else is derived from: the introduction server at `stream.{MW_DOMAIN}`, STUN at `stream.{MW_DOMAIN}:3478`, the update relay at `updates.{MW_DOMAIN}`. Fallback default: `moonlightweb.top`. A fork sets this and needs nothing else. |
-| `MW_RENDEZVOUS_URL` | optional | Overrides the derivation above outright when the introduction server lives somewhere else (trailing slashes trimmed). Useful for a staging box. |
+| `MW_DOMAIN` | Internet Access | The project domain everything else is derived from: the introduction server at `stream.{MW_DOMAIN}`, STUN at `stream.{MW_DOMAIN}:3478`, the update relay at `updates.{MW_DOMAIN}`. Fallback default: `moonlightweb.top` — **except under `--dev`**, where an unset value defaults to `dev.moonlightweb.top`, the staging rendezvous ([Infrastructure §10.14](10-Infrastructure-Stack.md#1014-production-and-staging-on-one-box)); set `MW_DOMAIN=moonlightweb.top` explicitly to point a dev instance at production. A fork sets this and needs nothing else. |
+| `MW_RENDEZVOUS_URL` | optional | Overrides the derivation above outright when the introduction server lives somewhere else (trailing slashes trimmed) — a lab box, say. It also suppresses the `--dev` staging default. |
 | `MW_PDNS_TOKEN` | update relay + census | The **restricted** key an instance presents to `updates.` and `metrics.` ([Infrastructure §10.9](10-Infrastructure-Stack.md#109-least-privilege-api-key-mw-proxy)). **Secret.** Absent → the update check goes straight to GitHub and nothing is counted, which is exactly what a self-built binary does. |
 | `MW_NO_TELEMETRY` | optional | Set to anything and neither census is contacted, whatever the settings say. |
 | `MW_CERT_PEM` / `MW_CERT_KEY` | optional | Inline PEM cert/key (the default `cert_pem`/`cert_key` settings point at these env-var names). |
