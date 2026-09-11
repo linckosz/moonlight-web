@@ -33,6 +33,19 @@ Toolchain: CMake ≥ 3.21, Ninja, **Qt 6.11** (Core, Network, **WebSockets**), C
 - can embed a fallback cert (`MW_CERT_PEM`/`MW_CERT_KEY` read from `.env` at build time),
 - installs the frontend next to the binary and generates the app icon resource (`app_icon.rc.in`).
 
+## 11.1bis LAN-only development environment for a fork
+
+[`CLAUDE-LAN-DEV-SETUP.md`](../../CLAUDE-LAN-DEV-SETUP.md), at the repository root, is a setup plan written for **Claude Code (model Opus)**. An agent that reads it builds a complete development environment for a fork on one machine — toolchain, build, a running instance reached by IP, the test gates as a baseline — and the file ends with a table of short prompts for the loop before every pull request (rebuild and relaunch, run the gates, format, sync with upstream, open the PR).
+
+| Constraint | How it is met |
+|---|---|
+| LAN only, reached by IP | a `--dev` instance on `https://localhost:48443` and `https://<LAN-IP>:48443`, self-signed certificate, no domain, no Internet URL |
+| No contact with the project's servers | `MW_LAN_ONLY=1` in the checkout's `.env` **and** in the environment the build is configured from, which embeds it ([Settings §7.3](07-Settings-Reference.md#73-env--environment-configuration) lists everything it turns off). Turning Internet Access on answers an error — from the admin page, the setup wizard, the REST API and `--enable-internet` alike |
+| No VM, no WSL, no Docker | nothing in the loop needs the DNS stack, a domain or a container: Visual Studio Build Tools, Qt, Python and Node on the host, which Windows 11 Home runs as well as Pro |
+| A modest CPU | `BUILD_JOBS` caps the parallel compile of `backend/build_msvc.bat`; with no GPU encoder the native engine falls back to software H.264 |
+
+**How to use it**: fork the repository, clone the fork, start Claude Code at its root with the Opus model and ask *"Read CLAUDE-LAN-DEV-SETUP.md and set up my LAN-only dev environment."* The agent asks before installing anything. Linux and macOS are covered by a differences section.
+
 ## 11.2 CI (`.github/workflows/ci.yml`)
 
 Gated pipeline — quality and tests **block** the packaging stage. Runs on **`v*` tags**, on pull requests, and on manual dispatch — **not on branch pushes**: an ordinary push spends no CI minutes, so installers for an untagged commit are a deliberate act (Actions → CI → *Run workflow* on that branch). A tag is the one automatic push trigger, because this pipeline is what publishes the release (`release.yml` has no tag trigger of its own — see 11.3).

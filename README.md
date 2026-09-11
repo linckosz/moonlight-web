@@ -521,6 +521,17 @@ cmd //c backend/build_msvc.bat
 **Qt Creator** kit configuration, frontend tests and the PR workflow — is in
 **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
+### LAN‑only dev environment for a fork (with Claude Code)
+
+Forking to add a feature? **[`CLAUDE-LAN-DEV-SETUP.md`](CLAUDE-LAN-DEV-SETUP.md)** is a step‑by‑step setup plan written for **Claude Code (model Opus)**. It builds a complete development environment on one PC — **Windows 11 Home included** — with **no VM, no Docker, no domain and no Internet access**. The instance runs with `MW_LAN_ONLY=1`: it never talks to the rendezvous server or the DNS stack, and asking it to open Internet access answers an error. You reach it by IP, from the PC itself and from any device on your LAN.
+
+1. Fork the repository on GitHub, clone **your fork**, and start **Claude Code** at its root with the **Opus** model.
+2. Ask: *“Read CLAUDE-LAN-DEV-SETUP.md and set up my LAN-only dev environment.”*
+3. Claude surveys the machine, installs the toolchain (asking before each install), builds, starts a `--dev` instance and proves it is LAN‑only, then runs the test gates once as a baseline.
+4. The end of the file lists **short prompts** for the everyday loop before a pull request — *“Rebuild and relaunch.”*, *“Run the full PR gate.”*, *“Sync with upstream.”*, *“Open the PR.”*
+
+Linux and macOS work too; the file lists what differs.
+
 **DNS stack (rendezvous server).** The domain the rendezvous server answers on is served by [`deploy/powerdns/`](deploy/powerdns/): a turnkey Docker stack (dnsdist + PowerDNS + Caddy), which a fork can run for its own users. It also keeps answering for the per‑instance sub‑domains v0.2.4 clients registered, until that retired mechanism's shared service shuts down in **February 2027** — no version of the app writes to it any more.\
 Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 80 and 443, register your nameservers at your registrar, then point the app at it with `MW_DOMAIN` in its `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).
 

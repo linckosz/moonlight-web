@@ -90,6 +90,8 @@ Key choices:
 
 This repository's actual development already follows this model (build/test/sunshine-api skills, an opt-in `expert-moonlight-refs` sub-agent, sonnet-by-default sub-agents) — the layout above is the generalized, shareable version.
 
+**For a fork**, one agent-facing file is committed: [`CLAUDE-LAN-DEV-SETUP.md`](../../CLAUDE-LAN-DEV-SETUP.md), an ordered plan that sets up a **LAN-only** development environment (`MW_LAN_ONLY`, no VM, no domain) and ends with the short prompts a contributor reuses before each PR ([§11.1bis](11-Build-CI-Testing.md#111bis-lan-only-development-environment-for-a-fork)). It is a plain Markdown file at the root rather than a `CLAUDE.md` on purpose: it is read once, on request — *"Read CLAUDE-LAN-DEV-SETUP.md and set up my LAN-only dev environment."* — not loaded into every session.
+
 ## 12.4 GitHub Copilot configuration
 
 Copilot's repo-level steering uses different files:

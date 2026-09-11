@@ -6,6 +6,14 @@ the project from source, run the tests, and open a pull request.
 Cross‑platform build via **CMake** — the single, canonical build system (qmake
 removed). CMake also generates `compile_commands.json` for clangd / IDEs.
 
+> **Fastest start for a fork:** [`CLAUDE-LAN-DEV-SETUP.md`](CLAUDE-LAN-DEV-SETUP.md)
+> lets **Claude Code (Opus)** set the whole environment up for you — toolchain,
+> build, a running instance reached by IP, and the pre‑PR gates — **LAN‑only**:
+> no VM, no Docker, no domain, and no contact with the project's rendezvous or
+> DNS servers (`MW_LAN_ONLY=1`). Start Claude Code at the root of your fork and
+> ask: *“Read CLAUDE-LAN-DEV-SETUP.md and set up my LAN-only dev environment.”*
+> The file ends with the short prompts you reuse before every pull request.
+
 ---
 
 ## 1. Install the toolchain

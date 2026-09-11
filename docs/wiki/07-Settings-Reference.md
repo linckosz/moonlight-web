@@ -98,6 +98,7 @@ Loaded at startup by `loadEnvFile()` (`.env` next to the executable, else the pr
 | `MW_RENDEZVOUS_URL` | optional | Overrides the derivation above outright when the introduction server lives somewhere else (trailing slashes trimmed) — a lab box, say. It also suppresses the DEV staging default. |
 | `MW_PDNS_TOKEN` | update relay + census | The **restricted** key an instance presents to `updates.` and `metrics.` ([Infrastructure §10.9](10-Infrastructure-Stack.md#109-least-privilege-api-key-mw-proxy)). **Secret.** Absent → the update check goes straight to GitHub and nothing is counted, which is exactly what a self-built binary does. |
 | `MW_NO_TELEMETRY` | optional | Set to anything and neither census is contacted, whatever the settings say. |
+| `MW_LAN_ONLY` | forks developing on a LAN | `1` / `true` / `yes` / `on` makes the instance **LAN-only** ([§11.1bis](11-Build-CI-Testing.md#111bis-lan-only-development-environment-for-a-fork)); anything else, empty included, leaves it off. `internet_access_enabled` then reads `false` whatever `settings.json` says, the rendezvous line never opens and no rendezvous address is handed out, neither end is given a STUN server, no UPnP discovery or mapping runs, and neither the update check nor the census is made. Asking for more is refused with the reason: `POST /api/internet/enable` (to enable), `/api/internet/refresh` and `/api/internet/upnp-probe` answer **409**, `/api/setup/apply` returns it as `internet_error`, and `--enable-internet` exits 1. `--dev` skips its staging default. `/api/internet/status` reports `lan_only`. Set in the environment CMake is configured from, it is also embedded in the binary (below). |
 | `MW_CERT_PEM` / `MW_CERT_KEY` | optional | Inline PEM cert/key (the default `cert_pem`/`cert_key` settings point at these env-var names). |
 | `MW_SERVICE` | service installs | Set by service supervisors: suppresses browser/tray/shortcut behavior and port-mapping take-overs. |
 | `MW_MEDIA_QUEUED_VIDEO` | debug | `1` rolls `MediaTrackRelay` back to the old queued-video send path (default: send from the capture thread). |
@@ -105,6 +106,8 @@ Loaded at startup by `loadEnvFile()` (`.env` next to the executable, else the pr
 ### Build-time embedded fallbacks
 
 CI bakes `MW_DOMAIN` and `MW_PDNS_TOKEN` (from repo secrets, via CMake defines) into release binaries. `applyEmbeddedEnvDefaults()` applies them **only when the runtime env/.env did not set them** — so distributed builds work out of the box against the shared infrastructure, while forks and self-hosters override cleanly. A build compiled without them is not crippled: it still reaches the introduction server through the `MW_DOMAIN` fallback default, and only the update relay and the censuses (which need the restricted key) fall back to talking to GitHub directly and counting nothing.
+
+`MW_LAN_ONLY` rides a similar path: present in the environment `backend/CMakeLists.txt` is configured from, it is compiled in, and `mw::edition::lanOnly()` (`backend/src/common/Edition.cpp`) falls back to it when the runtime environment has no value — a LAN-only binary stays LAN-only when copied away from the checkout whose `.env` said so. A runtime value still wins. Unlike the two above, nothing in CI sets it.
 
 ## 7.4 Browser-side preferences (`localStorage`)
 

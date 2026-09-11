@@ -6,7 +6,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 
 ## How to read this wiki
 
-- **New contributor?** Read [Overview](01-Overview.md) → [Architecture](02-Architecture.md) → the chapter that matches the area you want to change, then [Build, CI & Testing](11-Build-CI-Testing.md) before opening a PR.
+- **New contributor?** Read [Overview](01-Overview.md) → [Architecture](02-Architecture.md) → the chapter that matches the area you want to change, then [Build, CI & Testing](11-Build-CI-Testing.md) before opening a PR. Forking to add a feature? Let Claude Code set up a **LAN-only** dev environment for you with [`CLAUDE-LAN-DEV-SETUP.md`](../../CLAUDE-LAN-DEV-SETUP.md) — no VM, no domain, no Internet access ([§11.1bis](11-Build-CI-Testing.md#111bis-lan-only-development-environment-for-a-fork)).
 - **AI agent?** Start with [Architecture](02-Architecture.md) (component map + data flow), then [Settings Reference](07-Settings-Reference.md) and [REST API](08-REST-API.md) (the machine-readable contracts). The [Agentic Coding](12-Agentic-Coding.md) chapter describes the recommended agent configuration for this repo.
 - **Running the server side?** Go straight to [Infrastructure Stack](10-Infrastructure-Stack.md) — the introduction server, the entry page, STUN and DNS, on one VM.
 
