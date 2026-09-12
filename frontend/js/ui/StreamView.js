@@ -5912,6 +5912,24 @@ export class StreamView {
 
         // --- H.264 / HEVC pipeline ---
 
+        // New parameter sets at a keyframe: the host changed the picture size
+        // (or profile) mid-stream. The decoder holds the old sets as its
+        // description and the chunks have theirs stripped, so it would decode
+        // this keyframe against the wrong size — green blocks. Re-read the sets
+        // from this keyframe and configure again; the keyframe waits in
+        // pendingFrames until the new configuration is in (decodeFrame buffers
+        // while decoderConfigured is false).
+        if (isKeyframe && this.decoderConfigured && this.nalParser.changedBy(data)) {
+            console.log(
+                '[StreamView] Parameter sets changed at a keyframe — reconfiguring decoder',
+            );
+            this.nalParser.reset();
+            this.nalParser.feed(data);
+            this.decoderConfigured = false;
+            this.decoderConfiguring = false;
+            this.configureDecoder();
+        }
+
         // Extract SPS/PPS from the first keyframe if not done yet
         if (!this.nalParser.isReady()) {
             if (isKeyframe) {

@@ -118,6 +118,42 @@ export class NalParser {
         return !!(this.sps && this.pps);
     }
 
+    /**
+     * Whether a buffer carries a parameter set that differs from the one this
+     * parser holds — a new SPS means a new picture size, profile or level.
+     *
+     * A host may change these in the middle of a stream, at a keyframe, and the
+     * native host's CPU tier does exactly that when it trades pixels for encode
+     * time. The decoder was configured with the OLD sets as its description and
+     * the chunks have theirs stripped, so the new keyframe is decoded against a
+     * picture of the wrong size: green blocks, and the right part of the frame
+     * a flat bright green (issue #15, 12/09/2026). The caller reconfigures when
+     * this says yes. A buffer with no parameter set at all says no.
+     */
+    changedBy(buffer) {
+        if (!this.isReady()) return false;
+        const same = (a, b) => {
+            if (!a || a.length !== b.length) return false;
+            for (let i = 0; i < b.length; i++) if (a[i] !== b[i]) return false;
+            return true;
+        };
+        for (const n of splitNals(buffer)) {
+            if (this.codec === CODEC_HEVC) {
+                if (n.length < 2) continue;
+                const type = (n[0] >> 1) & 0x3f;
+                if (type === HEVC_VPS && !same(this.vps, n)) return true;
+                if (type === HEVC_SPS && !same(this.sps, n)) return true;
+                if (type === HEVC_PPS && !same(this.pps, n)) return true;
+            } else {
+                if (n.length < 1) continue;
+                const type = n[0] & 0x1f;
+                if (type === H264_SPS && !same(this.sps, n)) return true;
+                if (type === H264_PPS && !same(this.pps, n)) return true;
+            }
+        }
+        return false;
+    }
+
     reset() {
         this.codec = null;
         this.sps = null;

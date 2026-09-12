@@ -90,6 +90,26 @@ describe('Mp4Muxer — NalParser', () => {
         expect(getCodecString(p)).toMatch(/^hvc1\./);
     });
 
+    it('changedBy() spots a new SPS or PPS, and nothing else', () => {
+        const p = new NalParser();
+        expect(p.changedBy(annexB(H264_SPS, H264_PPS, H264_IDR))).toBe(false); // not ready
+        p.feed(annexB(H264_SPS, H264_PPS));
+        // The same sets again, or none at all: no reconfiguration.
+        expect(p.changedBy(annexB(H264_SPS, H264_PPS, H264_IDR))).toBe(false);
+        expect(p.changedBy(annexB(H264_IDR))).toBe(false);
+        // A different SPS — the host resized the picture — or a different PPS.
+        const resized = [...H264_SPS.slice(0, -1), 0xb3];
+        expect(p.changedBy(annexB(resized, H264_PPS, H264_IDR))).toBe(true);
+        expect(p.changedBy(annexB(H264_SPS, [0x68, 0xef], H264_IDR))).toBe(true);
+    });
+
+    it('changedBy() compares all three HEVC sets', () => {
+        const p = new NalParser();
+        p.feed(annexB(HEVC_VPS, HEVC_SPS, HEVC_PPS));
+        expect(p.changedBy(annexB(HEVC_VPS, HEVC_SPS, HEVC_PPS))).toBe(false);
+        expect(p.changedBy(annexB([0x40, 0x01, 0x0c, 0x02], HEVC_SPS, HEVC_PPS))).toBe(true);
+    });
+
     it('reset() clears state; helpers no-op until ready', () => {
         const p = new NalParser();
         p.feed(annexB(H264_SPS, H264_PPS));

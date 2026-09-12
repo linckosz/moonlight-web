@@ -947,6 +947,18 @@ function processFrame(data, isKeyframe, backendTs, arrivalAbs) {
         return;
     }
 
+    // New parameter sets at a keyframe: the host changed the picture size
+    // mid-stream — reconfigure, or the old description decodes it green
+    // (StreamView._processVideoFrame has the full story).
+    if (isKeyframe && S.decoderConfigured && S.nalParser.changedBy(data)) {
+        console.log('[VideoWorker] Parameter sets changed at a keyframe — reconfiguring decoder');
+        S.nalParser.reset();
+        S.nalParser.feed(data);
+        S.decoderConfigured = false;
+        S.decoderConfiguring = false;
+        configureDecoder();
+    }
+
     // H.264 / HEVC: extract SPS/PPS from the first keyframe, then configure.
     if (!S.nalParser.isReady()) {
         if (isKeyframe) {
