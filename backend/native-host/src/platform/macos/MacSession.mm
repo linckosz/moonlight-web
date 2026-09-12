@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "FrameFit.h"
 #include "MacDisplays.h"
 
 #include "../../audio/PacedOpusSink.h"
@@ -360,7 +361,14 @@ public:
     void sendInput(const InputEvent& event) override
     {
         std::lock_guard<std::mutex> lock(m_InputMutex);
-        if (m_Input) m_Input->inject(event);
+        if (!m_Input) return;
+        if (event.type == InputEvent::Type::MouseMoveAbsolute) {
+            InputEvent aimed = event;
+            unletterbox(aimed);
+            m_Input->inject(aimed);
+            return;
+        }
+        m_Input->inject(event);
     }
 
     void setCompositeCursor(bool composite, int cursorFramePx) override
@@ -447,6 +455,29 @@ private:
         out = m_LinkFeedback;
         m_LinkPending = false;
         return true;
+    }
+
+    /// Take the letterbox back out of a position aimed at the picture.
+    ///
+    /// The client points at what it is shown — the whole frame, bars included
+    /// — and the input sink stretches the whole reference onto the whole
+    /// desktop. Between the two sits the fit ScreenCaptureKit applied
+    /// (FrameFit): without this the desktop is spread across the bars as well,
+    /// and a point lands short of what it was aimed at by up to the width of
+    /// one bar, worst at the edges. The bars themselves are no part of the
+    /// desktop, so a point on one clamps to the edge it is nearest.
+    void unletterbox(InputEvent& event) const
+    {
+        const platform::FrameFit fit =
+            platform::frameFit(m_Display.pixelWidth, m_Display.pixelHeight, event.referenceWidth,
+                               event.referenceHeight);
+        int x = 0;
+        int y = 0;
+        if (!platform::unletterboxPoint(fit, event.referenceWidth, event.referenceHeight,
+                                        event.positionX, event.positionY, x, y))
+            return;
+        event.positionX = static_cast<int16_t>(x);
+        event.positionY = static_cast<int16_t>(y);
     }
 
     /// Wake a dark panel, the way a touch of the trackpad would. The assertion
@@ -889,11 +920,12 @@ private:
             update.kind = "";
             for (const auto& known : m_KnownShapes)
                 if (known.first == shape.hash) update.kind = known.second;
-            // The bitmap is in display pixels; the frame may be smaller.
-            update.scale =
-                (m_Display.pixelWidth > 0 && m_Info.width > 0)
-                    ? static_cast<float>(m_Info.width) / static_cast<float>(m_Display.pixelWidth)
-                    : 1.0f;
+            // The bitmap is in display pixels; the frame may be smaller — and
+            // the picture inside it smaller again when the two do not share an
+            // aspect (FrameFit), so the ratio is the fit's, not the widths'.
+            update.scale = platform::frameFit(m_Display.pixelWidth, m_Display.pixelHeight,
+                                              m_Info.width, m_Info.height)
+                               .scale;
             update.pixels = visible ? shape.pixels.data() : nullptr;
             m_Callbacks.onCursor(update);
         }
@@ -953,8 +985,13 @@ private:
         // a smaller loss than no pointer at all, and gaming mode is unaffected
         // (the compositor draws that one, and it disappears with the real one).
         p.visible = true;
-        p.fx = static_cast<float>(x * m_Info.width / w);
-        p.fy = static_cast<float>(y * m_Info.height / h);
+        // Through the letterbox, not across the whole frame: see FrameFit. A
+        // pointer at the right edge of a 1.54:1 panel streamed at 16:9 belongs
+        // at the right edge of the PICTURE, not 129 pixels further out on the
+        // black bar — where nothing ever repaints over it.
+        const platform::FrameFit fit = platform::frameFit(w, h, m_Info.width, m_Info.height);
+        p.fx = fit.offsetX + static_cast<float>(x) * fit.scale;
+        p.fy = fit.offsetY + static_cast<float>(y) * fit.scale;
         return p;
     }
 
@@ -1026,10 +1063,10 @@ private:
                     // smaller. Its natural size in the frame is the floor,
                     // the client's request the target, sized on the longer
                     // side of the ink (CursorState::inkWidth says why).
-                    const float frameScale = m_Display.pixelWidth > 0
-                                                 ? static_cast<float>(planes.width) /
-                                                       static_cast<float>(m_Display.pixelWidth)
-                                                 : 1.0f;
+                    const float frameScale =
+                        platform::frameFit(m_Display.pixelWidth, m_Display.pixelHeight,
+                                           planes.width, planes.height)
+                            .scale;
                     const int ink = std::max(m_Prepared.inkWidth, m_Prepared.inkHeight);
                     const int wanted = m_CursorFramePx.load();
                     float scale = frameScale;

@@ -20,6 +20,7 @@
 #include "../../audio/AudioInterleave.h"
 #include "../../core/Log.h"
 
+#import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
 #import <Foundation/Foundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
@@ -377,6 +378,14 @@ bool SckCapture::start(std::string& error)
         SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
         config.width = static_cast<size_t>(m_Width);
         config.height = static_cast<size_t>(m_Height);
+        // The desktop keeps its aspect inside that size, so a panel shaped
+        // unlike the stream is letterboxed — and the bars are painted with
+        // this colour. It defaults to clear, which on a buffer coming back
+        // round the pool means "whatever was in it last time": anything ever
+        // drawn on a bar stayed there, frame after frame, once per place it
+        // was drawn. Opaque black paints them afresh every frame.
+        if (@available(macOS 12.3, *))
+            config.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
         if (m_Hdr) {
             // 10-bit 4:2:0 ('x420', the P010 layout), BT.2020 PQ: the HDR
             // input HEVC Main10 wants, written by the compositor itself. The
