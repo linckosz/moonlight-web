@@ -953,6 +953,13 @@ begin
 
   origin := LoopbackOrigin(ResolvedAdminUrl);
   ProgressPage.SetText(ExpandConstant('{cm:ResolveLinkWait}'), '');
+  // The bar is still full from the checklist above, and this wait has no
+  // measurable progress to show: it ends the moment the server answers, or at
+  // the six-second budget. Drawn as a marquee for that reason — a bar that
+  // dropped from 100% to a slowly refilling 50% read as the install going
+  // backwards. SetProgress below is kept for its side effect only (the message
+  // pump); a marquee ignores the position it is handed.
+  ProgressPage.ProgressBar.Style := npbstMarquee;
   ProgressPage.Show;
   try
     // Bounded on the CLOCK, not on a number of attempts: a server that has
@@ -975,6 +982,7 @@ begin
     until False;
   finally
     ProgressPage.Hide;
+    ProgressPage.ProgressBar.Style := npbstNormal;
   end;
 end;
 
@@ -1045,12 +1053,15 @@ begin
       spin := SpinChar(i);
 
       // Pseudo-progress: climb towards 95 while the task runs, then snap to 100
-      // on done. Gives a long step visible movement instead of a spinner that
-      // looks frozen; the rate (~1%/1.5s) is sized on DNS propagation followed
-      // by the ACME order, so it does not park at 95% for the rest of the wait.
+      // on done. Gives the step visible movement instead of a spinner that
+      // looks frozen. The curve is 95·n/(n+7) over 300 ms ticks: fast at first
+      // (40% after 1.5 s, 56% after 3 s), then ever slower, so it neither parks
+      // at 95% nor crawls. The old linear 1%/1.5 s was sized on DNS propagation
+      // plus an ACME order; since the rendezvous era the step closes in a few
+      // seconds, and the bar barely left 1% before snapping to 100.
       if ar = 'done' then pctAr := 100
       else if IsTerminal(ar) then pctAr := 0
-      else begin itAr := itAr + 1; pctAr := itAr div 5; if pctAr > 95 then pctAr := 95; end;
+      else begin itAr := itAr + 1; pctAr := (95 * itAr) div (itAr + 7); end;
 
       LblArecord.Caption := StepGlyph(ar, spin) + ' ' + PadRight(StepPercent(ar, pctAr), 6) + ExpandConstant('{cm:TaskArecord}');
 
