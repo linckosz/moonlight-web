@@ -33,6 +33,12 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+// Linux 6.8 (libdrm 2.4.120). Ubuntu 22.04's libdrm predates it; the value is
+// ABI and the kernel simply refuses it where it does not exist.
+#ifndef DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT
+#define DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT 6
+#endif
+
 namespace mw::native::capture {
 namespace {
 
@@ -150,6 +156,9 @@ struct PlaneProps
     uint32_t crtcX = 0;
     uint32_t crtcY = 0;
     uint32_t fbId = 0;
+    /// Only a virtualized adapter's cursor plane has these (see start()).
+    uint32_t hotspotX = 0;
+    uint32_t hotspotY = 0;
     uint64_t typeValue = 0;
 };
 
@@ -170,6 +179,10 @@ bool readPlaneProps(int card, uint32_t planeId, PlaneProps& out)
             out.crtcY = p->prop_id;
         } else if (std::strcmp(p->name, "FB_ID") == 0) {
             out.fbId = p->prop_id;
+        } else if (std::strcmp(p->name, "HOTSPOT_X") == 0) {
+            out.hotspotX = p->prop_id;
+        } else if (std::strcmp(p->name, "HOTSPOT_Y") == 0) {
+            out.hotspotY = p->prop_id;
         }
         drmModeFreeProperty(p);
     }
@@ -342,24 +355,50 @@ bool KmsCapture::resolveTopology(std::string& error)
         return false;
     }
 
-    // The planes attached to this CRTC: one primary, one cursor (if the
-    // compositor uses a hardware cursor — GNOME does, and on the VM that did
-    // not, the pointer was simply inside the primary buffer).
+    // The planes of this CRTC: one primary, one cursor (if the compositor uses
+    // a hardware cursor — GNOME does, and on the VM that did not, the pointer
+    // was simply inside the primary buffer).
+    //
+    // The primary is found by what it is doing: it holds the buffer being
+    // scanned out, so it is attached to our CRTC right now. The cursor plane is
+    // found by what it CAN do — possible_crtcs — and never by its attachment:
+    // a cursor plane is attached only while the pointer is shown, and the
+    // moment a session opens is exactly when it tends not to be. X does not
+    // light it before the first pointer motion; GNOME unplugs it while the
+    // user types. Read by attachment, the plane was then missed, the capture
+    // said "no cursor plane (pointer is in the picture)", and the pointer was
+    // in neither — a mouse that vanished the moment it entered the stream.
+    // Measured 12/09/2026 on a virtio-gpu guest (issue #15): plane 33 was the
+    // CRTC's cursor plane, crtc_id 0 at start, fb 45 once the mouse moved.
+    // A plane that is not lit costs nothing to watch: updateCursor() reads
+    // FB_ID 0 and reports the pointer hidden until it appears.
     m_PrimaryPlane = m_CursorPlane = 0;
+    const uint32_t crtcBit = 1u << static_cast<unsigned>(m_CrtcIndex);
+    bool cursorAttached = false;
     drmModePlaneRes* planes = drmModeGetPlaneResources(m_Card);
     for (uint32_t i = 0; planes && i < planes->count_planes; ++i) {
         drmModePlane* p = drmModeGetPlane(m_Card, planes->planes[i]);
         if (!p) continue;
-        if (p->crtc_id == m_CrtcId) {
+        const bool attached = p->crtc_id == m_CrtcId;
+        const bool possible = (p->possible_crtcs & crtcBit) != 0;
+        if (attached || possible) {
             PlaneProps props;
             if (readPlaneProps(m_Card, p->plane_id, props)) {
                 if (props.typeValue == DRM_PLANE_TYPE_PRIMARY) {
-                    m_PrimaryPlane = p->plane_id;
+                    if (attached) m_PrimaryPlane = p->plane_id;
                 } else if (props.typeValue == DRM_PLANE_TYPE_CURSOR) {
-                    m_CursorPlane = p->plane_id;
-                    m_PropCrtcX = props.crtcX;
-                    m_PropCrtcY = props.crtcY;
-                    m_PropFbId = props.fbId;
+                    // One attached to us beats one that merely could be: a
+                    // card with several CRTCs has a cursor plane per CRTC,
+                    // each able to serve any of them.
+                    if (!m_CursorPlane || (attached && !cursorAttached)) {
+                        m_CursorPlane = p->plane_id;
+                        m_PropCrtcX = props.crtcX;
+                        m_PropCrtcY = props.crtcY;
+                        m_PropFbId = props.fbId;
+                        m_PropHotspotX = props.hotspotX;
+                        m_PropHotspotY = props.hotspotY;
+                        cursorAttached = attached;
+                    }
                 }
             }
         }
@@ -398,6 +437,20 @@ bool KmsCapture::start(std::string& error)
     // modeset, so the cap only changes what we are allowed to read; a driver
     // without atomic refuses it and we are no worse off than before.
     drmSetClientCap(m_Card, DRM_CLIENT_CAP_ATOMIC, 1);
+    // And the virtualized cursor plane. Since Linux 6.8 the drivers of the
+    // virtual machines' adapters — virtio-gpu, QXL, vmwgfx, vboxvideo — HIDE
+    // their cursor plane from every client that has not declared this: their
+    // pointer is drawn by the hypervisor, which needs the hotspot to place it,
+    // and a client unaware of that would set the plane without one. Without
+    // the cap the plane list holds the primary alone, this capture concludes
+    // "no cursor plane (pointer is in the picture)", and on a guest whose X
+    // server uses the hardware cursor the pointer is in the picture no more
+    // than it is on the plane: the mouse simply vanishes over the stream —
+    // issue #15, measured 12/09/2026 on a virtio-gpu guest under Linux 6.12
+    // (the plane is 33; listed only with the cap). Declared, the plane comes
+    // back and brings HOTSPOT_X/Y with it, the one thing this route lacked. A
+    // kernel or driver without the cap refuses it, and nothing changes.
+    drmSetClientCap(m_Card, DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT, 1);
 
     char* render = drmGetRenderDeviceNameFromFd(m_Card);
     m_RenderNode = render ? render : "";
@@ -520,10 +573,15 @@ bool KmsCapture::updateCursor()
 {
     if (!m_CursorPlane) return false;
 
-    uint64_t fbId = 0, x = 0, y = 0;
+    uint64_t fbId = 0, x = 0, y = 0, hotX = 0, hotY = 0;
     if (!planeProperty(m_Card, m_CursorPlane, m_PropFbId, fbId)) return false;
     planeProperty(m_Card, m_CursorPlane, m_PropCrtcX, x);
     planeProperty(m_Card, m_CursorPlane, m_PropCrtcY, y);
+    // The hotspot, where the plane has one (virtualized adapters, see start()).
+    // Read with the position: a shape keeps its hotspot, but the compositor
+    // sets the two together and a stale one aims the pointer wrong.
+    if (m_PropHotspotX) planeProperty(m_Card, m_CursorPlane, m_PropHotspotX, hotX);
+    if (m_PropHotspotY) planeProperty(m_Card, m_CursorPlane, m_PropHotspotY, hotY);
 
     bool changed = false;
     const bool visible = fbId != 0;
@@ -531,6 +589,8 @@ bool KmsCapture::updateCursor()
     // edge) but the property carries them as unsigned 64-bit.
     const int px = static_cast<int>(static_cast<int32_t>(x));
     const int py = static_cast<int>(static_cast<int32_t>(y));
+    const int hx = static_cast<int>(static_cast<int32_t>(hotX));
+    const int hy = static_cast<int>(static_cast<int32_t>(hotY));
 
     if (visible && fbId != m_CursorFbId) {
         // The pointer's image changed. It is a small linear ARGB buffer, read
@@ -586,10 +646,20 @@ bool KmsCapture::updateCursor()
     }
 
     if (m_Cursor.visible != visible || m_Cursor.x != px || m_Cursor.y != py) changed = true;
+    // A hotspot change without a shape change does not happen; counted as a
+    // shape change anyway, so the consumer that caches the shape by version
+    // re-reads the hotspot beside it.
+    if (m_Cursor.hotspotX != hx || m_Cursor.hotspotY != hy) {
+        m_Cursor.hotspotX = hx;
+        m_Cursor.hotspotY = hy;
+        ++m_Cursor.shapeVersion;
+        changed = true;
+    }
     m_Cursor.visible = visible;
     // KMS positions the plane where the IMAGE goes — the compositor subtracted
     // the hotspot before placing it — which is exactly what CursorState::x/y
-    // means. No hotspot to subtract here, and none to report either.
+    // means. No hotspot to subtract here; the one reported above says where
+    // inside the image the pointer aims, for whoever draws it elsewhere.
     m_Cursor.x = px;
     m_Cursor.y = py;
     return changed;

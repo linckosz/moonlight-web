@@ -51,11 +51,15 @@
 //
 // The pointer is on its own hardware plane, so the primary buffer does not
 // contain it — exactly as with Desktop Duplication — and it is read from that
-// plane here: its ARGB image and its position. Its hotspot, however, is
+// plane here: its ARGB image and its position. Its hotspot, however, is mostly
 // unknown: the compositor has already applied it before placing the plane, so
 // what KMS reports is where the image goes, not where it aims. The composited
 // pointer is therefore exact; a CLIENT-drawn pointer lands hotspot-offset by a
-// few pixels until a source for it exists.
+// few pixels — except on a virtual machine, whose adapter (virtio-gpu, QXL,
+// vmwgfx, vboxvideo) carries the hotspot on the plane as HOTSPOT_X/Y, because
+// the hypervisor draws the pointer itself and needs it. Those planes are
+// hidden from a client that does not declare DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT
+// (Linux 6.8+), which start() does — see the note there.
 //
 // And the scanout buffer is TILED — on AMD with DCC metadata in extra planes —
 // so it cannot be handed to VA-API directly (radeonsi refuses the modifier on
@@ -158,6 +162,9 @@ private:
     uint32_t m_PropCrtcX = 0;
     uint32_t m_PropCrtcY = 0;
     uint32_t m_PropFbId = 0;
+    /// Zero where the plane has no hotspot properties (a real GPU).
+    uint32_t m_PropHotspotX = 0;
+    uint32_t m_PropHotspotY = 0;
 
     int m_Width = 0;
     int m_Height = 0;

@@ -118,17 +118,31 @@ void run_linux_pipeline_tests()
     // is read a second time, by this test's own fd, and the two answers must
     // agree. Skipped honestly where the compositor has no cursor plane or has
     // hidden the pointer — neither is a failure.
+    //
+    // The plane is found by possible_crtcs, as the capture finds it, and not
+    // by its attachment: a hidden pointer is a cursor plane with no CRTC, and
+    // reading it by attachment turns "hidden right now" into "no cursor plane"
+    // — the second way the mouse went missing on issue #15 (12/09/2026).
     {
         const int fd = ::open(target.cardPath.c_str(), O_RDWR | O_CLOEXEC);
         drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
         drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1);
+        // A virtual machine's adapter hides its cursor plane from a client
+        // that has not declared this (Linux 6.8+) — see KmsCapture::start().
+        drmSetClientCap(fd, 6 /* DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT */, 1);
+        uint32_t crtcBit = 0;
+        if (drmModeRes* res = fd >= 0 ? drmModeGetResources(fd) : nullptr) {
+            for (int i = 0; i < res->count_crtcs; ++i)
+                if (res->crtcs[i] == target.crtcId) crtcBit = 1u << static_cast<unsigned>(i);
+            drmModeFreeResources(res);
+        }
         uint64_t cursorFb = 0;
         bool sawCursorPlane = false;
         drmModePlaneRes* planes = fd >= 0 ? drmModeGetPlaneResources(fd) : nullptr;
         for (uint32_t i = 0; planes && i < planes->count_planes; ++i) {
             drmModePlane* p = drmModeGetPlane(fd, planes->planes[i]);
             if (!p) continue;
-            if (p->crtc_id == target.crtcId) {
+            if (p->crtc_id == target.crtcId || (p->possible_crtcs & crtcBit)) {
                 drmModeObjectProperties* props =
                     drmModeObjectGetProperties(fd, p->plane_id, DRM_MODE_OBJECT_PLANE);
                 uint64_t type = 0, fbId = 0;
@@ -140,7 +154,10 @@ void run_linux_pipeline_tests()
                     drmModeFreeProperty(prop);
                 }
                 if (props) drmModeFreeObjectProperties(props);
-                if (type == DRM_PLANE_TYPE_CURSOR) {
+                // The one attached to our CRTC wins over one that merely could
+                // be: a card with several CRTCs has a cursor plane per CRTC.
+                if (type == DRM_PLANE_TYPE_CURSOR &&
+                    (!sawCursorPlane || p->crtc_id == target.crtcId)) {
                     sawCursorPlane = true;
                     cursorFb = fbId;
                 }

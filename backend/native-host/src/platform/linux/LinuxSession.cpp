@@ -734,8 +734,11 @@ private:
             const float magnify = target / static_cast<float>(cursor.inkWidth);
             if (magnify > 1.0f) draw.magnify = magnify;
         }
-        // KMS reports no hotspot (the compositor applied it): the image grows
-        // around its top-left, which for the arrow IS the hotspot.
+        // The hotspot where the capture knows it (a virtual machine's cursor
+        // plane carries one); 0,0 elsewhere, so the image grows around its
+        // top-left, which for the arrow IS the hotspot.
+        draw.hotspotX = cursor.hotspotX;
+        draw.hotspotY = cursor.hotspotY;
         return draw;
     }
 
@@ -1164,10 +1167,11 @@ private:
                   "before frames");
     }
 
-    /// The pointer for a client that draws its own. KMS gives the image but
-    /// no hotspot and no name: the client places it by its top-left, which for
-    /// the arrow is right and for a crosshair is a few pixels off — noted in
-    /// KmsCapture.h as the one thing this route does not give.
+    /// The pointer for a client that draws its own. KMS gives the image and no
+    /// name; the hotspot only on a virtual machine's cursor plane (see
+    /// KmsCapture.h). Elsewhere it is 0,0 and the client places the image by
+    /// its top-left, which for the arrow is right and for a crosshair is a few
+    /// pixels off.
     void reportCursor()
     {
         if (!m_Callbacks.onCursor || m_CompositeCursor.load()) return;
@@ -1183,8 +1187,8 @@ private:
         update.visible = cursor.visible && cursor.width > 0 && cursor.height > 0;
         update.width = cursor.width;
         update.height = cursor.height;
-        update.hotspotX = 0;
-        update.hotspotY = 0;
+        update.hotspotX = cursor.hotspotX;
+        update.hotspotY = cursor.hotspotY;
         update.kind = "";
         update.scale =
             (m_Capture->width() > 0 && m_Info.width > 0)

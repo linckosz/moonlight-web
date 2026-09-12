@@ -133,6 +133,14 @@ struct CursorState
     int width = 0;
     int height = 0;
 
+    /// The point inside the image that IS the pointer position, in cursor
+    /// pixels — where the capture can tell. KMS can, on the virtualized
+    /// adapters whose cursor plane carries HOTSPOT_X/Y (virtio-gpu, QXL,
+    /// vmwgfx, vboxvideo); elsewhere it stays 0,0, which for the arrow is the
+    /// tip anyway. Windows and macOS keep theirs beside the shape, not here.
+    int hotspotX = 0;
+    int hotspotY = 0;
+
     /// How many columns (from the left) and rows (from the top) actually hold
     /// ink — a pixel that is either coloured or inverting. Zero when the shape
     /// is empty.
