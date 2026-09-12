@@ -86,6 +86,9 @@ describe('VersionGuard', () => {
         vi.stubGlobal('navigator', { serviceWorker: { controller: {} } });
         const bridge = await import('../js/net/tunnelBridge.js');
         vi.spyOn(bridge, 'tunnelHostId').mockReturnValue('a'.repeat(26));
+        // The address carries what the link arrived with (see bootstrapAddress);
+        // what matters here is that the guard goes through it, not a bare id.
+        vi.spyOn(bridge, 'bootstrapAddress').mockReturnValue('/' + 'a'.repeat(26) + '#k=x');
 
         const reload = vi.fn();
         const replace = vi.fn();
@@ -98,6 +101,6 @@ describe('VersionGuard', () => {
         Object.defineProperty(window, 'location', { value: original, configurable: true });
 
         expect(reload).not.toHaveBeenCalled();
-        expect(replace).toHaveBeenCalledWith('/' + 'a'.repeat(26));
+        expect(replace).toHaveBeenCalledWith('/' + 'a'.repeat(26) + '#k=x');
     });
 });

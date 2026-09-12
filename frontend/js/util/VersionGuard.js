@@ -38,7 +38,7 @@
  * that cache — it holds the manifest and the connection to fetch from — so
  * there the update goes through it instead.
  */
-import { pageCameThroughTunnel, tunnelHostId } from '../net/tunnelBridge.js';
+import { bootstrapAddress, pageCameThroughTunnel, tunnelHostId } from '../net/tunnelBridge.js';
 
 export const VersionGuard = {
     _boot: null,
@@ -67,7 +67,7 @@ export const VersionGuard = {
                 '(was',
                 this._boot + ') — fetching it from the host',
             );
-            location.replace(`/${hostId}`);
+            location.replace(bootstrapAddress());
             return;
         }
         console.log('[MW] New version', v, '(was', this._boot + ') — reloading');

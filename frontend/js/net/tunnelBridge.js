@@ -102,6 +102,46 @@ export function pageCameThroughTunnel() {
 }
 
 /**
+ * The address to go back through the bootstrap on, keeping what this link
+ * carried.
+ *
+ * Every path that gives up on the current page — the connection dropped, the
+ * connection never came up, a newer build on the host — goes back to
+ * `/<id>`, and the bootstrap starts over. What the bootstrap then hands over
+ * to is built from the fragment it finds, so a bare `/<id>` throws away the
+ * fragment this page arrived with: the single-use host key, which nothing
+ * can hand out a second time, and the page the link asked for.
+ *
+ * This is how the installer's own "open the admin page" landed on the PIN
+ * screen: the first page came up, its connection died within milliseconds on
+ * a busy machine, it bounced through the bootstrap without its fragment, and
+ * the second page had no key to redeem.
+ *
+ * So the fragment travels along, minus the identifier (the path carries it).
+ * The page asked for is written back as `p=` when this page is on one and the
+ * fragment does not already say so — the router had moved it from the
+ * fragment to the path at startup, and the bootstrap only reads the fragment.
+ * The shape check mirrors the bootstrap's own: one plain segment.
+ */
+export function bootstrapAddress() {
+    return bootstrapAddressFor(hostId, location);
+}
+
+/** The pure part of bootstrapAddress(): the identifier and a location-shaped
+ *  object in, the address out. Exported so it can be pinned by a test. */
+export function bootstrapAddressFor(id, { hash, pathname }) {
+    const parts = (hash || '')
+        .replace(/^#/, '')
+        .split('&')
+        .filter((part) => part && part !== id);
+    const path = pathname || '';
+    if (/^\/[A-Za-z0-9_-]{1,32}$/.test(path) && !parts.some((part) => part.startsWith('p='))) {
+        parts.push('p=' + encodeURIComponent(path));
+    }
+    return `/${id}` + (parts.length ? '#' + parts.join('&') : '');
+}
+
+/**
  * A WebSocket, or something shaped like one.
  *
  * On a direct connection this is `new WebSocket(url)` and nothing more. Through
@@ -205,7 +245,7 @@ export async function startTunnel(onStage) {
         // Go back through the bootstrap. It is the one path that can re-establish
         // everything — connection, cached interface, worker — and it says what is
         // happening while it does, rather than leaving a dead page on screen.
-        location.replace(`/${hostId}`);
+        location.replace(bootstrapAddress());
     };
 
     try {

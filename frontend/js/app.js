@@ -77,6 +77,7 @@ import {
     takeTunnelHostKey,
     tunnelShareToken,
     pageCameThroughTunnel,
+    bootstrapAddress,
 } from './net/tunnelBridge.js';
 import { SecuringOverlay } from './ui/SecuringOverlay.js';
 import { ourStunHost } from './api/IceServers.js';
@@ -184,8 +185,7 @@ const MoonlightApp = {
             // The bootstrap is the one place that can explain that and retry,
             // and it is where the address in the bar already points.
             console.error('[MW] The connection to the host failed:', e.message);
-            const id = tunnelHostId();
-            if (id) location.replace(`/${id}`);
+            if (tunnelHostId()) location.replace(bootstrapAddress());
             return;
         }
 
@@ -1056,17 +1056,37 @@ const MoonlightApp = {
      *           warning on loopback.
      *
      * Single-use at the far end: the host burns the key as it redeems it. So it
-     * comes out of the address bar either way — a spent key in the history is
-     * pointless, and a refused one is worse than pointless.
+     * comes out of the address bar once the host has answered — a spent key in
+     * the history is pointless, and a refused one is worse than pointless.
+     *
+     * Once the host has ANSWERED, not before. It used to leave the address
+     * first, so that nothing below could leave it behind; but a page that goes
+     * back through the bootstrap while the request is in flight — the
+     * connection dropped, a busy machine — starts over from the address, and
+     * an address without the key is a PIN screen. The key stays until the host
+     * has said yes or no; a request that never got an answer leaves it in
+     * place for the next attempt to spend.
      */
     async _redeemHostKey() {
         const params = new URLSearchParams(window.location.search);
         const key = params.get('mwk') || takeTunnelHostKey();
         if (!key) return;
 
-        // Out of the address first, so nothing below can leave it behind. The
-        // fragment is rebuilt from the identifier alone, dropping the key with
-        // it; the tunnel keeps the identifier in this tab either way.
+        let answered = false;
+        try {
+            await BackendClient.redeemHostKey(key);
+            answered = true;
+            console.log('[MW] Host key redeemed — host-machine session granted');
+        } catch (err) {
+            // A status is the host's answer; anything else is the request not
+            // arriving, and the key is still worth carrying.
+            answered = !!err.statusCode;
+            console.warn('[MW] Host key redemption failed:', err);
+        }
+        if (!answered) return;
+
+        // The fragment is rebuilt from the identifier alone, dropping the key
+        // with it; the tunnel keeps the identifier in this tab either way.
         params.delete('mwk');
         const query = params.toString();
         const id = tunnelHostId();
@@ -1076,13 +1096,6 @@ const MoonlightApp = {
             '',
             window.location.pathname + (query ? '?' + query : '') + hash,
         );
-
-        try {
-            await BackendClient.redeemHostKey(key);
-            console.log('[MW] Host key redeemed — host-machine session granted');
-        } catch (err) {
-            console.warn('[MW] Host key redemption failed:', err);
-        }
     },
 
     /**
