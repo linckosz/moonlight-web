@@ -262,6 +262,21 @@ body.streaming-active::after {
     touch-action: none;
 }
 
+/* The pointer a touch screen draws for itself (StreamView's
+   MOBILE_CURSOR_CLIENT_DRAWN): an image placed in viewport coordinates from
+   the finger's own moves, above the input layer, touching nothing. */
+.stream-client-cursor {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 51;
+    pointer-events: none;
+    transform-origin: 0 0;
+    will-change: transform;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
 /* Last frame of the previous stream, held over the canvas/video until this
    view decodes its own (see StreamView.showStalePoster). Above the picture
    elements so the empty canvas cannot show through, below the input layer so

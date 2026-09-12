@@ -21,6 +21,7 @@
 #include "../../capture/windows/WgcCapture.h"
 #include "../../convert/windows/ColorConvert.h"
 #include "../../core/CadenceAlign.h"
+#include "../../core/CursorPositionGate.h"
 #include "../../core/FrameCadence.h"
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
@@ -1292,6 +1293,7 @@ private:
             // screen with the mouse on another display every single wake-up is
             // a timeout, so anything gated behind a frame would never run.
             reportCursor();
+            reportCursorPosition();
 
             if (status == capture::AcquireStatus::Timeout) {
                 // Nothing moved on the desktop — but the pointer we draw onto it
@@ -1623,9 +1625,10 @@ private:
     /// moved around keeps one shape for thousands of frames, so in the case
     /// this feature exists for, this sends nothing at all.
     ///
-    /// Position is deliberately NOT sent. The client knows where its own pointer
-    /// is, better and sooner than we could tell it; sending ours would only give
-    /// it something to disagree with.
+    /// Position is deliberately NOT sent here. A client with a pointer device
+    /// knows where its own pointer is, better and sooner than we could tell it;
+    /// sending ours would only give it something to disagree with. The one that
+    /// has no pointer device gets it apart — see reportCursorPosition.
     void reportCursor()
     {
         if (!m_Callbacks.onCursor || m_CompositeCursor.load()) return;
@@ -1673,6 +1676,35 @@ private:
             update.pixels = m_CursorScratch.data();
         }
 
+        m_Callbacks.onCursor(update);
+    }
+
+    /// Where the pointer is, for a client that draws it without a pointer device
+    /// of its own to know. Every loop iteration, throttled by the gate: a sweep
+    /// of the mouse is a PointerOnly per event on a still screen, and the
+    /// client needs a correction, not a replay. See CursorUpdate::positionOnly.
+    void reportCursorPosition()
+    {
+        if (!m_Callbacks.onCursor) return;
+        if (m_CompositeCursor.load()) {
+            // Nothing to say while we draw it; and the client that takes it
+            // over next has seen nothing, so the first position must go out.
+            m_PositionGate.reset();
+            return;
+        }
+        const capture::CursorState& cursor = m_Capture->cursor();
+        const float scale = cursorScale();
+        // The capture keeps the image's corner; the client wants the hotspot.
+        const float fx = static_cast<float>(cursor.x + m_Capture->cursorHotspotX()) * scale;
+        const float fy = static_cast<float>(cursor.y + m_Capture->cursorHotspotY()) * scale;
+        if (!m_PositionGate.due(cursor.visible, static_cast<int>(fx), static_cast<int>(fy),
+                                steadyNowUs()))
+            return;
+        CursorUpdate update;
+        update.positionOnly = true;
+        update.visible = cursor.visible;
+        update.x = fx;
+        update.y = fy;
         m_Callbacks.onCursor(update);
     }
 
@@ -2011,6 +2043,8 @@ private:
     /// Deliberately not 1: the first report must go out whatever the scale is,
     /// and a sentinel that no ratio can equal is what guarantees it.
     float m_ReportedScale = 0.0f;
+    /// When the pointer's position last went out to a self-drawing client.
+    CursorPositionGate m_PositionGate;
     bool m_LoggedFirstKeyframe = false;
     /// Bytes the last emit() produced. The refinement loop reads it to know
     /// when a still picture has stopped improving.

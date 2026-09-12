@@ -559,6 +559,23 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
                 } catch (const std::exception&) {}
             });
 
+    // And where that pointer is, for a touch screen that draws it from its own
+    // finger and needs the host's position only to correct itself. Sparse by
+    // construction (throttled at the source), so it rides the input channel
+    // like the shape does.
+    connect(m_Shim, &IMediaEngine::cursorMoved, this, [this](double x, double y, bool visible) {
+        if (m_Stopping.load() || !m_InputDc) return;
+        QJsonObject m;
+        m["type"] = "cursorpos";
+        m["x"] = x;
+        m["y"] = y;
+        m["visible"] = visible;
+        QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+        try {
+            m_InputDc->send(std::string(j.constData(), j.size()));
+        } catch (const std::exception&) {}
+    });
+
     // The input gate (native host): the viewer's presses are being dropped,
     // or no longer are. On change only, so it costs nothing in steady state.
     connect(m_Shim, &IMediaEngine::inputGateChanged, this,
@@ -1199,11 +1216,12 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         // the viewer's real pointer away, so the only one that can exist is the
         // one burned into the frame.
         //
-        // A touch screen is always composited: CSS `cursor` draws nothing at all
-        // where there is no pointer device, so a client-drawn pointer there
-        // would be no pointer. `cursorPx` is how wide it should end up in frame
-        // pixels — the phone case, where a pointer at its desktop size is a few
-        // screen pixels across.
+        // A touch screen has no pointer device, so CSS `cursor` draws nothing
+        // there: the client either has the host composite the pointer (then
+        // `cursorPx` is how wide it should end up in frame pixels — a pointer
+        // at its desktop size is a few screen pixels across on a phone) or
+        // draws an image of it itself, moved from the finger and corrected by
+        // the host's `cursorpos` reports.
         //
         // Native host only; every other backend ignores it, since no remote
         // GameStream host can be told to stop drawing its cursor.

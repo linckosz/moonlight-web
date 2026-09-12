@@ -73,11 +73,29 @@ using RumbleCallback = std::function<void(const RumbleEvent& rumble)>;
 /// The engine still tracks it; it just reports the shape rather than burning it
 /// in. Sent only when something changes, which for a pointer being moved around
 /// is never: one shape lasts thousands of frames.
+///
+/// The POSITION travels too, but apart and sparingly — see `positionOnly`. A
+/// client with a real pointer never needs it. A client on a touch screen that
+/// draws its own pointer moves it from its own finger and uses the host's word
+/// only to correct the drift, so that word is throttled (CursorPositionGate)
+/// and carries nothing but the position.
 struct CursorUpdate
 {
     /// False means "draw no pointer at all" — a game that hid it, or a pointer
     /// that left this display.
     bool visible = false;
+
+    /// True for a position report: `visible`, `x` and `y` are meaningful and
+    /// nothing else is — no shape, no pixels, no hotspot. Sent while the client
+    /// draws the pointer, at most every CursorPositionGate::kIntervalUs, and
+    /// only when the position changed.
+    bool positionOnly = false;
+
+    /// Where the pointer is, in FRAME pixels: the hotspot itself, not the
+    /// image's corner, so a client places it with no knowledge of the shape.
+    /// Only with `positionOnly`.
+    float x = 0.0f;
+    float y = 0.0f;
 
     int width = 0;
     int height = 0;
@@ -230,9 +248,11 @@ public:
     /// pointer that exists is the one in the frame.
     ///
     /// False reports the shape through the CursorCallback instead and leaves the
-    /// picture clean. Runtime-settable because the viewer can switch modes
-    /// mid-session, and re-launching the whole pipeline over a pointer would be
-    /// absurd. The next frame reflects the change.
+    /// picture clean; the position goes the same way, throttled, for a client
+    /// that draws its own pointer with no pointer device to move it.
+    /// Runtime-settable because the viewer can switch modes mid-session, and
+    /// re-launching the whole pipeline over a pointer would be absurd. The next
+    /// frame reflects the change.
     ///
     /// @p cursorFramePx is how WIDE the composited pointer should end up, in
     /// pixels of the frame being encoded; 0 means the size it has on the desktop.

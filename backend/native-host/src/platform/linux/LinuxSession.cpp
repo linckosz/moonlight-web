@@ -21,6 +21,7 @@
 #endif
 #include "../../convert/linux/GlConvert.h"
 #include "../../core/CadenceAlign.h"
+#include "../../core/CursorPositionGate.h"
 #include "../../core/FrameCadence.h"
 #include "../../core/Log.h"
 #include "../../core/RestartBackoff.h"
@@ -972,6 +973,7 @@ private:
             }
 
             reportCursor();
+            reportCursorPosition();
 
             if (status == capture::AcquireStatus::Timeout) {
                 if (m_CursorDirty.exchange(false) && m_CompositeCursor.load() && haveFrame) {
@@ -1206,6 +1208,34 @@ private:
         m_Callbacks.onCursor(update);
     }
 
+    /// Where the pointer is, for a client that draws it without a pointer device
+    /// of its own to know. Throttled by the gate — see CursorUpdate::positionOnly
+    /// and the Windows session, which this mirrors.
+    void reportCursorPosition()
+    {
+        if (!m_Callbacks.onCursor) return;
+        if (m_CompositeCursor.load()) {
+            m_PositionGate.reset();
+            return;
+        }
+        const capture::CursorState& cursor = m_Capture->cursor();
+        const float scale =
+            (m_Capture->width() > 0 && m_Info.width > 0)
+                ? static_cast<float>(m_Info.width) / static_cast<float>(m_Capture->width())
+                : 1.0f;
+        const float fx = static_cast<float>(cursor.x + cursor.hotspotX) * scale;
+        const float fy = static_cast<float>(cursor.y + cursor.hotspotY) * scale;
+        if (!m_PositionGate.due(cursor.visible, static_cast<int>(fx), static_cast<int>(fy),
+                                steadyNowUs()))
+            return;
+        CursorUpdate update;
+        update.positionOnly = true;
+        update.visible = cursor.visible;
+        update.x = fx;
+        update.y = fy;
+        m_Callbacks.onCursor(update);
+    }
+
     int chooseCadence(int clientMilliHz, bool clientVsync, FrameCadence& cadence,
                       std::string& line) const
     {
@@ -1345,6 +1375,8 @@ private:
     int64_t m_LoopStartUs = 0;
     uint64_t m_ReportedShape = 0;
     bool m_ReportedVisible = false;
+    /// When the pointer's position last went out to a self-drawing client.
+    CursorPositionGate m_PositionGate;
 };
 
 } // namespace

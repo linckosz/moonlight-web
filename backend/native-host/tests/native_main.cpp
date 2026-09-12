@@ -47,6 +47,7 @@ void run_audio_interleave_tests();
 void run_cursor_blend_tests();
 void run_frame_fit_tests();
 void run_painted_pointer_tests();
+void run_cursor_position_gate_tests();
 
 void installTestLogSink()
 {
@@ -85,6 +86,7 @@ int main()
     run_cursor_blend_tests();
     run_frame_fit_tests();
     run_painted_pointer_tests();
+    run_cursor_position_gate_tests();
     run_capture_tests();
     run_win32_cursor_tests();
     run_host_mute_tests();

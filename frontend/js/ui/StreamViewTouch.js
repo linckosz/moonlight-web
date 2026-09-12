@@ -232,6 +232,7 @@ export class StreamViewTouch {
             referenceWidth: Math.round(rect.width),
             referenceHeight: Math.round(rect.height),
         });
+        this._clientCursorPlacedAt(x / rect.width, y / rect.height);
     }
 
     /**
@@ -281,6 +282,8 @@ export class StreamViewTouch {
         // getBoundingClientRect reflects the transform, so zoom/pan moves the
         // media rect — the cached measurement is now stale.
         this._invalidateMediaRect();
+        // And the pointer drawn over the picture goes where the picture went.
+        this._placeClientCursor();
     }
 
     /**
@@ -402,6 +405,9 @@ export class StreamViewTouch {
                     this._moveAccumX -= dx;
                     this._moveAccumY -= dy;
                     this.webrtc.send({ type: 'mousemove', dx, dy });
+                    // Our own drawing of the pointer follows the finger now,
+                    // not the host's echo — see MOBILE_CURSOR_CLIENT_DRAWN.
+                    this._clientCursorMoved(dx, dy);
                 }
             }
 

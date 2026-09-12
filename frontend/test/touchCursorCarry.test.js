@@ -25,6 +25,9 @@ function touchSink(sensitivity, zoom) {
         webrtc: { send: (m) => sent.push(m) },
         handleTouchMove: StreamViewTouch.prototype.handleTouchMove,
         _clearLongPress: () => {},
+        // The pointer the view draws for itself follows every delta sent; here
+        // there is no drawing, only the deltas.
+        _clientCursorMoved: () => {},
         _touchActive: true,
         _touchScreen: false, // trackpad mode, not touchscreen mode
         _touchMaxFingers: 1,

@@ -117,6 +117,21 @@ MediaTrackRelay::MediaTrackRelay(IMediaEngine* engine, QObject* parent)
                 } catch (const std::exception&) {}
             });
 
+    // Its position too, for a touch screen drawing its own pointer — same
+    // message as DataChannelRelay's, same reasoning there.
+    connect(m_Shim, &IMediaEngine::cursorMoved, this, [this](double x, double y, bool visible) {
+        if (m_Stopping.load() || !m_InputDc) return;
+        QJsonObject m;
+        m["type"] = "cursorpos";
+        m["x"] = x;
+        m["y"] = y;
+        m["visible"] = visible;
+        QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+        try {
+            m_InputDc->send(std::string(j.constData(), j.size()));
+        } catch (const std::exception&) {}
+    });
+
     // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
     // Connected within m_IceTimeoutMs after setRemoteDescription().
     m_IceCheckTimer = new QTimer(this);

@@ -140,6 +140,43 @@ const CURSOR_USES_CLIENT_STYLE = false;
 const PHONE_CURSOR_CSS_PX = 14;
 
 /**
+ * Phones and tablets: draw the pointer HERE, as an image moved from the finger,
+ * instead of having the host composite it into the picture.
+ *
+ * A composited pointer is part of the video: it moves at the stream's rate and
+ * arrives with the stream's latency, which on a slow host is a pointer that
+ * trails the finger by a beat and steps rather than glides. Drawn here, it
+ * moves the instant the finger does, exactly like the CSS cursor a desktop
+ * client gets — the host only ever sends the shape, plus a sparse position so
+ * the drawing can be corrected when the two drift apart: the host clamped the
+ * pointer at a screen edge, an application moved it, the host's own mouse
+ * acceleration stretched a delta. That correction is the jump this switch
+ * exists to let a real device judge. False is the previous behaviour.
+ */
+const MOBILE_CURSOR_CLIENT_DRAWN = true;
+
+/**
+ * How long after the finger's last move a host position is trusted over our
+ * own. While the finger moves, the host's word is late by a round trip and
+ * would drag the pointer back under it; once the finger has been still this
+ * long, whatever the host says last is where the pointer really is.
+ */
+const CLIENT_CURSOR_SETTLE_MS = 150;
+
+/**
+ * The ordinary arrow, for a host that says "there is a pointer" without having
+ * shown it yet (see _pictureCursor) — a desktop client draws `default` there,
+ * an image needs an image. Hotspot at the tip, top-left; ink 12×19.
+ */
+const CLIENT_CURSOR_ARROW_SVG =
+    'data:image/svg+xml;utf8,' +
+    encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="19" viewBox="0 0 12 19">' +
+            '<path d="M0.5 0.5v16.4l4.1-3.6 2.6 5.4 2.6-1.2-2.6-5.3h5.3z" fill="#000" stroke="#fff"/>' +
+            '</svg>',
+    );
+
+/**
  * How often the native host must keep sending frames while nothing at all moves
  * on its screen — a floor in frames per second, asked for by the client. 0 means
  * "nothing in particular", and leaves the host its own.
@@ -752,6 +789,24 @@ export class StreamView {
         this._hideCursorAlt = false;
         this._hiddenCursorAltCss = null;
         this._cursorForcePending = false;
+        // The pointer a touch screen draws for itself (MOBILE_CURSOR_CLIENT_DRAWN).
+        // Where WE think it is, in frame pixels — moved from the finger, corrected
+        // by the host. Null until the host has said once: before that there is
+        // nothing to draw anywhere.
+        this._clientCursorPos = null;
+        // The host's latest word, when it arrived while the finger was moving:
+        // held until the finger settles, then applied if it is newer than the
+        // last move. See _clientCursorHostSaid.
+        this._clientCursorHostPending = null;
+        this._clientCursorLastMoveAt = 0;
+        this._clientCursorSettleTimer = null;
+        // What the host's position reports say about visibility, apart from the
+        // shape's own flag: the pointer leaving the display is reported here
+        // long before the next shape message would say so.
+        this._clientCursorHostVisible = true;
+        // The decoded shape: its bitmap size and the extent of its ink, which is
+        // what the phone sizes the pointer on (see PHONE_CURSOR_CSS_PX).
+        this._clientCursorImg = null;
         /** Gaming mode focus state: true when pointer lock is active (cursor captured).
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
@@ -1562,6 +1617,7 @@ export class StreamView {
                 <audio id="stream-audio" autoplay playsinline></audio>
                 <div id="stream-latency-mark" class="stream-latency-mark" hidden></div>
                 <div id="stream-input-layer" class="stream-input-layer"></div>
+                <img id="stream-client-cursor" class="stream-client-cursor" alt="" hidden>
                 <div class="stream-click-hint" id="stream-hint">
                     ${t('stream.clickToCapture')}
                 </div>
@@ -1646,6 +1702,10 @@ export class StreamView {
         // over the video element.
         this.inputEl = /** @type {HTMLElement} */ (el.querySelector('#stream-input-layer'));
         this.inputEl.style.touchAction = 'none';
+        // The pointer a touch screen draws for itself — see MOBILE_CURSOR_CLIENT_DRAWN.
+        this._clientCursorEl = /** @type {HTMLImageElement} */ (
+            el.querySelector('#stream-client-cursor')
+        );
         if (this._latencyFlag) this._initLatencyProbe(el);
 
         // statusEl kept for backward compatibility — setStatus() is now a no-op
@@ -3808,7 +3868,11 @@ export class StreamView {
     // viewport also moves independently as the URL bar collapses.
     _setupMediaRectInvalidation() {
         if (this._mediaRectListeners) return;
-        const onChange = () => this._invalidateMediaRect();
+        const onChange = () => {
+            this._invalidateMediaRect();
+            // The picture moved on the glass; the pointer drawn over it must too.
+            this._placeClientCursor();
+        };
         const opts = { passive: true, capture: true };
         /** @type {Array<[EventTarget, string, AddEventListenerOptions|undefined]>} */
         const targets = [
@@ -5437,6 +5501,11 @@ export class StreamView {
                 console.log('[StreamView] Host cursor: drawing it here, not in the frame');
             }
             this._applyHostCursor();
+            this._clientCursorShapeChanged();
+            return;
+        }
+        if (msg.type === 'cursorpos') {
+            this._clientCursorHostSaid(msg);
             return;
         }
         if (msg.type === 'clipboardcaps') {
@@ -6744,11 +6813,17 @@ export class StreamView {
      * that moves at the viewer's refresh rate for one that moves at the
      * stream's.
      *
+     * Unless the touch screen draws an image of the pointer for itself, moved
+     * from the finger — MOBILE_CURSOR_CLIENT_DRAWN — which gives it exactly what
+     * the desktop has: a pointer that moves at the viewer's rate, with the host
+     * only ever naming the shape (and, there, correcting the position).
+     *
      * Everywhere else — desktop mode, and gaming mode before the first click —
      * we draw it ourselves and should.
      */
     _sendCursorMode() {
-        const composite = !!this.pointerLocked || IS_MOBILE_OR_TABLET;
+        const composite =
+            !!this.pointerLocked || (IS_MOBILE_OR_TABLET && !MOBILE_CURSOR_CLIENT_DRAWN);
         const cursorPx = composite ? this._compositeCursorPx() : 0;
         if (composite === this._sentCursorComposite && cursorPx === this._sentCursorPx) return;
         // Only the transition into compositing invalidates what we hold; a size
@@ -6768,7 +6843,258 @@ export class StreamView {
             this._dragCursor = null;
             this._scaledCursor = null;
             this._scaledCursorPending = null;
+            this._clientCursorPos = null;
+            this._clientCursorHostPending = null;
+            this._clientCursorImg = null;
         }
+        this._placeClientCursor();
+    }
+
+    // ── The pointer a touch screen draws for itself ──────────────────────────
+    //
+    // See MOBILE_CURSOR_CLIENT_DRAWN. Three inputs, one drawing: the shape the
+    // host named (the `cursor` message, as on a desktop), the finger's own
+    // deltas — applied the instant they are sent, which is what makes the
+    // pointer feel attached to the finger — and the host's sparse position
+    // reports (`cursorpos`), which are late by a round trip and so only
+    // trusted once the finger has been still for CLIENT_CURSOR_SETTLE_MS.
+
+    /** Whether this view draws the pointer itself, right now. */
+    _clientCursorActive() {
+        return MOBILE_CURSOR_CLIENT_DRAWN && IS_MOBILE_OR_TABLET && !this.pointerLocked;
+    }
+
+    /** Frame height, the way _pictureWidth gives the width. */
+    _pictureHeight() {
+        if (this._videoIsDisplay()) {
+            const vh = (this.videoEl && this.videoEl.videoHeight) || 0;
+            if (vh > 0) return vh;
+        }
+        const m = /^\d+×(\d+)/.exec(this._resolution || '');
+        if (m) {
+            const h = parseInt(m[1], 10);
+            if (h > 0) return h;
+        }
+        if (!this._firstFrameRendered) return 0;
+        return (this.canvas && this.canvas.height) || 0;
+    }
+
+    /** The host sent a shape (or "no shape yet"): decode it for the drawing. */
+    _clientCursorShapeChanged() {
+        if (!this._clientCursorActive() || !this._clientCursorEl) return;
+        const png = this._hostCursorPng;
+        if (!png) {
+            this._clientCursorImg = null;
+            this._placeClientCursor();
+            return;
+        }
+        if (this._clientCursorImg && this._clientCursorImg.png === png) return;
+        const img = new Image();
+        img.onload = () => {
+            if (this._hostCursorPng !== png) return; // a newer shape won
+            const [inkW, inkH] = this._inkExtent(img);
+            this._clientCursorImg = { png, w: img.width, h: img.height, inkW, inkH };
+            this._placeClientCursor();
+        };
+        img.src = 'data:image/png;base64,' + png;
+    }
+
+    /**
+     * How many columns and rows of the bitmap actually hold ink — the host's
+     * own inkWidth/inkHeight, measured here because the shape message does not
+     * carry them. Windows pads an arrow into a 32-pixel canvas; sizing on the
+     * canvas would size on the padding. Falls back to the bitmap when the
+     * pixels cannot be read.
+     */
+    _inkExtent(img) {
+        try {
+            const c = document.createElement('canvas');
+            c.width = img.width;
+            c.height = img.height;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const data = ctx.getImageData(0, 0, c.width, c.height).data;
+            let maxX = -1,
+                maxY = -1;
+            for (let y = 0; y < c.height; y++) {
+                for (let x = 0; x < c.width; x++) {
+                    if (data[(y * c.width + x) * 4 + 3] > 0) {
+                        if (x > maxX) maxX = x;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+            if (maxX >= 0) return [maxX + 1, maxY + 1];
+        } catch {
+            /* unreadable: the bitmap will do */
+        }
+        return [img.width, img.height];
+    }
+
+    /**
+     * What to multiply the bitmap by to draw it on the glass.
+     *
+     * The natural size first — host desktop pixels through the frame and the
+     * window, as _pictureScale does for the desktop cursor. Then, on a phone,
+     * the same magnification the host would have applied when compositing:
+     * enough for the longer side of the ink to reach PHONE_CURSOR_CSS_PX, never
+     * below natural size, never past the point where a stretched bitmap stops
+     * looking like a pointer. Zoom walks it back down on its own, exactly as it
+     * does on the host — see _compositeCursorPx.
+     */
+    _clientCursorCssScale() {
+        const natural = this._pictureScale();
+        if (!IS_MOBILE || !this._clientCursorImg) return natural;
+        const ink = Math.max(this._clientCursorImg.inkW, this._clientCursorImg.inkH);
+        if (!(ink > 0)) return natural;
+        const magnify = PHONE_CURSOR_CSS_PX / (ink * natural);
+        if (!isFinite(magnify) || !(magnify > 1)) return natural;
+        return natural * Math.min(2.5, magnify);
+    }
+
+    /** The finger moved the pointer by (dx, dy) host desktop pixels. */
+    _clientCursorMoved(dx, dy) {
+        if (!this._clientCursorActive() || !this._clientCursorPos) return;
+        const s = this._hostCursorScale > 0 ? this._hostCursorScale : 1;
+        const fw = this._pictureWidth(),
+            fh = this._pictureHeight();
+        const p = this._clientCursorPos;
+        p.x = Math.max(0, Math.min(fw > 0 ? fw - 1 : p.x, p.x + dx * s));
+        p.y = Math.max(0, Math.min(fh > 0 ? fh - 1 : p.y, p.y + dy * s));
+        this._clientCursorNoteMove();
+        this._placeClientCursor();
+    }
+
+    /** Touch-screen mode: the pointer was put under the finger, at this
+     *  fraction of the picture. */
+    _clientCursorPlacedAt(fx, fy) {
+        if (!this._clientCursorActive()) return;
+        const fw = this._pictureWidth(),
+            fh = this._pictureHeight();
+        if (!(fw > 0) || !(fh > 0)) return;
+        this._clientCursorPos = { x: fx * fw, y: fy * fh };
+        this._clientCursorNoteMove();
+        this._placeClientCursor();
+    }
+
+    _clientCursorNoteMove() {
+        this._clientCursorLastMoveAt = performance.now();
+        if (this._clientCursorSettleTimer) clearTimeout(this._clientCursorSettleTimer);
+        this._clientCursorSettleTimer = setTimeout(() => {
+            this._clientCursorSettleTimer = null;
+            this._clientCursorSettled();
+        }, CLIENT_CURSOR_SETTLE_MS);
+    }
+
+    /** The host said where its pointer is (frame pixels). */
+    _clientCursorHostSaid(msg) {
+        if (!this._clientCursorActive()) return;
+        this._clientCursorHostVisible = msg.visible !== false;
+        const said = { x: Number(msg.x), y: Number(msg.y), at: performance.now() };
+        if (!isFinite(said.x) || !isFinite(said.y)) {
+            this._placeClientCursor();
+            return;
+        }
+        // The first word places the pointer; afterwards the host is trusted
+        // only over a finger that has been still for a while — mid-gesture its
+        // word is a round trip old and would drag the pointer back.
+        if (
+            !this._clientCursorPos ||
+            said.at - this._clientCursorLastMoveAt >= CLIENT_CURSOR_SETTLE_MS
+        ) {
+            this._clientCursorApplyHost(said);
+            return;
+        }
+        this._clientCursorHostPending = said;
+        this._placeClientCursor();
+    }
+
+    /** The finger has been still for CLIENT_CURSOR_SETTLE_MS. */
+    _clientCursorSettled() {
+        const said = this._clientCursorHostPending;
+        this._clientCursorHostPending = null;
+        // Only a word that arrived after the last move describes where the
+        // pointer came to rest; an older one describes mid-gesture.
+        if (said && said.at > this._clientCursorLastMoveAt) this._clientCursorApplyHost(said);
+    }
+
+    _clientCursorApplyHost(said) {
+        const p = this._clientCursorPos;
+        if (p) {
+            // The correction — the jump this whole switch exists to measure.
+            const d = Math.hypot(said.x - p.x, said.y - p.y);
+            if (d >= 2) {
+                console.log(
+                    '[StreamView] Client cursor: host correction of ' + d.toFixed(0) + ' frame px',
+                );
+            }
+        }
+        this._clientCursorPos = { x: said.x, y: said.y };
+        this._placeClientCursor();
+    }
+
+    /** Draw (or hide) the pointer where we think it is. */
+    _placeClientCursor() {
+        const el = this._clientCursorEl;
+        if (!el) return;
+        const pos = this._clientCursorPos;
+        const fw = this._pictureWidth(),
+            fh = this._pictureHeight();
+        const show =
+            this._clientCursorActive() &&
+            this._hostDrawsCursor &&
+            this._hostCursorVisible &&
+            this._clientCursorHostVisible &&
+            !!pos &&
+            fw > 0 &&
+            fh > 0;
+        if (!show) {
+            el.hidden = true;
+            return;
+        }
+        const rect = this._mediaRect();
+        if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+            el.hidden = true;
+            return;
+        }
+        const cx = rect.left + (pos.x * rect.width) / fw;
+        const cy = rect.top + (pos.y * rect.height) / fh;
+        // Zoomed in, the picture runs past its area and so would the pointer:
+        // clip it the way the picture is.
+        if (this._zoom > 1.001 && this.canvasArea) {
+            const a = this.canvasArea.getBoundingClientRect();
+            if (cx < a.left || cy < a.top || cx > a.right || cy > a.bottom) {
+                el.hidden = true;
+                return;
+            }
+        }
+        const img = this._clientCursorImg;
+        const s = this._clientCursorCssScale();
+        let w, h, hx, hy;
+        if (img) {
+            const src = 'data:image/png;base64,' + img.png;
+            if (el.getAttribute('src') !== src) el.src = src;
+            w = img.w * s;
+            h = img.h * s;
+            [hx, hy] = this._hostCursorHotspot;
+            hx *= s;
+            hy *= s;
+        } else {
+            // A pointer we have not been shown: the ordinary arrow, sized the
+            // way the phone wants a pointer (its ink is 12×19).
+            if (el.getAttribute('src') !== CLIENT_CURSOR_ARROW_SVG) {
+                el.src = CLIENT_CURSOR_ARROW_SVG;
+            }
+            const arrowScale = IS_MOBILE ? PHONE_CURSOR_CSS_PX / 19 : Math.max(1, s);
+            w = 12 * arrowScale;
+            h = 19 * arrowScale;
+            hx = 0;
+            hy = 0;
+        }
+        el.style.width = w + 'px';
+        el.style.height = h + 'px';
+        el.style.transform = 'translate(' + (cx - hx) + 'px, ' + (cy - hy) + 'px)';
+        el.hidden = false;
     }
 
     /**
@@ -6940,6 +7266,10 @@ export class StreamView {
             this.streamEl.removeEventListener('touchcancel', this._onTouchEnd);
             this._stopScrollMomentum();
             this._stopPanMomentum();
+        }
+        if (this._clientCursorSettleTimer) {
+            clearTimeout(this._clientCursorSettleTimer);
+            this._clientCursorSettleTimer = null;
         }
         if (this.inputEl) {
             this.inputEl.removeEventListener('wheel', this._onWheel);

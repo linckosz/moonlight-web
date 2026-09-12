@@ -23,6 +23,7 @@
 #include "../../capture/macos/SckCapture.h"
 #include "../../convert/CursorBlend.h"
 #include "../../core/CadenceAlign.h"
+#include "../../core/CursorPositionGate.h"
 #include "../../core/FrameCadence.h"
 #include "../../core/Log.h"
 #include "../../core/RestartBackoff.h"
@@ -739,8 +740,11 @@ private:
             int timeoutMs = refineSoon ? refineTimeoutMs : idleTimeoutMs;
             // Drawing the pointer ourselves: the capture no longer makes a
             // frame for a pointer move on a still screen, so the loop looks
-            // at the pointer at the stream's own rate instead.
-            if (haveFrame && selfDrawn())
+            // at the pointer at the stream's own rate instead. The same when
+            // the CLIENT draws it: its position still has to be watched to be
+            // reported (reportCursorPosition), and a still screen would
+            // otherwise only be looked at once per idle interval.
+            if (haveFrame && (selfDrawn() || !m_CompositeCursor.load()))
                 timeoutMs = std::min(timeoutMs, std::max(4, 1000 / std::max(1, m_EncodeFps)));
 
             capture::SckFrame fresh;
@@ -752,6 +756,7 @@ private:
             }
 
             reportCursor();
+            reportCursorPosition();
 
             if (status == capture::AcquireStatus::Timeout) {
                 if (!haveFrame) continue;
@@ -929,6 +934,29 @@ private:
             update.pixels = visible ? shape.pixels.data() : nullptr;
             m_Callbacks.onCursor(update);
         }
+    }
+
+    /// Where the pointer is, for a client that draws it without a pointer device
+    /// of its own to know. Throttled by the gate — see CursorUpdate::positionOnly
+    /// and the Windows session, which this mirrors. The position is the same
+    /// one the magnified pointer is painted at: frame pixels, through the fit.
+    void reportCursorPosition()
+    {
+        if (!m_Callbacks.onCursor) return;
+        if (m_CompositeCursor.load()) {
+            m_PositionGate.reset();
+            return;
+        }
+        const PointerNow p = pointerNow();
+        if (!m_PositionGate.due(p.visible, static_cast<int>(p.fx), static_cast<int>(p.fy),
+                                steadyNowUs()))
+            return;
+        CursorUpdate update;
+        update.positionOnly = true;
+        update.visible = p.visible;
+        update.x = p.fx;
+        update.y = p.fy;
+        m_Callbacks.onCursor(update);
     }
 
     double backingScale() const
@@ -1298,6 +1326,8 @@ private:
     int64_t m_LastCursorPollUs = 0;
     uint64_t m_ReportedHash = 0;
     bool m_ReportedVisible = false;
+    /// When the pointer's position last went out to a self-drawing client.
+    CursorPositionGate m_PositionGate;
     std::vector<std::pair<uint64_t, const char*>> m_KnownShapes;
 
     // The engine-drawn pointer (capture thread only).

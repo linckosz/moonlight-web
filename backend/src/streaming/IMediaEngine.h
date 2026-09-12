@@ -335,6 +335,14 @@ signals:
     void cursorShapeChanged(QByteArray png, int hotspotX, int hotspotY, bool visible, QString kind,
                             double scale);
 
+    /// Where the host's pointer IS, in frame pixels, for a client that draws
+    /// the pointer without a pointer device of its own to know — a touch
+    /// screen. Native host only, only while the client draws, and throttled at
+    /// the source (CursorPositionGate): a correction for the client's own
+    /// estimate, not a replay of every mouse event. `visible == false` means
+    /// the pointer left the streamed display.
+    void cursorMoved(double x, double y, bool visible);
+
     /// The viewer's presses stopped reaching the host, or started again.
     /// Native host only. `reason` is "policy" (this viewer is not this
     /// machine's administrator and the focused window runs as one) or "uipi"

@@ -510,6 +510,16 @@ int64_t NativeMediaEngine::firstFrameArrivalSteadyMs() const
 
 void NativeMediaEngine::onCursor(const mw::native::CursorUpdate& cursor)
 {
+    // A position report carries no shape: nothing to encode, one small signal.
+    if (cursor.positionOnly) {
+        QMetaObject::invokeMethod(
+            this,
+            [this, x = static_cast<double>(cursor.x), y = static_cast<double>(cursor.y),
+             visible = cursor.visible]() { emit cursorMoved(x, y, visible); },
+            Qt::QueuedConnection);
+        return;
+    }
+
     // Encoded HERE, on the capture thread, because the pixels are borrowed and
     // stop being valid the moment this returns. A PNG of a 32×32 cursor is a
     // couple of hundred bytes and this runs only when the shape changes, so the
