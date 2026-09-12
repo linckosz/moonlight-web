@@ -69,8 +69,20 @@ jobs:
           # checked. CNAME is Pages plumbing and is not served by the other.
           tag=$(git tag --list 'v*' 'srv-*' --sort=-creatordate | head -1)
           echo "release tag: $tag"
+
+          # grep selects nothing when that tag carries no bootstrap/, exits 1,
+          # and pipefail ends the step on the assignment itself: a red run with
+          # no output at all, which reads like a comparison that failed when in
+          # truth none was ever made. Take the failure and name it. An empty
+          # list means the newest tag predates bootstrap/ — or that there is no
+          # tag — so there is no file to verify, and a check with nothing to
+          # verify is broken, not reassuring.
           files=$(git ls-tree -r --name-only "$tag" bootstrap \
-                  | sed 's|^bootstrap/||' | grep -vx CNAME | sort)
+                  | sed 's|^bootstrap/||' | grep -vx CNAME | sort) || true
+          if [ -z "$files" ]; then
+            echo "::error::no bootstrap/ files at '${tag:-no release tag}' — the live entry page was NOT compared against anything. Both hosts follow release tags, so this clears once a tag carrying bootstrap/ is pushed."
+            exit 1
+          fi
 
           # Assign, then override on failure: a failed curl still feeds an empty
           # stream to sha256sum, which happily hashes nothing. Reporting that
@@ -139,7 +151,18 @@ jobs:
         run: |
           set -uo pipefail
           tag=$(git tag --list 'v*' 'srv-*' --sort=-creatordate | head -1)
-          for f in $(git ls-tree -r --name-only "$tag" bootstrap | sed 's|^bootstrap/||' | grep -vx CNAME | sort); do
+          files=$(git ls-tree -r --name-only "$tag" bootstrap \
+                  | sed 's|^bootstrap/||' | grep -vx CNAME | sort) || true
+
+          # An empty list is worse here than above: this loop would run zero
+          # times and the step would finish green, so a step that checked
+          # nothing would look like a step that found nothing wrong.
+          if [ -z "$files" ]; then
+            echo "::warning::no bootstrap/ files at '${tag:-no release tag}' — the reference copy was not checked either"
+            exit 0
+          fi
+
+          for f in $files; do
             ref=$(curl -fsS --max-time 20 "$REFERENCE/$f" | sha256sum | cut -d' ' -f1)
             tagged=$(git show "$tag:bootstrap/$f" | sha256sum | cut -d' ' -f1)
             [ "$ref" = "$tagged" ] || echo "::warning::$f differs from $tag — Pages may not have deployed it yet"
