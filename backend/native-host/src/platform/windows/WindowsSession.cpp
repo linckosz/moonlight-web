@@ -1558,7 +1558,13 @@ private:
     {
         if (m_Target.encoder != EncoderApi::Software) return;
         if (encodedUs <= convertedUs) return;
-        if (m_LoadCap.note(encodedUs - convertedUs, m_Cadence.intervalUs(), encodedUs))
+        // The STREAM's interval, not the gate's: the gate is off when the
+        // stream runs at the display's own rate, and its zero would switch the
+        // cap off with it — see LinuxSession::noteEncodeLoad.
+        const int64_t intervalUs = m_Cadence.enabled() ? m_Cadence.intervalUs()
+                                   : m_CadenceFps > 0  ? 1000000 / m_CadenceFps
+                                                       : 0;
+        if (m_LoadCap.note(encodedUs - convertedUs, intervalUs, encodedUs))
             m_PendingResize.store(true);
     }
 

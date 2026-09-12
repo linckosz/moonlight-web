@@ -120,6 +120,59 @@ void run_encode_load_cap_tests()
         CHECK_EQ(cap.percent(), 100);
     }
 
+    SECTION("EncodeLoadCap — comfort at the small size is not proof for the large one");
+    {
+        EncodeLoadCap cap;
+        int64_t now = 0;
+        cap.start(now);
+        CHECK(feed(cap, 39.7, 1, now));
+        CHECK_EQ(cap.percent(), 75);
+        // Down to the floor, where the pixel ratio to the rung above is 2,25.
+        CHECK(feed(cap, 33.5, 1, now));
+        CHECK_EQ(cap.percent(), 50);
+        // 5,5 ms at half size is comfortable (< 5,8 ms) and predicts 12,4 ms
+        // at 75 %: over the 10,8 ms climb line. It stays down, for ever.
+        CHECK(!feed(cap, 5.5, 30, now));
+        CHECK_EQ(cap.percent(), 50);
+        // 4 ms predicts 9 ms: that one may climb, after the usual four.
+        CHECK(feed(cap, 4.0, 4, now));
+        CHECK_EQ(cap.percent(), 75);
+    }
+
+    SECTION("EncodeLoadCap — a climb undone at once makes the next one wait twice as long");
+    {
+        EncodeLoadCap cap;
+        int64_t now = 0;
+        cap.start(now);
+        CHECK(feed(cap, 39.7, 1, now));
+        CHECK_EQ(cap.percent(), 75);
+        // The reporter's guest: a still desktop costs nothing, the first
+        // moving window costs the full price. Four quiet seconds, a climb, and
+        // straight back down.
+        CHECK(feed(cap, 1.0, 4, now));
+        CHECK_EQ(cap.percent(), 100);
+        CHECK(feed(cap, 39.7, 1, now));
+        CHECK_EQ(cap.percent(), 75);
+        // Now eight quiet windows are needed, not four.
+        CHECK(!feed(cap, 1.0, 7, now));
+        CHECK_EQ(cap.percent(), 75);
+        CHECK(feed(cap, 1.0, 1, now));
+        CHECK_EQ(cap.percent(), 100);
+        // Failing again: sixteen.
+        CHECK(feed(cap, 39.7, 1, now));
+        CHECK(!feed(cap, 1.0, 15, now));
+        CHECK_EQ(cap.percent(), 75);
+        CHECK(feed(cap, 1.0, 1, now));
+        CHECK_EQ(cap.percent(), 100);
+        // A climb that holds through its probation clears the record: after
+        // ten easy seconds at full size, a later step down needs four again.
+        CHECK(!feed(cap, 1.0, 11, now));
+        CHECK(feed(cap, 39.7, 1, now));
+        CHECK_EQ(cap.percent(), 75);
+        CHECK(feed(cap, 1.0, 4, now));
+        CHECK_EQ(cap.percent(), 100);
+    }
+
     SECTION("EncodeLoadCap — no interval, no cap");
     {
         EncodeLoadCap cap;

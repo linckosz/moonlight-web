@@ -1130,7 +1130,15 @@ private:
     {
         if (m_Target.encoder != EncoderApi::Software) return;
         if (encodedUs <= convertedUs) return;
-        if (m_LoadCap.note(encodedUs - convertedUs, m_Cadence.intervalUs(), encodedUs))
+        // The STREAM's interval, not the gate's. The gate is off whenever the
+        // stream runs at the display's own rate — 60 fps on a 60 Hz screen,
+        // the common case — and its interval then reads zero, which the cap
+        // takes for "unpaced" and ignores: a machine that could not keep up
+        // was never resized at all, and one on a 75 Hz screen was (12/09/2026).
+        const int64_t intervalUs = m_Cadence.enabled() ? m_Cadence.intervalUs()
+                                   : m_CadenceFps > 0  ? 1000000 / m_CadenceFps
+                                                       : 0;
+        if (m_LoadCap.note(encodedUs - convertedUs, intervalUs, encodedUs))
             m_PendingResize.store(true);
     }
 

@@ -74,6 +74,25 @@ struct EncodeLoadCap
     /// threshold does not oscillate. The gap between the two is the hysteresis.
     static constexpr int kUpPercentOfInterval = 35;
 
+    /// ...and only when the encode time PREDICTED at the rung above stays under
+    /// this share. The mean measured here is the cost at the SMALLER size, and
+    /// the size above has more pixels to pay for: judged on the small-size
+    /// number alone, a 2-core guest measured comfortable at 960×600, climbed to
+    /// 1280×800 and was back over the limit a second later — every four
+    /// seconds, for minutes, a keyframe and a resize each time (issue #15,
+    /// 12/09/2026). The prediction scales the mean by the pixel ratio, which
+    /// overstates the cost (the table above: four times the pixels cost two
+    /// times the time) and so errs on the side of staying down.
+    static constexpr int kClimbPredictedPercentOfInterval = 65;
+
+    /// A climb that is undone within this long failed: the content, not the
+    /// machine, decided — a still desktop encodes for nothing at any size, and
+    /// the first window that moves pays for the full one. Each failure doubles
+    /// the comfortable windows the next climb needs, up to kMaxUpWindows; a
+    /// climb that holds this long clears the record.
+    static constexpr int64_t kClimbProbationUs = 10 * 1000 * 1000;
+    static constexpr int kMaxUpWindows = 120;
+
     /// Everything is judged over one-second windows: long enough that a single
     /// stutter cannot resize the picture, short enough to react.
     static constexpr int64_t kWindowUs = 1000 * 1000;
@@ -95,12 +114,19 @@ struct EncodeLoadCap
     int frames = 0;
     /// Consecutive comfortable windows. Reset by anything else.
     int comfortWindows = 0;
+    /// Comfortable windows the next climb needs: kUpWindows, doubled by every
+    /// climb that had to be undone (see kClimbProbationUs).
+    int upWindowsNeeded = kUpWindows;
+    /// When the last climb happened; 0 when none is on probation.
+    int64_t climbedAtUs = 0;
 
     void start(int64_t nowUs)
     {
         rung = 0;
         changes = 0;
         comfortWindows = 0;
+        upWindowsNeeded = kUpWindows;
+        climbedAtUs = 0;
         resetWindow(nowUs);
     }
 
@@ -129,8 +155,16 @@ struct EncodeLoadCap
         const int64_t mean = encodeSumUs / frames;
         const int64_t downLimit = intervalUs * kDownPercentOfInterval / 100;
         const int64_t upLimit = intervalUs * kUpPercentOfInterval / 100;
+        const int64_t climbLimit = intervalUs * kClimbPredictedPercentOfInterval / 100;
         constexpr int kLastRung = static_cast<int>(sizeof(kRungs) / sizeof(kRungs[0])) - 1;
         resetWindow(nowUs);
+
+        // A climb that held through its probation is a machine that can carry
+        // that size: forget the failures that came before it.
+        if (climbedAtUs != 0 && nowUs - climbedAtUs >= kClimbProbationUs) {
+            climbedAtUs = 0;
+            upWindowsNeeded = kUpWindows;
+        }
 
         if (mean > downLimit) {
             comfortWindows = 0;
@@ -138,16 +172,33 @@ struct EncodeLoadCap
             // cannot keep up at half the linear size is not helped by a
             // quarter, and the picture would stop being worth sending.
             if (rung >= kLastRung) return false;
+            // Undoing a climb still on probation: that climb failed, and the
+            // next one waits twice as long.
+            if (climbedAtUs != 0) {
+                climbedAtUs = 0;
+                upWindowsNeeded =
+                    upWindowsNeeded * 2 > kMaxUpWindows ? kMaxUpWindows : upWindowsNeeded * 2;
+            }
             ++rung;
             ++changes;
             return true;
         }
 
         if (mean < upLimit && rung > 0) {
-            if (++comfortWindows < kUpWindows) return false;
+            // What this window would have cost at the rung above: scaled by the
+            // pixel ratio (see kClimbPredictedPercentOfInterval).
+            const int64_t here = kRungs[rung];
+            const int64_t above = kRungs[rung - 1];
+            const int64_t predicted = mean * above * above / (here * here);
+            if (predicted >= climbLimit) {
+                comfortWindows = 0;
+                return false;
+            }
+            if (++comfortWindows < upWindowsNeeded) return false;
             comfortWindows = 0;
             --rung;
             ++changes;
+            climbedAtUs = nowUs;
             return true;
         }
 
