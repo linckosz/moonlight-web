@@ -164,6 +164,15 @@ const MOBILE_CURSOR_CLIENT_DRAWN = true;
 const CLIENT_CURSOR_SETTLE_MS = 150;
 
 /**
+ * How long to wait for the host's first position before placing the pointer
+ * in the middle of the picture anyway. A host that predates `cursorpos` sends
+ * the shape and nothing else; without this the phone would have no pointer at
+ * all against it — worse than one that starts in the wrong place and is then
+ * only moved by the finger.
+ */
+const CLIENT_CURSOR_SEED_MS = 1000;
+
+/**
  * The ordinary arrow, for a host that says "there is a pointer" without having
  * shown it yet (see _pictureCursor) — a desktop client draws `default` there,
  * an image needs an image. Hotspot at the tip, top-left; ink 12×19.
@@ -800,6 +809,7 @@ export class StreamView {
         this._clientCursorHostPending = null;
         this._clientCursorLastMoveAt = 0;
         this._clientCursorSettleTimer = null;
+        this._clientCursorSeedTimer = null;
         // What the host's position reports say about visibility, apart from the
         // shape's own flag: the pointer leaving the display is reported here
         // long before the next shape message would say so.
@@ -6882,6 +6892,20 @@ export class StreamView {
     /** The host sent a shape (or "no shape yet"): decode it for the drawing. */
     _clientCursorShapeChanged() {
         if (!this._clientCursorActive() || !this._clientCursorEl) return;
+        // The host has handed the pointer over: its position should follow
+        // shortly. If it never does (an older host), start from the middle.
+        if (!this._clientCursorPos && !this._clientCursorSeedTimer) {
+            this._clientCursorSeedTimer = setTimeout(() => {
+                this._clientCursorSeedTimer = null;
+                if (this._clientCursorPos || !this._clientCursorActive()) return;
+                const fw = this._pictureWidth(),
+                    fh = this._pictureHeight();
+                if (!(fw > 0) || !(fh > 0)) return;
+                console.log('[StreamView] Client cursor: no position from the host, seeding it');
+                this._clientCursorPos = { x: fw / 2, y: fh / 2 };
+                this._placeClientCursor();
+            }, CLIENT_CURSOR_SEED_MS);
+        }
         const png = this._hostCursorPng;
         if (!png) {
             this._clientCursorImg = null;
@@ -7270,6 +7294,10 @@ export class StreamView {
         if (this._clientCursorSettleTimer) {
             clearTimeout(this._clientCursorSettleTimer);
             this._clientCursorSettleTimer = null;
+        }
+        if (this._clientCursorSeedTimer) {
+            clearTimeout(this._clientCursorSeedTimer);
+            this._clientCursorSeedTimer = null;
         }
         if (this.inputEl) {
             this.inputEl.removeEventListener('wheel', this._onWheel);
