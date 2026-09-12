@@ -590,7 +590,11 @@ private:
         }
 
         std::string ddaError;
-        if (!forceWgc) {
+        if (m_DuplicationPaintsPointer) {
+            // Settled earlier in this session, and a restart would not unsettle
+            // it: the driver has no hardware pointer. See PaintedPointer.h.
+            ddaError = "it paints the pointer into the picture";
+        } else if (!forceWgc) {
             m_Capture = std::make_unique<capture::DxgiDuplication>(
                 m_Target.captureAdapterHandle, m_Target.outputIndex, m_Target.hdr);
             if (m_Capture->start(ddaError)) {
@@ -1258,7 +1262,20 @@ private:
             if (m_PendingResize.exchange(false)) applyLoadCap();
 
             capture::CapturedFrame frame;
-            const capture::AcquireStatus status = m_Capture->acquire(timeoutMs, frame);
+            // A duplication that turned out to paint the pointer in is left for
+            // Windows.Graphics.Capture, through the ordinary restart: the same
+            // road a mode change takes, with DDA skipped for the rest of the
+            // session. Before the acquire, so no frame is held when it goes.
+            if (m_CaptureApi == CaptureApi::DxgiDuplication && m_Capture->pointerPaintedIn() &&
+                !m_DuplicationPaintsPointer && capture::WgcCapture::available()) {
+                m_DuplicationPaintsPointer = true;
+                log::info("[native] moving this display to Windows.Graphics.Capture, which leaves "
+                          "the pointer out of the picture");
+            }
+            const capture::AcquireStatus status =
+                m_DuplicationPaintsPointer && m_CaptureApi == CaptureApi::DxgiDuplication
+                    ? capture::AcquireStatus::Lost
+                    : m_Capture->acquire(timeoutMs, frame);
 
             // Anything but a timeout means the screen is alive again, and the
             // frame about to be encoded is a moving one. Restore the ordinary
@@ -1940,6 +1957,9 @@ private:
     /// duplication back (a driver restart, a mode change) should stop paying
     /// for the fallback.
     CaptureApi m_CaptureApi = CaptureApi::DxgiDuplication;
+    /// Desktop Duplication was found to paint the pointer into the picture on
+    /// this display: every (re)open goes straight to WGC. Capture thread only.
+    bool m_DuplicationPaintsPointer = false;
     /// Present only when the encoder sits on another GPU than the display's:
     /// carries every frame across, and owns the device the converter and the
     /// encoder are then built on. See CrossGpuBridge.

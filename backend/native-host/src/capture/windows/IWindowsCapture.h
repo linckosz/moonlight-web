@@ -124,6 +124,11 @@ public:
     virtual int cursorHotspotX() const = 0;
     virtual int cursorHotspotY() const = 0;
 
+    /// True once the capture has shown that the pointer comes painted into the
+    /// picture, where it can be neither left out nor magnified. The session
+    /// answers by moving to a capture that can. See PaintedPointer.h.
+    virtual bool pointerPaintedIn() const { return false; }
+
 protected:
     IWindowsCapture() = default;
 };

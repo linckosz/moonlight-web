@@ -375,19 +375,46 @@ AcquireStatus WgcCapture::acquire(int timeoutMs, CapturedFrame& frame)
     if (FAILED(d->pool->TryGetNextFrame(next.ReleaseAndGetAddressOf()))) return AcquireStatus::Lost;
 
     if (!next) {
+        if (cursorMoved) return AcquireStatus::PointerOnly;
+
         // Nothing waiting: sleep on the handler rather than poll. A frame that
         // lands during the wait wakes us within microseconds of the compositor
         // publishing it, which is the closest this API gets to DDA's "wake on
         // present".
-        std::unique_lock<std::mutex> lock(d->mutex);
-        d->cv.wait_for(lock, std::chrono::milliseconds(timeoutMs < 0 ? 0 : timeoutMs),
-                       [this]() { return d->arrived; });
-        d->arrived = false;
-        lock.unlock();
+        //
+        // In slices, though, with the pointer asked after each one. Nothing
+        // wakes this wait when only the pointer moves — the compositor has no
+        // frame to publish, the pointer being left out of it — so one long
+        // sleep read the pointer once per timeout: ten times a second on a
+        // still desktop, which is what a viewer saw as a pointer lagging and
+        // jumping (Windows on ARM, 12/09/2026). DDA has no such problem, a
+        // pointer move wakes it like a present.
+        constexpr auto kPointerPoll = std::chrono::milliseconds(4);
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(timeoutMs < 0 ? 0 : timeoutMs);
+        bool arrived = false;
+        for (;;) {
+            const auto now = std::chrono::steady_clock::now();
+            const std::chrono::steady_clock::duration left = deadline - now;
+            const std::chrono::steady_clock::duration slice =
+                left < kPointerPoll ? left : kPointerPoll;
+            {
+                std::unique_lock<std::mutex> lock(d->mutex);
+                if (slice.count() > 0) d->cv.wait_for(lock, slice, [this]() { return d->arrived; });
+                arrived = d->arrived;
+                d->arrived = false;
+            }
+            if (arrived || std::chrono::steady_clock::now() >= deadline) break;
+            if (m_Cursor2.update(m_Cursor, m_DesktopRect, m_Width, m_Height))
+                return AcquireStatus::PointerOnly;
+        }
 
         if (FAILED(d->pool->TryGetNextFrame(next.ReleaseAndGetAddressOf())))
             return AcquireStatus::Lost;
-        if (!next) return cursorMoved ? AcquireStatus::PointerOnly : AcquireStatus::Timeout;
+        if (!next) {
+            const bool movedLast = m_Cursor2.update(m_Cursor, m_DesktopRect, m_Width, m_Height);
+            return movedLast ? AcquireStatus::PointerOnly : AcquireStatus::Timeout;
+        }
     }
 
     ComPtr<WGDD::IDirect3DSurface> surface;

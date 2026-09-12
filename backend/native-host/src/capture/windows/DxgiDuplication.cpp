@@ -114,6 +114,9 @@ bool DxgiDuplication::start(std::string& error)
         return false;
     }
     m_QpcFrequency = frequency.QuadPart;
+    // A new duplication is a new question: the display, or its driver, may not
+    // be the one that painted the pointer in last time.
+    m_PaintedPointer = PaintedPointer();
 
     ComPtr<IDXGIAdapter1> adapter;
     ComPtr<IDXGIOutput> output;
@@ -273,6 +276,25 @@ void DxgiDuplication::decodeShape(const DXGI_OUTDUPL_POINTER_SHAPE_INFO& shape, 
     decodeCursorShape(source, m_Cursor);
 }
 
+void DxgiDuplication::samplePointerForVerdict()
+{
+    if (!m_PaintedPointer.undecided()) return;
+    CURSORINFO info = {};
+    info.cbSize = sizeof(info);
+    if (!::GetCursorInfo(&info)) return;
+    // The same test Win32Cursor makes: showing, and on THIS display. A pointer
+    // moving on another monitor says nothing about this duplication.
+    const bool onDisplay =
+        (info.flags & CURSOR_SHOWING) != 0 && m_DesktopRect.valid() &&
+        info.ptScreenPos.x >= m_DesktopRect.left && info.ptScreenPos.x < m_DesktopRect.right &&
+        info.ptScreenPos.y >= m_DesktopRect.top && info.ptScreenPos.y < m_DesktopRect.bottom;
+    m_PaintedPointer.noteSample(onDisplay, info.ptScreenPos.x, info.ptScreenPos.y);
+    if (m_PaintedPointer.paintedIn())
+        log::info("[native] Desktop Duplication paints the pointer into the picture on this "
+                  "display (no hardware pointer from the driver) — it can be neither left to the "
+                  "client nor magnified");
+}
+
 bool DxgiDuplication::updateCursor(const DXGI_OUTDUPL_FRAME_INFO& info)
 {
     bool changed = false;
@@ -287,6 +309,8 @@ bool DxgiDuplication::updateCursor(const DXGI_OUTDUPL_FRAME_INFO& info)
         UINT required = 0;
         const HRESULT hr = m_Duplication->GetFramePointerShape(
             static_cast<UINT>(m_ShapeBuffer.size()), m_ShapeBuffer.data(), &required, &shape);
+        // Even a shape that fails to read proves the pointer is kept apart.
+        m_PaintedPointer.noteReported();
         if (SUCCEEDED(hr)) {
             decodeShape(shape, m_ShapeBuffer.data(), m_ShapeBuffer.size());
             changed = true;
@@ -346,6 +370,7 @@ AcquireStatus DxgiDuplication::acquire(int timeoutMs, CapturedFrame& frame)
     m_FrameHeld = true;
 
     const bool cursorMoved = updateCursor(info);
+    samplePointerForVerdict();
 
     // A present time of zero means DXGI woke us for a pointer change only: not
     // one desktop pixel moved, so there is no new texture to encode and no

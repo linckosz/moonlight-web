@@ -18,6 +18,7 @@
 #pragma once
 
 #include "IWindowsCapture.h"
+#include "PaintedPointer.h"
 
 #include <dxgi1_6.h>
 #include <wrl/client.h>
@@ -74,8 +75,13 @@ public:
     const CursorState& cursor() const override { return m_Cursor; }
     int cursorHotspotX() const override { return m_CursorHotspotX; }
     int cursorHotspotY() const override { return m_CursorHotspotY; }
+    bool pointerPaintedIn() const override { return m_PaintedPointer.paintedIn(); }
 
 private:
+    /// Ask Win32 where the pointer is, for as long as PaintedPointer has no
+    /// verdict. Costs one GetCursorInfo per acquire, and nothing afterwards.
+    void samplePointerForVerdict();
+
     /// Find the adapter whose LUID matches, and its requested output.
     bool openAdapterAndOutput(Microsoft::WRL::ComPtr<IDXGIAdapter1>& adapter,
                               Microsoft::WRL::ComPtr<IDXGIOutput>& output, std::string& error);
@@ -127,6 +133,8 @@ private:
     /// Scratch for GetFramePointerShape, reused so a moving cursor does not
     /// allocate. DXGI tells us the size it needs before it fills it.
     std::vector<uint8_t> m_ShapeBuffer;
+    /// Whether this duplication keeps the pointer apart at all. Reset by start().
+    PaintedPointer m_PaintedPointer;
 
     /// Calibration for qpcToMicroseconds: ticks per second, plus one sample of
     /// both clocks taken at the same instant in start().

@@ -378,6 +378,7 @@ if(MW_BUILD_TESTS)
         tests/test_audio_interleave.cpp
         tests/test_cursor_blend.cpp
         tests/test_frame_fit.cpp
+        tests/test_painted_pointer.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)
