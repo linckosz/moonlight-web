@@ -240,7 +240,16 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         const QByteArray expected =
             QCryptographicHash::hash(appSettings.localKey().toUtf8(), QCryptographicHash::Sha256);
         if (!plausiblyHost || key.isEmpty() || given != expected) {
-            Logger::warning(QStringLiteral("[Auth] Host key redemption refused for %1").arg(addr));
+            // Say which gate closed: the address is the one ICE settled on for
+            // a tunnel peer, and whether it passed is the whole question when
+            // the owner's own link lands on the PIN page.
+            Logger::warning(
+                QStringLiteral("[Auth] Host key redemption refused for %1 (%2; %3)")
+                    .arg(addr,
+                         req.viaTunnel ? QStringLiteral("via tunnel") : QStringLiteral("direct"),
+                         !plausiblyHost  ? QStringLiteral("address not plausibly this machine")
+                         : key.isEmpty() ? QStringLiteral("no key given")
+                                         : QStringLiteral("key does not match")));
             return HttpResponse::error(403, "Invalid host key");
         }
 
