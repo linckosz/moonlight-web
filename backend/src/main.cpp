@@ -4171,6 +4171,12 @@ int main(int argc, char* argv[])
     // single-use key.
     QNetworkAccessManager entryProbeNam;
     bool entryAnswers = false;
+    // Whether any verdict has been reached since this process started, and how
+    // long ago it started: together they say whether an empty link is an answer
+    // or merely "not yet" (see remoteLinkPending below).
+    bool entryVerdictReached = false;
+    QElapsedTimer sinceServerStart;
+    sinceServerStart.start();
     QNetworkReply* entryProbeReply = nullptr;
     QElapsedTimer entryProbedAt;
     auto probeEntry = [&]() {
@@ -4196,6 +4202,7 @@ int main(int argc, char* argv[])
                         << (ok ? "answers" : "does not answer — falling back to loopback")
                         << "status" << status << entryProbeReply->errorString();
             entryAnswers = ok;
+            entryVerdictReached = true;
             entryProbedAt.restart();
             entryProbeReply->deleteLater();
             entryProbeReply = nullptr;
@@ -4246,6 +4253,19 @@ int main(int argc, char* argv[])
         return remoteLink(QStringLiteral("/admin"));
     };
 
+    // An empty link that is only "not yet": the internet way in is wanted, but
+    // the line has not come up and been checked since this process started.
+    // A caller that can afford to wait — the installer, which restarts this
+    // server seconds before asking — keeps asking instead of settling for
+    // loopback. On a slow machine the line and its check take about eleven
+    // seconds from launch (Snapdragon 7c, 13/09/2026), and the installer's old
+    // fixed six-second budget, started before the server was even back up,
+    // expired first on every update. Bounded, so a machine whose line never
+    // comes up stops being "pending" and gets its honest loopback answer.
+    auto remoteLinkPending = [&]() -> bool {
+        return rendezvousShouldRun() && !entryVerdictReached && sinceServerStart.elapsed() < 20000;
+    };
+
     // GET /api/server/remote-link — the same link, for the tray client. That
     // tray runs in its own process decorating a server it cannot see, so it asks
     // over loopback. Local callers only: this hands out a live credential, and
@@ -4255,14 +4275,20 @@ int main(int argc, char* argv[])
     // the shape the bootstrap will accept rather than passed through, so this
     // route can never be the thing that puts an arbitrary string into a link
     // this machine hands its owner.
-    server.router()->get("/api/server/remote-link", [remoteLink](const HttpRequest& req) {
-        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
-        const QString path = req.queryParams.value(QStringLiteral("p"));
-        static const QRegularExpression shape(QStringLiteral("^/[A-Za-z0-9_-]{1,32}$"));
-        if (!path.isEmpty() && !shape.match(path).hasMatch())
-            return HttpResponse::error(400, "Bad page");
-        return HttpResponse::json(QJsonObject{{QStringLiteral("url"), remoteLink(path)}});
-    });
+    //
+    // `pending` is true while an empty url is only "not yet" (remoteLinkPending).
+    server.router()->get(
+        "/api/server/remote-link", [remoteLink, remoteLinkPending](const HttpRequest& req) {
+            if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+            const QString path = req.queryParams.value(QStringLiteral("p"));
+            static const QRegularExpression shape(QStringLiteral("^/[A-Za-z0-9_-]{1,32}$"));
+            if (!path.isEmpty() && !shape.match(path).hasMatch())
+                return HttpResponse::error(400, "Bad page");
+            const QString url = remoteLink(path);
+            return HttpResponse::json(
+                QJsonObject{{QStringLiteral("url"), url},
+                            {QStringLiteral("pending"), url.isEmpty() && remoteLinkPending()}});
+        });
 
     // GET /api/server/stream-activity — who is streaming this screen, for the
     // tray client. Same snapshot the in-process tray reads straight from the

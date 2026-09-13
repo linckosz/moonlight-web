@@ -886,18 +886,21 @@ end;
 // rendezvous address, with a single-use host key in the fragment.
 //
 // Loopback, self-signed certificate, no proxy. Empty on anything unexpected, so
-// the caller falls back.
+// the caller falls back. `answered` says whether the server replied at all (it
+// may still be restarting), `pending` whether its empty url only means "not yet".
 //
 // The question can only be put to the server, because only the server knows
 // whether the line is up AND whether the introduction server answers when asked
-// — it probes that itself. An empty url is its considered answer, not a
-// failure: it means loopback is the honest address here.
-function AskRemoteAdminLink(const origin: String): String;
+// — it probes that itself. An empty url without `pending` is its considered
+// answer, not a failure: it means loopback is the honest address here.
+function AskRemoteAdminLink(const origin: String; var answered, pending: Boolean): String;
 var
   req: Variant;
   body: String;
 begin
   Result := '';
+  answered := False;
+  pending := False;
   try
     req := CreateOleObject('MSXML2.ServerXMLHTTP.6.0');
   except
@@ -918,7 +921,10 @@ begin
   except
     Exit;
   end;
-  // Compact JSON, one key: {"url":"https://.../xxxx#k=...&p=/admin"}.
+  answered := True;
+  // Compact JSON: {"pending":false,"url":"https://.../xxxx#k=...&p=/admin"}.
+  // A server older than `pending` never sends it, and is read as settled.
+  pending := Pos('"pending":true', body) > 0;
   Result := StatusValue(body, 'url');
 end;
 
@@ -937,11 +943,20 @@ end;
 // the answer is cached in a variable: the line needs a few seconds to come up
 // after the server starts, and those are seconds this page is already spending.
 // A wizard that freezes on its last button is worse than one that waits where
-// it is already waiting. Six seconds is the same budget the app allows itself
-// when it opens a browser at launch; then loopback, silently.
+// it is already waiting.
+//
+// How long: until the server has a verdict, not a fixed budget. It used to be
+// six seconds, and that is why an update landed on loopback: on an update
+// nothing is provisioned, so this starts the instant the server is relaunched,
+// and a Snapdragon 7c needs about eleven seconds from there to line up and
+// check the entry page (13/09/2026). A plain empty url is a verdict and ends
+// the wait. While the server is still restarting (no answer) or says `pending`,
+// the wait goes on, up to a ceiling; the server itself stops saying `pending`
+// twenty seconds after its start. Then loopback, silently.
 procedure ResolveAdminUrl();
 var
   origin, link: String;
+  answered, pending: Boolean;
   // Cardinal, like GetTickCount itself: the difference then stays correct
   // across the 49-day wrap instead of going through a signed overflow.
   started, elapsed: Cardinal;
@@ -954,8 +969,8 @@ begin
   origin := LoopbackOrigin(ResolvedAdminUrl);
   ProgressPage.SetText(ExpandConstant('{cm:ResolveLinkWait}'), '');
   // The bar is full from the checklist above, and this wait has no measurable
-  // progress to show: it ends the moment the server answers, or at the
-  // six-second budget. So the bar simply stays full. Neither a refilling bar
+  // progress to show: it ends the moment the server has a verdict, or at the
+  // ceiling. So the bar simply stays full. Neither a refilling bar
   // (100% dropping to a slowly refilling 50% read as the install going
   // backwards) nor a marquee (switching style recreates the control, which
   // restarts empty with its block at the left edge: a flash of 0%). The
@@ -968,7 +983,7 @@ begin
     // fifteen of those would hold the wizard for a minute and a half.
     started := GetTickCount;
     repeat
-      link := AskRemoteAdminLink(origin);
+      link := AskRemoteAdminLink(origin, answered, pending);
       if link <> '' then begin
         ResolvedAdminUrl := link;
         Break;
@@ -977,7 +992,12 @@ begin
       // SetProgress pumps the message queue, which is what keeps the page
       // painted across the Sleep below.
       ProgressPage.SetProgress(100, 100);
-      if elapsed >= 6000 then Break;
+      // The server just installed is the one answering, so it knows `pending`:
+      // an empty url without it is settled.
+      if answered and not pending then Break;
+      if elapsed >= 30000 then Break;
+      // Still refusing after fifteen seconds: it is not coming back up.
+      if not answered and (elapsed >= 15000) then Break;
       Sleep(400);
     until False;
   finally
