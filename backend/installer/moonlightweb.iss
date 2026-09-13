@@ -953,14 +953,15 @@ begin
 
   origin := LoopbackOrigin(ResolvedAdminUrl);
   ProgressPage.SetText(ExpandConstant('{cm:ResolveLinkWait}'), '');
-  // The bar is still full from the checklist above, and this wait has no
-  // measurable progress to show: it ends the moment the server answers, or at
-  // the six-second budget. Drawn as a marquee for that reason — a bar that
-  // dropped from 100% to a slowly refilling 50% read as the install going
-  // backwards. SetProgress below is kept for its side effect only (the message
-  // pump); a marquee ignores the position it is handed.
-  ProgressPage.ProgressBar.Style := npbstMarquee;
+  // The bar is full from the checklist above, and this wait has no measurable
+  // progress to show: it ends the moment the server answers, or at the
+  // six-second budget. So the bar simply stays full. Neither a refilling bar
+  // (100% dropping to a slowly refilling 50% read as the install going
+  // backwards) nor a marquee (switching style recreates the control, which
+  // restarts empty with its block at the left edge: a flash of 0%). The
+  // SetProgress calls below keep it at 100% and pump the message queue.
   ProgressPage.Show;
+  ProgressPage.SetProgress(100, 100);
   try
     // Bounded on the CLOCK, not on a number of attempts: a server that has
     // wedged answers each attempt with a timeout rather than a refusal, and
@@ -975,14 +976,12 @@ begin
       elapsed := GetTickCount - started;
       // SetProgress pumps the message queue, which is what keeps the page
       // painted across the Sleep below.
-      if elapsed > 6000 then elapsed := 6000;
-      ProgressPage.SetProgress(elapsed, 6000);
+      ProgressPage.SetProgress(100, 100);
       if elapsed >= 6000 then Break;
       Sleep(400);
     until False;
   finally
     ProgressPage.Hide;
-    ProgressPage.ProgressBar.Style := npbstNormal;
   end;
 end;
 
@@ -1001,7 +1000,7 @@ procedure RunProvisionChecklist();
 var
   statusPath, content, ar, spin: String;
   raw: AnsiString; // LoadStringFromFile requires an AnsiString out-param.
-  i, rc: Integer;
+  i, j, rc: Integer;
   pctAr, itAr: Integer;
   prevAr: String;
   holdDone: Boolean;
@@ -1075,10 +1074,15 @@ begin
       prevAr := ar;
 
       if IsTerminal(ar) then begin
-        // Settled. SetProgress above already pumped the message queue, so the
-        // full bar and the final [OK] line are on screen: hold them long enough
-        // to be read instead of blinking straight to the next page.
-        Sleep(900);
+        // Settled: hold the full bar and the final [OK] line long enough to be
+        // read instead of blinking straight to the next page. Held in short
+        // slices that each pump the message queue, not one Sleep: a themed
+        // progress bar animates its fill on timer messages, and a single
+        // Sleep(900) froze it around 70% under a label already reading 100%.
+        for j := 1 to 9 do begin
+          ProgressPage.SetProgress(BarPercent(ar, pctAr), 100);
+          Sleep(100);
+        end;
         Break;
       end;
       if holdDone then Sleep(1000) else Sleep(300);
