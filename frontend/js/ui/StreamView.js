@@ -173,6 +173,18 @@ const CLIENT_CURSOR_SETTLE_MS = 150;
 const CLIENT_CURSOR_SEED_MS = 1000;
 
 /**
+ * The acceleration of the pointer we steer ourselves, as a function of finger
+ * speed in CSS pixels per millisecond: the gain rises from 1 towards
+ * CLIENT_CURSOR_ACCEL_MAX, reaching about two thirds of the way there at
+ * CLIENT_CURSOR_ACCEL_SPEED. It stands in for the host's own "enhance pointer
+ * precision", which a relative delta used to pick up and an absolute position
+ * never does — without it a flick of the finger crossed a fraction of the
+ * picture and the pointer read as slow.
+ */
+const CLIENT_CURSOR_ACCEL_MAX = 3;
+const CLIENT_CURSOR_ACCEL_SPEED = 1.0;
+
+/**
  * The ordinary arrow, for a host that says "there is a pointer" without having
  * shown it yet (see _pictureCursor) — a desktop client draws `default` there,
  * an image needs an image. Hotspot at the tip, top-left; ink 12×19.
@@ -810,6 +822,8 @@ export class StreamView {
         this._clientCursorLastMoveAt = 0;
         this._clientCursorSettleTimer = null;
         this._clientCursorSeedTimer = null;
+        // When the finger last steered the pointer, for its speed.
+        this._clientCursorSteerAt = 0;
         // What the host's position reports say about visibility, apart from the
         // shape's own flag: the pointer leaving the display is reported here
         // long before the next shape message would say so.
@@ -6974,6 +6988,58 @@ export class StreamView {
         const magnify = PHONE_CURSOR_CSS_PX / (ink * natural);
         if (!isFinite(magnify) || !(magnify > 1)) return natural;
         return natural * Math.min(2.5, magnify);
+    }
+
+    /** Whether the finger steers the pointer we draw — which needs a place to
+     *  steer it from. Before the host's first word (or the seed) the relative
+     *  path carries on. */
+    _clientCursorSteers() {
+        return this._clientCursorActive() && !!this._clientCursorPos;
+    }
+
+    /**
+     * The finger moved by (cssDx, cssDy) CSS pixels: move the pointer we draw
+     * and put the host's exactly there.
+     *
+     * Absolute, not relative, on purpose. A delta is handed to the host's OS,
+     * which applies its own acceleration and clamps at its own edges, so the
+     * host's pointer ends up somewhere other than the one drawn here — and a
+     * tap then clicks where the host's is, not where the viewer sees it. A
+     * position in the picture's own pixels lands on the host at the same
+     * point in the picture, zoomed or not, and the drawing IS the pointer.
+     *
+     * `sens` is the trackpad sensitivity (finger CSS px → host desktop px),
+     * as on the relative path; the acceleration is ours, from finger speed.
+     */
+    _clientCursorSteer(cssDx, cssDy, sens) {
+        const p = this._clientCursorPos;
+        if (!p) return;
+        const fw = this._pictureWidth(),
+            fh = this._pictureHeight();
+        if (!(fw > 0) || !(fh > 0)) return;
+        const now = performance.now();
+        const dt = this._clientCursorSteerAt ? now - this._clientCursorSteerAt : 0;
+        this._clientCursorSteerAt = now;
+        // Speed over this event, ignoring a stale first event of a gesture.
+        let gain = 1;
+        if (dt > 0 && dt < 100) {
+            const v = Math.hypot(cssDx, cssDy) / Math.max(dt, 4);
+            gain =
+                1 + (CLIENT_CURSOR_ACCEL_MAX - 1) * (1 - Math.exp(-v / CLIENT_CURSOR_ACCEL_SPEED));
+        }
+        // Host desktop pixels to frame pixels, as everywhere else.
+        const s = this._hostCursorScale > 0 ? this._hostCursorScale : 1;
+        p.x = Math.max(0, Math.min(fw - 1, p.x + cssDx * sens * gain * s));
+        p.y = Math.max(0, Math.min(fh - 1, p.y + cssDy * sens * gain * s));
+        this.webrtc.send({
+            type: 'mousemove',
+            x: Math.round(p.x),
+            y: Math.round(p.y),
+            referenceWidth: Math.round(fw),
+            referenceHeight: Math.round(fh),
+        });
+        this._clientCursorNoteMove();
+        this._placeClientCursor();
     }
 
     /** The finger moved the pointer by (dx, dy) host desktop pixels. */

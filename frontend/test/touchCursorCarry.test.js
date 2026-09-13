@@ -28,6 +28,7 @@ function touchSink(sensitivity, zoom) {
         // The pointer the view draws for itself follows every delta sent; here
         // there is no drawing, only the deltas.
         _clientCursorMoved: () => {},
+        _clientCursorSteers: () => false, // the relative path under test
         _touchActive: true,
         _touchScreen: false, // trackpad mode, not touchscreen mode
         _touchMaxFingers: 1,

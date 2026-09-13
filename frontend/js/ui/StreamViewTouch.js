@@ -389,6 +389,21 @@ export class StreamViewTouch {
                 // x2→0.9, x3→0.8, x4→0.7…) for finer aim when zoomed in.
                 const zoomSlow = Math.max(0.1, 1 - 0.1 * (this._zoom - 1));
                 const sens = this._touchSensitivity * zoomSlow;
+                // Drawing the pointer ourselves, we also PLACE it: the position
+                // is computed here, with our own acceleration, and sent as an
+                // absolute point — so the host's pointer is exactly under the
+                // one drawn, whatever the host's own mouse settings would have
+                // made of a delta. See StreamView._clientCursorSteer.
+                if (this._clientCursorSteers()) {
+                    this._clientCursorSteer(
+                        touch.clientX - this._touchLastX,
+                        touch.clientY - this._touchLastY,
+                        sens,
+                    );
+                    this._touchLastX = touch.clientX;
+                    this._touchLastY = touch.clientY;
+                    return;
+                }
                 // Carried as fractions, exactly like the wheel in _emitScroll,
                 // and for the same reason: a finger moving slowly (or a zoomed
                 // view, which divides the sensitivity by up to 3) produces
