@@ -35,11 +35,16 @@ name: bootstrap-watch
 
 on:
   schedule:
-    # Every 30 minutes. GitHub runs scheduled jobs on a best-effort basis and
-    # skews them under load, so treat the interval as "about half an hour", not
+    # Every 6 hours. GitHub runs scheduled jobs on a best-effort basis and
+    # skews them under load, so treat the interval as "about 6 hours", not
     # as a guarantee — the window an unnoticed swap could live in is the honest
-    # number to quote, and it is larger than the cron line suggests.
-    - cron: "*/30 * * * *"
+    # number to quote, and it is larger than the cron line suggests. This only
+    # bounds the untargeted case (see the header comment); tightening it below
+    # 30 minutes bought nothing precision-wise, and the repo is public so the
+    # old interval cost nothing either — 6 hours was chosen purely to cut how
+    # often a stale-tag false alarm (or a real one) pages a human, not because
+    # a wider window was judged safe on its own merits.
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 permissions:
