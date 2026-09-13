@@ -4171,12 +4171,14 @@ int main(int argc, char* argv[])
     // single-use key.
     QNetworkAccessManager entryProbeNam;
     bool entryAnswers = false;
-    // Whether any verdict has been reached since this process started, and how
-    // long ago it started: together they say whether an empty link is an answer
-    // or merely "not yet" (see remoteLinkPending below).
+    // Whether any verdict has been reached since the line was last wanted, and
+    // how long ago that was: together they say whether an empty link is an
+    // answer or merely "not yet" (see remoteLinkPending below). "Wanted" is this
+    // process starting, or the switch being turned on while it runs — which is
+    // what the setup wizard does seconds before its last button asks for a link.
     bool entryVerdictReached = false;
-    QElapsedTimer sinceServerStart;
-    sinceServerStart.start();
+    QElapsedTimer sinceLineWanted;
+    sinceLineWanted.start();
     QNetworkReply* entryProbeReply = nullptr;
     QElapsedTimer entryProbedAt;
     auto probeEntry = [&]() {
@@ -4263,7 +4265,7 @@ int main(int argc, char* argv[])
     // expired first on every update. Bounded, so a machine whose line never
     // comes up stops being "pending" and gets its honest loopback answer.
     auto remoteLinkPending = [&]() -> bool {
-        return rendezvousShouldRun() && !entryVerdictReached && sinceServerStart.elapsed() < 20000;
+        return rendezvousShouldRun() && !entryVerdictReached && sinceLineWanted.elapsed() < 20000;
     };
 
     // GET /api/server/remote-link — the same link, for the tray client. That
@@ -4366,10 +4368,17 @@ int main(int argc, char* argv[])
     registerSystemRoutes(
         server, appSettings, authManager, internetAccess, computerManager,
         [adminUrl]() { writeAdminShortcut(adminUrl()); },
-        [&rendezvous, rendezvousShouldRun](bool enabled) {
-            if (enabled && rendezvousShouldRun())
+        [&rendezvous, rendezvousShouldRun, &entryVerdictReached, &sinceLineWanted](bool enabled) {
+            if (enabled && rendezvousShouldRun()) {
+                // A line that is not up yet restarts the "not yet" window, so
+                // the wizard's button waits for it instead of settling for
+                // loopback on a server that has been running for hours.
+                if (!rendezvous.isOnline()) {
+                    entryVerdictReached = false;
+                    sinceLineWanted.restart();
+                }
                 rendezvous.start();
-            else
+            } else
                 rendezvous.stop();
         },
         [&rendezvous]() {

@@ -108,6 +108,8 @@ export class SetupView {
         // True while the typed credentials are being tried against the Sunshine
         // already installed here (the config step waits, it does not advance).
         this._checking = false;
+        // The last button is waiting for the internet link (see _finish).
+        this._finishing = false;
 
         this._pollTimer = null;
         // Which checklist rows are relevant to the run in progress.
@@ -875,8 +877,26 @@ export class SetupView {
     // `mw_setup_dismissed` is still READ by the startup gate — browsers that
     // pressed the old button keep their dismissal — and nothing writes it.
 
-    _finish() {
+    async _finish() {
         this._stopPolling();
+        if (this._finishing) return;
+        // Internet access on: open MoonlightWeb through its internet link, the
+        // way the Windows installer's last page does. That page is served under
+        // a certificate the browser already trusts, where localhost only has the
+        // self-signed one to show. Loopback stays the fallback for everything
+        // the link cannot be had for.
+        if (this._internetActive) {
+            this._finishing = true;
+            const button = this.container.querySelector('#btn-setup-finish');
+            if (button) button.disabled = true;
+            const link = await this._remoteLink();
+            this._finishing = false;
+            if (link) {
+                window.location.href = link;
+                return;
+            }
+            if (button) button.disabled = false;
+        }
         // Streaming needs a trusted TLS origin. The wizard normally already runs
         // over https://, but if it was reached over http:// switch now — the user
         // accepts the self-signed cert once here, then the host list works.
@@ -887,6 +907,28 @@ export class SetupView {
         }
         const port = this._httpsPort && this._httpsPort !== 443 ? ':' + this._httpsPort : '';
         window.location.href = 'https://' + window.location.hostname + port + '/';
+    }
+
+    // The internet link to this machine's front door, carrying a single-use
+    // host key, or '' when there is none to be had. The wizard has usually
+    // just turned the line on, and bringing it up and checking its entry page
+    // takes seconds (about eleven on a Snapdragon 7c): the server says
+    // `pending` for as long as an empty answer only means "not yet", and this
+    // keeps asking until it gives a real one. Bounded on this side too, so a
+    // server that keeps saying "not yet" cannot hold the button forever.
+    async _remoteLink() {
+        const deadline = Date.now() + 25000;
+        for (;;) {
+            try {
+                const answer = await BackendClient.get('/api/server/remote-link');
+                if (answer.url) return answer.url;
+                if (!answer.pending) return '';
+            } catch (_e) {
+                return '';
+            }
+            if (Date.now() >= deadline) return '';
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
     }
 
     esc(text) {
