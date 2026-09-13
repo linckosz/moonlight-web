@@ -72,6 +72,7 @@
         "donePermissions": "最后一步：打开 Sunshine，在“系统设置”中授予它“屏幕录制”和“辅助功能”权限——macOS 需要你手动完成此操作。",
         "donePermissionsNative": "最后一步：在“系统设置 → 隐私与安全性”中授予 MoonlightWeb“屏幕录制”权限，然后退出并重新打开它——macOS 需要你手动完成此操作，并且只在重新启动后才生效。",
         "finish": "打开 MoonlightWeb",
+        "openingLink": "正在准备你的互联网链接…",
         "errorGeneric": "设置失败，请重试。",
         "sunshineInstallFailed": "Sunshine 安装失败：{{error}}。请重试（系统会要求输入密码）、取消勾选 Sunshine，或跳过此步骤。"
     },

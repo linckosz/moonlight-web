@@ -509,8 +509,13 @@ export class SetupView {
             ${domainLine}
             ${permsLine}
             ${displayLine}
-            <button id="btn-setup-finish" class="btn btn-neutral login-submit">
-                ${t('setup.finish')}
+            <button id="btn-setup-finish" class="btn btn-neutral login-submit"
+                    ${this._finishing ? 'disabled' : ''}>
+                ${
+                    this._finishing
+                        ? `<span class="tunnel-spinner"></span>${t('setup.openingLink')}`
+                        : t('setup.finish')
+                }
             </button>`;
     }
 
@@ -886,16 +891,20 @@ export class SetupView {
         // self-signed one to show. Loopback stays the fallback for everything
         // the link cannot be had for.
         if (this._internetActive) {
+            // The wait can last seconds: the button says what it is waiting
+            // for rather than just going grey.
             this._finishing = true;
-            const button = this.container.querySelector('#btn-setup-finish');
-            if (button) button.disabled = true;
+            this.render();
+            this.bindEvents();
             const link = await this._remoteLink();
-            this._finishing = false;
             if (link) {
+                // Left spinning: the page is navigating away.
                 window.location.href = link;
                 return;
             }
-            if (button) button.disabled = false;
+            this._finishing = false;
+            this.render();
+            this.bindEvents();
         }
         // Streaming needs a trusted TLS origin. The wizard normally already runs
         // over https://, but if it was reached over http:// switch now — the user

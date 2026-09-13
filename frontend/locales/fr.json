@@ -72,6 +72,7 @@
         "donePermissions": "Dernière étape : ouvrez Sunshine et accordez-lui les autorisations Enregistrement de l'écran et Accessibilité dans les Réglages Système — macOS exige de le faire manuellement.",
         "donePermissionsNative": "Dernière étape : accordez à MoonlightWeb l'autorisation Enregistrement de l'écran dans Réglages Système → Confidentialité et sécurité, puis quittez et rouvrez l'application — macOS exige de le faire manuellement, et ne l'applique qu'au redémarrage.",
         "finish": "Ouvrir MoonlightWeb",
+        "openingLink": "Préparation de votre lien Internet…",
         "errorGeneric": "La configuration a échoué. Veuillez réessayer.",
         "sunshineInstallFailed": "L'installation de Sunshine a échoué : {{error}}. Réessayez (votre mot de passe vous sera redemandé), décochez Sunshine ou ignorez cette étape."
     },

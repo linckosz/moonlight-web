@@ -72,6 +72,7 @@
         "donePermissions": "One last step: open Sunshine and grant it Screen Recording and Accessibility permissions in System Settings — macOS requires you to do this manually.",
         "donePermissionsNative": "One last step: grant MoonlightWeb the Screen Recording permission in System Settings → Privacy & Security, then quit and reopen it — macOS requires you to do this manually, and only applies it on relaunch.",
         "finish": "Open MoonlightWeb",
+        "openingLink": "Preparing your internet link…",
         "errorGeneric": "Setup failed. Please try again.",
         "sunshineInstallFailed": "Sunshine installation failed: {{error}}. Try again (you'll be asked for your password), uncheck Sunshine, or skip this step."
     },
