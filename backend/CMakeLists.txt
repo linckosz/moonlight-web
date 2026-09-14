@@ -41,9 +41,15 @@ if(NOT MW_VERSION)
         string(REGEX REPLACE "^v" "" _mw_git_describe "${_mw_git_describe}")
         string(REPLACE "-" "." _mw_git_describe "${_mw_git_describe}")
         set(MW_VERSION "${_mw_git_describe}")
-        # New commits/tags rewrite these files; watching them makes a plain
-        # `cmake --build` re-configure and pick up the new version.
-        foreach(_mw_git_state HEAD packed-refs)
+        # Watching these makes a plain `cmake --build` re-configure and pick up
+        # the new version. HEAD alone is not enough: on a branch it only says
+        # "ref: refs/heads/main" and no commit touches it — logs/HEAD (the
+        # reflog) is what every commit, checkout and reset appends to. A new
+        # tag lands as a loose file under refs/tags, which rewrites that
+        # directory but neither of the files; missing it once left a build of
+        # the v0.3.0 commit calling itself 0.2.4.548 and offering to "update"
+        # to the release it already was.
+        foreach(_mw_git_state HEAD logs/HEAD packed-refs refs/tags)
             if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../.git/${_mw_git_state}")
                 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                              "${CMAKE_CURRENT_SOURCE_DIR}/../.git/${_mw_git_state}")
