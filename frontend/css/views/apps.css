@@ -99,19 +99,69 @@
     display: block;
 }
 /* A cover being re-fetched after a failed request: the frame shows the generic
-   pad meanwhile, and the image stays in the DOM to come back into. Needed
+   ship meanwhile, and the image stays in the DOM to come back into. Needed
    because the rule above outranks the browser's own [hidden] handling. */
 .app-card-image img[hidden] {
     display: none;
 }
+
+/* ── No cover: an arcade ship over "PRESS START" (AppPlaceholder.js) ────── */
+/* Sized off the frame's own width (cqi), so the line under the ship still fits
+   in the narrow two-column tiles of a phone. */
+.app-card-image {
+    container-type: inline-size;
+}
 .app-card-image .app-icon {
+    position: relative;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 14cqi;
     width: 100%;
     height: 100%;
-    font-size: 2rem;
-    opacity: 0.7;
+    background: linear-gradient(var(--surface-2), var(--surface-1));
+}
+/* CRT scanlines over the whole frame. */
+.app-card-image .app-icon::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 2px, transparent 2px 4px);
+}
+.app-icon-sprite {
+    width: 72%;
+    height: auto;
+    filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.55));
+}
+.app-icon-cyan {
+    fill: var(--neon-cyan);
+}
+.app-icon-yellow {
+    fill: var(--accent-1);
+}
+.app-icon-magenta {
+    fill: var(--neon-magenta);
+}
+.app-icon-label {
+    font-family: var(--font-mono);
+    font-size: 9cqi;
+    letter-spacing: 0.15em;
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--accent-1);
+}
+/* Hovering a coverless card makes the line blink, as it does on a cabinet
+   waiting for a player. */
+.app-card:hover .app-icon-label,
+.app-card:focus-visible .app-icon-label {
+    animation: app-press-start 1s steps(1, end) infinite;
+}
+@keyframes app-press-start {
+    50% {
+        opacity: 0;
+    }
 }
 
 .app-card-name {
@@ -227,6 +277,10 @@
         animation: none;
     }
     .app-card--launching::before {
+        animation: none;
+    }
+    .app-card:hover .app-icon-label,
+    .app-card:focus-visible .app-icon-label {
         animation: none;
     }
     /* No fade: the wash simply holds for its second, then the timer in

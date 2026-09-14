@@ -204,7 +204,8 @@
         "loadFailed": "Failed to load applications",
         "loadFailedHint": "The host is unreachable or took too long to respond",
         "launchAria": "Launch {{name}}",
-        "launching": "Launching…"
+        "launching": "Launching…",
+        "pressStart": "PRESS START"
     },
     "login": {
         "connecting": "Connecting to server...",

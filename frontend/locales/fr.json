@@ -204,7 +204,8 @@
         "loadFailed": "Échec du chargement des applications",
         "loadFailedHint": "L'hôte est injoignable ou a mis trop de temps à répondre",
         "launchAria": "Lancer {{name}}",
-        "launching": "Lancement…"
+        "launching": "Lancement…",
+        "pressStart": "PRESS START"
     },
     "login": {
         "connecting": "Connexion au serveur...",

@@ -261,7 +261,7 @@ describe('HostListView app grid', () => {
             expect(JSON.parse(localStorage.getItem('mw-host-apps'))['host-a'].art).toEqual([1]);
         });
 
-        it('falls back to the pad for a cover never seen — that host simply has none', () => {
+        it('falls back to the ship for a cover never seen — that host simply has none', () => {
             remember([{ id: 1, name: 'Desktop' }]);
             mount();
 
@@ -269,6 +269,19 @@ describe('HostListView app grid', () => {
 
             expect(art()).toBeNull();
             expect(pad()).not.toBeNull();
+        });
+
+        it('draws the stand-in in the theme, not with an emoji each OS paints its own way', () => {
+            remember([{ id: 1, name: 'Desktop' }]);
+            mount();
+
+            art().dispatchEvent(new Event('error'));
+
+            expect(pad().querySelector('svg.app-icon-sprite path.app-icon-cyan')).not.toBeNull();
+            expect(pad().querySelector('.app-icon-label')).not.toBeNull();
+            expect(pad().textContent).not.toMatch(/\p{Extended_Pictographic}/u);
+            // Decorative: the card's own aria-label already names the app.
+            expect(pad().getAttribute('aria-hidden')).toBe('true');
         });
 
         it('retries a cover already seen, and puts it back when it arrives', () => {

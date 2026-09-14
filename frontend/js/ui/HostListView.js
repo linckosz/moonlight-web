@@ -35,6 +35,7 @@ import { ShareBoard } from './ShareBoard.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { Icons } from './icons.js';
+import { appPlaceholderHtml } from './AppPlaceholder.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import {
     loadCachedApps,
@@ -1363,16 +1364,16 @@ export class HostListView {
             const placeholder = () => {
                 const prev = img.previousElementSibling;
                 if (prev && prev.classList.contains('app-icon')) return prev;
-                img.insertAdjacentHTML('beforebegin', `<span class="app-icon">\u{1F3AE}</span>`);
+                img.insertAdjacentHTML('beforebegin', appPlaceholderHtml(t('apps.pressStart')));
                 return img.previousElementSibling;
             };
 
             const onError = () => {
                 const ladder = HostListView.BOX_ART_RETRY_MS;
                 if (!boxArtWasSeen(uuid, appId) || attempt >= ladder.length) {
-                    // Never seen, or the host has stopped answering: the pad
+                    // Never seen, or the host has stopped answering: the ship
                     // stands in for the cover for good, and the <img> goes away.
-                    // Reusing the placeholder when there is one — two pads in
+                    // Reusing the placeholder when there is one — two ships in
                     // one frame is a frame with a second, smaller frame in it.
                     placeholder();
                     img.remove();
@@ -1416,7 +1417,7 @@ export class HostListView {
                             ? `<img src="${this.esc(app.boxArtUrl)}"
                                alt="${this.esc(app.displayName)}"
                                loading="lazy">`
-                            : `<span class="app-icon">\u{1F3AE}</span>`
+                            : appPlaceholderHtml(t('apps.pressStart'))
                     }
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
