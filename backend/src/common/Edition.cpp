@@ -64,7 +64,10 @@ QString displayNameFor(bool devBuild, bool devFlag)
 
 QString versionFor(const QString& base, bool dev)
 {
-    if (!dev || base.endsWith(QLatin1String("-dev"))) return base;
+    // CI stamps the suffix itself (0.3.0-b7c-dev), dotted in the Linux build
+    // (0.3.0.b7c.dev) because rpm refuses dashes.
+    if (!dev || base.endsWith(QLatin1String("-dev")) || base.endsWith(QLatin1String(".dev")))
+        return base;
     return base + QStringLiteral("-dev");
 }
 

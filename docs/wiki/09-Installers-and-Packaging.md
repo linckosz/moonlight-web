@@ -151,7 +151,7 @@ Ports, volume layout, backups, non-root operation and troubleshooting: [`docker/
 
 ## 9.4bis Editions — PROD and DEV side by side
 
-Every installer comes in two editions, decided by `release.yml`: a `v*` tag builds **PROD** (`MoonlightWeb`), every other run — a CI dispatch on `main`, say — builds **DEV** (`MoonlightWebDev`). DEV is how a pre-release reaches a tester who may also run the release: it installs **beside** production, never over it. Operating systems key firewall rules, TCC grants, services and packages on names, so everything a system knows an install by differs (`-DMW_EDITION=dev`, [`backend/src/common/Edition.h`](../../backend/src/common/Edition.h)):
+Every installer comes in two editions, decided by `release.yml`: a `v*` tag builds **PROD** (`MoonlightWeb`), a CI dispatch with `channel=staging` builds the same PROD edition as a hidden, unpublished build (`0.3.0-b7c-stg`), and every other run — a CI dispatch on `main` with the default `channel=dev` — builds **DEV** (`MoonlightWebDev`). DEV is how a pre-release reaches a tester who may also run the release: it installs **beside** production, never over it. Operating systems key firewall rules, TCC grants, services and packages on names, so everything a system knows an install by differs (`-DMW_EDITION=dev`, [`backend/src/common/Edition.h`](../../backend/src/common/Edition.h)):
 
 | | PROD | DEV |
 |---|---|---|

@@ -63,7 +63,8 @@ QString dataNameFor(bool devBuild, bool devFlag);
 QString displayNameFor(bool devBuild, bool devFlag);
 
 /// The version as shown and reported: `base`, plus "-dev" for a DEV identity
-/// (never twice — the untagged fallback is already 0.0.0-dev).
+/// (never twice — the untagged fallback is already 0.0.0-dev, and a CI DEV
+/// build already reads 0.3.0-b7c-dev, or 0.3.0.b7c.dev on Linux).
 QString versionFor(const QString& base, bool dev);
 
 /// The launcher's name: what the installer registered this build under (the

@@ -9,13 +9,16 @@
 #
 # CI (ci.yml) calls this same workflow as its last stage, so untagged installers
 # can be downloaded from a manual CI run's artifacts and tested before a tag is
-# cut. The version differs: a v* tag ships `1.2.3`, any other run ships
-# `<last tag>-<3-char sha>` (e.g. 0.2.1-b7c). And so does the edition: a v* tag
-# builds MoonlightWeb (PROD), any other run MoonlightWebDev (DEV) — a
-# pre-release that installs BESIDE a production MoonlightWeb instead of over it,
-# under its own name, state, ports, staging server and blue icons
-# (backend/src/common/Edition.h). Someone testing a CI build never touches the
-# release they may also have installed.
+# cut. Three channels, told apart by the version they stamp:
+#   • v* tag         → `0.3.0`, PROD edition, published to every user.
+#   • channel=staging → `<last tag>-<3-char sha>-stg` (e.g. 0.3.0-b7c-stg), PROD
+#     edition (MoonlightWeb, installs over the release, production
+#     introduction server), artifacts only — a hidden production build.
+#   • channel=dev (the default) → `<last tag>-<3-char sha>-dev`, DEV edition:
+#     MoonlightWebDev installs BESIDE a production MoonlightWeb instead of over
+#     it, under its own name, state, ports, staging server and blue icons
+#     (backend/src/common/Edition.h), so testing it never touches the release.
+# Only a tag ever publishes: every release step below stays gated on refs/tags.
 name: release
 
 # NO tag trigger here on purpose. A v* tag fires ci.yml, which validates the
@@ -36,6 +39,13 @@ on:
           - windows-arm64
           - linux
           - macos
+      channel:
+        description: "Untagged build: dev (MoonlightWebDev, x.y.z-sha-dev) or staging (hidden PROD, x.y.z-sha-stg). Ignored on a v* tag."
+        type: choice
+        default: dev
+        options:
+          - dev
+          - staging
   # Called by CI once the gates are green, so the installers come off this exact
   # packaging path — no second recipe to keep in sync. What the run does with
   # them depends on the caller's ref: the gh-release steps below stay gated on a
@@ -47,6 +57,10 @@ on:
         description: "Platform(s) to build"
         type: string
         default: all
+      channel:
+        description: "Untagged build: dev or staging (ignored on a v* tag)"
+        type: string
+        default: dev
 
 permissions:
   contents: write
@@ -65,6 +79,7 @@ jobs:
       macos: ${{ steps.sel.outputs.macos }}
       version: ${{ steps.ver.outputs.version }}
       pkg_version: ${{ steps.ver.outputs.pkg_version }}
+      label: ${{ steps.ver.outputs.label }}
       edition: ${{ steps.edition.outputs.edition }}
       app: ${{ steps.edition.outputs.app }}
       pkg: ${{ steps.edition.outputs.pkg }}
@@ -92,32 +107,46 @@ jobs:
 
       # Single version string for every platform job (installer file names,
       # MW_VERSION baked into the binary, artifact names):
-      #   • v* tag push  → the tag, verbatim minus the "v" (v1.2.3 → 1.2.3)
-      #   • anywhere else (CI on main, manual dispatch) → last v* tag + the
-      #     3-char commit sha, e.g. 0.2.1-b7c, so a test installer says exactly
-      #     which commit it came from.
+      #   • v* tag push     → the tag, verbatim minus the "v" (v1.2.3 → 1.2.3)
+      #   • channel=staging → last v* tag + 3-char sha + -stg (0.3.0-b7c-stg)
+      #   • channel=dev     → last v* tag + 3-char sha + -dev (0.2.4-e8f-dev)
+      # `label` names the workflow artifacts: `v1.2.3` on a tag, the bare
+      # version otherwise — the "v" belongs to what gets released.
       - id: ver
+        env:
+          CHANNEL: ${{ inputs.channel || 'dev' }}
         run: |
           if [ "$GITHUB_REF" != "${GITHUB_REF#refs/tags/v}" ]; then
-            v="${GITHUB_REF_NAME#v}"
+            v="${GITHUB_REF_NAME#v}"; label="v$v"
           else
+            case "$CHANNEL" in
+              staging) suffix=stg ;;
+              dev)     suffix=dev ;;
+              *) echo "::error::Unknown channel '$CHANNEL' (dev or staging)"; exit 1 ;;
+            esac
             tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.2.1)
             # cut, not `rev-parse --short=3`: git refuses to abbreviate below 4.
-            v="${tag#v}-$(git rev-parse HEAD | cut -c1-3)"
+            v="${tag#v}-$(git rev-parse HEAD | cut -c1-3)-$suffix"; label="$v"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
           # rpm rejects '-' in the Version field, so the Linux packages use a
-          # dotted variant (0.2.1-b7c → 0.2.1.b7c). Identical on a tag build.
+          # dotted variant (0.3.0-b7c-stg → 0.3.0.b7c.stg). Identical on a tag
+          # build. Sorts after the 0.3.0 it was cut from and before 0.3.1, as
+          # the commit does.
           echo "pkg_version=${v//-/.}" >> "$GITHUB_OUTPUT"
           echo "Version: $v" >> "$GITHUB_STEP_SUMMARY"
 
-      # PROD only on a v* tag — the build users install. `app` is the launcher's
-      # name (MoonlightWeb / MoonlightWebDev), `pkg` the lower-case one the file
+      # PROD on a v* tag — the build users install — and on channel=staging,
+      # the same build kept to its artifacts. `app` is the launcher's name
+      # (MoonlightWeb / MoonlightWebDev), `pkg` the lower-case one the file
       # names and Linux packages use. Every name below derives from these; the
       # tag-only jobs (release assets, Homebrew, APT/DNF, AUR) only ever see PROD.
       - id: edition
+        env:
+          CHANNEL: ${{ inputs.channel || 'dev' }}
         run: |
-          if [ "$GITHUB_REF" != "${GITHUB_REF#refs/tags/v}" ]; then
+          if [ "$GITHUB_REF" != "${GITHUB_REF#refs/tags/v}" ] || [ "$CHANNEL" = staging ]; then
             e=prod; app=MoonlightWeb; pkg=moonlightweb
           else
             e=dev; app=MoonlightWebDev; pkg=moonlightweb-dev
@@ -376,11 +405,10 @@ jobs:
           $i = "${{ steps.sign-installer.outcome }}"
           Write-Host "::warning title=Unsigned Windows build::SignPath request failed (payload: $p, installer: $i) - ${{ matrix.arch }} ships UNSIGNED and will trip SmartScreen. Check the project, signing policy and artifact configuration slugs at signpath.io."
 
-      # Downloadable on every run (incl. the CI call on main and a
-      # workflow_dispatch with no tag).
+      # Downloadable on every run (incl. a CI dispatch on main, dev or staging).
       - uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.setup.outputs.app }}-windows-${{ matrix.arch }}-v${{ needs.setup.outputs.version }}
+          name: ${{ needs.setup.outputs.app }}-windows-${{ matrix.arch }}-${{ needs.setup.outputs.label }}
           path: ${{ needs.setup.outputs.app }}-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe
 
       # Published to the GitHub Release only on a v* tag push.
@@ -583,7 +611,7 @@ jobs:
       # Downloadable on every run (incl. the CI call on main, which never tags).
       - uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.setup.outputs.pkg }}-linux-x64-v${{ needs.setup.outputs.pkg_version }}
+          name: ${{ needs.setup.outputs.pkg }}-linux-x64-${{ needs.setup.outputs.label }}
           path: |
             ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.deb
             ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.pkg_version }}-linux-x64.rpm
@@ -854,7 +882,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.setup.outputs.pkg }}-macos-arm64-v${{ needs.setup.outputs.version }}
+          name: ${{ needs.setup.outputs.pkg }}-macos-arm64-${{ needs.setup.outputs.label }}
           path: ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.version }}-macos-arm64.pkg
 
       - uses: softprops/action-gh-release@v3
@@ -901,7 +929,7 @@ jobs:
         if: steps.tap.outputs.enabled == 'true'
         uses: actions/download-artifact@v6
         with:
-          name: ${{ needs.setup.outputs.pkg }}-macos-arm64-v${{ needs.setup.outputs.version }}
+          name: ${{ needs.setup.outputs.pkg }}-macos-arm64-${{ needs.setup.outputs.label }}
 
       - name: Render the cask
         if: steps.tap.outputs.enabled == 'true'
@@ -1023,7 +1051,7 @@ jobs:
         if: steps.sign.outputs.enabled == 'true'
         uses: actions/download-artifact@v6
         with:
-          name: ${{ needs.setup.outputs.pkg }}-linux-x64-v${{ needs.setup.outputs.pkg_version }}
+          name: ${{ needs.setup.outputs.pkg }}-linux-x64-${{ needs.setup.outputs.label }}
 
       - name: Import the signing key
         if: steps.sign.outputs.enabled == 'true'
@@ -1072,7 +1100,7 @@ jobs:
         if: steps.sign.outputs.enabled == 'true'
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.setup.outputs.pkg }}-linux-repo-v${{ needs.setup.outputs.pkg_version }}
+          name: ${{ needs.setup.outputs.pkg }}-linux-repo-${{ needs.setup.outputs.label }}
           path: moonlightweb-repo-${{ needs.setup.outputs.pkg_version }}.tar.gz
 
       # A public, unauthenticated URL deploy-packages.sh can just curl from the
@@ -1114,7 +1142,7 @@ jobs:
         if: steps.aur.outputs.enabled == 'true'
         uses: actions/download-artifact@v6
         with:
-          name: ${{ needs.setup.outputs.pkg }}-linux-x64-v${{ needs.setup.outputs.pkg_version }}
+          name: ${{ needs.setup.outputs.pkg }}-linux-x64-${{ needs.setup.outputs.label }}
 
       # Both files are rendered from the same two values, because the AUR reads
       # .SRCINFO and makepkg reads the PKGBUILD — a mismatch between them is the

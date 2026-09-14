@@ -37,6 +37,9 @@ void run_edition_tests()
     CHECK_EQ(versionFor(QStringLiteral("0.3.0"), false), QStringLiteral("0.3.0"));
     CHECK_EQ(versionFor(QStringLiteral("0.3.0-b7c"), true), QStringLiteral("0.3.0-b7c-dev"));
     CHECK_EQ(versionFor(QStringLiteral("0.0.0-dev"), true), QStringLiteral("0.0.0-dev"));
+    CHECK_EQ(versionFor(QStringLiteral("0.3.0-b7c-dev"), true), QStringLiteral("0.3.0-b7c-dev"));
+    CHECK_EQ(versionFor(QStringLiteral("0.3.0.b7c.dev"), true), QStringLiteral("0.3.0.b7c.dev"));
+    CHECK_EQ(versionFor(QStringLiteral("0.3.0-b7c-stg"), false), QStringLiteral("0.3.0-b7c-stg"));
     CHECK_EQ(versionFor(QStringLiteral("0.2.4.12.g6f79dad"), true),
              QStringLiteral("0.2.4.12.g6f79dad-dev"));
 
