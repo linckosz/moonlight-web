@@ -6009,17 +6009,23 @@ export class StreamView {
         // (or profile) mid-stream. The decoder holds the old sets as its
         // description and the chunks have theirs stripped, so it would decode
         // this keyframe against the wrong size — green blocks. Re-read the sets
-        // from this keyframe and configure again; the keyframe waits in
-        // pendingFrames until the new configuration is in (decodeFrame buffers
+        // from this keyframe and start a NEW decoder on them; the keyframe waits
+        // in pendingFrames until the configuration is in (decodeFrame buffers
         // while decoderConfigured is false).
+        //
+        // A new decoder, not configure() on the running one: Chrome on Linux
+        // with a VA-API decoder kept painting green after re-configuring the
+        // live instance to the new size (issue #15, 13/09/2026, both log lines
+        // "reconfiguring" then green), while every fresh decoder at stream start
+        // on that same machine showed a clean first picture. A new one is the
+        // path proven there; it costs one decoder creation per resize.
         if (isKeyframe && this.decoderConfigured && this.nalParser.changedBy(data)) {
             console.log(
-                '[StreamView] Parameter sets changed at a keyframe — reconfiguring decoder',
+                '[StreamView] Parameter sets changed at a keyframe — starting a new decoder',
             );
             this.nalParser.reset();
             this.nalParser.feed(data);
-            this.decoderConfigured = false;
-            this.decoderConfiguring = false;
+            this.setupDecoder();
             this.configureDecoder();
         }
 
