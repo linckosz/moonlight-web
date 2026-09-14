@@ -124,8 +124,13 @@ private slots:
     void onOpenSessions();
     void onRestart();
     void onQuit();
+    void onAutostartToggled(bool on);
 
 private:
+    /// Re-read the login item from the OS before the menu shows, so the tick
+    /// says what is true right now (the admin page or the user's own hands may
+    /// have changed it since the last look).
+    void refreshAutostart();
     /// Ask the provider, then say what changed: tooltip, menu entry, and one
     /// notification per viewer who arrived or left.
     void pollActivity();
@@ -149,8 +154,9 @@ private:
     std::function<void()> m_QuitServer;    // client mode: stop the remote server
     QSystemTrayIcon* m_TrayIcon;
     QMenu* m_Menu;
-    QMenu* m_DockMenu;         // macOS Dock right-click menu (null elsewhere)
-    QElapsedTimer m_StartedAt; // filters out the app-launch activation (macOS)
+    QMenu* m_DockMenu;                    // macOS Dock right-click menu (null elsewhere)
+    QAction* m_AutostartAction = nullptr; // "Start at login" — only where it can be done
+    QElapsedTimer m_StartedAt;            // filters out the app-launch activation (macOS)
 
     // ── Streaming activity ─────────────────────────────────────────────────
     std::function<StreamActivity()> m_Activity;

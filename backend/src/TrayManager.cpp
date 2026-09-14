@@ -16,6 +16,7 @@
  */
 
 #include "TrayManager.h"
+#include "Autostart.h"
 #include "common/Edition.h"
 #include "server/HttpServer.h"
 
@@ -30,6 +31,7 @@
 #include <QAction>
 #include <QGuiApplication>
 #include <QMenu>
+#include <QSignalBlocker>
 
 TrayManager::TrayManager(HttpServer* server, QObject* parent)
     : QObject(parent)
@@ -124,6 +126,19 @@ bool TrayManager::init()
     QAction* openAction = m_Menu->addAction(tr("&Open"));
     QAction* controlPanelAction = m_Menu->addAction(tr("&Server Settings"));
     m_Menu->addSeparator();
+    // Start at login: a tick that says whether the OS will launch this app at
+    // the next logon, and flips it. Only where that is ours to do — a desktop
+    // session with a mechanism behind it. Not in client mode: the server is a
+    // service there, already up before anyone logs in, and a login item beside
+    // it would only be another way into the very update trouble a service
+    // install has. The tick is re-read from the OS each time the menu opens.
+    if (!m_ClientMode && Autostart::isSupported()) {
+        m_AutostartAction = m_Menu->addAction(tr("Start at &login"));
+        m_AutostartAction->setCheckable(true);
+        connect(m_AutostartAction, &QAction::toggled, this, &TrayManager::onAutostartToggled);
+        connect(m_Menu, &QMenu::aboutToShow, this, &TrayManager::refreshAutostart);
+        refreshAutostart();
+    }
     QAction* restartAction =
         m_Menu->addAction(m_ClientMode ? tr("&Restart Server") : tr("&Restart"));
     m_Menu->addSeparator();
@@ -146,6 +161,10 @@ bool TrayManager::init()
     m_DockMenu->addAction(openAction);
     m_DockMenu->addAction(controlPanelAction);
     m_DockMenu->addSeparator();
+    if (m_AutostartAction) {
+        m_DockMenu->addAction(m_AutostartAction);
+        connect(m_DockMenu, &QMenu::aboutToShow, this, &TrayManager::refreshAutostart);
+    }
     m_DockMenu->addAction(restartAction);
     m_DockMenu->setAsDockMenu();
 
@@ -337,6 +356,33 @@ void TrayManager::onOpenSettings()
 void TrayManager::onOpenSessions()
 {
     openAppPage(QStringLiteral("/sessions"));
+}
+
+// Blocked so the OS probe does not come back as a toggle: setChecked() emits
+// toggled(), and that would (re)install what was only being read.
+void TrayManager::refreshAutostart()
+{
+    if (!m_AutostartAction) return;
+    const QSignalBlocker quiet(m_AutostartAction);
+    m_AutostartAction->setChecked(Autostart::isLoginItemInstalled());
+}
+
+// The tick is the request, the OS is the answer: on failure the tick goes back
+// to what is actually true, and the log says why — a box that stays ticked
+// after a refused write would be a promise nobody made.
+void TrayManager::onAutostartToggled(bool on)
+{
+    qInfo() << "[TrayManager]" << (on ? "Enabling" : "Disabling") << "start at login";
+    const bool ok = on ? Autostart::installLoginItem() : Autostart::removeLoginItem();
+    if (!ok) {
+        qWarning() << "[TrayManager] Start at login could not be" << (on ? "enabled" : "disabled");
+        if (m_TrayIcon)
+            m_TrayIcon->showMessage(mw::edition::displayName(),
+                                    on ? tr("Could not enable start at login")
+                                       : tr("Could not disable start at login"),
+                                    QSystemTrayIcon::Warning, 5000);
+    }
+    refreshAutostart();
 }
 
 void TrayManager::onRestart()

@@ -890,42 +890,50 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
     // — Admin settings (localhost only, server config) —
 
-    server.router()->get(
-        "/api/admin/settings", [&server, &appSettings, &authManager](const HttpRequest& req) {
-            QJsonObject obj;
-            obj["http_port"] = static_cast<int>(server.httpPort());
-            // Report the persisted (canonical) HTTPS port, not the
-            // primary listener's live port: after a port-parity
-            // rebind the host adopts the router-side port (e.g.
-            // 44729) as its single https_port — served locally by
-            // the secondary listener on every interface — so the
-            // admin UI's Local Access URL and port input must show
-            // that port, matching the public-domain URL. In the
-            // normal case main.cpp keeps this in sync with the
-            // active listener at startup, so they are identical.
-            obj["https_port"] = static_cast<int>(appSettings.httpsPort(server.activeHttpsPort()));
-            obj["cert_auth_enabled"] = authManager.certAuthEnabled();
-            // Whether the desktop is told when someone streams this screen.
-            obj["stream_notifications"] = appSettings.streamNotifications();
-            // The name this install shows in the header of every browser paired
-            // with it. Both halves are reported, and the difference is what the
-            // field on screen needs: the stored one is what goes in the input
-            // (empty when nothing was chosen), the machine's own is what goes in
-            // the placeholder, so clearing the box visibly means "back to the PC
-            // name" rather than "no name at all".
-            obj["instance_name"] = appSettings.instanceName();
-            obj["default_instance_name"] = AppSettings::machineName();
-            obj["instance_name_max"] = AppSettings::kInstanceNameMaxLength;
-            // Host machine only: the current host key, so the
-            // admin page can carry its session over to the
-            // public-domain URL after Internet activation. Not
-            // isLocal — a LAN admin that unlocked with the password
-            // has the same rights but is NOT the host, and handing
-            // it the key would rotate the one the host's own
-            // shortcut still embeds.
-            if (req.isHostMachine) obj["local_key"] = appSettings.localKey();
-            return HttpResponse::json(obj);
-        });
+    server.router()->get("/api/admin/settings", [&server, &appSettings,
+                                                 &authManager](const HttpRequest& req) {
+        QJsonObject obj;
+        obj["http_port"] = static_cast<int>(server.httpPort());
+        // Report the persisted (canonical) HTTPS port, not the
+        // primary listener's live port: after a port-parity
+        // rebind the host adopts the router-side port (e.g.
+        // 44729) as its single https_port — served locally by
+        // the secondary listener on every interface — so the
+        // admin UI's Local Access URL and port input must show
+        // that port, matching the public-domain URL. In the
+        // normal case main.cpp keeps this in sync with the
+        // active listener at startup, so they are identical.
+        obj["https_port"] = static_cast<int>(appSettings.httpsPort(server.activeHttpsPort()));
+        obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+        // Whether the desktop is told when someone streams this screen.
+        obj["stream_notifications"] = appSettings.streamNotifications();
+        // Start at login. Two facts, because the page has two decisions to
+        // make: whether to show the box at all (a desktop session with a
+        // login-item mechanism — never under a service supervisor), and
+        // whether it is ticked. The second is read from the OS, not from
+        // settings.json: the installer, the tray and the user's own hands
+        // all write the same login item, and the box must agree with them.
+        obj["autostart_supported"] = Autostart::isSupported();
+        obj["autostart_enabled"] = Autostart::isSupported() && Autostart::isLoginItemInstalled();
+        // The name this install shows in the header of every browser paired
+        // with it. Both halves are reported, and the difference is what the
+        // field on screen needs: the stored one is what goes in the input
+        // (empty when nothing was chosen), the machine's own is what goes in
+        // the placeholder, so clearing the box visibly means "back to the PC
+        // name" rather than "no name at all".
+        obj["instance_name"] = appSettings.instanceName();
+        obj["default_instance_name"] = AppSettings::machineName();
+        obj["instance_name_max"] = AppSettings::kInstanceNameMaxLength;
+        // Host machine only: the current host key, so the
+        // admin page can carry its session over to the
+        // public-domain URL after Internet activation. Not
+        // isLocal — a LAN admin that unlocked with the password
+        // has the same rights but is NOT the host, and handing
+        // it the key would rotate the one the host's own
+        // shortcut still embeds.
+        if (req.isHostMachine) obj["local_key"] = appSettings.localKey();
+        return HttpResponse::json(obj);
+    });
 
     server.router()->post("/api/admin/settings", [&server, &appSettings, &authManager,
                                                   &internetAccess](const HttpRequest& req) {
@@ -953,6 +961,24 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["stream_notifications"].toBool();
             appSettings.setStreamNotifications(enabled);
             obj["stream_notifications"] = enabled;
+            hadChange = true;
+        }
+
+        // ── Start at login ───────────────────────────────────────────────
+        // Written straight to the OS (task, LaunchAgent, XDG entry) and echoed
+        // back from it, so the page shows what was actually done. Refused
+        // outright where there is no login item to write (a service install):
+        // the page never offers the box there, so a request for it is not
+        // one of ours.
+        if (body.contains("autostart_enabled")) {
+            if (!Autostart::isSupported())
+                return HttpResponse::error(409, "Start at login is not available here");
+            const bool enabled = body["autostart_enabled"].toBool();
+            const bool ok = enabled ? Autostart::installLoginItem() : Autostart::removeLoginItem();
+            if (!ok)
+                return HttpResponse::error(500, enabled ? "Could not enable start at login"
+                                                        : "Could not disable start at login");
+            obj["autostart_enabled"] = Autostart::isLoginItemInstalled();
             hadChange = true;
         }
 

@@ -221,7 +221,9 @@ zh.UninstConfigDetail=设置、账户、证书和主机配对将被永久删除�
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "autostart"; Description: "{cm:AutoStartTask}"; GroupDescription: "{cm:AdditionalIcons}"
+; Unchecked: a login item is opted into, and the same switch is in the tray
+; menu and on the admin page afterwards (it drives this very task).
+Name: "autostart"; Description: "{cm:AutoStartTask}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -476,8 +478,9 @@ begin
   ProgressPage.Msg2Label.Top := ScaleY(102);
 
   // The tasks page is hidden in update mode, so its checkboxes would fall back
-  // to their defaults (both ticked) and silently re-add a Desktop icon or an
-  // autostart the user had removed. Mirror what is actually on the machine.
+  // to their defaults and silently re-add a Desktop icon the user had removed,
+  // or drop an autostart the user had switched on from the tray or the admin
+  // page. Mirror what is actually on the machine.
   // One call with the complete list: WizardSelectTasks deselects everything the
   // list does not name, so two calls would undo each other.
   if UpdateMode then begin

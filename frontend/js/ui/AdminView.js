@@ -121,6 +121,11 @@ export class AdminView {
         // through the native host. Server-side setting: the tray obeys it, and
         // the tray may live in another process.
         this._streamNotifications = true;
+        // Start at login. Offered only where the server says it can do it (a
+        // desktop session, never a service), and ticked from what the OS
+        // actually holds — the installer or the tray may have set it.
+        this._autostartSupported = false;
+        this._autostartEnabled = false;
         // The name this install shows in the header of every browser paired with
         // it — and in the switcher those browsers use to reach the others.
         // Empty means "whatever this PC is called", which is the default and,
@@ -201,6 +206,8 @@ export class AdminView {
             this._httpPort = admin.http_port || 80;
             this._certAuthEnabled = admin.cert_auth_enabled || false;
             this._streamNotifications = admin.stream_notifications !== false;
+            this._autostartSupported = admin.autostart_supported === true;
+            this._autostartEnabled = admin.autostart_enabled === true;
             // Two values, not one: what was chosen (often nothing) and what the
             // PC is called. The field shows the first and offers the second as
             // its placeholder, so an empty box reads as "this machine's own
@@ -966,6 +973,21 @@ export class AdminView {
                 <div class="settings-section">
                     <h3 class="settings-section-title">${t('admin.serverConfig')}</h3>
 
+                    ${
+                        this._isLocalhost() && this._autostartSupported
+                            ? `
+                    <div class="settings-field" id="admin-autostart">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-autostart"
+                                   ${this._autostartEnabled ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.autostart')}</span>
+                        </label>
+                        <p class="setting-desc">${t('admin.autostartDesc')}</p>
+                    </div>
+                    `
+                            : ''
+                    }
+
                     <div class="settings-field">
                         <label class="settings-label" for="admin-instance-name">
                             ${t('admin.instanceName')}
@@ -1547,6 +1569,31 @@ export class AdminView {
                     console.error('[Admin] Failed to save notification setting:', err);
                     Toast.error(t('admin.saveFailed', { message: err.message }));
                     notifyChk.checked = !enabled; // revert
+                }
+            });
+        }
+
+        // ── Start at login ─────────────────────────────────────────────────
+        // Saved on the spot. The server answers with what the OS now holds,
+        // and the box follows that answer rather than the click: a login
+        // item the OS refused to write must not show as written.
+        const autostartChk = this.container.querySelector('#chk-autostart');
+        if (autostartChk) {
+            autostartChk.addEventListener('change', async () => {
+                const enabled = autostartChk.checked;
+                try {
+                    const res = await BackendClient.saveAdminSettings({
+                        autostart_enabled: enabled,
+                    });
+                    this._autostartEnabled = res?.autostart_enabled === true;
+                    autostartChk.checked = this._autostartEnabled;
+                    Toast.success(
+                        this._autostartEnabled ? t('admin.autostartOn') : t('admin.autostartOff'),
+                    );
+                } catch (err) {
+                    console.error('[Admin] Failed to save start-at-login setting:', err);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
+                    autostartChk.checked = !enabled; // revert
                 }
             });
         }

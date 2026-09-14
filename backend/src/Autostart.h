@@ -20,23 +20,45 @@
 /**
  * @brief Registers the app to start at user login (GUI session).
  *
- * Windows uses a logon Scheduled Task created by the Inno Setup installer. macOS
- * and Linux have no wizard-driven installer, so the in-app setup wizard installs
- * the platform login item itself: a per-user LaunchAgent on macOS
- * (~/Library/LaunchAgents/com.moonlightweb.agent.plist, relaunch on crash only)
- * and an XDG autostart entry on Linux (~/.config/autostart/moonlightweb.desktop).
+ * One per-user login item per platform, and the same one whether it was
+ * created by an installer or toggled from inside the app:
  *
- * This is distinct from the root LaunchDaemon (packaging/launchd) used for a
- * headless server binding :80/:443, which sets MW_SERVICE=1 and shows no tray.
+ *  - Windows: the logon Scheduled Task named after the edition (`MoonlightWeb`
+ *    / `MoonlightWebDev`), the very task the Inno Setup installer registers
+ *    when its "Start at logon" box is ticked. Driven here through the Task
+ *    Scheduler COM API, so no `schtasks` process and no elevation: a task a
+ *    user created (or an installer created for that user) is that user's to
+ *    change.
+ *  - macOS: a per-user LaunchAgent (~/Library/LaunchAgents/com.moonlightweb.agent.plist,
+ *    relaunch on crash only), the one the .pkg postinstall writes as well.
+ *  - Linux: an XDG autostart entry (~/.config/autostart/moonlightweb.desktop).
+ *
+ * This is distinct from the service supervisors (root LaunchDaemon, systemd
+ * unit, NSSM service) used for a headless server: those set MW_SERVICE=1 and
+ * show no tray. Under one of them the login item is meaningless (the server
+ * is already up before anyone logs in), so isSupported() answers false and
+ * nothing offers the option — that is also what keeps a service install
+ * from ever mixing the two mechanisms.
  */
 namespace Autostart {
 
-/// Install the per-user login item. Returns true on success. Writing the file is
-/// enough for the next login; the already-running instance is left untouched (no
-/// immediate second launch). macOS + Linux — no-op on Windows.
+/// Whether a login item makes sense here at all: a desktop session (not a
+/// service supervisor) on a platform with a mechanism behind it. When false,
+/// no menu entry and no checkbox is shown, and the other calls are no-ops.
+bool isSupported();
+
+/// Install the per-user login item. Returns true on success. Writing it is
+/// enough for the next login; the already-running instance is left untouched
+/// (no immediate second launch).
 bool installLoginItem();
 
-/// Whether the per-user login item is already present.
+/// Remove the per-user login item. Returns true on success, and also when
+/// there was nothing to remove.
+bool removeLoginItem();
+
+/// Whether the per-user login item is present. Probed from the OS every time,
+/// never cached: the user can remove the task or the file by hand, and a box
+/// that stays ticked afterwards would be lying.
 bool isLoginItemInstalled();
 
 } // namespace Autostart

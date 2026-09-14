@@ -85,7 +85,10 @@ export class SetupView {
         // it has to be one somebody actually gave.
         this._internetAuth = null;
         this._installSunshine = true;
-        this._autoStart = true;
+        // Never pre-ticked: a login item is the user's to ask for, and the
+        // switch stays within reach afterwards — in the tray menu and on the
+        // admin page — so nothing is lost by leaving it off here.
+        this._autoStart = false;
         // Keeping the display awake rewrites the user's own power settings, so it
         // is opt-in like Internet Access — never pre-ticked, and only offered at
         // all when the backend says this desktop exposes the knobs.
