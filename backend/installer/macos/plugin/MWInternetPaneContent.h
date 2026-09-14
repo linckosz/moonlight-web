@@ -33,7 +33,15 @@ static inline NSTextField *MWWrappingLabel(NSString *text, NSColor *color, CGFlo
 /// receives the second box, "start at login": Installer.app's last page is
 /// Apple's own and takes no controls, so this pane — the last one before the
 /// files are copied — is where that choice stays within reach.
-static inline NSButton *MWBuildInternetPaneContent(NSView *view, NSButton **autostartOut)
+///
+/// __strong, not the ARC-inferred __autoreleasing a bare `NSButton **` would
+/// get: the only caller passes the address of an ivar (MWInternetPane.m's
+/// _autostartCheck), and ARC can only write back through an __autoreleasing
+/// out-param via a local temporary — it refuses outright for a non-local
+/// object ("passing address of non-local object to __autoreleasing parameter
+/// for write-back"). __strong matches the ivar's own storage, so the write
+/// goes straight through with no temporary needed.
+static inline NSButton *MWBuildInternetPaneContent(NSView *view, NSButton *__strong *autostartOut)
 {
     NSTextField *intro =
         MWWrappingLabel(@"MoonlightWeb streams this Mac itself — there is nothing else to "
