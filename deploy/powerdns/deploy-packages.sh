@@ -42,12 +42,17 @@ main() {
     echo "tag:   $tag"
     echo "asset: $url"
 
-    local tmp
+    # Not `local`: the EXIT trap fires at the whole script's exit, after this
+    # function's own scope is gone, and `set -u` refuses an out-of-scope local.
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
 
     echo "--- downloading"
-    curl -fSL --retry 3 -o "$tmp/repo.tar.gz" "$url"
+    curl -fSL --retry 3 -o "$tmp/repo.tar.gz" "$url" || {
+        echo "::error::no such release asset — a release cut before this" \
+             "script existed never got one; nothing to deploy for $tag." >&2
+        exit 1
+    }
 
     echo "--- extracting"
     mkdir -p "$tmp/site"
