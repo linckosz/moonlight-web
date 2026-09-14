@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <QList>
 #include <QString>
 #include <QJsonObject>
 
@@ -341,6 +342,37 @@ public:
     /// Default: true (recommended — enables direct P2P connections from outside LAN).
     bool upnpEnabled() const;
     void setUpnpEnabled(bool enabled);
+
+    // ── Router ports (sticky UPnP allocation) ──────────────────────────────────
+    //
+    // The router-side ports this host obtained last time, so it asks for the
+    // same ones again and keeps its place among the other MoonlightWeb hosts on
+    // the LAN: the first installed keeps the corporate-friendly 3478, whatever
+    // order the machines boot in. See network/RouterPortAllocator.h.
+    //
+    // Stored as JSON object "router_ports", file-only and NOT seeded — it is
+    // state the allocator writes, not a preference:
+    //   {"lan_ip": "192.168.1.20", "tunnel": [3478, 3479], "media": {"0": 48010}}
+    // A remembered port is retried first and forgotten the moment the router
+    // says it belongs to another machine. The numbers survive a shutdown — the
+    // mappings are removed, the memory is what makes the next start land on
+    // the same ones.
+
+    /// Router ports remembered for the control tunnel, in the order obtained.
+    QList<quint16> rememberedTunnelPorts() const;
+    void rememberTunnelPort(quint16 port);
+    void forgetTunnelPort(quint16 port);
+
+    /// Router-side (external) media port remembered for a stream slot, 0 if none.
+    quint16 rememberedMediaPort(int slot) const;
+    void rememberMediaPort(int slot, quint16 port);
+    void forgetMediaPort(int slot);
+
+    /// The LAN address this host had when it obtained those ports. An entry
+    /// the router still points at it after a DHCP renumbering is ours to take
+    /// back, not a neighbour's to leave alone.
+    QString routerLanIp() const;
+    void setRouterLanIp(const QString& ip);
 
     // ── STUN server ─────────────────────────────────────────────────────────────
     //

@@ -99,6 +99,8 @@
 #include "streaming/worker/StreamWorkerMain.h"
 #include "network/InternetAccessManager.h"
 #include "network/RendezvousClient.h"
+#include "network/RouterPortAllocator.h"
+#include "network/RouterPortPools.h"
 #include "network/GeoIpService.h"
 #include "network/SelfUpdater.h"
 #include "network/SessionMetrics.h"
@@ -121,6 +123,14 @@
 // captures through would re-wrap a 600-line capture list for nothing.
 static QString g_LastOwnerHostUuid;
 static int g_LastOwnerAppId = 0;
+
+// The latest launch asked of each stream slot. A launch now waits for the
+// router to hand its slot a hole before the worker is spawned, and a second
+// /start for the same slot can land in that window; without this, both would
+// spawn and fight over the slot's ports. The older one sees a newer number
+// when its turn comes and stands down. File scope for the same reason as the
+// two above.
+static QHash<int, quint64> g_SlotLaunchGeneration;
 
 // Load KEY=VALUE pairs from a .env file into the process environment.
 // Supports PEM blocks: if a value starts with "-----BEGIN", lines are
@@ -1203,10 +1213,11 @@ using mw::edition::kDevHttpPort;
 using mw::edition::kDevHttpsPort;
 using mw::edition::kDevSignalingPort;
 // WebRTC media UDP port base (all modes). Each concurrent slot binds a distinct
-// port (base + slot) so simultaneous streams never collide on it, and UPnP maps
-// exactly that port. Slot 0 keeps the historical 48010; mirrors
-// SignalingServer::kUpnpPort. The dev firewall rule opens base..base+kMaxSlots-1.
-static constexpr quint16 kMediaBasePort = 48010;
+// port (base + slot) so simultaneous streams never collide on it; the router
+// forwards an external port to it, claimed per slot by RouterPortAllocator.
+// Slot 0 keeps the historical 48010. The dev firewall rule opens
+// base..base+kMaxSlots-1.
+static constexpr quint16 kMediaBasePort = mw::routerports::kMediaBasePort;
 
 // First port above the signaling base that belongs to somebody else: the
 // MultiSeat seat range documented above, and Wolf's video ping (48100, audio
@@ -1972,6 +1983,10 @@ int main(int argc, char* argv[])
         });
 
     InternetAccessManager internetAccess(&appSettings);
+    // Every hole in the router, from one place: the tunnel's and each stream
+    // slot's. Inert until a rendezvous line-up or a stream start asks for one,
+    // and then only with UPnP on and Internet Access consented.
+    RouterPortAllocator routerPorts(&appSettings);
     GeoIpService geoIpService(&appSettings);
     UpdateChecker updateChecker(QCoreApplication::applicationVersion(),
                                 appSettings.updateRelayAllowed());
@@ -2181,8 +2196,6 @@ int main(int argc, char* argv[])
     registerHostRoutes(server, computerManager);
 
     // Phase 5: Start streaming — launch app + RTSP handshake
-    auto effectiveUpnpEnabled = upnpEnabled; // Capture by value for the lambda
-
     server.router()->postAsync("/api/hosts/:id/start", [&computerManager, signalingPort,
                                                         &g_ActiveRelay, &g_ActiveStreamRelay,
                                                         &g_ActiveMediaTrackRelay, &g_ActiveSession,
@@ -2193,7 +2206,7 @@ int main(int argc, char* argv[])
                                                         &slotSignalingPort, &slotWsPath,
                                                         &anyOtherSlotLive, &reapCoopSession,
                                                         &server, &appSettings, &authManager,
-                                                        &sessionMetrics, effectiveUpnpEnabled,
+                                                        &sessionMetrics, &routerPorts,
                                                         stunServer](const HttpRequest& req,
                                                                     ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
@@ -2848,8 +2861,7 @@ int main(int argc, char* argv[])
             auto* s = new StreamSession(
                 host, appId, computerManager.http(), std::move(rsp), signalingPort, serverHost,
                 (codecOverride != VideoCodec::Auto) ? codecOverride : reqCodec, reqGamingMode,
-                effectiveUpnpEnabled, internal, stunServer, reqHeight, reqWidth, reqFps, reqBitrate,
-                reqYuv444, reqHdr);
+                internal, stunServer, reqHeight, reqWidth, reqFps, reqBitrate, reqYuv444, reqHdr);
             s->setHttpsPort(server.activeHttpsPort());
             // Set from the request, never guessed: this machine's port means
             // nothing to a browser that reached us through the rendezvous.
@@ -2950,14 +2962,13 @@ int main(int argc, char* argv[])
             cfg["codecOverridden"] = codecOverridden;
             cfg["originalCodec"] = static_cast<int>(originalCodec);
             cfg["gamingMode"] = reqGamingMode;
-            // UPnP is consent-gated: a router mapping only serves a peer coming
-            // from the internet, and internet_access_enabled is the user's
-            // answer to exactly that question. Read live (not baked into
-            // effectiveUpnpEnabled at boot) so flipping the admin toggle takes
-            // effect on the very next stream, without a restart. A LAN-only
+            // The router hole ("upnpPublicIp"/"upnpExternalPort") is added
+            // below, once the allocator has answered: a mapping only serves a
+            // peer coming from the internet, and the allocator reads the UPnP
+            // switch and the Internet Access consent live, so flipping the
+            // admin toggle takes effect on the very next stream. A LAN-only
             // user who declined keeps streaming — same-subnet peers connect on
             // the host candidate, the router is never in the path.
-            cfg["upnpEnabled"] = effectiveUpnpEnabled && appSettings.internetAccessEnabled();
 
             // MW-BIND-v1 (docs/design/pairing-signature.md): the worker signs the
             // DTLS fingerprint of its SDP offer, and verifies the browser's, so
@@ -3187,8 +3198,9 @@ int main(int argc, char* argv[])
                     }
                 });
 
-            auto startWorker = [worker, cfg, respond, standby, reqSlot, appId, &g_Pool,
-                                &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken]() {
+            auto startWorker = [worker, respond, standby, reqSlot, appId, &g_Pool,
+                                &g_LastStandbyStartMs, hostUuidCopy, uid,
+                                sessionToken](QJsonObject cfg) {
                 if (!worker->start(cfg)) {
                     worker->deleteLater();
                     // Spawn failure. For a standby attempt just report
@@ -3218,6 +3230,49 @@ int main(int argc, char* argv[])
                 if (standby) g_LastStandbyStartMs = QDateTime::currentMSecsSinceEpoch();
             };
 
+            // The router hole for this slot, claimed before the child exists
+            // so it can be told which external port the browser will aim at.
+            // Instant when the slot's hole is already held from an earlier
+            // session; one SOAP round trip otherwise; nothing at all (STUN
+            // only, as before) when there is no gateway or UPnP is off.
+            //
+            // A newer /start for this slot may arrive while the router is being
+            // asked — a quality switch, a reload. It never saw this worker in
+            // the pool, so it could not tear it down; this one stands down
+            // instead, before spawning anything.
+            const quint64 generation = ++g_SlotLaunchGeneration[reqSlot];
+            auto claimThenStart = [&routerPorts, startWorker, cfg, reqSlot, generation, worker,
+                                   respond, standby]() {
+                routerPorts.claimMediaPort(
+                    reqSlot, static_cast<uint16_t>(kMediaBasePort + reqSlot), qApp,
+                    [&routerPorts, startWorker, cfg, reqSlot, generation, worker, respond,
+                     standby](const RouterPortAllocator::Claim& claim, const QString& why) {
+                        if (g_SlotLaunchGeneration.value(reqSlot) != generation) {
+                            qInfo() << "[Session] Launch on slot" << reqSlot
+                                    << "superseded by a newer one while its router hole was "
+                                       "claimed — not spawning";
+                            worker->deleteLater();
+                            if (standby) {
+                                respond(HttpResponse::json(
+                                    QJsonObject{{"status", QStringLiteral("dual_unavailable")},
+                                                {"reason", QStringLiteral("superseded")}},
+                                    200));
+                            } else {
+                                respond(HttpResponse::error(409, "Superseded by a newer launch"));
+                            }
+                            return;
+                        }
+                        QJsonObject withHole = cfg;
+                        if (claim.external != 0) {
+                            withHole["upnpPublicIp"] = routerPorts.publicIp();
+                            withHole["upnpExternalPort"] = static_cast<int>(claim.external);
+                        } else {
+                            qInfo() << "[Session] No router hole for this stream —" << why;
+                        }
+                        startWorker(withHole);
+                    });
+            };
+
             // Serialize with whatever still holds this slot's ports: a previous
             // worker child (wait for its process to die) or a legacy in-process
             // relay (wait for its destruction) — same rationale as the deferred
@@ -3225,13 +3280,13 @@ int main(int argc, char* argv[])
             if (previousWorker) {
                 qInfo() << "[Session] Previous slot" << reqSlot
                         << "worker still tearing down — deferring worker start";
-                QObject::connect(previousWorker, &QObject::destroyed, qApp, startWorker);
+                QObject::connect(previousWorker, &QObject::destroyed, qApp, claimThenStart);
             } else if (reqSlot == 0 && g_ActiveRelayRoot) {
                 qInfo() << "[Session] Previous in-process relay still tearing down — "
                            "deferring worker start";
-                QObject::connect(g_ActiveRelayRoot, &QObject::destroyed, qApp, startWorker);
+                QObject::connect(g_ActiveRelayRoot, &QObject::destroyed, qApp, claimThenStart);
             } else {
-                startWorker();
+                claimThenStart();
             }
             return;
         }
@@ -3280,16 +3335,38 @@ int main(int argc, char* argv[])
             // this is the real fix for "second session won't start": it covers
             // both take-over and a self-disconnect immediately followed by a
             // relaunch. start() then runs on the main thread (qApp context).
+            //
+            // And before start(), the router hole for slot 0 — see the worker
+            // path, generation guard included. The session is looked up through
+            // a QPointer: a take-over can have destroyed it while the router
+            // was being asked.
+            const QPointer<StreamSession> guarded(session);
+            const quint64 generation = ++g_SlotLaunchGeneration[0];
+            auto claimThenStart = [&routerPorts, guarded, generation]() {
+                routerPorts.claimMediaPort(
+                    0, kMediaBasePort, qApp,
+                    [&routerPorts, guarded, generation](const RouterPortAllocator::Claim& claim,
+                                                        const QString& why) {
+                        if (!guarded) return;
+                        if (g_SlotLaunchGeneration.value(0) != generation) {
+                            qInfo() << "[Session] In-process launch superseded by a newer one "
+                                       "while its router hole was claimed — not starting";
+                            guarded->deleteLater();
+                            return;
+                        }
+                        if (claim.external != 0)
+                            guarded->setUpnpMapping(routerPorts.publicIp(), claim.external);
+                        else
+                            qInfo() << "[Session] No router hole for this stream —" << why;
+                        guarded->start();
+                    });
+            };
             if (g_ActiveRelayRoot) {
                 qInfo() << "[Session] Previous relay" << g_ActiveRelayRoot.data()
                         << "still tearing down — deferring start() until destroyed";
-                QObject::connect(g_ActiveRelayRoot, &QObject::destroyed, qApp, [session]() {
-                    qInfo() << "[Session] Previous relay gone — starting deferred session"
-                            << session;
-                    session->start();
-                });
+                QObject::connect(g_ActiveRelayRoot, &QObject::destroyed, qApp, claimThenStart);
             } else {
-                session->start();
+                claimThenStart();
             }
         }
     });
@@ -3864,7 +3941,8 @@ int main(int argc, char* argv[])
         cfg["codecOverridden"] = false;
         cfg["originalCodec"] = static_cast<int>(VideoCodec::Auto);
         cfg["gamingMode"] = true;
-        cfg["upnpEnabled"] = false; // the owner's session owns the mapping
+        // No router hole for a guest: the owner's session owns the mapping,
+        // and a player joins on STUN. (A pool port for guests is a follow-up.)
         cfg["internalTransport"] = chain.first().startsWith(QStringLiteral("webrtc-media"))
                                        ? QStringLiteral("webrtc-media")
                                    : chain.first().startsWith(QStringLiteral("webrtc-dc"))
@@ -4408,7 +4486,7 @@ int main(int argc, char* argv[])
     //
     // It is created unconditionally: it does nothing at all until the rendezvous
     // line announces a browser, and the line only runs with consent.
-    ControlTunnel controlTunnel(&server, &authManager, &appSettings, &rendezvous);
+    ControlTunnel controlTunnel(&server, &authManager, &appSettings, &rendezvous, &routerPorts);
 
     // Phase N: System tray icon. Its entries open the public domain (with the
     // host key) once Internet Access is live, https://localhost otherwise.

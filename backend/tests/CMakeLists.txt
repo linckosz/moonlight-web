@@ -79,7 +79,11 @@ add_executable(run_tests
     test_keyboard_layout.cpp
     test_native_capabilities_json.cpp
     test_edition.cpp
+    test_router_port_core.cpp
     # In-scope production units (+ their real deps)
+    # The router-port allocation policy, behind its gateway seam: the rules
+    # that keep two MoonlightWeb hosts on one LAN out of each other's holes.
+    ${_src}/src/network/RouterPortCore.cpp
     # Which MoonlightWeb this is: the names, ports and version a DEV build
     # must answer to so it can sit beside a production install.
     ${_src}/src/common/Edition.cpp

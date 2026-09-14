@@ -106,7 +106,7 @@ Key invariants (hard-won, do not regress):
 | **C++17 + Qt 6.11** (backend) | `moonlight-common-c` is C; Qt provides the cross-platform event loop, networking (QSslSocket), JSON, tray icon, and mature TLS handling on all three OSes with a single codebase. Qt 6.11 is the tested baseline; the **OpenSSL TLS backend is forced** on Windows (Schannel cannot import PEM keys). |
 | **`moonlight-common-c`** (submodule) | The canonical, battle-tested GameStream protocol core used by every Moonlight client. Reimplementing RTSP/RTP/ENet/FEC would be folly. |
 | **`libdatachannel`** (submodule) | Lightweight C++ WebRTC implementation (DataChannels *and* RTP media tracks) without pulling the enormous libwebrtc. Built statically via CMake `add_subdirectory`. |
-| **`qmdnsengine`**, **`miniupnpc`** (submodules) | mDNS discovery and UPnP port mapping, both small and embeddable. |
+| **`qmdnsengine`**, **`miniupnpc`** (submodules) | mDNS discovery and UPnP port mapping, both small and embeddable. Every router hole — the tunnel's and each stream slot's — is claimed by one `RouterPortAllocator` in the main process, which walks shared candidate lists so several MoonlightWeb hosts on one LAN never take each other's entries — tunnel `3478-3481`, `5349-5352` then `46000-46031`; stream `48010 + slot` then `46100-46199` on the router side only (`backend/src/network/RouterPortPools.h`). |
 | **OpenSSL 3** | Pairing crypto (AES/RSA per GameStream), input encryption (AES-128-GCM), certificate handling. Bundled on Windows (`backend/libs/windows/`). |
 | **Vanilla JS, no framework, no build step** (frontend) | The app is served by an embedded C++ web server: zero build tooling means the server ships plain files and contributors need only a browser. ES6 modules give structure; Prettier+ESLint+Vitest+tsc(advisory) give quality without a bundler. |
 | **WebCodecs + WebGPU/Canvas** (video) | WebCodecs exposes the browser's hardware H.264/HEVC/AV1 decoders with frame-level control (latency!); rendering to canvas allows the WebGPU enhancement pipeline. A `<video>`-sink alternative exists for HDR (see [Transports](05-Streaming-and-Transports.md)). |
@@ -130,7 +130,7 @@ moonlight-web/
 │   │   │   └── routes/         # AuthRoutes, HostRoutes, SystemRoutes
 │   │   ├── streaming/          # Session, relays (DC/media/WSS), shim, input, signaling
 │   │   │   └── worker/         # --stream-worker child-process entry point
-│   │   ├── network/            # InternetAccess: RendezvousClient, STUN, UPnP, GeoIP, updates
+│   │   ├── network/            # InternetAccess: RendezvousClient, STUN, RouterPortAllocator (UPnP), GeoIP, updates
 │   │   └── common/             # Logger, CrashHandler, RendezvousId, shared types
 │   ├── tests/                  # Qt Test suites + coverage scripts
 │   ├── third_party/            # git submodules (moonlight-common-c, libdatachannel, …)

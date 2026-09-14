@@ -238,6 +238,59 @@ void run_app_settings_tests()
         CHECK(s.nativeHostEnabled());
     }
 
+    // ── Router ports (sticky UPnP allocation) ─────────────────────────────
+    // Absent key = nothing remembered, on every axis.
+    {
+        QJsonObject obj = s.readAll();
+        obj.remove("router_ports");
+        s.writeAll(obj);
+    }
+    CHECK(s.rememberedTunnelPorts().isEmpty());
+    CHECK_EQ(s.rememberedMediaPort(0), quint16(0));
+    CHECK_EQ(s.routerLanIp(), QString());
+
+    // Tunnel ports keep the order they were obtained in, without duplicates.
+    s.rememberTunnelPort(3478);
+    s.rememberTunnelPort(5349);
+    s.rememberTunnelPort(3478);
+    CHECK_EQ(s.rememberedTunnelPorts(), (QList<quint16>{3478, 5349}));
+    s.forgetTunnelPort(3478);
+    CHECK_EQ(s.rememberedTunnelPorts(), (QList<quint16>{5349}));
+    s.forgetTunnelPort(4242); // never held: a no-op, not an error
+    CHECK_EQ(s.rememberedTunnelPorts(), (QList<quint16>{5349}));
+    s.rememberTunnelPort(0); // never a port
+    CHECK_EQ(s.rememberedTunnelPorts(), (QList<quint16>{5349}));
+
+    // Media ports are per slot, and forgetting one leaves the others alone.
+    s.rememberMediaPort(0, 48010);
+    s.rememberMediaPort(1, 46100);
+    CHECK_EQ(s.rememberedMediaPort(0), quint16(48010));
+    CHECK_EQ(s.rememberedMediaPort(1), quint16(46100));
+    CHECK_EQ(s.rememberedMediaPort(2), quint16(0));
+    s.forgetMediaPort(0);
+    CHECK_EQ(s.rememberedMediaPort(0), quint16(0));
+    CHECK_EQ(s.rememberedMediaPort(1), quint16(46100));
+
+    // The LAN address the ports were obtained under, and the three live in
+    // one object so a reader of settings.json sees them together.
+    s.setRouterLanIp("192.168.1.20");
+    CHECK_EQ(s.routerLanIp(), QString("192.168.1.20"));
+    CHECK_EQ(s.rememberedTunnelPorts(), (QList<quint16>{5349}));
+    {
+        const QJsonObject rp = s.readAll().value("router_ports").toObject();
+        CHECK(rp.contains("lan_ip"));
+        CHECK(rp.contains("tunnel"));
+        CHECK(rp.contains("media"));
+    }
+    // Not seeded: it is state, not a preference to discover in the file.
+    {
+        QJsonObject obj = s.readAll();
+        obj.remove("router_ports");
+        s.writeAll(obj);
+        s.seedDocumentedDefaults();
+        CHECK(!s.readAll().contains("router_ports"));
+    }
+
     // Low-level access.
     QJsonObject all = s.readAll();
     CHECK(all.contains("http_port"));

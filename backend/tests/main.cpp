@@ -40,6 +40,7 @@ void run_input_watchdog_tests();
 void run_keyboard_layout_tests();
 void run_native_capabilities_json_tests();
 void run_edition_tests();
+void run_router_port_core_tests();
 
 int main(int argc, char** argv)
 {
@@ -76,6 +77,7 @@ int main(int argc, char** argv)
     run_keyboard_layout_tests();
     run_native_capabilities_json_tests();
     run_edition_tests();
+    run_router_port_core_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");

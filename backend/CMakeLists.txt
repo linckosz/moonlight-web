@@ -225,6 +225,8 @@ add_executable(mw-server
     src/common/RendezvousId.cpp
     src/network/RendezvousClient.cpp
     src/network/UPNPClient.cpp
+    src/network/RouterPortCore.cpp
+    src/network/RouterPortAllocator.cpp
     src/network/StunClient.cpp
     src/network/InternetAccessManager.cpp
     src/network/GeoIpService.cpp

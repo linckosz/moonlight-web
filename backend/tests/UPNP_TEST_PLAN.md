@@ -108,18 +108,33 @@ Ouvrir https://localhost dans un navigateur :
 - tunnel public actif (ou exposition directe)
 
 **Procedure** :
-1. Verifier que UPnP discover trouve l'IGD :
-   - Log : `[UPNP] IGD found: LAN addr=192.168.x.x`
-2. Verifier que le port mapping est ajoute :
-   - Log : `[UPNP] Port mapping added successfully: 48010 UDP`
-3. Verifier l'IP publique :
-   - Log : `[UPNP] External IP address: <PUBLIC_IP>`
-4. Depuis l'exterieur, ouvrir l'URL publique
-5. Lancer un stream
-6. Verifier les logs :
+1. Verifier que l'allocateur (processus principal, thread `mw-upnp`) trouve l'IGD :
+   - Log : `[UPNP] Gateway found, public <PUBLIC_IP>, this host 192.168.x.x`
+2. Verifier le trou du tunnel a la montee du rendez-vous :
+   - Log : `[UPNP] tunnel: claimed 3478 (UDP+TCP, public <PUBLIC_IP>)`
+   - Log : `[Tunnel] Router hole 3478 ready (public <PUBLIC_IP>), 1 of 4 — more are claimed as browsers arrive`
+3. Depuis l'exterieur, ouvrir l'URL publique
+4. Lancer un stream : le trou media est reclame AVANT le spawn du worker
+   - Log : `[UPNP] media slot 0: claimed 48010 (UDP+TCP, public <PUBLIC_IP>)`
+   - Log worker : `[SignalingServer] Router forwards <PUBLIC_IP> : 48010 to media port 48010`
+5. Verifier les logs :
    - `[DataChannelRelay] Rewrote host candidate: <LAN_IP> -> <PUBLIC_IP>:48010`
-   - `[SignalingServer] UPnP ICE: port range fixed to 48010-48010`
-7. Verifier que le stream fonctionne (video + audio + input)
+6. Verifier que le stream fonctionne (video + audio + input)
+7. Un deuxieme navigateur sur le tunnel : `[UPNP] tunnel: claimed 3479 …` apres que le
+   premier a ete servi, jamais en le bloquant
+8. `settings.json` porte `router_ports` ; un redemarrage reutilise les memes numeros
+   (`[UPNP] tunnel: claimed 3478 …` sans `after skipping`)
+
+### 4b. Deux hotes MoonlightWeb sur le meme LAN
+
+1. Demarrer l'hote A, puis l'hote B (Internet Access + UPnP actifs sur les deux)
+2. Sur B : `[UPNP] tunnel: claimed 3479 … after skipping 3478 (<IP de A>)` et, au premier
+   stream, `[UPNP] media slot 0: claimed external 46100 -> 48010 after skipping 48010 (<IP de A>)`
+3. Verifier la table du routeur en SOAP (`GetSpecificPortMappingEntry`, la table COM ment) :
+   `NewInternalClient` de 3478 = A, de 3479 = B, de 48010 = A, de 46100 = B
+4. Depuis un reseau d'entreprise, le tunnel de A ET celui de B repondent
+5. Redemarrer B : il reprend 3479 (memorise), A n'est pas touche
+6. Trempage > 1 h : aucun `[UPNP] … now forwards to …` sur aucun des deux hotes
 
 ---
 
@@ -129,10 +144,12 @@ Ouvrir https://localhost dans un navigateur :
 |---|---|
 | Routeur non-UPnP | discover echoue → fallback STUN-only, pas de crash |
 | Routeur UPnP desactive | idem |
-| Port 48010 occupe | addPortMapping echoue sur 48010, essai 48011...48014 |
-| Mapping expire | Timer de renouvellement toutes les 30 min |
-| Double demarrage | 2eme session → UPnP deja setup, skip |
-| Arret brutal du serveur | cleanupUPnP() appelle removePortMapping |
+| 48010 tenu par un voisin du LAN | l'externe marche vers le pool 46100-46199, le bind local reste 48010 (`RouterPortCore`, TNR `test_router_port_core.cpp`) |
+| 3478-3481 et 5349-5352 tenus | le tunnel prend 46000-46031, un port a la fois ; tout tenu → port ephemere, candidat reflexif seul |
+| Routeur qui reecrit en silence (Livebox) | relecture apres chaque ecriture et a chaque renouvellement → `dropped and forgotten`, re-reclamation |
+| Mapping expire | renouvellement toutes les 30 min sur le thread `mw-upnp` ; 2 echecs → mappings permanents |
+| Deuxieme stream sur le meme slot | trou deja tenu → reponse immediate, pas de SOAP |
+| Arret du serveur | `RouterPortAllocator::~RouterPortAllocator` retire tous les mappings, les numeros restent dans `router_ports` |
 | CGNAT detecte | getExternalIPAddress retourne IP du CGNAT, pas de solution → message utilisateur |
 
 ---
@@ -152,3 +169,4 @@ Ouvrir https://localhost dans un navigateur :
 - [ ] Candidat host reecrit avec IP publique (log visible)
 - [ ] Streaming LAN sans regression
 - [ ] Port mapping cleanup a l'arret
+- [ ] Deux hotes sur le meme LAN : chacun son trou, table du routeur a l'appui (§4b)

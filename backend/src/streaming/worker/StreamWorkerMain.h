@@ -27,7 +27,10 @@
  *
  * Protocol (JSON lines):
  *   stdin  (parent → worker):
- *     first line       — the session config (see StreamWorkerHost::buildConfig)
+ *     first line       — the session config (see StreamWorkerHost::buildConfig);
+ *                        "upnpPublicIp"/"upnpExternalPort" carry the router hole
+ *                        the parent claimed for the slot — the worker never
+ *                        touches the router itself
  *     {"cmd":"quit"}      — graceful local teardown, then exit(0)
  *     {"cmd":"takenOver"} — notify the browser it was taken over, teardown, exit
  *     {"cmd":"revoked"}   — notify the browser it was revoked, teardown, exit

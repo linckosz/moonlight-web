@@ -22,7 +22,8 @@
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
 #include "network/RendezvousClient.h"
-#include "network/UPNPClient.h"
+#include "network/RouterPortAllocator.h"
+#include "network/RouterPortPools.h"
 #include "server/AppSettings.h"
 #include "server/AuthManager.h"
 #include "server/HttpServer.h"
@@ -34,7 +35,6 @@
 #include <QMetaObject>
 #include <QStringList>
 #include <QTimer>
-#include <QUdpSocket>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QWebSocket>
@@ -94,62 +94,17 @@ bool isForbiddenHeader(const QString& name)
 constexpr int kMaxSocketsPerPeer = 8;
 constexpr int kMaxInFlightRequests = 24;
 
-/// Where the tunnel's connections listen, and why here of all places.
-///
-/// 3478-3481 is the STUN/TURN range. Two things follow from that, and both
-/// matter more than the numbers being pretty:
-///
-///   it is a port a corporate firewall already lets out. Such networks
-///   routinely permit UDP to 3478 — it is what every conferencing product on
-///   earth uses — while dropping it to arbitrary high ports. The browser's
-///   connectivity checks are aimed at THIS port, so it is the destination that
-///   has to be acceptable, not ours.
-///
-///   it is nowhere near anything else this project binds. The stream block
-///   starts at 48010, GameStream owns 47984-48010, MultiSeat and Wolf sit above
-///   48100. A hole here can never be mistaken for one of those, in a router
-///   table or in a log.
-///
-/// Four of them because several browsers may hold a tunnel at once — a phone, a
-/// laptop, an admin tab — and each connection binds its own socket. Beyond four,
-/// the extra ones fall back to an ephemeral port; they are no worse off than
-/// every tunnel was before this existed.
-///
-/// 5349-5352 is the same range's TLS half (TURNS), and it exists here for the
-/// SECOND MoonlightWeb host on one LAN. Without somewhere else to go it would
-/// ask for the very same four entries as the first, and a router does not
-/// refuse that — measured on a Livebox, 09/09/2026: it silently repoints all
-/// four at the newcomer. The first host is not told, keeps advertising
-/// 82.67.150.202:3478 as its public address, and every connectivity check aimed
-/// at it lands on the other machine. Its tunnel then works from a permissive
-/// network, where the reflexive path alone carries it, and dies on exactly the
-/// corporate networks these ports were chosen for. Both hosts renew every half
-/// hour, so the theft alternates and the symptom comes and goes.
-constexpr uint16_t kTunnelPorts[] = {3478, 3479, 3480, 3481, 5349, 5350, 5351, 5352};
-constexpr int kTunnelPortCount = 4;
-
-/// Half the lease, so a mapping is refreshed well before it lapses.
-constexpr int kUpnpRenewIntervalMs = 1800000;
-
-/// Whether this machine can actually listen there. Asked before the mapping is
-/// made, so a port some other program already holds is skipped rather than
-/// mapped to a hole that leads nowhere — a router entry pointing at a closed
-/// port is worse than no entry, because ICE would advertise it.
-bool portIsFree(uint16_t port)
-{
-    QUdpSocket probe;
-    return probe.bind(QHostAddress::AnyIPv4, port, QAbstractSocket::DontShareAddress);
-}
-
 } // namespace
 
 ControlTunnel::ControlTunnel(HttpServer* http, AuthManager* auth, AppSettings* settings,
-                             RendezvousClient* rendezvous, QObject* parent)
+                             RendezvousClient* rendezvous, RouterPortAllocator* routerPorts,
+                             QObject* parent)
     : QObject(parent)
     , m_Http(http)
     , m_Auth(auth)
     , m_Settings(settings)
     , m_Rendezvous(rendezvous)
+    , m_Ports(routerPorts)
 {
     connect(m_Rendezvous, &RendezvousClient::sessionOpened, this, &ControlTunnel::onSessionOpened);
     connect(m_Rendezvous, &RendezvousClient::sessionClosed, this, &ControlTunnel::onSessionClosed);
@@ -158,9 +113,20 @@ ControlTunnel::ControlTunnel(HttpServer* http, AuthManager* auth, AppSettings* s
     // The holes are opened when the line first comes up, not here. This object
     // is constructed unconditionally, and a machine with Internet Access off
     // never announces itself — it should not be touching the router either.
+    // Nor should one whose owner turned UPnP off: the allocator reads that
+    // switch, and this is the first place the tunnel honours it.
     connect(m_Rendezvous, &RendezvousClient::onlineChanged, this, [this](bool online) {
-        if (online) setupUpnp();
+        if (!online || !m_Ports->enabled()) return;
+        m_Ports->ensureStarted();
+        // Already discovered on behalf of a stream: the signal below has fired.
+        if (m_Ports->gatewayState() == RouterPortAllocator::GatewayState::Ready &&
+            m_PublicIP.empty())
+            onGatewayReady(m_Ports->publicIp());
     });
+    connect(m_Ports, &RouterPortAllocator::gatewayReady, this, &ControlTunnel::onGatewayReady);
+    connect(m_Ports, &RouterPortAllocator::gatewayMissing, this,
+            [this]() { giveUpWaiting(QStringLiteral("no IGD on this network")); });
+    connect(m_Ports, &RouterPortAllocator::portLost, this, &ControlTunnel::onPortLost);
 
     Logger::info(QStringLiteral("[Tunnel] Ready — host key %1").arg(hostKeyFingerprint()));
 }
@@ -170,192 +136,97 @@ ControlTunnel::~ControlTunnel()
     const QStringList ids = m_Peers.keys();
     for (const QString& id : ids)
         dropPeer(id, QStringLiteral("shutting down"));
-    teardownUpnp();
+    // The holes themselves are the allocator's to remove.
+    m_FreePorts.clear();
 }
 
 // ── The router holes ────────────────────────────────────────────────────────
 
-void ControlTunnel::setupUpnp()
+void ControlTunnel::onGatewayReady(const QString& publicIp)
 {
-    // Once per run. The line comes up again after every network hiccup, and a
-    // fresh IGD discovery on each of those would cost two seconds of the main
-    // thread for mappings that are already there. Renewal keeps them alive.
-    if (m_UpnpTried) return;
-    m_UpnpTried = true;
-
-    auto* upnp = new UPNPClient(this);
-    if (!upnp->discover(2000)) {
-        Logger::info(QStringLiteral("[Tunnel] No IGD — connections will rely on their reflexive "
-                                    "address alone"));
-        delete upnp;
-        return;
-    }
-
-    m_PublicIP = upnp->getExternalIPAddress();
-    m_Upnp = upnp;
-
-    acquirePorts();
-
-    if (m_MappedPorts.isEmpty()) {
-        Logger::warning(QStringLiteral("[Tunnel] The router mapped none of the tunnel ports — "
-                                       "connections will rely on their reflexive address alone"));
-        m_Upnp->deleteLater();
-        m_Upnp = nullptr;
-        return;
-    }
-
-    m_UpnpRenew = new QTimer(this);
-    connect(m_UpnpRenew, &QTimer::timeout, this, &ControlTunnel::renewUpnp);
-    m_UpnpRenew->start(kUpnpRenewIntervalMs);
-
-    // The ports by name, not just how many: they are no longer a fixed range —
-    // a second host on this LAN pushes this one onto the TLS half — and the
-    // first thing anyone diagnosing a dead tunnel needs is which entry in the
-    // router's table is supposed to be ours.
-    QStringList names;
-    names.reserve(m_MappedPorts.size());
-    for (const uint16_t port : std::as_const(m_MappedPorts))
-        names << QString::number(port);
-    Logger::info(QStringLiteral("[Tunnel] Router holes open on %1 (public %2), lease %3 s")
-                     .arg(names.join(QLatin1Char(',')), QString::fromStdString(m_PublicIP))
-                     .arg(m_UpnpLeaseSec));
+    m_PublicIP = publicIp.toStdString();
+    // One hole up front, so the first browser is served the moment it arrives
+    // rather than waiting a SOAP round trip for it. The rest come on demand.
+    if (m_Ports->heldTunnelPorts().isEmpty() &&
+        m_Ports->inFlight(RouterPortAllocator::Purpose::Tunnel) == 0)
+        requestTunnelPort();
 }
 
-void ControlTunnel::acquirePorts()
+void ControlTunnel::requestTunnelPort()
 {
-    for (const uint16_t port : kTunnelPorts) {
-        if (m_MappedPorts.size() >= kTunnelPortCount) return;
-        if (m_MappedPorts.contains(port)) continue;
-        acquirePort(port);
+    using Purpose = RouterPortAllocator::Purpose;
+    if (m_Ports->inFlight(Purpose::Tunnel) > 0) return;
+    if (m_Ports->heldTunnelPorts().size() >= mw::routerports::kTunnelPortCap) return;
+
+    m_Ports->claimTunnelPort(this, [this](const RouterPortAllocator::Claim& claim,
+                                          const QString& why) {
+        if (claim.external == 0) {
+            giveUpWaiting(why);
+            return;
+        }
+        if (m_PublicIP.empty()) m_PublicIP = m_Ports->publicIp().toStdString();
+        m_FreePorts.append(claim.external);
+        // The port by name, not just a count: the first thing anyone
+        // diagnosing a dead tunnel needs is which entry in the router's table
+        // is supposed to be ours.
+        Logger::info(QStringLiteral("[Tunnel] Router hole %1 ready (public %2), %3 of %4 — more "
+                                    "are claimed as browsers arrive")
+                         .arg(claim.external)
+                         .arg(QString::fromStdString(m_PublicIP))
+                         .arg(m_Ports->heldTunnelPorts().size())
+                         .arg(mw::routerports::kTunnelPortCap));
+        serveWaitingPeers();
+        if (m_WaitingPeers.isEmpty()) return;
+        // More browsers than holes: ask again, and if the cap says no, they
+        // are not kept waiting for a hole that is not coming.
+        requestTunnelPort();
+        if (m_Ports->inFlight(Purpose::Tunnel) == 0)
+            giveUpWaiting(QStringLiteral("every hole this host may hold is in use"));
+    });
+}
+
+void ControlTunnel::serveWaitingPeers()
+{
+    while (!m_WaitingPeers.isEmpty() && !m_FreePorts.isEmpty()) {
+        const QString id = m_WaitingPeers.takeFirst();
+        Peer* pp = peer(id);
+        if (!pp || !pp->awaitingPort) continue;
+        startPeer(*pp);
     }
 }
 
-bool ControlTunnel::acquirePort(uint16_t port)
+void ControlTunnel::giveUpWaiting(const QString& why)
 {
-    if (!portIsFree(port)) {
+    const QStringList waiting = m_WaitingPeers;
+    m_WaitingPeers.clear();
+    for (const QString& id : waiting) {
+        Peer* pp = peer(id);
+        if (!pp || !pp->awaitingPort) continue;
         Logger::info(
-            QStringLiteral("[Tunnel] Port %1 is taken on this machine — skipped").arg(port));
-        return false;
+            QStringLiteral("[Tunnel] Session %1 gets an ephemeral port — %2").arg(id.left(8), why));
+        startPeer(*pp);
     }
-
-    // Someone else's entry is left alone.
-    //
-    // The router would let us overwrite it — that is the whole bug this guards
-    // against — and taking it would break the other machine's tunnel exactly
-    // the way ours was broken, until it renews and breaks ours back. There are
-    // other ports; a fight over this one has no winner.
-    const QString lan = QString::fromStdString(m_Upnp->lanAddress());
-    const QString before = mappingOwner(port);
-    if (!before.isEmpty() && before != lan) {
-        Logger::info(QStringLiteral("[Tunnel] Port %1 is forwarded to %2 on this network — "
-                                    "leaving it alone")
-                         .arg(port)
-                         .arg(before));
-        return false;
-    }
-
-    if (!m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "UDP")) {
-        // A router that refuses a leased mapping often accepts a permanent
-        // one, and one that refuses both has nothing more to give.
-        if (!m_Upnp->addPortMapping(port, port, 0, "MoonlightWeb tunnel", "UDP")) return false;
-        m_UpnpLeaseSec = 0;
-    }
-
-    // And the write is read back, because "added successfully" is the router's
-    // opinion of the request, not of the table. An entry that answers with
-    // another machine's address is a hole that leads somewhere else, and
-    // advertising it would aim every connectivity check at that machine.
-    const QString after = mappingOwner(port);
-    if (!after.isEmpty() && after != lan) {
-        Logger::warning(QStringLiteral("[Tunnel] The router kept port %1 pointed at %2 — not "
-                                       "using it")
-                            .arg(port)
-                            .arg(after));
-        return false;
-    }
-
-    // Best effort, and only useful where UDP is blocked outright: the
-    // connections enable ICE-TCP, but a browser only ever opens those
-    // outbound, so reaching this machine needs the inbound hole too.
-    m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "TCP");
-    m_MappedPorts.append(port);
-    m_FreePorts.append(port);
-    return true;
 }
 
-QString ControlTunnel::mappingOwner(uint16_t port)
+void ControlTunnel::onPortLost(int purpose, int slot, quint16 port, const QString& owner)
 {
-    if (!m_Upnp) return {};
-    std::string client;
-    std::string internalPort;
-    if (!m_Upnp->getExistingPortMapping(port, "UDP", client, internalPort)) return {};
-    return QString::fromStdString(client);
-}
-
-void ControlTunnel::dropMappedPort(uint16_t port, const QString& owner)
-{
-    Logger::warning(QStringLiteral("[Tunnel] Port %1 now forwards to %2 — dropped, this machine "
-                                   "will stop offering it")
-                        .arg(port)
-                        .arg(owner));
-    m_MappedPorts.removeAll(port);
+    Q_UNUSED(slot);
+    if (purpose != static_cast<int>(RouterPortAllocator::Purpose::Tunnel)) return;
     m_FreePorts.removeAll(port);
-}
-
-void ControlTunnel::renewUpnp()
-{
-    if (!m_Upnp) return;
-
-    bool ok = true;
-    // Checked after the write, once per half hour, because a machine that comes
-    // online later takes these entries silently: nothing in the renewal's own
-    // answer says the table stopped pointing here. The list is copied since
-    // dropMappedPort() edits it.
-    const QString lan = QString::fromStdString(m_Upnp->lanAddress());
-    QList<std::pair<uint16_t, QString>> lost;
-    const QList<uint16_t> held = m_MappedPorts;
-    for (const uint16_t port : held) {
-        if (!m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "UDP"))
-            ok = false;
-        m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, "MoonlightWeb tunnel", "TCP");
-        const QString owner = mappingOwner(port);
-        if (!owner.isEmpty() && owner != lan) lost.append({port, owner});
+    for (const auto& owned : std::as_const(m_Peers)) {
+        if (owned->port != port) continue;
+        // Its socket keeps working through the reflexive path, or it does not;
+        // nothing can be done for a live connection except say so.
+        Logger::warning(QStringLiteral("[Tunnel] Session %1 is bound to port %2, which the router "
+                                       "now forwards to %3")
+                            .arg(owned->sessionId.left(8))
+                            .arg(port)
+                            .arg(owner));
     }
-    if (!lost.isEmpty()) {
-        for (const auto& [port, owner] : lost)
-            dropMappedPort(port, owner);
-        // Somewhere else in the list, most likely: this is the moment the
-        // second host on the LAN appeared, and it is holding what used to be
-        // ours. Ephemeral ports are the floor, not the destination.
-        acquirePorts();
-    }
-    if (ok) {
-        m_UpnpRenewFailures = 0;
-        return;
-    }
-
-    // A lease expiring under a live tunnel takes the interface with it. Two
-    // misses is enough to stop betting on the next one; teardownUpnp() still
-    // removes the mappings when this process ends.
-    if (++m_UpnpRenewFailures >= 2 && m_UpnpLeaseSec > 0) {
-        Logger::warning(QStringLiteral("[Tunnel] Renewal failed twice — switching to permanent "
-                                       "mappings"));
-        m_UpnpLeaseSec = 0;
-        renewUpnp();
-    }
-}
-
-void ControlTunnel::teardownUpnp()
-{
-    if (!m_Upnp) return;
-    for (const uint16_t port : std::as_const(m_MappedPorts)) {
-        m_Upnp->removePortMapping(port, "UDP");
-        m_Upnp->removePortMapping(port, "TCP");
-    }
-    m_MappedPorts.clear();
-    m_FreePorts.clear();
-    delete m_Upnp;
-    m_Upnp = nullptr;
+    // Somewhere else in the list, most likely: this is the moment the second
+    // host on the LAN appeared, and it is holding what used to be ours. The
+    // next browser should still find a hole waiting.
+    if (m_FreePorts.isEmpty()) requestTunnelPort();
 }
 
 uint16_t ControlTunnel::takeTunnelPort()
@@ -366,8 +237,13 @@ uint16_t ControlTunnel::takeTunnelPort()
 
 void ControlTunnel::releaseTunnelPort(uint16_t port)
 {
-    if (port == 0 || m_FreePorts.contains(port) || !m_MappedPorts.contains(port)) return;
-    m_FreePorts.append(port);
+    if (port == 0 || m_FreePorts.contains(port)) return;
+    // Only a hole this host still holds: one lost at renewal is gone for good.
+    for (const RouterPortAllocator::Claim& c : m_Ports->heldTunnelPorts()) {
+        if (c.external != port) continue;
+        m_FreePorts.append(port);
+        return;
+    }
 }
 
 QString ControlTunnel::hostKeyFingerprint() const
@@ -426,6 +302,59 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
     p.sessionId = sessionId;
     m_Peers.insert(sessionId, std::move(owned));
 
+    Logger::info(QStringLiteral("[Tunnel] Browser arrived on session %1").arg(sessionId.left(8)));
+
+    // A hole is free: build the connection on it now, the common case.
+    p.port = takeTunnelPort();
+    if (p.port != 0 || !m_Ports->enabled()) {
+        createPeerConnection(p);
+        return;
+    }
+
+    // None free. Claim one for this browser and build the connection when it
+    // lands — a few hundred milliseconds, or two seconds more if the gateway
+    // is still being discovered — unless nothing is coming: no gateway, the
+    // cap reached, the pool exhausted. Then an ephemeral port straight away,
+    // which is what every tunnel had before any of this existed.
+    using Purpose = RouterPortAllocator::Purpose;
+    using State = RouterPortAllocator::GatewayState;
+    m_Ports->ensureStarted();
+    const State state = m_Ports->gatewayState();
+    const bool gatewayMayAnswer = state == State::Ready || state == State::Discovering;
+    const bool oneIsComing = m_Ports->inFlight(Purpose::Tunnel) > 0;
+    const bool roomForOne = m_Ports->heldTunnelPorts().size() < mw::routerports::kTunnelPortCap;
+    if (!gatewayMayAnswer || (!oneIsComing && !roomForOne)) {
+        createPeerConnection(p);
+        return;
+    }
+
+    p.awaitingPort = true;
+    m_WaitingPeers.append(sessionId);
+    Logger::info(
+        QStringLiteral("[Tunnel] Session %1 waiting for a router hole").arg(sessionId.left(8)));
+    requestTunnelPort();
+    QTimer::singleShot(mw::routerports::kClaimWaitMs, this, [this, sessionId]() {
+        Peer* pp = peer(sessionId);
+        if (!pp || !pp->awaitingPort) return;
+        Logger::info(QStringLiteral("[Tunnel] Session %1 — no hole within %2 ms, ephemeral port")
+                         .arg(sessionId.left(8))
+                         .arg(mw::routerports::kClaimWaitMs));
+        startPeer(*pp);
+    });
+}
+
+void ControlTunnel::startPeer(Peer& p)
+{
+    p.awaitingPort = false;
+    m_WaitingPeers.removeAll(p.sessionId);
+    if (p.port == 0) p.port = takeTunnelPort();
+    createPeerConnection(p);
+}
+
+void ControlTunnel::createPeerConnection(Peer& p)
+{
+    const QString sessionId = p.sessionId;
+
     // ICE for the control channel.
     //
     // STUN is always on and LAN host candidates are always emitted, which is a
@@ -449,7 +378,6 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
     // browser's checks arriving from somewhere else entirely, and the tunnel
     // dies in silence while a stream to the same machine connects on its own
     // mapped port. Pinning the socket is what makes the mapping mean anything.
-    p.port = takeTunnelPort();
     if (p.port != 0) {
         config.portRangeBegin = p.port;
         config.portRangeEnd = p.port;
@@ -600,8 +528,6 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
             Qt::QueuedConnection);
     });
     p.dc->setBufferedAmountLowThreshold(TunnelFrame::kChunkBytes);
-
-    Logger::info(QStringLiteral("[Tunnel] Browser arrived on session %1").arg(sessionId.left(8)));
 }
 
 void ControlTunnel::onSessionClosed(const QString& sessionId)
@@ -616,6 +542,7 @@ void ControlTunnel::dropPeer(const QString& sessionId, const QString& why)
 
     const std::shared_ptr<Peer> owned = it.value();
     m_Peers.erase(it);
+    m_WaitingPeers.removeAll(sessionId);
 
     for (auto& ws : owned->sockets) {
         if (ws) {
@@ -773,6 +700,14 @@ void ControlTunnel::handleAnswer(Peer& p, const QJsonObject& msg)
         m_Settings->rendezvousId(), p.nonceHost, p.localFingerprint, remoteFingerprint);
     if (!PairingCrypto::verify(p.browserSpki, signedBytes, sig)) {
         abort(p, QStringLiteral("the answer's signature does not verify"));
+        return;
+    }
+
+    // The offer goes out only once the connection exists, so an answer cannot
+    // precede it; the invariant is still worth a line, since a browser that
+    // sent one anyway would otherwise dereference nothing.
+    if (!p.pc) {
+        abort(p, QStringLiteral("an answer arrived before the connection was built"));
         return;
     }
 

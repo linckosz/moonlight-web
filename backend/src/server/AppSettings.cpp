@@ -24,6 +24,7 @@
 #include <QDir>
 #include <QFile>
 #include <QHostInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
@@ -493,6 +494,105 @@ bool AppSettings::keyboardDebug() const
 {
     QJsonObject obj = readAll();
     return obj.value("keyboard_debug").toBool(false);
+}
+
+// ── Router ports ─────────────────────────────────────────────────────────────
+// What the allocator obtained last time. Read and rewritten as a whole object
+// so a partial write can never leave the tunnel list and the media map
+// disagreeing about which host address they were obtained under.
+
+static const char kRouterPortsKey[] = "router_ports";
+
+QList<quint16> AppSettings::rememberedTunnelPorts() const
+{
+    QList<quint16> ports;
+    const QJsonArray arr = readAll().value(kRouterPortsKey).toObject().value("tunnel").toArray();
+    for (const QJsonValue& v : arr) {
+        const int port = v.toInt();
+        if (port > 0 && port <= 65535 && !ports.contains(static_cast<quint16>(port)))
+            ports.append(static_cast<quint16>(port));
+    }
+    return ports;
+}
+
+void AppSettings::rememberTunnelPort(quint16 port)
+{
+    if (port == 0) return;
+    QList<quint16> ports = rememberedTunnelPorts();
+    if (ports.contains(port)) return;
+    ports.append(port);
+
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    QJsonArray arr;
+    for (const quint16 p : ports)
+        arr.append(static_cast<int>(p));
+    rp["tunnel"] = arr;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
+}
+
+void AppSettings::forgetTunnelPort(quint16 port)
+{
+    QList<quint16> ports = rememberedTunnelPorts();
+    if (!ports.removeAll(port)) return;
+
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    QJsonArray arr;
+    for (const quint16 p : ports)
+        arr.append(static_cast<int>(p));
+    rp["tunnel"] = arr;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
+}
+
+quint16 AppSettings::rememberedMediaPort(int slot) const
+{
+    const QJsonObject media = readAll().value(kRouterPortsKey).toObject().value("media").toObject();
+    const int port = media.value(QString::number(slot)).toInt();
+    return (port > 0 && port <= 65535) ? static_cast<quint16>(port) : 0;
+}
+
+void AppSettings::rememberMediaPort(int slot, quint16 port)
+{
+    if (port == 0 || slot < 0) return;
+    if (rememberedMediaPort(slot) == port) return;
+
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    QJsonObject media = rp.value("media").toObject();
+    media[QString::number(slot)] = static_cast<int>(port);
+    rp["media"] = media;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
+}
+
+void AppSettings::forgetMediaPort(int slot)
+{
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    QJsonObject media = rp.value("media").toObject();
+    if (!media.contains(QString::number(slot))) return;
+    media.remove(QString::number(slot));
+    rp["media"] = media;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
+}
+
+QString AppSettings::routerLanIp() const
+{
+    return readAll().value(kRouterPortsKey).toObject().value("lan_ip").toString();
+}
+
+void AppSettings::setRouterLanIp(const QString& ip)
+{
+    if (routerLanIp() == ip) return;
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    rp["lan_ip"] = ip;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
 }
 
 // ── STUN server ──────────────────────────────────────────────────────────────────

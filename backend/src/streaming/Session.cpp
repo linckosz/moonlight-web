@@ -69,10 +69,9 @@ QThread* spawnRelayThread(QObject* relayRoot)
 
 StreamSession::StreamSession(NvComputer* host, int appId, NvHTTP* http, ResponseCallback respond,
                              quint16 wsPort, const QString& serverHost, VideoCodec videoCodec,
-                             bool gamingMode, bool upnpEnabled, const QString& transport,
-                             const QString& stunServer, int streamHeight, int streamWidth,
-                             int streamFps, int streamBitrateKbps, bool yuv444, bool hdrEnabled,
-                             QObject* parent)
+                             bool gamingMode, const QString& transport, const QString& stunServer,
+                             int streamHeight, int streamWidth, int streamFps,
+                             int streamBitrateKbps, bool yuv444, bool hdrEnabled, QObject* parent)
     : QObject(parent)
     , m_Host(host)
     , m_AppId(appId)
@@ -81,7 +80,6 @@ StreamSession::StreamSession(NvComputer* host, int appId, NvHTTP* http, Response
     , m_WsPort(wsPort)
     , m_ServerHost(serverHost)
     , m_GamingMode(gamingMode)
-    , m_UpnpEnabled(upnpEnabled)
     , m_Transport(transport)
     , m_TransportMode(transport) // default = internal transport; set explicitly for auto mode
     , m_StunServer(stunServer)
@@ -732,13 +730,13 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setWsPath(m_WsPath);
-        signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
         signaling->setClientKind(m_ClientKind);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
+        signaling->setPresetMapping(m_UpnpPublicIp, m_UpnpExternalPort);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
@@ -806,13 +804,13 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setWsPath(m_WsPath);
-        signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
         signaling->setClientKind(m_ClientKind);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
+        signaling->setPresetMapping(m_UpnpPublicIp, m_UpnpExternalPort);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {

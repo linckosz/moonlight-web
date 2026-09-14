@@ -50,7 +50,7 @@ public:
     StreamSession(NvComputer* host, int appId, NvHTTP* http, ResponseCallback respond,
                   quint16 wsPort = 48001, const QString& serverHost = "localhost",
                   VideoCodec videoCodec = VideoCodec::Auto, bool gamingMode = true,
-                  bool upnpEnabled = true, const QString& transport = "webrtc",
+                  const QString& transport = "webrtc",
                   const QString& stunServer = "stun:stream.moonlightweb.top:3478",
                   int streamHeight = 1080,
                   int streamWidth = 0, // 0 = derive from height (16:9); >0 = explicit (ultrawide)
@@ -199,6 +199,15 @@ public:
     /// the media port. Defaults to the base for the single-stream path.
     void setMediaPort(quint16 port) { m_MediaPort = port; }
 
+    /// The router hole the parent claimed for this slot (RouterPortAllocator):
+    /// the browser is told publicIp:externalPort, the socket binds the media
+    /// port. Absent or 0 = no mapping, STUN only.
+    void setUpnpMapping(const QString& publicIp, quint16 externalPort)
+    {
+        m_UpnpPublicIp = publicIp;
+        m_UpnpExternalPort = externalPort;
+    }
+
     /// Proxy path prefix for this session's WebSockets ("/ws" by default;
     /// "/ws1" for the second concurrent stream slot). Forwarded to the
     /// SignalingServer / StreamRelay so the advertised wsUrl matches the
@@ -309,7 +318,6 @@ private:
     int m_StreamFps = 60;
     int m_StreamBitrateKbps = 20000;
 
-    bool m_UpnpEnabled = true;
     QString m_Transport = "webrtc";
     /// Full transport mode string (e.g. "webrtc-media-udp", "webrtc-dc-tcp", "wss").
     /// Echoed back to the browser in the /start response for display/debug.
@@ -381,8 +389,11 @@ private:
 
     /// Port for legacy WSS StreamRelay (separate from m_WsPort used for signaling).
     quint16 m_StreamRelayPort = 48002;
-    /// WebRTC/UPnP media UDP port for this slot; 48010 (slot 0 base) by default.
+    /// WebRTC media UDP port for this slot; 48010 (slot 0 base) by default.
     quint16 m_MediaPort = 48010;
+    /// The router hole for this slot (see setUpnpMapping); none by default.
+    QString m_UpnpPublicIp;
+    quint16 m_UpnpExternalPort = 0;
 
     /// Proxy path prefix for this session's WebSockets (see setWsPath).
     QString m_WsPath = QStringLiteral("/ws");

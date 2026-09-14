@@ -32,7 +32,6 @@ struct Configuration;
 }
 
 class RelayBase;
-class UPNPClient;
 class IMediaEngine;
 
 // Minimal WebSocket server for WebRTC signaling only.
@@ -85,10 +84,10 @@ public:
     /// Default: "stun:stream.{MW_DOMAIN}:3478" (AppSettings::stunServer).
     void setStunServer(const QString& url) { m_StunServerUrl = url; }
 
-    /// WebRTC/UPnP media UDP port for this stream slot. Each concurrent slot
-    /// binds a distinct port (base + slot) so simultaneous streams never
-    /// collide on it, and UPnP maps exactly that port. Defaults to the base
-    /// (kUpnpPort) for the single-stream path.
+    /// WebRTC media UDP port for this stream slot. Each concurrent slot binds
+    /// a distinct port (base + slot) so simultaneous streams never collide on
+    /// it; the router forwards the preset external port to it. Defaults to the
+    /// base for the single-stream path.
     void setMediaPort(quint16 port) { m_MediaPort = port; }
 
     /// Enable/disable ICE-TCP candidates.
@@ -194,12 +193,23 @@ private:
     /// Force ICE-TCP candidates (true = UDP + TCP, false = UDP only).
     bool m_ForceIceTcp = false;
 
-    // ── UPnP NAT traversal ──────────────────────────────────────────────────
+    // ── The router hole this stream is reached through ──────────────────────
+    //
+    // Claimed by the parent process (RouterPortAllocator) BEFORE the worker is
+    // spawned and handed down in the config: the worker never touches the
+    // router. The external port is what the browser is told, m_MediaPort is
+    // what the socket binds — a router forwards one to the other, and the two
+    // differ exactly when another MoonlightWeb host on the LAN got to this
+    // slot's own number first.
 
 public:
-    /// Enable/disable UPnP port mapping for NAT traversal.
-    /// Called before start() to set the preference from settings.
-    void setUseUPnP(bool enable) { m_UseUPnP = enable; }
+    /// The router forwards publicIp:externalPort to this slot's media port.
+    /// Not called (or called with 0) when there is no mapping: STUN only.
+    void setPresetMapping(const QString& publicIp, uint16_t externalPort)
+    {
+        m_UpnpPublicIP = publicIp;
+        m_UpnpExternalPort = externalPort;
+    }
 
     /// Where the streaming client actually sits, classified from the browser's
     /// own address by whoever accepted the /start request.
@@ -235,29 +245,20 @@ public:
     void setPairingIdentity(const QString& hostId, const QByteArray& hostKeyPem,
                             const QByteArray& browserSpki);
 
-    /// The external port mapped via UPnP (0 = not mapped).
-    uint16_t upnpMappedPort() const { return m_UpnpMappedPort; }
+    /// The router-side port this stream is reached on (0 = no mapping).
+    uint16_t upnpMappedPort() const { return m_UpnpExternalPort; }
 
-    /// The public IP discovered via UPnP (empty if not available).
+    /// The public IP the router answers on (empty if no mapping).
     QString upnpPublicIP() const { return m_UpnpPublicIP; }
 
 private:
-    /// Discover IGD and add the UDP and TCP port mappings via UPnP.
-    /// Called async (QTimer::singleShot(0)) so it doesn't block start().
-    bool setupUPnP();
-
-    /// Add or refresh one mapping, retrying without a lease if the router
-    /// rejects the leased form. Uses m_UpnpLeaseSec, which it may latch to 0.
-    bool addUpnpMapping(uint16_t port, const std::string& protocol);
-
-    /// Remove the UPnP port mappings and clean up resources.
-    void cleanupUPnP();
-
     /// Build the rtc::Configuration with ICE servers and port range.
     /// ICE-TCP is always enabled as fallback. STUN is always present in
-    /// Internet mode. UPnP sets a fixed port range and rewrites host candidates.
-    static rtc::Configuration buildIceConfig(bool isInternet, uint16_t upnpMappedPort,
-                                             uint16_t mediaPort, const QString& stunServerUrl,
+    /// Internet mode. A router mapping pins the socket to the media port the
+    /// router forwards to, and the relay rewrites host candidates to the
+    /// public address.
+    static rtc::Configuration buildIceConfig(bool isInternet, bool mapped, uint16_t mediaPort,
+                                             const QString& stunServerUrl,
                                              bool forceIceTcp = false);
 
     // ── MW-BIND-v1 state ───────────────────────────────────────────────────
@@ -284,32 +285,12 @@ private:
     std::vector<std::pair<std::string, std::string>> m_PendingCandidates; // (candidate, mid)
     bool m_HelloReceived = false;
 
-    bool m_UseUPnP = true;
-    /// Distinct WebRTC/UPnP media UDP port for this slot (base + slot). Keeps
+    /// Distinct WebRTC media UDP port for this slot (base + slot). Keeps
     /// concurrent workers off each other's port; slot 0 keeps 48010. See
-    /// setMediaPort().
-    quint16 m_MediaPort = kUpnpPort;
+    /// setMediaPort() and mw::routerports::kMediaBasePort.
+    quint16 m_MediaPort = 48010;
     NetClassify::Kind m_ClientKind = NetClassify::Kind::Public; // see setClientKind
-    UPNPClient* m_Upnp = nullptr;
-    uint16_t m_UpnpMappedPort = 0;
+    /// The router hole, as handed down by the parent. See setPresetMapping().
+    uint16_t m_UpnpExternalPort = 0;
     QString m_UpnpPublicIP;
-    QTimer* m_UpnpRenewTimer = nullptr;
-    /// TCP mapped alongside UDP? Best effort: losing it only costs the ICE-TCP
-    /// transports, while UDP carries the vast majority of sessions.
-    bool m_UpnpTcpMapped = false;
-    /// Lease currently in effect. Latched to 0 (permanent) when the router
-    /// rejects a leased mapping, or when renewal keeps failing.
-    uint32_t m_UpnpLeaseSec = kUpnpLeaseDurationSec;
-    /// Consecutive renewal failures; two is enough to stop trusting the lease.
-    int m_UpnpRenewFailures = 0;
-
-    /// Default port for UPnP mapping (must match libdatachannel port range).
-    /// Mapped in both UDP and TCP: the ICE-TCP transports need an inbound TCP
-    /// port to be reachable from the internet, since browsers only ever open
-    /// ICE-TCP connections outbound.
-    static constexpr uint16_t kUpnpPort = 48010;
-    /// Lease duration in seconds (1 hour). Renew timer fires at half this interval.
-    static constexpr uint32_t kUpnpLeaseDurationSec = 3600;
-    /// Renew timer interval (ms): every 30 minutes.
-    static constexpr int kUpnpRenewIntervalMs = 1800000;
 };

@@ -273,13 +273,16 @@ int runStreamWorker(QCoreApplication& app)
         host, cfg["appId"].toInt(), http, std::move(respond),
         static_cast<quint16>(cfg["signalingPort"].toInt(48001)), cfg["serverHost"].toString(),
         static_cast<VideoCodec>(cfg["codec"].toInt()), cfg["gamingMode"].toBool(true),
-        cfg["upnpEnabled"].toBool(true), cfg["internalTransport"].toString(),
-        cfg["stunServer"].toString(), cfg["height"].toInt(), cfg["width"].toInt(),
-        cfg["fps"].toInt(), cfg["bitrateKbps"].toInt(), cfg["yuv444"].toBool(),
-        cfg["hdr"].toBool());
+        cfg["internalTransport"].toString(), cfg["stunServer"].toString(), cfg["height"].toInt(),
+        cfg["width"].toInt(), cfg["fps"].toInt(), cfg["bitrateKbps"].toInt(),
+        cfg["yuv444"].toBool(), cfg["hdr"].toBool());
     session->setHttpsPort(static_cast<quint16>(cfg["serverHttpsPort"].toInt(443)));
     session->setStreamRelayPort(static_cast<quint16>(cfg["streamRelayPort"].toInt(48002)));
     session->setMediaPort(static_cast<quint16>(cfg["mediaPort"].toInt(48010)));
+    // The router hole the parent claimed for this slot, if any. Absent (no
+    // gateway, UPnP off, a guest) → STUN only, as before.
+    session->setUpnpMapping(cfg["upnpPublicIp"].toString(),
+                            static_cast<quint16>(cfg["upnpExternalPort"].toInt(0)));
     session->setTransportMode(cfg["transportMode"].toString());
     session->setEnableIceTcp(cfg["iceTcp"].toBool());
     session->setLowAudio(cfg["lowAudio"].toBool());

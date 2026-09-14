@@ -28,7 +28,6 @@ extern "C" {
 #include "SdpFingerprint.h"
 #include "common/Edition.h"
 #include "common/PairingCrypto.h"
-#include "network/UPNPClient.h"
 #include "server/NetClassify.h"
 
 #include <rtc/rtc.hpp>
@@ -117,12 +116,11 @@ bool SignalingServer::start()
     qInfo() << "[SignalingServer] Listening OK";
     m_Running = true;
 
-    // Async UPnP discovery: kicks off IGD discovery without blocking start().
-    // The browser doesn't connect immediately (user still clicks "Launch"), so
-    // UPnP has time to complete before the PeerConnection is created.
-    if (m_UseUPnP && m_ServerHost != "localhost") {
-        QTimer::singleShot(0, this, [this]() { setupUPnP(); });
-    }
+    // The router hole, if any, was claimed by the parent before this process
+    // existed (RouterPortAllocator); nothing to discover here.
+    if (m_UpnpExternalPort > 0)
+        qInfo() << "[SignalingServer] Router forwards" << m_UpnpPublicIP << ":"
+                << m_UpnpExternalPort << "to media port" << m_MediaPort;
 
     return true;
 }
@@ -168,8 +166,6 @@ void SignalingServer::stop()
         m_ShimConnected = false;
     }
     m_WsFallbackActive = false;
-
-    cleanupUPnP();
 
     m_SignalingComplete = false;
     m_DataChannelsOpen = false;
@@ -310,15 +306,16 @@ void SignalingServer::onNewWsConnection()
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port
     // m_ForceIceTcp controls whether ICE-TCP candidates are generated
     // (true = UDP + TCP, false = UDP only).
-    rtc::Configuration config =
-        buildIceConfig(isInternet, m_UpnpMappedPort, m_MediaPort,
-                       lanOnly ? QString() : m_StunServerUrl, m_ForceIceTcp);
+    const bool mapped = !m_UpnpPublicIP.isEmpty() && m_UpnpExternalPort > 0;
+    rtc::Configuration config = buildIceConfig(
+        isInternet, mapped, m_MediaPort, lanOnly ? QString() : m_StunServerUrl, m_ForceIceTcp);
 
-    // If UPnP is active, tell the relay to rewrite host candidates with the
-    // public IP and mapped port so the browser sees a "host" candidate at
-    // PUBLIC_IP:48010 instead of 192.168.x.x:48010.
-    if (!m_UpnpPublicIP.isEmpty() && m_UpnpMappedPort > 0) {
-        m_Relay->setPublicAddress(m_UpnpPublicIP.toStdString(), m_UpnpMappedPort);
+    // With a router hole, tell the relay to rewrite host candidates with the
+    // public IP and EXTERNAL port so the browser sees a "host" candidate at
+    // PUBLIC_IP:<external> instead of 192.168.x.x:48010. The two ports differ
+    // when a neighbour on the LAN holds this slot's own number.
+    if (mapped) {
+        m_Relay->setPublicAddress(m_UpnpPublicIP.toStdString(), m_UpnpExternalPort);
         m_Relay->setForceHostCandidatePublic(true);
         // Withhold non-global IPv6 candidates (ULA / mesh VPN / link-local) —
         // same no-leak rule as the private IPv4 host candidate. A global IPv6
@@ -330,7 +327,7 @@ void SignalingServer::onNewWsConnection()
         // (routers rarely hairpin UDP). Never for internet clients — no LAN leak.
         m_Relay->setEmitLanHostCandidate(clientIsLocal);
         qInfo() << "[SignalingServer] UPnP: relaying host candidate as" << m_UpnpPublicIP << ":"
-                << m_UpnpMappedPort;
+                << m_UpnpExternalPort;
     }
 
     // Prepare the PeerConnection + DataChannels
@@ -1024,10 +1021,12 @@ void SignalingServer::onDataChannelsOpen()
 
 // ── UPnP NAT traversal ─────────────────────────────────────────────────────────
 
-rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort,
-                                                   uint16_t mediaPort, const QString& stunServerUrl,
-                                                   bool forceIceTcp)
+rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, bool mapped, uint16_t mediaPort,
+                                                   const QString& stunServerUrl, bool forceIceTcp)
 {
+    // What the log lines below name: the port the socket binds, which is the
+    // one the router forwards to when there is a mapping.
+    const uint16_t upnpMappedPort = mapped ? mediaPort : 0;
     rtc::Configuration config;
     config.iceTransportPolicy = rtc::TransportPolicy::All;
 
@@ -1043,13 +1042,14 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
     //   - MediaTrackRelay: the video track triggers SRTP negotiation implicitly
     // config.forceMediaTransport is NOT set here.
 
-    // When UPnP is active, force libdatachannel to bind to the mapped port
-    // in ALL modes (not just TCP or WAN). Without this, libdatachannel picks
-    // an ephemeral port that the router's UPnP mapping cannot reach, and the
-    // host candidate rewrite will point to a port nobody is listening on.
-    if (upnpMappedPort > 0) {
-        config.portRangeBegin = upnpMappedPort;
-        config.portRangeEnd = upnpMappedPort;
+    // With a router hole, force libdatachannel to bind to the media port the
+    // router forwards to, in ALL modes (not just TCP or WAN). Without this,
+    // libdatachannel picks an ephemeral port that the router's mapping cannot
+    // reach, and the host candidate rewrite will point to a port nobody is
+    // listening on.
+    if (mapped) {
+        config.portRangeBegin = mediaPort;
+        config.portRangeEnd = mediaPort;
     } else if (mw::edition::devFlag()) {
         // In --dev (LAN, no UPnP), libdatachannel would otherwise bind an
         // ephemeral UDP port, and each fresh test build listening on a new port
@@ -1103,137 +1103,4 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
     }
 
     return config;
-}
-
-bool SignalingServer::setupUPnP()
-{
-    if (m_Upnp) {
-        qInfo() << "[UPNP] Already set up";
-        return true;
-    }
-
-    qInfo() << "[UPNP] Setting UPnP for signaling server (host=" << m_ServerHost << ")";
-
-    auto* upnp = new UPNPClient(this);
-    if (!upnp->discover(2000)) {
-        qInfo() << "[UPNP] No IGD found — STUN fallback only";
-        delete upnp;
-        return false;
-    }
-
-    // Get public IP via UPnP (more reliable than STUN srflx for routing)
-    std::string pubIP = upnp->getExternalIPAddress();
-    if (!pubIP.empty()) {
-        m_UpnpPublicIP = QString::fromStdString(pubIP);
-        qInfo() << "[UPNP] Public IP:" << m_UpnpPublicIP;
-    }
-
-    // Published before the mappings so addUpnpMapping() can use it.
-    m_Upnp = upnp;
-
-    // UDP first: it is what the media path actually requires. Map exactly this
-    // slot's media port — it is distinct per slot (base + slot), so workers
-    // never contend for it, and trying a neighbour would collide with the
-    // adjacent slot's own mapping/bind.
-    if (addUpnpMapping(m_MediaPort, "UDP")) {
-        m_UpnpMappedPort = m_MediaPort;
-    } else {
-        qWarning() << "[UPNP] Port" << m_MediaPort << "mapping failed — STUN fallback only";
-        m_Upnp = nullptr;
-        delete upnp;
-        return false;
-    }
-
-    // TCP on the same port, for the ICE-TCP transports: browsers only ever open
-    // ICE-TCP connections outbound, so reaching this host from the internet
-    // needs an inbound TCP port. Best effort — a router that refuses it only
-    // costs the -tcp fallback modes.
-    m_UpnpTcpMapped = addUpnpMapping(m_UpnpMappedPort, "TCP");
-    if (!m_UpnpTcpMapped) {
-        qWarning() << "[UPNP] TCP mapping failed on port" << m_UpnpMappedPort
-                   << "— ICE-TCP transports will not be reachable from the internet";
-    }
-
-    // Schedule periodic renewal for routers without persistent mappings.
-    // Re-adding also re-establishes the mappings after a router reboot, so this
-    // stays worthwhile even once the lease has been latched to permanent.
-    m_UpnpRenewTimer = new QTimer(this);
-    connect(m_UpnpRenewTimer, &QTimer::timeout, this, [this]() {
-        if (!m_Upnp || m_UpnpMappedPort == 0) return;
-
-        bool ok = addUpnpMapping(m_UpnpMappedPort, "UDP");
-        if (m_UpnpTcpMapped && !addUpnpMapping(m_UpnpMappedPort, "TCP")) ok = false;
-        if (ok) {
-            m_UpnpRenewFailures = 0;
-            return;
-        }
-
-        // A lease expiring mid-session pulls the mapping out from under a live
-        // stream. Two misses is enough to stop betting on the next one — a
-        // permanent mapping is the lesser evil, and cleanupUPnP() still removes
-        // it at shutdown.
-        if (++m_UpnpRenewFailures >= 2 && m_UpnpLeaseSec > 0) {
-            qWarning() << "[UPNP] Renewal failed twice — switching to a permanent mapping so a "
-                          "long session cannot outlive its lease";
-            m_UpnpLeaseSec = 0;
-            addUpnpMapping(m_UpnpMappedPort, "UDP");
-            if (m_UpnpTcpMapped) addUpnpMapping(m_UpnpMappedPort, "TCP");
-        }
-    });
-    m_UpnpRenewTimer->start(kUpnpRenewIntervalMs);
-
-    qInfo() << "[UPNP] Setup complete: port" << m_UpnpMappedPort << "mapped (UDP"
-            << (m_UpnpTcpMapped ? "+ TCP)" : "only)") << "lease=" << m_UpnpLeaseSec
-            << "s, public IP:" << m_UpnpPublicIP;
-    return true;
-}
-
-bool SignalingServer::addUpnpMapping(uint16_t port, const std::string& protocol)
-{
-    if (!m_Upnp) return false;
-
-    const std::string desc = "MoonlightWeb WebRTC";
-    if (m_UpnpLeaseSec > 0) {
-        if (m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, desc, protocol)) return true;
-
-        // Plenty of IGDs — v1 especially — reject a non-zero lease outright,
-        // and would otherwise cost the user UPnP entirely. Only conclude that
-        // from a permanent retry actually succeeding: a plain "port busy"
-        // failure fails either way and must not drop everyone's lease.
-        if (m_Upnp->addPortMapping(port, port, 0, desc, protocol)) {
-            qWarning() << "[UPNP] Router refused a" << m_UpnpLeaseSec
-                       << "s lease — falling back to permanent mappings";
-            m_UpnpLeaseSec = 0;
-            return true;
-        }
-        return false;
-    }
-
-    return m_Upnp->addPortMapping(port, port, 0, desc, protocol);
-}
-
-void SignalingServer::cleanupUPnP()
-{
-    if (m_UpnpRenewTimer) {
-        m_UpnpRenewTimer->stop();
-        m_UpnpRenewTimer->deleteLater();
-        m_UpnpRenewTimer = nullptr;
-    }
-
-    if (m_Upnp && m_UpnpMappedPort > 0) {
-        qInfo() << "[UPNP] Removing port mappings" << m_UpnpMappedPort;
-        m_Upnp->removePortMapping(m_UpnpMappedPort, "UDP");
-        if (m_UpnpTcpMapped) m_Upnp->removePortMapping(m_UpnpMappedPort, "TCP");
-    }
-
-    if (m_Upnp) {
-        m_Upnp->deleteLater();
-        m_Upnp = nullptr;
-    }
-
-    m_UpnpMappedPort = 0;
-    m_UpnpPublicIP.clear();
-    m_UpnpTcpMapped = false;
-    m_UpnpLeaseSec = kUpnpLeaseDurationSec;
-    m_UpnpRenewFailures = 0;
 }

@@ -26,6 +26,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 
 #include <cstdint>
 #include <memory>
@@ -35,8 +36,7 @@ class AppSettings;
 class AuthManager;
 class HttpServer;
 class RendezvousClient;
-class UPNPClient;
-class QTimer;
+class RouterPortAllocator;
 class QWebSocket;
 
 namespace rtc {
@@ -103,7 +103,8 @@ class ControlTunnel : public QObject
 
 public:
     ControlTunnel(HttpServer* http, AuthManager* auth, AppSettings* settings,
-                  RendezvousClient* rendezvous, QObject* parent = nullptr);
+                  RendezvousClient* rendezvous, RouterPortAllocator* routerPorts,
+                  QObject* parent = nullptr);
     ~ControlTunnel() override;
 
     /// How many browsers are connected through the tunnel right now.
@@ -137,6 +138,10 @@ private:
         /// The router hole this connection listens behind, or 0 when there is
         /// none and ICE is left to an ephemeral port. See takeTunnelPort().
         uint16_t port = 0;
+        /// No hole was free when this browser arrived and one is being claimed
+        /// on its behalf; the peer connection is built once it lands, or once
+        /// the wait runs out. See onSessionOpened().
+        bool awaitingPort = false;
         /// The public host candidate is one address, and this machine has as
         /// many local ones as it has adapters — a laptop with Hyper-V and WSL
         /// easily reaches eight. Rewriting each of them would send the browser
@@ -203,29 +208,33 @@ private:
     // from a peer it has never sent one to. Plenty of routers do not, and then
     // the browser's checks vanished and the tunnel never came up — while a
     // stream to the same machine, over the mapped port, connected fine.
+    //
+    // The holes themselves come from RouterPortAllocator, which is also what
+    // keeps two MoonlightWeb hosts on one LAN out of each other's entries. One
+    // is claimed when the rendezvous line comes up, so the first browser is
+    // served at once; the next ones are claimed as browsers arrive, up to
+    // mw::routerports::kTunnelPortCap, and kept for reuse until this process
+    // ends — a browser leaving hands its hole to the next one, never back to
+    // the router.
 
-    /// Open the holes and learn the public address. Called once, on the first
-    /// moment the rendezvous line comes up: a machine that never announces
-    /// itself has nothing to be reached for, and asks nothing of the router.
-    void setupUpnp();
-    /// Re-add the mappings; routers drop leases and forget them across reboots.
-    void renewUpnp();
-    void teardownUpnp();
+    /// The gateway answered: learn the public address and claim the first hole.
+    void onGatewayReady(const QString& publicIp);
+    /// Ask the allocator for one more hole, unless one is already on its way
+    /// or the cap is reached. Waiting browsers are served as it lands.
+    void requestTunnelPort();
+    /// Hand free holes to the browsers waiting for one, in arrival order.
+    void serveWaitingPeers();
+    /// No hole is coming: every waiting browser gets an ephemeral port now.
+    void giveUpWaiting(const QString& why);
+    /// Renewal found one of our holes aimed at another machine.
+    void onPortLost(int purpose, int slot, quint16 port, const QString& owner);
 
-    /// Take one hole from the candidate list, or leave it alone and say why.
-    /// Refuses a port another machine on this LAN holds, and — separately —
-    /// refuses one the router hands to someone else despite our write.
-    bool acquirePort(uint16_t port);
-    /// Fill the pool up to kTunnelPortCount from the candidates not yet held.
-    void acquirePorts();
-    /// The address the router says an entry points at, empty when it has no
-    /// entry for that port OR cannot answer the question. Both are reported as
-    /// "nobody" on purpose: an IGD that does not implement the query must not
-    /// make us throw away mappings that are working.
-    QString mappingOwner(uint16_t port);
-    /// Give up a hole that now leads to another machine: it is worse than no
-    /// hole at all, because ICE would still advertise it.
-    void dropMappedPort(uint16_t port, const QString& owner);
+    /// Build the peer connection for a browser, on its hole or without one.
+    /// The half of onSessionOpened() that has to wait for the allocator.
+    void createPeerConnection(Peer& p);
+    /// Stop waiting (if it was) and build the connection with whatever hole is
+    /// free right now, or none.
+    void startPeer(Peer& p);
 
     /// A mapped port for one connection, or 0 when none is free — in which case
     /// the connection falls back to an ephemeral port and its reflexive
@@ -237,21 +246,16 @@ private:
     AuthManager* m_Auth = nullptr;
     AppSettings* m_Settings = nullptr;
     RendezvousClient* m_Rendezvous = nullptr;
+    RouterPortAllocator* m_Ports = nullptr;
 
-    UPNPClient* m_Upnp = nullptr;
-    QTimer* m_UpnpRenew = nullptr;
     /// This machine's address as the router reports it, for the host candidate
     /// rewrite. Empty when there is no IGD, which disables the rewrite.
     std::string m_PublicIP;
-    /// Mapped and idle, and mapped in total. The second is what renewal and
-    /// shutdown work from, so a port in use is still renewed and still removed.
+    /// Holes held by this host and not in use by a connection. The allocator
+    /// knows the full set; this is the idle subset.
     QList<uint16_t> m_FreePorts;
-    QList<uint16_t> m_MappedPorts;
-    /// Latched to 0 (permanent) when the router refuses a leased mapping or
-    /// renewal keeps failing — the same concession SignalingServer makes.
-    uint32_t m_UpnpLeaseSec = 3600;
-    int m_UpnpRenewFailures = 0;
-    bool m_UpnpTried = false;
+    /// Browsers waiting for a hole, in arrival order.
+    QStringList m_WaitingPeers;
 
     /// Peers are held behind pointers so a reference into one stays valid while
     /// another connects: Qt 6's QHash moves its values when it grows.
