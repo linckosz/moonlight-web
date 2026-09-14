@@ -120,6 +120,21 @@ updates.@MW_DOMAIN@ {
 	reverse_proxy mw-proxy:8080
 }
 
+# Linux package repository (APT + DNF), 0.3.0+ — built by release.yml's
+# linux-repo job and shipped here by deploy/powerdns/deploy-packages.sh, run
+# by hand like deploy-prod.sh. NOT a GitHub Pages deployment: Pages is one
+# site per repository and pages.yml already owns it for the bootstrap
+# (bootstrap-watch.yml's reference copy) — the package repo raced it there on
+# every tag push and usually won, since building three package formats takes
+# longer than publishing a few KB of bootstrap. See the 2026-09-14 incident.
+packages.@MW_DOMAIN@ {
+	@SITE_TLS_LINE@
+	import no_index
+	encode zstd gzip
+	root * /srv/packages
+	file_server
+}
+
 # Session census (0.3.0+) — DELIBERATELY NOT SERVED HERE.
 #
 # The code exists (mw-proxy/session.go, exact path /v1/session) and instances

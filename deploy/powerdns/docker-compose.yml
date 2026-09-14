@@ -237,6 +237,12 @@ services:
       # ./bootstrap). Same files the pages.yml workflow publishes to GitHub
       # Pages, which stays as the digest-stamped reference copy.
       - ../../bootstrap:/srv/bootstrap:ro
+      # APT/DNF repository served at packages.${MW_DOMAIN} — deliberately NOT
+      # under ../../ like the two mounts above: this holds release binaries
+      # (~100 MB/release) that never belong in the git history, so it is a
+      # fixed host path outside the checkout, filled by deploy-packages.sh and
+      # left untouched by deploy-prod.sh moving the checkout to another tag.
+      - /root/mw-packages:/srv/packages:ro
     # mw-edge as well: stream.dev.${MW_DOMAIN} is proxied to the staging
     # project's Caddy (mw-dev-caddy), which joins that network from its own
     # compose file. Nothing else crosses it.

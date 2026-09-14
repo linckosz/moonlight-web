@@ -15,6 +15,7 @@ Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:80
                              ├─ dnsapi.{domain} ───> mw-proxy:8080 ─> pdns:8081   restricted API (0.2.0+)
                              ├─ updates.{domain} ──> mw-proxy:8080 ─> GitHub      release relay + version census (0.3.0+)
                              ├─ metrics.{domain} ──> (not deployed — see Session census)
+                             ├─ packages.{domain} ─> /root/mw-packages   APT/DNF repo (0.3.0+, see deploy-packages.sh)
                              └─ stats.{domain} ────> umami:3000      analytics dashboard
                      [pdns]     (internal, non-root)  PowerDNS authoritative + REST API
                      [mw-proxy] (internal)            least-privilege filtering gateway
@@ -332,6 +333,44 @@ establish the browser connection counts as its own very short session, so a
 spike in `dur-0-1m` reads as "the first transport is not working here", not as
 "people leave immediately".
 
+## Linux package repository (APT + DNF)
+
+`release.yml`'s `linux-repo` job builds the signed APT and DNF repository tree
+on every tagged release and attaches it to the GitHub Release as
+`moonlightweb-repo-{version}.tar.gz`. Getting it from there onto
+`https://packages.{MW_DOMAIN}` is a separate, deliberate step —
+`deploy-packages.sh`, run by hand like `deploy-prod.sh`:
+
+```sh
+cd ~/moonlight-web/deploy/powerdns
+./deploy-packages.sh v0.3.1          # dry run — downloads and reports, writes nothing
+./deploy-packages.sh v0.3.1 --apply  # downloads and rsyncs into /root/mw-packages
+```
+
+**Why not GitHub Pages.** That was the first attempt, and it broke production:
+Pages is one site per repository, and `pages.yml` already owns it for the
+bootstrap (the reference copy `bootstrap-watch.yml` checks the live entry page
+against). Deploying the package repo there too raced it on every tag push —
+and usually won, since building three package formats takes longer than
+publishing a few KB of bootstrap, so it finished, and deployed, **later**,
+overwriting the entry page with the package-repo homepage. `packages.{MW_DOMAIN}`
+is a real host on this box instead: `/root/mw-packages`, bind-mounted
+read-only into Caddy, filled by the script above. It is a fixed path outside
+the git checkout on purpose — `deploy-prod.sh` moving to the next tag must
+never touch it.
+
+**Why not automatic from CI.** Nothing in this stack pushes to production by
+itself — see `deploy-prod.sh`'s own reasoning. A release goes live when a
+human ships it, not the moment a workflow happens to finish; that principle is
+exactly what the GitHub Pages mistake violated.
+
+**One-time setup** (already done for `packages.{MW_DOMAIN}`, kept here for the
+next host that needs the same three steps): add the A record
+(`pdnsutil add-record {MW_DOMAIN} packages A {MW_PUBLIC_IP}` +
+`pdnsutil rectify-zone {MW_DOMAIN}`), add the `packages.@MW_DOMAIN@` block to
+`caddy/Caddyfile.tmpl`, add the `/root/mw-packages:/srv/packages:ro` mount to
+`docker-compose.yml`, then `docker compose up -d --build caddy`.
+
 ## Production and staging on one box
 
 Since 0.3.0 every connection — LAN included — goes through `stream.{MW_DOMAIN}`,
@@ -355,7 +394,7 @@ the only box. Two rules follow, and the layout below is what makes them hold:
   address and coturn listens on the host.
 
 Only the presentation website (apex + `www.`) is meant to be found. Every other
-host — `stream.`, `stream.dev.`, `api.`, `dnsapi.`, `updates.`, `stats.` — is
+host — `stream.`, `stream.dev.`, `api.`, `dnsapi.`, `updates.`, `stats.`, `packages.` — is
 sent with `X-Robots-Tag: noindex…` and answers a `robots.txt` that shuts every
 crawler out, naming the AI ones (`(no_index)` in `Caddyfile.tmpl`); the entry
 page carries the same in a `<meta>`. The names are in DNS and in the CT logs
