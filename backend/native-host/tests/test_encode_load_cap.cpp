@@ -83,6 +83,36 @@ void run_encode_load_cap_tests()
         CHECK_EQ(cap.percent(), 100);
     }
 
+    SECTION("EncodeLoadCap — a pause, then one hard frame, is not a slow window");
+    {
+        EncodeLoadCap cap;
+        int64_t now = 0;
+        cap.start(now);
+        CHECK(!feed(cap, 3.0, 1, now));
+        // A still desktop: keyframes and re-sends are never fed, so for five
+        // seconds nothing arrives. The first moving frame after that is the
+        // dearest — a scene change encoded as a delta — and used to close the
+        // window all on its own.
+        now += 5 * 1000 * kMs;
+        CHECK(!cap.note(60 * kMs, kInterval, now));
+        CHECK_EQ(cap.percent(), 100);
+        // Followed by an easy second, the mean is what it should be: fine.
+        CHECK(!feed(cap, 3.0, 1, now));
+        CHECK_EQ(cap.percent(), 100);
+        // A pause does not shield a machine that then really falls behind: the
+        // window restarts at the first frame back, and the next full second of
+        // slow frames closes it.
+        now += 5 * 1000 * kMs;
+        CHECK(feed(cap, 39.7, 2, now));
+        CHECK_EQ(cap.percent(), 75);
+        // Nor does one cheap frame after a pause count as a comfortable window.
+        for (int i = 0; i < 4; ++i) {
+            now += 5 * 1000 * kMs;
+            CHECK(!cap.note(1 * kMs, kInterval, now));
+        }
+        CHECK_EQ(cap.percent(), 75);
+    }
+
     SECTION("EncodeLoadCap — it climbs back, but only after sustained comfort");
     {
         EncodeLoadCap cap;

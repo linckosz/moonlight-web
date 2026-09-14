@@ -6019,6 +6019,12 @@ export class StreamView {
         // "reconfiguring" then green), while every fresh decoder at stream start
         // on that same machine showed a clean first picture. A new one is the
         // path proven there; it costs one decoder creation per resize.
+        //
+        // And the proactive IDR is re-armed: every clean first picture in that
+        // log was a fresh decoder PLUS the keyframe requested 250 ms after its
+        // configuration (configureDecoder says why a first decode can come out
+        // green). The new decoder gets the same keyframe, or the evidence does
+        // not carry over.
         if (isKeyframe && this.decoderConfigured && this.nalParser.changedBy(data)) {
             console.log(
                 '[StreamView] Parameter sets changed at a keyframe — starting a new decoder',
@@ -6026,6 +6032,7 @@ export class StreamView {
             this.nalParser.reset();
             this.nalParser.feed(data);
             this.setupDecoder();
+            this._proactiveIdrScheduled = false;
             this.configureDecoder();
         }
 

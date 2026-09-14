@@ -956,6 +956,7 @@ function processFrame(data, isKeyframe, backendTs, arrivalAbs) {
         S.nalParser.reset();
         S.nalParser.feed(data);
         setupDecoder();
+        S._proactiveIdrScheduled = false; // the new decoder gets its clean keyframe too
         configureDecoder();
     }
 

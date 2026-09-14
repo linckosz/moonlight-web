@@ -110,6 +110,8 @@ struct EncodeLoadCap
     int changes = 0;
 
     int64_t windowStartUs = 0;
+    /// When the last frame was fed; a gap longer than a window starts a new one.
+    int64_t lastNoteUs = 0;
     int64_t encodeSumUs = 0;
     int frames = 0;
     /// Consecutive comfortable windows. Reset by anything else.
@@ -127,6 +129,7 @@ struct EncodeLoadCap
         comfortWindows = 0;
         upWindowsNeeded = kUpWindows;
         climbedAtUs = 0;
+        lastNoteUs = nowUs;
         resetWindow(nowUs);
     }
 
@@ -143,6 +146,14 @@ struct EncodeLoadCap
     bool note(int64_t encodeUs, int64_t intervalUs, int64_t nowUs)
     {
         if (intervalUs <= 0) return false;
+        // A window is a second of CONSECUTIVE frames. Only new pictures are
+        // fed here (keyframes and the still-picture re-sends are not), so a
+        // still desktop feeds nothing, and the first frame after it would
+        // otherwise close a window that had been open for the whole pause —
+        // judged on that one frame, the dearest of all: a scene change encoded
+        // as a delta. One frame is a stutter, and a stutter never resizes.
+        if (nowUs - lastNoteUs > kWindowUs) resetWindow(nowUs);
+        lastNoteUs = nowUs;
         encodeSumUs += encodeUs;
         ++frames;
 
