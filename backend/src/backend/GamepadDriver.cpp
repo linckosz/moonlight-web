@@ -18,6 +18,7 @@
 #include "backend/GamepadDriver.h"
 
 #include "common/Logger.h"
+#include "common/WinSystemPath.h"
 
 #include "mw/native/NativeHost.h"
 
@@ -66,10 +67,11 @@ QString stagingDir()
 {
 #ifdef Q_OS_WIN
     const QString base = qEnvironmentVariable("LOCALAPPDATA");
-    if (!base.isEmpty()) return base + QStringLiteral("/MoonlightWeb/driver");
-    // A service inherits the SCM's system environment block, which carries no
-    // LOCALAPPDATA. The install directory is admin-only, which is the property
-    // that matters here.
+    if (!base.isEmpty() && !mw::win::isUnderSystem32(base))
+        return base + QStringLiteral("/MoonlightWeb/driver");
+    // A service has either no LOCALAPPDATA or SYSTEM's own, under System32 —
+    // where the 32-bit WiX bundle cannot find itself (see isUnderSystem32). The
+    // install directory is admin-only, which is the property that matters here.
     return QCoreApplication::applicationDirPath() + QStringLiteral("/driver");
 #else
     return QDir::tempPath() + QStringLiteral("/MoonlightWeb-driver");

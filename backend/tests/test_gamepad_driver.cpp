@@ -12,6 +12,7 @@
  */
 #include "test_framework.h"
 #include "backend/GamepadDriver.h"
+#include "common/WinSystemPath.h"
 
 namespace {
 
@@ -77,4 +78,30 @@ void run_gamepad_driver_tests()
     // two different driver versions.
     CHECK(GamepadDriver::downloadUrl().startsWith(
         QStringLiteral("https://github.com/nefarius/ViGEmBus/releases/")));
+
+    SECTION("Staging — never under System32, where a 32-bit installer cannot find itself");
+
+    // Pure string logic, so it runs on every platform; SystemRoot is pinned for
+    // the duration so a Windows runner's real value cannot change the answer.
+    const QByteArray savedRoot = qgetenv("SystemRoot");
+    qputenv("SystemRoot", "C:\\WINDOWS");
+
+    using mw::win::isUnderSystem32;
+    // What a LocalSystem service reports as LOCALAPPDATA — the path every
+    // service update was staged under while it silently failed. Case differs
+    // from SystemRoot on purpose: Windows hands out both spellings.
+    CHECK(isUnderSystem32(
+        QStringLiteral("C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local")));
+    CHECK(isUnderSystem32(QStringLiteral("C:/WINDOWS/System32")));
+    // The fallbacks and an ordinary user profile are fine.
+    CHECK(!isUnderSystem32(QStringLiteral("C:\\Users\\alice\\AppData\\Local")));
+    CHECK(!isUnderSystem32(QStringLiteral("C:/Program Files/MoonlightWeb")));
+    // A sibling that merely starts with the same letters is not inside it.
+    CHECK(!isUnderSystem32(QStringLiteral("C:\\Windows\\System32Backup\\x")));
+    CHECK(!isUnderSystem32(QStringLiteral("C:\\Windows\\SysWOW64\\config\\systemprofile")));
+
+    if (savedRoot.isNull())
+        qunsetenv("SystemRoot");
+    else
+        qputenv("SystemRoot", savedRoot);
 }

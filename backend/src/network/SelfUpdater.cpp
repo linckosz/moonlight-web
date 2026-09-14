@@ -19,6 +19,7 @@
 #include "UpdateChecker.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
+#include "common/WinSystemPath.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -153,13 +154,15 @@ QString SelfUpdater::stagingDir()
     // Under the edition's own name: the installer's elevated task runs a fixed
     // path, and a DEV install must never stage into production's.
     const QString base = qEnvironmentVariable("LOCALAPPDATA");
-    if (!base.isEmpty())
+    if (!base.isEmpty() && !mw::win::isUnderSystem32(base))
         return base + QLatin1Char('/') + mw::edition::productName() + QStringLiteral("/update");
-    // A service inherits the SCM's *system* environment block, which carries no
-    // LOCALAPPDATA at all. Falling back to the temp directory would put the
-    // installer in C:\Windows\Temp — a directory every local account can write
-    // to, holding a file we are about to execute as SYSTEM. The install
-    // directory is admin-only, which is the property that actually matters.
+    // A service has either no LOCALAPPDATA or SYSTEM's own, under System32 —
+    // where the 32-bit installer cannot find itself (see isUnderSystem32), so
+    // every update from a service used to die there silently. Falling back to the
+    // temp directory would put the installer in C:\Windows\Temp — a directory
+    // every local account can write to, holding a file we are about to execute
+    // as SYSTEM. The install directory is admin-only, which is the property that
+    // actually matters.
     return QCoreApplication::applicationDirPath() + QStringLiteral("/update");
 #else
     return QDir::tempPath() + QStringLiteral("/MoonlightWeb-update");
@@ -460,7 +463,12 @@ QString SelfUpdater::installerLogPath()
     // Next to our own log, NOT in the staging directory: that one is wiped on the
     // next startup, which is exactly when someone comes looking for the log of
     // the update that just failed.
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+#ifdef Q_OS_WIN
+    // A service's AppDataLocation is under System32, which the 32-bit installer
+    // sees as SysWOW64: it could not create the log there.
+    if (mw::win::isUnderSystem32(base)) base = QCoreApplication::applicationDirPath();
+#endif
     QDir().mkpath(base + QStringLiteral("/logs"));
     return base + QStringLiteral("/logs/installer.log");
 }
