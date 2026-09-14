@@ -2028,6 +2028,7 @@ const MoonlightApp = {
         this._aspectProbeStop = startAspectProbe({
             getSurface: () => (this.streamView ? this.streamView.getProbeSurface() : null),
             getRequestedAspect: () => (this._lastStreamingSettings || {}).stream_aspect,
+            hostPads: !this._lastStreamNative,
             onResult: (aspect, reason) => this._onAspectMeasured(aspect, reason),
         });
     },

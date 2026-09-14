@@ -427,6 +427,35 @@ void run_selector_tests()
         CHECK_EQ(sel.fps, 60);
     }
 
+    // ── ...except its shape: the frame keeps the display's ───────────────────
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 1; // 3840×2160
+        cfg.width = 1664;  // what a client that misread the bars asked for
+        cfg.height = 1080;
+        cfg.clientCodecs = {Codec::H264};
+
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.width, 1920);
+        CHECK_EQ(sel.height, 1080);
+
+        // An ultrawide asked for 16:9 streams its own shape, width kept even.
+        Capabilities wide = hybridMachine();
+        wide.displays[1].width = 3440;
+        wide.displays[1].height = 1440;
+        CHECK(select(wide, cfg, sel, err));
+        CHECK_EQ(sel.width, 2580);
+        CHECK_EQ(sel.height, 1080);
+
+        // A client's own rounding (within 0.5%) is left alone.
+        cfg.width = 2578;
+        CHECK(select(wide, cfg, sel, err));
+        CHECK_EQ(sel.width, 2578);
+    }
+
     SECTION("Selector — default display");
 
     // ── displayId -1 lands on the primary: the single-screen one-click case ──

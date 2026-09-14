@@ -19,6 +19,7 @@
 #include "Log.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace mw::native {
 namespace {
@@ -307,6 +308,29 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     // ── Geometry: zero means "native", which is the default ─────────────────
     out.width = config.width > 0 ? config.width : out.display->width;
     out.height = config.height > 0 ? config.height : out.display->height;
+
+    // The frame keeps the display's shape; only its height is the client's.
+    // A frame of another shape is not letterboxed on every platform — the
+    // Windows conversion pass stretches the desktop across it — so a 16:9
+    // screen asked for 1664x1080 came out squeezed into 3:2 (Arc A380,
+    // 14/09/2026). Nothing then marks the picture as wrong: no bars for the
+    // browser's aspect probe to measure, a request honoured to the pixel. The
+    // browser reads the shape off the decoded frame and relaunches with it.
+    // Within 0.5% the request stands, so a client's even-width rounding is
+    // never fought over.
+    if (out.display->width > 0 && out.display->height > 0 && out.width > 0 && out.height > 0) {
+        const double displayAspect = static_cast<double>(out.display->width) / out.display->height;
+        const double frameAspect = static_cast<double>(out.width) / out.height;
+        if (std::abs(frameAspect - displayAspect) / displayAspect > 0.005) {
+            const int width = static_cast<int>(std::lround(out.height * displayAspect)) & ~1;
+            log::info("[native] " + std::to_string(out.width) + "x" + std::to_string(out.height) +
+                      " asked of a " + std::to_string(out.display->width) + "x" +
+                      std::to_string(out.display->height) + " display — streaming " +
+                      std::to_string(width) + "x" + std::to_string(out.height) +
+                      ", the display's own shape");
+            out.width = width;
+        }
+    }
 
     // The fallback tier never upscales. A client whose setting is 1440p asking
     // a 1080p display would have a machine with no encoder to spare convert and

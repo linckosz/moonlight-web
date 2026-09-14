@@ -226,6 +226,11 @@ function isBlankCanvas(surface) {
  *        launched with, re-read on every tick: the correction this probe
  *        triggers changes it, and comparing against a frozen value would make
  *        the probe answer itself.
+ * @param {boolean} [opts.hostPads=true] false for a host that never pads — the
+ *        native host encodes its display's own shape — where every bar is
+ *        picture: streaming the host's own screen shows the client page, dark
+ *        with the stream centred, which reads exactly like pillarboxing. Only
+ *        the decoded frame's shape is consulted then.
  * @param {(aspect: string|null, reason: string) => void} opts.onResult fires
  *        once with the startup verdict — the aspect to request, or null when
  *        undecided — and again only if the host later changes the shape it
@@ -233,7 +238,7 @@ function isBlankCanvas(surface) {
  * @returns {() => void} stop, safe to call at any time (onResult never fires
  *          afterwards).
  */
-export function startAspectProbe({ getSurface, getRequestedAspect, onResult }) {
+export function startAspectProbe({ getSurface, getRequestedAspect, hostPads = true, onResult }) {
     let ctx = null;
     let reference = null;
     let samples = 0;
@@ -329,6 +334,10 @@ export function startAspectProbe({ getSurface, getRequestedAspect, onResult }) {
         const stated = frameAspect(surface.width, surface.height, requested());
         if (stated) {
             finish(stated, 'frame-aspect');
+            return;
+        }
+        if (!hostPads) {
+            finish(null, 'host-never-pads');
             return;
         }
 
