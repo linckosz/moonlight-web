@@ -89,11 +89,14 @@ struct FrameStamps
     int64_t capturedUs = 0;
     int64_t submittedUs = 0;
     int64_t convertedUs = 0;
+    /// The held picture encoded again (idle floor, refinement, a keyframe on
+    /// request), not a new one: what it costs says nothing about keeping up.
+    bool resend = false;
 };
 
 FrameStamps resendStamps(int64_t nowUs)
 {
-    return FrameStamps{nowUs, nowUs, nowUs, nowUs};
+    return FrameStamps{nowUs, nowUs, nowUs, nowUs, true};
 }
 
 std::string hzString(int milliHz)
@@ -1115,7 +1118,7 @@ private:
             out.convertedUs = stamps.convertedUs;
             out.encodedUs = steadyNowUs();
             m_Callbacks.onVideo(out);
-            noteEncodeLoad(out.convertedUs, out.encodedUs);
+            noteEncodeLoad(out, stamps);
         }
         m_Pipeline->releaseOutput();
         return true;
@@ -1128,9 +1131,20 @@ private:
     /// already own that space. It is the machine with no encoder at all where
     /// the encode duration IS the latency, and where trading pixels for it is
     /// the right bargain (EncodeLoadCap.h says why that way round).
-    void noteEncodeLoad(int64_t convertedUs, int64_t encodedUs)
+    ///
+    /// Only new pictures encoded as deltas count. A keyframe costs several
+    /// deltas, and the still-picture refinement re-encodes the held frame at a
+    /// raised bitrate, pass after pass — neither is the steady cost of keeping
+    /// up. Counted, they resized a 2-core guest within a second of every start
+    /// and every resize (1280×800 → 960×600 → 640×400 in two seconds, issue
+    /// #15, 13/09/2026): each resize is a keyframe plus a refinement burst,
+    /// which read as overload and triggered the next step down.
+    void noteEncodeLoad(const EncodedFrame& out, const FrameStamps& stamps)
     {
         if (m_Target.encoder != EncoderApi::Software) return;
+        if (out.keyframe || stamps.resend) return;
+        const int64_t convertedUs = out.convertedUs;
+        const int64_t encodedUs = out.encodedUs;
         if (encodedUs <= convertedUs) return;
         // The STREAM's interval, not the gate's. The gate is off whenever the
         // stream runs at the display's own rate — 60 fps on a 60 Hz screen,

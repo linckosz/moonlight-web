@@ -96,6 +96,9 @@ struct FrameStamps
     int64_t capturedUs = 0;
     int64_t submittedUs = 0;
     int64_t convertedUs = 0;
+    /// The held picture encoded again (idle floor, refinement, a keyframe on
+    /// request), not a new one: what it costs says nothing about keeping up.
+    bool resend = false;
 };
 
 /// A re-send has no present of its own. Reporting "now" for everything keeps
@@ -104,7 +107,7 @@ struct FrameStamps
 /// half a second of delay.
 FrameStamps resendStamps(int64_t nowUs)
 {
-    return FrameStamps{nowUs, nowUs, nowUs, nowUs};
+    return FrameStamps{nowUs, nowUs, nowUs, nowUs, true};
 }
 
 /// "165", "144", "60" — the refresh rate as a person would say it.
@@ -1560,7 +1563,7 @@ private:
             // returning. The buffer is unlocked immediately after, which is
             // what keeps the GPU→CPU copy at exactly one per frame.
             m_Callbacks.onVideo(out);
-            noteEncodeLoad(out.convertedUs, out.encodedUs);
+            noteEncodeLoad(out, stamps);
         }
         m_Encoder->releaseOutput();
         return true;
@@ -1573,9 +1576,14 @@ private:
     /// that space. It is the machine that fell all the way to OpenH264 where
     /// the encode duration IS the latency, and where trading pixels for it is
     /// the right bargain (EncodeLoadCap.h says why that way round).
-    void noteEncodeLoad(int64_t convertedUs, int64_t encodedUs)
+    ///
+    /// Only new pictures encoded as deltas count — see LinuxSession::noteEncodeLoad.
+    void noteEncodeLoad(const EncodedFrame& out, const FrameStamps& stamps)
     {
         if (m_Target.encoder != EncoderApi::Software) return;
+        if (out.keyframe || stamps.resend) return;
+        const int64_t convertedUs = out.convertedUs;
+        const int64_t encodedUs = out.encodedUs;
         if (encodedUs <= convertedUs) return;
         // The STREAM's interval, not the gate's: the gate is off when the
         // stream runs at the display's own rate, and its zero would switch the
