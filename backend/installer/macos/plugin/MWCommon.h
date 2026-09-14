@@ -73,6 +73,40 @@ static inline BOOL MWInternetAlreadyAuthorized(void)
     return [[(NSDictionary *)json objectForKey:@"internet_access_enabled"] boolValue];
 }
 
+// The per-user LaunchAgent this pkg writes for start-at-login (postinstall) and
+// the app's own switch drives afterwards (Autostart.cpp, tray menu, admin page).
+// Same label as build-pkg.sh substitutes into postinstall for the production
+// edition; the DEV edition's pane reads the production one, like the settings
+// path above — a known approximation, not worth a second template.
+static inline NSString *MWLoginItemPath(void)
+{
+    return [NSHomeDirectory()
+        stringByAppendingPathComponent:@"Library/LaunchAgents/com.moonlightweb.agent.plist"];
+}
+
+// True when MoonlightWeb was installed here before: the app's settings.json is
+// the only durable trace an install leaves that survives a bundle replacement.
+static inline BOOL MWPreviousInstallExists(void)
+{
+    NSArray<NSString *> *base =
+        NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+    if (base.count == 0)
+        return NO;
+    NSString *path =
+        [base.firstObject stringByAppendingPathComponent:@"MoonlightWeb/MoonlightWeb/settings.json"];
+    return [[NSFileManager defaultManager] fileExistsAtPath:path];
+}
+
+// What the start-at-login box should show: on for a first install; on an
+// update, whatever the machine does today — the user may have switched it off
+// from the tray since, and an installer that re-ticked it would undo that.
+static inline BOOL MWAutostartDefault(void)
+{
+    if (!MWPreviousInstallExists())
+        return YES;
+    return [[NSFileManager defaultManager] fileExistsAtPath:MWLoginItemPath()];
+}
+
 // Merge key/values into the hand-off plist (created if absent), preserving keys
 // written earlier. 0600 out of habit rather than need now that no credential
 // travels through it: the postinstall (root) reads and deletes it.

@@ -31,6 +31,7 @@
 @implementation MWInternetPane {
     BOOL _built;
     NSButton *_internetCheck;
+    NSButton *_autostartCheck;
 }
 
 // Sidebar label comes from InstallerSectionTitle; this is the pane title shown
@@ -49,13 +50,16 @@
     if (!view) return;
     _built = YES;
 
-    _internetCheck = MWBuildInternetPaneContent(view);
+    _internetCheck = MWBuildInternetPaneContent(view, &_autostartCheck);
     // Pre-ticked only when a previous install already authorized Internet access
     // (settings.json) — a re-install must not silently forget the prior opt-in.
     // First install stays unchecked: opening the machine to the Internet
     // (per-session UPnP mapping) requires an explicit opt-in click.
     _internetCheck.state =
         MWInternetAlreadyAuthorized() ? NSControlStateValueOn : NSControlStateValueOff;
+    // The other way round for start-at-login: on unless an earlier install's
+    // user switched it off (see MWAutostartDefault).
+    _autostartCheck.state = MWAutostartDefault() ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 // Everything the postinstall needs. Written on the way out, and again from
@@ -68,6 +72,7 @@
         // Exact agreement text displayed — recorded by the server in its DNS
         // registration audit log (legal traceability).
         @"consent" : MWInternetConsentText(),
+        @"autostart" : @(_autostartCheck.state == NSControlStateValueOn),
     });
 }
 

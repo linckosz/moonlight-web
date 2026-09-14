@@ -28,9 +28,12 @@ static inline NSTextField *MWWrappingLabel(NSString *text, NSColor *color, CGFlo
     return l;
 }
 
-/// Fill `view` with the pane's contents and return the opt-in checkbox, whose
-/// state the caller reads on the way out.
-static inline NSButton *MWBuildInternetPaneContent(NSView *view)
+/// Fill `view` with the pane's contents and return the Internet opt-in
+/// checkbox, whose state the caller reads on the way out. `autostartOut`
+/// receives the second box, "start at login": Installer.app's last page is
+/// Apple's own and takes no controls, so this pane — the last one before the
+/// files are copied — is where that choice stays within reach.
+static inline NSButton *MWBuildInternetPaneContent(NSView *view, NSButton **autostartOut)
 {
     NSTextField *intro =
         MWWrappingLabel(@"MoonlightWeb streams this Mac itself — there is nothing else to "
@@ -53,12 +56,29 @@ static inline NSButton *MWBuildInternetPaneContent(NSView *view)
     NSTextField *body = MWWrappingLabel(MWInternetConsentBody(), [NSColor secondaryLabelColor],
                                         [NSFont smallSystemFontSize]);
 
-    NSStackView *stack = [NSStackView stackViewWithViews:@[ intro, check, body ]];
+    // Start at login, ticked by default (unticked only on an update where the
+    // user had switched it off since). One line of explanation, same colours.
+    NSButton *autostart = [[NSButton alloc] init];
+    [autostart setButtonType:NSButtonTypeSwitch];
+    autostart.translatesAutoresizingMaskIntoConstraints = NO;
+    autostart.title = @"Start MoonlightWeb when I log in.";
+    autostart.font = [NSFont systemFontOfSize:[NSFont systemFontSize]];
+    NSTextField *autostartBody =
+        MWWrappingLabel(@"The host runs in the background at every login, with its menu bar "
+                        @"icon and no browser window. The same switch is in that icon's menu "
+                        @"and on the admin page.",
+                        [NSColor secondaryLabelColor], [NSFont smallSystemFontSize]);
+    if (autostartOut)
+        *autostartOut = autostart;
+
+    NSStackView *stack =
+        [NSStackView stackViewWithViews:@[ intro, check, body, autostart, autostartBody ]];
     stack.orientation = NSUserInterfaceLayoutOrientationVertical;
     stack.alignment = NSLayoutAttributeLeading;
     stack.spacing = 14;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     [stack setCustomSpacing:6 afterView:check];
+    [stack setCustomSpacing:6 afterView:autostart];
     [view addSubview:stack];
 
     // Pinned on three sides and free at the bottom: the pane is as tall as its
@@ -71,6 +91,7 @@ static inline NSButton *MWBuildInternetPaneContent(NSView *view)
         // and push the stack wider than the pane instead of wrapping inside it.
         [intro.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
         [body.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
+        [autostartBody.widthAnchor constraintEqualToAnchor:stack.widthAnchor],
     ]];
     return check;
 }

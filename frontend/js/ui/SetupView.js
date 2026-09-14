@@ -85,10 +85,12 @@ export class SetupView {
         // it has to be one somebody actually gave.
         this._internetAuth = null;
         this._installSunshine = true;
-        // Never pre-ticked: a login item is the user's to ask for, and the
-        // switch stays within reach afterwards — in the tray menu and on the
-        // admin page — so nothing is lost by leaving it off here.
-        this._autoStart = false;
+        // Start at login is applied by default with the rest of the setup, and
+        // shown as a ticked box on the last page — above the button that leaves
+        // the wizard — where unticking it takes it back on the spot. Only where
+        // the server says it can be done (a desktop session, never a service).
+        this._autoStart = true;
+        this._autostartSupported = false;
         // Keeping the display awake rewrites the user's own power settings, so it
         // is opt-in like Internet Access — never pre-ticked, and only offered at
         // all when the backend says this desktop exposes the knobs.
@@ -143,6 +145,12 @@ export class SetupView {
             this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
             this._sunshinePaired = !!(status.sunshine && status.sunshine.paired);
             this._autostartInstalled = !!status.autostart_installed;
+            // Older servers do not say; they are all desktop installs, and the
+            // installed flag they do send is worth a box either way.
+            this._autostartSupported =
+                status.autostart_supported !== undefined
+                    ? !!status.autostart_supported
+                    : !status.headless;
             this._displaySleepSupported = !!(
                 status.display_sleep && status.display_sleep.supported
             );
@@ -304,14 +312,6 @@ export class SetupView {
                     ${t('setup.internetChange')}
                 </button>`;
 
-        const autostartBlock = this._autostartInstalled
-            ? this._okNote(t('setup.autostartInstalled'))
-            : `
-                <label class="setup-check">
-                    <input type="checkbox" id="chk-autostart" ${this._autoStart ? 'checked' : ''} />
-                    <span>${t('setup.autostartOption')}</span>
-                </label>`;
-
         // Display-sleep section: the whole section disappears on a desktop whose
         // settings we can't reach, rather than offering a box that would do
         // nothing. Already configured → a green "done" row, no control.
@@ -350,11 +350,6 @@ export class SetupView {
 
             ${hostSection}
             ${displayBlock}
-
-            <div class="setup-section">
-                <h2 class="setup-section-title">${t('setup.autostartTitle')}</h2>
-                ${autostartBlock}
-            </div>
 
             ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
 
@@ -507,11 +502,24 @@ export class SetupView {
                   error: this.esc(this._displaySleepError),
               })}</p>`
             : '';
+        // Start at login, already applied with the rest and shown ticked — the
+        // last thing before the button that leaves, so it can still be taken
+        // back here (the change handler does it on the spot). Not offered where
+        // the server has no login item to write (a service install).
+        const autostartLine = this._autostartSupported
+            ? `<label class="setup-check">
+                    <input type="checkbox" id="chk-autostart" ${
+                        this._autostartInstalled ? 'checked' : ''
+                    } />
+                    <span>${t('setup.autostartOption')}</span>
+                </label>`
+            : '';
         return `
             <p class="login-subtitle">${t('setup.doneTitle')}</p>
             ${domainLine}
             ${permsLine}
             ${displayLine}
+            ${autostartLine}
             <button id="btn-setup-finish" class="btn btn-neutral login-submit"
                     ${this._finishing ? 'disabled' : ''}>
                 ${
@@ -595,6 +603,24 @@ export class SetupView {
         } else if (this._step === 'done') {
             const finish = this.container.querySelector('#btn-setup-finish');
             if (finish) finish.addEventListener('click', () => this._finish());
+            // Written straight to the OS through the same route the admin page
+            // uses; the box follows the server's answer, not the click, so a
+            // login item the OS refused to write never shows as written.
+            const autostartChk = this.container.querySelector('#chk-autostart');
+            if (autostartChk) {
+                autostartChk.addEventListener('change', async () => {
+                    const enabled = autostartChk.checked;
+                    try {
+                        const res = await BackendClient.saveAdminSettings({
+                            autostart_enabled: enabled,
+                        });
+                        this._autostartInstalled = res?.autostart_enabled === true;
+                    } catch (err) {
+                        console.error('[Setup] Failed to save start-at-login setting:', err);
+                    }
+                    autostartChk.checked = this._autostartInstalled;
+                });
+            }
         } else if (this._step === 'error') {
             const retry = this.container.querySelector('#btn-setup-retry');
             if (retry) retry.addEventListener('click', () => this.start());
@@ -613,8 +639,9 @@ export class SetupView {
         // Steps already satisfied are rendered as "✓ done" (no controls) and
         // must not run again: their flags are forced off here.
         this._internetAuth = !this._internetActive && this._internetAuth === true;
-        this._autoStart =
-            !this._autostartInstalled && !!this.container.querySelector('#chk-autostart')?.checked;
+        // Applied with the rest, by default; the done page shows it ticked and
+        // lets it be taken back. Never re-applied over an item already there.
+        this._autoStart = this._autostartSupported && !this._autostartInstalled;
         this._keepDisplayAwake =
             this._displaySleepSupported &&
             !this._displayKeptAwake &&
@@ -701,6 +728,7 @@ export class SetupView {
             }
             this._displaySleepError = result.display_sleep_error || '';
             if (result.display_kept_awake) this._displayKeptAwake = true;
+            if (result.autostart) this._autostartInstalled = true;
             // Sunshine install can fail on its own (e.g. the user mistyped the OS
             // password in the polkit dialog) while /apply still returns 200. Don't
             // dead-end on the "done" screen: return to config with the error shown

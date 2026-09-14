@@ -62,7 +62,10 @@ read_flag() { # <key> <default:true|false>
 }
 INTERNET="$(read_flag internet false)"
 CONSENT="$(read_val consent)" # exact agreement text shown in the installer pane
-echo "handoff: internet=$INTERNET"
+# Start at login: on unless the pane's box was unticked. Absent key (CLI
+# install, older plugin) → on, which is what every install did before the box.
+AUTOSTART="$(read_flag autostart true)"
+echo "handoff: internet=$INTERNET autostart=$AUTOSTART"
 
 # ── 1) provisioning.json, consumed and removed by the server on first run
 #    (Provisioning::applyOnce). Written into the console user's Qt
@@ -89,10 +92,16 @@ echo "wrote $APPDATA/provisioning.json (internet=$INTERNET)"
 # ── 2) LaunchAgent: auto-start at login (mirrors Autostart::installLoginItem).
 #    RunAtLoad + KeepAlive/SuccessfulExit=false → relaunch on crash only, never
 #    after a clean quit. NOT bootstrapped here (we launch once below instead);
-#    launchd loads it at the next login.
+#    launchd loads it at the next login. The same file the app's own switch
+#    (tray menu, admin page) writes and removes afterwards — so an unticked box
+#    also removes what a previous install left, rather than merely not writing.
 AGENTS="$CONSOLE_HOME/Library/LaunchAgents"
 LOGDIR="$APPDATA/logs"
 /bin/mkdir -p "$AGENTS" "$LOGDIR"
+if [ "$AUTOSTART" != "true" ]; then
+    /bin/rm -f "$AGENTS/$AGENT_LABEL.plist"
+    echo "start at login declined — no LaunchAgent"
+else
 cat > "$AGENTS/$AGENT_LABEL.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -113,6 +122,7 @@ cat > "$AGENTS/$AGENT_LABEL.plist" <<PLIST
 PLIST
 /usr/sbin/chown "$CONSOLE_USER" "$AGENTS/$AGENT_LABEL.plist"
 echo "wrote LaunchAgent"
+fi
 
 # ── 2a) Hand the app-data tree to the user. This script runs as root, so every
 #    dir/file created above (provisioning.json, logs/) is root-owned; the app

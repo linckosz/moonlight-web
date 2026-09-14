@@ -384,7 +384,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         disp["kept_awake"] = DisplaySleep::isDisplayKeptAwake();
         obj["display_sleep"] = disp;
 
-        obj["autostart_installed"] = Autostart::isLoginItemInstalled();
+        // Whether a login item can be written here at all (a desktop session,
+        // never a service), and whether one is there: the wizard's last page
+        // shows a box only for the first, ticked for the second.
+        obj["autostart_supported"] = Autostart::isSupported();
+        obj["autostart_installed"] = Autostart::isSupported() && Autostart::isLoginItemInstalled();
         // The wizard is served over http://localhost (no cert warning); its
         // "Open MoonlightWeb" button switches to the HTTPS origin for streaming.
         obj["https_port"] = static_cast<int>(server.activeHttpsPort());

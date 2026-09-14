@@ -221,9 +221,9 @@ zh.UninstConfigDetail=设置、账户、证书和主机配对将被永久删除�
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-; Unchecked: a login item is opted into, and the same switch is in the tray
-; menu and on the admin page afterwards (it drives this very task).
-Name: "autostart"; Description: "{cm:AutoStartTask}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; No "autostart" task here: start-at-logon is a checkbox on the Finished page
+; (see AutostartCheck in [Code]), ticked by default and still within reach at
+; the very last click — and, on an update, showing what the machine already does.
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -288,6 +288,14 @@ var
   // ResolveAdminUrl at the end of the post-install step and read back by
   // GetAdminUrl when the [Run] entry fires.
   ResolvedAdminUrl: String;
+  // "Start MoonlightWeb at logon" on the Finished page, above the "open the
+  // admin page" row. Ticked by default on a first install; on an update it
+  // shows whether the logon task is there right now — the tray menu and the
+  // admin page drive that same task, so the previous install's box is not the
+  // last word on it. Applied when Finish is clicked (NextButtonClick), or from
+  // its default when there is no Finished page to click through (silent).
+  AutostartCheck: TNewCheckBox;
+  WantAutostart: Boolean;
 
 // Not a Pascal Script builtin — it has to be declared as an import, same as
 // any other Win32 API call, or the compiler stops with "Unknown identifier
@@ -477,21 +485,29 @@ begin
   ProgressPage.ProgressBar.Width := ProgressPage.SurfaceWidth;
   ProgressPage.Msg2Label.Top := ScaleY(102);
 
-  // The tasks page is hidden in update mode, so its checkboxes would fall back
-  // to their defaults and silently re-add a Desktop icon the user had removed,
-  // or drop an autostart the user had switched on from the tray or the admin
-  // page. Mirror what is actually on the machine.
-  // One call with the complete list: WizardSelectTasks deselects everything the
-  // list does not name, so two calls would undo each other.
+  // The tasks page is hidden in update mode, so its checkbox would fall back to
+  // its default and silently re-add a Desktop icon the user had removed. Mirror
+  // what is actually on the machine. (WizardSelectTasks deselects everything the
+  // list does not name — one call with the complete list.)
   if UpdateMode then begin
     tasks := '';
     if DesktopIconExists() then tasks := 'desktopicon';
-    if LogonTaskExists() then begin
-      if tasks <> '' then tasks := tasks + ',';
-      tasks := tasks + 'autostart';
-    end;
     WizardSelectTasks(tasks);
   end;
+
+  // Start at logon: on by default, and on an update whatever the machine does
+  // today — the box reflects the task, it does not re-impose a default on it.
+  // Placed on the Finished page in CurPageChanged, once Inno has laid that
+  // page out (RunList's position is only known then).
+  if UpdateMode then WantAutostart := LogonTaskExists()
+  else WantAutostart := True;
+  AutostartCheck := TNewCheckBox.Create(WizardForm);
+  AutostartCheck.Parent := WizardForm.FinishedPage;
+  AutostartCheck.Left := WizardForm.FinishedLabel.Left;
+  AutostartCheck.Width := WizardForm.FinishedLabel.Width;
+  AutostartCheck.Height := ScaleY(17);
+  AutostartCheck.Caption := ExpandConstant('{cm:AutoStartTask}');
+  AutostartCheck.Checked := WantAutostart;
 end;
 
 // Update mode collapses the wizard to the Ready page: the destination and the
@@ -548,6 +564,19 @@ begin
     WizardForm.NextButton.Caption := ExpandConstant('{cm:ButtonUpdate}');
   end;
 
+  // Finished page: the start-at-logon box goes right above the "open the admin
+  // page" row, which moves down to make room. That row is Inno's RunList; it is
+  // laid out just before this hook runs, which is why the box is placed here
+  // rather than when it was created. With no RunList (nothing to run, a silent
+  // install never gets here at all), the box sits under the closing text.
+  if CurPageID = wpFinished then begin
+    if WizardForm.RunList.Visible then begin
+      AutostartCheck.Top := WizardForm.RunList.Top;
+      WizardForm.RunList.Top := AutostartCheck.Top + AutostartCheck.Height + ScaleY(8);
+    end else
+      AutostartCheck.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(16);
+  end;
+
   if (InternetPage <> nil) and (CurPageID = InternetPage.ID) then begin
     // Defensive: a second visit must not inherit the first visit's Passer.
     InternetSkipped := False;
@@ -569,6 +598,10 @@ begin
   end;
 end;
 
+// Defined with the task helpers further down; declared here because the Finish
+// click below is the one place it is called from before that.
+procedure ApplyAutostartChoice(want: Boolean); forward;
+
 // The Internet page is the only one that answers a question, and it answers it
 // through this hook: "Accepter" is Next itself, "Passer" is Next reached through
 // InternetSkipClick — so the flag, not the button, is the answer.
@@ -577,6 +610,11 @@ begin
   Result := True;
   if (InternetPage <> nil) and (CurPageID = InternetPage.ID) then
     InternetAuthorized := not InternetSkipped;
+  // Finish: the last click is what the start-at-logon box means. Done before
+  // Inno runs the [Run] rows, so the admin page it opens next already sees the
+  // task the way the box left it.
+  if CurPageID = wpFinished then
+    ApplyAutostartChoice(AutostartCheck.Checked);
 end;
 
 // --- ViGEmBus: the virtual gamepad bus ------------------------------------
@@ -684,6 +722,22 @@ begin
   if SaveStringToFile(xmlPath, xml, False) then
     Exec('schtasks.exe', '/Create /TN "{#MyAppName}" /XML "' + xmlPath + '" /F',
          '', SW_HIDE, ewWaitUntilTerminated, rc);
+end;
+
+// The start-at-logon box, made true on the machine: register the task (over
+// any existing one, so an update also refreshes its exe path) or drop it. The
+// same task the app's own switch drives afterwards (tray menu, admin page).
+// Dropping it leaves a running instance alone: /Delete unregisters, /End is
+// what would kill it, and the user asked about the next logon, not this one.
+procedure ApplyAutostartChoice(want: Boolean);
+var
+  rc: Integer;
+begin
+  if want then
+    RegisterLogonTask()
+  else if LogonTaskExists() then
+    Exec('schtasks.exe', '/Delete /TN "{#MyAppName}" /F', '', SW_HIDE,
+         ewWaitUntilTerminated, rc);
 end;
 
 // --- One-click update from the web app: the elevated launcher --------------
@@ -1182,9 +1236,12 @@ begin
   // the router's forwarded port — never silently dropped.
   AddFirewallRule();
 
-  // Auto-start at logon (relaunches on crash, keeps the tray icon).
-  if WizardIsTaskSelected('autostart') then
-    RegisterLogonTask();
+  // Auto-start at logon (relaunches on crash, keeps the tray icon). Interactive
+  // installs decide this on the Finished page, at the last click; a silent one
+  // has no such page and takes the default (on for a first install, unchanged
+  // for an update).
+  if WizardSilent then
+    ApplyAutostartChoice(WantAutostart);
 
   // Launch the server and show the live checklist (the Internet link) while
   // first-run provisioning completes.
