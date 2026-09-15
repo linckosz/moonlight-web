@@ -37,14 +37,48 @@
  * notice the same new version, and reload again. Only the entry page can refill
  * that cache — it holds the manifest and the connection to fetch from — so
  * there the update goes through it instead.
+ *
+ * The timer alone misses an update that happened while no page was open. The
+ * entry page checks the cache against the host's manifest, but only when the
+ * machine's link is opened: a home-screen icon (start_url "/"), a restored tab
+ * or a reload on /admin is answered from the cache by the service worker and
+ * connects on its own, straight to the last machine. The baseline captured
+ * above is then already the NEW version, the timer never sees a difference, and
+ * the old interface runs against the updated host for the whole visit. So on
+ * the way in, the cache's stamp is compared with the host's manifest first.
  */
 import { bootstrapAddress, pageCameThroughTunnel, tunnelHostId } from '../net/tunnelBridge.js';
+
+/** Written by the entry page (bootstrap/v1/boot.js) when it fills the cache. */
+const SHELL_STAMP_KEY = 'mw-shell-stamp';
+/** The refill already asked for in this tab, so a refill that cannot help does
+ *  not turn into a loop between this page and the entry page. */
+const SHELL_RECHECK_KEY = 'mw-shell-recheck';
+
+function readStorage(storage, key) {
+    try {
+        return storage.getItem(key);
+    } catch (_) {
+        return null;
+    }
+}
+
+function writeStorage(storage, key, value) {
+    try {
+        if (value === null) storage.removeItem(key);
+        else storage.setItem(key, value);
+    } catch (_) {
+        /* storage refused — the loop guard is lost, nothing else */
+    }
+}
 
 export const VersionGuard = {
     _boot: null,
     _interval: null,
 
     async start() {
+        if (await this._shellIsStale()) return; // leaving for the entry page
+
         this._boot = await this._fetch();
         if (!this._boot) return; // version.json missing — disable guard silently
 
@@ -72,6 +106,71 @@ export const VersionGuard = {
         }
         console.log('[MW] New version', v, '(was', this._boot + ') — reloading');
         location.reload();
+    },
+
+    /**
+     * Through the rendezvous: is the interface in the cache the one the host
+     * serves now? When it is not, go back through the entry page, which refills
+     * the cache and hands over to the page this one was on.
+     *
+     * Compared on the manifest's version rather than /version.json's, because it
+     * is the string the stamp was written from — and it carries a fingerprint of
+     * the files, so a frontend edit under an unchanged build counts too.
+     *
+     * Every "cannot tell" answer (no tunnel, no stamp, manifest unreachable)
+     * keeps the page: a guess that sends the user away is worse than the timer.
+     *
+     * @returns {Promise<boolean>} true when the page is navigating away.
+     */
+    async _shellIsStale() {
+        const hostId = tunnelHostId();
+        if (!pageCameThroughTunnel() || !hostId) return false;
+
+        let stamp = null;
+        try {
+            stamp = JSON.parse(readStorage(localStorage, SHELL_STAMP_KEY) || 'null');
+        } catch (_) {
+            return false;
+        }
+        if (!stamp) return false;
+
+        const live = await this._fetchManifestVersion();
+        if (!live) return false;
+
+        if (stamp.hostId === hostId && stamp.version === live) {
+            writeStorage(sessionStorage, SHELL_RECHECK_KEY, null);
+            return false;
+        }
+
+        // The entry page writes the stamp from the very manifest it filled the
+        // cache from, so a second mismatch on the same version right after a
+        // refill means the refill cannot fix it. Keep running rather than bounce.
+        const target = hostId + ' ' + live;
+        if (readStorage(sessionStorage, SHELL_RECHECK_KEY) === target) {
+            console.warn('[MW] Interface cache still differs from the host after a refill:', live);
+            return false;
+        }
+        writeStorage(sessionStorage, SHELL_RECHECK_KEY, target);
+
+        console.log(
+            '[MW] Cached interface',
+            stamp.version,
+            'is not the host’s',
+            live,
+            '— fetching it from the host',
+        );
+        location.replace(bootstrapAddress());
+        return true;
+    },
+
+    async _fetchManifestVersion() {
+        try {
+            const r = await fetch('/api/app/manifest', { cache: 'no-store' });
+            if (!r.ok) return null;
+            return (await r.json()).version || null;
+        } catch (_) {
+            return null;
+        }
     },
 
     async _fetch() {
