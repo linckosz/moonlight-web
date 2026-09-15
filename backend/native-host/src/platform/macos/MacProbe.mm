@@ -25,6 +25,8 @@
 #import <Metal/Metal.h>
 
 #include <CoreGraphics/CoreGraphics.h>
+#include <IOKit/ps/IOPSKeys.h>
+#include <IOKit/ps/IOPowerSources.h>
 #include <Security/AuthSession.h>
 #include <VideoToolbox/VideoToolbox.h>
 
@@ -54,6 +56,33 @@
 
 namespace mw::native::platform {
 
+namespace {
+
+/// A MacBook's own battery, as opposed to a UPS reporting through USB.
+bool hasInternalBattery()
+{
+    bool found = false;
+    CFTypeRef blob = IOPSCopyPowerSourcesInfo();
+    if (!blob) return false;
+    CFArrayRef sources = IOPSCopyPowerSourcesList(blob);
+    if (sources) {
+        for (CFIndex i = 0; i < CFArrayGetCount(sources) && !found; ++i) {
+            CFDictionaryRef desc =
+                IOPSGetPowerSourceDescription(blob, CFArrayGetValueAtIndex(sources, i));
+            if (!desc) continue;
+            CFTypeRef type = CFDictionaryGetValue(desc, CFSTR(kIOPSTypeKey));
+            found = type && CFGetTypeID(type) == CFStringGetTypeID() &&
+                    CFStringCompare(static_cast<CFStringRef>(type), CFSTR(kIOPSInternalBatteryType),
+                                    0) == kCFCompareEqualTo;
+        }
+        CFRelease(sources);
+    }
+    CFRelease(blob);
+    return found;
+}
+
+} // namespace
+
 std::vector<MacDisplay> listDisplays()
 {
     std::vector<MacDisplay> out;
@@ -73,6 +102,10 @@ std::vector<MacDisplay> listDisplays()
             d.displayId = ids[i];
             d.isMain = CGDisplayIsMain(ids[i]);
             d.isAsleep = CGDisplayIsAsleep(ids[i]);
+            d.builtIn = CGDisplayIsBuiltin(ids[i]);
+            d.stableKey = std::to_string(CGDisplayVendorNumber(ids[i])) + "-" +
+                          std::to_string(CGDisplayModelNumber(ids[i])) + "-" +
+                          std::to_string(CGDisplaySerialNumber(ids[i]));
             const CGRect bounds = CGDisplayBounds(ids[i]);
             d.left = static_cast<int>(bounds.origin.x);
             d.top = static_cast<int>(bounds.origin.y);
@@ -267,10 +300,16 @@ Unavailability enumerate(Capabilities& caps)
                                       std::to_string(static_cast<int>(d.edrHeadroom + 0.5)) + ")"
                                 : std::string()) +
                          (d.isAsleep ? " (asleep)" : "");
+        display.kind = d.builtIn                  ? DisplayKind::BuiltIn
+                       : nameLooksVirtual(d.name) ? DisplayKind::Virtual
+                                                  : DisplayKind::External;
+        display.model = d.name;
+        display.key = d.stableKey;
         caps.displays.push_back(display);
     }
 
     caps.capture = CaptureApi::ScreenCaptureKit;
+    caps.hasBattery = hasInternalBattery();
 
     // The permission, checked once here so the host list can say why rather
     // than a session failing at the click. The OS prompt is requested once

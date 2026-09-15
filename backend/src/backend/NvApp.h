@@ -55,6 +55,13 @@ public:
     bool hasBoxArt() const { return m_HasBoxArt; }
     void setHasBoxArt(bool has) { m_HasBoxArt = has; }
 
+    /// What the browser needs to draw the machine behind an app: set only by
+    /// the native host, whose apps are the displays of the machine it runs on
+    /// (OS, kind of screen, monitor name, a stable key). Empty everywhere else,
+    /// and then left out of the JSON, so no other backend's list changes.
+    const QJsonObject& device() const { return m_Device; }
+    void setDevice(const QJsonObject& device) { m_Device = device; }
+
     QJsonObject toJson() const
     {
         QJsonObject obj;
@@ -62,6 +69,7 @@ public:
         obj["name"] = m_Name;
         obj["hdrSupported"] = m_HdrSupported;
         obj["boxArt"] = m_HasBoxArt;
+        if (!m_Device.isEmpty()) obj["device"] = m_Device;
         return obj;
     }
 
@@ -75,7 +83,7 @@ public:
     bool operator==(const NvApp& other) const
     {
         return m_Id == other.m_Id && m_Name == other.m_Name &&
-               m_HdrSupported == other.m_HdrSupported;
+               m_HdrSupported == other.m_HdrSupported && m_Device == other.m_Device;
     }
 
     bool operator!=(const NvApp& other) const { return !(*this == other); }
@@ -87,4 +95,5 @@ private:
     /// Default true: every GameStream host serves /appasset, and only a backend
     /// that knows there is nothing behind it says otherwise.
     bool m_HasBoxArt = true;
+    QJsonObject m_Device;
 };

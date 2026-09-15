@@ -71,6 +71,11 @@ struct DisplayMode
     /// The name the monitor reports in its EDID — "M27Q", "LINDY32115_V3".
     /// Empty for a virtual display, which has no EDID to report one.
     std::string monitorName;
+    /// Built-in, external or virtual, from the path's output technology.
+    DisplayKind kind = DisplayKind::Unknown;
+    /// The monitor's device interface path — stable for one monitor on one
+    /// port, which the Windows display number is not.
+    std::string devicePath;
 };
 
 /// Which of two paths sharing one source describes the display better.
@@ -155,10 +160,16 @@ std::unordered_map<std::string, DisplayMode> realDisplayModes()
         targetName.header.size = sizeof(targetName);
         targetName.header.adapterId = path.targetInfo.adapterId;
         targetName.header.id = path.targetInfo.id;
-        if (::DisplayConfigGetDeviceInfo(&targetName.header) == ERROR_SUCCESS &&
-            targetName.flags.friendlyNameFromEdid) {
-            mode.monitorName = narrow(targetName.monitorFriendlyDeviceName);
+        if (::DisplayConfigGetDeviceInfo(&targetName.header) == ERROR_SUCCESS) {
+            if (targetName.flags.friendlyNameFromEdid)
+                mode.monitorName = narrow(targetName.monitorFriendlyDeviceName);
+            mode.devicePath = narrow(targetName.monitorDevicePath);
         }
+        // A laptop's panel, a monitor on a cable, or a driver with no screen
+        // behind it — for the picture on the card only.
+        mode.kind = classifyOutputTechnology(
+            static_cast<long long>(static_cast<uint32_t>(path.targetInfo.outputTechnology)),
+            mode.monitorName);
 
         // The SOURCE mode is the desktop framebuffer — which is exactly what
         // Desktop Duplication hands back, so it is the size the pipeline will
@@ -469,6 +480,9 @@ Unavailability enumerate(Capabilities& caps)
             display.label = makeLabel(number);
             display.detail = describe(deviceName, mode.monitorName, display.width, display.height,
                                       display.refreshMilliHz);
+            display.kind = mode.kind;
+            display.model = mode.monitorName;
+            display.key = mode.devicePath.empty() ? deviceName : mode.devicePath;
 
             caps.displays.push_back(std::move(display));
             adapterDrivesADisplay = true;
@@ -493,6 +507,11 @@ Unavailability enumerate(Capabilities& caps)
     // starts; DDA is what is attempted first, so it is what is reported until
     // a fallback happens.
     caps.capture = CaptureApi::DxgiDuplication;
+
+    // 128 is "no system battery", 255 "unknown status" — neither is a laptop.
+    SYSTEM_POWER_STATUS power = {};
+    caps.hasBattery =
+        ::GetSystemPowerStatus(&power) && power.BatteryFlag != 128 && power.BatteryFlag != 255;
 
     if (log::enabled(log::Info)) {
         for (const DisplayInfo& display : caps.displays) {

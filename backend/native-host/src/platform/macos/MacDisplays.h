@@ -44,6 +44,12 @@ struct MacDisplay
     int pixelHeight = 0;
     int refreshMilliHz = 0;
     bool isMain = false;
+    /// A MacBook's or an iMac's own panel.
+    bool builtIn = false;
+    /// Vendor, model and serial from the display's EDID — the same screen
+    /// reads the same after a restart or a re-plug, unlike its position in
+    /// the list.
+    std::string stableKey;
     /// The panel is dark (display sleep). Still online, still capturable
     /// once woken — which a session does.
     bool isAsleep = false;

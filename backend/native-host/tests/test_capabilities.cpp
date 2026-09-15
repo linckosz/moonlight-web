@@ -44,6 +44,48 @@ void run_capabilities_tests()
         CHECK(caps.gpuFor(orphan) == nullptr);
     }
 
+    SECTION("Capabilities — what kind of screen a display is");
+
+    {
+        // Windows: DISPLAYCONFIG_OUTPUT_TECHNOLOGY and the EDID name.
+        const long long internal = 0x80000000LL, hdmi = 5, dpExternal = 10, dpEmbedded = 11,
+                        lvds = 6, indirectWired = 16, indirectVirtual = 17, other = 0xFFFFFFFFLL;
+        CHECK(classifyOutputTechnology(internal, "") == DisplayKind::BuiltIn);
+        CHECK(classifyOutputTechnology(dpEmbedded, "LQ156M1") == DisplayKind::BuiltIn);
+        CHECK(classifyOutputTechnology(lvds, "") == DisplayKind::BuiltIn);
+        CHECK(classifyOutputTechnology(hdmi, "M27Q") == DisplayKind::External);
+        CHECK(classifyOutputTechnology(dpExternal, "LINDY32115_V3") == DisplayKind::External);
+        CHECK(classifyOutputTechnology(indirectVirtual, "") == DisplayKind::Virtual);
+        // A DisplayLink dock is indirect too, and a real monitor: it has a name.
+        CHECK(classifyOutputTechnology(indirectWired, "DELL P2419H") == DisplayKind::External);
+        CHECK(classifyOutputTechnology(indirectWired, "") == DisplayKind::Virtual);
+        CHECK(classifyOutputTechnology(other, "") == DisplayKind::Virtual);
+        // The virtual display driver measured on bench-desk, whatever its path says.
+        CHECK(classifyOutputTechnology(hdmi, "VDD by MTT") == DisplayKind::Virtual);
+        CHECK(classifyOutputTechnology(hdmi, "HDMI Dummy") == DisplayKind::Virtual);
+
+        // Linux: the kernel's connector names.
+        CHECK(classifyConnectorName("eDP-1") == DisplayKind::BuiltIn);
+        CHECK(classifyConnectorName("LVDS-1") == DisplayKind::BuiltIn);
+        CHECK(classifyConnectorName("DSI-1") == DisplayKind::BuiltIn);
+        CHECK(classifyConnectorName("HDMI-A-1") == DisplayKind::External);
+        CHECK(classifyConnectorName("DP-2") == DisplayKind::External);
+        CHECK(classifyConnectorName("Virtual-1") == DisplayKind::Virtual);
+        CHECK(classifyConnectorName("Writeback-1") == DisplayKind::Virtual);
+        CHECK(classifyConnectorName("") == DisplayKind::Unknown);
+
+        // The strings travel to the browser and back through the service's
+        // console probe.
+        for (DisplayKind k : {DisplayKind::Unknown, DisplayKind::BuiltIn, DisplayKind::External,
+                              DisplayKind::Virtual})
+            CHECK(displayKindFromString(toString(k)) == k);
+        CHECK(displayKindFromString("laptop") == DisplayKind::Unknown);
+
+        CHECK(nameLooksVirtual("Virtual Display"));
+        CHECK(!nameLooksVirtual("Studio Display"));
+        CHECK(!nameLooksVirtual(""));
+    }
+
     SECTION("Capabilities — probe never throws and never lies");
 
     {

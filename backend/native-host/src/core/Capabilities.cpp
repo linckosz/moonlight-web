@@ -18,6 +18,7 @@
 #include "mw/native/Capabilities.h"
 
 #include <algorithm>
+#include <cctype>
 
 namespace mw::native {
 
@@ -73,6 +74,82 @@ const char* toString(Unavailability u)
     case Unavailability::ProbeFailed: return "probe failed";
     }
     return "unknown";
+}
+
+const char* toString(DisplayKind k)
+{
+    switch (k) {
+    case DisplayKind::Unknown: return "unknown";
+    case DisplayKind::BuiltIn: return "builtin";
+    case DisplayKind::External: return "external";
+    case DisplayKind::Virtual: return "virtual";
+    }
+    return "unknown";
+}
+
+DisplayKind displayKindFromString(const std::string& s)
+{
+    if (s == "builtin") return DisplayKind::BuiltIn;
+    if (s == "external") return DisplayKind::External;
+    if (s == "virtual") return DisplayKind::Virtual;
+    return DisplayKind::Unknown;
+}
+
+bool nameLooksVirtual(const std::string& monitorName)
+{
+    std::string lower(monitorName);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // "VDD by MTT", Parsec's and SudoVDA's drivers, and the dummy plugs sold
+    // for headless machines, which name themselves after what they are.
+    for (const char* marker : {"virtual", "vdd", "parsec", "sudovda", "dummy", "headless"}) {
+        if (lower.find(marker) != std::string::npos) return true;
+    }
+    return false;
+}
+
+DisplayKind classifyOutputTechnology(long long technology, const std::string& monitorName)
+{
+    // DISPLAYCONFIG_OUTPUT_TECHNOLOGY, from wingdi.h. Spelled as numbers so the
+    // rule can be tested on every platform.
+    constexpr long long kOther = -1;
+    constexpr long long kOtherUnsigned = 0xFFFFFFFFLL;
+    constexpr long long kLvds = 6;
+    constexpr long long kDisplayPortEmbedded = 11;
+    constexpr long long kUdiEmbedded = 13;
+    constexpr long long kIndirectWired = 16;
+    constexpr long long kIndirectVirtual = 17;
+    constexpr long long kInternal = 0x80000000LL;
+
+    if (nameLooksVirtual(monitorName)) return DisplayKind::Virtual;
+    switch (technology) {
+    case kInternal:
+    case kLvds:
+    case kDisplayPortEmbedded:
+    case kUdiEmbedded: return DisplayKind::BuiltIn;
+    case kIndirectVirtual: return DisplayKind::Virtual;
+    // An indirect driver is also what a DisplayLink dock uses, and that is a
+    // real monitor with a real EDID. Without a name, nothing is plugged in.
+    case kIndirectWired:
+    case kOther:
+    case kOtherUnsigned: return monitorName.empty() ? DisplayKind::Virtual : DisplayKind::External;
+    default: return DisplayKind::External;
+    }
+}
+
+DisplayKind classifyConnectorName(const std::string& connector)
+{
+    if (connector.empty()) return DisplayKind::Unknown;
+    const std::string type = connector.substr(0, connector.find('-'));
+    std::string lower(type);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // The kernel's own connector type names (drm_connector.c).
+    if (lower == "edp" || lower == "lvds" || lower == "dsi") return DisplayKind::BuiltIn;
+    // virtio-gpu, vkms and qxl all expose "Virtual"; a writeback connector
+    // scans out to memory.
+    if (lower == "virtual" || lower == "writeback") return DisplayKind::Virtual;
+    return DisplayKind::External;
 }
 
 bool GpuInfo::supports444(Codec codec) const

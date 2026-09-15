@@ -151,6 +151,32 @@ struct FallbackEncoder
     std::string name;
 };
 
+/// What kind of screen a display is. The browser draws the machine a display
+/// belongs to on its card — a laptop for a built-in panel, a monitor for an
+/// external one, a mini-PC for a machine with no real screen — so this is
+/// presentation, never a streaming decision.
+enum class DisplayKind
+{
+    Unknown,  ///< the platform could not tell (the Linux portal's single "Screen")
+    BuiltIn,  ///< the panel of a laptop or an all-in-one
+    External, ///< a monitor on a cable
+    Virtual,  ///< no panel at all: a virtual display driver or a dummy plug
+};
+
+const char* toString(DisplayKind k);
+DisplayKind displayKindFromString(const std::string& s);
+
+/// Windows: a DISPLAYCONFIG_OUTPUT_TECHNOLOGY value, passed as its raw integer
+/// so this stays testable off Windows, and the monitor's EDID name.
+DisplayKind classifyOutputTechnology(long long technology, const std::string& monitorName);
+
+/// Linux: a DRM connector name — "eDP-1", "HDMI-A-1", "Virtual-1".
+DisplayKind classifyConnectorName(const std::string& connector);
+
+/// Whether a monitor name gives away a screen that is not one: a virtual
+/// display driver ("VDD by MTT") or an HDMI dummy plug. Case-insensitive.
+bool nameLooksVirtual(const std::string& monitorName);
+
 /// A display, as the OS enumerates it. This is what the user picks from — and
 /// the ONLY thing they are ever asked to pick (§13 of the mission).
 struct DisplayInfo
@@ -187,6 +213,21 @@ struct DisplayInfo
     /// True when this is the OS's primary display. Used only to pick a default
     /// ordering, never to restrict the choice.
     bool primary = false;
+
+    /// Built-in panel, external monitor or no screen at all — see DisplayKind.
+    DisplayKind kind = DisplayKind::Unknown;
+
+    /// The monitor's own name when the OS has one — the EDID name on Windows,
+    /// AppKit's on macOS ("Studio Display"). Empty on Linux, whose probe has
+    /// no EDID reader.
+    std::string model;
+
+    /// What identifies this screen across restarts and re-plugs, unlike `id`
+    /// (an enumeration index): the monitor device path on Windows, the card
+    /// and connector on Linux, the display UUID on macOS. Opaque; the browser
+    /// only hashes it, so a card keeps the same picture for as long as the
+    /// screen it stands for exists.
+    std::string key;
 };
 
 /// Why the native engine cannot run here. The caller maps every one of these to
@@ -230,6 +271,11 @@ struct Capabilities
 
     /// Free-form, English, for the log line only. Never shown to a user.
     std::string diagnostic;
+
+    /// Whether the machine runs on a battery of its own. Tells a MacBook from
+    /// an iMac, and a Mac mini from a MacBook driving an external monitor, for
+    /// the picture on the card. A UPS or a wireless mouse is not one.
+    bool hasBattery = false;
 
     const GpuInfo* gpuFor(const DisplayInfo& display) const;
 

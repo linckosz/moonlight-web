@@ -92,9 +92,13 @@ QJsonObject toJson(const Capabilities& caps)
         o["gpuId"] = d.gpuId;
         o["hdrActive"] = d.hdrActive;
         o["primary"] = d.primary;
+        o["kind"] = QString::fromLatin1(toString(d.kind));
+        o["model"] = QString::fromStdString(d.model);
+        o["key"] = QString::fromStdString(d.key);
         displays.append(o);
     }
     obj["displays"] = displays;
+    obj["hasBattery"] = caps.hasBattery;
     return obj;
 }
 
@@ -142,8 +146,12 @@ bool fromJson(const QJsonObject& obj, Capabilities& out)
         d.gpuId = o["gpuId"].toInt(-1);
         d.hdrActive = o["hdrActive"].toBool(false);
         d.primary = o["primary"].toBool(false);
+        d.kind = displayKindFromString(o["kind"].toString().toStdString());
+        d.model = o["model"].toString().toStdString();
+        d.key = o["key"].toString().toStdString();
         out.displays.push_back(std::move(d));
     }
+    out.hasBattery = obj["hasBattery"].toBool(false);
     return true;
 }
 

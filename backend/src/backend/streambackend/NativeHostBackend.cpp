@@ -24,6 +24,7 @@ extern "C" {
 #include "Limelight.h"
 }
 
+#include "HostOsProbe.h"
 #include "NativeProbeService.h"
 
 #include <QHostInfo>
@@ -227,6 +228,16 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
         // A monitor has no cover art, and there is no library here to look it up
         // in. Saying so spares the grid one 404 per display, on every render.
         app.setHasBoxArt(false);
+        // What the card draws instead: the machine this display belongs to.
+        // The OS is the one this server was built for — the native host is
+        // this machine by definition.
+        app.setDevice(QJsonObject{
+            {QStringLiteral("os"), HostOsProbe::toString(HostOsProbe::thisMachine())},
+            {QStringLiteral("display"), QString::fromLatin1(mw::native::toString(display.kind))},
+            {QStringLiteral("model"), QString::fromStdString(display.model)},
+            {QStringLiteral("key"), QString::fromStdString(display.key)},
+            {QStringLiteral("battery"), caps.hasBattery},
+        });
         apps.append(app);
     }
     cb(true, BackendError{}, apps);

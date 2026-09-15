@@ -32,6 +32,8 @@
 #include <va/va_drm.h>
 #include <xf86drm.h>
 
+#include <climits>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -63,6 +65,49 @@ std::vector<std::string> cardPaths()
     }
     globfree(&found);
     return paths;
+}
+
+/// What names a card across boots: its bus address ("0000:03:00.0"), which the
+/// minor number is not when two GPUs race to register. Falls back to the path.
+std::string cardStableId(const std::string& cardPath)
+{
+    const std::string node = cardPath.substr(cardPath.rfind('/') + 1);
+    char resolved[PATH_MAX];
+    if (::realpath(("/sys/class/drm/" + node + "/device").c_str(), resolved)) {
+        const std::string device(resolved);
+        return device.substr(device.rfind('/') + 1);
+    }
+    return cardPath;
+}
+
+/// Whether the machine has a battery of its own. A mouse or a UPS reports one
+/// too, with a "Device" scope; a laptop's has none or "System".
+bool hasSystemBattery()
+{
+    bool found = false;
+    glob_t supplies = {};
+    if (glob("/sys/class/power_supply/*/type", 0, nullptr, &supplies) == 0) {
+        for (size_t i = 0; i < supplies.gl_pathc && !found; ++i) {
+            const std::string typePath(supplies.gl_pathv[i]);
+            const std::string dir = typePath.substr(0, typePath.rfind('/'));
+            auto read = [](const std::string& path) {
+                std::string text;
+                if (FILE* f = std::fopen(path.c_str(), "r")) {
+                    char buf[64] = {};
+                    if (std::fgets(buf, sizeof(buf), f)) text = buf;
+                    std::fclose(f);
+                }
+                while (!text.empty() && (text.back() == '\n' || text.back() == ' '))
+                    text.pop_back();
+                return text;
+            };
+            if (read(typePath) != "Battery") continue;
+            const std::string scope = read(dir + "/scope");
+            found = scope.empty() || scope == "System";
+        }
+    }
+    globfree(&supplies);
+    return found;
 }
 
 /// The card's minor number — /dev/dri/card1 → 1. Stable within a boot, which
@@ -270,6 +315,8 @@ Unavailability enumerate(Capabilities& caps)
                              std::to_string(out.height) + " \xC2\xB7 " +
                              std::to_string((out.refreshMilliHz + 500) / 1000) + " Hz" +
                              (out.active ? "" : " (off)");
+            display.kind = classifyConnectorName(out.name);
+            display.key = cardStableId(card) + "/" + out.name;
             caps.displays.push_back(display);
             ++indexOnCard;
         }
@@ -284,6 +331,7 @@ Unavailability enumerate(Capabilities& caps)
         return Unavailability::NoDisplay;
     }
     if (!anyPrimary) caps.displays.front().primary = true;
+    caps.hasBattery = hasSystemBattery();
 
     // The privilege check, once, so the host list can say why rather than a
     // session failing at the click.
@@ -324,6 +372,10 @@ Unavailability enumerate(Capabilities& caps)
             portal.hdrActive = false;
             portal.primary = true;
             portal.label = "Screen";
+            // Which screen it will be is the user's choice, made later: the
+            // card cannot say what it stands for, so it draws no machine.
+            portal.kind = DisplayKind::Unknown;
+            portal.key = "portal";
             portal.detail = "chosen when the stream starts \xE2\x80\x94 " + reason;
             caps.displays.clear();
             caps.displays.push_back(portal);

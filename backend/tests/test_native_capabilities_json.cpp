@@ -58,6 +58,9 @@ Capabilities sample()
     primary.gpuId = 0;
     primary.hdrActive = true;
     primary.primary = true;
+    primary.kind = DisplayKind::BuiltIn;
+    primary.model = "M27Q";
+    primary.key = "\\\\?\\DISPLAY#GBT270D#5&1f2a&0&UID4352";
 
     DisplayInfo second;
     second.id = 2;
@@ -70,6 +73,7 @@ Capabilities sample()
     second.gpuId = 1;
 
     caps.displays = {primary, second};
+    caps.hasBattery = true;
     return caps;
 }
 
@@ -118,6 +122,14 @@ void run_native_capabilities_json_tests()
         CHECK(out.displays[1].gpuId == 1);
         CHECK(!out.displays[1].hdrActive);
         CHECK(!out.displays[1].primary);
+        // What the card draws: the kind of screen, its name, its stable key,
+        // and whether the machine has a battery.
+        CHECK(out.displays[0].kind == DisplayKind::BuiltIn);
+        CHECK(out.displays[0].model == "M27Q");
+        CHECK(out.displays[0].key == in.displays[0].key);
+        CHECK(out.displays[1].kind == DisplayKind::Unknown);
+        CHECK(out.displays[1].model.empty() && out.displays[1].key.empty());
+        CHECK(out.hasBattery);
 
         // gpuFor() works on the copy as it did on the original.
         CHECK(out.gpuFor(out.displays[0]) == &out.gpus[0]);
