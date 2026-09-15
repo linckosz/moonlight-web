@@ -63,8 +63,24 @@ export const CANVAS_W = 44;
 /** Taller than any laptop: the width sets the pixel size, the height is free. */
 export const CANVAS_H = 54;
 
+/**
+ * A box. `front` and `top` colour its faces pixel by pixel; `overlay` draws
+ * vectors over its front face, inside a one-unit bezel (see deviceSvg).
+ */
 function box(x0, x1, y0, y1, z0, z1, mat, opt = {}) {
-    return { x0, x1, y0, y1, z0, z1, mat, r: opt.r || 0, front: opt.front, top: opt.top };
+    return {
+        x0,
+        x1,
+        y0,
+        y1,
+        z0,
+        z1,
+        mat,
+        r: opt.r || 0,
+        front: opt.front,
+        top: opt.top,
+        overlay: opt.overlay,
+    };
 }
 
 function inside(p, x, y, z) {
@@ -207,12 +223,13 @@ export function renderDevice(prims) {
     return {
         pixels,
         shadows: floor,
+        overlays: prims.filter((p) => p.overlay),
         bbox: { minX: minX - 1, maxX: maxX + 1, minY: minY - 1, maxY: bottom },
     };
 }
 
 /** The SVG of a rendered device, centred on the shared canvas, one path per colour. */
-export function deviceSvg({ pixels, shadows, bbox }) {
+export function deviceSvg({ pixels, shadows, overlays = [], bbox }) {
     const ox = Math.floor((CANVAS_W - (bbox.maxX - bbox.minX + 1)) / 2) - bbox.minX;
     const oy = Math.floor((CANVAS_H - (bbox.maxY - bbox.minY + 1)) / 2) - bbox.minY;
     const rows = new Map(); // colour → y → sorted xs
@@ -249,9 +266,25 @@ export function deviceSvg({ pixels, shadows, bbox }) {
                 ? `<path d="${d}" fill="#000" fill-opacity=".32"/>`
                 : `<path d="${d}" fill="${col}"/>`;
     }
+
+    // Vectors in a front face's plane. A point (a, b) of the face, from the
+    // inner corner of its bezel, sits in the world at x = x0 + 1 + a, y = y1,
+    // z = z1 − 1 − b, so on the canvas at X = a + (x0 + 1 − y1) + ox and
+    // Y = a/2 + b + ((x0 + 1 + y1)/2 − z1 + 1) + oy: the same slope the pixels
+    // follow, exactly.
+    let vectors = '';
+    for (const p of overlays) {
+        const e = p.x0 + 1 - p.y1 + ox;
+        const f = (p.x0 + 1 + p.y1) / 2 - p.z1 + 1 + oy;
+        const inner = p.overlay(p.x1 - p.x0 - 2, p.z1 - p.z0 - 2);
+        vectors +=
+            `<g transform="matrix(1 0.5 0 1 ${e.toFixed(3)} ${f.toFixed(3)})" ` +
+            `shape-rendering="geometricPrecision">${inner}</g>`;
+    }
     return (
         `<svg class="app-icon-sprite" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}" ` +
-        `shape-rendering="crispEdges" aria-hidden="true">${paths}</svg>`
+        `shape-rendering="crispEdges" aria-hidden="true">` +
+        `${vectors ? GLOW_FILTER : ''}${paths}${vectors}</svg>`
     );
 }
 
@@ -353,12 +386,6 @@ function macos(a, b, W, H) {
     return f < 0.35 ? '#5b4bb0' : f < 0.6 ? '#8752a8' : f < 0.85 ? '#bd658d' : '#dc8b62';
 }
 
-function os9(a, b, W) {
-    if (b < 1) return '#eceef0';
-    if (inRect(a, b, W - 4, 2, 2, 2)) return '#c9ccd2';
-    return (Math.floor(a) + Math.floor(b)) % 2 ? '#7282ad' : '#6a7aa5';
-}
-
 /** The arcade sprites a Windows screen shows instead of a wallpaper. */
 const ARCADE_ROWS = {
     invader: [
@@ -417,112 +444,86 @@ const ARCADE_ROWS = {
 export const WALLPAPERS = Object.keys(ARCADE_ROWS);
 const ARCADE_COLOURS = { y: '#fcee0a', c: '#00e5ff', m: '#ff2a6d', w: '#eafdff', d: '#7d7400' };
 
-/**
- * The attract-mode line under each sprite on a monitor, and its colour. Short
- * enough for a 3×5 pixel font on a 38-pixel screen: "PRESS START" needs 40,
- * so the ship says what many cabinets said anyway.
- */
+/** The attract-mode line under each sprite on a monitor, and its colour. */
 export const ARCADE_LINES = {
     invader: ['INSERT COIN', 'c'],
     ghost: ['READY!', 'y'],
     joystick: ['PLAYER 1', 'c'],
-    ship: ['PUSH START', 'y'],
+    ship: ['PRESS START', 'y'],
     coin: ['CREDIT 01', 'c'],
 };
 
-/** A 3×5 pixel font, proportional where it helps: I, 1 and ! are narrower, N wider. */
-export const FONT = {
-    A: ['.#.', '#.#', '###', '#.#', '#.#'],
-    C: ['###', '#..', '#..', '#..', '###'],
-    D: ['##.', '#.#', '#.#', '#.#', '##.'],
-    E: ['###', '#..', '##.', '#..', '###'],
-    H: ['#.#', '#.#', '###', '#.#', '#.#'],
-    I: ['#', '#', '#', '#', '#'],
-    L: ['#..', '#..', '#..', '#..', '###'],
-    N: ['#..#', '##.#', '#.##', '#..#', '#..#'],
-    O: ['###', '#.#', '#.#', '#.#', '###'],
-    P: ['###', '#.#', '###', '#..', '#..'],
-    R: ['##.', '#.#', '##.', '#.#', '#.#'],
-    S: ['###', '#..', '###', '..#', '###'],
-    T: ['###', '.#.', '.#.', '.#.', '.#.'],
-    U: ['#.#', '#.#', '#.#', '#.#', '###'],
-    Y: ['#.#', '#.#', '.#.', '.#.', '.#.'],
-    0: ['###', '#.#', '#.#', '#.#', '###'],
-    1: ['.#', '##', '.#', '.#', '.#'],
-    '!': ['#', '#', '#', '.', '#'],
-    ' ': ['', '', '', '', ''],
-};
+const TASKBAR = 1.2;
 
 /**
- * The pixels of a line of text: five strings of '#' and '.', one column between
- * glyphs, and for every column the column its glyph starts at.
+ * A Windows screen, in the picture's own pixels: a dark desktop over a
+ * taskbar. What shows on it is drawn over it by arcadeOverlay.
  */
-export function textRows(text) {
-    const rows = ['', '', '', '', ''];
-    const starts = [];
-    [...text].forEach((ch, n) => {
-        const glyph = FONT[ch] || FONT[' '];
-        if (n) {
-            for (let r = 0; r < 5; r++) rows[r] += '.';
-            starts.push(starts.length);
-        }
-        const start = rows[0].length;
-        for (let r = 0; r < 5; r++) rows[r] += glyph[r];
-        for (let c = 0; c < glyph[0].length; c++) starts.push(start);
-    });
-    return Object.assign(rows, { starts });
+function windowsDesktop(a, b, W, H) {
+    if (b >= H - TASKBAR) {
+        const c = W / 2;
+        if (inRect(a, b, c - 3, H - 1, 1, 1)) return '#5fb0ff';
+        if (inRect(a, b, c - 1, H - 1, 1, 1)) return '#d8dfe6';
+        if (inRect(a, b, c + 1, H - 1, 1, 1)) return '#e3a53d';
+        return '#1c2533';
+    }
+    return '#111a2b';
 }
 
 /**
- * The row of a pixel-art block drawn upright on a screen seen in isometry.
- *
- * On a front face a screen row is b + a/2, so a block sampled by b alone is
- * sheared: its horizontal strokes break into a staircase in the middle of a
- * letter. Measured from the block's own left column instead, each block stays
- * upright and whole, and only the line of blocks follows the slope.
+ * The sprite and its line on a Windows screen, as vectors in the screen's own
+ * plane. Rasterised into the picture's pixels a sprite came out coarse, and
+ * text could not be both legible and on the slope; drawn over the panel with
+ * the isometric transform (deviceSvg), both keep their definition and follow
+ * the screen's angle. Units are the screen's, from its inner top-left corner.
  */
-const uprightRow = (a, b, top, left) => Math.floor(b - top + (a - left) / 2);
-
-const windowsArcade =
+const arcadeOverlay =
     (sprite, { line = false } = {}) =>
-    (a, b, W, H) => {
-        const bar = 1.2;
-        if (b >= H - bar) {
-            const c = W / 2;
-            if (inRect(a, b, c - 3, H - 1, 1, 1)) return '#5fb0ff';
-            if (inRect(a, b, c - 1, H - 1, 1, 1)) return '#d8dfe6';
-            if (inRect(a, b, c + 1, H - 1, 1, 1)) return '#e3a53d';
-            return '#1c2533';
-        }
+    (W, H) => {
         const rows = ARCADE_ROWS[sprite];
-        const [label, labelColour] = ARCADE_LINES[sprite];
-        const text = line ? textRows(label) : null;
-        // The sprite and its line are centred as one block.
-        const block = rows.length + (text ? 2 + text.length : 0);
-        const y = Math.floor((H - bar - block) / 2);
-        const x = Math.floor((W - rows[0].length) / 2);
-        const j = Math.floor(a - x);
-        const i = line ? uprightRow(a, b, y, x) : Math.floor(b - y);
-        if (
-            i >= 0 &&
-            i < rows.length &&
-            j >= 0 &&
-            j < rows[0].length &&
-            ARCADE_COLOURS[rows[i][j]]
-        ) {
-            return ARCADE_COLOURS[rows[i][j]];
-        }
-        if (text) {
-            const ty = y + rows.length + 2;
-            const tx = Math.floor((W - text[0].length) / 2);
-            const tj = Math.floor(a - tx);
-            if (tj >= 0 && tj < text[0].length) {
-                const ti = uprightRow(a, b, ty, tx + text.starts[tj]);
-                if (ti >= 0 && ti < 5 && text[ti][tj] === '#') return ARCADE_COLOURS[labelColour];
+        const cols = rows[0].length;
+        const avail = H - TASKBAR;
+        const fontSize = line ? avail * 0.16 : 0;
+        const gap = line ? avail * 0.08 : 0;
+        const spriteH = Math.min(avail * (line ? 0.5 : 0.72), (W * 0.5 * rows.length) / cols);
+        const cell = spriteH / rows.length;
+        const top = (avail - spriteH - gap - fontSize) / 2;
+        const left = (W - cols * cell) / 2;
+
+        const byColour = {};
+        rows.forEach((row, y) => {
+            for (let x = 0; x < row.length; ) {
+                const ch = row[x];
+                let end = x + 1;
+                while (end < row.length && row[end] === ch) end++;
+                if (ARCADE_COLOURS[ch])
+                    byColour[ch] = (byColour[ch] || '') + `M${x} ${y}h${end - x}v1h-${end - x}z`;
+                x = end;
             }
+        });
+        const paths = Object.entries(byColour)
+            .map(([ch, d]) => `<path d="${d}" fill="${ARCADE_COLOURS[ch]}"/>`)
+            .join('');
+        let out =
+            `<g transform="translate(${left.toFixed(3)} ${top.toFixed(3)}) scale(${cell.toFixed(4)})" ` +
+            `filter="url(#mw-host-art-glow)">${paths}</g>`;
+        if (line) {
+            const [label, colour] = ARCADE_LINES[sprite];
+            out +=
+                `<text x="${(W / 2).toFixed(3)}" y="${(top + spriteH + gap + fontSize * 0.8).toFixed(3)}" ` +
+                `font-family="'Share Tech Mono', monospace" font-size="${fontSize.toFixed(3)}" ` +
+                `letter-spacing="${(fontSize * 0.2).toFixed(3)}" text-anchor="middle" ` +
+                `fill="${ARCADE_COLOURS[colour]}">${label}</text>`;
         }
-        return '#111a2b';
+        return out;
     };
+
+/** The glow the arcade sprites have on a Windows screen, defined once per picture. */
+const GLOW_FILTER =
+    '<defs><filter id="mw-host-art-glow" x="-40%" y="-40%" width="180%" height="180%">' +
+    '<feGaussianBlur stdDeviation="0.7" result="blur"/>' +
+    '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>' +
+    '</filter></defs>';
 
 const bezel =
     (screen, { notch = false, chin = 0 } = {}) =>
@@ -546,16 +547,16 @@ const keyboard = (trackpoint) => (a, b, W, H) => {
 
 /* ── Devices ───────────────────────────────────────────────────────────────── */
 
-const laptop = (mat, screen, { lid = 17, notch = false, trackpoint = false } = {}) => [
-    box(0, 24, 0, 2.2, 1.6, lid, mat, { front: bezel(screen, { notch }) }),
+const laptop = (mat, screen, { lid = 17, notch = false, trackpoint = false, overlay } = {}) => [
+    box(0, 24, 0, 2.2, 1.6, lid, mat, { front: bezel(screen, { notch }), overlay }),
     box(0, 24, 0, 16, 0, 1.6, mat, { top: keyboard(trackpoint) }),
 ];
 
 /** A monitor on a stand. `z0` is where the panel's bottom edge sits. */
-const monitor = (mat, screen, { w = 38, h = 23, z0 = 5 } = {}) => {
+const monitor = (mat, screen, { w = 38, h = 23, z0 = 5, overlay } = {}) => {
     const c = w / 2;
     return [
-        box(0, w, 2.2, 3.6, z0, z0 + h, mat, { front: bezel(screen) }),
+        box(0, w, 2.2, 3.6, z0, z0 + h, mat, { front: bezel(screen), overlay }),
         box(c - 1.4, c + 1.4, 1, 2.2, 1, z0 + 6, mat),
         box(c - 6, c + 6, 0, 8, 0, 1, mat),
     ];
@@ -594,12 +595,24 @@ const linuxBadge = (a, b, W, H) =>
 
 /** Every picture, by id. Windows screens take the arcade sprite as a parameter. */
 const DEVICES = {
-    'windows-laptop': (w) => laptop('gray', windowsArcade(w), { lid: 18.6 }),
+    // A laptop's lid is too small for a legible line: the sprite alone, bigger.
+    'windows-laptop': (w) =>
+        laptop('gray', windowsDesktop, { lid: 18.6, overlay: arcadeOverlay(w) }),
     // Monitors are drawn as big as the canvas allows beside a laptop, which
     // leaves room for the attract-mode line under the sprite.
-    'windows-monitor': (w) => monitor('black', windowsArcade(w, { line: true }), { w: 40, h: 25 }),
+    'windows-monitor': (w) =>
+        monitor('black', windowsDesktop, {
+            w: 40,
+            h: 25,
+            overlay: arcadeOverlay(w, { line: true }),
+        }),
     'windows-monitor-4x3': (w) =>
-        monitor('black', windowsArcade(w, { line: true }), { w: 40, h: 30, z0: 4 }),
+        monitor('black', windowsDesktop, {
+            w: 40,
+            h: 30,
+            z0: 4,
+            overlay: arcadeOverlay(w, { line: true }),
+        }),
     'windows-mini': () => miniPc('black', windowsBadge),
     'linux-laptop': () => laptop('black', gnome, { trackpoint: true }),
     'linux-monitor': () => monitor('graph', gnome),
@@ -613,7 +626,7 @@ const DEVICES = {
                     r: 2.5,
                     front: (a, b, W, H) =>
                         inRect(a, b, 4, 3, W - 8, H - 8)
-                            ? os9(a - 4, b - 3, W - 8)
+                            ? macos(a - 4, b - 3, W - 8, H - 8)
                             : inRect(a, b, 3, 2, W - 6, H - 6)
                               ? '#9aa4aa'
                               : null,

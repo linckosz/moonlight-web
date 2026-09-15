@@ -6,8 +6,6 @@ import { describe, it, expect } from 'vitest';
 
 import {
     ARCADE_LINES,
-    FONT,
-    textRows,
     CANVAS_H,
     CANVAS_W,
     DEVICE_IDS,
@@ -18,6 +16,10 @@ import {
     hostArtSvg,
     renderDevice,
 } from '../js/ui/HostArt.js';
+
+/** The pixel layer of a picture: its vector overlay and the glow it uses left out. */
+const pixelsOf = (svg) =>
+    svg.replace(/<defs>.*?<\/defs>/, '').replace(/<g transform="matrix[\s\S]*(?=<\/svg>)/, '');
 
 const dev = (os, display, extra = {}) => ({
     os,
@@ -123,7 +125,7 @@ describe('HostArt', () => {
                     const label = `${id} ${wallpaper}`;
                     const svg = hostArtSvg(id, wallpaper);
                     expect(svg, label).toMatch(/^<svg class="app-icon-sprite"/);
-                    const runs = [...svg.matchAll(/M(-?\d+) (-?\d+)h(\d+)/g)].map((m) => [
+                    const runs = [...pixelsOf(svg).matchAll(/M(-?\d+) (-?\d+)h(\d+)/g)].map((m) => [
                         +m[1],
                         +m[2],
                         +m[3],
@@ -139,23 +141,36 @@ describe('HostArt', () => {
             }
         });
 
-        it('gives every sprite an attract-mode line that fits a monitor and its font', () => {
+        it('writes the attract-mode line on monitors, in the plane of the screen', () => {
             expect(Object.keys(ARCADE_LINES)).toEqual(WALLPAPERS);
             for (const [sprite, [line]] of Object.entries(ARCADE_LINES)) {
-                // A 40-pixel panel, less its one-pixel bezel on each side.
-                expect(textRows(line)[0].length, sprite).toBeLessThanOrEqual(38);
-                for (const ch of line) expect(FONT, `${sprite} "${ch}"`).toHaveProperty(ch);
+                for (const id of ['windows-monitor', 'windows-monitor-4x3']) {
+                    const svg = hostArtSvg(id, sprite);
+                    expect(svg, `${id} ${sprite}`).toContain(`>${line}</text>`);
+                    // The isometric slope of a front face: one down for two across.
+                    expect(svg).toContain('transform="matrix(1 0.5 0 1 ');
+                    expect(svg).toContain('filter="url(#mw-host-art-glow)"');
+                }
             }
-            // One column between glyphs, and each column knows where its glyph starts.
-            const rows = textRows('IN');
-            expect(rows[0]).toBe('#.#..#');
-            expect(rows.starts).toEqual([0, 1, 2, 2, 2, 2]);
+            // A laptop lid has the sprite and no room for its line.
+            const laptop = hostArtSvg('windows-laptop', 'coin');
+            expect(laptop).toContain('transform="matrix(1 0.5 0 1 ');
+            expect(laptop).not.toContain('<text');
+            // Nothing else draws over its screen.
+            expect(hostArtSvg('linux-monitor')).not.toContain('matrix(');
+        });
+
+        it('gives the iMac G3 the same wallpaper as the other Macs', () => {
+            for (const colour of ['#5b4bb0', '#dc8b62']) {
+                expect(hostArtSvg('imac-g3')).toContain(colour);
+                expect(hostArtSvg('macbook')).toContain(colour);
+            }
         });
 
         it('draws the monitors about as big as the laptops beside them', () => {
             // Drawn width, floor shadow left out.
             const width = (id) => {
-                const body = hostArtSvg(id, 'ship').replace(
+                const body = pixelsOf(hostArtSvg(id, 'ship')).replace(
                     /<path d="[^"]*" fill="#000"[^>]*>/,
                     '',
                 );
