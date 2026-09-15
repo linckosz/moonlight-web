@@ -205,7 +205,14 @@
         "loadFailedHint": "L'hôte est injoignable ou a mis trop de temps à répondre",
         "launchAria": "Lancer {{name}}",
         "launching": "Lancement…",
-        "pressStart": "PRESS START"
+        "arcade": {
+            "pressStart": "PRESS START",
+            "jackIn": "JACK IN",
+            "wakeUp": "WAKE UP",
+            "nightCity": "NIGHT CITY",
+            "rideOut": "RIDE OUT",
+            "scanning": "SCANNING"
+        }
     },
     "login": {
         "connecting": "Connexion au serveur...",

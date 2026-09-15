@@ -277,11 +277,29 @@ describe('HostListView app grid', () => {
 
             art().dispatchEvent(new Event('error'));
 
-            expect(pad().querySelector('svg.app-icon-sprite path.app-icon-cyan')).not.toBeNull();
+            expect(pad().querySelector('svg.app-icon-sprite path')).not.toBeNull();
             expect(pad().querySelector('.app-icon-label')).not.toBeNull();
             expect(pad().textContent).not.toMatch(/\p{Extended_Pictographic}/u);
             // Decorative: the card's own aria-label already names the app.
             expect(pad().getAttribute('aria-hidden')).toBe('true');
+        });
+
+        it('gives two coverless apps side by side two different sprites', () => {
+            remember([
+                { id: 1, name: 'Display 1' },
+                { id: 2, name: 'Display 2' },
+            ]);
+            mount();
+
+            grid(container)
+                .querySelectorAll('.app-card-image img')
+                .forEach((img) => img.dispatchEvent(new Event('error')));
+
+            const sprites = Array.from(
+                grid(container).querySelectorAll('.app-card-image .app-icon'),
+            ).map((el) => el.dataset.sprite);
+            expect(sprites).toHaveLength(2);
+            expect(sprites[0]).not.toBe(sprites[1]);
         });
 
         it('retries a cover already seen, and puts it back when it arrives', () => {

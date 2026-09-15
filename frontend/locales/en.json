@@ -205,7 +205,14 @@
         "loadFailedHint": "The host is unreachable or took too long to respond",
         "launchAria": "Launch {{name}}",
         "launching": "Launching…",
-        "pressStart": "PRESS START"
+        "arcade": {
+            "pressStart": "PRESS START",
+            "jackIn": "JACK IN",
+            "wakeUp": "WAKE UP",
+            "nightCity": "NIGHT CITY",
+            "rideOut": "RIDE OUT",
+            "scanning": "SCANNING"
+        }
     },
     "login": {
         "connecting": "Connecting to server...",

@@ -1364,7 +1364,7 @@ export class HostListView {
             const placeholder = () => {
                 const prev = img.previousElementSibling;
                 if (prev && prev.classList.contains('app-icon')) return prev;
-                img.insertAdjacentHTML('beforebegin', appPlaceholderHtml(t('apps.pressStart')));
+                img.insertAdjacentHTML('beforebegin', appPlaceholderHtml(appId, t));
                 return img.previousElementSibling;
             };
 
@@ -1417,7 +1417,7 @@ export class HostListView {
                             ? `<img src="${this.esc(app.boxArtUrl)}"
                                alt="${this.esc(app.displayName)}"
                                loading="lazy">`
-                            : appPlaceholderHtml(t('apps.pressStart'))
+                            : appPlaceholderHtml(app.id, t)
                     }
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>

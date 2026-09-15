@@ -105,9 +105,9 @@
     display: none;
 }
 
-/* ── No cover: an arcade ship over "PRESS START" (AppPlaceholder.js) ────── */
-/* Sized off the frame's own width (cqi), so the line under the ship still fits
-   in the narrow two-column tiles of a phone. */
+/* ── No cover: an arcade sprite over its line (AppPlaceholder.js) ───────── */
+/* Sized off the frame's own width (cqi), so the line under the sprite still
+   fits in the narrow two-column tiles of a phone. */
 .app-card-image {
     container-type: inline-size;
 }
@@ -130,10 +130,18 @@
     pointer-events: none;
     background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 2px, transparent 2px 4px);
 }
+/* Every sprite shares one 15×13 canvas, so this width sets one pixel size for
+   the whole cast. */
 .app-icon-sprite {
-    width: 72%;
+    width: 66%;
     height: auto;
     filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.55));
+}
+.app-icon-sprite--yellow {
+    filter: drop-shadow(0 0 5px rgba(252, 238, 10, 0.5));
+}
+.app-icon-sprite--magenta {
+    filter: drop-shadow(0 0 5px rgba(255, 42, 109, 0.6));
 }
 .app-icon-cyan {
     fill: var(--neon-cyan);
@@ -143,6 +151,9 @@
 }
 .app-icon-magenta {
     fill: var(--neon-magenta);
+}
+.app-icon-white {
+    fill: var(--text-1);
 }
 .app-icon-label {
     font-family: var(--font-mono);
