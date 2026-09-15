@@ -36,6 +36,7 @@ import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { Icons } from './icons.js';
 import { appPlaceholderHtml } from './AppPlaceholder.js';
+import { hostArtHtml } from './HostArt.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import {
     loadCachedApps,
@@ -1331,7 +1332,8 @@ export class HostListView {
             cont.innerHTML = `<div class="host-apps-msg">${t('apps.empty')}</div>`;
             return;
         }
-        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a)).join('')}</div>`;
+        const devices = apps.map((a) => a.device).filter(Boolean);
+        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a, devices)).join('')}</div>`;
         this._wireBoxArt(cont, uuid);
     }
 
@@ -1404,21 +1406,26 @@ export class HostListView {
         });
     }
 
-    renderApp(app) {
+    renderApp(app, devices = []) {
         // The whole card is the launch action. role/tabindex keep it
         // keyboard-accessible (Enter/Space handled by the keydown delegate).
+        //
+        // A native host's app is a display, and the host says what it is: the
+        // card draws that machine, on no frame. Every other host keeps its
+        // cover art, and its own stand-in when there is none.
+        const image = app.device
+            ? hostArtHtml(app.device, devices)
+            : app.boxArtUrl
+              ? `<img src="${this.esc(app.boxArtUrl)}"
+                               alt="${this.esc(app.displayName)}"
+                               loading="lazy">`
+              : appPlaceholderHtml(app.id, t);
         return `
             <div class="app-card" data-app-id="${app.id}"
                  role="button" tabindex="0"
                  aria-label="${this.esc(t('apps.launchAria', { name: app.displayName }))}">
-                <div class="app-card-image">
-                    ${
-                        app.boxArtUrl
-                            ? `<img src="${this.esc(app.boxArtUrl)}"
-                               alt="${this.esc(app.displayName)}"
-                               loading="lazy">`
-                            : appPlaceholderHtml(app.id, t)
-                    }
+                <div class="app-card-image${app.device ? ' app-card-image--host' : ''}">
+                    ${image}
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
             </div>

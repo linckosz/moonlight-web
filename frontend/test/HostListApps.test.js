@@ -341,6 +341,52 @@ describe('HostListView app grid', () => {
         });
     });
 
+    describe('a native host, whose apps are the displays of its machine', () => {
+        const laptopPanel = {
+            os: 'windows',
+            display: 'builtin',
+            model: '',
+            key: '\\\\?\\DISPLAY#SHP14D2',
+            battery: true,
+        };
+
+        it('draws the machine instead of cover art or the arcade stand-in', () => {
+            remember([{ id: 1, name: 'Display 1', boxArt: false, device: laptopPanel }]);
+            BackendClient.getAppList.mockReturnValue(new Promise(() => {}));
+            mount();
+
+            const frame = grid(container).querySelector('.app-card-image');
+            expect(frame.classList.contains('app-card-image--host')).toBe(true);
+            expect(frame.querySelector('.app-icon--host').dataset.art).toMatch(/^windows-laptop:/);
+            expect(frame.querySelector('img')).toBeNull();
+            expect(frame.querySelector('.app-icon-label')).toBeNull();
+        });
+
+        it('keeps an app without a device on its own art', () => {
+            remember([{ id: 1, name: 'Desktop', boxArt: false }]);
+            BackendClient.getAppList.mockReturnValue(new Promise(() => {}));
+            mount();
+
+            const frame = grid(container).querySelector('.app-card-image');
+            expect(frame.classList.contains('app-card-image--host')).toBe(false);
+            expect(frame.querySelector('.app-icon[data-sprite]')).not.toBeNull();
+        });
+
+        it('repaints when the host starts describing its displays', async () => {
+            remember([{ id: 1, name: 'Display 1', boxArt: false }]);
+            BackendClient.getAppList.mockResolvedValue(
+                ok([{ id: 1, name: 'Display 1', boxArt: false, device: laptopPanel }]),
+            );
+            mount();
+            expect(grid(container).querySelector('.app-icon--host')).toBeNull();
+            await settle();
+
+            expect(grid(container).querySelector('.app-icon--host')).not.toBeNull();
+            const cached = JSON.parse(localStorage.getItem('mw-host-apps'))['host-a'].apps[0];
+            expect(cached.device).toEqual(laptopPanel);
+        });
+    });
+
     describe('an app that no longer exists on the host', () => {
         it('is reported gone, and disappears from the grid', async () => {
             remember([

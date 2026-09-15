@@ -155,6 +155,28 @@
 .app-icon-white {
     fill: var(--text-1);
 }
+
+/* ── Native host: the machine a display belongs to (HostArt.js) ────────── */
+/* No frame, no scanlines: the machine stands on the card itself. */
+.app-card-image--host,
+.app-card-image--host .app-icon {
+    background: transparent;
+}
+.app-card-image--host .app-icon::after {
+    display: none;
+}
+/* The picture is wider than it is tall; one canvas for every device keeps a
+   pixel the same size on every card. */
+.app-icon--host .app-icon-sprite {
+    width: 92%;
+    filter: drop-shadow(0 0 4px rgba(90, 190, 170, 0.26));
+}
+.app-icon--windows .app-icon-sprite {
+    filter: drop-shadow(0 0 4px rgba(80, 150, 230, 0.3));
+}
+.app-icon--macos .app-icon-sprite {
+    filter: drop-shadow(0 0 4px rgba(170, 140, 230, 0.28));
+}
 .app-icon-label {
     font-family: var(--font-mono);
     font-size: 9cqi;

@@ -27,6 +27,10 @@ export class App {
         // host that knows it has none — the native host, whose "apps" are
         // monitors — says so. An older host that says nothing keeps asking.
         this.hasBoxArt = data.boxArt !== false;
+        // Only the native host sends it: what the display is (OS, built-in or
+        // external screen, monitor name, a stable key), so the card can draw the
+        // machine instead of cover art. See ui/HostArt.js.
+        this.device = data.device && typeof data.device === 'object' ? data.device : null;
         this.hostUuid = hostUuid;
     }
 
