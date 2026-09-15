@@ -598,6 +598,15 @@ def analyse(results_dir):
                              f"p90 {pr.get('p90')} ms, min {pr.get('min')}, max {pr.get('max')}")
         e["flag"] = flag
 
+    # The flag rules above read inventory.json, which discover.ps1 writes at the
+    # start of the ENCODER half - often against another instance than the one the
+    # browser half streams from, since the flag is armed at startup and has to be
+    # switched on for that half alone. A matrix whose passes carry samples had
+    # the flag armed, whatever the inventory saw; saying otherwise sends
+    # somebody to edit a settings file for nothing.
+    if any((e.get("probe") or {}).get("n") for e in passes):
+        anomalies[:] = [a for a in anomalies if a["kind"] not in ("probe-off", "probe-not-armed")]
+
     # Reproducibility: the reference replayed head and tail.
     head = next((e for e in passes if e["id"] == "ref-head"), None)
     tail = next((e for e in passes if e["id"] == "ref-tail"), None)
@@ -1018,16 +1027,18 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
     # ── The other chapters of the same campaign ─────────────────────────────
     if chapters or fleet:
         parts.append("<h2>The rest of the campaign</h2>")
-        parts.append('<p class="note">Everything below was measured in the same session, on the '
-                     'same binary, and is kept apart only because each chapter answers a '
-                     'different question. Their anomalies are in the list at the end, named '
-                     'after the chapter they came from.</p>')
-    for label, prov, ps in chapters:
+        parts.append('<p class="note">Everything below was measured on the binary its card names, '
+                     'and is kept apart only because each chapter answers a different question. '
+                     'Their anomalies are in the list at the end, named after the chapter they '
+                     'came from.</p>')
+    for label, prov, ps, note in chapters:
         parts.append('<div class="card">')
         parts.append(f"<h3>{esc(label)}</h3>")
         tier = str((prov or {}).get("tier") or "?")
         sha = str((prov or {}).get("sha256") or "?")
         parts.append(f'<p class="note">binary: {esc(tier)} · digest <code>{esc(sha)}</code></p>')
+        if note:
+            parts.append(f"<p>{esc(note)}</p>")
         parts.append(chapter_table(ps))
         parts.append("</div>")
     for label, path in fleet:
@@ -1085,11 +1096,22 @@ def main():
         if not d:
             label, d = os.path.basename(spec.rstrip("/\\")), spec
         inv2, mat2, ps2, an2, _, _, prov2, _ = analyse(d)
-        chapters.append((label, prov2, ps2))
+        # note.txt: what the person who ran the chapter knows and the rules do not -
+        # when it was measured, on which topology, and a cause already established.
+        # A drift card with a generic "find what moved" under a chapter whose cause
+        # has been found costs the reader the investigation a second time.
+        note = ""
+        note_path = os.path.join(d, "note.txt")
+        if os.path.exists(note_path):
+            with open(note_path, encoding="utf-8-sig") as f:
+                note = f.read().strip()
+        chapters.append((label, prov2, ps2, note))
         # An anomaly is only readable next to the chapter it came from: the same
         # rule fires for very different reasons on an AMD desktop and a MacBook.
         for a in an2:
             a["title"] = f"[{label}] {a['title']}"
+            if note and a["kind"].startswith("reference-drift"):
+                a["mitigation"] = "Known cause, from the chapter note: " + note
             anomalies.append(a)
 
     fleet = []

@@ -28,6 +28,7 @@ param(
     [int] $X = 0, [int] $Y = 0, [int] $W = 2560, [int] $H = 1440,
     [string] $ChromeProfile = '',
     [int] $DebugPort = 0,
+    [string] $AdapterLuid = '',
     [switch] $Verify
 )
 Add-Type @"
@@ -102,6 +103,15 @@ if ($DebugPort -gt 0) {
     $chromeArgs += "--remote-debugging-port=$DebugPort"
     $chromeArgs += "--ignore-certificate-errors"
     $chromeArgs += "--unsafely-treat-insecure-origin-as-secure=$Url"
+}
+if ($AdapterLuid) {
+    # Chrome renders every window on ONE adapter - the one driving the primary
+    # screen - whatever screen the window sits on. When that adapter is the
+    # host GPU under test, the client kiosk decodes and draws on it too, and the
+    # campaign measures a card doing both ends of the stream: 42% of an Arc A380
+    # went to the client, plus cross-adapter copies to reach the other screen.
+    # Decimal "high,low": 0x12419 is "0,74777". The hex form is ignored silently.
+    $chromeArgs += "--use-adapter-luid=$AdapterLuid"
 }
 $chromeArgs += $Url
 Start-Process -FilePath $chrome -ArgumentList $chromeArgs

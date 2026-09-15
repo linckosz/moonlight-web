@@ -37,6 +37,10 @@ param(
     [string] $Tile = '',
     [string] $ClientRect = '',
     [int]    $DebugPort = 9333,
+    # Pin the CLIENT kiosk to another GPU than the one under test (kiosk.ps1
+    # -AdapterLuid): a real client is another machine, and without this it
+    # shares the host's card. Decimal "high,low".
+    [string] $ClientAdapterLuid = '',
     [int]    $Clicks = 10,
     [int]    $SpacingMs = 1500,
     [switch] $NoProbe,
@@ -150,14 +154,25 @@ if (-not $Tile) {
 
 # ── The two kiosks and the click target ─────────────────────────────────────
 # Content first: the client kiosk raises itself last, so it keeps the focus.
-$content = 'file:///' + ((Join-Path $PSScriptRoot 'content\cod.html') -replace '\\', '/')
-$clip = Join-Path $env:USERPROFILE '.mw-bench\content\cod.webm'
-if (Test-Path $clip) {
-    $content += '?src=' + [uri]::EscapeDataString('file:///' + ($clip -replace '\\', '/'))
+# The content is the one the ENCODER half played, as matrix.json records it. It
+# used to be the clip unconditionally, so a matrix run with -Content scroll
+# measured its encoder on a canvas and its click-to-photon on the clip: two
+# different loads under one name. On a small GPU that also drives the screen
+# that difference is the whole result - decoding the 1440p60 clip beside the
+# encoder is what broke the Arc A380 matrix, and the scroll matrix holds.
+$contentName = Get-Prop $matrix 'content' 'cod'
+if (-not $contentName) { $contentName = 'cod' }
+$content = 'file:///' + ((Join-Path $PSScriptRoot "content\$contentName.html") -replace '\\', '/')
+if ($contentName -eq 'cod') {
+    $clip = Join-Path $env:USERPROFILE '.mw-bench\content\cod.webm'
+    if (Test-Path $clip) {
+        $content += '?src=' + [uri]::EscapeDataString('file:///' + ($clip -replace '\\', '/'))
+    }
 }
+Write-Host "content      : $contentName"
 & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $content -X $kx -Y $ky -W $kw -H $kh | Out-Host
 & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $AppUrl -X $cx -Y $cy -W $cw -H $ch `
-    -DebugPort $DebugPort | Out-Host
+    -DebugPort $DebugPort -AdapterLuid $ClientAdapterLuid | Out-Host
 
 # -like '*click-target.ps1*' matches the killing shell's own command line: exclude $PID.
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
@@ -190,13 +205,16 @@ function Stop-Stream {
 # exist. Two seconds was enough on a warm profile and not on a cold one, and the
 # failure is a throw on the FIRST pass - "no element with text 'Display 1'" -
 # which is indistinguishable from a host that is not paired at all.
-$ready = $false
-for ($i = 0; $i -lt 40; $i++) {
-    $txt = Cdp eval "JSON.stringify(document.body ? document.body.innerText : '')"
-    if ($txt -match [regex]::Escape($Tile)) { $ready = $true; break }
-    Start-Sleep -Seconds 2
+function Wait-Tile {
+    param([int] $Tries = 40)
+    for ($i = 0; $i -lt $Tries; $i++) {
+        $txt = Cdp eval "JSON.stringify(document.body ? document.body.innerText : '')"
+        if ($txt -match [regex]::Escape($Tile)) { return $true }
+        Start-Sleep -Seconds 2
+    }
+    return $false
 }
-if (-not $ready) {
+if (-not (Wait-Tile)) {
     throw "the app at $AppUrl never showed a tile named '$Tile' - is the host paired in THIS instance? (cdp.py --port $DebugPort tiles says what is on the page)"
 }
 Write-Host "app ready    : tile '$Tile' is on the page"
@@ -233,7 +251,14 @@ try {
         if ($applied -notmatch [regex]::Escape($pass.settings.video_codec)) {
             Write-Warning "  settings did not take: $($applied.Trim())"
         }
-        Start-Sleep -Seconds 2
+        # settingsfile ends with a reload, and the same cold-start wait applies to
+        # the page that comes back: on an instance started a minute earlier the
+        # host list had not arrived two seconds later, and the pass died on "no
+        # element with text 'Display 1'" right after the tile had been seen.
+        if (-not (Wait-Tile -Tries 20)) {
+            $seen = (Cdp eval "JSON.stringify((document.body ? document.body.innerText : '').slice(0, 300))").Trim()
+            throw "after the settings reload the tile '$Tile' never came back at $AppUrl - the page shows: $seen"
+        }
 
         # Twice if the first only hovered, then the self-stream confirmation.
         Cdp launch $Tile | Out-Null
