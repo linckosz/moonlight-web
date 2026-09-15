@@ -60,7 +60,8 @@ const MATS = {
 const OUTLINE = '#080b0f';
 /** Every picture shares this canvas, so a pixel is the same size in all of them. */
 export const CANVAS_W = 44;
-export const CANVAS_H = 41;
+/** Taller than any laptop: the width sets the pixel size, the height is free. */
+export const CANVAS_H = 54;
 
 function box(x0, x1, y0, y1, z0, z1, mat, opt = {}) {
     return { x0, x1, y0, y1, z0, z1, mat, r: opt.r || 0, front: opt.front, top: opt.top };
@@ -74,9 +75,10 @@ function inside(p, x, y, z) {
     return (x - cx) ** 2 + (y - cy) ** 2 <= p.r * p.r;
 }
 
-const RANGE = 34;
+const RANGE = 44;
 const STEP = 0.2;
-const T_MAX = 30;
+/** Above the tallest device: a ray starts here and walks down. */
+const T_MAX = 40;
 
 /** Rasterises a device. Returns its pixels, floor shadow and bounding box. */
 export function renderDevice(prims) {
@@ -295,19 +297,31 @@ function gnome(a, b, W, H) {
     return f < 0.35 ? '#4b8f93' : f < 0.7 ? '#3d7a80' : '#30666d';
 }
 
-function terminal(a, b, W) {
+/** Lines of text as seen from afar: every other row, lengths that never repeat in step. */
+const TERMINAL_LINES = [9, 6, 11, 4, 13, 7, 10, 5, 12, 8];
+const CODE_LINES = [
+    [1, 8],
+    [3, 11],
+    [3, 7],
+    [5, 9],
+    [5, 13],
+    [3, 6],
+    [1, 5],
+    [1, 10],
+    [3, 12],
+    [1, 4],
+];
+
+function terminal(a, b, W, H) {
     if (b < 1) return '#0f1215';
     const t = tux(a, b, W - 8, 1.5);
     if (t) return t;
-    for (const [row, len] of [
-        [3, 9],
-        [5, 6],
-        [7, 11],
-        [9, 4],
-    ]) {
-        if (Math.floor(b) === row && a >= 1.5 && a < 1.5 + len) {
-            return row === 9 ? '#e8b23a' : '#69c98a';
-        }
+    const row = Math.floor(b);
+    const n = (row - 3) / 2;
+    if (row >= 3 && Number.isInteger(n) && row < H - 1) {
+        const last = row + 2 >= H - 1;
+        const len = TERMINAL_LINES[n % TERMINAL_LINES.length];
+        if (a >= 1.5 && a < 1.5 + (last ? 4 : len)) return last ? '#e8b23a' : '#69c98a';
     }
     return '#161c22';
 }
@@ -315,15 +329,11 @@ function terminal(a, b, W) {
 /** The default screen: the Linux monitor's wallpaper with lines of code on it. */
 function code(a, b, W, H) {
     if (b < 1) return '#0f1215';
-    for (const [row, x, len] of [
-        [3, 1, 8],
-        [5, 3, 11],
-        [7, 3, 7],
-        [9, 5, 9],
-        [11, 1, 5],
-    ]) {
-        if (Math.floor(b) === row && a >= x && a < x + len)
-            return row === 7 ? '#e8b23a' : '#d3ece6';
+    const row = Math.floor(b);
+    const n = (row - 3) / 2;
+    if (row >= 3 && Number.isInteger(n) && row < H - 1) {
+        const [x, len] = CODE_LINES[n % CODE_LINES.length];
+        if (a >= x && a < x + len) return n % CODE_LINES.length === 2 ? '#e8b23a' : '#d3ece6';
     }
     const f = (b - 1) / (H - 1);
     return f < 0.35 ? '#4b8f93' : f < 0.7 ? '#3d7a80' : '#30666d';
@@ -407,25 +417,112 @@ const ARCADE_ROWS = {
 export const WALLPAPERS = Object.keys(ARCADE_ROWS);
 const ARCADE_COLOURS = { y: '#fcee0a', c: '#00e5ff', m: '#ff2a6d', w: '#eafdff', d: '#7d7400' };
 
-const windowsArcade = (sprite) => (a, b, W, H) => {
-    const bar = 1.2;
-    if (b >= H - bar) {
-        const c = W / 2;
-        if (inRect(a, b, c - 3, H - 1, 1, 1)) return '#5fb0ff';
-        if (inRect(a, b, c - 1, H - 1, 1, 1)) return '#d8dfe6';
-        if (inRect(a, b, c + 1, H - 1, 1, 1)) return '#e3a53d';
-        return '#1c2533';
-    }
-    const rows = ARCADE_ROWS[sprite];
-    const x = Math.floor((W - rows[0].length) / 2);
-    const y = Math.floor((H - bar - rows.length) / 2);
-    const i = Math.floor(b - y);
-    const j = Math.floor(a - x);
-    if (i >= 0 && i < rows.length && j >= 0 && j < rows[0].length && ARCADE_COLOURS[rows[i][j]]) {
-        return ARCADE_COLOURS[rows[i][j]];
-    }
-    return '#111a2b';
+/**
+ * The attract-mode line under each sprite on a monitor, and its colour. Short
+ * enough for a 3×5 pixel font on a 38-pixel screen: "PRESS START" needs 40,
+ * so the ship says what many cabinets said anyway.
+ */
+export const ARCADE_LINES = {
+    invader: ['INSERT COIN', 'c'],
+    ghost: ['READY!', 'y'],
+    joystick: ['PLAYER 1', 'c'],
+    ship: ['PUSH START', 'y'],
+    coin: ['CREDIT 01', 'c'],
 };
+
+/** A 3×5 pixel font, proportional where it helps: I, 1 and ! are narrower, N wider. */
+export const FONT = {
+    A: ['.#.', '#.#', '###', '#.#', '#.#'],
+    C: ['###', '#..', '#..', '#..', '###'],
+    D: ['##.', '#.#', '#.#', '#.#', '##.'],
+    E: ['###', '#..', '##.', '#..', '###'],
+    H: ['#.#', '#.#', '###', '#.#', '#.#'],
+    I: ['#', '#', '#', '#', '#'],
+    L: ['#..', '#..', '#..', '#..', '###'],
+    N: ['#..#', '##.#', '#.##', '#..#', '#..#'],
+    O: ['###', '#.#', '#.#', '#.#', '###'],
+    P: ['###', '#.#', '###', '#..', '#..'],
+    R: ['##.', '#.#', '##.', '#.#', '#.#'],
+    S: ['###', '#..', '###', '..#', '###'],
+    T: ['###', '.#.', '.#.', '.#.', '.#.'],
+    U: ['#.#', '#.#', '#.#', '#.#', '###'],
+    Y: ['#.#', '#.#', '.#.', '.#.', '.#.'],
+    0: ['###', '#.#', '#.#', '#.#', '###'],
+    1: ['.#', '##', '.#', '.#', '.#'],
+    '!': ['#', '#', '#', '.', '#'],
+    ' ': ['', '', '', '', ''],
+};
+
+/**
+ * The pixels of a line of text: five strings of '#' and '.', one column between
+ * glyphs, and for every column the column its glyph starts at.
+ */
+export function textRows(text) {
+    const rows = ['', '', '', '', ''];
+    const starts = [];
+    [...text].forEach((ch, n) => {
+        const glyph = FONT[ch] || FONT[' '];
+        if (n) {
+            for (let r = 0; r < 5; r++) rows[r] += '.';
+            starts.push(starts.length);
+        }
+        const start = rows[0].length;
+        for (let r = 0; r < 5; r++) rows[r] += glyph[r];
+        for (let c = 0; c < glyph[0].length; c++) starts.push(start);
+    });
+    return Object.assign(rows, { starts });
+}
+
+/**
+ * The row of a pixel-art block drawn upright on a screen seen in isometry.
+ *
+ * On a front face a screen row is b + a/2, so a block sampled by b alone is
+ * sheared: its horizontal strokes break into a staircase in the middle of a
+ * letter. Measured from the block's own left column instead, each block stays
+ * upright and whole, and only the line of blocks follows the slope.
+ */
+const uprightRow = (a, b, top, left) => Math.floor(b - top + (a - left) / 2);
+
+const windowsArcade =
+    (sprite, { line = false } = {}) =>
+    (a, b, W, H) => {
+        const bar = 1.2;
+        if (b >= H - bar) {
+            const c = W / 2;
+            if (inRect(a, b, c - 3, H - 1, 1, 1)) return '#5fb0ff';
+            if (inRect(a, b, c - 1, H - 1, 1, 1)) return '#d8dfe6';
+            if (inRect(a, b, c + 1, H - 1, 1, 1)) return '#e3a53d';
+            return '#1c2533';
+        }
+        const rows = ARCADE_ROWS[sprite];
+        const [label, labelColour] = ARCADE_LINES[sprite];
+        const text = line ? textRows(label) : null;
+        // The sprite and its line are centred as one block.
+        const block = rows.length + (text ? 2 + text.length : 0);
+        const y = Math.floor((H - bar - block) / 2);
+        const x = Math.floor((W - rows[0].length) / 2);
+        const j = Math.floor(a - x);
+        const i = line ? uprightRow(a, b, y, x) : Math.floor(b - y);
+        if (
+            i >= 0 &&
+            i < rows.length &&
+            j >= 0 &&
+            j < rows[0].length &&
+            ARCADE_COLOURS[rows[i][j]]
+        ) {
+            return ARCADE_COLOURS[rows[i][j]];
+        }
+        if (text) {
+            const ty = y + rows.length + 2;
+            const tx = Math.floor((W - text[0].length) / 2);
+            const tj = Math.floor(a - tx);
+            if (tj >= 0 && tj < text[0].length) {
+                const ti = uprightRow(a, b, ty, tx + text.starts[tj]);
+                if (ti >= 0 && ti < 5 && text[ti][tj] === '#') return ARCADE_COLOURS[labelColour];
+            }
+        }
+        return '#111a2b';
+    };
 
 const bezel =
     (screen, { notch = false, chin = 0 } = {}) =>
@@ -454,14 +551,28 @@ const laptop = (mat, screen, { lid = 17, notch = false, trackpoint = false } = {
     box(0, 24, 0, 16, 0, 1.6, mat, { top: keyboard(trackpoint) }),
 ];
 
-const monitor = (mat, screen, { w = 24, z0 = 6, z1 = 20 } = {}) => {
+/** A monitor on a stand. `z0` is where the panel's bottom edge sits. */
+const monitor = (mat, screen, { w = 38, h = 23, z0 = 5 } = {}) => {
     const c = w / 2;
     return [
-        box(0, w, 2.2, 3.6, z0, z1, mat, { front: bezel(screen) }),
-        box(c - 1.2, c + 1.2, 1, 2.2, 1, 12, mat),
-        box(c - 5, c + 5, 0, 7, 0, 1, mat),
+        box(0, w, 2.2, 3.6, z0, z0 + h, mat, { front: bezel(screen) }),
+        box(c - 1.4, c + 1.4, 1, 2.2, 1, z0 + 6, mat),
+        box(c - 6, c + 6, 0, 8, 0, 1, mat),
     ];
 };
+
+/** The same device, bigger: geometry only, so screen content keeps its pixel size. */
+const scaled = (prims, k) =>
+    prims.map((p) => ({
+        ...p,
+        x0: p.x0 * k,
+        x1: p.x1 * k,
+        y0: p.y0 * k,
+        y1: p.y1 * k,
+        z0: p.z0 * k,
+        z1: p.z1 * k,
+        r: p.r * k,
+    }));
 
 const miniPc = (mat, badge) => [box(0, 17, 0, 13, 0, 8, mat, { r: 1.2, front: badge })];
 
@@ -484,41 +595,52 @@ const linuxBadge = (a, b, W, H) =>
 /** Every picture, by id. Windows screens take the arcade sprite as a parameter. */
 const DEVICES = {
     'windows-laptop': (w) => laptop('gray', windowsArcade(w), { lid: 18.6 }),
-    'windows-monitor': (w) => monitor('black', windowsArcade(w), { z0: 5, z1: 21.5 }),
-    'windows-monitor-4x3': (w) => [
-        box(0, 20, 2.2, 3.6, 4, 21, 'black', { front: bezel(windowsArcade(w)) }),
-        box(8.8, 11.2, 1, 2.2, 1, 11, 'black'),
-        box(5, 15, 0, 7, 0, 1, 'black'),
-    ],
+    // Monitors are drawn as big as the canvas allows beside a laptop, which
+    // leaves room for the attract-mode line under the sprite.
+    'windows-monitor': (w) => monitor('black', windowsArcade(w, { line: true }), { w: 40, h: 25 }),
+    'windows-monitor-4x3': (w) =>
+        monitor('black', windowsArcade(w, { line: true }), { w: 40, h: 30, z0: 4 }),
     'windows-mini': () => miniPc('black', windowsBadge),
     'linux-laptop': () => laptop('black', gnome, { trackpoint: true }),
     'linux-monitor': () => monitor('graph', gnome),
-    'linux-monitor-terminal': () => monitor('black', terminal, { z1: 21 }),
+    'linux-monitor-terminal': () => monitor('black', terminal, { h: 24 }),
     'linux-mini': () => miniPc('graph', linuxBadge),
     macbook: () => laptop('alu', macos, { notch: true }),
-    'imac-g3': () => [
-        box(1, 21, 7, 17, 4, 21, 'ice', {
-            r: 2.5,
-            front: (a, b, W, H) =>
-                inRect(a, b, 3, 2.5, W - 6, H - 6.5)
-                    ? os9(a - 3, b - 2.5, W - 6)
-                    : inRect(a, b, 2, 1.5, W - 4, H - 4.5)
-                      ? '#9aa4aa'
-                      : null,
-        }),
-        box(3, 19, 1, 9, 5, 19, 'bondi', { r: 4 }),
-        box(5, 17, 6, 15, 0, 4, 'bondi', { r: 2 }),
-    ],
-    'imac-alu': () => [
-        box(0, 26, 4, 6.4, 4, 22, 'alu', { front: bezel(macos, { chin: 3.5 }) }),
-        box(9, 17, 1, 4, 1, 11, 'alu'),
-        box(9, 17, 0, 9, 0, 1, 'alu'),
-    ],
-    'studio-display': () => [
-        box(0, 26, 4, 6.2, 7, 22, 'alu', { front: bezel(macos) }),
-        box(10, 16, 1, 4, 1, 11, 'alu'),
-        box(10, 16, 0, 9, 0, 0.9, 'alu'),
-    ],
+    'imac-g3': () =>
+        scaled(
+            [
+                box(1, 21, 7, 17, 4, 21, 'ice', {
+                    r: 2.5,
+                    front: (a, b, W, H) =>
+                        inRect(a, b, 4, 3, W - 8, H - 8)
+                            ? os9(a - 4, b - 3, W - 8)
+                            : inRect(a, b, 3, 2, W - 6, H - 6)
+                              ? '#9aa4aa'
+                              : null,
+                }),
+                box(3, 19, 1, 9, 5, 19, 'bondi', { r: 4 }),
+                box(5, 17, 6, 15, 0, 4, 'bondi', { r: 2 }),
+            ],
+            1.3,
+        ),
+    'imac-alu': () =>
+        scaled(
+            [
+                box(0, 26, 4, 6.4, 4, 22, 'alu', { front: bezel(macos, { chin: 4.5 }) }),
+                box(9, 17, 1, 4, 1, 11, 'alu'),
+                box(9, 17, 0, 9, 0, 1, 'alu'),
+            ],
+            1.4,
+        ),
+    'studio-display': () =>
+        scaled(
+            [
+                box(0, 26, 4, 6.2, 7, 22, 'alu', { front: bezel(macos) }),
+                box(10, 16, 1, 4, 1, 11, 'alu'),
+                box(10, 16, 0, 9, 0, 0.9, 'alu'),
+            ],
+            1.4,
+        ),
     'mac-mini': () => [
         box(0, 20, 0, 20, 0, 4.5, 'alu', {
             r: 2,

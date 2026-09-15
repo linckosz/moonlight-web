@@ -5,6 +5,9 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+    ARCADE_LINES,
+    FONT,
+    textRows,
     CANVAS_H,
     CANVAS_W,
     DEVICE_IDS,
@@ -133,6 +136,42 @@ describe('HostArt', () => {
                         expect(y + 1, label).toBeLessThanOrEqual(CANVAS_H);
                     }
                 }
+            }
+        });
+
+        it('gives every sprite an attract-mode line that fits a monitor and its font', () => {
+            expect(Object.keys(ARCADE_LINES)).toEqual(WALLPAPERS);
+            for (const [sprite, [line]] of Object.entries(ARCADE_LINES)) {
+                // A 40-pixel panel, less its one-pixel bezel on each side.
+                expect(textRows(line)[0].length, sprite).toBeLessThanOrEqual(38);
+                for (const ch of line) expect(FONT, `${sprite} "${ch}"`).toHaveProperty(ch);
+            }
+            // One column between glyphs, and each column knows where its glyph starts.
+            const rows = textRows('IN');
+            expect(rows[0]).toBe('#.#..#');
+            expect(rows.starts).toEqual([0, 1, 2, 2, 2, 2]);
+        });
+
+        it('draws the monitors about as big as the laptops beside them', () => {
+            // Drawn width, floor shadow left out.
+            const width = (id) => {
+                const body = hostArtSvg(id, 'ship').replace(
+                    /<path d="[^"]*" fill="#000"[^>]*>/,
+                    '',
+                );
+                const runs = [...body.matchAll(/M(\d+) \d+h(\d+)/g)].map((m) => [+m[1], +m[2]]);
+                return Math.max(...runs.map(([x, w]) => x + w)) - Math.min(...runs.map(([x]) => x));
+            };
+            const laptop = width('windows-laptop');
+            for (const id of [
+                'windows-monitor',
+                'windows-monitor-4x3',
+                'linux-monitor',
+                'imac-alu',
+                'studio-display',
+                'default-monitor',
+            ]) {
+                expect(width(id), id).toBeGreaterThanOrEqual(laptop - 2);
             }
         });
 
