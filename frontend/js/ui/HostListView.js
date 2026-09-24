@@ -952,11 +952,18 @@ export class HostListView {
         // discovery order is the network's opinion, and it puts the machine
         // played on every evening under three boxes seen once. The score only
         // moves on a launch, so the list does not reshuffle under the cursor;
-        // hosts never launched all score 0 and the stable sort leaves them in
-        // discovery order behind the rest.
+        // hosts never launched all score 0 and fall back to their name, so a
+        // fresh install — where nothing has been launched yet — lists them
+        // alphabetically rather than in whatever order they answered.
         const usage = hostUsageRanker();
         this.hosts.sort(
-            (a, b) => Number(b.isPaired) - Number(a.isPaired) || usage(b.uuid) - usage(a.uuid),
+            (a, b) =>
+                Number(b.isPaired) - Number(a.isPaired) ||
+                usage(b.uuid) - usage(a.uuid) ||
+                a.displayName.localeCompare(b.displayName, undefined, {
+                    sensitivity: 'base',
+                    numeric: true,
+                }),
         );
 
         const currentUuids = new Set(this.hosts.map((h) => h.uuid));
