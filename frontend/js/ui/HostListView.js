@@ -952,14 +952,19 @@ export class HostListView {
         // discovery order is the network's opinion, and it puts the machine
         // played on every evening under three boxes seen once. The score only
         // moves on a launch, so the list does not reshuffle under the cursor;
-        // hosts never launched all score 0 and fall back to their name, so a
-        // fresh install — where nothing has been launched yet — lists them
-        // alphabetically rather than in whatever order they answered.
+        // hosts never launched all score 0 and fall back to the default order:
+        // the native host (always there, the one a fresh install streams
+        // from), then the available hosts on this same PC, then the rest by
+        // name rather than in whatever order they answered.
         const usage = hostUsageRanker();
+        const isNative = (h) => (h.backendType === 'native' ? 1 : 0);
+        const isHere = (h) => (h.isLocalHost && h.isAvailable ? 1 : 0);
         this.hosts.sort(
             (a, b) =>
                 Number(b.isPaired) - Number(a.isPaired) ||
                 usage(b.uuid) - usage(a.uuid) ||
+                isNative(b) - isNative(a) ||
+                isHere(b) - isHere(a) ||
                 a.displayName.localeCompare(b.displayName, undefined, {
                     sensitivity: 'base',
                     numeric: true,
