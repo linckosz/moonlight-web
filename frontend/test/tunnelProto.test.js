@@ -8,10 +8,16 @@
  * says which revision it speaks (`?v=`) and the server answers a page it will
  * not serve with a code rather than a hang-up that looks like the network. The
  * three constants — here, in hub.go and in RendezvousClient.cpp — are kept in
- * step by hand; this file pins what the page sends and what it says.
+ * step by hand; this file pins what the page sends and what it says, and that
+ * the three still agree.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 function memoryStorage() {
     const map = new Map();
@@ -109,5 +115,29 @@ describe('protocol revision', () => {
             expect(FakeWebSocket.last.sent.map((s) => JSON.parse(s).d.type)).toEqual(['hello']);
             FakeWebSocket.last = null;
         }
+    });
+});
+
+// One step taken by hand in three files. Bumping the app without the server
+// would ship an application every updated machine is refused with; bumping the
+// server alone would offer pages an addition nobody reads. Parsed from the
+// sources, since neither the Go nor the C++ constant is importable here.
+describe('the three copies of the revision', () => {
+    const constant = (file, pattern) => {
+        const m = readFileSync(join(REPO, ...file.split('/')), 'utf8').match(pattern);
+        if (!m) throw new Error(`no protocol revision found in ${file}`);
+        return Number(m[1]);
+    };
+
+    it('agree: the page, the host and the introduction server', () => {
+        const server = constant(
+            'deploy/powerdns/mw-rendezvous/hub.go',
+            /^const protoCurrent = (\d+)\r?$/m,
+        );
+        const host = constant(
+            'backend/src/network/RendezvousClient.cpp',
+            /^constexpr int kProto = (\d+);\r?$/m,
+        );
+        expect({ page: tunnelModule.PROTO, host }).toEqual({ page: server, host: server });
     });
 });
