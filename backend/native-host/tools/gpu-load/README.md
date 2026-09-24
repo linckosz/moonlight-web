@@ -100,7 +100,7 @@ mw-gpu-load --gpu 0:73665 --autostart --level 93
   19.3 ms of GPU a frame and 1/32 is 2.7 ms — the N95, 35 fps at level 1, can
   now be brought up to 45 instead of overloaded.
 
-## Calibrated levels (22/09/2026)
+## Calibrated levels (22/09/2026, N95 24/09)
 
 | GPU | Level at ~45 fps | GPU time |
 |---|---|---|
@@ -110,6 +110,7 @@ mw-gpu-load --gpu 0:73665 --autostart --level 93
 | Radeon 780M (UM790Pro, Ubuntu, Vulkan) | 248 | 21 ms |
 | Apple M1 Pro (Metal) | 24 | — |
 
+| Intel UHD Graphics (N95, mw-intel), 24/09 | 1.05 | 21 ms |
 A level only compares on the same machine and window size: the glow costs per
 pixel.
 
