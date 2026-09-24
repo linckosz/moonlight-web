@@ -35,7 +35,7 @@
 ///
 /// It is also a test signal. Square waves are unforgiving: a dropped or
 /// repeated buffer on the way to the client is a click nobody can miss. And the
-/// kick drum is on every beat, so the picture can flash on it (kickPulse) and
+/// kick drum is on every beat, so the picture can beat with it (kickPulse) and
 /// show whether sound and image arrive together.
 class ChipSong
 {
@@ -56,7 +56,7 @@ public:
     void blip(int direction) { m_blip.store(direction > 0 ? 1 : -1); }
 
     static qint64 songFrames();
-    /// How bright the picture's flash is at `frame` of the song (0..1): 1 when
+    /// How strong the picture's beat is at `frame` of the song (0..1): 1 when
     /// a kick hits, fading within a beat. A pure function of the score, so the
     /// render thread can ask it for the frame the speakers are playing now.
     static float kickPulse(qint64 frame);

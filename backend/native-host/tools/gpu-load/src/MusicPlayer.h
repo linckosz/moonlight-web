@@ -49,7 +49,7 @@ public:
     void stop();
     void blip(int direction);
 
-    /// The kick's flash for what the speakers play right now (0..1).
+    /// The kick's pulse for what the speakers play right now (0..1).
     float kickPulse() const;
 
     struct Stats

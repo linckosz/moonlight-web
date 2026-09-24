@@ -51,7 +51,7 @@ struct Uniforms
     float invViewProj[16];
     float camTime[4];  // eye xyz, time in seconds
     float params[4];   // raymarch steps, noise octaves, shells, level
-    float viewport[4]; // width, height, kick flash, unused
+    float viewport[4]; // width, height, kick pulse, unused
     float model[16];   // the orientation the client gives the knot
 };
 static_assert(sizeof(Uniforms) == 240, "std140 layout of the uniform block");

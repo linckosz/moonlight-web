@@ -14,7 +14,7 @@ layout(std140, binding = 0) uniform buf
     mat4 invViewProj;
     vec4 camTime; // eye xyz, time
     vec4 params;  // steps, octaves, shells, level
-    vec4 viewport; // width, height, kick flash (0..1), unused
+    vec4 viewport; // width, height, kick pulse (0..1), unused
     mat4 model;    // the orientation the client gives the knot
 };
 
@@ -74,7 +74,7 @@ void main()
         float line = min(cell.x, cell.y);
         float width = fwidth(line) * 1.5 + 0.004;
         float glow = smoothstep(width, 0.0, line) + 0.25 * exp(-line * 12.0);
-        col += mix(kMagenta, kCyan, 0.3) * glow * exp(-d * 0.07) * (1.0 + 0.8 * viewport.z);
+        col += mix(kMagenta, kCyan, 0.3) * glow * exp(-d * 0.07);
     }
 
     // The volumetric glow, inside a sphere around the knot.

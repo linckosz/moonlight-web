@@ -19,7 +19,7 @@ layout(std140, binding = 0) uniform buf
     mat4 invViewProj;
     vec4 camTime;
     vec4 params;
-    vec4 viewport; // width, height, kick flash (0..1), unused
+    vec4 viewport; // width, height, kick pulse (0..1), unused
     mat4 model;    // the orientation the client gives the knot
 };
 
@@ -47,8 +47,8 @@ void main()
     mat3 rot = rotY(dir * t * (0.35 + 0.013 * fs)) * rotX(0.4 * sin(t * 0.21 + fs * 0.17));
     // A ripple running along the tube: a little vertex work per shell.
     vec3 p = position + normal * 0.03 * sin(uv.x * 188.5 + t * 4.0 + fs);
-    // The kick swells the whole knot a little, like a heartbeat: the same
-    // pulse as the flash, so the eye can still match it against the sound.
+    // The kick swells the whole knot a little, like a heartbeat: on the
+    // client, the swell and the kick heard should land together.
     float beat = 1.0 + 0.045 * viewport.z;
     mat3 held = mat3(model);
     vWorld = held * (rot * (p * scale * beat));

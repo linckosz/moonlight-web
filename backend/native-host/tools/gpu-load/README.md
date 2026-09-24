@@ -37,10 +37,11 @@ It is a lab instrument: built on demand, never installed, never shipped.
     an audible click. The window counts the host's own underruns (`Music:
     playing, 60 ms buffered, 0 underruns`, and `audioUnderruns` in the JSON). A
     click heard on the client while the host counts none was made on the way.
-  - **Sync.** The knot's edges and the grid flash on every kick drum, and the
-    knot swells a little like a heartbeat, timed on what the audio device is
-    playing. On the client, flash and kick should land
-    together; a visible lag between them is the stream's audio/video offset.
+  - **Sync.** The knot swells a little on every kick drum, like a heartbeat,
+    timed on what the audio device is playing. On the client, swell and kick
+    should land together; a visible lag between them is the stream's
+    audio/video offset. (A flash of the edges did the same job until
+    24/09/2026 and was dropped: too harsh on the eyes.)
   - `--no-music` or the *Music* box turns it off.
 - **The client drives the knot.** The mouse turns it as it moves (a drag
   released while moving throws it); the arrow keys accelerate its spin, which
@@ -109,8 +110,8 @@ mw-gpu-load --gpu 0:73665 --autostart --level 93
 | NVIDIA RTX 5060 Ti | ~500 | 22 ms |
 | Radeon 780M (UM790Pro, Ubuntu, Vulkan) | 248 | 21 ms |
 | Apple M1 Pro (Metal) | 24 | — |
-
 | Intel UHD Graphics (N95, mw-intel), 24/09 | 1.05 | 21 ms |
+
 A level only compares on the same machine and window size: the glow costs per
 pixel.
 

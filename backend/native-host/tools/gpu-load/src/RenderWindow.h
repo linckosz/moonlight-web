@@ -59,7 +59,7 @@ public:
     void shutdown();
     /// The graphics API and adapter QRhi actually opened, once running.
     QString deviceText() const { return m_deviceText; }
-    /// Asked once a frame: how bright the kick's flash is (0..1).
+    /// Asked once a frame: how far the kick swells the knot (0..1).
     void setPulseSource(std::function<float()> source) { m_pulse = std::move(source); }
 
     /// What the client sent, counted since the run started.

@@ -43,7 +43,7 @@ constexpr int kPollMs = 5;
 /// Lives in the player's thread and keeps the device's buffer full ("push"
 /// mode). Pulling was tried first: Qt then reads the synth from a thread of its
 /// own and reports a play position (processedUSecs) that drifted by 24 ms a
-/// second and jumped back, so neither the flash nor an underrun count could be
+/// second and jumped back, so neither the picture's beat nor an underrun count could be
 /// built on it (22/09/2026). Pushing, the buffer's fill level says both.
 class MusicWorker : public QObject
 {
