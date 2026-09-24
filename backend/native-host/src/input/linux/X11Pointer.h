@@ -104,6 +104,8 @@ inline bool desktopToAbsoluteRange(int left, int top, int right, int bottom, int
 /// XWarpPointer puts it back. Both are X11 and only X11: under Wayland no client
 /// may read or move another client's pointer, by design, and there is no
 /// fallback to write — a Wayland host simply keeps the behaviour it has today.
+/// Xwayland's DISPLAY does not count: it answers with a stale position (see
+/// open()).
 ///
 /// ── Loaded, not linked ──────────────────────────────────────────────────────
 ///

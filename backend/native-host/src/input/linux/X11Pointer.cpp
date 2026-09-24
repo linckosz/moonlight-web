@@ -52,6 +52,22 @@ bool X11Pointer::open()
         return false;
     }
 
+    // A Wayland session sets DISPLAY too — for Xwayland, which only learns
+    // where the pointer is while it hovers one of its own windows. Anywhere
+    // else it keeps answering the last spot it saw, forever: measured on
+    // GNOME 42 (24/09/2026), 1280,720 on every query while the real pointer
+    // moved across the desktop. The re-centring detector took that frozen
+    // spot for a game warping the pointer back and turned every desktop
+    // position into a delta, so clicks drifted away from the viewer's pointer.
+    // Only a real X server knows where the pointer is.
+    const char* wayland = std::getenv("WAYLAND_DISPLAY");
+    const char* sessionType = std::getenv("XDG_SESSION_TYPE");
+    if ((wayland && *wayland != '\0') || (sessionType && std::string(sessionType) == "wayland")) {
+        log::debug(std::string("[native] input: DISPLAY \"") + display +
+                   "\" is Xwayland — its pointer is not the compositor's, not read");
+        return false;
+    }
+
     // RTLD_LOCAL so nothing else in this process picks up X symbols by accident;
     // RTLD_NOW so a truncated or mismatched library fails here, once, rather
     // than at the first pointer move.
