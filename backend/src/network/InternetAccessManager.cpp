@@ -17,6 +17,7 @@
 
 #include "InternetAccessManager.h"
 #include "RouterPortAllocator.h"
+#include "RouterPortPools.h"
 #include "UPNPClient.h"
 #include "common/Edition.h"
 #include "server/AppSettings.h"
@@ -87,9 +88,10 @@ void InternetAccessManager::setRouterPorts(RouterPortAllocator* routerPorts)
     // Eager discovery (deferred, off the main thread) so that upnp_available
     // is correctly reported even if Internet Access has never been enabled.
     // A LAN-only instance never maps a port, so it has no router to find
-    // (discover() says no there).
+    // (discover() says no there). Nor does one whose owner turned UPnP off:
+    // that switch means the router is not spoken to at all.
     QTimer::singleShot(2000, this, [this]() {
-        if (m_RouterPorts) m_RouterPorts->discover();
+        if (m_RouterPorts && m_Settings->upnpEnabled()) m_RouterPorts->discover();
     });
 }
 
@@ -318,6 +320,12 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("cert_key")] = m_Settings->certKey();
     obj[QStringLiteral("upnp_available")] =
         m_RouterPorts && m_RouterPorts->gatewayState() == RouterPortAllocator::GatewayState::Ready;
+    // What a router without UPnP should forward by hand: the stream block,
+    // UDP, each port to itself. The tunnel has no fixed port to give there —
+    // without a hole of its own it takes an ephemeral one.
+    obj[QStringLiteral("media_port_first")] = mw::routerports::kMediaBasePort;
+    obj[QStringLiteral("media_port_last")] =
+        mw::routerports::kMediaBasePort + mw::routerports::kMediaPortCount - 1;
     // Whether the host can reach its own public endpoint (router NAT hairpin).
     // Drives the host-machine redirect from https://localhost to the domain.
     obj[QStringLiteral("hairpin_reachable")] = m_HairpinReachable;

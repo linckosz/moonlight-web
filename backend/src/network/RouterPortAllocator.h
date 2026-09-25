@@ -31,6 +31,7 @@
 
 class AppSettings;
 class QThread;
+class QTimer;
 
 /**
  * @brief Every hole this host opens in the router, from one place.
@@ -75,7 +76,8 @@ public:
         /// Discovery in progress; claims queue behind it.
         Discovering,
         Ready,
-        /// No IGD answered. Claims fail at once; nothing to wait for.
+        /// No IGD answered. Claims fail at once; nothing to wait for. Looked
+        /// for again later on its own — see scheduleRediscovery().
         Missing,
     };
 
@@ -154,6 +156,11 @@ private:
                       const QString& gateway);
     /// Spawn the worker thread and start a discovery on it.
     void startWorker();
+    /// After a miss, look for the router again a little later, backing off
+    /// from half a minute to ten. A single miss used to stick until restart:
+    /// a host started at logon, before the network was up, or behind a router
+    /// that answered late once, showed "UPnP not available" all day.
+    void scheduleRediscovery();
     void onClaimed(quint64 token, const RouterPortCore::Result& result);
     void onRenewed(const QList<RouterPortCore::Lost>& lost);
     quint64 submit(RouterPortCore::Request request, QObject* context, Callback callback);
@@ -169,6 +176,10 @@ private:
     Worker* m_Worker = nullptr;
 
     GatewayState m_State = GatewayState::Unknown;
+    /// Discoveries missed in a row, for the back-off and for logging the
+    /// first miss only.
+    int m_Misses = 0;
+    QTimer* m_Rediscover = nullptr;
     QString m_PublicIp;
     QString m_LanIp;
     QString m_GatewayAddress;

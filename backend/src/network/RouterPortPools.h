@@ -107,4 +107,11 @@ constexpr int kRenewIntervalMs = 1800000;
 // browser's page would look dead.
 constexpr int kClaimWaitMs = 4000;
 
+// Looking for the router again after a discovery found none: half a minute
+// first (the network at logon, a router slow to answer once), doubling up to
+// ten minutes. Each look is one M-SEARCH of two seconds on the allocator's
+// thread.
+constexpr int kRediscoverFirstMs = 30000;
+constexpr int kRediscoverMaxMs = 600000;
+
 } // namespace mw::routerports

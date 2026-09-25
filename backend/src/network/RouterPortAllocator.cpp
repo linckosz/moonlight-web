@@ -253,11 +253,20 @@ void RouterPortAllocator::onDiscovered(bool ok, const QString& publicIp, const Q
 {
     if (!ok) {
         m_State = GatewayState::Missing;
-        Logger::info(QStringLiteral("[UPNP] No IGD — tunnel connections will rely on their "
-                                    "reflexive address, streams on STUN alone"));
+        if (m_Misses == 0)
+            Logger::info(QStringLiteral("[UPNP] No IGD — tunnel connections will rely on their "
+                                        "reflexive address, streams on STUN alone; looking "
+                                        "again in the background"));
+        ++m_Misses;
+        scheduleRediscovery();
         emit gatewayMissing();
         return;
     }
+    if (m_Misses > 0)
+        Logger::info(QStringLiteral("[UPNP] Gateway answered after %1 missed discover%2")
+                         .arg(m_Misses)
+                         .arg(m_Misses == 1 ? QStringLiteral("y") : QStringLiteral("ies")));
+    m_Misses = 0;
     m_State = GatewayState::Ready;
     m_PublicIp = publicIp;
     m_LanIp = lanIp;
@@ -268,6 +277,29 @@ void RouterPortAllocator::onDiscovered(bool ok, const QString& publicIp, const Q
     // now on. The worker already took the previous one for the reclaim rule.
     m_Settings->setRouterLanIp(lanIp);
     emit gatewayReady(publicIp);
+}
+
+void RouterPortAllocator::scheduleRediscovery()
+{
+    if (!m_Rediscover) {
+        m_Rediscover = new QTimer(this);
+        m_Rediscover->setSingleShot(true);
+        connect(m_Rediscover, &QTimer::timeout, this, [this]() {
+            if (m_State != GatewayState::Missing) return;
+            // Turned off since: the router is not to be touched, but the
+            // switch may come back on, so keep the next look booked.
+            if (!m_Settings->upnpEnabled()) {
+                scheduleRediscovery();
+                return;
+            }
+            discover();
+        });
+    }
+    // 30 s, 1, 2, 4, 8 min, then every 10. A claim arriving while one runs
+    // queues behind it on the worker, as behind the first discovery.
+    const int shift = qMin(m_Misses - 1, 5);
+    m_Rediscover->start(qMin(mw::routerports::kRediscoverFirstMs << qMax(shift, 0),
+                             mw::routerports::kRediscoverMaxMs));
 }
 
 quint64 RouterPortAllocator::submit(RouterPortCore::Request request, QObject* context,

@@ -95,6 +95,12 @@ export class AdminView {
         this._transportMode = 'auto';
         this._availableTransports = [];
         this._upnpAvailable = false;
+        // Off in settings.json: the router is never asked, which is not the
+        // same thing as a router that did not answer.
+        this._upnpEnabled = true;
+        this._customDomain = false;
+        this._mediaPortFirst = 48550;
+        this._mediaPortLast = 48573;
         this._active = false; // the manager is running (IP detected, router asked)
         this._rendezvousUrl = ''; // address this install is reached at, once claimed
         this._rendezvousOnline = false; // the held line is actually up
@@ -239,6 +245,10 @@ export class AdminView {
             this._transportMode = status.transport_mode || 'auto';
             this._availableTransports = status.available_transports || [];
             this._upnpAvailable = status.upnp_available || false;
+            this._upnpEnabled = status.upnp_enabled !== false;
+            this._customDomain = status.custom_domain === true;
+            this._mediaPortFirst = status.media_port_first || this._mediaPortFirst;
+            this._mediaPortLast = status.media_port_last || this._mediaPortLast;
             this._active = status.active || false;
             // The address this install is reached at. It exists nowhere but
             // here: no record is published any more, so this page is where its
@@ -845,12 +855,20 @@ export class AdminView {
                     <div class="internet-info-box">
                         <p><strong class="internet-important-label">${t('admin.importantLabel')}</strong><br>
                         ${this._internetConsentText()}</p>
-                        <p>${this._upnpAvailable ? t('admin.upnpAvailableNote') : t('admin.upnpUnavailableNote')}</p>
+                        <p>${
+                            !this._upnpEnabled
+                                ? t('admin.upnpDisabledNote')
+                                : this._upnpAvailable
+                                  ? t('admin.upnpAvailableNote')
+                                  : t('admin.upnpUnavailableNote')
+                        }</p>
                         ${this._publicIp ? `<p>${t('admin.publicIp')} <code>${this.esc(this._publicIp)}</code></p>` : ''}
                         <p>${t('admin.upnpLabel')} ${
-                            this._upnpAvailable
-                                ? `<span class="text-success">${t('admin.available')}</span>`
-                                : `<span class="text-muted">${t('admin.notAvailable')}</span>`
+                            !this._upnpEnabled
+                                ? `<span class="text-muted">${t('admin.upnpDisabled')}</span>`
+                                : this._upnpAvailable
+                                  ? `<span class="text-success">${t('admin.available')}</span>`
+                                  : `<span class="text-muted">${t('admin.notAvailable')}</span>`
                         }
                         </p>
                     </div>
@@ -895,7 +913,11 @@ export class AdminView {
                             : ''
                     }
 
-                    <!-- Port Mapping: only shown when UPnP is NOT available -->
+                    <!-- Port Mapping: only shown when no hole is opened for us.
+                         What to forward is the stream block, UDP, each port to
+                         itself: the web port stays closed, the rendezvous
+                         introduces the browser. A user-owned domain is the one
+                         case that does need its HTTPS port forwarded. -->
                     ${
                         !this._upnpAvailable
                             ? `
@@ -903,10 +925,16 @@ export class AdminView {
                             <label class="settings-label">${t('admin.portMapping')}</label>
                             <p class="settings-hint">
                                 ${t('admin.portMappingHint')}
-                                <br />${t('admin.portMappingSource')} (<strong>Any:${this._httpsPort}</strong>) &rarr;
-                                ${t('admin.portMappingDest')} (<strong>${this._getLocalIpForDisplay() ? this.esc(this._getLocalIpForDisplay()) + ':' : ''}${this._httpsPort}</strong>)
+                                <br />${t('admin.portMappingSource')} (<strong>UDP ${this._mediaPortFirst}-${this._mediaPortLast}</strong>) &rarr;
+                                ${t('admin.portMappingDest')} (<strong>${this._getLocalIpForDisplay() ? this.esc(this._getLocalIpForDisplay()) + ':' : ''}${this._mediaPortFirst}-${this._mediaPortLast}</strong>)
                                 ${this._getLocalIpForDisplay() ? '' : `<br />${t('admin.portMappingEnterIp')}`}
-                                <br /><strong>${t('admin.portMappingProtocols')}</strong>.
+                                ${
+                                    this._customDomain
+                                        ? `<br />${t('admin.portMappingDomain')}
+                                (<strong>TCP ${this._httpsPort}</strong>) &rarr;
+                                (<strong>${this._getLocalIpForDisplay() ? this.esc(this._getLocalIpForDisplay()) + ':' : ''}${this._httpsPort}</strong>)`
+                                        : `<br />${t('admin.portMappingNoWebPort')}`
+                                }
                             </p>
                         </div>
                     `
