@@ -2936,6 +2936,10 @@ const MoonlightApp = {
             // The host is this machine's own screen (mw-native-host): the mouse
             // is sent at its raw report rate there — see _bindPointerRaw.
             nativeHost: result.native === true,
+            // This browser streams the machine it runs on ("Stream anyway"):
+            // what the host injects comes back to this very window, and the
+            // view must not send it again — see StreamView.handleKeyDown.
+            selfStream: !!(host && host.isLocalHost && this._isHostMachine()),
             // The frame rate this launch asked for: the ceiling the view's
             // decode-rate governor climbs back to — see DecodeRateGovernor.
             streamFps: Number(streamingSettings.stream_fps) || 0,

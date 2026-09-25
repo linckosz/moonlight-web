@@ -43,6 +43,10 @@ param(
     [string]   $LogDir = '',
     [string]   $SettingsPath = '',
     [int]      $DebugPort = 9333,
+    # Two presses of one key closer than this are one keystroke come back.
+    [int]      $EchoWindowMs = 60,
+    # More presses than this for one keystroke is a loop, flagged as such.
+    [int]      $FloodPresses = 3,
     [switch]   $WriteSettings,
     [switch]   $NoLaunch
 )
@@ -166,20 +170,39 @@ try {
         }
 
         # Pair the lines with the keys: a transport line opens a record, the
-        # host line that may follow it closes it. One line per press, in order,
-        # so order is all the pairing needs.
+        # host line that may follow it closes it, in order.
+        #
+        # A press that reaches the host within a few milliseconds of the
+        # previous one is the SAME keystroke coming back, not the next key
+        # (cdp.py types them 120 ms apart): folded into its record and counted. On a
+        # self-stream (this bench streams its own screen) the host injects into
+        # the foreground window, which is the client, and a key CDP pressed was
+        # never down for the OS -- so it comes back once, as a fresh press, and
+        # under another code when the host resolved the character to another
+        # key (us-qwerty 'w' on an AZERTY host comes back as KeyZ). More than
+        # $FloodPresses is a loop: until 25/09/2026 every key came back
+        # forever, every 22 ms, and the table read "log out of step" from the
+        # second key on.
         $records = @()
+        $lastT = [datetime]::MinValue
         $current = $null
         foreach ($line in $kbdLines) {
             if ($line -match '\[KBD\] host ') {
-                if ($null -ne $current) { $current.host = $line }
+                if ($null -ne $current -and -not $current.host) { $current.host = $line }
                 continue
             }
-            if ($line -match "\[KBD\] (\S+) client '(.*?)'( \(non-US\))? -> (.*?) \| Notepad: (.*?) \| Game: (.*)$") {
+            if ($line -match "^\[(\S+ \S+)\].*\[KBD\] (\S+) client '(.*?)'( \(non-US\))? -> (.*?) \| Notepad: (.*?) \| Game: (.*)$") {
+                $t = [datetime]::ParseExact($Matches[1], 'yyyy-MM-dd HH:mm:ss.fff', $null)
+                $echo = $null -ne $current -and ($t - $lastT).TotalMilliseconds -lt $EchoWindowMs
+                $lastT = $t
+                if ($echo) {
+                    $current.presses++
+                    continue
+                }
                 $current = [pscustomobject]@{
-                    code = $Matches[1]; char = $Matches[2]; nonUs = [bool]$Matches[3]
-                    sent = $Matches[4]; wireNote = $Matches[5]; wireGame = $Matches[6]
-                    host = ''
+                    code = $Matches[2]; char = $Matches[3]; nonUs = [bool]$Matches[4]
+                    sent = $Matches[5]; wireNote = $Matches[6]; wireGame = $Matches[7]
+                    host = ''; presses = 1
                 }
                 $records += $current
             }
@@ -210,6 +233,8 @@ try {
             }
             $row.sent = $rec.sent
             $row.hostSaid = $rec.host
+            $row.presses = $rec.presses
+            if ($rec.presses -gt $FloodPresses) { $row.flood = $true }
 
             # Note: the host's own verdict when it gave one -- it read the key
             # back through its real layout, which no prediction from this side
@@ -239,6 +264,8 @@ try {
         $noteKo = @($rows | Where-Object { (Get-Prop $_ 'noteOk' $true) -eq $false })
         $csKo = @($rows | Where-Object { (Get-Prop $_ 'gameOk' $true) -eq $false })
         $csKoCritical = @($csKo | Where-Object { $_.role -eq 'cs' -or $_.role -eq 'both' })
+        $flooded = @($rows | Where-Object { Get-Prop $_ 'flood' $false })
+        $maxPresses = ($rows | ForEach-Object { Get-Prop $_ 'presses' 0 } | Measure-Object -Maximum).Maximum
 
         foreach ($r in $rows) {
             $n = if ($null -eq (Get-Prop $r 'noteOk' $null)) { '??' }
@@ -252,12 +279,17 @@ try {
         }
         Write-Host ("  -> Note KO: {0}/{1}   CS KO: {2}/{1}   of which game-critical: {3}" -f `
             $noteKo.Count, $rows.Count, $csKo.Count, $csKoCritical.Count)
+        if ($flooded.Count) {
+            Write-Warning ("  {0} key(s) reached the host more than {1} times per keystroke (up to {2}): an input loop" -f `
+                $flooded.Count, $FloodPresses, $maxPresses)
+        }
 
         ([pscustomobject]@{
             profile = $profileName; layout = $table.layout; fidelity = $fidelity
             keys = $rows
             summary = [ordered]@{ total = $rows.Count; noteKo = $noteKo.Count
-                                  csKo = $csKo.Count; csKoCritical = $csKoCritical.Count }
+                                  csKo = $csKo.Count; csKoCritical = $csKoCritical.Count
+                                  flooded = $flooded.Count; maxPresses = $maxPresses }
         } | ConvertTo-Json -Compress -Depth 8) | Add-Content -Path $jsonl -Encoding UTF8
     }
 

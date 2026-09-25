@@ -128,3 +128,37 @@ describe('auto-repeat on a held key', () => {
         expect(v.sent).toEqual([]);
     });
 });
+
+/**
+ * Streaming the machine the browser runs on. The host injects every key into
+ * the foreground window — this browser — so what it presses comes straight
+ * back as a repeat of a key already down, and what it releases as a release of
+ * a key this view already let go of. Sent back out, each is injected again:
+ * the bench of 25/09/2026 measured every held key re-pressed every 22 ms for
+ * as long as the stream lasted.
+ */
+describe('streaming its own machine', () => {
+    it('sends the press and the release once, not their echoes', () => {
+        const v = keySink({ _selfStream: true });
+        v.handleKeyDown(ev('KeyW', 'w'));
+        // The host's injection of that press, landing back here.
+        v.handleKeyDown(ev('KeyW', 'w', { repeat: true }));
+        v.handleKeyDown(ev('KeyW', 'w', { repeat: true }));
+        v.handleKeyUp(ev('KeyW', 'w'));
+        // The host's injection of that release, landing back here.
+        v.handleKeyUp(ev('KeyW', 'w'));
+
+        expect(v.sent.map((m) => m.type)).toEqual(['keydown', 'keyup']);
+        expect(v._heldPhysKeys.size).toBe(0);
+    });
+
+    it('leaves a remote client as it was: repeats forwarded, a stray release too', () => {
+        const v = keySink();
+        v.handleKeyDown(ev('KeyW', 'w'));
+        v.handleKeyDown(ev('KeyW', 'w', { repeat: true }));
+        v.handleKeyUp(ev('KeyW', 'w'));
+        v.handleKeyUp(ev('KeyW', 'w'));
+
+        expect(v.sent.map((m) => m.type)).toEqual(['keydown', 'keydown', 'keyup', 'keyup']);
+    });
+});

@@ -254,6 +254,16 @@ MITIGATIONS = {
         "types 'x'` means a key was pressed and it was the wrong one. On a Sunshine host the KO "
         "may also read `only if the host runs the client's layout`, which is not a failure but an "
         "unknown: the protocol carries no way to read a remote layout.",
+    "keyboard-flood":
+        "One keystroke reached the host many times over: an input loop, not a layout question. "
+        "The known one is the self-stream echo — the host injects into the foreground window, "
+        "which is the client when the bench streams its own screen, and a client that sends back "
+        "what it receives presses the key forever (every 22 ms on 25/09/2026). A self-stream "
+        "client must drop the echoes (StreamView._selfStream); check that the launch really "
+        "flagged the stream as one, and read the worker log: one [KBD] line per keystroke, two at "
+        "most on a self-stream (a key CDP pressed was never down for the OS, so its first echo "
+        "looks like a fresh press). A player on such a stream types a character forty times a "
+        "second until the stream ends.",
     "keyboard-not-armed":
         "Not one [KBD] line while keys were being typed. The instrument is read by the process "
         "that HANDLES the keys, and in worker mode — the default — that is the stream "
@@ -681,6 +691,13 @@ def analyse(results_dir):
                          str(run["error"]), owner="Opus")
             continue
         rows = run.get("keys") or []
+        flooded = [r for r in rows if r.get("flood")]
+        if flooded:
+            ev = "; ".join(f"{r['code']} x{r.get('presses')}" for r in flooded[:8])
+            flag_anomaly("keyboard-flood",
+                         f"{run.get('profile')}: {len(flooded)} key(s) reached the host again "
+                         "and again for one keystroke",
+                         f"presses per keystroke — {ev}", owner="Opus")
         bad_game = [r for r in rows
                     if r.get("gameOk") is False and r.get("role") in ("cs", "both")]
         bad_note = [r for r in rows if r.get("noteOk") is False]
@@ -999,12 +1016,16 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
             game_for_this_key = r.get("role") in ("cs", "both")
             pressed = r.get("gameKey") or "—"
             shift = "Shift+" if r.get("shift") else ""
+            presses = r.get("presses") or 1
+            dot_color = RED if r.get("flood") else YELLOW
+            times = (f'<div><span class="dot dot--{dot_color}"></span>'
+                     f'reached the host {presses} times</div>') if presses > 1 else ""
             parts.append(
                 "<tr>"
                 f'<td><code>{shift}{esc(str(r.get("code")))}</code>'
                 f'<div class="note">US {esc(str(r.get("us")))}</div></td>'
                 f'<td><code>{esc(str(r.get("key")))}</code></td>'
-                f'<td class="note">{esc(str(r.get("sent") or r.get("error") or ""))}</td>'
+                f'<td class="note">{esc(str(r.get("sent") or r.get("error") or ""))}{times}</td>'
                 f'<td>{dot(r.get("noteOk"), not game_for_this_key)}'
                 f'<div class="note">{esc(str(r.get("note") or ""))}</div></td>'
                 f'<td>{dot(r.get("gameOk"), game_for_this_key)}'

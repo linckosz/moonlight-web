@@ -816,6 +816,10 @@ export class StreamView {
         // `mousemove` delivers. Decided in _bindPointerRaw; while it is on, the
         // mousemove handlers keep their cursor bookkeeping and stop sending.
         this._nativeHost = opts.nativeHost === true;
+        // This browser is streaming the very machine it runs on ("Stream
+        // anyway" past the self-stream warning). Every key the host injects
+        // then lands in this window again — see handleKeyDown/handleKeyUp.
+        this._selfStream = opts.selfStream === true;
         // The screen this view paints on, as the native host knows it: frames
         // wait for its vsync unless tearing is on, and /start carried its
         // measured refresh. A vsync client gets a stream cadence that divides
@@ -8501,8 +8505,16 @@ export class StreamView {
         // deliberately swallow theirs (a control combo is a one-shot action, and
         // re-arming the clipboard bridge on every repeat would paste in a loop),
         // and _heldPhysKeys is exactly the set that went out.
+        //
+        // Except when this browser streams its own machine. The host injects
+        // into the foreground window, which is this one: its press of a key
+        // already down comes straight back here as a repeat, went out again,
+        // was injected again — forty-odd presses a second of every held key,
+        // for as long as the stream lasted. There the keyboard is local, and
+        // its own typematic already repeats on the host; nothing to forward.
         if (e.repeat) {
             e.preventDefault();
+            if (this._selfStream) return;
             const held = this._heldPhysKeys.get(e.code);
             if (!held) return;
             this._sendKeyEvent({
@@ -8789,6 +8801,11 @@ export class StreamView {
             }
         }
         e.preventDefault();
+        // Streaming its own machine, the host's injected release lands here
+        // too, for a key this view already let go of: sent back, it is
+        // injected again and comes back again, forever. A release of a key
+        // not held is only ever that echo there.
+        if (this._selfStream && !this._heldPhysKeys.has(e.code)) return;
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
         this._sendKeyEvent({
             type: 'keyup',
