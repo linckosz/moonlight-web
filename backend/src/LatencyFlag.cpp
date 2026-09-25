@@ -19,7 +19,9 @@
 
 #include <QtGlobal>
 #include <QDebug>
+#include <QRegularExpression>
 #include <QString>
+#include <QStringList>
 
 // Windows lives here; macOS is LatencyFlagMac.mm and X11 is LatencyFlagX11.cpp,
 // each added to the target only on its own platform (see CMakeLists.txt, which
@@ -170,9 +172,19 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 BOOL CALLBACK addMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM lParam)
 {
-    MONITORINFO mi = {};
+    MONITORINFOEXW mi = {};
     mi.cbSize = sizeof(mi);
     if (!GetMonitorInfoW(monitor, &mi)) return TRUE;
+    // A screen showing the measuring client itself (see LatencyFlag.h): a
+    // topmost flag over its desynchronized canvas stalls it ~200 ms.
+    const QString device = QString::fromWCharArray(mi.szDevice);
+    const QStringList skip =
+        qEnvironmentVariable("MW_LATENCY_FLAG_SKIP")
+            .split(QRegularExpression(QStringLiteral("[;,\\s]+")), Qt::SkipEmptyParts);
+    if (skip.contains(device, Qt::CaseInsensitive)) {
+        qInfo() << "[LatencyFlag] no flag on" << device << "(MW_LATENCY_FLAG_SKIP)";
+        return TRUE;
+    }
 
     // The monitor's own rectangle in virtual-desktop coordinates: the flag is
     // the same fraction of every screen, so the browser needs no handshake to
@@ -202,9 +214,10 @@ BOOL CALLBACK addMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM lParam)
 
     auto* description = reinterpret_cast<std::wstring*>(lParam);
     description->append(description->empty() ? L"" : L", ");
-    description->append(std::to_wstring(w) + L"x" + std::to_wstring(h) + L" at " +
-                        std::to_wstring(x) + L"," + std::to_wstring(y) + L" on a " +
-                        std::to_wstring(mw) + L"x" + std::to_wstring(mh) + L" screen");
+    description->append(std::wstring(mi.szDevice) + L" " + std::to_wstring(w) + L"x" +
+                        std::to_wstring(h) + L" at " + std::to_wstring(x) + L"," +
+                        std::to_wstring(y) + L" on a " + std::to_wstring(mw) + L"x" +
+                        std::to_wstring(mh) + L" screen");
     return TRUE;
 }
 

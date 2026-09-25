@@ -46,6 +46,9 @@ param(
     # How long a click waits for its flag (probe-run.ps1 -TimeoutMs); 0 keeps
     # the page's 200 ms. 1000 shows the whole distribution, slow tail included.
     [int]    $ProbeTimeoutMs = 0,
+    # localStorage.mw_webgl_power for every pass (WebGlRenderer.js): the GPU
+    # preference of the enhancer's WebGL context. Empty: the renderer's default.
+    [ValidateSet('', 'default', 'low-power', 'high-performance')] [string] $WebGlPower = '',
     # The hdr-on pass also switches the CLIENT's screen to HDR, so the stream
     # can be HDR end to end. Opt-in: on 25/09/2026 the Arc's M27Q left the
     # desktop instead, and came back only with a power cycle.
@@ -173,6 +176,24 @@ foreach ($line in @(Get-Prop (Get-Content (Join-Path $ResultsDir 'inventory.json
         $clientDevice = $Matches[1]
     }
 }
+
+# The host draws its flag on EVERY screen, the client's included, unless told
+# otherwise: over the client's desynchronized canvas on a physical screen that
+# topmost window stalls presentation ~200 ms, and the probe measures its own
+# flag - a click in two landed near 235 ms on DualRTX's AMD client (25/09/2026),
+# none once the flag stayed off that screen. MW_LATENCY_FLAG_SKIP, in the
+# HOST's environment, keeps it off; the report is told when it was not.
+$flagOnClient = $false
+try {
+    $flagCfg = Invoke-RestMethod -Uri "$ApiUrl/api/settings/streaming" -Method Get -TimeoutSec 10
+    $skipList = @((Get-Prop $flagCfg 'latency_flag_skip' '') -split '[;,\s]+' | Where-Object { $_ })
+    if ((Get-Prop $flagCfg 'latency_flag_active' $false) -and $clientDevice -and
+        -not ($skipList | Where-Object { $_ -ieq $clientDevice })) {
+        $flagOnClient = $true
+        Write-Warning ("the host draws its flag on the client's own screen $clientDevice - restart it with " +
+                       "MW_LATENCY_FLAG_SKIP=$clientDevice in its environment, or expect ~200 ms clicks that are the flag's, not the stream's")
+    }
+} catch { }
 
 # The flag occupies 44%..56% x 0..5% of the captured screen (LatencyFlag.h).
 # The pointer parks well below it, centred, and the inert target is drawn there:
@@ -317,6 +338,16 @@ try {
             # what gives it away, so it is checked below.
             $settingsPath = Join-Path $ResultsDir "settings-$($pass.id).json"
             ($pass.settings | ConvertTo-Json -Compress) | Set-Content -Path $settingsPath -Encoding UTF8
+            # The WebGL renderer's GPU preference, before the reload that follows.
+            # Cleared when not asked for: the bench profile keeps its storage, and
+            # a value left by the previous A/B would measure that one again.
+            if ($WebGlPower) { Cdp eval "localStorage.setItem('mw_webgl_power','$WebGlPower')" | Out-Null }
+            else { Cdp eval "localStorage.removeItem('mw_webgl_power')" | Out-Null }
+            # Every pass starts at its own setting: the enhancer ladder remembers
+            # the rung it settled on (EnhancerGovernor, per browser profile, not
+            # per GPU), and a pass would otherwise inherit the previous run's -
+            # an "enhancer-on" measured as SGSR learnt on another GPU.
+            Cdp eval "localStorage.removeItem('mw_enhancer_rung')" | Out-Null
             $applied = Cdp settingsfile $settingsPath
             if ($applied -notmatch [regex]::Escape($pass.settings.video_codec)) {
                 Write-Warning "  settings did not take: $($applied.Trim())"
@@ -347,6 +378,7 @@ try {
             }
 
             $row = [ordered]@{ id = $pass.id; factor = $pass.factor }
+            if ($flagOnClient) { $row.flagOnClient = $clientDevice }
             if ((Cdp eval "!!document.querySelector('canvas')") -notmatch 'True|true') {
                 Write-Warning "  the stream never started"
                 $row.error = 'stream never started'

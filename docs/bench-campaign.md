@@ -187,6 +187,23 @@ when only a virtual screen is available, the probe's cases are **grey with that
 reason**, never red. The same goes for a very small screen: on 800×600 the flag
 is 96×30 px, which does not survive a downscale to 720p.
 
+**Keep the flag off the client's own screen.** The flag goes on every screen, and
+on a self-stream bench one of them shows the measuring client. Over its
+desynchronized canvas on a **physical** screen, that topmost window stalls
+presentation ~200 ms: on 25/09/2026 (DualRTX, AMD client) one click in two
+landed near 235 ms against a 30 ms median, then none at all once the flag stayed
+off that screen — and none with VSync, none with the client on a virtual screen.
+Start the host with the client's screen named in its environment:
+
+```powershell
+$env:MW_LATENCY_FLAG_SKIP = '\\.\DISPLAY9'   # GDI names, ; or , separated
+.\build\MoonlightWeb.exe --dev --autostart
+```
+
+`/api/settings/streaming` reports it as `latency_flag_skip`; `run-browser.ps1`
+warns when the client's screen is missing from it, and the report then raises
+`photon-flag-on-client` on every pass it measured that way.
+
 **Wolf is grey by design**: it injects into the uinput of a container with its
 own compositor, so no flag placed on the host is in its picture. A Wayland
 session is grey too — no client may draw above everything else, and a flag that

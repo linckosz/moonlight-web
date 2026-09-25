@@ -68,8 +68,9 @@ def page_ws(port, connect_timeout=CONNECT_TIMEOUT):
 
 
 class Cdp:
-    def __init__(self, port):
+    def __init__(self, port, reply_timeout=REPLY_TIMEOUT):
         self.port = port
+        self.reply_timeout = reply_timeout
         self.ws = page_ws(port)
         self.n = 0
 
@@ -79,12 +80,12 @@ class Cdp:
         # Events for other subscriptions arrive on the same socket and are
         # skipped, so the deadline is on the WHOLE reply, not on one frame:
         # a chatty page must not be able to extend the wait indefinitely.
-        deadline = time.time() + REPLY_TIMEOUT
-        self.ws.settimeout(REPLY_TIMEOUT)
+        deadline = time.time() + self.reply_timeout
+        self.ws.settimeout(self.reply_timeout)
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
-                raise SystemExit(f"{method} did not answer in {REPLY_TIMEOUT}s on port "
+                raise SystemExit(f"{method} did not answer in {self.reply_timeout}s on port "
                                  f"{self.port} — the page or the DevTools endpoint is stuck")
             self.ws.settimeout(remaining)
             try:
@@ -201,11 +202,16 @@ STATS_JS = """(() => {
 def main():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--port", type=int, default=9333)
+    # An evaluation that is SUPPOSED to take long - a probe series of N clicks
+    # N x spacing apart - says so, rather than every call waiting longer: 20
+    # clicks 1.5 s apart are 30 s, exactly the default, and a series with a few
+    # slow clicks was reported as a stuck page (25/09/2026).
+    parser.add_argument("--timeout", type=float, default=REPLY_TIMEOUT)
     parser.add_argument("command")
     parser.add_argument("args", nargs="*")
     ns = parser.parse_args()
 
-    c = Cdp(ns.port)
+    c = Cdp(ns.port, ns.timeout)
     cmd, args = ns.command, ns.args
 
     if cmd == "settingsfile":

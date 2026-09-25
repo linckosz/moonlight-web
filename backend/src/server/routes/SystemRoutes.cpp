@@ -1177,6 +1177,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["latency_flag_active"] = LatencyFlag::isEnabled();
         obj["latency_flag_supported"] = LatencyFlag::isSupported();
         obj["latency_flag_reason"] = QString::fromUtf8(LatencyFlag::unsupportedReason());
+        // The screens kept free of the flag (LatencyFlag.h): a bench checks that
+        // the one its client sits on is among them.
+        obj["latency_flag_skip"] = qEnvironmentVariable("MW_LATENCY_FLAG_SKIP");
         // Debug build flag: the UI exposes the enhancement algo selector only in
         // debug builds (Qt Creator); production forces 'auto'.
 #ifdef QT_DEBUG

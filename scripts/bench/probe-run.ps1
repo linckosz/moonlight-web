@@ -84,6 +84,9 @@ $js = @"
   });
 })()
 "@
-$out = python cdp.py --port $DebugPort eval $js
+# The whole series is ONE evaluation: every click's spacing and its wait for the
+# flag, plus margin. cdp.py's default 30 s is exactly 20 clicks 1.5 s apart.
+$evalTimeout = [math]::Ceiling($Clicks * ($SpacingMs + [math]::Max($TimeoutMs, 200)) / 1000) + 30
+$out = python cdp.py --port $DebugPort --timeout $evalTimeout eval $js
 $out
 Add-Content -Path (Join-Path $ResultsDir 'probe-results.jsonl') -Value $out -Encoding UTF8

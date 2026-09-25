@@ -199,12 +199,19 @@ MITIGATIONS = {
         "handoff/decode/queue/render. Only a leg that moved between two passes is a finding.",
     "photon-tail":
         "Some clicks come back a whole step later than the rest — farther than one capture "
-        "period, so not the cadence. On 25/09/2026 it was one click in ten at ~235 ms against a "
-        "~30 ms median, plus 1-4 'timeouts' that are the same clicks past the probe's 200 ms: the "
-        "shape of an SCTP retransmission timeout (a lone flag frame's last packet lost, nothing "
-        "behind it to trigger a fast retransmit, and libdatachannel's 200 ms minimum RTO). Re-run "
-        "the pass with `probe-run.ps1 -TimeoutMs 1000` to see the true distribution, compare a "
-        "wss or media-track pass, and read the host's SCTP counters before touching a setting.",
+        "period, so not the cadence. The ~235 ms step of 25/09/2026 was the bench's own: the "
+        "host's flag window, topmost on EVERY screen, covered the client's desynchronized canvas "
+        "on a physical screen and stalled its presentation ~200 ms (DualRTX, AMD client; none "
+        "on a virtual screen, none with VSync, none once the flag stayed off). First make sure "
+        "the host ran with MW_LATENCY_FLAG_SKIP naming the client's screen (run-browser.ps1 "
+        "warns, and the pass notes it). Only then suspect SCTP: the host logs 'SCTP this "
+        "session' (retransmissions, T3 timeouts) when a stream ends.",
+    "photon-flag-on-client":
+        "The host drew its latency flag on the screen the measuring client sits on. Over a "
+        "desynchronized canvas on a physical screen that topmost window stalls presentation "
+        "~200 ms, so this pass's click-to-photon may be measuring the flag, not the stream. "
+        "Restart the host with MW_LATENCY_FLAG_SKIP=<the client's GDI name> in its environment "
+        "and play the pass again.",
     "photon-discarded":
         "Read `saw` and `via` on the discarded samples: a flag absent from the picture, the wrong "
         "surface sampled and a surface that was never drawn all read as `timeout` and have "
@@ -661,6 +668,13 @@ def analyse(results_dir):
                 flag_anomaly("photon-discarded",
                              f"{e['id']}: {of - n} of {of} click-to-photon samples discarded",
                              ", ".join(str(x) for x in (pr.get("all") or [])[:8]))
+            flag_client = (e.get("browser") or {}).get("flagOnClient")
+            if flag_client:
+                flag = YELLOW if flag == GREEN else flag
+                e["notes"].append(f"host flag drawn on the client's screen {flag_client}")
+                flag_anomaly("photon-flag-on-client",
+                             f"{e['id']}: the host's flag was on the client's screen {flag_client}",
+                             f"median {pr.get('median')} ms, p90 {pr.get('p90')} ms, max {pr.get('max')} ms")
             # Two humps are the capture cadence only when they are about one
             # capture period apart. A slow hump much farther out is something
             # else, and the timeouts are usually its tail past the 200 ms wait.
