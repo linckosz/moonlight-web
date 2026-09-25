@@ -473,6 +473,10 @@ class SpsBitReader {
         if (zeros === 0) return 0;
         return (1 << zeros) - 1 + this.u(zeros);
     }
+    se() {
+        const k = this.ue();
+        return k & 1 ? (k + 1) / 2 : -(k / 2);
+    }
 }
 
 /**
@@ -484,7 +488,14 @@ class SpsBitReader {
  * the variable-length profile_tier_level and sub-layer ordering loops.
  */
 function parseHevcSpsInfo(spsNal) {
-    const result = { chromaFormat: 1, bitDepthLumaMinus8: 0, bitDepthChromaMinus8: 0 };
+    // width/height: the picture after the conformance window, 0 when unread.
+    const result = {
+        chromaFormat: 1,
+        bitDepthLumaMinus8: 0,
+        bitDepthChromaMinus8: 0,
+        width: 0,
+        height: 0,
+    };
     if (!spsNal || spsNal.length < 16) return result;
 
     try {
@@ -531,17 +542,24 @@ function parseHevcSpsInfo(spsNal) {
         br.ue(); // sps_seq_parameter_set_id
         const chromaFormatIdc = br.ue();
         result.chromaFormat = chromaFormatIdc;
-        if (chromaFormatIdc === 3) br.u(1); // separate_colour_plane_flag
+        let separatePlanes = 0;
+        if (chromaFormatIdc === 3) separatePlanes = br.u(1); // separate_colour_plane_flag
 
-        br.ue(); // pic_width_in_luma_samples
-        br.ue(); // pic_height_in_luma_samples
+        const picWidth = br.ue(); // pic_width_in_luma_samples
+        const picHeight = br.ue(); // pic_height_in_luma_samples
+        // Conformance window offsets count in chroma samples (§7.4.3.2.1).
+        const chroma = separatePlanes ? 0 : chromaFormatIdc;
+        const subW = chroma === 1 || chroma === 2 ? 2 : 1;
+        const subH = chroma === 1 ? 2 : 1;
+        let cropW = 0,
+            cropH = 0;
         if (br.u(1)) {
             // conformance_window_flag
-            br.ue(); // conf_win_left_offset
-            br.ue(); // conf_win_right_offset
-            br.ue(); // conf_win_top_offset
-            br.ue(); // conf_win_bottom_offset
+            cropW = br.ue() + br.ue(); // conf_win_left_offset + right
+            cropH = br.ue() + br.ue(); // conf_win_top_offset + bottom
         }
+        result.width = picWidth - subW * cropW;
+        result.height = picHeight - subH * cropH;
 
         result.bitDepthLumaMinus8 = br.ue();
         result.bitDepthChromaMinus8 = br.ue();
@@ -550,6 +568,100 @@ function parseHevcSpsInfo(spsNal) {
     }
 
     return result;
+}
+
+/**
+ * The picture size an H.264 SPS announces, after its frame cropping, from the
+ * de-emulated NAL unit (1-byte header included). Null on a parse error.
+ * ITU-T H.264 §7.3.2.1.1; crop units per §7.4.2.1.1.
+ */
+function parseH264PictureSize(spsNal) {
+    if (!spsNal || spsNal.length < 5) return null;
+    try {
+        const br = new SpsBitReader(spsNal.subarray(1));
+        const profileIdc = br.u(8);
+        br.u(16); // constraint_set flags, level_idc
+        br.ue(); // seq_parameter_set_id
+        let chromaFormatIdc = 1;
+        let separatePlanes = 0;
+        if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135].includes(profileIdc)) {
+            chromaFormatIdc = br.ue();
+            if (chromaFormatIdc === 3) separatePlanes = br.u(1);
+            br.ue(); // bit_depth_luma_minus8
+            br.ue(); // bit_depth_chroma_minus8
+            br.u(1); // qpprime_y_zero_transform_bypass_flag
+            if (br.u(1)) {
+                // seq_scaling_matrix_present_flag: skip the lists, their
+                // sizes are all this parse needs.
+                const lists = chromaFormatIdc === 3 ? 12 : 8;
+                for (let i = 0; i < lists; i++) {
+                    if (!br.u(1)) continue;
+                    const size = i < 6 ? 16 : 64;
+                    let last = 8,
+                        next = 8;
+                    for (let j = 0; j < size && next !== 0; j++) {
+                        next = (last + br.se() + 256) % 256;
+                        if (next !== 0) last = next;
+                    }
+                }
+            }
+        }
+        br.ue(); // log2_max_frame_num_minus4
+        const pocType = br.ue();
+        if (pocType === 0) {
+            br.ue(); // log2_max_pic_order_cnt_lsb_minus4
+        } else if (pocType === 1) {
+            br.u(1); // delta_pic_order_always_zero_flag
+            br.se(); // offset_for_non_ref_pic
+            br.se(); // offset_for_top_to_bottom_field
+            const cycle = br.ue();
+            for (let i = 0; i < cycle; i++) br.se();
+        }
+        br.ue(); // max_num_ref_frames
+        br.u(1); // gaps_in_frame_num_value_allowed_flag
+        const widthMbs = br.ue() + 1;
+        const heightMapUnits = br.ue() + 1;
+        const frameMbsOnly = br.u(1);
+        if (!frameMbsOnly) br.u(1); // mb_adaptive_frame_field_flag
+        br.u(1); // direct_8x8_inference_flag
+        let width = widthMbs * 16;
+        let height = (2 - frameMbsOnly) * heightMapUnits * 16;
+        if (br.u(1)) {
+            // frame_cropping_flag
+            const chroma = separatePlanes ? 0 : chromaFormatIdc;
+            const cropX = chroma === 1 || chroma === 2 ? 2 : 1;
+            const cropY = (chroma === 1 ? 2 : 1) * (2 - frameMbsOnly);
+            width -= cropX * (br.ue() + br.ue());
+            height -= cropY * (br.ue() + br.ue());
+        }
+        return width > 0 && height > 0 ? { width, height } : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * The size of the picture the stream's SPS announces, cropping applied — the
+ * size the host really encodes. Null until the parameter sets are known, or
+ * when the SPS cannot be read.
+ *
+ * VideoDecoder.configure() is given this as codedWidth/codedHeight. Chromium
+ * reads the size from the bitstream anyway, but Edge's hardware HEVC decoder
+ * on Windows takes the frames' visible rectangle from the configured size
+ * (Edge 153, Arc A380, 25/09/2026): configured at a fixed 1920×1080, a 1440p
+ * stream came out as its top-left 1920×1080 and a 720p one as 1280×736, the
+ * padding rows included — issue #23. With no size at all it assumed 1280×720.
+ */
+export function getPictureSize(parser) {
+    if (!parser || !parser.isReady()) return null;
+    const sps = removeEmulationPrevention(parser.sps);
+    if (parser.codec === CODEC_HEVC) {
+        const info = parseHevcSpsInfo(sps);
+        return info.width > 0 && info.height > 0
+            ? { width: info.width, height: info.height }
+            : null;
+    }
+    return parseH264PictureSize(sps);
 }
 
 /**

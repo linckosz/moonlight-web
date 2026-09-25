@@ -42,6 +42,7 @@ import {
     splitNals,
     buildDescription,
     getCodecString,
+    getPictureSize,
     toAvcc,
     H264_FALLBACK_CODEC_STRINGS,
     HEVC_FALLBACK_CODEC_STRINGS,
@@ -2803,12 +2804,14 @@ export class StreamView {
                 });
         };
 
-        // Shared config fields
-        const shared = {
-            codedWidth: 1920,
-            codedHeight: 1080,
-            optimizeForLatency: true,
-        };
+        // The size the host really encodes, read from the SPS: Edge's hardware
+        // HEVC decoder crops every frame to the configured size (issue #23,
+        // see getPictureSize). 1080p only when the SPS cannot be read.
+        const pic = getPictureSize(this.nalParser);
+        const codedSize = pic
+            ? { codedWidth: pic.width, codedHeight: pic.height }
+            : { codedWidth: 1920, codedHeight: 1080 };
+        const shared = { ...codedSize, optimizeForLatency: true };
 
         // Decoder color space: HDR (BT.2020 + PQ) or SDR (BT.709).
         // HDR is detected from the codec string (HEVC Main10 / AV1 10-bit).
@@ -2899,8 +2902,7 @@ export class StreamView {
             configsToTry.push({
                 codec: fbCodec,
                 description: desc.buffer,
-                codedWidth: 1920,
-                codedHeight: 1080,
+                ...codedSize,
                 optimizeForLatency: true,
                 ...vColor,
             });
@@ -2908,8 +2910,7 @@ export class StreamView {
             configsToTry.push({
                 codec: fbCodec,
                 description: desc.buffer,
-                codedWidth: 1920,
-                codedHeight: 1080,
+                ...codedSize,
                 optimizeForLatency: true,
             });
         }
@@ -2924,8 +2925,7 @@ export class StreamView {
             configsToTry.push({
                 codec: codec,
                 description: desc.buffer,
-                codedWidth: 1920,
-                codedHeight: 1080,
+                ...codedSize,
             });
             // Variant B: no optimizeForLatency, no codedWidth/codedHeight
             configsToTry.push({
@@ -2937,8 +2937,7 @@ export class StreamView {
             configsToTry.push({
                 codec: codec,
                 description: desc,
-                codedWidth: 1920,
-                codedHeight: 1080,
+                ...codedSize,
                 optimizeForLatency: true,
             });
             // Last resort: bare codec string, no description at all.
@@ -2997,7 +2996,12 @@ export class StreamView {
 
         cfgs.push({ codec, description: desc, ...shared });
         cfgs.push({ codec, description: desc.buffer, optimizeForLatency: true });
-        cfgs.push({ codec, description: desc.buffer, codedWidth: 1920, codedHeight: 1080 });
+        cfgs.push({
+            codec,
+            description: desc.buffer,
+            codedWidth: shared.codedWidth,
+            codedHeight: shared.codedHeight,
+        });
         cfgs.push({ codec, description: desc.buffer });
         cfgs.push({ codec, ...shared });
         cfgs.push({ codec, optimizeForLatency: true });

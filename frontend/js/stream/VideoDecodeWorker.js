@@ -39,6 +39,7 @@ import {
     NalParser,
     buildDescription,
     getCodecString,
+    getPictureSize,
     toAvcc,
     H264_FALLBACK_CODEC_STRINGS,
     HEVC_FALLBACK_CODEC_STRINGS,
@@ -503,7 +504,13 @@ function configureDecoder() {
     // 4:4:4 is RExt too and is SDR), AV1 10-bit.
     const isHdr = isHevcHdrProfile(codec, S.nalParser.sps) || isAv1HdrProfile(codec);
 
-    const shared = { codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true };
+    // The size the host really encodes, from the SPS (StreamView.configureDecoder
+    // has why: issue #23); 1080p only when the SPS cannot be read.
+    const pic = getPictureSize(S.nalParser);
+    const codedSize = pic
+        ? { codedWidth: pic.width, codedHeight: pic.height }
+        : { codedWidth: 1920, codedHeight: 1080 };
+    const shared = { ...codedSize, optimizeForLatency: true };
     // Decoder color space: HDR (BT.2020 + PQ) or SDR (BT.709).
     /** @type {{ colorSpace: HdrVideoColorSpaceInit }} */
     const vColor = isHdr
@@ -555,26 +562,23 @@ function configureDecoder() {
         configsToTry.push({
             codec: fbCodec,
             description: desc.buffer,
-            codedWidth: 1920,
-            codedHeight: 1080,
+            ...codedSize,
             optimizeForLatency: true,
             ...vColor,
         });
         configsToTry.push({
             codec: fbCodec,
             description: desc.buffer,
-            codedWidth: 1920,
-            codedHeight: 1080,
+            ...codedSize,
             optimizeForLatency: true,
         });
     }
-    configsToTry.push({ codec, description: desc.buffer, codedWidth: 1920, codedHeight: 1080 });
+    configsToTry.push({ codec, description: desc.buffer, ...codedSize });
     configsToTry.push({ codec, description: desc.buffer });
     configsToTry.push({
         codec,
         description: desc,
-        codedWidth: 1920,
-        codedHeight: 1080,
+        ...codedSize,
         optimizeForLatency: true,
     });
     configsToTry.push({ codec, optimizeForLatency: true });
@@ -604,7 +608,12 @@ function tryHevcAvccConfigs(codec, desc, fallbacks, shared, vColor) {
     }
     cfgs.push({ codec, description: desc, ...shared });
     cfgs.push({ codec, description: desc.buffer, optimizeForLatency: true });
-    cfgs.push({ codec, description: desc.buffer, codedWidth: 1920, codedHeight: 1080 });
+    cfgs.push({
+        codec,
+        description: desc.buffer,
+        codedWidth: shared.codedWidth,
+        codedHeight: shared.codedHeight,
+    });
     cfgs.push({ codec, description: desc.buffer });
     cfgs.push({ codec, ...shared });
     cfgs.push({ codec, optimizeForLatency: true });

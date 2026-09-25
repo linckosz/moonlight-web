@@ -16,6 +16,7 @@ import {
     buildHvcCDescription,
     getHevcCodecString,
     getCodecString,
+    getPictureSize,
     buildDescription,
     isHevcHdrProfile,
     toAvcc,
@@ -39,7 +40,10 @@ const H264_IDR = [0x65, 0x88, 0x84, 0x00];
 
 // HEVC NAL: 2-byte header, type = (b0>>1)&0x3f. VPS=32(0x40), SPS=33(0x42), PPS=34(0x44).
 const HEVC_VPS = [0x40, 0x01, 0x0c, 0x01];
-const HEVC_SPS = [0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x78, 0x00, 0x00, 0x03, 0x00, 0x00];
+const HEVC_SPS = [
+    0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x78, 0x00, 0x00, 0x03,
+    0x00, 0x00,
+];
 const HEVC_PPS = [0x44, 0x01, 0xc1, 0x72];
 
 describe('Mp4Muxer — splitNals', () => {
@@ -127,7 +131,10 @@ describe('Mp4Muxer — NalParser', () => {
         expect(p.changedBy(annexB(main10, HEVC_SPS, HEVC_PPS))).toBe(true);
 
         // SPS: tier flag in byte 3, level in byte 14; the size still counts.
-        const sps = [0x42, 0x01, 0x01, 0x01, 0x60, 0, 0, 3, 0, 0x90, 0, 0, 3, 0, 0, 3, 0, 0x7b, 0xa0, 0x02, 0xd0];
+        const sps = [
+            0x42, 0x01, 0x01, 0x01, 0x60, 0, 0, 3, 0, 0x90, 0, 0, 3, 0, 0, 3, 0, 0x7b, 0xa0, 0x02,
+            0xd0,
+        ];
         const q = new NalParser();
         q.feed(annexB(HEVC_VPS, sps, HEVC_PPS));
         const spsHigh50 = [...sps];
@@ -162,7 +169,9 @@ describe('Mp4Muxer — emulation prevention', () => {
             0, 0, 1, 5,
         ]);
         // 00 00 03 03 -> 00 00 03
-        expect(Array.from(removeEmulationPrevention(new Uint8Array([0, 0, 3, 3])))).toEqual([0, 0, 3]);
+        expect(Array.from(removeEmulationPrevention(new Uint8Array([0, 0, 3, 3])))).toEqual([
+            0, 0, 3,
+        ]);
     });
 });
 
@@ -232,5 +241,88 @@ describe('Mp4Muxer — toAvcc', () => {
     it('emits Annex B start codes for HEVC when useAnnexB is set', () => {
         const out = toAvcc(annexB(HEVC_VPS), false, CODEC_HEVC, true);
         expect(Array.from(out.slice(0, 4))).toEqual([0, 0, 0, 1]);
+    });
+});
+
+// Real parameter sets, from one frame of ffmpeg's testsrc encoded by libx264 /
+// libx265 at the size in the name (issue #23: the decoder is configured with
+// the size the SPS announces, cropping applied).
+const fromHex = (hex) => Uint8Array.from(hex.match(/../g).map((h) => parseInt(h, 16)));
+const spsParser = (codec, hex) => ({ codec, sps: fromHex(hex), isReady: () => true });
+
+describe('Mp4Muxer — getPictureSize', () => {
+    const cases = [
+        [
+            CODEC_H264,
+            '1280x720 4:2:0',
+            '6764001facd9405005bb011000000300100000030020f1831960',
+            1280,
+            720,
+        ],
+        // 1080 is cropped from 68 macroblock rows (1088).
+        [
+            CODEC_H264,
+            '1920x1080 4:2:0',
+            '67640028acd940780227e5c044000003000400000300083c60c658',
+            1920,
+            1080,
+        ],
+        [
+            CODEC_H264,
+            '1366x768 4:2:0',
+            '67640020acd94056061e6f011000000300100000030020f1831960',
+            1366,
+            768,
+        ],
+        [
+            CODEC_H264,
+            '1280x720 4:4:4',
+            '67f4001f919b280a00b76022000003000200000300041e30632c',
+            1280,
+            720,
+        ],
+        [
+            CODEC_HEVC,
+            '1280x720 4:2:0',
+            '42010101600000030090000003000003005da00280802d165959a4932bc05a020000030002000003000210',
+            1280,
+            720,
+        ],
+        [
+            CODEC_HEVC,
+            '1920x1080 4:2:0',
+            '420101016000000300900000030000030078a003c08010e596566924caf016808000000300800000030084',
+            1920,
+            1080,
+        ],
+        // Coded 1368 wide, the conformance window takes the last 2 columns off.
+        [
+            CODEC_HEVC,
+            '1366x768 4:2:0',
+            '420101016000000300900000030000030078a002ac80301d796566924caf0168080000030008000003000840',
+            1366,
+            768,
+        ],
+        [
+            CODEC_HEVC,
+            '2560x1440 4:4:4',
+            '4201010408000003009e080000030000969000280400b42cb2b349265780b4040000030004000003000420',
+            2560,
+            1440,
+        ],
+    ];
+    for (const [codec, name, hex, width, height] of cases) {
+        it(`reads ${codec} ${name}`, () => {
+            expect(getPictureSize(spsParser(codec, hex))).toEqual({ width, height });
+        });
+    }
+
+    it('is null before the parameter sets are known', () => {
+        expect(getPictureSize(new NalParser())).toBeNull();
+    });
+
+    it('is null for an SPS too short to hold a size', () => {
+        expect(getPictureSize(spsParser(CODEC_H264, '6764001f'))).toBeNull();
+        expect(getPictureSize(spsParser(CODEC_HEVC, '420101016000'))).toBeNull();
     });
 });
