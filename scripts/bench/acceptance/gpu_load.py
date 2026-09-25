@@ -53,6 +53,22 @@ def encoder_gpu(target, port=48080):
     return displays[0]["gpu"]
 
 
+def display_on_gpu(name, port=None):
+    """The native display that a named GPU encodes, as (index, status entry).
+
+    `name` is a part of the GPU's name ("RTX", "Arc", "AMD"). The index counts
+    the physical displays in the order /api/native/status lists them, which is
+    the order of their tiles (app ids 1, 2, 3...): pick_tile's `index`.
+    """
+    port = port or int((os.environ.get("MW_BENCH_LOCAL_PORTS") or "48080").split(",")[0])
+    with urllib.request.urlopen("http://127.0.0.1:%d/api/native/status" % port, timeout=5) as r:
+        status = json.load(r)
+    for i, disp in enumerate(status.get("displays") or []):
+        if name.lower() in (disp.get("gpu") or "").lower():
+            return i, disp
+    raise Unavailable("no display of the native host is driven by a GPU named %r" % name)
+
+
 def read(path):
     try:
         with open(path, encoding="utf-8") as f:

@@ -216,7 +216,7 @@ class Driver:
         except PassFailed:
             return {}
 
-    def pick_tile(self, target, tries=5):
+    def pick_tile(self, target, tries=5, index=None):
         """Turn a matrix `target` into the tile to click, or say why there is none.
 
         Patient on purpose. A host card appears before its app list does — the
@@ -227,13 +227,13 @@ class Driver:
         last = None
         for attempt in range(tries):
             try:
-                return self._pick_tile_once(target)
+                return self._pick_tile_once(target, index)
             except PassFailed as e:
                 last = e
                 time.sleep(3)
         raise last
 
-    def _pick_tile_once(self, target):
+    def _pick_tile_once(self, target, index=None):
         inv = self.inventory()
         cards = inv.get("cards", [])
         if not cards:
@@ -268,8 +268,10 @@ class Driver:
         if target == "display":
             # MW_BENCH_DISPLAY picks another physical display than the first,
             # counted in app-id order: the way to stream a screen driven by a
-            # different GPU (DualRTX: 1 is the AMD iGPU's).
-            index = int(os.environ.get("MW_BENCH_DISPLAY", "0") or 0)
+            # different GPU (DualRTX: 1 is the AMD iGPU's). A pass that names
+            # its encoder GPU (`displayGpu`) hands the index in instead.
+            if index is None:
+                index = int(os.environ.get("MW_BENCH_DISPLAY", "0") or 0)
             for c in native:
                 phys = [a for a in c["apps"] if a["appId"].isdigit() and a["appId"] != "1000"]
                 if len(phys) > index:

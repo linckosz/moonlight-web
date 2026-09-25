@@ -13,7 +13,10 @@
     "  display   the first physical display of the native host (app id 1)",
     "  sunshine  the Sunshine/Wolf host of that machine, whatever it offers",
     "`via` is how the client reaches the host: `lan` on its address, or",
-    "`rendezvous` through stream.dev — the path an internet user takes."
+    "`rendezvous` through stream.dev — the path an internet user takes.",
+    "`displayGpu` streams the native display that GPU drives (a codec its driver",
+    "does not offer is grey); `clientGpu` opens the client on that GPU's screen,",
+    "so it decodes there and never on the encoder's GPU."
   ],
   "base": {
     "video_codec": "hevc",
@@ -267,6 +270,87 @@
           "checks": [
             "audio"
           ]
+        },
+        {
+          "id": "codec-load-rtx-h264",
+          "factor": "RTX (NVENC) H.264, default settings + GPU load, client on the Arc",
+          "settings": { "video_codec": "h264" },
+          "target": "display",
+          "displayGpu": "RTX",
+          "clientGpu": "Arc",
+          "load": "gpu"
+        },
+        {
+          "id": "codec-load-rtx-hevc",
+          "factor": "RTX (NVENC) HEVC, default settings + GPU load, client on the Arc",
+          "settings": { "video_codec": "hevc" },
+          "target": "display",
+          "displayGpu": "RTX",
+          "clientGpu": "Arc",
+          "load": "gpu"
+        },
+        {
+          "id": "codec-load-rtx-av1",
+          "factor": "RTX (NVENC) AV1, default settings + GPU load, client on the Arc",
+          "settings": { "video_codec": "av1" },
+          "target": "display",
+          "displayGpu": "RTX",
+          "clientGpu": "Arc",
+          "load": "gpu"
+        },
+        {
+          "id": "codec-load-amd-h264",
+          "factor": "AMD (AMF) H.264, default settings + GPU load, client on the RTX",
+          "settings": { "video_codec": "h264" },
+          "target": "display",
+          "displayGpu": "AMD",
+          "clientGpu": "RTX",
+          "load": "gpu"
+        },
+        {
+          "id": "codec-load-amd-hevc",
+          "factor": "AMD (AMF) HEVC, default settings + GPU load, client on the RTX",
+          "settings": { "video_codec": "hevc" },
+          "target": "display",
+          "displayGpu": "AMD",
+          "clientGpu": "RTX",
+          "load": "gpu"
+        },
+        {
+          "id": "codec-load-amd-av1",
+          "factor": "AMD (AMF) AV1, default settings + GPU load, client on the RTX",
+          "settings": { "video_codec": "av1" },
+          "target": "display",
+          "displayGpu": "AMD",
+          "clientGpu": "RTX",
+          "load": "gpu"
+        },
+        {
+          "id": "codec-load-arc-h264",
+          "factor": "Arc (oneVPL) H.264, default settings + GPU load, client on the RTX",
+          "settings": { "video_codec": "h264" },
+          "target": "display",
+          "displayGpu": "Arc",
+          "clientGpu": "RTX",
+          "load": "gpu"
+        },
+        {
+          "id": "codec-load-arc-hevc",
+          "factor": "Arc (oneVPL) HEVC, default settings + GPU load, client on the RTX",
+          "settings": { "video_codec": "hevc" },
+          "target": "display",
+          "displayGpu": "Arc",
+          "clientGpu": "RTX",
+          "load": "gpu"
+        },
+        {
+          "id": "codec-load-arc-av1",
+          "factor": "Arc (oneVPL) AV1, default settings + GPU load, client on the RTX",
+          "settings": { "video_codec": "av1" },
+          "target": "display",
+          "displayGpu": "Arc",
+          "clientGpu": "RTX",
+          "load": "gpu"
         },
         {
           "id": "ref-tail",

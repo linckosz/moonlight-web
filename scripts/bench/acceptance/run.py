@@ -6,12 +6,14 @@
     python run.py --chapter 3                 every other host, DualRTX client
     python run.py --only mw-mac               restrict to one machine
     python run.py --pass default              restrict to one pass
+    python run.py --pass "codec-load-*"       ...or to the passes a pattern matches
 
 Results are appended to bench-out/acceptance/results/, screenshots land under
 bench-out/acceptance/screens/<machine>/<chapter>/<pass>.png, and report.py
 turns the two into one HTML page. Nothing here is ever committed.
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -77,6 +79,40 @@ def client_position():
     return int(x), int(y)
 
 
+def list_gpus():
+    """Each GPU mw-gpu-load sees: (name, "high,low" LUID, its first screen or None)."""
+    listing = subprocess.run([gpu_load._tool(), "--list"],
+                             capture_output=True, text=True, encoding="utf-8").stdout
+    gpus = []
+    for line in listing.splitlines():
+        m = re.search(r"^\d+\t(.*?) — .*\(LUID (\d+):(\d+)\)(?: — (\S+))?", line)
+        if m:
+            gpus.append((m.group(1), "%s,%s" % (m.group(2), m.group(3)), m.group(4)))
+    return gpus
+
+
+def client_on_gpu(name):
+    """Where to open the client so that it decodes on the GPU named `name`:
+    ((x, y) of that GPU's screen, its LUID). A GPU with no screen is refused,
+    for the reason client_luid() gives."""
+    gpu = next((g for g in list_gpus() if name.lower() in g[0].lower()), None)
+    if not gpu or not gpu[2]:
+        raise SystemExit("the client cannot sit on the %s: %s" % (
+            name, "no screen of its own" if gpu else "no such GPU"))
+    out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                          "Add-Type -AssemblyName System.Windows.Forms; "
+                          "[System.Windows.Forms.Screen]::AllScreens | "
+                          "Where-Object { $_.DeviceName -eq '%s' } | "
+                          "ForEach-Object { '{0},{1}' -f $_.Bounds.X, $_.Bounds.Y }" % gpu[2]],
+                         capture_output=True, text=True).stdout.strip()
+    if not out:
+        raise SystemExit("the %s's screen %s is not on the desktop" % (gpu[0], gpu[2]))
+    x, y = out.split(",")
+    print("  client decodes on the %s (%s), which drives %s" % (gpu[0], gpu[1], gpu[2]),
+          flush=True)
+    return (int(x), int(y)), gpu[1]
+
+
 def client_luid():
     """The adapter the client decodes on: the GPU that drives its screen.
 
@@ -88,15 +124,9 @@ def client_luid():
     LUID is the one of the GPU behind the screen at client_position().
     """
     try:
-        listing = subprocess.run([gpu_load._tool(), "--list"],
-                                 capture_output=True, text=True, encoding="utf-8").stdout
+        gpus = list_gpus()
     except gpu_load.Unavailable:
         return os.environ.get("MW_BENCH_CLIENT_LUID", "")  # cannot check: as given
-    gpus = []  # (name, "high,low", first screen or None)
-    for line in listing.splitlines():
-        m = re.search(r"^\d+\t(.*?) — .*\(LUID (\d+):(\d+)\)(?: — (\S+))?", line)
-        if m:
-            gpus.append((m.group(1), "%s,%s" % (m.group(2), m.group(3)), m.group(4)))
     luid = os.environ.get("MW_BENCH_CLIENT_LUID", "").strip()
     if luid:
         if "," not in luid:
@@ -124,12 +154,19 @@ def client_luid():
     return gpu[1]
 
 
-def kiosk_start(url):
+# The GPU the running client was pinned to by a pass's `clientGpu`, or None
+# for the default placement.
+KIOSK = {"gpu": None}
+
+
+def kiosk_start(url, on_gpu=None):
     """A Chrome of its own, with a debugging port and no certificate fuss.
 
     Not the Chrome extension: it emulates a fixed viewport, its synthetic
     clicks carry no user activation so requestFullscreen is refused, and its
     tab stays visibilityState=hidden, which freezes rAF.
+
+    `on_gpu` opens it on the screen of that GPU, so that it decodes there.
     """
     subprocess.run(["powershell", "-NoProfile", "-Command",
                     "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
@@ -141,7 +178,11 @@ def kiosk_start(url):
     # The client decodes on the GPU of its own screen, never the encoder's
     # (docs/bench-campaign.md §4). Chrome wants "high,low": a bare decimal is
     # ignored without a word.
-    luid = client_luid()
+    if on_gpu:
+        pos, luid = client_on_gpu(on_gpu)
+    else:
+        pos, luid = client_position(), client_luid()
+    KIOSK["gpu"] = on_gpu
     subprocess.Popen([CHROME] + (["--use-adapter-luid=" + luid] if luid else []) + [
                       "--user-data-dir=" + PROFILE,
                       "--no-first-run", "--no-default-browser-check",
@@ -156,7 +197,7 @@ def kiosk_start(url):
                       "--disable-features=CalculateNativeWinOcclusion",
                       "--disable-backgrounding-occluded-windows",
                       "--disable-renderer-backgrounding",
-                      "--window-position=%d,%d" % client_position(), "--window-size=1920,1200",
+                      "--window-position=%d,%d" % pos, "--window-size=1920,1200",
                       url])
     # Wait for the debugging port to answer rather than for a fixed delay: on a
     # busy machine Chrome takes longer than eight seconds to open it, and the
@@ -310,6 +351,32 @@ def run_pass(d, chapter, machine, spec, base, seconds, settle, access):
         want_url = access["rendezvous"] if rec["via"] == "rendezvous" else access["lan"]
         if not want_url:
             raise drive.PassFailed("no %s URL for this machine" % rec["via"])
+
+        # displayGpu: stream the native display that GPU drives, so the pass
+        # measures that GPU's encoder. A codec its driver does not offer is
+        # grey, never red: there is nothing to measure.
+        index = disp = None
+        if spec.get("displayGpu"):
+            try:
+                index, disp = gpu_load.display_on_gpu(spec["displayGpu"])
+            except gpu_load.Unavailable as e:
+                raise drive.NotApplicable(str(e))
+            rec["encoder"] = {"gpu": disp.get("gpu"), "name": disp.get("encoder"),
+                              "display": disp.get("label"), "codecs": disp.get("codecs")}
+            codec = settings["video_codec"].lower().replace(".", "")
+            offered = [c.strip().lower().replace(".", "")
+                       for c in (disp.get("codecs") or "").split(",")]
+            if codec not in offered:
+                raise drive.NotApplicable("%s on the %s offers %s: no %s encoder" % (
+                    disp.get("encoder"), disp.get("gpu"), disp.get("codecs"), codec.upper()))
+
+        # clientGpu: the client decodes on that GPU, never on the encoder's
+        # (docs/bench-campaign.md §4). The browser is reopened only when the
+        # placement changes, and put back where it was for a pass without one.
+        if spec.get("clientGpu") != KIOSK["gpu"]:
+            kiosk_start("about:blank", on_gpu=spec.get("clientGpu"))
+            d.reconnect()
+            access["_current"] = None
         # Reaching a host through the rendezvous is a slower thing than dialling
         # its address: the page has to be fetched from stream.dev, a tunnel has
         # to come up, and only then does the host list arrive. The LAN patience
@@ -331,7 +398,7 @@ def run_pass(d, chapter, machine, spec, base, seconds, settle, access):
             if not d.wait_library(access["name"], access["pin"], tries=patience):
                 raise drive.PassFailed("no host card after the reload, twice")
 
-        card, app = d.pick_tile(rec["target"])
+        card, app = d.pick_tile(rec["target"], index=index)
         rec["tile"] = {"host": card.get("name", ""), "app": app.get("name", ""),
                        "appId": app.get("appId", "")}
         # contentAfter: the captured screen only exists once the stream is up
@@ -348,7 +415,8 @@ def run_pass(d, chapter, machine, spec, base, seconds, settle, access):
                 if machine == "local":
                     # loadGpu names it outright where /api/native/status cannot:
                     # a Sunshine target, whose encoder GPU is Sunshine's config.
-                    gpu = spec.get("loadGpu") or gpu_load.encoder_gpu(rec["target"])
+                    gpu = (spec.get("loadGpu") or (disp or {}).get("gpu")
+                           or gpu_load.encoder_gpu(rec["target"]))
                     load = gpu_load.Load(gpu, os.path.join(
                         RESULTS, "gpu-load-%s-%s-%s.jsonl" % (chapter, machine, spec["id"])),
                         level=spec.get("loadLevel"))
@@ -495,7 +563,7 @@ def run_chapter(key, matrix, access_by_machine, only=None, one_pass=None, resume
             continue
         done = already_done(key, machine) if resume else set()
         for spec in chapter["passes"]:
-            if one_pass and spec["id"] != one_pass:
+            if one_pass and not any(fnmatch.fnmatch(spec["id"], p) for p in one_pass):
                 continue
             if spec["id"] in done:
                 print("  %-16s already recorded — skipped" % spec["id"], flush=True)
@@ -645,7 +713,8 @@ def main():
                     help="1, 2 or 3; repeatable. Default: all three")
     ap.add_argument("--package", default="", help="directory holding the CI artifacts")
     ap.add_argument("--only", action="append", default=[], help="restrict to a machine")
-    ap.add_argument("--pass", dest="one_pass", default="", help="restrict to one pass id")
+    ap.add_argument("--pass", dest="one_pass", action="append", default=[],
+                    help="restrict to a pass id, or a pattern (codec-load-*); repeatable")
     ap.add_argument("--plan-only", action="store_true")
     ap.add_argument("--resume", action="store_true",
                     help="skip passes already recorded as ok for that machine")
