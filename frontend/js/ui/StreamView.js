@@ -5808,6 +5808,10 @@ export class StreamView {
                 // that was felt — the averages above cannot.
                 const tails = this._formatStageTails(now);
                 if (tails) diagLine += ' · ' + tails;
+                // What the enhancer ladder read from the GPU fences this window.
+                if (this._gpuBehind !== null && this._gpuBehind !== undefined) {
+                    diagLine += ' · gpu behind ' + Math.round(this._gpuBehind * 100) + '%';
+                }
                 if (this._mainThreadProbe) {
                     diagLine += ' · ' + formatMainThread(this._mainThreadProbe.snapshot());
                 }
@@ -6049,10 +6053,18 @@ export class StreamView {
 
     _applyEnhancerGovernor(diag, now) {
         if (!this._governor || !this._renderer) return;
+        // The GPU fences of the window (WebGlRenderer.takeGpuBehind): the one
+        // signal of a pass the GPU keeps up with, frames late. Other renderers
+        // cannot tell, and null says so.
+        this._gpuBehind =
+            typeof this._renderer.takeGpuBehind === 'function'
+                ? this._renderer.takeGpuBehind()
+                : null;
         const algo = this._governor.update({
             serviceMs: diag.renderServiceMs,
             arrivalMs: diag.arrivalAvgMs,
             decodeQueue: diag.decodeQueueAvg,
+            gpuBehind: this._gpuBehind,
             now,
         });
         if (!algo) return;

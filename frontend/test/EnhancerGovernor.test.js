@@ -295,6 +295,80 @@ describe('EnhancerGovernor — a starved decoder behind a cheap draw', () => {
     });
 });
 
+/**
+ * The other failure the draw timing cannot report: a GPU that keeps UP with the
+ * frame rate but runs BEHIND it. 2-CU Radeon iGPU, 1440p60, FSR1 WebGL: 60 fps
+ * in and out, decoder queue empty, submission 0.3ms — and every picture ~29ms
+ * late (click-to-photon 59.6ms, 30.8 without the enhancer, 32.6 with SGSR).
+ * The fences say it: FSR1's work is still running when the next frame comes.
+ */
+describe('EnhancerGovernor — a GPU that keeps up, frames late', () => {
+    // Share of draws still on the GPU at the next one, per running level.
+    const BEHIND = { fsr1: 1.0, nis: 0.9, sgsr: 0.0, off: 0.0 };
+
+    function runGpu(gov, behindByLevel, seconds, startMs = 0) {
+        const steps = [];
+        let now = startMs;
+        for (let i = 0; i < seconds * 2; i++) {
+            now += 500;
+            const algo = gov.update({
+                serviceMs: 0.3,
+                arrivalMs: 16.7,
+                decodeQueue: 0,
+                gpuBehind: behindByLevel[gov.level],
+                now,
+            });
+            if (algo) steps.push({ algo, now });
+        }
+        return { steps, now };
+    }
+
+    it('steps down to the pass the GPU finishes in time', () => {
+        const gov = new EnhancerGovernor('fsr1');
+        const { steps } = runGpu(gov, BEHIND, 10);
+        expect(steps.map((s) => s.algo)).toEqual(['nis', 'sgsr']);
+        expect(gov.level).toBe('sgsr');
+    });
+
+    it('undoes each bet on the heavier pass, and waits longer before the next', () => {
+        const gov = new EnhancerGovernor('fsr1');
+        const { steps } = runGpu(gov, BEHIND, 300);
+        const algos = steps.map((s) => s.algo);
+        expect(algos.slice(0, 2)).toEqual(['nis', 'sgsr']);
+        // Every climb back to NIS finds the fences late again and is undone.
+        const bets = steps.filter((s, i) => i >= 2 && s.algo === 'nis').map((s) => s.now);
+        expect(bets.length).toBeGreaterThan(1);
+        for (let i = 2; i < algos.length; i += 2) expect(algos[i + 1] ?? 'sgsr').toBe('sgsr');
+        // ...and the wait between bets grows.
+        const gaps = bets.slice(1).map((t, i) => t - bets[i]);
+        for (let i = 1; i < gaps.length; i++) expect(gaps[i]).toBeGreaterThan(gaps[i - 1]);
+    });
+
+    it('leaves a GPU that is only sometimes late alone', () => {
+        const gov = new EnhancerGovernor('fsr1');
+        const { steps } = runGpu(gov, { fsr1: 0.3, nis: 0.3, sgsr: 0.3, off: 0 }, 60);
+        expect(steps).toEqual([]);
+        expect(gov.level).toBe('fsr1');
+    });
+
+    it('treats a renderer that cannot tell (null) as never behind', () => {
+        const gov = new EnhancerGovernor('fsr1');
+        const { steps } = runGpu(gov, { fsr1: null, nis: null, sgsr: null, off: null }, 60);
+        expect(steps).toEqual([]);
+        expect(gov.level).toBe('fsr1');
+    });
+
+    it('does not bet on the heavier pass again while the GPU still lags', () => {
+        const gov = new EnhancerGovernor('fsr1');
+        runGpu(gov, BEHIND, 10);
+        expect(gov.level).toBe('sgsr');
+        // Draw and queue say recover; the fences of SGSR itself are not clear.
+        const { steps } = runGpu(gov, { ...BEHIND, sgsr: 0.2 }, 300, 10000);
+        expect(steps).toEqual([]);
+        expect(gov.level).toBe('sgsr');
+    });
+});
+
 describe('EnhancerGovernor — WebGL2 passes and the memory of a verdict', () => {
     const STARVED = { serviceMs: 0.2, arrivalMs: 9.0, decodeQueue: 13 };
     const CLEAR = { serviceMs: 0.2, arrivalMs: 9.0, decodeQueue: 0 };

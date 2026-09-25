@@ -122,6 +122,19 @@ const DEGRADE_RATIO = 0.8;
 const DECODE_QUEUE_DEGRADE = 4;
 /** …and the queue has to be back to about empty before climbing again. */
 const DECODE_QUEUE_RECOVER = 1;
+/**
+ * Share of draws whose GPU work was still running when the next frame came to
+ * be drawn (WebGlRenderer's fences), above which the pass is judged too slow
+ * for this GPU — the third signal, and the one that sees a GPU that keeps UP
+ * but runs BEHIND. Measured 25/09/2026 on a 2-CU Radeon iGPU: FSR1 at 1440p
+ * held 60 fps with the decoder queue empty and the submission at 0.3 ms, while
+ * every picture reached the screen ~29 ms late, two frames queued on the GPU
+ * (click-to-photon 59.6 ms against 30.8 without the enhancer, 32.6 with SGSR).
+ * Throughput hid it; latency is what the player pays.
+ */
+const GPU_BEHIND_DEGRADE = 0.5;
+/** …and about none of them before climbing again. */
+const GPU_BEHIND_RECOVER = 0.1;
 /** …and back below this share (with margin, so a restore is not a coin flip). */
 const RECOVER_RATIO = 0.4;
 /** A verdict must hold this long — a single busy window is not a trend. */
@@ -204,7 +217,7 @@ export class EnhancerGovernor {
     /**
      * Feed one observation window.
      * @param {{serviceMs: number, arrivalMs: number, now: number,
-     *           decodeQueue?: number}} obs
+     *           decodeQueue?: number, gpuBehind?: number|null}} obs
      *   serviceMs per-frame cost of the render stage — the draw latency divided
      *             by how many draws overlap (PipelineDiag.renderServiceMs), NOT
      *             the raw wait: with two draws in flight each one waits about
@@ -214,6 +227,9 @@ export class EnhancerGovernor {
      *   decodeQueue average decodeQueueSize (PipelineDiag.decodeQueueAvg) —
      *             the cost a queued GPU pass does not report about itself, see
      *             DECODE_QUEUE_DEGRADE. Absent counts as an empty queue.
+     *   gpuBehind share (0..1) of draws still on the GPU when the next one
+     *             came (see GPU_BEHIND_DEGRADE). Absent or null — a renderer
+     *             that cannot tell — counts as never behind.
      * @returns {string|null} the new algo when the level changed, else null.
      */
     update(obs) {
@@ -221,6 +237,7 @@ export class EnhancerGovernor {
         const wait = obs && obs.serviceMs;
         const now = (obs && obs.now) || 0;
         const queue = obs && obs.decodeQueue > 0 ? obs.decodeQueue : 0;
+        const behind = obs && obs.gpuBehind > 0 ? obs.gpuBehind : 0;
         // No usable budget (stream idle, no sample yet): hold, and let the
         // sustain timers lapse rather than deciding on nothing.
         if (!(budget >= MIN_BUDGET_MS) || budget > MAX_BUDGET_MS || !(wait >= 0)) {
@@ -252,9 +269,10 @@ export class EnhancerGovernor {
         const recoverBelow = this._fixedBudgetMs > 0 ? -1 : budget * RECOVER_RATIO;
 
         // Either the draw no longer fits, or it says it does while the decoder
-        // starves behind it. The second is the only signal a queued GPU pass
+        // starves behind it, or while the GPU finishes each picture after the
+        // next one is due. The last two are the only signals a queued GPU pass
         // gives about its real cost.
-        if (wait > degradeAbove || queue > DECODE_QUEUE_DEGRADE) {
+        if (wait > degradeAbove || queue > DECODE_QUEUE_DEGRADE || behind > GPU_BEHIND_DEGRADE) {
             this._recoverSince = 0;
             if (this._degradeSince === 0) this._degradeSince = now;
             if (now - this._degradeSince < DEGRADE_SUSTAIN_MS) return null;
@@ -273,6 +291,7 @@ export class EnhancerGovernor {
             !this._noRecovery &&
             wait < recoverBelow &&
             queue <= DECODE_QUEUE_RECOVER &&
+            behind <= GPU_BEHIND_RECOVER &&
             this._level > this._ceiling
         ) {
             this._degradeSince = 0;

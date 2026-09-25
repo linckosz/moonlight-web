@@ -287,6 +287,10 @@ function applyEnhancerGovernor(diag, now) {
         serviceMs: diag.renderServiceMs,
         arrivalMs: diag.arrivalAvgMs,
         decodeQueue: diag.decodeQueueAvg,
+        // The GPU fences (WebGlRenderer.takeGpuBehind): a pass the GPU keeps
+        // up with, frames late.
+        gpuBehind:
+            typeof S.renderer.takeGpuBehind === 'function' ? S.renderer.takeGpuBehind() : null,
         now,
     });
     if (!algo) return;

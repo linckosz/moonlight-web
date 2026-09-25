@@ -606,6 +606,60 @@ export class WebGlRenderer extends VideoRenderer {
         /** Click-to-photon probe: read the flag pixels after each draw. */
         this._probeActive = false;
         this._probePixels = null;
+        /**
+         * GPU lag, see takeGpuBehind(): the fence set after the last draw, when
+         * it was set, and the draws counted since the last read.
+         */
+        this._fence = null;
+        this._fenceAt = 0;
+        this._gpuChecked = 0;
+        this._gpuBehind = 0;
+    }
+
+    /**
+     * Share of draws whose GPU work was still running when the next frame came
+     * to be drawn, since the last call — or null when none could be judged.
+     *
+     * drawArrays only records commands, so the draw timing measures submission
+     * and a pass that is too heavy for the GPU never shows there: it keeps the
+     * frame rate while every picture is finished frames late (EnhancerGovernor,
+     * GPU_BEHIND_DEGRADE). A fence after each draw, looked at when the next one
+     * starts — a later task, so its status has had the chance to move — says
+     * whether the GPU had caught up. A look taken under 5 ms after the fence
+     * (two frames back to back after a network hiccup) is not counted: no GPU
+     * finishes a pass that fast, whatever its speed.
+     */
+    takeGpuBehind() {
+        const n = this._gpuChecked;
+        const share = n > 0 ? this._gpuBehind / n : null;
+        this._gpuChecked = 0;
+        this._gpuBehind = 0;
+        return share;
+    }
+
+    _checkFence(now) {
+        const gl = this.gl;
+        if (!this._fence) return;
+        try {
+            if (now - this._fenceAt >= 5) {
+                this._gpuChecked++;
+                if (gl.getSyncParameter(this._fence, gl.SYNC_STATUS) !== gl.SIGNALED)
+                    this._gpuBehind++;
+            }
+            gl.deleteSync(this._fence);
+        } catch (e) {
+            // a lost context takes its syncs with it
+        }
+        this._fence = null;
+    }
+
+    _setFence(now) {
+        try {
+            this._fence = this.gl.fenceSync(this.gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+            this._fenceAt = now;
+        } catch (e) {
+            this._fence = null;
+        }
     }
 
     /**
@@ -902,6 +956,7 @@ export class WebGlRenderer extends VideoRenderer {
         }
         const drawStart = performance.now();
         let waitMs = 0;
+        this._checkFence(drawStart);
 
         const inW = frame.displayWidth || frame.codedWidth || 0;
         const inH = frame.displayHeight || frame.codedHeight || 0;
@@ -1040,6 +1095,7 @@ export class WebGlRenderer extends VideoRenderer {
                 gl.activeTexture(gl.TEXTURE0);
             }
             if (this._probeActive) this._readProbePixels(cw, ch);
+            this._setFence(performance.now());
         } catch (e) {
             console.error('[WebGlRenderer] draw failed: ' + e.message);
             path = 'failed';
@@ -1065,6 +1121,8 @@ export class WebGlRenderer extends VideoRenderer {
                     if (t) gl.deleteTexture(t);
                 if (this._fbo) gl.deleteFramebuffer(this._fbo);
                 if (this._vao) gl.deleteVertexArray(this._vao);
+                if (this._fence) gl.deleteSync(this._fence);
+                this._fence = null;
                 for (const p of [this._easu, this._rcas, this._sgsr, this._nis, this._blit])
                     if (p) gl.deleteProgram(p.prog);
                 const ext = gl.getExtension('WEBGL_lose_context');
