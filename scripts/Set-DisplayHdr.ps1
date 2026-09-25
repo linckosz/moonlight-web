@@ -1,10 +1,15 @@
 # Set-DisplayHdr.ps1 -- list or switch Windows HDR ("advanced color") per display.
 #   .\Set-DisplayHdr.ps1 -List
 #   .\Set-DisplayHdr.ps1 -Name M27Q -Enable
-#   .\Set-DisplayHdr.ps1 -Name M27Q -Disable
+#   .\Set-DisplayHdr.ps1 -Device \\.\DISPLAY5 -Disable
+#
+# -Device names the screen by its GDI name, which is unique; -Name matches the
+# monitor's model name, which is not when a desk has several of one model (the
+# three M27Q of DualRTX) - it then takes the first, and that may be the wrong one.
 param(
     [switch]$List,
     [string]$Name,
+    [string]$Device,
     [switch]$Enable,
     [switch]$Disable
 )
@@ -32,16 +37,19 @@ public static class DispHdr
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string monitorFriendlyDeviceName;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string monitorDevicePath;
     }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct SOURCE_NAME { public HEADER header; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string viewGdiDeviceName; }
     [StructLayout(LayoutKind.Sequential)] public struct GET_ADVANCED_COLOR { public HEADER header; public uint value; public uint colorEncoding; public uint bitsPerColorChannel; }
     [StructLayout(LayoutKind.Sequential)] public struct SET_ADVANCED_COLOR { public HEADER header; public uint value; }
 
     [DllImport("user32.dll")] static extern int GetDisplayConfigBufferSizes(uint flags, out uint numPath, out uint numMode);
     [DllImport("user32.dll")] static extern int QueryDisplayConfig(uint flags, ref uint numPath, [Out] PATH_INFO[] paths, ref uint numMode, [Out] MODE_INFO[] modes, IntPtr topology);
     [DllImport("user32.dll")] static extern int DisplayConfigGetDeviceInfo(ref TARGET_NAME p);
+    [DllImport("user32.dll")] static extern int DisplayConfigGetDeviceInfo(ref SOURCE_NAME p);
     [DllImport("user32.dll")] static extern int DisplayConfigGetDeviceInfo(ref GET_ADVANCED_COLOR p);
     [DllImport("user32.dll")] static extern int DisplayConfigSetDeviceInfo(ref SET_ADVANCED_COLOR p);
 
-    public class Target { public string Name; public LUID Adapter; public uint Id; public bool Supported; public bool Enabled; public uint Bits; }
+    public class Target { public string Name; public string Gdi; public LUID Adapter; public uint Id; public bool Supported; public bool Enabled; public uint Bits; }
 
     public static List<Target> List()
     {
@@ -61,7 +69,11 @@ public static class DispHdr
             var ac = new GET_ADVANCED_COLOR();
             ac.header.type = 9; ac.header.size = (uint)Marshal.SizeOf(typeof(GET_ADVANCED_COLOR)); ac.header.adapterId = t.adapterId; ac.header.id = t.id;
             DisplayConfigGetDeviceInfo(ref ac);
-            list.Add(new Target { Name = tn.monitorFriendlyDeviceName, Adapter = t.adapterId, Id = t.id, Supported = (ac.value & 1) != 0, Enabled = (ac.value & 2) != 0, Bits = ac.bitsPerColorChannel });
+            var s = paths[i].sourceInfo;
+            var sn = new SOURCE_NAME();
+            sn.header.type = 1; sn.header.size = (uint)Marshal.SizeOf(typeof(SOURCE_NAME)); sn.header.adapterId = s.adapterId; sn.header.id = s.id;
+            DisplayConfigGetDeviceInfo(ref sn);
+            list.Add(new Target { Name = tn.monitorFriendlyDeviceName, Gdi = sn.viewGdiDeviceName, Adapter = t.adapterId, Id = t.id, Supported = (ac.value & 1) != 0, Enabled = (ac.value & 2) != 0, Bits = ac.bitsPerColorChannel });
         }
         return list;
     }
@@ -78,15 +90,17 @@ public static class DispHdr
 if (-not ([System.Management.Automation.PSTypeName]'DispHdr').Type) { Add-Type -TypeDefinition $src }
 
 $targets = [DispHdr]::List()
-if ($List -or -not $Name) {
-    $targets | ForEach-Object { "{0,-28} supported={1,-5} enabled={2,-5} bpc={3}" -f $_.Name, $_.Supported, $_.Enabled, $_.Bits }
-    if (-not $Name) { exit 0 }
+if ($List -or (-not $Name -and -not $Device)) {
+    $targets | ForEach-Object { "{0,-14} {1,-28} supported={2,-5} enabled={3,-5} bpc={4}" -f $_.Gdi, $_.Name, $_.Supported, $_.Enabled, $_.Bits }
+    if (-not $Name -and -not $Device) { exit 0 }
 }
-$t = $targets | Where-Object { $_.Name -like "*$Name*" } | Select-Object -First 1
-if (-not $t) { Write-Error "no display matching '$Name'"; exit 1 }
+$t = if ($Device) { $targets | Where-Object { $_.Gdi -eq $Device } | Select-Object -First 1 }
+     else { $targets | Where-Object { $_.Name -like "*$Name*" } | Select-Object -First 1 }
+if (-not $t) { Write-Error "no display matching '$Device$Name'"; exit 1 }
 if ($Enable -or $Disable) {
     $rc = [DispHdr]::Set($t, [bool]$Enable)
-    "set {0} HDR={1} rc={2}" -f $t.Name, [bool]$Enable, $rc
+    "set {0} ({1}) HDR={2} rc={3}" -f $t.Gdi, $t.Name, [bool]$Enable, $rc
     Start-Sleep -Milliseconds 800
-    [DispHdr]::List() | Where-Object { $_.Name -eq $t.Name } | ForEach-Object { "{0} now enabled={1} bpc={2}" -f $_.Name, $_.Enabled, $_.Bits }
+    [DispHdr]::List() | Where-Object { $_.Gdi -eq $t.Gdi } | ForEach-Object { "{0} ({1}) now enabled={2} bpc={3}" -f $_.Gdi, $_.Name, $_.Enabled, $_.Bits }
+    if ($rc -ne 0) { exit 1 }
 }

@@ -11,7 +11,7 @@
 #                    [-Base 'seconds=10,bitrate=20000']
 #                    [-Exe ..\..\build\MoonlightWeb.exe]
 #                    [-Relaunch -ContentUrl <url> -KioskRect '<x,y,w,h>']
-#                    [-ResultsDir <path>]
+#                    [-ResultsDir <path>] [-HdrDevice \\.\DISPLAYn]
 #
 # -Relaunch restarts the content kiosk before every pass and waits -SettleMs, so
 # each pass encodes the SAME seconds of the same footage. Without it, comparing
@@ -34,10 +34,14 @@ param(
     [switch] $Relaunch,
     [string] $ContentUrl,
     [string] $KioskRect = '',
-    [int] $SettleMs = 3500
+    [int] $SettleMs = 3500,
+    # GDI name of the captured (physical) screen: the hdr=1 spec is then played
+    # with Windows HDR on there, and the screen is put back as it was after it.
+    [string] $HdrDevice = ''
 )
 
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot\hdr-switch.ps1"
 if ($SpecFile) {
     if (-not (Test-Path $SpecFile)) { throw "no spec file at $SpecFile" }
     $Specs = @(Get-Content $SpecFile -Encoding UTF8 | Where-Object { $_.Trim() })
@@ -125,68 +129,76 @@ foreach ($spec in $Specs) {
     }
 
     Write-Host "[$index/$($Specs.Count)] $spec"
-    # Start-Process, not `& $Exe`: Windows PowerShell 5.1 turns EVERY line a
-    # native command writes to stderr into an ErrorRecord — with or without a
-    # redirection — and under $ErrorActionPreference='Stop' the matrix then dies
-    # on the engine's first informational line ("AMF confirmed ..."). Redirecting
-    # through Start-Process keeps both streams as plain files, which is also
-    # where they are wanted when a pass has to be explained afterwards.
-    $errPath = [IO.Path]::ChangeExtension($csv, '.err')
-    $outPath = [IO.Path]::ChangeExtension($csv, '.out')
-    Start-Process -FilePath $Exe -ArgumentList @('--native-bench', $full) `
-        -NoNewWindow -Wait -RedirectStandardOutput $outPath -RedirectStandardError $errPath
-    # -Encoding UTF8 for the same reason as the stderr read below: the engine
-    # writes UTF-8, and without it Get-Content decodes as ANSI and the middot
-    # of the negotiated line lands in the report as a double-encoded 'A-tilde'.
-    $stdout = if (Test-Path $outPath) { Get-Content $outPath -Raw -Encoding UTF8 } else { '' }
+    # The one pass that needs HDR gets it on the captured screen, and gives
+    # it back whatever happens (hdr-switch.ps1).
+    $hdrPass = $HdrDevice -and ($spec -match '(^|,)hdr=1(,|$)')
+    $hdrWas = if ($hdrPass) { Enter-PassHdr $HdrDevice } else { $true }
+    try {
+        # Start-Process, not `& $Exe`: Windows PowerShell 5.1 turns EVERY line a
+        # native command writes to stderr into an ErrorRecord — with or without a
+        # redirection — and under $ErrorActionPreference='Stop' the matrix then dies
+        # on the engine's first informational line ("AMF confirmed ..."). Redirecting
+        # through Start-Process keeps both streams as plain files, which is also
+        # where they are wanted when a pass has to be explained afterwards.
+        $errPath = [IO.Path]::ChangeExtension($csv, '.err')
+        $outPath = [IO.Path]::ChangeExtension($csv, '.out')
+        Start-Process -FilePath $Exe -ArgumentList @('--native-bench', $full) `
+            -NoNewWindow -Wait -RedirectStandardOutput $outPath -RedirectStandardError $errPath
+        # -Encoding UTF8 for the same reason as the stderr read below: the engine
+        # writes UTF-8, and without it Get-Content decodes as ANSI and the middot
+        # of the negotiated line lands in the report as a double-encoded 'A-tilde'.
+        $stdout = if (Test-Path $outPath) { Get-Content $outPath -Raw -Encoding UTF8 } else { '' }
 
-    $row = New-Row $spec
-    $row.csv = $csv
+        $row = New-Row $spec
+        $row.csv = $csv
 
-    if (-not (Test-Path $csv)) {
-        # The line that EXPLAINS, not the last four lines: the engine logs a
-        # dozen informational lines before it gives up, and quoting the tail
-        # puts "colour conversion: ..." in the report where the driver's refusal
-        # belongs. -Encoding UTF8 because the engine writes UTF-8 and Get-Content
-        # would otherwise read it as ANSI and mangle every dash.
-        $errLines = if (Test-Path $errPath) { @(Get-Content $errPath -Encoding UTF8) } else { @() }
-        $said = @($errLines | Where-Object {
-            $_ -match 'could not|failed|unsupported|not supported|refused|error'
-        })
-        $tail = if ($said.Count) { ($said | Select-Object -Last 2) -join ' ' }
-                elseif ($errLines.Count) { ($errLines | Select-Object -Last 2) -join ' ' }
-                else { ($stdout -split "`n" | Select-Object -Last 2) -join ' ' }
-        # An engine that never started writes NOTHING to either stream, and
-        # every branch above then yields an empty array rather than a string:
-        # calling .Trim() on it threw and took the whole matrix down with it,
-        # hiding the one fact that mattered — the exe did not run. A missing
-        # Qt runtime beside a bare payload .exe looks exactly like this.
-        $tail = (@($tail) -join ' ').Trim()
-        if (-not $tail) {
-            $tail = "the engine wrote nothing to stdout or stderr — it did not start (missing runtime beside $Exe?)"
+        if (-not (Test-Path $csv)) {
+            # The line that EXPLAINS, not the last four lines: the engine logs a
+            # dozen informational lines before it gives up, and quoting the tail
+            # puts "colour conversion: ..." in the report where the driver's refusal
+            # belongs. -Encoding UTF8 because the engine writes UTF-8 and Get-Content
+            # would otherwise read it as ANSI and mangle every dash.
+            $errLines = if (Test-Path $errPath) { @(Get-Content $errPath -Encoding UTF8) } else { @() }
+            $said = @($errLines | Where-Object {
+                $_ -match 'could not|failed|unsupported|not supported|refused|error'
+            })
+            $tail = if ($said.Count) { ($said | Select-Object -Last 2) -join ' ' }
+                    elseif ($errLines.Count) { ($errLines | Select-Object -Last 2) -join ' ' }
+                    else { ($stdout -split "`n" | Select-Object -Last 2) -join ' ' }
+            # An engine that never started writes NOTHING to either stream, and
+            # every branch above then yields an empty array rather than a string:
+            # calling .Trim() on it threw and took the whole matrix down with it,
+            # hiding the one fact that mattered — the exe did not run. A missing
+            # Qt runtime beside a bare payload .exe looks exactly like this.
+            $tail = (@($tail) -join ' ').Trim()
+            if (-not $tail) {
+                $tail = "the engine wrote nothing to stdout or stderr — it did not start (missing runtime beside $Exe?)"
+            }
+            Write-Warning "  no CSV produced — the pass failed: $tail"
+            $row.error = $tail
+            $results += [pscustomobject]$row
+            continue
         }
-        Write-Warning "  no CSV produced — the pass failed: $tail"
-        $row.error = $tail
-        $results += [pscustomobject]$row
-        continue
-    }
 
-    $stats = Measure-Pass $csv
-    if (-not $stats) {
-        Write-Warning "  the pass produced no captured frame"
-        $row.error = 'no captured frame'
+        $stats = Measure-Pass $csv
+        if (-not $stats) {
+            Write-Warning "  the pass produced no captured frame"
+            $row.error = 'no captured frame'
+            $results += [pscustomobject]$row
+            continue
+        }
+        # The engine's own description of what it really did — encoder, codec,
+        # chroma and HDR as NEGOTIATED, which is not always what was asked for.
+        $negotiated = ($stdout -split "`n" | Where-Object { $_ -match '^native-bench: ' } |
+                       Select-Object -First 1) -replace '^native-bench: ', ''
+        $row.negotiated = (@($negotiated) -join ' ').Trim()
+        foreach ($k in $stats.Keys) { $row[$k] = $stats[$k] }
         $results += [pscustomobject]$row
-        continue
+        Write-Host ("  encode {0} / {1} / {2} ms   {3} KB   QP {4}   {5} fps" -f `
+            $stats.encodeMean, $stats.encodeP95, $stats.encodeP99, $stats.deltaKB, $stats.avgQp, $stats.captureFps)
+    } finally {
+        if ($hdrPass) { Exit-PassHdr $HdrDevice $hdrWas }
     }
-    # The engine's own description of what it really did — encoder, codec,
-    # chroma and HDR as NEGOTIATED, which is not always what was asked for.
-    $negotiated = ($stdout -split "`n" | Where-Object { $_ -match '^native-bench: ' } |
-                   Select-Object -First 1) -replace '^native-bench: ', ''
-    $row.negotiated = (@($negotiated) -join ' ').Trim()
-    foreach ($k in $stats.Keys) { $row[$k] = $stats[$k] }
-    $results += [pscustomobject]$row
-    Write-Host ("  encode {0} / {1} / {2} ms   {3} KB   QP {4}   {5} fps" -f `
-        $stats.encodeMean, $stats.encodeP95, $stats.encodeP99, $stats.deltaKB, $stats.avgQp, $stats.captureFps)
 }
 
 $out = Join-Path $ResultsDir 'native-bench.csv'

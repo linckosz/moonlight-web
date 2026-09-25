@@ -75,6 +75,24 @@ $passes = @($matrix.passes)
 # matrix.display is the whole /api/native/status entry, not the index.
 $displayInfo = $matrix.display
 $display = [int]$displayInfo.id
+# The screen the hdr-on pass switches to HDR and back (run-campaign -Hdr
+# physical); empty, nothing is switched.
+. "$PSScriptRoot\hdr-switch.ps1"
+$hdrDevice = Get-Prop $matrix 'hdrDevice' ''
+
+# The host's own word that its display is in HDR: the stream is HDR only then.
+function Wait-HostHdr([int] $Seconds = 15) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $s = Invoke-RestMethod -Uri "$ApiUrl/api/native/status" -Method Get -TimeoutSec 5
+            $d = @($s.displays) | Where-Object { [int]$_.id -eq $display } | Select-Object -First 1
+            if ($d -and (Get-Prop $d 'hdr_active' $false)) { return $true }
+        } catch { }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
 
 # ── Where the kiosks go, and where the pointer parks ────────────────────────
 # The encoder half already paired the captured display with a monitor (by size,
@@ -249,92 +267,106 @@ try {
             $out += [pscustomobject]@{ id = $pass.id; factor = $pass.factor; skipped = $skip }
             continue
         }
-        Write-Host ""
-        Write-Host "=== $($pass.id) ($($pass.factor)) ==="
+        # hdr-on with -Hdr physical: Windows HDR on the captured screen for
+        # this pass only, and back as it was whatever happens (hdr-switch.ps1).
+        $hdrPass = $hdrDevice -and [bool](Get-Prop $pass.settings 'hdr_enabled' $false)
+        $hdrWas = $true
+        try {
+            if ($hdrPass) {
+                # The previous pass's stream would relaunch into HDR for nothing.
+                Stop-Stream
+                $hdrWas = Enter-PassHdr $hdrDevice
+                if (-not (Wait-HostHdr)) { Write-Warning "  the host never reported HDR on display $display after $hdrDevice went to HDR" }
+            }
+            Write-Host ""
+            Write-Host "=== $($pass.id) ($($pass.factor)) ==="
 
-        Stop-Stream
-        # Through a FILE, never as an inline argument: PowerShell strips the double
-        # quotes before python sees them, cdp.py's Object.assign then throws, the
-        # page reloads with the settings it already had, and the pass measures the
-        # reference while claiming to measure a factor. Twelve passes came back as
-        # 1080p HEVC that way — the log line "Per-request streaming settings" is
-        # what gives it away, so it is checked below.
-        $settingsPath = Join-Path $ResultsDir "settings-$($pass.id).json"
-        ($pass.settings | ConvertTo-Json -Compress) | Set-Content -Path $settingsPath -Encoding UTF8
-        $applied = Cdp settingsfile $settingsPath
-        if ($applied -notmatch [regex]::Escape($pass.settings.video_codec)) {
-            Write-Warning "  settings did not take: $($applied.Trim())"
-        }
-        # settingsfile ends with a reload, and the same cold-start wait applies to
-        # the page that comes back: on an instance started a minute earlier the
-        # host list had not arrived two seconds later, and the pass died on "no
-        # element with text 'Display 1'" right after the tile had been seen.
-        if (-not (Wait-Tile -Tries 20)) {
-            $seen = (Cdp eval "JSON.stringify((document.body ? document.body.innerText : '').slice(0, 300))").Trim()
-            throw "after the settings reload the tile '$Tile' never came back at $AppUrl - the page shows: $seen"
-        }
+            Stop-Stream
+            # Through a FILE, never as an inline argument: PowerShell strips the double
+            # quotes before python sees them, cdp.py's Object.assign then throws, the
+            # page reloads with the settings it already had, and the pass measures the
+            # reference while claiming to measure a factor. Twelve passes came back as
+            # 1080p HEVC that way — the log line "Per-request streaming settings" is
+            # what gives it away, so it is checked below.
+            $settingsPath = Join-Path $ResultsDir "settings-$($pass.id).json"
+            ($pass.settings | ConvertTo-Json -Compress) | Set-Content -Path $settingsPath -Encoding UTF8
+            $applied = Cdp settingsfile $settingsPath
+            if ($applied -notmatch [regex]::Escape($pass.settings.video_codec)) {
+                Write-Warning "  settings did not take: $($applied.Trim())"
+            }
+            # settingsfile ends with a reload, and the same cold-start wait applies to
+            # the page that comes back: on an instance started a minute earlier the
+            # host list had not arrived two seconds later, and the pass died on "no
+            # element with text 'Display 1'" right after the tile had been seen.
+            if (-not (Wait-Tile -Tries 20)) {
+                $seen = (Cdp eval "JSON.stringify((document.body ? document.body.innerText : '').slice(0, 300))").Trim()
+                throw "after the settings reload the tile '$Tile' never came back at $AppUrl - the page shows: $seen"
+            }
 
-        # Twice if the first only hovered, then the self-stream confirmation.
-        Cdp launch $Tile | Out-Null
-        Start-Sleep -Seconds 3
-        $state = Cdp eval "JSON.stringify({selfGo:!!document.querySelector('.self-stream-go'),canvas:!!document.querySelector('canvas')})"
-        if ($state -match '"selfGo":true') {
-            Cdp launch 'Stream anyway 🚀' | Out-Null
-            Start-Sleep -Seconds 8
-        } elseif ($state -notmatch '"canvas":true') {
+            # Twice if the first only hovered, then the self-stream confirmation.
             Cdp launch $Tile | Out-Null
-            Start-Sleep -Seconds 6
-            if ((Cdp eval "!!document.querySelector('.self-stream-go')") -match 'True|true') {
+            Start-Sleep -Seconds 3
+            $state = Cdp eval "JSON.stringify({selfGo:!!document.querySelector('.self-stream-go'),canvas:!!document.querySelector('canvas')})"
+            if ($state -match '"selfGo":true') {
                 Cdp launch 'Stream anyway 🚀' | Out-Null
                 Start-Sleep -Seconds 8
+            } elseif ($state -notmatch '"canvas":true') {
+                Cdp launch $Tile | Out-Null
+                Start-Sleep -Seconds 6
+                if ((Cdp eval "!!document.querySelector('.self-stream-go')") -match 'True|true') {
+                    Cdp launch 'Stream anyway 🚀' | Out-Null
+                    Start-Sleep -Seconds 8
+                }
             }
-        }
 
-        $row = [ordered]@{ id = $pass.id; factor = $pass.factor }
-        if ((Cdp eval "!!document.querySelector('canvas')") -notmatch 'True|true') {
-            Write-Warning "  the stream never started"
-            $row.error = 'stream never started'
+            $row = [ordered]@{ id = $pass.id; factor = $pass.factor }
+            if ((Cdp eval "!!document.querySelector('canvas')") -notmatch 'True|true') {
+                Write-Warning "  the stream never started"
+                $row.error = 'stream never started'
+                $out += [pscustomobject]$row
+                ($row | ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+                continue
+            }
+
+            Cdp fullscreen | Out-Null
+            Start-Sleep -Seconds 2
+
+            # The NEGOTIATED settings, which are not always the ones asked for. Read off
+            # the overlay rows rather than the request: a HEVC that became H.264 and a
+            # 4:4:4 that fell back to 4:2:0 are exactly what the campaign looks for.
+            $rows = Cdp eval "JSON.stringify(Object.fromEntries([...document.querySelectorAll('.stats-row')].map(r=>[r.querySelector('.stats-label')?.textContent.trim(),r.querySelector('.stats-value')?.textContent.trim()])))"
+            $row.negotiated = $rows.Trim()
+            Write-Host "  negotiated : $($row.negotiated)"
+
+            $row.perf = (Cdp perf 20).Trim()
+
+            if (-not $NoProbe) {
+                $probe = & powershell -NoProfile -File "$PSScriptRoot\probe-run.ps1" `
+                    -Label $pass.id -Clicks $Clicks -SpacingMs $SpacingMs `
+                    -ParkX $parkX -ParkY $parkY -DebugPort $DebugPort -ResultsDir $ResultsDir 2>&1 | Out-String
+                $row.probe = $probe.Trim()
+                $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
+                if ($line) { Write-Host "  probe      : $($line.Trim())" }
+                # Every sample of the very first series timing out is not a slow
+                # pipeline, it is no flag at all - and it costs an hour to find that
+                # out at the end of a matrix. The flag is armed when the host STARTS:
+                # writing latency_flag_enabled into settings.json while it runs
+                # changes nothing, which is exactly how a whole campaign came back
+                # empty on 10/09. Stop on the first pass and say so.
+                if ($first -and $line -and ($line -match '"n":\s*0')) {
+                    throw ("every click-to-photon sample timed out on the first pass. That is the flag, " +
+                           "not the pipeline: check latency_flag_enabled in the settings the HOST reads, " +
+                           "then RESTART the host - the flag is armed at startup and its log says " +
+                           "'[LatencyFlag] armed on N screen(s)'. Use -NoProbe to run the matrix without it.")
+                }
+                $first = $false
+            }
+
             $out += [pscustomobject]$row
-            ($row | ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
-            continue
+            ($row | ConvertTo-Json -Compress -Depth 6) | Add-Content -Path $jsonl -Encoding UTF8
+        } finally {
+            if ($hdrPass) { Exit-PassHdr $hdrDevice $hdrWas }
         }
-
-        Cdp fullscreen | Out-Null
-        Start-Sleep -Seconds 2
-
-        # The NEGOTIATED settings, which are not always the ones asked for. Read off
-        # the overlay rows rather than the request: a HEVC that became H.264 and a
-        # 4:4:4 that fell back to 4:2:0 are exactly what the campaign looks for.
-        $rows = Cdp eval "JSON.stringify(Object.fromEntries([...document.querySelectorAll('.stats-row')].map(r=>[r.querySelector('.stats-label')?.textContent.trim(),r.querySelector('.stats-value')?.textContent.trim()])))"
-        $row.negotiated = $rows.Trim()
-        Write-Host "  negotiated : $($row.negotiated)"
-
-        $row.perf = (Cdp perf 20).Trim()
-
-        if (-not $NoProbe) {
-            $probe = & powershell -NoProfile -File "$PSScriptRoot\probe-run.ps1" `
-                -Label $pass.id -Clicks $Clicks -SpacingMs $SpacingMs `
-                -ParkX $parkX -ParkY $parkY -DebugPort $DebugPort -ResultsDir $ResultsDir 2>&1 | Out-String
-            $row.probe = $probe.Trim()
-            $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
-            if ($line) { Write-Host "  probe      : $($line.Trim())" }
-            # Every sample of the very first series timing out is not a slow
-            # pipeline, it is no flag at all - and it costs an hour to find that
-            # out at the end of a matrix. The flag is armed when the host STARTS:
-            # writing latency_flag_enabled into settings.json while it runs
-            # changes nothing, which is exactly how a whole campaign came back
-            # empty on 10/09. Stop on the first pass and say so.
-            if ($first -and $line -and ($line -match '"n":\s*0')) {
-                throw ("every click-to-photon sample timed out on the first pass. That is the flag, " +
-                       "not the pipeline: check latency_flag_enabled in the settings the HOST reads, " +
-                       "then RESTART the host - the flag is armed at startup and its log says " +
-                       "'[LatencyFlag] armed on N screen(s)'. Use -NoProbe to run the matrix without it.")
-            }
-            $first = $false
-        }
-
-        $out += [pscustomobject]$row
-        ($row | ConvertTo-Json -Compress -Depth 6) | Add-Content -Path $jsonl -Encoding UTF8
     }
 
     Stop-Stream

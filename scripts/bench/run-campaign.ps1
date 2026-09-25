@@ -52,7 +52,16 @@ param(
     # that really refreshes at 120 Hz or more, or the capture stays at 60.
     [ValidateSet('cod', 'cod-120', 'scroll', 'still')] [string] $Content = 'cod',
     [string] $KioskRect = '',
-    [string] $Exe = "$PSScriptRoot\..\..\build\MoonlightWeb.exe"
+    [string] $Exe = "$PSScriptRoot\..\..\build\MoonlightWeb.exe",
+    # The hdr-on pass. 'physical': Windows HDR is switched on for that pass
+    # only, on the captured screen (a physical one: click-to-photon needs it),
+    # and put back as it was after it, in both halves - see hdr-switch.ps1.
+    # 'virtual': left to display-follow.ps1, which moves the virtual display to
+    # HDR mid-stream. 'off': played only if the OS already has HDR on there.
+    [ValidateSet('off', 'physical', 'virtual')] [string] $Hdr = 'off',
+    # GDI name of the captured screen, when -KioskRect was given and it cannot
+    # be paired from the monitor list.
+    [string] $HdrDevice = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -224,6 +233,7 @@ if (-not $KioskRect) {
     }
     $KioskRect = "$($match.x),$($match.y),$w,$h"
     Write-Host "kiosk rect         : $KioskRect (display $Display = $($match.device))"
+    if (-not $HdrDevice -and $match.device -like '\\.\DISPLAY*') { $HdrDevice = $match.device }
 }
 
 # ── 2. The matrix ───────────────────────────────────────────────────────────
@@ -275,8 +285,27 @@ foreach ($codec in @('h264', 'av1')) {
 }
 $passes += New-Pass 'enhancer-on' 'enhancer' @{ video_enhancement = 'on' }
 $passes += New-Pass 'chroma-444' 'chroma' @{ chroma_444_enabled = $true }
-$hdrSkip = if (Get-Prop $displayInfo 'hdr_active' $false) { '' }
-           else { 'HDR is not switched on for this display in the OS — turn it on (scripts\Set-DisplayHdr.ps1) or this measures SDR' }
+# HDR is the one factor the campaign cannot just ask for: the native host
+# streams HDR exactly when its display is in HDR, whatever the checkbox says.
+$hdrSkip = ''
+$passHdrDevice = ''
+switch ($Hdr) {
+    'physical' {
+        $hdrLine = @(& powershell -NoProfile -File "$PSScriptRoot\..\Set-DisplayHdr.ps1" -List |
+            Where-Object { $HdrDevice -and $_ -like "$HdrDevice *" }) | Select-Object -First 1
+        if ($looksVirtual) { $hdrSkip = 'the captured screen is virtual: -Hdr physical needs the physical one click-to-photon is measured on' }
+        elseif (-not $HdrDevice) { $hdrSkip = 'no GDI name for the captured screen: pass -HdrDevice \\.\DISPLAYn' }
+        elseif (-not $hdrLine) { $hdrSkip = "$HdrDevice is not an active display" }
+        elseif ($hdrLine -notmatch 'supported=True') { $hdrSkip = "$HdrDevice cannot do HDR" }
+        else { $passHdrDevice = $HdrDevice }
+    }
+    'virtual' { $hdrSkip = 'HDR measured on the virtual display by display-follow.ps1 (-Hdr virtual): the click-to-photon flag is never painted on it' }
+    default {
+        if (-not (Get-Prop $displayInfo 'hdr_active' $false)) {
+            $hdrSkip = 'HDR is not on for this display in the OS — run with -Hdr physical (on for this pass only, then put back) or this measures SDR'
+        }
+    }
+}
 $passes += New-Pass 'hdr-on' 'hdr' @{ hdr_enabled = $true } $hdrSkip
 $passes += New-Pass 'mute-off' 'mute' @{ mute_host_audio = $false }
 
@@ -312,6 +341,10 @@ $matrix = [ordered]@{
     # the clip under the client kiosk on another screen — a whole matrix at
     # 2 fps of an idle desktop, and not one click-to-photon reading.
     kioskRect   = $KioskRect
+    # The screen whose Windows HDR the hdr-on pass switches on and back, in the
+    # encoder half and in the browser half (run-browser.ps1). Empty: nothing
+    # is ever switched.
+    hdrDevice   = $passHdrDevice
     reference   = $reference
     passes      = $passes
 }
@@ -412,6 +445,7 @@ Set-Content -Path $specFile -Value $specs -Encoding UTF8
 $matrixArgs = @('-NoProfile', '-File', "$PSScriptRoot\run-matrix.ps1",
                 '-Display', $Display, '-SpecFile', $specFile,
                 '-ResultsDir', $ResultsDir, '-Exe', $Exe)
+if ($passHdrDevice) { $matrixArgs += @('-HdrDevice', $passHdrDevice) }
 if (-not $NoKiosk) {
     $matrixArgs += @('-Relaunch', '-ContentUrl', $contentUrl, '-KioskRect', $KioskRect)
 } else {

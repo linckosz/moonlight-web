@@ -7,6 +7,8 @@
     settingsfile <path>   the same, JSON read from a file — use this from
                           PowerShell, which eats the quotes of an inline arg
     launch "Display 1"    click the tile whose text is that, by real coordinates
+    relaunch "<tile>" [hook.js]  reload, then launch that tile again at once
+                          (hook evaluated first) — see display-follow.ps1
     fullscreen            click the app's Fullscreen button
     exitfs                Ctrl+Alt+Shift+X
     stop                  click "Stop streaming"
@@ -299,6 +301,43 @@ def main():
             print(json.dumps({"code": k["code"], "key": k["key"],
                               "shift": bool(k.get("shift")), "us": k.get("us", "")}))
             time.sleep(gap)
+    elif cmd == "relaunch":
+        # Reload the page and launch a tile again, in ONE DevTools session and
+        # as fast as the page allows. The Virtual Display outlives its last
+        # stream by 4 s and every activation makes it SDR again: a relaunch
+        # made of separate cdp.py calls (a Python start and a handshake each)
+        # took longer than that, and display-follow's HDR launch measured a
+        # display that had been remade.
+        tile = args[0]
+        hook = None
+        if len(args) > 1:
+            with open(args[1], encoding="utf-8") as f:
+                hook = f.read()
+        t0 = time.time()
+        end = t0 + 30
+        c.call("Page.reload")
+        while True:
+            if time.time() > end:
+                raise SystemExit(f"after a reload the tile {tile!r} never came back")
+            time.sleep(0.1)
+            try:
+                if c.eval(f"!!document.body && document.body.innerText.includes({json.dumps(tile)})"):
+                    break
+            except (RuntimeError, SystemExit):
+                continue  # the old document went away under the call
+        if hook:
+            c.eval(hook)
+        c.click_text(tile)
+        # The self-stream warning, when it comes up: answered on sight.
+        while time.time() < end:
+            if c.eval("!!document.querySelector('.self-stream-go')"):
+                c.click_text("Stream anyway")
+                break
+            if c.eval("!![...document.querySelectorAll('canvas, video')]"
+                      ".find(e => e.getBoundingClientRect().width > 0)"):
+                break
+            time.sleep(0.1)
+        print(json.dumps({"relaunchMs": round((time.time() - t0) * 1000)}))
     elif cmd == "eval":
         print(c.eval(args[0]))
     elif cmd == "evalfile":

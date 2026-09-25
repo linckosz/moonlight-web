@@ -1087,9 +1087,10 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
         parts.append("</table></div>")
     else:
         parts.append('<div class="card"><p class="empty">No screen-follow check in this campaign. '
-                     'Run <code>display-follow.ps1</code> on a native host with a virtual display '
-                     'to switch — the only instrument that says whether the stream keeps the '
-                     'host’s shape and dynamic range when they change.</p></div>')
+                     'Run <code>display-follow.ps1</code> on a native host — it brings the '
+                     'MoonlightWeb Virtual Display up by itself (the host’s physical primary '
+                     'goes dark while it streams) — the only instrument that says whether the '
+                     'stream keeps the host’s shape and dynamic range when they change.</p></div>')
 
     parts.append("<h2>Encoder</h2>")
     enc = [(e["id"], num((e["bench"] or {}).get("encodeMean")),
