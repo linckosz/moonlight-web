@@ -89,6 +89,14 @@ VirtualDisplayJob::VirtualDisplayJob(QObject* parent)
     m_Release.setSingleShot(true);
     m_Release.setInterval(kReleaseGraceMs);
     connect(&m_Release, &QTimer::timeout, this, [this]() {
+        // A take-over on the tile (another device) asks for the display —
+        // cancelling the grace — BEFORE the stream it replaces is torn down,
+        // and that teardown starts the grace again: without this, the display
+        // went off four seconds into the new stream.
+        if (m_InUse && m_InUse()) {
+            Logger::info(QStringLiteral("[vdisplay] still streamed — stays on"));
+            return;
+        }
         Logger::info(QStringLiteral("[vdisplay] no stream left on the virtual display"));
         deactivate(nullptr);
     });

@@ -327,6 +327,21 @@ def main():
                 continue  # the old document went away under the call
         if hook:
             c.eval(hook)
+        # The host cards keep arriving for a moment after the tile's text does,
+        # and every one of them moves it: a click at its first position landed
+        # on another host's app (25/09/2026, a Sunshine desktop instead of the
+        # Virtual Display). Clicked once it has held still.
+        where = (f"(() => {{ const e = [...document.querySelectorAll('*')].find(x => "
+                 f"x.children.length === 0 && x.textContent.trim() === {json.dumps(tile)}); "
+                 f"if (!e) return null; const r = e.getBoundingClientRect(); "
+                 f"return [Math.round(r.left), Math.round(r.top)]; }})()")
+        last = None
+        while time.time() < end:
+            pos = c.eval(where)
+            if pos and pos == last:
+                break
+            last = pos
+            time.sleep(0.25)
         c.click_text(tile)
         # The self-stream warning, when it comes up: answered on sight.
         while time.time() < end:

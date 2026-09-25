@@ -1971,6 +1971,18 @@ int main(int argc, char* argv[])
     auto anyOtherSlotLive = [&g_Pool](int slot, const QString& hostUuid) {
         return g_Pool.anyOtherLiveOnHost(slot, hostUuid);
     };
+    // "MoonlightWeb Virtual Display" goes off only once nothing streams it,
+    // judged when its grace runs out rather than when a stream ends: a
+    // take-over's /start asks for it before the stream it replaces is torn
+    // down, and that teardown starts the grace again under the new stream.
+    VirtualDisplayJob::instance().setInUse([&g_Pool]() {
+        for (const SessionPool::Slot& sl : g_Pool) {
+            if (!sl.worker.isNull() && sl.hostUuid == NativeHostBackend::hostUuid() &&
+                sl.appId == NativeHostBackend::virtualDisplayAppId())
+                return true;
+        }
+        return false;
+    });
     // Per-host result of the dual-stream capability probe (first standby
     // launch): missing = unknown (assume yes), false = host rejected a second
     // concurrent session → frontend falls back to the legacy relaunch.

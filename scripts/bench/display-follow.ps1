@@ -327,11 +327,15 @@ if (-not $script:vdMode) {
 Write-Host "client screen: $($client.Gdi) ($($client.Name)) $($client.W)x$($client.H)@$($client.Hz) HDR=$($client.HdrOn)"
 
 if (-not $LogDir) {
-    # A dev instance writes to its own profile; read the one whose log moved last.
+    # A dev instance writes to its own profile; read the one whose WORKER log
+    # moved last. Any log would do not: the virtual display's elevated helper
+    # writes moonlightweb-vdisplay.log into the production profile whatever
+    # instance asked it, and on 25/09/2026 that sent the script to a folder
+    # with none of the stream's lines in it — every change read "0x0".
     $roots = @('MoonlightWeb-dev', 'MoonlightWebDev', 'MoonlightWeb') |
         ForEach-Object { Join-Path $env:APPDATA "MoonlightWeb\$_\logs" } | Where-Object { Test-Path $_ }
     $LogDir = $roots | Sort-Object {
-        $newest = Get-ChildItem $_ -Filter 'moonlightweb*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $newest = Get-ChildItem $_ -Filter 'moonlightweb-worker-*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
         if ($newest) { $newest.LastWriteTime } else { [datetime]::MinValue }
     } -Descending | Select-Object -First 1
 }
@@ -351,10 +355,26 @@ function Get-LiveLength([string] $Path) {
         try { return $fs.Length } finally { $fs.Dispose() }
     } catch { return 0 }
 }
-function Get-LogMark {
-    $m = @{}
+#
+# Only the logs this run can have written to: a profile keeps every worker log
+# it ever had (1,830 on DualRTX, 25/09/2026), and opening them all on every
+# poll made one poll outlast the change it was waiting for. Written to during
+# the run, or belonging to a worker alive right now — the second because the
+# listing's dates are as lazy as its sizes while a worker holds its log open,
+# and because a pid comes back: worker 50044 appended to a log of 02/09.
+$script:logSince = (Get-Date).AddMinutes(-2)
+function Get-WorkerLogs {
+    $live = @(Get-CimInstance Win32_Process -Filter "Name='MoonlightWeb.exe' OR Name='MoonlightWebDev.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*--stream-worker*' } |
+        ForEach-Object { "moonlightweb-worker-$($_.ProcessId).log" })
     Get-ChildItem (Join-Path $LogDir 'moonlightweb-worker-*.log') -ErrorAction SilentlyContinue |
-        ForEach-Object { $m[$_.FullName] = Get-LiveLength $_.FullName }
+        Where-Object { $_.LastWriteTime -gt $script:logSince -or $live -contains $_.Name }
+}
+# The mark also carries its time: a log that comes back under a reused pid
+# holds another day's sessions before the offset of a file first seen now.
+function Get-LogMark {
+    $m = @{ '__since' = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff') }
+    Get-WorkerLogs | ForEach-Object { $m[$_.FullName] = Get-LiveLength $_.FullName }
     return $m
 }
 # With -Share the guest's worker writes a log of its own: kept out of the
@@ -362,7 +382,7 @@ function Get-LogMark {
 $script:GuestLog = ''
 function Get-HostLines($Mark, [string] $Only = '') {
     $lines = @()
-    foreach ($f in Get-ChildItem (Join-Path $LogDir 'moonlightweb-worker-*.log') -ErrorAction SilentlyContinue) {
+    foreach ($f in Get-WorkerLogs) {
         if ($Only) { if ($f.FullName -ne $Only) { continue } }
         elseif ($script:GuestLog -and $f.FullName -eq $script:GuestLog) { continue }
         $from = if ($Mark.ContainsKey($f.FullName)) { $Mark[$f.FullName] } else { 0 }
@@ -372,7 +392,11 @@ function Get-HostLines($Mark, [string] $Only = '') {
             $fs.Seek($from, 'Begin') | Out-Null
             $text = (New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)).ReadToEnd()
         } finally { $fs.Dispose() }
-        $lines += @($text -split "`r?`n" | Where-Object { $_ -match '\[native\] (session:|display format:|session ended|AcquireNextFrame failed)' })
+        $since = if ($Mark.ContainsKey('__since')) { $Mark['__since'] } else { '' }
+        $lines += @($text -split "`r?`n" | Where-Object {
+            $_ -match '\[native\] (session:|display format:|session ended|AcquireNextFrame failed)' -and
+            (-not $since -or ($_.Length -gt 24 -and $_.Substring(1, 23) -ge $since))
+        })
     }
     # Two workers overlap during a transition: order by their own timestamps.
     return @($lines | Sort-Object)
@@ -502,8 +526,7 @@ function Add-Row($Row) {
 # when the guest joined: found once, then kept out of the owner's lines.
 function Get-GuestState($Mark) {
     if (-not $script:GuestLog) {
-        $new = @(Get-ChildItem (Join-Path $LogDir 'moonlightweb-worker-*.log') -ErrorAction SilentlyContinue |
-            Where-Object { -not $Mark.ContainsKey($_.FullName) } |
+        $new = @(Get-WorkerLogs | Where-Object { -not $Mark.ContainsKey($_.FullName) } |
             Where-Object { Select-String -Path $_.FullName -Pattern '\[native\] session:' -Quiet })
         if ($new.Count -ne 1) { return Get-HostState @() }
         $script:GuestLog = $new[0].FullName

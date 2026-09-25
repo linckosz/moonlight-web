@@ -89,6 +89,12 @@ public:
     /// Turn it off in a few seconds unless activate() comes first.
     void releaseSoon();
 
+    /// Asked when that grace runs out: true while a stream still shows the
+    /// display, which then stays on. A take-over asks for the display
+    /// (cancelling the grace) BEFORE the stream it replaces is torn down, and
+    /// that teardown starts the grace again — under the new stream.
+    void setInUse(std::function<bool()> inUse) { m_InUse = std::move(inUse); }
+
     bool running() const;
 
     /// {state, action, error?, started_at, finished_at?, display?}
@@ -141,6 +147,7 @@ private:
     QTimer m_Poll;
     QTimer m_Deadline;
     QTimer m_Release;
+    std::function<bool()> m_InUse;
     QByteArray m_HelperOut;
     // The service path runs the node stage as SYSTEM and the desktop stages
     // in the console session, one child each; these are the ones still to run.
