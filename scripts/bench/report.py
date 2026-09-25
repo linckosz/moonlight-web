@@ -574,7 +574,16 @@ def analyse(results_dir):
         got = e["negotiated"]
         asked_codec = str(want.get("video_codec", "")).lower()
         got_codec = str(got.get("Codec", "")).lower().replace(".", "")
-        if asked_codec and got_codec and not got_codec.startswith(asked_codec.replace(".", "")):
+        # 4:4:4 in H.264 where the setting says HEVC is the client's own choice
+        # since 24be92df: a browser that decodes 4:4:4 only in H.264 asks for it
+        # there from the start (chroma444Codec), with no relaunch. A note, not a
+        # loss - a relaunch would show as a second stream request in the host log.
+        planned_444 = (want.get("chroma_444_enabled") and got_codec.startswith("h264")
+                       and "4:4:4" in got_codec)
+        if planned_444 and not got_codec.startswith(asked_codec.replace(".", "")):
+            e["notes"].append(f"4:4:4 asked in H.264 from the start ({asked_codec.upper()} "
+                              f"setting): the client decodes 4:4:4 only in H.264")
+        elif asked_codec and got_codec and not got_codec.startswith(asked_codec.replace(".", "")):
             e["notes"].append(f"codec asked {asked_codec.upper()}, negotiated {got_codec.upper()}")
             flag_anomaly(
                 f"codec-fallback-{e['id']}",
@@ -682,7 +691,10 @@ def analyse(results_dir):
             split = humps(pr.get("samples") or [])
             # A tail: the slow hump is the minority (a fast one-off below a
             # slower majority is not this).
-            if (split and len(split[1]) <= len(split[0])
+            # ...and a hump, not one click: a single slow sample is noise (an
+            # enhancer ladder's recovery bet, one late frame), and calling it a
+            # tail sends the reader after the flag or SCTP for nothing.
+            if (split and 2 <= len(split[1]) <= len(split[0])
                     and hump_distance(pr.get("samples") or []) > max(1.5 * period, 20.0)):
                 lo, hi = split
                 timeouts = sum(1 for x in (pr.get("all") or []) if str(x).endswith("timeout"))

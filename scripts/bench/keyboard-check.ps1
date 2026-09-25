@@ -243,6 +243,19 @@ try {
             if ($rec.host -match '\| Notepad: (.*?) \| Game:') { $noteText = $Matches[1] }
             $row.note = $noteText
             $row.noteOk = [bool]($noteText -match '^OK')
+            # Positional mode (keyboard_layout_fidelity off, the product default)
+            # sends no character, so the host has nothing to check against - but
+            # it says what its layout typed for that position, and this side knows
+            # what the client's layout meant: compare the two. The host names the
+            # UNSHIFTED character; a shifted key cannot be judged from that line.
+            if ($noteText -match '^no client character' -and $rec.host -match "this layout types '(.*?)'") {
+                $typed = $Matches[1]
+                if ($row.shift) { $row.noteOk = $null; $row.note = "not judged: the host names the unshifted '$typed'" }
+                else {
+                    $row.noteOk = ($typed -ceq $row.key)
+                    $row.note = if ($row.noteOk) { "OK typed '$typed'" } else { "KO typed '$typed', the client meant '$($row.key)'" }
+                }
+            }
 
             # CS: which physical key was really pressed, named in US. The host
             # names it; only we know which position was pressed, so only we can
