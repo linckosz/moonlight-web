@@ -132,7 +132,7 @@ foreach ($spec in $Specs) {
     # The one pass that needs HDR gets it on the captured screen, and gives
     # it back whatever happens (hdr-switch.ps1).
     $hdrPass = $HdrDevice -and ($spec -match '(^|,)hdr=1(,|$)')
-    $hdrWas = if ($hdrPass) { Enter-PassHdr $HdrDevice } else { $true }
+    $hdrWas = if ($hdrPass) { Enter-PassHdr $HdrDevice } else { $null }
     try {
         # Start-Process, not `& $Exe`: Windows PowerShell 5.1 turns EVERY line a
         # native command writes to stderr into an ErrorRecord — with or without a

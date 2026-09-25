@@ -652,6 +652,17 @@ void DataChannelRelay::setClipboardEnabled(bool enabled)
 DataChannelRelay::~DataChannelRelay()
 {
     qInfo() << "[DataChannelRelay] Destructor";
+    // What SCTP had to repair during the session. A T3 timeout is a repair
+    // that waited out the retransmission timer (200 ms at least) instead of a
+    // fast retransmit — on a LAN, the one way a single frame arrives that late.
+    // Here and not in stop(), which a closing peer has usually entered first.
+    if (m_SctpAtOpenSet.load()) {
+        const std::array<uint32_t, 4> now = mw::sctp::readCounters();
+        qInfo() << "[DataChannelRelay] SCTP this session:" << (now[0] - m_SctpAtOpen[0])
+                << "data chunks sent," << (now[1] - m_SctpAtOpen[1]) << "retransmitted ("
+                << (now[2] - m_SctpAtOpen[2]) << "fast)," << (now[3] - m_SctpAtOpen[3])
+                << "T3 timeouts";
+    }
     // Static call: dynamic dispatch is meaningless in a destructor.
     DataChannelRelay::stop();
 }
@@ -1955,17 +1966,6 @@ void DataChannelRelay::stop()
     }
 
     qInfo() << "[DataChannelRelay::stop] ENTER, frameCount=" << m_FrameCount;
-
-    // What SCTP had to repair during the session. A T3 timeout is a repair
-    // that waited out the retransmission timer (200 ms at least) instead of a
-    // fast retransmit — on a LAN, the one way a single frame arrives that late.
-    if (m_SctpAtOpenSet.load()) {
-        const std::array<uint32_t, 4> now = mw::sctp::readCounters();
-        qInfo() << "[DataChannelRelay] SCTP this session:" << (now[0] - m_SctpAtOpen[0])
-                << "data chunks sent," << (now[1] - m_SctpAtOpen[1]) << "retransmitted ("
-                << (now[2] - m_SctpAtOpen[2]) << "fast)," << (now[3] - m_SctpAtOpen[3])
-                << "T3 timeouts";
-    }
 
     // Stop ICE timeout timer
     if (m_IceCheckTimer) {

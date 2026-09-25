@@ -46,6 +46,10 @@ param(
     # How long a click waits for its flag (probe-run.ps1 -TimeoutMs); 0 keeps
     # the page's 200 ms. 1000 shows the whole distribution, slow tail included.
     [int]    $ProbeTimeoutMs = 0,
+    # The hdr-on pass also switches the CLIENT's screen to HDR, so the stream
+    # can be HDR end to end. Opt-in: on 25/09/2026 the Arc's M27Q left the
+    # desktop instead, and came back only with a power cycle.
+    [switch] $ClientHdr,
     [switch] $NoProbe,
     # The kiosks are borderless, TOPMOST and have no close button: whoever is at
     # the machine cannot get rid of them by hand. So this script owns their
@@ -146,11 +150,29 @@ if (-not $ClientRect) {
                "capture a display that is not the only screen.")
     }
     $c = $free[0]
+    # The client decodes on -ClientAdapterLuid: its window goes on a screen
+    # that adapter drives. The largest free screen alone put it on the Arc's
+    # M27Q on 25/09/2026, and the HDR pass then switched THAT screen to HDR -
+    # which the Arc answered by dropping the monitor off the desktop.
+    if ($ClientAdapterLuid -match '^(-?\d+),(\d+)$') {
+        $luid = "$($Matches[1]),$($Matches[2])"
+        $onAdapter = @($free | Where-Object { (Get-ScreenAdapter $_.device) -eq $luid })
+        if ($onAdapter.Count -gt 0) { $c = $onAdapter[0] }
+        else { Write-Warning "no free screen on adapter ${ClientAdapterLuid}: the client goes on $($c.device)" }
+    }
     $ClientRect = "$($c.x),$($c.y),$($c.w),$($c.h)"
     Write-Host "client rect  : $ClientRect ($($c.device))"
 }
 $crect = $ClientRect -split ','
 $cx = [int]$crect[0]; $cy = [int]$crect[1]; $cw = [int]$crect[2]; $ch = [int]$crect[3]
+# The client's own screen, by GDI name: the hdr-on pass needs it in HDR too,
+# or the host rightly streams SDR to a screen that could not show HDR.
+$clientDevice = ''
+foreach ($line in @(Get-Prop (Get-Content (Join-Path $ResultsDir 'inventory.json') -Raw -Encoding UTF8 | ConvertFrom-Json) 'monitors' @())) {
+    if ($line -match '^(\S+)\s+(-?\d+),(-?\d+)\s' -and [int]$Matches[2] -eq $cx -and [int]$Matches[3] -eq $cy) {
+        $clientDevice = $Matches[1]
+    }
+}
 
 # The flag occupies 44%..56% x 0..5% of the captured screen (LatencyFlag.h).
 # The pointer parks well below it, centred, and the inert target is drawn there:
@@ -273,12 +295,14 @@ try {
         # hdr-on with -Hdr physical: Windows HDR on the captured screen for
         # this pass only, and back as it was whatever happens (hdr-switch.ps1).
         $hdrPass = $hdrDevice -and [bool](Get-Prop $pass.settings 'hdr_enabled' $false)
-        $hdrWas = $true
+        $hdrWas = $null
+        $clientHdrWas = $null
         try {
             if ($hdrPass) {
                 # The previous pass's stream would relaunch into HDR for nothing.
                 Stop-Stream
                 $hdrWas = Enter-PassHdr $hdrDevice
+                if ($ClientHdr -and $clientDevice -and $clientDevice -ne $hdrDevice) { $clientHdrWas = Enter-PassHdr $clientDevice }
                 if (-not (Wait-HostHdr)) { Write-Warning "  the host never reported HDR on display $display after $hdrDevice went to HDR" }
             }
             Write-Host ""
@@ -369,7 +393,10 @@ try {
             $out += [pscustomobject]$row
             ($row | ConvertTo-Json -Compress -Depth 6) | Add-Content -Path $jsonl -Encoding UTF8
         } finally {
-            if ($hdrPass) { Exit-PassHdr $hdrDevice $hdrWas }
+            if ($hdrPass) {
+                Exit-PassHdr $hdrDevice $hdrWas
+                if ($clientHdrWas) { Exit-PassHdr $clientDevice $clientHdrWas }
+            }
         }
     }
 

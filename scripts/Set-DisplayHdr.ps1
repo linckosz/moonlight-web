@@ -91,7 +91,7 @@ if (-not ([System.Management.Automation.PSTypeName]'DispHdr').Type) { Add-Type -
 
 $targets = [DispHdr]::List()
 if ($List -or (-not $Name -and -not $Device)) {
-    $targets | ForEach-Object { "{0,-14} {1,-28} supported={2,-5} enabled={3,-5} bpc={4}" -f $_.Gdi, $_.Name, $_.Supported, $_.Enabled, $_.Bits }
+    $targets | ForEach-Object { "{0,-14} {1,-28} supported={2,-5} enabled={3,-5} bpc={4} adapter={5},{6}" -f $_.Gdi, $_.Name, $_.Supported, $_.Enabled, $_.Bits, $_.Adapter.HighPart, $_.Adapter.LowPart }
     if (-not $Name -and -not $Device) { exit 0 }
 }
 $t = if ($Device) { $targets | Where-Object { $_.Gdi -eq $Device } | Select-Object -First 1 }
