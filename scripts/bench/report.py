@@ -197,6 +197,14 @@ MITIGATIONS = {
         "cadence, not the encoder — the flag falls either side of the next deadline. Then split "
         "the chain with `cdp.py perf`: host acquire/convert/encode against client "
         "handoff/decode/queue/render. Only a leg that moved between two passes is a finding.",
+    "photon-tail":
+        "Some clicks come back a whole step later than the rest — farther than one capture "
+        "period, so not the cadence. On 25/09/2026 it was one click in ten at ~235 ms against a "
+        "~30 ms median, plus 1-4 'timeouts' that are the same clicks past the probe's 200 ms: the "
+        "shape of an SCTP retransmission timeout (a lone flag frame's last packet lost, nothing "
+        "behind it to trigger a fast retransmit, and libdatachannel's 200 ms minimum RTO). Re-run "
+        "the pass with `probe-run.ps1 -TimeoutMs 1000` to see the true distribution, compare a "
+        "wss or media-track pass, and read the host's SCTP counters before touching a setting.",
     "photon-discarded":
         "Read `saw` and `via` on the discarded samples: a flag absent from the picture, the wrong "
         "surface sampled and a surface that was never drawn all read as `timeout` and have "
@@ -389,6 +397,30 @@ def bar_chart(series, unit="ms", width=760, bar_h=26, threshold=None):
                    f'class="val">{text}</text>')
     out.append('</svg>')
     return "".join(out)
+
+
+def humps(samples):
+    """Split a click-to-photon series at its widest gap: (low, high) sample
+    lists, or None when there is nothing to split. The two humps the capture
+    cadence makes sit about one capture period apart; a gap far wider than
+    that is another phenomenon (see MITIGATIONS['photon-tail'])."""
+    s = sorted(x for x in samples if isinstance(x, (int, float)))
+    if len(s) < 5:
+        return None
+    gaps = [(s[i + 1] - s[i], i) for i in range(len(s) - 1)]
+    width, at = max(gaps)
+    if width <= 0:
+        return None
+    return s[:at + 1], s[at + 1:]
+
+
+def hump_distance(samples):
+    """Milliseconds between the medians of the two humps, or None."""
+    split = humps(samples)
+    if not split:
+        return None
+    lo, hi = split
+    return statistics.median(hi) - statistics.median(lo)
 
 
 def histogram(samples, width=760, height=190, bins=18):
@@ -629,6 +661,26 @@ def analyse(results_dir):
                 flag_anomaly("photon-discarded",
                              f"{e['id']}: {of - n} of {of} click-to-photon samples discarded",
                              ", ".join(str(x) for x in (pr.get("all") or [])[:8]))
+            # Two humps are the capture cadence only when they are about one
+            # capture period apart. A slow hump much farther out is something
+            # else, and the timeouts are usually its tail past the 200 ms wait.
+            period = 1000.0 / (num(want.get("stream_fps")) or 60.0)
+            split = humps(pr.get("samples") or [])
+            # A tail: the slow hump is the minority (a fast one-off below a
+            # slower majority is not this).
+            if (split and len(split[1]) <= len(split[0])
+                    and hump_distance(pr.get("samples") or []) > max(1.5 * period, 20.0)):
+                lo, hi = split
+                timeouts = sum(1 for x in (pr.get("all") or []) if str(x).endswith("timeout"))
+                flag = YELLOW if flag == GREEN else flag
+                e["notes"].append(f"{len(hi)} click(s) ~{statistics.median(hi):.0f} ms, "
+                                  f"the rest ~{statistics.median(lo):.0f} ms")
+                flag_anomaly("photon-tail",
+                             f"{e['id']}: {len(hi)} of {len(lo) + len(hi)} clicks "
+                             f"~{statistics.median(hi) - statistics.median(lo):.0f} ms behind the rest",
+                             f"humps at ~{statistics.median(lo):.0f} and ~{statistics.median(hi):.0f} ms "
+                             f"(capture period {period:.1f} ms); {timeouts} timeout(s) past "
+                             f"{pr.get('timeoutMs') or 200} ms")
             median = num(pr.get("median"))
             if perf_meaningful and median and median > THRESHOLDS["photon_median_ms"]:
                 flag = YELLOW if flag == GREEN else flag
@@ -974,9 +1026,17 @@ def render(inventory, matrix, passes, anomalies, drift, perf_meaningful, provena
         ref_probe = next((e["probe"] for e in passes if e["id"] == "ref-head" and e["probe"]), None)
         if ref_probe and ref_probe.get("samples"):
             parts.append("<h3>Distribution of the reference series</h3>")
+            ref_fps = num(((matrix.get("reference") or {}).get("stream_fps"))) or 60.0
+            ref_period = 1000.0 / ref_fps
+            dist = hump_distance(ref_probe["samples"])
+            if dist is not None and dist > max(1.5 * ref_period, 20.0):
+                hump_note = (f'The humps are {dist:.0f} ms apart, far more than one capture period '
+                             f'({ref_period:.1f} ms): not the cadence — see the photon-tail anomaly.')
+            else:
+                hump_note = ('Two humps about one capture period apart are the capture cadence, the '
+                             'flag falling either side of the next deadline — not the presenter.')
             parts.append('<div class="card">' + histogram(ref_probe["samples"]) +
-                         '<p class="note">Two humps are normal: they are the capture cadence, the '
-                         'flag falling either side of the next deadline — not the presenter.</p></div>')
+                         f'<p class="note">{esc(hump_note)}</p></div>')
     else:
         parts.append('<div class="card"><p class="empty">No click-to-photon series in this '
                      'campaign. Where the host cannot raise the flag that is expected, not a '

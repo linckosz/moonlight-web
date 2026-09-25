@@ -79,14 +79,18 @@ LRESULT CALLBACK mouseHookProc(int code, WPARAM wParam, LPARAM lParam)
         const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
         const bool injected = info && (info->flags & LLMHF_INJECTED);
         // One line per injected click, so a run can be matched against the
-        // browser's table (and a hook that never fires shows as silence).
+        // browser's table (and a hook that never fires shows as silence) —
+        // written by the message loop, not here: a log line is a lock and a
+        // file write, and this hook sits inside the delivery of the very click
+        // being measured. The point rides the message.
         // Under the SAME guard as the post, deliberately: a line that says
         // "injected click" while g_Windows is empty claims a flag was raised
         // when none exists, and sends whoever reads it hunting the pipeline
         // instead of the overlay. Silence in both directions, or nothing.
         if (injected && !g_Windows.empty()) {
-            PostMessageW(g_Windows.front(), kMsgClick, 0, 0);
-            qInfo() << "[LatencyFlag] injected click at" << info->pt.x << "," << info->pt.y;
+            PostMessageW(g_Windows.front(), kMsgClick,
+                         static_cast<WPARAM>(static_cast<LONG_PTR>(info->pt.x)),
+                         static_cast<LPARAM>(info->pt.y));
         } else if (injected) {
             qWarning() << "[LatencyFlag] injected click at" << info->pt.x << "," << info->pt.y
                        << "but no flag window exists — nothing was raised";
@@ -141,6 +145,9 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     switch (msg) {
     case kMsgClick:
         showAll();
+        qInfo() << "[LatencyFlag] injected click at"
+                << static_cast<int>(static_cast<LONG_PTR>(wParam)) << ","
+                << static_cast<int>(lParam);
         // A second click inside the window restarts the countdown. The timer
         // belongs to the thread, not to a window: the windows are rebuilt
         // under it when a monitor comes or goes.

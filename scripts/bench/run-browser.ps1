@@ -43,6 +43,9 @@ param(
     [string] $ClientAdapterLuid = '',
     [int]    $Clicks = 10,
     [int]    $SpacingMs = 1500,
+    # How long a click waits for its flag (probe-run.ps1 -TimeoutMs); 0 keeps
+    # the page's 200 ms. 1000 shows the whole distribution, slow tail included.
+    [int]    $ProbeTimeoutMs = 0,
     [switch] $NoProbe,
     # The kiosks are borderless, TOPMOST and have no close button: whoever is at
     # the machine cannot get rid of them by hand. So this script owns their
@@ -343,7 +346,8 @@ try {
             if (-not $NoProbe) {
                 $probe = & powershell -NoProfile -File "$PSScriptRoot\probe-run.ps1" `
                     -Label $pass.id -Clicks $Clicks -SpacingMs $SpacingMs `
-                    -ParkX $parkX -ParkY $parkY -DebugPort $DebugPort -ResultsDir $ResultsDir 2>&1 | Out-String
+                    -ParkX $parkX -ParkY $parkY -DebugPort $DebugPort -ResultsDir $ResultsDir `
+                    -TimeoutMs $ProbeTimeoutMs 2>&1 | Out-String
                 $row.probe = $probe.Trim()
                 $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
                 if ($line) { Write-Host "  probe      : $($line.Trim())" }

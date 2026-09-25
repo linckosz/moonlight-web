@@ -3,7 +3,7 @@
 #
 #   powershell -NoProfile -File probe-run.ps1 -Label hevc-1080p60
 #              [-Clicks 10] [-SpacingMs 1500] [-ParkX 1950 -ParkY 710]
-#              [-ResultsDir <path>]
+#              [-ResultsDir <path>] [-TimeoutMs 1000]
 #
 # The sequence is the protocol, not decoration:
 #   1. park the host pointer on the inert click target — an injected click that
@@ -25,7 +25,10 @@ param(
     [int] $SpacingMs = 1500,
     [int] $ParkX = 1950, [int] $ParkY = 710,
     [int] $DebugPort = 9333,
-    [string] $ResultsDir = "$PSScriptRoot\results"
+    [string] $ResultsDir = "$PSScriptRoot\results",
+    # How long a click waits for its flag. The page's default (200 ms) cannot
+    # tell a slow flag from a lost one; 1000 shows the whole distribution.
+    [int] $TimeoutMs = 0
 )
 Add-Type -Namespace PR -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c); [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);'
 if (-not [PR.U]::SetProcessDpiAwarenessContext([IntPtr](-4))) { [PR.U]::SetProcessDPIAware() | Out-Null }
@@ -65,13 +68,14 @@ $warm = python cdp.py --port $DebugPort eval "(async()=>{const e=await mwLatency
 Start-Sleep -Milliseconds 800
 [PR.U]::SetCursorPos($ParkX, $ParkY) | Out-Null
 
+$runOpts = if ($TimeoutMs -gt 0) { "{ timeoutMs: $TimeoutMs }" } else { '{}' }
 $js = @"
 (async()=>{
-  const e = await mwLatency.run($Clicks, $SpacingMs);
+  const e = await mwLatency.run($Clicks, $SpacingMs, $runOpts);
   const ok = e.filter(x=>x.ok).map(x=>x.latencyMs).sort((a,b)=>a-b);
   const at = p => ok[Math.min(ok.length-1, Math.max(0, Math.ceil(p*ok.length)-1))];
   return JSON.stringify({
-    label: '$Label', ts: Date.now(),
+    label: '$Label', ts: Date.now(), timeoutMs: $(if ($TimeoutMs -gt 0) { $TimeoutMs } else { 200 }),
     n: ok.length, of: e.length,
     median: at(0.5), p90: at(0.9), p99: at(0.99),
     min: ok[0], max: ok[ok.length-1],

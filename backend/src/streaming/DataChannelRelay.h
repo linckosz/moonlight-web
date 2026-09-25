@@ -326,6 +326,11 @@ private:
 
     std::atomic<bool> m_Connected{false};
     std::atomic<bool> m_Stopping{false};
+    // usrsctp's counters (data chunks sent, retransmitted, fast-retransmitted,
+    // T3 timeouts) when the channels opened, so stop() can report the
+    // session's own. Written once in onOpen, then the flag is raised.
+    std::array<uint32_t, 4> m_SctpAtOpen{};
+    std::atomic<bool> m_SctpAtOpenSet{false};
     // Bidirectional clipboard sync (only when the streamed host is this
     // machine). Written once on the main thread before the relay moves to its
     // dedicated thread, read from relay/libdatachannel threads afterwards.

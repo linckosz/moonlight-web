@@ -28,6 +28,8 @@ extern "C" {
 #include "Limelight.h"
 }
 
+#include "SctpCounters.h"
+
 #include <rtc/rtc.hpp>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -675,9 +677,24 @@ void applySctpSettings(int bitrateKbps)
     const size_t bytes = SendBacklog::sendBufferBytesFor(bitrateKbps);
     rtc::SctpSettings settings;
     settings.sendBufferSize = bytes;
+    // Bench knobs, never settings: unset, libdatachannel's defaults stand (a
+    // 200 ms minimum RTO, a 20 ms delayed SACK). They exist for one A/B — the
+    // click-to-photon tail of 25/09/2026, one click in ten ~205 ms late, has
+    // the shape of a T3 timeout at that minimum RTO: a lone flag frame whose
+    // last packet is lost has nothing behind it to trigger a fast retransmit.
+    bool ok = false;
+    const int rtoMinMs = qEnvironmentVariableIntValue("MW_SCTP_RTO_MIN_MS", &ok);
+    if (ok && rtoMinMs > 0) settings.minRetransmitTimeout = std::chrono::milliseconds(rtoMinMs);
+    const int sackMs = qEnvironmentVariableIntValue("MW_SCTP_SACK_DELAY_MS", &ok);
+    if (ok && sackMs >= 0) settings.delayedSackTime = std::chrono::milliseconds(sackMs);
     rtc::SetSctpSettings(settings);
     qInfo() << "[DataChannelRelay] SCTP send buffer set to" << (bytes / 1024) << "KiB for"
             << bitrateKbps << "kbps, so bufferedAmount reflects the real backlog";
+    if (settings.minRetransmitTimeout || settings.delayedSackTime)
+        qInfo() << "[DataChannelRelay] SCTP bench override: min RTO"
+                << (settings.minRetransmitTimeout ? settings.minRetransmitTimeout->count() : -1)
+                << "ms, delayed SACK"
+                << (settings.delayedSackTime ? settings.delayedSackTime->count() : -1) << "ms";
 }
 
 bool DataChannelRelay::prepare(const rtc::Configuration& config, bool isInternet)
@@ -914,6 +931,10 @@ void DataChannelRelay::createDataChannels()
         m_InputDc->onOpen([this]() {
             qInfo() << "[DataChannelRelay] Input DataChannel open";
             m_Connected = true;
+            if (!m_SctpAtOpenSet.load()) {
+                m_SctpAtOpen = mw::sctp::readCounters();
+                m_SctpAtOpenSet.store(true);
+            }
             // All 3 DataChannels are open when we reach here
             // (they all open together as part of SCTP association)
             emit dataChannelsOpen();
@@ -1934,6 +1955,17 @@ void DataChannelRelay::stop()
     }
 
     qInfo() << "[DataChannelRelay::stop] ENTER, frameCount=" << m_FrameCount;
+
+    // What SCTP had to repair during the session. A T3 timeout is a repair
+    // that waited out the retransmission timer (200 ms at least) instead of a
+    // fast retransmit — on a LAN, the one way a single frame arrives that late.
+    if (m_SctpAtOpenSet.load()) {
+        const std::array<uint32_t, 4> now = mw::sctp::readCounters();
+        qInfo() << "[DataChannelRelay] SCTP this session:" << (now[0] - m_SctpAtOpen[0])
+                << "data chunks sent," << (now[1] - m_SctpAtOpen[1]) << "retransmitted ("
+                << (now[2] - m_SctpAtOpen[2]) << "fast)," << (now[3] - m_SctpAtOpen[3])
+                << "T3 timeouts";
+    }
 
     // Stop ICE timeout timer
     if (m_IceCheckTimer) {

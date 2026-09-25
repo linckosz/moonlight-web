@@ -197,6 +197,8 @@ export class LatencyProbe {
         /** @type {null | {t0: number, ts: number, tMark: number, resolve: Function, timer: any, raf: number}} */
         this._pending = null;
         this._running = false;
+        /** How long a click waits for its flag; run() may lengthen it. */
+        this._timeoutMs = FLAG_TIMEOUT_MS;
         this._canvas = null;
         this._ctx = null;
     }
@@ -211,19 +213,24 @@ export class LatencyProbe {
      * with the entries of this run (they are also appended to `results`).
      * A run already in progress is left alone — its promise is returned.
      */
-    async run(clicks = 3, spacingMs = 2000) {
+    async run(clicks = 3, spacingMs = 2000, { timeoutMs = FLAG_TIMEOUT_MS } = {}) {
         if (this._running) {
             console.warn('[LatencyProbe] a run is already in progress');
             return this._runPromise;
         }
         this._running = true;
         this._stopped = false;
+        // A longer wait, for a run that wants to SEE the slow clicks: at the
+        // default 200 ms a flag that arrives at 230 ms is a "timeout", and the
+        // slow tail and the lost flags cannot be told apart (25/09/2026).
+        this._timeoutMs = timeoutMs > 0 ? timeoutMs : FLAG_TIMEOUT_MS;
         this._runPromise = this._runInner(clicks, spacingMs);
         try {
             return await this._runPromise;
         } finally {
             this._running = false;
             this._runPromise = null;
+            this._timeoutMs = FLAG_TIMEOUT_MS;
         }
     }
 
@@ -302,7 +309,8 @@ export class LatencyProbe {
                 if (this._pending && this._pending.ts === ts)
                     this._pending.tMark = performance.now();
             });
-            if (this._requestFrameEvents) this._requestFrameEvents(FLAG_TIMEOUT_MS + 50);
+            const timeoutMs = this._timeoutMs || FLAG_TIMEOUT_MS;
+            if (this._requestFrameEvents) this._requestFrameEvents(timeoutMs + 50);
             // rAF polling is the floor: the presented-frame hooks sample sooner
             // (right after a draw, or a <video> frame callback) when they fire.
             const tick = () => {
@@ -311,7 +319,7 @@ export class LatencyProbe {
                 if (this._pending) this._pending.raf = requestAnimationFrame(tick);
             };
             this._pending.raf = requestAnimationFrame(tick);
-            this._pending.timer = setTimeout(() => this._finish(null, 'timeout'), FLAG_TIMEOUT_MS);
+            this._pending.timer = setTimeout(() => this._finish(null, 'timeout'), timeoutMs);
             this._armVideoCallback();
         });
     }
@@ -339,7 +347,7 @@ export class LatencyProbe {
         const hit = this._sample();
         if (hit) {
             this._finish(now, null);
-        } else if (now - p.t0 > FLAG_TIMEOUT_MS) {
+        } else if (now - p.t0 > (this._timeoutMs || FLAG_TIMEOUT_MS)) {
             this._finish(null, 'timeout');
         }
     }

@@ -292,6 +292,7 @@ add_executable(mw-server
     src/streaming/HostAudioSink.cpp
     src/streaming/StreamRelay.cpp
     src/streaming/DataChannelRelay.cpp
+    src/streaming/SctpCounters.cpp
     src/streaming/FrameSender.cpp
     src/streaming/MediaTrackRelay.cpp
     src/streaming/SignalingServer.cpp
@@ -399,6 +400,9 @@ target_include_directories(mw-server PRIVATE
     third_party/qmdnsengine
     third_party/moonlight-common-c/src
     third_party/moonlight-common-c/enet/include
+    # usrsctp (built inside libdatachannel): DataChannelRelay reads its
+    # retransmission counters.
+    third_party/libdatachannel/deps/usrsctp/usrsctplib
     ${CMAKE_CURRENT_BINARY_DIR}/miniupnpc_include
 )
 
