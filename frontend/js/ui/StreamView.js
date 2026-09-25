@@ -49,6 +49,7 @@ import {
     CODEC_H264,
     CODEC_HEVC,
     isHevcHdrProfile,
+    isChroma444Profile,
 } from '../util/Mp4Muxer.js';
 import {
     findSequenceHeader,
@@ -2849,6 +2850,15 @@ export class StreamView {
             fallbacks = fallbacks.filter((c) => isHevcHdrProfile(c));
             annexbStrings = annexbStrings.filter((c) => isHevcHdrProfile(c));
         }
+        // A 4:4:4 stream, the same way: a 4:2:0 profile configures fine and
+        // then fails every frame, three errors make a codec fallback, and the
+        // viewer ends in H.264 4:2:0 without a word (25/09/2026, an SDR HEVC
+        // RExt stream on Chrome with an AMD iGPU). Only the stream's own
+        // profile is tried; refused, the chain goes to the fallback at once.
+        if (isChroma444Profile(codec)) {
+            fallbacks = fallbacks.filter((c) => isChroma444Profile(c));
+            annexbStrings = annexbStrings.filter((c) => isChroma444Profile(c));
+        }
         // Chrome WebCodecs has historically rejected HEVC configs that include
         // an explicit colorSpace. We attempt it as the primary config for HEVC
         // too; if Chrome rejects it, the fallback chain skips to the next
@@ -2943,6 +2953,15 @@ export class StreamView {
         }
 
         tryCodecs(configsToTry, 0, () => {
+            // A High 4:4:4 stream nothing here decodes: avc3 below is Baseline,
+            // 4:2:0 — the same trap as a Main string for HEVC RExt. The way out
+            // is H.264 without 4:4:4 (_computeCodecFallbackTarget).
+            if (isChroma444Profile(codec)) {
+                console.warn('[StreamView] No decoder for H.264 High 4:4:4 — H.264 4:2:0 fallback');
+                this.decoderConfiguring = false;
+                this._requestCodecFallback();
+                return;
+            }
             // All avc1 configs exhausted — try avc3 (in-band SPS/PPS).
             // Some browsers/devices prefer avc3 over avc1 for hardware decoding.
             console.warn('[GPU] All avc1 configs rejected, trying avc3 (in-band SPS/PPS)');
@@ -3117,6 +3136,8 @@ export class StreamView {
         if (cur === 'hevc' || cur === 'av1') {
             return { codec: 'h264', hdr: false };
         }
+        // H.264 High 4:4:4 → H.264 4:2:0: the relaunch drops 4:4:4 (launchApp).
+        if (cur === 'h264' && this._yuv444) return { codec: 'h264', hdr: false };
         return null;
     }
 

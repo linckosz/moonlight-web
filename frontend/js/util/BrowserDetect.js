@@ -322,29 +322,34 @@ export async function hdrClientCapability() {
 }
 
 /**
- * 8-bit 4:4:4 profiles a chroma 4:4:4 stream arrives in: HEVC Range Extensions
- * (general_profile_idc 4 — the same profile a 10-bit 4:4:4 stream uses, the SPS
- * tells them apart), then H.264 High 4:4:4 Predictive (profile 244, 0xF4).
+ * 8-bit 4:4:4 profiles a chroma 4:4:4 stream arrives in, per codec: HEVC Range
+ * Extensions (general_profile_idc 4 — the same profile a 10-bit 4:4:4 stream
+ * uses, the SPS tells them apart), and H.264 High 4:4:4 Predictive (profile
+ * 244, 0xF4).
  */
-const CHROMA444_DECODE_PROBES = [
-    'hvc1.4.10.L153.B0',
-    'hev1.4.10.L153.B0',
-    'hvc1.4.10.L123.B0',
-    'avc1.F4002A',
-];
+export const CHROMA444_DECODE_PROBES = {
+    hevc: ['hvc1.4.10.L153.B0', 'hev1.4.10.L153.B0', 'hvc1.4.10.L123.B0'],
+    h264: ['avc1.F4002A', 'avc1.F40028'],
+};
 let chroma444Probe = null;
 
 /**
- * Whether THIS browser decodes any profile a 4:4:4 stream can arrive in.
+ * Which codecs THIS browser decodes a 4:4:4 stream in.
  *
  * Measured 03/09/2026: Chrome 152 on Windows answers false for every RExt
  * string (no 4:4:4 DXVA GUID on Chromium's D3D11 path) while Chrome on macOS
  * answers true and shows the picture. Asked for the host anyway, the stream
  * came up, failed three decodes and fell back to 4:2:0 H.264 three seconds
- * later — so the settings page greys the box out here, and the launch gate
- * drops a saved preference. Probed once per page: a decoder does not change
- * under us. A browser without isConfigSupported is trusted, as for HDR.
- * @returns {Promise<{decode: boolean}>}
+ * later — so the settings page greys the box out when neither codec can, and
+ * the launch asks the one that can (see launchApp).
+ *
+ * Per codec, because one "yes" said nothing about the other: until 25/09/2026
+ * an H.264 4:4:4 answer let an HEVC 4:4:4 stream be asked of a browser that
+ * decodes no HEVC 4:4:4, and it ended in H.264 4:2:0 two seconds later. At the
+ * size the decoder is configured at (StreamView), since a level is a size.
+ * Probed once per page: a decoder does not change under us. A browser without
+ * isConfigSupported is trusted, as for HDR.
+ * @returns {Promise<{decode: boolean, hevc: boolean, h264: boolean}>}
  */
 export async function chroma444ClientCapability() {
     if (!chroma444Probe) {
@@ -353,20 +358,49 @@ export async function chroma444ClientCapability() {
                 typeof VideoDecoder === 'undefined' ||
                 typeof VideoDecoder.isConfigSupported !== 'function'
             ) {
-                return { decode: true };
+                return { decode: true, hevc: true, h264: true };
             }
-            for (const codec of CHROMA444_DECODE_PROBES) {
-                try {
-                    const r = await VideoDecoder.isConfigSupported({ codec });
-                    if (r && r.supported) return { decode: true };
-                } catch (e) {
-                    // This string is refused outright — try the next profile.
+            const decodes = async (strings) => {
+                for (const codec of strings) {
+                    try {
+                        const r = await VideoDecoder.isConfigSupported({
+                            codec,
+                            codedWidth: 1920,
+                            codedHeight: 1080,
+                        });
+                        if (r && r.supported) return true;
+                    } catch (e) {
+                        // This string is refused outright — try the next one.
+                    }
                 }
-            }
-            return { decode: false };
+                return false;
+            };
+            const hevc = await decodes(CHROMA444_DECODE_PROBES.hevc);
+            const h264 = await decodes(CHROMA444_DECODE_PROBES.h264);
+            return { decode: hevc || h264, hevc, h264 };
         })();
     }
     return chroma444Probe;
+}
+
+/**
+ * The codec a 4:4:4 launch should ask for, given the one chosen and what this
+ * browser decodes in 4:4:4 (chroma444ClientCapability).
+ *
+ * The chosen codec when it can; H.264 instead of HEVC when only H.264 can,
+ * because that keeps the 4:4:4 the viewer asked for (the HEVC stream would end
+ * in H.264 4:2:0 anyway); null when 4:4:4 cannot be had in the chosen codec. AV1
+ * is left to the host, which says whether it encodes it — asked, as before, of
+ * a browser that decodes 4:4:4 at all.
+ * @param {string|undefined} codec 'hevc' (the default), 'h264' or 'av1'
+ * @param {{decode: boolean, hevc: boolean, h264: boolean}} cap
+ * @returns {string|null}
+ */
+export function chroma444Codec(codec, cap) {
+    const c = codec || 'hevc';
+    if (c === 'hevc') return cap.hevc ? 'hevc' : cap.h264 ? 'h264' : null;
+    if (c === 'h264') return cap.h264 ? 'h264' : null;
+    return cap.decode ? c : null;
 }
 
 /** True when the app runs as an installed PWA (no browser chrome). */

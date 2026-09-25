@@ -62,6 +62,7 @@ import {
     resolveTearing,
     hdrClientCapability,
     chroma444ClientCapability,
+    chroma444Codec,
 } from './util/BrowserDetect.js';
 import {
     startRefreshRateMonitor,
@@ -520,6 +521,9 @@ const MoonlightApp = {
                         streamView._codecFallback?.codec === 'h264'
                     ) {
                         console.warn('[MW] Guest: codec fallback → H.264');
+                        // The guest loses 4:4:4 there as the owner does, and is
+                        // told the same way.
+                        if (streamView._yuv444) Toast.warning(t('launch.chroma444Fallback'));
                         view.onJoin({ height, gaming, touchScreen, padKey }, at, 'h264').catch(
                             (err) => {
                                 console.error('[MW] Guest codec fallback failed:', err);
@@ -1939,18 +1943,34 @@ const MoonlightApp = {
             }
         }
 
-        // 4:4:4 is never asked of the host for a browser that decodes no 4:4:4
-        // profile (HEVC RExt, H.264 High 4:4:4). Chrome on Windows decodes
-        // neither: asked anyway, the stream came up, failed three decodes and
-        // fell back to 4:2:0 H.264 three seconds later (B7, 03/09/2026). The
-        // settings page greys the box out on such a browser; this catches a
-        // preference saved on another one (the settings travel with the account).
+        // 4:4:4 is asked of the host only in a codec this browser decodes it in
+        // (HEVC RExt, H.264 High 4:4:4). Chrome on Windows decodes neither:
+        // asked anyway, the stream came up, failed three decodes and fell back
+        // to 4:2:0 H.264 three seconds later (B7, 03/09/2026). A browser that
+        // decodes only H.264 4:4:4 is asked H.264 4:4:4 rather than an HEVC one
+        // it would drop in the same way (25/09/2026, Chrome on an AMD iGPU).
+        // The settings page greys the box out when neither can; this catches a
+        // preference saved on another browser (the settings travel with the
+        // account), and says so.
         if (streamingSettings.chroma_444_enabled) {
             const cap = await chroma444ClientCapability();
-            if (!cap.decode) {
-                console.log('[MW] 4:4:4 preference ignored: this browser decodes no 4:4:4 profile');
+            const asked = streamingSettings.video_codec;
+            const codec = chroma444Codec(asked, cap);
+            if (!codec) {
+                console.log(
+                    `[MW] 4:4:4 preference ignored: this browser decodes no 4:4:4 in ${asked || 'hevc'}`,
+                );
                 this._chroma444Declined = 'this browser decodes none';
                 streamingSettings.chroma_444_enabled = false;
+                // Said once: the preference is put away in this browser, whose
+                // settings page greys the box out anyway.
+                if (this._persistChroma444Disabled() && !codecOverride)
+                    Toast.warning(t('settings.chroma444BrowserUnsupported'));
+            } else if (codec !== (asked || 'hevc')) {
+                console.log(
+                    `[MW] 4:4:4: this browser decodes it in ${codec} only — asking ${codec}`,
+                );
+                streamingSettings.video_codec = codec;
             }
         }
 
@@ -4060,9 +4080,15 @@ const MoonlightApp = {
             // The H.264 fallback silently drops 4:4:4 as well (launchApp), and
             // that loss had no voice at all: the overlay reads "H264" with no
             // mention of chroma, so a viewer who asked for 4:4:4 has no way to
-            // learn they are watching 4:2:0. Say it exactly like HDR.
-            if (fallbackTarget.codec === 'h264' && this._persistChroma444Disabled()) {
-                Toast.warning(t('launch.chroma444Fallback'));
+            // learn they are watching 4:2:0. Say it exactly like HDR — whenever
+            // the stream that failed asked for it, not only when the saved
+            // preference still did (a launch can ask 4:4:4 the storage no
+            // longer holds, and then the loss went unsaid again).
+            if (fallbackTarget.codec === 'h264') {
+                const asked = (this._lastStreamingSettings || {}).chroma_444_enabled === true;
+                if (this._persistChroma444Disabled() || asked) {
+                    Toast.warning(t('launch.chroma444Fallback'));
+                }
             }
 
             // Keep the full-screen loader up across teardown + relaunch so the

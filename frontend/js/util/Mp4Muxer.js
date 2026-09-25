@@ -640,6 +640,18 @@ export function isHevcHdrProfile(codecString, sps) {
 }
 
 /**
+ * Whether a codec string names a profile a 4:4:4 stream is carried in: HEVC
+ * Range Extensions (general_profile_idc 4) or H.264 High 4:4:4 Predictive
+ * (profile_idc 244, 0xF4). A 4:2:0 profile configures fine for such a stream
+ * and then fails every frame.
+ * @param {string} codecString
+ * @returns {boolean}
+ */
+export function isChroma444Profile(codecString) {
+    return /^(hvc1|hev1)\.4\./.test(codecString || '') || /^avc1\.f4/i.test(codecString || '');
+}
+
+/**
  * Common H.264 codec strings for fallback.
  * Listed in order of preference (most common for 1080p60 first).
  */
