@@ -66,7 +66,7 @@ Attendu : La reponse JSON contient les champs suivants selon le contexte:
 |---|---|---|
 | `upnpAvailable` | `true` | `false` |
 | `upnpPublicIP` | `"1.2.3.4"` | absent (`undefined`) |
-| `upnpPort` | `48010` | absent (`undefined`) |
+| `upnpPort` | `48550` | absent (`undefined`) |
 
 **Note** : Sans miniupnpc compile, `upnpAvailable` sera toujours `false`.
 
@@ -115,10 +115,10 @@ Ouvrir https://localhost dans un navigateur :
    - Log : `[Tunnel] Router hole 3478 ready (public <PUBLIC_IP>), 1 of 4 — more are claimed as browsers arrive`
 3. Depuis l'exterieur, ouvrir l'URL publique
 4. Lancer un stream : le trou media est reclame AVANT le spawn du worker
-   - Log : `[UPNP] media slot 0: claimed 48010 (UDP+TCP, public <PUBLIC_IP>)`
-   - Log worker : `[SignalingServer] Router forwards <PUBLIC_IP> : 48010 to media port 48010`
+   - Log : `[UPNP] media slot 0: claimed 48550 (UDP+TCP, public <PUBLIC_IP>)`
+   - Log worker : `[SignalingServer] Router forwards <PUBLIC_IP> : 48550 to media port 48550`
 5. Verifier les logs :
-   - `[DataChannelRelay] Rewrote host candidate: <LAN_IP> -> <PUBLIC_IP>:48010`
+   - `[DataChannelRelay] Rewrote host candidate: <LAN_IP> -> <PUBLIC_IP>:48550`
 6. Verifier que le stream fonctionne (video + audio + input)
 7. Un deuxieme navigateur sur le tunnel : `[UPNP] tunnel: claimed 3479 …` apres que le
    premier a ete servi, jamais en le bloquant
@@ -129,9 +129,9 @@ Ouvrir https://localhost dans un navigateur :
 
 1. Demarrer l'hote A, puis l'hote B (Internet Access + UPnP actifs sur les deux)
 2. Sur B : `[UPNP] tunnel: claimed 3479 … after skipping 3478 (<IP de A>)` et, au premier
-   stream, `[UPNP] media slot 0: claimed external 46100 -> 48010 after skipping 48010 (<IP de A>)`
+   stream, `[UPNP] media slot 0: claimed external 46100 -> 48550 after skipping 48550 (<IP de A>)`
 3. Verifier la table du routeur en SOAP (`GetSpecificPortMappingEntry`, la table COM ment) :
-   `NewInternalClient` de 3478 = A, de 3479 = B, de 48010 = A, de 46100 = B
+   `NewInternalClient` de 3478 = A, de 3479 = B, de 48550 = A, de 46100 = B
 4. Depuis un reseau d'entreprise, le tunnel de A ET celui de B repondent
 5. Redemarrer B : il reprend 3479 (memorise), A n'est pas touche
 6. Trempage > 1 h : aucun `[UPNP] … now forwards to …` sur aucun des deux hotes
@@ -144,7 +144,7 @@ Ouvrir https://localhost dans un navigateur :
 |---|---|
 | Routeur non-UPnP | discover echoue → fallback STUN-only, pas de crash |
 | Routeur UPnP desactive | idem |
-| 48010 tenu par un voisin du LAN | l'externe marche vers le pool 46100-46199, le bind local reste 48010 (`RouterPortCore`, TNR `test_router_port_core.cpp`) |
+| 48550 tenu par un voisin du LAN | l'externe marche vers le pool 46100-46199, le bind local reste 48550 (`RouterPortCore`, TNR `test_router_port_core.cpp`) |
 | 3478-3481 et 5349-5352 tenus | le tunnel prend 46000-46031, un port a la fois ; tout tenu → port ephemere, candidat reflexif seul |
 | Routeur qui reecrit en silence (Livebox) | relecture apres chaque ecriture et a chaque renouvellement → `dropped and forgotten`, re-reclamation |
 | Mapping expire | renouvellement toutes les 30 min sur le thread `mw-upnp` ; 2 echecs → mappings permanents |

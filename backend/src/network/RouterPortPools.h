@@ -41,8 +41,8 @@ namespace mw::routerports {
 //   has to be acceptable, not ours.
 //
 //   it is nowhere near anything else this project binds. The stream block
-//   starts at 48010, GameStream owns 47984-48010, MultiSeat and Wolf sit above
-//   48100. A hole here can never be mistaken for one of those, in a router
+//   starts at 48550, GameStream owns 47984-48010, MultiSeat and Wolf sit above
+//   48095. A hole here can never be mistaken for one of those, in a router
 //   table or in a log.
 //
 // Eight of them: a first host takes what it needs from the front, a second
@@ -69,13 +69,26 @@ constexpr int kTunnelPortCap = 4;
 
 // ── The stream ──────────────────────────────────────────────────────────────
 //
-// Each stream slot binds 48010 + slot locally, and that never changes: the
-// --dev firewall rule and every diagnostic know the block. What the ROUTER
-// forwards to it is negotiated — the slot's own number first, so a lone host
-// looks exactly as it always did, then a pool for the host whose neighbour
-// got there first. A router forwards any external port to any internal one;
-// the browser is told the external, the socket keeps the internal.
-constexpr uint16_t kMediaBasePort = 48010;
+// Each stream slot binds 48550 + slot locally, and that never changes: the
+// packages' firewall rule, the --dev one and every diagnostic know the block.
+// What the ROUTER forwards to it is negotiated — the slot's own number first,
+// so a lone host looks exactly as it always did, then a pool for the host whose
+// neighbour got there first. A router forwards any external port to any
+// internal one; the browser is told the external, the socket keeps the internal.
+//
+// Where the block sits is chosen for the machines it runs on, which also run
+// the streaming servers. Sunshine and Apollo own 47984-48010 (48010 is their
+// RTSP, over TCP — which the media socket binds too under ICE-TCP), MultiSeat
+// seats and Wolf 48095 to ~48340, and a GameStream server moved up by a
+// thousand, the usual way to run a second one, 48984-49010. 49152 and above is
+// where Windows and macOS hand out ephemeral ports, and where Hyper-V, WSL and
+// Docker reserve whole blocks at boot. Linux hands out 32768-60999, so the
+// packages reserve the block there (ip_local_reserved_ports). Until 0.3.1 it
+// was 48010-48033, right on Sunshine's RTSP port.
+constexpr uint16_t kMediaBasePort = 48550;
+// One port per stream slot: the ceiling of concurrent streams, and the block
+// the packages open, 48550-48573.
+constexpr int kMediaPortCount = 24;
 constexpr uint16_t kMediaPoolBegin = 46100;
 constexpr uint16_t kMediaPoolEnd = 46199;
 

@@ -415,8 +415,8 @@ private:
 
     /// Port for legacy WSS StreamRelay (separate from m_WsPort used for signaling).
     quint16 m_StreamRelayPort = 48002;
-    /// WebRTC media UDP port for this slot; 48010 (slot 0 base) by default.
-    quint16 m_MediaPort = 48010;
+    /// WebRTC media UDP port for this slot; 48550 (slot 0 base) by default.
+    quint16 m_MediaPort = 48550;
     /// The router hole for this slot (see setUpnpMapping); none by default.
     QString m_UpnpPublicIp;
     quint16 m_UpnpExternalPort = 0;

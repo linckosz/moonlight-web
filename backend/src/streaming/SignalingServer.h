@@ -286,9 +286,9 @@ private:
     bool m_HelloReceived = false;
 
     /// Distinct WebRTC media UDP port for this slot (base + slot). Keeps
-    /// concurrent workers off each other's port; slot 0 keeps 48010. See
+    /// concurrent workers off each other's port; slot 0 takes 48550. See
     /// setMediaPort() and mw::routerports::kMediaBasePort.
-    quint16 m_MediaPort = 48010;
+    quint16 m_MediaPort = 48550;
     NetClassify::Kind m_ClientKind = NetClassify::Kind::Public; // see setClientKind
     /// The router hole, as handed down by the parent. See setPresetMapping().
     uint16_t m_UpnpExternalPort = 0;

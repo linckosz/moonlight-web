@@ -134,8 +134,8 @@ void run_router_port_core_tests()
 
         const auto m = core.claim(mediaRequest(0));
         CHECK(m.ok);
-        CHECK_EQ(m.claim.external, uint16_t(48010));
-        CHECK_EQ(m.claim.internal, uint16_t(48010));
+        CHECK_EQ(m.claim.external, uint16_t(48550));
+        CHECK_EQ(m.claim.internal, uint16_t(48550));
         CHECK_EQ(m.claim.slot, 0);
     }
 
@@ -229,7 +229,7 @@ void run_router_port_core_tests()
         const auto m = core.claim(mediaRequest(0, 46107));
         CHECK(m.ok);
         CHECK_EQ(m.claim.external, uint16_t(46107));
-        CHECK_EQ(m.claim.internal, uint16_t(48010));
+        CHECK_EQ(m.claim.internal, uint16_t(48550));
     }
 
     // ── A remembered port a neighbour took meanwhile is passed over ───────
@@ -279,25 +279,25 @@ void run_router_port_core_tests()
         RouterPortCore mediaCore(gw, [](uint16_t) { return false; });
         const auto m = mediaCore.claim(mediaRequest(0));
         CHECK(m.ok);
-        CHECK_EQ(m.claim.external, uint16_t(48010));
+        CHECK_EQ(m.claim.external, uint16_t(48550));
     }
 
     // ── The media external port walks when a neighbour has the slot's own ─
     {
         FakeGateway gw;
-        gw.foreign(48010, QStringLiteral("192.168.1.34"));
+        gw.foreign(48550, QStringLiteral("192.168.1.34"));
         RouterPortCore core(gw, kAlwaysFree);
 
         const auto m = core.claim(mediaRequest(0));
         CHECK(m.ok);
         CHECK_EQ(m.claim.external, uint16_t(46100));
-        CHECK_EQ(m.claim.internal, uint16_t(48010));
+        CHECK_EQ(m.claim.internal, uint16_t(48550));
         CHECK_EQ(gw.table[qMakePair(uint16_t(46100), QStringLiteral("UDP"))].internal,
-                 uint16_t(48010));
+                 uint16_t(48550));
         // Slot 1 on the same host: its own number is free, so it keeps it.
         const auto m1 = core.claim(mediaRequest(1));
         CHECK(m1.ok);
-        CHECK_EQ(m1.claim.external, uint16_t(48011));
+        CHECK_EQ(m1.claim.external, uint16_t(48551));
     }
 
     // ── A mute IGD is "nobody", not "not ours" ────────────────────────────
@@ -397,7 +397,7 @@ void run_router_port_core_tests()
         CHECK(core.held().isEmpty());
         CHECK_EQ(gw.removes, 4); // two holes, UDP + TCP each
         CHECK(!gw.table.contains(qMakePair(uint16_t(3478), QStringLiteral("UDP"))));
-        CHECK(!gw.table.contains(qMakePair(uint16_t(48010), QStringLiteral("TCP"))));
+        CHECK(!gw.table.contains(qMakePair(uint16_t(48550), QStringLiteral("TCP"))));
         // The neighbour's entry was never ours to remove.
         CHECK(gw.table.contains(qMakePair(uint16_t(5349), QStringLiteral("UDP"))));
     }
@@ -406,8 +406,12 @@ void run_router_port_core_tests()
     {
         using namespace mw::routerports;
         CHECK(kTunnelPoolEnd < kMediaPoolBegin);
-        CHECK(kMediaPoolEnd < 47984);       // GameStream
-        CHECK(kMediaBasePort + 24 < 48100); // the slot plan's ceiling
+        CHECK(kMediaPoolEnd < 47984); // GameStream
+        // The media block sits above MultiSeat and Wolf (up to ~48340), below a
+        // GameStream server moved up by a thousand (48984) and the Windows and
+        // macOS ephemeral range (49152).
+        CHECK(kMediaBasePort > 48399);
+        CHECK(kMediaBasePort + kMediaPortCount - 1 < 48984);
         CHECK(kTunnelPreferred[0] == 3478); // the corporate port first
         CHECK(kTunnelPortCap >= 1);
     }

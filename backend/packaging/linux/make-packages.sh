@@ -30,13 +30,14 @@ OUT=$(realpath "$3")
 EDITION=${4:-prod}
 
 # PORTS: what postinst opens in an active firewall (and prerm closes), in ufw's
-# notation (postinst turns a range's ':' into firewalld's '-'). 48010:48033/udp
-# is the stream media block: one pinned port per slot, 48010 + slot, for the 24
-# slots planSlotPorts() gives the default signaling port (backend/src/main.cpp).
+# notation (postinst turns a range's ':' into firewalld's '-'). 48550:48573/udp
+# is the stream media block: one pinned port per slot, 48550 + slot, for the 24
+# slots (mw::routerports::kMediaBasePort / kMediaPortCount). postinst also
+# reserves it from the kernel's ephemeral ports (MEDIA_RANGE below).
 # The DEV edition listens on its own TCP ports and leaves the media block alone:
 # production opens it, and a DEV uninstall closing it would cut production off.
 case "$EDITION" in
-    prod) NAME=moonlightweb;     APP=MoonlightWeb;    PORTS="443/tcp 80/tcp 48010:48033/udp" ;;
+    prod) NAME=moonlightweb;     APP=MoonlightWeb;    PORTS="443/tcp 80/tcp 48550:48573/udp" ;;
     dev)  NAME=moonlightweb-dev; APP=MoonlightWebDev; PORTS="48443/tcp 48080/tcp" ;;
     *) echo "error: edition must be prod or dev (got '$EDITION')" >&2; exit 1 ;;
 esac
@@ -166,23 +167,53 @@ udevadm control --reload-rules >/dev/null 2>&1 || true
 udevadm trigger --subsystem-match=misc --sysname-match=uinput >/dev/null 2>&1 || true
 modprobe uinput >/dev/null 2>&1 || true
 
+# The stream's media block, the one production owns (empty in the DEV edition).
+MEDIA_RANGE=48550-48573
+
 # Open the server ports in the system firewall (best-effort). Unlike Windows /
 # macOS, Linux netfilter firewalls are port-based (no per-program rule), and this
 # runs before the app picks a port, so we open the defaults: 443/tcp + 80/tcp
-# (HTTPS + HTTP→HTTPS redirect) and 48010-48033/udp (the stream's media ports).
+# (HTTPS + HTTP→HTTPS redirect) and 48550-48573/udp (the stream's media ports).
 # Without the media block the page loads and every stream dies at ICE. A
 # non-default or per-instance parity port under an *active* firewall would need
 # a manual rule. firewalld (Fedora/RHEL — active by default) and ufw
 # (Debian/Ubuntu) only; the AUR hook (moonlightweb-bin.install) does the same.
+# 48010:48033/udp was the media block up to 0.3.0, on Sunshine's RTSP port: an
+# upgrade closes it.
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    for p in 443/tcp 80/tcp 48010:48033/udp; do
+    for p in 443/tcp 80/tcp 48550:48573/udp; do
         firewall-cmd --permanent --add-port="$(echo "$p" | tr : -)" >/dev/null 2>&1 || true
     done
+    [ -n "$MEDIA_RANGE" ] && firewall-cmd --permanent --remove-port=48010-48033/udp >/dev/null 2>&1
     firewall-cmd --reload >/dev/null 2>&1 || true
 elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
-    for p in 443/tcp 80/tcp 48010:48033/udp; do
+    for p in 443/tcp 80/tcp 48550:48573/udp; do
         ufw allow "$p" >/dev/null 2>&1 || true
     done
+    [ -n "$MEDIA_RANGE" ] && ufw delete allow 48010:48033/udp >/dev/null 2>&1
+fi
+
+# Reserve the media block from the kernel's ephemeral ports (32768-60999 by
+# default), so no outgoing connection is handed one of them at random and the
+# stream never has to leave the block the firewall opens. The setting is a single
+# list for the whole machine: what is already reserved is kept, and the merged
+# list is written to sysctl.d so it survives a reboot. Best-effort: a container
+# cannot write it, and the app then falls back within the block on its own.
+if [ -n "$MEDIA_RANGE" ]; then
+    key=net.ipv4.ip_local_reserved_ports
+    if cur=$(sysctl -n "$key" 2>/dev/null); then
+        case ",$cur," in
+            *",$MEDIA_RANGE,"*) new=$cur ;;
+            *) new=${cur:+$cur,}$MEDIA_RANGE ;;
+        esac
+        if sysctl -w "$key=$new" >/dev/null 2>&1; then
+            {
+                echo "# Written by the MoonlightWeb package: keeps the kernel from handing its"
+                echo "# stream media ports ($MEDIA_RANGE) out as ephemeral ports. Removed with it."
+                echo "$key = $(sysctl -n "$key")"
+            } > /etc/sysctl.d/60-moonlightweb.conf 2>/dev/null || true
+        fi
+    fi
 fi
 
 # Upgrade over a headless install: the service owns the binary we just replaced.
@@ -320,14 +351,26 @@ if [ "${1:-}" != "upgrade" ] && [ "${1:-0}" != "1" ]; then
     fi
 
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        for p in 443/tcp 80/tcp 48010:48033/udp; do
+        for p in 443/tcp 80/tcp 48550:48573/udp; do
             firewall-cmd --permanent --remove-port="$(echo "$p" | tr : -)" >/dev/null 2>&1 || true
         done
         firewall-cmd --reload >/dev/null 2>&1 || true
     elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
-        for p in 443/tcp 80/tcp 48010:48033/udp; do
+        for p in 443/tcp 80/tcp 48550:48573/udp; do
             ufw delete allow "$p" >/dev/null 2>&1 || true
         done
+    fi
+
+    # Give the media block back to the kernel's ephemeral ports (see postinst).
+    MEDIA_RANGE=48550-48573
+    if [ -n "$MEDIA_RANGE" ] && [ -f /etc/sysctl.d/60-moonlightweb.conf ]; then
+        PATH="$PATH:/usr/sbin:/sbin"
+        rm -f /etc/sysctl.d/60-moonlightweb.conf
+        key=net.ipv4.ip_local_reserved_ports
+        if cur=$(sysctl -n "$key" 2>/dev/null); then
+            new=$(printf ',%s,' "$cur" | sed -e "s/,$MEDIA_RANGE,/,/" -e 's/^,//' -e 's/,$//')
+            sysctl -w "$key=$new" >/dev/null 2>&1 || true
+        fi
     fi
 fi
 exit 0
@@ -337,7 +380,8 @@ if [ "$EDITION" = dev ]; then
     sed -i -e "s|/opt/moonlightweb/bin/MoonlightWeb|$PREFIX/bin/$APP|g" \
            -e "s|/opt/moonlightweb/|$PREFIX/|g" \
            -e "s|moonlightweb\.service|$NAME.service|g" \
-           -e "s|443/tcp 80/tcp 48010:48033/udp|$PORTS|g" \
+           -e "s|443/tcp 80/tcp 48550:48573/udp|$PORTS|g" \
+           -e "s|^\( *\)MEDIA_RANGE=.*|\1MEDIA_RANGE=|" \
            -e "s|moonlightweb --|$NAME --|g" \
            -e "s|enable --now moonlightweb\$|enable --now $NAME|" \
            -e "s|the moonlightweb service|the $NAME service|" \

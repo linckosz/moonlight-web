@@ -142,10 +142,10 @@ VOLUME ["/data"]
 
 # Documentation only — EXPOSE publishes nothing. 443 is the web UI and the
 # signalling upgrade, 80 the redirect and the ACME http-01 challenge; the UDP
-# block carries WebRTC media, one port per stream slot (48010 + slot), plus the
+# block carries WebRTC media, one port per stream slot (48550 + slot), plus the
 # 47999 Internet Access maps alongside 80/443. `--network host` is still the
 # supported layout. Full table: docker/README.md.
-EXPOSE 443/tcp 80/tcp 47999/udp 48010-48033/udp
+EXPOSE 443/tcp 80/tcp 47999/udp 48550-48573/udp
 
 # --status talks to the running instance over loopback and exits non-zero when
 # nothing answers, so it doubles as the liveness probe. start-period covers the

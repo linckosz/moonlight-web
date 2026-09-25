@@ -266,7 +266,7 @@ curl -fsSL https://moonlightweb.top/install.sh | bash
 
 It registers the signed **APT** or **DNF** repository and installs from it, so `apt`/`dnf` upgrade MoonlightWeb along with the rest of the system, and the app shows up in **GNOME Software**, **KDE Discover** and Ubuntu's **App Center**. Arch and derivatives get [`moonlightweb-bin`](https://aur.archlinux.org/packages/moonlightweb-bin) from the AUR; distros with neither fall back to the AppImage. The repository can also be added by hand — see the [Linux guide](https://moonlightweb.top/guides/linux.html#one-line-install).
 
-Or pick the package for your distro family directly. All of them are **self‑contained** (Qt + OpenSSL bundled, **no dependencies**), install to `/opt/moonlightweb` with a `moonlightweb` command and a menu entry, open the firewall ports (80/tcp, 443/tcp, 48010‑48033/udp) best‑effort, and start the app right after install.
+Or pick the package for your distro family directly. All of them are **self‑contained** (Qt + OpenSSL bundled, **no dependencies**), install to `/opt/moonlightweb` with a `moonlightweb` command and a menu entry, open the firewall ports (80/tcp, 443/tcp, 48550‑48573/udp) best‑effort, and start the app right after install.
 
 | Distro family | Package | Command |
 |---|---|---|
@@ -330,7 +330,7 @@ caveats).
 | | |
 |---|---|
 | **Tags** | `latest` · `0.2.4` · `0.2` · `sha-<commit>`. Release tags only — no `edge`, no nightly, so `latest` can never be work in progress. |
-| **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (HTTP→HTTPS redirect). WebRTC media takes **48010‑48014/udp** when UPnP maps it, an ephemeral UDP port otherwise. A GameStream host is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
+| **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (HTTP→HTTPS redirect). WebRTC media takes **48550‑48573/udp**, one port per stream slot, with or without UPnP. A GameStream host is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
 | **Volume** | `/data` — settings, TLS material, paired hosts and the **client identity**. Losing it un‑pairs every host. |
 | **Env** | `MW_HTTPS_PORT` · `MW_HTTP_PORT` · `MW_UPNP` · `TZ` |
 | **GPU** | **None required.** A container has no desktop to capture, so the native engine does not run here and the server never decodes or re‑encodes: the paired host encodes on its GPU, the browser decodes on the viewer's. No `/dev/dri`, no NVIDIA runtime, no VA‑API. Gamepad/keyboard/mouse arrive over the data channel — no `/dev/input`, no privileged container. |
@@ -404,7 +404,7 @@ What the browser loads from that server is a few kilobytes of entry page. It ope
 
 </div>
 
-**Possible limitations:** UPnP disabled (forward the media ports 48010‑48014 manually), CGNAT/double‑NAT (detected and reported — port forwarding won't work), or a port already mapped by another device.
+**Possible limitations:** UPnP disabled (forward the media ports 48550‑48573 manually), CGNAT/double‑NAT (detected and reported — port forwarding won't work), or a port already mapped by another device.
 
 ---
 

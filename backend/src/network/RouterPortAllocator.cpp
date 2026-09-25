@@ -355,7 +355,13 @@ void RouterPortAllocator::claimMediaPort(int slot, uint16_t internalPort, QObjec
     request.purpose = Purpose::Media;
     request.slot = slot;
     request.internalPort = internalPort;
-    if (const quint16 remembered = m_Settings->rememberedMediaPort(slot))
+    // Up to 0.3.0 the slot's own number was 48010 + slot, and that is what a
+    // host upgraded from it remembers: asking for it again would keep the old
+    // number on the router, pointed at the new block. Asked for from scratch.
+    const quint16 remembered = m_Settings->rememberedMediaPort(slot);
+    if (remembered >= 48010 && remembered <= 48033)
+        m_Settings->forgetMediaPort(slot);
+    else if (remembered)
         request.remembered.append(remembered);
     request.preferred.append(internalPort);
     request.poolBegin = mw::routerports::kMediaPoolBegin;

@@ -234,7 +234,7 @@ So that a phone or another PC on the LAN can reach the instance (one UAC prompt)
 powershell -ExecutionPolicy Bypass -File scripts\dev-firewall-allow.ps1
 ```
 
-It adds port rules on every profile for TCP 48080 / 48443 and TCP + UDP 48010–48033 — the `--dev`
+It adds port rules on every profile for TCP 48080 / 48443 and TCP + UDP 48550–48573 — the `--dev`
 web ports and the per-stream WebRTC media ports. Also ask the user to check that the PC's network
 is **Private** (*Settings → Network & internet → Wi-Fi or Ethernet → Network profile type*) and that
 the other device is on the same network, not on a guest Wi-Fi that isolates clients.
@@ -455,7 +455,7 @@ Everything above holds, with these substitutions:
 | `.env` | `printf 'MW_LAN_ONLY=1\n' > .env` | same |
 | Build | `MW_LAN_ONLY=1 CMAKE_PREFIX_PATH=<kit> ./backend/build.sh`, `<kit>` being the folder aqt created under `~/Qt/6.11.0/` (`gcc_64`) | same (`macos`) |
 | Run | `./build/MoonlightWeb --dev --log build/dev.log` | same |
-| Firewall | if `ufw` is active: `sudo ufw allow 48080,48443/tcp` and `sudo ufw allow 48010:48033/udp` | allow the binary when macOS asks |
+| Firewall | if `ufw` is active: `sudo ufw allow 48080,48443/tcp` and `sudo ufw allow 48550:48573/udp` | allow the binary when macOS asks |
 | Own screen | the installed packages grant the capability KMS capture needs (`backend/packaging/linux/make-packages.sh`); a plain build may fall back to the ScreenCast portal, or show no host card | grant *Screen Recording* to the binary at first launch |
 | Backend tests | CI runs the Qt suite on Windows; locally, rely on the PR's CI for it | same |
 

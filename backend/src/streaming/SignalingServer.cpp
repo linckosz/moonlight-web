@@ -28,6 +28,7 @@ extern "C" {
 #include "SdpFingerprint.h"
 #include "common/Edition.h"
 #include "common/PairingCrypto.h"
+#include "network/RouterPortPools.h"
 #include "server/NetClassify.h"
 
 #include <rtc/rtc.hpp>
@@ -56,6 +57,29 @@ static bool udpPortFree(uint16_t port)
     const bool ok = probe.bind(QHostAddress::AnyIPv4, port, QAbstractSocket::DontShareAddress);
     probe.close();
     return ok;
+}
+
+// The media block, as the packages' firewall rule and the log name it.
+static const QString kMediaBlock =
+    QStringLiteral("%1-%2/udp")
+        .arg(mw::routerports::kMediaBasePort)
+        .arg(mw::routerports::kMediaBasePort + mw::routerports::kMediaPortCount - 1);
+
+// The port this slot's media socket pins: its own when free, else another of
+// the block — still open in the firewall, where a random one would not be.
+// Something else on the machine can hold one: a second instance streaming on
+// the same slot (production next to --dev), or on Linux a program that got it
+// as an ephemeral port where the packages could not reserve it. The walk runs
+// from the top of the block down, away from the low slots that are always in
+// use. 0 when the whole block is held.
+static uint16_t freeMediaPort(uint16_t own)
+{
+    if (udpPortFree(own)) return own;
+    for (int i = mw::routerports::kMediaPortCount - 1; i >= 0; --i) {
+        const auto port = static_cast<uint16_t>(mw::routerports::kMediaBasePort + i);
+        if (port != own && udpPortFree(port)) return port;
+    }
+    return 0;
 }
 
 // The Linux firewall front-end that is filtering, if any: "ufw" or "firewalld".
@@ -578,9 +602,9 @@ void SignalingServer::onRelayIceTimedOut()
     const QString firewall = hostFirewallName();
     if (!firewall.isEmpty())
         qWarning().noquote() << "[SignalingServer]" << firewall
-                             << "is active on this host: it must let UDP" << m_MediaPort
-                             << "through (the packages open 48010-48033/udp), or no stream "
-                                "reaches this machine over UDP";
+                             << "is active on this host: it must let" << kMediaBlock
+                             << "through (the packages open it), or no stream reaches this "
+                                "machine over UDP";
 
     if (!m_AllowWsFallback) {
         // Auto mode: WS fallback is disabled so the auto fallback chain
@@ -1104,22 +1128,26 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, bool mapped,
     if (mapped) {
         config.portRangeBegin = mediaPort;
         config.portRangeEnd = mediaPort;
-    } else if (udpPortFree(mediaPort)) {
-        // Without a router hole too, pin this slot's fixed media port (base +
-        // slot, so concurrent streams never collide). An ephemeral port cannot
-        // be allowed through a port-based firewall: ufw and firewalld on Linux
-        // — which the packages open the media block in — and the port rules of
-        // --dev test builds on Windows (scripts/dev-firewall-allow.ps1). The
-        // installed Windows and macOS rules are program-scoped and take either.
-        config.portRangeBegin = mediaPort;
-        config.portRangeEnd = mediaPort;
-        qInfo() << "[SignalingServer] Pinned UDP media port" << mediaPort;
+    } else if (const uint16_t pinned = freeMediaPort(mediaPort)) {
+        // Without a router hole too, pin a port of the media block. An
+        // ephemeral port cannot be allowed through a port-based firewall: ufw
+        // and firewalld on Linux — which the packages open the block in — and
+        // the port rules of --dev test builds on Windows
+        // (scripts/dev-firewall-allow.ps1). The installed Windows and macOS
+        // rules are program-scoped and take either.
+        config.portRangeBegin = pinned;
+        config.portRangeEnd = pinned;
+        if (pinned == mediaPort)
+            qInfo() << "[SignalingServer] Pinned UDP media port" << pinned;
+        else
+            qWarning() << "[SignalingServer] UDP media port" << mediaPort << "is taken — pinned"
+                       << pinned << "from the same block instead";
     } else {
-        // Someone else holds it: a second instance on this machine (production
-        // next to --dev) streaming on the same slot. An ephemeral port still
-        // works wherever the firewall is program-scoped or off.
-        qWarning() << "[SignalingServer] UDP media port" << mediaPort
-                   << "is taken — using an ephemeral port, which a port-based firewall will block";
+        // The whole block is held: an ephemeral port still works wherever the
+        // firewall is program-scoped or off.
+        qWarning().noquote() << "[SignalingServer] UDP media ports" << kMediaBlock
+                             << "are all taken — using an ephemeral port, which a "
+                                "port-based firewall will block";
     }
 
     if (forceIceTcp) {

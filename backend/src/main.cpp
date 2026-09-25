@@ -1266,20 +1266,14 @@ using mw::edition::kDevSignalingPort;
 // WebRTC media UDP port base (all modes). Each concurrent slot binds a distinct
 // port (base + slot) so simultaneous streams never collide on it; the router
 // forwards an external port to it, claimed per slot by RouterPortAllocator.
-// Slot 0 keeps the historical 48010. The dev firewall rule opens
-// base..base+kMaxSlots-1.
+// The packages and the dev firewall rule open base..base+kSlotHardCeiling-1.
 static constexpr quint16 kMediaBasePort = mw::routerports::kMediaBasePort;
 
-// First port above the signaling base that belongs to somebody else: the
-// MultiSeat seat range documented above, and Wolf's video ping (48100, audio
-// 48200) whenever Wolf shares the machine — which the Linux build does. The
-// slot plan takes ten ports per slot, so it walks into this range fast and has
-// to stop before it.
-static constexpr quint16 kForeignPortFloor = 48100;
 // Ceiling independent of the port plan: enough for the largest per-backend cap
 // on two hosts at once (see concurrentSessionCap) plus the reserved block. It
-// is a ceiling, not an allocation — the pool creates slots on demand.
-static constexpr int kSlotHardCeiling = 24;
+// is a ceiling, not an allocation — the pool creates slots on demand. One media
+// port per slot, so it is the size of the media block.
+static constexpr int kSlotHardCeiling = mw::routerports::kMediaPortCount;
 // How long the Sunshine /cancel of a worker that ended on its own is held back,
 // waiting for the same browser to relaunch (see the worker's ended handler).
 // The transport chain relaunches within a second; a closed tab waits this out.
@@ -1288,11 +1282,18 @@ static constexpr int kHostCancelGraceMs = 10000;
 // Where a slot's two signaling ports live, and how many slots fit.
 //
 // Slot 0 keeps the historical base; slots 1.. take two consecutive ports from a
-// second base placed after the media block, so the two ranges can never
-// overlap. They used to: with the old base + 10*slot spacing, slot 1's pair
-// (48011/48012) landed exactly on the media ports of slots 1 and 2, and since
-// the media socket also binds TCP under ICE-TCP, that candidate silently failed
-// to bind. Starting after the media block costs nothing and ends the class.
+// second base, just above slot 0's own ports (base, +1 relay, +2 control) and
+// pushed past every block it would land on: the media block, and the ports the
+// streaming servers sharing the machine listen on. It used to start right
+// after the media block, which production and --dev share: once the block
+// moved above the --dev base, both instances would have started their slots at
+// the same port.
+//
+// The foreign blocks: Sunshine and Apollo's stock ports (47984-48010, RTSP on
+// 48010), and MultiSeat's seats (48100 - 5 onwards, thirty ports a seat, eight
+// seats) with Wolf's video and audio pings (48100, 48200) among them.
+// Production lands at 48011-48058, --dev (48501) past the media block, at
+// 48574-48621.
 struct SlotPortPlan
 {
     quint16 extraBase = 0;
@@ -1301,17 +1302,29 @@ struct SlotPortPlan
 
 static SlotPortPlan planSlotPorts(quint16 signalingBase, quint16 mediaBase, int ceiling)
 {
-    for (int n = ceiling; n >= 1; --n) {
-        // Clear of slot 0's own ports (base, +1 relay, +2 control) AND of the
-        // media block, whichever ends later.
-        const int extra = qMax<int>(signalingBase + 4, mediaBase + n);
-        const int top = extra + 2 * (n - 1) + 1;
-        // A block that already starts above the reserved range has nothing left
-        // to walk into: the --dev base (48501) is in that case.
-        if (extra >= kForeignPortFloor || top < kForeignPortFloor)
-            return SlotPortPlan{static_cast<quint16>(extra), n};
+    struct Block
+    {
+        int first, last;
+    };
+    const Block kTaken[] = {
+        {47984, 48010},
+        {48095, 48399},
+        {mediaBase, mediaBase + ceiling - 1},
+    };
+    int extra = signalingBase + 4;
+    for (bool moved = true; moved;) {
+        moved = false;
+        const int top = extra + 2 * (ceiling - 1) + 1;
+        for (const Block& b : kTaken)
+            if (extra <= b.last && top >= b.first) {
+                extra = b.last + 1;
+                moved = true;
+            }
     }
-    return SlotPortPlan{static_cast<quint16>(signalingBase + 4), 1};
+    // Only a signaling base picked by hand near the top of the port space can
+    // run out of room; it gets what fits there.
+    const int n = qBound(1, (65535 - extra + 1) / 2, ceiling);
+    return SlotPortPlan{static_cast<quint16>(extra), n};
 }
 
 // How many sessions one host may serve at once, by the software it runs.
@@ -1934,10 +1947,10 @@ int main(int argc, char* argv[])
     // sessions (moonlight-common-c is process-global). Slot 0 is the owner's
     // primary stream (/ws, 48001/48002); slot 1 the standby used by the
     // frontend's seamless quality switching (/ws1, 48011/48012); slots 2..4
-    // belong to invited players (/ws2../ws4, 48021.. onwards), one each.
+    // belong to invited players (/ws2../ws4, 48013.. onwards), one each.
     //
-    // Ports follow the slot: signaling = base + 10 * slot, relay = that + 1.
-    // Slot 0 keeps the historical pair, which is why the formula starts there.
+    // Slot 0 keeps the historical pair; every other slot takes two consecutive
+    // ports from a second base, signaling then relay (see planSlotPorts).
     static constexpr int kOwnerSlots = 2; // 0 = primary, 1 = standby
     static constexpr int kTotalSlots = kOwnerSlots + ShareManager::kSlotCount;
     // Slots up to kTotalSlots are addressed directly by index: 0/1 by the owner

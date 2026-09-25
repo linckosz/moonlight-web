@@ -47,7 +47,7 @@ bool looksIpv6(const std::string& candStr)
            candStr.find(':', firstSpace + 1) != std::string::npos;
 }
 
-/// "host 192.168.1.66:48010/UDP" — enough to tell a direct path from one that
+/// "host 192.168.1.66:48550/UDP" — enough to tell a direct path from one that
 /// leaves through the router and comes back (same public IP on both ends).
 QString describeCandidate(const rtc::Candidate& c)
 {

@@ -35,9 +35,9 @@
 // port above it — with the control channel just after. Every other slot takes
 // two consecutive ports from a second base, so the whole range stays compact:
 // the old "base + 10 * index" spacing spent ten ports to use two, ran into the
-// media range (48010 + slot) after a couple of slots, and hit the ports
-// reserved above 48100 at slot ten. Caller picks that second base; see
-// planSlotPorts() in main.cpp, which places it clear of the media block.
+// media range after a couple of slots, and hit the ports reserved above 48100
+// at slot ten. Caller picks that second base; see planSlotPorts() in main.cpp,
+// which places it clear of the media block and of the streaming servers' ports.
 //
 // The first `reservedSlots` indices keep their historical meaning — 0 is the
 // owner's primary stream, 1 the standby used for seamless quality switching —

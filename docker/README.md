@@ -214,11 +214,11 @@ outside the LAN.
 |---|---|---|---|
 | **443** | TCP | **Always** | The web UI, the REST API, and the `wss://…/ws` upgrade that carries WebRTC signalling. The one port a browser cannot do without. |
 | **80** | TCP | Recommended | Redirect to HTTPS, so `http://server` reaches the app instead of failing. |
-| **48010–48033** | UDP | **Always** (host firewall) | WebRTC media, audio and input. Each stream slot binds `48010 + slot`, with or without UPnP, so a host firewall can let the block through; with UPnP the router forwards a port to it (the slot's own first). |
+| **48550–48573** | UDP | **Always** (host firewall) | WebRTC media, audio and input. Each stream slot binds `48550 + slot`, with or without UPnP, so a host firewall can let the block through; with UPnP the router forwards a port to it (the slot's own first). |
 | **47999** | UDP | Legacy Internet Access | Mapped alongside 80/443 only by an install that still holds a legacy `moonlightweb.top` sub-domain. |
-| *ephemeral* | UDP | Fallback | Only when the slot's port is already taken (a second instance on the same machine): libdatachannel then takes whatever the kernel gives it, which a host firewall blocks. |
+| *ephemeral* | UDP | Fallback | When the slot's port is already taken (a second instance on the same machine), the stream takes another free port of the block. Only when the whole block is taken does libdatachannel take whatever the kernel gives it, which a host firewall blocks. |
 
-> **In short:** on a LAN, **443/tcp**, **80/tcp** and **48010–48033/udp**.
+> **In short:** on a LAN, **443/tcp**, **80/tcp** and **48550–48573/udp**.
 > The `.deb`, `.rpm` and AUR package open them for you in
 > firewalld/ufw; a container does not touch the host's firewall, so that is
 > yours to do.

@@ -413,7 +413,7 @@ public:
     //
     // Stored as JSON object "router_ports", file-only and NOT seeded — it is
     // state the allocator writes, not a preference:
-    //   {"lan_ip": "192.168.1.20", "tunnel": [3478, 3479], "media": {"0": 48010}}
+    //   {"lan_ip": "192.168.1.20", "tunnel": [3478, 3479], "media": {"0": 48550}}
     // A remembered port is retried first and forgotten the moment the router
     // says it belongs to another machine. The numbers survive a shutdown — the
     // mappings are removed, the memory is what makes the next start land on

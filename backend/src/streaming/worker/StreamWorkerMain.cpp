@@ -278,7 +278,7 @@ int runStreamWorker(QCoreApplication& app)
         cfg["yuv444"].toBool(), cfg["hdr"].toBool());
     session->setHttpsPort(static_cast<quint16>(cfg["serverHttpsPort"].toInt(443)));
     session->setStreamRelayPort(static_cast<quint16>(cfg["streamRelayPort"].toInt(48002)));
-    session->setMediaPort(static_cast<quint16>(cfg["mediaPort"].toInt(48010)));
+    session->setMediaPort(static_cast<quint16>(cfg["mediaPort"].toInt(48550)));
     // The router hole the parent claimed for this slot, if any. Absent (no
     // gateway, UPnP off, a guest) → STUN only, as before.
     session->setUpnpMapping(cfg["upnpPublicIp"].toString(),

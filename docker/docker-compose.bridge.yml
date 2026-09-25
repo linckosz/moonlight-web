@@ -11,7 +11,7 @@
 #    • Host discovery. Sunshine is found by mDNS (multicast UDP 5353), which
 #      does not cross the bridge — add your hosts by IP address instead. That is
 #      a one-time inconvenience, not a limitation on streaming.
-#    • WebRTC media. Each stream slot binds 48010 + slot, and the block is
+#    • WebRTC media. Each stream slot binds 48550 + slot, and the block is
 #      published below — but the address the container announces to the
 #      browser is its bridge address, which nothing on your LAN can reach.
 #      Publishing the right port does not fix the wrong address.
@@ -33,7 +33,7 @@ services:
       # turn Internet Access on. Drop it if you always type https:// yourself.
       - "80:8080/tcp"
       # WebRTC media, one port per stream slot. See the warning above.
-      - "48010-48033:48010-48033/udp"
+      - "48550-48573:48550-48573/udp"
 
     volumes:
       - mw-data:/data

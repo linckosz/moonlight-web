@@ -705,7 +705,7 @@ EOF
 # policy, which the postinstall does not touch.
 #
 # Root is available: need_root ran for every path that reaches this point.
-PORTS_HINT="443/tcp, 80/tcp and 48010-48033/udp"
+PORTS_HINT="443/tcp, 80/tcp and 48550-48573/udp"
 
 lan_access_note() {
     # A container is reached only through the ports its host published. The
@@ -715,7 +715,7 @@ lan_access_note() {
         say "  ${bold}This is a container${reset} — nothing on your LAN reaches it unless the"
         say "  ports were published when it was started:"
         say ""
-        say "      ${dim}docker run -p 443:443 -p 80:80 -p 48010-48033:48010-48033/udp …${reset}"
+        say "      ${dim}docker run -p 443:443 -p 80:80 -p 48550-48573:48550-48573/udp …${reset}"
         say ""
         say "  ${dim}Published ports cannot be added to a running container; it has to be${reset}"
         say "  ${dim}recreated. --net=host sidesteps the question entirely.${reset}"
@@ -727,7 +727,7 @@ lan_access_note() {
         # The media block counts as much as 443: without it the page loads and
         # every stream dies at ICE, which looks like a broken transport.
         fw_ports=$($SUDO firewall-cmd --list-ports 2>/dev/null)
-        if echo "$fw_ports" | grep -q '443/tcp' && echo "$fw_ports" | grep -q '48010-48033/udp'; then
+        if echo "$fw_ports" | grep -q '443/tcp' && echo "$fw_ports" | grep -q '48550-48573/udp'; then
             say "  ${dim}firewalld is active and lets $PORTS_HINT through.${reset}"
         else
             say "  ${red}firewalld is active and does not let $PORTS_HINT through${reset} —"
@@ -735,7 +735,7 @@ lan_access_note() {
             say "  Open the ports with:"
             say ""
             say "      ${dim}sudo firewall-cmd --permanent --add-port=443/tcp \\${reset}"
-            say "      ${dim}     --add-port=80/tcp --add-port=48010-48033/udp${reset}"
+            say "      ${dim}     --add-port=80/tcp --add-port=48550-48573/udp${reset}"
             say "      ${dim}sudo firewall-cmd --reload${reset}"
         fi
         say ""
@@ -744,7 +744,7 @@ lan_access_note() {
 
     if have ufw && $SUDO ufw status 2>/dev/null | grep -qi '^Status: active'; then
         ufw_rules=$($SUDO ufw status 2>/dev/null)
-        if echo "$ufw_rules" | grep -q '443' && echo "$ufw_rules" | grep -q '48010:48033/udp'; then
+        if echo "$ufw_rules" | grep -q '443' && echo "$ufw_rules" | grep -q '48550:48573/udp'; then
             say "  ${dim}ufw is active and lets $PORTS_HINT through.${reset}"
         else
             say "  ${red}ufw is active and does not let $PORTS_HINT through${reset} — LAN devices"
@@ -752,7 +752,7 @@ lan_access_note() {
             say ""
             say "      ${dim}sudo ufw allow 443/tcp${reset}"
             say "      ${dim}sudo ufw allow 80/tcp${reset}"
-            say "      ${dim}sudo ufw allow 48010:48033/udp${reset}"
+            say "      ${dim}sudo ufw allow 48550:48573/udp${reset}"
         fi
         say ""
         return 0
