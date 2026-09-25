@@ -95,8 +95,8 @@ Get-Process MoonlightWeb -ErrorAction SilentlyContinue | Select-Object Id, Path
 Then tell the user, in a few lines:
 
 - **OS** — x64 Windows 10 or 11, Home or Pro: both fine. **Windows on ARM: stop here** — this plan
-  targets x64 (the native engine does not run on ARM64, and that build takes its OpenSSL from
-  vcpkg; see `.github/workflows/release.yml`).
+  targets x64 (the native engine does not run on ARM64, and that build has its own toolchain;
+  see `.github/workflows/release.yml`).
 - **Disk** — about **15 GB** free: Build Tools ~7 GB, Qt ~1.5 GB, sources and build ~3 GB, Node
   modules ~0.5 GB.
 - **RAM / cores** — under 8 GB of RAM or under 4 cores: build with `BUILD_JOBS=2` (§5). A first

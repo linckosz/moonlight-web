@@ -687,9 +687,10 @@ does not prove which code is running.
 
 Three gaps a local build cannot close, all of them already known:
 
-- **Windows ARM64** — the cross-compiled OpenSSL is broken (every client TLS
-  handshake crashes in `libssl!tls_parse_all_extensions`). Only the CI's native
-  `windows-arm64` job produces a sound binary.
+- **Windows ARM64** — the build machine's cross-compiler is not the CI's native
+  one, and the bench is too small to build on. (What was long read as "the
+  cross-compiled OpenSSL is broken" was MSVC 14.51 miscompiling it, native or
+  cross; OpenSSL is now a committed prebuilt — `docs/design/openssl-windows.md`.)
 - **macOS** — the `.pkg` cannot be assembled on the bench: `ibtool` needs a full
   Xcode and the bench has only the Command Line Tools. The signing identity and
   the TCC behaviour of the shipped app are also not those of a hand-built one.

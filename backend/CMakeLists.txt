@@ -102,15 +102,23 @@ if(WIN32)
         set(_mw_ssl_arch x64)
     endif()
     set(_mw_ssl "${CMAKE_CURRENT_SOURCE_DIR}/libs/windows")
-    # Use the committed prebuilt only if present for this arch (x64). Otherwise
-    # (e.g. ARM64) fall back to find_package — supply OpenSSL via a vcpkg
-    # toolchain or OPENSSL_ROOT_DIR on the command line.
+    # Use the committed prebuilt when present for this arch (x64 and ARM64, made
+    # by scripts/build-openssl-windows.ps1). Otherwise fall back to find_package
+    # — supply OpenSSL via a vcpkg toolchain or OPENSSL_ROOT_DIR.
     if(EXISTS "${_mw_ssl}/lib/${_mw_ssl_arch}/libssl.lib")
         set(_mw_ssl_prebuilt ON)
         set(OPENSSL_ROOT_DIR     "${_mw_ssl}")
         set(OPENSSL_INCLUDE_DIR  "${_mw_ssl}/include/${_mw_ssl_arch}" CACHE PATH "" FORCE)
         set(OPENSSL_SSL_LIBRARY    "${_mw_ssl}/lib/${_mw_ssl_arch}/libssl.lib"    CACHE FILEPATH "" FORCE)
         set(OPENSSL_CRYPTO_LIBRARY "${_mw_ssl}/lib/${_mw_ssl_arch}/libcrypto.lib" CACHE FILEPATH "" FORCE)
+        # Under MSVC, FindOpenSSL searches OPENSSL_ROOT_DIR/lib for its own
+        # names (libcrypto64MD...) and then overwrites the two variables above
+        # with what it found — the x64 import library, whatever the target.
+        # Its search results are cache entries: pinning them pins the answer.
+        foreach(_cfg RELEASE DEBUG)
+            set(LIB_EAY_${_cfg} "${OPENSSL_CRYPTO_LIBRARY}" CACHE FILEPATH "" FORCE)
+            set(SSL_EAY_${_cfg} "${OPENSSL_SSL_LIBRARY}" CACHE FILEPATH "" FORCE)
+        endforeach()
     else()
         message(STATUS "No committed OpenSSL for ${_mw_ssl_arch} — relying on find_package")
     endif()

@@ -174,47 +174,13 @@ jobs:
         with:
           submodules: recursive
 
-      # OpenSSL is built from source here, by whatever MSVC the runner image
-      # carries — and the image moved to Visual Studio 18 (MSVC 14.51) in
-      # September 2026. The same OpenSSL 3.6.4 source compiled by it crashes on
-      # the first TLS handshake (access violation in libssl-3-arm64.dll, seen on
-      # the Snapdragon bench on 25/09/2026); compiled by MSVC 14.44 it is sound.
-      # So the compiler is pinned, not just the version: vcpkg is pointed at
-      # the Visual Studio 2022 install, or at a 14.4x toolset beside the newer
-      # one. With neither, the job stops — an ARM64 installer whose every TLS
-      # connection kills the app is worse than no ARM64 installer.
-      - name: Pin the MSVC that builds OpenSSL (arm64 only)
-        if: matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          & $vswhere -all -products * -format text -property installationPath
-          $vs17 = & $vswhere -products * -version '[17.0,18.0)' -property installationPath | Select-Object -First 1
-          if ($vs17) {
-            "VCPKG_VISUAL_STUDIO_PATH=$vs17" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-            Write-Host "OpenSSL will be built by Visual Studio 2022 at $vs17"
-            exit 0
-          }
-          $latest = & $vswhere -latest -products * -property installationPath
-          $tools = Get-ChildItem (Join-Path $latest 'VC\Tools\MSVC') -Directory -EA SilentlyContinue |
-                   Where-Object Name -like '14.4*' | Sort-Object Name -Descending | Select-Object -First 1
-          if ($tools) {
-            $ver = ($tools.Name -split '\.')[0..1] -join '.'
-            New-Item -ItemType Directory -Force -Path triplets | Out-Null
-            Copy-Item "$env:VCPKG_INSTALLATION_ROOT\triplets\arm64-windows.cmake" triplets\arm64-windows.cmake
-            Add-Content triplets\arm64-windows.cmake "set(VCPKG_PLATFORM_TOOLSET_VERSION $ver)"
-            "VCPKG_OVERLAY_TRIPLETS=$PWD\triplets" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-            Write-Host "OpenSSL will be built by MSVC $($tools.Name) beside $latest"
-            exit 0
-          }
-          Write-Host "::error::No MSVC 14.4x on this runner: OpenSSL built by a newer MSVC crashes on ARM64 (see the comment above this step)"
-          exit 1
-
-      - name: Install OpenSSL (vcpkg, arm64 only)
-        if: matrix.arch == 'arm64'
-        shell: pwsh
-        run: vcpkg install openssl:arm64-windows
-
+      # OpenSSL is not built here, for either architecture: the DLLs and import
+      # libraries are committed under backend/libs/windows/<arch>, made by
+      # scripts/build-openssl-windows.ps1. The ARM64 ones used to come from
+      # vcpkg on this runner, built by whatever MSVC the image carried — and
+      # when the image moved to MSVC 14.51 (September 2026) the same OpenSSL
+      # source came out crashing on every TLS handshake. See
+      # docs/design/openssl-windows.md.
       - uses: jurplel/install-qt-action@v4
         with:
           version: 6.11.0
@@ -245,14 +211,19 @@ jobs:
           $args = @("-S","backend","-B","build","-G","Ninja","-DCMAKE_BUILD_TYPE=Release",
                     "-DMW_VERSION=${{ needs.setup.outputs.version }}",
                     "-DMW_EDITION=${{ needs.setup.outputs.edition }}")
-          if ("${{ matrix.arch }}" -eq "arm64") {
-            $args += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-            $args += "-DVCPKG_TARGET_TRIPLET=arm64-windows"
-          }
           cmake @args
 
       - name: Build
         run: cmake --build build -j
+
+      # The MSVC 14.51 defect that broke OpenSSL (a prologue calling __chkstk
+      # before saving LR, so the function returns into itself) can reach our
+      # own code too, in any function with a frame over 4 KB. Checked on every
+      # ARM64 build, since the compiler is whatever the image carries.
+      - name: Check ARM64 prologues
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: scripts/check-arm64-chkstk.ps1 build/${{ needs.setup.outputs.app }}.exe
 
       # Archive the debug symbols so a crash minidump (CrashHandler.cpp) from this
       # exact build can be symbolized later. The Release build emits MoonlightWeb.pdb
@@ -286,10 +257,48 @@ jobs:
           Copy-Item $tlsSrc dist\tls\qopensslbackend.dll -Force
           Write-Host "Deployed $tlsSrc"
 
-      - name: Bundle OpenSSL (arm64)
-        if: matrix.arch == 'arm64'
+      # Nothing else in this job runs the binary it packages. Start it the way
+      # a user would, reach it over HTTPS, and have it open a TLS connection of
+      # its own: --status is an HTTPS client of the running server, through
+      # the same OpenSSL. The September 2026 ARM64 build died a second after
+      # "Server ready" on every start — this is the check that would have said
+      # so. --dev keeps its state and ports (48443) apart from any install.
+      - name: Smoke test (starts, serves HTTPS, makes a TLS connection)
         shell: pwsh
-        run: Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/arm64-windows/bin/*.dll" dist/ -ErrorAction SilentlyContinue
+        run: |
+          $exe = (Resolve-Path "dist/${{ needs.setup.outputs.app }}.exe").Path
+          foreach ($dll in "libssl-3-${{ matrix.arch }}.dll", "libcrypto-3-${{ matrix.arch }}.dll") {
+            if (-not (Test-Path "dist/$dll")) { throw "dist/$dll is missing: the OpenSSL DLLs were not staged" }
+          }
+          $t0 = Get-Date
+          $server = Start-Process $exe -ArgumentList '--dev', '--autostart' -PassThru
+          $up = $false
+          for ($i = 0; $i -lt 90 -and -not $server.HasExited; $i++) {
+            try {
+              $r = Invoke-RestMethod https://127.0.0.1:48443/api/health -SkipCertificateCheck -TimeoutSec 3
+              if ($r.status -eq 'ok') { $up = $true; break }
+            } catch { Start-Sleep 1 }
+          }
+          $status = Start-Process $exe -ArgumentList '--dev', '--status' -Wait -PassThru -NoNewWindow -RedirectStandardOutput status.txt
+          Get-Content status.txt -ErrorAction SilentlyContinue
+          # The crash came about a second after the first handshakes; leave room.
+          Start-Sleep 10
+          $alive = -not $server.HasExited
+          $wer = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000; StartTime = $t0 } -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Message -match [regex]::Escape((Split-Path $exe -Leaf)) }
+          if ($alive) { Stop-Process -Id $server.Id -Force }
+          $problems = @()
+          if (-not $up) { $problems += 'never answered https://127.0.0.1:48443/api/health' }
+          if ($status.ExitCode -ne 0) { $problems += ('--status exited with 0x{0:X8}' -f $status.ExitCode) }
+          if (-not $alive) { $problems += ('the server exited with 0x{0:X8}' -f $server.ExitCode) }
+          if ($wer) { $problems += "Windows Error Reporting: $(($wer | Select-Object -First 1).Message -replace '\s+', ' ')" }
+          if ($problems) {
+            Get-ChildItem "$env:APPDATA\MoonlightWeb" -Recurse -Filter moonlightweb.log -ErrorAction SilentlyContinue |
+              Where-Object LastWriteTime -gt $t0 | ForEach-Object { "--- $($_.FullName)"; Get-Content $_.FullName -Tail 40 }
+            $problems | ForEach-Object { Write-Host "::error title=Smoke test::$_" }
+            exit 1
+          }
+          Write-Host 'Started, served HTTPS, made a TLS connection, and was still running 10 s later.'
 
       # ── Authenticode signing (SignPath) ──────────────────────────────────
       # Without a signature Windows SmartScreen greets every download with

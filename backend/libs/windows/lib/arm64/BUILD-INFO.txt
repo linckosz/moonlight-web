@@ -1,0 +1,14 @@
+OpenSSL 3.6.4 for Windows arm64, built by scripts/build-openssl-windows.ps1
+Source:     openssl-3.6.4.tar.gz  sha256 9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef
+Configure:  VC-WIN64-CLANGASM-ARM shared no-docs no-tests no-apps CFLAGS=/W3 /wd4090 /nologo /O2 /FS /Gs4096 LDFLAGS=/nologo /debug /INCREMENTAL:NO /OPT:REF /OPT:ICF
+CFLAGS:     /W3 /wd4090 /nologo /O2 /FS /Gs4096
+LDFLAGS:    /nologo /debug /INCREMENTAL:NO /OPT:REF /OPT:ICF
+Compiler:   Microsoft (R) C/C++ Optimizing Compiler Version 19.51.36248 for ARM64 (14.51.36231)
+Assembler:  clang version 21.1.8
+Built:      2026-09-25 on DUALRTX
+
+SHA-256:
+  40c86f0af94a092791b9341be25758420c57516367db2af16f7ccdc8dfa2f755  libcrypto-3-arm64.dll
+  e16af623559479e88d5c8bf12abdb1b1fed960824fa403d1cfe2a9f24385d403  libssl-3-arm64.dll
+  291fbd4d66196cbfd0d134957076c7d469f7f6ebb3169ef540e010b47c0dd60b  libcrypto.lib
+  8fbc28c0aa310cef606d87832f4edaf65e8ff7f83ed0d6b450939d803e5a6d22  libssl.lib
