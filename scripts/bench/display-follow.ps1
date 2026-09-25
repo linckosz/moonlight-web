@@ -280,7 +280,9 @@ if ($script:vdMode) {
 function Update-VirtualScreen {
     if (-not $script:vdMode) { return $true }
     $now = @([BenchScreens]::List())
-    $found = @(if ($script:vdName) { $now | Where-Object { $_.Name -eq $script:vdName } }
+    # By name, but never a screen that was there before the launch: the desk's
+    # own "VDD by MTT" (DualRTX, 25/09/2026) carries the very same name.
+    $found = @(if ($script:vdName) { $now | Where-Object { $_.Name -eq $script:vdName -and $script:before -notcontains $_.Gdi } }
                else { $now | Where-Object { $script:before -notcontains $_.Gdi } })
     if ($found.Count -ne 1) { return $false }
     $script:vdName = $found[0].Name
@@ -297,8 +299,13 @@ $client = $clientCandidates[0]
 # The client decodes on -ClientAdapterLuid: its window goes on a screen that
 # adapter drives, or Chrome draws on one GPU and scans out on another.
 if ($ClientAdapterLuid -match '^(-?\d+),(\d+)$') {
-    $luidHigh = [int]$Matches[1]; $luidLow = [uint32]$Matches[2]
-    $onAdapter = @($clientCandidates | Where-Object { $_.Adapter.High -eq $luidHigh -and $_.Adapter.Low -eq $luidLow })
+    $luid = "$($Matches[1]),$($Matches[2])"
+    # The GPU that renders each screen (render=), not the adapter of its path:
+    # a virtual display's path names the virtual adapter, never the GPU behind it.
+    $render = @{}
+    & powershell -NoProfile -File (Join-Path (Split-Path $PSScriptRoot -Parent) 'Set-DisplayHdr.ps1') -List |
+        ForEach-Object { if ($_ -match '^(\S+)\s.*render=(-?\d+,\d+)') { $render[$Matches[1]] = $Matches[2] } }
+    $onAdapter = @($clientCandidates | Where-Object { $render[$_.Gdi] -eq $luid })
     if ($onAdapter.Count -gt 0) { $client = $onAdapter[0] }
     else { Write-Warning "no screen on adapter ${ClientAdapterLuid}: the client kiosk goes on $($client.Gdi)" }
 }

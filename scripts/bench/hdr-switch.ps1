@@ -70,6 +70,9 @@ function Get-PassHdr([string] $Device) {
 function Get-ScreenAdapter([string] $Device) {
     $line = & powershell -NoProfile -File $script:SetDisplayHdr -List |
         Where-Object { $_ -like "$Device *" } | Select-Object -First 1
+    # render= first: a virtual display's path names its own adapter, not the
+    # GPU a client on it decodes with (the Arc, behind "VDD by MTT").
+    if ($line -match 'render=(-?\d+),(\d+)') { return "$($Matches[1]),$($Matches[2])" }
     if ($line -match 'adapter=(-?\d+),(\d+)') { return "$($Matches[1]),$($Matches[2])" }
     return ''
 }
