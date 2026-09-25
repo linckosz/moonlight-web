@@ -44,6 +44,22 @@ if ($state -notlike 'visible*') {
     Write-Warning "the client page is not visible — the probe would hang; fix that before measuring"
 }
 
+# No probe on the page at all: the launch reply did not carry latency_flag,
+# which is what happens whenever the host's settings.json lacks
+# "latency_flag_enabled": true (default false, read at startup — a fresh
+# install resets it). Every series then came back as a bare {}: no label, no
+# reason, nothing to read (25/09/2026). Say so and write a line that says it.
+$has = python cdp.py --port $DebugPort eval "typeof window.mwLatency === 'object' && window.mwLatency !== null"
+if ($has -notmatch 'true') {
+    Write-Warning ("no click-to-photon probe on the page: the host did not raise latency_flag. " +
+                   "Set `"latency_flag_enabled`": true in the settings.json the host reads, and restart it.")
+    $none = @{ label = $Label; ts = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); n = 0; of = 0
+               all = @(); samples = @(); error = 'no probe: latency_flag_enabled is off on the host' } |
+            ConvertTo-Json -Compress
+    Add-Content -Path (Join-Path $ResultsDir 'probe-results.jsonl') -Value $none -Encoding UTF8
+    return
+}
+
 $warm = python cdp.py --port $DebugPort eval "(async()=>{const e=await mwLatency.run(1,500); return JSON.stringify(e);})()"
 "warm-up (discarded): $warm"
 Start-Sleep -Milliseconds 800

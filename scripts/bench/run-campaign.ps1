@@ -306,6 +306,12 @@ $matrix = [ordered]@{
     # that paints on every present - scroll, driven by rAF - can answer that
     # question, and only on a screen refreshing that fast.
     content     = $Content
+    # Where the content kiosk went, as paired above. The browser half reads it
+    # instead of pairing the two lists again: it used to take the monitor at the
+    # display's INDEX, which is not the same numbering, and on 25/09/2026 put
+    # the clip under the client kiosk on another screen — a whole matrix at
+    # 2 fps of an idle desktop, and not one click-to-photon reading.
+    kioskRect   = $KioskRect
     reference   = $reference
     passes      = $passes
 }

@@ -77,6 +77,9 @@ $displayInfo = $matrix.display
 $display = [int]$displayInfo.id
 
 # ── Where the kiosks go, and where the pointer parks ────────────────────────
+# The encoder half already paired the captured display with a monitor (by size,
+# then by which one is primary — never by index) and wrote the result down.
+if (-not $KioskRect) { $KioskRect = Get-Prop $matrix 'kioskRect' '' }
 if (-not $KioskRect) {
     $inv = Get-Content (Join-Path $ResultsDir 'inventory.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $d = $displayInfo
