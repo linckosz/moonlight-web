@@ -649,6 +649,18 @@ export class WebGlRenderer extends VideoRenderer {
         r.canvas = canvas;
         r.videoCodec = opts.videoCodec;
         r._algo = WEBGL_ALGOS.includes(opts.algo) || opts.algo === 'off' ? opts.algo : 'gl-fsr1';
+        // Diagnostics: mw_webgl_power picks the GPU preference, for the A/B of
+        // 25/09/2026 — FSR1 cost +34 ms of click-to-photon on a three-GPU
+        // client and nothing on a one-GPU one, and "high-performance" may put
+        // the context on another adapter than the one that decodes and scans
+        // out. Not a setting, same family as mw_raw_pointer.
+        let power = 'high-performance';
+        try {
+            const p = localStorage.getItem('mw_webgl_power');
+            if (p === 'default' || p === 'low-power' || p === 'high-performance') power = p;
+        } catch (e) {
+            // storage refused: the default stands
+        }
         // desynchronized is the whole point (see the file comment); the other
         // flags remove work the stream never needs: no depth, no blending with
         // the page, no MSAA, no readback of the previous frame.
@@ -660,10 +672,23 @@ export class WebGlRenderer extends VideoRenderer {
             stencil: false,
             premultipliedAlpha: false,
             preserveDrawingBuffer: false,
-            powerPreference: 'high-performance',
+            powerPreference: power,
         });
         if (!gl) throw new Error('WebGL2 unavailable');
         r.gl = gl;
+        // What was actually granted, and on which GPU: a hint the browser
+        // ignored, or a context on the wrong adapter, is invisible otherwise.
+        try {
+            const attrs = gl.getContextAttributes() || {};
+            const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+            const gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '?';
+            console.log(
+                `[WebGlRenderer] context: gpu=${gpu} desynchronized=${attrs.desynchronized} ` +
+                    `power=${attrs.powerPreference || power}`,
+            );
+        } catch (e) {
+            // a context without the extension still renders
+        }
         canvas.addEventListener?.('webglcontextlost', (e) => {
             e.preventDefault();
             r._lost = true;
