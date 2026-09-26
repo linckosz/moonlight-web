@@ -607,6 +607,8 @@
         "revokedBody": "此设备的访问权限已被管理员撤销。",
         "disconnectTitle": "正在断开连接",
         "disconnectBody": "正在关闭会话——再见。",
+        "hostEndedTitle": "应用已关闭",
+        "hostEndedBody": "应用已在主机上关闭。",
         "statResolution": "分辨率：",
         "statFramerate": "帧率：",
         "statBitrate": "码率：",

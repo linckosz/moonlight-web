@@ -24,8 +24,9 @@
 #include <string>
 #include <thread>
 
-/// Exit notices ("takeover" / "revoked") sent to the browser on the input
-/// DataChannel just before a relay tears the session down.
+/// Exit notices ("takeover", "revoked", "session-ended", "host-ended") sent to
+/// the browser on the input DataChannel just before a relay tears the session
+/// down.
 ///
 /// The notice is what lets the client show a graceful exit instead of a generic
 /// "connection lost". Getting it onto the wire is a race: `send()` only queues

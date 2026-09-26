@@ -607,6 +607,8 @@
         "revokedBody": "L'accès de cet appareil a été révoqué par l'administrateur.",
         "disconnectTitle": "Déconnexion",
         "disconnectBody": "Fermeture de la session — à bientôt.",
+        "hostEndedTitle": "Appli fermée",
+        "hostEndedBody": "L'appli a été fermée sur l'hôte.",
         "statResolution": "Résolution :",
         "statFramerate": "Fréquence :",
         "statBitrate": "Débit :",

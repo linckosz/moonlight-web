@@ -607,6 +607,8 @@
         "revokedBody": "This device's access was revoked by the administrator.",
         "disconnectTitle": "Disconnecting",
         "disconnectBody": "Closing session — see you soon.",
+        "hostEndedTitle": "App closed",
+        "hostEndedBody": "The app was closed on the host.",
         "statResolution": "Resolution:",
         "statFramerate": "Framerate:",
         "statBitrate": "Bitrate:",

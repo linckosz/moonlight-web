@@ -21,6 +21,10 @@
 #include "IMediaEngine.h"
 #include "NativeMediaEngine.h"
 
+extern "C" {
+#include "Limelight.h"
+}
+
 #include <QCoreApplication>
 #include <QThread>
 #include <QMetaObject>
@@ -784,6 +788,10 @@ void StreamRelay::onShimConnectionTerminated(int errorCode)
             << "m_Running=" << m_Running << "m_Stopping=" << m_Stopping
             << "frames sent=" << m_FrameCount;
     m_StreamStarted = false;
+
+    // Graceful termination: the host ended the stream on purpose (the app was
+    // closed there). Tell the browser before the socket drops.
+    if (errorCode == ML_ERROR_GRACEFUL_TERMINATION) sendExitNotice("host-ended");
 
     // Always emit sessionEnded so cleanup runs, regardless of error code.
     // Graceful termination (code 0) still needs relay/shim cleanup.

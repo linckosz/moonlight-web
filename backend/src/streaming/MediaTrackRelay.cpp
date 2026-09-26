@@ -710,6 +710,10 @@ void MediaTrackRelay::onAudioSample(const QByteArray& data)
 void MediaTrackRelay::onShimConnectionTerminated(int errorCode)
 {
     qInfo() << "[MediaTrackRelay] Shim connection terminated, code=" << errorCode;
+    // Graceful termination: the host ended the stream on purpose, typically
+    // because the app was closed there. Say so before the channels drop, or
+    // the browser reads the close as a connection error.
+    if (errorCode == ML_ERROR_GRACEFUL_TERMINATION) sendExitNotice("host-ended");
     if (!m_Stopping.exchange(true)) {
         m_Connected = false;
         emit sessionEnded();

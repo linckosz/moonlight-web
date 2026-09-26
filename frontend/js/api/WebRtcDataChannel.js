@@ -148,6 +148,7 @@ export class WebRtcDataChannel {
         this.onTakeover = null; // () session taken over by another device
         this.onRevoked = null; // () this device's access was revoked by the admin
         this.onSessionEnded = null; // () the owner ended the session we were invited to
+        this.onHostEnded = null; // () the host ended the stream on purpose (app closed there)
 
         // Stats
         this.stats = {
@@ -945,6 +946,8 @@ export class WebRtcDataChannel {
                         if (this.onRevoked) this.onRevoked();
                     } else if (msg.type === 'session-ended') {
                         if (this.onSessionEnded) this.onSessionEnded();
+                    } else if (msg.type === 'host-ended') {
+                        if (this.onHostEnded) this.onHostEnded();
                     } else {
                         console.log('[WebRTC] Input DC message:', msg);
                     }
@@ -1737,6 +1740,8 @@ export class WebRtcDataChannel {
                     this.onRevoked();
                 } else if (msg.type === 'session-ended' && this.onSessionEnded) {
                     this.onSessionEnded();
+                } else if (msg.type === 'host-ended' && this.onHostEnded) {
+                    this.onHostEnded();
                 }
             } catch (e) {
                 /* ignore non-JSON text */
@@ -1804,6 +1809,8 @@ export class WebRtcDataChannel {
                     if (this.onRevoked) this.onRevoked();
                 } else if (msg.type === 'session-ended') {
                     if (this.onSessionEnded) this.onSessionEnded();
+                } else if (msg.type === 'host-ended') {
+                    if (this.onHostEnded) this.onHostEnded();
                 }
             } catch (e) {
                 /* non-JSON text — ignore */

@@ -1213,6 +1213,9 @@ export class StreamView {
         // The owner stopped the session a player was invited to.
         this.webrtc.onSessionEnded = () => this._handleSessionEnded();
 
+        // The host ended the stream on purpose (the app was closed there).
+        this.webrtc.onHostEnded = () => this._handleHostEnded();
+
         // Physical keys currently held down (e.code → keyup payload). Used to
         // release everything when the window loses focus: the OS can steal focus
         // mid-press (e.g. the Windows key opens the local Start menu), so the
@@ -10083,6 +10086,60 @@ export class StreamView {
     _handleSessionEnded() {
         this._sessionEndedByOwner = true;
         this._handleForcedExit(t('player.endedTitle'), t('player.endedBody'));
+    }
+
+    /**
+     * The host ended the stream on purpose: the app was closed there (Quit to
+     * Desktop in the game, or quit from another client). Not an error, so the
+     * clean-exit transition rather than the alarm one, and no disconnect
+     * toasts. The host session is already gone: exit locally, no /quit — the
+     * backend cleans up the slot on its own when the worker ends.
+     */
+    _handleHostEnded() {
+        if (this._quitting || this._takenOver || this._manualQuitting) return;
+        // A hidden standby leg keeps its own failure path (retire, no toast).
+        if (this._standby) return;
+        // A guest sees the owner's session end, whoever closed the app.
+        if (this._playerMode) {
+            this.webrtc.markStopping();
+            this._handleSessionEnded();
+            return;
+        }
+        this._manualQuitting = true;
+        this.connected = false;
+        // The relay closes its channels right after the notice: keep that
+        // close from reading as an unexpected disconnect.
+        this.webrtc.markStopping();
+        if (this.onQuitStart) {
+            try {
+                this.onQuitStart();
+            } catch (e) {}
+        }
+        const el = document.createElement('div');
+        el.className = 'stream-takeover-overlay is-quit';
+        const title = t('stream.hostEndedTitle');
+        el.innerHTML =
+            '<div class="takeover-scanlines"></div>' +
+            '<div class="takeover-box">' +
+            '<div class="takeover-title" data-text="' +
+            title +
+            '">' +
+            title +
+            '</div>' +
+            '<div class="takeover-sub">' +
+            t('stream.hostEndedBody') +
+            '</div>' +
+            '<div class="takeover-bar"><span></span></div>' +
+            '</div>';
+        const root = this._rootEl || document.body;
+        root.appendChild(el);
+        requestAnimationFrame(() => el.classList.add('is-active'));
+        setTimeout(() => {
+            try {
+                el.classList.add('is-closing');
+            } catch (e) {}
+            this._playPowerOff(() => this.quit({ takenOver: true }));
+        }, 1200);
     }
 
     /**

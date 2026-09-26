@@ -63,10 +63,22 @@ describe.each([
         expect(t.onRevoked).not.toHaveBeenCalled();
     });
 
+    // Sent on a graceful host termination (the app was closed on the host), so
+    // StreamView exits cleanly instead of toasting a connection error.
+    it('invokes onHostEnded for a host-ended message', () => {
+        const t = make();
+        t.onHostEnded = vi.fn();
+        t.onSessionEnded = vi.fn();
+        inputChannel(t, label)({ type: 'host-ended' });
+        expect(t.onHostEnded).toHaveBeenCalledTimes(1);
+        expect(t.onSessionEnded).not.toHaveBeenCalled();
+    });
+
     it('tolerates an exit notice with no handler attached', () => {
         const t = make();
         const send = inputChannel(t, label);
         expect(() => send({ type: 'takeover' })).not.toThrow();
         expect(() => send({ type: 'revoked' })).not.toThrow();
+        expect(() => send({ type: 'host-ended' })).not.toThrow();
     });
 });
