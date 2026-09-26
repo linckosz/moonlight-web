@@ -70,6 +70,7 @@ import {
     isSnapdragonGpu,
     pickAutoEnhancer,
     supportsDisplayHdr,
+    supportsGamingMode,
 } from '../util/BrowserDetect.js';
 import { createVideoRenderer, NO_WEBGPU_ALGOS } from '../stream/renderers/createRenderer.js';
 import { videoSinkCtor } from '../stream/renderers/videoSink.js';
@@ -487,9 +488,9 @@ export class StreamView {
         this._transport = transport;
         this._transportMode = transportMode || transport;
         this._gamingMode = gamingMode;
-        // Force gaming mode off on touch devices — pointer lock and mouse
-        // capture are irrelevant when input is touch-based.
-        if (IS_TOUCH_DEVICE) {
+        // Force gaming mode off where there is no mouse to capture (a phone, a
+        // tablet without a trackpad). A touchscreen PC with one keeps it.
+        if (!supportsGamingMode()) {
             this._gamingMode = false;
         }
         this._upnpEnabled = upnpEnabled;
@@ -1984,9 +1985,9 @@ export class StreamView {
         // ── Mouse-gaming-mode exit reminder (top-center, draggable) ────────
         // Discreet card that only appears once gaming mode has captured the
         // mouse. It reminds the single combo that frees the cursor, releases
-        // the full keyboard lock and leaves fullscreen. Touch devices never
-        // use gaming mode, so it is never built there.
-        if (!IS_TOUCH_DEVICE) {
+        // the full keyboard lock and leaves fullscreen. Devices without a
+        // mouse never use gaming mode, so it is never built there.
+        if (supportsGamingMode()) {
             this._gamingOverlay = document.createElement('div');
             this._gamingOverlay.id = 'stream-gaming-overlay';
             this._gamingOverlay.className = 'stream-gaming-overlay';

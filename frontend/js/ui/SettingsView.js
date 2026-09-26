@@ -48,6 +48,7 @@ import {
     supportsDisplayHdr,
     hdrClientCapability,
     chroma444ClientCapability,
+    supportsGamingMode,
 } from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 import { autoFps, measuredFps } from '../util/RefreshRate.js';
@@ -1402,7 +1403,7 @@ export class SettingsView {
                     ${gamepadProfileHtml}
 
                     ${
-                        IS_TOUCH_DEVICE
+                        !supportsGamingMode()
                             ? ''
                             : `
                     <div class="settings-field">

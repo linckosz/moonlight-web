@@ -28,6 +28,8 @@ function withNavigator(extra) {
 }
 
 describe('BrowserDetect.detectPlatform', () => {
+    // jsdom defines `ontouchstart`, so every case here is a touch device: the
+    // no-touch-screen branch cannot be staged and is left to the code.
     afterEach(() => vi.unstubAllGlobals());
 
     it('classifies phones as mobile', () => {
@@ -186,5 +188,34 @@ describe('BrowserDetect — Snapdragon picks SGSR whatever the form factor', () 
         m.pickAutoEnhancer();
         m.isSnapdragonGpu();
         expect(spy).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('BrowserDetect.supportsGamingMode', () => {
+    async function fresh(userAgent, maxTouchPoints, finePointer) {
+        vi.resetModules();
+        vi.stubGlobal('navigator', { userAgent, maxTouchPoints });
+        vi.stubGlobal('matchMedia', (q) => ({
+            matches: q === '(any-pointer: fine)' && finePointer,
+        }));
+        return import('../js/util/BrowserDetect.js');
+    }
+
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('a touchscreen PC with a mouse has it (Surface, issue #16)', async () => {
+        const m = await fresh(UA.desktop, 10, true);
+        expect(m.IS_TOUCH_DEVICE).toBe(true);
+        expect(m.supportsGamingMode()).toBe(true);
+    });
+
+    it('a touchscreen PC with no mouse or trackpad does not', async () => {
+        const m = await fresh(UA.desktop, 10, false);
+        expect(m.supportsGamingMode()).toBe(false);
+    });
+
+    it('a phone never has it, even with a mouse paired', async () => {
+        const m = await fresh(UA.androidPhone, 5, true);
+        expect(m.supportsGamingMode()).toBe(false);
     });
 });

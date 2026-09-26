@@ -108,6 +108,24 @@ export function isIphone() {
 /** True when the browser supports touch events (any touch-capable device). */
 export const IS_TOUCH_DEVICE = platform.isTouchDevice;
 
+/**
+ * True when mouse gaming mode (pointer lock + relative mouse) makes sense: no
+ * touch screen at all, or one alongside a mouse or trackpad — a Surface with
+ * its type cover, a touchscreen laptop. A touch screen alone is not a reason
+ * to take the mode away: `maxTouchPoints > 0` is true on those PCs too, and
+ * gating on it hid the option from every one of them (issue #16). Phones stay
+ * out. Asked at call time, so a mouse plugged in later counts.
+ */
+export function supportsGamingMode() {
+    if (!platform.isTouchDevice) return true;
+    if (platform.type === 'mobile') return false;
+    try {
+        return !!window.matchMedia && window.matchMedia('(any-pointer: fine)').matches;
+    } catch {
+        return false;
+    }
+}
+
 /** The raw platform type string: 'mobile', 'tablet', or 'desktop'. */
 export const PLATFORM_TYPE = platform.type;
 
