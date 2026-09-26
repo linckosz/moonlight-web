@@ -58,6 +58,10 @@ import { noteHostUse, forgetHostUse, hostUsageRanker } from '../util/hostUsage.j
  */
 const SUNSHINE_DOWNLOAD_URL = 'https://github.com/LizardByte/Sunshine/releases/latest';
 
+/** Set while a host update this tab started is under way; read by the entry
+ *  page (bootstrap/v1/boot.js) so it waits for the host to come back. */
+const UPDATE_PENDING_KEY = 'mw-update-pending';
+
 /**
  * The order a host card shows its apps in: alphabetical, with "MoonlightWeb
  * Virtual Display" always last.
@@ -641,6 +645,11 @@ export class HostListView {
 
     _renderUpdateFailed(message) {
         this._updateBusy = false;
+        try {
+            sessionStorage.removeItem(UPDATE_PENDING_KEY);
+        } catch (_) {
+            /* expires on its own */
+        }
         this._stopProgressAnimation();
         this._progressFill = null;
         const banner = this.container.querySelector('#update-banner');
@@ -668,6 +677,15 @@ export class HostListView {
         } catch (err) {
             this._renderUpdateFailed(err.message);
             return;
+        }
+        // Through the rendezvous, the installer taking the host down closes the
+        // connection and sends this tab back to the entry page before the new
+        // build is up. This note tells that page to keep calling rather than
+        // report the machine offline (bootstrap/v1/boot.js, same key).
+        try {
+            sessionStorage.setItem(UPDATE_PENDING_KEY, String(Date.now()));
+        } catch (_) {
+            /* the entry page gives up at once, as before; a refresh still works */
         }
         this._watchUpdate();
     }

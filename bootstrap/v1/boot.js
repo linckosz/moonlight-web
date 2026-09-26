@@ -481,6 +481,76 @@ async function fetchShell(tunnel, hostId) {
     return manifest.version;
 }
 
+/* Written by the application (HostListView's UPDATE_PENDING_KEY) the moment it
+   asks the host to update itself, and removed again if that update fails.
+
+   The installer takes the host down, which closes the connection, which sends
+   the application back here — while the new build is still being installed. A
+   single attempt then finds the machine offline and says "Not connected" over an
+   update that is going perfectly well, and the person has to refresh by hand
+   once it is done. With the note present, this page keeps calling instead, for
+   as long as an install plus the host coming back can reasonably take. */
+const UPDATE_PENDING_KEY = 'mw-update-pending';
+const UPDATE_WAIT_MS = 10 * 60 * 1000;
+const UPDATE_RETRY_MS = 3000;
+
+function updatePendingSince() {
+    try {
+        return Number(sessionStorage.getItem(UPDATE_PENDING_KEY) || 0);
+    } catch {
+        return 0;
+    }
+}
+
+function clearUpdatePending() {
+    try {
+        sessionStorage.removeItem(UPDATE_PENDING_KEY);
+    } catch {
+        /* the note expires on its own */
+    }
+}
+
+/**
+ * Connect, and while an update this tab started is under way, keep trying.
+ *
+ * Every failure counts during that window, not only "offline": the relay can
+ * also report the host gone, or an attempt can land on the old server in its
+ * last seconds and time out. Outside the window, the first failure is final, as
+ * it always was.
+ */
+async function connectThroughUpdate(hostId) {
+    const since = updatePendingSince();
+    const waitUntil = since ? since + UPDATE_WAIT_MS : 0;
+    // No detail: the line under the bar shows the stage when the detail is empty,
+    // and that line is the only one visible while this page is working.
+    const updateWords = ['Your machine is installing an update — waiting for it…', ''];
+    if (Date.now() < waitUntil) say(...updateWords);
+
+    for (;;) {
+        const tunnel = new Tunnel(hostId);
+        const waiting = Date.now() < waitUntil;
+        tunnel.onstatus = (stage) => {
+            if (!waiting) say(STAGE_WORDS[stage] || stage, '');
+            if (STAGE_PROGRESS[stage]) progress(STAGE_PROGRESS[stage]);
+        };
+        try {
+            await tunnel.connect();
+            clearUpdatePending();
+            return tunnel;
+        } catch (e) {
+            if (Date.now() >= waitUntil) {
+                clearUpdatePending();
+                throw e;
+            }
+            // A failed attempt can leave its relay socket or peer connection
+            // open; the next one starts from nothing.
+            tunnel.close();
+            say(...updateWords);
+            await sleep(UPDATE_RETRY_MS);
+        }
+    }
+}
+
 async function main() {
     const hostId = hostIdFromLocation();
 
@@ -508,14 +578,9 @@ async function main() {
         return;
     }
 
-    const tunnel = new Tunnel(hostId);
-    tunnel.onstatus = (stage) => {
-        say(STAGE_WORDS[stage] || stage, '');
-        if (STAGE_PROGRESS[stage]) progress(STAGE_PROGRESS[stage]);
-    };
-
+    let tunnel;
     try {
-        await tunnel.connect();
+        tunnel = await connectThroughUpdate(hostId);
     } catch (e) {
         // The failure names its own explanation when it has a better one than
         // "your machine is off" — a connection that was refused by the network
