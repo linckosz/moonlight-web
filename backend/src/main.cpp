@@ -1984,6 +1984,15 @@ int main(int argc, char* argv[])
     auto anyOtherSlotLive = [&g_Pool](int slot, const QString& hostUuid) {
         return g_Pool.anyOtherLiveOnHost(slot, hostUuid);
     };
+    // Moonlight's model (issue #24): on a host whose app outlives the stream,
+    // a stream ending — Stop, a closed tab, a lost link — leaves the app
+    // running for the viewer to resume, and only an explicit "Quit app" sends
+    // the /cancel. Sunshine's /cancel is not scoped to anyone anyway: it ends
+    // every session and terminates the app for all.
+    auto appOutlivesStream = [&computerManager](const QString& hostUuid) {
+        std::unique_ptr<IStreamBackend> backend = computerManager.backendForHost(hostUuid);
+        return backend && backend->capabilities().resumableApps;
+    };
     // "MoonlightWeb Virtual Display" goes off only once nothing streams it,
     // judged when its grace runs out rather than when a stream ends: a
     // take-over's /start asks for it before the stream it replaces is torn
@@ -2581,12 +2590,18 @@ int main(int argc, char* argv[])
         // transport fallback.
         bool backendIsMultiUser = false;
         bool backendConcurrentApps = false;
+        bool backendResumable = false;
         QString backendType;
         if (auto probe = computerManager.backendForHost(uuid)) {
             backendIsMultiUser = probe->capabilities().multiUser;
             backendConcurrentApps = probe->capabilities().concurrentApps;
+            backendResumable = probe->capabilities().resumableApps;
             backendType = probe->type();
         }
+        // The viewer's "Quit the app when the stream stops" setting (it rides
+        // along with the other streaming settings): this stream ending on its
+        // own then still closes the app, as it always did.
+        const bool quitAppOnEnd = body["quit_app_on_stop"].toBool(false);
         // The pool stores the raw request value, so compare against the same.
         const QString reqDevice = body["client_uniqueid"].toString();
         const int reqAppId = body["appId"].toInt(0);
@@ -3440,7 +3455,12 @@ int main(int argc, char* argv[])
             // standby joins the running app by definition, and any uid we know
             // to be live resumes its own session (Sunshine rejects /launch
             // while an app runs; the launch↔resume self-heal stays as backup).
-            cfg["preferResume"] = standby || g_LiveSunshineUids.contains(reqClientUniqueId);
+            //
+            // Where the app outlives the stream, the session asks the host which
+            // app runs instead (Session::chooseByRunningApp): a uid known to be
+            // live says nothing about WHICH app it would resume.
+            cfg["preferResume"] =
+                standby || (!backendResumable && g_LiveSunshineUids.contains(reqClientUniqueId));
             cfg["serverHost"] = serverHost;
             cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
             // Every slot owns a port pair so all children can listen at once
@@ -3551,7 +3571,8 @@ int main(int argc, char* argv[])
                 [worker, &g_Pool, &g_DualSupport, &g_LastStandbyStartMs, &g_LiveSunshineUids,
                  &g_PendingHostCancels, &dropPendingHostCancel, &anyOtherSlotLive, &computerManager,
                  &authManager, &reapCoopSession, &sessionMetrics, sessionFacts, sessionStartedAt,
-                 reqSlot, host, hostUuidCopy, uid, sessionToken, coopSessionId]() {
+                 reqSlot, host, hostUuidCopy, uid, sessionToken, coopSessionId, backendResumable,
+                 quitAppOnEnd]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
                             << ")";
                     // Pairs with the start above: a non-zero timestamp is proof
@@ -3594,7 +3615,15 @@ int main(int argc, char* argv[])
                     // drops the cancel (dropPendingHostCancel); a browser that
                     // does not come back still gets its app closed.
                     const bool siblingLive = anyOtherSlotLive(reqSlot, hostUuidCopy);
-                    if (!siblingLive) {
+                    // Where the app outlives the stream, nothing is cancelled:
+                    // the viewer resumes it from its card, or quits it there —
+                    // unless they asked for the app to close with the stream.
+                    const bool keepApp = backendResumable && !quitAppOnEnd;
+                    if (keepApp) {
+                        qInfo() << "[main] Stream ended — the app keeps running on the host "
+                                   "for a later resume";
+                        if (!siblingLive) computerManager.refreshRunningApp(hostUuidCopy);
+                    } else if (!siblingLive) {
                         // The native host is not a GameStream server and
                         // keeps its immediate /cancel.
                         const int graceMs = host->backendType == NativeHostBackend::typeName()
@@ -3903,7 +3932,7 @@ int main(int argc, char* argv[])
         "/api/hosts/:id/quit",
         [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
          &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_Pool, &g_LiveSunshineUids,
-         &dropPendingHostCancel, &detachWorkerSlot,
+         &dropPendingHostCancel, &detachWorkerSlot, &appOutlivesStream, &anyOtherSlotLive,
          &endPlayerSessions](const HttpRequest& req, const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
             qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
@@ -3945,7 +3974,14 @@ int main(int argc, char* argv[])
             const int quitSlot = qbody.contains("session_slot")
                                      ? qBound(0, qbody["session_slot"].toInt(0), kOwnerSlots - 1)
                                      : -1;
-            const bool keepHostSession = qbody["keep_host_session"].toBool(false);
+            // Where the app outlives the stream (issue #24), a Stop is a
+            // disconnect like Moonlight's: the app keeps running for a later
+            // resume, and every guest keeps playing. quit_app — the viewer's
+            // "Quit the app when the stream stops" setting — asks for the old
+            // Stop, which ends the app for everyone.
+            const bool quitApp = qbody["quit_app"].toBool(false);
+            const bool keepHostSession = qbody["keep_host_session"].toBool(false) ||
+                                         (appOutlivesStream(host->uuid) && !quitApp);
 
             // The authenticated device asking to quit, read the same way /start
             // records it. Empty for localhost.
@@ -4071,6 +4107,12 @@ int main(int argc, char* argv[])
             // app session stays alive for the surviving leg — respond directly.
             if (keepHostSession) {
                 qInfo() << "[quit] EXIT — retired without Sunshine /cancel";
+                // Say at once that the app still runs: the host poll pauses
+                // while a stream runs, so its last answer predates the launch.
+                // Not while another leg streams — it would only add a request
+                // to a host that is encoding.
+                if (!anyOtherSlotLive(-1, host->uuid))
+                    computerManager.refreshRunningApp(host->uuid);
                 respond(HttpResponse::json(QJsonObject{{"status", "quit"}}));
                 return;
             }
@@ -4086,22 +4128,49 @@ int main(int argc, char* argv[])
             qInfo() << "[quit] quitAppAsync reply=" << reply;
 
             // Wait for quit to complete, then respond
-            QObject::connect(reply, &QNetworkReply::finished, [reply, respond]() {
-                reply->deleteLater();
-                if (reply->error() != QNetworkReply::NoError) {
-                    qWarning() << "[quit] Sunshine quit failed: error=" << reply->error()
-                               << "errorString=" << reply->errorString();
-                    qInfo() << "[quit] EXIT — returning 502";
-                    respond(HttpResponse::error(502, "Quit failed: " + reply->errorString()));
-                } else {
-                    QByteArray body = reply->readAll();
-                    qInfo() << "[quit] Sunshine quit OK, body size=" << body.size()
-                            << "body=" << body.left(200);
-                    QJsonObject result;
-                    result["status"] = "quit";
-                    qInfo() << "[quit] EXIT — returning 200 OK";
-                    respond(HttpResponse::json(result));
+            const QString hostUuid = host->uuid;
+            QObject::connect(
+                reply, &QNetworkReply::finished, [reply, respond, &computerManager, hostUuid]() {
+                    reply->deleteLater();
+                    computerManager.refreshRunningApp(hostUuid);
+                    if (reply->error() != QNetworkReply::NoError) {
+                        qWarning() << "[quit] Sunshine quit failed: error=" << reply->error()
+                                   << "errorString=" << reply->errorString();
+                        qInfo() << "[quit] EXIT — returning 502";
+                        respond(HttpResponse::error(502, "Quit failed: " + reply->errorString()));
+                    } else {
+                        QByteArray body = reply->readAll();
+                        qInfo() << "[quit] Sunshine quit OK, body size=" << body.size()
+                                << "body=" << body.left(200);
+                        QJsonObject result;
+                        result["status"] = "quit";
+                        qInfo() << "[quit] EXIT — returning 200 OK";
+                        respond(HttpResponse::json(result));
+                    }
+                });
+        });
+
+    // GET /api/hosts/:id/running-app — which app the host runs right now.
+    //
+    // Asked of the host, not read from the last poll, which pauses while any
+    // stream runs. The browser asks before launching on a host whose app
+    // outlives the stream: another app running is a question for the viewer
+    // (quit it, or resume it instead), and it has to be asked before /start,
+    // whose take-over would already have ended someone else's stream.
+    server.router()->getAsync(
+        "/api/hosts/:id/running-app",
+        [&computerManager](const HttpRequest& req, const ResponseCallback& respond) {
+            const QString uuid = req.pathParams.value("id");
+            if (!computerManager.getHost(uuid)) {
+                respond(HttpResponse::error(404, "Host not found"));
+                return;
+            }
+            computerManager.refreshRunningApp(uuid, [respond](bool ok, int appId) {
+                if (!ok) {
+                    respond(HttpResponse::error(502, "The host did not say which app it runs"));
+                    return;
                 }
+                respond(HttpResponse::json(QJsonObject{{"currentGameId", appId}}));
             });
         });
 
@@ -4153,7 +4222,15 @@ int main(int argc, char* argv[])
             *sendNext = [&computerManager, host, identity, cancelQueue, sendNext, respond,
                          idx = 0]() mutable {
                 if (idx >= cancelQueue.size()) {
-                    respond(HttpResponse::json(QJsonObject{{"status", QStringLiteral("stopped")}}));
+                    // Read back what the host runs now, so the card stops
+                    // offering to resume at once. Sunshine's /cancel is
+                    // synchronous, so this is 0 unless the app would not die.
+                    const QString hostUuid = host->uuid;
+                    computerManager.refreshRunningApp(hostUuid, [respond](bool ok, int appId) {
+                        QJsonObject out{{"status", QStringLiteral("stopped")}};
+                        if (ok) out["currentGameId"] = appId;
+                        respond(HttpResponse::json(out));
+                    });
                     return;
                 }
                 const QString uid = cancelQueue.at(idx++);
@@ -4353,11 +4430,18 @@ int main(int argc, char* argv[])
     // native host has no app to keep, and no grace.
     auto cancelGuestHostSessionSoon = [&g_PendingHostCancels, &dropPendingHostCancel,
                                        &g_LiveSunshineUids, &computerManager, &anyOtherSlotLive,
-                                       &g_Pool](int slot, const QString& boundHost,
-                                                const QString& uid) {
+                                       &appOutlivesStream, &g_Pool](
+                                          int slot, const QString& boundHost, const QString& uid) {
         NvComputer* host = computerManager.getHost(boundHost);
         if (!host || uid.isEmpty() || anyOtherSlotLive(slot, boundHost)) {
             g_LiveSunshineUids.remove(uid);
+            return;
+        }
+        // The last guest leaving is not a reason to end the owner's game: the
+        // owner may have stepped away (Stop) and resume it later.
+        if (appOutlivesStream(boundHost)) {
+            qInfo() << "[share] Last guest left — the app keeps running for the owner";
+            computerManager.refreshRunningApp(boundHost);
             return;
         }
         const int graceMs =

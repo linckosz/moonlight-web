@@ -116,6 +116,13 @@ public:
     /// Public because the stream path builds one per session.
     std::unique_ptr<IStreamBackend> backendForHost(const QString& uuid) const;
 
+    /// Ask the host which app it runs right now and store the answer as its
+    /// currentGameId, so the next host list says so without waiting for the
+    /// poll — which pauses while a stream runs. `cb` (optional) gets the id,
+    /// or ok == false when the backend cannot tell or the host did not answer.
+    void refreshRunningApp(const QString& uuid,
+                           std::function<void(bool ok, int appId)> cb = nullptr);
+
     /// What the host's backend can do, as the frontend consumes it: {multiUser,
     /// provisioning, lobbies}. Read off a real provider instance so it cannot
     /// claim something the code does not implement. Empty object for a plain

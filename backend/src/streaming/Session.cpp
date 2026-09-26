@@ -25,6 +25,7 @@
 #include "MoonlightShim.h"
 #include "NativeMediaEngine.h"
 #include "InputMessageCodec.h"
+#include "StartChoice.h"
 #include "../backend/NvHTTP.h"
 #include "../backend/NvComputer.h"
 #include "../backend/IdentityManager.h"
@@ -179,13 +180,78 @@ void StreamSession::start()
     // that didn't /quit cleanly), /resume reconnects to OUR own session instead
     // of /launch (which would be rejected with "app already running"). /resume
     // is keyed by uniqueid, so it never touches another client's session.
-    if (m_PreferResume || s_ActiveUniqueIds.contains(effectiveUniqueId())) {
-        qInfo() << "[Session] Resuming (preferResume=" << m_PreferResume << ") on" << m_Host->name
-                << m_Host->activeAddress.address();
-        doResumeApp();
-    } else {
-        doLaunchApp();
-    }
+    //
+    // Where the app outlives the stream, the host itself says what runs: the
+    // uniqueid hints above cannot tell which app a /resume would join, and a
+    // /resume carries no app id — joining app A when the viewer clicked B is
+    // exactly the wrong answer. A standby (preferResume) joins the live app by
+    // definition and skips the question.
+    auto byHint = [this]() {
+        if (m_PreferResume || s_ActiveUniqueIds.contains(effectiveUniqueId())) {
+            qInfo() << "[Session] Resuming (preferResume=" << m_PreferResume << ") on"
+                    << m_Host->name << m_Host->activeAddress.address();
+            doResumeApp();
+        } else {
+            doLaunchApp();
+        }
+    };
+    if (!m_PreferResume && m_Backend->capabilities().resumableApps)
+        chooseByRunningApp(byHint);
+    else
+        byHint();
+}
+
+void StreamSession::chooseByRunningApp(std::function<void()> orElse)
+{
+    QPointer<StreamSession> self(this);
+    m_Backend->runningApp(
+        m_Host->uuid, [self, orElse](bool ok, const BackendError& err, int running) {
+            if (!self) return;
+            if (!ok) {
+                qWarning() << "[Session] Host did not say which app runs (" << err.message
+                           << ") — choosing by hint";
+                orElse();
+                return;
+            }
+            switch (startchoice::decide(running, self->m_AppId, self->m_LaunchAttempted)) {
+            case startchoice::Verb::Launch:
+                qInfo() << "[Session] No app running on" << self->m_Host->name << "— launching"
+                        << self->m_AppId;
+                self->doLaunchApp();
+                break;
+            case startchoice::Verb::Resume:
+                qInfo() << "[Session] App" << running << "already runs on" << self->m_Host->name
+                        << "— resuming it";
+                self->doResumeApp();
+                break;
+            case startchoice::Verb::AppRunning:
+                qInfo() << "[Session] App" << running << "runs on" << self->m_Host->name
+                        << "— not joining it for app" << self->m_AppId;
+                self->respondAppRunning(running);
+                break;
+            case startchoice::Verb::ByHint:
+                // Our /launch was refused, yet nothing runs now: the app ended in
+                // between. The hint path has nothing better to offer.
+                orElse();
+                break;
+            }
+        });
+}
+
+void StreamSession::respondAppRunning(int runningAppId)
+{
+    // Machine-readable: the browser offers to quit the running app and launch
+    // this one, or to resume the running one instead.
+    QJsonObject errObj;
+    errObj["error"] = QString("Another app is already running on \"%1\". Quit it first, or "
+                              "resume it.")
+                          .arg(m_Host->name);
+    errObj["code"] = QStringLiteral("app_running");
+    errObj["status"] = 409;
+    errObj["runningAppId"] = runningAppId;
+    m_Respond(HttpResponse::json(errObj, 409));
+    emit sessionFailed(QStringLiteral("Another app is running"));
+    deleteLater();
 }
 
 QString StreamSession::effectiveUniqueId() const
@@ -412,6 +478,22 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // vanishingly rare, and one extra attempt of the other verb is harmless
         // self-healing rather than a wrong answer.
         if (err.kind == BackendError::Protocol) {
+            // Sunshine refuses /launch while ANY app runs, and a /resume would
+            // join that app whatever it is. Where the host can say which one
+            // runs, only resume the one asked for.
+            if (m_LaunchAttempted && !m_ResumeAttempted &&
+                m_Backend->capabilities().resumableApps) {
+                qWarning() << "[Session] Launch rejected (" << err.message
+                           << ") — asking the host which app runs";
+                QPointer<StreamSession> self(this);
+                chooseByRunningApp([self, message = err.message]() {
+                    if (!self) return;
+                    qWarning() << "[Session] Launch rejected (" << message
+                               << ") — falling back to /resume for our uniqueid";
+                    self->doResumeApp();
+                });
+                return;
+            }
             if (!m_ResumeAttempted) {
                 qWarning() << "[Session] Launch rejected (" << err.message
                            << ") — falling back to /resume for our uniqueid";

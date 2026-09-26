@@ -219,6 +219,34 @@ std::unique_ptr<IStreamBackend> ComputerManager::backendForHost(const QString& u
     return StreamBackendRegistry::instance().create(type, config);
 }
 
+void ComputerManager::refreshRunningApp(const QString& uuid, std::function<void(bool, int)> cb)
+{
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend || !backend->capabilities().resumableApps) {
+        if (cb) cb(false, 0);
+        return;
+    }
+    // The lambda keeps `backend` alive until the answer comes back: its reply
+    // is parented to it.
+    QPointer<ComputerManager> self(this);
+    backend->runningApp(
+        uuid, [self, backend, uuid, cb](bool ok, const BackendError& err, int appId) {
+            if (!ok) {
+                Logger::warning(QString("Running app of %1 unknown: %2").arg(uuid, err.message));
+                if (cb) cb(false, 0);
+                return;
+            }
+            if (self) {
+                if (NvComputer* host = self->findHostByUuid(uuid);
+                    host && host->currentGameId != appId) {
+                    host->currentGameId = appId;
+                    emit self->hostsChanged();
+                }
+            }
+            if (cb) cb(true, appId);
+        });
+}
+
 ComputerManager::~ComputerManager()
 {
     qDeleteAll(m_Hosts);
@@ -964,6 +992,11 @@ QJsonArray ComputerManager::getHostsJson() const
         // than in NvComputer::toJson() because it is not a property of the host:
         // it is whether *we* hold a way to bounce its service without asking
         // anyone for a password.
+        // Moonlight's model — Stop leaves the app running, the card offers to
+        // resume or quit it — applies only where the backend says the app is
+        // ours to keep. Read off a provider instance, like the capabilities.
+        if (std::unique_ptr<IStreamBackend> backend = backendForHost(it.key()))
+            obj["resumableApps"] = backend->capabilities().resumableApps;
         obj["restartSupported"] = it.value()->isLocalMachine()
                                       ? localSunshinePresent()
                                       : caps.value("restartService").toBool();

@@ -434,6 +434,60 @@ void GameStreamBackend::quit(const QString& seatId, const QString& clientUniqueI
     });
 }
 
+void GameStreamBackend::runningApp(const QString& seatId, BackendIntCallback cb)
+{
+    Q_UNUSED(seatId);
+
+    NvComputer* host = m_ResolveHost ? m_ResolveHost() : nullptr;
+    if (!host) {
+        cb(false, BackendError::make(BackendError::NotFound, QStringLiteral("Host not found")), 0);
+        return;
+    }
+    const NvAddress addr = !host->activeAddress.isNull()        ? host->activeAddress
+                           : !host->uniqueAddresses().isEmpty() ? host->uniqueAddresses().first()
+                                                                : NvAddress();
+    if (addr.isNull()) {
+        cb(false,
+           BackendError::make(BackendError::NoAddress,
+                              QStringLiteral("Host has no reachable address")),
+           0);
+        return;
+    }
+
+    // The same plain-HTTP serverinfo the host poll reads `currentgame` from,
+    // asked now: the poll pauses while a stream runs, so its value is stale
+    // exactly when the answer matters (right after a stream stops).
+    QNetworkReply* reply = m_Http->getServerInfoAsync(addr, IdentityManager::get()->getUniqueId());
+
+    auto answered = std::make_shared<bool>(false);
+    auto answer = [answered, cb](bool ok, const BackendError& e, int appId) {
+        if (*answered) return;
+        *answered = true;
+        cb(ok, e, appId);
+    };
+
+    QTimer::singleShot(NvHTTP::FAST_FAIL_TIMEOUT_MS + 2000, reply, [answer]() {
+        answer(false,
+               BackendError::make(BackendError::Timeout,
+                                  QStringLiteral("Server info request timed out")),
+               0);
+    });
+
+    connect(reply, &QNetworkReply::finished, this, [reply, answer]() {
+        if (reply->error() != QNetworkReply::NoError) {
+            answer(false,
+                   BackendError::make(
+                       transportErrorKind(reply->error()), reply->errorString(),
+                       reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()),
+                   0);
+        } else {
+            answer(true, BackendError{},
+                   NvHTTP::getCurrentGame(QString::fromUtf8(reply->readAll())));
+        }
+        reply->deleteLater();
+    });
+}
+
 void GameStreamBackend::provisionSeat(const QJsonObject& params, BackendSeatCallback cb)
 {
     Q_UNUSED(params);

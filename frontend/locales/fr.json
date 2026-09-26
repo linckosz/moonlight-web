@@ -278,7 +278,14 @@
             "nightCity": "NIGHT CITY",
             "rideOut": "RIDE OUT",
             "scanning": "SCANNING"
-        }
+        },
+        "running": "En cours",
+        "quit": "Quitter",
+        "quitAria": "Quitter {{name}} sur l'hôte",
+        "resumeAria": "Reprendre {{name}}",
+        "quitConfirm": "Quitter {{name}} sur l'hôte ? La progression non sauvegardée sera perdue, et toute personne qui le streame sera déconnectée.",
+        "quitting": "Fermeture…",
+        "quitFailed": "Impossible de quitter {{name}} sur l'hôte."
     },
     "login": {
         "connecting": "Connexion au serveur...",
@@ -419,7 +426,9 @@
         "controllersSaved": "Dispositions enregistrées (manette non branchée)",
         "controllersTest": "Tester / remapper",
         "controllersReset": "Réinitialiser",
-        "controllersDelete": "Supprimer"
+        "controllersDelete": "Supprimer",
+        "quitAppOnStop": "Quitter l'appli en arrêtant le stream",
+        "quitAppOnStopDesc": "Désactivé : arrêter le stream laisse le jeu tourner sur l'hôte, et sa tuile propose de le reprendre ou de le quitter, comme Moonlight. Activé : arrêter le stream ferme aussi le jeu."
     },
     "admin": {
         "title": "Paramètres serveur",
@@ -701,7 +710,8 @@
         "gamepadConfigure": "Configurer",
         "gamepadAutoMapped": "« {{name}} » a été reconnue automatiquement. Des boutons mal placés ?",
         "gamepadRemap": "Remapper",
-        "gamepadButton": "Manette"
+        "gamepadButton": "Manette",
+        "streamEndAppRunning": "Fin du flux — l'appli tourne toujours sur l'hôte. Reprenez-la depuis sa tuile."
     },
     "transport": {
         "webrtcDcUdp": "WebRTC DataChannel (UDP)",
@@ -887,5 +897,14 @@
         "seatFreeHint": "Détacher ce siège de son propriétaire, sans le supprimer",
         "seatFreeing": "Libération du siège…",
         "seatFreed": "Siège libéré — il peut être repris."
+    },
+    "appRunning": {
+        "title": "Une autre appli tourne",
+        "body": "{{running}} tourne encore sur {{host}}. La quitter pour lancer {{app}}, ou la reprendre ?",
+        "resume": "Reprendre {{name}}",
+        "quitAndLaunch": "Quitter et lancer {{name}}",
+        "quitting": "Fermeture de {{name}}…",
+        "quitFailed": "Impossible de quitter {{name}}. Réessayez, ou reprenez-la.",
+        "unknownApp": "Une appli"
     }
 }

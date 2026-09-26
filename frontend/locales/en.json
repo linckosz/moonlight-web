@@ -278,7 +278,14 @@
             "nightCity": "NIGHT CITY",
             "rideOut": "RIDE OUT",
             "scanning": "SCANNING"
-        }
+        },
+        "running": "Running",
+        "quit": "Quit",
+        "quitAria": "Quit {{name}} on the host",
+        "resumeAria": "Resume {{name}}",
+        "quitConfirm": "Quit {{name}} on the host? Unsaved progress is lost, and anyone streaming it is disconnected.",
+        "quitting": "Quitting…",
+        "quitFailed": "Could not quit {{name}} on the host."
     },
     "login": {
         "connecting": "Connecting to server...",
@@ -419,7 +426,9 @@
         "controllersSaved": "Saved layouts (controller not connected)",
         "controllersTest": "Test / remap",
         "controllersReset": "Reset",
-        "controllersDelete": "Delete"
+        "controllersDelete": "Delete",
+        "quitAppOnStop": "Quit the app when the stream stops",
+        "quitAppOnStopDesc": "Off: stopping the stream leaves the game running on the host, and its card offers to resume or quit it — like Moonlight. On: stopping the stream also closes the game."
     },
     "admin": {
         "title": "Server Settings",
@@ -701,7 +710,8 @@
         "gamepadConfigure": "Map it",
         "gamepadAutoMapped": "\"{{name}}\" was recognized automatically. Buttons in the wrong place?",
         "gamepadRemap": "Remap",
-        "gamepadButton": "Controller"
+        "gamepadButton": "Controller",
+        "streamEndAppRunning": "Stream ended — the app is still running on the host. Resume it from its card."
     },
     "transport": {
         "webrtcDcUdp": "WebRTC DataChannel (UDP)",
@@ -887,5 +897,14 @@
         "seatFreeHint": "Release this seat from its owner, keeping the seat itself",
         "seatFreeing": "Releasing the seat…",
         "seatFreed": "Seat released — it can be claimed again."
+    },
+    "appRunning": {
+        "title": "Another app is running",
+        "body": "{{running}} is still running on {{host}}. Quit it to launch {{app}}, or resume it instead?",
+        "resume": "Resume {{name}}",
+        "quitAndLaunch": "Quit and launch {{name}}",
+        "quitting": "Quitting {{name}}…",
+        "quitFailed": "Could not quit {{name}}. Try again, or resume it.",
+        "unknownApp": "An app"
     }
 }

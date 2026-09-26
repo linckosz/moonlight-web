@@ -278,7 +278,14 @@
             "nightCity": "NIGHT CITY",
             "rideOut": "RIDE OUT",
             "scanning": "SCANNING"
-        }
+        },
+        "running": "运行中",
+        "quit": "退出",
+        "quitAria": "在主机上退出 {{name}}",
+        "resumeAria": "继续 {{name}}",
+        "quitConfirm": "在主机上退出 {{name}}？未保存的进度将丢失，正在串流的人都会断开连接。",
+        "quitting": "正在退出…",
+        "quitFailed": "无法在主机上退出 {{name}}。"
     },
     "login": {
         "connecting": "正在连接服务器…",
@@ -419,7 +426,9 @@
         "controllersSaved": "已保存的布局（手柄未连接）",
         "controllersTest": "测试 / 重新映射",
         "controllersReset": "重置",
-        "controllersDelete": "删除"
+        "controllersDelete": "删除",
+        "quitAppOnStop": "停止串流时退出应用",
+        "quitAppOnStopDesc": "关闭：停止串流后游戏仍在主机上运行，其卡片提供继续或退出——与 Moonlight 相同。开启：停止串流同时关闭游戏。"
     },
     "admin": {
         "title": "服务器设置",
@@ -701,7 +710,8 @@
         "gamepadConfigure": "映射",
         "gamepadAutoMapped": "“{{name}}”已自动识别。按键位置不对？",
         "gamepadRemap": "重新映射",
-        "gamepadButton": "手柄"
+        "gamepadButton": "手柄",
+        "streamEndAppRunning": "串流结束——应用仍在主机上运行。可从其卡片继续。"
     },
     "transport": {
         "webrtcDcUdp": "WebRTC 数据通道（UDP）",
@@ -887,5 +897,14 @@
         "seatFreeHint": "将该席位从其占用者手中释放，席位本身保留",
         "seatFreeing": "正在释放席位…",
         "seatFreed": "席位已释放——可以重新占用。"
+    },
+    "appRunning": {
+        "title": "另一个应用正在运行",
+        "body": "{{running}} 仍在 {{host}} 上运行。退出它来启动 {{app}}，还是继续它？",
+        "resume": "继续 {{name}}",
+        "quitAndLaunch": "退出并启动 {{name}}",
+        "quitting": "正在退出 {{name}}…",
+        "quitFailed": "无法退出 {{name}}。请重试，或继续它。",
+        "unknownApp": "一个应用"
     }
 }

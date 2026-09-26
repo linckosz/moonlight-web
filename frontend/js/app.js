@@ -1769,6 +1769,30 @@ const MoonlightApp = {
             return;
         }
 
+        // A host whose app outlives the stream (issue #24): Stop left an app
+        // running, and Sunshine runs one at a time. The same app is simply
+        // resumed by the server; ANOTHER one is the viewer's call — quit it, or
+        // resume it instead — and it has to be asked before /start, whose
+        // take-over would already have ended whoever streams it. The audio
+        // unlock is taken now, while the click still counts as a gesture.
+        if (!codecOverride && !(opts && opts.runningChecked) && host && host.resumableApps) {
+            iosAudioUnlock.prepareForLaunch(48000);
+            let running = 0;
+            try {
+                const answer = await BackendClient.getRunningApp(host.uuid);
+                running = Number(answer && answer.currentGameId) || 0;
+            } catch (e) {
+                // Unknown: launch anyway — the server still refuses to join
+                // the wrong app, and says so with app_running.
+                console.warn('[MW] Running app unknown, launching anyway:', e);
+            }
+            if (running > 0 && running !== app.id) {
+                iosAudioUnlock.release();
+                this._showAppRunningDialog(host, app, running);
+                return;
+            }
+        }
+
         // iOS: create + unlock the AudioContext and start the silent element NOW,
         // while we still hold the launch-click user activation. The audio pipeline
         // is created only after the network round-trip below, by which point no
@@ -2184,6 +2208,14 @@ const MoonlightApp = {
             // display on the host, sometimes a macOS permission it can't be
             // granted programmatically. Show an explicit dialog whose wording and
             // repair buttons follow the payload's local_host / local_os.
+            // Another app runs on the host and the server would not join it in
+            // place of this one (the check above could not tell in time).
+            if (err && err.responseBody && err.responseBody.code === 'app_running') {
+                if (this.hostListView) this.hostListView.clearLaunching();
+                this._showAppRunningDialog(host, app, Number(err.responseBody.runningAppId) || 0);
+                this.transition('app_list');
+                return;
+            }
             if (err && err.responseBody && err.responseBody.code === 'video_capture_failed') {
                 this._showVideoCaptureHelp(host, app, err.message, err.responseBody);
                 this.transition('app_list');
@@ -2230,6 +2262,119 @@ const MoonlightApp = {
      * "Stream anyway" re-invokes launchApp with the warning suppressed — done from
      * the button's own click so the iOS audio-unlock user gesture stays valid.
      */
+    /**
+     * Another app already runs on a host whose app outlives the stream: the
+     * question Moonlight asks too. Quit it and launch this one, resume it
+     * instead, or back out. The choices re-invoke launchApp from their own
+     * click, so the iOS audio unlock keeps a gesture to hang on to.
+     */
+    _showAppRunningDialog(host, app, runningId) {
+        if (document.querySelector('.app-running-overlay')) return;
+        const entry =
+            this.hostListView && this.hostListView.appsByHost
+                ? this.hostListView.appsByHost[host.uuid]
+                : null;
+        const apps = (entry && entry.apps) || [];
+        const runningApp = apps.find((a) => a.id === runningId) || null;
+        const runningName = runningApp ? runningApp.name : t('appRunning.unknownApp');
+
+        const overlay = document.createElement('div');
+        overlay.className = 'pairing-overlay app-running-overlay';
+        const resumeHtml = runningApp
+            ? `<button class="btn btn-secondary app-running-resume">${escapeHtml(
+                  t('appRunning.resume', { name: runningName }),
+              )}</button>`
+            : '';
+        overlay.innerHTML = `
+            <div class="pairing-dialog" role="dialog" aria-modal="true">
+                <h3>${escapeHtml(t('appRunning.title'))}</h3>
+                <p class="pairing-instruction">${escapeHtml(
+                    t('appRunning.body', {
+                        running: runningName,
+                        host: host.displayName || host.name || '',
+                        app: app.name,
+                    }),
+                )}</p>
+                <p class="pairing-instruction app-running-error" hidden></p>
+                <div class="pairing-actions app-running-actions">
+                    <button class="btn btn-secondary app-running-cancel">${escapeHtml(
+                        t('common.cancel'),
+                    )}</button>
+                    ${resumeHtml}
+                    <button class="btn btn-danger app-running-quit">${escapeHtml(
+                        t('appRunning.quitAndLaunch', { name: app.name }),
+                    )}</button>
+                </div>
+            </div>
+        `;
+
+        let busy = false;
+        const onKey = (e) => {
+            if (e.key === 'Escape' && !busy) cancel();
+        };
+        const cleanup = () => {
+            document.removeEventListener('keydown', onKey);
+            overlay.remove();
+        };
+        const cancel = () => {
+            cleanup();
+            // Nothing failed: the viewer chose not to go on.
+            if (this.hostListView) {
+                this.hostListView.clearLaunching();
+                this.hostListView.start();
+            }
+        };
+        const resume = () => {
+            cleanup();
+            if (this.hostListView) this.hostListView.clearLaunching();
+            this.launchApp(host, runningApp, undefined, undefined, {
+                skipSelfStreamWarn: true,
+                runningChecked: true,
+            });
+        };
+        const quitAndLaunch = async () => {
+            if (busy) return;
+            busy = true;
+            // The gesture is this click; the quit below outlasts it.
+            iosAudioUnlock.prepareForLaunch(48000);
+            const quitBtn = overlay.querySelector('.app-running-quit');
+            overlay.querySelectorAll('button').forEach((b) => (b.disabled = true));
+            quitBtn.textContent = t('appRunning.quitting', { name: runningName });
+            try {
+                await BackendClient.stopHostSession(host.uuid);
+            } catch (e) {
+                console.error('[MW] Quitting the running app failed:', e);
+                busy = false;
+                iosAudioUnlock.release();
+                overlay.querySelectorAll('button').forEach((b) => (b.disabled = false));
+                quitBtn.textContent = t('appRunning.quitAndLaunch', { name: app.name });
+                const errEl = /** @type {HTMLElement} */ (
+                    overlay.querySelector('.app-running-error')
+                );
+                errEl.textContent = t('appRunning.quitFailed', { name: runningName });
+                errEl.hidden = false;
+                return;
+            }
+            cleanup();
+            host.currentGameId = 0;
+            if (this.hostListView) this.hostListView.clearLaunching();
+            this.launchApp(host, app, undefined, undefined, {
+                skipSelfStreamWarn: true,
+                runningChecked: true,
+            });
+        };
+
+        overlay.querySelector('.app-running-cancel').addEventListener('click', cancel);
+        const resumeBtn = overlay.querySelector('.app-running-resume');
+        if (resumeBtn) resumeBtn.addEventListener('click', resume);
+        overlay.querySelector('.app-running-quit').addEventListener('click', quitAndLaunch);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay && !busy) cancel();
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+    },
+
     async _showSelfStreamWarning(host, app) {
         // Guard against a double-open (e.g. a replayed click).
         if (document.querySelector('.self-stream-overlay')) return;
@@ -2963,6 +3108,9 @@ const MoonlightApp = {
             // The frame rate this launch asked for: the ceiling the view's
             // decode-rate governor climbs back to — see DecodeRateGovernor.
             streamFps: Number(streamingSettings.stream_fps) || 0,
+            // "Quit the app when the stream stops": Stop then closes the app on
+            // a host where it would otherwise keep running for a resume.
+            quitAppOnStop: streamingSettings.quit_app_on_stop === true,
             // Its encoder heals a lost frame with a delta (reference
             // invalidation): the view then decodes through a gap.
             refInvalidation: result.ref_invalidation === true,

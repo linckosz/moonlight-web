@@ -301,6 +301,12 @@ private:
 
     void doLaunchApp();
     void doResumeApp();
+    /// Where the app outlives the stream (capabilities().resumableApps), ask
+    /// the host what runs before choosing: the requested app → /resume, none →
+    /// /launch, another one → refuse with `app_running` so the browser can ask
+    /// the viewer what to do. `orElse` runs when the host cannot tell.
+    void chooseByRunningApp(std::function<void()> orElse);
+    void respondAppRunning(int runningAppId);
 
     /// Single landing point for launch and resume, whichever produced it.
     void onLaunchResult(bool ok, const BackendError& err, const MediaDescriptor& media);

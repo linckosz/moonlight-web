@@ -51,8 +51,13 @@ public:
     QString type() const override { return QStringLiteral("gamestream"); }
 
     // A plain GameStream host is single-user, cannot provision seats, and has
-    // no native co-op — so the UI renders exactly what it renders today.
-    BackendCapabilities capabilities() const override { return BackendCapabilities{}; }
+    // no native co-op. Its one app outlives the stream, as in Moonlight.
+    BackendCapabilities capabilities() const override
+    {
+        BackendCapabilities caps;
+        caps.resumableApps = true;
+        return caps;
+    }
 
     void ensurePaired(BackendVoidCallback cb) override;
     void listSeats(BackendSeatListCallback cb) override;
@@ -65,6 +70,7 @@ public:
     void resume(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb) override;
     void quit(const QString& seatId, const QString& clientUniqueId,
               BackendVoidCallback cb) override;
+    void runningApp(const QString& seatId, BackendIntCallback cb) override;
 
     void provisionSeat(const QJsonObject& params, BackendSeatCallback cb) override;
     void teardownSeat(const QString& seatId, BackendVoidCallback cb) override;

@@ -108,6 +108,7 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
+        this._quitAppOnStop = false;
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
         // Mobile only: direct touch-screen input (absolute) instead of the
@@ -374,6 +375,7 @@ export class SettingsView {
         this._hdrEnabled = data.hdr_enabled === true;
         this._chroma444 = data.chroma_444_enabled === true;
         this._muteHostAudio = data.mute_host_audio !== false;
+        this._quitAppOnStop = data.quit_app_on_stop === true;
         this._touchSensitivity =
             typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
                 ? data.touch_sensitivity
@@ -537,6 +539,7 @@ export class SettingsView {
             video_enhancement: this._videoEnhancement,
             video_enhancement_algo: this._videoEnhancementAlgo,
             // Per-device only (server ignores these unknown fields).
+            quit_app_on_stop: this._quitAppOnStop,
             power_save: this._powerSave,
             power_save_backup: this._powerSaveBackup,
             gamepad_profile: this._gamepadProfile,
@@ -868,6 +871,7 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
+        this._quitAppOnStop = false;
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
         this._touchScreen = false;
@@ -1374,6 +1378,17 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.muteHostDesc')}</span>
                     </div>
 
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-quit-app-on-stop"
+                                ${this._quitAppOnStop ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.quitAppOnStop')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.quitAppOnStopDesc')}</span>
+                    </div>
+
                     <!-- Allow tearing: disables VSync pacing + desynchronized
                          canvas. Dimmed + locked "(unavailable)" outside Chromium
                          desktop — Safari/Firefox ignore the flag and mobile
@@ -1714,6 +1729,13 @@ export class SettingsView {
         if (chroma444Check)
             chroma444Check.addEventListener('change', () => {
                 this._applyAutoBitrate();
+                this._autoSave();
+            });
+
+        const quitAppCheck = this.container.querySelector('#settings-quit-app-on-stop');
+        if (quitAppCheck)
+            quitAppCheck.addEventListener('change', () => {
+                this._quitAppOnStop = quitAppCheck.checked;
                 this._autoSave();
             });
 

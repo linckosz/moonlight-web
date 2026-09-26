@@ -106,6 +106,13 @@ struct BackendCapabilities
     // Sunshine web-UI password, so a plain GameStream host — whose only restart
     // path is Sunshine's Basic-Auth REST — stays false and shows nothing.
     bool restartService = false;
+    // The app keeps running on the host when the stream stops, and a later
+    // launch of the same app joins it again — Moonlight's own model: Stop
+    // disconnects, "Quit app" is a separate, explicit action. True for a plain
+    // GameStream host (Sunshine and its forks), which runs one app at a time and
+    // names it in serverinfo (`currentgame`). False where the app is not ours to
+    // keep: Wolf reaps its sessions, the native host has displays, not apps.
+    bool resumableApps = false;
 };
 
 // Why a call failed. Callers map this to HTTP; keeping the kind distinct from
@@ -153,6 +160,8 @@ using BackendJsonCallback =
 // but has nothing to name — an unambiguous "no", distinct from ok == false.
 using BackendStringCallback =
     std::function<void(bool ok, const BackendError& error, const QString& value)>;
+// One number from the backend, e.g. the running app id (0 = none).
+using BackendIntCallback = std::function<void(bool ok, const BackendError& error, int value)>;
 
 // A source of streamable seats and apps.
 //
@@ -197,6 +206,18 @@ public:
     // down a *different* player's stream. StreamSession has always passed it.
     virtual void quit(const QString& seatId, const QString& clientUniqueId,
                       BackendVoidCallback cb) = 0;
+
+    // The app running on the seat right now, asked of the host rather than read
+    // from the last poll: 0 when none. Only meaningful when
+    // capabilities().resumableApps is true; others answer Unsupported.
+    virtual void runningApp(const QString& seatId, BackendIntCallback cb)
+    {
+        Q_UNUSED(seatId);
+        cb(false,
+           BackendError::make(BackendError::Unsupported,
+                              QStringLiteral("This backend does not report its running app")),
+           0);
+    }
 
     // Restart the streaming service this backend fronts, through its own
     // control API — never by asking the host for credentials. Only meaningful

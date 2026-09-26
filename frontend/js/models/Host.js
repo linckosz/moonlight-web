@@ -39,6 +39,10 @@ export class Host {
         this.gfeVersion = data.gfeVersion || '';
         this.appVersion = data.appVersion || '';
         this.currentGameId = data.currentGameId || 0;
+        // The app outlives the stream here (Sunshine and its forks): Stop only
+        // disconnects, and the running app's card offers to resume or quit it,
+        // as in Moonlight. Declared by the server from the host's backend.
+        this.resumableApps = data.resumableApps === true;
         this.displayModes = data.displayModes || [];
         this.serverCodecModeSupport = data.serverCodecModeSupport || 1;
         // The backend never sends host addresses or the MAC: the browser talks

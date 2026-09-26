@@ -396,6 +396,29 @@ export class BackendClient {
      * quitApp above needs a live view to name its slot and uniqueid; this is
      * the way out when there is none left.
      */
+    /**
+     * Which app the host runs right now (`currentGameId`, 0 = none), asked of
+     * the host rather than read from the last poll. Asked before a launch on a
+     * host whose app outlives the stream: another app running is the viewer's
+     * call, and it has to be made before /start takes the host over.
+     */
+    static async getRunningApp(hostId) {
+        // Bounded: the answer only refines a launch, it must never hold one up
+        // for the browser's own timeout. Aborted → the caller launches anyway
+        // and the server still refuses to join the wrong app.
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), 6000) : null;
+        try {
+            const resp = await fetch(`/api/hosts/${hostId}/running-app`, {
+                signal: controller ? controller.signal : undefined,
+            });
+            if (!resp.ok) return this._handleError(resp, 'running-app');
+            return resp.json();
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
     static async stopHostSession(hostId) {
         return this.post(`/api/hosts/${hostId}/stop-session`, {}, { timeoutMs: 15000 });
     }

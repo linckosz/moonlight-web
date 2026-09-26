@@ -399,6 +399,36 @@ export class HostListView {
                 return;
             }
 
+            // ── Quit the app a stopped stream left running (issue #24) ─────
+            const quitAppBtn = e.target.closest('.app-card-quit');
+            if (quitAppBtn) {
+                const hostCard = quitAppBtn.closest('.host-card');
+                const uuid = hostCard && hostCard.dataset.uuid;
+                const host = this.hosts.find((h) => h.uuid === uuid);
+                const entry = this.appsByHost[uuid];
+                const appId = parseInt(quitAppBtn.dataset.appId, 10);
+                const app = entry && entry.apps && entry.apps.find((a) => a.id === appId);
+                const name = app ? app.displayName : '';
+                // Closes the game on the host, for everyone on it: one
+                // confirmation, as Moonlight asks.
+                if (!window.confirm(t('apps.quitConfirm', { name }))) return;
+                quitAppBtn.disabled = true;
+                quitAppBtn.textContent = t('apps.quitting');
+                BackendClient.stopHostSession(uuid)
+                    .then((res) => {
+                        if (host) host.currentGameId = Number(res && res.currentGameId) || 0;
+                    })
+                    .catch((err) => {
+                        console.error('[MW] Quit app failed:', err);
+                        Toast.error(t('apps.quitFailed', { name }));
+                    })
+                    .finally(() => {
+                        this.renderList();
+                        this.refresh();
+                    });
+                return;
+            }
+
             // ── App card launch ───────────────────────────────────────────
             const appCard = e.target.closest('.app-card');
             if (appCard) {
@@ -430,6 +460,8 @@ export class HostListView {
         this._keydownHandler = (e) => {
             if (this._destroyed) return;
             if (e.key !== 'Enter' && e.key !== ' ') return;
+            // The Quit button of a running app is a real <button>: let it act.
+            if (e.target.closest && e.target.closest('.app-card-quit')) return;
             const appCard = e.target.closest && e.target.closest('.app-card');
             if (!appCard) return;
             e.preventDefault();
@@ -874,10 +906,11 @@ export class HostListView {
                 h.customName,
                 h.port,
                 h.gpuModel,
-                // A running session drives the kebab's "Stop session" entry;
-                // without it here the card never re-renders when a Leave leaves
-                // the Sunshine app paused-but-alive.
-                h.currentGameId > 0,
+                // A running session drives the kebab's "Stop session" entry and
+                // the running app's card; without it here the card never
+                // re-renders when a Stop leaves the Sunshine app running.
+                h.currentGameId,
+                h.resumableApps,
                 h.restartSupported,
             ]),
         );
@@ -895,7 +928,8 @@ export class HostListView {
             host.gpuModel,
             host.wakeSupported,
             host.restartSupported,
-            host.currentGameId > 0,
+            host.currentGameId,
+            host.resumableApps,
             // The native host's display state: a screen appearing or leaving
             // must repaint the card from empty state to grid and back.
             JSON.stringify(host.nativeDisplay),
@@ -1428,7 +1462,9 @@ export class HostListView {
             return;
         }
         const devices = apps.map((a) => a.device).filter(Boolean);
-        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a, devices)).join('')}</div>`;
+        const host = this.hosts.find((h) => h.uuid === uuid);
+        const runningId = host && host.resumableApps ? host.currentGameId : 0;
+        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a, devices, runningId)).join('')}</div>`;
         this._wireBoxArt(cont, uuid);
     }
 
@@ -1513,7 +1549,7 @@ export class HostListView {
         });
     }
 
-    renderApp(app, devices = []) {
+    renderApp(app, devices = [], runningId = 0) {
         // The whole card is the launch action. role/tabindex keep it
         // keyboard-accessible (Enter/Space handled by the keydown delegate).
         //
@@ -1527,14 +1563,27 @@ export class HostListView {
                                alt="${this.esc(app.displayName)}"
                                loading="lazy">`
               : appPlaceholderHtml(app.id, t);
+        // The app a stopped stream left running (issue #24): the card resumes
+        // it, and says so; a small Quit closes it on the host.
+        const running = runningId > 0 && app.id === runningId;
+        const aria = running
+            ? t('apps.resumeAria', { name: app.displayName })
+            : t('apps.launchAria', { name: app.displayName });
         return `
-            <div class="app-card" data-app-id="${app.id}"
+            <div class="app-card${running ? ' app-card--running' : ''}" data-app-id="${app.id}"
                  role="button" tabindex="0"
-                 aria-label="${this.esc(t('apps.launchAria', { name: app.displayName }))}">
+                 aria-label="${this.esc(aria)}">
                 <div class="app-card-image${app.device ? ' app-card-image--host' : ''}">
                     ${image}
+                    ${running ? `<span class="app-card-badge">${this.esc(t('apps.running'))}</span>` : ''}
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
+                ${
+                    running
+                        ? `<button type="button" class="app-card-quit" data-app-id="${app.id}"
+                                aria-label="${this.esc(t('apps.quitAria', { name: app.displayName }))}">${this.esc(t('apps.quit'))}</button>`
+                        : ''
+                }
             </div>
         `;
     }

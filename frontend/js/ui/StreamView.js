@@ -435,6 +435,10 @@ export class StreamView {
         // the live one; input/wake-lock/overlays stay off until activate() flips
         // it to the visible, controlling view (called on its first frame).
         this._standby = opts.standby === true;
+        // "Quit the app when the stream stops" (settings). Off by default: on a
+        // host whose app outlives the stream, Stop only disconnects, as in
+        // Moonlight, and the app's card offers to resume or quit it.
+        this._quitAppOnStop = opts.quitAppOnStop === true;
         // Backend stream slot this view runs on (0 = /ws ports, 1 = /ws1) and
         // the uniqueid it launched with — quit() scopes its /quit with them so
         // retiring one leg of a dual stream never cancels the other.
@@ -10186,8 +10190,10 @@ export class StreamView {
      * (clean-exit variant — signature yellow/cyan, no alarm magenta), then
      * quit normally (backend /quit). Guarded so a double-tap is a no-op.
      *
-     * @param {{keepHostSession?: boolean}} [opts] keepHostSession leaves the
-     *        game — and every guest on it — running; see _askShareExit().
+     * @param {{keepHostSession?: boolean, quitApp?: boolean}} [opts]
+     *        keepHostSession leaves the game — and every guest on it — running;
+     *        see _askShareExit(). quitApp closes the app on the host as well
+     *        (implied by the "Quit the app when the stream stops" setting).
      */
     _handleManualQuit(opts = {}) {
         if (this._quitting || this._takenOver || this._manualQuitting) return;
@@ -10235,7 +10241,14 @@ export class StreamView {
             try {
                 el.classList.add('is-closing');
             } catch (e) {}
-            this._playPowerOff(() => this.quit({ keepHostSession: opts.keepHostSession === true }));
+            this._playPowerOff(() =>
+                this.quit({
+                    keepHostSession: opts.keepHostSession === true,
+                    quitApp:
+                        opts.keepHostSession !== true &&
+                        (opts.quitApp === true || this._quitAppOnStop),
+                }),
+            );
         }, 1200);
     }
 
@@ -10294,7 +10307,7 @@ export class StreamView {
         });
         overlay.querySelector('.share-exit-stop').addEventListener('click', () => {
             close();
-            this._handleManualQuit({ keepHostSession: false });
+            this._handleManualQuit({ keepHostSession: false, quitApp: true });
         });
     }
 
@@ -10352,6 +10365,11 @@ export class StreamView {
         // every guest on it carry on. Implied by retire, which is the same
         // promise made by the seamless switcher.
         const keepHostSession = retire || opts.keepHostSession === true;
+        // quitApp: close the app on the host too. Only an explicit choice asks
+        // for it — "Stop everything", or the "Quit the app when the stream
+        // stops" setting. Without it, a host whose app outlives the stream
+        // keeps it running for a later resume (the backend decides by host).
+        const quitApp = !keepHostSession && opts.quitApp === true;
         // Guard: prevent re-entrant calls (e.g. from WS onClose -> setTimeout)
         if (this._quitting) return;
         this._quitting = true;
@@ -10578,11 +10596,18 @@ export class StreamView {
                 const quitExtras = { session_slot: this._sessionSlot };
                 if (this._slotUniqueId) quitExtras.client_uniqueid = this._slotUniqueId;
                 if (keepHostSession) quitExtras.keep_host_session = true;
+                if (quitApp) quitExtras.quit_app = true;
                 await BackendClient.quitApp(this.host.uuid, quitExtras);
                 this.webrtc.close();
                 if (!silent) {
                     await Toast.dismissAll();
-                    Toast.success(t('stream.streamEnd'));
+                    // Say where the app went: still running, and where to get
+                    // back to it — the viewer used to it closing would look for it.
+                    Toast.success(
+                        this.host && this.host.resumableApps && !quitApp
+                            ? t('stream.streamEndAppRunning')
+                            : t('stream.streamEnd'),
+                    );
                 }
             } catch (err) {
                 console.warn('[StreamView] Quit failed:', err);

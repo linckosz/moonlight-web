@@ -496,6 +496,14 @@ describe('BackendClient request shaping', () => {
         expect(JSON.parse(init.body)).toEqual({ session_slot: 1, client_uniqueid: 'AAAA' });
     });
 
+    // Issue #24: asked before a launch on a host whose app outlives the stream.
+    it('getRunningApp asks the host route and returns its answer', async () => {
+        const fetchMock = mockFetch(jsonResponse({ currentGameId: 7 }));
+        const answer = await BackendClient.getRunningApp('h1');
+        expect(answer).toEqual({ currentGameId: 7 });
+        expect(fetchMock.apiCalls()[0][0]).toBe('/api/hosts/h1/running-app');
+    });
+
     it('quitApp defaults to this browser when no slot is named', async () => {
         const fetchMock = mockFetch(jsonResponse({ ok: true }));
         await BackendClient.quitApp('h1');

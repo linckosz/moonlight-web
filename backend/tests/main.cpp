@@ -36,6 +36,7 @@ void run_host_lag_tracker_tests();
 void run_tunnel_frame_tests();
 void run_app_manifest_tests();
 void run_wolf_coop_tests();
+void run_start_choice_tests();
 void run_multiseat_tests();
 void run_session_metrics_tests();
 void run_us_scancode_tests();
@@ -78,6 +79,7 @@ int main(int argc, char** argv)
     run_tunnel_frame_tests();
     run_app_manifest_tests();
     run_wolf_coop_tests();
+    run_start_choice_tests();
     run_multiseat_tests();
     run_session_metrics_tests();
     run_us_scancode_tests();
