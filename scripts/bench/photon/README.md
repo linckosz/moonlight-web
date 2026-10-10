@@ -15,7 +15,10 @@ client's own screen.
 
 What a sample includes: the click's way up, the flip on the host, capture,
 encode, network, decode, the client's present and the DWM's composition, plus
-up to one pixel read (~1 ms). It leaves out the screen's scan-out and
+up to one pixel read. A `GetPixel` on the screen waits for the DWM's next
+composition (8.3 ms at 120 Hz, measured on the UM790Pro on 10/10/2026), so a
+change is seen within one composition: an onset is a composition's time, give
+or take under a millisecond. It leaves out the screen's scan-out and
 response, the same for every client on one screen. GDI reads the DWM's last
 composed frame: right for a windowed client, unproven for an exclusive
 full-screen one. Keep the client windowed.
@@ -64,6 +67,16 @@ Windows client, with no camera and no microphone.
   with the nearest flag: the offset alone, against a host in `tick`, or while
   something else clicks (a `series.py` pass, whose page clicks raise the flag
   and the beep).
+- `--center` puts the cursor in the middle of `--window`'s client area first;
+  `--warmup N` clicks N times before the measured clicks (a page that captures
+  the pointer takes its first click for that). Each click's line carries its
+  QPC time in µs (`click 1 at <µs> ... flag <ms>`): with the page's time origin
+  on QPC (`MW_BENCH_TICKS_ORIGIN=1`) and its frame log, each click is followed
+  from the client's SendInput to its flag on the screen (POC Ultra U3.7, the end
+  of the chain: clicks from the client's own OS, the page's probe idle, so no
+  canvas readback sits on the frame it measures). Without a beep on the host,
+  `--timeout 600` keeps an 800 ms interval: each click waits that long for a
+  sound that never comes.
 - Over ssh, `run-click-sound.ps1 -Tag t -Arguments '--tick 120 --window MoonlightWeb'`
   runs it in the console session (a scheduled task), where the desktop, the
   clicks and the user's audio are.
