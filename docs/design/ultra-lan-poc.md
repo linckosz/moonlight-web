@@ -769,6 +769,16 @@ ces 15-25 ms. Le décodeur d'Ultra (U3.4) se branchera sur ce présentateur-là.
 
 ### 6.8 U1.2 — ce que le DataChannel porte à haut débit (05/10/2026, 06:56-08:46)
 
+> **Corrigé le 10/10/2026 : le plafond venait du chemin, pas du DataChannel.**
+> - Entre DualRTX et l'UM790Pro, il y avait un saut Wi-Fi 7 (§6.10).
+> - Sur un vrai câble, la même association SCTP porte ~530 Mbit/s (§6.16), avec
+>   les mêmes messages de 16 Kio et le même MTU, trois fois les 170 Mbit/s de
+>   PyroWave.
+> - Ni la taille des messages ni le MTU de 1 500 o de la table U1.1 n'ont été
+>   essayés depuis. Qu'ils pèsent sous ce plafond reste une hypothèse.
+> - Deux passes restent inexpliquées : 200 Kio à 60 i/s ici (19 Mbit/s), et
+>   350 Kio sur le câble au §6.16 (85 Mbit/s).
+
 Hôte DualRTX : la `--dev` du build `66f71c56`, avec les défauts Windows
 `sctpburst=0` et `retrcut=3`. L'écran streamé est un écran physique, DISPLAY1
 (celui de l'Arc, à 120 Hz), choisi par Bruno pour ne faire aucune bascule
@@ -1262,6 +1272,12 @@ vert du coordinateur.
   choix de route le couvrent.
 - Le transport ne change pas : c'est la route audio, avec le numéro d'image
   (`native:hevc+aroad`).
+- **Un écart avec le plan du transport (noté le 10/10/2026).** U4 envoie
+  l'image entière, coupée en octets comme une image HEVC, et non en messages de
+  blocs entiers comme le prévoyait le plan : des morceaux de 1 100 o, réparés
+  par NACK. La page attend donc l'image complète, et abandonne une image restée
+  incomplète. Les paquets décodables seuls de
+  l'amont (`packetize`, 8 Kio) n'ont pas encore été essayés.
 
 **La page** (`82ba6d5f`, `216c690f`).
 - `PyroWaveDecoder.present()` dessine l'image en RGB (BT.709, plage limitée)
@@ -1485,6 +1501,18 @@ NVENC et GeForce NOW). Notre résultat est cohérent, pas anormal.
 
 ### 6.19 PyroWave à 120 images/s : il passe devant le HEVC (06/10/2026, 19:40)
 
+> **Corrigé le 10/10/2026 : ce verdict est faux contre le HEVC du produit.**
+> - Le HEVC de cette passe et du §6.20 passait par la piste vidéo RTP
+>   (`U14_SMOKE_SCTP=0`). Il payait donc la retenue de Chrome sur cette piste
+>   (§6.11, ~8 ms par image), que le HEVC du produit, par SCTP, ne paie pas.
+> - La sonde du clic d'avant `652fc726` comptait aussi ~4,5 ms d'elle-même par
+>   clic. Les valeurs absolues ne valent plus, seuls les écarts à cadence égale.
+> - Rejoué contre SCTP au §6.26 : PyroWave perd ~7,5 ms par image de la
+>   capture au dessin (10,7 contre 3,5 ms), et ~8,5 ms au clic.
+> - Avec la relance et `early`, à l'écran du client : 24,3 ms du clic à
+>   l'écran, contre 22,5 pour le HEVC (§6.38-6.39). PyroWave reste derrière,
+>   de ~2 ms.
+
 Même banc qu'au §6.18 (RTX → câble → UM790Pro, écran virtuel à 120 Hz), mais
 le flux à 120 images/s, et 60 clics par passe au lieu de 30. PyroWave par la
 route audio, HEVC par la piste vidéo RTP.
@@ -1513,6 +1541,13 @@ HEVC ralentit et que les images PyroWave deviennent assez petites. La suite :
 confirmer en répétant les passes, puis 120 images/s comme cadence d'Ultra.
 
 ### 6.20 Trois passes de plus : l'avance se réduit, mais reste (06/10/2026, 20:10)
+
+> **Corrigé le 10/10/2026** : comme au §6.19, le HEVC de ces passes était celui
+> de la piste vidéo RTP. L'avance de PyroWave (−2,4 ms en médiane, ~2 ms de
+> l'hôte au dessin, 4× moins d'images répétées) se mesure contre cette piste,
+> pas contre le HEVC du produit. Contre SCTP, PyroWave est derrière (§6.26,
+> §6.38-6.39). Ce qui reste : 120 images/s comme cadence d'Ultra, et la
+> conclusion sur la Freebox.
 
 Même banc qu'au §6.19, trois passes de plus de chaque, en ordre alterné
 (PyroWave, HEVC, HEVC, PyroWave, PyroWave, HEVC), 60 clics par passe.
