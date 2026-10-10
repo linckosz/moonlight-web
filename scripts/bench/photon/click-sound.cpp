@@ -23,6 +23,12 @@
 // 500 ms (MW_LATENCY_FLAG_SOUND=tick); each beep is paired with the nearest
 // flag, and only the offset is measured, on this machine's clock alone.
 //
+// Every run also prints where the loopback heard nothing: `gap <us> <len>`
+// (no packet, no stream rendering) and `silent <us> <len>` (packets the mixer
+// flagged silent), and counts the engine's discontinuities. sound_offset.py
+// puts each missing beep in one of them, or in sound the browser played as
+// silence.
+//
 // What it counts: from the click's send to the client's system mixer (the
 // loopback tap) — the way up, the host's input, its beep through its own mixer
 // and loopback capture, the pacer, Opus, the relay, the network, the browser's
@@ -97,10 +103,42 @@ struct Onsets
     }
 };
 
+// Stretches of time on the QPC clock (µs): where the loopback heard nothing.
+struct Spans
+{
+    std::mutex mutex;
+    std::vector<std::pair<int64_t, int64_t>> spans; // start, length
+    int64_t total = 0;
+    void add(int64_t start, int64_t length)
+    {
+        std::lock_guard<std::mutex> lk(mutex);
+        spans.emplace_back(start, length);
+        total += length;
+    }
+    std::vector<std::pair<int64_t, int64_t>> all()
+    {
+        std::lock_guard<std::mutex> lk(mutex);
+        return spans;
+    }
+};
+
 std::atomic<bool> g_Run{true};
 Onsets g_Sound, g_Flag;
+// Where a beep the host sent may have gone (A1, 10/10). The loopback hands
+// over every packet the system mixer made, so:
+// - g_Gaps: no packet at all for more than 2 ms, the endpoint idle because no
+//   stream was rendering (an output the browser stopped on silence);
+// - g_SilentRuns: packets the mixer flagged silent, nothing mixed in them;
+// - g_Discontinuities: packets the audio engine flagged as not following the
+//   previous one (the loopback itself lost data), and g_LostFrames, the device
+//   positions it skipped.
+// A missing beep inside none of them was played as silence by the browser.
+Spans g_Gaps, g_SilentRuns;
+std::atomic<int> g_Discontinuities{0};
+std::atomic<int64_t> g_LostFrames{0};
 std::atomic<int> g_SoundReady{0}; // 1 capturing, -1 failed
-// The loudest sample heard, x1000: how far a missed beep stayed under the threshold.
+// The loudest sample heard, x1000: how far a missed beep stayed under the
+// threshold.
 std::atomic<int> g_MaxPeakMilli{0};
 constexpr int64_t kRefractoryUs = 150'000;
 // --wav FILE: everything the client played, mono 16-bit, gaps filled with
@@ -176,6 +214,10 @@ void soundThread(float threshold)
     std::FILE* wav = g_WavPath.empty() ? nullptr : std::fopen(g_WavPath.c_str(), "wb");
     uint32_t wavSamples = 0;
     int64_t wavNextUs = -1;
+    // The previous packet's end, on the QPC clock and the device's position.
+    int64_t nextUs = -1;
+    UINT64 nextDevPos = 0;
+    int64_t silentStart = -1, silentEnd = -1;
     if (wav) writeWavHeader(wav, static_cast<int>(rate), 0);
     while (g_Run) {
         UINT32 next = 0;
@@ -191,6 +233,23 @@ void soundThread(float threshold)
         if (FAILED(capture->GetBuffer(&data, &frames, &flags, &devPos, &qpcPos))) break;
         const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
         const int64_t firstUs = static_cast<int64_t>(qpcPos / 10); // 100 ns units
+        const int64_t endUs = firstUs + static_cast<int64_t>(frames * 1e6 / rate);
+        if (nextUs >= 0) {
+            if (firstUs > nextUs + 2000) g_Gaps.add(nextUs, firstUs - nextUs);
+            if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) ++g_Discontinuities;
+            if (devPos > nextDevPos) g_LostFrames += static_cast<int64_t>(devPos - nextDevPos);
+        }
+        nextUs = endUs;
+        nextDevPos = devPos + frames;
+        // Silent packets in a row make one run; a run ends at a packet with
+        // sound or at a gap.
+        if (silent && silentStart >= 0 && firstUs <= silentEnd + 2000) {
+            silentEnd = endUs;
+        } else {
+            if (silentStart >= 0) g_SilentRuns.add(silentStart, silentEnd - silentStart);
+            silentStart = silent ? firstUs : -1;
+            silentEnd = silent ? endUs : -1;
+        }
         if (!silent && data) {
             for (UINT32 i = 0; i < frames; ++i) {
                 float peak = 0;
@@ -243,6 +302,7 @@ void soundThread(float threshold)
         }
         capture->ReleaseBuffer(frames);
     }
+    if (silentStart >= 0) g_SilentRuns.add(silentStart, silentEnd - silentStart);
     client->Stop();
     if (wav) {
         writeWavHeader(wav, static_cast<int>(rate), wavSamples);
@@ -501,15 +561,23 @@ int main(int argc, char** argv)
     if (tickSecs > 0) {
         // Each onset as it comes, flushed: a run stopped early keeps them.
         const int64_t end = qpcUs() + static_cast<int64_t>(tickSecs * 1e6);
-        size_t printedSound = 0, printedFlag = 0;
+        size_t printedSound = 0, printedFlag = 0, printedGap = 0, printedSilent = 0;
         while (qpcUs() < end) {
             Sleep(500);
             const auto ss = g_Sound.all();
             const auto ff = g_Flag.all();
+            const auto gg = g_Gaps.all();
+            const auto rr = g_SilentRuns.all();
             for (; printedSound < ss.size(); ++printedSound)
                 std::printf("beep %lld\n", static_cast<long long>(ss[printedSound]));
             for (; printedFlag < ff.size(); ++printedFlag)
                 std::printf("flag %lld\n", static_cast<long long>(ff[printedFlag]));
+            for (; printedGap < gg.size(); ++printedGap)
+                std::printf("gap %lld %lld\n", static_cast<long long>(gg[printedGap].first),
+                            static_cast<long long>(gg[printedGap].second));
+            for (; printedSilent < rr.size(); ++printedSilent)
+                std::printf("silent %lld %lld\n", static_cast<long long>(rr[printedSilent].first),
+                            static_cast<long long>(rr[printedSilent].second));
             std::fflush(stdout);
         }
         const auto s = g_Sound.all();
@@ -551,7 +619,8 @@ int main(int argc, char** argv)
                     ++flagMiss;
             }
             if (s >= 0 && fl >= 0) avMs.push_back(s - fl);
-            std::printf("click %2d at %lld  sound %7.1f ms  flag %8.2f ms  sound-flag %7.1f ms\n",
+            std::printf("click %2d at %lld  sound %7.1f ms  flag %8.2f ms  "
+                        "sound-flag %7.1f ms\n",
                         k + 1, static_cast<long long>(t0), s, fl, s >= 0 && fl >= 0 ? s - fl : 0.0);
             std::fflush(stdout);
             char row[96];
@@ -567,6 +636,22 @@ int main(int argc, char** argv)
     if (flag.joinable()) flag.join();
     timeEndPeriod(1);
 
+    // The click runs print their spans at the end (a --tick run streamed them).
+    if (tickSecs <= 0) {
+        for (const auto& g : g_Gaps.all())
+            std::printf("gap %lld %lld\n", static_cast<long long>(g.first),
+                        static_cast<long long>(g.second));
+        for (const auto& r : g_SilentRuns.all())
+            std::printf("silent %lld %lld\n", static_cast<long long>(r.first),
+                        static_cast<long long>(r.second));
+    }
+    const size_t gaps = g_Gaps.all().size(), silentRuns = g_SilentRuns.all().size();
+    std::printf("loopback: %zu gaps (%.1f ms), %zu silent runs (%.1f ms), %d "
+                "discontinuities, "
+                "%lld frames skipped\n",
+                gaps, g_Gaps.total / 1000.0, silentRuns, g_SilentRuns.total / 1000.0,
+                g_Discontinuities.load(), static_cast<long long>(g_LostFrames.load()));
+
     std::printf("click -> sound  median %.1f  p90 %.1f ms  (%zu, %d missed)\n",
                 quantile(soundMs, 0.5), quantile(soundMs, 0.9), soundMs.size(), soundMiss);
     if (watchFlag)
@@ -580,10 +665,15 @@ int main(int argc, char** argv)
         if (fp) {
             std::fprintf(fp,
                          "{%s, %s, %s, \"soundMissed\": %d, \"flagMissed\": %d, "
-                         "\"threshold\": %.3f, "
+                         "\"threshold\": %.3f, \"loopbackGaps\": %zu, \"loopbackGapMs\": "
+                         "%.1f, "
+                         "\"silentRuns\": %zu, \"silentMs\": %.1f, \"discontinuities\": %d, "
+                         "\"skippedFrames\": %lld, "
                          "\"clicks\": [%s]}\n",
                          stats("sound", soundMs).c_str(), stats("flag", flagMs).c_str(),
                          stats("soundMinusFlag", avMs).c_str(), soundMiss, flagMiss, threshold,
+                         gaps, g_Gaps.total / 1000.0, silentRuns, g_SilentRuns.total / 1000.0,
+                         g_Discontinuities.load(), static_cast<long long>(g_LostFrames.load()),
                          rows.c_str());
             std::fclose(fp);
         }

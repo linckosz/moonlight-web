@@ -97,6 +97,15 @@ Windows client, with no camera and no microphone.
 - `sound_offset.py <listener output>` pairs the streamed `flag`/`beep` onsets
   again with a wider window (-100 to +900 ms): the tool's own ±250 ms misses
   a sound that trails its picture by a grown jitter buffer.
+- Where a missing beep went (10/10/2026): every run prints `gap <µs> <len>`
+  (no loopback packet for over 2 ms: no stream rendering, an output stopped on
+  silence) and `silent <µs> <len>` (packets the mixer flagged silent), and
+  counts the audio engine's discontinuities and skipped frames.
+  `sound_offset.py` puts each flag without a beep at its flag plus the median
+  offset and says whether it fell in a gap, in a silent run, or in sound the
+  browser played as silence. The page's `mwAudio.csv()` adds Chrome's
+  `media-playout` side: the ms the device took each second, those the browser
+  made up at the output, and the output's delay.
 - **Counted**: the click's send to this machine's mixer (the loopback tap): the
   way up, the host's input, its beep through its mixer and loopback capture,
   the pacer, Opus, the relay, the network, the browser's jitter buffer and
