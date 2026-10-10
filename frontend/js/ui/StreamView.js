@@ -122,7 +122,7 @@ import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 import { flushClientLog, serverDiag } from '../util/ClientLog.js';
-import { UltraPlayer, ultraPlayerSupported } from '../stream/ultra/UltraPlayer.js';
+import { UltraPlayer, presentMode, ultraPlayerSupported } from '../stream/ultra/UltraPlayer.js';
 
 /**
  * Lane name → the i18n key the card already uses for that value. The graph
@@ -4541,8 +4541,11 @@ export class StreamView {
             const queueMs = drawStart - decodedPerf;
             if (queueMs >= 0 && queueMs < 5000) this._clientQueueStats.addSample(queueMs);
         }
-        this._renderer
-            .draw(frame)
+        // A PyroWave frame the player presented itself (B2.1): already on its
+        // way to the screen, only the bookkeeping is left.
+        const presented = frame.presented === true;
+        const drawn = presented ? Promise.resolve() : this._renderer.draw(frame);
+        drawn
             .then(() => {
                 this.stats.rendered++;
                 // Render stage: the GPU/canvas draw itself, same clock.
@@ -4567,7 +4570,8 @@ export class StreamView {
                 if (renderMs >= 0 && renderMs < 5000) this._clientRenderStats.addSample(renderMs);
                 // …and how that time splits between our work and waiting on the
                 // GPU/compositor, which is what tells back-pressure from cost.
-                this._diag.noteDraw(this._renderer && this._renderer.lastDraw, inFlight);
+                if (!presented)
+                    this._diag.noteDraw(this._renderer && this._renderer.lastDraw, inFlight);
                 // Click-to-photon probe: a presented frame is a chance to spot
                 // the host's flag. One null check when no measurement is on.
                 if (this._latencyProbe) this._latencyProbe.onFramePresented();
@@ -11928,6 +11932,10 @@ export class StreamView {
             const width = (w0 & 0x3fff) + 1;
             const height = ((w0 >>> 14) & 0x3fff) + 1;
             this._ultraStarting = true;
+            // POC Ultra U3.7 B2.1 (bench key mw_ultra_present): a canvas of the
+            // same box for the player to present on itself; it takes the
+            // place of this one once the player has it configured.
+            const present = presentMode() && this.canvas ? this.canvas.cloneNode(false) : null;
             const player = new UltraPlayer(
                 width,
                 height,
@@ -11941,11 +11949,12 @@ export class StreamView {
                     }
                     this.onDecodedFrame(frame);
                 },
-                { log: (m) => console.log(m) },
+                { log: (m) => console.log(m), present },
             );
             player.init().then(
                 (ok) => {
                     this._ultraStarting = false;
+                    if (ok && player.presenting) this._showUltraCanvas(present);
                     if (ok) this._ultraPlayer = player;
                     else
                         console.warn(
@@ -11970,6 +11979,20 @@ export class StreamView {
         });
         // The frame id pairs it with the pieces that came before it (by slices).
         this._ultraPlayer.push(data, ts, backendTs, frameId || undefined);
+    }
+
+    /**
+     * B2.1: the player's canvas in the place of this one, whose renderer
+     * stays (nothing is drawn on it any more). What maps the input and sizes
+     * the picture reads this.canvas, so it follows. The click probe reads the
+     * renderer's pixels: it sees no flag on this road.
+     */
+    _showUltraCanvas(el) {
+        if (!this.canvas || !el) return;
+        this.canvas.replaceWith(el);
+        this.canvas = el;
+        this._invalidateMediaRect();
+        console.log('[MW-ULTRA] the player presents on the page (' + presentMode() + ')');
     }
 
     destroy() {

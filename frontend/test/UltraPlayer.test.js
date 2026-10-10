@@ -361,6 +361,95 @@ describe('UltraPlayer', () => {
         p._nudge.destroy();
     });
 
+    it('presented by the player: a stand-in at submit, two frames ahead at most, the freshest waits', async () => {
+        const { PyroWaveDecoder } = await import('../js/stream/ultra/PyroWaveDecoder.js');
+        const got = [];
+        const p = new UltraPlayer(64, 48, (frame, meta) => got.push([frame, meta.timestamp]), {
+            log: () => {},
+        });
+        const releases = [];
+        p.device = {
+            createCommandEncoder: () => ({ finish: () => ({}) }),
+            queue: {
+                submit() {},
+                onSubmittedWorkDone: () => new Promise((resolve) => releases.push(resolve)),
+            },
+        };
+        p.decoder = new PyroWaveDecoder();
+        p.context = {};
+        p.presenting = true;
+        p.push(new Uint8Array([1]), 1, 10);
+        p.push(new Uint8Array([2]), 2, 11); // goes too: one ahead
+        p.push(new Uint8Array([3]), 3, 12); // waits: two on the queue
+        p.push(new Uint8Array([4]), 4, 13); // replaces frame 3
+        expect(p.decoder.pushed).toEqual([1, 2]);
+        expect(got.map(([, ts]) => ts)).toEqual([1, 2]); // at submit, not at the work done
+        const [frame] = got[0];
+        expect(frame).toMatchObject({ presented: true, timestamp: 1, displayWidth: 64 });
+        expect(frame.displayHeight).toBe(48);
+        frame.close(); // the page closes what it is given
+        releases.shift()();
+        for (let k = 0; k < 3; k++) await Promise.resolve();
+        expect(p.decoder.pushed).toEqual([1, 2, 4]);
+        expect(got.map(([, ts]) => ts)).toEqual([1, 2, 4]);
+        expect(p.stats).toMatchObject({ frames: 1, replaced: 1 });
+        releases.shift()();
+        releases.shift()();
+        for (let k = 0; k < 3; k++) await Promise.resolve();
+        expect(p.stats.frames).toBe(3);
+        expect(p._busy).toBe(false);
+    });
+
+    it("presented by the player: the page's canvas at the frame's size, by the way the key asks", async () => {
+        vi.stubGlobal('navigator', { gpu: { getPreferredCanvasFormat: () => 'bgra8unorm' } });
+        let mode = 'dom';
+        vi.stubGlobal('localStorage', {
+            getItem: (k) => (k === 'mw_ultra_present' ? mode : null),
+        });
+        const canvas = () => {
+            const ctx = { configure: vi.fn() };
+            const el = { width: 300, height: 150, getContext: vi.fn(() => ctx), ctx };
+            el.transferControlToOffscreen = vi.fn(() => ({ getContext: vi.fn(() => ctx) }));
+            return el;
+        };
+        const open = (el) => {
+            const p = new UltraPlayer(64, 48, () => {}, { log: () => {}, present: el });
+            p.device = {};
+            p._presentOnPage();
+            return p;
+        };
+        let el = canvas();
+        let p = open(el);
+        expect(p.presenting).toBe(true);
+        expect([el.width, el.height]).toEqual([64, 48]);
+        expect(el.getContext).toHaveBeenCalledWith('webgpu');
+        expect(el.ctx.configure).toHaveBeenCalledWith(
+            expect.objectContaining({ format: 'bgra8unorm', alphaMode: 'opaque' }),
+        );
+        expect(p.summary().present).toBe('dom');
+        mode = 'offscreen';
+        el = canvas();
+        p = open(el);
+        expect(el.transferControlToOffscreen).toHaveBeenCalled();
+        expect(el.getContext).not.toHaveBeenCalled();
+        expect(p.presenting).toBe(true);
+        // A way the player does not know (desync showed a black canvas): none.
+        mode = 'desync';
+        expect(new UltraPlayer(64, 48, () => {}, { present: canvas() }).presentMode).toBe(null);
+        // A canvas that will not give a WebGPU context: the VideoFrame road.
+        mode = 'dom';
+        el = canvas();
+        el.getContext = () => null;
+        p = open(el);
+        expect(p.presenting).toBe(false);
+        expect(p.summary().present).toBe(null);
+        // No key, no canvas taken.
+        mode = null;
+        el = canvas();
+        p = new UltraPlayer(64, 48, () => {}, { log: () => {}, present: el });
+        expect(p.presentMode).toBe(null);
+    });
+
     it('by slices: a piece missing, and the frame decodes whole', async () => {
         vi.stubGlobal(
             'VideoFrame',

@@ -38,6 +38,12 @@
  * Nudged (WebGPU, bench key mw_ultra_nudge=1 or all): while a frame waits for
  * its work done, empty submits wake Chrome's GPU process up, which otherwise
  * sees the end 2 to 3 ms late (GpuNudge.js).
+ *
+ * Presented by the player (WebGPU, bench key mw_ultra_present, U3.7 B2.1):
+ * the present pass draws on a canvas the page shows, and the page gets a
+ * stand-in for its bookkeeping at submit: no VideoFrame, no Canvas2D draw,
+ * and nothing waits for the work done but the next frames, PRESENT_AHEAD of
+ * them at most on the GPU's queue (no nudge then).
  */
 
 import { GpuNudge, nudgeMode } from './GpuNudge.js';
@@ -61,6 +67,8 @@ const REF_EVERY = 8;
 const PART_STAMPS = 62;
 // A query set resolves at a multiple of 256 bytes.
 const RESOLVE_STRIDE = 256;
+// Presented by the player: frames submitted and not yet done, at most.
+const PRESENT_AHEAD = 2;
 
 // Bench switch (localStorage mw_ultra_idwt=2 or 1): an older inverse wavelet
 // shader of the decoder, which gives the same values more slowly, for an A/B.
@@ -80,6 +88,23 @@ function fp16Storage() {
         return globalThis.localStorage?.getItem('mw_ultra_fp16') !== '0';
     } catch {
         return true;
+    }
+}
+
+/**
+ * The bench key mw_ultra_present (B2.1), or null: how the player presents on
+ * the page's canvas. dom: its WebGPU context; offscreen: an OffscreenCanvas
+ * its control is transferred to (Chrome sends that one's frames to the
+ * compositor itself, apart from the page's). Not a WebGPU context asked for
+ * desynchronized, as the page's Canvas2D is: Chrome then shows a black canvas
+ * (lab, 10/10/2026).
+ */
+export function presentMode() {
+    try {
+        const v = globalThis.localStorage?.getItem('mw_ultra_present');
+        return v === 'dom' || v === 'offscreen' ? v : null;
+    } catch {
+        return null;
     }
 }
 
@@ -106,11 +131,19 @@ export class UltraPlayer {
     /**
      * @param {number} width picture width (even)
      * @param {number} height picture height (even)
-     * @param {(frame: VideoFrame, meta: {timestamp: number, backendTs: number, decodeMs: number}) => void} onFrame
-     *        receives each VideoFrame (to close) with its chunk timestamp and host stamp
-     * @param {{limited?: boolean, log?: function(string): void}} [options]
+     * @param {(frame: VideoFrame | object, meta: {timestamp: number, backendTs: number, decodeMs: number}) => void} onFrame
+     *        receives each VideoFrame (to close) with its chunk timestamp and host stamp;
+     *        presented by the player, a stand-in instead: `presented: true`, the
+     *        frame's timestamp and size, close()
+     * @param {{limited?: boolean, log?: function(string): void, present?: HTMLCanvasElement | null}} [options]
+     *        present: the canvas to present on (bench key mw_ultra_present), WebGPU only
      */
-    constructor(width, height, onFrame, { limited = true, log = console.log } = {}) {
+    constructor(
+        width,
+        height,
+        onFrame,
+        { limited = true, log = console.log, present = null } = {},
+    ) {
         this.width = width;
         this.height = height;
         this.onFrame = onFrame;
@@ -120,6 +153,12 @@ export class UltraPlayer {
         this.decoder = null;
         this._busy = false;
         this._waiting = null;
+        // Presented by the player (B2.1): the canvas and the way, until init()
+        // has it configured (presenting); then the frames on the GPU's queue.
+        this.presentMode = present ? presentMode() : null;
+        this._presentEl = this.presentMode ? present : null;
+        this.presenting = false;
+        this._inFlight = 0;
         this.stats = { frames: 0, replaced: 0, incomplete: 0, errors: 0, sliced: 0, parts: 0 };
         // The frame coming by slices: its frame id, the bytes of it seen, the
         // tail of a block cut by the transport, and whether it is all in.
@@ -191,6 +230,7 @@ export class UltraPlayer {
             stats: { ...this.stats },
             gpuTimestamps: !!this._querySet,
             early: this.early,
+            present: this.presenting ? this.presentMode : null,
             nudge: this._nudge ? { mode: this._nudge.mode, ...this._nudge.stats } : null,
             traced: this.trace ? this.trace.length : null,
         };
@@ -229,9 +269,16 @@ export class UltraPlayer {
             idwt: idwtVersion(),
             fp16: fp16Storage(),
         });
-        this.canvas = new OffscreenCanvas(this.width, this.height);
-        this.context = this.canvas.getContext('webgpu');
-        this.context.configure({ device: this.device, format: 'rgba8unorm', alphaMode: 'opaque' });
+        if (this._presentEl) this._presentOnPage();
+        if (!this.presenting) {
+            this.canvas = new OffscreenCanvas(this.width, this.height);
+            this.context = this.canvas.getContext('webgpu');
+            this.context.configure({
+                device: this.device,
+                format: 'rgba8unorm',
+                alphaMode: 'opaque',
+            });
+        }
         if (timestamps) {
             const reads = this.trace ? TRACE_READS : 1;
             const count = this.trace ? 4 + 2 * PART_STAMPS : 4;
@@ -249,7 +296,8 @@ export class UltraPlayer {
                 this._reads.push({ buf, slot: i, busy: false });
             }
         }
-        if (this.nudgeMode && typeof MessageChannel === 'function')
+        // Presented by the player, nothing waits for the work done but the next frames.
+        if (this.nudgeMode && !this.presenting && typeof MessageChannel === 'function')
             this._nudge = new GpuNudge(this.device, this.nudgeMode);
         this.api = 'webgpu';
         this.log(
@@ -260,9 +308,33 @@ export class UltraPlayer {
                 ', inverse wavelet ' +
                 this.decoder.idwtVersion +
                 (this.decoder.fp16 ? ', fine levels in FP16' : ', all in f32') +
-                (this._nudge ? ', nudged (' + this._nudge.mode + ')' : ''),
+                (this._nudge ? ', nudged (' + this._nudge.mode + ')' : '') +
+                (this.presenting ? ', presented on the page (' + this.presentMode + ')' : ''),
         );
         return true;
+    }
+
+    // B2.1: the page's canvas at the frame's size, then its context, in the
+    // canvas's own format. On any failure, the VideoFrame road instead.
+    _presentOnPage() {
+        const el = this._presentEl;
+        try {
+            // A placeholder's size cannot change once its control is transferred.
+            el.width = this.width;
+            el.height = this.height;
+            const target = this.presentMode === 'offscreen' ? el.transferControlToOffscreen() : el;
+            const ctx = target.getContext('webgpu');
+            if (!ctx) throw new Error('no WebGPU context on the canvas');
+            ctx.configure({
+                device: this.device,
+                format: navigator.gpu.getPreferredCanvasFormat(),
+                alphaMode: 'opaque',
+            });
+            this.context = ctx;
+            this.presenting = true;
+        } catch (e) {
+            this.log('[MW-ULTRA] presenting on the page failed (' + e.message + '): by VideoFrame');
+        }
     }
 
     _initGL() {
@@ -464,6 +536,7 @@ export class UltraPlayer {
             : null;
         if (rec) this._keep(rec);
         if (read) this._readGpuTimes(read, count, rec);
+        if (this.presenting) return this._presented(timestamp, backendTs, t0, t1, rec);
         this._nudge?.begin(t1);
         const emit = (from) => {
             let frame = null;
@@ -504,6 +577,55 @@ export class UltraPlayer {
                 this._busy = false;
                 this.stats.errors++;
                 this._nudge?.end();
+            },
+        );
+    }
+
+    // B2.1: the frame is on the page's canvas at the end of this task. The
+    // page's bookkeeping now, by a stand-in; the next frame may go at once,
+    // unless PRESENT_AHEAD are still on the GPU's queue: the freshest then
+    // waits for one of them to be done.
+    _presented(timestamp, backendTs, t0, t1, rec) {
+        this._inFlight++;
+        this._busy = this._inFlight >= PRESENT_AHEAD;
+        const t3 = performance.now();
+        this._note('frame', t3 - t1);
+        if (rec) rec.t3 = t3;
+        const { width, height } = this;
+        this.onFrame(
+            {
+                presented: true,
+                timestamp,
+                codedWidth: width,
+                codedHeight: height,
+                displayWidth: width,
+                displayHeight: height,
+                close() {},
+            },
+            { timestamp, backendTs, decodeMs: t3 - t0 },
+        );
+        this.device.queue.onSubmittedWorkDone().then(
+            () => {
+                this._inFlight--;
+                this._busy = this._inFlight >= PRESENT_AHEAD;
+                this.stats.frames++;
+                const t2 = performance.now();
+                this._note('done', t2 - t1);
+                if (rec) rec.t2 = t2;
+                // Traced: the empty reference only on a GPU with nothing else queued.
+                if (
+                    this.trace &&
+                    !this._waiting &&
+                    !this._inFlight &&
+                    ++this._refCount % REF_EVERY === 0
+                )
+                    this._reference();
+                this._next();
+            },
+            () => {
+                this._inFlight--;
+                this._busy = this._inFlight >= PRESENT_AHEAD;
+                this.stats.errors++;
             },
         );
     }
