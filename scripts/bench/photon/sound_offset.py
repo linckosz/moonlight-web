@@ -15,7 +15,10 @@ Where the listener logged them (10/10), `gap <us> <len>` (no loopback packet:
 no stream rendering) and `silent <us> <len>` (packets the mixer flagged
 silent): each flag without a beep is placed at its flag + the median offset,
 and counted as fallen in a gap, in a silent run, or in sound the browser
-played as silence (A1: where the missing beeps go).
+played as silence (A1: where the missing beeps go). Without any flag (the
+listener did not find it), the missing beeps are inferred from the heard
+ones' rhythm: the page clicks about once a second, so an interval of about
+twice the median hides one beep, placed in its middle, three times two.
 """
 import sys
 
@@ -57,13 +60,25 @@ def main():
         q = lambda p: o[min(len(o) - 1, int(p * (len(o) - 1) + 0.5))]
         print("sound - flag  median %.1f  p10 %.1f  p90 %.1f  min %.1f  max %.1f ms" % (
             q(0.5), q(0.1), q(0.9), o[0], o[-1]))
-    if lone and offsets and (gaps or silents):
+    # Where each missing beep should have played, on the client's clock.
+    expected = []
+    if lone and offsets:
         median_us = int(sorted(offsets)[len(offsets) // 2] * 1000)
+        expected = [fl + median_us for fl in lone]
+    elif not flags and len(beeps) > 2:
+        steps = sorted(b - a for a, b in zip(beeps, beeps[1:]))
+        period = steps[len(steps) // 2]
+        for a, b in zip(beeps, beeps[1:]):
+            k = int((b - a) / period + 0.5)
+            expected += [a + (b - a) * j // k for j in range(1, k)]
+        print("no flag: %d beeps heard, ~%d ms apart; %d inferred missing" % (
+            len(beeps), period // 1000, len(expected)))
+    if expected and (gaps or silents):
         # The beep's 20 ms, where it should have played.
         within = lambda t, spans: any(s0 <= t + 20000 and t <= s0 + n for s0, n in spans)
-        in_gap = sum(1 for fl in lone if within(fl + median_us, gaps))
-        in_silent = sum(1 for fl in lone if not within(fl + median_us, gaps)
-                        and within(fl + median_us, silents))
+        lone = expected
+        in_gap = sum(1 for t in lone if within(t, gaps))
+        in_silent = sum(1 for t in lone if not within(t, gaps) and within(t, silents))
         print("missing beeps: %d in a loopback gap, %d in a silent run, %d in sound played as silence"
               % (in_gap, in_silent, len(lone) - in_gap - in_silent))
     if gaps or silents:
