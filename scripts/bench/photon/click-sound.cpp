@@ -36,9 +36,13 @@
 // Usage:
 //   mw-click-sound [--clicks 30] [--interval 1000] [--timeout 1500]
 //                  [--threshold 0.05] [--flag X,Y] [--tick SECS] [--out
-//                  file.json]
-// The cursor must rest over the streaming page, the page must play sound (not a
-// muted kiosk), and this machine must not be the host itself.
+//                  file.json] [--window TITLE [--center]] [--warmup N]
+// The cursor must rest over the streaming page (--center puts it in the
+// middle of --window's client area), the page must play sound (not a muted
+// kiosk), and this machine must not be the host itself. --warmup N clicks
+// first, measured by nothing: a page that captures the pointer takes its first
+// click for that. Each click's line has its QPC time (µs), to join it with the
+// page's frame log or a trace (POC Ultra U3.7, the end of the chain).
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -375,8 +379,9 @@ bool flagPointInWindow(const std::string& title, int& x, int& y)
     POINT tl = {r.left, r.top}, br = {r.right, r.bottom};
     ClientToScreen(f.found, &tl);
     ClientToScreen(f.found, &br);
-    (void)x;
-    (void)y;
+    // Its middle, for --center.
+    x = (tl.x + br.x) / 2;
+    y = (tl.y + br.y) / 2;
     g_FlagWindow = f.found;
     std::fprintf(stderr, "window client %ld,%ld-%ld,%ld: the flag is looked for in it\n", tl.x,
                  tl.y, br.x, br.y);
@@ -415,10 +420,11 @@ std::string stats(const char* name, const std::vector<double>& v)
 
 int main(int argc, char** argv)
 {
-    int clicks = 30, intervalMs = 1000, timeoutMs = 1500;
+    int clicks = 30, intervalMs = 1000, timeoutMs = 1500, warmup = 0;
     double tickSecs = 0;
     float threshold = 0.05f;
     int flagX = -1, flagY = -1;
+    bool center = false;
     std::string out, window;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -437,6 +443,10 @@ int main(int argc, char** argv)
             out = val();
         else if (a == "--window")
             window = val();
+        else if (a == "--center")
+            center = true;
+        else if (a == "--warmup")
+            warmup = std::atoi(val().c_str());
         else if (a == "--wav")
             g_WavPath = val();
         else if (a == "--flag") {
@@ -463,6 +473,10 @@ int main(int argc, char** argv)
         if (!found) {
             std::fprintf(stderr, "no visible window titled *%s*\n", window.c_str());
             return 1;
+        }
+        if (center) {
+            SetCursorPos(flagX, flagY);
+            std::fprintf(stderr, "the cursor put at %d,%d\n", flagX, flagY);
         }
         flagX = flagY = -1; // found by its colours (flagThread)
     }
@@ -509,6 +523,11 @@ int main(int argc, char** argv)
         std::printf("tick: %zu beeps, %zu flags, %zu paired; loudest sample %.3f\n", s.size(),
                     fl.size(), avMs.size(), g_MaxPeakMilli / 1000.0);
     } else {
+        for (int k = 0; k < warmup; ++k) {
+            click();
+            std::printf("warmup %d at %lld\n", k + 1, static_cast<long long>(qpcUs()));
+            Sleep(intervalMs);
+        }
         for (int k = 0; k < clicks; ++k) {
             const int64_t t0 = qpcUs();
             click();
@@ -532,8 +551,9 @@ int main(int argc, char** argv)
                     ++flagMiss;
             }
             if (s >= 0 && fl >= 0) avMs.push_back(s - fl);
-            std::printf("click %2d  sound %7.1f ms  flag %7.1f ms  sound-flag %7.1f ms\n", k + 1, s,
-                        fl, s >= 0 && fl >= 0 ? s - fl : 0.0);
+            std::printf("click %2d at %lld  sound %7.1f ms  flag %8.2f ms  sound-flag %7.1f ms\n",
+                        k + 1, static_cast<long long>(t0), s, fl, s >= 0 && fl >= 0 ? s - fl : 0.0);
+            std::fflush(stdout);
             char row[96];
             std::snprintf(row, sizeof row, "%s[%.2f, %.2f]", rows.empty() ? "" : ", ", s, fl);
             rows += row;
