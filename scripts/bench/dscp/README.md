@@ -17,8 +17,35 @@ product code marks anything. Findings go to
 | `tidstat.py` | Linux | per receiver and transmitter, the 802.11 QoS data frames by TID (bad-FCS frames left out) |
 | `tidtime.py` | Linux | the TIDs of the frames to one station from one source, per `udptos.py` window: the access point's DSCP → Wi-Fi queue table |
 | `ap-table.sh`, `ap_table.py` | Linux, Wi-Fi + wired | the same table read from the station's own per-TID counters, no monitor mode: one BSSID per run |
+| `load.py` | a wired server + a second Wi-Fi station | D1: a reproducible load beside the stream (a video's bursts, a bulk transfer, a call), marked as asked, and what it costs the house (its own throughput and round trips) |
 
 TID → queue: 1-2 BK, 0 and 3 BE, 4-5 VI, 6-7 VO.
+
+### A load beside the stream (D1)
+
+```
+python3 load.py serve                                   # a wired machine
+python3 load.py run --server <wired-ip> --bind <wifi-ip> --profile video --secs 300 --out v.json
+python3 load.py run --server <wired-ip> --profile call --tos EF --secs 300   # a video call
+```
+
+The generator runs on a second Wi-Fi station of the stream client's access
+point; `--dir down` (the default) fills the access point's queues toward it,
+as the stream's own way down does, `up` the air from it. `video` is an
+iPhone watching a video: 11 Mbit/s on average, fetched in 4-second segments
+over TCP as fast as the link goes, since bursts are what the stream feels
+(a paced flow is not). `bulk` is one long TCP transfer, `call` paced UDP both
+ways (3 Mbit/s each way, 30 frames a second). `--tos` marks every socket on
+both sides (DF, AF41, EF, or 0-63); the server marks what it sends back as
+asked. Every run pings the server 50 times a second in the same class, from
+a process of its own so the load's loops never stretch its round trips: that
+and the segments' Mbit/s are the harm done to the house.
+
+For a mark to count, the station and the stream's client must hang off an
+access point that reads it. On the bench (06/10) the switch hangs off
+ec:68:b4, which puts everything in BE: a Wi-Fi client on that same access
+point sees no effect of any mark. Behind the Wi-Fi 7 link (the router
+07:1d:00) the precedence rule holds (EF and AF41 in VI, CS6 in VO).
 
 ### The access point's table, from the station's counters
 
