@@ -291,6 +291,15 @@ def ultra_player(d, tag):
         with open(os.path.join(age.OUT, tag + ".ultratrace.json"), "w") as f:
             f.write(trace)
         print("  pyrowave trace: %s records" % player["traced"], flush=True)
+        # The audio road's frames through the browser (POC Ultra P-B):
+        # [rtp ts, first chunk read, its receive, last chunk's receive,
+        # posted by the worker, on the page, bytes], beside it as
+        # <tag>.rtptrace.json.
+        rtp = d.eval("globalThis.__mwRtp && __mwRtp.trace ? JSON.stringify(__mwRtp.trace) : null")
+        if rtp:
+            with open(os.path.join(age.OUT, tag + ".rtptrace.json"), "w") as f:
+                f.write(rtp)
+            print("  audio road trace: %d frames" % len(json.loads(rtp)), flush=True)
     return player
 
 

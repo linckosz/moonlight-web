@@ -119,14 +119,32 @@ function readEncodedFrame(mid, frame) {
     return { mid, data: frame.data, key: frame.type === 'key', ts: ts >>> 0, at, held };
 }
 
-/** The bench's figures of one frame (U1.4): kept as running windows. */
+/** Frames kept by the audio road's trace (bench key mw_ultra_trace=1). */
+const RTP_TRACE_KEEP = 16384;
+
+/** Whether this page keeps the audio road's per-frame trace. */
+function rtpTraceOn() {
+    try {
+        return globalThis.localStorage?.getItem('mw_ultra_trace') === '1';
+    } catch {
+        return false;
+    }
+}
+
+/** The bench's figures of one frame (U1.4): kept as running windows. With the
+ * trace (POC Ultra P-B), every audio road frame's way through the browser
+ * too: [rtp ts, first chunk read, its receive, last chunk's receive, posted
+ * by the worker, here, bytes], ms on the time origin's clock. */
 function noteFrame(m) {
     const st = (globalThis.__mwRtp ||= { hops: [], held: [], ats: [], rcv: [] });
     const keep = (a, v) => {
         a.push(v);
         if (a.length > 600) a.shift();
     };
-    keep(st.hops, performance.timeOrigin + performance.now() - m.at);
+    const here = performance.timeOrigin + performance.now();
+    if (st.trace && m.w0 !== undefined && st.trace.length < RTP_TRACE_KEEP)
+        st.trace.push([m.ts, m.w0, m.rx0, m.rxN, m.at, here, m.data ? m.data.byteLength : 0]);
+    keep(st.hops, here - m.at);
     if (m.lost) st.lost = (st.lost || 0) + 1;
     // When the frame reached us, and when its last packet came, on one clock.
     keep(st.ats, m.at);
@@ -227,6 +245,8 @@ export function attachRtpVideo(
             });
         pump().catch((e) => onFrame({ error: String(e && e.message ? e.message : e) }));
     } else {
+        if (/^[vu]audio$/.test(mid) && rtpTraceOn())
+            (globalThis.__mwRtp ||= { hops: [], held: [], ats: [], rcv: [] }).trace = [];
         worker = new Worker(new URL('./rtpVideoTransformWorker.js', import.meta.url));
         worker.onmessage = (msg) => onFrame(msg.data);
         worker.onerror = (e) =>

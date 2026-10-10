@@ -73,6 +73,19 @@ const GIVE_UP_REPAIR_MS = 40;
  * of at least that many bytes, so its decoding starts before the frame is
  * whole; the whole frame follows as before.
  */
+/** When the browser received the packet of @p frame, on the time origin's
+ * clock (ms), or -1. */
+function receivedAt(frame) {
+    try {
+        const meta = frame.getMetadata();
+        if (meta && typeof meta.receiveTime === 'number')
+            return performance.timeOrigin + meta.receiveTime;
+    } catch {
+        // No metadata here.
+    }
+    return -1;
+}
+
 function audioRoad(reader, outMid, giveUpMs = GIVE_UP_MS, repair = true, partBytes = 0) {
     const ordered = outMid === 'video';
     const tag = ordered ? 'v' : 'u';
@@ -208,6 +221,9 @@ function audioRoad(reader, outMid, giveUpMs = GIVE_UP_MS, repair = true, partByt
                 ts: f.ts >>> 0,
                 at: now,
                 held: f.held,
+                w0: f.w0,
+                rx0: f.rx0,
+                rxN: f.rxN,
                 lost,
                 fid: f.fid,
             },
@@ -263,6 +279,10 @@ function audioRoad(reader, outMid, giveUpMs = GIVE_UP_MS, repair = true, partByt
                     fid: dv.getUint32(8),
                     sentIdx: 0, // chunks given as pieces (partBytes)
                     sentBytes: 0,
+                    // The first chunk read here, and when the browser got it
+                    // (POC Ultra P-B: the way down, split; -1 if unknown).
+                    w0: performance.timeOrigin + performance.now(),
+                    rx0: receivedAt(frame),
                 };
                 open.set(seq, f);
                 // A newer frame started: what an older one still lacks is lost.
@@ -282,12 +302,15 @@ function audioRoad(reader, outMid, giveUpMs = GIVE_UP_MS, repair = true, partByt
             }
             open.delete(seq);
             f.held = -1;
+            f.rxN = -1;
             f.ts = frame.timestamp;
             try {
                 const meta = frame.getMetadata();
                 if (meta && typeof meta.rtpTimestamp === 'number') f.ts = meta.rtpTimestamp;
-                if (meta && typeof meta.receiveTime === 'number')
+                if (meta && typeof meta.receiveTime === 'number') {
                     f.held = performance.now() - meta.receiveTime;
+                    f.rxN = performance.timeOrigin + meta.receiveTime;
+                }
             } catch {
                 // No metadata: the figures stay empty.
             }
