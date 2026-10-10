@@ -89,6 +89,17 @@ static bool nativeVideoPipelineSupported()
     return false;
 }
 
+/// Whether the admin may choose PyroWave (POC Ultra, ultra-lan-poc.md §6.43):
+/// its encoder is on the D3D12 route only, Windows's.
+static bool nativeVideoCodecSupported()
+{
+#if defined(Q_OS_WIN)
+    return nativeVideoPipelineSupported();
+#else
+    return false;
+#endif
+}
+
 /// Whether this host can run the owner's apps in gamescope: a Linux native
 /// host whose engine found a gamescope recent enough (LinuxProbe).
 static bool gamescopeAppsSupported()
@@ -1264,6 +1275,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["native_video_pipeline"] = appSettings.nativeVideoPipeline();
         obj["native_video_pipeline_supported"] = nativeVideoPipelineSupported();
         obj["native_video_pipeline_options"] = nativeVideoPipelineOptions();
+        // The codec of a native session (admin → Advanced): PyroWave for a
+        // wired LAN, on Windows only (the D3D12 route).
+        obj["native_video_codec"] = appSettings.nativeVideoCodec();
+        obj["native_video_codec_supported"] = nativeVideoCodecSupported();
         // The owner's apps in gamescope (Linux native host), and whether this
         // machine can run them.
         obj["gamescope_apps"] = appSettings.gamescopeApps();
@@ -1337,6 +1352,13 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                 return HttpResponse::error(
                     400, "native_video_pipeline must be auto, d3d11, d3d12, vaapi or vulkan");
             obj["native_video_pipeline"] = appSettings.nativeVideoPipeline();
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+        if (body.contains("native_video_codec")) {
+            if (!appSettings.setNativeVideoCodec(body["native_video_codec"].toString()))
+                return HttpResponse::error(400, "native_video_codec must be auto or pyrowave");
+            obj["native_video_codec"] = appSettings.nativeVideoCodec();
             obj["status"] = "saved";
             hadChange = true;
         }

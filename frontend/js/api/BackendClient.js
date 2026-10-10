@@ -81,6 +81,7 @@ import {
 } from '../util/BrowserDetect.js';
 import { currentRefreshMilliHz } from '../util/RefreshRate.js';
 import { canCropFrames } from '../stream/FrameCrop.js';
+import { ultraPlayerSupported } from '../stream/ultra/UltraPlayer.js';
 
 export class BackendClient {
     /** Cached promise for the per-run admin key (see _adminKey). */
@@ -377,6 +378,10 @@ export class BackendClient {
                 // (stream/FrameCrop.js): the native host may then pad an AV1
                 // frame past the picture instead of shrinking the picture.
                 crops_to_frame: canCropFrames(),
+                // This browser can decode PyroWave (WebGPU or WebGL2): a native
+                // Windows host whose admin chose it for a wired LAN then codes
+                // in it, and /start answers ultra_codec.
+                pyrowave: ultraPlayerSupported(),
                 // This screen's measured refresh and whether frames wait for
                 // its vsync (tearing off). The native host runs a vsync client
                 // at a divisor of its refresh so frames land on its grid — see

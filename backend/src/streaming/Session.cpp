@@ -1256,6 +1256,11 @@ void StreamSession::onShimConnectionStarted()
             result["hdr"] = info.hdr;
             result["display_hdr"] = info.displayHdr;
             result["hdr_capable"] = info.hdrCapable;
+            // The frames are PyroWave's (the admin's codec, AppSettings::
+            // nativeVideoCodec), which the browser decodes itself: said from
+            // the encoder that runs, never from the setting.
+            if (info.videoEncoder12 == mw::native::EncoderTuning::Encoder12::Pyrowave)
+                result["ultra_codec"] = QStringLiteral("pyrowave");
         }
     }
 

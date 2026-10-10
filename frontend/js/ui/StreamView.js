@@ -530,6 +530,9 @@ export class StreamView {
         // resolution means leaving and rejoining.
         this._playerMode = opts.playerMode === true;
         this._shareToken = opts.shareToken || null;
+        // The host codes PyroWave, the admin's codec for a wired LAN (/start's
+        // ultra_codec): this page decodes it on its own thread (_ultraMode).
+        this._ultraAsked = opts.ultraCodec === 'pyrowave';
         // A guest gets SGSR1 with a promise attached: it is dropped for good if
         // it costs more than 8ms per frame, measured after a 10s warm-up. The
         // owner's adaptive ladder (a share of their own frame budget) would make
@@ -626,6 +629,7 @@ export class StreamView {
         try {
             this._useWorker =
                 workerWanted &&
+                !this._ultraAsked &&
                 !this._hdrEnabled &&
                 transport !== 'webrtc-media' &&
                 typeof Worker !== 'undefined' &&
@@ -11899,17 +11903,18 @@ export class StreamView {
     }
 
     /**
-     * POC Ultra (U4): whether this page decodes the host's frames as PyroWave
-     * (bench key: localStorage mw_ultra=pyrowave, with the host's
-     * pipeline=d3d12,enc12=pyrowave). Read once per session.
+     * POC Ultra (U4): whether this page decodes the host's frames as PyroWave:
+     * the host said so (/start's ultra_codec, the admin's codec), or the bench
+     * key localStorage mw_ultra=pyrowave, with the host's
+     * pipeline=d3d12,enc12=pyrowave. Read once per session.
      */
     _ultraMode() {
         if (this._ultraOn === undefined) {
-            let on = false;
+            let on = this._ultraAsked === true;
             try {
-                on = globalThis.localStorage?.getItem('mw_ultra') === 'pyrowave';
+                on = on || globalThis.localStorage?.getItem('mw_ultra') === 'pyrowave';
             } catch {
-                on = false;
+                /* the host's word stands */
             }
             // The player draws through onDecodedFrame on this thread: a
             // decode worker that owns the canvas has no room for it.

@@ -614,6 +614,18 @@ public:
     /// as it was, for anything else.
     bool setNativeVideoPipeline(const QString& pipeline);
 
+    /// The codec a native Windows session codes its pictures in: "auto" — the
+    /// browser's H.264, HEVC or AV1, as before — or "pyrowave", the intra-only
+    /// wavelet codec of POC Ultra (docs/design/ultra-lan-poc.md §6.43), for a
+    /// browser on a wired LAN (~130 Mbit/s). Taken only for a browser that
+    /// says it can decode it, without HDR; the admin's "Advanced" choice.
+    /// Default: "auto", which is also what a value the file holds that is not
+    /// one of the two reads as.
+    QString nativeVideoCodec() const;
+    /// Stores one of the two names, in any case. False, with the file left as
+    /// it was, for anything else.
+    bool setNativeVideoCodec(const QString& codec);
+
     /// The apps a Linux native host runs each in its own gamescope, a card
     /// apiece beside the displays (plan Idées Punktfunk, chapter G, G5):
     /// [{"name", "command"}], in the owner's order. A command is run by

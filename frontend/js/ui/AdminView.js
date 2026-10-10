@@ -151,6 +151,10 @@ export class AdminView {
         this._videoPipeline = 'auto';
         this._videoPipelineSupported = false;
         this._videoPipelineValues = ['auto', 'd3d11', 'd3d12'];
+        // The codec of a native session: 'auto' (the browser's H.264, HEVC or
+        // AV1) or 'pyrowave' for a wired LAN, offered on Windows only.
+        this._videoCodec = 'auto';
+        this._videoCodecSupported = false;
         // The owner's apps in gamescope (a Linux native host): [{name, command}],
         // and whether this machine can run them — the section is hidden where
         // it cannot.
@@ -263,6 +267,8 @@ export class AdminView {
             const settings = await BackendClient.getStreamingSettings();
             this._videoPipeline = settings.native_video_pipeline || 'auto';
             this._videoPipelineSupported = settings.native_video_pipeline_supported === true;
+            this._videoCodec = settings.native_video_codec === 'pyrowave' ? 'pyrowave' : 'auto';
+            this._videoCodecSupported = settings.native_video_codec_supported === true;
             // An older server names no values: Windows', the only ones it had.
             if (Array.isArray(settings.native_video_pipeline_options)) {
                 this._videoPipelineValues = settings.native_video_pipeline_options;
@@ -1454,6 +1460,13 @@ export class AdminView {
                 this._saveVideoPipeline(pipelineSelect.value);
             });
         }
+        // Codec (Advanced): the same
+        const codecSelect = this.container.querySelector('#select-video-codec');
+        if (codecSelect) {
+            codecSelect.addEventListener('change', () => {
+                this._saveVideoCodec(codecSelect.value);
+            });
+        }
 
         // The owner's apps in gamescope: each change saved at once.
         this._bindGamescopeApps();
@@ -2248,6 +2261,7 @@ export class AdminView {
                 <div class="settings-section" id="admin-section-advanced">
                     <h3 class="settings-section-title">${t('admin.advanced')}</h3>
                     ${this._videoPipelineSupported ? this._renderVideoPipeline() : ''}
+                    ${this._videoCodecSupported ? this._renderVideoCodec() : ''}
                     ${this._renderDiagMode('chk-debug-mode', this._debugMode, this._debugModeCli, 'debugMode', '--debug')}
                     ${this._renderDiagMode('chk-verbose-logs', this._verboseLogs, this._verboseLogsCli, 'verboseLogs', '--verbose')}
                     <div class="settings-field">
@@ -2311,6 +2325,32 @@ export class AdminView {
                                     : 'admin.videoPipelineHint',
                             )}
                         </p>
+                    </div>
+        `;
+    }
+
+    _videoCodecOptions() {
+        return [
+            ['auto', t('admin.videoCodecAuto')],
+            ['pyrowave', t('admin.videoCodecPyrowave')],
+        ];
+    }
+
+    _renderVideoCodec() {
+        return `
+                    <div class="settings-field">
+                        <label class="settings-label" for="select-video-codec">
+                            ${t('admin.videoCodec')}
+                        </label>
+                        <select id="select-video-codec" class="settings-select">
+                            ${this._videoCodecOptions()
+                                .map(
+                                    ([value, label]) =>
+                                        `<option value="${value}" ${value === this._videoCodec ? 'selected' : ''}>${this.esc(label)}</option>`,
+                                )
+                                .join('')}
+                        </select>
+                        <p class="settings-hint">${t('admin.videoCodecHint')}</p>
                     </div>
         `;
     }
@@ -2537,6 +2577,21 @@ export class AdminView {
             // The select shows what is stored, not what failed to be.
             const select = this.container.querySelector('#select-video-pipeline');
             if (select) select.value = this._videoPipeline;
+        }
+    }
+
+    // Saved at once, like the picture chain; it applies to the next stream.
+    async _saveVideoCodec(value) {
+        try {
+            await BackendClient.saveStreamingSettings({ native_video_codec: value });
+            this._videoCodec = value;
+            const option = this._videoCodecOptions().find(([v]) => v === value);
+            Toast.success(t('admin.videoCodecSaved', { codec: option ? option[1] : value }));
+        } catch (err) {
+            console.warn('[Admin] Failed to save the video codec:', err);
+            Toast.error(t('admin.videoCodecSaveFailed'));
+            const select = this.container.querySelector('#select-video-codec');
+            if (select) select.value = this._videoCodec;
         }
     }
 

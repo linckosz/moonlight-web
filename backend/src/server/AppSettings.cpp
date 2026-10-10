@@ -1059,6 +1059,22 @@ bool AppSettings::setNativeVideoPipeline(const QString& pipeline)
     return true;
 }
 
+QString AppSettings::nativeVideoCodec() const
+{
+    const QString v = readAll().value("native_video_codec").toString().trimmed().toLower();
+    return v == QLatin1String("pyrowave") ? v : QStringLiteral("auto");
+}
+
+bool AppSettings::setNativeVideoCodec(const QString& codec)
+{
+    const QString v = codec.trimmed().toLower();
+    if (v != QLatin1String("auto") && v != QLatin1String("pyrowave")) return false;
+    QJsonObject obj = readAll();
+    obj["native_video_codec"] = v;
+    writeAll(obj);
+    return true;
+}
+
 // ── Apps in gamescope (Linux native host) ───────────────────────────────────
 
 namespace {

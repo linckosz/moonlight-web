@@ -3369,6 +3369,30 @@ int main(int argc, char* argv[])
                 << ":" << chainMode << "internal=" << internalTransport
                 << "iceTcp=" << enableIceTcp;
 
+        // The admin's codec (Advanced, AppSettings::nativeVideoCodec): PyroWave
+        // for a native Windows host, when the browser says it decodes it and
+        // the frames reach the page (the DataChannel's transport, not the
+        // <video> of webrtc-media). Its frames ride the audio road
+        // (ultra-lan-poc.md §6.41), and it codes 8-bit SDR only: no HDR asked.
+        // A bench's own native_tuning and rtp_video still come after.
+#if defined(Q_OS_WIN)
+        const bool nativePyrowave = backendType == QStringLiteral("native") &&
+                                    appSettings.nativeVideoCodec() == QLatin1String("pyrowave") &&
+                                    body["pyrowave"].toBool(false) &&
+                                    internalTransport == QLatin1String("webrtc");
+#else
+        const bool nativePyrowave = false;
+#endif
+        QString nativeTuningSpec = appSettings.nativeTuning();
+        QString rtpVideoSpec = appSettings.rtpVideo();
+        if (nativePyrowave) {
+            reqHdr = false;
+            nativeTuningSpec = QStringLiteral("pipeline=d3d12,enc12=pyrowave") +
+                               (nativeTuningSpec.isEmpty() ? QString() : "," + nativeTuningSpec);
+            if (rtpVideoSpec.isEmpty()) rtpVideoSpec = QStringLiteral("native:h264+hevc+av1+aroad");
+            qInfo() << "[Session] PyroWave (the admin's codec, wired LAN): D3D12, audio road";
+        }
+
         // ── Helper: attach lifecycle relay tracking for a new session ───────────
         // Adds the standard relay-created and session-ended connections that
         // maintain the global relay pointers (g_ActiveRelay, etc.) and send a
@@ -3587,8 +3611,8 @@ int main(int argc, char* argv[])
             // The admin's picture chain for a native Windows session.
             s->setNativeVideoPipeline(appSettings.nativeVideoPipeline());
             // The bench's knobs, when someone added them to the settings file.
-            s->setNativeTuning(appSettings.nativeTuning());
-            s->setRtpVideo(appSettings.rtpVideo());
+            s->setNativeTuning(nativeTuningSpec);
+            s->setRtpVideo(rtpVideoSpec);
             QObject::connect(s, &StreamSession::portalGrantReceived, qApp,
                              [&appSettings, portalVirtual](const QString& token) {
                                  appSettings.setPortalRestoreToken(token, portalVirtual);
@@ -3751,8 +3775,8 @@ int main(int argc, char* argv[])
             cfg["nativeVideoPipeline"] = appSettings.nativeVideoPipeline();
             // The bench's knobs, read here: a SYSTEM worker's own AppData is
             // systemprofile's, where this settings file is not.
-            cfg["nativeTuning"] = appSettings.nativeTuning();
-            cfg["rtpVideo"] = appSettings.rtpVideo();
+            cfg["nativeTuning"] = nativeTuningSpec;
+            cfg["rtpVideo"] = rtpVideoSpec;
             cfg["clientUniqueId"] = reqClientUniqueId;
             cfg["clientKind"] = NetClassify::toString(clientKind);
             cfg["autoMode"] = true;

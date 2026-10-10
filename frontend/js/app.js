@@ -3258,6 +3258,9 @@ const MoonlightApp = {
             // "NVENC" / "AMF" / "oneVPL", for the stats overlay — only the
             // native host, whose encoder runs on this very machine, can name it.
             nativeEncoder: typeof result.native_encoder === 'string' ? result.native_encoder : '',
+            // The host codes PyroWave (the admin's codec for a wired LAN):
+            // this page decodes it itself (stream/ultra/UltraPlayer.js).
+            ultraCodec: result.ultra_codec === 'pyrowave' ? 'pyrowave' : '',
             // What /start told the host this screen refreshes at, so the view
             // only speaks up again when the number changes.
             clientRefreshMilliHz: currentRefreshMilliHz(),

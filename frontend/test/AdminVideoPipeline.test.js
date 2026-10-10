@@ -132,3 +132,72 @@ describe('AdminView — video pipeline (Advanced)', () => {
         expect(Toast.success).not.toHaveBeenCalled();
     });
 });
+
+// The codec of a native session beside it: Auto, or PyroWave for a wired LAN,
+// offered only where the server says it can run (Windows, the D3D12 route).
+describe('AdminView — video codec (Advanced)', () => {
+    let view;
+
+    const select = () => document.querySelector('#select-video-codec');
+    const mount = () => {
+        document.body.innerHTML = `<div>${view._renderAdvanced()}</div>`;
+        view.container = document.body;
+        view.bindEvents();
+    };
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div></div>';
+        view = new AdminView(document.body, () => {});
+        BackendClient.getStreamingSettings.mockReset();
+        BackendClient.saveStreamingSettings.mockReset();
+        Toast.success.mockReset();
+        Toast.error.mockReset();
+    });
+
+    afterEach(() => {
+        view.destroy();
+    });
+
+    it('is hidden unless the server offers it', async () => {
+        BackendClient.getStreamingSettings.mockResolvedValue({ native_video_codec: 'pyrowave' });
+        await view._loadStreamingState();
+        expect(view._videoCodecSupported).toBe(false);
+        expect(view._renderAdvanced()).not.toContain('select-video-codec');
+    });
+
+    it('offers Auto and PyroWave for a wired LAN, the stored one selected', async () => {
+        BackendClient.getStreamingSettings.mockResolvedValue({
+            native_video_codec: 'pyrowave',
+            native_video_codec_supported: true,
+        });
+        await view._loadStreamingState();
+        mount();
+        const values = Array.from(select().options).map((o) => o.value);
+        expect(values).toEqual(['auto', 'pyrowave']);
+        expect(select().value).toBe('pyrowave');
+        expect(select().options[1].textContent).toBe('admin.videoCodecPyrowave');
+        expect(document.body.innerHTML).toContain('admin.videoCodecHint');
+    });
+
+    it('saves a change at once, and puts the stored value back on a refusal', async () => {
+        BackendClient.saveStreamingSettings.mockResolvedValueOnce({
+            native_video_codec: 'pyrowave',
+        });
+        view._videoCodecSupported = true;
+        mount();
+        select().value = 'pyrowave';
+        select().dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(Toast.success).toHaveBeenCalled());
+        expect(BackendClient.saveStreamingSettings).toHaveBeenCalledWith({
+            native_video_codec: 'pyrowave',
+        });
+        expect(view._videoCodec).toBe('pyrowave');
+
+        BackendClient.saveStreamingSettings.mockRejectedValueOnce(new Error('400'));
+        select().value = 'auto';
+        select().dispatchEvent(new Event('change'));
+        await vi.waitFor(() => expect(Toast.error).toHaveBeenCalled());
+        expect(view._videoCodec).toBe('pyrowave');
+        expect(select().value).toBe('pyrowave');
+    });
+});
