@@ -481,6 +481,9 @@ private:
     static constexpr int kNativeSctpMaxBurst = 0;
     // `sctpss=` (plan Wi-Fi W2.3): usrsctp's stream scheduler, -1 its own.
     int m_SctpScheduler = -1;
+    // `sctpmtu=` (plan Wi-Fi W2.6): the connection's path MTU in bytes, 0
+    // libdatachannel's 1280. Set at setup.
+    int m_SctpMtu = 0;
     // usrsctp's counters at the last link report, for the share of chunks
     // sent again in each report window (LinkFeedback::retransPermille).
     // Relay thread only.

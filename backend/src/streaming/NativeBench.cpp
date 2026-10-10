@@ -244,6 +244,9 @@ const char* const kUsage =
     "                    not 2, round robin by packet: Chrome's SCTP fails within seconds\n"
     "  sctpburst=<n>     usrsctp's max burst, in packets; 0 no limit (every native\n"
     "                    host's own; 10 libdatachannel's; plan Wi-Fi W2.5)\n"
+    "  sctpmtu=<bytes>   the connection's path MTU, 1280-1500 (1280 libdatachannel's):\n"
+    "                    SCTP packets of mtu - 108 bytes, 1392 at 1500 instead of 1172;\n"
+    "                    a LAN that holds 1500 only (plan Wi-Fi W2.6)\n"
     "  linkhold=<ms>     a picture held, not encoded, once video has waited outside usrsctp\n"
     "                    that long, 1-100; the freshest goes once it drained (Windows host;\n"
     "                    with sctpbuf=)\n"
@@ -624,6 +627,11 @@ bool applyTuningKey(const QString& key, const QString& value, mw::native::Encode
     } else if (key == "sctpburst") {
         tuning.sctpMaxBurst = value.toInt(&ok);
         ok = ok && tuning.sctpMaxBurst >= 0 && tuning.sctpMaxBurst <= 1000;
+    } else if (key == "sctpmtu") {
+        // Not above 1500: libdatachannel warns past a standard Ethernet frame,
+        // and a jumbo path needs both cards and the switch set for it.
+        tuning.sctpMtu = value.toInt(&ok);
+        ok = ok && tuning.sctpMtu >= 1280 && tuning.sctpMtu <= 1500;
     } else if (key == "linkhold") {
         tuning.linkHoldMs = value.toInt(&ok);
         ok = ok && tuning.linkHoldMs >= 0 && tuning.linkHoldMs <= 100;

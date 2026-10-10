@@ -260,6 +260,13 @@ void run_cadence_choice_tests()
         s.sctpScheduler = 4;
         CHECK(!s.isDefault());
         CHECK_EQ(s.describe(), std::string("sctpss=4"));
+        // And its path MTU (W2.6): libdatachannel's 1280 unless said.
+        EncoderTuning m;
+        CHECK_EQ(m.sctpMtu, 0);
+        CHECK(m.isDefault());
+        m.sctpMtu = 1500;
+        CHECK(!m.isDefault());
+        CHECK_EQ(m.describe(), std::string("sctpmtu=1500"));
     }
 
     // The audio log (plan audio + DSCP, A0): off unless said, named when set.

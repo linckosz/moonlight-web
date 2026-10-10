@@ -497,6 +497,15 @@ struct EncoderTuning
     /// trip on a Mac in Wi-Fi; 2 made the association with Chrome fail within
     /// seconds, and the key refuses it (04/10/2026).
     int sctpScheduler = -1;
+    /// The connection's path MTU in bytes, 1280-1500 (plan Wi-Fi W2.6):
+    /// libdatachannel's Configuration::mtu, from which usrsctp's packets are
+    /// sized (mtu - 108: SCTP, DTLS, UDP and IPv6 headers) and DTLS fragments
+    /// its handshake (mtu - 48). 0, the product: libdatachannel's 1280, the
+    /// least IPv6 guarantees, so 1172-byte SCTP packets; 1500 makes them 1392.
+    /// The host pays per packet (~12 us each on the audio road, POC Ultra
+    /// §6.41), and a path that does not hold the size drops every full packet,
+    /// the DTLS handshake's first: only for a LAN known to hold 1500.
+    int sctpMtu = 0;
     /// Each audio packet's way through the host — the pacer's tick, its queue,
     /// the frame's peak, the relay thread, the RTP track — written as a CSV
     /// next to the log when the session ends (plan « le son et la priorité des
@@ -545,8 +554,8 @@ struct EncoderTuning
                aroadWindowKb == 0 && aroadBudgetPct == 0 && aroadChunk == 0 && !relayLog &&
                paceMultiple == 0 && paceBurstKb == 0 && retransCutPermille < 0 &&
                sctpBufferKb == 0 && linkHoldMs == 0 && sctpMaxBurst < 0 && sctpScheduler < 0 &&
-               !audioLog && audioFrameMs == 0 && !clickTrace && sckQueueDepth == 0 &&
-               sckMinIntervalUs < 0;
+               sctpMtu == 0 && !audioLog && audioFrameMs == 0 && !clickTrace &&
+               sckQueueDepth == 0 && sckMinIntervalUs < 0;
     }
 
     /// One line naming every field that is NOT at its default, for the log and
@@ -665,6 +674,7 @@ struct EncoderTuning
         if (linkHoldMs > 0) add("linkhold=" + std::to_string(linkHoldMs));
         if (sctpMaxBurst >= 0) add("sctpburst=" + std::to_string(sctpMaxBurst));
         if (sctpScheduler >= 0) add("sctpss=" + std::to_string(sctpScheduler));
+        if (sctpMtu > 0) add("sctpmtu=" + std::to_string(sctpMtu));
         if (audioLog) add("audiolog=1");
         if (audioFrameMs > 0) add("audioframe=" + std::to_string(audioFrameMs));
         if (clickTrace) add("clicktrace=1");

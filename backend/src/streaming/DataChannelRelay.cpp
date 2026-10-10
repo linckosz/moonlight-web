@@ -877,6 +877,7 @@ void DataChannelRelay::setLinkBench(const mw::native::EncoderTuning& tuning)
     m_LinkHoldMs = tuning.linkHoldMs;
     m_SctpMaxBurst = tuning.sctpMaxBurst >= 0 ? tuning.sctpMaxBurst : kNativeSctpMaxBurst;
     m_SctpScheduler = tuning.sctpScheduler;
+    m_SctpMtu = tuning.sctpMtu;
     if (tuning.relayLog && !m_FrameLog) {
         m_FrameLog = std::make_unique<RelayFrameLog>();
         qWarning() << "[DataChannelRelay] bench frame log on (relaylog=1): each video frame's way "
@@ -1013,6 +1014,16 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
     // comes near — a bench has none.
     rtc::Configuration pcConfig = config;
     if (m_SctpBufferKb > 0) pcConfig.maxMessageSize = static_cast<size_t>(m_SctpBufferKb) * 1024;
+    // `sctpmtu=` (plan Wi-Fi W2.6): usrsctp sizes its packets from the path
+    // MTU (mtu - 108, path MTU discovery off), 1172 bytes at libdatachannel's
+    // 1280, so a frame goes in ~16 % fewer packets at 1500. Only our sends:
+    // the browser's SCTP keeps its own size. DTLS fragments its handshake
+    // from it too, so a path that does not hold it never connects.
+    if (m_SctpMtu > 0) {
+        pcConfig.mtu = static_cast<size_t>(m_SctpMtu);
+        qWarning() << "[DataChannelRelay] SCTP bench override (sctpmtu=): path MTU" << m_SctpMtu
+                   << "bytes, SCTP packets of" << (m_SctpMtu - 108) << "bytes";
+    }
 
     m_Pc = std::make_shared<rtc::PeerConnection>(pcConfig);
 
