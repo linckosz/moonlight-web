@@ -395,12 +395,20 @@ class Driver:
                 return out;
             };
             const c = document.querySelector('canvas');
+            // A canvas whose control went to an OffscreenCanvas throws on
+            // getContext (POC Ultra B2.1, mw_ultra_present=offscreen).
+            const kind = () => {
+                try {
+                    return c.getContext('webgl2') ? 'webgl2' : 'canvas2d';
+                } catch (e) {
+                    return 'offscreen';
+                }
+            };
             return JSON.stringify({
                 rows: grab('.stats-row'),
                 legs: grab('.stats-leg-row'),
                 latencyText: document.querySelector('.stats-value.stats-latency')?.textContent.trim() || null,
-                canvas: c ? { w: c.width, h: c.height,
-                              renderer: c.getContext('webgl2') ? 'webgl2' : 'canvas2d' } : null,
+                canvas: c ? { w: c.width, h: c.height, renderer: kind() } : null,
                 fullscreen: !!document.fullscreenElement,
                 visibility: document.visibilityState
             });
