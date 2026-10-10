@@ -165,7 +165,7 @@ const char* const kUsage =
     "                              when the stream it codes is the same (default 1)\n"
     "  conv12=direct|compute       the D3D12 conversion's queue\n"
     "  enc12=ve|nvenc|amf|pyrowave the D3D12 route's encoder; pyrowave = POC Ultra\n"
-    "  ultrambps=<Mbit/s>          the PyroWave encoder's rate (default 170)\n"
+    "  ultrambps=<Mbit/s>          the PyroWave encoder's rate (default 128)\n"
     "  aroadpace=<x>               the audio road's chunks paced at x times what it carried,\n"
     "                              50 Mbit/s at least; 0 = a frame in one run (default 0)\n"
     "  aroadwin=<KiB>              the audio road's send window: at most this much sent and\n"

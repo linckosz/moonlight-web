@@ -82,7 +82,7 @@ private:
     PyroWaveEncoder12 m_Encoder;
     std::vector<std::vector<uint8_t>> m_Packets;
     std::vector<uint8_t> m_Frame;
-    int m_Width = 0, m_Height = 0, m_Fps = 60, m_Mbps = 170;
+    int m_Width = 0, m_Height = 0, m_Fps = 60, m_Mbps = 128;
     bool m_GpuTiming = false;
 };
 

@@ -90,7 +90,9 @@ bool UltraEncoder12::init(const std::shared_ptr<d3d12::D3d12Device>& device, Cod
     m_Width = width & ~1;
     m_Height = height & ~1;
     m_Fps = (std::max)(fps, 1);
-    m_Mbps = tuning.ultraMbps > 0 ? tuning.ultraMbps : 170;
+    // 128 Mbit/s = 134 KB a frame at 119 fps (design 6.42): 0.4 ms less on the
+    // 1 Gbit/s wire than 170, text 24 dB instead of 28.
+    m_Mbps = tuning.ultraMbps > 0 ? tuning.ultraMbps : 128;
     m_GpuTiming = tuning.gpuTiming;
 
     if (!m_Device->createQueue(d3d12::queueRequestFor(D3D12_COMMAND_LIST_TYPE_COMPUTE, tuning,
