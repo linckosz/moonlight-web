@@ -1384,6 +1384,12 @@ whose MAC is the HESSID every BSS advertises):
 
 ### 06/10/2026 — The sound: the 60 ms floor costs ~25 ms on the Mac, and the N95 never plays most beeps (audio + DSCP plan, A1 bis and A2 begun)
 
+> **Corrected on 10/10/2026:** the N95 does play the beeps. The listener
+> lost them: its 20 ms loopback buffer overran on that small CPU, and its WAV
+> was written by the same starved thread. With the listener fixed, 60/60 and
+> 58/60 beeps were heard (see the 10/10 entry below). Everything said here
+> about missing beeps measured the tool.
+
 Windows native host DualRTX. Tools: `audio_summary.py` (content-age),
 `sound_offset.py` (photon). Commit `911ab5c1`.
 
@@ -1401,7 +1407,8 @@ Windows native host DualRTX. Tools: `audio_summary.py` (content-age),
 **On the N95 the floor does nothing under load**: NetEq chose 240-320 ms by
 itself (06:08-06:20, the house's Wi-Fi busy again), far above 60.
 
-**Most beeps never reach the N95's output** (`MW_LATENCY_FLAG_SOUND=click`,
+**Most beeps never reach the N95's output** (wrong, the listener's loss: see
+the 10/10 entry) (`MW_LATENCY_FLAG_SOUND=click`,
 `audiolog=1`, two passes of 60 clicks):
 - the host captured and sent all 60 beeps of each pass (60 loud bursts of 5
   frames in its audio log, all `sent`); the page counted 20 and 54 packets
@@ -1452,7 +1459,7 @@ the production instance, 13:48-13:51, set aside and run again):
   without it, 92-125 with it, concealment 0.07-0.19 % either way). On this
   small CPU the playout side, not the link, seems to set NetEq's target: the
   floor's cost depends on the client;
-- **A1 ter by cable**: 43 of 60 beeps played (12-19 in Wi-Fi), NetEq
+- **A1 ter by cable** (the missing beeps were the listener's, 10/10): 43 of 60 beeps played (12-19 in Wi-Fi), NetEq
   discarded no packet (`packetsDiscarded` 0) and concealed 0.15 %: the
   missing beeps are not packets NetEq threw away. Chrome reports
   `totalAudioEnergy` 0 on this receiver even with beeps playing, so that
@@ -1631,6 +1638,33 @@ pair to the Wi-Fi address; the fixed probe (`652fc726`). Means of three passes:
   as on the N95. On a link this clean, no overflow was expected anyway, so this
   does not settle the open question below.
 - Verdict: unchanged, the three keys stay bench-only.
+
+### 10/10/2026 — The missing beeps were the listener's: the N95 plays them all (audio + DSCP plan, A1)
+
+Windows native host DualRTX (`--dev`, `audiolog=1`,
+`MW_LATENCY_FLAG_SOUND=click`), the N95 on the bench switch's cable, four
+passes of 60 clicks, 17:44-18:12. New this time: the listener logs its
+loopback gaps, the audio engine's discontinuities and skipped frames
+(`08aefcce`); the page logs Chrome's `media-playout` (`e93566c3`).
+- **With the listener as it was** (20 ms loopback buffer, one WAV write per
+  sample): 27 and 12 beeps heard of 60, and the listener itself lost **106 s
+  and 137 s of the client's output** in ~5 minutes (1 167 and 672 gaps,
+  2 032 and 1 217 discontinuities, 5.1 and 6.6 million frames skipped). 37
+  of the 42 beeps it missed fell in those holes;
+- **with the listener fixed** (200 ms buffer, one WAV write a packet, its
+  capture thread at the highest priority): **60/60 and 58/60 beeps heard**, 0
+  discontinuity, 0 frame skipped, one 3-4 ms gap a pass. The two missed fell
+  in digital silence the mixer flagged (between beeps it flags ~850-940 ms of
+  silence each time);
+- so the "beeps not played" of 05-06/10 (12-19 of 60 in Wi-Fi, 43 by cable)
+  measured the tool on this small CPU, not Chrome. Chrome's playout agrees:
+  nothing made up at the output (`synthesizedSamplesDuration` 0), an output
+  delay of 41 ms;
+- NetEq on the N95 by cable today: target 280-380 ms, buffer 266-338 ms, with
+  an arrival jitter of 6-7 ms (77-140 ms on 06/10 under the same conditions).
+  Not the link: something on the playout side of this client, open;
+- still open: the flag is not found in the N95's window by cable (0 flags in
+  all four passes), so no sound − picture offset yet.
 
 ## 4. The model so far (04/10/2026)
 
