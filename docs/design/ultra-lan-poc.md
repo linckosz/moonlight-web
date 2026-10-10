@@ -3101,6 +3101,79 @@ que B2.1 rend inutile.
 Le README de `scripts/bench/photon/` est corrigé (`28f5ab57`) : une lecture
 `GetPixel` attend la composition suivante (8,3 ms à 120 Hz), pas ~1 ms.
 
+### 6.39 B2.1, présenter par un canevas WebGPU : une période d'écran de plus (10/10/2026, 12:16-12:46)
+
+B2.1 retire au lecteur la VideoFrame et le dessin Canvas2D : la passe de
+présentation du décodeur dessine elle-même dans un canevas que la page montre
+(`68592009`, clé de banc `mw_ultra_present`).
+- `dom` : le contexte WebGPU d'un canevas qui prend la place de celui de la
+  page.
+- `offscreen` : un OffscreenCanvas auquel ce canevas a passé son contrôle.
+  Chrome envoie ses images au compositeur lui-même, à part de celles de la
+  page.
+- Dans les deux cas, la page reçoit à la soumission un objet de remplacement,
+  pour sa comptabilité (journal des images, cadence). Plus rien n'attend la
+  fin du travail, sauf les images suivantes : deux au plus sur la file du GPU,
+  puis la plus fraîche attend. La relance n'a plus rien à hâter : elle reste
+  coupée.
+
+Au labo d'abord (`84d182cc`, `present-lab.html`, Chrome headless sur
+SwiftShader) : `dom` et `offscreen` laissent à l'écran exactement l'image du
+chemin VideoFrame (captures identiques au pixel). Un contexte WebGPU demandé
+`desynchronized`, comme le Canvas2D de la page, laisse un canevas noir : écarté.
+
+Puis le banc du §6.38 (`scratchpad/pw120c/run-b21.sh`, rapport
+`b21-report.txt`). Accord de Bruno pour l'écran virtuel (« Je t'autorise pour
+l'écran virtuel ») ; banc donné par 59.
+- **Muet à coup sûr**, la condition de 59 après les deux sons du §6.38 : la
+  sortie de l'UM790Pro coupée pendant toute la série (`audio-mute.ps1`, l'état
+  d'avant gardé puis remis à la fin). Aucun clic n'a entendu de son.
+- Deux passes d'essai, puis 8 passes ABBA de 70 clics. L'essai `offscreen` a
+  été refait : en fin de passe, le lecteur d'overlay du banc demandait un
+  contexte WebGL2 au canevas transféré, ce qui lève une erreur (corrigé,
+  `3cf04fe7`).
+- Aucun TDR sur les deux PC, et pas de gel du client.
+- Les bras : `bh` (HEVC par SCTP), `be` (le `ce` du §6.38 : images entières,
+  relance, `early`), `bd` (`dom`) et `bo` (`offscreen`).
+
+Du clic à l'écran, sur le QPC du client seul (en ms ; 139 à 140 clics par bras,
+sans les essais) :
+
+| Bras | Clic → écran, moyenne (erreur type) | Médiane | Passes | Relais → dessin, toutes les images | Dessin → écran |
+|---|---|---|---|---|---|
+| HEVC (SCTP) | 22,5 (0,4) | 22,5 | 22,8 / 22,2 | 1,14 | 9,9 |
+| relance + `early` | 24,3 (0,5) | 23,6 | 25,1 / 23,5 | 3,68 | 9,5 |
+| `dom` | 32,2 (0,5) | 31,4 | 31,5 / 32,8 (essai 32,0) | 3,38 | 18,4 |
+| `offscreen` | 32,4 (0,5) | 31,9 | 31,8 / 32,9 (essai 33,3) | 3,42 | 18,4 |
+
+Ce que la série dit :
+- **B2.1 remet l'image plus tôt, mais elle arrive une période plus tard à
+  l'écran.** De l'arrivée à la remise, 0,3 ms au lieu de 0,7. Du dessin à
+  l'écran, 18,4 ms au lieu de 9,5 : +8,9 ms, soit une période d'écran à
+  120 Hz (8,3 ms). Au clic → écran, +7,9 ms (`dom`) et +8,1 ms (`offscreen`),
+  plus de dix erreurs types. Chaque passe B2.1, essais compris, est au-dessus
+  des deux passes de `be`.
+- **Lecture** : le Canvas2D désynchronisé part vers le compositeur à la fin de
+  la tâche qui l'a dessiné. Un canevas WebGPU, celui de la page comme celui
+  d'un OffscreenCanvas, part avec l'image suivante de Chrome. Ce n'est pas
+  vérifié dans le code de Chromium.
+- **Ce que B2.1 gagne ailleurs ne se voit pas à l'écran.**
+  - Plus de boucle de relance sur le fil principal (2,5 ms par image dans
+    `be`).
+  - Moins d'images remplacées : 6 à 16 par passe, contre 40 à 43.
+  - Une soumission → fin de 3,3-3,4 ms, comme sans relance au §6.38 (3,5).
+- **Le banc n'a pas bougé depuis le matin** : `be` et le HEVC redonnent les
+  chiffres du §6.38 (24,3 contre 24,8 ; 22,5 contre 22,5).
+
+**Verdict.** B2.1 est clos, en négatif. Dans Chrome sous Windows, le chemin le
+plus court vers l'écran reste la VideoFrame dessinée sur le Canvas2D
+désynchronisé. Ce qu'elle coûte (~0,4 ms jusqu'à la remise) est bien moins que
+la période qu'attend un canevas WebGPU. Le lecteur garde donc la VideoFrame ;
+`mw_ultra_present` reste une clé de banc, pour un autre navigateur ou un
+Chrome plus récent. Restent les deux leviers mesurés au §6.38 : la relance
+(−2,5 ms à l'écran) et `early` (−1,0 ms). Proposé : en faire les valeurs par
+défaut du lecteur PyroWave, avec des clés pour les couper.
+
 ## 7. Concrètement, pour l'utilisateur
 
 Pendant le POC, rien ne change : Ultra est caché derrière deux clés de banc et
