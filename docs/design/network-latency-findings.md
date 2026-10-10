@@ -1572,6 +1572,66 @@ nine passes, 19:29-19:49. Log:
   this narrows the race rather than closing it by construction; at the old 1
   in 9, ten clean passes are encouraging, not proof.
 
+### 10/10/2026 — What POC Ultra's close says about the road (cable, from `ultra-lan-poc.md` §6.26-6.43)
+
+DualRTX (NVENC) → the UM790Pro under Windows (780M), 1 Gbit/s cable, 1080p at
+120 fps, the fixed probe, then the client's own clicks (§6.38). No new bench
+here: the POC's numbers, read for the network.
+
+- **The product's HEVC gains nothing off SCTP on cable** (§6.26): click 10.5 ms
+  on SCTP against 11.7 on the audio road, capture → draw 3.5 ms on both. On a
+  near-still scene an HEVC frame is ~180 bytes. SCTP's way down for it: 0.41 /
+  1.01 ms (p50 / p90), relay → drawn 1.11 ms (§6.42).
+- **The audio road only gets big frames there sooner**: for PyroWave's 177 KB
+  frames, 0.7 ms (§6.26), then ~1 ms with the nudge (§6.29: relay → arrival
+  3.9-4.0 → 3.0-3.1 ms).
+- **On the audio road the host pays per packet** (§6.41): ~12.4 µs whatever
+  its size (three copies, an `srtp_protect`, a `sendto`), and Chrome receives
+  at the pace of the host's send loop. 1,400-byte packets instead of 1,100:
+  −0.43 ms of send, −0.41 ms of way down, −0.86 ms click → screen. 1,400 is the
+  ceiling in IPv6 under a 1,500-byte MTU; PyroWave's default only (`3ed245ea`).
+- **Not done: SCTP's packet size.** SCTP runs at libdatachannel's default MTU,
+  1,280, i.e. 1,172-byte SCTP packets (`sctptransport.cpp`, path-MTU discovery
+  off), against 1,400 on the audio road. A bigger MTU means fewer packets a
+  frame (less per-packet cost on the host and, in Wi-Fi, fewer packets to
+  SACK), but it needs a path that holds 1,500 bytes: LAN only, not the
+  internet or a mesh VPN at 1,280. Open (§6).
+- **For the road choice:** with W4 on the Mac (SCTP loses fewer clicks in a
+  busy Wi-Fi), the video stays on SCTP on cable and in Wi-Fi. The audio road
+  is for a very heavy flow (Ultra) or a video that must not wait behind one.
+
+### 10/10/2026 — W2 A, C and W2.3 with a Windows client in Wi-Fi (UM790Pro)
+
+Bruno's go via session 59. DualRTX `--dev` (`build\` of 16:48, `5060bb35`'s
+code, Arc, the page at 240, Auto with detection, `relaylog=1`, B and W2.5 at
+their defaults) → the UM790Pro under Windows **on its Wi-Fi**, its cable
+disabled for the series (Killer AX1675x, `OctoPowerWifi7`, 5 GHz channel 44,
+802.11ax, 1,201 Mbit/s, 99 % signal from the nearby repeater). 17:04-17:45, 12
+passes: four arms × three rounds, order turned (`bench-out/wifi/w2-um-wifi-run.sh`,
+`series.py um --prefix w2um`, `MW_UM_IP`). Every pass took the direct IPv6
+pair to the Wi-Fi address; the fixed probe (`652fc726`). Means of three passes:
+
+| | Click (p90) | Frame age mean / p90 | Way down | Retr. | Refreshes with no new picture /min | Message p90 | Mbit/s |
+|---|---|---|---|---|---|---|---|
+| base | 27.9 ms (43) | 8.4 / 11.7 ms | 6.9 ms | 0.06 % | 908 | 6.0 ms | 28.6 |
+| A, `pace=2` | 27.6 ms (45) | 11.7 / 20.7 ms | 8.7 ms | 0.04 % | 1,931 | 3.9 ms | 25.2 |
+| C, `sctpbuf=48,linkhold=4` | 29.7 ms (39) | 9.6 / 14.0 ms | 7.6 ms | 0.00 % | 1,332 | 12.3 ms | 28.7 |
+| W2.3, `sctpss=4` | 29.8 ms (40) | 8.6 / 11.6 ms | 7.2 ms | 0.03 % | 862 | 18.5 ms | 28.5 |
+
+- **No arm beats the product.** The click moves by ±2 ms between arms, inside
+  its pass-to-pass spread (25-33 ms). One pass per arm ended at 120 fps
+  instead of 240 (Auto), so the arms stay balanced; those passes carry the
+  worst p90s.
+- **A and C age the picture**: pacing adds 3.3 ms to the mean frame age and
+  ~9 to its p90; C's small buffer adds 1.2 ms. W2.3 is the base.
+- **This link is clean**: at most 0.1 % of chunks resent (the Mac 0.3-0.7 %), 0
+  T3. The three keys were built for a lossy, overflowing Wi-Fi; on a clean
+  one they cannot gain and A and C still cost.
+- **Windows counted nothing**: 0 UDP "Receive Errors" (v4 + v6) in any pass,
+  as on the N95. On a link this clean, no overflow was expected anyway, so this
+  does not settle the open question below.
+- Verdict: unchanged, the three keys stay bench-only.
+
 ## 4. The model so far (04/10/2026)
 
 What the measurements support, in order of the path:
@@ -1607,9 +1667,9 @@ What the measurements support, in order of the path:
 | before 09/2026 | Unordered video channel | removed | reordering looked like holes, each asked for an IDR |
 | 17/09 | Send buffer sized at 100 ms of bitrate | never took | libdatachannel raises it to 256 KiB (found 03/10) |
 | 01-03/10 | RTCC congestion module (`sctpcc=3`) | no click gain | retransmissions halved, the wait did not move |
-| 03/10 | Pacing the host's chunks (`pace=`) | no gain, `pace=4` worse | the socket overflows when Chrome reads late, not under the host's bursts |
-| 03-04/10 | Small usrsctp buffer + picture held (`sctpbuf=`, `linkhold=`) | worse: fps ÷4, +14-20 ms click | the buffer caps throughput at ~buffer / 16 ms; the wait is in-flight time, not a queue |
-| 04/10 | usrsctp's fair-bandwidth stream scheduler for the host's messages (`sctpss=4`) | no effect | the messages do not wait in usrsctp's stream queues |
+| 03/10 | Pacing the host's chunks (`pace=`) | no gain, `pace=4` worse; 10/10 on a clean Windows Wi-Fi: frame age +3.3 ms | the socket overflows when Chrome reads late, not under the host's bursts |
+| 03-04/10 | Small usrsctp buffer + picture held (`sctpbuf=`, `linkhold=`) | worse: fps ÷4, +14-20 ms click; 10/10 on a clean Windows Wi-Fi: frame age +1.2 ms | the buffer caps throughput at ~buffer / 16 ms; the wait is in-flight time, not a queue |
+| 04/10 | usrsctp's fair-bandwidth stream scheduler for the host's messages (`sctpss=4`) | no effect (Mac 04/10, Windows Wi-Fi 10/10) | the messages do not wait in usrsctp's stream queues |
 | 04/10 | usrsctp's round-robin-by-packet scheduler (`sctpss=2`) | breaks the association in ~8 s | not investigated; never against Chrome |
 | 29/09 | Named drops on oneVPL (Arc) | forbidden | a long-term-reference repair during an intra-refresh wave hangs Intel's HEVC encoder (bench §8n.30) |
 
@@ -1628,7 +1688,12 @@ What the measurements support, in order of the path:
   measured: a Mac client in Wi-Fi against them.
 - What receive buffer Chrome gives its UDP socket on macOS and on Windows, and
   whether a page can influence it (it cannot directly). Whether Windows counts
-  a full-socket drop anywhere (the N95 showed 0 "received errors").
+  a full-socket drop anywhere (the N95 showed 0 "received errors", the
+  UM790Pro on a clean Wi-Fi too, 10/10; neither link was shown to overflow).
+- SCTP's MTU: libdatachannel's default 1,280 (1,172-byte SCTP packets)
+  against 1,400 on the audio road, whose host pays ~12.4 µs a packet (POC
+  Ultra §6.41). Fewer, bigger packets on a LAN that holds 1,500: less host
+  cost, fewer packets to SACK in Wi-Fi? Never tried (10/10 entry above).
 - Whether the N95's SCTP losses are the same mechanism (pacing changed nothing
   there; no kernel counter).
 - Why "two windows in a row" or a minimum count was not needed for

@@ -268,15 +268,30 @@ class N95(Client):
 
 class UmWin(Client):
     name, port = "um", 9424
+    # MW_UM_IP: the UM790Pro reached at another address than the alias' cable one
+    # (192.168.1.9), its Wi-Fi when the cable is off (10/10/2026). The host key
+    # stays the Windows one: the cable's IP shares known_hosts with the Ubuntu.
+    ALT = os.environ.get("MW_UM_IP", "")
+    SSHU = [SSH] + (["-o", "HostName=" + ALT, "-o", "HostKeyAlias=um790-windows"]
+                    if ALT else []) + ["mw-um790win"]
 
     def tunnel_cmd(self):
-        return [SSH] + TUN_OPTS + ["-L", "9424:127.0.0.1:9222", "mw-um790win"]
+        return self.SSHU[:1] + TUN_OPTS + ["-L", "9424:127.0.0.1:9222"] + self.SSHU[1:]
 
     def chrome_up(self):
-        return run([SSH, "mw-um790win", r"& 'C:\Users\minis\um790-chrome.ps1'"], timeout=120)
+        return run(self.SSHU + [r"& 'C:\Users\minis\um790-chrome.ps1'"], timeout=120)
 
     def chrome_down(self):
-        return run([SSH, "mw-um790win", r"& 'C:\Users\minis\um790-chrome.ps1' -Stop"], timeout=60)
+        return run(self.SSHU + [r"& 'C:\Users\minis\um790-chrome.ps1' -Stop"], timeout=60)
+
+    def udp_drops(self):
+        # Windows has no "full socket buffers" line: the closest is the UDP
+        # "Receive Errors" of both families (the pair is often IPv6). The N95
+        # never counted one (W1 bis); kept to see whether this card does.
+        out = run(self.SSHU + ["netstat -s -p udp; netstat -s -p udpv6"], timeout=30)
+        counts = [int(l.split("=")[-1].strip()) for l in out.splitlines()
+                  if "Receive Errors" in l and l.split("=")[-1].strip().isdigit()]
+        return sum(counts) if counts else None
 
 
 LX_UP = r"""export XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
