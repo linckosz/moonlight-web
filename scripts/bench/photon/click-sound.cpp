@@ -128,7 +128,8 @@ Onsets g_Sound, g_Flag;
 // over every packet the system mixer made, so:
 // - g_Gaps: no packet at all for more than 2 ms, the endpoint idle because no
 //   stream was rendering (an output the browser stopped on silence);
-// - g_SilentRuns: packets the mixer flagged silent, nothing mixed in them;
+// - g_SilentRuns: packets the mixer flagged as digital silence (between two
+//   beeps it flags ~0.9 s each time: a stream playing zeros);
 // - g_Discontinuities: packets the audio engine flagged as not following the
 //   previous one (the loopback itself lost data), and g_LostFrames, the device
 //   positions it skipped.
@@ -173,6 +174,7 @@ void writeWavHeader(std::FILE* f, int rate, uint32_t samples)
 void soundThread(float threshold)
 {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     IMMDeviceEnumerator* enumerator = nullptr;
     IMMDevice* device = nullptr;
     IAudioClient* client = nullptr;
@@ -187,8 +189,10 @@ void soundThread(float threshold)
                               reinterpret_cast<void**>(&client));
     if (SUCCEEDED(hr)) hr = client->GetMixFormat(&fmt);
     if (SUCCEEDED(hr))
+        // 200 ms: a slow client (the N95, 10/10) let a 20 ms buffer overrun
+        // and lost a third of what it played, beeps included.
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
-                                200'000 /* 20 ms */, 0, fmt, nullptr);
+                                2'000'000 /* 200 ms */, 0, fmt, nullptr);
     if (SUCCEEDED(hr))
         hr = client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void**>(&capture));
     if (SUCCEEDED(hr)) hr = client->Start();
@@ -214,6 +218,7 @@ void soundThread(float threshold)
     std::FILE* wav = g_WavPath.empty() ? nullptr : std::fopen(g_WavPath.c_str(), "wb");
     uint32_t wavSamples = 0;
     int64_t wavNextUs = -1;
+    std::vector<int16_t> wavBuf;
     // The previous packet's end, on the QPC clock and the device's position.
     int64_t nextUs = -1;
     UINT64 nextDevPos = 0;
@@ -280,11 +285,12 @@ void soundThread(float threshold)
                 // Nothing played meanwhile: the loopback sends no packet.
                 const int64_t gap =
                     std::min<int64_t>((firstUs - wavNextUs) * rate / 1e6, 10 * rate);
-                const int16_t zero = 0;
-                for (int64_t k = 0; k < gap; ++k)
-                    std::fwrite(&zero, 2, 1, wav);
+                wavBuf.assign(static_cast<size_t>(gap), 0);
+                std::fwrite(wavBuf.data(), 2, wavBuf.size(), wav);
                 wavSamples += static_cast<uint32_t>(gap);
             }
+            // One write a packet: a write a sample starved this thread.
+            wavBuf.resize(frames);
             for (UINT32 i = 0; i < frames; ++i) {
                 float sum = 0;
                 if (!silent && data)
@@ -294,9 +300,9 @@ void soundThread(float threshold)
                                    : reinterpret_cast<const int16_t*>(data)[i * channels + c] /
                                          32768.0f;
                 const float v = std::max(-1.0f, std::min(1.0f, sum / channels));
-                const int16_t sample = static_cast<int16_t>(v * 32767);
-                std::fwrite(&sample, 2, 1, wav);
+                wavBuf[i] = static_cast<int16_t>(v * 32767);
             }
+            std::fwrite(wavBuf.data(), 2, wavBuf.size(), wav);
             wavSamples += frames;
             wavNextUs = firstUs + static_cast<int64_t>(frames * 1e6 / rate);
         }

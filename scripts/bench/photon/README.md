@@ -97,9 +97,16 @@ Windows client, with no camera and no microphone.
 - `sound_offset.py <listener output>` pairs the streamed `flag`/`beep` onsets
   again with a wider window (-100 to +900 ms): the tool's own ±250 ms misses
   a sound that trails its picture by a grown jitter buffer.
+- **10/10/2026: those missing beeps were the listener's.** Its 20 ms
+  loopback buffer overran on the N95 and one WAV write a sample starved its
+  thread: it lost 106-137 s of output in 5 minutes. With 200 ms, one write a
+  packet and a time-critical capture thread, it heard 60/60 and 58/60 beeps,
+  with no discontinuity. Check the `loopback:` line of every run: a
+  discontinuity means the tool, not the client, lost sound.
 - Where a missing beep went (10/10/2026): every run prints `gap <µs> <len>`
   (no loopback packet for over 2 ms: no stream rendering, an output stopped on
-  silence) and `silent <µs> <len>` (packets the mixer flagged silent), and
+  silence) and `silent <µs> <len>` (packets the mixer flagged as digital
+  silence, as between beeps), and
   counts the audio engine's discontinuities and skipped frames.
   `sound_offset.py` puts each flag without a beep at its flag plus the median
   offset and says whether it fell in a gap, in a silent run, or in sound the
