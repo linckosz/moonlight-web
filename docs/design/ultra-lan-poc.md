@@ -3256,6 +3256,128 @@ tuiles du bord valent ~0,04 ms. Le seul levier encore grand est la descente :
 - **la pile** (~1,2 ms) : la taille des messages et le MTU, jamais essayés
   (§6.8).
 
+### 6.41 P-B, la taille des paquets de la route audio : l'hôte envoie au rythme du fil, −0,4 ms par image (10/10/2026, 13:20-14:26)
+
+Sur la route audio, l'image PyroWave (~178 Ko) part en 163 paquets de
+1 100 octets. La taille d'un message, pour elle, c'est donc celle d'un paquet.
+
+**L'hôte envoie moins vite que le fil.** Son propre journal (`RTP video:
+sendFrame`, passes des §6.38-6.39) le montre : la boucle qui passe les 163
+paquets à libdatachannel prend 1,5 à 2,5 ms en médiane, 3 à 5 ms au p99. Le
+fil, lui, ne demande que 1,6 ms, trames Ethernet comprises. Pour trouver ce
+qui coûte, sans banc d'abord (`scratchpad/pw120c/`) :
+- **L'envoi brut de Windows** (`udpburst.py`, feu vert de 59, 12 s par essai,
+  vers l'UM790Pro). La socket est réglée comme libjuice la règle : IPv6 double
+  pile (la paire du flux), tampons de 1 Mio, non bloquante. Elle passe par le
+  commutateur Hyper-V (`vEthernet (LAN)`). Il faut 5,1 µs par datagramme :
+  l'image part en 0,84 ms en paquets de 1 100 octets, en 0,67 ms en paquets de
+  1 400. Aucun envoi n'est refusé. Le noyau prend donc l'image plus vite que
+  le fil.
+- **Le fil qui dort entre deux images** (`burstshape.py`, `ecotail.py`,
+  `pintail.py`, en boucle locale). C'est ce que fait celui de l'hôte. Sur un
+  cœur qui tourne sans arrêt, la rafale prend 0,46 ms au p90. Si le fil dort
+  entre deux rafales, elle prend 1,7 à 2 ms au p90 et 2 à 5 ms au p99. Tous
+  les paquets de la rafale ralentissent, pas seulement les premiers. Rien
+  n'y change :
+  - MMCSS « Games » ;
+  - la sortie d'EcoQoS et la haute priorité, comme l'hôte (`StreamPriority.cpp`) ;
+  - un cœur fixé, quel qu'il soit ;
+  - tourner à vide 0,5 à 2 ms avant la rafale.
+
+  Lecture : l'état d'énergie des cœurs, en mode « Utilisation normale ».
+  C'est un réglage du système, pas du produit.
+- **libdatachannel** propose AES-GCM en premier. La session prend
+  `SRTP_AEAD_AES_256_GCM`. Par paquet, le chemin fait trois copies, un
+  `srtp_protect` et un `sendto`.
+
+Les nouvelles mesures (`3ed245ea`, `f90e87ea`) :
+- Le journal du relais (`relaylog=1`) date désormais aussi, sur la route
+  audio, le premier et le dernier paquet passés à libdatachannel.
+- La trace de la page (`mw_ultra_trace=1`, `<tag>.rtptrace.json`) note pour
+  chaque image :
+  - quand Chrome a reçu le premier et le dernier paquet (`receiveTime`) ;
+  - quand le worker a lu le premier morceau et posté l'image ;
+  - quand la page l'a eue.
+
+  L'horloge de Chrome est arrondie à 0,1 ms.
+- `scratchpad/pw120c/down.py` coupe la descente en morceaux, rapport
+  `down-report.txt`.
+- Une clé de banc règle la taille des paquets : `aroadchunk=<octets>`, de 256
+  à 1 400.
+
+**La série** (`scratchpad/pw120c/run-pb.sh`) : le banc du §6.38, avec les clics
+du client lui-même. Les deux bras ont les défauts du lecteur (images entières,
+relance, `early`) :
+- `p1` : des paquets de 1 100 octets ;
+- `p4` : des paquets de 1 400 octets (`aroadchunk=1400`). Avec l'en-tête de la
+  route, RTP, l'étiquette SRTP, UDP et IPv6, le paquet fait 1 488 octets. Le
+  MTU de 1 500 le tient.
+
+Le déroulé :
+- Une passe d'essai `p4`, puis 8 passes ABBA de 70 clics.
+- Feu vert de 59 ; accord permanent de Bruno pour l'écran virtuel.
+- UM790Pro muet toute la série ; 0 TDR, aucun gel.
+- 69 ou 70 clics sur 70 retrouvés par passe ; 19 morceaux redemandés sur la
+  passe d'essai.
+
+Par image, en ms (p50 / p90 ; 35 000 à 44 000 images par bras) :
+
+| | `p1` (1 100 o) | `p4` (1 400 o) |
+|---|---|---|
+| boucle d'envoi de l'hôte, premier → dernier paquet | 2,02 / 3,54 | 1,59 / 2,96 |
+| Chrome, premier → dernier paquet reçu | 1,90 / 3,40 | 1,60 / 2,80 |
+| dernier paquet reçu → image postée par le worker | 0,3 / 0,9 | 0,3 / 0,6 |
+| worker → page | 0,1 / 0,3 | 0,1 / 0,2 |
+| descente (relais → arrivée dans la page) | 2,86 / 4,23 | 2,45 / 3,75 |
+| relais → dessin, toutes les images | 3,75 | 3,29 |
+| clic → écran, moyenne (erreur type) | 24,42 (0,32), 278 clics | 23,56 (0,30), 348 clics |
+
+Ce que la série dit :
+- **Chrome suit l'hôte.** Il reçoit les paquets d'une image sur le même
+  intervalle que l'hôte met à les envoyer (écart médian −0,09 à −0,02 ms).
+  La descente, c'est donc :
+  - la boucle d'envoi de l'hôte ;
+  - ~0,3 ms dans le worker ;
+  - ~0,1 ms jusqu'à la page ;
+  - 0 à 0,7 ms entre l'hôte et Chrome, d'une passe à l'autre. Ce morceau
+    passe d'une horloge à l'autre, sur une estimation.
+- **L'hôte dépense 12,4 µs par paquet, quelle que soit sa taille** (`p1` comme
+  `p4`). Moins de paquets vont donc d'autant plus vite. Avec `p4` :
+  - −0,43 ms sur la boucle d'envoi ;
+  - −0,41 ms sur la descente ;
+  - −0,46 ms du relais au dessin.
+
+  Chaque passe `p4` est sous chaque passe `p1`.
+- **À 1 400 octets, l'hôte suit le rythme du fil en médiane** : 1,58 ms
+  contre 1,56 pour 128 paquets de 1 488 octets à 1 Gbit/s. Il reste la
+  traîne. 47 % des images partent un peu moins vite que le fil, de 0,22 ms en
+  moyenne (p90 2,96 ms).
+- **Au clic → écran, −0,86 ms** (24,42 → 23,56, deux erreurs types). Le bras
+  `p1` retrouve le `be` du §6.39 (24,3). Le HEVC n'a pas été repassé : à
+  22,5 ms aux §6.38-6.39, PyroWave reste ~1 ms derrière lui à l'écran.
+- **1 400 octets, c'est le plafond.** En IPv6, un MTU de 1 500 tient au plus
+  1 412 octets d'image. Au-delà, il faudrait des trames géantes, réglées sur
+  les deux cartes et sur le commutateur.
+- **Passe de vérification** (`p1-rv`), avec le nouveau défaut et sans la clé :
+  1 400 octets dans le journal, envoi en 1,54 ms, Chrome en 1,60 ms.
+
+**Verdict.** Les paquets de 1 400 octets deviennent le défaut de la route
+audio pour PyroWave (`enc12=pyrowave`). `aroadchunk=1100` y revient. Les autres
+usages de la route audio (le HEVC des bancs, le plan Wi-Fi) gardent 1 100.
+
+Sur le câble à 1 Gbit/s, la descente est maintenant le fil et l'hôte, au même
+rythme. Ce qui reste :
+- **Un lien plus rapide, seul, ne changerait rien en médiane** : l'hôte
+  mettrait toujours ~1,6 ms à envoyer l'image. Il faut aussi un hôte qui
+  dépense moins par paquet. Le levier connu est l'envoi groupé (UDP
+  segmentation offload : `WSASendMsg` avec `UDP_SEND_MSG_SIZE`, un appel par
+  64 Ko de paquets égaux). Il demande de modifier libjuice et libdatachannel.
+  À 1 Gbit/s, il ne rendrait que la traîne (~0,2 ms en moyenne). Avec un lien
+  à 2,5 Gbit/s en plus, ~1 ms.
+- **Des images plus petites** raccourcissent les deux à la fois.
+- **La taille des messages SCTP et le MTU de SCTP** (le P-B du plan) : pas
+  passés. PyroWave prend la route audio, déjà 0,7 ms devant SCTP (§6.26).
+
 ## 7. Concrètement, pour l'utilisateur
 
 Pendant le POC, rien ne change : Ultra est caché derrière deux clés de banc et
