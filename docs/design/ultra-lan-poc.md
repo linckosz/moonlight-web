@@ -3474,6 +3474,29 @@ Ce qui reste pour la descente :
 - **une taille qui suit le contenu**, par exemple plus petite quand l'image
   bouge vite et que l'œil voit moins le détail. Rien n'est écrit pour ça.
 
+Suite (10/10) : Bruno a choisi 134 Ko par défaut (`ultrambps` 128 au lieu de
+170, `5060bb35`).
+
+### 6.43 Clôture de PyroWave (10/10/2026)
+
+Bruno clôt le chantier PyroWave le 10/10, sur ce bilan (DualRTX NVENC →
+UM790Pro, Chrome, câble à 1 Gbit/s) :
+- **PyroWave ne bat pas le HEVC du produit.** Après l'arrivée du dernier
+  octet, il est à égalité ou un peu devant (`early`, §6.38-6.40). Tout
+  l'écart est dans la descente : le fil et la boucle d'envoi de l'hôte
+  (§6.41). Au défaut de 134 Ko, il reste ~1,2 ms derrière le HEVC du relais au
+  dessin sur une scène fixe, ~0,8 ms à 89 Ko (§6.42).
+- **La qualité du texte est faible** : 24 dB au défaut, 22 à 89 Ko.
+- **Ce qui est gardé, dans le code** : l'encodeur D3D12 et le décodeur
+  WebGPU, la route audio et ses paquets de 1 400 octets, la relance et
+  `early`. Tout reste derrière les clés de banc (`pipeline=d3d12`,
+  `enc12=pyrowave`) et n'est jamais choisi seul.
+- **Ce qui n'a pas été fait** : un lien à 2,5 Gbit/s (bloqué sur le matériel :
+  les deux cartes savent le faire, l'équipement entre elles bride à 1 Gbit/s),
+  l'envoi groupé (USO), une taille qui suit le contenu, P-B sur SCTP, et la
+  matrice U5 (autres hôtes, dont les GPU intégrés Intel et AMD où le plan
+  attendait le gain, Steam, les TV).
+
 ## 7. Concrètement, pour l'utilisateur
 
 Pendant le POC, rien ne change : Ultra est caché derrière deux clés de banc et
@@ -3519,6 +3542,12 @@ rendre. En revanche, quand un flux très lourd comme Ultra passe à côté de la
 vidéo, RTP évite que la vidéo attende derrière lui : elle reste aussi fraîche que
 sans charge. Si la retenue de Chrome se lève, RTP pourra servir à tout le monde.
 Sinon, il restera le transport d'Ultra seulement.
+
+Clos (10/10, §6.43) : PyroWave ne rejoint pas le produit. Sur un PC NVIDIA
+relié en Ethernet à 1 Gbit/s, son image arrive environ 1 ms plus tard que celle
+du HEVC d'aujourd'hui, avec un texte moins net. Rien ne change pour
+l'utilisateur : il reste caché derrière ses clés de banc. Ce qu'il a appris sur
+le chemin de l'image dans Chrome reste écrit ici pour la suite.
 
 Pas encore visible (U1.4 ter, la route audio) : la retenue de Chrome vient d'une
 horloge interne que la page ne peut pas couper. Mais elle ne touche que les
