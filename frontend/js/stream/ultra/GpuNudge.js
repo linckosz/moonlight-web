@@ -22,8 +22,8 @@
  * empty submit every EVERY ms, on a loop of messages (a timer comes 1.5 to
  * 3 ms late, too late to help).
  *
- * The loop holds the main thread as long as it runs. auto (bench key
- * mw_ultra_nudge=1) starts it only a little before the end expected: the
+ * The loop holds the main thread as long as it runs. auto (the default,
+ * mw_ultra_nudge=0 turns it off) starts it only a little before the end expected: the
  * shortest submit → done of the last frames (the nudges bring it to ~0.35 ms
  * after the GPU's end), less LEAD; a timer waits until then, when that is
  * further away than a timer can be late. Nearer, and with all
@@ -42,7 +42,11 @@ const HISTORY = 32;
 // A wait this long (a lost device) stops the loop.
 const MAX_SPIN = 100;
 
-/** The bench key mw_ultra_nudge: 'auto' (1 or auto), 'all', or null (off). */
+/**
+ * The key mw_ultra_nudge: 'auto' by default (no key, 1 or auto; §6.38 found
+ * it 2.5 ms sooner at the client's screen), 'all', or null (off: 0, off, or
+ * the empty value the bench recipes have always meant off by).
+ */
 export function nudgeMode() {
     let v = null;
     try {
@@ -50,8 +54,8 @@ export function nudgeMode() {
     } catch {
         v = null;
     }
-    if (v === '1' || v === 'auto') return 'auto';
     if (v === 'all') return 'all';
+    if (v === null || v === '1' || v === 'auto') return 'auto';
     return null;
 }
 

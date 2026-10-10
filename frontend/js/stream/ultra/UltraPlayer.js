@@ -35,9 +35,12 @@
  * whole; its last piece leaves only the rest to do. A piece missing, or a
  * frame by slices waiting for the GPU, and the next frame comes whole.
  *
- * Nudged (WebGPU, bench key mw_ultra_nudge=1 or all): while a frame waits for
- * its work done, empty submits wake Chrome's GPU process up, which otherwise
- * sees the end 2 to 3 ms late (GpuNudge.js).
+ * Nudged (WebGPU, by default; key mw_ultra_nudge=0 off, all the lab's way):
+ * while a frame waits for its work done, empty submits wake Chrome's GPU
+ * process up, which otherwise sees the end 2 to 3 ms late (GpuNudge.js).
+ *
+ * Early (WebGPU, by default; key mw_ultra_early=0 off): the VideoFrame goes to
+ * the page at submit, and Chrome's fences hold its draw until the GPU is done.
  *
  * Presented by the player (WebGPU, bench key mw_ultra_present, U3.7 B2.1):
  * the present pass draws on a canvas the page shows, and the page gets a
@@ -184,13 +187,16 @@ export class UltraPlayer {
         // each its own slot of the resolve buffer.
         this._reads = [];
         this._slotBytes = RESOLVE_STRIDE;
-        // Bench switch (localStorage mw_ultra_early=1): hand the frame over at submit.
+        // Early by default (§6.38: 1.0 ms sooner at the client's screen): hand
+        // the frame over at submit. localStorage mw_ultra_early=0 (or the
+        // empty value of the bench recipes) waits for the work done instead.
         try {
-            this.early = globalThis.localStorage?.getItem('mw_ultra_early') === '1';
+            const v = globalThis.localStorage?.getItem('mw_ultra_early') ?? null;
+            this.early = v === null || v === '1';
         } catch {
-            this.early = false;
+            this.early = true;
         }
-        // Bench switch (mw_ultra_nudge): the GpuNudge built at init(), WebGPU only.
+        // Nudged by default (mw_ultra_nudge, 0 turns it off): the GpuNudge built at init(), WebGPU only.
         this.nudgeMode = nudgeMode();
         this._nudge = null;
         // The timeline, when traced: one record per frame decoded, all on

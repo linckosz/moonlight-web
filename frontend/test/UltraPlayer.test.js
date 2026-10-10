@@ -44,11 +44,13 @@ vi.mock('../js/stream/ultra/PyroWaveDecoder.js', () => ({
 
 const { UltraPlayer } = await import('../js/stream/ultra/UltraPlayer.js');
 
-function player() {
+// Handed over at the work done unless early (the player's default is early).
+function player({ early = false } = {}) {
     const frames = [];
     const p = new UltraPlayer(64, 64, (frame, meta) => frames.push(meta.timestamp), {
         log: () => {},
     });
+    p.early = early;
     let release = null;
     p.device = {
         createCommandEncoder: () => ({ finish: () => ({}) }),
@@ -96,6 +98,54 @@ describe('UltraPlayer', () => {
         await Promise.resolve();
         await Promise.resolve();
         expect(frames).toEqual([1, 3]);
+    });
+
+    it('is early and nudged by default, each off by its key', () => {
+        const keys = {};
+        vi.stubGlobal('localStorage', { getItem: (k) => (k in keys ? keys[k] : null) });
+        const make = () => new UltraPlayer(64, 64, () => {}, { log: () => {} });
+        let p = make();
+        expect(p.early).toBe(true);
+        expect(p.nudgeMode).toBe('auto');
+        for (const off of ['0', '']) {
+            keys.mw_ultra_early = off;
+            keys.mw_ultra_nudge = off;
+            p = make();
+            expect(p.early).toBe(false);
+            expect(p.nudgeMode).toBe(null);
+        }
+        keys.mw_ultra_early = '1';
+        keys.mw_ultra_nudge = 'all';
+        p = make();
+        expect(p.early).toBe(true);
+        expect(p.nudgeMode).toBe('all');
+    });
+
+    it('early: the frame goes at submit, the next still waits for the work done', async () => {
+        vi.stubGlobal(
+            'VideoFrame',
+            class {
+                constructor(src, { timestamp }) {
+                    this.timestamp = timestamp;
+                }
+            },
+        );
+        const { PyroWaveDecoder } = await import('../js/stream/ultra/PyroWaveDecoder.js');
+        const { p, frames, done } = player({ early: true });
+        p.decoder = new PyroWaveDecoder();
+        p.canvas = {};
+        p.context = {};
+        p.push(new Uint8Array([1]), 1, 10);
+        expect(frames).toEqual([1]);
+        p.push(new Uint8Array([2]), 2, 11); // waits
+        expect(p.decoder.pushed).toEqual([1]);
+        expect(p.stats.frames).toBe(0);
+        done();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(p.stats.frames).toBe(1);
+        expect(frames).toEqual([1, 2]);
+        expect(p.decoder.pushed).toEqual([1, 2]);
     });
 
     it('drops a malformed frame without stalling the next', async () => {

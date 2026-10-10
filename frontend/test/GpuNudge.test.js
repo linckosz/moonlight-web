@@ -17,14 +17,18 @@ afterEach(() => {
 });
 
 describe('GpuNudge', () => {
-    it('reads its bench key', () => {
-        expect(nudgeMode()).toBe(null);
+    it('is auto by default, off by its key', () => {
+        expect(nudgeMode()).toBe('auto');
         globalThis.localStorage.setItem('mw_ultra_nudge', '1');
+        expect(nudgeMode()).toBe('auto');
+        globalThis.localStorage.setItem('mw_ultra_nudge', 'auto');
         expect(nudgeMode()).toBe('auto');
         globalThis.localStorage.setItem('mw_ultra_nudge', 'all');
         expect(nudgeMode()).toBe('all');
-        globalThis.localStorage.setItem('mw_ultra_nudge', '0');
-        expect(nudgeMode()).toBe(null);
+        for (const off of ['0', 'off', '']) {
+            globalThis.localStorage.setItem('mw_ultra_nudge', off);
+            expect(nudgeMode()).toBe(null);
+        }
     });
 
     it('submits empty work while a frame waits, and stops at its end', async () => {
