@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import {
     AUDIO_STATS_COLUMNS,
     AudioStatsSampler,
+    findAudioPlayout,
     findStreamAudioInbound,
 } from '../js/stream/AudioStats.js';
 
@@ -121,7 +122,56 @@ describe('AudioStatsSampler', () => {
         expect(lines[0]).toBe(AUDIO_STATS_COLUMNS.join(','));
         expect(lines.length).toBe(3);
         expect(lines[2]).toBe(
-            '3000,60.00,60.00,60.00,2.10,200,0,48000,480,0,1,0,96,3,-1,0.00250000',
+            '3000,60.00,60.00,60.00,2.10,200,0,48000,480,0,1,0,96,3,-1,0.00250000,-1,-1,-1,-1',
         );
+    });
+
+    const playout = (k, extra) => ({
+        type: 'media-playout',
+        totalSamplesDuration: 1.0 * k,
+        totalSamplesCount: 48000 * k,
+        synthesizedSamplesDuration: 0.01 * k,
+        synthesizedSamplesEvents: 2 * k,
+        totalPlayoutDelay: 0.02 * 48000 * k, // 20 ms a sample
+        ...extra,
+    });
+
+    it('reads what the audio device took from the browser', () => {
+        const s = new AudioStatsSampler();
+        s.sample(cumul(1), 1000, playout(1));
+        const row = s.sample(cumul(2), 2000, playout(2));
+        expect(row.playedMs).toBeCloseTo(1000, 6);
+        expect(row.synthMs).toBeCloseTo(10, 6);
+        expect(row.synthEvents).toBe(2);
+        expect(row.outputMs).toBeCloseTo(20, 6);
+    });
+
+    it('shows an output that stopped asking as less than a second played', () => {
+        const s = new AudioStatsSampler();
+        s.sample(cumul(1), 1000, playout(1));
+        const row = s.sample(
+            cumul(2),
+            2000,
+            playout(1, { totalSamplesDuration: 1.25, totalSamplesCount: 60000 }),
+        );
+        expect(row.playedMs).toBeCloseTo(250, 6);
+    });
+
+    it('marks the playout -1 without it, or when its count went back', () => {
+        const s = new AudioStatsSampler();
+        s.sample(cumul(1), 1000);
+        expect(s.sample(cumul(2), 2000, playout(2)).playedMs).toBe(-1); // nothing before
+        expect(s.sample(cumul(3), 3000, playout(1)).playedMs).toBe(-1); // went back
+    });
+});
+
+describe('findAudioPlayout', () => {
+    it('takes the playout the sound plays through, else the only one', () => {
+        const a = { type: 'media-playout', id: 'AP1' };
+        const b = { type: 'media-playout', id: 'AP2' };
+        expect(findAudioPlayout(report(a, b), inbound({ playoutId: 'AP2' }))).toBe(b);
+        expect(findAudioPlayout(report(a), inbound({}))).toBe(a);
+        expect(findAudioPlayout(report(a, b), inbound({}))).toBe(null);
+        expect(findAudioPlayout(report(inbound({})), inbound({}))).toBe(null);
     });
 });

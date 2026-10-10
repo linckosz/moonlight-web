@@ -104,7 +104,11 @@ import {
 import { drawCapFor } from '../stream/RenderPacing.js';
 import { ContentAgeProbe } from '../stream/ContentAgeProbe.js';
 import { FrameLog } from '../stream/FrameLog.js';
-import { AudioStatsSampler, findStreamAudioInbound } from '../stream/AudioStats.js';
+import {
+    AudioStatsSampler,
+    findAudioPlayout,
+    findStreamAudioInbound,
+} from '../stream/AudioStats.js';
 import { cropToAnnounced } from '../stream/FrameCrop.js';
 import { VsyncGrid } from '../stream/VsyncGrid.js';
 import { CadenceStepper, autostepEnabled, stepMemory } from '../stream/CadenceStepper.js';
@@ -5478,7 +5482,11 @@ export class StreamView {
                 // The stream's sound only, never an audio-road track (POC Ultra).
                 const inbound = findStreamAudioInbound(report, peer);
                 if (!inbound) return;
-                const row = this._audioStats.sample(inbound, performance.now());
+                const row = this._audioStats.sample(
+                    inbound,
+                    performance.now(),
+                    findAudioPlayout(report, inbound),
+                );
                 if (row && row.bufferMs >= 0) {
                     this._audioJbMs = row.bufferMs;
                     this._audioJbAt = performance.now();

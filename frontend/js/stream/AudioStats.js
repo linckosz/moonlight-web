@@ -36,7 +36,12 @@
  *   themselves (Chrome only), and the energy of the sound actually played
  *   (`totalAudioEnergy`), which tells a sound lost inside the browser from one
  *   lost after it. A1 (06/10): the host sent all 60 beeps of a pass, the
- *   client's output held 12-19, with no packet lost.
+ *   client's output held 12-19, with no packet lost;
+ * - what the audio device took from the browser (`media-playout`, Chrome): the
+ *   sound it played, the part the browser had to make up because nothing was
+ *   ready when the device asked (a gap at the output, not in NetEq), and the
+ *   output's own delay. A device that stopped asking (an output suspended on
+ *   silence) shows as less than a second played in a second.
  *
  * Only the stream's sound: in POC Ultra's audio road mode (`vaudio`, `uaudio`)
  * other audio tracks carry video, and the last `inbound-rtp` of kind audio may
@@ -76,6 +81,25 @@ export function findStreamAudioInbound(report, pc) {
     return audio.find((s) => !roadTracks.has(s.trackIdentifier)) || audio[0];
 }
 
+/**
+ * The `media-playout` stats that @p inbound plays through (its `playoutId`),
+ * or the only one in @p report, or null (Firefox, Safari).
+ *
+ * @param {RTCStatsReport|Map<string, object>} report
+ * @param {object} [inbound]
+ */
+export function findAudioPlayout(report, inbound) {
+    const playouts = [];
+    report.forEach((s) => {
+        if (s && s.type === 'media-playout') playouts.push(s);
+    });
+    if (inbound && inbound.playoutId) {
+        const own = playouts.find((s) => s.id === inbound.playoutId);
+        if (own) return own;
+    }
+    return playouts.length === 1 ? playouts[0] : null;
+}
+
 /** The CSV columns, in order. */
 export const AUDIO_STATS_COLUMNS = [
     't',
@@ -94,10 +118,22 @@ export const AUDIO_STATS_COLUMNS = [
     'discarded',
     'flushes',
     'energy',
+    'playedMs',
+    'synthMs',
+    'synthEvents',
+    'outputMs',
 ];
 
 /** The columns that hold milliseconds. */
-const MS_COLUMNS = new Set(['bufferMs', 'targetMs', 'minimumMs', 'jitterMs']);
+const MS_COLUMNS = new Set([
+    'bufferMs',
+    'targetMs',
+    'minimumMs',
+    'jitterMs',
+    'playedMs',
+    'synthMs',
+    'outputMs',
+]);
 
 const delta = (now, before) =>
     typeof now === 'number' && typeof before === 'number' && now >= before ? now - before : 0;
@@ -105,6 +141,28 @@ const delta = (now, before) =>
 /** The interval's value of a counter some browsers lack: -1 when absent. */
 const optionalDelta = (now, before) =>
     typeof now === 'number' && typeof before === 'number' ? delta(now, before) : -1;
+
+/**
+ * The interval's playout values from two `media-playout` stats (seconds,
+ * cumulative): -1 each without both, or when the device's count went back.
+ */
+function playoutDeltas(now, before) {
+    const none = { playedMs: -1, synthMs: -1, synthEvents: -1, outputMs: -1 };
+    if (!now || !before) return none;
+    const count = optionalDelta(now.totalSamplesCount, before.totalSamplesCount);
+    if ((now.totalSamplesCount || 0) < (before.totalSamplesCount || 0)) return none;
+    const ms = (key) => {
+        const d = optionalDelta(now[key], before[key]);
+        return d >= 0 ? d * 1000 : -1;
+    };
+    const delay = optionalDelta(now.totalPlayoutDelay, before.totalPlayoutDelay);
+    return {
+        playedMs: ms('totalSamplesDuration'),
+        synthMs: ms('synthesizedSamplesDuration'),
+        synthEvents: optionalDelta(now.synthesizedSamplesEvents, before.synthesizedSamplesEvents),
+        outputMs: count > 0 && delay >= 0 ? (delay / count) * 1000 : -1,
+    };
+}
 
 export class AudioStatsSampler {
     /** @param {{maxRows?: number}} [opts] */
@@ -115,20 +173,24 @@ export class AudioStatsSampler {
         /** The newest row, or null. */
         this.last = null;
         this._prev = null;
+        this._prevPlayout = null;
         this._t0 = -1;
     }
 
     /**
-     * One interval from cumulative stats @p s, taken at @p nowMs. The first
+     * One interval from cumulative stats @p s, taken at @p nowMs, with the
+     * `media-playout` stats @p playout where the browser has them. The first
      * call only anchors; a counter that went backwards (a new track) anchors
      * again.
      *
      * @returns {object|null} the row, or null when there is none yet
      */
-    sample(s, nowMs) {
+    sample(s, nowMs, playout = null) {
         if (!s) return null;
         const prev = this._prev;
+        const prevPlayout = this._prevPlayout;
         this._prev = s;
+        this._prevPlayout = playout;
         if (this._t0 < 0) this._t0 = nowMs;
         if (!prev) return null;
         const emitted = delta(s.jitterBufferEmittedCount, prev.jitterBufferEmittedCount);
@@ -155,6 +217,7 @@ export class AudioStatsSampler {
             discarded: optionalDelta(s.packetsDiscarded, prev.packetsDiscarded),
             flushes: optionalDelta(s.jitterBufferFlushes, prev.jitterBufferFlushes),
             energy: optionalDelta(s.totalAudioEnergy, prev.totalAudioEnergy),
+            ...playoutDeltas(playout, prevPlayout),
         };
         this.last = row;
         this.rows.push(row);
