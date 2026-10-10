@@ -2978,6 +2978,129 @@ page reste enregistré, pour le relais → dessin de toutes les images. Il faut
 pour cela que `pass.py` enregistre ce journal en mode `--hold`, et qu'il tienne
 le flux le temps des clics. Puis B2.1 au même endroit.
 
+### 6.38 Le bout de chaîne propre : les clics du client lui-même, la relance gagne 2,5 ms à l'écran (10/10/2026, 10:42-11:41)
+
+Le banc du §6.37, mais les clics viennent du client lui-même, et la sonde de la
+page reste au repos : aucune relecture du canevas sur l'image du drapeau.
+- **Les clics** : `mw-click-sound --clicks 70 --interval 803 --warmup 3
+  --window MoonlightWeb --center` dans la session console de l'UM790Pro
+  (`6b158f86`). Il pose le curseur au milieu de la fenêtre du flux, clique par
+  `SendInput` et date chaque clic sur QPC. Il date aussi l'apparition de son
+  drapeau sur le bureau composé, comme le guetteur du §6.37. 803 ms et non
+  800 : 800 ms font tout juste 96 périodes de 120 Hz, et la phase du clic
+  resterait la même d'un clic à l'autre.
+- **La page** : `pass.py --hold 75` enregistre toutes les images du maintien
+  (`<tag>.frames.csv`) avec l'origine de la page (`032205ce`). Il écrit un
+  repère au début du maintien (`MW_BENCH_HOLD_MARK`), et le lanceur part de ce
+  repère pour lancer les clics.
+- **Le découpage** (`scratchpad/pw120c/endclean.py`) : tout est mis sur le QPC
+  du client. Les heures de l'hôte passent sur l'horloge de la page par
+  l'estimation du journal des images (`hostMs − captureMs`), puis sur QPC par
+  l'origine. L'image du drapeau est la première présentation du bureau après
+  celle de `mw-click-target`, puis la première image que le flux emporte.
+  Testé d'abord sur les fichiers du §6.37 : il retrouve son clic → écran
+  (`xk` 27,81 ms, comme `endqpc.py`).
+
+Accord de Bruno pour l'écran virtuel (« Oui, vas-y ») ; banc donné par 59. Deux
+passes d'essai, puis 19 passes ABBA de 70 clics (`scratchpad/pw120c/run-clean.sh`,
+rapport `endclean-report.txt`). Aucun TDR (événement 4101) sur les deux PC. Les
+bras sont ceux du §6.37 : `ch` (HEVC par SCTP), `cw` (images entières, shader 3,
+FP16, relance allumée), `ck` (par tranches de 16 Kio), `ce` (`cw` avec
+`mw_ultra_early=1`) et `cn` (`cw` sans la relance).
+
+**La première passe d'essai a gelé côté client.** Le flux s'est arrêté 8 s
+après le début du maintien, au 6ᵉ clic, et n'est pas reparti.
+- Le lecteur n'a plus reçu d'image, et le débit lu sur la page était de
+  0 Mbit/s. L'hôte, lui, a continué d'envoyer.
+- Le temps d'aller-retour SCTP vu par l'hôte est passé de ~2 à 80-117 ms : le
+  client répondait encore, mais lentement.
+- Cause non trouvée. Le gel ne s'est pas reproduit dans les 20 passes
+  suivantes, avec un second client CDP sur la page (console et état toutes les
+  5 s, `cdpspy.py`). S'il revient, ce sera un bug du produit, pas du banc.
+
+Toutes les passes de la série ont leurs 73 appuis reçus par l'hôte et 8 880 à
+8 924 images dans le journal. Il manque 0 à 2 clics par passe : ceux dont
+l'image n'a pas été retrouvée. Rien n'a été joué par l'outil. Deux clics de la
+même passe (`ck-r2`, vers 11:11) ont pourtant entendu un son dans la sortie de
+l'UM790Pro, de source inconnue (DualRTX dans le flux, ou une notification du
+client).
+
+Du clic à l'écran, sur le QPC du client seul (en ms ; 210 clics pour le HEVC,
+277 à 280 par bras PyroWave) :
+
+| Bras | Clic → écran, moyenne (erreur type) | Médiane | Passes | Relais → dessin, toutes les images | Dessin → écran |
+|---|---|---|---|---|---|
+| HEVC (SCTP) | 22,5 (0,3) | 22,4 | 22,2 / 22,5 / 22,7 | 1,12 | 10,3 |
+| entières | 25,8 (0,4) | 24,8 | 25,3 / 25,6 / 26,5 / 25,7 | 5,89 | 8,6 |
+| tranches | 25,8 (0,4) | 25,1 | 26,2 / 26,2 / 24,8 / 26,1 | 5,66 | 8,7 |
+| `early` | 24,8 (0,3) | 23,7 | 25,3 / 24,7 / 24,6 / 24,6 | 3,82 | 9,8 |
+| sans relance | 28,3 (0,3) | 27,2 | 28,8 / 27,5 / 29,0 / 27,8 | 7,40 | 9,4 |
+
+Le clic découpé (moyennes, en ms) :
+
+| Bras | Montée | Appli | Bureau | Emport | Encodage | Descente | Page | Écran |
+|---|---|---|---|---|---|---|---|---|
+| HEVC (SCTP) | 3,0 | 1,8 | 2,1 | 2,4 | 1,5 | 0,6 | 0,8 | 10,3 |
+| entières | 3,1 | 1,5 | 2,3 | 2,5 | 1,4 | 3,2 | 3,2 | 8,6 |
+| tranches | 3,4 | 1,6 | 2,2 | 2,4 | 1,4 | 3,4 | 2,7 | 8,7 |
+| `early` | 3,2 | 1,6 | 2,3 | 2,6 | 1,4 | 3,1 | 0,7 | 9,8 |
+| sans relance | 3,3 | 1,7 | 2,3 | 2,5 | 1,4 | 3,1 | 4,7 | 9,4 |
+
+- **Montée** : du `SendInput` du client à celui de l'hôte. Cela comprend
+  l'entrée dans Chrome, le canal de données et le relais.
+- **Appli** : de là à la présentation du drapeau par `mw-click-target`.
+- **Bureau** : jusqu'à la présentation du bureau qui le porte (écran virtuel à
+  240 Hz : une demi-période en moyenne).
+- **Emport** : jusqu'à l'image que le flux à 119 i/s emporte.
+- **Encodage** : jusqu'au relais.
+- **Descente** : du relais à l'arrivée dans la page (`arrivedMs`).
+- **Page** : de l'arrivée au dessin.
+- **Écran** : du dessin à l'apparition sur le bureau composé du client.
+
+La montée et la descente passent d'une horloge à l'autre. L'estimation
+hôte ↔ page varie de ±0,4 ms d'une passe à l'autre : elle déplace un peu de
+temps entre ces deux jambes, sans changer le clic → écran.
+
+Ce que la série dit :
+- **La sonde ne pèse plus sur l'image mesurée.** Les images du drapeau ne sont
+  plus que 0 à 0,5 ms plus lentes du relais au dessin que les autres, contre
+  4,0 à 4,6 ms avec la sonde (§6.37). La cause de ce reste n'est pas
+  cherchée : les images PyroWave ont toutes la même taille (~178 Ko), drapeau
+  ou non.
+- **La relance gagne 2,5 ms à l'écran** (28,3 → 25,8 ms, cinq erreurs types ;
+  les quatre passes sans relance sont au-dessus des quatre passes avec). Elle
+  gagne 1,5 ms au dessin, et ~0,7 de plus du dessin à l'écran. C'est le plus
+  gros levier mesuré à l'écran. Au §6.37, la relecture de la sonde attendait
+  le GPU à sa place et cachait ce gain.
+- **`early` gagne 1,0 ms à l'écran** (25,8 → 24,8 ms, deux erreurs types),
+  soit la moitié de ce qu'il gagne au dessin (2,1 ms). Le reste du travail du
+  GPU se retrouve après le dessin (9,8 contre 8,6 ms jusqu'à l'écran).
+  `early` et la relance s'ajoutent : le bras `ce` a les deux.
+- **Les tranches ne gagnent rien à l'écran** (25,8 contre 25,8). Au dessin,
+  elles gagnent 0,2 ms sur toutes les images.
+- **PyroWave est à 3,3 ms du HEVC à l'écran** en images entières avec la
+  relance, et à 2,3 ms avec `early` en plus. L'écart vient de la descente
+  (+2,7 ms : 178 Ko par image sur le câble) et de la page (+2,4 ms : le
+  décodage). PyroWave en reprend 1,6 du dessin à l'écran : son dessin a déjà
+  attendu le GPU, celui du HEVC non.
+- **Avant l'encodage, la chaîne coûte ~9,5 ms** dans tous les bras (9,4 à
+  9,8) : la montée, l'appli, le bureau et l'emport. Le codec n'y change rien.
+  Dont ~4,6 ms pour les deux grilles de l'hôte (le bureau à 240 Hz, puis le
+  flux à 119 i/s).
+
+**Verdict.** Mesurés à l'écran du client, sans la sonde, la relance (−2,5 ms)
+et `early` (−1,0 ms) gagnent vraiment, et ensemble. Les tranches ne gagnent
+rien. Le lecteur ne change pas encore : ce sont toujours des clés de banc,
+mesurées sur un seul client (la 780M de l'UM790Pro, sous Windows), et la boucle
+de relance tient le fil principal pendant qu'elle tourne. Proposé : B2.1
+(présenter par le canevas WebGPU, sans VideoFrame ni `onSubmittedWorkDone`),
+jugé sur ce banc contre `ce`, le meilleur PyroWave mesuré, et contre le HEVC.
+Puis décider des valeurs par défaut du lecteur : la relance et `early`, ou ce
+que B2.1 rend inutile.
+
+Le README de `scripts/bench/photon/` est corrigé (`28f5ab57`) : une lecture
+`GetPixel` attend la composition suivante (8,3 ms à 120 Hz), pas ~1 ms.
+
 ## 7. Concrètement, pour l'utilisateur
 
 Pendant le POC, rien ne change : Ultra est caché derrière deux clés de banc et
