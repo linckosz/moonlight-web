@@ -17,8 +17,15 @@ The page is served cross-origin isolated, so that performance.now() counts
 in µs, not in the 100 µs steps a pass's trace has. A remote Chrome (the
 UM790Pro's): --remote-cdp and --http-port, through SSH tunnels, as
 decoder_lab.py. Needs `pip install websocket-client`.
+
+--page present-lab.html runs UltraPlayer itself instead, presented as a
+stream is (B2.1, present-lab.js: present=vf|dom|offscreen), and --shot
+keeps a screenshot of each case (<run>.png, Pillow): its mean level and its
+mean difference to the first case's, the picture each way leaves on the
+screen. With --chrome-arg=--window-size=1920,1080 a 1080p frame is drawn 1:1.
 """
 import argparse
+import base64
 import functools
 import http.server
 import json
@@ -87,9 +94,24 @@ def brief(trace):
     return out
 
 
+def shot_stats(path, ref):
+    """A screenshot's mean level (0-255) and its mean difference to @p ref's, or None."""
+    from PIL import Image, ImageChops, ImageStat
+    img = Image.open(path).convert("RGB")
+    level = sum(ImageStat.Stat(img).mean) / 3
+    if not ref:
+        return level, None
+    other = Image.open(ref).convert("RGB")
+    if other.size != img.size:
+        return level, None
+    return level, sum(ImageStat.Stat(ImageChops.difference(img, other)).mean) / 3
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
+    ap.add_argument("--page", default="gpuwait-lab.html", help="the lab page (present-lab.html: B2.1)")
+    ap.add_argument("--shot", action="store_true", help="a screenshot after each case, compared to the first")
     ap.add_argument("--case", action="append", default=[], help="NAME:QUERY (gpuwait-lab.js parameters)")
     ap.add_argument("--rounds", type=int, default=1, help="2: the cases again in reverse order (ABBA)")
     ap.add_argument("--dir", default=os.path.join(REPO, "bench-out", "ultra-lab"))
@@ -149,8 +171,9 @@ def main():
         print("%-22s %-28s %6s %7s %7s | %6s %6s %6s (bounds) | %-9s | %s" % (
             "case", "adapter", "i/s", "done50", "done90", "start", "gpu", "tail", "empty ref",
             "main thread ms/frame, nudges/frame, spin p50"))
+        first_shot = None
         for name, query, rnd in order:
-            url = "http://127.0.0.1:%d/scripts/bench/ultra/gpuwait-lab.html?%s" % (http_port, query)
+            url = "http://127.0.0.1:%d/scripts/bench/ultra/%s?%s" % (http_port, a.page, query)
             call("Page.navigate", url=url)
             busy0 = task_ms()
             for _ in range(240):
@@ -168,6 +191,18 @@ def main():
                 print("%-22s ERROR %s" % (name, res["error"][:600]))
                 continue
             run = "%s-%s%s" % (a.tag, name, "-r%d" % rnd if a.rounds > 1 else "")
+            extra = ""
+            if a.shot:
+                png = os.path.join(a.dir, run + ".png")
+                with open(png, "wb") as f:
+                    f.write(base64.b64decode(call("Page.captureScreenshot", format="png")["data"]))
+                level, diff = shot_stats(png, first_shot)
+                first_shot = first_shot or png
+                res["shot"] = {"level": level, "diffToFirst": diff}
+                extra += "  shot level %.1f%s" % (level, "" if diff is None else ", diff %.2f" % diff)
+            if res.get("submitToHanded"):
+                extra += "  handed p50 %s, shown %d, replaced %d" % (
+                    res["submitToHanded"]["p50"], res["shown"], res["replaced"])
             trace = res.pop("trace")
             with open(os.path.join(a.dir, run + ".ultratrace.json"), "w") as f:
                 json.dump(trace, f)
@@ -179,11 +214,11 @@ def main():
             with open(os.path.join(a.dir, run + ".json"), "w") as f:
                 json.dump(res, f, indent=1)
             fmt = lambda k: ("%6.2f" % b[k]) if b.get(k) is not None else "     -"  # noqa: E731
-            print("%-22s %-28s %6.1f %7.3f %7.3f | %s %s %s (%s) | %-9s | %5.2f %5.1f %s%s%s" % (
+            print("%-22s %-28s %6.1f %7.3f %7.3f | %s %s %s (%s) | %-9s | %5.2f %5.1f %s%s%s%s" % (
                 name + ("/%d" % rnd if a.rounds > 1 else ""), res["adapter"][:28], res["perSecond"],
                 b["done"], b["done90"], fmt("start"), fmt("gpu"), fmt("tail"), fmt("bounds").strip(),
                 fmt("ref_done").strip(), b["mainMsPerFrame"], b["nudgesPerFrame"], fmt("spin").strip(),
-                "" if res.get("isolated") else "  (not isolated: 0.1 ms steps)",
+                "" if res.get("isolated") else "  (not isolated: 0.1 ms steps)", extra,
                 ("  errors: %s" % res["errors"][:2]) if res.get("errors") else ""))
             sys.stdout.flush()
     finally:

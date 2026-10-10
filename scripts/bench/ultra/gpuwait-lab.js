@@ -34,7 +34,7 @@ import { PyroWaveDecoder } from "/frontend/js/stream/ultra/PyroWaveDecoder.js";
 
 const RESOLVE_STRIDE = 256;
 
-async function bytes(url) {
+export async function bytes(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${url}: ${r.status}`);
   return new Uint8Array(await r.arrayBuffer());
@@ -42,7 +42,7 @@ async function bytes(url) {
 
 // A corpus stream's frames, each the bytes of its packets back to back (what
 // the audio road hands UltraPlayer).
-function pwvFrames(pwv, max) {
+export function pwvFrames(pwv, max) {
   const dv = new DataView(pwv.buffer, pwv.byteOffset);
   const w = dv.getUint32(4, true);
   const h = dv.getUint32(8, true);

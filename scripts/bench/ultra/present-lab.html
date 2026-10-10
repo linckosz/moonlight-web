@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Present lab</title>
+    <style>
+      body {
+        margin: 0;
+        background: #000;
+        color: #ccc;
+        font: 12px monospace;
+      }
+      /* The stream's own box: the canvas fills it, object-fit letterboxes. */
+      .area {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      pre {
+        position: fixed;
+        top: 0;
+        left: 0;
+        margin: 4px;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="area"><canvas id="view"></canvas></div>
+    <pre id="log"></pre>
+    <script type="module">
+      // UltraPlayer presented as a stream is (POC Ultra U3.7, B2.1): see
+      // present-lab.js for the parameters; driven by gpuwait_lab.py --page
+      // present-lab.html over CDP. The log stays hidden, off the picture the
+      // driver's screenshot compares. The result is left in window.__labResult.
+      import { runPresentLab } from "./present-lab.js";
+
+      const params = Object.fromEntries(new URLSearchParams(location.search));
+      const out = document.getElementById("log");
+      const log = (s) => {
+        out.textContent += s + "\n";
+      };
+      window.__labResult = runPresentLab(
+        params,
+        log,
+        document.getElementById("view"),
+      )
+        .then((r) => {
+          r.params.thread = "main";
+          r.log = out.textContent;
+          return r;
+        })
+        .catch((e) => ({
+          error: String(e && e.stack ? e.stack : e),
+          log: out.textContent,
+        }));
+    </script>
+  </body>
+</html>
