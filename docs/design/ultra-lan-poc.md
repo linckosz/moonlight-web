@@ -3491,6 +3491,16 @@ UM790Pro, Chrome, câble à 1 Gbit/s) :
   WebGPU, la route audio et ses paquets de 1 400 octets, la relance et
   `early`. Tout reste derrière les clés de banc (`pipeline=d3d12`,
   `enc12=pyrowave`) et n'est jamais choisi seul.
+- **Un choix dans l'admin** (`8f8d9307`, demande de Bruno) : Avancé →
+  « Codec vidéo » → « PyroWave — LAN filaire uniquement (expérimental) »
+  (`native_video_codec=auto|pyrowave`, hôte natif Windows avec la chaîne
+  D3D12). L'hôte ne le prend que si le navigateur sait le décoder (WebGPU ou
+  WebGL2, dit au /start), sur le DataChannel, sans HDR, jamais pour les
+  invités ; `/start` répond `ultra_codec` d'après l'encodeur qui tourne, et la
+  page décode alors elle-même. Les clés de banc restent prioritaires.
+  Compilé, tests du front verts, **jamais streamé de bout en bout**. Limites
+  connues : aucune garde réseau (seul le libellé dit « filaire ») ; un repli
+  D3D12 → D3D11 en plein stream laisserait la page en PyroWave.
 - **Ce qui n'a pas été fait** : un lien à 2,5 Gbit/s (bloqué sur le matériel :
   les deux cartes savent le faire, l'équipement entre elles bride à 1 Gbit/s),
   l'envoi groupé (USO), une taille qui suit le contenu, P-B sur SCTP, et la
@@ -3545,9 +3555,10 @@ Sinon, il restera le transport d'Ultra seulement.
 
 Clos (10/10, §6.43) : PyroWave ne rejoint pas le produit. Sur un PC NVIDIA
 relié en Ethernet à 1 Gbit/s, son image arrive environ 1 ms plus tard que celle
-du HEVC d'aujourd'hui, avec un texte moins net. Rien ne change pour
-l'utilisateur : il reste caché derrière ses clés de banc. Ce qu'il a appris sur
-le chemin de l'image dans Chrome reste écrit ici pour la suite.
+du HEVC d'aujourd'hui, avec un texte moins net. Il ne s'active jamais seul :
+l'admin peut le choisir dans Avancé → « Codec vidéo », pour un appareil relié
+en Ethernet seulement (environ 130 Mbit/s à 120 i/s, pas de HDR). Ce qu'il a
+appris sur le chemin de l'image dans Chrome reste écrit ici pour la suite.
 
 Pas encore visible (U1.4 ter, la route audio) : la retenue de Chrome vient d'une
 horloge interne que la page ne peut pas couper. Mais elle ne touche que les
