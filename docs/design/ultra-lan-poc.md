@@ -3209,6 +3209,53 @@ Chrome plus récent. Restent les deux leviers mesurés au §6.38 : la relance
 (−2,5 ms à l'écran) et `early` (−1,0 ms). Proposé : en faire les valeurs par
 défaut du lecteur PyroWave, avec des clés pour les couper.
 
+### 6.40 Les phases lentes, relues dans les traces : presque rien avec les défauts (10/10/2026)
+
+Sans banc : les traces des passes en images entières des §6.36, §6.38 et §6.39
+(`mw_ultra_trace=1`), relues par `scratchpad/pw120c/phases.py`. Pour chaque
+image : la soumission → fin (horloge de la page) et le travail du GPU, du début
+de sa passe de décodage à la fin de sa présentation (horloge du GPU). Une
+seconde est lente quand sa médiane de soumission → fin dépasse de 0,35 ms celle
+de sa passe.
+
+| Bras | Passes | Soumission → fin, p50 | GPU, début → fin | Secondes lentes |
+|---|---|---|---|---|
+| shader 3, relance (§6.36 `w3`) | 4 | 2,0-2,4 | 0,95-0,98 | 1 / 8 / 16 / 17 sur 64 |
+| shader 2, relance (§6.36 `w2`) | 4 | 2,3 | 1,23-1,26 | 0 / 0 / 0 / 2 sur 64 |
+| relance (§6.38 `cw`) | 4 | 2,0 | 0,97-0,99 | 2 à 7 sur 79 |
+| sans relance (§6.38 `cn`) | 4 | 3,5 | 0,96-0,97 | 0 à 2 sur 79 |
+| relance + `early` (§6.38 `ce`, §6.39 `be`) | 6 | 2,9-3,2 | 1,01-1,03 | 0 ou 1 sur 79 |
+
+- **Le GPU ne ralentit jamais.** Dans les secondes lentes, son travail reste le
+  même à 0,03 ms près. Les images arrivent au même rythme (8,3 ms) et la
+  relance tourne comme ailleurs. C'est l'attente de Chrome, avant ou après le
+  GPU, qui s'allonge, de 0,5 à 0,7 ms.
+- **Les longues phases ne viennent que de deux passes du §6.36** (`w3-r2`
+  et `w3-r4`, 08:08 et 08:22) : 16 et 17 secondes lentes, par blocs de 7 à 13
+  secondes. Les huit passes des §6.38-6.39 avec la relance n'en ont plus que
+  quelques secondes isolées.
+- **Avec les défauts du lecteur** (relance + `early`), 2 secondes lentes sur
+  ~470, en six passes. Il n'y a plus rien à gagner là.
+- **Après l'arrivée, PyroWave est déjà au niveau du HEVC.** Au §6.38, de
+  l'arrivée à l'écran du client : 10,5 ms pour `early` (page 0,7 + écran 9,8),
+  contre 11,1 pour le HEVC (0,8 + 10,3). Tout l'écart restant à l'écran
+  (+1,8 à +2,3 ms, §6.38-6.39) est dans la descente : 3,1 ms contre 0,6.
+- **La descente est surtout le câble.** DualRTX est relié à 1 Gbit/s (sa
+  carte Realtek 5GbE négocie 1 Gbps). À ce débit, une image de ~178 Ko met déjà
+  ~1,45 ms à passer sur le fil, contre ~0,15 ms pour une image HEVC. Sur les
+  +2,5 ms de descente, ~1,3 ms est donc le fil lui-même. Le reste, ~1,2 ms, est
+  la pile : Chrome, la route audio et le découpage en paquets.
+
+**Verdict.** Les phases lentes, le surcoût des morceaux et les tuiles du bord
+sont clos sans banc. Les phases lentes ont presque disparu avec les défauts. Les
+tranches ne gagnent rien à l'écran (§6.38) : leur surcoût ne compte plus. Les
+tuiles du bord valent ~0,04 ms. Le seul levier encore grand est la descente :
+- **des images plus petites**, décision de Bruno ;
+- **un lien plus rapide** : à 2,5 Gbit/s, le fil seul prendrait ~0,6 ms au
+  lieu de ~1,45. C'est du matériel (le commutateur ou la box), pas du code ;
+- **la pile** (~1,2 ms) : la taille des messages et le MTU, jamais essayés
+  (§6.8).
+
 ## 7. Concrètement, pour l'utilisateur
 
 Pendant le POC, rien ne change : Ultra est caché derrière deux clés de banc et
