@@ -405,6 +405,8 @@ private:
     std::unique_ptr<AroadPacer> m_AroadPacer;
     double m_AroadPace = -1;
     int m_AroadWindowKb = 0;
+    // Bytes of the frame per packet (aroadchunk=, POC Ultra P-B).
+    size_t m_AroadChunk = 1100;
     int64_t m_AroadAcks = 0;
     std::atomic<int64_t> m_AroadSent{0}, m_AroadResent{0};
     // The resends' budget (AroadPacer.h): a fifth of what the road sent,

@@ -172,7 +172,10 @@ const char* const kUsage =
     "                              not yet acknowledged by the page (default: none)\n"
     "  aroadbudget=<%>             the audio road's resends: at most this share of what it\n"
     "                              first sent over the last 100 ms (default 20)\n"
-    "  rc12=driver|qp              D3D12 Video Encode's rate control; qp = the in-house one\n"
+    "  aroadchunk=<bytes>          the audio road's chunk, 256 to 1400 bytes of the frame per\n"
+    "                              packet (default 1100, 1400 with enc12=pyrowave); over 1100\n"
+    "                              for the LAN only\n"
+    "  rc12=driver|qp             D3D12 Video Encode's rate control; qp = the in-house one\n"
     "  reencode=0|1                in-house rate control: a picture far over its budget is\n"
     "                              coded again, at the QP that fits it (1); 0 sends it as is\n"
     "  refit=0|1                   how: at two budgets by the slope learned, then the\n"
@@ -572,6 +575,9 @@ bool applyTuningKey(const QString& key, const QString& value, mw::native::Encode
     } else if (key == "aroadbudget") {
         tuning.aroadBudgetPct = value.toInt(&ok);
         ok = ok && tuning.aroadBudgetPct >= 1 && tuning.aroadBudgetPct <= 100;
+    } else if (key == "aroadchunk") {
+        tuning.aroadChunk = value.toInt(&ok);
+        ok = ok && tuning.aroadChunk >= 256 && tuning.aroadChunk <= 1400;
     } else if (key == "ultrambps") {
         tuning.ultraMbps = value.toInt(&ok);
         ok = ok && tuning.ultraMbps >= 1 && tuning.ultraMbps <= 2000;

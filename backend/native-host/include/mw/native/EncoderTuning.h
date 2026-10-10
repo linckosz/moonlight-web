@@ -433,6 +433,11 @@ struct EncoderTuning
     /// The audio road's resend budget, percent of the bytes it first sent over
     /// the last 100 ms (plan « Wi-Fi », W4). 0, the default: 20.
     int aroadBudgetPct = 0;
+    /// The audio road's chunk, bytes of the frame per packet (POC Ultra P-B).
+    /// 0, the default: 1100, and 1400 with enc12=pyrowave. Up to 1400, LAN
+    /// only: with the road's 12-byte head, RTP, the SRTP tag and IPv6, a
+    /// 1500-byte MTU still holds it.
+    int aroadChunk = 0;
     /// Each video frame's way through the relay, written as a CSV next to the
     /// log when the session ends (plan « Wi-Fi : la vidéo qui attend dans
     /// SCTP », W1). false, the product: nothing kept.
@@ -537,10 +542,11 @@ struct EncoderTuning
                mutterDirect == Choice::Default && lossPermille == 0 && lossBurst == 0 &&
                sctpCongestion < 0 && floodKbps == 0 && floodBytes == 0 && !floodLikeVideo &&
                ultraSynthKb == 0 && !ultraUnordered && ultraMbps == 0 && aroadPace < 0 &&
-               aroadWindowKb == 0 && aroadBudgetPct == 0 && !relayLog && paceMultiple == 0 &&
-               paceBurstKb == 0 && retransCutPermille < 0 && sctpBufferKb == 0 && linkHoldMs == 0 &&
-               sctpMaxBurst < 0 && sctpScheduler < 0 && !audioLog && audioFrameMs == 0 &&
-               !clickTrace && sckQueueDepth == 0 && sckMinIntervalUs < 0;
+               aroadWindowKb == 0 && aroadBudgetPct == 0 && aroadChunk == 0 && !relayLog &&
+               paceMultiple == 0 && paceBurstKb == 0 && retransCutPermille < 0 &&
+               sctpBufferKb == 0 && linkHoldMs == 0 && sctpMaxBurst < 0 && sctpScheduler < 0 &&
+               !audioLog && audioFrameMs == 0 && !clickTrace && sckQueueDepth == 0 &&
+               sckMinIntervalUs < 0;
     }
 
     /// One line naming every field that is NOT at its default, for the log and
@@ -649,6 +655,7 @@ struct EncoderTuning
         }
         if (aroadWindowKb > 0) add("aroadwin=" + std::to_string(aroadWindowKb));
         if (aroadBudgetPct > 0) add("aroadbudget=" + std::to_string(aroadBudgetPct));
+        if (aroadChunk > 0) add("aroadchunk=" + std::to_string(aroadChunk));
         if (ultraUnordered) add("ultrachannel=unordered");
         if (relayLog) add("relaylog=1");
         if (paceMultiple > 0) add("pace=" + std::to_string(paceMultiple));

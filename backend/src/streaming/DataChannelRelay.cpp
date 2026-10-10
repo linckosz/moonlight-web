@@ -855,6 +855,16 @@ void DataChannelRelay::setLinkBench(const mw::native::EncoderTuning& tuning)
     m_UltraUnordered = tuning.ultraUnordered;
     m_AroadPace = tuning.aroadPace;
     m_AroadWindowKb = tuning.aroadWindowKb;
+    // PyroWave sends its whole frame every time (~178 KB at 170 Mbit/s), and
+    // the host spends ~12 us a packet whatever its size: its chunks are the
+    // biggest a 1500-byte MTU holds, which Ultra's cabled LAN has (POC Ultra
+    // P-B, design §6.41: -0.4 ms on the way down). aroadchunk= says otherwise.
+    const bool pyrowave = tuning.enc12 == mw::native::EncoderTuning::Encoder12::Pyrowave;
+    if (tuning.aroadChunk > 0 || pyrowave) {
+        m_AroadChunk = static_cast<size_t>(tuning.aroadChunk > 0 ? tuning.aroadChunk : 1400);
+        qInfo() << "[DataChannelRelay] audio road chunks of" << m_AroadChunk << "bytes"
+                << (tuning.aroadChunk > 0 ? "(aroadchunk=)" : "(PyroWave's default)");
+    }
     if (tuning.aroadBudgetPct > 0) {
         std::lock_guard<std::mutex> budget(m_AroadBudgetMutex);
         m_AroadBudget.setShare(tuning.aroadBudgetPct / 100.0);
@@ -3147,8 +3157,8 @@ void DataChannelRelay::sendAudioRoad(const std::shared_ptr<rtc::Track>& track,
     info.isKeyFrame = isKeyframe;
     // One Opus packet per chunk: 'M', flags (1 = key), frame seq, index,
     // count (u16, big endian), the wire frame id (u32, big endian), then up
-    // to kChunk bytes of the frame.
-    constexpr size_t kChunk = 1100;
+    // to kChunk bytes of the frame (1100, or the bench's aroadchunk=).
+    const size_t kChunk = m_AroadChunk;
     constexpr size_t kHead = 12;
     const size_t count = std::max<size_t>(1, (size + kChunk - 1) / kChunk);
     AudioRoadHistory::Frame kept;
@@ -3271,6 +3281,7 @@ void DataChannelRelay::sendRtpVideo(const QByteArray& frameData, bool isKeyframe
     info.isKeyFrame = isKeyframe;
     // Stamped now: how long after its capture the frame leaves (POC U1.4).
     const int64_t sendStartUs = steadyUs();
+    int64_t wireId = -1;
     try {
         if (m_RtpVideoAudioRoad) {
             // The DataChannel's frame id, and its map to the engine's frame
@@ -3278,6 +3289,7 @@ void DataChannelRelay::sendRtpVideo(const QByteArray& frameData, bool isKeyframe
             // named back by id, and a host that heals by invalidation answers
             // with deltas instead of a keyframe.
             const uint32_t frameId = m_FrameId++;
+            wireId = frameId;
             m_FrameNumberById[frameId % kFrameNumberRing].store(
                 frameNumber >= 0
                     ? (static_cast<int64_t>(frameId) << 32) | static_cast<uint32_t>(frameNumber)
@@ -3291,6 +3303,12 @@ void DataChannelRelay::sendRtpVideo(const QByteArray& frameData, bool isKeyframe
                                     static_cast<size_t>(frameData.size()), info);
         }
         const int64_t endUs = steadyUs();
+        // The bench's frame log (relaylog=1): the first and the last packet
+        // handed to libdatachannel, as the sender stamps a DataChannel frame.
+        if (m_FrameLog && frameNumber >= 0) {
+            if (wireId >= 0) m_FrameLog->sent(frameNumber, static_cast<uint32_t>(wireId));
+            m_FrameLog->frameSent(static_cast<uint32_t>(frameNumber), sendStartUs, endUs);
+        }
         m_RtpSendUs.push_back(static_cast<int>(endUs - sendStartUs));
         // backendTs is the steady clock in ms, mod 2^32: the difference wraps alike.
         const uint32_t nowMs32 = static_cast<uint32_t>((endUs / 1000) & 0xFFFFFFFF);
