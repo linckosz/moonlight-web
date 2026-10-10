@@ -3378,6 +3378,102 @@ rythme. Ce qui reste :
 - **La taille des messages SCTP et le MTU de SCTP** (le P-B du plan) : pas
   passés. PyroWave prend la route audio, déjà 0,7 ms devant SCTP (§6.26).
 
+### 6.42 Des images plus petites : −0,4 ms par 45 Ko, au prix du texte (10/10/2026, 15:13-15:53)
+
+Bruno a choisi cette piste parmi les trois du §6.41. PyroWave code chaque image
+entière, au débit de la clé `ultrambps` (170 Mbit/s par défaut) : à 119 i/s,
+178 Ko par image, et l'encodeur remplit ce budget, même sur une scène fixe.
+Une image plus petite passe plus vite sur le fil et dans la boucle d'envoi de
+l'hôte, mais elle perd du détail. Les deux se mesurent ici.
+
+**La qualité, hors ligne** (`scratchpad/size/quality.py`, feu vert de 59).
+- L'encodeur du produit (`mw-pyrowave-d3d12`) tourne sur WARP. Le décodeur de
+  référence de l'amont tourne sur la RTX. Le PSNR de la luminance est calculé
+  sur le corpus 1080p.
+- Les clips du corpus sont à 60 i/s : le débit est réduit dans le même
+  rapport, pour retrouver la taille par image du flux à 119 i/s.
+- Des morceaux de 480 × 270 pixels d'une même image, décodés à chaque taille,
+  servent à juger à l'œil.
+
+| taille par image (débit à 119 i/s) | texte | jeu (`game`) | dégradé |
+|---|---|---|---|
+| 354 Ko (le seuil de l'amont en 1080p60) | 33,4 | 51,9 | 67,6 |
+| **178 Ko (170 Mbit/s, le défaut)** | **28,1** | **46,9** | **66,1** |
+| 134 Ko (128 Mbit/s) | 24,1 | 44,7 | 64,6 |
+| 89 Ko (85 Mbit/s) | 22,1 | 42,8 | 64,1 |
+| 45 Ko (43 Mbit/s) | 21,2 | 40,1 | 62,2 |
+
+PSNR Y en dB. Le clip `game10` donne les mêmes valeurs que `game` à 0,3 dB
+près.
+- Le texte couvre tout l'écran : c'est le cas le plus dur. Il est déjà faible
+  au défaut. À 134 Ko, il devient plus mou, avec un peu de bavure autour des
+  lettres. À 89 Ko, il reste lisible, mais flou.
+- L'extrait de jeu vient d'une vidéo déjà compressée, donc plus douce qu'un
+  vrai rendu de jeu. À 89 Ko, il se distingue à peine de la source.
+
+**La série** (`scratchpad/pw120c/run-sz.sh`). C'est le banc du §6.41 : clics du
+client lui-même, défauts du lecteur, paquets de 1 400 octets. Une passe d'essai
+`z89`, puis 12 passes alternées de 70 clics :
+- `zh` : le HEVC du produit, par SCTP ;
+- `z178` : PyroWave au défaut ;
+- `z134` : `ultrambps=128` ;
+- `z89` : `ultrambps=85`.
+
+Le déroulé :
+- Feu vert de 59 ; accord permanent de Bruno pour l'écran virtuel.
+- UM790Pro muet toute la série, puis remis ; 0 TDR, aucun gel.
+- 70 clics sur 70 dans chaque passe, sauf un (69).
+- La taille dans le journal du relais est la taille attendue : 178,5, 134,4
+  et 89,2 Ko.
+
+Par image, p50 / p90 en ms (~26 500 images par bras), et par clic :
+
+| | `zh` (HEVC) | `z178` | `z134` | `z89` |
+|---|---|---|---|---|
+| boucle d'envoi de l'hôte | | 1,12 / 1,76 | 0,84 / 1,29 | 0,56 / 1,37 |
+| Chrome, premier → dernier paquet reçu | | 1,50 / 1,70 | 1,10 / 1,30 | 0,80 / 1,20 |
+| descente (relais → arrivée dans la page) | 0,41 / 1,01 | 2,21 / 3,05 | 1,84 / 2,54 | 1,43 / 2,15 |
+| relais → dessin | 1,11 / 1,70 | 2,75 / 3,63 | 2,33 / 3,09 | 1,92 / 2,64 |
+| clic → écran, moyenne (erreur type), 210 clics | 22,24 (0,38) | 23,79 (0,36) | 22,18 (0,38) | 22,46 (0,33) |
+
+Ce que la série dit :
+- **Le gain suit le fil.** Du relais au dessin, −0,42 ms à 134 Ko, −0,83 ms à
+  89 Ko, en médiane. Ça fait ~9,3 µs par Ko, le prix du fil à 1 Gbit/s
+  (~8,5 µs par Ko, trames Ethernet comprises). Chaque passe `z89` est sous
+  chaque passe `z134`, elle-même sous chaque passe `z178`.
+- **Cette fois, l'hôte envoie plus vite que le fil, à toutes les tailles.** Sa
+  boucle prend 1,12 ms pour 178 Ko, contre 1,59 au §6.41. Chrome reçoit au
+  rythme du fil : 1,50 ms pour 128 paquets, 1,56 attendus. La vitesse de la
+  boucle varie donc d'une série à l'autre. Le fil, lui, ne bouge pas.
+- **Après l'arrivée, PyroWave est un peu devant le HEVC** : 0,49 à 0,54 ms
+  jusqu'au dessin, contre 0,70. C'est `early` (§6.38). Tout l'écart reste
+  dans la descente.
+- **Même à 89 Ko, PyroWave reste ~0,8 ms derrière le HEVC**, du relais au
+  dessin (1,92 contre 1,11). Sur une scène fixe, une image HEVC pèse ~100
+  octets : c'est son cas le plus favorable.
+- **Le clic → écran va dans le même sens, mais il est bruité.** `z178` est
+  +1,55 ms derrière le HEVC, au-delà du bruit. `z134` et `z89` sont à égalité
+  avec lui, à moins d'une erreur type. Les étapes de l'hôte avant l'encodage
+  (montée, appli, bureau, capture) varient de ±0,5 ms d'un bras à l'autre :
+  elles ne dépendent pas du codec. Sans elles, de l'encodage à l'écran, il
+  reste +1,8 ms à `z178`, +0,8 à `z134` et +0,9 à `z89`, à ±0,3 ms près.
+
+**Verdict.** Une image deux fois plus petite fait gagner 0,8 ms par image à
+l'écran. Le prix est surtout sur le texte, déjà faible au défaut : 28 dB à
+178 Ko, 24 à 134, 22 à 89. Même à 89 Ko, l'écart avec le HEVC ne se ferme pas
+sur une scène fixe. **Le défaut ne change pas** (170 Mbit/s) : la taille est un
+choix de qualité, qui revient à Bruno. Une page montre les morceaux décodés
+à chaque taille, avec les chiffres :
+https://claude.ai/artifact/BuLgNR6TzGGHe6WNTLYqFK.
+
+Ce qui reste pour la descente :
+- **un lien plus rapide**, qui raccourcit le fil sans toucher à la qualité.
+  Dans cette série, l'hôte suit déjà le fil en médiane, à toutes les tailles
+  (pas au p90). L'envoi groupé (USO, §6.41) ne servirait donc qu'à la traîne,
+  aux séries où la boucle de l'hôte est lente, ou avec un lien à 2,5 Gbit/s ;
+- **une taille qui suit le contenu**, par exemple plus petite quand l'image
+  bouge vite et que l'œil voit moins le détail. Rien n'est écrit pour ça.
+
 ## 7. Concrètement, pour l'utilisateur
 
 Pendant le POC, rien ne change : Ultra est caché derrière deux clés de banc et
