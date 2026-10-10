@@ -59,8 +59,14 @@ import {
     supportsGamingMode,
 } from '../util/BrowserDetect.js';
 import * as RemoteNav from './RemoteNav.js';
-import { deviceKey, loadForwarded, saveForwarded } from '../hid/HidPassthrough.js';
-import { GAME_FILTERS, isGameDevice } from '../hid/hidWire.js';
+import {
+    HID_KINDS,
+    deviceKey,
+    linkModel,
+    loadForwarded,
+    saveForwarded,
+} from '../hid/HidPassthrough.js';
+import { isGameDevice } from '../hid/hidWire.js';
 import { confirmAction } from './ConfirmDialog.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 import { autoFps, measuredFps } from '../util/RefreshRate.js';
@@ -693,10 +699,20 @@ export class SettingsView {
     // dialog to check or remap it. Mappings live in this browser only
     // (gamepadMappingsStore), so the list also offers to forget the saved
     // layouts of pads that are not plugged in right now.
+    //
+    // A wheel's, radio's or stick's row also has the HID passthrough's switch,
+    // « As itself »: on, the stream sends the real device to the host instead
+    // of an Xbox pad, when the host can (hid/HidPassthrough.js). The first
+    // click opens Chrome's chooser narrowed to that model; Chrome then keeps
+    // the permission of a device with a serial number, and the switch is a
+    // plain switch, kept in this browser.
 
     _startPadWatch() {
         if (this._padWatch || !navigator.getGamepads) return;
-        const tick = () => this._renderPads();
+        const tick = () => {
+            this._renderPads();
+            this._refreshHid();
+        };
         this._padWatch = { timer: setInterval(tick, 500), tick };
         window.addEventListener('gamepadconnected', tick);
         window.addEventListener('gamepaddisconnected', tick);
@@ -718,34 +734,71 @@ export class SettingsView {
         if (!list) return;
         const pads = connectedPads();
         const saved = listMappings();
-        const rows = pads.map((gp) => ({ gp, key: padKey(gp), res: resolvePad(gp) }));
+        // HID passthrough: the devices this browser may open, and the switches.
+        const allowed = this._hidAllowed || new Map();
+        const wanted = navigator.hid ? loadForwarded() : new Set();
+        const hidModel = (key, kind) => {
+            const usb = navigator.hid && key.startsWith('usb:') ? key.slice(4) : null;
+            return usb && (HID_KINDS.includes(kind) || allowed.has(usb)) ? usb : null;
+        };
+        const rows = pads.map((gp) => {
+            const key = padKey(gp);
+            const res = resolvePad(gp);
+            return { gp, key, res, model: hidModel(key, res.kind) };
+        });
         const present = new Set(rows.map((r) => r.key));
         const absent = saved.filter((m) => !present.has(m.key));
+        // Allowed devices the Gamepad API does not show (yet: Chrome shows a
+        // pad once a button is pressed) keep their switch on a row of their own.
+        const hidOnly = Array.from(allowed).filter(([model]) => !present.has(`usb:${model}`));
         const sig =
             rows
-                .map((r) => [r.key, r.res.source, r.res.kind, !!getMapping(r.key)].join(':'))
+                .map((r) =>
+                    [r.key, r.res.source, r.res.kind, !!getMapping(r.key), r.model].join(':'),
+                )
                 .join('|') +
             '#' +
-            absent.map((m) => m.key).join('|');
+            absent.map((m) => m.key).join('|') +
+            '#' +
+            Array.from(allowed.keys()).join('|') +
+            '#' +
+            Array.from(wanted).join('|');
         if (sig === this._padSig) return;
         this._padSig = sig;
 
         const btn = (cls, key, label) =>
             `<button type="button" class="btn btn-secondary ${cls}" data-key="${escapeHtml(key)}">${escapeHtml(label)}</button>`;
+        const hidSwitch = (model) => `
+                    <label class="settings-pad-hid" title="${escapeHtml(t('settings.hidAsItselfDesc'))}">
+                        <input type="checkbox" class="settings-hid-toggle" data-model="${escapeHtml(model)}" ${allowed.has(model) && wanted.has(model) ? 'checked' : ''}>
+                        <span>${escapeHtml(t('settings.hidAsItself'))}</span>
+                    </label>`;
         let html = rows.length
             ? rows
                   .map(
-                      ({ gp, key, res }) => `
+                      ({ gp, key, res, model }) => `
                 <div class="settings-pad">
                     <span class="settings-pad-kind" title="${escapeHtml(t(`gamepad.remap.kind.${res.kind}`))}">${kindIconSvg(res.kind)}</span>
                     <span class="settings-pad-name">${escapeHtml(padName(gp))}</span>
                     ${res.kind === 'remote' ? '' : sourceBadge(res.source)}
+                    ${model ? hidSwitch(model) : ''}
                     ${btn('settings-pad-test', key, t(res.kind === 'remote' ? 'settings.controllersRemote' : 'settings.controllersTest'))}
                     ${getMapping(key) ? btn('settings-pad-reset', key, t('settings.controllersReset')) : ''}
                 </div>`,
                   )
                   .join('')
-            : `<p class="setting-desc">${escapeHtml(t('settings.controllersNone'))}</p>`;
+            : hidOnly.length
+              ? ''
+              : `<p class="setting-desc">${escapeHtml(t('settings.controllersNone'))}</p>`;
+        html += hidOnly
+            .map(
+                ([model, name]) => `
+                <div class="settings-pad">
+                    <span class="settings-pad-name">${escapeHtml(name)}</span>
+                    ${hidSwitch(model)}
+                </div>`,
+            )
+            .join('');
         if (absent.length) {
             html += `<span class="setting-desc">${escapeHtml(t('settings.controllersSaved'))}</span>`;
             html += absent
@@ -773,64 +826,52 @@ export class SettingsView {
                 removeMapping(/** @type {HTMLElement} */ (b).dataset.key),
             ),
         );
+        list.querySelectorAll('.settings-hid-toggle').forEach((box) =>
+            box.addEventListener('change', () =>
+                this._toggleHid(/** @type {HTMLInputElement} */ (box)),
+            ),
+        );
     }
 
-    // --- HID passthrough ---
-    //
-    // The game devices this browser may open (Chrome keeps the permission of
-    // a device with a serial number) and a switch each: on, the stream sends
-    // it to the host as itself when the host can (hid/HidPassthrough.js).
-
-    async _renderHid() {
-        const list = this.container.querySelector('.settings-hid-list');
-        if (!list || !navigator.hid) return;
-        const wanted = loadForwarded();
+    /**
+     * The game devices this browser may open, by vid:pid (one entry for a
+     * device with several interfaces, like the G923's vendor one); the rows
+     * follow when it changes.
+     */
+    async _refreshHid() {
+        if (!navigator.hid) return;
         let devices = [];
         try {
             devices = (await navigator.hid.getDevices()).filter((d) => isGameDevice(d.collections));
         } catch {
             devices = [];
         }
-        // One row per device: a device with several interfaces (the G923's
-        // vendor one) shows once, by its game interface.
-        const seen = new Set();
-        devices = devices.filter((d) => !seen.has(deviceKey(d)) && seen.add(deviceKey(d)));
-        list.innerHTML = devices.length
-            ? devices
-                  .map(
-                      (d) => `
-                <label class="settings-pad">
-                    <input type="checkbox" class="settings-hid-toggle" data-key="${escapeHtml(deviceKey(d))}" ${wanted.has(deviceKey(d)) ? 'checked' : ''}>
-                    <span class="settings-pad-name">${escapeHtml(d.productName || deviceKey(d))}</span>
-                    <span class="setting-desc">${escapeHtml(deviceKey(d))}</span>
-                </label>`,
-                  )
-                  .join('')
-            : `<p class="setting-desc">${escapeHtml(t('settings.hidNone'))}</p>`;
-        list.querySelectorAll('.settings-hid-toggle').forEach((box) =>
-            box.addEventListener('change', () => {
-                const keys = loadForwarded();
-                const key = /** @type {HTMLInputElement} */ (box).dataset.key;
-                if (/** @type {HTMLInputElement} */ (box).checked) keys.add(key);
-                else keys.delete(key);
-                saveForwarded(keys);
-            }),
-        );
+        const next = new Map();
+        for (const d of devices)
+            if (!next.has(deviceKey(d))) next.set(deviceKey(d), d.productName || deviceKey(d));
+        const sig = Array.from(next.keys()).sort().join('|');
+        if (sig === this._hidSig) return;
+        this._hidSig = sig;
+        this._hidAllowed = next;
+        this._renderPads();
     }
 
-    async _addHidDevice() {
-        let chosen = [];
-        try {
-            chosen = await navigator.hid.requestDevice({ filters: GAME_FILTERS });
-        } catch {
-            chosen = [];
+    /** « As itself » clicked: the chooser the first time, a plain switch after. */
+    async _toggleHid(box) {
+        const model = box.dataset.model;
+        if (box.checked && !this._hidAllowed?.has(model)) {
+            const [vid, pid] = model.split(':').map((h) => parseInt(h, 16));
+            // Still inside the click: Chrome opens its chooser only then.
+            const chosen = await linkModel(navigator.hid, vid, pid);
+            if (!chosen.length) box.checked = false;
+            await this._refreshHid();
+            return;
         }
-        if (chosen.length) {
-            const keys = loadForwarded();
-            for (const d of chosen) if (isGameDevice(d.collections)) keys.add(deviceKey(d));
-            saveForwarded(keys);
-        }
-        this._renderHid();
+        const keys = loadForwarded();
+        if (box.checked) keys.add(model);
+        else keys.delete(model);
+        saveForwarded(keys);
+        this._renderPads();
     }
 
     // --- Auto-save ---
@@ -1629,14 +1670,9 @@ export class SettingsView {
                     <h3 class="settings-section-title">${t('settings.controllers')}</h3>
                     <span class="setting-desc">${t('settings.controllersDesc')}</span>
                     <div class="settings-pads"></div>
-                    <!-- The HID passthrough: devices sent to the host as
-                         themselves. Switches kept in this browser. -->
-                    <div class="settings-hid">
-                        <span class="settings-label">${t('settings.hidTitle')}</span>
-                        <span class="setting-desc">${t(navigator.hid ? 'settings.hidDesc' : 'settings.hidUnsupported')}</span>
-                        <div class="settings-pads settings-hid-list"></div>
-                        ${navigator.hid ? `<button type="button" class="btn btn-secondary" id="btn-settings-hid-add">${t('settings.hidAdd')}</button>` : ''}
-                    </div>
+                    <!-- The HID passthrough's switch sits on each wheel's,
+                         radio's or stick's row; WebHID only (Chrome, Edge). -->
+                    ${navigator.hid ? `<span class="setting-desc">${t('settings.hidDesc')}</span>` : ''}
                 </div>
 
                 <!-- ── Privacy ─────────────────────────────────────────────── -->
@@ -1739,11 +1775,9 @@ export class SettingsView {
         // Controllers: the list follows what is plugged in.
         this._padSig = '';
         this._startPadWatch();
+        this._hidSig = null;
         this._renderPads();
-        this._renderHid();
-        this.container
-            .querySelector('#btn-settings-hid-add')
-            ?.addEventListener('click', () => this._addHidDevice());
+        this._refreshHid();
 
         // Anonymous statistics: consent given, or withdrawn, on the spot.
         const statsChk = this.container.querySelector('#settings-stats-consent');

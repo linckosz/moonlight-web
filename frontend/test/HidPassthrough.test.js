@@ -11,13 +11,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     FORWARD_KEY,
+    HID_KINDS,
     HidPassthrough,
+    MAX_OFFERS,
     deviceKey,
+    hidModelOf,
+    linkModel,
     loadForwarded,
     padKeyOf,
     saveForwarded,
 } from '../js/hid/HidPassthrough.js';
-import { decodeReportFrame } from '../js/hid/hidWire.js';
+import { decodeReportFrame, modelFilters } from '../js/hid/hidWire.js';
 
 function fakeDevice({
     vendorId = 0x046d,
@@ -246,6 +250,90 @@ describe('HidPassthrough (HID passthrough in the stream, P2)', () => {
         expect(t.sent[1]).toEqual({ type: 'hiddetach', slot: 0 });
     });
 
+    it('knows which pads a row offers « as itself », by kind and USB ids', () => {
+        const id = (name, vid, pid) => `${name} (STANDARD GAMEPAD Vendor: ${vid} Product: ${pid})`;
+        expect(hidModelOf({ id: id('G923 Racing Wheel', '046d', 'c26e') })).toEqual({
+            key: '046d:c26e',
+            vendorId: 0x046d,
+            productId: 0xc26e,
+        });
+        expect(hidModelOf({ id: id('Radiomaster TX12 Joystick', '1209', '4f54') })?.key).toBe(
+            '1209:4f54',
+        );
+        // A plain pad, unless the viewer said what it is; no ids, no offer.
+        expect(hidModelOf({ id: id('Xbox Wireless Controller', '045e', '0b13') })).toBeNull();
+        expect(
+            hidModelOf({ id: id('Xbox Wireless Controller', '045e', '0b13') }, 'wheel'),
+        ).not.toBeNull();
+        expect(hidModelOf({ id: 'Racing Wheel' })).toBeNull();
+        expect(HID_KINDS).toEqual(['wheel', 'rc', 'flightstick']);
+    });
+
+    it('narrows the chooser to one model, game interfaces only, and switches it on', async () => {
+        expect(modelFilters(0x046d, 0xc26e)).toContainEqual({
+            vendorId: 0x046d,
+            productId: 0xc26e,
+            usagePage: 0x01,
+            usage: 0x04,
+        });
+        const wheel = fakeDevice();
+        const vendorOnly = fakeDevice({ usagePage: 0xfffd, usage: 0xfd01 });
+        const hid = fakeHid([wheel]);
+        hid.requestDevice.mockResolvedValueOnce([wheel, vendorOnly]);
+        const storage = memoryStorage();
+        expect(await linkModel(hid, 0x046d, 0xc26e, storage)).toEqual([wheel]);
+        expect(hid.requestDevice).toHaveBeenCalledWith({ filters: modelFilters(0x046d, 0xc26e) });
+        expect(Array.from(loadForwarded(storage))).toEqual(['046d:c26e']);
+        // Closed without a choice, or no WebHID: nothing switched on.
+        hid.requestDevice.mockRejectedValueOnce(new Error('no gesture'));
+        expect(await linkModel(hid, 1, 2, memoryStorage())).toEqual([]);
+        expect(await linkModel(null, 1, 2)).toEqual([]);
+    });
+
+    it('links a model from the stream and sends it at once', async () => {
+        const wheel = fakeDevice();
+        const t = setup([wheel]);
+        t.hp.handleMessage({ type: 'hidcaps', available: true });
+        await Promise.resolve();
+        expect(t.sent).toHaveLength(0);
+        expect(await t.hp.link(0x046d, 0xc26e)).toBe(true);
+        expect(t.sent[0]).toMatchObject({ type: 'hidattach', vendorId: 0x046d });
+        expect(Array.from(loadForwarded(t.storage))).toEqual(['046d:c26e']);
+        t.hid.requestDevice.mockResolvedValueOnce([]);
+        expect(await t.hp.link(0x046d, 0xc26e)).toBe(false);
+    });
+
+    it('offers a wheel never linked, once a stream and three streams at most', async () => {
+        const wheelPad = { id: 'G923 (STANDARD GAMEPAD Vendor: 046d Product: c26e)' };
+        const pad = { id: 'Xbox (STANDARD GAMEPAD Vendor: 045e Product: 0b13)' };
+        const radioPad = { id: 'TX12 (STANDARD GAMEPAD Vendor: 1209 Product: 4f54)' };
+        const radio = fakeDevice({ vendorId: 0x1209, productId: 0x4f54, usage: 5 });
+        // The radio is allowed already (switched off by the viewer): never offered.
+        const t = setup([radio]);
+        expect(await t.hp.offers([wheelPad])).toEqual([]); // host has not said yet
+        t.hp.handleMessage({ type: 'hidcaps', available: true });
+        const first = await t.hp.offers([wheelPad, pad, radioPad, null]);
+        expect(first).toEqual([
+            { key: '046d:c26e', vendorId: 0x046d, productId: 0xc26e, name: 'G923' },
+        ]);
+        expect(await t.hp.offers([wheelPad])).toEqual([]); // once a stream
+
+        const streamAgain = () => {
+            const hp = new HidPassthrough({
+                hid: t.hid,
+                send: () => {},
+                sendFrame: () => true,
+                storage: t.storage,
+            });
+            hp.handleMessage({ type: 'hidcaps', available: true });
+            return hp.offers([wheelPad]);
+        };
+        expect(await streamAgain()).toHaveLength(1);
+        expect(await streamAgain()).toHaveLength(1);
+        expect(MAX_OFFERS).toBe(3);
+        expect(await streamAgain()).toEqual([]);
+    });
+
     it('says WebHID is missing rather than failing', async () => {
         const hp = new HidPassthrough({
             hid: null,
@@ -256,6 +344,8 @@ describe('HidPassthrough (HID passthrough in the stream, P2)', () => {
         expect(hp.supported).toBe(false);
         expect(await hp.devices()).toEqual([]);
         expect(await hp.choose()).toEqual([]);
+        expect(await hp.offers([{ id: 'G923 (Vendor: 046d Product: c26e)' }])).toEqual([]);
+        expect(await hp.link(0x046d, 0xc26e)).toBe(false);
         await hp.applyWanted();
         hp.stop();
     });

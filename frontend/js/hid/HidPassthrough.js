@@ -15,7 +15,9 @@ import {
     attachMessage,
     detachMessage,
     isGameDevice,
+    modelFilters,
 } from './hidWire.js';
+import { padKind, padName, parsePadId } from '../stream/gamepadMapping.js';
 import { HidppFfbPlayer, HidppTransport, findFfbFeature, hasHidpp } from './hidppFfb.js';
 import { PidFfbPlayer, hasNativePid } from './pidFfb.js';
 import { HidppRelay, hidppInputIds, isHidppReport } from './hidppRelay.js';
@@ -28,7 +30,10 @@ import { HidppRelay, hidppInputIds, isHidppReport } from './hidppRelay.js';
  * Which devices: the ones Chrome already lets this page open (a click in its
  * chooser, kept by Chrome for a device with a serial number) whose key the
  * viewer switched on, kept in localStorage (`mw_hid_forward`). Settings holds
- * the switches; the stream applies them.
+ * the switches, on each wheel's, radio's or stick's own row: the first click
+ * opens Chrome's chooser narrowed to that model (linkModel). The stream applies
+ * them, and offers the link for such a device plugged in but never linked
+ * (offers(), at most MAX_OFFERS streams per model).
  *
  * What the host asks back (`hidrequest`: output reports, features) is counted
  * and never written to the real device: a host writing to a wheel's vendor
@@ -91,6 +96,56 @@ export function saveForwarded(keys, storage = globalThis.localStorage) {
     }
 }
 
+/** The pads a mapping shortchanges most: their rows offer « as itself ». */
+export const HID_KINDS = ['wheel', 'rc', 'flightstick'];
+
+const OFFERS_KEY = 'mw_hid_offers';
+export const MAX_OFFERS = 3;
+
+/**
+ * The model a pad the Gamepad API sees could be sent as, or null: a wheel,
+ * radio or stick the browser gives USB ids for. `kind` overrides the guess
+ * (the viewer's choice, from the mappings store).
+ * @param {Gamepad|{id: string}} gp
+ * @param {string} [kind]
+ */
+export function hidModelOf(gp, kind = padKind(gp?.id)) {
+    const { vid, pid } = parsePadId(gp?.id);
+    if (!vid || !pid || !HID_KINDS.includes(kind)) return null;
+    return { key: `${vid}:${pid}`, vendorId: parseInt(vid, 16), productId: parseInt(pid, 16) };
+}
+
+/**
+ * Chrome's chooser for one model, game interfaces only; what the viewer
+ * picked is switched on. Needs the click that called it.
+ * @returns {Promise<HIDDevice[]>}
+ */
+export async function linkModel(hid, vendorId, productId, storage = globalThis.localStorage) {
+    if (!hid) return [];
+    let chosen = [];
+    try {
+        chosen = await hid.requestDevice({ filters: modelFilters(vendorId, productId) });
+    } catch {
+        chosen = [];
+    }
+    chosen = chosen.filter((d) => isGameDevice(d.collections));
+    if (chosen.length) {
+        const keys = loadForwarded(storage);
+        for (const d of chosen) keys.add(deviceKey(d));
+        saveForwarded(keys, storage);
+    }
+    return chosen;
+}
+
+function loadOffers(storage) {
+    try {
+        const v = JSON.parse(storage?.getItem(OFFERS_KEY) || '{}');
+        return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+    } catch {
+        return {};
+    }
+}
+
 export class HidPassthrough {
     /**
      * @param {object} o
@@ -126,6 +181,7 @@ export class HidPassthrough {
         this._entries = new Map(); // HIDDevice -> { slot, state, why, listener }
         this._timer = null;
         this._requests = 0;
+        this._offered = new Set(); // models offered in this stream
         this._onDisconnect = (e) => this._drop(e.device, 'unplugged');
         if (this._hid) this._hid.addEventListener('disconnect', this._onDisconnect);
     }
@@ -256,6 +312,58 @@ export class HidPassthrough {
         } catch {
             return [];
         }
+    }
+
+    /**
+     * The chooser for one model, from a click (the stream's offer); what the
+     * viewer picked is switched on and sent at once when the host can.
+     * @returns {Promise<boolean>} something was linked
+     */
+    async link(vendorId, productId) {
+        const chosen = await linkModel(this._hid, vendorId, productId, this._storage);
+        for (const d of chosen) await this._attach(d);
+        this._changed();
+        return chosen.length > 0;
+    }
+
+    /**
+     * The pads worth offering to send as themselves, when the host can: a
+     * wheel, radio or stick model this browser may not open yet. A model the
+     * viewer allowed then switched off is never offered: that was a choice.
+     * Each model once a stream, MAX_OFFERS streams in all; Settings stays.
+     * @param {Array<Gamepad|{id: string}>} pads
+     * @returns {Promise<Array<{key: string, vendorId: number, productId: number, name: string}>>}
+     */
+    async offers(pads) {
+        if (!this._hid || !this._caps?.available) return [];
+        let permitted;
+        try {
+            permitted = new Set(
+                (await this._hid.getDevices())
+                    .filter((d) => isGameDevice(d.collections))
+                    .map(deviceKey),
+            );
+        } catch {
+            return [];
+        }
+        const counts = loadOffers(this._storage);
+        const out = [];
+        for (const gp of pads) {
+            const m = gp && hidModelOf(gp);
+            if (!m || permitted.has(m.key) || this._offered.has(m.key)) continue;
+            if ((counts[m.key] | 0) >= MAX_OFFERS) continue;
+            this._offered.add(m.key);
+            counts[m.key] = (counts[m.key] | 0) + 1;
+            out.push({ ...m, name: padName(gp) });
+        }
+        if (out.length) {
+            try {
+                this._storage?.setItem(OFFERS_KEY, JSON.stringify(counts));
+            } catch {
+                /* private window: offered again next stream */
+            }
+        }
+        return out;
     }
 
     stop() {

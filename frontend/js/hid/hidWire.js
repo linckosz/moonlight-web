@@ -106,6 +106,15 @@ export function isGameDevice(collections) {
     );
 }
 
+/**
+ * Chrome's chooser narrowed to one model's game interfaces: the row of a
+ * wheel in Settings, or the stream's offer, lists that wheel and nothing else
+ * (not its vendor-only interface either).
+ */
+export function modelFilters(vendorId, productId) {
+    return GAME_FILTERS.map((f) => ({ vendorId, productId, ...f }));
+}
+
 /** The `hidattach` message for a device opened in this page. */
 export function attachMessage(slot, device, { forceFeedback = false } = {}) {
     const m = {

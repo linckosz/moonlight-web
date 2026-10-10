@@ -6828,7 +6828,30 @@ export class StreamView {
                 else Toast.warning(t('stream.hidRefused', { name, why }), { durationMs: 8000 });
             },
         });
+        // Chrome shows a pad once a button is pressed: offer it then too.
+        this._onHidPadConnected = () => this._offerHid();
+        window.addEventListener('gamepadconnected', this._onHidPadConnected);
         return this._hidPassthrough;
+    }
+
+    /**
+     * A wheel, radio or stick plugged in but never linked: offer, once a
+     * stream, to send it as itself. The toast's button is the click Chrome's
+     * chooser needs (narrowed to that model).
+     */
+    async _offerHid() {
+        const hp = this._hidPassthrough;
+        if (!hp || this._quitting || !navigator.getGamepads) return;
+        const pads = Array.from(navigator.getGamepads()).filter(Boolean);
+        for (const m of await hp.offers(pads)) {
+            Toast.info(t('stream.hidOffer', { name: m.name }), {
+                durationMs: 15000,
+                action: {
+                    label: t('stream.hidOfferAction'),
+                    onClick: () => hp.link(m.vendorId, m.productId),
+                },
+            });
+        }
     }
 
     // ── Stats message handler (ping/pong + periodic backend stats) ─────────
@@ -6836,6 +6859,7 @@ export class StreamView {
     _handleStatsMessage(msg) {
         if (typeof msg.type === 'string' && msg.type.startsWith('hid')) {
             this._ensureHidPassthrough()?.handleMessage(msg);
+            if (msg.type === 'hidcaps') this._offerHid();
             return;
         }
         if (msg.type === 'rumble') {
@@ -8806,6 +8830,7 @@ export class StreamView {
         if (this._hidPassthrough) {
             this._hidPassthrough.stop();
             this._hidPassthrough = null;
+            window.removeEventListener('gamepadconnected', this._onHidPadConnected);
         }
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener('keyup', this._onKeyUp);

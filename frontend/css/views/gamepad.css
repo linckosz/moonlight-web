@@ -627,10 +627,6 @@
     flex-direction: column;
     gap: 8px;
 }
-/* Keeps "Add a device" off the last device; nothing to clear when empty. */
-.settings-hid-list:not(:empty) {
-    margin-bottom: var(--space-3);
-}
 .settings-pad {
     display: flex;
     align-items: center;
@@ -660,4 +656,20 @@
 }
 .settings-pad .btn {
     padding: 6px 12px;
+}
+/* The HID passthrough's « As itself » switch on a wheel's or radio's row. */
+.settings-pad-hid {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.settings-pad-hid input {
+    margin: 0;
+    accent-color: var(--neon-cyan);
+}
+.settings-section-controllers .settings-pads + .setting-desc {
+    margin-top: var(--space-3);
 }

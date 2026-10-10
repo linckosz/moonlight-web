@@ -106,7 +106,7 @@ Standard pads just work. Others are recognized from [SDL_GameControllerDB](https
 | Radiomaster TX12 (EdgeTX) | USB Joystick (HID) | ✅ recognized on plug-in, like any EdgeTX/OpenTX radio |
 | Logitech G923 for Xbox One and PC | USB, with G HUB on the client | ✅ recognized on plug-in |
 
-**Wheels and radios as themselves** (Chrome or Edge on a computer, MoonlightWeb native host): in **Settings → Controllers → Send a device as itself**, add the device once. The game then sees the real wheel or radio instead of an Xbox pad: every axis, clutch included, and all 8 channels of a TX12. Force feedback works on a Windows host, tested with the G923 in ACC; wheels that speak USB PID (Moza, Simucube, Fanatec…) are supported but not tried yet. The Windows host needs the MoonlightWeb Virtual HID driver, which the installer does not set up yet. A Linux host needs nothing more.
+**Wheels and radios as themselves** (Chrome or Edge on a computer, MoonlightWeb native host): in **Settings → Controllers**, switch **As itself** on the wheel's or radio's row (the browser asks for the device the first time), or accept the offer when a stream starts. The game then sees the real wheel or radio instead of an Xbox pad: every axis, clutch included, and all 8 channels of a TX12. Force feedback works on Windows and Linux hosts, tested with the G923 in ACC; wheels that speak USB PID (Moza, Simucube, Fanatec…) are supported but not tried yet. The Windows host needs the MoonlightWeb Virtual HID driver, which the installer does not set up yet. A Linux host needs nothing more.
 
 Details and test notes in the [wiki](docs/wiki/04-Frontend.md#48-controller-compatibility).
 
