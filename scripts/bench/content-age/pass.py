@@ -526,10 +526,21 @@ def main():
             # driven by a script of its own): the stream held, nothing drawn
             # over it, the overlay read at the end. The frame log of the held
             # time, read before the clicks clear it: each frame's age, host to
-            # drawn, under the game.
+            # drawn, under the game. Every frame of it too (<tag>.frames.csv)
+            # with the page's time origin, for clicks given by the client's OS
+            # (POC Ultra U3.7: mw-click-sound). MW_BENCH_HOLD_MARK names a file
+            # written as the hold begins, for whatever drives them: this
+            # pass's output is read only at its end (local_matrix.py).
             d.eval("window.mwFrameLog && mwFrameLog.clear()")
+            if os.environ.get("MW_BENCH_HOLD_MARK"):
+                with open(os.environ["MW_BENCH_HOLD_MARK"], "w") as f:
+                    f.write("%s %d\n" % (a.tag, a.hold))
             time.sleep(a.hold)
             frame_log = d.eval("window.mwFrameLog ? JSON.stringify(mwFrameLog.summary()) : null")
+            time_origin = d.eval("performance.timeOrigin")
+            if frame_log and frame_log != "null":
+                with open(os.path.join(age.OUT, a.tag + ".frames.csv"), "w", newline="") as f:
+                    f.write(d.eval("mwFrameLog.csv()") or "")
             # A still screen: the way up with almost no video coming down.
             uplink = uplink_runs(d, a.uplink, a.tag)
             clicks = click_flag(d, a.clicks, tag=a.tag) if a.clicks > 0 else None
@@ -545,6 +556,7 @@ def main():
                 json.dump({"tag": a.tag, "overlay": stats, "args": vars(a),
                            "uplink": uplink, "clicks": clicks,
                            "frameLog": json.loads(frame_log) if frame_log else None,
+                           "timeOrigin": time_origin,
                            "ultraPlayer": player, "ticksOrigin": ticks,
                            "env": {k: os.environ.get(k, "")
                                    for k in ("MW_NATIVE_TUNING", "MW_VDD_REFRESH")}}, f)
