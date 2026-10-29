@@ -74,6 +74,7 @@ void StreamWorkerHost::prepare(const QJsonObject& config, QStringList& args,
     {
         const AppSettings settings;
         withSettings[QStringLiteral("keyboardLayoutFidelity")] = settings.keyboardLayoutFidelity();
+        withSettings[QStringLiteral("keyboardHostLayout")] = settings.keyboardHostLayout();
         if (settings.keyboardDebug()) withSettings[QStringLiteral("keyboardDebug")] = true;
         // The admin's « Network priority » box, by the same trap: SYSTEM's
         // settings.json, which nobody writes, says marked. And the bench's

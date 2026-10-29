@@ -139,6 +139,11 @@ export class AdminView {
         // (issue #39). Offered on Windows once the display is installed.
         this._vdExclusiveSupported = false;
         this._vdExclusive = false;
+        // This PC's keyboard layout for the touch keyboard's text (issue #44).
+        // Offered when the server reads a layout here and a host runs here.
+        this._hostLayoutOffered = false;
+        this._hostLayoutDetected = '';
+        this._hostLayout = false;
         // Start at login. Offered only where the server says it can do it (a
         // desktop session, never a service), and ticked from what the OS
         // actually holds — the installer or the tray may have set it.
@@ -254,6 +259,9 @@ export class AdminView {
             this._packetMarking = admin.packet_marking !== false;
             this._vdExclusiveSupported = admin.virtual_display_exclusive_supported === true;
             this._vdExclusive = admin.virtual_display_exclusive === true;
+            this._hostLayoutOffered = admin.keyboard_host_layout_offered === true;
+            this._hostLayoutDetected = admin.keyboard_host_layout_detected || '';
+            this._hostLayout = admin.keyboard_host_layout === true;
             this._autostartSupported = admin.autostart_supported === true;
             this._autostartEnabled = admin.autostart_enabled === true;
             // Two values, not one: what was chosen (often nothing) and what the
@@ -1104,6 +1112,23 @@ export class AdminView {
                             : ''
                     }
 
+                    ${
+                        this._hostLayoutOffered
+                            ? `
+                    <div class="settings-field" id="admin-host-layout">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-host-layout"
+                                   ${this._hostLayout ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.hostLayout', {
+                                layout: escapeHtml(this._hostLayoutDetected),
+                            })}</span>
+                        </label>
+                        <p class="setting-desc">${t('admin.hostLayoutDesc')}</p>
+                    </div>
+                    `
+                            : ''
+                    }
+
                     <div class="settings-field">
                         <label class="settings-label" for="admin-instance-name">
                             ${t('admin.instanceName')}
@@ -1779,6 +1804,24 @@ export class AdminView {
                     console.error('[Admin] Failed to save the other screens option:', err);
                     Toast.error(t('admin.saveFailed', { message: err.message }));
                     exclusiveChk.checked = !enabled; // revert
+                }
+            });
+        }
+
+        // ── This PC's keyboard layout for the touch keyboard ───────────────
+        // Saved on the spot; the next stream reads it as it opens.
+        const hostLayoutChk = this.container.querySelector('#chk-host-layout');
+        if (hostLayoutChk) {
+            hostLayoutChk.addEventListener('change', async () => {
+                const enabled = hostLayoutChk.checked;
+                try {
+                    await BackendClient.saveAdminSettings({ keyboard_host_layout: enabled });
+                    this._hostLayout = enabled;
+                    Toast.success(enabled ? t('admin.hostLayoutOn') : t('admin.hostLayoutOff'));
+                } catch (err) {
+                    console.error('[Admin] Failed to save the keyboard layout option:', err);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
+                    hostLayoutChk.checked = !enabled; // revert
                 }
             });
         }

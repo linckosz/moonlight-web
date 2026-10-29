@@ -742,6 +742,64 @@ void run_keyboard_layout_tests()
         CHECK(planText(QString(), KeyboardMode::Positional).isEmpty());
     }
 
+    // ── The touch keyboard's text on this PC's layout ────────────────────────
+    //
+    // With the owner's box ticked and the host on this machine, each character
+    // goes on the key this machine's layout puts it on: an AZERTY's a is the
+    // US Q, é its 2, € AltGr+E, ê the dead circumflex then e. Only what the
+    // layout cannot type is left to text (issue #44, 29/10/2026).
+    {
+        using InputMsg::planText;
+        struct AzertySample : mw::native::HostKeyboardLayout
+        {
+            bool find(char32_t cp, mw::native::LayoutChar& out) const override
+            {
+                mw::native::LayoutChar typed;
+                typed.count = 1;
+                switch (cp) {
+                case U'a': typed.keys[0] = {0x51, false, false}; break;
+                case U'A': typed.keys[0] = {0x51, true, false}; break;
+                case U'1': typed.keys[0] = {0x31, true, false}; break;
+                case U' ': typed.keys[0] = {0x20, false, false}; break;
+                case U'é': typed.keys[0] = {0x32, false, false}; break; // é
+                case U'€': typed.keys[0] = {0x45, false, true}; break;  // €
+                case U'ê':                                              // ê
+                    typed.keys[0] = {0xDD, false, false};
+                    typed.keys[1] = {0x45, false, false};
+                    typed.count = 2;
+                    break;
+                default: return false;
+                }
+                out = typed;
+                return true;
+            }
+            std::string name() const override { return "fr azerty"; }
+        };
+        const AzertySample azerty;
+
+        const auto steps =
+            planText(QStringLiteral("aA1 é€ê😀z"), KeyboardMode::Positional, &azerty);
+        CHECK_EQ(steps.size(), 9);
+        if (steps.size() == 9) {
+            CHECK(steps[0].keyCode == 0x51 && !steps[0].shift && !steps[0].altGr);
+            CHECK(steps[1].keyCode == 0x51 && steps[1].shift);
+            CHECK(steps[2].keyCode == 0x31 && steps[2].shift);
+            CHECK(steps[3].keyCode == 0x20);
+            CHECK(steps[4].keyCode == 0x32 && !steps[4].shift && !steps[4].altGr);
+            CHECK(steps[5].keyCode == 0x45 && !steps[5].shift && steps[5].altGr);
+            CHECK(steps[6].keyCode == 0xDD && !steps[6].isText());
+            CHECK(steps[7].keyCode == 0x45 && !steps[7].altGr);
+            // What the layout lacks stays one run of text, the surrogate pair
+            // whole, and z with it: the US key would not be z on this host.
+            CHECK(steps[8].text == QStringLiteral("😀z"));
+        }
+        // Hosts that inject text exactly keep it, layout or not.
+        for (KeyboardMode mode : {KeyboardMode::Native, KeyboardMode::SunshineWindows}) {
+            const auto kept = planText(QStringLiteral("aé"), mode, &azerty);
+            CHECK(kept.size() == 1 && kept[0].text == QStringLiteral("aé"));
+        }
+    }
+
     // ── AltGr on a positional host ───────────────────────────────────────────
     //
     // Chrome on Windows reports AltGr as Ctrl+Alt. Wolf presses what the

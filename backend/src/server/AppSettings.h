@@ -199,6 +199,16 @@ public:
 
     QString keyboardLayoutFidelity() const;
 
+    // ── This PC's keyboard layout for the touch keyboard ──────────────────────
+    // Stored as JSON bool "keyboard_host_layout", DEFAULT false, set from the
+    // admin page (« Use this PC's keyboard layout »), offered only when this
+    // machine names a layout and a host other than the native one runs here.
+    // On: a Sunshine or a Wolf on this machine, which can only type a phone's
+    // text by pressing keys, gets the keys this machine's layout puts each
+    // character on (issue #44). Read before each stream.
+    bool keyboardHostLayout() const;
+    void setKeyboardHostLayout(bool enabled);
+
     // ── Keyboard diagnostics ──────────────────────────────────────────────────
     //
     // On: every printable keystroke writes one line saying how it was resolved

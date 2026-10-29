@@ -1109,8 +1109,24 @@ void StreamSession::applyKeyboardMode(HostOsProbe::HostOs os)
                                            : m_KeyboardLayoutFidelity);
     m_Engine->setKeyboardMode(mode);
     m_Engine->setLayoutFidelity(fidelity);
+
+    // The touch keyboard's text on this machine's layout, when the owner asked
+    // for it and the host runs here, the one host whose layout this process can
+    // read (issue #44). Read once: this runs again when the OS is settled late.
+    std::shared_ptr<const mw::native::HostKeyboardLayout> textLayout;
+    const bool hostLayout = m_KeyboardHostLayout.value_or(AppSettings().keyboardHostLayout());
+    if (mode == KeyboardMode::Positional && hostLayout && m_Host->isLocalMachine()) {
+        textLayout = m_Engine->hostTextLayout();
+        if (!textLayout) textLayout = mw::native::HostKeyboardLayout::detect();
+    }
+    m_Engine->setHostTextLayout(textLayout);
+
     qInfo() << "[Session] Keyboard:" << InputMsg::keyboardModeName(mode)
-            << "| layout fidelity:" << InputMsg::layoutFidelityName(fidelity);
+            << "| layout fidelity:" << InputMsg::layoutFidelityName(fidelity) << "| text:"
+            << (textLayout ? QStringLiteral("this PC's layout, %1")
+                                 .arg(QString::fromStdString(textLayout->name()))
+                : mode == KeyboardMode::Positional ? QStringLiteral("US keys")
+                                                   : QStringLiteral("as text"));
 }
 
 void StreamSession::sampleHostIpTtl()

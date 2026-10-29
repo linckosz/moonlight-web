@@ -150,4 +150,25 @@ constexpr uint16_t evdevKeyCode(int vk)
     return 0;
 }
 
+/// The keys that type something, as virtual keys: the alphabet, the digit row,
+/// the punctuation around them, the 102-key extra, Space, Enter and Tab.
+constexpr uint8_t kTypingVks[] = {
+    0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+    0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0xC0, 0xBD, 0xBB,
+    0xDB, 0xDD, 0xDC, 0xBA, 0xDE, 0xBC, 0xBE, 0xBF, 0xE2, 0x20, 0x0D, 0x09,
+};
+
+/// evdevKeyCode() read backwards, over the keys that type: the virtual key a
+/// US keyboard carries at evdev position @p code, or 0 for any other key. This
+/// is how a host that presses keys by position (Wolf, Sunshine on Linux) is
+/// told to press the key a character sits on in some other layout.
+constexpr uint8_t typingVkAt(uint16_t code)
+{
+    for (const uint8_t vk : kTypingVks) {
+        if (evdevKeyCode(vk) == code) return vk;
+    }
+    return 0;
+}
+
 } // namespace mw::native::input

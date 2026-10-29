@@ -140,6 +140,53 @@ inline bool parseKeyboardConfig(const std::string& text, XkbNames& out)
     return !out.layout.empty();
 }
 
+/// Read the Xkb options out of the contents of /etc/X11/xorg.conf.d/00-keyboard.conf.
+///
+/// Where `localectl set-x11-keymap` records the layout on the distributions that
+/// have no /etc/default/keyboard (Fedora, Arch): `Option "XkbLayout" "fr"`
+/// lines inside an InputClass section. Same contract as parseKeyboardConfig.
+inline bool parseXorgKeyboardConfig(const std::string& text, XkbNames& out)
+{
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        const size_t eol = text.find('\n', pos);
+        const std::string line =
+            text.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+        pos = eol == std::string::npos ? text.size() + 1 : eol + 1;
+
+        const size_t begin = line.find_first_not_of(" \t\r");
+        if (begin == std::string::npos || line[begin] == '#') continue;
+        if (line.compare(begin, 6, "Option") != 0) continue;
+
+        // The two quoted words after Option: the name, then the value.
+        std::string quoted[2];
+        size_t at = begin + 6;
+        int found = 0;
+        while (found < 2) {
+            const size_t open = line.find('"', at);
+            if (open == std::string::npos) break;
+            const size_t close = line.find('"', open + 1);
+            if (close == std::string::npos) break;
+            quoted[found++] = line.substr(open + 1, close - open - 1);
+            at = close + 1;
+        }
+        if (found < 2) continue;
+
+        std::string key = quoted[0];
+        for (char& c : key)
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        if (key == "xkbmodel")
+            out.model = quoted[1];
+        else if (key == "xkblayout")
+            out.layout = quoted[1];
+        else if (key == "xkbvariant")
+            out.variant = quoted[1];
+        else if (key == "xkboptions")
+            out.options = quoted[1];
+    }
+    return !out.layout.empty();
+}
+
 /// What has to be pressed to type one character on the host's own layout.
 struct XkbStroke
 {
@@ -167,10 +214,11 @@ struct XkbStroke
 ///
 /// libxkbcommon compiles a keymap from rules/model/layout/variant/options, and
 /// we take those from XKB_DEFAULT_* if the session sets them, then from
-/// /etc/default/keyboard, and otherwise leave them to libxkbcommon's own default
-/// (a US layout). The resolved names are logged, because they are a guess about
-/// somebody else's desktop: if a host ever types the wrong letter, the log line
-/// says in one glance which layout was assumed. GNOME keeps its own copy of the
+/// /etc/default/keyboard, then from the X11 file localectl writes, and
+/// otherwise leave them to libxkbcommon's own default (a US layout). The
+/// resolved names are logged, because they are a guess about somebody else's
+/// desktop: if a host ever types the wrong letter, the log line says in one
+/// glance which layout was assumed. GNOME keeps its own copy of the
 /// setting in dconf, which a user who changed layout AFTER installing can have
 /// drift from the file; reading it would mean running gsettings as a child of a
 /// process holding CAP_SYS_ADMIN, which is a worse trade than being wrong on a
@@ -223,9 +271,18 @@ public:
     const std::string& description() const { return m_Description; }
     size_t size() const { return m_Table.size(); }
 
+    /// The names the keymap was compiled from.
+    const XkbNames& names() const { return m_Names; }
+
+    /// Whether those names came from this machine's configuration, rather than
+    /// from libxkbcommon's own default or from the caller.
+    bool fromSystem() const { return m_FromSystem; }
+
 private:
     void* m_Lib = nullptr;
     std::string m_Description;
+    XkbNames m_Names;
+    bool m_FromSystem = false;
     std::unordered_map<char32_t, XkbStroke> m_Table;
     /// The dead keys this layout has, by keysym. A dead key produces no
     /// character of its own — which is exactly why the walk above skips it — and

@@ -130,4 +130,22 @@ void run_evdev_keymap_tests()
     // is the "no such key" answer and 0x00 is not a virtual key at all.
     CHECK_EQ(evdevKeyCode(0x00), 0);
     CHECK_EQ(evdevKeyCode(0xFF), 0);
+
+    SECTION("Linux key map — evdev code back to the virtual key, for typing");
+
+    // Every key that types comes back as itself: a character placed on the key
+    // this machine's layout puts it on reaches Wolf or Sunshine as the US
+    // virtual key at that position, which they turn back into the same evdev
+    // code (issue #44).
+    for (const uint8_t vk : kTypingVks)
+        CHECK_EQ(int(typingVkAt(evdevKeyCode(vk))), int(vk));
+    CHECK_EQ(int(typingVkAt(16)), 0x51); // KEY_Q: where an AZERTY types a
+    CHECK_EQ(int(typingVkAt(3)), 0x32);  // KEY_2: where an AZERTY types é
+    CHECK_EQ(int(typingVkAt(86)), 0xE2); // KEY_102ND: < and > on an ISO board
+    // Modifiers, the keypad and the arrows type nothing a layout is asked for.
+    CHECK_EQ(int(typingVkAt(42)), 0);  // KEY_LEFTSHIFT
+    CHECK_EQ(int(typingVkAt(100)), 0); // KEY_RIGHTALT
+    CHECK_EQ(int(typingVkAt(79)), 0);  // KEY_KP1
+    CHECK_EQ(int(typingVkAt(103)), 0); // KEY_UP
+    CHECK_EQ(int(typingVkAt(0)), 0);
 }

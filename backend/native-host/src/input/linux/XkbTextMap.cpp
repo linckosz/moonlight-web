@@ -211,7 +211,8 @@ std::string envOrEmpty(const char* name)
 /// rules/model/layout/variant/options for THIS host.
 ///
 /// The environment first — a session that sets XKB_DEFAULT_LAYOUT has said what
-/// it wants — then /etc/default/keyboard, then nothing at all, which leaves
+/// it wants — then /etc/default/keyboard (Debian, Ubuntu), then the X11 file
+/// localectl writes (Fedora, Arch), then nothing at all, which leaves
 /// libxkbcommon to its own default. The names are passed explicitly rather than
 /// letting libxkbcommon read the environment itself: it reads it through
 /// secure_getenv, and this process may be running with an ambient capability,
@@ -236,6 +237,17 @@ XkbNames resolveNames(std::string& source)
         XkbNames fromFile;
         if (parseKeyboardConfig(buffer.str(), fromFile)) {
             source = "/etc/default/keyboard";
+            return fromFile;
+        }
+    }
+
+    std::ifstream xorg("/etc/X11/xorg.conf.d/00-keyboard.conf");
+    if (xorg) {
+        std::ostringstream buffer;
+        buffer << xorg.rdbuf();
+        XkbNames fromFile;
+        if (parseXorgKeyboardConfig(buffer.str(), fromFile)) {
+            source = "/etc/X11/xorg.conf.d/00-keyboard.conf";
             return fromFile;
         }
     }
@@ -308,11 +320,13 @@ bool XkbTextMap::open(const char* layout)
 
     std::string source;
     XkbNames names;
+    bool fromSystem = false;
     if (layout && *layout) {
         names.layout = layout;
         source = "the nested compositor's own";
     } else {
         names = resolveNames(source);
+        fromSystem = !names.layout.empty();
     }
     const RuleNames rules = {orNull(names.rules), orNull(names.model), orNull(names.layout),
                              orNull(names.variant), orNull(names.options)};
@@ -389,6 +403,8 @@ bool XkbTextMap::open(const char* layout)
         close();
         return false;
     }
+    m_Names = names;
+    m_FromSystem = fromSystem;
     return true;
 }
 
@@ -397,6 +413,8 @@ void XkbTextMap::close()
     m_Table.clear();
     m_Dead.clear();
     m_Description.clear();
+    m_Names = XkbNames();
+    m_FromSystem = false;
     if (m_Lib) ::dlclose(m_Lib);
     m_Lib = nullptr;
 }

@@ -26,6 +26,7 @@
 
 #include "InputPolicy.h"
 #include "IMediaEngine.h"
+#include "mw/native/HostKeyboardLayout.h"
 
 #include <QDebug>
 #include <QJsonArray>
@@ -713,12 +714,14 @@ inline bool usKeyOf(QChar c, short& vk, bool& shift)
 }
 
 /// One step of typing a string: a key pressed and released (its US position,
-/// Shift in the modifier byte), or a run of text.
+/// Shift in the modifier byte, AltGr as the right Alt held around it), or a run
+/// of text.
 struct TextStep
 {
     short keyCode = 0;
     bool shift = false;
     QString text;
+    bool altGr = false;
 
     bool isText() const { return !text.isEmpty(); }
 };
@@ -736,7 +739,15 @@ struct TextStep
 /// does with its soft keyboard (Game.java, handleKeyDown). The host's layout
 /// decides what the key types, as it does for the physical keyboard on these
 /// hosts. Only what no US key carries is left to text.
-inline QVector<TextStep> planText(const QString& text, KeyboardMode mode)
+///
+/// With @p layout — this machine's, for a host that runs on it, when the owner
+/// ticked the box — every character goes on the key that layout puts it on,
+/// dead keys included: `a` is the US Q on an AZERTY, `é` its 2, `€` AltGr+E,
+/// where the text sequence typed nothing in a game (SDL, GLFW) and closed the
+/// XFCE session for `€` (29/10/2026). Only what the layout cannot type is left
+/// to text.
+inline QVector<TextStep> planText(const QString& text, KeyboardMode mode,
+                                  const mw::native::HostKeyboardLayout* layout = nullptr)
 {
     QVector<TextStep> steps;
     if (text.isEmpty()) return steps;
@@ -745,18 +756,41 @@ inline QVector<TextStep> planText(const QString& text, KeyboardMode mode)
         return steps;
     }
     QString run;
-    for (const QChar c : text) {
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        // A whole code point: an emoji is two UTF-16 units, and the layout
+        // speaks code points.
+        QString unit(text[i]);
+        char32_t cp = text[i].unicode();
+        if (text[i].isHighSurrogate() && i + 1 < text.size() && text[i + 1].isLowSurrogate()) {
+            cp = QChar::surrogateToUcs4(text[i], text[i + 1]);
+            unit += text[i + 1];
+            ++i;
+        }
+
+        QVector<TextStep> keys;
+        mw::native::LayoutChar typed;
         short vk = 0;
         bool shift = false;
-        if (!usKeyOf(c, vk, shift)) {
-            run += c;
+        if (layout) {
+            if (layout->find(cp, typed)) {
+                for (int k = 0; k < typed.count; ++k) {
+                    const mw::native::LayoutKey& key = typed.keys[k];
+                    keys.append({static_cast<short>(key.vk), key.shift, QString(), key.altGr});
+                }
+            }
+        } else if (unit.size() == 1 && usKeyOf(unit[0], vk, shift)) {
+            keys.append({vk, shift, QString()});
+        }
+
+        if (keys.isEmpty()) {
+            run += unit;
             continue;
         }
         if (!run.isEmpty()) {
             steps.append({0, false, run});
             run.clear();
         }
-        steps.append({vk, shift, QString()});
+        steps += keys;
     }
     if (!run.isEmpty()) steps.append({0, false, run});
     return steps;
@@ -765,14 +799,17 @@ inline QVector<TextStep> planText(const QString& text, KeyboardMode mode)
 /// Type the touch keyboard's @p text on the host (see planText).
 inline void sendText(IMediaEngine& engine, const QString& text)
 {
-    for (const TextStep& step : planText(text, engine.keyboardMode())) {
+    const std::shared_ptr<const mw::native::HostKeyboardLayout> layout = engine.hostTextLayout();
+    for (const TextStep& step : planText(text, engine.keyboardMode(), layout.get())) {
         if (step.isText()) {
             engine.sendUtf8Text(step.text);
             continue;
         }
         const char mods = step.shift ? MODIFIER_SHIFT : 0;
+        if (step.altGr) engine.sendKeyEvent(kVkRightAlt, true, 0, 0);
         engine.sendKeyEvent(step.keyCode, true, mods, 0);
         engine.sendKeyEvent(step.keyCode, false, mods, 0);
+        if (step.altGr) engine.sendKeyEvent(kVkRightAlt, false, 0, 0);
     }
 }
 

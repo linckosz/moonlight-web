@@ -653,6 +653,9 @@ int runStreamWorker(QCoreApplication& app)
     session->setViewerAdmin(cfg["viewerAdmin"].toBool(false));
     // Absent (an older parent) → this process reads the file, as before.
     session->setKeyboardLayoutFidelity(cfg["keyboardLayoutFidelity"].toString());
+    // Absent (an older parent) → this process reads the file, as before.
+    if (cfg.contains(QStringLiteral("keyboardHostLayout")))
+        session->setKeyboardHostLayout(cfg[QStringLiteral("keyboardHostLayout")].toBool());
     // Absent (an older parent, or a machine that never met a portal) → empty,
     // and the user is asked. Never a failure: a dialog is the fallback.
     session->setPortalRestoreToken(cfg["portalRestoreToken"].toString());

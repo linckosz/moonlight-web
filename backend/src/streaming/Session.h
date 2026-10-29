@@ -184,6 +184,10 @@ public:
     /// right one for a session in the server's own process.
     void setKeyboardLayoutFidelity(const QString& fidelity) { m_KeyboardLayoutFidelity = fidelity; }
 
+    /// keyboard_host_layout as the server read it, by the same road and for the
+    /// same reason. Unset: read the file here.
+    void setKeyboardHostLayout(bool enabled) { m_KeyboardHostLayout = enabled; }
+
     /// The desktop portal consent this installation already holds, replayed so
     /// the user is not asked again. Only the native engine acts on it, and only
     /// on the Linux portal route; empty everywhere else, which simply means the
@@ -560,6 +564,7 @@ private:
     /// path, which is the host's own administrator anyway.
     bool m_ViewerAdmin = true;
     QString m_KeyboardLayoutFidelity;
+    std::optional<bool> m_KeyboardHostLayout;
 
     /// See setPortalRestoreToken. Empty is the honest default: a session that
     /// does not know of a consent asks for one.

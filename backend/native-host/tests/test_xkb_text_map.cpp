@@ -5,6 +5,7 @@
 #include "native_test_framework.h"
 
 #include "input/linux/XkbTextMap.h"
+#include "mw/native/HostKeyboardLayout.h"
 
 #include <cstdio>
 #include <string>
@@ -101,6 +102,38 @@ void checkPlumbing()
     // than compile a keymap for nothing.
     XkbNames empty;
     CHECK(!parseKeyboardConfig("# nothing here\nBACKSPACE=\"guess\"\n", empty));
+
+    // The file localectl writes where there is no /etc/default/keyboard
+    // (Fedora, Arch), as `localectl set-x11-keymap fr pc105 azerty` writes it.
+    XkbNames xorg;
+    CHECK(parseXorgKeyboardConfig("# Written by systemd-localed(8), read by systemd-localed\n"
+                                  "# and Xorg. It's probably wise not to edit this file\n"
+                                  "Section \"InputClass\"\n"
+                                  "        Identifier \"system-keyboard\"\n"
+                                  "        MatchIsKeyboard \"on\"\n"
+                                  "        Option \"XkbLayout\" \"fr\"\n"
+                                  "        Option \"XkbModel\" \"pc105\"\n"
+                                  "        Option \"XkbVariant\" \"azerty\"\n"
+                                  "EndSection\n",
+                                  xorg));
+    CHECK_EQ(xorg.layout, std::string("fr"));
+    CHECK_EQ(xorg.variant, std::string("azerty"));
+    CHECK_EQ(xorg.model, std::string("pc105"));
+    CHECK_EQ(xorg.options, std::string());
+
+    // Option names are case-blind in Xorg, a commented line is not an option,
+    // and a section that names no layout is no layout.
+    XkbNames cased;
+    CHECK(parseXorgKeyboardConfig("\tOption \"xkblayout\" \"de\"\r\n"
+                                  "#\tOption \"XkbVariant\" \"nodeadkeys\"\r\n",
+                                  cased));
+    CHECK_EQ(cased.layout, std::string("de"));
+    CHECK_EQ(cased.variant, std::string());
+    XkbNames none;
+    CHECK(!parseXorgKeyboardConfig("Section \"InputClass\"\n"
+                                   "        Option \"XkbModel\" \"pc105\"\n"
+                                   "EndSection\n",
+                                   none));
 }
 
 #if defined(__linux__)
@@ -203,6 +236,44 @@ void checkRealKeymap()
     describe(map, char32_t(0x00EA), "e-circ");
 }
 
+void checkHostLayout()
+{
+    SECTION("Text input — this machine's layout as GameStream keys (Linux)");
+
+    const auto layout = mw::native::HostKeyboardLayout::detect();
+    if (!layout) {
+        std::fprintf(stderr, "  [SKIP] this machine names no layout (or has no libxkbcommon): "
+                             "the admin is not offered the box, which is the documented "
+                             "behaviour\n");
+        return;
+    }
+    std::fprintf(stderr, "      layout: %s\n", layout->name().c_str());
+
+    // A letter is one key, its capital the same key with Shift.
+    mw::native::LayoutChar lower;
+    mw::native::LayoutChar upper;
+    CHECK(layout->find(U'a', lower));
+    CHECK(layout->find(U'A', upper));
+    CHECK_EQ(lower.count, 1);
+    CHECK(lower.keys[0].vk != 0 && !lower.keys[0].shift && !lower.keys[0].altGr);
+    CHECK_EQ(int(upper.keys[0].vk), int(lower.keys[0].vk));
+    CHECK(upper.keys[0].shift);
+
+    // On a French layout (XKB_DEFAULT_LAYOUT=fr), the keys of issue #44 as Wolf
+    // and Sunshine must be told them: a on the US Q, é on 2, € AltGr+E, ê the
+    // dead circumflex then e.
+    if (layout->name().rfind("fr", 0) == 0) {
+        mw::native::LayoutChar c;
+        CHECK(layout->find(U'a', c) && c.keys[0].vk == 0x51);
+        CHECK(layout->find(char32_t(0x00E9), c) && c.count == 1 && c.keys[0].vk == 0x32 &&
+              !c.keys[0].shift && !c.keys[0].altGr);
+        CHECK(layout->find(char32_t(0x20AC), c) && c.count == 1 && c.keys[0].vk == 0x45 &&
+              c.keys[0].altGr);
+        CHECK(layout->find(char32_t(0x00EA), c) && c.count == 2 && c.keys[1].vk == 0x45);
+        CHECK(layout->find(U'1', c) && c.keys[0].vk == 0x31 && c.keys[0].shift);
+    }
+}
+
 #endif // __linux__
 
 } // namespace
@@ -212,5 +283,6 @@ void run_xkb_text_map_tests()
     checkPlumbing();
 #if defined(__linux__)
     checkRealKeymap();
+    checkHostLayout();
 #endif
 }

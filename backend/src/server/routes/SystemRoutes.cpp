@@ -35,6 +35,7 @@
 #include "backend/streambackend/NativeProbeService.h"
 #include "streaming/ConsoleSession.h"
 #include "mw/native/Capabilities.h"
+#include "mw/native/HostKeyboardLayout.h"
 #include "mw/native/VideoPipeline.h"
 #include "Autostart.h"
 #include "DisplaySleep.h"
@@ -1054,8 +1055,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
     // — Admin settings (localhost only, server config) —
 
-    server.router()->get("/api/admin/settings", [&server, &appSettings,
-                                                 &authManager](const HttpRequest& req) {
+    server.router()->get("/api/admin/settings", [&server, &appSettings, &authManager,
+                                                 &computerManager](const HttpRequest& req) {
         QJsonObject obj;
         obj["http_port"] = static_cast<int>(server.httpPort());
         // Report the persisted (canonical) HTTPS port, not the
@@ -1081,6 +1082,27 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["virtual_display_exclusive_supported"] = false;
 #endif
         obj["virtual_display_exclusive"] = appSettings.virtualDisplayExclusive();
+        // This PC's keyboard layout for the touch keyboard's text: offered when
+        // this machine names a layout (Linux only, see HostKeyboardLayout) and a
+        // host runs here other than the native one, which types text itself.
+        // The layout is named on the box, for the owner to check it.
+        {
+            const auto layout = mw::native::HostKeyboardLayout::detect();
+            bool hostHere = false;
+            const QJsonArray hosts = computerManager.getHostsJson();
+            for (const QJsonValue& v : hosts) {
+                const QJsonObject h = v.toObject();
+                if (h.value("backendType").toString() == QLatin1String("native")) continue;
+                if (h.value("isLocalHost").toBool()) {
+                    hostHere = true;
+                    break;
+                }
+            }
+            obj["keyboard_host_layout_offered"] = layout != nullptr && hostHere;
+            obj["keyboard_host_layout_detected"] =
+                layout ? QString::fromStdString(layout->name()) : QString();
+            obj["keyboard_host_layout"] = appSettings.keyboardHostLayout();
+        }
         // Start at login. Two facts, because the page has two decisions to
         // make: whether to show the box at all (a desktop session with a
         // login-item mechanism — never under a service supervisor), and
@@ -1161,6 +1183,16 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             const bool enabled = body["virtual_display_exclusive"].toBool();
             appSettings.setVirtualDisplayExclusive(enabled);
             obj["virtual_display_exclusive"] = enabled;
+            hadChange = true;
+        }
+
+        // ── This PC's keyboard layout for the touch keyboard ────────────
+        // Read by each stream as it opens (StreamSession::applyKeyboardMode),
+        // so the next stream follows; one already running keeps its keys.
+        if (body.contains("keyboard_host_layout")) {
+            const bool enabled = body["keyboard_host_layout"].toBool();
+            appSettings.setKeyboardHostLayout(enabled);
+            obj["keyboard_host_layout"] = enabled;
             hadChange = true;
         }
 

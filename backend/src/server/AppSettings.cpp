@@ -720,6 +720,19 @@ QString AppSettings::keyboardLayoutFidelity() const
     return QStringLiteral("auto");
 }
 
+bool AppSettings::keyboardHostLayout() const
+{
+    // Only a real true: typing on another layout's keys is a decision.
+    return readAll().value("keyboard_host_layout").toBool(false);
+}
+
+void AppSettings::setKeyboardHostLayout(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["keyboard_host_layout"] = enabled;
+    writeAll(obj);
+}
+
 bool AppSettings::keyboardDebug() const
 {
     QJsonObject obj = readAll();

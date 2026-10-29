@@ -24,6 +24,9 @@
 #include <QVector>
 #include <atomic>
 #include <cstdint>
+#include <memory>
+
+#include "mw/native/HostKeyboardLayout.h"
 
 class FrameSentSink;
 
@@ -345,6 +348,19 @@ public:
         return m_LayoutFidelity.load(std::memory_order_relaxed);
     }
 
+    /// The layout of this machine, for a positional host that runs on it, when
+    /// the owner asked for it (keyboard_host_layout): the touch keyboard's text
+    /// is then typed on the keys this layout puts each character on. Null — the
+    /// default — keeps the US keys and the text of InputMsg::planText.
+    void setHostTextLayout(std::shared_ptr<const mw::native::HostKeyboardLayout> layout)
+    {
+        std::atomic_store(&m_HostTextLayout, std::move(layout));
+    }
+    std::shared_ptr<const mw::native::HostKeyboardLayout> hostTextLayout() const
+    {
+        return std::atomic_load(&m_HostTextLayout);
+    }
+
     /// Whether the client's key presses come from its gaming mouse mode, as
     /// their `gaming` flag says. True when that changed: the session logs one
     /// line per change, since under "auto" it decides positions or characters.
@@ -511,5 +527,8 @@ protected:
     /// keystroke by whichever thread owns the input channel — hence atomic.
     std::atomic<KeyboardMode> m_KeyboardMode{KeyboardMode::Positional};
     std::atomic<LayoutFidelity> m_LayoutFidelity{LayoutFidelity::Never};
+    /// Same: set by the session thread, read by the input thread, through
+    /// std::atomic_load / atomic_store.
+    std::shared_ptr<const mw::native::HostKeyboardLayout> m_HostTextLayout;
     std::atomic<int> m_GamingKeys{-1};
 };

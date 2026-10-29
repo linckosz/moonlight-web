@@ -495,6 +495,15 @@ else()
     target_sources(mw-native-host PRIVATE src/input/VirtualHid_none.cpp)
 endif()
 
+# This machine's keyboard layout (include/mw/native/HostKeyboardLayout.h), for
+# a Sunshine or a Wolf on the same machine that types text by pressing keys:
+# read through XkbTextMap on Linux, and needed nowhere else.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(mw-native-host PRIVATE src/input/linux/HostKeyboardLayout.cpp)
+else()
+    target_sources(mw-native-host PRIVATE src/input/HostKeyboardLayout_none.cpp)
+endif()
+
 target_compile_features(mw-native-host PUBLIC cxx_std_17)
 
 # The top-level build turns CMAKE_AUTOMOC on globally. This module has no
