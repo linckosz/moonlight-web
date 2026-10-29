@@ -609,10 +609,15 @@ export class StreamViewKeyboard {
             // Park the special-keys bar just above the soft keyboard, then shrink
             // the stream by its height too so the bottom of the picture (e.g. the
             // Windows taskbar) stays visible above the bar instead of behind it.
-            // The pan the shorter area is about to clamp, for the way back.
+            // The pan the shorter area is about to clamp, for the way back, and
+            // where the clamp left it: a pan that moves from there is the
+            // user's own, kept when the keyboard closes (iPhone, 29/10/2026).
             if (!this._panBeforeKbd) {
                 this._panBeforeKbd = { x: this._panX, y: this._panY, zoom: this._zoom };
             }
+            const kept = this._panBeforeKbd;
+            if (kept.atX !== undefined && Math.abs(this._panX - kept.atX) > 0.5) kept.movedX = true;
+            if (kept.atY !== undefined && Math.abs(this._panY - kept.atY) > 0.5) kept.movedY = true;
             let tbHeight = 0;
             if (this._kbToolbar) {
                 this._kbToolbar.classList.add('visible');
@@ -624,6 +629,8 @@ export class StreamViewKeyboard {
             // Re-clamp the pan to the shorter area, then seat the picture.
             if (this._applyZoomTransform) this._applyZoomTransform();
             else this._seatPictureOnKbToolbar();
+            kept.atX = this._panX;
+            kept.atY = this._panY;
             // A hidden standby leg measures the same viewport as the live one;
             // let the visible view own the document-wide inset.
             if (!this._standby) publishKbdInset(covered + tbHeight);
@@ -643,12 +650,17 @@ export class StreamViewKeyboard {
             this._hideKbToolbar();
             // Closing the keyboard puts the picture back where it was before:
             // the clamp to the shorter area moved it, not the user (iPhone,
-            // 27/10/2026). A zoom changed while typing keeps its own pan.
+            // 27/10/2026). Only what the clamp moved, axis by axis: a pan the
+            // user made while typing stays, or closing the keyboard slides the
+            // desktop back sideways (iPhone, 29/10/2026). A zoom changed while
+            // typing keeps its own pan.
             const before = this._panBeforeKbd;
             this._panBeforeKbd = null;
             if (before && Math.abs((before.zoom ?? 1) - (this._zoom ?? 1)) < 0.001) {
-                this._panX = before.x;
-                this._panY = before.y;
+                const untouched = (moved, at, now) =>
+                    !moved && (at === undefined || Math.abs(now - at) <= 0.5);
+                if (untouched(before.movedX, before.atX, this._panX)) this._panX = before.x;
+                if (untouched(before.movedY, before.atY, this._panY)) this._panY = before.y;
             }
             if (this._applyZoomTransform) this._applyZoomTransform();
             else this._seatPictureOnKbToolbar(false);

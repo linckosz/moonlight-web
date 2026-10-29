@@ -178,6 +178,29 @@ describe('touch keyboard bar placement', () => {
         expect(Math.abs(v._panY)).toBe(0);
     });
 
+    it('keeps a pan made while typing, axis by axis (iPhone, 29/10)', () => {
+        const v = zoomedView(3.5, -351);
+        v._panX = 200;
+        openKeyboard(v);
+        // The user drags the desktop sideways to read its other half.
+        v._panX = -300;
+        closeKeyboard(v);
+        expect(v._panX).toBe(-300);
+        // Up and down, only the clamp moved it: that part goes back.
+        expect(v._panY).toBe(-351);
+    });
+
+    it('keeps a pan made while typing through a later resize of the keyboard', () => {
+        const v = zoomedView(3.5, -351);
+        openKeyboard(v);
+        v._panY = -100;
+        // The suggestion bar comes up: the keyboard grows, the branch runs again.
+        viewport(450, 420);
+        v._handleViewportResize();
+        closeKeyboard(v);
+        expect(v._panY).toBe(-100);
+    });
+
     it('keeps the pan of a zoom changed while typing', () => {
         const v = zoomedView(3.5, -351);
         openKeyboard(v);
