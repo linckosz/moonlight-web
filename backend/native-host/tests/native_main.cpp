@@ -83,6 +83,7 @@ void run_cadence_lock_tests();
 void run_input_admit_tests();
 void run_capture_hold_tests();
 void run_resample_cost_tests();
+void run_mwsr_zones_tests();
 void run_cadence_align_tests();
 void run_cadence_choice_tests();
 void run_cadence_step_tests();
@@ -180,6 +181,7 @@ int main(int argc, char** argv)
     RUN(input_admit);
     RUN(capture_hold);
     RUN(resample_cost);
+    RUN(mwsr_zones);
     RUN(cadence_align);
     RUN(cadence_choice);
     RUN(cadence_step);

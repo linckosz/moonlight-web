@@ -593,6 +593,7 @@ if(MW_BUILD_TESTS)
         tests/test_input_admit.cpp
         tests/test_capture_hold.cpp
         tests/test_resample_cost.cpp
+        tests/test_mwsr_zones.cpp
         tests/test_cadence_align.cpp
         tests/test_cadence_choice.cpp
         tests/test_cadence_step.cpp
