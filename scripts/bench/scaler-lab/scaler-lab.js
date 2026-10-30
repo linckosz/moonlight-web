@@ -1634,6 +1634,122 @@ async function runLabInner(p, log) {
     srgb: mwsrRegime(inW, inH, outW, outH, { srgb: true }),
   };
   const regime = regimes.soft;
+
+  // The adaptive sharpness's cost (mwsr-map.js, lab only): `mwsr:map=WxH`
+  // reads a grid of factors (a fixed pattern), `mwsr:map=WxH;ana=1` writes it
+  // first from the picture — statistics per cell of a `cells=CWxCH` grid at
+  // the stride `q` (`nb=1`: the neighbours 1 texel away, not q; `rot=1`: a
+  // quarter of those texels a frame, in turn), then per tile, then the tree
+  // — four passes in all.
+  const MAP = await import("./mwsr-map.js");
+  const plTexMap = L([
+    { binding: 0, visibility: FR, sampler: {} },
+    { binding: 1, visibility: FR, texture: { sampleType: "float" } },
+    { binding: 2, visibility: FR, buffer: {} },
+    { binding: 3, visibility: FR, texture: { sampleType: "float" } },
+  ]);
+  const plExtMap = L([
+    { binding: 0, visibility: FR, sampler: {} },
+    { binding: 1, visibility: FR, externalTexture: {} },
+    { binding: 2, visibility: FR, buffer: {} },
+    { binding: 3, visibility: FR, texture: { sampleType: "float" } },
+  ]);
+  // via=vtx: the map read by the vertices (mapKernelVtx)
+  const VF = GPUShaderStage.VERTEX | FR;
+  const plTexMapV = L([
+    { binding: 0, visibility: FR, sampler: {} },
+    { binding: 1, visibility: FR, texture: { sampleType: "float" } },
+    { binding: 2, visibility: FR, buffer: {} },
+    { binding: 3, visibility: VF, texture: { sampleType: "float" } },
+  ]);
+  const plExtMapV = L([
+    { binding: 0, visibility: FR, sampler: {} },
+    { binding: 1, visibility: FR, externalTexture: {} },
+    { binding: 2, visibility: FR, buffer: {} },
+    { binding: 3, visibility: VF, texture: { sampleType: "float" } },
+  ]);
+  const plStatsTex = L([{ binding: 0, visibility: FR, texture: { sampleType: "float" } }]);
+  const plStatsExt = L([{ binding: 0, visibility: FR, externalTexture: {} }]);
+  const plTwo = L([
+    { binding: 0, visibility: FR, texture: { sampleType: "unfilterable-float" } },
+    { binding: 1, visibility: FR, texture: { sampleType: "unfilterable-float" } },
+  ]);
+  const dimsOf = (s) => {
+    const m = /^(\d+)x(\d+)$/.exec(s);
+    if (!m) throw new Error("map/cells: WxH, not " + s);
+    return [Number(m[1]), Number(m[2])];
+  };
+  const mapTargets = new Map();
+  // mapv=V: every factor V instead of the pattern (mapv=1 must draw as mwsr)
+  const sharpMapView = (spec, analysed, value) => {
+    const key = "map-" + spec + (analysed ? "-a" : "-p" + (value ?? ""));
+    if (!mapTargets.has(key)) {
+      const [w, h] = dimsOf(spec);
+      const tex = mkTex(w, h, "r16float", T.TEXTURE_BINDING | T.RENDER_ATTACHMENT | T.COPY_DST);
+      if (!analysed)
+        device.queue.writeTexture({ texture: tex }, MAP.mapPattern(w, h, value), { bytesPerRow: w * 2 }, [w, h]);
+      views[key] = tex.createView();
+      targetFormats[key] = "r16float";
+      mapTargets.set(key, key);
+    }
+    return views[mapTargets.get(key)];
+  };
+  const mrtPipeline = (key, code, layout, constants) => {
+    if (pipelines.has(key)) return pipelines.get(key);
+    const module = device.createShaderModule({ code });
+    const pl = device.createRenderPipeline({
+      layout,
+      vertex: { module, entryPoint: "vs" },
+      fragment: {
+        module,
+        entryPoint: "fs",
+        targets: [{ format: "rgba16float" }, { format: "rgba16float" }],
+        constants,
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    pipelines.set(key, pl);
+    return pl;
+  };
+  const analysisPasses = (name, feed, opts, srcView) => {
+    const [mw, mh] = dimsOf(opts.map);
+    const [cw, ch] = dimsOf(opts.cells || "64x36");
+    const q = Number(opts.q || 4);
+    const nb = Number(opts.nb || 0);
+    const rot = opts.rot === "1";
+    const T2 = T.TEXTURE_BINDING | T.RENDER_ATTACHMENT;
+    const tag = `${cw}x${ch}-${mw}x${mh}`;
+    for (const [k, w, h] of [["sa-" + tag, cw, ch], ["sb-" + tag, cw, ch], ["ta-" + tag, mw, mh], ["tb-" + tag, mw, mh]])
+      if (!views[k]) views[k] = mkTex(w, h, "rgba16float", T2).createView();
+    // rot=1: one pipeline per phase, the batch's iterations take them in turn
+    const phases = (rot ? [0, 1, 2, 3] : [0]).map((p) =>
+      mrtPipeline(
+        `stats-${feed}-${tag}-q${q}-d${nb}` + (rot ? `-r${p}` : ""),
+        MAP.statsWgsl(feed),
+        feed === "ext" ? plStatsExt : plStatsTex,
+        { CW: cw, CH: ch, Q: q, D: nb, R: rot ? 1 : 0, P: p },
+      ),
+    );
+    const stats = phases[0];
+    const tiles = mrtPipeline(`tiles-${tag}`, MAP.TILE_WGSL, plTwo, { MW: mw, MH: mh });
+    sharpMapView(opts.map, true); // the map's target (its format) before its pipeline
+    // tree=lum: the factor is the tile's mean luma (the chain's check against the bench's numpy);
+    // tree=fKxS: the tile's statistic K (0-7) times S, the same check for the others
+    const fk = /^f([0-7])x([\d.]+)$/.exec(opts.tree || "");
+    const tree = opts.tree === "lum" ? "    return f[0];" : fk ? `    return f[${fk[1]}] * ${Number(fk[2]).toFixed(3)};` : undefined;
+    const decide = pipeline(`decide-${tag}-${opts.tree || "std"}`, MAP.decideWgsl(tree), "map-" + opts.map + "-a", ["vs", "fs"], plTwo);
+    const p1 =
+      feed === "ext"
+        ? { pipeline: stats, targets: ["sa-" + tag, "sb-" + tag], ext: (ext) => bind(stats, [ext]) }
+        : { pipeline: stats, targets: ["sa-" + tag, "sb-" + tag], group: bind(stats, [srcView]) };
+    if (rot) p1.pick = (i) => phases[i % 4];
+    return [
+      p1,
+      { pipeline: tiles, targets: ["ta-" + tag, "tb-" + tag], group: bind(tiles, [views["sa-" + tag], views["sb-" + tag]]) },
+      { pipeline: decide, target: "map-" + opts.map + "-a", group: bind(decide, [views["ta-" + tag], views["tb-" + tag]]) },
+    ];
+  };
+
   const mwsrPass = (name, feed, opts, srcView) => {
     const over = {};
     const uni = {};
@@ -1649,6 +1765,7 @@ async function runLabInner(p, log) {
     }
     for (const [k, v] of Object.entries(opts)) {
       if (k === "tau" || k === "sharp") uni[k] = Number(v);
+      else if (["map", "mapv", "ana", "cells", "q", "nb", "rot", "tree", "via"].includes(k)) continue; // mwsr-map.js
       else if (k === "gaze") {
         uni.gaze = Number(v);
         if (!("GAZE" in over)) over.GAZE = 1;
@@ -1672,6 +1789,26 @@ async function runLabInner(p, log) {
       srcView = inViewSrgb;
     }
     const target = srgb ? "out-srgb" : "out";
+    const ub = uniform(mwsrUniforms(inW, inH, outW, outH, uni));
+    if (opts.map) {
+      // mwsr-map.js: the kernel reading a grid of sharpness factors (map=WxH),
+      // per pixel from the texture, or (via=vtx) by the vertices of a mesh
+      const mapView = sharpMapView(opts.map, !!opts.ana, opts.mapv === undefined ? undefined : Number(opts.mapv));
+      const vtx = opts.via === "vtx";
+      if (opts.via && !vtx) throw new Error(name + ": via=vtx, or no via");
+      const code = (vtx ? MAP.mapKernelVtx : MAP.mapKernel)(mwsrWgsl({ feed, half, mode, taps, fine }));
+      const layout = feed === "ext" ? (vtx ? plExtMapV : plExtMap) : vtx ? plTexMapV : plTexMap;
+      const pl = pipeline(name, code, target, ["vs", "fs"], layout, over);
+      const count = vtx ? MAP.vtxCount(...dimsOf(opts.map)) : 3;
+      if (feed === "ext")
+        return {
+          pipeline: pl,
+          target,
+          count,
+          ext: (ext) => bind(pl, [sampler, ext, { buffer: ub }, mapView]),
+        };
+      return { pipeline: pl, target, count, group: bind(pl, [sampler, srcView, { buffer: ub }, mapView]) };
+    }
     const pl = pipeline(
       name,
       mwsrWgsl({ feed, half, mode, taps, fine }),
@@ -1680,7 +1817,6 @@ async function runLabInner(p, log) {
       feed === "ext" ? plExt : plTex,
       over,
     );
-    const ub = uniform(mwsrUniforms(inW, inH, outW, outH, uni));
     if (feed === "ext")
       return {
         pipeline: pl,
@@ -1778,6 +1914,8 @@ async function runLabInner(p, log) {
           .map((kv) => kv.split("=")),
       );
       const passes = pre ? [blitPass()] : [];
+      // mwsr-map.js: ana=1 writes the map from the picture first (three passes)
+      if (opts.map && opts.ana) passes.push(...analysisPasses(name, feed, opts, pre ? views.blit : inView));
       passes.push(mwsrPass(name, feed, opts, pre ? views.blit : inView));
       return { name, feed: pre || feed === "ext" ? "ext" : "tex", passes };
     }
@@ -1861,7 +1999,7 @@ async function runLabInner(p, log) {
 
   // Timestamps: a query set wide enough for a batch of the longest chain,
   // resolved once per batch into a mappable buffer.
-  const maxPasses = 4;
+  const maxPasses = 6; // mwsr-map.js's analysed cells: three passes before the kernel
   const qCount = 2 * maxPasses * batch;
   let querySet = null;
   let resolveBuf = null;
@@ -1900,14 +2038,13 @@ async function runLabInner(p, log) {
       }
       for (const ps of cell.passes) {
         const desc = {
-          colorAttachments: [
-            {
-              view: views[ps.target],
-              loadOp: "clear",
-              storeOp: "store",
-              clearValue: { r: 0, g: 0, b: 0, a: 1 },
-            },
-          ],
+          // several targets: the analysis passes of mwsr-map.js
+          colorAttachments: (ps.targets || [ps.target]).map((t) => ({
+            view: views[t],
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          })),
         };
         if (stamp) {
           desc.timestampWrites = {
@@ -1918,9 +2055,9 @@ async function runLabInner(p, log) {
           q += 2;
         }
         const pass = enc.beginRenderPass(desc);
-        pass.setPipeline(ps.pipeline);
+        pass.setPipeline(ps.pick ? ps.pick(i) : ps.pipeline); // rot=1: the phase of iteration i
         pass.setBindGroup(0, ps.ext ? ps.ext(ext) : ps.group);
-        pass.draw(3);
+        pass.draw(ps.count || 3); // a mesh's vertices for via=vtx (mwsr-map.js)
         pass.end();
       }
     }

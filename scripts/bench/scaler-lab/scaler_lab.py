@@ -372,6 +372,8 @@ def main():
     ap.add_argument("--chrome-arg", action="append", default=[])
     ap.add_argument("--headed", default="", help="X,Y,W,H: a shown window there instead of headless")
     ap.add_argument("--remote-cdp", type=int, default=0, help="DevTools port of an already running Chrome")
+    ap.add_argument("--remote-target", default="",
+                    help="with --remote-cdp: the page whose URL holds this, not the first one (a phone's own tabs left alone)")
     ap.add_argument("--http-port", type=int, default=0, help="fixed port for the server (remote runs)")
     ap.add_argument("--serve", default="", help="host:port — serve for a phone (HTTPS, self-signed) and wait for posted results")
     ap.add_argument("--no-tls", action="store_true", help="--serve in plain HTTP (no WebGPU on a phone then)")
@@ -482,7 +484,7 @@ def main():
         for _ in range(50):
             try:
                 targets = json.load(urllib.request.urlopen("http://127.0.0.1:%d/json" % cdp_port))
-                page = next(t for t in targets if t["type"] == "page")
+                page = next(t for t in targets if t["type"] == "page" and a.remote_target in t.get("url", ""))
                 break
             except Exception:  # noqa: BLE001
                 time.sleep(0.2)
