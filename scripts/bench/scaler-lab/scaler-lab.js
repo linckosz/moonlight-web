@@ -635,11 +635,34 @@ async function makeFrames(pictures, codec, log, encSw = false) {
   if (codec === "hevc") encConfig.hevc = { format: "annexb" };
   else if (codec !== "vp9") encConfig.avc = { format: "annexb" };
   let sup = await VideoEncoder.isConfigSupported(encConfig);
+  // enc=sw on a browser that has no software encoder for the codec (Safari on
+  // iOS may have none for H.264): the other software codec, then the hardware.
+  // Both only make the clip, before any timing: neither is timed.
+  let encNote = "";
+  if (!sup.supported && encSw && codec !== "hevc") {
+    const other = codec === "vp9" ? (big ? "avc1.640033" : "avc1.640032") : big ? "vp09.00.51.08" : "vp09.00.50.08";
+    const alt = { ...encConfig, codec: other };
+    if (other.startsWith("avc1")) alt.avc = { format: "annexb" };
+    else delete alt.avc;
+    const s2 = await VideoEncoder.isConfigSupported(alt);
+    if (s2.supported) {
+      Object.keys(encConfig).forEach((k) => delete encConfig[k]);
+      Object.assign(encConfig, alt);
+      sup = s2;
+      encNote = "no software " + codecString + ", software " + other + " instead";
+    }
+  }
+  if (!sup.supported && encSw) {
+    encConfig.hardwareAcceleration = "no-preference";
+    sup = await VideoEncoder.isConfigSupported(encConfig);
+    if (sup.supported) encNote = "no software encoder: " + encConfig.codec + " by the browser's choice, before the timing";
+  }
   if (!sup.supported && !encSw) {
     encConfig.hardwareAcceleration = "no-preference";
     sup = await VideoEncoder.isConfigSupported(encConfig);
   }
   if (!sup.supported) throw new Error("no encoder for " + codecString + (encSw ? " in software" : ""));
+  if (encNote) log("encoder: " + encNote);
   const encHw = encConfig.hardwareAcceleration;
   let encErr = null;
   const encoder = new VideoEncoder({
@@ -661,7 +684,7 @@ async function makeFrames(pictures, codec, log, encSw = false) {
   encoder.close();
   if (encErr) throw new Error("encoder: " + encErr.message);
   const decConfig = {
-    codec: codecString,
+    codec: encConfig.codec,
     hardwareAcceleration: "prefer-hardware",
     optimizeForLatency: true,
   };
@@ -669,7 +692,7 @@ async function makeFrames(pictures, codec, log, encSw = false) {
   if (!dsup.supported) {
     decConfig.hardwareAcceleration = "no-preference";
     dsup = await VideoDecoder.isConfigSupported(decConfig);
-    if (!dsup.supported) throw new Error("no decoder for " + codecString);
+    if (!dsup.supported) throw new Error("no decoder for " + encConfig.codec);
   }
   const frames = [];
   let decErr = null;
@@ -691,7 +714,8 @@ async function makeFrames(pictures, codec, log, encSw = false) {
   const f0 = frames[0];
   const bytes = chunks.reduce((a, c) => a + c.byteLength, 0);
   const info = {
-    codec: codecString,
+    codec: encConfig.codec,
+    ...(encNote ? { encoderNote: encNote } : {}),
     encoderAcceleration: encHw,
     decoderAcceleration: decConfig.hardwareAcceleration,
     format: f0.format,
