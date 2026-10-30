@@ -640,6 +640,34 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
    - Aussi : la lecture de la grille, et les temps du README de `mwsr/` refaits sur ce GPU.
    - Clip encodé dans la page en logiciel et décodé sur la 780M.
    - Environ 30 min, installation comprise (estimé).
+   - **Fait le 30/10 (19:13-19:21).** Chrome 154 sans fenêtre, sur Vulkan (RADV), piloté depuis DualRTX
+     par des tunnels ssh. Le clip est encodé et décodé en logiciel, comme au §9. La fréquence n'est pas
+     fixée : lots de 100 dessins, dispersion sous 1 %, série refaite dans l'ordre inverse, mêmes chiffres
+     à 1 % près. p50, en ms :
+
+     | Cas | Chaîne V0 | Chaîne V2 | Écart | Noyau V0 | Noyau V2 |
+     |---|---|---|---|---|---|
+     | ×2, jeu | 0,294 | 0,349 | +19 % | 0,233 | 0,246 |
+     | ×1,33, jeu | 0,390 | 0,482 | +24 % | 0,271 | 0,274 |
+     | ×2, texte | 0,368 | 0,384 | +4 % | 0,299 | 0,282 |
+     | ×1,33, texte | 0,473 | 0,521 | +10 % | 0,304 | 0,294 |
+     | ×2, jeu en 4K | 0,658 | 0,759 | +15 % | 0,526 | 0,552 |
+
+     - **V2 perd sur la 780M.**
+       - Son noyau ne gagne rien (−6 à +6 %, contre −20 % sur le GPU intégré à 2 unités de calcul).
+       - Sa passe 0 en deux plans coûte 35 à 65 % de plus que la copie RGBA.
+       - Supposé : avec 12 unités de calcul, ce GPU n'est pas limité par le calcul.
+     - **La lecture de la grille est gratuite** : 0 % (±0,5 %). Le f16 ne gagne rien (0 à −1 %).
+     - **Les temps du README**, sur le jeu, à 1080p → 1440p, chacun à sa meilleure précision :
+       MWSR 0,267 ms, FSR1 0,707, NIS 0,953, SGSR1 0,216, bilinéaire 0,110. Le f16 n'a pas été
+       comparé au pixel au f32 sur ce GPU.
+     - **Conséquence pour le §12 d** : en 4K, la chaîne V0 fait 0,66 ms, au-dessus du seuil de 0,5 ms. La
+       règle prendrait donc V2, plus lente de 15 %, et le repli par la marque la prendrait partout sur ce
+       GPU.
+       - Proposé à Bruno : V2 seulement si elle est mesurée plus rapide que V0, d'au moins 5 %, sur ce
+         GPU et à cette taille.
+       - Sans horodatages : le chemin actuel.
+       - En attente de sa réponse.
 4. **Le HDR 10 bits au banc** (DualRTX, créneau GPU de la gestion des plans).
    - Un clip P010 encodé en logiciel, décodé sur la RTX puis sur l'iGPU.
    - V0 contre V2 : les temps, et la couleur en PQ (écart et dépassement).
