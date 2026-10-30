@@ -599,19 +599,27 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
   - D'abord, la passe 0 écrit Y et UV depuis la texture externe.
   - Ensuite, le noyau traite Y en MWSR et UV au bilinéaire, avec une sortie RGB.
 - **Quand :** sur un flux 4:2:0, jamais sous CHROMA444 (`_yuv444`), et sur un GPU faible.
-- **« GPU faible », par la mesure :**
+- **« GPU faible », par la mesure** (règle A de Bruno, 30/10, après la 780M : V2 seulement si elle est
+  mesurée au moins 5 % plus rapide, sur ce GPU et à cette taille ; sans horodatages, le chemin actuel) :
   - le renderer demande `timestamp-query` quand l'adaptateur l'a, comme `shader-f16` ;
-  - il mesure la chaîne MWSR (passe 0 et noyau) pendant environ 2 s après le démarrage, à la taille
-    courante, et garde le p50 ;
-  - au-dessus de 0,5 ms par image, il prend V2. Mesures du 29 et du 30/10 :
+  - il mesure d'abord la chaîne actuelle (passe 0 et noyau) pendant environ 1 s après le démarrage, à
+    la taille courante, et garde le p50 ;
+  - sous 0,5 ms par image, il garde le chemin actuel : le GPU n'est pas faible. Mesures du 29 et du
+    30/10 :
     - RTX : 0,08 à 0,11 ms ;
+    - 780M : 0,29 à 0,47 ms en 1440p, 0,66 ms en 4K ;
     - iGPU du 9900X : 2,4 à 3,1 ms ;
     - iPhone 13 Pro : 0,9 à 1,1 ms ;
     - realme : 18 à 25 ms ;
+  - au-dessus, il mesure aussi V2 pendant environ 2 s, en blocs de quelques images alternés avec le
+    chemin actuel, pour que la montée en fréquence du GPU ne favorise aucun des deux. V2 s'affiche alors
+    par moments ; sa couleur ne s'écarte que de 0,1 point de SSIM ;
+  - il prend V2 seulement si son p50 est plus bas d'au moins 5 %. Sinon, le chemin actuel : c'est le
+    cas de la 780M en 4K, où V2 perd 15 % ;
   - la mesure est refaite à chaque changement de taille, parce que l'échelle change le coût ;
   - à taille égale, le choix ne change plus pendant la session : pas de bascule en boucle ;
-  - sans `timestamp-query`, la marque décide, comme pour le f16 : V2 hors NVIDIA. Une carte graphique
-    dédiée AMD ou Intel prend alors V2 sans en avoir besoin.
+  - sans `timestamp-query` : le chemin actuel. Plus de repli par la marque, qui aurait pris V2 sur la
+    780M.
 - **L'échelle de l'enhancer ne change pas.** V2 reste la marche `mwsr` : elle la rend seulement moins
   chère.
 - **Un drapeau de debug,** coupé par défaut et sans interface : `mw_mwsr_v2` dans le localStorage. `0`
@@ -667,7 +675,10 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
        - Proposé à Bruno : V2 seulement si elle est mesurée plus rapide que V0, d'au moins 5 %, sur ce
          GPU et à cette taille.
        - Sans horodatages : le chemin actuel.
-       - En attente de sa réponse.
+       - **Bruno a choisi cette règle (A)** le 30/10 au soir. Elle s'ajoute au seuil de 0,5 ms, qui
+         reconnaît le GPU faible ; le §12 d est réécrit.
+     - Les temps du README sont dans la notice de `mwsr/` depuis le 30/10 (oui de Bruno), avec la
+       mention que le f16 n'y a pas été comparé au f32.
 4. **Le HDR 10 bits au banc** (DualRTX, créneau GPU de la gestion des plans).
    - Un clip P010 encodé en logiciel, décodé sur la RTX puis sur l'iGPU.
    - V0 contre V2 : les temps, et la couleur en PQ (écart et dépassement).
@@ -686,7 +697,8 @@ pousse.
    4. le transport : `mwsr_map` au `/start`, le bit de l'octet 8, le bloc annexe, sa lecture et ses
       tests. `xhigh`
    5. la grille dans le client WebGPU, les deux compilations, le drapeau, vérifiés sur SwiftShader. `high`
-   6. V2 dans `MwsrShader.js`, la règle par la mesure, le drapeau, vérifiés sur SwiftShader. `xhigh`
+   6. V2 dans `MwsrShader.js`, la règle par la mesure (seuil, puis V2 contre le chemin actuel), le
+      drapeau, vérifiés sur SwiftShader. `xhigh`
    7. pourquoi V2 ne dessine pas dans WebKit, en lisant le code, avant de prendre l'iPhone. `high`
 3. Les créneaux de la gestion des plans, avec la durée annoncée à chaque fois. `xhigh`
    - DualRTX : le coût de la passe de l'hôte sur la RTX et l'iGPU, puis le HDR de V2 ;
