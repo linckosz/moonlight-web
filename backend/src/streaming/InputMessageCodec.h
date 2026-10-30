@@ -796,11 +796,29 @@ inline QVector<TextStep> planText(const QString& text, KeyboardMode mode,
     return steps;
 }
 
+/// The characters of @p steps a host running @p mode can only type through its
+/// input method: the text a positional host enters with Ctrl+Shift+U, which
+/// nothing types without IBus in the host's session (issue #44). Empty when
+/// every character went as a key, or when the host injects text itself.
+inline QString inputMethodText(const QVector<TextStep>& steps, KeyboardMode mode)
+{
+    QString left;
+    if (mode != KeyboardMode::Positional) return left;
+    for (const TextStep& step : steps)
+        left += step.text;
+    return left;
+}
+
 /// Type the touch keyboard's @p text on the host (see planText).
-inline void sendText(IMediaEngine& engine, const QString& text)
+///
+/// @returns the characters left to the host's input method (inputMethodText),
+///          for the page to say why they may not arrive.
+inline QString sendText(IMediaEngine& engine, const QString& text)
 {
     const std::shared_ptr<const mw::native::HostKeyboardLayout> layout = engine.hostTextLayout();
-    for (const TextStep& step : planText(text, engine.keyboardMode(), layout.get())) {
+    const KeyboardMode mode = engine.keyboardMode();
+    const QVector<TextStep> steps = planText(text, mode, layout.get());
+    for (const TextStep& step : steps) {
         if (step.isText()) {
             engine.sendUtf8Text(step.text);
             continue;
@@ -811,6 +829,7 @@ inline void sendText(IMediaEngine& engine, const QString& text)
         engine.sendKeyEvent(step.keyCode, false, mods, 0);
         if (step.altGr) engine.sendKeyEvent(kVkRightAlt, false, 0, 0);
     }
+    return inputMethodText(steps, mode);
 }
 
 } // namespace InputMsg

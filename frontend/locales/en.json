@@ -764,7 +764,7 @@
         "lineReconnecting": "Reconnecting to your machine… the stream carries on.",
         "lineOutOfReach": "Your machine's controls are out of reach — the stream carries on.",
         "gamepadIgnored": "\"{{name}}\" is not forwarded: its layout is unknown. Map it once and it will work.",
-        "textInputNeedsIme": "Touch keyboard: on a Linux host, text is entered through IBus. Without an input method running in the host's session, nothing usable is typed.",
+        "textInputNeedsIme": "Touch keyboard: this host has no key for “{{chars}}”, so it was sent as text. That needs an input method (IBus) running in the host's session; without one, nothing appears, or digits do.",
         "webrtcError": "WebRTC connection error",
         "degradeBitrate": "Unstable network — bitrate reduced to {{mbps}} Mbps",
         "degradeBitrateFps": "Unstable network — bitrate reduced to {{mbps}} Mbps, capped at 60 fps",

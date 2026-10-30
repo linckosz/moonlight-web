@@ -764,7 +764,7 @@
         "lineReconnecting": "Reconnexion à votre machine… le stream continue.",
         "lineOutOfReach": "Les commandes de votre machine sont hors d'atteinte — le stream continue.",
         "gamepadIgnored": "« {{name}} » n’est pas transmise : sa disposition est inconnue. Configurez-la une fois et elle fonctionnera.",
-        "textInputNeedsIme": "Clavier tactile : sur un hôte Linux, le texte passe par IBus. Sans méthode de saisie active dans la session de l'hôte, rien d'utilisable n'est tapé.",
+        "textInputNeedsIme": "Clavier tactile : cet hôte n'a pas de touche pour « {{chars}} », envoyé donc en texte. Il faut alors une méthode de saisie (IBus) active dans la session de l'hôte ; sans elle, rien ne s'affiche, ou des chiffres.",
         "webrtcError": "Erreur de connexion WebRTC",
         "degradeBitrate": "Réseau instable — débit réduit à {{mbps}} Mbps",
         "degradeBitrateFps": "Réseau instable — débit réduit à {{mbps}} Mbps, limité à 60 fps",

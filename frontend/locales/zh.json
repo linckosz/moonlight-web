@@ -764,7 +764,7 @@
         "lineReconnecting": "正在重新连接您的电脑…串流不受影响。",
         "lineOutOfReach": "暂时无法操作您的电脑——串流不受影响。",
         "gamepadIgnored": "“{{name}}”未被转发：布局未知。映射一次即可使用。",
-        "textInputNeedsIme": "触摸键盘：在 Linux 主机上，文本通过 IBus 输入。若主机会话中没有运行输入法，将无法正确输入。",
+        "textInputNeedsIme": "触摸键盘：此主机没有可输入“{{chars}}”的按键，因此以文本发送。这需要主机会话中运行输入法（IBus）；否则不会显示任何内容，或显示为数字。",
         "webrtcError": "WebRTC 连接错误",
         "degradeBitrate": "网络不稳定——码率已降至 {{mbps}} Mbps",
         "degradeBitrateFps": "网络不稳定——码率已降至 {{mbps}} Mbps，帧率限制为 60 fps",

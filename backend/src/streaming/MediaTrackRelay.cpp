@@ -883,7 +883,21 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     } else if (type == "textinput") {
         // Virtual/soft keyboard text: as text, or as US keys on a host that
         // cannot type text without an input method (InputMsg::planText).
-        InputMsg::sendText(*m_Shim, msg["text"].toString());
+        // What was left to that input method is named back to the page, which
+        // says once why it may not arrive.
+        const QString viaIme = InputMsg::sendText(*m_Shim, msg["text"].toString());
+        if (!viaIme.isEmpty() && m_InputDc && !m_Stopping.load()) {
+            QJsonObject m;
+            m["type"] = "textviaime";
+            m["text"] = viaIme;
+            const QByteArray json = QJsonDocument(m).toJson(QJsonDocument::Compact);
+            try {
+                m_InputDc->send(std::string(json.constData(), json.size()));
+            } catch (const std::exception& e) {
+                if (!m_Stopping.load())
+                    qWarning() << "[MediaTrackRelay] textviaime send error:" << e.what();
+            }
+        }
     } else if (type == "locksync") {
         // Align the host's toggle locks (Num/Caps/Scroll) with the client's,
         // sent once per session on the browser's first real keyboard event.

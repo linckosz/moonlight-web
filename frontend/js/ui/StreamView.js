@@ -7712,6 +7712,11 @@ export class StreamView {
             if (typeof msg.text === 'string') this._applyHostClipboard(msg.text);
             return;
         }
+        if (msg.type === 'textviaime') {
+            // Touch-keyboard characters the host could only take as text.
+            if (typeof msg.text === 'string') this._noteTextViaIme(msg.text);
+            return;
+        }
         if (msg.type === 'inputstamp') {
             // The host's answer to a stamped input (stream/InputUplink.js).
             this._inputUplink.noteReply(msg, performance.now());

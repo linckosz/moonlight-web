@@ -59,7 +59,18 @@ function publishKbdInset(px) {
  */
 export class StreamViewKeyboard {
     /**
-     * Send typed text to the host, warning once when it may arrive as garbage.
+     * Send typed text to the host. The server decides how each character
+     * goes, and says so when one cannot go as a key (_noteTextViaIme).
+     *
+     * @param {string} text the characters the soft keyboard produced
+     */
+    _sendTextInput(text) {
+        this.webrtc.send({ type: 'textinput', text });
+    }
+
+    /**
+     * The server's word that some typed characters went to the host's input
+     * method, warning once per view that they may not arrive.
      *
      * Why the warning exists
      * ----------------------
@@ -70,34 +81,25 @@ export class StreamViewKeyboard {
      * and with no input method listening in the host's session the prefix is
      * swallowed and the digits are typed bare.
      *
-     * The defect is on the host, and nothing we send can work around it: the
-     * alternative — sending key events instead of text — needs the host's
-     * KEYBOARD LAYOUT, which no part of the GameStream protocol carries. So the
-     * honest thing is to say it, once, to the person who is about to be
-     * confused by it.
+     * Why only now, and only for these characters
+     * -------------------------------------------
+     * The server now sends what a key can type as that key (InputMsg::planText
+     * — US keys, or this PC's layout when the owner ticked the box), and only
+     * the rest as text. Warning on the first letter, as this did, was a false
+     * alarm on every Wolf: the letters arrived, with a warning that they would
+     * not (issue #44, 30/10/2026). So the server names the characters it had
+     * to leave to the input method (`textviaime`), and only those are worth a
+     * sentence — named, so the person knows which ones to look for.
      *
-     * Who gets warned, and who deliberately does not
-     * ----------------------------------------------
-     *  - MoonlightWeb's own host: never. Its Linux backend resolves the
-     *    character in the session's real layout (XkbTextMap), so text works.
-     *  - A host positively identified as Windows or macOS: never. Both inject
-     *    text directly. HostOsProbe names Windows from its IP TTL, from
-     *    MultiSeat, and from the original NVIDIA software.
-     *  - Everything else — Linux, and Unknown: warned. Unknown is mostly Linux
-     *    or macOS (a TTL of 64 cannot separate them), and a false warning on a
-     *    rare macOS host costs one sentence, while staying silent costs a user
-     *    a keyboard that types nonsense with no explanation.
-     *
-     * @param {string} text the characters the soft keyboard produced
+     * @param {string} text the characters left to the host's input method
      */
-    _sendTextInput(text) {
-        if (!this._textInputHostWarned) {
-            this._textInputHostWarned = true;
-            const os = (this.host?.hostOs || '').toLowerCase();
-            const mayMangle = !this._nativeHost && os !== 'windows' && os !== 'macos';
-            if (mayMangle) Toast.warning(t('stream.textInputNeedsIme'), { durationMs: 10000 });
-        }
-        this.webrtc.send({ type: 'textinput', text });
+    _noteTextViaIme(text) {
+        if (this._textInputHostWarned || !text) return;
+        this._textInputHostWarned = true;
+        // A paste can leave a whole sentence to it: a few are enough to name.
+        const cps = Array.from(text);
+        const chars = cps.length > 8 ? cps.slice(0, 8).join('') + '…' : text;
+        Toast.warning(t('stream.textInputNeedsIme', { chars }), { durationMs: 10000 });
     }
 
     /**

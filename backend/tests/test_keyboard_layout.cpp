@@ -740,6 +740,17 @@ void run_keyboard_layout_tests()
             CHECK(kept.size() == 1 && kept[0].text == QStringLiteral("aZ1!"));
         }
         CHECK(planText(QString(), KeyboardMode::Positional).isEmpty());
+
+        // What is named back to the page: only the text a positional host
+        // types through its input method — never a character sent as a key,
+        // never the text of a host that injects it itself.
+        using InputMsg::inputMethodText;
+        CHECK(inputMethodText(steps, KeyboardMode::Positional) == QStringLiteral("é😀"));
+        CHECK(inputMethodText(planText(QStringLiteral("abc 1!"), KeyboardMode::Positional),
+                              KeyboardMode::Positional)
+                  .isEmpty());
+        for (KeyboardMode mode : {KeyboardMode::Native, KeyboardMode::SunshineWindows})
+            CHECK(inputMethodText(planText(QStringLiteral("é"), mode), mode).isEmpty());
     }
 
     // ── The touch keyboard's text on this PC's layout ────────────────────────
@@ -793,6 +804,12 @@ void run_keyboard_layout_tests()
             // whole, and z with it: the US key would not be z on this host.
             CHECK(steps[8].text == QStringLiteral("😀z"));
         }
+        // é € ê went as keys: only what the layout lacks is named back.
+        CHECK(InputMsg::inputMethodText(steps, KeyboardMode::Positional) == QStringLiteral("😀z"));
+        CHECK(InputMsg::inputMethodText(
+                  planText(QStringLiteral("é€ê"), KeyboardMode::Positional, &azerty),
+                  KeyboardMode::Positional)
+                  .isEmpty());
         // Hosts that inject text exactly keep it, layout or not.
         for (KeyboardMode mode : {KeyboardMode::Native, KeyboardMode::SunshineWindows}) {
             const auto kept = planText(QStringLiteral("aé"), mode, &azerty);

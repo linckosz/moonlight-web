@@ -702,7 +702,17 @@ void StreamRelay::onWsTextMessage(const QString& message)
     } else if (type == "textinput") {
         // Virtual/soft keyboard text: as text, or as US keys on a host that
         // cannot type text without an input method (InputMsg::planText).
-        InputMsg::sendText(*m_Shim, msg["text"].toString());
+        // What was left to that input method is named back to the page, which
+        // says once why it may not arrive.
+        const QString viaIme = InputMsg::sendText(*m_Shim, msg["text"].toString());
+        if (!viaIme.isEmpty() && m_WsClient &&
+            m_WsClient->state() == QAbstractSocket::ConnectedState) {
+            QJsonObject m;
+            m["type"] = "textviaime";
+            m["text"] = viaIme;
+            m_WsClient->sendTextMessage(
+                QString::fromUtf8(QJsonDocument(m).toJson(QJsonDocument::Compact)));
+        }
     } else if (type == "locksync") {
         // Align the host's toggle locks (Num/Caps/Scroll) with the client's,
         // sent once per session on the browser's first real keyboard event.
