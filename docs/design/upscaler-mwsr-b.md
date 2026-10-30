@@ -637,6 +637,15 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
    - Rendu par les cellules SwiftShader du labo (`split+yuv`), sur le processeur seul.
    - Règle fixée d'avance : si Bruno choisit V2 ou « pas de différence » sur la plupart des planches, V2
      tient ; s'il choisit le chemin actuel sur la plupart, V2 attend.
+   - **Fait le 30/10 au soir : V2 attend.** 8 extraits de 480 × 270 px, à ×2 et à ×1,33 (code, IDE, un
+     jeu, et un panneau de texte posé sur le jeu), découpés là où les deux chemins diffèrent le plus.
+     - Bruno a choisi le chemin actuel sur 7 extraits, V2 sur un seul (le panneau à ×1,33), « pas de
+       différence » sur aucun.
+     - Ses choix ne suivent pas la place : le chemin actuel était 3 fois en A et 4 fois en B. Au hasard,
+       7 sur 8 ou mieux arrive 3,5 fois sur 100. Un seul observateur, en une séance.
+     - Sur l'image entière, les mesures ne le disaient pas : 0,1 point de SSIM, et un écart CIEDE2000
+       presque égal. Les extraits montrent les endroits où V2 s'écarte le plus, et c'est là que Bruno
+       voit la différence.
 2. **V2 sur l'iPhone.** Dans WebKit, elle ne dessine sans doute pas : les temps sont proches de 0 et
    les horodatages constants.
    - Trouver pourquoi, avec une capture, puis corriger.
@@ -692,6 +701,8 @@ pousse.
 1. Ce plan. `high`
 2. Sans GPU :
    1. les planches couleur de V2 (vérification 1). `medium`
+      - **Fait : V2 attend** (e.1). Les étapes de V2 (6 et 7, puis son HDR au créneau) attendent la
+        décision de Bruno ; la grille (4 et 5) ne dépend pas de V2.
    2. l'arbre exporté en table, et ses tests contre le banc. `high`
    3. la passe de statistiques de l'hôte en D3D11, vérifiée sur WARP. `xhigh`
       - **Fait le 30/10** : `MwsrStats` (`src/convert/windows/`), un compute shader `cs_5_0`, un
