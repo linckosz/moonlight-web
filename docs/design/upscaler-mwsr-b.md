@@ -450,3 +450,235 @@ de deviner.
   toutes les 15 images environ.
   - Validation d'abord dans le labo : une cellule qui lit une grille, puis P7 et les coupes de scène.
   - Rien dans le produit sans le oui de Bruno.
+
+## 12. La v0.4.2 : la netteté par zone de l'hôte natif et V2 (30/10/2026, décisions de Bruno)
+
+### a. Ce que le banc libre a établi (29-30/10, hors dépôt)
+
+Bruno a demandé, le 29/10 au soir, de refaire l'étude sans loi imposée : « que le benchmark cherche le
+meilleur résultat possible ». Le banc est en Python (`b-free/`, hors dépôt). Son modèle numpy du noyau
+rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un niveau.
+- **Le corpus.** Sortie en 1440p sur 19 références vraiment natives : texte, code coloré, interface, jeux,
+  photos, images mixtes. L'entrée est réduite comme le fait chaque hôte :
+  - l'hôte natif en Lanczos-2 linéaire (`ScaleFilter.h`) ;
+  - Sunshine, Apollo et le repli de l'hôte natif en bilinéaire gamma ;
+  - en plus, une version encodée par x264.
+  
+  Cinq séquences : défilement, panoramique, Call of Duty, coupes, panneau glissé.
+- **La loi est un plafond.** Sur images fixes, l'œil de Bruno n'a jamais choisi plus net que la loi. Il
+  a choisi moins net sur les jeux, le code coloré et les images mixtes. La netteté adaptative ne fait
+  donc que baisser, et la variante « jamais sous la loi » du §11 est abandonnée.
+  - Politique retenue : la baisse proposée, réduite de 0,15 ; aucune baisse si elle fait moins de 0,15.
+- **La meilleure approche mesurée : l'hôte natif, une valeur par zone.**
+  - Une grille de 32 × 18 zones de 80 px en 1440p.
+  - Huit statistiques sur chaque pixel de la capture native, avant la réduction.
+  - Un arbre de décision de profondeur 4, appris contre la capture.
+  
+  Résultats, en SSIM-Y × 100 sur la loi, validés en écartant un contenu, puis une famille :
+  - images fixes : +0,066 / +0,063, pire −0,03 ;
+  - séquences : 102 % du gain de la meilleure valeur par image en mouvement, 95 % après les coupes ;
+    défilement −0,010 en moyenne (pire image −0,024).
+- **Les autres approches, mesurées puis écartées :**
+  - l'hôte natif avec une valeur par image : +0,051 / +0,052, 84 % en mouvement ;
+  - le client, une valeur par image : +0,038 / +0,034, 58 % en mouvement, pour un coût de +2 à +6 % sur
+    le realme et de +17 à +28 % sur l'iPhone 13 Pro ;
+  - le client par zone : il se dégrade quand la grille s'affine ;
+  - les règles par pixel ;
+  - le lissage gaussien de la grille, utile seulement si le pompage se voyait.
+- **La valeur voyage avec son image.** Une image de retard coûte 4 à 8 points à chaque coupe. Elle va
+  donc dans l'en-tête de son image, pas dans un quatrième flux, qui ne serait pas en phase. Pas en SEI
+  non plus : aucun encodeur natif n'en écrit, et chaque codec a son propre format.
+- **En mouvement, l'œil de Bruno ne voit ni le gain ni le pompage.** Planches animées à l'aveugle, 4 puis
+  8 extraits : ses choix ont suivi la place A, 7 fois sur 8.
+  - Le pompage mesuré : le pire bloc de 10 px change de 10 niveaux sur 255 entre deux images stables,
+    contre 3 avec une valeur par image.
+  - Le verdict du banc était « garder la loi ». Bruno a choisi la valeur par zone pour l'hôte natif.
+
+### b. Les décisions de Bruno (30/10/2026)
+
+1. **La netteté par zone en v0.4.2, pour l'hôte natif seulement.**
+   - Les autres hôtes gardent la loi : Sunshine, Apollo, Wolf, et un hôte natif d'avant la v0.4.2.
+   - C'est le même noyau, avec une entrée en plus, facultative : la grille des zones.
+2. **V2 en v0.4.2, sur les GPU faibles seulement.**
+   - Ces GPU sont reconnus par la mesure.
+   - En 4:2:0 seulement : le 4:4:4 garde le chemin actuel.
+   - Le choix est automatique, avec un drapeau de debug coupé par défaut.
+3. **Avant d'activer V2, quatre vérifications** (e) :
+   - l'œil de Bruno sur la couleur ;
+   - V2 sur l'iPhone ;
+   - le vrai Radeon 780M ;
+   - le HDR 10 bits au banc.
+4. **Le plan d'abord** : ce paragraphe. Ensuite, la gestion des plans organise les créneaux.
+
+### c. La netteté par zone
+
+**L'hôte natif calcule la grille.**
+- **Où :** sur la capture native, dans la passe de réduction ou juste avant elle. Huit statistiques par
+  pixel, chaque voisin à 1 px, moyennées par zone de la grille posée sur la capture :
+  - la luma et son carré ;
+  - le gradient (|dx| + |dy|), et la part des pixels au-dessus de 0,05 et sous 0,01 ;
+  - le laplacien ;
+  - la saturation (max − min de RGB) ;
+  - la part des pixels sombres (luma < 0,15).
+- **La décision :** l'arbre du banc. Ses entrées :
+  - l'échelle ;
+  - les huit statistiques de la zone et leurs moyennes sur l'image ;
+  - le filtre de réduction (linéaire ou non).
+  
+  Sa sortie est une baisse, sur 12 niveaux, donc 4 bits. L'arbre est appris sur tout le corpus, puis ses
+  seuils deviennent une table constante dans le code. Un test rejoue cette table sur des cas du banc.
+- **Quand :** seulement si l'hôte réduit l'image (capture plus grande que le flux), et en SDR. À 1:1 ou
+  en HDR, aucune grille : le client applique la loi. Le banc n'a mesuré ni le HDR, ni une capture à la
+  taille du flux.
+- **L'échelle :**
+  - l'arbre suppose que la capture a la taille d'affichage du client. C'est ce que fait l'écran virtuel
+    ajusté au client ;
+  - l'hôte prend donc l'échelle capture / flux, et l'écrit avec la grille ;
+  - le client ignore la grille si son échelle réelle s'en écarte de plus de 10 % : fenêtre réduite, zoom,
+    capture d'un écran physique.
+- **Sans retarder l'image :**
+  - les statistiques partent avec la conversion et sont relues quand l'image encodée sort ;
+  - si elles ne sont pas prêtes, l'image part sans grille, et le client applique la loi.
+- **Le transport :**
+  - un bloc annexe en tête de l'image, signalé par un bit de l'octet 8 de l'en-tête de morceau (aujourd'hui
+    « image clé », 0 ou 1) ;
+  - environ 290 octets par image : 576 valeurs de 4 bits, l'échelle et la taille de la grille. Soit
+    environ 140 kbit/s à 60 i/s ;
+  - le bloc n'est envoyé que si le client l'a demandé au `/start` (`mwsr_map`). Un frontend ancien resté
+    en cache ne le voit donc jamais ;
+  - même en-tête de 17 octets sur le canal de données (`FrameSender`) et sur le WebSocket de secours
+    (`StreamRelay`), lus tous deux par `_onVideoChunk`. L'ancien chemin du WebSocket, à en-tête de
+    2 octets, n'aura pas de grille : le client y applique la loi.
+- **Le coût, à mesurer avant d'activer.**
+  - Estimé, non mesuré : environ 0,1 ms par image sur une RTX, environ 3 ms sur un GPU intégré.
+  - Règle proposée, sur le modèle du Lanczos-2, gardé s'il coûte au plus 1,5 ms (`ResampleCost.h`) :
+    - la passe complète tourne si elle tient dans un budget, que Bruno fixe sur les mesures ;
+    - sinon, la variante légère : 16 × 9 zones, un pixel sur 4, pour environ un quart du coût (estimé).
+      Elle a été mesurée à +0,064 / +0,062 sur images fixes et à 99,6 % en mouvement ;
+    - sinon, aucune grille.
+- **Les plateformes :**
+  - D3D11 (Windows) d'abord ;
+  - puis D3D12, EGL et Vulkan (Linux), chacune à son tour ;
+  - un hôte qui n'a pas la passe n'envoie rien, et le client applique la loi.
+
+**Le client lit la grille.**
+- **La garde :**
+  - le renderer garde la grille par horodatage jusqu'au dessin de son image, comme le QP (`noteFrameQp`) ;
+  - la grille voyage dans son image : elle n'arrive jamais seule ni en retard ;
+  - une image sans grille prend la loi.
+- **La lecture :**
+  - la grille devient une texture 32 × 18, lue au bilinéaire par la passe `up` ;
+  - la netteté vaut `loi(échelle) − baisse / force(échelle)`, avec une baisse positive ou nulle ;
+  - la baisse porte sur le poids à travers le bord ; la force est la rampe du noyau, qui vaut 1 à ×2 et
+    0,667 à ×1,33.
+- **Deux compilations du même source,** avec et sans lecture de la grille :
+  - sans lecture, c'est le module d'aujourd'hui, pour tous les autres hôtes : ils ne paient rien ;
+  - le coût de la lecture est mesuré : 0 à 2 % sur PC ; sur le realme, environ 0 en f16, mais +8 à +10 %
+    en f32.
+- **Les renderers et les noyaux :**
+  - WebGPU d'abord : c'est là que la grille est validée au labo (`mwsr-map.js`) ;
+  - puis le jumeau GLSL (WebGL2) ;
+  - V2 aussi, pour l'hôte natif sur un GPU faible. Le binding 3 est déjà pris par V2 dans
+    `mwsr-yuv.js`.
+- **Un drapeau de debug,** coupé par défaut et sans interface, comme `mw_mwsr_gaze` : `mw_mwsr_map` =
+  `0` dans le localStorage ignore la grille, pour comparer à la loi sur le même stream.
+
+**Les preuves avant d'activer :**
+- la table de l'arbre redonne les décisions du banc ;
+- la passe de l'hôte, sur WARP, redonne les statistiques du banc à la précision f16 près ;
+- le client, sur SwiftShader : une grille uniforme rend la loi au bit près, et la grille du banc rend
+  comme le modèle numpy ;
+- le coût réel de la passe, mesurée seule sur une capture, sur la RTX et sur l'iGPU du 9900X (créneau de
+  la gestion des plans), puis sur la 780M quand la passe Linux existera ;
+- enfin, un vrai stream de l'hôte natif, pour l'œil de Bruno : grille ou loi, par le drapeau.
+
+### d. V2
+
+- **Le noyau.** Celui du labo (`mwsr-yuv.js`, V2) entre dans `MwsrShader.js`, en WebGPU seulement,
+  le seul rendu mesuré. WebGL garde le chemin actuel.
+  - D'abord, la passe 0 écrit Y et UV depuis la texture externe.
+  - Ensuite, le noyau traite Y en MWSR et UV au bilinéaire, avec une sortie RGB.
+- **Quand :** sur un flux 4:2:0, jamais sous CHROMA444 (`_yuv444`), et sur un GPU faible.
+- **« GPU faible », par la mesure :**
+  - le renderer demande `timestamp-query` quand l'adaptateur l'a, comme `shader-f16` ;
+  - il mesure la chaîne MWSR (passe 0 et noyau) pendant environ 2 s après le démarrage, à la taille
+    courante, et garde le p50 ;
+  - au-dessus de 0,5 ms par image, il prend V2. Mesures du 29 et du 30/10 :
+    - RTX : 0,08 à 0,11 ms ;
+    - iGPU du 9900X : 2,4 à 3,1 ms ;
+    - iPhone 13 Pro : 0,9 à 1,1 ms ;
+    - realme : 18 à 25 ms ;
+  - la mesure est refaite à chaque changement de taille, parce que l'échelle change le coût ;
+  - à taille égale, le choix ne change plus pendant la session : pas de bascule en boucle ;
+  - sans `timestamp-query`, la marque décide, comme pour le f16 : V2 hors NVIDIA. Une carte graphique
+    dédiée AMD ou Intel prend alors V2 sans en avoir besoin.
+- **L'échelle de l'enhancer ne change pas.** V2 reste la marche `mwsr` : elle la rend seulement moins
+  chère.
+- **Un drapeau de debug,** coupé par défaut et sans interface : `mw_mwsr_v2` dans le localStorage. `0`
+  force le chemin actuel, `1` force V2, par exemple pour la voir sur une RTX. Absent, la règle décide.
+- **Le gain et le prix, mesurés :**
+  - la chaîne gagne 0 à 6 % sur la RTX, 11 à 16 % sur l'iGPU et 14 à 23 % sur le realme ;
+  - la couleur perd 0,1 point de SSIM en 4:2:0, et la luma ne bouge pas.
+- **Plus tard :** V2 en option du générateur `mwsr/`, et dans un renderer natif. Là, elle lirait les
+  plans du décodeur sans passe 0 ; c'est non mesuré.
+
+### e. Les quatre vérifications de V2, avant de l'activer
+
+1. **L'œil de Bruno sur la couleur.** Planches A/B à l'aveugle, chemin actuel contre V2, en 4:2:0 :
+   texte coloré, code, un jeu.
+   - Rendu par les cellules SwiftShader du labo (`split+yuv`), sur le processeur seul.
+   - Règle fixée d'avance : si Bruno choisit V2 ou « pas de différence » sur la plupart des planches, V2
+     tient ; s'il choisit le chemin actuel sur la plupart, V2 attend.
+2. **V2 sur l'iPhone.** Dans WebKit, elle ne dessine sans doute pas : les temps sont proches de 0 et
+   les horodatages constants.
+   - Trouver pourquoi, avec une capture, puis corriger.
+   - Mesurer ensuite avec Bruno : Safari, environ 3 min, `phone.sh ios` (hors dépôt).
+   - Jusque-là, Safari garde le chemin actuel.
+3. **Le vrai Radeon 780M** (UM790Pro sous Ubuntu, créneau de la gestion des plans).
+   - D'abord, vérifier que le WebGPU de Chrome tourne sur Vulkan.
+   - Ensuite, V0 contre V2, chaîne et noyau, en f32 et en f16, à ×2 et ×1,33, sur le jeu et le texte.
+   - Aussi : la lecture de la grille, et les temps du README de `mwsr/` refaits sur ce GPU.
+   - Clip encodé dans la page en logiciel et décodé sur la 780M.
+   - Environ 30 min, installation comprise (estimé).
+4. **Le HDR 10 bits au banc** (DualRTX, créneau GPU de la gestion des plans).
+   - Un clip P010 encodé en logiciel, décodé sur la RTX puis sur l'iGPU.
+   - V0 contre V2 : les temps, et la couleur en PQ (écart et dépassement).
+
+### f. L'ordre, avec l'effort de chaque étape
+
+Le code entre dans le produit coupé : aucun client ne demande la grille, et aucune règle ne choisit V2.
+On l'allume au oui de Bruno, après les mesures. Commits sans push ; c'est la gestion des plans qui
+pousse.
+
+1. Ce plan. `high`
+2. Sans GPU :
+   1. les planches couleur de V2 (vérification 1). `medium`
+   2. l'arbre exporté en table, et ses tests contre le banc. `high`
+   3. la passe de statistiques de l'hôte en D3D11, vérifiée sur WARP. `xhigh`
+   4. le transport : `mwsr_map` au `/start`, le bit de l'octet 8, le bloc annexe, sa lecture et ses
+      tests. `xhigh`
+   5. la grille dans le client WebGPU, les deux compilations, le drapeau, vérifiés sur SwiftShader. `high`
+   6. V2 dans `MwsrShader.js`, la règle par la mesure, le drapeau, vérifiés sur SwiftShader. `xhigh`
+   7. pourquoi V2 ne dessine pas dans WebKit, en lisant le code, avant de prendre l'iPhone. `high`
+3. Les créneaux de la gestion des plans, avec la durée annoncée à chaque fois. `xhigh`
+   - DualRTX : le coût de la passe de l'hôte sur la RTX et l'iGPU, puis le HDR de V2 ;
+   - l'UM790Pro : la 780M ;
+   - l'iPhone, avec Bruno.
+4. Le verdict à Bruno : le budget de la passe de l'hôte, le seuil de V2, les planches. Puis l'activation,
+   à son oui. `high`
+5. Ensuite :
+   - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
+   - le jumeau GLSL de la grille. `high`
+   - le distribuable `mwsr/`. `medium`
+
+### g. Ce qui n'est pas mesuré
+
+- **Le HDR.** La grille est coupée en HDR, et V2 attend la vérification 4.
+- **Une capture qui n'a pas la taille d'affichage du client.** La grille est ignorée au-delà de 10 %
+  d'écart.
+- **La passe de l'hôte en rotation**, un quart des pixels par image : le coût baisserait, mais le gain
+  n'est pas mesuré par zone.
+- **Le pompage à l'œil.** Sur les 4 extraits de la première série, les coches de Bruno ne suivaient pas
+  le pompage mesuré (la loi, qui ne peut pas pomper, a été cochée une fois). Un seul observateur, en une
+  séance.
+- **Les autres hôtes :** une valeur par image côté client a été mesurée, puis écartée par Bruno.
