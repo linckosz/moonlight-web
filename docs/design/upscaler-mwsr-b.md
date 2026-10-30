@@ -846,6 +846,8 @@ pousse.
        - L'iGPU du 9900X aurait la légère à toutes les tailles, pour 0,74 à 1,43 ms au repos.
        - À écrire : la passe légère de l'hôte, l'arbre en 16 × 9 et leurs tests. `high`
          Le transport et le client lisent déjà une grille de toute taille.
+     - **Bruno a choisi B** le 30/10 au soir. Go pour la passe légère, l'arbre en 16 × 9 et leurs tests :
+       WARP d'abord, rien d'activé, le créneau GPU demandé à la gestion des plans (pas avant le matin).
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
    - le jumeau GLSL de la grille. `high`
