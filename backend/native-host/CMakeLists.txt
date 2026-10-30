@@ -72,6 +72,7 @@ if(WIN32)
         src/convert/windows/ColorConvert.cpp
         src/convert/windows/ConvertShaders.cpp
         src/convert/windows/MwsrStats.cpp
+        src/convert/windows/PassTimer.cpp
         src/convert/windows/d3d12/ColorConvert12.cpp
         src/input/windows/Win32Input.cpp
         src/input/windows/WinTextKeys.cpp

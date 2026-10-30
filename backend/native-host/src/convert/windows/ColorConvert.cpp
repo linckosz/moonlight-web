@@ -91,9 +91,7 @@ bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sour
     m_Filter = geometry.filter;
     m_Letterboxed = geometry.letterboxed;
     // A new device, or a new size: what the pass costs is a new question.
-    releaseResampleTiming();
-    m_ResampleCost.reset();
-    m_ResampleCostTaken = false;
+    m_ResampleTimer.reset();
     m_PictureX = geometry.pictureX;
     m_PictureY = geometry.pictureY;
     m_PictureWidth = geometry.pictureWidth;
@@ -135,11 +133,11 @@ bool ColorConvert::dropResample()
     m_ScaledMidView.Reset();
     m_ScaledMidTarget.Reset();
     m_ScaledMid.Reset();
-    releaseResampleTiming();
+    m_ResampleTimer.release();
     return true;
 }
 
-bool ColorConvert::enableMwsrStats(std::string& why)
+bool ColorConvert::enableMwsrStats(std::string& why, bool light)
 {
     m_MwsrStats.reset();
     m_MwsrTicket = 0;
@@ -168,7 +166,7 @@ bool ColorConvert::enableMwsrStats(std::string& why)
         return false;
     }
     auto stats = std::make_unique<MwsrStats>();
-    if (!stats->init(m_Device.Get(), m_SourceWidth, m_SourceHeight, why)) return false;
+    if (!stats->init(m_Device.Get(), m_SourceWidth, m_SourceHeight, light, why)) return false;
     m_MwsrStats = std::move(stats);
     return true;
 }
@@ -180,77 +178,7 @@ bool ColorConvert::readMwsrCells(float* cells)
 
 bool ColorConvert::takeResampleCost(int64_t& costUs)
 {
-    if (m_ResampleCostTaken || !m_ResampleCost.done()) return false;
-    m_ResampleCostTaken = true;
-    costUs = m_ResampleCost.medianUs();
-    releaseResampleTiming();
-    return true;
-}
-
-int ColorConvert::beginResampleTiming()
-{
-    size_t inFlight = 0;
-    for (const TimingSlot& slot : m_Timing)
-        if (slot.pending) ++inFlight;
-    if (!m_ResampleCost.timeThisFrame(inFlight)) return -1;
-
-    const int index = m_TimingNext;
-    TimingSlot& slot = m_Timing[index];
-    if (slot.pending) return -1; // the GPU is further behind than the ring: skip this one
-    if (!slot.disjoint) {
-        D3D11_QUERY_DESC desc = {D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
-        if (FAILED(m_Device->CreateQuery(&desc, slot.disjoint.GetAddressOf()))) return -1;
-        desc.Query = D3D11_QUERY_TIMESTAMP;
-        if (FAILED(m_Device->CreateQuery(&desc, slot.begin.GetAddressOf())) ||
-            FAILED(m_Device->CreateQuery(&desc, slot.end.GetAddressOf()))) {
-            slot = TimingSlot{};
-            return -1;
-        }
-    }
-    m_Context->Begin(slot.disjoint.Get());
-    m_Context->End(slot.begin.Get());
-    return index;
-}
-
-void ColorConvert::endResampleTiming(int index)
-{
-    if (index < 0) return;
-    TimingSlot& slot = m_Timing[index];
-    m_Context->End(slot.end.Get());
-    m_Context->End(slot.disjoint.Get());
-    slot.pending = true;
-    m_TimingNext = (index + 1) % kTimingSlots;
-}
-
-void ColorConvert::collectResampleTiming()
-{
-    for (TimingSlot& slot : m_Timing) {
-        if (!slot.pending) continue;
-        // DONOTFLUSH: a result not there yet is read at a later frame, never
-        // waited for — waiting here would be the very latency being measured.
-        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint = {};
-        if (m_Context->GetData(slot.disjoint.Get(), &disjoint, sizeof(disjoint),
-                               D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK)
-            continue;
-        UINT64 begin = 0, end = 0;
-        if (m_Context->GetData(slot.begin.Get(), &begin, sizeof(begin),
-                               D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK ||
-            m_Context->GetData(slot.end.Get(), &end, sizeof(end), D3D11_ASYNC_GETDATA_DONOTFLUSH) !=
-                S_OK)
-            continue;
-        slot.pending = false;
-        // A disjoint interval (the GPU changed clock mid-way, or was reset)
-        // says nothing reliable: dropped, the next frame is timed instead.
-        if (!disjoint.Disjoint && disjoint.Frequency > 0 && end > begin)
-            m_ResampleCost.add(static_cast<int64_t>((end - begin) * 1000000 / disjoint.Frequency));
-    }
-}
-
-void ColorConvert::releaseResampleTiming()
-{
-    for (TimingSlot& slot : m_Timing)
-        slot = TimingSlot{};
-    m_TimingNext = 0;
+    return m_ResampleTimer.take(costUs);
 }
 
 bool ColorConvert::createScaler(std::string& error)
@@ -563,8 +491,7 @@ bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& 
     m_Context->IASetInputLayout(nullptr);
     m_Context->VSSetShader(m_VertexShader.Get(), nullptr, 0);
     if (m_Filter != ScaleFilter::Bilinear) {
-        collectResampleTiming();
-        const int timing = beginResampleTiming();
+        const int timing = m_ResampleTimer.begin(m_Device.Get(), m_Context.Get());
         D3D11_VIEWPORT pass = {};
         pass.Width = m_PictureWidth;
         pass.Height = static_cast<float>(m_SourceHeight);
@@ -594,7 +521,7 @@ bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& 
         m_Context->PSSetShader(m_ScaleVShader.Get(), nullptr, 0);
         m_Context->PSSetShaderResources(0, 1, mid);
         m_Context->Draw(3, 0);
-        endResampleTiming(timing);
+        m_ResampleTimer.end(m_Context.Get(), timing);
         m_Context->PSSetShaderResources(0, 1, unbind);
         m_Context->OMSetRenderTargets(0, nullptr, nullptr);
     }

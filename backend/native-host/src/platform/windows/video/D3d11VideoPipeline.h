@@ -107,7 +107,7 @@ public:
     }
     bool dropResample() override { return m_Converter->dropResample(); }
 
-    bool takeMwsrZones(uint8_t* codes, float& scale) override;
+    bool takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY, float& scale) override;
 
     void logEndOfSession() const override;
 

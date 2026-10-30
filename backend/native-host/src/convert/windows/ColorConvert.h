@@ -22,6 +22,7 @@
 #include "../ResampleCost.h"
 #include "../ScaleFilter.h"
 #include "MwsrStats.h"
+#include "PassTimer.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -200,10 +201,25 @@ public:
     // ── MWSR's statistics, for the sharpness by zone (plan B §12 c) ─────────
 
     /// Take MWSR's statistics (MwsrStats) of every picture convert() reads
-    /// from now on. Only where the grid was measured: an 8-bit SDR source,
+    /// from now on: the full pass, or with @p light the light one (plan B
+    /// §12 f.4). Only where the grid was measured: an 8-bit SDR source,
     /// reduced to a smaller stream of its own shape. False, with the reason,
     /// anywhere else: nothing is taken, and the stream goes without a grid.
-    bool enableMwsrStats(std::string& why);
+    bool enableMwsrStats(std::string& why, bool light = false);
+
+    /// No statistics any more: the stream goes on without a grid.
+    void disableMwsrStats()
+    {
+        m_MwsrStats.reset();
+        m_MwsrTicket = 0;
+    }
+
+    /// Whether the statistics taken are the light pass's.
+    bool mwsrStatsLight() const { return m_MwsrStats && m_MwsrStats->light(); }
+
+    /// What the statistics pass costs this GPU, once per enableMwsrStats():
+    /// see MwsrStats::takeCost.
+    bool takeMwsrStatsCost(int64_t& costUs) { return m_MwsrStats && m_MwsrStats->takeCost(costUs); }
 
     /// The cells of the picture the last convert() read, if the GPU has
     /// finished them: MwsrStats::kFloats into @p cells. Never waits.
@@ -231,14 +247,6 @@ private:
     /// Re-upload the cursor's small textures, and tell the shader where to put
     /// them. Cheap on every frame but the ones where the shape changed.
     bool updateCursorResources(const capture::CursorState& cursor, std::string& error);
-
-    /// GPU timestamps around the resample pass: which slot this frame's pair
-    /// went into (-1 for none), then the end stamp; and, at the next frame,
-    /// whatever the GPU has finished, read without waiting for it.
-    int beginResampleTiming();
-    void endResampleTiming(int slot);
-    void collectResampleTiming();
-    void releaseResampleTiming();
 
     Microsoft::WRL::ComPtr<ID3D11Device> m_Device;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_Context;
@@ -297,20 +305,8 @@ private:
     ScaleFilter m_Filter = ScaleFilter::Bilinear;
     bool m_Letterboxed = false;
 
-    /// A few frames' worth of timestamp queries in flight: the GPU answers a
-    /// frame or two late, and a slot still pending is simply not reused.
-    struct TimingSlot
-    {
-        Microsoft::WRL::ComPtr<ID3D11Query> disjoint;
-        Microsoft::WRL::ComPtr<ID3D11Query> begin;
-        Microsoft::WRL::ComPtr<ID3D11Query> end;
-        bool pending = false;
-    };
-    static constexpr int kTimingSlots = 4;
-    TimingSlot m_Timing[kTimingSlots];
-    int m_TimingNext = 0;
-    ResampleCost m_ResampleCost;
-    bool m_ResampleCostTaken = false;
+    /// GPU timestamps around the resample pass, on its first few dozen frames.
+    PassTimer m_ResampleTimer;
     /// MWSR's statistics pass, once enableMwsrStats() took it, and the ticket
     /// of the picture the last convert() read (0: none).
     std::unique_ptr<MwsrStats> m_MwsrStats;

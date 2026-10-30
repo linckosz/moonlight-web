@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../MwsrZones.h"
+#include "PassTimer.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -45,6 +46,15 @@ namespace mw::native::convert {
 /// Only for the 8-bit desktop: the statistics are those of the sRGB-encoded
 /// values the bench measured, and an HDR or tone-mapped capture gets no grid.
 ///
+/// ── Two passes, one budget ──────────────────────────────────────────────────
+///
+/// The full pass reads every pixel; the light one, one pixel in 16, for the
+/// light grid of 16 × 9 zones (mwsrzones::decideAll). Both write the same
+/// 128 × 72 cells. What the pass costs is timed on the stream's own frames
+/// (PassTimer, as the Lanczos-2 is): Bruno's budget of 30/10/2026 is the
+/// Lanczos-2's, ResampleCost::kBudgetUs — the full pass if it fits, else the
+/// light one, else no grid (D3d11VideoPipeline::takeMwsrZones).
+///
 /// On the device's immediate context, so on the thread that converts.
 class MwsrStats
 {
@@ -58,10 +68,11 @@ public:
     MwsrStats(const MwsrStats&) = delete;
     MwsrStats& operator=(const MwsrStats&) = delete;
 
-    /// Prepare the pass for @p width × @p height captures on @p device. False,
-    /// with the reason, below feature level 11_0 (no compute shaders) or for a
-    /// capture smaller than the grid (a cell without a pixel).
-    bool init(ID3D11Device* device, int width, int height, std::string& error);
+    /// Prepare the pass for @p width × @p height captures on @p device: the
+    /// full one, or with @p light the light one. False, with the reason, below
+    /// feature level 11_0 (no compute shaders) or for a capture smaller than
+    /// the grid (a cell without a pixel).
+    bool init(ID3D11Device* device, int width, int height, bool light, std::string& error);
 
     /// Queue the pass over @p source, a view of the 8-bit capture through its
     /// UNORM format (the encoded values, not light), and the copy of its cells.
@@ -74,8 +85,14 @@ public:
     /// tests: a frame never waits.
     bool read(uint64_t ticket, float* cells, bool wait = false);
 
+    /// What the pass costs this GPU, once: true exactly once per init(), when
+    /// enough frames have been timed, with the median GPU time in @p costUs —
+    /// the pass and the copy of its cells.
+    bool takeCost(int64_t& costUs) { return m_Timer.take(costUs); }
+
     int width() const { return m_Width; }
     int height() const { return m_Height; }
+    bool light() const { return m_Light; }
 
 private:
     Microsoft::WRL::ComPtr<ID3D11Device> m_Device;
@@ -89,6 +106,8 @@ private:
     uint64_t m_Last = 0;
     int m_Width = 0;
     int m_Height = 0;
+    bool m_Light = false;
+    PassTimer m_Timer;
 };
 
 } // namespace mw::native::convert

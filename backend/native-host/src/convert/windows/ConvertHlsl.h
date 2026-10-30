@@ -415,6 +415,12 @@ float4 PsScale(VsOut i) : SV_TARGET
 // group per cell, 64 threads striding over it, then a tree in groupshared
 // memory; the cell's 8 means go out as two float4.
 //
+// MW_LIGHT, the light variant (§12 f.4): the same cells, but each from one
+// pixel in 16 — every 4th column of every 4th row from the cell's first, the
+// neighbours still 1 px away — as the bench's light grid took them. Too few
+// pixels for a group each: a thread per cell, a group per 8 × 8 cells (one
+// zone of the light 16 × 9 grid).
+//
 // Every operation on a pixel is `precise`, so that FXC fuses no multiply and
 // add and keeps the order written: the order a CPU reference can repeat bit
 // for bit, and the one of the bench (numpy, in float32) but for the luma's
@@ -434,6 +440,56 @@ float Luma(int x, int y)
     return l;
 }
 
+// The pixel's 8 statistics: luma, luma², gradient, gradient > 0.05 |
+// gradient < 0.01, |laplacian|, saturation, luma < 0.15.
+void PixelStats(int x, int y, out float4 head, out float4 tail)
+{
+    precise float3 rgb = Source.Load(int3(x, y, 0)).rgb;
+    precise float  c   = rgb.r * 0.2126 + rgb.g * 0.7152 + rgb.b * 0.0722;
+    precise float  lx  = Luma(min(x + 1, kW - 1), y);
+    precise float  lw  = Luma(max(x - 1, 0), y);
+    precise float  ly  = Luma(x, min(y + 1, kH - 1));
+    precise float  ln  = Luma(x, max(y - 1, 0));
+    precise float  g   = abs(lx - c) + abs(ly - c);
+    precise float  lap = abs(lx + ly + lw + ln - 4.0 * c);
+    precise float  sat = max(rgb.r, max(rgb.g, rgb.b)) - min(rgb.r, min(rgb.g, rgb.b));
+    precise float4 h   = float4(c, c * c, g, g > 0.05 ? 1.0 : 0.0);
+    precise float4 t   = float4(g < 0.01 ? 1.0 : 0.0, lap, sat, c < 0.15 ? 1.0 : 0.0);
+    head = h;
+    tail = t;
+}
+
+#if MW_LIGHT
+
+[numthreads(8, 8, 1)]
+void CsStats(uint3 zone : SV_GroupID, uint3 t : SV_GroupThreadID)
+{
+    const int cx = int(zone.x) * 8 + int(t.x);
+    const int cy = int(zone.y) * 8 + int(t.y);
+    const int x0 = cx * kW / MW_CELLS_X;
+    const int x1 = (cx + 1) * kW / MW_CELLS_X;
+    const int y0 = cy * kH / MW_CELLS_Y;
+    const int y1 = (cy + 1) * kH / MW_CELLS_Y;
+
+    precise float4 head = 0.0;
+    precise float4 tail = 0.0;
+    int n = 0;
+    for (int y = y0; y < y1; y += 4) {
+        for (int x = x0; x < x1; x += 4) {
+            float4 h, tl;
+            PixelStats(x, y, h, tl);
+            head += h;
+            tail += tl;
+            ++n;
+        }
+    }
+    const uint k = (uint(cy) * MW_CELLS_X + uint(cx)) * 2;
+    Cells[k]     = head / float(n);
+    Cells[k + 1] = tail / float(n);
+}
+
+#else
+
 groupshared float4 gHead[64];
 groupshared float4 gTail[64];
 
@@ -445,23 +501,14 @@ void CsStats(uint3 cell : SV_GroupID, uint3 t : SV_GroupThreadID, uint i : SV_Gr
     const int y0 = int(cell.y) * kH / MW_CELLS_Y;
     const int y1 = (int(cell.y) + 1) * kH / MW_CELLS_Y;
 
-    // luma, luma², gradient, gradient > 0.05 | gradient < 0.01, |laplacian|,
-    // saturation, luma < 0.15
     precise float4 head = 0.0;
     precise float4 tail = 0.0;
     for (int y = y0 + int(t.y); y < y1; y += 8) {
         for (int x = x0 + int(t.x); x < x1; x += 8) {
-            precise float3 rgb = Source.Load(int3(x, y, 0)).rgb;
-            precise float  c   = rgb.r * 0.2126 + rgb.g * 0.7152 + rgb.b * 0.0722;
-            precise float  lx  = Luma(min(x + 1, kW - 1), y);
-            precise float  lw  = Luma(max(x - 1, 0), y);
-            precise float  ly  = Luma(x, min(y + 1, kH - 1));
-            precise float  ln  = Luma(x, max(y - 1, 0));
-            precise float  g   = abs(lx - c) + abs(ly - c);
-            precise float  lap = abs(lx + ly + lw + ln - 4.0 * c);
-            precise float  sat = max(rgb.r, max(rgb.g, rgb.b)) - min(rgb.r, min(rgb.g, rgb.b));
-            head += float4(c, c * c, g, g > 0.05 ? 1.0 : 0.0);
-            tail += float4(g < 0.01 ? 1.0 : 0.0, lap, sat, c < 0.15 ? 1.0 : 0.0);
+            float4 h, tl;
+            PixelStats(x, y, h, tl);
+            head += h;
+            tail += tl;
         }
     }
 
@@ -483,6 +530,8 @@ void CsStats(uint3 cell : SV_GroupID, uint3 t : SV_GroupThreadID, uint i : SV_Gr
         Cells[k + 1] = gTail[0] / n;
     }
 }
+
+#endif
 )HLSL";
 
 } // namespace mw::native::convert

@@ -26,7 +26,7 @@ namespace mw::native::convert {
 
 namespace mz = mwsrzones;
 
-bool MwsrStats::init(ID3D11Device* device, int width, int height, std::string& error)
+bool MwsrStats::init(ID3D11Device* device, int width, int height, bool light, std::string& error)
 {
     // A new size, or a new device: nothing of the old pass is kept, and no
     // ticket of it reads (m_Last goes on counting).
@@ -40,6 +40,8 @@ bool MwsrStats::init(ID3D11Device* device, int width, int height, std::string& e
         m_Ticket[slot] = 0;
     }
     m_Width = m_Height = 0;
+    m_Light = false;
+    m_Timer.reset();
     if (!device) {
         error = "no D3D11 device";
         return false;
@@ -56,7 +58,7 @@ bool MwsrStats::init(ID3D11Device* device, int width, int height, std::string& e
     }
 
     ComPtr<ID3DBlob> blob;
-    if (!compileMwsrStatsShader(width, height, blob, error)) return false;
+    if (!compileMwsrStatsShader(width, height, light, blob, error)) return false;
     if (FAILED(device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr,
                                            m_Shader.GetAddressOf()))) {
         error = "could not create MWSR's statistics pass";
@@ -95,6 +97,7 @@ bool MwsrStats::init(ID3D11Device* device, int width, int height, std::string& e
     m_Device->GetImmediateContext(m_Context.GetAddressOf());
     m_Width = width;
     m_Height = height;
+    m_Light = light;
     return true;
 }
 
@@ -102,12 +105,18 @@ uint64_t MwsrStats::dispatch(ID3D11ShaderResourceView* source)
 {
     if (!m_Shader || !source) return 0;
 
+    const int timing = m_Timer.begin(m_Device.Get(), m_Context.Get());
     ID3D11ShaderResourceView* views[] = {source};
     ID3D11UnorderedAccessView* cells[] = {m_CellsView.Get()};
     m_Context->CSSetShader(m_Shader.Get(), nullptr, 0);
     m_Context->CSSetShaderResources(0, 1, views);
     m_Context->CSSetUnorderedAccessViews(0, 1, cells, nullptr);
-    m_Context->Dispatch(mz::kCellsX, mz::kCellsY, 1);
+    // A group per cell; the light pass, a thread per cell and a group per
+    // 8 × 8 cells (kMwsrStatsSource).
+    if (m_Light)
+        m_Context->Dispatch(mz::kCellsX / 8, mz::kCellsY / 8, 1);
+    else
+        m_Context->Dispatch(mz::kCellsX, mz::kCellsY, 1);
     // Unbound at once: the capture is about to release its texture, and a view
     // left bound would keep it (see ColorConvert::convert).
     ID3D11ShaderResourceView* noView[] = {nullptr};
@@ -120,6 +129,7 @@ uint64_t MwsrStats::dispatch(ID3D11ShaderResourceView* source)
     const int slot = static_cast<int>(ticket % kSlots);
     m_Context->CopyResource(m_Readback[slot].Get(), m_Cells.Get());
     m_Ticket[slot] = ticket;
+    m_Timer.end(m_Context.Get(), timing);
     return ticket;
 }
 

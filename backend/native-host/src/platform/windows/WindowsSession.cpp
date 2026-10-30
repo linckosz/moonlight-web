@@ -3424,14 +3424,15 @@ private:
         ++m_MwsrAskedFrames;
         const int64_t startUs = steadyNowUs();
         float scale = 0.0f;
-        if (!m_Pipeline->takeMwsrZones(m_MwsrZones, scale)) return;
+        int zonesX = 0, zonesY = 0;
+        if (!m_Pipeline->takeMwsrZones(m_MwsrZones, zonesX, zonesY, scale)) return;
         const int64_t spentUs = steadyNowUs() - startUs;
         ++m_MwsrZoneFrames;
         m_MwsrDecideUs += spentUs;
         if (spentUs > m_MwsrDecideMaxUs) m_MwsrDecideMaxUs = spentUs;
         out.mwsrZones = m_MwsrZones;
-        out.mwsrZonesX = convert::mwsrzones::kZonesX;
-        out.mwsrZonesY = convert::mwsrzones::kZonesY;
+        out.mwsrZonesX = zonesX;
+        out.mwsrZonesY = zonesY;
         out.mwsrScale = scale;
     }
 

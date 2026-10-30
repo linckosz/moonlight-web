@@ -41,7 +41,8 @@ using namespace mw::native;
 
 // MWSR's statistics pass on WARP, against a CPU reference that repeats the
 // shader's operations on every pixel in the same order and the same float
-// precision (the cell sums in double, the GPU's in float: a few ulps apart).
+// precision (the cell sums in double, the GPU's in float: a few ulps apart);
+// and the light pass, one pixel in 16, against the same reference.
 // The picture is 1000 × 600, so that the cells are 7 or 8 pixels wide and 8 or
 // 9 high, as the bench cut them; it holds flat blocks, text-like strokes, a
 // smooth gradient and saturated noise. The bench's own captures, against its
@@ -87,8 +88,9 @@ void run_mwsr_stats_tests()
     };
 
     // The shader's arithmetic on one picture: per pixel in float, in its
-    // order; per cell, the sums in double.
-    auto reference = [](const std::vector<uint8_t>& px, int w, int h) {
+    // order; per cell, the sums in double. @p step 4 is the light pass's:
+    // every 4th column of every 4th row from the cell's first.
+    auto reference = [](const std::vector<uint8_t>& px, int w, int h, int step) {
         auto rgb = [&](int x, int y, int c) {
             // BGRA: R is byte 2, B byte 0
             return static_cast<float>(px[(static_cast<size_t>(y) * w + x) * 4 + 2 - c]) / 255.0f;
@@ -102,8 +104,10 @@ void run_mwsr_stats_tests()
                 const int x0 = cx * w / mz::kCellsX, x1 = (cx + 1) * w / mz::kCellsX;
                 const int y0 = cy * h / mz::kCellsY, y1 = (cy + 1) * h / mz::kCellsY;
                 double* s = &cells[(static_cast<size_t>(cy) * mz::kCellsX + cx) * mz::kStats];
-                for (int y = y0; y < y1; ++y) {
-                    for (int x = x0; x < x1; ++x) {
+                int n = 0;
+                for (int y = y0; y < y1; y += step) {
+                    for (int x = x0; x < x1; x += step) {
+                        ++n;
                         const float c = luma(x, y);
                         const float lx = luma(std::min(x + 1, w - 1), y);
                         const float lw = luma(std::max(x - 1, 0), y);
@@ -126,7 +130,6 @@ void run_mwsr_stats_tests()
                             s[k] += v[k];
                     }
                 }
-                const double n = static_cast<double>((x1 - x0) * (y1 - y0));
                 for (int k = 0; k < mz::kStats; ++k)
                     s[k] /= n;
             }
@@ -177,31 +180,35 @@ void run_mwsr_stats_tests()
 
         ComPtr<ID3D11ShaderResourceView> view;
         CHECK(upload(px, w, h, view));
-        MwsrStats stats;
-        std::string error;
-        CHECK(stats.init(device.Get(), w, h, error));
-        if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
-        const uint64_t ticket = stats.dispatch(view.Get());
-        CHECK(ticket != 0);
-        std::vector<float> cells(MwsrStats::kFloats);
-        CHECK(stats.read(ticket, cells.data(), true));
+        for (const bool light : {false, true}) {
+            MwsrStats stats;
+            std::string error;
+            CHECK(stats.init(device.Get(), w, h, light, error));
+            if (!error.empty()) std::fprintf(stderr, "  %s\n", error.c_str());
+            CHECK(stats.light() == light);
+            const uint64_t ticket = stats.dispatch(view.Get());
+            CHECK(ticket != 0);
+            std::vector<float> cells(MwsrStats::kFloats);
+            CHECK(stats.read(ticket, cells.data(), true));
 
-        const std::vector<double> want = reference(px, w, h);
-        double worst[mz::kStats] = {};
-        for (size_t i = 0; i < cells.size(); ++i) {
-            const double d = std::fabs(static_cast<double>(cells[i]) - want[i]);
-            double& wk = worst[i % mz::kStats];
-            wk = std::max(wk, d);
+            const std::vector<double> want = reference(px, w, h, light ? 4 : 1);
+            double worst[mz::kStats] = {};
+            for (size_t i = 0; i < cells.size(); ++i) {
+                const double d = std::fabs(static_cast<double>(cells[i]) - want[i]);
+                double& wk = worst[i % mz::kStats];
+                wk = std::max(wk, d);
+            }
+            std::fprintf(stderr, "  %s pass, largest differences:", light ? "light" : "full");
+            for (double d : worst)
+                std::fprintf(stderr, " %.2g", d);
+            std::fprintf(stderr, "\n");
+            // The sums in float against double: a few ulps of values up to 4
+            // (the laplacian); a share differs by 1 / 72 at the least when one
+            // pixel is counted differently (1 / 4 on the light pass), so 1e-6
+            // says none was.
+            for (int k = 0; k < mz::kStats; ++k)
+                CHECK(worst[k] < 1e-6);
         }
-        std::fprintf(stderr, "  largest differences:");
-        for (double d : worst)
-            std::fprintf(stderr, " %.2g", d);
-        std::fprintf(stderr, "\n");
-        // The sums in float against double: a few ulps of values up to 4 (the
-        // laplacian); a share differs by 1 / 72 at the least when one pixel
-        // is counted differently, so 1e-6 says none was.
-        for (int k = 0; k < mz::kStats; ++k)
-            CHECK(worst[k] < 1e-6);
     }
 
     // ── A flat grey capture, all the way to the codes: the law everywhere ──
@@ -210,19 +217,52 @@ void run_mwsr_stats_tests()
         std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4, 128);
         ComPtr<ID3D11ShaderResourceView> view;
         CHECK(upload(px, w, h, view));
-        MwsrStats stats;
-        std::string error;
-        CHECK(stats.init(device.Get(), w, h, error));
-        std::vector<float> cells(MwsrStats::kFloats);
-        CHECK(stats.read(stats.dispatch(view.Get()), cells.data(), true));
-        CHECK_EQ(cells[4], 1.0f); // every pixel flat
-        CHECK_EQ(cells[2], 0.0f); // no gradient
-        uint8_t codes[mz::kZones];
-        mz::decideAll(cells.data(), 2.0f, true, codes);
-        int law = 0;
-        for (uint8_t c : codes)
-            law += c == 0;
-        CHECK_EQ(law, mz::kZones);
+        for (const bool light : {false, true}) {
+            MwsrStats stats;
+            std::string error;
+            CHECK(stats.init(device.Get(), w, h, light, error));
+            std::vector<float> cells(MwsrStats::kFloats);
+            CHECK(stats.read(stats.dispatch(view.Get()), cells.data(), true));
+            CHECK_EQ(cells[4], 1.0f); // every pixel flat
+            CHECK_EQ(cells[2], 0.0f); // no gradient
+            const mz::Grid& grid = light ? mz::kLightGrid : mz::kFullGrid;
+            uint8_t codes[mz::kZones];
+            mz::decideAll(cells.data(), 2.0f, true, codes, grid);
+            int law = 0;
+            for (int z = 0; z < grid.zones(); ++z)
+                law += codes[z] == 0;
+            CHECK_EQ(law, grid.zones());
+        }
+    }
+
+    // ── What the pass costs, timed on its own dispatches: once ──
+    {
+        const int w = 256, h = 144;
+        std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4, 90);
+        ComPtr<ID3D11ShaderResourceView> view;
+        CHECK(upload(px, w, h, view));
+        for (const bool light : {false, true}) {
+            MwsrStats stats;
+            std::string error;
+            CHECK(stats.init(device.Get(), w, h, light, error));
+            std::vector<float> cells(MwsrStats::kFloats);
+            int64_t costUs = -1;
+            int frames = 0;
+            bool taken = false;
+            // Each dispatch reads what the GPU has finished of the ones
+            // before; the read that waits keeps it from falling behind.
+            while (!taken && frames < 200) {
+                CHECK(stats.read(stats.dispatch(view.Get()), cells.data(), true));
+                ++frames;
+                taken = stats.takeCost(costUs);
+            }
+            CHECK(taken);
+            // the warm-up and the median's samples, at the least
+            CHECK(frames >= convert::ResampleCost::kWarmupFrames +
+                                static_cast<int>(convert::ResampleCost::kSamples));
+            CHECK(costUs >= 0);
+            CHECK(!stats.takeCost(costUs)); // once
+        }
     }
 
     // ── The ring: a ticket reads until its buffer goes to a later dispatch ──
@@ -233,7 +273,7 @@ void run_mwsr_stats_tests()
         CHECK(upload(px, w, h, view));
         MwsrStats stats;
         std::string error;
-        CHECK(stats.init(device.Get(), w, h, error));
+        CHECK(stats.init(device.Get(), w, h, false, error));
         std::vector<float> cells(MwsrStats::kFloats);
         const uint64_t first = stats.dispatch(view.Get());
         uint64_t last = first;
@@ -250,7 +290,8 @@ void run_mwsr_stats_tests()
     {
         MwsrStats stats;
         std::string error;
-        CHECK(!stats.init(device.Get(), 100, 72, error));
+        CHECK(!stats.init(device.Get(), 100, 72, false, error));
+        CHECK(!stats.init(device.Get(), 100, 72, true, error));
         CHECK(!error.empty());
         CHECK_EQ(stats.dispatch(nullptr), uint64_t(0));
     }
@@ -283,10 +324,20 @@ void run_mwsr_stats_tests()
             ColorConvert conv;
             CHECK(build(512, 288, 384, 216, ScaleFilter::Lanczos2, conv));
             CHECK(conv.enableMwsrStats(why));
+            CHECK(!conv.mwsrStatsLight());
             CHECK(conv.mwsrScale() > 1.333f && conv.mwsrScale() < 1.334f);
             CHECK(conv.reducesInLinearLight());
             CHECK(conv.dropResample());
             CHECK(!conv.reducesInLinearLight());
+            // the light pass in its place, then none
+            CHECK(conv.enableMwsrStats(why, true));
+            CHECK(conv.mwsrStatsLight());
+            int64_t costUs = 0;
+            CHECK(!conv.takeMwsrStatsCost(costUs)); // nothing timed yet
+            conv.disableMwsrStats();
+            CHECK(!conv.mwsrStatsLight());
+            std::vector<float> cells(MwsrStats::kFloats);
+            CHECK(!conv.readMwsrCells(cells.data()));
         }
     }
 
@@ -341,7 +392,7 @@ void run_mwsr_stats_tests()
         CHECK(conv.readMwsrCells(cells.data()));
 
         MwsrStats direct;
-        CHECK(direct.init(device.Get(), w, h, error));
+        CHECK(direct.init(device.Get(), w, h, false, error));
         std::vector<float> want(MwsrStats::kFloats);
         CHECK(direct.read(direct.dispatch(view.Get()), want.data(), true));
         CHECK(cells == want);

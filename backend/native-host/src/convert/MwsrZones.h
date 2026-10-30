@@ -18,6 +18,8 @@
 #pragma once
 
 #include "convert/MwsrZoneTree.h"
+#include "convert/MwsrZoneTreeLight.h"
+#include "convert/ResampleCost.h"
 
 #include <cmath>
 #include <cstddef>
@@ -48,6 +50,12 @@
 // float32, taken through double and rounded back, so that no compiler can fuse
 // two of them into one rounding.
 //
+// ── The light grid ──────────────────────────────────────────────────────────
+// Bruno's budget (§12 f.4, 30/10/2026): where the full pass costs too much,
+// the light one — one pixel in 16 into the same cells, and a 16 x 9 grid of
+// 8 x 8 cells per zone, decided by its own tree (kTreeLight), as the bench
+// measured it. The client reads a grid of any size.
+//
 // What is not measured (§12 g): a capture of another size than 2560 x 1440
 // (the bench's), HDR (no grid then), a stream encoded at another quality than
 // x264's QP 32 (the encoded flag is always set: a stream is always encoded).
@@ -63,6 +71,48 @@ constexpr int kStats = 8;
 constexpr int kInputs = 19;
 /// Codes 0..11: 0 the law, k a drop of 0.1 + (k - 1) * 0.125.
 constexpr int kCodes = 12;
+constexpr int kLightZonesX = 16;
+constexpr int kLightZonesY = 9;
+
+/// A grid of zones over the cells, and the tree that decides its zones.
+struct Grid
+{
+    int zonesX;
+    int zonesY;
+    const TreeNode* tree;
+
+    constexpr int zones() const { return zonesX * zonesY; }
+    /// Cells along a zone's side: as many across as down.
+    constexpr int cellsPerZone() const { return kCellsX / zonesX; }
+};
+
+inline constexpr Grid kFullGrid = {kZonesX, kZonesY, kTree};
+inline constexpr Grid kLightGrid = {kLightZonesX, kLightZonesY, kTreeLight};
+
+/// What the statistics become once their pass's cost on this GPU is in.
+enum class PassStep
+{
+    Keep,    ///< within the budget
+    Lighten, ///< the full pass costs too much: the light one, timed in turn
+    Drop,    ///< the light one too: no grid, the client keeps its law
+};
+
+/// Bruno's budget (§12 f.4, 30/10/2026): the Lanczos-2's (ResampleCost), the
+/// full pass where it fits, else the light one, else nothing.
+inline PassStep afterPassCost(bool light, int64_t costUs)
+{
+    if (ResampleCost::affordable(costUs)) return PassStep::Keep;
+    return light ? PassStep::Drop : PassStep::Lighten;
+}
+
+static_assert(kFullGrid.cellsPerZone() * kZonesX == kCellsX &&
+                  kFullGrid.cellsPerZone() * kZonesY == kCellsY,
+              "whole cells per zone");
+static_assert(kLightGrid.cellsPerZone() * kLightZonesX == kCellsX &&
+                  kLightGrid.cellsPerZone() * kLightZonesY == kCellsY,
+              "whole cells per zone");
+// The light pass's thread groups are its zones (kMwsrStatsSource, MW_LIGHT).
+static_assert(kLightGrid.cellsPerZone() == 8, "a group of 8 x 8 threads per light zone");
 
 /// @p x rounded to IEEE binary16 and back, to nearest, ties to even, as numpy's
 /// float16 (subnormals included; past the largest half, infinity).
@@ -99,22 +149,23 @@ inline float roundToHalf(float x)
     return r;
 }
 
-/// A zone's 8 means from its 4 x 4 cells (@p cells: the 128 x 72 grid, row by
-/// row, 8 floats per cell, as the pass wrote them): the bench's tiles().
-inline void zoneMeans(const float* cells, int zx, int zy, float out[kStats])
+/// A zone's 8 means from its @p per x @p per cells — 4 on the full grid, 8 on
+/// the light one (@p cells: the 128 x 72 grid, row by row, 8 floats per cell,
+/// as the pass wrote them): the bench's tiles().
+inline void zoneMeans(const float* cells, int zx, int zy, float out[kStats],
+                      int per = kFullGrid.cellsPerZone())
 {
-    constexpr int kPer = kCellsX / kZonesX;
     float acc[kStats] = {};
-    for (int y = 0; y < kPer; ++y) {
-        for (int x = 0; x < kPer; ++x) {
+    for (int y = 0; y < per; ++y) {
+        for (int x = 0; x < per; ++x) {
             const float* c =
-                cells + ((size_t(zy) * kPer + y) * kCellsX + (size_t(zx) * kPer + x)) * kStats;
+                cells + ((size_t(zy) * per + y) * kCellsX + (size_t(zx) * per + x)) * kStats;
             for (int s = 0; s < kStats; ++s)
                 acc[s] = static_cast<float>(static_cast<double>(acc[s]) + roundToHalf(c[s]));
         }
     }
     for (int s = 0; s < kStats; ++s)
-        out[s] = roundToHalf(static_cast<float>(static_cast<double>(acc[s]) / (kPer * kPer)));
+        out[s] = roundToHalf(static_cast<float>(static_cast<double>(acc[s]) / (per * per)));
 }
 
 /// The 8 features of a zone from its means: the luma, its standard deviation,
@@ -137,12 +188,12 @@ inline void features(const float m[kStats], float f[kStats])
 }
 
 /// The tree's walk (MwsrZoneTree.h): a zone's 19 inputs -> its code.
-inline int decide(const float in[kInputs])
+inline int decide(const float in[kInputs], const TreeNode* tree = kTree)
 {
     int i = 0;
-    while (kTree[i].feature >= 0)
-        i = double(in[kTree[i].feature]) <= kTree[i].threshold ? kTree[i].left : kTree[i].right;
-    return kTree[i].code;
+    while (tree[i].feature >= 0)
+        i = double(in[tree[i].feature]) <= tree[i].threshold ? tree[i].left : tree[i].right;
+    return tree[i].code;
 }
 
 /// What the client takes off its sharpness law for @p code, as the across
@@ -152,20 +203,23 @@ inline float dropOf(int code)
     return code <= 0 ? 0.0f : 0.1f + float(code - 1) * 0.125f;
 }
 
-/// Every zone's code from the pass's cells (@p cells: 128 x 72 x 8 floats).
-/// @p scale is the stream's upscale at the client (the capture's width over
-/// the stream's); @p linear says the host reduced in linear light (Lanczos-2),
-/// not with the bilinear of its fallback.
-inline void decideAll(const float* cells, float scale, bool linear, uint8_t codes[kZones])
+/// Every zone's code of @p grid from the pass's cells (@p cells: 128 x 72 x 8
+/// floats; the light grid's from the light pass's), row by row into @p codes
+/// (grid.zones() of them, at most kZones). @p scale is the stream's upscale
+/// at the client (the capture's width over the stream's); @p linear says the
+/// host reduced in linear light (Lanczos-2), not with the bilinear of its
+/// fallback.
+inline void decideAll(const float* cells, float scale, bool linear, uint8_t* codes,
+                      const Grid& grid = kFullGrid)
 {
-    static_assert(kCellsX % kZonesX == 0 && kCellsY % kZonesY == 0, "whole cells per zone");
+    const int zones = grid.zones();
     float feat[kZones][kStats];
     double sum[kStats] = {};
-    for (int zy = 0; zy < kZonesY; ++zy) {
-        for (int zx = 0; zx < kZonesX; ++zx) {
+    for (int zy = 0; zy < grid.zonesY; ++zy) {
+        for (int zx = 0; zx < grid.zonesX; ++zx) {
             float m[kStats];
-            zoneMeans(cells, zx, zy, m);
-            float* f = feat[zy * kZonesX + zx];
+            zoneMeans(cells, zx, zy, m, grid.cellsPerZone());
+            float* f = feat[zy * grid.zonesX + zx];
             features(m, f);
             for (int s = 0; s < kStats; ++s)
                 sum[s] += f[s];
@@ -174,13 +228,13 @@ inline void decideAll(const float* cells, float scale, bool linear, uint8_t code
     float in[kInputs];
     in[0] = scale;
     for (int s = 0; s < kStats; ++s)
-        in[1 + kStats + s] = static_cast<float>(sum[s] / kZones);
+        in[1 + kStats + s] = static_cast<float>(sum[s] / zones);
     in[17] = 1.0f; // encoded: a stream always is
     in[18] = linear ? 1.0f : 0.0f;
-    for (int z = 0; z < kZones; ++z) {
+    for (int z = 0; z < zones; ++z) {
         for (int s = 0; s < kStats; ++s)
             in[1 + s] = feat[z][s];
-        codes[z] = static_cast<uint8_t>(decide(in));
+        codes[z] = static_cast<uint8_t>(decide(in, grid.tree));
     }
 }
 

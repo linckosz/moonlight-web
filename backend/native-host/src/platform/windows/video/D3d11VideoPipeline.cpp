@@ -274,13 +274,52 @@ WindowsVideoPipeline::EncodeResult D3d11VideoPipeline::encode(bool forceKeyframe
                : EncodeResult::Failed;
 }
 
-bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, float& scale)
+bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY, float& scale)
 {
-    if (!m_Converter || m_MwsrCells.empty() || !m_Converter->readMwsrCells(m_MwsrCells.data()))
-        return false;
+    namespace mz = convert::mwsrzones;
+    if (!m_Converter || m_MwsrCells.empty()) return false;
+
+    // Bruno's budget (plan B §12 f.4): what the pass costs this GPU, timed on
+    // the stream's own frames, decides once whether it stays, gives way to
+    // the light pass (timed in turn), or goes. The frames between go without
+    // a grid: the new pass's first cells are not back yet.
+    int64_t costUs = 0;
+    if (m_Converter->takeMwsrStatsCost(costUs)) {
+        const bool light = m_Converter->mwsrStatsLight();
+        const std::string pass = light ? "light" : "full";
+        const std::string cost = " pass costs " + std::to_string(costUs) + " us";
+        const std::string budget = std::to_string(convert::ResampleCost::kBudgetUs) + " us";
+        std::string why;
+        switch (mz::afterPassCost(light, costUs)) {
+        case mz::PassStep::Keep:
+            log::info("[native] MWSR zones: the " + pass + cost + ", kept");
+            break;
+        case mz::PassStep::Lighten:
+            if (m_Converter->enableMwsrStats(why, true)) {
+                log::info("[native] MWSR zones: the full" + cost + ", over " + budget +
+                          ": the light pass (16x9) instead");
+                break;
+            }
+            log::info("[native] MWSR zones: the full" + cost + ", over " + budget +
+                      ", and no light pass — " + why + ": none from now on");
+            m_Converter->disableMwsrStats();
+            m_MwsrCells.clear();
+            return false;
+        case mz::PassStep::Drop:
+            log::info("[native] MWSR zones: the light" + cost + ", over " + budget +
+                      ": none from now on");
+            m_Converter->disableMwsrStats();
+            m_MwsrCells.clear();
+            return false;
+        }
+    }
+
+    if (!m_Converter->readMwsrCells(m_MwsrCells.data())) return false;
+    const mz::Grid& grid = m_Converter->mwsrStatsLight() ? mz::kLightGrid : mz::kFullGrid;
     scale = m_Converter->mwsrScale();
-    convert::mwsrzones::decideAll(m_MwsrCells.data(), scale, m_Converter->reducesInLinearLight(),
-                                  codes);
+    mz::decideAll(m_MwsrCells.data(), scale, m_Converter->reducesInLinearLight(), codes, grid);
+    zonesX = grid.zonesX;
+    zonesY = grid.zonesY;
     return true;
 }
 

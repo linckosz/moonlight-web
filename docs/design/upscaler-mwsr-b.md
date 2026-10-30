@@ -561,10 +561,12 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
   - Estimé : environ 0,1 ms par image sur une RTX, environ 3 ms sur un GPU intégré. Mesuré le 30/10
     (f.3) : 0,04 à 0,09 ms sur une RTX 5060 Ti et 0,86 à 2,6 ms sur l'iGPU du 9900X, à pleine fréquence ;
     plus sur un bureau au repos (jusqu'à 1,4 et 3,4 ms en 4K).
-  - Règle proposée, sur le modèle du Lanczos-2, gardé s'il coûte au plus 1,5 ms (`ResampleCost.h`) :
-    - la passe complète tourne si elle tient dans un budget, que Bruno fixe sur les mesures ;
-    - sinon, la variante légère : 16 × 9 zones, un pixel sur 4, pour environ un quart du coût (estimé).
-      Elle a été mesurée à +0,064 / +0,062 sur images fixes et à 99,6 % en mouvement ;
+  - La règle de Bruno (f.4), celle du Lanczos-2, gardé s'il coûte au plus 1,5 ms (`ResampleCost.h`),
+    mesurée dans le stream :
+    - la passe complète, si elle tient dans ces 1,5 ms ;
+    - sinon, la variante légère : 16 × 9 zones, un pixel sur 16 (un sur 4 dans chaque direction, les
+      voisins toujours à 1 px), c'est le « pas 4 » du banc. Elle a été mesurée à +0,064 / +0,062 sur
+      images fixes et à 99,6 % en mouvement ;
     - sinon, aucune grille.
 - **Les plateformes :**
   - D3D11 (Windows) d'abord ;
@@ -812,10 +814,13 @@ pousse.
        | 1440p | 0,063 | 0,21 | 1,58 | 2,32 à 2,36 | 0,41 | 1,13 à 1,16 |
        | 4K | 0,091 | 1,40 | 2,60 | 3,33 à 3,38 | 0,73 | 1,42 à 1,43 |
 
-     - **La variante légère** : 16 × 9 zones, donc 64 × 36 cellules, et un pixel sur 4. Seul son coût est
-       mesuré : ses moyennes ne sont pas renormalisées. Elle coûte 3,6 fois moins en rafale, et 2 à
-       2,4 fois moins à 60 i/s. Le pixel sur 4 seul, sans réduire les zones, ne divise le coût de l'iGPU
-       que par 1,4 à 2,9 : une part fixe par groupe domine.
+     - **La « légère » de ce tableau n'est pas celle du banc.** Elle lit 64 × 36 cellules, un pixel sur 4.
+       Seul son coût est mesuré : ses moyennes ne sont pas renormalisées. Elle coûte 3,6 fois moins en
+       rafale, et 2 à 2,4 fois moins à 60 i/s. Le pixel sur 4 seul, sans réduire les zones, ne divise le
+       coût de l'iGPU que par 1,4 à 2,9 : une part fixe par groupe domine.
+       - Le « pas 4 » du banc lit un pixel sur 16 (`zonecells.py`, `n4`), ce que fait la passe légère
+         écrite ensuite (f.4). Son coût reste à mesurer au prochain créneau ; il devrait être plus bas
+         (supposé).
      - **L'estimation** (0,1 ms sur une RTX, 3 ms sur un GPU intégré) tient pour un GPU à pleine fréquence.
      - **À 60 i/s, le GPU redescend entre deux images,** et la passe coûte plus : 1,3 à 1,9 fois plus sur
        l'iGPU, 2 à 15 fois plus sur la RTX.
@@ -843,11 +848,46 @@ pousse.
      - **B : 1,5 ms, le budget du Lanczos-2, et la variante légère** entre la passe complète et rien.
        - Au banc, la légère garde presque tout le gain : +0,064 / +0,062 contre +0,066 / +0,063 sur images
          fixes, 99,6 % contre 102,5 % en mouvement (a, 16 × 9 au pas 4).
-       - L'iGPU du 9900X aurait la légère à toutes les tailles, pour 0,74 à 1,43 ms au repos.
+       - L'iGPU du 9900X aurait la légère à toutes les tailles, pour 0,74 à 1,43 ms au repos. Ces chiffres
+         sont ceux d'une légère qui lisait 4 fois plus de pixels que celle du banc (f.3) : la vraie devrait
+         coûter moins (supposé).
        - À écrire : la passe légère de l'hôte, l'arbre en 16 × 9 et leurs tests. `high`
          Le transport et le client lisent déjà une grille de toute taille.
      - **Bruno a choisi B** le 30/10 au soir. Go pour la passe légère, l'arbre en 16 × 9 et leurs tests :
        WARP d'abord, rien d'activé, le créneau GPU demandé à la gestion des plans (pas avant le matin).
+     - **Écrit le 30/10 au soir, vérifié sur WARP**, coupé comme le reste : sans la clé de labo, aucun
+       client ne demande la grille.
+       - **La passe légère** (`MW_LIGHT` dans `kMwsrStatsSource`) :
+         - elle écrit les mêmes 128 × 72 cellules que la passe complète, chacune d'un pixel sur 16 ;
+         - les voisins restent à 1 px ;
+         - un fil par cellule, et un groupe de 8 × 8 fils par zone de la grille légère.
+
+         Le calcul d'un pixel est une fonction commune aux deux passes. La passe complète rend ses
+         cellules d'avant au bit près, sur les 22 captures natives du banc (WARP).
+       - **L'arbre en 16 × 9** (`MwsrZoneTreeLight.h`, 23 nœuds) : appris par l'export du banc sur tout
+         le corpus, en « hôte natif q4 ». Sa décision moyenne 8 × 8 cellules par zone (`kLightGrid`). La
+         nouvelle option de l'export (`--light`) laisse l'arbre 32 × 18 identique à l'octet près.
+       - **Contre le banc**, sur les 22 captures, sur WARP :
+         - aucun code de zone ne change : 0 sur 25 344 décisions, aux 4 échelles, réduction linéaire ou
+           bilinéaire ;
+         - les cellules sont à 1 pas de f16 du banc, sauf une : un pixel compté autrement sur les 25 de la
+           cellule, l'ordre des produits de la luma dans numpy (déjà vu en 2.3).
+       - **Le budget** (`D3d11VideoPipeline::takeMwsrZones`, `afterPassCost`) :
+         - la passe se chronomètre elle-même sur les images du stream (`PassTimer`, l'anneau de requêtes
+           du Lanczos-2 sorti de `ColorConvert` et partagé) ;
+         - au-dessus de 1,5 ms, la passe complète laisse la place à la légère, chronométrée à son tour ;
+         - si la légère dépasse aussi, plus de grille. Chaque étape est écrite dans le journal.
+
+         Les images du changement partent sans grille.
+       - **La grille** : 32 × 18 ou 16 × 9 selon la passe, portée par l'image (`mwsrZonesX`, `mwsrZonesY`).
+         Le transport et le client en lisent de toute taille.
+       - **Tests** : 392 vérifications des groupes touchés passent (`mwsr_zones`, `mwsr_stats` sur WARP,
+         `color_convert`, `resample_cost`, `d3d11_video_pipeline`).
+         - Les nouvelles : la passe légère contre une référence processeur (1e-7 au plus) et l'arbre
+           léger sur des zones du banc ;
+         - une zone légère depuis ses 64 cellules ;
+         - la règle du budget, et le chronomètre sur WARP.
+       - **Non fait** : le coût de la vraie légère sur GPU (créneau du matin) et un vrai stream.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
    - le jumeau GLSL de la grille. `high`

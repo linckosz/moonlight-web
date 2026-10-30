@@ -49,9 +49,10 @@ bool compileScaleShader(bool horizontal, bool decode, int length, int output, in
                         Microsoft::WRL::ComPtr<ID3DBlob>& blob, std::string& error);
 
 /// MWSR's statistics pass (kMwsrStatsSource) for a @p width × @p height
-/// capture, as a cs_5_0 compute shader.
-bool compileMwsrStatsShader(int width, int height, Microsoft::WRL::ComPtr<ID3DBlob>& blob,
-                            std::string& error);
+/// capture, as a cs_5_0 compute shader: on every pixel, or with @p light on
+/// one pixel in 16 (MW_LIGHT).
+bool compileMwsrStatsShader(int width, int height, bool light,
+                            Microsoft::WRL::ComPtr<ID3DBlob>& blob, std::string& error);
 
 /// What a converter makes of the sizes it is given.
 struct ConvertGeometry
