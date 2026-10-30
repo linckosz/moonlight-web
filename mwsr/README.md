@@ -31,8 +31,9 @@ serve below.
 **HDR**: both modes work per channel and clamp nothing to 1.0, so they run unchanged on a float texture whose values go
 past 1.0 (1.0 = reference white).
 
-**Cost**: the upscale to 1440p takes 0.09 ms (text) to 0.12 ms (a game picture) per frame on an RTX 5060 Ti, from
-720p and from 1080p (GPU timestamps). The edge path, the costly one, runs only on the quads the vote marks.
+**Cost**: the upscale to 1440p takes 0.09 ms (text) to 0.12 ms (a game picture) per frame on an RTX 5060 Ti, and
+0.23 to 0.27 ms (a game picture) on a Radeon 780M, from 720p and from 1080p (GPU timestamps). The edge path, the
+costly one, runs only on the quads the vote marks.
 
 The design, the measurements against FSR1, SGSR1, NIS and the host's Lanczos, and every decision behind the defaults
 are in the lab journal, [`scripts/bench/scaler-lab/journal.md`](../scripts/bench/scaler-lab/journal.md), and the
@@ -45,15 +46,15 @@ a port of each beside MWSR. They spend their work in different places:
 
 - **FSR1** (AMD FidelityFX Super Resolution 1) runs two passes. EASU rebuilds each pixel from 12 input texels with a
   Lanczos-like kernel stretched along the local edge, then RCAS sharpens the whole picture. On the game picture it is
-  the closest of the four to the native frame. It costs 1.7 to 2.3 times what MWSR costs, and its sharpening leaves
+  the closest of the four to the native frame. It costs 1.7 to 2.6 times what MWSR costs, and its sharpening leaves
   the local range on 14 % of the pixels: a light halo along strong edges.
 - **NIS** (NVIDIA Image Scaling) runs one pass over 6×6 texels: a filter bank chosen by the edge's direction, plus a
   sharpening of the luma. It is the sharpest of the four, which lifts its SSIM at ×2, and it overshoots on 42 % of the
   game picture's pixels: the bright rims and the grain in the zooms.
 - **SGSR1** (Snapdragon Game Super Resolution 1) runs one pass of 12 texels read in four gathers, skips the flat
   areas and finds edges on the green channel. It lands about as close to the native frame as MWSR, with a lighter
-  halo than FSR1 (6.5 %). In half precision, as Qualcomm writes it, it is the fastest of the four on the integrated
-  GPU.
+  halo than FSR1 (6.5 %). In half precision, as Qualcomm writes it, it is the fastest of the four on the two
+  integrated GPUs.
 - **MWSR** runs one pass and decides per 2×2 quad: a flat quad keeps a smooth cubic, an edge gets four more samples
   along and across it. It bounds every pixel by its four input texels, so nothing rings (0.03 % of the pixels). It is
   the closest to the native frame on text at ×1.33. At ×2 on the game picture it is the softest of the four, where
@@ -84,23 +85,23 @@ share of pixels that leave the range of their four input texels by more than 2/2
 ringing. FLIP: NVIDIA's ꟻLIP, the mean perceptual difference to the native frame (lower is closer). Times: the game
 picture, each at its faster precision.
 
-| | Fidelity, game | Fidelity, text | Overshoot, game | FLIP, game | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) |
-|---|---|---|---|---|---|---|
-| MWSR | 85.9 | 96.0 | 0.03 % | 0.048 | 0.116 ms | 3.80 ms (f16) |
-| FSR1 | 87.5 | 94.4 | 13.7 % | 0.034 | 0.265 ms (f16) | 6.33 ms (f16) |
-| NIS * | 82.8 | 95.6 | 42.6 % | 0.100 | 0.904 ms | 13.78 ms |
-| SGSR1 | 85.6 | 95.3 | 6.5 % | 0.042 | 0.118 ms | 2.97 ms (f16) |
-| Bilinear | 81.8 | 92.6 | 0 % | 0.045 | 0.029 ms | 0.449 ms |
+| | Fidelity, game | Fidelity, text | Overshoot, game | FLIP, game | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|---|---|---|---|---|---|---|---|
+| MWSR | 85.9 | 96.0 | 0.03 % | 0.048 | 0.116 ms | 3.80 ms (f16) | 0.267 ms (f16) |
+| FSR1 | 87.5 | 94.4 | 13.7 % | 0.034 | 0.265 ms (f16) | 6.33 ms (f16) | 0.707 ms (f16) |
+| NIS * | 82.8 | 95.6 | 42.6 % | 0.100 | 0.904 ms | 13.78 ms | 0.953 ms |
+| SGSR1 | 85.6 | 95.3 | 6.5 % | 0.042 | 0.118 ms | 2.97 ms (f16) | 0.216 ms (f16) |
+| Bilinear | 81.8 | 92.6 | 0 % | 0.045 | 0.029 ms | 0.449 ms | 0.110 ms |
 
 **720p → 1440p**, the same columns:
 
-| | Fidelity, game | Fidelity, text | Overshoot, game | FLIP, game | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) |
-|---|---|---|---|---|---|---|
-| MWSR | 66.2 | 86.5 | 0.01 % | 0.071 | 0.113 ms | 3.69 ms (f16) |
-| FSR1 | 68.0 | 84.7 | 2.9 % | 0.053 | 0.273 ms | 6.32 ms (f16) |
-| NIS * | 69.5 | 87.6 | 41.7 % | 0.116 | 0.614 ms | 12.99 ms |
-| SGSR1 | 66.9 | 87.6 | 6.3 % | 0.062 | 0.118 ms | 2.95 ms (f16) |
-| Bilinear | 61.6 | 81.8 | 0 % | 0.073 | 0.029 ms | 0.422 ms |
+| | Fidelity, game | Fidelity, text | Overshoot, game | FLIP, game | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|---|---|---|---|---|---|---|---|
+| MWSR | 66.2 | 86.5 | 0.01 % | 0.071 | 0.113 ms | 3.69 ms (f16) | 0.231 ms (f16) |
+| FSR1 | 68.0 | 84.7 | 2.9 % | 0.053 | 0.273 ms | 6.32 ms (f16) | 0.685 ms (f16) |
+| NIS * | 69.5 | 87.6 | 41.7 % | 0.116 | 0.614 ms | 12.99 ms | 0.886 ms |
+| SGSR1 | 66.9 | 87.6 | 6.3 % | 0.062 | 0.118 ms | 2.95 ms (f16) | 0.204 ms (f16) |
+| Bilinear | 61.6 | 81.8 | 0 % | 0.073 | 0.029 ms | 0.422 ms | 0.094 ms |
 
 \* MoonlightWeb's per-fragment port of NIS. NVIDIA ships a compute shader with shared memory, which is faster: these
 times are those of the port, not of NIS.
@@ -128,22 +129,24 @@ What each one does:
 
 </details>
 
-**How it was measured** (28/10/2026):
+**How it was measured** (28/10/2026, the Radeon 780M on 30/10/2026):
 - **The pictures.** The native frame is a 4K screenshot of 0 A.D. reduced to 2560×1440, or the lab's text chart drawn
   at 2560×1440. The input is that frame reduced to 1920×1080 or 1280×720. Both reductions are Lanczos-3 in linear
   light. Each upscaler draws the input back at 2560×1440.
-- **The times.** WebGPU in Chrome on Windows 11, with the input already in an 8-bit RGBA texture (no video decoding
-  in it). GPU timestamps wrap batches of 100 draws, in 3 rounds of 6 batches, and the figure is the median per draw.
-  The RTX 5060 Ti ran at P0 throughout. The Ryzen 9 9900X's integrated Radeon (RDNA 2, 2 compute units) ran at its own
-  clock, which nothing fixed, so read its figures as ratios.
+- **The times.** WebGPU in Chrome on Windows 11, and on Ubuntu for the Radeon 780M, with the input already in an
+  8-bit RGBA texture (no video decoding in it). GPU timestamps wrap batches of 100 draws, in 3 rounds of 6 batches,
+  and the figure is the median per draw. The RTX 5060 Ti ran at P0 throughout. The Ryzen 9 9900X's integrated Radeon
+  (RDNA 2, 2 compute units) and the Radeon 780M (RDNA 3, 12 compute units) ran at their own clocks, which nothing
+  fixed, so read their figures as ratios.
 - **The ports.** These are MoonlightWeb's ports, not the vendors' own builds:
   - FSR1: firdawolf's WGSL port of EASU and RCAS (RCAS at 0.75 stops, its noise term on), and the lab's port of
     AMD's 16-bit path (`FsrEasuH`, `FsrRcasH`).
   - NIS: a per-fragment transcription of NVScaler, SDK 1.0.3, with its filter tables, at sharpness 0.5.
   - SGSR1: a port of `sgsr1.h` (mode 1, edge threshold 6/255, edge sharpness 1.5), in 32-bit and in half precision.
   - MWSR: its defaults, in 32-bit and in 16-bit (`mwsr-up-f16.wgsl`).
-- **The precision.** Each upscaler is timed at its faster precision on each GPU. Before any timing, each 16-bit text
-  is held to its 32-bit one on that GPU: fewer than 0.05 % of the pixels differ by more than 4/255.
+- **The precision.** Each upscaler is timed at its faster precision on each GPU. On the RTX and the 9900X's iGPU,
+  before any timing, each 16-bit text is held to its 32-bit one on that GPU: fewer than 0.05 % of the pixels differ
+  by more than 4/255. The Radeon 780M was timed without that check.
 - **To run it again**: `scripts/bench/scaler-lab/scaler_lab.py`, its `--quality` mode for the pictures and its
   `cells=` cases for the times (cells `mwsr`, `mwsr:half=1`, `fsr1`, `fsr1h`, `nis`, `sgsr-repo`, `sgsrh`, `tex-s1`).
   In a browser with WebGPU, on your own GPU: [moonlightweb.top/mwsr](https://moonlightweb.top/mwsr/), with the same

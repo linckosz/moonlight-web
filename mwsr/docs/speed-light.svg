@@ -1,42 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="828" height="300" viewBox="0 0 828 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" width="956" height="300" viewBox="0 0 956 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-labelledby="t d">
 <title id="t">GPU time per frame of MWSR, FSR1, NIS, SGSR1 and bilinear</title>
-<desc id="d">Median GPU time of one 1080p to 1440p frame of the game picture, on two GPUs. The values are in the table below the figure.</desc>
+<desc id="d">Median GPU time of one 1080p to 1440p frame of the game picture, on three GPUs. The values are in the table below the figure.</desc>
 <text x="0" y="22" font-size="17" font-weight="600" fill="#0b0b0b">GPU time per frame</text>
 <text x="0" y="44" font-size="13" fill="#52514e">1080p → 1440p, game picture, median of 1,800 draws (lower is faster). Each panel has its own scale.</text>
 <text x="0" y="84" font-size="13" font-weight="600" fill="#0b0b0b">GeForce RTX 5060 Ti</text>
 <line x1="78.0" y1="96" x2="78.0" y2="250" stroke="#8a8984" stroke-width="1"/>
 <text x="0" y="115" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
-<path d="M78.0 106.0 h4.1 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-4.1 z" fill="#c9c8c3"/>
-<text x="92.1" y="115.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.029 ms</text>
+<path d="M78.0 106.0 h0.9 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-0.9 z" fill="#c9c8c3"/>
+<text x="88.9" y="115.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.029 ms</text>
 <text x="0" y="145" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
-<path d="M78.0 136.0 h28.3 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-28.3 z" fill="#2a78d6"/>
-<text x="116.3" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.116 ms</text>
+<path d="M78.0 136.0 h15.5 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-15.5 z" fill="#2a78d6"/>
+<text x="103.5" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.116 ms</text>
 <text x="0" y="175" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
-<path d="M78.0 166.0 h28.9 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-28.9 z" fill="#9b9a95"/>
-<text x="116.9" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.118 ms</text>
+<path d="M78.0 166.0 h15.8 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-15.8 z" fill="#9b9a95"/>
+<text x="103.8" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.118 ms</text>
 <text x="0" y="205" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
-<path d="M78.0 196.0 h69.9 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-69.9 z" fill="#9b9a95"/>
-<text x="157.9" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.265 ms (f16)</text>
+<path d="M78.0 196.0 h40.6 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-40.6 z" fill="#9b9a95"/>
+<text x="128.6" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.265 ms (f16)</text>
 <text x="0" y="235" font-size="13" fill="#52514e" dominant-baseline="middle">NIS *</text>
-<path d="M78.0 226.0 h248.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-248.0 z" fill="#9b9a95"/>
-<text x="336.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.904 ms</text>
-<text x="428" y="84" font-size="13" font-weight="600" fill="#0b0b0b">Radeon iGPU (Ryzen 9 9900X)</text>
-<line x1="506.0" y1="96" x2="506.0" y2="250" stroke="#8a8984" stroke-width="1"/>
-<text x="428" y="115" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
-<path d="M506.0 106.0 h4.2 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-4.2 z" fill="#c9c8c3"/>
-<text x="520.2" y="115.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.449 ms</text>
-<text x="428" y="145" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
-<path d="M506.0 136.0 h65.4 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-65.4 z" fill="#2a78d6"/>
-<text x="581.4" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">3.80 ms (f16)</text>
-<text x="428" y="175" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
-<path d="M506.0 166.0 h50.3 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-50.3 z" fill="#9b9a95"/>
-<text x="566.3" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">2.97 ms (f16)</text>
-<text x="428" y="205" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
-<path d="M506.0 196.0 h111.8 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-111.8 z" fill="#9b9a95"/>
-<text x="627.8" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">6.33 ms (f16)</text>
-<text x="428" y="235" font-size="13" fill="#52514e" dominant-baseline="middle">NIS *</text>
-<path d="M506.0 226.0 h248.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-248.0 z" fill="#9b9a95"/>
-<text x="764.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">13.78 ms</text>
-<text x="0" y="276" font-size="12" fill="#8a8984">WebGPU in Chrome, GPU timestamps around batches of 100 draws; the RTX at P0 throughout, the iGPU at its own clock (neither fixed).</text>
+<path d="M78.0 226.0 h148.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-148.0 z" fill="#9b9a95"/>
+<text x="236.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.904 ms</text>
+<text x="328" y="84" font-size="13" font-weight="600" fill="#0b0b0b">Radeon iGPU (Ryzen 9 9900X)</text>
+<line x1="406.0" y1="96" x2="406.0" y2="250" stroke="#8a8984" stroke-width="1"/>
+<text x="328" y="115" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
+<path d="M406.0 106.0 h1.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-1.0 z" fill="#c9c8c3"/>
+<text x="417.0" y="115.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.449 ms</text>
+<text x="328" y="145" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
+<path d="M406.0 136.0 h37.9 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-37.9 z" fill="#2a78d6"/>
+<text x="453.9" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">3.80 ms (f16)</text>
+<text x="328" y="175" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
+<path d="M406.0 166.0 h28.7 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-28.7 z" fill="#9b9a95"/>
+<text x="444.7" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">2.97 ms (f16)</text>
+<text x="328" y="205" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
+<path d="M406.0 196.0 h65.8 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-65.8 z" fill="#9b9a95"/>
+<text x="481.8" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">6.33 ms (f16)</text>
+<text x="328" y="235" font-size="13" fill="#52514e" dominant-baseline="middle">NIS *</text>
+<path d="M406.0 226.0 h148.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-148.0 z" fill="#9b9a95"/>
+<text x="564.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">13.78 ms</text>
+<text x="656" y="84" font-size="13" font-weight="600" fill="#0b0b0b">Radeon 780M</text>
+<line x1="734.0" y1="96" x2="734.0" y2="250" stroke="#8a8984" stroke-width="1"/>
+<text x="656" y="115" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
+<path d="M734.0 106.0 h13.5 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-13.5 z" fill="#c9c8c3"/>
+<text x="757.5" y="115.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.110 ms</text>
+<text x="656" y="145" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
+<path d="M734.0 136.0 h38.6 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-38.6 z" fill="#2a78d6"/>
+<text x="782.6" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.267 ms (f16)</text>
+<text x="656" y="175" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
+<path d="M734.0 166.0 h30.5 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-30.5 z" fill="#9b9a95"/>
+<text x="774.5" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.216 ms (f16)</text>
+<text x="656" y="205" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
+<path d="M734.0 196.0 h108.8 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-108.8 z" fill="#9b9a95"/>
+<text x="852.8" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.707 ms (f16)</text>
+<text x="656" y="235" font-size="13" fill="#52514e" dominant-baseline="middle">NIS *</text>
+<path d="M734.0 226.0 h148.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-148.0 z" fill="#9b9a95"/>
+<text x="892.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.953 ms</text>
+<text x="0" y="276" font-size="12" fill="#8a8984">WebGPU in Chrome, GPU timestamps around batches of 100 draws; the RTX at P0 throughout, each iGPU at its own clock. The 780M under Ubuntu.</text>
 <text x="0" y="294" font-size="12" fill="#8a8984">Each at its faster precision (f32 or f16). * MoonlightWeb's per-fragment port of NIS, not NVIDIA's compute shader.</text>
 </svg>
