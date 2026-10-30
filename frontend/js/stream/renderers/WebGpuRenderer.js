@@ -58,6 +58,16 @@
  *   and skips both passes on a frame fine enough. SDR only (rgba8unorm).
  *   Without opts.deblock nothing of it is built, and no QP is asked for.
  *
+ * mwsr's zones (opts.zoneMap: the page asked the native host for them at
+ *   /start, plan B §12 c): the `up` kernel's second text (mwsrWgsl's `map`),
+ *   built beside the first, reads a texture of one texel per zone of the
+ *   capture, the drop the host's tree chose there under the sharpness law.
+ *   A frame's zones are kept by its timestamp until it is drawn
+ *   (noteFrameZones), and read only where the page draws at the scale the
+ *   host decided them for (mwsrZonesFit); every other frame, and every other
+ *   host, takes the first text and the law. Without opts.zoneMap nothing of
+ *   it is built.
+ *
  * SGSRv1 (algo 'sgsr'): 2 passes — Pass 0 blit, Pass 1 SGSR inputTex → canvas.
  *   Port (Qualcomm, BSD-3-Clause) from sgsr1.h, mode 1, luma = GREEN, EdgeThreshold
  *   6/255, EdgeSharpness 1.5.
@@ -111,11 +121,19 @@ import {
     deblockUniforms,
 } from './DeblockShader.js';
 import { GazeZone } from '../GazeZone.js';
+import { mwsrZoneTexels, mwsrZonesFit } from '../MwsrZoneBlock.js';
 import { IS_HANDHELD } from '../../util/BrowserDetect.js';
 
 // The kernel's constants the product sets for this device's class (plan §9,
 // Bruno's decisions of 24/10/2026), under the laboratory's overrides.
 const MWSR_CLASS = mwsrClassOverrides({ handheld: IS_HANDHELD });
+
+// Whether the zones' texture holds these codes already (null: nothing yet).
+function sameCodes(a, b) {
+    if (!a || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+}
 
 // Full-screen triangle (uv 0..1, v down — matches texture sampling).
 const FULLSCREEN_VS = /* wgsl */ `
@@ -1016,6 +1034,19 @@ export class WebGpuRenderer extends VideoRenderer {
         this._lastQp = null;
         /** The last mwsr draw's deblocking, for the overlay: {qp, thr}, thr 0 when skipped. */
         this.deblockLast = null;
+        /** mwsr's zones (opts.zoneMap): the second `up` text, built only when asked. */
+        this._zoneMap = false;
+        /** Each frame's zones by its timestamp (noteFrameZones), until it is drawn. */
+        this._zonesByTs = new Map();
+        /** The zones' texture (r16float, a texel per zone), its size and the codes in it. */
+        this._zoneTex = null;
+        this._zoneTexView = null;
+        this._zoneTexDims = '';
+        this._zoneCodes = null;
+        /** The second text's bind groups, by the view the kernel reads. */
+        this._mwsrMapGroups = new WeakMap();
+        /** Frames the kernel drew with their zones, since creation. */
+        this.mwsrZoneFrames = 0;
         /** NIS sharpness (0..1, 0.5 neutral) and its re-read throttle. */
         this._nisSharpness = 0.5;
         this._nisKnobsMs = 0;
@@ -1060,6 +1091,8 @@ export class WebGpuRenderer extends VideoRenderer {
         // The gaze zone the caller wants (BrowserDetect.mwsrGazeWanted): the
         // kernel's pipelines take it, its weight follows the stream's motion.
         if (opts.gazeZone) r.setMwsrZone({});
+        // mwsr's zones (BrowserDetect.mwsrMapWanted): the kernel's second text.
+        r._zoneMap = opts.zoneMap === true;
         r._mwsrHalf = device.features.has('shader-f16');
         // HDR: rgba16float canvas in extended tone-mapping mode (values > 1.0
         // map to the display's HDR headroom). Gated on opts.hdr; _configure()
@@ -1151,7 +1184,9 @@ export class WebGpuRenderer extends VideoRenderer {
                 ' yuv444=' +
                 r._yuv444 +
                 ' deblock=' +
-                r._deblock,
+                r._deblock +
+                ' zones=' +
+                r._zoneMap,
         );
         return r;
     }
@@ -1428,6 +1463,8 @@ export class WebGpuRenderer extends VideoRenderer {
         // mwsr's pipelines belong to this device: a recovered one builds anew.
         this._mwsrLayout = null;
         this._mwsrPipelines = null;
+        this._zoneTex = null;
+        this._zoneTexDims = '';
         if (this._algo === 'fsr1') {
             this._buildFsr1Resources();
         } else if (this._algo === 'nis') {
@@ -1583,29 +1620,62 @@ export class WebGpuRenderer extends VideoRenderer {
         this._mwsrPipelineLayout = device.createPipelineLayout({
             bindGroupLayouts: [this._mwsrLayout],
         });
+        this._mwsrMapGroups = new WeakMap();
         this._mwsrPipelines = new Map();
         for (const reg of mwsrRegimes({ srgb: this._srgbViews, linear: this._hdrLinear }))
             this._mwsrPipeline(reg);
+        // The zones: the same bindings and the zones' texture, the `up` kernel's
+        // second text, built now too, so that a frame's zones compile nothing.
+        if (this._zoneMap) {
+            this._mwsrMapLayout = device.createBindGroupLayout({
+                entries: [
+                    { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+                    {
+                        binding: 1,
+                        visibility: GPUShaderStage.FRAGMENT,
+                        texture: { sampleType: 'float' },
+                    },
+                    { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+                    {
+                        binding: 3,
+                        visibility: GPUShaderStage.FRAGMENT,
+                        texture: { sampleType: 'float' },
+                    },
+                ],
+            });
+            this._mwsrMapPipelineLayout = device.createPipelineLayout({
+                bindGroupLayouts: [this._mwsrMapLayout],
+            });
+            this._mwsrPipeline({ mode: 'up', taps: 5, rDown: 0, linearLight: 0 }, true);
+        }
     }
 
     /**
      * The pipeline of one mwsr regime (mwsrRegime), specialised by override:
      * the kernel with CHROMA444 on a 4:4:4 stream; a reduction grid with its
      * span and its light, drawing into the canvas' `-srgb` view where there
-     * is one. Built once per device, kept in a map by regime.
+     * is one. Built once per device, kept in a map by regime. `map`: the
+     * kernel's second text, which reads the zones (binding 3).
      * @param {{mode: 'up'|'down', taps: number, rDown: number, linearLight: number}} reg
+     * @param {boolean} [map]
      * @returns {GPURenderPipeline}
      */
-    _mwsrPipeline(reg) {
-        const key = mwsrRegimeKey(reg);
+    _mwsrPipeline(reg, map = false) {
+        const key = mwsrRegimeKey(reg) + (map ? 'map' : '');
         let pipeline = this._mwsrPipelines.get(key);
         if (pipeline) return pipeline;
         const srgb = reg.mode === 'down' && this._srgbViews;
         const module = this._device.createShaderModule({
-            code: mwsrWgsl({ feed: 'tex', half: this._mwsrHalf, mode: reg.mode, taps: reg.taps }),
+            code: mwsrWgsl({
+                feed: 'tex',
+                half: this._mwsrHalf,
+                mode: reg.mode,
+                taps: reg.taps,
+                map,
+            }),
         });
         pipeline = this._device.createRenderPipeline({
-            layout: this._mwsrPipelineLayout,
+            layout: map ? this._mwsrMapPipelineLayout : this._mwsrPipelineLayout,
             vertex: { module, entryPoint: 'vs' },
             fragment: {
                 module,
@@ -2313,6 +2383,81 @@ export class WebGpuRenderer extends VideoRenderer {
         if (this._qpByTs.size > 64) this._qpByTs.delete(this._qpByTs.keys().next().value);
     }
 
+    /** See VideoRenderer.wantsFrameZones: the mwsr kernel, when the page asked for them. */
+    get wantsFrameZones() {
+        return this._zoneMap && this._algo === 'mwsr';
+    }
+
+    /** See VideoRenderer.noteFrameZones: kept by timestamp until its frame is drawn. */
+    noteFrameZones(timestamp, zones) {
+        if (!this.wantsFrameZones || !zones) return;
+        this._zonesByTs.set(timestamp, zones);
+        if (this._zonesByTs.size > 64) this._zonesByTs.delete(this._zonesByTs.keys().next().value);
+    }
+
+    /**
+     * Whether the frame drawn at `ts` has zones that fit `scale` (output /
+     * input, the smaller axis; mwsrZonesFit), now in the zones' texture. The
+     * frame's entry goes, and any the decoder dropped before it. False: the
+     * frame takes the law.
+     * @param {number} ts
+     * @param {number} scale
+     * @returns {boolean}
+     */
+    _zonesReady(ts, scale) {
+        const zones = this._zonesByTs.get(ts);
+        for (const t of this._zonesByTs.keys()) {
+            if (t > ts) break;
+            this._zonesByTs.delete(t);
+        }
+        if (!zones || !mwsrZonesFit(zones, scale)) return false;
+        const { cols, rows, codes } = zones;
+        const dims = cols + 'x' + rows;
+        if (this._zoneTexDims !== dims) {
+            try {
+                if (this._zoneTex) this._zoneTex.destroy();
+            } catch (e) {}
+            this._zoneTex = this._device.createTexture({
+                size: { width: cols, height: rows },
+                format: 'r16float',
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+            });
+            this._zoneTexView = this._zoneTex.createView();
+            this._zoneTexDims = dims;
+            this._zoneCodes = null;
+            this._mwsrMapGroups = new WeakMap();
+        }
+        // Rewritten only when they change: a still picture keeps its zones.
+        if (!sameCodes(this._zoneCodes, codes)) {
+            this._device.queue.writeTexture(
+                { texture: this._zoneTex },
+                mwsrZoneTexels(codes),
+                { bytesPerRow: cols * 2 },
+                { width: cols, height: rows },
+            );
+            this._zoneCodes = codes.slice();
+        }
+        return true;
+    }
+
+    /** The second text's bind group: `view` (inputTex, or dbTex) and the zones. */
+    _mwsrMapGroup(view) {
+        let group = this._mwsrMapGroups.get(view);
+        if (!group) {
+            group = this._device.createBindGroup({
+                layout: this._mwsrMapLayout,
+                entries: [
+                    { binding: 0, resource: this._sampler },
+                    { binding: 1, resource: view },
+                    { binding: 2, resource: { buffer: this._mwsrUniform } },
+                    { binding: 3, resource: this._zoneTexView },
+                ],
+            });
+            this._mwsrMapGroups.set(view, group);
+        }
+        return group;
+    }
+
     /**
      * The deblocking of the frame drawn at `ts` (deblockStrength), or null to
      * leave it out; mwsr 3 takes that frame's QP, or the last one known.
@@ -2927,6 +3072,15 @@ export class WebGpuRenderer extends VideoRenderer {
                 // mwsr 2 / 3: the frame deblocked into dbTex, which the kernel
                 // then reads; a frame mwsr 3 finds fine enough skips both passes.
                 const db = this._deblock && this._dbTex ? this._deblockFor(frame.timestamp) : null;
+                // The host's zones for this frame, read by the kernel's second
+                // text where they fit the scale it is drawn at (a reduction
+                // reads none); any other frame takes the first, and the law.
+                const zoned =
+                    this._zoneMap &&
+                    this._zonesReady(
+                        frame.timestamp,
+                        reg.mode === 'up' ? Math.min(cw / inW, ch / inH) : 0,
+                    );
                 if (db) {
                     const dbKey = inW + 'x' + inH + ':' + db.thr + ':' + db.cmax;
                     if (this._dbUniKey !== dbKey) {
@@ -2971,8 +3125,14 @@ export class WebGpuRenderer extends VideoRenderer {
                         },
                     ],
                 });
-                p1.setPipeline(this._mwsrPipeline(reg));
-                if (db) {
+                p1.setPipeline(this._mwsrPipeline(reg, zoned));
+                if (zoned) {
+                    p1.setBindGroup(
+                        0,
+                        this._mwsrMapGroup(db ? this._dbTexView : this._inputTexView),
+                    );
+                    this.mwsrZoneFrames++;
+                } else if (db) {
                     p1.setBindGroup(0, srgb ? this._mwsrBindGroupDbSrgb : this._mwsrBindGroupDb);
                 } else {
                     p1.setBindGroup(0, srgb ? this._mwsrBindGroupSrgb : this._mwsrBindGroup);
@@ -3059,6 +3219,10 @@ export class WebGpuRenderer extends VideoRenderer {
             if (this._intermTex) this._intermTex.destroy();
         } catch (e) {}
         this._destroyDeblockTex();
+        try {
+            if (this._zoneTex) this._zoneTex.destroy();
+        } catch (e) {}
+        this._zoneTex = null;
         try {
             if (this._readbackTex) this._readbackTex.destroy();
         } catch (e) {}

@@ -28,7 +28,11 @@
  * know is stepped over and the bitstream still found. `scale` is the upscale
  * the host's decision assumed, in thousandths. The codes are 4 bits, two to a
  * byte, high half first, the zones row by row: 0 the sharpness law, 1..11 a
- * drop under it (MWSR_ZONE_DROP).
+ * drop under it (mwsrZoneDrop).
+ *
+ * The WebGPU mwsr kernel reads them (WebGpuRenderer.noteFrameZones): one
+ * texel per zone, its drop (mwsrZoneTexels), wherever the page draws at the
+ * scale the host decided them for (mwsrZonesFit).
  */
 
 /** Byte 8 of the chunk header: bit 0 a keyframe, bit 1 a side block. */
@@ -38,14 +42,69 @@ export const CHUNK_FLAG_SIDE_BLOCK = 0x02;
 const VERSION = 1;
 const HEADER_SIZE = 7;
 
+/** The codes a host of this version writes: 0 the law, 1..11 a drop. */
+export const MWSR_ZONE_CODES = 12;
+
+/**
+ * The scales the zones are read at: the client's, the smaller axis, within
+ * a tenth of the host's (plan B §12 c: a shrunk window, a zoom, a capture of
+ * a physical screen, and the tree's statistics no longer see the client's
+ * pixels), and never under ×1.3. The bench measured from ×1.33 up; below, the
+ * kernel's strength falls to 0 at 1:1, and the drop over it, of the across
+ * weight, would grow without a bound.
+ */
+export const MWSR_ZONE_SCALE_TOLERANCE = 0.1;
+export const MWSR_ZONE_MIN_SCALE = 1.3;
+
 /**
  * The drop a code takes off the sharpness law, as the weight across an edge
- * (the native host's mwsrzones::dropOf).
- * @param {number} code 0..11
+ * (the native host's mwsrzones::dropOf). A code past 11 is a later host's:
+ * the law here.
+ * @param {number} code 0..15
  * @returns {number}
  */
 export function mwsrZoneDrop(code) {
-    return code <= 0 ? 0 : 0.1 + (code - 1) * 0.125;
+    return code > 0 && code < MWSR_ZONE_CODES ? 0.1 + (code - 1) * 0.125 : 0;
+}
+
+// IEEE binary16 of 0 or of a normal half (2^-14 to 65504), to nearest, ties to
+// even: the drops' range.
+function halfBits(x) {
+    if (x === 0) return 0;
+    const e = Math.floor(Math.log2(x));
+    const v = (x / 2 ** e - 1) * 1024;
+    let m = Math.round(v);
+    if (m - v === 0.5 && m & 1) m -= 1;
+    return m === 1024 ? (e + 16) << 10 : ((e + 15) << 10) | m;
+}
+
+const DROP_HALF = Uint16Array.from({ length: 16 }, (_, code) => halfBits(mwsrZoneDrop(code)));
+
+/**
+ * The zones' texels for an r16float texture of cols × rows: each zone's drop,
+ * as binary16 bits, row by row.
+ * @param {Uint8Array} codes
+ * @returns {Uint16Array}
+ */
+export function mwsrZoneTexels(codes) {
+    const out = new Uint16Array(codes.length);
+    for (let i = 0; i < codes.length; i++) out[i] = DROP_HALF[codes[i] & 15];
+    return out;
+}
+
+/**
+ * Whether a frame's zones may be read where the page draws it at `scale`
+ * (output / input, the smaller axis): see MWSR_ZONE_SCALE_TOLERANCE. A frame
+ * whose zones do not fit takes the law.
+ * @param {{scale: number}} zones
+ * @param {number} scale
+ * @returns {boolean}
+ */
+export function mwsrZonesFit(zones, scale) {
+    return (
+        scale >= MWSR_ZONE_MIN_SCALE &&
+        Math.abs(scale - zones.scale) <= MWSR_ZONE_SCALE_TOLERANCE * zones.scale
+    );
 }
 
 /**

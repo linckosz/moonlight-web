@@ -82,6 +82,7 @@ import {
     hdrExtTonemapRoute,
     hdrFramesOpaque,
     mwsrGazeWanted,
+    mwsrMapWanted,
     noteDecoderCannotRideOut,
     noteDecoderRefusesReferenceRepairs,
     noteHdrFramesOpaque,
@@ -2677,6 +2678,8 @@ export class StreamView {
                     frameSize: this._frameSize,
                     // mwsr's gaze zone (a lab key, phones and tablets only).
                     gazeZone: mwsrGazeWanted(),
+                    // mwsr's zones from the native host (a lab key, asked at /start).
+                    zoneMap: mwsrMapWanted(),
                     // mwsr 2 / 3's deblocking (the debug menu's), null otherwise.
                     deblock: this._mwsrDeblock,
                 },
@@ -2700,6 +2703,7 @@ export class StreamView {
                 ceiling: this._enhancerCeiling,
                 yuv444: this._yuv444,
                 gazeZone: mwsrGazeWanted(),
+                zoneMap: mwsrMapWanted(),
                 deblock: this._mwsrDeblock,
                 plainWebGl: this._plainWebGl,
                 hdr: (this._useVideoSink && this._hdrEnabled) || this._hdrLinear,
@@ -3766,15 +3770,21 @@ export class StreamView {
         }
         while (this.pendingFrames.length > 0) {
             const entry = this.pendingFrames.shift();
-            this.decodeFrame(entry.data, entry.isKeyframe, entry.backendTs, entry.arrivalAbs);
+            this.decodeFrame(
+                entry.data,
+                entry.isKeyframe,
+                entry.backendTs,
+                entry.arrivalAbs,
+                entry.zones,
+            );
         }
     }
 
-    decodeFrame(data, isKeyframe, backendTs, arrivalAbs = 0) {
+    decodeFrame(data, isKeyframe, backendTs, arrivalAbs = 0, zones = null) {
         if (!this.decoderConfigured) {
             // Buffer until decoder is ready (limit to avoid OOM)
             if (this.pendingFrames.length < 120) {
-                this.pendingFrames.push({ data, isKeyframe, backendTs, arrivalAbs });
+                this.pendingFrames.push({ data, isKeyframe, backendTs, arrivalAbs, zones });
             }
             return;
         }
@@ -3907,6 +3917,9 @@ export class StreamView {
             // mwsr 3: the frame's QP, from its first slice header (nothing read otherwise).
             if (this._renderer && this._renderer.wantsFrameQp)
                 this._renderer.noteFrameQp(timestamp, this._frameQp(data));
+            // mwsr's zones from the native host, kept by the chunk's timestamp.
+            if (zones && this._renderer && this._renderer.wantsFrameZones)
+                this._renderer.noteFrameZones(timestamp, zones);
             this._trackChunkSubmit(timestamp, backendTs, {
                 arrived: arrivalAbs > 0 ? arrivalAbs - performance.timeOrigin : 0,
                 bytes: avccData.length,
@@ -5494,6 +5507,8 @@ export class StreamView {
                         yuv444: this._yuv444,
                         // mwsr's gaze zone (a lab key, phones and tablets only).
                         gazeZone: mwsrGazeWanted(),
+                        // mwsr's zones from the native host (a lab key, asked at /start).
+                        zoneMap: mwsrMapWanted(),
                         // mwsr 2 / 3's deblocking (the debug menu's), null otherwise.
                         deblock: this._mwsrDeblock,
                         plainWebGl: this._plainWebGl,
@@ -5592,8 +5607,8 @@ export class StreamView {
         };
         // Video frames: DataChannel mode uses WebCodecs callbacks
         if (this._transport !== 'webrtc-media') {
-            this.webrtc.onVideo = (frame, isKeyframe, backendTs, frameId) =>
-                this.handleVideoFrame(frame, isKeyframe, backendTs, frameId);
+            this.webrtc.onVideo = (frame, isKeyframe, backendTs, frameId, zones) =>
+                this.handleVideoFrame(frame, isKeyframe, backendTs, frameId, zones);
             // POC Ultra, decode by slices: the front of a frame still coming.
             this.webrtc.onVideoPart = (frameId, offset, bytes) => {
                 if (!this._quitting && this._ultraPlayer && this._ultraMode())
@@ -7836,7 +7851,7 @@ export class StreamView {
         this._stepper.noteStats(cadence, now);
     }
 
-    handleVideoFrame(data, isKeyframe, backendTs, frameId = 0) {
+    handleVideoFrame(data, isKeyframe, backendTs, frameId = 0, zones = null) {
         // The frame is whole: this is where the network's time ends and the
         // browser's begins. Stamped on the absolute clock so the decode worker,
         // which has its own time origin, can measure the hop to decode().
@@ -7982,7 +7997,7 @@ export class StreamView {
         if (stall) this._notePeriodicStall(stall);
 
         // Direct frame processing — no reordering.
-        this._processVideoFrame(data, isKeyframe, backendTs, arrivalAbs);
+        this._processVideoFrame(data, isKeyframe, backendTs, arrivalAbs, zones);
     }
 
     /**
@@ -8223,9 +8238,10 @@ export class StreamView {
 
     /**
      * Process a single video frame (deliver to NAL parser / decoder).
-     * Called in monotonically-increasing frameId order.
+     * Called in monotonically-increasing frameId order. `zones`: MWSR's zones
+     * from the native host's side block (stream/MwsrZoneBlock.js), or null.
      */
-    _processVideoFrame(data, isKeyframe, backendTs, arrivalAbs = 0) {
+    _processVideoFrame(data, isKeyframe, backendTs, arrivalAbs = 0, zones = null) {
         if (!this._firstFrameProcessed) {
             this._firstFrameProcessed = true;
             console.log(
@@ -8250,7 +8266,7 @@ export class StreamView {
                     buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
                 }
                 this._videoWorker.postMessage(
-                    { type: 'frame', data: buf, isKeyframe, backendTs, arrivalAbs },
+                    { type: 'frame', data: buf, isKeyframe, backendTs, arrivalAbs, zones },
                     [buf],
                 );
             }
@@ -8266,7 +8282,7 @@ export class StreamView {
         // AV1 pipeline: no NAL units, no SPS/PPS, no Annex B start codes.
         // OBUs are passed directly to the decoder.
         if (this.videoCodec === CODEC_AV1) {
-            this.handleAv1Frame(data, isKeyframe, backendTs, arrivalAbs);
+            this.handleAv1Frame(data, isKeyframe, backendTs, arrivalAbs, zones);
             return;
         }
 
@@ -8342,12 +8358,12 @@ export class StreamView {
         }
 
         // Submit frame to decoder
-        this.decodeFrame(data, isKeyframe, backendTs, arrivalAbs);
+        this.decodeFrame(data, isKeyframe, backendTs, arrivalAbs, zones);
     }
 
     // --- AV1 pipeline ---
 
-    handleAv1Frame(data, isKeyframe, backendTs = 0, arrivalAbs = 0) {
+    handleAv1Frame(data, isKeyframe, backendTs = 0, arrivalAbs = 0, zones = null) {
         // On first keyframe, extract the Sequence Header OBU for decoder config
         // and immediately configure the decoder.
         if (!this.decoderConfigured && !this.decoderConfiguring) {
@@ -8372,7 +8388,7 @@ export class StreamView {
             } else {
                 // Wait for a keyframe before configuring — buffer until then
                 if (this.pendingFrames.length < 120) {
-                    this.pendingFrames.push({ data, isKeyframe });
+                    this.pendingFrames.push({ data, isKeyframe, zones });
                 }
 
                 // Request an IDR if we've buffered too many delta frames
@@ -8392,7 +8408,7 @@ export class StreamView {
         }
 
         // Submit frame to AV1 decoder (no AVCC conversion needed)
-        this.decodeAv1Frame(data, isKeyframe, backendTs, arrivalAbs);
+        this.decodeAv1Frame(data, isKeyframe, backendTs, arrivalAbs, zones);
     }
 
     configureAv1Decoder(seqHeaderObu) {
@@ -8447,7 +8463,13 @@ export class StreamView {
                             }
                             while (this.pendingFrames.length > 0) {
                                 const entry = this.pendingFrames.shift();
-                                this.decodeAv1Frame(entry.data, entry.isKeyframe);
+                                this.decodeAv1Frame(
+                                    entry.data,
+                                    entry.isKeyframe,
+                                    0,
+                                    0,
+                                    entry.zones,
+                                );
                             }
                         } catch (e) {
                             console.warn(
@@ -8472,11 +8494,11 @@ export class StreamView {
         tryCodecs(0);
     }
 
-    decodeAv1Frame(data, isKeyframe, backendTs = 0, arrivalAbs = 0) {
+    decodeAv1Frame(data, isKeyframe, backendTs = 0, arrivalAbs = 0, zones = null) {
         if (!this.decoderConfigured) {
             // Buffer until decoder is ready (limit to avoid OOM)
             if (this.pendingFrames.length < 120) {
-                this.pendingFrames.push({ data, isKeyframe });
+                this.pendingFrames.push({ data, isKeyframe, zones });
             }
             return;
         }
@@ -8508,6 +8530,9 @@ export class StreamView {
             // frame's stamp (hostTs) still reaches what measures its age: the
             // detection, the content-age probe, the frame log.
             if (this._renderer) this._renderer.noteEncodedFrame(obuData.length, isKeyframe);
+            // mwsr's zones from the native host, kept by the chunk's timestamp.
+            if (zones && this._renderer && this._renderer.wantsFrameZones)
+                this._renderer.noteFrameZones(timestamp, zones);
             this._trackChunkSubmit(timestamp, 0, {
                 arrived: arrivalAbs > 0 ? arrivalAbs - performance.timeOrigin : 0,
                 bytes: obuData.length,

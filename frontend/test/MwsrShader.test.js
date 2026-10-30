@@ -91,6 +91,29 @@ describe('the mwsr shader text', () => {
         expect(mwsrWgsl({ mode: 'down', half: true })).toBe(down);
     });
 
+    it("has a second up text that takes the native host's zone drop off the law (plan B §12 c)", () => {
+        const decl = '@group(0) @binding(3) var zoneMap : texture_2d<f32>;';
+        const law = '    let sharp = mix(u.sharp, u.zsharp, zg);';
+        const zoned =
+            '    let sharp = mix(u.sharp, u.zsharp, zg)\n' +
+            '        - textureSampleLevel(zoneMap, samp, uv, 0.0).r / max(strength, 0.01);';
+        for (const opts of [{ feed: 'tex' }, { feed: 'ext' }, { feed: 'tex', half: true }]) {
+            const base = mwsrWgsl(opts);
+            const map = mwsrWgsl({ ...opts, map: true });
+            // without the zones, the text of before them, to the byte
+            expect(mwsrWgsl({ ...opts, map: false })).toBe(base);
+            expect(base).not.toContain('zoneMap');
+            // with them: binding 3 under the uniform block, and the one line
+            expect(map.split(decl)).toHaveLength(2);
+            expect(map).toContain('var<uniform> u : U;\n' + decl + '\n');
+            expect(map.split(zoned)).toHaveLength(2);
+            expect(map.replace('\n' + decl, '').replace(zoned, law)).toBe(base);
+            // the strength the line divides by is the kernel's, taken before it
+            expect(map.indexOf('let strength = clamp(')).toBeLessThan(map.indexOf(zoned));
+        }
+        expect(() => mwsrWgsl({ mode: 'down', map: true })).toThrow(/up mode only/);
+    });
+
     it('reduces with an unrolled grid of 4, 9 or 16 samples over the footprint, or one sample', () => {
         for (const taps of [4, 9, 16]) {
             const text = mwsrWgsl({ mode: 'down', taps });
@@ -185,7 +208,7 @@ describe('the mwsr shader text', () => {
     });
 
     it('uses no gather, no discard, no loop, no dynamic indexing (plan §3.4)', () => {
-        for (const text of [tex, down, mwsrWgsl({ mode: 'down', taps: 16 }), glsl, glslDown, hlsl, hlslDown])
+        for (const text of [tex, mwsrWgsl({ map: true }), down, mwsrWgsl({ mode: 'down', taps: 16 }), glsl, glslDown, hlsl, hlslDown])
             expect(text).not.toMatch(
                 /textureGather|\.Gather|discard|clip\(|\bfor\s*\(|\bloop\b|\bwhile\b|\[\s*i\s*\]/,
             );

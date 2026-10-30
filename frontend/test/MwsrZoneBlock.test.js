@@ -3,7 +3,13 @@
  * GPLv3 — see repository LICENSE.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mwsrZoneDrop, readMwsrZoneBlock } from '../js/stream/MwsrZoneBlock.js';
+import {
+    MWSR_ZONE_CODES,
+    mwsrZoneDrop,
+    mwsrZoneTexels,
+    mwsrZonesFit,
+    readMwsrZoneBlock,
+} from '../js/stream/MwsrZoneBlock.js';
 import { WebRtcDataChannel } from '../js/api/WebRtcDataChannel.js';
 
 // The block as backend/src/streaming/MwsrZoneBlock.h writes it.
@@ -81,6 +87,32 @@ describe('MwsrZoneBlock — the side block of the native host', () => {
         expect(mwsrZoneDrop(0)).toBe(0);
         expect(mwsrZoneDrop(1)).toBeCloseTo(0.1, 6);
         expect(mwsrZoneDrop(11)).toBeCloseTo(1.35, 6);
+        // a later host's codes: the law here
+        for (let c = MWSR_ZONE_CODES; c < 16; c++) expect(mwsrZoneDrop(c)).toBe(0);
+    });
+
+    it("gives the kernel each zone's drop as the nearest binary16", () => {
+        const half = (b) => 2 ** (((b >> 10) & 31) - 15) * (1 + (b & 1023) / 1024);
+        const t = mwsrZoneTexels(Uint8Array.from({ length: 16 }, (_, c) => c));
+        expect(Array.from(t.slice(0, 3))).toEqual([0, 0x2e66, 0x3333]);
+        expect(t[11]).toBe(0x3d66);
+        for (let c = 1; c < MWSR_ZONE_CODES; c++) {
+            const err = Math.abs(half(t[c]) - mwsrZoneDrop(c));
+            expect(err).toBeLessThanOrEqual(Math.abs(half(t[c] - 1) - mwsrZoneDrop(c)));
+            expect(err).toBeLessThanOrEqual(Math.abs(half(t[c] + 1) - mwsrZoneDrop(c)));
+        }
+        expect(Array.from(t.slice(MWSR_ZONE_CODES))).toEqual([0, 0, 0, 0]);
+    });
+
+    it('fits the scale they were decided for, to a tenth, from ×1.3 up', () => {
+        expect(mwsrZonesFit({ scale: 1.333 }, 2560 / 1920)).toBe(true);
+        expect(mwsrZonesFit({ scale: 2 }, 1.81)).toBe(true);
+        expect(mwsrZonesFit({ scale: 2 }, 2.19)).toBe(true);
+        expect(mwsrZonesFit({ scale: 2 }, 1.79)).toBe(false);
+        expect(mwsrZonesFit({ scale: 1.333 }, 2)).toBe(false);
+        expect(mwsrZonesFit({ scale: 1.333 }, 1.3)).toBe(true);
+        expect(mwsrZonesFit({ scale: 1.25 }, 1.25)).toBe(false);
+        expect(mwsrZonesFit({ scale: 1.333 }, 1)).toBe(false);
     });
 });
 

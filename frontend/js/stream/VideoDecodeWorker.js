@@ -689,7 +689,7 @@ function flushPendingFrames() {
     }
     while (S.pendingFrames.length > 0) {
         const entry = S.pendingFrames.shift();
-        decodeFrame(entry.data, entry.isKeyframe, entry.backendTs, entry.arrivalAbs);
+        decodeFrame(entry.data, entry.isKeyframe, entry.backendTs, entry.arrivalAbs, entry.zones);
     }
 }
 
@@ -715,10 +715,10 @@ function flushDecodeQueue() {
     return true;
 }
 
-function decodeFrame(data, isKeyframe, backendTs, arrivalAbs) {
+function decodeFrame(data, isKeyframe, backendTs, arrivalAbs, zones = null) {
     if (!S.decoderConfigured) {
         if (S.pendingFrames.length < 120)
-            S.pendingFrames.push({ data, isKeyframe, backendTs, arrivalAbs });
+            S.pendingFrames.push({ data, isKeyframe, backendTs, arrivalAbs, zones });
         return;
     }
     if (!S.decoder) return;
@@ -785,6 +785,9 @@ function decodeFrame(data, isKeyframe, backendTs, arrivalAbs) {
         if (S.renderer) S.renderer.noteEncodedFrame(avccData.length, isKeyframe);
         // mwsr 3: the frame's QP, from its first slice header (nothing read otherwise).
         if (S.renderer && S.renderer.wantsFrameQp) S.renderer.noteFrameQp(timestamp, frameQp(data));
+        // mwsr's zones from the native host, kept by the chunk's timestamp.
+        if (zones && S.renderer && S.renderer.wantsFrameZones)
+            S.renderer.noteFrameZones(timestamp, zones);
         trackChunkSubmit(timestamp, backendTs);
         if (arrivalAbs > 0) addStageSample(S._arriveSamples, nowAbs() - arrivalAbs);
         S.decoder.decode(chunk);
@@ -809,7 +812,7 @@ function frameQp(annexB) {
 
 // ── AV1 pipeline ─────────────────────────────────────────────────────────────
 
-function handleAv1Frame(data, isKeyframe, arrivalAbs) {
+function handleAv1Frame(data, isKeyframe, arrivalAbs, zones = null) {
     if (!S.decoderConfigured && !S.decoderConfiguring) {
         if (isKeyframe) {
             if (S.pendingFrames.length > 0) S.pendingFrames = [];
@@ -818,14 +821,14 @@ function handleAv1Frame(data, isKeyframe, arrivalAbs) {
             configureAv1Decoder(seqHeader || undefined);
         } else {
             if (S.pendingFrames.length < 120)
-                S.pendingFrames.push({ data, isKeyframe, arrivalAbs });
+                S.pendingFrames.push({ data, isKeyframe, arrivalAbs, zones });
             if (S.pendingFrames.length > 30 && S.pendingFrames.length % 30 === 0) {
                 requestIdr('AV1 no keyframe while buffering');
             }
             return;
         }
     }
-    decodeAv1Frame(data, isKeyframe, arrivalAbs);
+    decodeAv1Frame(data, isKeyframe, arrivalAbs, zones);
 }
 
 function configureAv1Decoder(seqHeaderObu) {
@@ -854,7 +857,7 @@ function configureAv1Decoder(seqHeaderObu) {
                         }
                         while (S.pendingFrames.length > 0) {
                             const entry = S.pendingFrames.shift();
-                            decodeAv1Frame(entry.data, entry.isKeyframe);
+                            decodeAv1Frame(entry.data, entry.isKeyframe, 0, entry.zones);
                         }
                     } catch (e) {
                         tryCodecs(index + 1);
@@ -868,9 +871,10 @@ function configureAv1Decoder(seqHeaderObu) {
     tryCodecs(0);
 }
 
-function decodeAv1Frame(data, isKeyframe, arrivalAbs) {
+function decodeAv1Frame(data, isKeyframe, arrivalAbs, zones = null) {
     if (!S.decoderConfigured) {
-        if (S.pendingFrames.length < 120) S.pendingFrames.push({ data, isKeyframe, arrivalAbs });
+        if (S.pendingFrames.length < 120)
+            S.pendingFrames.push({ data, isKeyframe, arrivalAbs, zones });
         return;
     }
     if (!S.decoder) return;
@@ -885,6 +889,8 @@ function decodeAv1Frame(data, isKeyframe, arrivalAbs) {
         // sees 0 and leaves this path on the present-on-decode behavior.
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: obuData });
         if (S.renderer) S.renderer.noteEncodedFrame(obuData.length, isKeyframe);
+        if (zones && S.renderer && S.renderer.wantsFrameZones)
+            S.renderer.noteFrameZones(timestamp, zones);
         trackChunkSubmit(timestamp, 0);
         if (arrivalAbs > 0) addStageSample(S._arriveSamples, nowAbs() - arrivalAbs);
         S.decoder.decode(chunk);
@@ -1033,7 +1039,7 @@ async function drawFrame(frame) {
 
 // Core frame entry (mirrors StreamView._processVideoFrame from the AV1 dispatch
 // onward; stale/gap/stats/overlay stay on the main thread before this point).
-function processFrame(data, isKeyframe, backendTs, arrivalAbs) {
+function processFrame(data, isKeyframe, backendTs, arrivalAbs, zones = null) {
     if (S.stopped || S._fatalDecodeError) return;
 
     // Arrival cadence + encoded size at the pipeline entry: distinguishes "the
@@ -1042,7 +1048,7 @@ function processFrame(data, isKeyframe, backendTs, arrivalAbs) {
     S.diag.noteArrival(data.length);
 
     if (S.videoCodec === CODEC_AV1) {
-        handleAv1Frame(data, isKeyframe, arrivalAbs);
+        handleAv1Frame(data, isKeyframe, arrivalAbs, zones);
         return;
     }
 
@@ -1076,7 +1082,7 @@ function processFrame(data, isKeyframe, backendTs, arrivalAbs) {
     }
     if (!S.decoderConfigured && S.nalParser.isReady()) configureDecoder();
 
-    decodeFrame(data, isKeyframe, backendTs, arrivalAbs);
+    decodeFrame(data, isKeyframe, backendTs, arrivalAbs, zones);
 }
 
 self.onmessage = (e) => {
@@ -1110,6 +1116,8 @@ self.onmessage = (e) => {
                 hdr: !!m.hdr,
                 // The mwsr kernel's gaze zone (BrowserDetect.mwsrGazeWanted, on main).
                 gazeZone: !!m.gazeZone,
+                // mwsr's zones from the native host (BrowserDetect.mwsrMapWanted, on main).
+                zoneMap: !!m.zoneMap,
                 // mwsr 2 / 3's deblocking (the debug menu's), null otherwise.
                 deblock: m.deblock || null,
             }).then((r) => {
@@ -1140,7 +1148,7 @@ self.onmessage = (e) => {
             break;
         case 'frame': {
             const data = new Uint8Array(m.data);
-            processFrame(data, m.isKeyframe, m.backendTs, m.arrivalAbs || 0);
+            processFrame(data, m.isKeyframe, m.backendTs, m.arrivalAbs || 0, m.zones || null);
             break;
         }
         case 'frameloss':

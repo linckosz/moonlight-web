@@ -404,9 +404,16 @@ fn L(c : vec2i) -> vec3f {
     },
 };
 
+// The native host's zones (plan B, upscaler-mwsr-b.md §12 c), the `up` text's
+// second compilation: binding 3, an r16float texture of one texel per zone of
+// the capture, the drop that zone takes off the across weight, which the
+// sampler reads bilinearly between the zones' centres, as the bench did.
+const MAP_DECL = '@group(0) @binding(3) var zoneMap : texture_2d<f32>;';
+
 // The part every text shares: the vertex stage, the uniform block, the
-// bindings, the feed, the overrides and the luma.
-function preamble(feed, half) {
+// bindings, the feed, the overrides and the luma (and the zones' texture,
+// `map`).
+function preamble(feed, half, map = false) {
     const f = FEEDS[feed];
     if (!f) throw new Error('mwsr: feed ' + feed + '?');
     const prelude = half ? 'enable f16;\n\n' : '';
@@ -448,7 +455,7 @@ struct U {
 
 @group(0) @binding(0) var samp : sampler;
 ${f.decl}
-@group(0) @binding(2) var<uniform> u : U;
+@group(0) @binding(2) var<uniform> u : U;${map ? '\n' + MAP_DECL : ''}
 
 ${f.sample}
 
@@ -671,6 +678,17 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 }
 `;
 
+// The `up` text that reads the zones (`map`): on the edge path the sharpness
+// is the law's, less the zone's drop over the kernel's strength, the drop
+// being one of the across weight (sharpness × strength), the bench's unit
+// (plan B §12 c). A drop is never negative: the law stays the ceiling. The
+// renderer reads the zones from ×1.3 up only, a strength of 0.6 or more; the
+// guard keeps any other draw finite.
+const SHARP_LAW = '    let sharp = mix(u.sharp, u.zsharp, zg);';
+const SHARP_MAP = `    let sharp = mix(u.sharp, u.zsharp, zg)
+        - textureSampleLevel(zoneMap, samp, uv, 0.0).r / max(strength, 0.01);`;
+const UP_FS_MAP = UP_FS.replace(SHARP_LAW, SHARP_MAP);
+
 // The k×k grid of the reduction, as offsets in the pixel's footprint (the
 // span): the centres of k×k equal cells, row by row. Both twins unroll it.
 function downOffsets(taps) {
@@ -747,7 +765,8 @@ ${lines.join('\n')}
  * uniform block of mwsrUniforms(). Explicit LOD and clamp-to-edge sampling
  * only, so the samples may sit in the non-uniform branch; the derivatives are
  * taken before it, in uniform control flow, as WGSL requires.
- * @param {{feed?: 'tex'|'ext', half?: boolean, mode?: 'up'|'down', taps?: number}} [opts]
+ * @param {{feed?: 'tex'|'ext', half?: boolean, mode?: 'up'|'down', taps?: number, fine?: boolean,
+ *          map?: boolean}} [opts]
  *   'tex' reads a texture_2d<f32>: the product's path, after its pass 0 (the
  *   external texture's two planes per sample made 'ext' lose to pass 0 +
  *   kernel on the RTX, the AMD iGPU and the M1 alike, P2.3; 'ext' stays for
@@ -755,14 +774,26 @@ ${lines.join('\n')}
  *   device must have 'shader-f16'; worth 9-10 % on the AMD iGPU, nothing on
  *   NVIDIA); the vote, the frame, the bound and the down mode stay in f32.
  *   `mode` 'down' is the reduction with `taps` samples (1, 4, 9 or 16; see
- *   mwsrRegime()).
+ *   mwsrRegime()). `map`, the up mode only: the second text, which reads the
+ *   native host's zones from binding 3 (a texture_2d<f32>, see UP_FS_MAP);
+ *   without it the text is the same as before the zones, to the byte.
  * @returns {string}
  */
-export function mwsrWgsl({ feed = 'tex', half = false, mode = 'up', taps = 4, fine = false } = {}) {
-    if (mode === 'up')
+export function mwsrWgsl({
+    feed = 'tex',
+    half = false,
+    mode = 'up',
+    taps = 4,
+    fine = false,
+    map = false,
+} = {}) {
+    if (mode === 'up') {
+        const fs = map ? UP_FS_MAP : UP_FS;
         return (
-            preamble(feed, half) + (fine ? UP_FS.replace(/dpd([xy])Coarse/g, 'dpd$1Fine') : UP_FS)
+            preamble(feed, half, map) + (fine ? fs.replace(/dpd([xy])Coarse/g, 'dpd$1Fine') : fs)
         );
+    }
+    if (map) throw new Error('mwsr: the zones are read by the up mode only');
     if (mode === 'down') return preamble(feed, false) + downFs(taps);
     throw new Error('mwsr: mode ' + mode + '?');
 }

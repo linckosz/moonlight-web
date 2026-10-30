@@ -124,6 +124,25 @@ export class VideoRenderer {
     noteFrameQp(timestamp, qp) {}
 
     /**
+     * Whether this renderer reads the native host's zones (noteFrameZones):
+     * the WebGPU mwsr kernel, when the page asked the host for them at /start
+     * (BrowserDetect.mwsrMapWanted). False here: the zones then go nowhere.
+     * @returns {boolean}
+     */
+    get wantsFrameZones() {
+        return false;
+    }
+
+    /**
+     * MWSR's zones of an encoded frame (stream/MwsrZoneBlock.js), by the
+     * timestamp its chunk goes to the decoder with. Called only while
+     * wantsFrameZones says so, and only for a frame that carried them.
+     * @param {number} timestamp
+     * @param {{cols: number, rows: number, scale: number, codes: Uint8Array}} zones
+     */
+    noteFrameZones(timestamp, zones) {}
+
+    /**
      * Click-to-photon probe support (see stream/LatencyProbe.js). A canvas that
      * presents through a desynchronized swap chain (WebGL2 here) cannot be
      * read back with drawImage once it is on screen — the drawing buffer is

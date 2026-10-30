@@ -538,7 +538,11 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
     ajusté au client ;
   - l'hôte prend donc l'échelle capture / flux, et l'écrit avec la grille ;
   - le client ignore la grille si son échelle réelle s'en écarte de plus de 10 % : fenêtre réduite, zoom,
-    capture d'un écran physique.
+    capture d'un écran physique ;
+  - il l'ignore aussi sous ×1,3 (f.2.5) : le banc a mesuré à partir de ×1,33. Plus bas, la force du noyau
+    tend vers 0 à 1:1, et la baisse divisée par elle croîtrait sans borne (à ×1,25, le code 11 rendrait une
+    netteté de −0,85, contre −0,18 au pire à ×1,33). L'hôte calcule quand même la grille entre ×1 et ×1,3 ;
+    l'en empêcher serait une ligne dans `enableMwsrStats`, pas encore faite.
 - **Sans retarder l'image :**
   - les statistiques partent avec la conversion et sont relues quand l'image encodée sort ;
   - si elles ne sont pas prêtes, l'image part sans grille, et le client applique la loi.
@@ -585,7 +589,9 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
   - V2 aussi, si elle revient (elle sort de la v0.4.2, b.2). Le binding 3 est déjà pris par V2 dans
     `mwsr-yuv.js`.
 - **Un drapeau de debug,** coupé par défaut et sans interface, comme `mw_mwsr_gaze` : `mw_mwsr_map` =
-  `0` dans le localStorage ignore la grille, pour comparer à la loi sur le même stream.
+  `0` dans le localStorage ignore la grille, pour comparer à la loi sur le même stream. Avant
+  l'activation, c'est l'inverse : `1` demande la grille et la lit (f.2.4, f.2.5) ; sans la clé, rien
+  n'est demandé.
 
 **Les preuves avant d'activer :**
 - la table de l'arbre redonne les décisions du banc ;
@@ -750,7 +756,7 @@ pousse.
         applique la loi.
       - Le client (`MwsrZoneBlock.js`) ôte le bloc avant le décodeur et passe la grille à
         `onVideo`. Un bloc dont la longueur est impossible fait perdre l'image, comme un
-        morceau manquant. Le renderer ne la lit pas encore : c'est l'étape 5.
+        morceau manquant. Le renderer la lit depuis l'étape 5.
       - La décision sur le processeur, mesurée sur le 9900X au repos : 0,30 ms par image, dont
         l'essentiel en arrondis f16. Réécrits sur les bits du float, même résultat sur les
         2^32 valeurs possibles : 0,09 ms.
@@ -758,6 +764,30 @@ pousse.
         prend les statistiques et relecture identique à la passe seule (WARP). Non testé : un
         vrai stream, avec le GPU (étape 3).
    5. la grille dans le client WebGPU, les deux compilations, le drapeau, vérifiés sur SwiftShader. `high`
+      - **Fait le 30/10 au soir**, coupé comme 2.4 : seul un client qui a la clé `mw_mwsr_map` = `1`
+        construit la seconde compilation et lit la grille.
+      - Le texte : `mwsrWgsl({ map: true })` ajoute le binding 3, une texture r16float d'un texel par
+        zone, qui porte sa baisse. Il ne change qu'une ligne : la netteté vaut `loi − baisse /
+        max(force, 0,01)`. Sans `map`, le texte est celui d'avant à l'octet près : les shaders générés
+        de `mwsr/` ne bougent pas, seule la copie de `MwsrShader.js` y suit.
+      - Le renderer (`WebGpuRenderer`) construit la seconde compilation avec la première, à la
+        création. La grille d'une image est gardée par son horodatage (`noteFrameZones`), comme le QP.
+        Au dessin, elle est lue si elle convient à l'échelle (`mwsrZonesFit` : à 10 % près, et ×1,3 au
+        moins). La texture n'est réécrite que quand les codes changent ; une réduction n'en lit pas.
+      - Le chemin de l'image : `onVideo`, `handleVideoFrame`, puis le worker de décodage ou
+        `decodeFrame`, AV1 compris, et les images qui attendent le décodeur gardent leur grille.
+      - Sur SwiftShader, le vrai renderer, des images du banc (`mix` à ×2 et à ×1,33, `text` à ×2) et
+        les grilles que `decideAll` tire des cellules WARP de ces captures :
+        - une grille de code 0 rend la loi au bit près ; une grille décidée pour une autre échelle
+          (+15 %) aussi ;
+        - contre le modèle numpy du banc, à la même carte de netteté : 0,0011 à 0,0070 % des pixels à
+          plus d'un niveau, pas plus que la loi elle-même (0,0017 à 0,0086 %) ;
+        - une grille qui parcourt les 12 codes : 0,0009 à 0,0057 %.
+      - Non vérifié : le module f16 (SwiftShader n'a pas `shader-f16`), le coût de la lecture sur un
+        vrai GPU, un vrai stream.
+      - Tests : le texte (`MwsrShader.test.js`), les texels et l'échelle (`MwsrZoneBlock.test.js`), le
+        renderer sur un faux GPU (`WebGpuRendererZones.test.js`), le chemin de la page
+        (`StreamViewZones.test.js`).
    6. ~~V2 dans `MwsrShader.js`, la règle par la mesure, le drapeau~~ : sautée, V2 sort de la v0.4.2.
    7. ~~pourquoi V2 ne dessine pas dans WebKit~~ : sautée, de même.
 3. Les créneaux de la gestion des plans, avec la durée annoncée à chaque fois. `xhigh`
