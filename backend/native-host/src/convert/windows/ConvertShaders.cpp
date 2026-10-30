@@ -24,6 +24,7 @@
 #include "ConvertShaders.h"
 #include "ConvertHlsl.h"
 
+#include "../MwsrZones.h"
 #include "../../platform/macos/FrameFit.h"
 
 #include <d3dcompiler.h>
@@ -91,6 +92,32 @@ bool compileScaleShader(bool horizontal, bool decode, int length, int output, in
 
     error = std::string("could not compile the ") + (horizontal ? "horizontal" : "vertical") +
             " resample";
+    if (errors && errors->GetBufferPointer()) {
+        error += ": ";
+        error += static_cast<const char*>(errors->GetBufferPointer());
+    }
+    return false;
+}
+
+bool compileMwsrStatsShader(int width, int height, ComPtr<ID3DBlob>& blob, std::string& error)
+{
+    const std::string widthText = std::to_string(width);
+    const std::string heightText = std::to_string(height);
+    const std::string cellsX = std::to_string(mwsrzones::kCellsX);
+    const std::string cellsY = std::to_string(mwsrzones::kCellsY);
+    const D3D_SHADER_MACRO defines[] = {{"MW_WIDTH", widthText.c_str()},
+                                        {"MW_HEIGHT", heightText.c_str()},
+                                        {"MW_CELLS_X", cellsX.c_str()},
+                                        {"MW_CELLS_Y", cellsY.c_str()},
+                                        {nullptr, nullptr}};
+    ComPtr<ID3DBlob> errors;
+    const HRESULT hr =
+        ::D3DCompile(kMwsrStatsSource, sizeof(kMwsrStatsSource) - 1, "MwsrStats.hlsl", defines,
+                     nullptr, "CsStats", "cs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+                     blob.GetAddressOf(), errors.GetAddressOf());
+    if (SUCCEEDED(hr)) return true;
+
+    error = "could not compile MWSR's statistics pass";
     if (errors && errors->GetBufferPointer()) {
         error += ": ";
         error += static_cast<const char*>(errors->GetBufferPointer());

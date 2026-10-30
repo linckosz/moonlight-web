@@ -71,6 +71,7 @@ if(WIN32)
         src/capture/windows/Win32Cursor.cpp
         src/convert/windows/ColorConvert.cpp
         src/convert/windows/ConvertShaders.cpp
+        src/convert/windows/MwsrStats.cpp
         src/convert/windows/d3d12/ColorConvert12.cpp
         src/input/windows/Win32Input.cpp
         src/input/windows/WinTextKeys.cpp
@@ -594,6 +595,7 @@ if(MW_BUILD_TESTS)
         tests/test_capture_hold.cpp
         tests/test_resample_cost.cpp
         tests/test_mwsr_zones.cpp
+        tests/test_mwsr_stats.cpp
         tests/test_cadence_align.cpp
         tests/test_cadence_choice.cpp
         tests/test_cadence_step.cpp

@@ -405,4 +405,84 @@ float4 PsScale(VsOut i) : SV_TARGET
 }
 )HLSL";
 
+// ── MWSR's statistics of the capture, for the sharpness by zone ─────────────
+//
+// Plan B §12 c (upscaler-mwsr-b.md): per pixel of the 8-bit capture, on its
+// sRGB-encoded values, its neighbours 1 px away and the picture's edges
+// clamped, the 8 statistics the bench's tree reads (MwsrZones.h), and their
+// means per cell of a MW_CELLS_X × MW_CELLS_Y grid: cell k spans the pixels
+// k * size / cells to (k + 1) * size / cells, as the bench cut them. A thread
+// group per cell, 64 threads striding over it, then a tree in groupshared
+// memory; the cell's 8 means go out as two float4.
+//
+// Every operation on a pixel is `precise`, so that FXC fuses no multiply and
+// add and keeps the order written: the order a CPU reference can repeat bit
+// for bit, and the one of the bench (numpy, in float32) but for the luma's
+// three products and the sums. The capture's size is compiled in (MW_WIDTH,
+// MW_HEIGHT), like the resample pass's.
+inline constexpr char kMwsrStatsSource[] = R"HLSL(
+Texture2D<float4>          Source : register(t0);
+RWStructuredBuffer<float4> Cells  : register(u0);
+
+static const int kW = MW_WIDTH;
+static const int kH = MW_HEIGHT;
+
+float Luma(int x, int y)
+{
+    precise float3 c = Source.Load(int3(x, y, 0)).rgb;
+    precise float  l = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+    return l;
+}
+
+groupshared float4 gHead[64];
+groupshared float4 gTail[64];
+
+[numthreads(8, 8, 1)]
+void CsStats(uint3 cell : SV_GroupID, uint3 t : SV_GroupThreadID, uint i : SV_GroupIndex)
+{
+    const int x0 = int(cell.x) * kW / MW_CELLS_X;
+    const int x1 = (int(cell.x) + 1) * kW / MW_CELLS_X;
+    const int y0 = int(cell.y) * kH / MW_CELLS_Y;
+    const int y1 = (int(cell.y) + 1) * kH / MW_CELLS_Y;
+
+    // luma, luma², gradient, gradient > 0.05 | gradient < 0.01, |laplacian|,
+    // saturation, luma < 0.15
+    precise float4 head = 0.0;
+    precise float4 tail = 0.0;
+    for (int y = y0 + int(t.y); y < y1; y += 8) {
+        for (int x = x0 + int(t.x); x < x1; x += 8) {
+            precise float3 rgb = Source.Load(int3(x, y, 0)).rgb;
+            precise float  c   = rgb.r * 0.2126 + rgb.g * 0.7152 + rgb.b * 0.0722;
+            precise float  lx  = Luma(min(x + 1, kW - 1), y);
+            precise float  lw  = Luma(max(x - 1, 0), y);
+            precise float  ly  = Luma(x, min(y + 1, kH - 1));
+            precise float  ln  = Luma(x, max(y - 1, 0));
+            precise float  g   = abs(lx - c) + abs(ly - c);
+            precise float  lap = abs(lx + ly + lw + ln - 4.0 * c);
+            precise float  sat = max(rgb.r, max(rgb.g, rgb.b)) - min(rgb.r, min(rgb.g, rgb.b));
+            head += float4(c, c * c, g, g > 0.05 ? 1.0 : 0.0);
+            tail += float4(g < 0.01 ? 1.0 : 0.0, lap, sat, c < 0.15 ? 1.0 : 0.0);
+        }
+    }
+
+    gHead[i] = head;
+    gTail[i] = tail;
+    GroupMemoryBarrierWithGroupSync();
+    [unroll]
+    for (uint s = 32; s > 0; s >>= 1) {
+        if (i < s) {
+            gHead[i] += gHead[i + s];
+            gTail[i] += gTail[i + s];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (i == 0) {
+        const float n = float((x1 - x0) * (y1 - y0));
+        const uint  k = (cell.y * MW_CELLS_X + cell.x) * 2;
+        Cells[k]     = gHead[0] / n;
+        Cells[k + 1] = gTail[0] / n;
+    }
+}
+)HLSL";
+
 } // namespace mw::native::convert

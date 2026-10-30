@@ -694,6 +694,19 @@ pousse.
    1. les planches couleur de V2 (vérification 1). `medium`
    2. l'arbre exporté en table, et ses tests contre le banc. `high`
    3. la passe de statistiques de l'hôte en D3D11, vérifiée sur WARP. `xhigh`
+      - **Fait le 30/10** : `MwsrStats` (`src/convert/windows/`), un compute shader `cs_5_0`, un
+        groupe par cellule de la grille 128 × 72, puis une copie relue sans attendre (anneau de 4
+        tampons, un ticket par image). Rien ne l'appelle encore : le branchement vient avec 2.4.
+      - Sur les 22 captures natives du banc, sur WARP : aucun code de zone ne change (0 sur
+        101 376 décisions, aux 4 échelles du banc, réduction linéaire ou bilinéaire). Les valeurs
+        des cellules sont à 1 pas de f16 au plus. Seuls 10 pixels sur 81 millions sont comptés
+        autrement, à cause de l'ordre des trois produits de la luma dans numpy ; écrits comme le
+        shader, aucun.
+      - Le test du dépôt (`test_mwsr_stats.cpp`, WARP) compare la passe à une référence CPU qui
+        refait ses opérations : écart de 1e-7 au plus.
+      - Seulement pour une capture 8 bits : le bureau HDR, même ramené en SDR, n'a pas de grille.
+      - Non mesuré : le coût sur GPU (créneau, étape 3). Sur le processeur, la décision des 576
+        zones prend 0,3 ms par image sur le 9900X ; ce sont surtout les arrondis f16.
    4. le transport : `mwsr_map` au `/start`, le bit de l'octet 8, le bloc annexe, sa lecture et ses
       tests. `xhigh`
    5. la grille dans le client WebGPU, les deux compilations, le drapeau, vérifiés sur SwiftShader. `high`

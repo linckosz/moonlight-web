@@ -84,6 +84,7 @@ void run_input_admit_tests();
 void run_capture_hold_tests();
 void run_resample_cost_tests();
 void run_mwsr_zones_tests();
+void run_mwsr_stats_tests();
 void run_cadence_align_tests();
 void run_cadence_choice_tests();
 void run_cadence_step_tests();
@@ -208,6 +209,7 @@ int main(int argc, char** argv)
     RUN(feed_arbiter);
     RUN(capture);
     RUN(color_convert);
+    RUN(mwsr_stats);
     RUN(color_convert12);
     RUN(d3d11_video_pipeline);
     RUN(d3d12_device);

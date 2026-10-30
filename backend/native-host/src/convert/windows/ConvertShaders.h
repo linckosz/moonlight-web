@@ -48,6 +48,11 @@ bool compileConvertShader(const char* entryPoint, const char* target, bool scRgb
 bool compileScaleShader(bool horizontal, bool decode, int length, int output, int fixed,
                         Microsoft::WRL::ComPtr<ID3DBlob>& blob, std::string& error);
 
+/// MWSR's statistics pass (kMwsrStatsSource) for a @p width × @p height
+/// capture, as a cs_5_0 compute shader.
+bool compileMwsrStatsShader(int width, int height, Microsoft::WRL::ComPtr<ID3DBlob>& blob,
+                            std::string& error);
+
 /// What a converter makes of the sizes it is given.
 struct ConvertGeometry
 {
