@@ -503,6 +503,9 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
    - Ces GPU sont reconnus par la mesure.
    - En 4:2:0 seulement : le 4:4:4 garde le chemin actuel.
    - Le choix est automatique, avec un drapeau de debug coupé par défaut.
+   - **Puis, le 30/10 au soir, V2 sort de la v0.4.2 et reste au labo** (choix A de Bruno). Elle perd
+     sur la 780M (e.3), et Bruno a vu sa perte de couleur (e.1). Le §d reste la conception, pour plus
+     tard.
 3. **Avant d'activer V2, quatre vérifications** (e) :
    - l'œil de Bruno sur la couleur ;
    - V2 sur l'iPhone ;
@@ -578,7 +581,7 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
 - **Les renderers et les noyaux :**
   - WebGPU d'abord : c'est là que la grille est validée au labo (`mwsr-map.js`) ;
   - puis le jumeau GLSL (WebGL2) ;
-  - V2 aussi, pour l'hôte natif sur un GPU faible. Le binding 3 est déjà pris par V2 dans
+  - V2 aussi, si elle revient (elle sort de la v0.4.2, b.2). Le binding 3 est déjà pris par V2 dans
     `mwsr-yuv.js`.
 - **Un drapeau de debug,** coupé par défaut et sans interface, comme `mw_mwsr_gaze` : `mw_mwsr_map` =
   `0` dans le localStorage ignore la grille, pour comparer à la loi sur le même stream.
@@ -593,6 +596,8 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
 - enfin, un vrai stream de l'hôte natif, pour l'œil de Bruno : grille ou loi, par le drapeau.
 
 ### d. V2
+
+**Hors de la v0.4.2** depuis le 30/10 au soir (b.2) : ce qui suit n'est pas codé dans le produit.
 
 - **Le noyau.** Celui du labo (`mwsr-yuv.js`, V2) entre dans `MwsrShader.js`, en WebGPU seulement,
   le seul rendu mesuré. WebGL garde le chemin actuel.
@@ -631,6 +636,8 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
   plans du décodeur sans passe 0 ; c'est non mesuré.
 
 ### e. Les quatre vérifications de V2, avant de l'activer
+
+La 1 et la 3 sont faites. La 2 et la 4 tombent avec la sortie de V2 (b.2).
 
 1. **L'œil de Bruno sur la couleur.** Planches A/B à l'aveugle, chemin actuel contre V2, en 4:2:0 :
    texte coloré, code, un jeu.
@@ -701,8 +708,8 @@ pousse.
 1. Ce plan. `high`
 2. Sans GPU :
    1. les planches couleur de V2 (vérification 1). `medium`
-      - **Fait : V2 attend** (e.1). Les étapes de V2 (6 et 7, puis son HDR au créneau) attendent la
-        décision de Bruno ; la grille (4 et 5) ne dépend pas de V2.
+      - **Fait : V2 attend** (e.1). Bruno a ensuite sorti V2 de la v0.4.2 (b.2) : les étapes 6 et 7
+        sont sautées, ainsi que son HDR au créneau. La grille (4 et 5) ne dépend pas de V2.
    2. l'arbre exporté en table, et ses tests contre le banc. `high`
    3. la passe de statistiques de l'hôte en D3D11, vérifiée sur WARP. `xhigh`
       - **Fait le 30/10** : `MwsrStats` (`src/convert/windows/`), un compute shader `cs_5_0`, un
@@ -721,15 +728,12 @@ pousse.
    4. le transport : `mwsr_map` au `/start`, le bit de l'octet 8, le bloc annexe, sa lecture et ses
       tests. `xhigh`
    5. la grille dans le client WebGPU, les deux compilations, le drapeau, vérifiés sur SwiftShader. `high`
-   6. V2 dans `MwsrShader.js`, la règle par la mesure (seuil, puis V2 contre le chemin actuel), le
-      drapeau, vérifiés sur SwiftShader. `xhigh`
-   7. pourquoi V2 ne dessine pas dans WebKit, en lisant le code, avant de prendre l'iPhone. `high`
+   6. ~~V2 dans `MwsrShader.js`, la règle par la mesure, le drapeau~~ : sautée, V2 sort de la v0.4.2.
+   7. ~~pourquoi V2 ne dessine pas dans WebKit~~ : sautée, de même.
 3. Les créneaux de la gestion des plans, avec la durée annoncée à chaque fois. `xhigh`
-   - DualRTX : le coût de la passe de l'hôte sur la RTX et l'iGPU, puis le HDR de V2 ;
-   - l'UM790Pro : la 780M ;
-   - l'iPhone, avec Bruno.
-4. Le verdict à Bruno : le budget de la passe de l'hôte, le seuil de V2, les planches. Puis l'activation,
-   à son oui. `high`
+   - DualRTX : le coût de la passe de l'hôte sur la RTX et l'iGPU ;
+   - ~~l'UM790Pro : la 780M~~ (fait le 30/10, e.3) ; ~~l'iPhone, avec Bruno~~ (V2 sortie).
+4. Le verdict à Bruno : le budget de la passe de l'hôte. Puis l'activation de la grille, à son oui. `high`
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
    - le jumeau GLSL de la grille. `high`
@@ -737,7 +741,7 @@ pousse.
 
 ### g. Ce qui n'est pas mesuré
 
-- **Le HDR.** La grille est coupée en HDR, et V2 attend la vérification 4.
+- **Le HDR.** La grille est coupée en HDR. V2, sortie de la v0.4.2, n'y a pas été mesurée.
 - **Une capture qui n'a pas la taille d'affichage du client.** La grille est ignorée au-delà de 10 %
   d'écart.
 - **La passe de l'hôte en rotation**, un quart des pixels par image : le coût baisserait, mais le gain
