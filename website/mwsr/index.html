@@ -229,24 +229,25 @@
       <a href="https://github.com/linckosz/moonlight-web/tree/main/mwsr" target="_blank" rel="noopener">mwsr folder</a>
       gives it to any renderer under the MIT License: WGSL, GLSL ES 3.00 and HLSL texts, and a C++ header for
       Direct3D 11 and 12, all written from the module the client runs.</p>
-    <h3>Measured on two GPUs</h3>
-    <p class="small">The README's figures (28/10/2026), in Chrome's WebGPU on Windows 11, the input already in an 8-bit
-      texture, on the 0 A.D. picture (game) and the text chart (text). Fidelity and overshoot as in the table above;
-      the times per draw, each upscaler at its faster precision.
-      The Ryzen 9 9900X's integrated Radeon ran at its own clock: read its times as ratios. NIS is MoonlightWeb's
-      port (see the ports below).</p>
+    <h3>Measured on three GPUs</h3>
+    <p class="small">The README's figures (28/10/2026, the Radeon 780M on 30/10/2026), in Chrome's WebGPU on Windows 11
+      (on Ubuntu for the Radeon 780M), the input already in an 8-bit texture, on the 0 A.D. picture (game) and the text
+      chart (text). Fidelity and overshoot as in the table above; the times per draw, each upscaler at its faster
+      precision. The Ryzen 9 9900X's integrated Radeon and the Radeon 780M ran at their own clocks: read their times as
+      ratios. On the Radeon 780M, the 16-bit texts were not held to their 32-bit ones. NIS is MoonlightWeb's port (see
+      the ports below).</p>
     <div class="table-wrap">
       <table>
         <caption>1080p → 1440p (×1.33)</caption>
         <thead><tr><th scope="col">Upscaler</th><th scope="col">Fidelity, game</th><th scope="col">Fidelity, text</th>
           <th scope="col">Overshoot, game</th><th scope="col">RTX 5060 Ti</th>
-          <th scope="col">Radeon iGPU (Ryzen 9 9900X)</th></tr></thead>
+          <th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M</th></tr></thead>
         <tbody>
-          <tr><th scope="row">MWSR</th><td>85.9</td><td>96.0</td><td>0.03 %</td><td>0.116 ms</td><td>3.80 ms (f16)</td></tr>
-          <tr><th scope="row">FSR1</th><td>87.5</td><td>94.4</td><td>13.7 %</td><td>0.265 ms (f16)</td><td>6.33 ms (f16)</td></tr>
-          <tr><th scope="row">NIS</th><td>82.8</td><td>95.6</td><td>42.6 %</td><td>0.904 ms</td><td>13.78 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>85.6</td><td>95.3</td><td>6.5 %</td><td>0.118 ms</td><td>2.97 ms (f16)</td></tr>
-          <tr><th scope="row">Bilinear</th><td>81.8</td><td>92.6</td><td>0 %</td><td>0.029 ms</td><td>0.449 ms</td></tr>
+          <tr><th scope="row">MWSR</th><td>85.9</td><td>96.0</td><td>0.03 %</td><td>0.116 ms</td><td>3.80 ms (f16)</td><td>0.267 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>87.5</td><td>94.4</td><td>13.7 %</td><td>0.265 ms (f16)</td><td>6.33 ms (f16)</td><td>0.707 ms (f16)</td></tr>
+          <tr><th scope="row">NIS</th><td>82.8</td><td>95.6</td><td>42.6 %</td><td>0.904 ms</td><td>13.78 ms</td><td>0.953 ms</td></tr>
+          <tr><th scope="row">SGSR1</th><td>85.6</td><td>95.3</td><td>6.5 %</td><td>0.118 ms</td><td>2.97 ms (f16)</td><td>0.216 ms (f16)</td></tr>
+          <tr><th scope="row">Bilinear</th><td>81.8</td><td>92.6</td><td>0 %</td><td>0.029 ms</td><td>0.449 ms</td><td>0.110 ms</td></tr>
         </tbody>
       </table>
     </div>
@@ -255,13 +256,13 @@
         <caption>720p → 1440p (×2)</caption>
         <thead><tr><th scope="col">Upscaler</th><th scope="col">Fidelity, game</th><th scope="col">Fidelity, text</th>
           <th scope="col">Overshoot, game</th><th scope="col">RTX 5060 Ti</th>
-          <th scope="col">Radeon iGPU (Ryzen 9 9900X)</th></tr></thead>
+          <th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M</th></tr></thead>
         <tbody>
-          <tr><th scope="row">MWSR</th><td>66.2</td><td>86.5</td><td>0.01 %</td><td>0.113 ms</td><td>3.69 ms (f16)</td></tr>
-          <tr><th scope="row">FSR1</th><td>68.0</td><td>84.7</td><td>2.9 %</td><td>0.273 ms</td><td>6.32 ms (f16)</td></tr>
-          <tr><th scope="row">NIS</th><td>69.5</td><td>87.6</td><td>41.7 %</td><td>0.614 ms</td><td>12.99 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>66.9</td><td>87.6</td><td>6.3 %</td><td>0.118 ms</td><td>2.95 ms (f16)</td></tr>
-          <tr><th scope="row">Bilinear</th><td>61.6</td><td>81.8</td><td>0 %</td><td>0.029 ms</td><td>0.422 ms</td></tr>
+          <tr><th scope="row">MWSR</th><td>66.2</td><td>86.5</td><td>0.01 %</td><td>0.113 ms</td><td>3.69 ms (f16)</td><td>0.231 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>68.0</td><td>84.7</td><td>2.9 %</td><td>0.273 ms</td><td>6.32 ms (f16)</td><td>0.685 ms (f16)</td></tr>
+          <tr><th scope="row">NIS</th><td>69.5</td><td>87.6</td><td>41.7 %</td><td>0.614 ms</td><td>12.99 ms</td><td>0.886 ms</td></tr>
+          <tr><th scope="row">SGSR1</th><td>66.9</td><td>87.6</td><td>6.3 %</td><td>0.118 ms</td><td>2.95 ms (f16)</td><td>0.204 ms (f16)</td></tr>
+          <tr><th scope="row">Bilinear</th><td>61.6</td><td>81.8</td><td>0 %</td><td>0.029 ms</td><td>0.422 ms</td><td>0.094 ms</td></tr>
         </tbody>
       </table>
     </div>
