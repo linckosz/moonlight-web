@@ -558,7 +558,9 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
     grille (f.2.4) ; le WebSocket de secours, son ancien chemin à en-tête de 2 octets compris, n'en a
     pas : le client y applique la loi.
 - **Le coût, à mesurer avant d'activer.**
-  - Estimé, non mesuré : environ 0,1 ms par image sur une RTX, environ 3 ms sur un GPU intégré.
+  - Estimé : environ 0,1 ms par image sur une RTX, environ 3 ms sur un GPU intégré. Mesuré le 30/10
+    (f.3) : 0,04 à 0,09 ms sur une RTX 5060 Ti et 0,86 à 2,6 ms sur l'iGPU du 9900X, à pleine fréquence ;
+    plus sur un bureau au repos (jusqu'à 1,4 et 3,4 ms en 4K).
   - Règle proposée, sur le modèle du Lanczos-2, gardé s'il coûte au plus 1,5 ms (`ResampleCost.h`) :
     - la passe complète tourne si elle tient dans un budget, que Bruno fixe sur les mesures ;
     - sinon, la variante légère : 16 × 9 zones, un pixel sur 4, pour environ un quart du coût (estimé).
@@ -792,8 +794,58 @@ pousse.
    7. ~~pourquoi V2 ne dessine pas dans WebKit~~ : sautée, de même.
 3. Les créneaux de la gestion des plans, avec la durée annoncée à chaque fois. `xhigh`
    - DualRTX : le coût de la passe de l'hôte sur la RTX et l'iGPU ;
+     - **Fait le 30/10 au soir** (22:35-22:41), une carte à la fois : la RTX 5060 Ti du bus 1, puis l'iGPU du
+       9900X (2 unités de calcul).
+     - Le banc, hors dépôt : la passe du produit (`compileMwsrStatsShader`, les tampons de `MwsrStats`),
+       seule sur une capture, entre horodatages GPU, copie des cellules comprise. Sur WARP, ses cellules
+       sont celles de `MwsrStats` au bit près.
+     - Deux rythmes :
+       - en rafale, par lots de 50, la file vidée entre les lots ;
+       - une image toutes les 16,7 ms, attendue, sur un bureau au repos.
+     - Les conditions : la série est refaite dans l'ordre inverse, avec les mêmes chiffres à 2 % près. Les
+       fréquences sont laissées au pilote. HAGS est actif sur la RTX ; l'iGPU ne le gère pas.
+     - p50 en ms, copie comprise :
+
+       | Capture | RTX, rafale | RTX, 60 i/s | iGPU, rafale | iGPU, 60 i/s | iGPU légère, rafale | iGPU légère, 60 i/s |
+       |---|---|---|---|---|---|---|
+       | 1080p | 0,044 | 0,08 à 0,19 | 0,86 | 1,61 à 1,62 | 0,23 | 0,74 |
+       | 1440p | 0,063 | 0,21 | 1,58 | 2,32 à 2,36 | 0,41 | 1,13 à 1,16 |
+       | 4K | 0,091 | 1,40 | 2,60 | 3,33 à 3,38 | 0,73 | 1,42 à 1,43 |
+
+     - **La variante légère** : 16 × 9 zones, donc 64 × 36 cellules, et un pixel sur 4. Seul son coût est
+       mesuré : ses moyennes ne sont pas renormalisées. Elle coûte 3,6 fois moins en rafale, et 2 à
+       2,4 fois moins à 60 i/s. Le pixel sur 4 seul, sans réduire les zones, ne divise le coût de l'iGPU
+       que par 1,4 à 2,9 : une part fixe par groupe domine.
+     - **L'estimation** (0,1 ms sur une RTX, 3 ms sur un GPU intégré) tient pour un GPU à pleine fréquence.
+     - **À 60 i/s, le GPU redescend entre deux images,** et la passe coûte plus : 1,3 à 1,9 fois plus sur
+       l'iGPU, 2 à 15 fois plus sur la RTX.
+       - Sur la RTX, la copie des cellules passe de 0,011 à 0,157 ms. Supposé : le lien PCIe ralentit au
+         repos.
+       - En 4K, la passe seule passe de 0,08 à 1,24 ms. Supposé : la capture (33 Mo) ne tient plus dans
+         le cache L2, et la mémoire est à sa fréquence de repos.
+     - **Non mesuré : dans un vrai stream**, le GPU convertit et encode aussi, et sa fréquence est entre
+       les deux.
+     - **La passe part avant la conversion,** sur la même file (`ColorConvert::convert`). Son coût
+       retarde donc chaque image, comme celui du Lanczos-2.
    - ~~l'UM790Pro : la 780M~~ (fait le 30/10, e.3) ; ~~l'iPhone, avec Bruno~~ (V2 sortie).
 4. Le verdict à Bruno : le budget de la passe de l'hôte. Puis l'activation de la grille, à son oui. `high`
+   - **Proposé à Bruno le 30/10 au soir**, sur les chiffres de 3. Dans tous les cas, la passe est mesurée
+     dans le stream, comme le Lanczos-2 : les minuteurs du convertisseur, 10 images d'échauffement, puis
+     la médiane de 30 (`ResampleCost.h`). La mesure seule ne dit pas le coût dans le stream.
+     - **A, recommandé : 0,5 ms, la passe complète seule.** Au-dessus, plus de grille, et le client
+       applique la loi.
+       - La RTX garde la grille en 1080p et en 1440p, même au repos (0,21 ms au plus). En 4K, la mesure
+         du stream tranche (0,09 à 1,40 ms).
+       - L'iGPU du 9900X n'en a pas : la passe complète lui coûte 0,86 ms au moins.
+       - Rien de plus à écrire.
+       - Pourquoi : la latence d'abord, pour un gain petit (+0,066 sur images fixes) que l'œil de Bruno
+         n'a pas vu en mouvement (a).
+     - **B : 1,5 ms, le budget du Lanczos-2, et la variante légère** entre la passe complète et rien.
+       - Au banc, la légère garde presque tout le gain : +0,064 / +0,062 contre +0,066 / +0,063 sur images
+         fixes, 99,6 % contre 102,5 % en mouvement (a, 16 × 9 au pas 4).
+       - L'iGPU du 9900X aurait la légère à toutes les tailles, pour 0,74 à 1,43 ms au repos.
+       - À écrire : la passe légère de l'hôte, l'arbre en 16 × 9 et leurs tests. `high`
+         Le transport et le client lisent déjà une grille de toute taille.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
    - le jumeau GLSL de la grille. `high`
@@ -806,6 +858,10 @@ pousse.
   d'écart.
 - **La passe de l'hôte en rotation**, un quart des pixels par image : le coût baisserait, mais le gain
   n'est pas mesuré par zone.
+- **Le coût de la passe dans un vrai stream.** Mesurée seule (f.3), elle coûte entre son prix à pleine
+  fréquence et son prix sur un bureau au repos, et l'écart va jusqu'à 15 fois sur la RTX en 4K.
+- **La passe lancée après la conversion** plutôt qu'avant : elle quitterait peut-être le chemin de
+  l'image vers l'encodeur. Non mesuré.
 - **Le pompage à l'œil.** Sur les 4 extraits de la première série, les coches de Bruno ne suivaient pas
   le pompage mesuré (la loi, qui ne peut pas pomper, a été cochée une fois). Un seul observateur, en une
   séance.
