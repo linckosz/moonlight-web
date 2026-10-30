@@ -161,6 +161,11 @@ public:
     /// every path except the native engine.
     void setCropsToFrame(bool crops) { m_CropsToFrame = crops; }
 
+    /// True when the browser reads MWSR's sharpness by zone, which the native
+    /// engine's frames then carry (mw::native::SessionConfig::mwsrZones).
+    /// Ignored by every other path.
+    void setMwsrZones(bool wanted) { m_MwsrZones = wanted; }
+
     /// The display a native display card stands for, as the server resolved
     /// it (LaunchRequest::displayKey). A stream worker's only.
     void setDisplayKey(const QString& key) { m_DisplayKey = key; }
@@ -549,6 +554,9 @@ private:
     /// See setCropsToFrame. False, the frame on the encoder's grid, unless the
     /// /start request said otherwise.
     bool m_CropsToFrame = false;
+
+    /// See setMwsrZones. False, no grid, unless the /start request asked.
+    bool m_MwsrZones = false;
 
     /// See setDisplayKey. Absent, the backend resolves the app id itself.
     std::optional<QString> m_DisplayKey;

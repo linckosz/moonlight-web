@@ -3782,6 +3782,10 @@ int main(int argc, char* argv[])
             // an encoder may then pad the frame. Absent (an older frontend) →
             // the picture is kept on the encoder's grid, as before.
             s->setCropsToFrame(body["crops_to_frame"].toBool(false));
+            // The browser reads MWSR's zones: the native host's frames carry
+            // them. Absent (an older frontend, or one that keeps the law) →
+            // none, as before.
+            s->setMwsrZones(body["mwsr_map"].toBool(false));
             // The client's screen: its measured refresh and whether it paints
             // on vsync. Absent (an older frontend) → unknown, no alignment.
             // And whether its tearing is real (Chromium on Windows): absent →
@@ -3944,6 +3948,8 @@ int main(int argc, char* argv[])
             cfg["refInvalidation"] = body["ref_invalidation"].toBool(true);
             // And the cropping, the same way (setCropsToFrame).
             cfg["cropsToFrame"] = body["crops_to_frame"].toBool(false);
+            // And MWSR's zones, the same way (setMwsrZones).
+            cfg["mwsrZones"] = body["mwsr_map"].toBool(false);
             cfg["fpsCeiling"] = reqFpsCeiling;
             cfg["clientRefreshMilliHz"] = body["client_refresh_mhz"].toInt(0);
             cfg["clientVsync"] = body["client_vsync"].toBool(false);

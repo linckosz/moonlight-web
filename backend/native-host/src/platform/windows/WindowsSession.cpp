@@ -1699,6 +1699,7 @@ private:
         converter.yuv444 = m_Target.yuv444;
         converter.hdr = hdr;
         converter.filter = filter;
+        converter.mwsrStats = m_Config.mwsrZones;
         if (!m_Pipeline->buildConverter(*m_Capture, converter, error)) return false;
         if (m_Pipeline->toneMapsToSdr())
             log::info("[native] SDR stream of an HDR desktop — tone-mapped on the GPU");
@@ -3412,6 +3413,28 @@ private:
         return out;
     }
 
+    /// MWSR's zones of the picture just encoded, onto its frame (plan B §12 c,
+    /// SessionConfig::mwsrZones): its statistics went to the GPU ahead of its
+    /// conversion, which the encoder had to finish, so they are back by now;
+    /// the decision is the CPU's, here. Statistics not back, or none on this
+    /// build: the frame goes without, and the client keeps its law for it.
+    void attachMwsrZones(EncodedFrame& out)
+    {
+        if (!m_Config.mwsrZones) return;
+        ++m_MwsrAskedFrames;
+        const int64_t startUs = steadyNowUs();
+        float scale = 0.0f;
+        if (!m_Pipeline->takeMwsrZones(m_MwsrZones, scale)) return;
+        const int64_t spentUs = steadyNowUs() - startUs;
+        ++m_MwsrZoneFrames;
+        m_MwsrDecideUs += spentUs;
+        if (spentUs > m_MwsrDecideMaxUs) m_MwsrDecideMaxUs = spentUs;
+        out.mwsrZones = m_MwsrZones;
+        out.mwsrZonesX = convert::mwsrzones::kZonesX;
+        out.mwsrZonesY = convert::mwsrzones::kZonesY;
+        out.mwsrScale = scale;
+    }
+
     bool emit(uint32_t& frameNumber, const FrameStamps& stamps, std::string& error)
     {
         // Pipelined, the encoder is this thread's once the encode thread holds
@@ -3444,7 +3467,8 @@ private:
         m_Link.sent(steadyNowUs(), encoded.size, m_LinkKbps);
 
         if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo) {
-            const EncodedFrame out = encodedFrame(encoded, frameNumber++, stamps, m_EncoderKbps);
+            EncodedFrame out = encodedFrame(encoded, frameNumber++, stamps, m_EncoderKbps);
+            attachMwsrZones(out);
             // Before the send, which is not the picture's own cost.
             if (m_Config.tuning.clickTrace && !stamps.resend)
                 traceFrame(out, stamps, encodeStartUs, encoded);
@@ -4476,6 +4500,21 @@ private:
                       " sent once the link drained, nothing newer having come");
         }
 
+        // MWSR's zones, when the client read them: how many frames carried
+        // their grid, and what the decision cost this thread.
+        if (m_MwsrAskedFrames > 0) {
+            char mean[16], peak[16];
+            std::snprintf(mean, sizeof(mean), "%.2f",
+                          m_MwsrZoneFrames > 0
+                              ? static_cast<double>(m_MwsrDecideUs) / m_MwsrZoneFrames / 1000.0
+                              : 0.0);
+            std::snprintf(peak, sizeof(peak), "%.2f", m_MwsrDecideMaxUs / 1000.0);
+            log::info("[native] MWSR zones: " + std::to_string(m_MwsrZoneFrames) + " of " +
+                      std::to_string(m_MwsrAskedFrames) +
+                      " frames carried their grid; the decision took " + mean + " ms mean, " +
+                      peak + " ms max");
+        }
+
         // The pipeline's own figures: what the cross-GPU bridge cost, when
         // there was one.
         if (m_Pipeline) m_Pipeline->logEndOfSession();
@@ -4763,6 +4802,14 @@ private:
     /// The average QP the encoder reported for the last emit(), -1 when it
     /// reports none. The refinement loop's second witness of convergence.
     int m_LastEmitQp = -1;
+    /// MWSR's zones of the frame being delivered (attachMwsrZones), and what
+    /// the end of the session says of them: frames that asked, frames that
+    /// carried a grid, the decision's time in all and at its longest.
+    uint8_t m_MwsrZones[convert::mwsrzones::kZones] = {};
+    int64_t m_MwsrAskedFrames = 0;
+    int64_t m_MwsrZoneFrames = 0;
+    int64_t m_MwsrDecideUs = 0;
+    int64_t m_MwsrDecideMaxUs = 0;
 
     /// A picture the encode thread encoded (pipelined=1, emitLater), for what
     /// emit() does after the delivery — on the capture thread, which owns it

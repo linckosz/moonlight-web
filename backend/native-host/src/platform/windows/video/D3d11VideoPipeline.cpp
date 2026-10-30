@@ -81,11 +81,29 @@ bool D3d11VideoPipeline::buildConverter(const capture::IWindowsCapture& capture,
     // frames to another GPU, in which case both stages live over there and
     // read the bridge's copy.
     m_Converter = std::make_unique<convert::ColorConvert>();
-    return m_Converter->init(pipelineDevice(&capture), capture.format(), capture.width(),
-                             capture.height(), build.outputWidth, build.outputHeight,
-                             build.yuv444 ? convert::ColorConvert::Chroma::C444
-                                          : convert::ColorConvert::Chroma::C420,
-                             build.hdr, build.filter, error);
+    if (!m_Converter->init(pipelineDevice(&capture), capture.format(), capture.width(),
+                           capture.height(), build.outputWidth, build.outputHeight,
+                           build.yuv444 ? convert::ColorConvert::Chroma::C444
+                                        : convert::ColorConvert::Chroma::C420,
+                           build.hdr, build.filter, error))
+        return false;
+
+    // MWSR's statistics, when the client reads the zones: never a reason to
+    // fail the build — the stream goes without a grid and the client keeps
+    // its law.
+    if (build.mwsrStats) {
+        std::string why;
+        if (m_Converter->enableMwsrStats(why)) {
+            m_MwsrCells.resize(convert::MwsrStats::kFloats);
+            char scale[16];
+            std::snprintf(scale, sizeof(scale), "%.3f", m_Converter->mwsrScale());
+            log::info(std::string("[native] MWSR zones: taken on every picture (x") + scale + ", " +
+                      (m_Converter->reducesInLinearLight() ? "linear light" : "bilinear") + ")");
+        } else {
+            log::info("[native] MWSR zones: none on this build — " + why);
+        }
+    }
+    return true;
 }
 
 bool D3d11VideoPipeline::buildEncoder(const capture::IWindowsCapture& capture,
@@ -254,6 +272,16 @@ WindowsVideoPipeline::EncodeResult D3d11VideoPipeline::encode(bool forceKeyframe
     return m_Encoder->encode(m_Converter->output(), forceKeyframe, frameNumber, out, error)
                ? EncodeResult::Ok
                : EncodeResult::Failed;
+}
+
+bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, float& scale)
+{
+    if (!m_Converter || m_MwsrCells.empty() || !m_Converter->readMwsrCells(m_MwsrCells.data()))
+        return false;
+    scale = m_Converter->mwsrScale();
+    convert::mwsrzones::decideAll(m_MwsrCells.data(), scale, m_Converter->reducesInLinearLight(),
+                                  codes);
+    return true;
 }
 
 void D3d11VideoPipeline::logEndOfSession() const

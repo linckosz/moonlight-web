@@ -690,6 +690,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         nativeParams.refInvalidation = media.nativeHost.refInvalidation;
         // And whether it cuts its frames to the size the host says.
         nativeParams.cropsToFrame = media.nativeHost.cropsToFrame;
+        // And whether it reads MWSR's zones, which the frames then carry.
+        nativeParams.mwsrZones = m_MwsrZones;
         // The client's screen, so the cadence can land on its grid when it
         // paints on vsync — see SessionConfig::clientRefreshMilliHz.
         nativeParams.clientRefreshMilliHz = m_ClientRefreshMilliHz;

@@ -85,6 +85,7 @@ add_executable(run_tests
     test_audio_path_log.cpp
     test_packet_marking.cpp
     test_send_pacer.cpp
+    test_mwsr_zone_block.cpp
     test_link_loss.cpp
     test_annexb_filler.cpp
     test_link_freeze_log.cpp

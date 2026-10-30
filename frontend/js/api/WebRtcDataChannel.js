@@ -29,6 +29,11 @@ import {
     isBindRefusedClose,
 } from '../util/pairingCrypto.js';
 import { defaultIceServers } from './IceServers.js';
+import {
+    CHUNK_FLAG_KEYFRAME,
+    CHUNK_FLAG_SIDE_BLOCK,
+    readMwsrZoneBlock,
+} from '../stream/MwsrZoneBlock.js';
 import { isViewMessage } from './hostMessages.js';
 import { attachFloodCounter, floodMode } from './FloodCounter.js';
 import { attachUltraSink, ultraSinkMode } from './UltraSink.js';
@@ -149,7 +154,7 @@ export class WebRtcDataChannel {
         this.onOpen = null; // All DataChannels open
         this.onClose = null; // Disconnected / error
         this.onError = null; // Error event
-        this.onVideo = null; // (frame: Uint8Array, isKeyframe: boolean, backendTs: number)
+        this.onVideo = null; // (frame: Uint8Array, isKeyframe: boolean, backendTs: number, frameId: number, zones: MWSR zones | null)
         // (frameId: number, offset: number, bytes: Uint8Array): the front of a
         // frame still on the audio road (POC Ultra, decode by slices).
         this.onVideoPart = null;
@@ -171,6 +176,9 @@ export class WebRtcDataChannel {
             // ride-outs that ran their course without the stream recovering.
             stalls: 0,
             rideOutFailed: 0,
+            // Frames that carried MWSR's zones (the native host, asked at
+            // /start: stream/MwsrZoneBlock.js).
+            mwsrZoneFrames: 0,
         };
 
         // Reassembly buffers: Map<frame_id, { chunks: Uint8Array[], total: number, keyframe: boolean, firstChunkTime: number }>
@@ -1388,7 +1396,11 @@ export class WebRtcDataChannel {
         const frameId = view.getUint32(0, false); // offset 0, big endian
         const chunkIndex = view.getUint16(4, false); // offset 4, big endian
         const totalChunks = view.getUint16(6, false); // offset 6, big endian
-        const isKeyframe = view.getUint8(8) !== 0; // offset 8
+        // offset 8: bit 0 a keyframe, bit 1 a side block ahead of the
+        // bitstream (MWSR's zones, sent only to a page that asked for them).
+        const flags = view.getUint8(8);
+        const isKeyframe = (flags & CHUNK_FLAG_KEYFRAME) !== 0;
+        const sideBlock = (flags & CHUNK_FLAG_SIDE_BLOCK) !== 0;
         const payloadSize = view.getUint32(9, false); // offset 9, big endian
         const backendTs = view.getUint32(13, false); // offset 13, big endian
         const payload = new Uint8Array(
@@ -1405,6 +1417,7 @@ export class WebRtcDataChannel {
                 total: totalChunks,
                 received: 0,
                 keyframe: isKeyframe,
+                sideBlock: sideBlock, // Same for all chunks in a frame
                 firstChunkTime: performance.now(),
                 completed: false,
                 backendTs: backendTs, // Same for all chunks in a frame
@@ -1464,11 +1477,34 @@ export class WebRtcDataChannel {
             totalSize += entry.chunks[i].length;
         }
 
-        const assembled = new Uint8Array(totalSize);
+        let assembled = new Uint8Array(totalSize);
         let offset = 0;
         for (let i = 0; i < entry.total; i++) {
             assembled.set(entry.chunks[i], offset);
             offset += entry.chunks[i].length;
+        }
+
+        // MWSR's zones ahead of the bitstream: taken off before the decoder
+        // sees the frame. A block whose length cannot be right leaves no way
+        // to the bitstream: the frame is lost, as an incomplete one is.
+        let zones = null;
+        if (entry.sideBlock) {
+            const split = readMwsrZoneBlock(assembled);
+            if (!split || split.bitstream.length === 0) {
+                this.stats.framesDropped++;
+                if (this._frameLogCount < 10) {
+                    console.warn(
+                        '[WebRTC] Dropping frame #' + frameId + ': its side block is damaged',
+                    );
+                    this._frameLogCount++;
+                }
+                if (this.onFrameLoss) this.onFrameLoss(frameId, entry.keyframe);
+                this._requestIdrFrame('damaged side block #' + frameId);
+                return;
+            }
+            assembled = split.bitstream;
+            zones = split.zones;
+            if (zones) this.stats.mwsrZoneFrames++;
         }
 
         this.stats.framesAssembled++;
@@ -1561,9 +1597,10 @@ export class WebRtcDataChannel {
             this._rideOutFailed = false;
         }
 
-        // Emit video frame with backend timestamp for latency calculations
+        // Emit video frame with backend timestamp for latency calculations,
+        // and its zones when it carried them (null: the sharpness law).
         if (this.onVideo) {
-            this.onVideo(assembled, entry.keyframe, entry.backendTs, frameId);
+            this.onVideo(assembled, entry.keyframe, entry.backendTs, frameId, zones);
         }
     }
 

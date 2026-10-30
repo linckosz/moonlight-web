@@ -276,6 +276,8 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.clientTearingReal = params.clientTearingReal;
     // The client cuts each decoded frame to the size the session says.
     config.clientCropsToFrame = params.cropsToFrame;
+    // And reads MWSR's zones, which the frames then carry (FrameView).
+    config.mwsrZones = params.mwsrZones;
 
     // The bench's encoder knobs, on a real session, from the environment: the
     // one way to put two encoder settings in front of a person on the same
@@ -738,6 +740,10 @@ void NativeMediaEngine::onEncodedFrame(const mw::native::EncodedFrame& encoded)
             view.keyframe = encoded.keyframe;
             view.frameNumber = frameNumber;
             view.presentationTimeUs = relativePresentUs;
+            view.mwsrZones = encoded.mwsrZones;
+            view.mwsrZonesX = encoded.mwsrZonesX;
+            view.mwsrZonesY = encoded.mwsrZonesY;
+            view.mwsrScale = encoded.mwsrScale;
             // Same bookkeeping as the signal path: the consumer balances it with
             // videoFrameDelivered(), so the relays' drop diagnostics stay true.
             m_PendingVideoFrames.fetch_add(1, std::memory_order_acq_rel);

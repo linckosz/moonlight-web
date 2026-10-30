@@ -25,7 +25,9 @@
 
 #include <wrl/client.h>
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace mw::native {
 
@@ -105,6 +107,8 @@ public:
     }
     bool dropResample() override { return m_Converter->dropResample(); }
 
+    bool takeMwsrZones(uint8_t* codes, float& scale) override;
+
     void logEndOfSession() const override;
 
     /// What the converter last wrote — NV12, P010 or AYUV — for the tests,
@@ -145,6 +149,9 @@ private:
     /// The picture sent while the display is away, from prepareBlank() to
     /// releaseBlank(). On the converter's device.
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_Blank;
+    /// MWSR's cells of the last picture, read back for the zones' decision:
+    /// sized once the converter takes the statistics.
+    std::vector<float> m_MwsrCells;
 };
 
 } // namespace mw::native

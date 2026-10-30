@@ -618,6 +618,23 @@ export function mwsrGazeWanted() {
     }
 }
 
+/**
+ * Lab key, no UI: localStorage.mw_mwsr_map = '1' asks the native host, at
+ * /start, for MWSR's sharpness by zone (docs/design/upscaler-mwsr-b.md §12 c,
+ * Bruno's decision of 30/10/2026): every frame then carries its grid
+ * (stream/MwsrZoneBlock.js). Off by default until the host's cost is measured
+ * and Bruno says yes; other hosts ignore the request. Where storage is
+ * refused, nothing is asked.
+ * @returns {boolean}
+ */
+export function mwsrMapWanted() {
+    try {
+        return localStorage.getItem('mw_mwsr_map') === '1';
+    } catch (e) {
+        return false;
+    }
+}
+
 function hasWebGpu() {
     return typeof navigator !== 'undefined' && !!navigator.gpu;
 }

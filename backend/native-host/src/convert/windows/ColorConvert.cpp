@@ -69,6 +69,9 @@ bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sour
 
     m_Device = device;
     m_Device->GetImmediateContext(m_Context.ReleaseAndGetAddressOf());
+    // Another source: the statistics are asked for again (enableMwsrStats).
+    m_MwsrStats.reset();
+    m_MwsrTicket = 0;
     m_Chroma = chroma;
     m_Hdr = hdr;
     m_ToneMap = !hdr && isHdrSource(sourceFormat);
@@ -134,6 +137,45 @@ bool ColorConvert::dropResample()
     m_ScaledMid.Reset();
     releaseResampleTiming();
     return true;
+}
+
+bool ColorConvert::enableMwsrStats(std::string& why)
+{
+    m_MwsrStats.reset();
+    m_MwsrTicket = 0;
+    if (!m_Device) {
+        why = "colour conversion is not initialized";
+        return false;
+    }
+    // The bench measured the sRGB-encoded values of an 8-bit desktop: an HDR
+    // capture, even tone-mapped down, is another picture.
+    if (m_Hdr || m_ToneMap) {
+        why = "the capture is not 8-bit SDR";
+        return false;
+    }
+    // A grid only where the host reduces the picture: at 1:1 the client's
+    // law is all the bench measured, and a larger stream has nothing to say.
+    if (m_SourceWidth <= m_OutputWidth || m_SourceHeight <= m_OutputHeight) {
+        why = "the stream is not smaller than the capture";
+        return false;
+    }
+    // Of the capture's own shape, within a percent: the zones lie on the
+    // capture, the client lays them on the stream.
+    const double sx = static_cast<double>(m_SourceWidth) / m_OutputWidth;
+    const double sy = static_cast<double>(m_SourceHeight) / m_OutputHeight;
+    if (m_Letterboxed || sx > sy * 1.01 || sy > sx * 1.01) {
+        why = "the stream is not of the capture's shape";
+        return false;
+    }
+    auto stats = std::make_unique<MwsrStats>();
+    if (!stats->init(m_Device.Get(), m_SourceWidth, m_SourceHeight, why)) return false;
+    m_MwsrStats = std::move(stats);
+    return true;
+}
+
+bool ColorConvert::readMwsrCells(float* cells)
+{
+    return m_MwsrStats && m_MwsrStats->read(m_MwsrTicket, cells);
 }
 
 bool ColorConvert::takeResampleCost(int64_t& costUs)
@@ -507,6 +549,10 @@ bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& 
         }
         m_SourceViewFor = source;
     }
+
+    // MWSR's statistics of this picture, ahead of the conversion: by the time
+    // the encoder has the converted picture, the GPU has gone past them.
+    m_MwsrTicket = m_MwsrStats ? m_MwsrStats->dispatch(m_SourceView.Get()) : 0;
 
     // The resample pass, when there is one: the capture goes through the
     // horizontal filter into the intermediate, the intermediate through the

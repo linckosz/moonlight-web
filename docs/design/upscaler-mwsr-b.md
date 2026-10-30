@@ -545,13 +545,14 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
 - **Le transport :**
   - un bloc annexe en tête de l'image, signalé par un bit de l'octet 8 de l'en-tête de morceau (aujourd'hui
     « image clé », 0 ou 1) ;
-  - environ 290 octets par image : 576 valeurs de 4 bits, l'échelle et la taille de la grille. Soit
+  - 295 octets par image : 576 valeurs de 4 bits, l'échelle et la taille de la grille. Soit
     environ 140 kbit/s à 60 i/s ;
   - le bloc n'est envoyé que si le client l'a demandé au `/start` (`mwsr_map`). Un frontend ancien resté
     en cache ne le voit donc jamais ;
   - même en-tête de 17 octets sur le canal de données (`FrameSender`) et sur le WebSocket de secours
-    (`StreamRelay`), lus tous deux par `_onVideoChunk`. L'ancien chemin du WebSocket, à en-tête de
-    2 octets, n'aura pas de grille : le client y applique la loi.
+    (`StreamRelay`), lus tous deux par `_onVideoChunk`. En v0.4.2, seul le canal de données porte la
+    grille (f.2.4) ; le WebSocket de secours, son ancien chemin à en-tête de 2 octets compris, n'en a
+    pas : le client y applique la loi.
 - **Le coût, à mesurer avant d'activer.**
   - Estimé, non mesuré : environ 0,1 ms par image sur une RTX, environ 3 ms sur un GPU intégré.
   - Règle proposée, sur le modèle du Lanczos-2, gardé s'il coûte au plus 1,5 ms (`ResampleCost.h`) :
@@ -727,6 +728,35 @@ pousse.
         zones prend 0,3 ms par image sur le 9900X ; ce sont surtout les arrondis f16.
    4. le transport : `mwsr_map` au `/start`, le bit de l'octet 8, le bloc annexe, sa lecture et ses
       tests. `xhigh`
+      - **Fait le 30/10 au soir**, coupé : aucun client ne demande la grille sans la clé de labo
+        `mw_mwsr_map` = `1` (`mwsrMapWanted`). Après l'activation, la clé s'inversera : `0`
+        ignorera la grille, comme prévu plus haut.
+      - L'hôte : `SessionConfig::mwsrZones`. La conversion D3D11 lance la passe avant ses
+        dessins ; après l'encodage, la session relit les cellules sans attendre, décide les
+        576 codes et les joint à l'image (`EncodedFrame::mwsrZones`). Statistiques pas encore
+        rendues : l'image part sans grille. Le journal de fin de session dit combien d'images
+        l'ont portée.
+      - Seulement sur une capture 8 bits SDR, réduite vers un flux de sa forme (à 1 % près), sur
+        la chaîne D3D11 : celle de NVENC et d'AMF par défaut. La chaîne D3D12 (Intel) n'a pas de
+        passe.
+      - Le bloc (`MwsrZoneBlock.h`) : `[longueur:2][version:1][colonnes:1][lignes:1]
+        [échelle:2][codes]`, en gros-boutiste, l'échelle en millièmes, deux codes de 4 bits par
+        octet. 295 octets pour 32 × 18 zones. La longueur en tête permet de sauter une version
+        inconnue.
+      - L'octet 8 de l'en-tête de morceau : bit 0 l'image clé, bit 1 le bloc, dans chaque
+        morceau de l'image. La découpe est sortie dans `FrameChunks.h`, testable sans WebRTC.
+      - Seul le canal de données direct de l'hôte natif porte la grille. Le WebSocket de
+        secours, la piste média et le flux commun des invités n'en ont pas : le client y
+        applique la loi.
+      - Le client (`MwsrZoneBlock.js`) ôte le bloc avant le décodeur et passe la grille à
+        `onVideo`. Un bloc dont la longueur est impossible fait perdre l'image, comme un
+        morceau manquant. Le renderer ne la lit pas encore : c'est l'étape 5.
+      - La décision sur le processeur, mesurée sur le 9900X au repos : 0,30 ms par image, dont
+        l'essentiel en arrondis f16. Réécrits sur les bits du float, même résultat sur les
+        2^32 valeurs possibles : 0,09 ms.
+      - Tests : bloc et découpe (serveur), lecture et réassemblage (client), conversion qui
+        prend les statistiques et relecture identique à la passe seule (WARP). Non testé : un
+        vrai stream, avec le GPU (étape 3).
    5. la grille dans le client WebGPU, les deux compilations, le drapeau, vérifiés sur SwiftShader. `high`
    6. ~~V2 dans `MwsrShader.js`, la règle par la mesure, le drapeau~~ : sautée, V2 sort de la v0.4.2.
    7. ~~pourquoi V2 ne dessine pas dans WebKit~~ : sautée, de même.

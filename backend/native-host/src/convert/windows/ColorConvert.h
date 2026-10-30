@@ -21,10 +21,13 @@
 #include "../CursorDraw.h"
 #include "../ResampleCost.h"
 #include "../ScaleFilter.h"
+#include "MwsrStats.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <cstdint>
+#include <memory>
 #include <string>
 
 namespace mw::native::convert {
@@ -194,6 +197,30 @@ public:
     int outputWidth() const { return m_OutputWidth; }
     int outputHeight() const { return m_OutputHeight; }
 
+    // ── MWSR's statistics, for the sharpness by zone (plan B §12 c) ─────────
+
+    /// Take MWSR's statistics (MwsrStats) of every picture convert() reads
+    /// from now on. Only where the grid was measured: an 8-bit SDR source,
+    /// reduced to a smaller stream of its own shape. False, with the reason,
+    /// anywhere else: nothing is taken, and the stream goes without a grid.
+    bool enableMwsrStats(std::string& why);
+
+    /// The cells of the picture the last convert() read, if the GPU has
+    /// finished them: MwsrStats::kFloats into @p cells. Never waits.
+    bool readMwsrCells(float* cells);
+
+    /// The upscale the client makes of the stream, as the zones' decision
+    /// takes it: the source's width over the output's.
+    float mwsrScale() const
+    {
+        return m_OutputWidth > 0 ? static_cast<float>(m_SourceWidth) / m_OutputWidth : 0.0f;
+    }
+
+    /// Whether the picture is reduced in linear light (the resample pass),
+    /// rather than by the conversion's bilinear fetch. Changes with
+    /// dropResample().
+    bool reducesInLinearLight() const { return m_Filter != ScaleFilter::Bilinear; }
+
 private:
     bool createShaders(std::string& error);
     bool createOutput(std::string& error);
@@ -284,6 +311,10 @@ private:
     int m_TimingNext = 0;
     ResampleCost m_ResampleCost;
     bool m_ResampleCostTaken = false;
+    /// MWSR's statistics pass, once enableMwsrStats() took it, and the ticket
+    /// of the picture the last convert() read (0: none).
+    std::unique_ptr<MwsrStats> m_MwsrStats;
+    uint64_t m_MwsrTicket = 0;
     /// Where the picture lands in m_Scaled: the whole of it, or the fitted
     /// rectangle between the bars.
     float m_PictureX = 0.0f;

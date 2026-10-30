@@ -111,6 +111,9 @@ public:
         /// The client cuts each decoded frame to the announced size — see
         /// SessionConfig::clientCropsToFrame.
         bool cropsToFrame = false;
+        /// The client reads MWSR's sharpness by zone (`mwsr_map` at /start):
+        /// the frames carry their grid — see SessionConfig::mwsrZones.
+        bool mwsrZones = false;
         /// Rebuild at the display's new shape when its mode changes under the
         /// session — see SessionConfig::followDisplayShape.
         bool followDisplayShape = false;
@@ -206,6 +209,14 @@ public:
         /// µs since the session's first frame — the same relative stamp the
         /// videoFrameReady signal carries.
         int64_t presentationTimeUs = 0;
+        /// MWSR's zones of the picture, borrowed like `data` — see
+        /// mw::native::EncodedFrame::mwsrZones. Null when it has none. Only
+        /// this path carries them: the signal's listeners (the WebSocket
+        /// fallback, the media track) and the guests' feed send none.
+        const uint8_t* mwsrZones = nullptr;
+        int mwsrZonesX = 0;
+        int mwsrZonesY = 0;
+        float mwsrScale = 0.0f;
     };
     using FrameSink = std::function<void(const FrameView&)>;
 

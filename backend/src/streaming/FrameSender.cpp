@@ -16,6 +16,7 @@
  */
 
 #include "FrameSender.h"
+#include "FrameChunks.h"
 #include "FrameSentSink.h"
 
 #include <rtc/rtc.hpp>
@@ -104,64 +105,19 @@ void FrameSender::stop()
 }
 
 void FrameSender::writeHeader(std::byte* dst, uint32_t frameId, uint16_t chunkIdx,
-                              uint16_t totalChunks, bool isKeyframe, uint32_t payloadSize,
+                              uint16_t totalChunks, uint8_t flags, uint32_t payloadSize,
                               uint32_t backendTs)
 {
-    // [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
-    // All multi-byte fields big endian.
-    dst[0] = static_cast<std::byte>((frameId >> 24) & 0xFF);
-    dst[1] = static_cast<std::byte>((frameId >> 16) & 0xFF);
-    dst[2] = static_cast<std::byte>((frameId >> 8) & 0xFF);
-    dst[3] = static_cast<std::byte>(frameId & 0xFF);
-
-    dst[4] = static_cast<std::byte>((chunkIdx >> 8) & 0xFF);
-    dst[5] = static_cast<std::byte>(chunkIdx & 0xFF);
-
-    dst[6] = static_cast<std::byte>((totalChunks >> 8) & 0xFF);
-    dst[7] = static_cast<std::byte>(totalChunks & 0xFF);
-
-    dst[8] = static_cast<std::byte>(isKeyframe ? 0x01 : 0x00);
-
-    dst[9] = static_cast<std::byte>((payloadSize >> 24) & 0xFF);
-    dst[10] = static_cast<std::byte>((payloadSize >> 16) & 0xFF);
-    dst[11] = static_cast<std::byte>((payloadSize >> 8) & 0xFF);
-    dst[12] = static_cast<std::byte>(payloadSize & 0xFF);
-
-    // Same value for all chunks of a frame.
-    dst[13] = static_cast<std::byte>((backendTs >> 24) & 0xFF);
-    dst[14] = static_cast<std::byte>((backendTs >> 16) & 0xFF);
-    dst[15] = static_cast<std::byte>((backendTs >> 8) & 0xFF);
-    dst[16] = static_cast<std::byte>(backendTs & 0xFF);
+    framechunks::writeHeader(dst, frameId, chunkIdx, totalChunks, flags, payloadSize, backendTs);
 }
 
-std::vector<FrameSender::Fragment> FrameSender::buildFragments(const uint8_t* data, size_t size,
-                                                               bool isKeyframe, uint32_t frameId,
-                                                               uint32_t backendTs,
-                                                               size_t maxPayload)
+std::vector<FrameSender::Fragment>
+FrameSender::buildFragments(const uint8_t* data, size_t size, bool isKeyframe, uint32_t frameId,
+                            uint32_t backendTs, size_t maxPayload, const uint8_t* sideBlock,
+                            size_t sideBlockSize)
 {
-    std::vector<Fragment> fragments;
-    if (!data || size == 0) return fragments;
-
-    // Never above what one SCTP message takes, never so small that a large
-    // keyframe would need more chunks than the 16-bit count holds.
-    size_t payloadMax = std::min(maxPayload, static_cast<size_t>(kMaxPayloadSize));
-    payloadMax = std::max<size_t>(payloadMax, 1024);
-    payloadMax = std::max<size_t>(payloadMax, (size + 65534) / 65535);
-    const size_t totalChunks = (size + payloadMax - 1) / payloadMax;
-    fragments.reserve(totalChunks);
-
-    for (size_t chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-        const size_t offset = chunkIdx * payloadMax;
-        const size_t payloadSize = std::min(payloadMax, size - offset);
-
-        Fragment bin(static_cast<size_t>(kFragHeaderSize) + payloadSize);
-        writeHeader(bin.data(), frameId, static_cast<uint16_t>(chunkIdx),
-                    static_cast<uint16_t>(totalChunks), isKeyframe,
-                    static_cast<uint32_t>(payloadSize), backendTs);
-        std::memcpy(bin.data() + kFragHeaderSize, data + offset, payloadSize);
-        fragments.push_back(std::move(bin));
-    }
-    return fragments;
+    return framechunks::cut(data, size, isKeyframe, frameId, backendTs, maxPayload, sideBlock,
+                            sideBlockSize);
 }
 
 bool FrameSender::push(Job&& job, std::vector<uint32_t>* evicted)
@@ -384,7 +340,8 @@ void FrameSender::sendJob(const Job& job)
 
             rtc::binary bin(kFragHeaderSize + payloadSize);
             writeHeader(bin.data(), job.frameId, static_cast<uint16_t>(chunkIdx),
-                        static_cast<uint16_t>(totalChunks), job.isKeyframe,
+                        static_cast<uint16_t>(totalChunks),
+                        static_cast<uint8_t>(job.isKeyframe ? kFlagKeyframe : 0),
                         static_cast<uint32_t>(payloadSize), job.backendTs);
             std::memcpy(bin.data() + kFragHeaderSize, job.data.constData() + offset,
                         static_cast<size_t>(payloadSize));

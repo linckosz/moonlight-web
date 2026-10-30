@@ -524,10 +524,17 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
             << "— input: direct (libdatachannel thread)";
     if (native) {
         native->setDirectFrameSink([this](const NativeMediaEngine::FrameView& view) {
+            // The engine computes zones only for a client that asked for
+            // them (`mwsr_map`), so a frame that has some is this client's.
+            mwsrzoneblock::Zones zones;
+            zones.codes = view.mwsrZones;
+            zones.cols = view.mwsrZonesX;
+            zones.rows = view.mwsrZonesY;
+            zones.scale = view.mwsrScale;
             handleVideoFrame(QByteArray::fromRawData(reinterpret_cast<const char*>(view.data),
                                                      static_cast<qsizetype>(view.size)),
                              view.keyframe, static_cast<int>(view.frameNumber),
-                             view.presentationTimeUs);
+                             view.presentationTimeUs, view.mwsrZones ? &zones : nullptr);
         });
     } else {
         connect(m_Shim, &IMediaEngine::videoFrameReady, this, &DataChannelRelay::onVideoFrame,
@@ -1522,7 +1529,8 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
 }
 
 void DataChannelRelay::handleVideoFrame(const QByteArray& data, bool isKeyframe, int frameNumber,
-                                        qint64 presentationTimeUs)
+                                        qint64 presentationTimeUs,
+                                        const mwsrzoneblock::Zones* zones)
 {
     // Balance the worker→relay pending counter (incremented before each emit).
     // m_Shim lifetime is guaranteed: the shim is Qt-parented to this relay
@@ -1701,7 +1709,7 @@ void DataChannelRelay::handleVideoFrame(const QByteArray& data, bool isKeyframe,
         m_NewKeyframeArrived = true;
     }
 
-    sendFragmented(frameData, isKeyframe, m_VideoDc, presentationTimeUs, frameNumber);
+    sendFragmented(frameData, isKeyframe, m_VideoDc, presentationTimeUs, frameNumber, zones);
 }
 
 // --- Buffered keyframe ---
@@ -2411,7 +2419,8 @@ void DataChannelRelay::sendInputStamp(double id, int64_t recvUs)
 
 void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
                                       std::shared_ptr<rtc::DataChannel>& dc,
-                                      qint64 presentationTimeUs, int frameNumber)
+                                      qint64 presentationTimeUs, int frameNumber,
+                                      const mwsrzoneblock::Zones* zones)
 {
     if (m_Stopping.load() || !dc || !dc->isOpen()) return;
     if (data.isEmpty()) return;
@@ -2638,9 +2647,13 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         // this call), so the chunks are cut here, once, straight from it —
         // the header and the slice written together, nothing copied before
         // and nothing left for the sender to copy after.
+        // MWSR's zones, when the frame has them: the side block, ahead of the
+        // bitstream in the same chunks.
+        const std::vector<uint8_t> zoneBlock =
+            zones ? mwsrzoneblock::write(*zones) : std::vector<uint8_t>();
         auto fragments = FrameSender::buildFragments(
             reinterpret_cast<const uint8_t*>(data.constData()), static_cast<size_t>(data.size()),
-            isKeyframe, frameId, backendTs, m_ChunkPayload);
+            isKeyframe, frameId, backendTs, m_ChunkPayload, zoneBlock.data(), zoneBlock.size());
         // The bench's losses (`loss=`, LinkLoss.h): messages that never reach
         // SCTP, so the receiver meets holes SCTP knows nothing of. A frame that
         // loses every message still spent its wire id: a gap, as on a link.

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "FrameChunks.h"
 #include "SendPacer.h"
 
 #include <QByteArray>
@@ -119,6 +120,11 @@ public:
                           bool isKeyframe, uint32_t frameNumber = 0, FrameSentSink* sink = nullptr,
                           std::vector<uint32_t>* evicted = nullptr);
 
+    /// Byte 8 of the chunk header: bit 0 a keyframe, bit 1 a side block ahead
+    /// of the frame's bitstream — see FrameChunks.h, which cuts the chunks.
+    static constexpr uint8_t kFlagKeyframe = framechunks::kFlagKeyframe;
+    static constexpr uint8_t kFlagSideBlock = framechunks::kFlagSideBlock;
+
     // Cut one frame into wire chunks, header included, reading `data` once.
     // `data` is borrowed: it only has to stay valid until this returns, which
     // is what lets the native relay call it on the encoder's own buffer before
@@ -128,9 +134,14 @@ public:
     // `maxPayload` caps each chunk's payload (16,000 bytes, the most SCTP takes
     // in one message, unless pacing wants smaller runs: the receiver joins the
     // chunks whatever their size).
+    //
+    // `sideBlock`, when given, goes ahead of `data` as if one with it — the
+    // chunks cut across the two — and every chunk says so (kFlagSideBlock).
     static std::vector<Fragment> buildFragments(const uint8_t* data, size_t size, bool isKeyframe,
                                                 uint32_t frameId, uint32_t backendTs,
-                                                size_t maxPayload = kMaxPayloadSize);
+                                                size_t maxPayload = kMaxPayloadSize,
+                                                const uint8_t* sideBlock = nullptr,
+                                                size_t sideBlockSize = 0);
 
     // Stop the worker thread and discard pending jobs. Idempotent; safe to call
     // from the relay's stop()/destructor.
@@ -187,9 +198,10 @@ private:
 
     const Options m_Options;
 
-    /// Write the 17-byte chunk header at `dst`.
+    /// Write the 17-byte chunk header at `dst`; `flags` is byte 8
+    /// (kFlagKeyframe, kFlagSideBlock).
     static void writeHeader(std::byte* dst, uint32_t frameId, uint16_t chunkIdx,
-                            uint16_t totalChunks, bool isKeyframe, uint32_t payloadSize,
+                            uint16_t totalChunks, uint8_t flags, uint32_t payloadSize,
                             uint32_t backendTs);
 
     /// Queue a job under the cap. Returns true when a delta was evicted; the

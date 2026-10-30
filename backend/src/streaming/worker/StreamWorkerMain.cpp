@@ -638,6 +638,8 @@ int runStreamWorker(QCoreApplication& app)
     session->setRefInvalidation(cfg["refInvalidation"].toBool(true));
     // Absent (an older parent, a guest) → no cropping, the frame on the grid.
     session->setCropsToFrame(cfg["cropsToFrame"].toBool(false));
+    // Absent (an older parent) → no grid, today's behaviour.
+    session->setMwsrZones(cfg["mwsrZones"].toBool(false));
     // A native display card: its display, as the server resolved it. This
     // process, SYSTEM's maybe, does not read the file the cards are numbered in.
     if (cfg.contains(QStringLiteral("displayKey")))

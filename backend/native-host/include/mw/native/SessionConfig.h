@@ -189,6 +189,15 @@ struct SessionConfig
     /// 1080p); without, it scales the picture onto its grid (1792x1008).
     bool clientCropsToFrame = false;
 
+    /// The viewer reads MWSR's sharpness by zone (its `/start` said
+    /// `mwsr_map`): the session then takes the statistics of every captured
+    /// picture and sends each frame with its grid (EncodedFrame::mwsrZones).
+    /// Only where the grid was measured: a D3D11 chain, an 8-bit SDR capture,
+    /// reduced to the stream (plan B, upscaler-mwsr-b.md §12 c). False, the
+    /// default and an older frontend's: nothing taken, nothing sent, and the
+    /// client keeps its law.
+    bool mwsrZones = false;
+
     /// Let the viewer act on windows that run elevated (as administrator).
     ///
     /// True — the default — is the trusting setting, right for the machine's

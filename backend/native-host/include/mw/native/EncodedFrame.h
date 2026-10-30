@@ -99,6 +99,17 @@ struct EncodedFrame
     /// not say (Windows only, for now).
     int encoderKbps = 0;
 
+    /// MWSR's sharpness by zone (plan B, upscaler-mwsr-b.md §12 c), when the
+    /// client asked for it (SessionConfig::mwsrZones) and this picture has it:
+    /// one code per zone, row by row, `mwsrZonesX` × `mwsrZonesY` of them — 0
+    /// the client's sharpness law, 1..11 a drop under it — and the upscale the
+    /// decision assumed, the capture's width over the stream's. Borrowed, as
+    /// `data` is. Null when the picture has none: the client applies the law.
+    const uint8_t* mwsrZones = nullptr;
+    int mwsrZonesX = 0;
+    int mwsrZonesY = 0;
+    float mwsrScale = 0.0f;
+
     /// Convenience: the host-side processing latency this frame really cost,
     /// present → encoded. This is what the stats overlay shows, and unlike the
     /// GameStream path it is measured here rather than reported by a third

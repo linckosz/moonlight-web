@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 // MWSR's sharpness by zone, the native host's half (plan B, upscaler-mwsr-b.md
 // §12 c, Bruno's decision of 30/10/2026): from the statistics of the native
@@ -65,22 +66,37 @@ constexpr int kCodes = 12;
 
 /// @p x rounded to IEEE binary16 and back, to nearest, ties to even, as numpy's
 /// float16 (subnormals included; past the largest half, infinity).
+///
+/// On the float's bits: a decision rounds 78 336 values, on the thread that
+/// sends the frame, and through frexp and ldexp it took 0.30 ms a frame on a
+/// Ryzen 9 9900X, 0.09 this way. The same result as theirs on every one of the
+/// 2^32 floats (checked exhaustively, 30/10/2026).
 inline float roundToHalf(float x)
 {
-    if (std::isnan(x)) return x;
-    const float a = std::fabs(x);
-    if (a >= 65520.0f) return std::copysign(INFINITY, x);
-    float q;
-    if (a < 6.103515625e-05f) {
-        // a subnormal half: a multiple of 2^-24
-        q = static_cast<float>(std::nearbyint(static_cast<double>(a) * 16777216.0) / 16777216.0);
+    uint32_t u;
+    std::memcpy(&u, &x, sizeof(u));
+    const uint32_t sign = u & 0x80000000u;
+    uint32_t a = u & 0x7FFFFFFFu;
+    if (a > 0x7F800000u) return x; // NaN
+    if (a >= 0x477FF000u) {
+        // 65520 and past: infinity
+        a = 0x7F800000u;
+    } else if (a >= 0x38800000u) {
+        // a normal half, 2^-14 and up: 10 of the 23 bits kept, to nearest even
+        // (a carry runs into the exponent, as it should)
+        a += 0x0FFFu + ((a >> 13) & 1u);
+        a &= ~0x1FFFu;
     } else {
-        int e = 0;
-        std::frexp(a, &e); // a = m * 2^e, m in [0.5, 1): 11 significant bits
-        const double ulp = std::ldexp(1.0, e - 11);
-        q = static_cast<float>(std::nearbyint(static_cast<double>(a) / ulp) * ulp);
+        // a subnormal half: a multiple of 2^-24, both scalings exact
+        float f;
+        std::memcpy(&f, &a, sizeof(f));
+        f = std::nearbyint(f * 16777216.0f) * (1.0f / 16777216.0f);
+        std::memcpy(&a, &f, sizeof(a));
     }
-    return std::copysign(q, x);
+    u = sign | a;
+    float r;
+    std::memcpy(&r, &u, sizeof(r));
+    return r;
 }
 
 /// A zone's 8 means from its 4 x 4 cells (@p cells: the 128 x 72 grid, row by

@@ -44,6 +44,7 @@ void run_link_addresses_tests();
 void run_audio_path_log_tests();
 void run_packet_marking_tests();
 void run_send_pacer_tests();
+void run_mwsr_zone_block_tests();
 void run_link_loss_tests();
 void run_annexb_filler_tests();
 void run_link_freeze_log_tests();
@@ -118,6 +119,7 @@ int main(int argc, char** argv)
     run_audio_path_log_tests();
     run_packet_marking_tests();
     run_send_pacer_tests();
+    run_mwsr_zone_block_tests();
     run_link_loss_tests();
     run_annexb_filler_tests();
     run_link_freeze_log_tests();

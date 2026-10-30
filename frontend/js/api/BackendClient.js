@@ -80,6 +80,7 @@ import {
     CANVAS_TEARING_IS_REAL,
     decoderRidesOutGaps,
     decoderTakesReferenceRepairs,
+    mwsrMapWanted,
     resolveTearing,
 } from '../util/BrowserDetect.js';
 import { currentRefreshMilliHz } from '../util/RefreshRate.js';
@@ -407,6 +408,10 @@ export class BackendClient {
                 // native host then sends every picture for a moment after a
                 // press. Other hosts ignore it.
                 client_tearing_real: CANVAS_TEARING_IS_REAL,
+                // MWSR's sharpness by zone: the native host's frames then
+                // carry their grid (stream/MwsrZoneBlock.js). A lab key for
+                // now (mwsrMapWanted); other hosts ignore it.
+                mwsr_map: mwsrMapWanted(),
                 ...streamingSettings,
             },
             // Fail fast if the backend hangs/crashes instead of waiting for the

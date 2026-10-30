@@ -23,6 +23,7 @@
 #include "native_test_framework.h"
 
 #if defined(_WIN32)
+#include "convert/windows/ColorConvert.h"
 #include "convert/windows/MwsrStats.h"
 
 #include <d3d11.h>
@@ -252,6 +253,106 @@ void run_mwsr_stats_tests()
         CHECK(!stats.init(device.Get(), 100, 72, error));
         CHECK(!error.empty());
         CHECK_EQ(stats.dispatch(nullptr), uint64_t(0));
+    }
+
+    SECTION("MwsrStats: taken by the colour conversion, on WARP");
+
+    // ── The converter takes them where the grid was measured, nowhere else ──
+    {
+        using convert::ColorConvert;
+        using convert::ScaleFilter;
+        const auto build = [&](int sw, int sh, int ow, int oh, ScaleFilter filter,
+                               ColorConvert& conv) {
+            std::string error;
+            return conv.init(device.Get(), DXGI_FORMAT_B8G8R8A8_UNORM, sw, sh, ow, oh,
+                             ColorConvert::Chroma::C420, false, filter, error);
+        };
+        std::string why;
+        {
+            ColorConvert conv;
+            CHECK(build(512, 288, 512, 288, ScaleFilter::Bilinear, conv));
+            CHECK(!conv.enableMwsrStats(why)); // 1:1
+            CHECK(!why.empty());
+        }
+        {
+            ColorConvert conv;
+            CHECK(build(512, 288, 256, 256, ScaleFilter::Bilinear, conv));
+            CHECK(!conv.enableMwsrStats(why)); // another shape
+        }
+        {
+            ColorConvert conv;
+            CHECK(build(512, 288, 384, 216, ScaleFilter::Lanczos2, conv));
+            CHECK(conv.enableMwsrStats(why));
+            CHECK(conv.mwsrScale() > 1.333f && conv.mwsrScale() < 1.334f);
+            CHECK(conv.reducesInLinearLight());
+            CHECK(conv.dropResample());
+            CHECK(!conv.reducesInLinearLight());
+        }
+    }
+
+    // ── A converted picture's cells, once the GPU is through: the pass's own ──
+    {
+        using convert::ColorConvert;
+        const int w = 512, h = 288;
+        std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                uint8_t* p = &px[(static_cast<size_t>(y) * w + x) * 4];
+                const bool ink = x > w / 2 && (y % 12) < 8 && ((x * 5 + y) % 9) < 3;
+                p[0] = p[1] = p[2] = ink ? 30 : static_cast<uint8_t>(x * 255 / w);
+                p[3] = 255;
+            }
+        D3D11_TEXTURE2D_DESC desc = {};
+        desc.Width = w;
+        desc.Height = h;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA seed = {};
+        seed.pSysMem = px.data();
+        seed.SysMemPitch = static_cast<UINT>(w * 4);
+        ComPtr<ID3D11Texture2D> source;
+        CHECK(SUCCEEDED(device->CreateTexture2D(&desc, &seed, source.GetAddressOf())));
+        ComPtr<ID3D11ShaderResourceView> view;
+        CHECK(SUCCEEDED(
+            device->CreateShaderResourceView(source.Get(), nullptr, view.GetAddressOf())));
+
+        ColorConvert conv;
+        std::string error;
+        CHECK(conv.init(device.Get(), DXGI_FORMAT_B8G8R8A8_UNORM, w, h, w / 2, h / 2,
+                        ColorConvert::Chroma::C420, false, convert::ScaleFilter::Bilinear, error));
+        std::vector<float> cells(MwsrStats::kFloats, -1.0f);
+        CHECK(!conv.readMwsrCells(cells.data())); // not taken yet
+        CHECK(conv.enableMwsrStats(error));
+        CHECK(conv.convert(source.Get(), capture::CursorState{}, convert::CursorDraw{}, error));
+
+        // Whatever the GPU was given, done: an event query behind it.
+        ComPtr<ID3D11Query> done;
+        D3D11_QUERY_DESC q = {D3D11_QUERY_EVENT, 0};
+        CHECK(SUCCEEDED(device->CreateQuery(&q, done.GetAddressOf())));
+        context->End(done.Get());
+        BOOL finished = FALSE;
+        for (int spin = 0; spin < 50000000; ++spin)
+            if (context->GetData(done.Get(), &finished, sizeof(finished), 0) == S_OK) break;
+        CHECK(finished == TRUE);
+        CHECK(conv.readMwsrCells(cells.data()));
+
+        MwsrStats direct;
+        CHECK(direct.init(device.Get(), w, h, error));
+        std::vector<float> want(MwsrStats::kFloats);
+        CHECK(direct.read(direct.dispatch(view.Get()), want.data(), true));
+        CHECK(cells == want);
+
+        // And the zones: the gradient on the left, text on the right.
+        uint8_t codes[mz::kZones];
+        mz::decideAll(cells.data(), conv.mwsrScale(), conv.reducesInLinearLight(), codes);
+        int valid = 0;
+        for (uint8_t c : codes)
+            valid += c < mz::kCodes;
+        CHECK_EQ(valid, mz::kZones);
     }
 #endif
 }

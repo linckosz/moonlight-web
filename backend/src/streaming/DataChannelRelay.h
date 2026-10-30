@@ -26,6 +26,7 @@
 #include "SendBacklog.h"
 #include "FrameSender.h"
 #include "LinkLoss.h"
+#include "MwsrZoneBlock.h"
 #include "RelayFrameLog.h"
 #include "SctpCounters.h"
 #include "AroadPacer.h"
@@ -215,9 +216,12 @@ private:
     // engine's direct sink. `data` may be a BORROWED buffer
     // (QByteArray::fromRawData over the encoder's output): valid until this
     // returns, never to be kept — the one place that keeps a frame (the
-    // buffered keyframe) copies explicitly.
+    // buffered keyframe) copies explicitly, and without its zones.
+    //
+    // `zones`: MWSR's zones of the frame, borrowed as `data` is, from the
+    // native engine's direct sink; null for every other frame.
     void handleVideoFrame(const QByteArray& data, bool isKeyframe, int frameNumber,
-                          qint64 presentationTimeUs);
+                          qint64 presentationTimeUs, const mwsrzoneblock::Zones* zones = nullptr);
 
     // Best-effort exit notice ({"type": ...}) on the input DC before stop().
     void sendExitNotice(const char* type);
@@ -302,9 +306,12 @@ private:
     // In direct mode the chunks are built here, on the calling thread, from
     // `data` (which may be borrowed — see handleVideoFrame), and the sender
     // only sends. Otherwise the frame is queued whole and the sender cuts it.
+    //
+    // `zones` go ahead of the bitstream as the side block (MwsrZoneBlock.h),
+    // in direct mode only: the queued frames are a GameStream engine's.
     void sendFragmented(const QByteArray& data, bool isKeyframe,
                         std::shared_ptr<rtc::DataChannel>& dc, qint64 presentationTimeUs = -1,
-                        int frameNumber = -1);
+                        int frameNumber = -1, const mwsrzoneblock::Zones* zones = nullptr);
 
     // Send a previously buffered keyframe (arrived before Video DC was open).
     // Called from the Video DC onOpen callback (marshaled to the relay thread).

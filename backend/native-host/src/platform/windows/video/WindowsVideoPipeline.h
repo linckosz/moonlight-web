@@ -80,6 +80,9 @@ public:
         /// session reconciles it with the capture's format before building.
         bool hdr = false;
         convert::ScaleFilter filter = convert::ScaleFilter::Bilinear;
+        /// Take MWSR's statistics of every picture (SessionConfig::mwsrZones),
+        /// where the chain has the pass and the picture qualifies.
+        bool mwsrStats = false;
     };
 
     /// The encoder half of a build.
@@ -239,6 +242,20 @@ public:
     virtual convert::ScaleFilter scaleFilter() const = 0;
     virtual bool takeResampleCost(int64_t& costUs) = 0;
     virtual bool dropResample() = 0;
+
+    // ── MWSR's sharpness by zone (plan B §12 c) ────────────────────────────
+
+    /// The zones' codes of the picture last converted, decided from its
+    /// statistics: @p codes takes mwsrzones::kZones of them, @p scale the
+    /// upscale the decision assumed. False when there are none — no pass on
+    /// this chain (D3D12), none asked, a picture that does not qualify, or
+    /// statistics the GPU has not finished: the frame goes without a grid.
+    virtual bool takeMwsrZones(uint8_t* codes, float& scale)
+    {
+        (void)codes;
+        (void)scale;
+        return false;
+    }
 
     /// The pipeline's own end-of-session figures, if it has any.
     virtual void logEndOfSession() const = 0;
