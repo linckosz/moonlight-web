@@ -51,10 +51,14 @@
 // two of them into one rounding.
 //
 // ── The light grid ──────────────────────────────────────────────────────────
-// Bruno's budget (§12 f.4, 30/10/2026): where the full pass costs too much,
-// the light one — one pixel in 16 into the same cells, and a 16 x 9 grid of
+// The light pass — one pixel in 16 into the same cells, and a 16 x 9 grid of
 // 8 x 8 cells per zone, decided by its own tree (kTreeLight), as the bench
-// measured it. The client reads a grid of any size.
+// measured it: where the full pass costs more than the budget (kBudgetUs), the
+// light one, timed in turn (§12 f.4). The client reads a grid of any size.
+//
+// ── The guard ───────────────────────────────────────────────────────────────
+// After the tree, a zone drops no more than the least of its neighbours
+// (guardNeighbours): text beside a photo keeps the law (31/10/2026).
 //
 // What is not measured (§12 g): a capture of another size than 2560 x 1440
 // (the bench's), HDR (no grid then), a stream encoded at another quality than
@@ -97,11 +101,23 @@ enum class PassStep
     Drop,    ///< the light one too: no grid, the client keeps its law
 };
 
-/// Bruno's budget (§12 f.4, 30/10/2026): the Lanczos-2's (ResampleCost), the
-/// full pass where it fits, else the light one, else nothing.
+/// Bruno's budget for the zones (31/10/2026, after his eye test): 1 ms a
+/// picture, timed in the stream — tighter than the Lanczos-2's 1.5
+/// (ResampleCost), which was the zones' too from 30/10. Over it, no grid and
+/// the client's law.
+inline constexpr int64_t kBudgetUs = 1000;
+
+/// The pass a stream starts on: the full one (Bruno's choice, 31/10/2026, after
+/// the pumping test: in a real stream the full pass cost 64 us on an RTX, the
+/// light one 35, both far under the budget, and the full one's 80-px zones
+/// keep text and photos apart better). The light one only where the full one
+/// is over the budget.
+inline constexpr bool kStartLight = false;
+
+/// The full pass where it fits the budget, else the light one, else nothing.
 inline PassStep afterPassCost(bool light, int64_t costUs)
 {
-    if (ResampleCost::affordable(costUs)) return PassStep::Keep;
+    if (costUs >= 0 && costUs <= kBudgetUs) return PassStep::Keep;
     return light ? PassStep::Drop : PassStep::Lighten;
 }
 
@@ -201,12 +217,34 @@ inline float dropOf(int code)
     return code <= 0 ? 0.0f : 0.1f + float(code - 1) * 0.125f;
 }
 
+/// The guard for text beside photos (Bruno's choice, 31/10/2026): a zone drops
+/// no more than the least of its 3 x 3 neighbourhood, itself included, the
+/// grid's edges clamped. A zone the tree left at the law keeps its neighbours
+/// at the law too: the client reads the grid bilinearly, so a photo's drop
+/// spilt onto the caption beside it (the bench: -0.06 to -0.15 SSIM on text
+/// beside photos at x2, none with the guard; the games keep most of their gain).
+/// Codes grow with the drop, so the least drop is the smallest code.
+inline void guardNeighbours(uint8_t* codes, int zonesX, int zonesY)
+{
+    uint8_t in[kZones];
+    std::memcpy(in, codes, size_t(zonesX) * zonesY);
+    for (int zy = 0; zy < zonesY; ++zy) {
+        for (int zx = 0; zx < zonesX; ++zx) {
+            uint8_t least = in[zy * zonesX + zx];
+            for (int y = zy > 0 ? zy - 1 : 0; y <= (zy + 1 < zonesY ? zy + 1 : zy); ++y)
+                for (int x = zx > 0 ? zx - 1 : 0; x <= (zx + 1 < zonesX ? zx + 1 : zx); ++x)
+                    if (in[y * zonesX + x] < least) least = in[y * zonesX + x];
+            codes[zy * zonesX + zx] = least;
+        }
+    }
+}
+
 /// Every zone's code of @p grid from the pass's cells (@p cells: 128 x 72 x 8
 /// floats; the light grid's from the light pass's), row by row into @p codes
 /// (grid.zones() of them, at most kZones). @p scale is the stream's upscale
 /// at the client (the capture's width over the stream's); @p linear says the
 /// host reduced in linear light (Lanczos-2), not with the bilinear of its
-/// fallback.
+/// fallback. The tree's codes, then the neighbours' guard (guardNeighbours).
 inline void decideAll(const float* cells, float scale, bool linear, uint8_t* codes,
                       const Grid& grid = kFullGrid)
 {
@@ -234,6 +272,7 @@ inline void decideAll(const float* cells, float scale, bool linear, uint8_t* cod
             in[1 + s] = feat[z][s];
         codes[z] = static_cast<uint8_t>(decide(in, grid.tree));
     }
+    guardNeighbours(codes, grid.zonesX, grid.zonesY);
 }
 
 } // namespace mw::native::convert::mwsrzones

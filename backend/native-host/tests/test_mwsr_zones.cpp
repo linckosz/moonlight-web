@@ -105,7 +105,11 @@ void run_mwsr_zones_tests()
 
     SECTION("MwsrZones — Bruno's budget: the full pass, else the light one, else none");
     {
-        const int64_t budget = mw::native::convert::ResampleCost::kBudgetUs;
+        // 1 ms, tighter than the Lanczos-2's (31/10/2026); the full pass first
+        const int64_t budget = mz::kBudgetUs;
+        CHECK_EQ(budget, 1000);
+        CHECK(budget < mw::native::convert::ResampleCost::kBudgetUs);
+        CHECK(!mz::kStartLight);
         CHECK(mz::afterPassCost(false, 90) == mz::PassStep::Keep);
         CHECK(mz::afterPassCost(false, budget) == mz::PassStep::Keep);
         CHECK(mz::afterPassCost(false, budget + 1) == mz::PassStep::Lighten);
@@ -169,5 +173,68 @@ void run_mwsr_zones_tests()
             CHECK_EQ(lightLaw, mz::kLightGrid.zones());
             CHECK_EQ(untouched, mz::kZones - mz::kLightGrid.zones());
         }
+    }
+
+    SECTION("MwsrZones — the guard: a zone drops no more than the least of its neighbours");
+    {
+        // a field at code 5, one zone at the law: its 3 x 3 neighbourhood takes the law
+        uint8_t codes[mz::kZones];
+        std::fill(std::begin(codes), std::end(codes), uint8_t(5));
+        codes[4 * mz::kZonesX + 7] = 0;
+        mz::guardNeighbours(codes, mz::kZonesX, mz::kZonesY);
+        int law = 0;
+        for (int zy = 0; zy < mz::kZonesY; ++zy)
+            for (int zx = 0; zx < mz::kZonesX; ++zx) {
+                const bool near = zy >= 3 && zy <= 5 && zx >= 6 && zx <= 8;
+                CHECK_EQ(int(codes[zy * mz::kZonesX + zx]), near ? 0 : 5);
+                law += codes[zy * mz::kZonesX + zx] == 0;
+            }
+        CHECK_EQ(law, 9);
+
+        // the edges clamped: a corner has 4 zones around it, an edge 6
+        std::fill(std::begin(codes), std::end(codes), uint8_t(8));
+        codes[0] = 3;
+        codes[(mz::kZonesY - 1) * mz::kZonesX + 10] = 1;
+        mz::guardNeighbours(codes, mz::kZonesX, mz::kZonesY);
+        CHECK_EQ(int(codes[0]), 3);
+        CHECK_EQ(int(codes[1]), 3);
+        CHECK_EQ(int(codes[mz::kZonesX]), 3);
+        CHECK_EQ(int(codes[mz::kZonesX + 1]), 3);
+        CHECK_EQ(int(codes[2]), 8);
+        CHECK_EQ(int(codes[2 * mz::kZonesX]), 8);
+        const int last = (mz::kZonesY - 1) * mz::kZonesX;
+        for (int x = 9; x <= 11; ++x) {
+            CHECK_EQ(int(codes[last + x]), 1);
+            CHECK_EQ(int(codes[last - mz::kZonesX + x]), 1);
+        }
+        CHECK_EQ(int(codes[last + 12]), 8);
+        CHECK_EQ(int(codes[last - 2 * mz::kZonesX + 10]), 8);
+
+        // two drops side by side: each takes the smaller where they meet, never a larger one
+        std::fill(std::begin(codes), std::end(codes), uint8_t(9));
+        for (int zy = 0; zy < mz::kZonesY; ++zy)
+            for (int zx = 0; zx < mz::kZonesX / 2; ++zx)
+                codes[zy * mz::kZonesX + zx] = 2;
+        mz::guardNeighbours(codes, mz::kZonesX, mz::kZonesY);
+        CHECK_EQ(int(codes[mz::kZonesX / 2 - 1]), 2);
+        CHECK_EQ(int(codes[mz::kZonesX / 2]), 2);
+        CHECK_EQ(int(codes[mz::kZonesX / 2 + 1]), 9);
+
+        // the light grid's 16 x 9: only its 144 codes are read and written
+        uint8_t light[mz::kZones];
+        std::fill(std::begin(light), std::end(light), uint8_t(0xEE));
+        for (int z = 0; z < mz::kLightGrid.zones(); ++z)
+            light[z] = 4;
+        light[mz::kLightGrid.zones() - 1] = 0; // the last corner at the law
+        mz::guardNeighbours(light, mz::kLightZonesX, mz::kLightZonesY);
+        int lightLaw = 0, untouched = 0;
+        for (int z = 0; z < mz::kZones; ++z) {
+            if (z < mz::kLightGrid.zones())
+                lightLaw += light[z] == 0;
+            else
+                untouched += light[z] == 0xEE;
+        }
+        CHECK_EQ(lightLaw, 4);
+        CHECK_EQ(untouched, mz::kZones - mz::kLightGrid.zones());
     }
 }

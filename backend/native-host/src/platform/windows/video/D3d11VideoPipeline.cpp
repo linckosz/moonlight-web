@@ -95,12 +95,14 @@ bool D3d11VideoPipeline::buildConverter(const capture::IWindowsCapture& capture,
     m_MwsrHeld.clear();
     if (build.mwsrStats) {
         std::string why;
-        if (m_Converter->enableMwsrStats(why)) {
+        if (m_Converter->enableMwsrStats(why, convert::mwsrzones::kStartLight)) {
             m_MwsrCells.resize(convert::MwsrStats::kFloats);
             char scale[16];
             std::snprintf(scale, sizeof(scale), "%.3f", m_Converter->mwsrScale());
-            log::info(std::string("[native] MWSR zones: taken on every picture (x") + scale + ", " +
-                      (m_Converter->reducesInLinearLight() ? "linear light" : "bilinear") + ")");
+            log::info(std::string("[native] MWSR zones: taken on every picture, the ") +
+                      (m_Converter->mwsrStatsLight() ? "light" : "full") + " pass (x" + scale +
+                      ", " + (m_Converter->reducesInLinearLight() ? "linear light" : "bilinear") +
+                      ")");
         } else {
             log::info("[native] MWSR zones: none on this build — " + why);
         }
@@ -281,16 +283,17 @@ bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY,
     namespace mz = convert::mwsrzones;
     if (!m_Converter || m_MwsrCells.empty()) return false;
 
-    // Bruno's budget (plan B §12 f.4): what the pass costs this GPU, timed on
-    // the stream's own frames, decides once whether it stays, gives way to
-    // the light pass (timed in turn), or goes. The frames between go without
-    // a grid: the new pass's first cells are not back yet.
+    // Bruno's budget (mz::kBudgetUs, 1 ms since 31/10/2026): what the pass
+    // costs this GPU, timed on the stream's own frames, decides once whether
+    // it stays, gives way to the light pass (timed in turn), or goes. The
+    // frames between go without a grid: the new pass's first cells are not
+    // back yet.
     int64_t costUs = 0;
     if (m_Converter->takeMwsrStatsCost(costUs)) {
         const bool light = m_Converter->mwsrStatsLight();
         const std::string pass = light ? "light" : "full";
         const std::string cost = " pass costs " + std::to_string(costUs) + " us";
-        const std::string budget = std::to_string(convert::ResampleCost::kBudgetUs) + " us";
+        const std::string budget = std::to_string(mz::kBudgetUs) + " us";
         std::string why;
         switch (mz::afterPassCost(light, costUs)) {
         case mz::PassStep::Keep:

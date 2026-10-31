@@ -51,9 +51,9 @@ namespace mw::native::convert {
 /// The full pass reads every pixel; the light one, one pixel in 16, for the
 /// light grid of 16 × 9 zones (mwsrzones::decideAll). Both write the same
 /// 128 × 72 cells. What the pass costs is timed on the stream's own frames
-/// (PassTimer, as the Lanczos-2 is): Bruno's budget of 30/10/2026 is the
-/// Lanczos-2's, ResampleCost::kBudgetUs — the full pass if it fits, else the
-/// light one, else no grid (D3d11VideoPipeline::takeMwsrZones).
+/// (PassTimer, as the Lanczos-2 is) against Bruno's budget, mwsrzones::
+/// kBudgetUs: the pass the stream started on (mwsrzones::kStartLight) if it
+/// fits, else the light one, else no grid (D3d11VideoPipeline::takeMwsrZones).
 ///
 /// On the device's immediate context, so on the thread that converts.
 class MwsrStats
