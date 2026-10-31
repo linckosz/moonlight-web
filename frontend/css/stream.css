@@ -1213,10 +1213,23 @@ body.streaming-active::after {
     transform: scale(0.95);
 }
 /* The viewer's microphone (StreamView._mountMicButton): the pad button's
-   shape, struck through and dimmed while muted or refused. */
+   shape, struck through in the volume's "off" colour while muted or refused.
+   Docked (.is-docked), it sits right of the speaker, with the volume's own
+   size and anchoring — by its right edge, left set by
+   StreamView._positionGamingOverlay — so the two read as one sound group. */
+.btn-stream-mic.is-docked {
+    position: absolute;
+    top: 50%;
+    transform: translate(-100%, -50%);
+    width: 36px;
+    margin-right: 0;
+    font-size: 16px;
+}
+.btn-stream-mic.is-docked:active {
+    transform: translate(-100%, -50%) scale(0.95);
+}
 .btn-stream-mic.is-off {
-    color: rgba(255, 120, 120, 0.85);
-    border-color: rgba(255, 120, 120, 0.35);
+    color: var(--c-danger-text, #ff6b8b);
 }
 .btn-stream-mic:disabled {
     cursor: default;

@@ -4467,7 +4467,12 @@ export class StreamView {
     /**
      * The microphone's mute button, when the host took the viewer's
      * microphone. Muting sends silence rather than dropping the track, so the
-     * host's virtual microphone stays where the apps found it. Idempotent.
+     * host's virtual microphone stays where the apps found it.
+     *
+     * Right of the speaker, between it and the Fullscreen button, wherever
+     * that button is laid out (_positionGamingOverlay docks it there); where
+     * it is not — a phone held upright — it waits before Stop, so a viewer
+     * can always mute. Idempotent.
      */
     _mountMicButton() {
         if (!this._mic || this._micBtn || !this._rootEl) return;
@@ -4485,9 +4490,13 @@ export class StreamView {
             // Space in the game would toggle it again.
             btn.blur();
         });
-        header.insertBefore(btn, quitBtn || null);
+        // After the volume in the tab order, as on screen.
+        const after = this._volumeCtl || this._mobileFsBtn;
+        if (after && after.parentElement === header) after.after(btn);
+        else header.insertBefore(btn, quitBtn || null);
         this._micBtn = btn;
         this._syncMicButton();
+        this._positionGamingOverlay();
     }
 
     /** The button as the microphone stands: live, muted, or refused. */
@@ -6632,7 +6641,8 @@ export class StreamView {
     /**
      * Lay out the middle of the header, and place the gaming-mode reminder.
      *  - Out of fullscreen (Fullscreen button laid out): the volume control on
-     *    the button's left, the reminder on its right — outside the streamed
+     *    the button's left, then the microphone's button between the two when
+     *    the host took it, the reminder on its right — outside the streamed
      *    image, so it never covers the game — and the group centred as one.
      *  - Fullscreen (button hidden): the reminder goes back to the CSS default
      *    (top-center, over the picture).
@@ -6642,6 +6652,7 @@ export class StreamView {
     _positionGamingOverlay() {
         const el = this._gamingOverlay;
         const vol = this._volumeCtl;
+        const mic = this._micBtn;
         const fsBtn = this._mobileFsBtn;
         // Default: button back to its CSS-centered position (cleared each pass so
         // the group-centering offset below is never left stale).
@@ -6658,9 +6669,19 @@ export class StreamView {
             el.classList.contains('visible') &&
             !el.classList.contains('user-moved');
         if (vol) vol.hidden = !fsVisible;
+        // Docked beside the Fullscreen button with it, or back in the bar's
+        // flow before Stop when that button is not laid out.
+        if (mic) {
+            mic.classList.toggle('is-docked', fsVisible);
+            if (!fsVisible) mic.style.left = '';
+        }
 
         if (fsVisible) {
             const gap = 12;
+            // The microphone sits right of the speaker, closer to it than the
+            // group is to the Fullscreen button: one sound group, two buttons.
+            const micGap = 6;
+            const micW = mic ? mic.getBoundingClientRect().width : 0;
             // The volume counts at its resting width: the slider it opens on
             // hover grows leftwards and must not push the Fullscreen button
             // about under the cursor.
@@ -6671,15 +6692,20 @@ export class StreamView {
                     (speaker ? speaker.getBoundingClientRect().width : 0) +
                     (vol.offsetWidth - vol.clientWidth); // its border
             }
-            const left = vol ? volW + gap : 0;
+            const micSpan = mic ? micW + (vol ? micGap : 0) : 0;
+            const left = vol || mic ? volW + micSpan + gap : 0;
             const right = dock ? el.getBoundingClientRect().width + gap : 0;
             const shift = (right - left) / 2;
             if (shift) fsBtn.style.transform = `translate(calc(-50% - ${shift}px), -50%)`;
             const rb = fsBtn.getBoundingClientRect();
+            // Both anchored by their right edge (translateX(-100%) in the CSS).
+            if (mic && mic.parentElement) {
+                const hr = mic.parentElement.getBoundingClientRect();
+                mic.style.left = Math.round(rb.left - gap - hr.left) + 'px';
+            }
             if (vol && vol.parentElement) {
-                // Anchored by its right edge (translateX(-100%) in the CSS).
                 const hr = vol.parentElement.getBoundingClientRect();
-                vol.style.left = Math.round(rb.left - gap - hr.left) + 'px';
+                vol.style.left = Math.round(rb.left - gap - micSpan - hr.left) + 'px';
             }
             if (dock) {
                 el.style.left = Math.round(rb.right + gap) + 'px';
@@ -13098,6 +13124,10 @@ export class StreamView {
             this._volumeCtl.remove();
             this._volumeCtl = null;
         }
+        if (this._micBtn) {
+            this._micBtn.remove();
+            this._micBtn = null;
+        }
 
         // Remove mobile fullscreen button
         if (this._mobileFsBtn) {
@@ -13492,6 +13522,10 @@ export class StreamView {
         if (this._volumeCtl) {
             this._volumeCtl.remove();
             this._volumeCtl = null;
+        }
+        if (this._micBtn) {
+            this._micBtn.remove();
+            this._micBtn = null;
         }
 
         // Remove mobile fullscreen button
