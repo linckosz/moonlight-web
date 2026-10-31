@@ -562,13 +562,17 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
     (f.3) : 0,04 à 0,09 ms sur une RTX 5060 Ti et 0,86 à 2,6 ms sur l'iGPU du 9900X, à pleine fréquence ;
     plus sur un bureau au repos (jusqu'à 1,4 et 3,4 ms en 4K). La légère, mesurée le 31/10 (f.4), ne
     coûte que 1,4 fois moins sur l'iGPU, et pas moins sur la RTX en 4K au repos.
-  - La règle de Bruno (f.4), celle du Lanczos-2, gardé s'il coûte au plus 1,5 ms (`ResampleCost.h`),
-    mesurée dans le stream :
-    - la passe complète, si elle tient dans ces 1,5 ms ;
+  - La règle de Bruno (f.4) : 1 ms par image depuis le 31/10 (`mwsrzones::kBudgetUs`), plus serré que
+    les 1,5 ms du Lanczos-2 qui étaient aussi celles des zones le 30/10. Mesurée dans le stream :
+    - la passe complète, si elle tient dans cette milliseconde ;
     - sinon, la variante légère : 16 × 9 zones, un pixel sur 16 (un sur 4 dans chaque direction, les
       voisins toujours à 1 px), c'est le « pas 4 » du banc. Elle a été mesurée à +0,064 / +0,062 sur
       images fixes et à 99,6 % en mouvement ;
     - sinon, aucune grille.
+    - À 1 ms, ni l'iGPU (la légère y coûte 1,2 à 1,4 ms au repos) ni une capture 4K, même sur une RTX,
+      n'ont de grille.
+  - **Le garde-fou des voisines** (31/10, f.4) : après l'arbre, une zone ne baisse pas plus que la moins
+    basse de ses 3 × 3 voisines (`guardNeighbours`). Le texte collé à une photo garde ainsi la loi.
 - **Les plateformes :**
   - D3D11 (Windows) d'abord ;
   - puis D3D12, EGL et Vulkan (Linux), chacune à son tour ;
@@ -745,8 +749,8 @@ pousse.
       - L'hôte : `SessionConfig::mwsrZones`. La conversion D3D11 lance la passe avant ses
         dessins ; après l'encodage, la session relit les cellules sans attendre, décide les
         576 codes et les joint à l'image (`EncodedFrame::mwsrZones`). Statistiques pas encore
-        rendues : l'image part sans grille. Le journal de fin de session dit combien d'images
-        l'ont portée.
+        rendues : depuis le 31/10, l'image porte la grille de l'image d'avant (f.4). Le journal de
+        fin de session dit combien d'images l'ont portée, et combien celle d'avant.
       - Seulement sur une capture 8 bits SDR, réduite vers un flux de sa forme (à 1 % près), sur
         la chaîne D3D11 : celle de NVENC et d'AMF par défaut. La chaîne D3D12 (Intel) n'a pas de
         passe.
@@ -994,7 +998,69 @@ pousse.
              grille aux trois tailles, au repos comme en rafale. Au repos, le p90 va jusqu'à 1,52 ms en 4K.
            - En 1080p au repos, elle coûte 0,04 à 0,07 ms de plus que l'ancienne. Cela ne change aucune
              décision du budget.
-       - **Non fait** : un vrai stream.
+       - **Un vrai stream pour l'œil de Bruno, le 31/10** (go de Bruno, créneau des deux RTX).
+         - Montage : capture de l'écran principal en 2560 × 1440, NVENC sur une RTX ; client Chrome sur
+           l'autre RTX, en localhost ; flux fixe 1080p (×1,333) puis 720p (×2), MWSR en WebGPU.
+         - Premier contrôle rouge : la grille n'arrivait que sur 25 à 47 % des images. La relecture
+           des statistiques n'attend pas, et une image dont les statistiques n'étaient pas revenues
+           partait sans grille. **Corrigé** : elle porte celle de l'image d'avant (2d49cc14). La grille
+           arrive alors sur 99,4 à 99,96 % des images. Part reprise : 43 à 51 % au premier essai,
+           26 à 36 % au test du pompage.
+         - Les deux entrées d'écran du banc sont un seul moniteur : pas de côte à côte avec
+           l'original. D'où un écran partagé de labo dans le client (e1bc8570) : la grille d'un côté,
+           la loi de l'autre, en trois vues (le centre deux fois, la moitié gauche deux fois, gauche |
+           droite). Un bouton et Ctrl+Alt+Shift+G changent de vue sans jamais dire quel côté porte
+           la grille. Seulement avec ses clés de labo.
+         - 6 manches à l'aveugle, vue « centre ×2 », une page Google d'images défilée à la molette.
+           **La grille tient au seuil exact, 4 sur 6** (la règle fixée d'avance) :
+           - à ×1,333, une manche pour la grille, deux « pareil » ;
+           - à ×2, une pour la grille, deux pour la loi : les titres et le texte sur les photos sont
+             plus lisibles côté loi en défilement.
+       - **Mesures sans Bruno à 720p et 1080p, le 31/10** (banc hors dépôt, processeur seul). Les arbres
+         du dépôt, parcourus comme le C++ ; un corpus neuf de texte sur des photos, qu'aucun arbre n'a
+         vu (une page d'images en 4 positions de défilement, un titre sur photo, des cartes
+         d'actualité, du texte sur une photo claire) ; masques exacts du texte. SSIM-Y × 100 contre
+         la loi, flux x264 QP 32, ×2 :
+
+         | Blocs de 10 px | Complète | Légère | Complète + garde-fou |
+         |---|---|---|---|
+         | texte à côté d'une photo | −0,060 ; 0,7 % perdent plus de 1 point | −0,145 ; 2,4 % | 0 ; 0 % |
+         | texte sur une photo | +0,005 ; 0,5 % | +0,007 ; 1,5 % | 0 ; 0 % |
+         | texte sur fond uni | −0,009 ; 0,3 % | −0,036 ; 2,0 % | 0 ; 0 % |
+
+         - L'œil de Bruno est retrouvé : à ×2, la baisse décidée pour une photo déborde sur la légende
+           voisine, puisque le client lit la grille au bilinéaire. Les zones de 160 px de la légère
+           l'aggravent. À ×1,333, aucun bloc ne perd plus d'un point.
+         - Sur le corpus du banc, à ×2, le garde-fou ramène le gain de +0,132 à +0,104 avec la
+           complète (les jeux gardent +0,275) ; les pages de photos et de texte reviennent à la loi.
+         - À 1 ms, la légère ne sauve aucune carte mesurée : sur la RTX, elle coûte ce que coûte la
+           complète.
+       - **Le test du pompage, le 31/10** (consigne de Bruno, créneau des deux RTX). Une page Google
+         d'images défilée en continu par le script de la page (4 px CSS par image à 120 Hz). Un code
+         de 12 cases dans la page donne la position exacte de l'image capturée : 36 prises sur 36
+         concordent. Pour chaque prise : l'image en plein défilement, puis la même position immobile,
+         l'image fixe et l'original pris sur l'hôte. Passes complète et légère, 2 échelles, 3 vues,
+         3 prises chacune.
+         - Coût dans le stream, sur la RTX en 1440p : complète 63 à 64 µs, légère 35 µs.
+         - Le pompage : la perte entre l'image fixe et l'image en mouvement est la même pour la grille
+           et pour la loi, en tout (0,03 SSIM d'écart au plus) comme bloc par bloc (aucun bloc de
+           20 px où la grille perd 2 points de plus).
+         - ×1,333 : grille − loi = +0,01 à +0,06 SSIM-Y, aucun bloc à plus de 2 points d'écart.
+           ×2 : +0,10 à +0,21, XPSNR +0,05 à +0,11 dB ; VMAF −0,7 à +0,4, sous le seuil visible. La
+           grille fait mieux sur 1,8 à 2,3 % des blocs, dans les photos, et moins bien sur 0,5 à
+           0,8 %, au bord des vignettes et sur les légendes collées aux photos.
+         - La complète et la légère : mêmes chiffres à 0,02 près sur cette page.
+       - **Les choix de Bruno, le 31/10** : le garde-fou des voisines ; la passe complète d'abord, la
+         légère seulement au-dessus de 1 ms ; le code final, rien d'activé. **Écrit** (6a76564c) :
+         `kBudgetUs` = 1000, `kStartLight` = false, `guardNeighbours` à la fin de `decideAll`. Les tests
+         des groupes touchés passent (912 vérifications, WARP compris).
+       - **Non fait** :
+         - le garde-fou dans un vrai stream ;
+         - la relecture : la décision tourne sur le fil qui encode et envoie, entre l'encodage et
+           l'envoi. L'arbre et le garde-fou prennent 0,09 à 0,10 ms sur le processeur ; avec la
+           relecture des cellules, le stream mesure 0,21 à 0,30 ms en moyenne, jusqu'à 1,9 ms ;
+         - pourquoi 26 à 36 % des images ne trouvent pas leurs statistiques prêtes, alors que
+           l'encodeur a fini l'image, et ce que coûterait une relecture qui attend.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
    - le jumeau GLSL de la grille. `high`
@@ -1007,11 +1073,14 @@ pousse.
   d'écart.
 - **La passe de l'hôte en rotation**, un quart des pixels par image : le coût baisserait, mais le gain
   n'est pas mesuré par zone.
-- **Le coût de la passe dans un vrai stream.** Mesurée seule (f.3), elle coûte entre son prix à pleine
-  fréquence et son prix sur un bureau au repos, et l'écart va jusqu'à 15 fois sur la RTX en 4K.
+- **Le coût de la passe dans un vrai stream, hors de la RTX en 1440p.** Mesurée seule (f.3), elle coûte
+  entre son prix à pleine fréquence et son prix sur un bureau au repos, et l'écart va jusqu'à 15 fois
+  sur la RTX en 4K. Dans un vrai stream, seule la RTX en 1440p est mesurée (f.4) : 64 µs la complète,
+  35 µs la légère.
 - **La passe lancée après la conversion** plutôt qu'avant : elle quitterait peut-être le chemin de
   l'image vers l'encodeur. Non mesuré.
 - **Le pompage à l'œil.** Sur les 4 extraits de la première série, les coches de Bruno ne suivaient pas
   le pompage mesuré (la loi, qui ne peut pas pomper, a été cochée une fois). Un seul observateur, en une
-  séance.
+  séance. Dans un vrai stream, les métriques ne voient aucun pompage propre à la grille (f.4), sur une
+  seule page et à une seule vitesse de défilement.
 - **Les autres hôtes :** une valeur par image côté client a été mesurée, puis écartée par Bruno.
