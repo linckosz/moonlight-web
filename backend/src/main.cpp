@@ -3945,10 +3945,9 @@ int main(int argc, char* argv[])
             cfg["iceTcp"] = enableIceTcp;
             cfg["lowAudio"] = reqLowAudio;
             cfg["muteHostAudio"] = reqMuteHost;
-            // The microphone, and the device it plays into: read here, since a
-            // SYSTEM worker does not read this settings file.
+            // The viewer's microphone; the device it plays into travels with
+            // the other settings a SYSTEM worker cannot read (StreamWorkerHost).
             cfg["mic"] = reqMic;
-            cfg["micDevice"] = appSettings.micDevice();
             // The browser's opt-in to decode through a gap instead of demanding
             // a keyframe. The worker owns the media engine, so the flag has to
             // travel with the config — setting it on the in-process session

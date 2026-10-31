@@ -78,6 +78,20 @@ public:
     /// Empty when a mic can be played on this machine, else why not.
     static std::string unavailable(const std::string& device);
 
+    /// The session's gate, before any device is looked at: why a requested
+    /// microphone is refused, or empty. It only lands where the game is when
+    /// the streamed host is this machine (a remote Sunshine would never hear
+    /// it: GameStream carries no microphone), and only the owner may send
+    /// one, never an invited player — the clipboard's rule.
+    static std::string refusal(bool hostIsHere, bool owner)
+    {
+        if (!hostIsHere)
+            return "the host is another machine, and a microphone can only reach the one "
+                   "MoonlightWeb runs on";
+        if (!owner) return "an invited player cannot send a microphone";
+        return {};
+    }
+
     /// The only payload type the relay offers on the audio section.
     static constexpr uint8_t kOpusPayloadType = 111;
     static constexpr int kRate = 48000;

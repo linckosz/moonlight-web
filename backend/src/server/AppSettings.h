@@ -398,8 +398,9 @@ public:
     //
     // Which device it plays into (src/streaming/MicOutput.h). File-only, JSON
     // string "mic_device": part of a playback device's name on Windows (say
-    // "CABLE-A Input"); empty or "auto", the default, takes the first virtual
-    // cable found. Ignored on Linux, which makes its own virtual source.
+    // "CABLE-A Input"); empty or "auto", the default, takes a VB-CABLE first,
+    // then Steam's (src/streaming/MicCable.h), and never the default output.
+    // Ignored on Linux, which makes its own virtual source.
     QString micDevice() const;
 
     /// Host each streaming session in a --stream-worker subprocess (enables two

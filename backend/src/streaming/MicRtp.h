@@ -147,6 +147,10 @@ enum class MicCodec : uint8_t
 
 constexpr uint8_t kMicFrameTag = 0x4D;
 constexpr size_t kMicFrameHeader = 4;
+/// The longest frame taken: 120 ms of PCM (Opus's own longest packet, at
+/// 48 kHz mono 16-bit). The page sends 20 ms; anything longer is refused
+/// before the server grows a buffer to its size.
+constexpr size_t kMicFrameMaxPayload = 5760 * 2;
 
 struct MicFrame
 {
@@ -157,10 +161,11 @@ struct MicFrame
 };
 
 /// False for anything that is not a microphone frame, an unknown codec, an
-/// empty payload, or PCM cut through a sample.
+/// empty or oversized payload, or PCM cut through a sample.
 inline bool parseMicFrame(const uint8_t* data, size_t size, MicFrame& out)
 {
     if (!data || size <= kMicFrameHeader || data[0] != kMicFrameTag) return false;
+    if (size - kMicFrameHeader > kMicFrameMaxPayload) return false;
     if (data[1] != uint8_t(MicCodec::Opus) && data[1] != uint8_t(MicCodec::Pcm16)) return false;
     out.codec = static_cast<MicCodec>(data[1]);
     out.sequence = static_cast<uint16_t>((data[2] << 8) | data[3]);

@@ -776,14 +776,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // and its entry carries no address for isSelfAddress() to recognise.
     if (m_MicRequested) {
         const bool micHostHere = media.type == MediaType::NativeHost || hostIsSelf;
-        std::string why;
-        if (!micHostHere)
-            why = "the host is another machine, and a microphone can only reach the one "
-                  "MoonlightWeb runs on";
-        else if (!m_InputPolicy.unrestricted())
-            why = "an invited player cannot send a microphone";
-        else
-            why = MicUplink::unavailable(m_MicDevice.toStdString());
+        std::string why = MicUplink::refusal(micHostHere, m_InputPolicy.unrestricted());
+        if (why.empty()) why = MicUplink::unavailable(m_MicDevice.toStdString());
         if (why.empty()) {
             auto mic = std::make_shared<MicUplink>(m_MicDevice.toStdString());
             if (mic->start(why)) m_Mic = std::move(mic);

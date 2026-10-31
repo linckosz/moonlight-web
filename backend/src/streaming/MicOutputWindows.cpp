@@ -20,6 +20,7 @@
 // Event-driven on a thread of its own (MMCSS "Pro Audio"), which owns COM and
 // every interface; start() waits for it to say whether the device opened.
 
+#include "MicCable.h"
 #include "MicJitter.h"
 #include "MicOutput.h"
 
@@ -33,7 +34,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cwctype>
 #include <future>
 #include <thread>
 #include <vector>
@@ -48,15 +48,6 @@ const PROPERTYKEY kDeviceFriendlyName = {
 // KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, without <ksmedia.h>'s INITGUID dance.
 const GUID kSubtypeFloat = {
     0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
-
-// The render sides of the virtual cables people already have, in order. Never
-// a real output, and never "Steam Streaming Speakers": Sunshine captures that
-// one, and the viewer would hear their own voice come back.
-const wchar_t* const kKnownCables[] = {
-    L"CABLE Input",                // VB-Audio Virtual Cable
-    L"VB-Audio",                   // its A/B/C/D variants and VoiceMeeter's inputs
-    L"Steam Streaming Microphone", // installed with Steam Remote Play
-};
 
 constexpr REFERENCE_TIME kBufferHns = 20 * 10000; // 20 ms
 constexpr DWORD kRetryMs = 2000;
@@ -89,67 +80,88 @@ std::string narrow(const std::wstring& w)
     return out;
 }
 
-std::wstring widen(const std::string& s)
+/// The endpoint id Windows gives a device, or empty.
+std::wstring endpointId(IMMDevice* device)
 {
-    if (s.empty()) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
-    std::wstring out(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), out.data(), n);
+    LPWSTR id = nullptr;
+    if (!device || FAILED(device->GetId(&id)) || !id) return {};
+    std::wstring out(id);
+    CoTaskMemFree(id);
     return out;
 }
 
-bool containsNoCase(const std::wstring& haystack, const std::wstring& needle)
+std::wstring friendlyName(IMMDevice* device)
 {
-    auto lower = [](std::wstring s) {
-        std::transform(s.begin(), s.end(), s.begin(),
-                       [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
-        return s;
-    };
-    return !needle.empty() && lower(haystack).find(lower(needle)) != std::wstring::npos;
+    ComPtr<IPropertyStore> props;
+    if (FAILED(device->OpenPropertyStore(STGM_READ, &props))) return {};
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    if (FAILED(props->GetValue(kDeviceFriendlyName, &value))) return {};
+    std::wstring out = value.vt == VT_LPWSTR ? value.pwszVal : L"";
+    PropVariantClear(&value);
+    return out;
 }
 
-bool wantsAuto(const std::string& device)
+std::string noCableReason(const std::string& device)
 {
-    return device.empty() || _stricmp(device.c_str(), "auto") == 0;
+    if (!wantsAutoDevice(device))
+        return "no playback device named like \"" + device +
+               "\" (settings.json mic_device) is active on this PC";
+    return "this PC has no virtual audio cable to play the microphone into. Install VB-CABLE "
+           "(vb-audio.com/Cable): MoonlightWeb plays into its \"CABLE Input\", and apps record "
+           "it as \"CABLE Output\"";
 }
 
-/// The render endpoint to play into, and its name. COM must be initialised on
-/// the calling thread. False when no endpoint matches.
-bool findDevice(IMMDeviceEnumerator* enumerator, const std::string& device, ComPtr<IMMDevice>& out,
-                std::wstring& name)
+/// The render endpoint to play into (MicCable.h says which), and its name.
+/// COM must be initialised on the calling thread. Empty on success, else why
+/// not, in a sentence the viewer is shown.
+///
+/// Never the PC's default output, even a cable: the host's own sound plays
+/// there, the stream captures it, and the viewer would hear their voice come
+/// back — besides every app's sound reaching the microphone.
+std::string findDevice(IMMDeviceEnumerator* enumerator, const std::string& device,
+                       ComPtr<IMMDevice>& out, std::wstring& name)
 {
     ComPtr<IMMDeviceCollection> devices;
     if (FAILED(enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices)))
-        return false;
+        return "the Windows audio service lists no playback device";
     UINT count = 0;
     devices->GetCount(&count);
 
-    std::vector<std::wstring> wanted;
-    if (wantsAuto(device))
-        wanted.assign(std::begin(kKnownCables), std::end(kKnownCables));
-    else
-        wanted.push_back(widen(device));
-
-    for (const std::wstring& needle : wanted) {
-        for (UINT i = 0; i < count; ++i) {
-            ComPtr<IMMDevice> candidate;
-            if (FAILED(devices->Item(i, &candidate))) continue;
-            ComPtr<IPropertyStore> props;
-            if (FAILED(candidate->OpenPropertyStore(STGM_READ, &props))) continue;
-            PROPVARIANT value;
-            PropVariantInit(&value);
-            if (FAILED(props->GetValue(kDeviceFriendlyName, &value))) continue;
-            const std::wstring friendly = value.vt == VT_LPWSTR ? value.pwszVal : L"";
-            PropVariantClear(&value);
-            if (!containsNoCase(friendly, needle)) continue;
-            out.reset();
-            out.p = candidate.p;
-            candidate.p = nullptr;
-            name = friendly;
-            return true;
-        }
+    std::wstring defaultId;
+    {
+        ComPtr<IMMDevice> def;
+        if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &def)))
+            defaultId = endpointId(def.p);
     }
-    return false;
+
+    const bool automatic = wantsAutoDevice(device);
+    int bestRank = 0;
+    std::string skippedDefault;
+    for (UINT i = 0; i < count; ++i) {
+        ComPtr<IMMDevice> candidate;
+        if (FAILED(devices->Item(i, &candidate))) continue;
+        const std::wstring friendly = friendlyName(candidate.p);
+        const std::string utf8 = narrow(friendly);
+        const int rank = automatic ? cableRank(utf8) : (nameMatches(utf8, device) ? 0 : kNotACable);
+        if (rank == kNotACable) continue;
+        if (!defaultId.empty() && endpointId(candidate.p) == defaultId) {
+            skippedDefault = utf8;
+            continue;
+        }
+        if (out && rank >= bestRank) continue;
+        out.reset();
+        out.p = candidate.p;
+        candidate.p = nullptr;
+        name = friendly;
+        bestRank = rank;
+    }
+    if (out) return {};
+    if (!skippedDefault.empty())
+        return "\"" + skippedDefault +
+               "\" is this PC's default output: the host's own sound would carry the voice "
+               "back. Choose your speakers as the default output";
+    return noCableReason(device);
 }
 
 /// COM for the scope of one call, whatever the thread already had.
@@ -168,16 +180,6 @@ struct ComScope
         if (owned) CoUninitialize();
     }
 };
-
-std::string noCableReason(const std::string& device)
-{
-    if (!wantsAuto(device))
-        return "no playback device named like \"" + device +
-               "\" (settings.json mic_device) is active on this PC";
-    return "this PC has no virtual audio cable to play the microphone into. Install VB-CABLE "
-           "(vb-audio.com/Cable): MoonlightWeb plays into its \"CABLE Input\", and apps record "
-           "it as \"CABLE Output\"";
-}
 
 class WasapiOutput final : public IMicOutput
 {
@@ -249,7 +251,8 @@ private:
     std::string open(IMMDeviceEnumerator* enumerator, Stream& s, std::string& name)
     {
         std::wstring wide;
-        if (!findDevice(enumerator, m_Device, s.device, wide)) return noCableReason(m_Device);
+        if (std::string why = findDevice(enumerator, m_Device, s.device, wide); !why.empty())
+            return why;
         name = narrow(wide);
 
         if (FAILED(s.device->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
@@ -398,7 +401,7 @@ std::string unavailable(const std::string& device)
         return "the Windows audio service is not available";
     ComPtr<IMMDevice> found;
     std::wstring name;
-    return findDevice(enumerator.p, device, found, name) ? std::string() : noCableReason(device);
+    return findDevice(enumerator.p, device, found, name);
 }
 
 } // namespace mw::mic

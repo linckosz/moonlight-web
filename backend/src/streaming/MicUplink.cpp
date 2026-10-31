@@ -213,10 +213,13 @@ void MicUplink::opusLocked(uint16_t sequence, uint32_t source, const uint8_t* pa
         if (missing <= kMaxConcealedPackets) {
             // PLC for all but the last missing packet, whose FEC copy rides in
             // this one (the offer's useinbandfec=1 asks the browser for it).
+            // Only a SILK or hybrid packet can carry it. A CELT-only one —
+            // which the browser's encoder may pick at a high rate — has
+            // none, and the FEC decode is then the same PLC: not a recovery.
             for (int i = 0; i < missing - 1; ++i)
                 decodeLocked(nullptr, 0, false, m_LastFrames);
             decodeLocked(payload, size, true, m_LastFrames);
-            ++m_Recovered;
+            if (opus_packet_has_lbrr(payload, static_cast<opus_int32>(size)) > 0) ++m_Recovered;
         }
     }
     m_LastSequence = sequence;

@@ -11,8 +11,10 @@
  * primed again when it runs dry, trimmed when it grows.
  */
 
+#include "../src/streaming/MicCable.h"
 #include "../src/streaming/MicJitter.h"
 #include "../src/streaming/MicRtp.h"
+#include "../src/streaming/MicUplink.h"
 
 #include "test_framework.h"
 
@@ -161,6 +163,60 @@ void run_mic_uplink_tests()
         CHECK(!mw::mic::parseMicFrame(empty, sizeof empty, f));
         CHECK(!mw::mic::parseMicFrame(odd, sizeof odd, f));
         CHECK(!mw::mic::parseMicFrame(nullptr, 0, f));
+
+        // The longest frame taken is 120 ms of PCM; one sample more is refused
+        // before the server grows a buffer to it.
+        std::vector<uint8_t> big(mw::mic::kMicFrameHeader + mw::mic::kMicFrameMaxPayload, 0);
+        big[0] = 0x4D;
+        big[1] = 2;
+        CHECK(mw::mic::parseMicFrame(big.data(), big.size(), f));
+        big.resize(big.size() + 2);
+        CHECK(!mw::mic::parseMicFrame(big.data(), big.size(), f));
+        big[1] = 1; // Opus as well
+        CHECK(!mw::mic::parseMicFrame(big.data(), big.size(), f));
+    }
+
+    SECTION("MicUplink — the session's gate");
+    {
+        CHECK(MicUplink::refusal(true, true).empty());
+        // A remote host would never hear it, whoever asks.
+        CHECK(!MicUplink::refusal(false, true).empty());
+        CHECK(!MicUplink::refusal(false, false).empty());
+        // An invited player never sends one, even to this machine.
+        CHECK(!MicUplink::refusal(true, false).empty());
+        CHECK(MicUplink::refusal(true, false) != MicUplink::refusal(false, true));
+    }
+
+    SECTION("MicCable — the cables Windows may play into, in order");
+    {
+        using mw::mic::cableRank;
+        using mw::mic::kNotACable;
+        CHECK_EQ(cableRank("CABLE Input (VB-Audio Virtual Cable)"), 0);
+        CHECK_EQ(cableRank("CABLE-A Input (VB-Audio Cable A)"), 0);
+        CHECK_EQ(cableRank("Hi-Fi Cable Input (VB-Audio Hi-Fi Cable)"), 0);
+        CHECK_EQ(cableRank("cable input (vb-audio virtual cable)"), 0);
+        CHECK_EQ(cableRank("Speakers (Steam Streaming Microphone)"), 1);
+        // VoiceMeeter mixes its inputs into the PC's speakers.
+        CHECK_EQ(cableRank("VoiceMeeter Input (VB-Audio VoiceMeeter VAIO)"), kNotACable);
+        CHECK_EQ(cableRank("VoiceMeeter Aux Input (VB-Audio VoiceMeeter AUX VAIO)"), kNotACable);
+        // Sunshine captures it: the voice would come back.
+        CHECK_EQ(cableRank("Speakers (Steam Streaming Speakers)"), kNotACable);
+        // Real outputs, and a cable's capture side.
+        CHECK_EQ(cableRank("Speakers (Realtek(R) Audio)"), kNotACable);
+        CHECK_EQ(cableRank("M27Q (NVIDIA High Definition Audio)"), kNotACable);
+        CHECK_EQ(cableRank("CABLE Output (VB-Audio Virtual Cable)"), kNotACable);
+        CHECK_EQ(cableRank(""), kNotACable);
+    }
+
+    SECTION("MicCable — the admin's mic_device");
+    {
+        CHECK(mw::mic::wantsAutoDevice(""));
+        CHECK(mw::mic::wantsAutoDevice("auto"));
+        CHECK(mw::mic::wantsAutoDevice("AUTO"));
+        CHECK(!mw::mic::wantsAutoDevice("CABLE-A Input"));
+        CHECK(mw::mic::nameMatches("CABLE-A Input (VB-Audio Cable A)", "cable-a input"));
+        CHECK(!mw::mic::nameMatches("CABLE-A Input (VB-Audio Cable A)", "CABLE-B"));
+        CHECK(!mw::mic::nameMatches("anything", ""));
     }
 
     SECTION("JitterRing — silent until primed, then plays in order");
