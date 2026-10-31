@@ -282,6 +282,9 @@ export async function refreshClientLog() {
         state = 'on';
         wrap();
         timer = setInterval(() => void tick(), FLUSH_MS);
+        // What this browser can do, for the same archive (`[Caps]`, once per
+        // page). Loaded only here: a page out of debug mode never fetches it.
+        import('./BrowserCaps.js').then((m) => m.logBrowserCaps()).catch(() => {});
     }
     void tick();
 }
