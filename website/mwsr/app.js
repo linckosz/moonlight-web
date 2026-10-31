@@ -23,7 +23,27 @@ const PICS = {
       ['Centre', 1280, 720],
     ],
   },
-  '0ad': { kind: 'sdr', url: '/mwsr/img/0ad-1440.webp', spots: ZA },
+  '0ad': { kind: 'sdr', url: '/mwsr/img/0ad-1440.webp', mb: 6, spots: ZA },
+  gears: {
+    kind: 'sdr',
+    url: '/mwsr/img/gears-1440.webp',
+    mb: 4,
+    spots: [
+      ['Power chain', 1584, 752],
+      ['Saw', 1888, 330],
+      ['Scoreboard', 832, 170],
+    ],
+  },
+  junkshop: {
+    kind: 'sdr',
+    url: '/mwsr/img/junkshop-1440.webp',
+    mb: 3,
+    spots: [
+      ['Retail sign', 1808, 300],
+      ['Colander', 1600, 500],
+      ['Robot', 784, 1104],
+    ],
+  },
   iso: {
     kind: 'iso',
     w: 2560,
@@ -54,7 +74,7 @@ const PICS = {
       ['Ramps', 1280, 290],
     ],
   },
-  'hdr-game': { kind: 'hdr-game', url: '/mwsr/img/0ad-1440.webp', spots: ZA },
+  'hdr-game': { kind: 'hdr-game', url: '/mwsr/img/0ad-1440.webp', mb: 6, spots: ZA },
   file: { kind: 'file', spots: [] },
 };
 const NAMES = {
@@ -360,8 +380,7 @@ async function load() {
   const p = PICS[S.pic];
   const pic =
     p.kind === 'file' ? { kind: 'file', file: S.file } : { ...p, url: p.url && new URL(p.url, location.href).href };
-  const big = p.kind === 'sdr' || p.kind === 'hdr-game' ? ' (6 MB the first time)' : '';
-  status((S.pic === '0ad' || S.pic === 'hdr-game' ? 'Loading the picture' + big : 'Preparing the picture') + '…');
+  status((p.mb ? `Loading the picture (${p.mb} MB the first time)` : 'Preparing the picture') + '…');
   for (const k of Object.keys(R)) delete R[k];
   let c;
   try {
