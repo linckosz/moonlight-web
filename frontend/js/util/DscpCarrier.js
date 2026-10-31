@@ -90,10 +90,11 @@ export function prepareDscpCarrier(pc, mode) {
 
 /**
  * An answer SDP with every `a=sendrecv` turned `a=recvonly`, except the stream's
- * audio section when the carrier is on (WebRtcMedia answers receive-only).
+ * audio section when the carrier is on, or the viewer's microphone holds it
+ * (`'mic'`, audio/MicUplink.js) — WebRtcMedia answers receive-only otherwise.
  *
  * @param {string} sdp
- * @param {'notrack'|'track'|null} mode
+ * @param {'notrack'|'track'|'mic'|null} mode
  * @returns {string}
  */
 export function recvonlyExceptCarrier(sdp, mode) {

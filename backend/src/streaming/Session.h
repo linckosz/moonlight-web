@@ -42,6 +42,7 @@ class MediaTrackRelay;
 class SignalingServer;
 class StreamRelay;
 class IMediaEngine;
+class MicUplink;
 
 class StreamSession : public QObject
 {
@@ -78,6 +79,13 @@ public:
 
     /// Request lower-bandwidth audio (10ms Opus frames) for mobile clients.
     void setLowAudio(bool enable) { m_LowAudio = enable; }
+
+    /// The browser asks to send its microphone (/start's mic_enabled). Granted
+    /// only where it can land on the right machine — see the gate in
+    /// onLaunchResult — and the /start reply says which (`mic`, `mic_why`).
+    void setMicRequested(bool on) { m_MicRequested = on; }
+    /// settings.json `mic_device`: which device it plays into (MicOutput.h).
+    void setMicDevice(const QString& device) { m_MicDevice = device; }
 
     /// Mute the host PC speakers while streaming (GameStream localAudioPlayMode).
     /// true (default) → host muted; false → audio also plays on the host.
@@ -462,6 +470,13 @@ private:
     bool m_IceTcpPassive = false;
     bool m_DebugIceDropUdp = false;
     bool m_LowAudio = false;
+    bool m_MicRequested = false;
+    QString m_MicDevice;
+    /// Started when the gate let the microphone in; the relay holds it from
+    /// then on, and this session (which deletes itself once streaming) lets go.
+    std::shared_ptr<MicUplink> m_Mic;
+    /// Why a requested microphone was not granted, for the /start reply.
+    QString m_MicWhy;
     /// True when session is part of the auto fallback chain (main.cpp auto mode).
     /// Disables internal WS fallback so ICE timeout → sessionEnded → tryNext().
     bool m_AutoMode = false;

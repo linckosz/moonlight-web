@@ -29,6 +29,7 @@ import { Toast } from './Toast.js';
 import { StatsGraph } from './StatsGraph.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
 import * as streamVolume from '../audio/streamVolume.js';
+import { MicUplink, micSupported } from '../audio/MicUplink.js';
 import { JitterController } from '../stream/JitterController.js';
 import { FramePacer } from '../stream/FramePacer.js';
 import {
@@ -1084,6 +1085,20 @@ export class StreamView {
         this.webrtc._chainFallback = true;
         // A share-link guest was never paired with this host: no MW-BIND.
         this.webrtc._unpairedGuest = this._playerMode;
+
+        // The viewer's microphone, when the host took it (/start's `mic`): it
+        // answers the stream's audio section, or rides the WSS socket. A
+        // standby leg holds it back until activate(), or the host would hear
+        // the voice twice.
+        /** @type {MicUplink|null} */
+        this._mic = null;
+        /** @type {HTMLButtonElement|null} */
+        this._micBtn = null;
+        if (opts.mic === true && micSupported()) {
+            this._mic = new MicUplink({ held: this._standby, quality: opts.micQuality });
+            this._mic.onStateChange = (state) => this._onMicState(state);
+            this.webrtc.mic = this._mic;
+        }
 
         // Ride out a gap rather than demand a keyframe — only when the HOST
         // confirmed its encoder is really intra-refreshing (opts.intraRefresh
@@ -4320,6 +4335,8 @@ export class StreamView {
         this._acquireWakeLock();
         this.bindEvents();
         if (this._gamepadManager) this._gamepadManager.start();
+        // The live leg's microphone goes with it; this one sends from now on.
+        if (this._mic) this._mic.release();
         // Unmuting an element the browser only let play BECAUSE it was muted
         // pauses it, unless the unmute happens on a user activation — and an
         // automatic quality degradation has none. Restart it, with the same
@@ -4383,6 +4400,7 @@ export class StreamView {
         if (consoleBtn) consoleBtn.classList.remove('stream-ctl-prestart');
         if (this._kbdBtn) this._kbdBtn.classList.remove('stream-ctl-prestart');
         this._mountGamepadButton();
+        this._mountMicButton();
         this._mountShareMenu();
         this._mountSupportButton();
     }
@@ -4444,6 +4462,64 @@ export class StreamView {
         });
         header.insertBefore(btn, quitBtn || null);
         this._padBtn = btn;
+    }
+
+    /**
+     * The microphone's mute button, when the host took the viewer's
+     * microphone. Muting sends silence rather than dropping the track, so the
+     * host's virtual microphone stays where the apps found it. Idempotent.
+     */
+    _mountMicButton() {
+        if (!this._mic || this._micBtn || !this._rootEl) return;
+        const header = this._rootEl.querySelector('.stream-header');
+        const quitBtn = this._rootEl.querySelector('#btn-stream-quit');
+        if (!header) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'btn-stream-mic';
+        btn.className = 'btn-stream-pad btn-stream-mic';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this._mic) this._mic.toggleMuted();
+            this._syncMicButton();
+            // Space in the game would toggle it again.
+            btn.blur();
+        });
+        header.insertBefore(btn, quitBtn || null);
+        this._micBtn = btn;
+        this._syncMicButton();
+    }
+
+    /** The button as the microphone stands: live, muted, or refused. */
+    _syncMicButton() {
+        const btn = this._micBtn;
+        if (!btn || !this._mic) return;
+        const state = this._mic.state;
+        const off = this._mic.muted || state === 'denied' || state === 'error';
+        btn.innerHTML = off ? Icons.micOff : Icons.mic;
+        btn.classList.toggle('is-off', off);
+        btn.disabled = state === 'denied' || state === 'error';
+        const label =
+            state === 'denied'
+                ? t('stream.micDenied')
+                : state === 'error'
+                  ? t('stream.micError')
+                  : this._mic.muted
+                    ? t('stream.micUnmute')
+                    : t('stream.micMute');
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
+        btn.setAttribute('aria-pressed', this._mic.muted ? 'true' : 'false');
+    }
+
+    /** @param {string} state - MicUplink.state */
+    _onMicState(state) {
+        this._syncMicButton();
+        // Said once per stream: a standby leg's own refusal would only repeat it.
+        if ((state === 'denied' || state === 'error') && !this._micWarned && !this._standby) {
+            this._micWarned = true;
+            Toast.warning(t(state === 'denied' ? 'stream.micDenied' : 'stream.micError'));
+        }
     }
 
     /**
@@ -13112,6 +13188,9 @@ export class StreamView {
         this.pendingFrames = [];
         this._clearPacingTimer();
 
+        // The microphone's indicator goes out with the stream.
+        if (this._mic) this._mic.close();
+
         // Mark WebRTC as stopping before calling /quit so that DataChannel
         // "onclose" events from the backend closing its side are not treated
         // as unexpected errors.  Then send the HTTP request while the relay
@@ -13329,6 +13408,7 @@ export class StreamView {
         this._releaseWakeLock();
         this.stopRenderLoop();
         this.unbindEvents();
+        if (this._mic) this._mic.close();
         this.webrtc.close();
         if (this._latencyProbe) {
             this._latencyProbe.stop();

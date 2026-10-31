@@ -19,6 +19,8 @@
 
 #include "IMediaEngine.h"
 #include "IcePriority.h"
+#include "MicRtp.h"
+#include "MicUplink.h"
 #include "server/NetClassify.h"
 
 #include <rtc/rtc.hpp>
@@ -97,6 +99,48 @@ void RelayBase::logSelectedCandidatePair(rtc::PeerConnection& pc, const char* lo
     }
     qInfo() << logTag << "Selected candidate pair: local" << describeCandidate(local) << "-> remote"
             << describeCandidate(remote);
+}
+
+void RelayBase::wireMicUplink(rtc::Track& audioTrack, const char* logTag)
+{
+    if (!m_Mic) return;
+    std::weak_ptr<MicUplink> weak = m_Mic;
+    audioTrack.onMessage([weak](rtc::message_variant message) {
+        const auto* bytes = std::get_if<rtc::binary>(&message);
+        if (!bytes || bytes->empty()) return;
+        if (const auto mic = weak.lock())
+            mic->onPacket(reinterpret_cast<const uint8_t*>(bytes->data()), bytes->size());
+    });
+    qInfo() << logTag << "Audio offered sendrecv: the viewer's microphone plays into"
+            << QString::fromStdString(m_Mic->deviceName());
+}
+
+void RelayBase::logMicAnswer(const std::string& sdp, const char* logTag) const
+{
+    if (!m_Mic) return;
+    const mw::mic::AudioAnswer answer = mw::mic::readAudioAnswer(sdp);
+    if (!answer.found || !answer.sends)
+        qInfo() << logTag
+                << "Microphone: the browser answered without sending (no track, or "
+                   "the page has the setting off)";
+    else if (!answer.hasSsrc)
+        qWarning() << logTag
+                   << "Microphone: the browser sends, but its answer names no SSRC — "
+                      "libdatachannel cannot route that RTP to the track";
+    else
+        qInfo() << logTag << "Microphone: the browser will send on the audio section";
+}
+
+void RelayBase::stopMic()
+{
+    if (m_Mic) m_Mic->stop();
+}
+
+std::string RelayBase::micOpusFmtp() const
+{
+    std::string fmtp = "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1";
+    if (m_Mic) fmtp += ";maxaveragebitrate=128000;maxplaybackrate=48000";
+    return fmtp;
 }
 
 void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* logTag)

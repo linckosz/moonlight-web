@@ -2805,6 +2805,13 @@ export const MoonlightApp = {
             );
         }
 
+        // The microphone was asked for and the host could not take it: said
+        // once per user-initiated launch, like the transport above, with the
+        // host's own reason (a remote host, no virtual cable…).
+        if (streamingSettings.mic_enabled === true && result.mic === false && !suppressShortcuts) {
+            Toast.warning(t('stream.micUnavailable', { why: result.mic_why || '' }));
+        }
+
         this.streamView = this._createStreamView(result, host, streamingSettings, {
             sessionSlot: slot,
             slotUniqueId: BackendClient.clientUniqueIdForSlot(slot),
@@ -3406,6 +3413,11 @@ export const MoonlightApp = {
             // The host is this machine's own screen (mw-native-host): the mouse
             // is sent at its raw report rate there — see _bindPointerRaw.
             nativeHost: result.native === true,
+            // The host took this viewer's microphone (audio/MicUplink.js): the
+            // view answers the audio section with it. Never a guest's.
+            mic: viewOpts.playerMode !== true && result.mic === true,
+            // How it sounds (Settings → Microphone sound): MIC_QUALITY's name.
+            micQuality: streamingSettings.mic_quality,
             // The virtual display drawn by another GPU than the display it
             // replaced, when the host says so: the view tells the user to
             // restart a stuttering app, once the stream shows the stall —

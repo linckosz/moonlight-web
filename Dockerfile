@@ -50,6 +50,9 @@ FROM debian:${DEBIAN_RELEASE} AS build
 # libssl-dev is required by both the server (TLS listener, ACME) and
 # moonlight-common-c (the GameStream crypto). git applies our submodule patches
 # at configure time (mw_apply_patch in backend/CMakeLists.txt).
+# libpipewire-0.3-dev is headers only for the viewer's microphone: the server
+# opens libpipewire with dlopen (src/streaming/MicOutputPipeWire.cpp), and the
+# native host's own PipeWire code stays off here — it also needs libdrm & co.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential \
@@ -59,6 +62,7 @@ RUN apt-get update \
         ninja-build \
         pkg-config \
         libssl-dev \
+        libpipewire-0.3-dev \
         qt6-base-dev \
         qt6-websockets-dev \
  && rm -rf /var/lib/apt/lists/*
@@ -105,6 +109,13 @@ FROM debian:${DEBIAN_RELEASE}-slim
 #
 # jq is used by the entrypoint to merge MW_HTTP_PORT / MW_HTTPS_PORT / MW_UPNP
 # into settings.json without clobbering the rest of the file.
+#
+# pipewire-bin is how the viewer's microphone reaches the host's PipeWire once
+# its socket is mounted (docker/README.md, "The microphone"): it carries the
+# client.conf libpipewire refuses to start without, and pulls the library and
+# the client modules under the right name on bookworm and trixie alike — about
+# 16 MB, most of its dependencies already being Qt's. Opened on first use, so
+# an image run without the socket starts all the same.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -112,6 +123,7 @@ RUN apt-get update \
         libqt6svg6 \
         libqt6websockets6 \
         libqt6widgets6 \
+        pipewire-bin \
         qt6-qpa-plugins \
         tzdata \
  && rm -rf /var/lib/apt/lists/*

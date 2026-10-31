@@ -42,6 +42,7 @@ import { attachRtpVideo, passEncodedAudio, rtpLegacyApi } from './RtpVideo.js';
 import { closeHidChannel, createHidChannel, sendHidFrame } from '../hid/hidWire.js';
 import { setAudioJitterBufferTarget } from '../util/AudioJitter.js';
 import { armDscpCarrier, dscpCarrierMode, prepareDscpCarrier } from '../util/DscpCarrier.js';
+import { MIC_SOCKET_BACKLOG } from '../audio/MicSocketSender.js';
 
 /**
  * Describe a WebSocket close code for diagnostic logging.
@@ -130,6 +131,10 @@ export class WebRtcDataChannel {
         this.audioElement = null;
         // Cleanup for the autoplay gesture retry, when play() was rejected.
         this._audioRetryCleanup = null;
+        // The viewer's microphone (audio/MicUplink.js), when the host took it:
+        // it answers the same audio section sendrecv. Set by StreamView.
+        /** @type {import('../audio/MicUplink.js').MicUplink|null} */
+        this.mic = null;
 
         // WSS mode: legacy StreamRelay WebSocket passthrough.
         // When true, this class acts as a simple WS client that receives
@@ -368,6 +373,9 @@ export class WebRtcDataChannel {
                 console.log('[WSS] WS connected, stream ready');
                 this.connected = true;
                 if (this.onOpen) this.onOpen();
+                // No audio track to answer here: the microphone goes on this
+                // socket as frames (audio/MicSocketSender.js). Not awaited.
+                if (this.mic) this.mic.attachSocket((bytes) => this._sendMicFrame(bytes));
             };
 
             this.signalingWs.onmessage = (evt) => this._onWssMessage(evt);
@@ -523,6 +531,22 @@ export class WebRtcDataChannel {
     /** One HID passthrough report frame; false when the channel is not open. */
     sendHid(frame) {
         return sendHidFrame(this._hidDc, frame);
+    }
+
+    /**
+     * One microphone frame on the WSS socket. Dropped while the socket is
+     * backed up: a voice that arrives late is worse than one missing 20 ms.
+     *
+     * @param {Uint8Array} bytes
+     * @returns {boolean} whether it was sent
+     */
+    _sendMicFrame(bytes) {
+        const ws = this.signalingWs;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        if (typeof ws.bufferedAmount === 'number' && ws.bufferedAmount > MIC_SOCKET_BACKLOG)
+            return false;
+        ws.send(bytes);
+        return true;
     }
 
     send(obj) {
@@ -1245,8 +1269,11 @@ export class WebRtcDataChannel {
             console.log('[WebRTC] Remote description set (offer)');
             await this._flushPendingCandidates();
 
-            // The bench's silent carrier (DscpCarrier.js), off by default.
-            const carrier = dscpCarrierMode();
+            // The viewer's microphone, when the host offered to take it.
+            const micOn = this.mic ? this.mic.prepare(this.pc, sdp) : false;
+            // The bench's silent carrier (DscpCarrier.js), off by default; the
+            // microphone holds that sender when both are asked.
+            const carrier = micOn ? null : dscpCarrierMode();
             prepareDscpCarrier(this.pc, carrier);
 
             // Create answer. Stereo Opus decode for the RTP audio track:
@@ -1260,6 +1287,8 @@ export class WebRtcDataChannel {
             await this.pc.setLocalDescription(modifiedAnswer);
             console.log('[WebRTC] Local description set (answer), sending...');
             armDscpCarrier(this.pc, carrier);
+            // Not awaited: a permission prompt must not hold the answer back.
+            if (micOn) this.mic.attach();
 
             // Start ICE timeout: if ICE doesn't reach connected/completed
             // within ICE_TIMEOUT_MS, the connection has failed (likely UDP

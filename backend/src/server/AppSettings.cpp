@@ -218,6 +218,13 @@ bool AppSettings::audioTimeStretch() const
     return obj.value("audio_time_stretch").toBool(true);
 }
 
+// ── The viewer's microphone ────────────────────────────────────────────────────
+
+QString AppSettings::micDevice() const
+{
+    return readAll().value("mic_device").toString().trimmed();
+}
+
 // ── Stream worker (per-session child process) ─────────────────────────────────
 // Hosts each streaming session in a `--stream-worker` subprocess, enabling two
 // concurrent sessions (dual-stream seamless switching) despite the process-

@@ -56,7 +56,11 @@ export default [
 
     // Worker / AudioWorklet context (no DOM, has worker globals).
     {
-        files: ['js/audio/audio-processor.js', 'js/stream/VideoDecodeWorker.js'],
+        files: [
+            'js/audio/audio-processor.js',
+            'js/audio/mic-capture-processor.js',
+            'js/stream/VideoDecodeWorker.js',
+        ],
         languageOptions: {
             globals: {
                 ...globals.worker,

@@ -28,10 +28,12 @@
 namespace rtc {
 class Candidate;
 class PeerConnection;
+class Track;
 struct Configuration;
 } // namespace rtc
 
 class IMediaEngine;
+class MicUplink;
 
 /// Abstract base class for DataChannelRelay and MediaTrackRelay.
 ///
@@ -131,6 +133,13 @@ public:
     }
     const InputMsg::Policy& inputPolicy() const { return m_InputPolicy; }
 
+    /// The viewer's microphone (MicUplink.h), already started: the audio
+    /// section is then offered sendrecv and what the browser sends on it is
+    /// played into this machine's virtual microphone. Set before prepare(),
+    /// with the same lifetime discipline as m_ClipboardEnabled; the relay
+    /// stops it with the PeerConnection.
+    void setMicUplink(std::shared_ptr<MicUplink> mic) { m_Mic = std::move(mic); }
+
     /// Request an IDR frame from Sunshine (keyframe).
     virtual void requestIdrFrame() = 0;
 
@@ -217,10 +226,34 @@ protected:
     /// @param logTag prefix for this relay's log lines, e.g. "[MediaTrackRelay]".
     void logSelectedCandidatePair(rtc::PeerConnection& pc, const char* logTag);
 
+    /// Hands what the browser sends on the audio track to m_Mic. The track
+    /// holds a weak reference only: the relay's stopMic() ends the uplink,
+    /// whatever libdatachannel still holds of the track afterwards.
+    void wireMicUplink(rtc::Track& audioTrack, const char* logTag);
+
+    /// What the browser's answer made of the microphone, in one line: whether
+    /// it sends on the audio section, and with the SSRC libdatachannel needs
+    /// to route that RTP to the track at all.
+    void logMicAnswer(const std::string& sdp, const char* logTag) const;
+
+    /// Closes the microphone's device. Both relays call it from stop().
+    void stopMic();
+
+    /// The audio section's Opus parameters. stereo=1;sprop-stereo=1 keep the
+    /// browser's decoder stereo (see the relays). With a microphone, the
+    /// section also says what this side takes from the browser: up to 128
+    /// kbit/s, which Chrome and Firefox use as their encoder's target where
+    /// they would otherwise speak at 32–64; the page sets the rate it wants
+    /// below that per quality (MicUplink.js).
+    std::string micOpusFmtp() const;
+
     /// Written once on the main thread before the relay moves to its own
     /// thread, read-only afterwards — same lifetime discipline as
     /// m_ClipboardEnabled.
     InputMsg::Policy m_InputPolicy;
+
+    /// See setMicUplink. Null: no microphone, the audio section sendonly.
+    std::shared_ptr<MicUplink> m_Mic;
 
     // ── ICE connectivity deadline ───────────────────────────────────────────
     /// Set by prepare() from the peer classification; read by
