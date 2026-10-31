@@ -543,9 +543,11 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
     tend vers 0 à 1:1, et la baisse divisée par elle croîtrait sans borne (à ×1,25, le code 11 rendrait une
     netteté de −0,85, contre −0,18 au pire à ×1,33). L'hôte calcule quand même la grille entre ×1 et ×1,3 ;
     l'en empêcher serait une ligne dans `enableMwsrStats`, pas encore faite.
-- **Sans retarder l'image :**
-  - les statistiques partent avec la conversion et sont relues quand l'image encodée sort ;
-  - si elles ne sont pas prêtes, l'image part sans grille, et le client applique la loi.
+- **Presque sans retarder l'image :**
+  - les statistiques partent avec la conversion et sont relues quand l'image encodée sort. Depuis le
+    31/10, la relecture attend le GPU (f.4) : 8 µs en moyenne, 0,26 ms au pire sur une RTX 5060 Ti ;
+  - si elles ne peuvent pas être relues (tampon repris par une image suivante, appareil perdu), l'image
+    porte la grille de l'image d'avant. Sans grille d'avant, elle part sans, et le client applique la loi.
 - **Le transport :**
   - un bloc annexe en tête de l'image, signalé par un bit de l'octet 8 de l'en-tête de morceau (aujourd'hui
     « image clé », 0 ou 1) ;
@@ -730,7 +732,8 @@ pousse.
    3. la passe de statistiques de l'hôte en D3D11, vérifiée sur WARP. `xhigh`
       - **Fait le 30/10** : `MwsrStats` (`src/convert/windows/`), un compute shader `cs_5_0`, un
         groupe par cellule de la grille 128 × 72, puis une copie relue sans attendre (anneau de 4
-        tampons, un ticket par image). Rien ne l'appelle encore : le branchement vient avec 2.4.
+        tampons, un ticket par image ; le stream l'attend depuis le 31/10, f.4). Rien ne l'appelle
+        encore : le branchement vient avec 2.4.
       - Sur les 22 captures natives du banc, sur WARP : aucun code de zone ne change (0 sur
         101 376 décisions, aux 4 échelles du banc, réduction linéaire ou bilinéaire). Les valeurs
         des cellules sont à 1 pas de f16 au plus. Seuls 10 pixels sur 81 millions sont comptés
@@ -747,10 +750,11 @@ pousse.
         `mw_mwsr_map` = `1` (`mwsrMapWanted`). Après l'activation, la clé s'inversera : `0`
         ignorera la grille, comme prévu plus haut.
       - L'hôte : `SessionConfig::mwsrZones`. La conversion D3D11 lance la passe avant ses
-        dessins ; après l'encodage, la session relit les cellules sans attendre, décide les
-        576 codes et les joint à l'image (`EncodedFrame::mwsrZones`). Statistiques pas encore
-        rendues : depuis le 31/10, l'image porte la grille de l'image d'avant (f.4). Le journal de
-        fin de session dit combien d'images l'ont portée, et combien celle d'avant.
+        dessins ; après l'encodage, la session relit les cellules, décide les 576 codes et les
+        joint à l'image (`EncodedFrame::mwsrZones`). Depuis le 31/10, la relecture attend le GPU
+        (f.4). Des statistiques illisibles (tampon repris, appareil perdu) laissent à l'image la
+        grille de l'image d'avant. Le journal de fin de session dit combien d'images l'ont portée,
+        et combien celle d'avant.
       - Seulement sur une capture 8 bits SDR, réduite vers un flux de sa forme (à 1 % près), sur
         la chaîne D3D11 : celle de NVENC et d'AMF par défaut. La chaîne D3D12 (Intel) n'a pas de
         passe.
@@ -768,7 +772,8 @@ pousse.
         morceau manquant. Le renderer la lit depuis l'étape 5.
       - La décision sur le processeur, mesurée sur le 9900X au repos : 0,30 ms par image, dont
         l'essentiel en arrondis f16. Réécrits sur les bits du float, même résultat sur les
-        2^32 valeurs possibles : 0,09 ms.
+        2^32 valeurs possibles : 0,09 ms. Plus rapide encore depuis le 31/10, pour les mêmes
+        codes (f.4).
       - Tests : bloc et découpe (serveur), lecture et réassemblage (client), conversion qui
         prend les statistiques et relecture identique à la passe seule (WARP). Non testé : un
         vrai stream, avec le GPU (étape 3).
@@ -1005,7 +1010,7 @@ pousse.
            des statistiques n'attend pas, et une image dont les statistiques n'étaient pas revenues
            partait sans grille. **Corrigé** : elle porte celle de l'image d'avant (2d49cc14). La grille
            arrive alors sur 99,4 à 99,96 % des images. Part reprise : 43 à 51 % au premier essai,
-           26 à 36 % au test du pompage.
+           26 à 36 % au test du pompage. Depuis 3956b23b, la relecture attend (plus bas).
          - Les deux entrées d'écran du banc sont un seul moniteur : pas de côte à côte avec
            l'original. D'où un écran partagé de labo dans le client (e1bc8570) : la grille d'un côté,
            la loi de l'autre, en trois vues (le centre deux fois, la moitié gauche deux fois, gauche |
@@ -1054,13 +1059,53 @@ pousse.
          légère seulement au-dessus de 1 ms ; le code final, rien d'activé. **Écrit** (6a76564c) :
          `kBudgetUs` = 1000, `kStartLight` = false, `guardNeighbours` à la fin de `decideAll`. Les tests
          des groupes touchés passent (912 vérifications, WARP compris).
-       - **Non fait** :
-         - le garde-fou dans un vrai stream ;
-         - la relecture : la décision tourne sur le fil qui encode et envoie, entre l'encodage et
-           l'envoi. L'arbre et le garde-fou prennent 0,09 à 0,10 ms sur le processeur ; avec la
-           relecture des cellules, le stream mesure 0,21 à 0,30 ms en moyenne, jusqu'à 1,9 ms ;
-         - pourquoi 26 à 36 % des images ne trouvent pas leurs statistiques prêtes, alors que
-           l'encodeur a fini l'image, et ce que coûterait une relecture qui attend.
+       - **Le garde-fou dans un vrai stream, le 31/10** (13:48-13:56, créneau des deux RTX ; la build de
+         e1bc8570). La page Google et le montage du test du pompage, 12 prises (vues centre ×2 et moitié
+         gauche ×2, 3 par échelle et par vue), positions concordantes 12 sur 12. La passe complète y
+         coûte 63 à 64 µs.
+         - Grille − loi, SSIM-Y × 100 : +0,004 et +0,012 à ×1,333, +0,011 et +0,023 à ×2 (sans
+           garde-fou, au test du pompage : jusqu'à +0,06 et +0,21). Même énergie des contours des deux
+           côtés. Sur cette page de photos et de texte, la grille rejoint presque la loi, comme le banc
+           le prévoyait.
+         - Pompage nul : la perte entre l'image fixe et l'image en mouvement est la même des deux côtés,
+           à 0,001 près.
+         - Blocs à plus de 2 points d'écart : 0,2 % à ×1,333, 0,6 à 0,7 % à ×2, dans les deux sens, sur
+           les bords verticaux des vignettes. Plus de perte systématique sur les légendes.
+         - Google avait chargé d'autres images qu'au test du pompage : la comparaison avec et sans
+           garde-fou est indicative. Chaque mesure, elle, compare la grille et la loi sur la même image.
+       - **La relecture qui attend, et une décision plus rapide, le 31/10** (3956b23b ; go de Bruno,
+         créneau des deux RTX). La décision tourne sur le fil qui encode et envoie, entre l'encodage
+         et l'envoi.
+         - **Pourquoi les statistiques manquaient :** la relecture ne demandait la copie que si elle
+           était prête (`D3D11_MAP_FLAG_DO_NOT_WAIT`). Le pilote répondait « pas encore » pour une
+           image sur deux, alors que l'encodeur avait fini l'image. Mesuré avec des minuteurs de labo,
+           hors dépôt : 579 relectures manquées sur 1 179 (49 %). Le `Map` réussi prenait 0,003 ms, la
+           copie des cellules 0,017 ms.
+         - **Corrigé :** la relecture attend. La passe part avant la conversion, que l'encodeur attend
+           déjà, et il ne reste presque rien à attendre : 8 µs en moyenne, 0,26 ms au pire.
+         - **La décision, plus rapide pour les mêmes codes :**
+           - l'arrondi f16 et les sommes des cellules, quatre floats à la fois en SSE2, toujours
+             présent en x64 ; ARM64 garde le chemin scalaire. Une somme en float
+             égale la somme en double arrondie en float (53 ≥ 2 × 24 + 2) ;
+           - le stream garde ses dernières cellules (`ZoneMemo`) : une zone dont aucune cellule n'a
+             changé d'un bit n'est pas relue.
+         - **Contre la décision d'avant** (banc hors dépôt, processeur seul) :
+           - les mêmes bits sur les 2^32 floats pour l'arrondi ;
+           - 0 code sur 446 400 ne change : les 22 captures du banc et 40 images construites (zéros,
+             moyennes sous-normales, NaN, infinis, négatifs), 5 échelles, les deux réductions, les deux
+             grilles ;
+           - 0 sur 1 440 000 le long d'un stream de 4 000 images, avec la mémoire ;
+           - 0,153 → 0,062 ms par image ; 0,068 ms avec la mémoire sur une image neuve, 0,015 ms quand
+             rien ne change.
+         - **Dans le stream**, la même galerie Wikimedia Commons défilée, à ×2 (720p depuis 1440p), le
+           même GPU :
+           - les images à la grille de l'image d'avant : 578 sur 1 179 avant, aucune sur 1 186 après ;
+           - la relecture et la décision ensemble : 0,06 ms en moyenne, 0,18 ms au pire. Avant, la
+             seule décision prenait 0,28 ms en moyenne, jusqu'à 1,09 ms ;
+           - 61 % des zones ne sont pas relues (265 540 relues sur 683 136) ;
+           - la passe complète reste : 64 µs dans le stream, sous le budget de 1 ms.
+       - **Non fait** : l'œil de Bruno sur le garde-fou. Ses métriques en vrai stream (plus haut) ne
+         montrent ni perte sur les légendes ni pompage.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
    - le jumeau GLSL de la grille. `high`
