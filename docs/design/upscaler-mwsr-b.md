@@ -905,10 +905,18 @@ pousse.
            n'est pas encore remontée.
          - **La légère ne gagne que 1,4 fois sur l'iGPU.** Elle gagne 2 fois sur la RTX en rafale, et rien
            en 4K au repos sur la RTX. C'est loin d'un pixel sur 16.
-           - Supposé : c'est la forme du noyau, pas l'échantillonnage. Il n'y a que 144 groupes. Chaque
-             fil enchaîne jusqu'à 64 pixels (en 4K). Deux fils voisins lisent à 15 à 30 px l'un de
-             l'autre, jamais dans la même ligne de cache. L'iGPU ne cache pas la latence de la mémoire.
-           - La passe complète, elle, semble limitée par ses lectures de texture (5 par pixel).
+           - Deux hypothèses, non tranchées :
+             - **La bande passante**, celle qui colle le mieux. Les voisins à 1 px de chaque pixel lu
+               touchent les lignes y − 1, y et y + 1 : 3 lignes de l'image sur 4. Dans chacune, un pixel
+               tous les 4 touche toutes les lignes de cache. La légère tire donc environ 3/4 des octets
+               de la complète. C'est le rapport mesuré sur l'iGPU (0,70 à 0,77), le même de 1080p à 4K.
+               C'est aussi ce que donne la RTX en 4K au repos, la mémoire à sa fréquence de repos.
+             - **La latence**, à cause de la forme du noyau. Il n'y a que 144 groupes. Chaque fil
+               enchaîne jusqu'à 64 pixels (en 4K). Deux fils voisins lisent à 15 à 30 px l'un de
+               l'autre, jamais dans la même ligne de cache.
+           - Si c'est la bande passante, seul un échantillonnage qui touche moins de lignes ferait
+             mieux. Mais il change les statistiques du banc : il faudrait refaire l'arbre, et c'est
+             une décision de Bruno.
          - **La règle B sur ces chiffres :**
            - l'iGPU du 9900X :
              - en 1080p, la complète en rafale et la légère au repos ;
@@ -916,10 +924,19 @@ pousse.
              - en 4K, aucune grille.
            - la RTX : la complète partout, sauf en 4K au repos. Là, elle est au bord des 1,5 ms (p90
              jusqu'à 1,77 ms), et la légère n'aide pas.
-         - **Ensuite :** une légère de la forme de la complète, écrite dans le banc seulement et vérifiée
-           sur WARP (go de la gestion des plans le 31/10) : un groupe par cellule, un pixel par fil, puis
-           la réduction en arbre. Le créneau court et le changement du produit passent par la gestion des
-           plans et par Bruno.
+         - **Pour trancher, deux variantes du banc**, hors dépôt (go de la gestion des plans le 31/10) :
+           - **light-cell**, la légère dans la forme de la complète : un groupe par cellule, un pixel par
+             fil, puis la réduction en arbre. Elle lit les mêmes pixels et rend les cellules de la
+             légère à l'ordre des sommes près.
+             - Vérifiée sur WARP, sur les 22 captures : 4,2e-7 d'écart au plus avec la légère.
+               45 valeurs sur 1 622 016 (9 216 cellules et 8 statistiques par capture) arrondissent au
+               f16 voisin.
+             - Aucune décision de zone ne change, 0 sur 25 344, contre la légère comme contre le banc.
+           - **light-rows**, la légère sans ses voisins verticaux, qui ne lit qu'une ligne sur 4. Elle
+             ne sert qu'à mesurer le coût.
+           - Si light-rows tombe vers le quart de la complète et que light-cell ne gagne rien, c'est la
+             bande passante. Si light-cell descend vers 0,1 à 0,3 ms en 4K sur l'iGPU, c'est la latence.
+           - Un créneau court, puis le produit s'il y a lieu : par la gestion des plans et par Bruno.
        - **Non fait** : un vrai stream.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
