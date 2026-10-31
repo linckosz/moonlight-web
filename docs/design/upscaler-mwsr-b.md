@@ -936,7 +936,37 @@ pousse.
              ne sert qu'à mesurer le coût.
            - Si light-rows tombe vers le quart de la complète et que light-cell ne gagne rien, c'est la
              bande passante. Si light-cell descend vers 0,1 à 0,3 ms en 4K sur l'iGPU, c'est la latence.
-           - Un créneau court, puis le produit s'il y a lieu : par la gestion des plans et par Bruno.
+         - **Tranché le 31/10 au matin** (06:45-06:51), au créneau de la gestion des plans : l'iGPU, puis
+           la RTX du bus 1. Le banc rend toujours le produit au bit près, et light-cell à 3,6e-7 de la
+           légère.
+           - p50 en ms, copie comprise :
+
+             | Capture | Carte, rythme | Complète | Légère | light-cell | light-rows |
+             |---|---|---|---|---|---|
+             | 1080p | iGPU, rafale | 0,86 | 0,62 | 0,48 | 0,42 |
+             | 1440p | iGPU, rafale | 1,58 | 1,22 | 0,48 | 0,65 |
+             | 4K | iGPU, rafale | 2,60 | 1,85 | 0,69 | 1,35 |
+             | 1080p | iGPU, 60 i/s | 1,60 | 1,19 | 1,25 | 0,88 |
+             | 1440p | iGPU, 60 i/s | 2,33 | 1,68 | 1,22 | 1,18 |
+             | 4K | iGPU, 60 i/s | 3,37 | 2,33 | 1,35 | 1,85 |
+             | 4K | RTX, rafale | 0,092 | 0,050 | 0,037 | 0,038 |
+             | 4K | RTX, 60 i/s | 1,32 à 1,44 | 1,22 à 1,33 | 1,07 | 0,73 |
+
+             En 1080p et en 1440p, la RTX reste entre 0,019 et 0,064 ms en rafale. Au repos, elle
+             reste entre 0,17 et 0,21 ms, dont 0,157 pour la copie.
+           - **Sur l'iGPU, c'est surtout la latence.** Dans la forme de la complète, la légère coûte 2,7
+             fois moins en 4K. light-rows gagne moins. light-cell a un plancher d'environ 0,48 ms, le même
+             en 1080p et en 1440p : le coût fixe de ses 9 216 groupes.
+           - **Sur la RTX en 4K au repos, c'est la bande passante** : light-rows divise le coût par 2, et
+             light-cell gagne un peu.
+           - **La règle B, si la légère prend la forme light-cell :**
+             - l'iGPU garde une grille aux trois tailles : 1,25 / 1,22 / 1,35 ms au repos (p90 jusqu'à
+               1,53 en 4K) ;
+             - la RTX la garde partout : en 4K au repos, la complète cède la place à la légère (1,07 ms).
+           - **Proposé** à la gestion des plans et à Bruno : la passe légère du produit dans la forme
+             light-cell, un seul noyau pour les deux passes (un pas de 1 ou de 4), WARP d'abord, puis un
+             créneau court sur l'iGPU. light-rows n'est pas proposée : elle change les statistiques du
+             banc, donc l'arbre.
        - **Non fait** : un vrai stream.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
