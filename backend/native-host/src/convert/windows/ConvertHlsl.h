@@ -417,9 +417,9 @@ float4 PsScale(VsOut i) : SV_TARGET
 //
 // MW_LIGHT, the light variant (§12 f.4): the same cells, but each from one
 // pixel in 16 — every 4th column of every 4th row from the cell's first, the
-// neighbours still 1 px away — as the bench's light grid took them. Too few
-// pixels for a group each: a thread per cell, a group per 8 × 8 cells (one
-// zone of the light 16 × 9 grid).
+// neighbours still 1 px away — as the bench's light grid took them. In the
+// full pass's shape, a group per cell: a thread per cell, looping over the
+// cell alone, cost an iGPU more than the pixels saved (31/10/2026, f.4).
 //
 // Every operation on a pixel is `precise`, so that FXC fuses no multiply and
 // add and keeps the order written: the order a CPU reference can repeat bit
@@ -459,36 +459,8 @@ void PixelStats(int x, int y, out float4 head, out float4 tail)
     tail = t;
 }
 
-#if MW_LIGHT
-
-[numthreads(8, 8, 1)]
-void CsStats(uint3 zone : SV_GroupID, uint3 t : SV_GroupThreadID)
-{
-    const int cx = int(zone.x) * 8 + int(t.x);
-    const int cy = int(zone.y) * 8 + int(t.y);
-    const int x0 = cx * kW / MW_CELLS_X;
-    const int x1 = (cx + 1) * kW / MW_CELLS_X;
-    const int y0 = cy * kH / MW_CELLS_Y;
-    const int y1 = (cy + 1) * kH / MW_CELLS_Y;
-
-    precise float4 head = 0.0;
-    precise float4 tail = 0.0;
-    int n = 0;
-    for (int y = y0; y < y1; y += 4) {
-        for (int x = x0; x < x1; x += 4) {
-            float4 h, tl;
-            PixelStats(x, y, h, tl);
-            head += h;
-            tail += tl;
-            ++n;
-        }
-    }
-    const uint k = (uint(cy) * MW_CELLS_X + uint(cx)) * 2;
-    Cells[k]     = head / float(n);
-    Cells[k + 1] = tail / float(n);
-}
-
-#else
+// The step between the pixels read, across and down: every one, or every 4th.
+static const int kStep = MW_LIGHT ? 4 : 1;
 
 groupshared float4 gHead[64];
 groupshared float4 gTail[64];
@@ -503,8 +475,8 @@ void CsStats(uint3 cell : SV_GroupID, uint3 t : SV_GroupThreadID, uint i : SV_Gr
 
     precise float4 head = 0.0;
     precise float4 tail = 0.0;
-    for (int y = y0 + int(t.y); y < y1; y += 8) {
-        for (int x = x0 + int(t.x); x < x1; x += 8) {
+    for (int y = y0 + kStep * int(t.y); y < y1; y += 8 * kStep) {
+        for (int x = x0 + kStep * int(t.x); x < x1; x += 8 * kStep) {
             float4 h, tl;
             PixelStats(x, y, h, tl);
             head += h;
@@ -524,14 +496,13 @@ void CsStats(uint3 cell : SV_GroupID, uint3 t : SV_GroupThreadID, uint i : SV_Gr
         GroupMemoryBarrierWithGroupSync();
     }
     if (i == 0) {
-        const float n = float((x1 - x0) * (y1 - y0));
+        // the pixels read: a column in kStep, from the first, of a row in kStep
+        const float n = float(((x1 - x0 + kStep - 1) / kStep) * ((y1 - y0 + kStep - 1) / kStep));
         const uint  k = (cell.y * MW_CELLS_X + cell.x) * 2;
         Cells[k]     = gHead[0] / n;
         Cells[k + 1] = gTail[0] / n;
     }
 }
-
-#endif
 )HLSL";
 
 } // namespace mw::native::convert

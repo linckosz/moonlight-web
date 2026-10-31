@@ -111,8 +111,6 @@ static_assert(kFullGrid.cellsPerZone() * kZonesX == kCellsX &&
 static_assert(kLightGrid.cellsPerZone() * kLightZonesX == kCellsX &&
                   kLightGrid.cellsPerZone() * kLightZonesY == kCellsY,
               "whole cells per zone");
-// The light pass's thread groups are its zones (kMwsrStatsSource, MW_LIGHT).
-static_assert(kLightGrid.cellsPerZone() == 8, "a group of 8 x 8 threads per light zone");
 
 /// @p x rounded to IEEE binary16 and back, to nearest, ties to even, as numpy's
 /// float16 (subnormals included; past the largest half, infinity).

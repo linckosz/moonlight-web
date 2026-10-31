@@ -111,12 +111,8 @@ uint64_t MwsrStats::dispatch(ID3D11ShaderResourceView* source)
     m_Context->CSSetShader(m_Shader.Get(), nullptr, 0);
     m_Context->CSSetShaderResources(0, 1, views);
     m_Context->CSSetUnorderedAccessViews(0, 1, cells, nullptr);
-    // A group per cell; the light pass, a thread per cell and a group per
-    // 8 × 8 cells (kMwsrStatsSource).
-    if (m_Light)
-        m_Context->Dispatch(mz::kCellsX / 8, mz::kCellsY / 8, 1);
-    else
-        m_Context->Dispatch(mz::kCellsX, mz::kCellsY, 1);
+    // A group per cell, the light pass's too (kMwsrStatsSource).
+    m_Context->Dispatch(mz::kCellsX, mz::kCellsY, 1);
     // Unbound at once: the capture is about to release its texture, and a view
     // left bound would keep it (see ColorConvert::convert).
     ID3D11ShaderResourceView* noView[] = {nullptr};

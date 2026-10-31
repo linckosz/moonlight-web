@@ -860,7 +860,8 @@ pousse.
        - **La passe légère** (`MW_LIGHT` dans `kMwsrStatsSource`) :
          - elle écrit les mêmes 128 × 72 cellules que la passe complète, chacune d'un pixel sur 16 ;
          - les voisins restent à 1 px ;
-         - un fil par cellule, et un groupe de 8 × 8 fils par zone de la grille légère.
+         - un fil par cellule, et un groupe de 8 × 8 fils par zone de la grille légère. Le 31/10, elle
+           a pris la forme de la complète (plus bas).
 
          Le calcul d'un pixel est une fonction commune aux deux passes. La passe complète rend ses
          cellules d'avant au bit près, sur les 22 captures natives du banc (WARP).
@@ -967,6 +968,15 @@ pousse.
              light-cell, un seul noyau pour les deux passes (un pas de 1 ou de 4), WARP d'abord, puis un
              créneau court sur l'iGPU. light-rows n'est pas proposée : elle change les statistiques du
              banc, donc l'arbre.
+         - **Bruno a dit oui** le 31/10 au matin. **Écrit le 31/10, vérifié sur WARP**, rien d'activé :
+           - un seul noyau dans `kMwsrStatsSource`, avec un pas de 1 ou de 4 (`kStep`). Les deux passes
+             ont un groupe par cellule : `Dispatch(128, 72)` ;
+           - sur les 22 captures, la passe complète rend ses cellules d'avant au bit près. La légère rend
+             celles de light-cell au bit près ;
+           - contre l'ancienne légère : 4,2e-7 d'écart au plus, et 45 valeurs sur 1 622 016 au f16
+             voisin. Aucune décision de zone ne change, 0 sur 25 344, ni contre elle ni contre le banc ;
+           - les 392 vérifications des groupes touchés passent.
+         - **Reste** : confirmer le coût sur l'iGPU, à un créneau court de la gestion des plans.
        - **Non fait** : un vrai stream.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
