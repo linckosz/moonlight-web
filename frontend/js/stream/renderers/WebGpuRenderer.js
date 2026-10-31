@@ -165,6 +165,38 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 }
 `;
 
+// The eye test's split screen (setMwsrSplit): the grid's picture and the
+// law's, each drawn whole from the same frame, put side by side at 1:1 — the
+// centre half twice, the left half twice, or each its own half — with a
+// black line of 2 pixels between. view: BrowserDetect.MWSR_SPLIT_VIEWS' index.
+const SPLIT_WGSL =
+    FULLSCREEN_VS +
+    /* wgsl */ `
+struct Split { view : u32, gridLeft : u32, width : u32, pad : u32 };
+@group(0) @binding(0) var gridTex : texture_2d<f32>;
+@group(0) @binding(1) var lawTex : texture_2d<f32>;
+@group(0) @binding(2) var<uniform> u : Split;
+
+@fragment
+fn fs(in : VSOut) -> @location(0) vec4f {
+    let w = i32(u.width);
+    let half = w / 2;
+    let x = i32(in.pos.x);
+    if (x == half - 1 || x == half) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+    let right = x >= half;
+    let x0 = select(x, x - half, right);
+    var sx = x;
+    if (u.view == 0u) { sx = x0 + w / 4; }
+    if (u.view == 1u) { sx = x0; }
+    let p = vec2i(sx, i32(in.pos.y));
+    if (right == (u.gridLeft == 1u)) { return textureLoad(lawTex, p, 0); }
+    return textureLoad(gridTex, p, 0);
+}
+`;
+
+/** BrowserDetect.MWSR_SPLIT_VIEWS, as SPLIT_WGSL numbers them. */
+const SPLIT_VIEW_INDEX = { 'centre-twice': 0, 'left-twice': 1, halves: 2 };
+
 // The same copy from a texture: the plain copy to the canvas when the frame
 // came in another way than the import (an ImageBitmap into inputTex, or the
 // readback into readbackTex, see _copyFrame), and the readback's pass 0.
@@ -1047,6 +1079,12 @@ export class WebGpuRenderer extends VideoRenderer {
         this._mwsrMapGroups = new WeakMap();
         /** Frames the kernel drew with their zones, since creation. */
         this.mwsrZoneFrames = 0;
+        /** The eye test's split screen (setMwsrSplit), null: none; and what it draws with. */
+        this._split = null;
+        this._splitTex = null;
+        this._splitPipeline = null;
+        this._splitUniform = null;
+        this._splitGroup = null;
         /** NIS sharpness (0..1, 0.5 neutral) and its re-read throttle. */
         this._nisSharpness = 0.5;
         this._nisKnobsMs = 0;
@@ -1093,6 +1131,8 @@ export class WebGpuRenderer extends VideoRenderer {
         if (opts.gazeZone) r.setMwsrZone({});
         // mwsr's zones (BrowserDetect.mwsrMapWanted): the kernel's second text.
         r._zoneMap = opts.zoneMap === true;
+        // The eye test's split screen (BrowserDetect.mwsrSplitWanted).
+        if (opts.mwsrSplit) r.setMwsrSplit(opts.mwsrSplit);
         r._mwsrHalf = device.features.has('shader-f16');
         // HDR: rgba16float canvas in extended tone-mapping mode (values > 1.0
         // map to the display's HDR headroom). Gated on opts.hdr; _configure()
@@ -1465,6 +1505,8 @@ export class WebGpuRenderer extends VideoRenderer {
         this._mwsrPipelines = null;
         this._zoneTex = null;
         this._zoneTexDims = '';
+        this._splitPipeline = null;
+        this._splitTex = null;
         if (this._algo === 'fsr1') {
             this._buildFsr1Resources();
         } else if (this._algo === 'nis') {
@@ -2396,6 +2438,92 @@ export class WebGpuRenderer extends VideoRenderer {
     }
 
     /**
+     * The eye test's split screen (BrowserDetect.mwsrSplitWanted), or null for
+     * none: a frame with its zones is drawn whole by the grid and whole by the
+     * law, and the two are put side by side (SPLIT_WGSL), the grid on the side
+     * `gridLeft` says. Any other frame is drawn as ever, by the law.
+     * @param {{gridLeft: boolean, view: string} | null} split
+     */
+    setMwsrSplit(split) {
+        const view = split ? SPLIT_VIEW_INDEX[split.view] : undefined;
+        this._split = view === undefined ? null : { gridLeft: !!split.gridLeft, view };
+    }
+
+    /**
+     * Draw a frame with its zones split (setMwsrSplit): the `up` kernel by
+     * each text into a texture of the canvas' size, then both onto the canvas.
+     * @param {GPUCommandEncoder} encoder
+     * @param {GPUTexture} canvasTex
+     * @param {number} cw
+     * @param {number} ch
+     * @param {object} reg
+     * @param {GPUTextureView} input inputTex's view, or dbTex's
+     * @param {GPUBindGroup} lawGroup the first text's bind group for `input`
+     */
+    _drawMwsrSplit(encoder, canvasTex, cw, ch, reg, input, lawGroup) {
+        const device = this._device;
+        if (!this._splitPipeline) {
+            const module = device.createShaderModule({ code: SPLIT_WGSL });
+            this._splitPipeline = device.createRenderPipeline({
+                layout: 'auto',
+                vertex: { module, entryPoint: 'vs' },
+                fragment: { module, entryPoint: 'fs', targets: [{ format: this._format }] },
+                primitive: { topology: 'triangle-list' },
+            });
+            this._splitUniform = device.createBuffer({
+                size: 16,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+        }
+        if (!this._splitTex || this._splitTex.w !== cw || this._splitTex.h !== ch) {
+            if (this._splitTex) for (const t of this._splitTex.tex) t.destroy();
+            const tex = [0, 1].map(() =>
+                device.createTexture({
+                    size: { width: cw, height: ch },
+                    format: this._format,
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+                }),
+            );
+            this._splitTex = { w: cw, h: ch, tex, views: tex.map((t) => t.createView()) };
+            this._splitGroup = device.createBindGroup({
+                layout: this._splitPipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: this._splitTex.views[0] },
+                    { binding: 1, resource: this._splitTex.views[1] },
+                    { binding: 2, resource: { buffer: this._splitUniform } },
+                ],
+            });
+        }
+        device.queue.writeBuffer(
+            this._splitUniform,
+            0,
+            new Uint32Array([this._split.view, this._split.gridLeft ? 1 : 0, cw, 0]),
+        );
+        const target = (view) => ({
+            colorAttachments: [
+                {
+                    view,
+                    loadOp: 'clear',
+                    storeOp: 'store',
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                },
+            ],
+        });
+        for (const grid of [true, false]) {
+            const p = encoder.beginRenderPass(target(this._splitTex.views[grid ? 0 : 1]));
+            p.setPipeline(this._mwsrPipeline(reg, grid));
+            p.setBindGroup(0, grid ? this._mwsrMapGroup(input) : lawGroup);
+            p.draw(3);
+            p.end();
+        }
+        const p = encoder.beginRenderPass(target(canvasTex.createView()));
+        p.setPipeline(this._splitPipeline);
+        p.setBindGroup(0, this._splitGroup);
+        p.draw(3);
+        p.end();
+    }
+
+    /**
      * Whether the frame drawn at `ts` has zones that fit `scale` (output /
      * input, the smaller axis; mwsrZonesFit), now in the zones' texture. The
      * frame's entry goes, and any the decoder dropped before it. False: the
@@ -3112,33 +3240,50 @@ export class WebGpuRenderer extends VideoRenderer {
                     pd.draw(3);
                     pd.end();
                 }
-                // Pass 1: mwsr inputTex (or dbTex) → canvas.
-                const p1 = encoder.beginRenderPass({
-                    colorAttachments: [
-                        {
-                            view: srgb
-                                ? canvasTex.createView({ format: this._format + '-srgb' })
-                                : canvasTex.createView(),
-                            loadOp: 'clear',
-                            storeOp: 'store',
-                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
-                        },
-                    ],
-                });
-                p1.setPipeline(this._mwsrPipeline(reg, zoned));
-                if (zoned) {
-                    p1.setBindGroup(
-                        0,
-                        this._mwsrMapGroup(db ? this._dbTexView : this._inputTexView),
+                // The eye test's split screen: both texts, side by side.
+                if (zoned && this._split) {
+                    this._drawMwsrSplit(
+                        encoder,
+                        canvasTex,
+                        cw,
+                        ch,
+                        reg,
+                        db ? this._dbTexView : this._inputTexView,
+                        db ? this._mwsrBindGroupDb : this._mwsrBindGroup,
                     );
                     this.mwsrZoneFrames++;
-                } else if (db) {
-                    p1.setBindGroup(0, srgb ? this._mwsrBindGroupDbSrgb : this._mwsrBindGroupDb);
                 } else {
-                    p1.setBindGroup(0, srgb ? this._mwsrBindGroupSrgb : this._mwsrBindGroup);
+                    // Pass 1: mwsr inputTex (or dbTex) → canvas.
+                    const p1 = encoder.beginRenderPass({
+                        colorAttachments: [
+                            {
+                                view: srgb
+                                    ? canvasTex.createView({ format: this._format + '-srgb' })
+                                    : canvasTex.createView(),
+                                loadOp: 'clear',
+                                storeOp: 'store',
+                                clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                            },
+                        ],
+                    });
+                    p1.setPipeline(this._mwsrPipeline(reg, zoned));
+                    if (zoned) {
+                        p1.setBindGroup(
+                            0,
+                            this._mwsrMapGroup(db ? this._dbTexView : this._inputTexView),
+                        );
+                        this.mwsrZoneFrames++;
+                    } else if (db) {
+                        p1.setBindGroup(
+                            0,
+                            srgb ? this._mwsrBindGroupDbSrgb : this._mwsrBindGroupDb,
+                        );
+                    } else {
+                        p1.setBindGroup(0, srgb ? this._mwsrBindGroupSrgb : this._mwsrBindGroup);
+                    }
+                    p1.draw(3);
+                    p1.end();
                 }
-                p1.draw(3);
-                p1.end();
             } else {
                 // SGSR: viewport = (1/inW, 1/inH, inW, inH).
                 this._device.queue.writeBuffer(
@@ -3223,6 +3368,10 @@ export class WebGpuRenderer extends VideoRenderer {
             if (this._zoneTex) this._zoneTex.destroy();
         } catch (e) {}
         this._zoneTex = null;
+        try {
+            if (this._splitTex) for (const t of this._splitTex.tex) t.destroy();
+        } catch (e) {}
+        this._splitTex = null;
         try {
             if (this._readbackTex) this._readbackTex.destroy();
         } catch (e) {}

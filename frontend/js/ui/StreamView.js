@@ -83,6 +83,9 @@ import {
     hdrFramesOpaque,
     mwsrGazeWanted,
     mwsrMapWanted,
+    MWSR_SPLIT_VIEWS,
+    mwsrSplitWanted,
+    nextMwsrSplitView,
     noteDecoderCannotRideOut,
     noteDecoderRefusesReferenceRepairs,
     noteHdrFramesOpaque,
@@ -513,6 +516,22 @@ const REMOTE_POINTER_DIRS = {
  */
 export function firedByTouch(e) {
     return !!(e && e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents);
+}
+
+/**
+ * The split screen's button: which view, never which side the grid is on.
+ * A lab control, in English like the debug menu.
+ * @param {string} view BrowserDetect.MWSR_SPLIT_VIEWS
+ * @returns {string}
+ */
+export function mwsrSplitLabel(view) {
+    const n = MWSR_SPLIT_VIEWS.indexOf(view) + 1;
+    const what = {
+        'centre-twice': 'centre ×2',
+        'left-twice': 'left half ×2',
+        halves: 'left | right',
+    };
+    return `Split ${n}/${MWSR_SPLIT_VIEWS.length} · ${what[view]}`;
 }
 
 export class StreamView {
@@ -2180,6 +2199,8 @@ export class StreamView {
             el.style.visibility = 'hidden';
         }
         const shell = shellIdentity();
+        // The eye test's split screen: a lab key, and its button only with it.
+        this._mwsrSplit = mwsrSplitWanted();
         el.innerHTML = `
             <div class="stream-header">
                 <div class="stream-brand" aria-hidden="true">
@@ -2234,6 +2255,12 @@ export class StreamView {
                     <button type="button" class="stream-input-gate-release"
                             id="stream-input-gate-release" hidden></button>
                 </div>
+                ${
+                    this._mwsrSplit
+                        ? `<button type="button" class="stream-mwsr-split" id="btn-mwsr-split"
+                                   title="Ctrl+Alt+Shift+G">${mwsrSplitLabel(this._mwsrSplit.view)}</button>`
+                        : ''
+                }
             </div>
         `;
         document.getElementById('app').appendChild(el);
@@ -2310,6 +2337,28 @@ export class StreamView {
         // over the video element.
         this.inputEl = /** @type {HTMLElement} */ (el.querySelector('#stream-input-layer'));
         this.inputEl.style.touchAction = 'none';
+        // The split screen's button, above the input layer: nothing of a press
+        // on it reaches the host, and it takes no focus (a Space for the host
+        // would press it again).
+        const splitBtn = el.querySelector('#btn-mwsr-split');
+        if (splitBtn) {
+            for (const type of [
+                'pointerdown',
+                'mousedown',
+                'mouseup',
+                'dblclick',
+                'contextmenu',
+                'wheel',
+            ])
+                splitBtn.addEventListener(type, (e) => {
+                    e.stopPropagation();
+                    if (type === 'mousedown' || type === 'contextmenu') e.preventDefault();
+                });
+            splitBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._cycleMwsrSplit();
+            });
+        }
         // The pointer a touch screen draws for itself — see MOBILE_CURSOR_CLIENT_DRAWN.
         this._clientCursorEl = /** @type {HTMLImageElement} */ (
             el.querySelector('#stream-client-cursor')
@@ -2704,6 +2753,7 @@ export class StreamView {
                 yuv444: this._yuv444,
                 gazeZone: mwsrGazeWanted(),
                 zoneMap: mwsrMapWanted(),
+                mwsrSplit: this._mwsrSplit,
                 deblock: this._mwsrDeblock,
                 plainWebGl: this._plainWebGl,
                 hdr: (this._useVideoSink && this._hdrEnabled) || this._hdrLinear,
@@ -5509,6 +5559,8 @@ export class StreamView {
                         gazeZone: mwsrGazeWanted(),
                         // mwsr's zones from the native host (a lab key, asked at /start).
                         zoneMap: mwsrMapWanted(),
+                        // The eye test's split screen (a lab key, main thread only).
+                        mwsrSplit: this._mwsrSplit,
                         // mwsr 2 / 3's deblocking (the debug menu's), null otherwise.
                         deblock: this._mwsrDeblock,
                         plainWebGl: this._plainWebGl,
@@ -10524,6 +10576,14 @@ export class StreamView {
                 return;
             }
 
+            // The eye test's split screen, next view: Ctrl+Alt+Shift+G
+            // (Win) / Cmd+Option+Ctrl+G (Mac), with its lab key only.
+            if (this._mwsrSplit && chk('g', 'KeyG')) {
+                e.preventDefault();
+                if (!e.repeat) this._cycleMwsrSplit();
+                return;
+            }
+
             // Block ANY other triple-modifier combo from reaching the host.
             // Ctrl+Alt+Shift (Win) / Cmd+Option+Ctrl (Mac) combos that are NOT
             // mapped above are still streaming-control territory — they must not
@@ -11877,6 +11937,21 @@ export class StreamView {
         } else {
             this._requestFullscreen();
         }
+    }
+
+    /**
+     * The eye test's split screen, its next view (BrowserDetect.MWSR_SPLIT_VIEWS),
+     * kept for the next streams: the button's press and Ctrl+Alt+Shift+G. The
+     * grid's side stays the one the lab key set. The main thread's renderer
+     * only — the worker's never takes the split.
+     */
+    _cycleMwsrSplit() {
+        if (!this._mwsrSplit) return;
+        this._mwsrSplit = { ...this._mwsrSplit, view: nextMwsrSplitView(this._mwsrSplit.view) };
+        if (this._renderer && typeof this._renderer.setMwsrSplit === 'function')
+            this._renderer.setMwsrSplit(this._mwsrSplit);
+        const btn = this.streamEl && this.streamEl.querySelector('#btn-mwsr-split');
+        if (btn) btn.textContent = mwsrSplitLabel(this._mwsrSplit.view);
     }
 
     /**

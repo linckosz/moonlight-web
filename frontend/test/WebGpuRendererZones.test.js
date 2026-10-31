@@ -45,7 +45,10 @@ function fakeGpu() {
             code: desc.code,
             getCompilationInfo: async () => ({ messages: [] }),
         })),
-        createRenderPipeline: vi.fn((desc) => ({ code: desc.fragment.module.code })),
+        createRenderPipeline: vi.fn((desc) => ({
+            code: desc.fragment.module.code,
+            getBindGroupLayout: () => ({}),
+        })),
         createComputePipeline: vi.fn(() => ({})),
         createBindGroup: vi.fn((desc) => ({ desc })),
         createBuffer: vi.fn((desc) => ({ desc, destroy() {} })),
@@ -242,5 +245,86 @@ describe("WebGpuRenderer — mwsr's zones from the native host", () => {
         // frame 95 takes its own, and 91 to 94 go with it
         await r.draw(frame(95));
         expect([...r._zonesByTs.keys()]).toEqual([96, 97, 98, 99, 100]);
+    });
+
+    describe("the eye test's split screen", () => {
+        const splitWrites = (gpu, r) =>
+            gpu.device.queue.writeBuffer.mock.calls
+                .filter(([buf]) => buf === r._splitUniform)
+                .map(([, , data]) => Array.from(data));
+
+        it('draws a frame with its zones by both texts, then the two side by side', async () => {
+            const gpu = fakeGpu();
+            const r = await renderer(gpu, {
+                algo: 'mwsr',
+                zoneMap: true,
+                mwsrSplit: { gridLeft: false, view: 'left-twice' },
+            });
+            r.noteFrameZones(10, zones(2));
+            const passes = gpu.device.createCommandEncoder().beginRenderPass.mock.calls.length;
+            await r.draw(frame(10));
+            const pipes = gpu.pass.setPipeline.mock.calls.map(([p]) => p).slice(-3);
+            expect(pipes[0]).toBe(r._mwsrPipelines.get('upmap'));
+            expect(pipes[1]).toBe(r._mwsrPipelines.get('up'));
+            expect(pipes[2]).toBe(r._splitPipeline);
+            expect(r._splitPipeline.code).toContain('textureLoad(gridTex');
+            const calls = gpu.device
+                .createCommandEncoder()
+                .beginRenderPass.mock.calls.slice(passes);
+            const views = calls.slice(-3).map(([d]) => d.colorAttachments[0].view);
+            expect(views[0]).toBe(r._splitTex.views[0]);
+            expect(views[1]).toBe(r._splitTex.views[1]);
+            expect(r._splitTex.tex[0].desc).toMatchObject({
+                size: { width: 1280, height: 720 },
+                format: 'bgra8unorm',
+            });
+            // the law's bind group: the first text's, on inputTex
+            const groups = gpu.pass.setBindGroup.mock.calls.map(([, g]) => g).slice(-3);
+            expect(groups[0].desc.layout).toBe(r._mwsrMapLayout);
+            expect(groups[1]).toBe(r._mwsrBindGroup);
+            expect(groups[2]).toBe(r._splitGroup);
+            // view 1 (the left half twice), the grid on the right, 1280 wide
+            expect(splitWrites(gpu, r)).toEqual([[1, 0, 1280, 0]]);
+            expect(r.mwsrZoneFrames).toBe(1);
+            expect(console.error).not.toHaveBeenCalled();
+        });
+
+        it('draws a frame without zones by the law alone, whole', async () => {
+            const gpu = fakeGpu();
+            const r = await renderer(gpu, {
+                algo: 'mwsr',
+                zoneMap: true,
+                mwsrSplit: { gridLeft: true, view: 'halves' },
+            });
+            await r.draw(frame(11));
+            expect(last(gpu).pipeline).toBe(r._mwsrPipelines.get('up'));
+            expect(r._splitPipeline).toBe(null);
+        });
+
+        it('changes view live, keeps its textures for one size, and goes off', async () => {
+            const gpu = fakeGpu();
+            const r = await renderer(gpu, {
+                algo: 'mwsr',
+                zoneMap: true,
+                mwsrSplit: { gridLeft: true, view: 'centre-twice' },
+            });
+            r.noteFrameZones(1, zones(2));
+            await r.draw(frame(1));
+            const tex = r._splitTex;
+            r.setMwsrSplit({ gridLeft: true, view: 'halves' });
+            r.noteFrameZones(2, zones(2));
+            await r.draw(frame(2));
+            expect(r._splitTex).toBe(tex);
+            expect(splitWrites(gpu, r)).toEqual([
+                [0, 1, 1280, 0],
+                [2, 1, 1280, 0],
+            ]);
+            r.setMwsrSplit({ gridLeft: true, view: 'nonsense' });
+            expect(r._split).toBe(null);
+            r.setMwsrSplit(null);
+            r.noteFrameZones(3, zones(2));
+            await r.draw(frame(3));
+            expect(last(gpu).pipeline).toBe(r._mwsrPipelines.get('upmap'));
+        });
     });
 });

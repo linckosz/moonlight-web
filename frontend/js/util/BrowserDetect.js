@@ -635,6 +635,49 @@ export function mwsrMapWanted() {
     }
 }
 
+/** The split screen's views, in the order its button and Ctrl+Alt+Shift+G go
+ *  through them (WebGpuRenderer.setMwsrSplit). */
+export const MWSR_SPLIT_VIEWS = ['centre-twice', 'left-twice', 'halves'];
+
+/**
+ * Lab key for the eye test of the zones (31/10/2026), off by default:
+ * localStorage.mw_mwsr_split = 'left' or 'right', the side the grid is drawn
+ * on — the other takes the law, from the same frame. Its view is
+ * localStorage.mw_mwsr_split_view (MWSR_SPLIT_VIEWS), the first by default.
+ * Only with the zones themselves (mwsrMapWanted); null otherwise, or where
+ * storage is refused.
+ * @returns {{gridLeft: boolean, view: string} | null}
+ */
+export function mwsrSplitWanted() {
+    if (!mwsrMapWanted()) return null;
+    try {
+        const side = localStorage.getItem('mw_mwsr_split');
+        if (side !== 'left' && side !== 'right') return null;
+        const view = localStorage.getItem('mw_mwsr_split_view');
+        return {
+            gridLeft: side === 'left',
+            view: MWSR_SPLIT_VIEWS.includes(view) ? view : MWSR_SPLIT_VIEWS[0],
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * The split screen's next view, kept for the streams after this one.
+ * @param {string} view
+ * @returns {string}
+ */
+export function nextMwsrSplitView(view) {
+    const next = MWSR_SPLIT_VIEWS[(MWSR_SPLIT_VIEWS.indexOf(view) + 1) % MWSR_SPLIT_VIEWS.length];
+    try {
+        localStorage.setItem('mw_mwsr_split_view', next);
+    } catch (e) {
+        /* this stream only */
+    }
+    return next;
+}
+
 function hasWebGpu() {
     return typeof navigator !== 'undefined' && !!navigator.gpu;
 }
