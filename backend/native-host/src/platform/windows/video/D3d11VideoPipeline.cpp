@@ -26,6 +26,7 @@
 #include "../StreamPriority.h"
 
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 namespace mw::native {
@@ -91,6 +92,7 @@ bool D3d11VideoPipeline::buildConverter(const capture::IWindowsCapture& capture,
     // MWSR's statistics, when the client reads the zones: never a reason to
     // fail the build — the stream goes without a grid and the client keeps
     // its law.
+    m_MwsrHeld.clear();
     if (build.mwsrStats) {
         std::string why;
         if (m_Converter->enableMwsrStats(why)) {
@@ -295,6 +297,7 @@ bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY,
             log::info("[native] MWSR zones: the " + pass + cost + ", kept");
             break;
         case mz::PassStep::Lighten:
+            m_MwsrHeld.clear();
             if (m_Converter->enableMwsrStats(why, true)) {
                 log::info("[native] MWSR zones: the full" + cost + ", over " + budget +
                           ": the light pass (16x9) instead");
@@ -314,17 +317,36 @@ bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY,
         }
     }
 
-    if (!m_Converter->readMwsrCells(m_MwsrCells.data())) return false;
+    if (!m_Converter->readMwsrCells(m_MwsrCells.data())) {
+        // Not back yet: the picture before's zones, one frame late.
+        if (m_MwsrHeld.empty()) return false;
+        std::memcpy(codes, m_MwsrHeld.data(), m_MwsrHeld.size());
+        zonesX = m_MwsrHeldX;
+        zonesY = m_MwsrHeldY;
+        scale = m_MwsrHeldScale;
+        ++m_MwsrHeldFrames;
+        return true;
+    }
     const mz::Grid& grid = m_Converter->mwsrStatsLight() ? mz::kLightGrid : mz::kFullGrid;
     scale = m_Converter->mwsrScale();
     mz::decideAll(m_MwsrCells.data(), scale, m_Converter->reducesInLinearLight(), codes, grid);
     zonesX = grid.zonesX;
     zonesY = grid.zonesY;
+    m_MwsrHeld.assign(codes, codes + zonesX * zonesY);
+    m_MwsrHeldX = zonesX;
+    m_MwsrHeldY = zonesY;
+    m_MwsrHeldScale = scale;
     return true;
 }
 
 void D3d11VideoPipeline::logEndOfSession() const
 {
+    // Of the frames that carried a grid, those that took the picture
+    // before's: their statistics were not back when the frame left.
+    if (m_MwsrHeldFrames > 0)
+        log::info("[native] MWSR zones: " + std::to_string(m_MwsrHeldFrames) +
+                  " of them the picture before's, theirs not back yet");
+
     // What the bridge cost, when there was one: the figure that says how
     // much of this session's convert stage was the copy and not the pass.
     if (m_Bridge && m_Bridge->transfers() > 0) {

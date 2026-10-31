@@ -249,9 +249,10 @@ public:
     /// statistics: @p codes takes up to mwsrzones::kZones of them, row by row
     /// on a grid of @p zonesX × @p zonesY (the full grid, or the light one on
     /// a GPU the full pass costs too much), @p scale the upscale the decision
-    /// assumed. False when there are none — no pass on this chain (D3D12),
-    /// none asked, a picture that does not qualify, a GPU neither pass fits,
-    /// or statistics the GPU has not finished: the frame goes without a grid.
+    /// assumed; the picture before's when the GPU has not finished this
+    /// one's statistics. False when there are none — no pass on this chain
+    /// (D3D12), none asked, a picture that does not qualify, a GPU neither
+    /// pass fits, or no decision yet: the frame goes without a grid.
     virtual bool takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY, float& scale)
     {
         (void)codes;

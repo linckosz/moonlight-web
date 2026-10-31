@@ -152,6 +152,17 @@ private:
     /// MWSR's cells of the last picture, read back for the zones' decision:
     /// sized once the converter takes the statistics.
     std::vector<float> m_MwsrCells;
+    /// The zones last decided, for a frame whose statistics the GPU has not
+    /// finished: it takes the picture before's, one frame late, rather than
+    /// the law — without, half to three quarters of a stream's frames went
+    /// without their grid on an RTX 5060 Ti (31/10/2026). Empty until the
+    /// first decision of a pass, and with each new pass.
+    std::vector<uint8_t> m_MwsrHeld;
+    int m_MwsrHeldX = 0;
+    int m_MwsrHeldY = 0;
+    float m_MwsrHeldScale = 0.0f;
+    /// Frames that went with the picture before's zones.
+    int64_t m_MwsrHeldFrames = 0;
 };
 
 } // namespace mw::native
