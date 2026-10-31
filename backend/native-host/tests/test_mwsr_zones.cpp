@@ -21,6 +21,8 @@
 #include "native_test_framework.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <vector>
 
@@ -132,6 +134,86 @@ void run_mwsr_zones_tests()
         CHECK_EQ(mz::roundToHalf(1e-6f), 17.0f / 16777216.0f);
         CHECK_EQ(mz::roundToHalf(-0.5f), -0.5f);
         CHECK_EQ(mz::roundToHalf(0.0f), 0.0f);
+#if MW_MWSR_ZONES_SSE2
+        // four at once: the same bits as one at a time — the edges of each
+        // branch, then a run of patterns over all the floats
+        const auto same = [](uint32_t bits) {
+            float x;
+            std::memcpy(&x, &bits, sizeof(x));
+            const float one = mz::roundToHalf(x);
+            float four[4];
+            _mm_storeu_ps(four, mz::roundToHalf4(_mm_set1_ps(x)));
+            uint32_t a, b;
+            std::memcpy(&a, &one, sizeof(a));
+            std::memcpy(&b, &four[3], sizeof(b));
+            return a == b;
+        };
+        int wrong = 0;
+        for (uint32_t edge :
+             {0x00000000u, 0x00000001u, 0x007FFFFFu, 0x00800000u, 0x33000000u, 0x33000001u,
+              0x337FFFFFu, 0x33800000u, 0x387FC000u, 0x387FE000u, 0x387FEFFFu, 0x387FF000u,
+              0x387FFFFFu, 0x38800000u, 0x38801000u, 0x38803000u, 0x3F800FFFu, 0x3F801000u,
+              0x3F803000u, 0x477FDFFFu, 0x477FE000u, 0x477FEFFFu, 0x477FF000u, 0x7F7FFFFFu,
+              0x7F800000u, 0x7F800001u, 0x7FC00000u, 0x7FFFFFFFu})
+            wrong += !same(edge) + !same(edge | 0x80000000u);
+        uint32_t bits = 12345u;
+        for (int i = 0; i < 1000000; ++i) {
+            bits = bits * 1664525u + 1013904223u;
+            wrong += !same(bits);
+        }
+        CHECK_EQ(wrong, 0);
+#endif
+    }
+
+    SECTION("MwsrZones — a stream's memo: the codes without it, its zones read only where they "
+            "changed");
+    {
+        // cells of every kind: zeros, means under the smallest normal half, the rest
+        std::vector<float> cells(static_cast<size_t>(mz::kCellFloats));
+        uint32_t seed = 2026u;
+        const auto next = [&seed]() {
+            seed = seed * 1664525u + 1013904223u;
+            return seed;
+        };
+        for (float& c : cells) {
+            const uint32_t r = next();
+            c = (r & 7u) == 0   ? 0.0f
+                : (r & 7u) == 1 ? float(r >> 8) * 1e-12f
+                                : float(r >> 8) / 16777216.0f;
+        }
+        mz::ZoneMemo memo;
+        int checked = 0, wrong = 0;
+        const auto both = [&](const mz::Grid& grid, float scale) {
+            uint8_t want[mz::kZones], got[mz::kZones];
+            mz::decideAll(cells.data(), scale, true, want, grid);
+            mz::decideAll(cells.data(), scale, true, got, grid, &memo);
+            for (int z = 0; z < grid.zones(); ++z)
+                wrong += want[z] != got[z];
+            ++checked;
+        };
+        both(mz::kFullGrid, 2.0f);
+        CHECK_EQ(memo.read, int64_t(mz::kZones)); // the first picture: every zone
+        both(mz::kFullGrid, 2.0f);
+        CHECK_EQ(memo.read, int64_t(mz::kZones)); // the same cells: none
+        // one value of one cell, in the zone (5, 3): that zone alone
+        cells[((size_t(3) * 4 + 2) * mz::kCellsX + 5 * 4 + 1) * mz::kStats + 6] += 0.25f;
+        both(mz::kFullGrid, 4.0f / 3.0f);
+        CHECK_EQ(memo.read, int64_t(mz::kZones) + 1);
+        // pictures that change a few zones, then many
+        for (int picture = 0; picture < 8; ++picture) {
+            const int changes = picture < 4 ? 3 : 4000;
+            for (int k = 0; k < changes; ++k)
+                cells[next() % cells.size()] = float(next() >> 8) / 16777216.0f;
+            both(mz::kFullGrid, picture % 2 ? 2.0f : 4.0f / 3.0f);
+        }
+        // the light grid: every zone again, its own codes
+        const int64_t before = memo.read;
+        both(mz::kLightGrid, 2.0f);
+        CHECK_EQ(memo.read, before + mz::kLightGrid.zones());
+        both(mz::kFullGrid, 2.0f); // and back
+        CHECK_EQ(checked, 13);
+        CHECK_EQ(wrong, 0);
+        CHECK_EQ(memo.zones, int64_t(12) * mz::kZones + mz::kLightGrid.zones());
     }
 
     SECTION("MwsrZones — a code is a drop under the law, never above it");

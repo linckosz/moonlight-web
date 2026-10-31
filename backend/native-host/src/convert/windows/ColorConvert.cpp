@@ -173,7 +173,7 @@ bool ColorConvert::enableMwsrStats(std::string& why, bool light)
 
 bool ColorConvert::readMwsrCells(float* cells)
 {
-    return m_MwsrStats && m_MwsrStats->read(m_MwsrTicket, cells);
+    return m_MwsrStats && m_MwsrStats->read(m_MwsrTicket, cells, true);
 }
 
 bool ColorConvert::takeResampleCost(int64_t& costUs)

@@ -152,11 +152,15 @@ private:
     /// MWSR's cells of the last picture, read back for the zones' decision:
     /// sized once the converter takes the statistics.
     std::vector<float> m_MwsrCells;
-    /// The zones last decided, for a frame whose statistics the GPU has not
-    /// finished: it takes the picture before's, one frame late, rather than
-    /// the law — without, half to three quarters of a stream's frames went
-    /// without their grid on an RTX 5060 Ti (31/10/2026). Empty until the
-    /// first decision of a pass, and with each new pass.
+    /// The last decision's cells and features: a zone whose cells did not
+    /// change is not read again (mwsrzones::ZoneMemo).
+    convert::mwsrzones::ZoneMemo m_MwsrMemo;
+    /// The zones last decided, for a frame whose statistics cannot be read
+    /// (their buffer gone to a later dispatch, a lost device): it takes the
+    /// picture before's, one frame late, rather than the law. Rare since the
+    /// read waits for the GPU; before, a third to three quarters of a stream's
+    /// frames took them on an RTX 5060 Ti (31/10/2026). Empty until the first
+    /// decision of a pass, and with each new pass.
     std::vector<uint8_t> m_MwsrHeld;
     int m_MwsrHeldX = 0;
     int m_MwsrHeldY = 0;

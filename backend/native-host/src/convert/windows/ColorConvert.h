@@ -221,8 +221,9 @@ public:
     /// see MwsrStats::takeCost.
     bool takeMwsrStatsCost(int64_t& costUs) { return m_MwsrStats && m_MwsrStats->takeCost(costUs); }
 
-    /// The cells of the picture the last convert() read, if the GPU has
-    /// finished them: MwsrStats::kFloats into @p cells. Never waits.
+    /// The cells of the picture the last convert() read: MwsrStats::kFloats
+    /// into @p cells, once the GPU has finished them — the read waits for it
+    /// (MwsrStats: briefly). False when there are none to read.
     bool readMwsrCells(float* cells);
 
     /// The upscale the client makes of the stream, as the zones' decision

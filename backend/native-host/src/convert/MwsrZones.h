@@ -25,6 +25,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
+
+#if defined(_M_X64) || defined(__x86_64__)
+#include <emmintrin.h>
+#define MW_MWSR_ZONES_SSE2 1
+#endif
 
 // MWSR's sharpness by zone, the native host's half (plan B, upscaler-mwsr-b.md
 // §12 c, Bruno's decision of 30/10/2026): from the statistics of the native
@@ -163,6 +169,38 @@ inline float roundToHalf(float x)
     return r;
 }
 
+#if MW_MWSR_ZONES_SSE2
+/// roundToHalf on four floats at once, its branches as masks: the same bits on
+/// every float (checked exhaustively against it, 31/10/2026). SSE2 is part of
+/// x64, so no CPU is asked.
+inline __m128 roundToHalf4(__m128 x)
+{
+    const __m128i u = _mm_castps_si128(x);
+    const __m128i sign = _mm_and_si128(u, _mm_set1_epi32(int(0x80000000u)));
+    const __m128i a = _mm_and_si128(u, _mm_set1_epi32(0x7FFFFFFF));
+    // a is under 2^31: the signed compares order it as the unsigned ones do
+    const __m128i nan = _mm_cmpgt_epi32(a, _mm_set1_epi32(0x7F800000));
+    const __m128i inf = _mm_cmpgt_epi32(a, _mm_set1_epi32(0x477FEFFF));
+    const __m128i normal = _mm_cmpgt_epi32(a, _mm_set1_epi32(0x387FFFFF));
+    // a normal half: 10 of the 23 bits kept, to nearest even
+    const __m128i odd = _mm_and_si128(_mm_srli_epi32(a, 13), _mm_set1_epi32(1));
+    const __m128i kept = _mm_andnot_si128(
+        _mm_set1_epi32(0x1FFF), _mm_add_epi32(_mm_add_epi32(a, _mm_set1_epi32(0x0FFF)), odd));
+    // a subnormal half: to the nearest multiple of 2^-24, even on a tie (2^23
+    // added and taken off rounds what is under 1024 to an integer); the other
+    // lanes go through as zero
+    const __m128 under = _mm_andnot_ps(_mm_castsi128_ps(normal), _mm_castsi128_ps(a));
+    const __m128 magic = _mm_set1_ps(8388608.0f);
+    const __m128 steps =
+        _mm_sub_ps(_mm_add_ps(_mm_mul_ps(under, _mm_set1_ps(16777216.0f)), magic), magic);
+    __m128i r = _mm_castps_si128(_mm_mul_ps(steps, _mm_set1_ps(1.0f / 16777216.0f)));
+    r = _mm_or_si128(_mm_and_si128(normal, kept), _mm_andnot_si128(normal, r));
+    r = _mm_or_si128(_mm_and_si128(inf, _mm_set1_epi32(0x7F800000)), _mm_andnot_si128(inf, r));
+    r = _mm_or_si128(_mm_and_si128(nan, a), _mm_andnot_si128(nan, r));
+    return _mm_castsi128_ps(_mm_or_si128(sign, r));
+}
+#endif
+
 /// A zone's 8 means from its @p per x @p per cells — 4 on the full grid, 8 on
 /// the light one (@p cells: the 128 x 72 grid, row by row, 8 floats per cell,
 /// as the pass wrote them): the bench's tiles().
@@ -170,6 +208,23 @@ inline void zoneMeans(const float* cells, int zx, int zy, float out[kStats],
                       int per = kFullGrid.cellsPerZone())
 {
     float acc[kStats] = {};
+#if MW_MWSR_ZONES_SSE2
+    // The 8 statistics of a cell in two registers, each summed in the cells'
+    // order. A float sum is the double one rounded back: rounding twice, to
+    // 53 bits then to 24, gives the once-rounded sum (53 >= 2 x 24 + 2).
+    static_assert(kStats == 8, "two registers a cell");
+    __m128 lo = _mm_setzero_ps();
+    __m128 hi = _mm_setzero_ps();
+    for (int y = 0; y < per; ++y) {
+        const float* c = cells + ((size_t(zy) * per + y) * kCellsX + size_t(zx) * per) * kStats;
+        for (int x = 0; x < per; ++x, c += kStats) {
+            lo = _mm_add_ps(lo, roundToHalf4(_mm_loadu_ps(c)));
+            hi = _mm_add_ps(hi, roundToHalf4(_mm_loadu_ps(c + 4)));
+        }
+    }
+    _mm_storeu_ps(acc, lo);
+    _mm_storeu_ps(acc + 4, hi);
+#else
     for (int y = 0; y < per; ++y) {
         for (int x = 0; x < per; ++x) {
             const float* c =
@@ -178,6 +233,7 @@ inline void zoneMeans(const float* cells, int zx, int zy, float out[kStats],
                 acc[s] = static_cast<float>(static_cast<double>(acc[s]) + roundToHalf(c[s]));
         }
     }
+#endif
     for (int s = 0; s < kStats; ++s)
         out[s] = roundToHalf(static_cast<float>(static_cast<double>(acc[s]) / (per * per)));
 }
@@ -239,24 +295,76 @@ inline void guardNeighbours(uint8_t* codes, int zonesX, int zonesY)
     }
 }
 
+/// The floats of the pass's cells: kCellsX x kCellsY of them, kStats each.
+constexpr int kCellFloats = kCellsX * kCellsY * kStats;
+
+/// What decideAll keeps of a stream's last picture (31/10/2026): its cells and
+/// its zones' features, so that a zone whose cells have not changed by a bit
+/// is not read again — a still desktop, a game's HUD. The same cells give the
+/// same features: the codes are those decideAll gives without it.
+struct ZoneMemo
+{
+    /// The last picture's cells, kCellFloats.
+    std::vector<float> cells;
+    /// Its zones' features, kStats each, of the grid of `tree`.
+    std::vector<float> features;
+    /// The tree of the grid they are of; null until the first decision.
+    const TreeNode* tree = nullptr;
+    /// Zones decided, and of them those read again: for the session's log.
+    int64_t zones = 0;
+    int64_t read = 0;
+};
+
 /// Every zone's code of @p grid from the pass's cells (@p cells: 128 x 72 x 8
 /// floats; the light grid's from the light pass's), row by row into @p codes
 /// (grid.zones() of them, at most kZones). @p scale is the stream's upscale
 /// at the client (the capture's width over the stream's); @p linear says the
 /// host reduced in linear light (Lanczos-2), not with the bilinear of its
 /// fallback. The tree's codes, then the neighbours' guard (guardNeighbours).
+/// With @p memo, a stream's: only the zones whose cells changed are read.
 inline void decideAll(const float* cells, float scale, bool linear, uint8_t* codes,
-                      const Grid& grid = kFullGrid)
+                      const Grid& grid = kFullGrid, ZoneMemo* memo = nullptr)
 {
     const int zones = grid.zones();
-    float feat[kZones][kStats];
+    const int per = grid.cellsPerZone();
+    // a zone's row of cells, in bytes
+    const size_t rowBytes = size_t(per) * kStats * sizeof(float);
+    float local[kZones][kStats];
+    float (*feat)[kStats] = local;
+    bool all = true;
+    if (memo) {
+        if (memo->cells.size() != size_t(kCellFloats)) {
+            memo->cells.assign(kCellFloats, 0.0f);
+            memo->features.assign(size_t(kZones) * kStats, 0.0f);
+            memo->tree = nullptr;
+        }
+        feat = reinterpret_cast<float (*)[kStats]>(memo->features.data());
+        all = memo->tree != grid.tree;
+        memo->tree = grid.tree;
+        memo->zones += zones;
+    }
     double sum[kStats] = {};
     for (int zy = 0; zy < grid.zonesY; ++zy) {
         for (int zx = 0; zx < grid.zonesX; ++zx) {
-            float m[kStats];
-            zoneMeans(cells, zx, zy, m, grid.cellsPerZone());
+            const size_t first = ((size_t(zy) * per) * kCellsX + size_t(zx) * per) * kStats;
+            bool changed = all;
+            for (int y = 0; y < per && !changed; ++y) {
+                const size_t at = first + size_t(y) * kCellsX * kStats;
+                changed = std::memcmp(cells + at, memo->cells.data() + at, rowBytes) != 0;
+            }
             float* f = feat[zy * grid.zonesX + zx];
-            features(m, f);
+            if (changed) {
+                float m[kStats];
+                zoneMeans(cells, zx, zy, m, per);
+                features(m, f);
+                if (memo) {
+                    for (int y = 0; y < per; ++y) {
+                        const size_t at = first + size_t(y) * kCellsX * kStats;
+                        std::memcpy(memo->cells.data() + at, cells + at, rowBytes);
+                    }
+                    ++memo->read;
+                }
+            }
             for (int s = 0; s < kStats; ++s)
                 sum[s] += f[s];
         }

@@ -136,8 +136,8 @@ bool MwsrStats::read(uint64_t ticket, float* cells, bool wait)
     if (m_Ticket[slot] != ticket) return false; // gone to a later dispatch
 
     D3D11_MAPPED_SUBRESOURCE mapped = {};
-    // DO_NOT_WAIT: a copy the GPU has not reached answers WAS_STILL_DRAWING at
-    // once, and the frame goes without its grid.
+    // Without @p wait, DO_NOT_WAIT: a copy the GPU has not reached answers
+    // WAS_STILL_DRAWING at once.
     if (FAILED(m_Context->Map(m_Readback[slot].Get(), 0, D3D11_MAP_READ,
                               wait ? 0 : D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped)))
         return false;

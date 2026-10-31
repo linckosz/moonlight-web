@@ -321,7 +321,7 @@ bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY,
     }
 
     if (!m_Converter->readMwsrCells(m_MwsrCells.data())) {
-        // Not back yet: the picture before's zones, one frame late.
+        // Not readable: the picture before's zones, one frame late.
         if (m_MwsrHeld.empty()) return false;
         std::memcpy(codes, m_MwsrHeld.data(), m_MwsrHeld.size());
         zonesX = m_MwsrHeldX;
@@ -332,7 +332,8 @@ bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY,
     }
     const mz::Grid& grid = m_Converter->mwsrStatsLight() ? mz::kLightGrid : mz::kFullGrid;
     scale = m_Converter->mwsrScale();
-    mz::decideAll(m_MwsrCells.data(), scale, m_Converter->reducesInLinearLight(), codes, grid);
+    mz::decideAll(m_MwsrCells.data(), scale, m_Converter->reducesInLinearLight(), codes, grid,
+                  &m_MwsrMemo);
     zonesX = grid.zonesX;
     zonesY = grid.zonesY;
     m_MwsrHeld.assign(codes, codes + zonesX * zonesY);
@@ -345,10 +346,14 @@ bool D3d11VideoPipeline::takeMwsrZones(uint8_t* codes, int& zonesX, int& zonesY,
 void D3d11VideoPipeline::logEndOfSession() const
 {
     // Of the frames that carried a grid, those that took the picture
-    // before's: their statistics were not back when the frame left.
+    // before's: their statistics could not be read when the frame left.
     if (m_MwsrHeldFrames > 0)
         log::info("[native] MWSR zones: " + std::to_string(m_MwsrHeldFrames) +
-                  " of them the picture before's, theirs not back yet");
+                  " of them the picture before's, theirs unreadable");
+    // Of the zones decided, those read again: the others' cells had not changed.
+    if (m_MwsrMemo.zones > 0)
+        log::info("[native] MWSR zones: " + std::to_string(m_MwsrMemo.read) + " of " +
+                  std::to_string(m_MwsrMemo.zones) + " zones read again, the others unchanged");
 
     // What the bridge cost, when there was one: the figure that says how
     // much of this session's convert stage was the copy and not the pass.

@@ -3415,9 +3415,10 @@ private:
 
     /// MWSR's zones of the picture just encoded, onto its frame (plan B §12 c,
     /// SessionConfig::mwsrZones): its statistics went to the GPU ahead of its
-    /// conversion, which the encoder had to finish, so they are back by now;
-    /// the decision is the CPU's, here. Statistics not back: the picture
-    /// before's zones. None yet, or none on this build: the frame goes
+    /// conversion, which the encoder had to finish, so they are back by now or
+    /// nearly, and the read waits for the rest; the decision is the CPU's,
+    /// here. Statistics unreadable: the picture before's zones. None yet, or
+    /// none on this build: the frame goes
     /// without, and the client keeps its law for it.
     void attachMwsrZones(EncodedFrame& out)
     {

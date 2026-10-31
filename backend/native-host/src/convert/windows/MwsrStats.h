@@ -34,14 +34,17 @@ namespace mw::native::convert {
 /// into the zones' codes. One compute pass (kMwsrStatsSource), then a copy of
 /// its 9216 cells into a buffer the CPU reads once the GPU is done.
 ///
-/// ── Never waited for ────────────────────────────────────────────────────────
+/// ── Waited for, briefly ─────────────────────────────────────────────────────
 ///
-/// The frame must not wait for its statistics: dispatch() goes with the
-/// conversion, read() comes back later and answers false while the GPU has not
-/// finished, and that frame then goes without a grid (the client keeps its
-/// sharpness law). The copies sit in a ring of kSlots buffers; a ticket names
-/// one dispatch, and the ring's reuse of its buffer kSlots dispatches later
-/// retires it, so a reading is never of another frame.
+/// dispatch() goes with the conversion; the stream's read() comes back once
+/// the encoder has the picture, and waits for the GPU (31/10/2026). The pass
+/// was queued ahead of the conversion the encoder waited on, so little is
+/// left: 8 us a frame on average, 0.26 ms at worst, in a stream on an RTX
+/// 5060 Ti. Without the wait, a third to a half of the frames found their
+/// copy not yet signalled and took the picture before's zones. The copies sit
+/// in a ring of kSlots buffers; a ticket names one dispatch, and the ring's
+/// reuse of its buffer kSlots dispatches later retires it, so a reading is
+/// never of another frame.
 ///
 /// Only for the 8-bit desktop: the statistics are those of the sRGB-encoded
 /// values the bench measured, and an HDR or tone-mapped capture gets no grid.
@@ -81,8 +84,8 @@ public:
 
     /// The cells of @p ticket into @p cells (kFloats), if the GPU has finished
     /// them. False while it has not, and for good once the ticket's buffer has
-    /// gone to a later dispatch. @p wait blocks until the GPU is done — for the
-    /// tests: a frame never waits.
+    /// gone to a later dispatch. @p wait blocks until the GPU is done, as the
+    /// stream's reads do (ColorConvert::readMwsrCells).
     bool read(uint64_t ticket, float* cells, bool wait = false);
 
     /// What the pass costs this GPU, once: true exactly once per init(), when

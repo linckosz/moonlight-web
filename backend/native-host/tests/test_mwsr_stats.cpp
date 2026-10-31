@@ -341,7 +341,7 @@ void run_mwsr_stats_tests()
         }
     }
 
-    // ── A converted picture's cells, once the GPU is through: the pass's own ──
+    // ── A converted picture's cells, read at once: the read waits for the GPU ──
     {
         using convert::ColorConvert;
         const int w = 512, h = 288;
@@ -378,18 +378,12 @@ void run_mwsr_stats_tests()
         std::vector<float> cells(MwsrStats::kFloats, -1.0f);
         CHECK(!conv.readMwsrCells(cells.data())); // not taken yet
         CHECK(conv.enableMwsrStats(error));
-        CHECK(conv.convert(source.Get(), capture::CursorState{}, convert::CursorDraw{}, error));
-
-        // Whatever the GPU was given, done: an event query behind it.
-        ComPtr<ID3D11Query> done;
-        D3D11_QUERY_DESC q = {D3D11_QUERY_EVENT, 0};
-        CHECK(SUCCEEDED(device->CreateQuery(&q, done.GetAddressOf())));
-        context->End(done.Get());
-        BOOL finished = FALSE;
-        for (int spin = 0; spin < 50000000; ++spin)
-            if (context->GetData(done.Get(), &finished, sizeof(finished), 0) == S_OK) break;
-        CHECK(finished == TRUE);
-        CHECK(conv.readMwsrCells(cells.data()));
+        // Every picture its own cells, none missed: the stream's read waits.
+        for (int picture = 0; picture < 3; ++picture) {
+            std::fill(cells.begin(), cells.end(), -1.0f);
+            CHECK(conv.convert(source.Get(), capture::CursorState{}, convert::CursorDraw{}, error));
+            CHECK(conv.readMwsrCells(cells.data()));
+        }
 
         MwsrStats direct;
         CHECK(direct.init(device.Get(), w, h, false, error));
