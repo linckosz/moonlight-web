@@ -560,7 +560,8 @@ rend comme SwiftShader : au plus 0,005 % des pixels s'en écartent de plus d'un 
 - **Le coût, à mesurer avant d'activer.**
   - Estimé : environ 0,1 ms par image sur une RTX, environ 3 ms sur un GPU intégré. Mesuré le 30/10
     (f.3) : 0,04 à 0,09 ms sur une RTX 5060 Ti et 0,86 à 2,6 ms sur l'iGPU du 9900X, à pleine fréquence ;
-    plus sur un bureau au repos (jusqu'à 1,4 et 3,4 ms en 4K).
+    plus sur un bureau au repos (jusqu'à 1,4 et 3,4 ms en 4K). La légère, mesurée le 31/10 (f.4), ne
+    coûte que 1,4 fois moins sur l'iGPU, et pas moins sur la RTX en 4K au repos.
   - La règle de Bruno (f.4), celle du Lanczos-2, gardé s'il coûte au plus 1,5 ms (`ResampleCost.h`),
     mesurée dans le stream :
     - la passe complète, si elle tient dans ces 1,5 ms ;
@@ -819,8 +820,7 @@ pousse.
        rafale, et 2 à 2,4 fois moins à 60 i/s. Le pixel sur 4 seul, sans réduire les zones, ne divise le
        coût de l'iGPU que par 1,4 à 2,9 : une part fixe par groupe domine.
        - Le « pas 4 » du banc lit un pixel sur 16 (`zonecells.py`, `n4`), ce que fait la passe légère
-         écrite ensuite (f.4). Son coût reste à mesurer au prochain créneau ; il devrait être plus bas
-         (supposé).
+         écrite ensuite (f.4). Son coût a été mesuré au créneau du 31/10 au matin (f.4).
      - **L'estimation** (0,1 ms sur une RTX, 3 ms sur un GPU intégré) tient pour un GPU à pleine fréquence.
      - **À 60 i/s, le GPU redescend entre deux images,** et la passe coûte plus : 1,3 à 1,9 fois plus sur
        l'iGPU, 2 à 15 fois plus sur la RTX.
@@ -887,7 +887,40 @@ pousse.
            léger sur des zones du banc ;
          - une zone légère depuis ses 64 cellules ;
          - la règle du budget, et le chronomètre sur WARP.
-       - **Non fait** : le coût de la vraie légère sur GPU (créneau du matin) et un vrai stream.
+       - **Mesuré le 31/10 au matin** (06:35-06:38), au créneau de la gestion des plans. Une carte à la
+         fois, le banc et les conditions de f.3. Le banc rend les cellules du produit au bit près, pour
+         la passe complète comme pour la légère. La passe complète refait les chiffres de f.3 à 1 % près.
+         - p50 en ms, copie comprise :
+
+           | Capture | Carte | Complète, rafale | Légère, rafale | Complète, 60 i/s | Légère, 60 i/s |
+           |---|---|---|---|---|---|
+           | 1080p | RTX | 0,044 | 0,022 | 0,08 à 0,19 | 0,17 |
+           | 1440p | RTX | 0,063 | 0,029 | 0,21 | 0,18 |
+           | 4K | RTX | 0,092 | 0,051 | 1,34 à 1,43 | 1,47 à 1,52 |
+           | 1080p | iGPU | 0,86 | 0,62 | 1,60 à 1,62 | 1,19 à 1,20 |
+           | 1440p | iGPU | 1,58 | 1,22 | 2,34 | 1,67 à 1,68 |
+           | 4K | iGPU | 2,60 | 1,83 à 1,88 | 3,36 | 2,34 à 2,36 |
+
+           En 4K, la rafale qui suit la série à 60 i/s coûte 0,21 à 0,25 ms sur la RTX : la fréquence
+           n'est pas encore remontée.
+         - **La légère ne gagne que 1,4 fois sur l'iGPU.** Elle gagne 2 fois sur la RTX en rafale, et rien
+           en 4K au repos sur la RTX. C'est loin d'un pixel sur 16.
+           - Supposé : c'est la forme du noyau, pas l'échantillonnage. Il n'y a que 144 groupes. Chaque
+             fil enchaîne jusqu'à 64 pixels (en 4K). Deux fils voisins lisent à 15 à 30 px l'un de
+             l'autre, jamais dans la même ligne de cache. L'iGPU ne cache pas la latence de la mémoire.
+           - La passe complète, elle, semble limitée par ses lectures de texture (5 par pixel).
+         - **La règle B sur ces chiffres :**
+           - l'iGPU du 9900X :
+             - en 1080p, la complète en rafale et la légère au repos ;
+             - en 1440p, la légère en rafale, et aucune grille au repos ;
+             - en 4K, aucune grille.
+           - la RTX : la complète partout, sauf en 4K au repos. Là, elle est au bord des 1,5 ms (p90
+             jusqu'à 1,77 ms), et la légère n'aide pas.
+         - **Ensuite :** une légère de la forme de la complète, écrite dans le banc seulement et vérifiée
+           sur WARP (go de la gestion des plans le 31/10) : un groupe par cellule, un pixel par fil, puis
+           la réduction en arbre. Le créneau court et le changement du produit passent par la gestion des
+           plans et par Bruno.
+       - **Non fait** : un vrai stream.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
    - le jumeau GLSL de la grille. `high`
