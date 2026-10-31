@@ -976,7 +976,24 @@ pousse.
            - contre l'ancienne légère : 4,2e-7 d'écart au plus, et 45 valeurs sur 1 622 016 au f16
              voisin. Aucune décision de zone ne change, 0 sur 25 344, ni contre elle ni contre le banc ;
            - les 392 vérifications des groupes touchés passent.
-         - **Reste** : confirmer le coût sur l'iGPU, à un créneau court de la gestion des plans.
+         - **Confirmé sur l'iGPU le 31/10** (07:07-07:09), au créneau de la gestion des plans. Le banc
+           rend le produit au bit près. Il refait aussi l'ancienne légère, à 3,6e-7 au plus de la
+           nouvelle.
+           - p50 en ms, copie comprise :
+
+             | Capture | Rythme | Complète | Légère | Ancienne légère |
+             |---|---|---|---|---|
+             | 1080p | rafale | 0,86 | 0,48 | 0,62 |
+             | 1440p | rafale | 1,58 | 0,49 | 1,22 |
+             | 4K | rafale | 2,61 | 0,69 | 1,83 à 1,88 |
+             | 1080p | 60 i/s | 1,60 à 1,62 | 1,25 à 1,28 | 1,21 |
+             | 1440p | 60 i/s | 2,30 à 2,34 | 1,25 | 1,68 |
+             | 4K | 60 i/s | 3,35 à 3,38 | 1,35 à 1,37 | 2,33 |
+
+           - La légère du produit coûte ce que coûtait light-cell. Sur l'iGPU, la règle B garde une
+             grille aux trois tailles, au repos comme en rafale. Au repos, le p90 va jusqu'à 1,52 ms en 4K.
+           - En 1080p au repos, elle coûte 0,04 à 0,07 ms de plus que l'ancienne. Cela ne change aucune
+             décision du budget.
        - **Non fait** : un vrai stream.
 5. Ensuite :
    - la passe de l'hôte en D3D12, en EGL et en Vulkan. `high` chacune
