@@ -19,6 +19,7 @@
 #include "ClipboardBridge.h"
 #include "InputMessageCodec.h"
 #include "IMediaEngine.h"
+#include "MicUplink.h"
 #include "NativeMediaEngine.h"
 
 extern "C" {
@@ -249,6 +250,9 @@ void StreamRelay::stop()
         return;
     }
     m_Stopping = true;
+
+    // The microphone's device first: nothing more will come for it.
+    if (m_Mic) m_Mic->stop();
 
     if (m_StatsTimer) m_StatsTimer->stop();
 
@@ -561,6 +565,7 @@ void StreamRelay::onNewWsConnection()
     qInfo() << "[StreamRelay] WS client created, connecting signals...";
 
     connect(m_WsClient, &QWebSocket::textMessageReceived, this, &StreamRelay::onWsTextMessage);
+    connect(m_WsClient, &QWebSocket::binaryMessageReceived, this, &StreamRelay::onWsBinaryMessage);
     connect(m_WsClient, &QWebSocket::disconnected, this, &StreamRelay::onWsDisconnected);
 
     // Log WS errors (QWebSocket::errorOccurred exists only since Qt 6.5)
@@ -790,6 +795,15 @@ void StreamRelay::onWsTextMessage(const QString& message)
     } else {
         qWarning() << "[StreamRelay] Unknown input type:" << type;
     }
+}
+
+void StreamRelay::onWsBinaryMessage(const QByteArray& message)
+{
+    // The only binary the page sends is its microphone (MicRtp.h): input is
+    // text. Without a granted microphone there is nothing to hand it to.
+    if (m_Mic)
+        m_Mic->onSocketFrame(reinterpret_cast<const uint8_t*>(message.constData()),
+                             static_cast<size_t>(message.size()));
 }
 
 void StreamRelay::onWsDisconnected()

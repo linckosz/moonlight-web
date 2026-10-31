@@ -376,6 +376,29 @@ capture. Run Sunshine on the machine with the GPU, and add it here by IP.
 
 ---
 
+## The microphone
+
+A viewer can send their microphone (Settings › *Send my microphone*). It comes
+out as **"MoonlightWeb Microphone"**, an input device in the PipeWire of a
+desktop user on the Docker host — so it is only useful when Sunshine runs on
+**that same machine**: GameStream carries no microphone to another one, and the
+server says so to the viewer rather than send it nowhere.
+
+Give the container that user's PipeWire socket, at the image's
+`XDG_RUNTIME_DIR` (`id -u` gives the uid; 1000 on most desktops):
+
+```sh
+docker run … -v /run/user/1000/pipewire-0:/tmp/runtime-moonlightweb/pipewire-0 …
+```
+
+The device is created at the first stream and stays in that PipeWire session,
+so a game or a chat app can select it once. Without the socket the image runs
+exactly as before, and a viewer who asks is told there is no PipeWire to play
+into. `docker exec <c> pw-cli ls Node | grep moonlightweb_mic` shows it from
+inside the container.
+
+---
+
 ## Running as a service
 
 `--restart unless-stopped` (or `restart: unless-stopped` in Compose) is enough

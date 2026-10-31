@@ -99,4 +99,15 @@ export const Icons = {
         '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>' +
             '<line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>',
     ),
+    // Microphone — the stream header's mute button for the viewer's own mic
+    mic: svg(
+        '<rect x="9" y="2" width="6" height="12" rx="3"/>' +
+            '<path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/>',
+    ),
+    micOff: svg(
+        '<line x1="2" y1="2" x2="22" y2="22"/>' +
+            '<path d="M15 9.34V5a3 3 0 0 0-5.68-1.33M9 9v2a3 3 0 0 0 5.12 2.12"/>' +
+            '<path d="M19 10v1a7 7 0 0 1-.11 1.23M16.95 16.95A7 7 0 0 1 5 11v-1"/>' +
+            '<line x1="12" y1="18" x2="12" y2="22"/>',
+    ),
 };

@@ -152,6 +152,11 @@ export class WebRtcMedia {
         this._logCount = 0;
         this._frameLogCount = 0;
 
+        // The viewer's microphone (audio/MicUplink.js), when the host took it:
+        // it answers the same audio section sendrecv. Set by StreamView.
+        /** @type {import('../audio/MicUplink.js').MicUplink|null} */
+        this.mic = null;
+
         // Guard
         this._stopping = false;
         this._closed = false; // separate from _stopping: markStopping() must not block close()
@@ -791,8 +796,11 @@ export class WebRtcMedia {
             console.log('[WebRtcMedia] Remote description set (offer)');
             await this._flushPendingCandidates();
 
-            // The bench's silent carrier (DscpCarrier.js), off by default.
-            const carrier = dscpCarrierMode();
+            // The viewer's microphone, when the host offered to take it.
+            const micOn = this.mic ? this.mic.prepare(this.pc, sdp) : false;
+            // The bench's silent carrier (DscpCarrier.js), off by default; the
+            // microphone holds that sender when both are asked.
+            const carrier = micOn ? null : dscpCarrierMode();
             prepareDscpCarrier(this.pc, carrier);
 
             // Create answer with receive-only constraints (lowest latency)
@@ -804,8 +812,8 @@ export class WebRtcMedia {
             // Apply low-latency SDP transformations before setLocalDescription
             let answerSdp = answer.sdp;
             // Direction: receive only (client is viewer, never sends media),
-            // but for the bench's silent carrier
-            answerSdp = recvonlyExceptCarrier(answerSdp, carrier);
+            // but for the microphone and the bench's silent carrier
+            answerSdp = recvonlyExceptCarrier(answerSdp, micOn ? 'mic' : carrier);
             // Strip ULPFEC/RED (redundant FEC adds bandwidth & latency). Only the
             // FEC payload types' lines are removed — the video codec's fmtp
             // (packetization-mode/profile-level-id) is kept intact.
@@ -834,6 +842,8 @@ export class WebRtcMedia {
             await this.pc.setLocalDescription(modifiedAnswer);
             console.log('[WebRtcMedia] Local description set (answer, low-latency), sending...');
             armDscpCarrier(this.pc, carrier);
+            // Not awaited: a permission prompt must not hold the answer back.
+            if (micOn) this.mic.attach();
 
             // Send answer via signaling WS, signed when this browser is paired.
             const answerMsg = {

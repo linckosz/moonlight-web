@@ -18,6 +18,7 @@
 #include "Session.h"
 #include "ClipboardBridge.h"
 #include "HostAudioSink.h"
+#include "MicUplink.h"
 #include "DataChannelRelay.h"
 #include "MediaTrackRelay.h"
 #include "SignalingServer.h"
@@ -765,6 +766,33 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         HostAudioSink::ensureFullVolume();
     }
 
+    // The viewer's microphone plays into THIS machine's virtual microphone, so
+    // it is only worth anything when the streamed host is this machine: a
+    // remote Sunshine would never hear it (GameStream carries no microphone),
+    // and the voice would come out on the wrong PC. Same gate as the clipboard
+    // otherwise: the owner's, never an invited player's. Every transport
+    // carries it: the WebRTC ones on the audio track, the WebSocket one as
+    // frames on its socket. The native host is this machine by construction,
+    // and its entry carries no address for isSelfAddress() to recognise.
+    if (m_MicRequested) {
+        const bool micHostHere = media.type == MediaType::NativeHost || hostIsSelf;
+        std::string why;
+        if (!micHostHere)
+            why = "the host is another machine, and a microphone can only reach the one "
+                  "MoonlightWeb runs on";
+        else if (!m_InputPolicy.unrestricted())
+            why = "an invited player cannot send a microphone";
+        else
+            why = MicUplink::unavailable(m_MicDevice.toStdString());
+        if (why.empty()) {
+            auto mic = std::make_shared<MicUplink>(m_MicDevice.toStdString());
+            if (mic->start(why)) m_Mic = std::move(mic);
+        }
+        m_MicWhy = QString::fromStdString(why);
+        qInfo().noquote() << "[Session] Microphone"
+                          << (m_Mic ? QStringLiteral("granted") : "refused: " + m_MicWhy);
+    }
+
     // Scroll: hold sub-notch amounts back only for a host that would throw them
     // away. Linux does (inputtino floors REL_WHEEL to whole notches with no
     // accumulator); Windows and macOS keep them, and quantizing those turns a
@@ -812,6 +840,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         streamRelay->setWsPath(m_WsPath);
         streamRelay->setClipboardEnabled(clipboardLocal);
         streamRelay->setInputPolicy(m_InputPolicy);
+        streamRelay->setMicUplink(m_Mic);
 
         connect(m_Engine, &IMediaEngine::connectionStarted, this,
                 &StreamSession::onShimConnectionStarted);
@@ -858,6 +887,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         auto* relay = new MediaTrackRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
         relay->setInputPolicy(m_InputPolicy);
+        relay->setMicUplink(m_Mic);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
@@ -928,6 +958,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         auto* relay = new DataChannelRelay(m_Engine, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
         relay->setInputPolicy(m_InputPolicy);
+        relay->setMicUplink(m_Mic);
         relay->setStreamBitrateKbps(m_StreamBitrateKbps);
 
         // The client's half of the bargain: it says it will decode through the
@@ -1271,6 +1302,13 @@ void StreamSession::onShimConnectionStarted()
     // less delay, whereas a GameStream host gets them over its own protocol
     // and keeps the browser's frame-coalesced cadence.
     result["native"] = qobject_cast<NativeMediaEngine*>(m_Engine) != nullptr;
+    // Whether the audio section was offered sendrecv for the viewer's
+    // microphone, and if it was asked and not granted, why — the page then
+    // never opens the microphone, and says why once.
+    if (m_MicRequested) {
+        result["mic"] = m_Mic != nullptr;
+        if (!m_Mic) result["mic_why"] = m_MicWhy;
+    }
     // The virtual display drawn by another GPU than the display it replaced:
     // apps opened before the stream stay there, and the browser suggests
     // restarting one that stutters. Absent when the GPUs are the same.

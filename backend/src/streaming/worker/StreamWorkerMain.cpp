@@ -632,6 +632,9 @@ int runStreamWorker(QCoreApplication& app)
     session->setDebugIceDropUdp(cfg["debugIceDropUdp"].toBool(false));
     session->setLowAudio(cfg["lowAudio"].toBool());
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));
+    // Absent (an older parent, a guest) → no microphone.
+    session->setMicRequested(cfg["mic"].toBool(false));
+    session->setMicDevice(cfg["micDevice"].toString());
     // Absent (an older parent) → off, which is exactly today's behaviour.
     session->setRideOutLoss(cfg["rideOutLoss"].toBool(false));
     // Absent (an older parent, a guest) → the engine's own repairs.

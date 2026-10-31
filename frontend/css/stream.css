@@ -1212,6 +1212,16 @@ body.streaming-active::after {
 .btn-stream-pad:active {
     transform: scale(0.95);
 }
+/* The viewer's microphone (StreamView._mountMicButton): the pad button's
+   shape, struck through and dimmed while muted or refused. */
+.btn-stream-mic.is-off {
+    color: rgba(255, 120, 120, 0.85);
+    border-color: rgba(255, 120, 120, 0.35);
+}
+.btn-stream-mic:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
 /* The owner's "Buy me a coffee" button (StreamView._mountSupportButton): the
    official cup alone — white outline, yellow coffee — with no button around
    it, first of the bar's right-hand controls; the wordmark or a frame would

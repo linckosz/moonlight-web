@@ -383,6 +383,9 @@ add_executable(mw-server
     src/streaming/NativeBench.cpp
     src/streaming/ClipboardBridge.cpp
     src/streaming/HostAudioSink.cpp
+    # The viewer's microphone, played into this machine's virtual one; its OS
+    # backend (MicOutput*.cpp) is chosen below.
+    src/streaming/MicUplink.cpp
     src/streaming/StreamRelay.cpp
     src/streaming/DataChannelRelay.cpp
     src/streaming/PacketMarking.cpp
@@ -475,6 +478,48 @@ elseif(UNIX)
         message(STATUS "LatencyFlag: no X11 headers — click-to-photon will report itself absent")
     endif()
 endif()
+
+# ── The viewer's microphone (src/streaming/MicOutput.h) ────────────────────
+# Windows plays it into a virtual cable through WASAPI (no dependency); Linux
+# into a PipeWire virtual source, libpipewire opened with dlopen — headers only
+# here, as for the native host, so a machine without it still starts. Without
+# the headers the build carries the stub, which says why.
+if(WIN32)
+    target_sources(mw-server PRIVATE src/streaming/MicOutputWindows.cpp)
+elseif(UNIX AND NOT APPLE)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(MW_MIC_PIPEWIRE QUIET libpipewire-0.3)
+    endif()
+    if(MW_MIC_PIPEWIRE_FOUND)
+        message(STATUS "Microphone: PipeWire ${MW_MIC_PIPEWIRE_VERSION} ON")
+        target_sources(mw-server PRIVATE src/streaming/MicOutputPipeWire.cpp)
+        target_include_directories(mw-server SYSTEM PRIVATE ${MW_MIC_PIPEWIRE_INCLUDE_DIRS})
+        target_compile_options(mw-server PRIVATE ${MW_MIC_PIPEWIRE_CFLAGS_OTHER})
+    else()
+        message(WARNING "Microphone OFF — install libpipewire-0.3-dev to build it")
+        target_sources(mw-server PRIVATE src/streaming/MicOutputNone.cpp)
+    endif()
+else()
+    target_sources(mw-server PRIVATE src/streaming/MicOutputNone.cpp)
+endif()
+
+# libopus decodes it. The native host builds the same submodule when it has a
+# sound to encode; a build where it does not (no PipeWire headers, the
+# container's relay-only image) gets it from here.
+if(NOT TARGET opus)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(native-host/third_party/opus ${CMAKE_CURRENT_BINARY_DIR}/opus-mic
+                     EXCLUDE_FROM_ALL)
+    set_target_properties(opus PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+endif()
+target_link_libraries(mw-server PRIVATE Opus::opus)
+target_include_directories(mw-server SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/native-host/third_party/opus/include)
 
 # Windows release builds run windowless (no console): logs go to a file next to
 # the exe (see main.cpp). Debug keeps the console for development. WIN32_EXECUTABLE

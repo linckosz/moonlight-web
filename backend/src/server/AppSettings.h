@@ -394,6 +394,14 @@ public:
 
     bool audioTimeStretch() const;
 
+    // ── The viewer's microphone ────────────────────────────────────────────────
+    //
+    // Which device it plays into (src/streaming/MicOutput.h). File-only, JSON
+    // string "mic_device": part of a playback device's name on Windows (say
+    // "CABLE-A Input"); empty or "auto", the default, takes the first virtual
+    // cable found. Ignored on Linux, which makes its own virtual source.
+    QString micDevice() const;
+
     /// Host each streaming session in a --stream-worker subprocess (enables two
     /// concurrent sessions). File-only kill switch, default true.
     bool streamWorkerEnabled() const;

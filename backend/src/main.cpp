@@ -3391,6 +3391,10 @@ int main(int argc, char* argv[])
         // Mobile clients request lower-bandwidth audio (10ms Opus frames).
         bool reqLowAudio = body.contains("low_audio") && body["low_audio"].toBool();
 
+        // The viewer's microphone, opt-in per device (Settings). Whether it is
+        // granted is the session's call (StreamSession::setMicRequested).
+        const bool reqMic = body["mic_enabled"].toBool(false);
+
         // Mute host PC speakers while streaming (localAudioPlayMode). Default true.
         bool reqMuteHost = body.contains("mute_host_audio") ? body["mute_host_audio"].toBool()
                                                             : appSettings.muteHostAudio();
@@ -3416,7 +3420,7 @@ int main(int argc, char* argv[])
                 << "codec=" << AppSettings::videoCodecToString(reqCodec)
                 << "gaming=" << reqGamingMode << "bitrate=" << reqBitrate << "height=" << reqHeight
                 << "fps=" << reqFps << "yuv444=" << reqYuv444 << "hdr=" << reqHdr
-                << "videoEnhancement=" << reqVideoEnhancement;
+                << "videoEnhancement=" << reqVideoEnhancement << "mic=" << reqMic;
 
         // Determine signaling host from the browser's Host header.
         // Works for both LAN (localhost:443) and remote access via moonlightweb.top.
@@ -3768,6 +3772,8 @@ int main(int argc, char* argv[])
             s->setDebugIceDropUdp(AppSettings().debugIceDropUdp());
             s->setLowAudio(reqLowAudio);
             s->setMuteHostAudio(reqMuteHost);
+            s->setMicRequested(reqMic);
+            s->setMicDevice(appSettings.micDevice());
             s->setClientUniqueId(reqClientUniqueId);
             // The browser opts in: it decodes through a gap rather than asking
             // for a keyframe, which is what makes intra-refresh worth its cost.
@@ -3939,6 +3945,10 @@ int main(int argc, char* argv[])
             cfg["iceTcp"] = enableIceTcp;
             cfg["lowAudio"] = reqLowAudio;
             cfg["muteHostAudio"] = reqMuteHost;
+            // The microphone, and the device it plays into: read here, since a
+            // SYSTEM worker does not read this settings file.
+            cfg["mic"] = reqMic;
+            cfg["micDevice"] = appSettings.micDevice();
             // The browser's opt-in to decode through a gap instead of demanding
             // a keyframe. The worker owns the media engine, so the flag has to
             // travel with the config — setting it on the in-process session
