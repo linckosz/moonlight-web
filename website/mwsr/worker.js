@@ -721,7 +721,22 @@ async function picture(p) {
  * reduction (scale < 1) takes the picture as the input and scores against
  * its Lanczos-3 reduction in linear light, the best the output can hold.
  */
-async function prepare({ pic: p, scale, chroma, role }) {
+// MWSR zones (zones.js, zonetree.js): the native host's codes for its own
+// client, from the native frame, the host's capture. Loaded by their versioned
+// URLs, once.
+let zoneMods = null;
+async function hostZones(urls, native, outW, outH, inW, inH) {
+  if (!urls) return null;
+  zoneMods ||= Promise.all([import(urls.zones), import(urls.tree)]);
+  const [Z, T] = await zoneMods;
+  // the client reads zones from x1.3 up only
+  if (Math.min(outW / inW, outH / inH) < Z.ZONE_MIN_SCALE) return null;
+  // the host's scale is the capture's width over the stream's; it reduced in linear light
+  const codes = Z.decideZones(Z.zoneCells(native, outW, outH), f(outW / inW), true, T.ZONE_TREE);
+  return { cols: Z.ZONES_X, rows: Z.ZONES_Y, codes, texels: Z.zoneTexels(codes) };
+}
+
+async function prepare({ pic: p, scale, chroma, role, zoneUrls = null }) {
   const pic = await picture(p);
   const { w, h } = pic;
   let outW, outH, inW, inH;
@@ -754,6 +769,8 @@ async function prepare({ pic: p, scale, chroma, role }) {
     if (chroma === '420') input = to420(input, inW, inH);
     res.native = native && new Uint8Array(native);
     res.input = new Uint8Array(input);
+    // SDR with a native frame only: the host takes no zones in HDR
+    if (native) res.zones = await hostZones(zoneUrls, native, outW, outH, inW, inH);
   } else {
     const at = (W, H) => encodeHdr(own(W, H) ? pic.planes : reduceHdr(pic.planes, w, h, W, H), W * H);
     native = at(outW, outH);

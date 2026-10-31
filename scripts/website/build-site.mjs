@@ -377,6 +377,29 @@ outputs.set(
   // MWSR itself (MIT) and NIS's filter banks, copied as they are.
   for (const f of ['MwsrShader.js', 'NisTables.js'])
     outputs.set(path.join(SITE, 'mwsr', f), read('frontend/js/stream/renderers/' + f));
+  // The native host's zone tree, for the page's MWSR zones (zones.js): the
+  // table of backend/native-host/src/convert/MwsrZoneTree.h, row for row.
+  const treeSrc = read('backend/native-host/src/convert/MwsrZoneTree.h');
+  const treeAt = treeSrc.indexOf('TreeNode kTree[');
+  if (treeAt < 0) throw new Error('kTree not found in MwsrZoneTree.h');
+  const treeLen = Number(treeSrc.slice(treeAt).match(/kTree\[(\d+)\]/)[1]);
+  const treeRows = [
+    ...treeSrc
+      .slice(treeAt, treeSrc.indexOf('};', treeAt))
+      .matchAll(/\{(-?\d+), ([-0-9.eE+]+), (-?\d+), (-?\d+), (-?\d+)\}/g),
+  ].map((m) => m.slice(1).map(Number));
+  if (treeRows.length !== treeLen) throw new Error(`kTree: ${treeRows.length} rows read of ${treeLen}`);
+  outputs.set(
+    path.join(SITE, 'mwsr', 'zonetree.js'),
+    '/*\n' +
+      ' * Written by scripts/website/build-site.mjs — do not edit by hand.\n' +
+      ' *\n' +
+      " * The native host's zone tree (backend/native-host/src/convert/MwsrZoneTree.h,\n" +
+      ' * GPL-3.0-or-later): [feature, threshold, left, right, code] per node, a leaf\n' +
+      ' * with feature -1. Walked by zones.js as MwsrZones.h walks it.\n' +
+      ' */\n' +
+      `export const ZONE_TREE = ${JSON.stringify(treeRows)};\n`,
+  );
 }
 
 /* ── Write or check ────────────────────────────────────────────────────── */

@@ -229,6 +229,10 @@
       <a href="https://github.com/linckosz/moonlight-web/tree/main/mwsr" target="_blank" rel="noopener">mwsr folder</a>
       gives it to any renderer under the MIT License: WGSL, GLSL ES 3.00 and HLSL texts, and a C++ header for
       Direct3D 11 and 12, all written from the module the client runs.</p>
+    <p><strong>MWSR zones</strong> is MoonlightWeb's own, for its native host. The host measures each zone of the frame
+      it captures (a 32×18 grid) and MWSR lowers its sharpness where a zone wants less, never above its law; a zone
+      beside one at the law keeps the law, so text next to a photo stays crisp. This page measures the native frame as
+      the host does. It is not in the mwsr folder: the MWSR anyone downloads draws by the law, the MWSR line above.</p>
     <h3>Measured on three GPUs</h3>
     <p class="small">The README's figures (28/10/2026, the Radeon 780M on 30/10/2026), in Chrome's WebGPU on Windows 11
       (on Ubuntu for the Radeon 780M), the input already in an 8-bit texture, on the 0 A.D. picture (game) and the text
@@ -345,6 +349,8 @@
         data-worker="/mwsr/worker.js?v={{(fileStat `/mwsr/worker.js`).ModTime.Unix}}"
         data-kernels="/mwsr/kernels.js?v={{(fileStat `/mwsr/kernels.js`).ModTime.Unix}}"
         data-mwsr="/mwsr/MwsrShader.js?v={{(fileStat `/mwsr/MwsrShader.js`).ModTime.Unix}}"
-        data-nis="/mwsr/NisTables.js?v={{(fileStat `/mwsr/NisTables.js`).ModTime.Unix}}"></script>
+        data-nis="/mwsr/NisTables.js?v={{(fileStat `/mwsr/NisTables.js`).ModTime.Unix}}"
+        data-zones="/mwsr/zones.js?v={{(fileStat `/mwsr/zones.js`).ModTime.Unix}}"
+        data-zonetree="/mwsr/zonetree.js?v={{(fileStat `/mwsr/zonetree.js`).ModTime.Unix}}"></script>
 </body>
 </html>

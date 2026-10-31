@@ -90,6 +90,8 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 /** The upscalers, in the order of the page. `wrap`: runs inside the reversible tone map on HDR. */
 export const KERNELS = [
   { id: 'mwsr', name: 'MWSR', half: true },
+  // MoonlightWeb's own: MWSR reading its native host's zones (zones.js); the law where there are none
+  { id: 'mwsrz', name: 'MWSR zones', half: true },
   { id: 'fsr1', name: 'FSR1', half: true, wrap: true },
   { id: 'nis', name: 'NIS', half: false, wrap: true },
   { id: 'sgsr1', name: 'SGSR1', half: true, wrap: true },
@@ -141,6 +143,13 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     { texture: { sampleType: 'float' } },
     { texture: { sampleType: 'unfilterable-float' } },
     { buffer: {} },
+  ]);
+  // MWSR's second text: the zones' r16float texture at binding 3, read bilinearly
+  const plMap = layout([
+    { sampler: {} },
+    { texture: { sampleType: 'float' } },
+    { buffer: {} },
+    { texture: { sampleType: 'float' } },
   ]);
   const plView = layout([
     { texture: { sampleType: 'unfilterable-float' } },
@@ -202,8 +211,9 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     return t;
   };
 
-  /** Uploads a case: `native` may be null (a picture taken as the input). */
-  function setCase({ outW, outH, inW, inH, hdr, native, input }) {
+  /** Uploads a case: `native` may be null (a picture taken as the input); `zones`, the native host's
+   *  codes (zones.js), only where its client would read them. */
+  function setCase({ outW, outH, inW, inH, hdr, native, input, zones = null }) {
     for (const t of owned.splice(0)) t.destroy();
     // MWSR's mode as the client picks it, its reduction below 1:1; at 1:1,
     // where the client copies, its kernel all the same, as every other one
@@ -257,7 +267,18 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
         ),
         mwsr: ubo(mwsrUniforms(inW, inH, outW, outH, {})),
       },
+      zoneView: null,
     };
+    if (zones && reg.mode === 'up') {
+      const z = tex(zones.cols, zones.rows, 'r16float', T.TEXTURE_BINDING | T.COPY_DST);
+      device.queue.writeTexture(
+        { texture: z },
+        zones.texels,
+        { bytesPerRow: zones.cols * 2 },
+        { width: zones.cols, height: zones.rows },
+      );
+      C.zoneView = z.createView();
+    }
     if (hdr) {
       // the input in the tone map, once for the three that run inside it
       const pl = pipeline('srtm', SRTM(false), format, plOne);
@@ -276,6 +297,20 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     const sv = src.createView();
     const dv = dst.createView();
     switch (id) {
+      case 'mwsrz': {
+        // without zones (a reduction, under x1.3, HDR, no native frame), the law: MWSR's own passes
+        if (!C.zoneView) return passes('mwsr', half, { c444 }, src, dst);
+        const constants = c444 ? { CHROMA444: 1 } : {};
+        const pl = pipeline(
+          'mwsrz' + (half ? 'h' : '') + (c444 ? '444' : ''),
+          mwsrWgsl({ feed: 'tex', half, mode: 'up', map: true }),
+          f,
+          plMap,
+          ['vs', 'fs'],
+          constants,
+        );
+        return [{ pipeline: pl, group: bind(pl, [sampler, sv, { buffer: C.u.mwsr }, C.zoneView]), view: dv }];
+      }
       case 'mwsr': {
         const r = C.reg;
         if (r.mode === 'down') {
@@ -535,7 +570,9 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     hasTs,
     hasF16,
     /** Whether `id` has a 16-bit text for this case (MWSR's reduction has none). */
-    halfOf: (id) => hasF16 && KERNELS.find((k) => k.id === id).half && !(id === 'mwsr' && C.reg.mode === 'down'),
+    halfOf: (id) =>
+      hasF16 && KERNELS.find((k) => k.id === id).half && !(id.startsWith('mwsr') && C.reg.mode === 'down'),
+    hasZones: () => !!(C && C.zoneView),
     /** MWSR's mode for this case: 'up' or 'down'. */
     mwsrMode: () => C && C.reg.mode,
     setCase,

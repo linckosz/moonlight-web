@@ -61,6 +61,7 @@ const NAMES = {
   native: 'Native',
   input: 'Input',
   mwsr: 'MWSR',
+  mwsrz: 'MWSR zones',
   fsr1: 'FSR1',
   nis: 'NIS',
   sgsr1: 'SGSR1',
@@ -71,6 +72,10 @@ const NOTES = {
   input: 'what the upscalers read, each texel enlarged',
   nis: "MoonlightWeb's per-fragment port",
 };
+// MWSR zones: MoonlightWeb's own, not in the MWSR anyone downloads (that one is the law, MWSR above)
+const ZONES_ONLY =
+  "MoonlightWeb only: its native host measures each zone of the native frame and lowers MWSR's sharpness there; the MWSR anyone downloads is the law, MWSR above";
+const ZONES_NONE = 'the law here: zones from ×1.3 up, in SDR, from a native frame';
 // A reduction scores against the picture reduced by Lanczos-3: no native frame, a reference
 const reducing = () => C && C.outW < C.inW;
 const nameOf = (id) => (id === 'native' && reducing() ? 'Reference' : NAMES[id]);
@@ -212,7 +217,7 @@ async function boot() {
     (engine.hasTs ? ' · GPU timestamps: yes' : ' · GPU timestamps: no (wall time, which includes the submission)');
   for (const sel of [$('a'), $('b')])
     sel.innerHTML = ['native', ...KERNELS.map((k) => k.id)]
-      .map((id) => `<option value="${id}">${NAMES[id]}</option>`)
+      .map((id) => `<option value="${id}">${NAMES[id]}${id === 'mwsrz' ? ' (MoonlightWeb only)' : ''}</option>`)
       .join('');
   syncControls();
   await load();
@@ -360,7 +365,13 @@ async function load() {
   for (const k of Object.keys(R)) delete R[k];
   let c;
   try {
-    c = await call('prepare', { pic, scale: S.scale, chroma: S.chroma, role: S.pic === 'file' ? S.role : 'native' });
+    c = await call('prepare', {
+      pic,
+      scale: S.scale,
+      chroma: S.chroma,
+      role: S.pic === 'file' ? S.role : 'native',
+      zoneUrls: { zones: new URL(ME.dataset.zones, location.href).href, tree: new URL(ME.dataset.zonetree, location.href).href },
+    });
   } catch (e) {
     if (my === token) status('The picture could not be prepared: ' + e.message, 'bad');
     return;
@@ -386,6 +397,7 @@ async function load() {
   // the pixels are on the GPU and in the worker now: keep only whether there is a native frame
   C.native = !!C.native;
   C.input = null;
+  C.zones = null;
   status('Drawing…');
   for (const k of KERNELS) await engine.draw(k.id, { c444: S.c444 });
   if (my !== token) return;
@@ -519,7 +531,7 @@ function line(id) {
   if (id === 'native' || id === 'input') return noteOf(id);
   const r = R[id];
   if (!r) return '…';
-  const bits = [];
+  const bits = id === 'mwsrz' && !engine.hasZones() ? [ZONES_NONE] : [];
   if (r.ssimY != null) bits.push(fid(r.ssimY));
   if (r.overshoot != null) bits.push(pct(r.overshoot) + ' over');
   const t = best(id);
@@ -732,7 +744,9 @@ function renderTable() {
     const star =
       k.id === 'nis'
         ? ' <small title="MoonlightWeb’s per-fragment port of NIS, not NVIDIA’s compute shader">port</small>'
-        : k.id === 'mwsr' && engine.mwsrMode() === 'down'
+        : k.id === 'mwsrz'
+          ? ` <small title="${ZONES_ONLY}${engine.hasZones() ? '' : '. Here ' + ZONES_NONE}">MoonlightWeb</small>`
+          : k.id === 'mwsr' && engine.mwsrMode() === 'down'
           ? ' <small title="MWSR’s reduction, as the client runs it: bilinear samples over each pixel’s footprint, averaged in linear light">reduction</small>'
           : '';
     return `<tr><th scope="row">${k.name}${star}</th><td class="num fid">${f}</td><td class="num">${col}</td><td class="num">${o}</td><td class="num">${time}${gate}</td></tr>`;
