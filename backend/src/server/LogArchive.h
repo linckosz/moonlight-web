@@ -78,6 +78,8 @@ public:
     /// its own kind, and every `…-worker-<pid>.log` is one kind.
     static QString kindOf(const QString& fileName);
     /// The newest non-empty file of each kind among @p files, oldest first.
+    /// Each file's size and date are asked again by its path: a directory
+    /// listing's are stale for a file still open for writing (Windows).
     static QList<QFileInfo> latestPerKind(const QList<QFileInfo>& files);
 
 private:

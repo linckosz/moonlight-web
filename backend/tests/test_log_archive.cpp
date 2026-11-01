@@ -217,6 +217,34 @@ void run_log_archive_tests()
         CHECK(!again.contains("moonlightweb.log"));
     }
 
+    // A log still open for writing, as the client log always is: on Windows
+    // the directory listing says 0 bytes until its writer closes it, and the
+    // archive left it out (issue #48: a Tesla's console, never in the zip).
+    {
+        QTemporaryDir live;
+        CHECK(live.isValid());
+        QFile writer(live.path() + "/moonlightweb-client.log");
+        CHECK(writer.open(QIODevice::WriteOnly | QIODevice::Append));
+        const QByteArray lines = "[Caps] browser {}\n[Life] visibility hidden\n";
+        CHECK_EQ(writer.write(lines), qint64(lines.size()));
+        CHECK(writer.flush()); // written, as the Logger does: no FlushFileBuffers
+        const QList<QFileInfo> picked =
+            LogArchive::latestPerKind(QDir(live.path()).entryInfoList(QDir::Files));
+        CHECK_EQ(picked.size(), qsizetype(1));
+        if (!picked.isEmpty()) CHECK_EQ(picked.first().size(), qint64(lines.size()));
+
+        LogArchive archive;
+        CHECK(archive.start(live.path(), QString(), "about\n", "logs.zip"));
+        QElapsedTimer t;
+        t.start();
+        while (archive.status().state == QLatin1String("running") && t.elapsed() < 10000)
+            QThread::msleep(10);
+        CHECK_EQ(archive.status().state, QString("done"));
+        CHECK_EQ(archive.status().doneBytes, qint64(lines.size()));
+        CHECK(holds(readZip(archive.result()).value("moonlightweb-client.log"), lines));
+        writer.close();
+    }
+
     // The Logger's threshold: DEBUG dropped unless asked for.
     {
         Logger* log = Logger::client();
