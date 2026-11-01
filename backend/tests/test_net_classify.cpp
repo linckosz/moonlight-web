@@ -19,7 +19,7 @@
 
 namespace {
 
-const QStringList kOwnPublic{QStringLiteral("82.67.150.202")};
+const QStringList kOwnPublic{QStringLiteral("198.51.100.10")};
 
 QList<QHostAddress> ownAddresses()
 {
@@ -31,15 +31,15 @@ QList<QHostAddress> ownAddresses()
 
 void testOwnPublicIpv4IsOurNetwork()
 {
-    CHECK(NetClassify::sharesHostNetwork(QStringLiteral("82.67.150.202"), kOwnPublic,
+    CHECK(NetClassify::sharesHostNetwork(QStringLiteral("198.51.100.10"), kOwnPublic,
                                          ownAddresses()));
     // As a dual-stack socket reports it.
-    CHECK(NetClassify::sharesHostNetwork(QStringLiteral("::ffff:82.67.150.202"), kOwnPublic,
+    CHECK(NetClassify::sharesHostNetwork(QStringLiteral("::ffff:198.51.100.10"), kOwnPublic,
                                          ownAddresses()));
     // Either source of the public address will do; an empty one matches nothing.
-    CHECK(NetClassify::sharesHostNetwork(QStringLiteral("82.67.150.202"),
-                                         {QString(), QStringLiteral("82.67.150.202")}, {}));
-    CHECK(!NetClassify::sharesHostNetwork(QStringLiteral("82.67.150.202"), {QString()}, {}));
+    CHECK(NetClassify::sharesHostNetwork(QStringLiteral("198.51.100.10"),
+                                         {QString(), QStringLiteral("198.51.100.10")}, {}));
+    CHECK(!NetClassify::sharesHostNetwork(QStringLiteral("198.51.100.10"), {QString()}, {}));
 }
 
 void testAnotherPublicIpv4IsNot()
