@@ -401,7 +401,11 @@ private:
         spa_data& d = b->buffer->datas[0];
         if (d.data && d.chunk) {
             size_t frames = d.maxsize / sizeof(float);
-#if PW_CHECK_VERSION(0, 3, 49)
+// PW_CHECK_VERSION(0, 3, 49) spelled with pipewire/version.h's plain
+// numbers: a function-like macro in #if is an error to a preprocessor that
+// lacks it, as cppcheck does without PipeWire's headers or in a
+// configuration where it defines the name alone.
+#if defined(PW_MAJOR) && (PW_MAJOR > 0 || PW_MINOR > 3 || (PW_MINOR == 3 && PW_MICRO >= 49))
             // How much the graph wants this cycle; older libraries do not say.
             if (b->requested > 0) frames = std::min<size_t>(frames, b->requested);
 #endif
