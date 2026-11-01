@@ -47,6 +47,8 @@ import {
     noteBoxArtSeen,
 } from '../util/appCache.js';
 import { noteHostUse, forgetHostUse, hostUsageRanker } from '../util/hostUsage.js';
+import { loadCachedHosts, saveCachedHosts } from '../util/hostListCache.js';
+import { bootMark } from '../util/bootTiming.js';
 import * as RemoteNav from './RemoteNav.js';
 import { confirmAction } from './ConfirmDialog.js';
 import { hostUpdate, canSelfUpdate } from './HostUpdate.js';
@@ -114,6 +116,14 @@ export class HostListView {
     constructor(container) {
         this.container = container;
         this.hosts = [];
+        // Which machine this page belongs to (instances.js id), set by the app
+        // before start(): the host list it last answered with is drawn at once
+        // under that name (hostListCache.js). Unset, nothing is remembered.
+        this.memoryKey = '';
+        // The cards on screen came from that memory and the machine has not
+        // answered yet: its first answer replaces them, and drops any host it
+        // no longer has.
+        this._hostsFromMemory = false;
         // What THIS device's seat runs, per host where each device has its own
         // (host.runningAppPerDevice): uuid -> app id, and when it was asked.
         this._deviceRunning = new Map();
@@ -479,10 +489,32 @@ export class HostListView {
         this._active = true;
         // Back on the list, maybe from a stream just stopped: ask again at once.
         this._deviceRunningAt.clear();
+        this._drawRememberedHosts();
         this._autoScan();
         this.scheduleNextPoll(0); // immediate first refresh
         this._checkForUpdate(); // discreet "new version available" banner
         this._scheduleUpdateCheck();
+    }
+
+    /**
+     * Draw the host list this machine sent last time, before it answers now
+     * (hostListCache.js). Only on the page's first sight of the list: once the
+     * machine has answered, what is on screen is already newer than any memory.
+     */
+    _drawRememberedHosts() {
+        if (this._hostsLoaded || this.hosts.length > 0) return;
+        const remembered = loadCachedHosts(this.memoryKey);
+        if (!remembered) return;
+        this.hosts = remembered.map((h) => {
+            const host = new Host(h);
+            // What ran last time is no news about now: no card offers to resume
+            // a game on the strength of a memory.
+            host.currentGameId = 0;
+            return host;
+        });
+        this._hostsFromMemory = true;
+        bootMark('hosts-remembered', `${this.hosts.length} hosts`);
+        this.renderList();
     }
 
     // --- Update banner ---
@@ -701,13 +733,27 @@ export class HostListView {
     async refresh() {
         if (!this._active) return;
         try {
+            const asked = performance.now();
             const data = await BackendClient.getHosts();
             // Re-check after await: stop()/destroy() may have run while the
             // request was in flight (e.g. a stream was launched) — a late
             // render here would overwrite the current view.
             if (!this._active || this._destroyed) return;
             const serverHosts = data.hosts || [];
+            bootMark(
+                'hosts-answered',
+                `${serverHosts.length} hosts, asked ${Math.round(performance.now() - asked)} ms before`,
+            );
             const before = this._fingerprint();
+            // The cards drawn from memory give way to the machine's own list,
+            // and a host it no longer has goes with them — the merge below
+            // never removes anything.
+            if (this._hostsFromMemory) {
+                this._hostsFromMemory = false;
+                const kept = new Set(serverHosts.map((h) => h.uuid));
+                this.hosts = this.hosts.filter((h) => kept.has(h.uuid));
+            }
+            this._rememberHosts(serverHosts);
             // Merge — add/update, never remove
             for (const h of serverHosts) {
                 const host = new Host(h);
@@ -737,6 +783,18 @@ export class HostListView {
             // Show error only on first load; keep existing data on refresh
             if (this.hosts.length === 0) this.renderError(err.message);
         }
+    }
+
+    /**
+     * Keep the list the machine just sent, for the next opening to draw at once.
+     * Written only when it changed: the list is asked every few seconds.
+     */
+    _rememberHosts(serverHosts) {
+        if (!this.memoryKey) return;
+        const json = JSON.stringify(serverHosts);
+        if (json === this._rememberedJson) return;
+        this._rememberedJson = json;
+        saveCachedHosts(this.memoryKey, serverHosts);
     }
 
     /**
@@ -1242,8 +1300,13 @@ export class HostListView {
         const entry = prev && prev.apps ? prev : {};
         this.appsByHost[uuid] = entry;
 
+        const asked = performance.now();
         const pending = BackendClient.getAppList(uuid)
             .then((data) => {
+                bootMark(
+                    'apps-answered',
+                    `asked ${Math.round(performance.now() - asked)} ms before`,
+                );
                 if (data && data.status === 'ok') {
                     const raw = data.apps || [];
                     saveCachedApps(uuid, raw);
@@ -1397,6 +1460,7 @@ export class HostListView {
             cont.innerHTML = `<div class="host-apps-msg">${t('apps.empty')}</div>`;
             return;
         }
+        bootMark('apps-painted', entry.fromCache ? 'remembered' : 'from the host');
         const devices = apps.map((a) => a.device).filter(Boolean);
         const host = this.hosts.find((h) => h.uuid === uuid);
         const runningId = host && host.resumableApps ? host.currentGameId : 0;

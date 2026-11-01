@@ -135,6 +135,7 @@ import { ourStunHost } from './api/IceServers.js';
 import { probeUdp } from './api/UdpProbe.js';
 import { InstanceMenu } from './ui/InstanceMenu.js';
 import { currentInstanceRef, importInstances, rememberInstance } from './util/instances.js';
+import { bootMark } from './util/bootTiming.js';
 
 // Every module above arrived and ran: the boot watchdog (bootWatch.js) stands down.
 window.mwBooted = true;
@@ -239,6 +240,7 @@ export const MoonlightApp = {
 
     async init() {
         console.log('[MW] Initializing MoonlightWeb...');
+        bootMark('init');
 
         // A stored HEVC becomes « Auto » once, before anything reads it
         // (util/CodecAuto.js).
@@ -264,6 +266,7 @@ export const MoonlightApp = {
             // Up: this console can reach the host now, which it could not
             // when util/ClientLog.js first asked (debug mode, `[perf]` lines).
             if (await startTunnel((stage) => SecuringOverlay.stage(stage))) void refreshClientLog();
+            bootMark('tunnel-up');
             // Closes the padlock and lifts the seal on its own schedule. Not
             // awaited: everything below renders behind it, so the moment it
             // holds costs the reveal and not the work.
@@ -349,6 +352,7 @@ export const MoonlightApp = {
 
         // ── Auth check: show login if remote and not authenticated ─────────
         const authOk = await this._checkAuth();
+        bootMark('auth-checked', authOk ? 'signed in' : 'login shown');
         if (!authOk) return; // LoginView handles rendering, stop here
         this._offerHomeScreenHandoff();
 
@@ -854,6 +858,8 @@ export const MoonlightApp = {
 
         this.hostListView = new HostListView(main);
         this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
+        this.hostListView.memoryKey = currentInstanceRef(tunnelHostId()).id;
+        bootMark('host-page');
         this.hostListView.start();
 
         // Tell the user how OTHER PCs reach this server (host machine), and —
