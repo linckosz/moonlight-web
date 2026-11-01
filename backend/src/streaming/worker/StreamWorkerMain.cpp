@@ -20,6 +20,7 @@
 #include "../Session.h"
 #include "../InputMessageCodec.h"
 #include "../../server/AppSettings.h"
+#include "mw/native/AudioAppFilter.h"
 #include "mw/native/FeedArbiter.h"
 #include "mw/native/NativeHost.h"
 #include "CoopSessionResolver.h"
@@ -42,6 +43,7 @@
 #include "../../backend/IdentityManager.h"
 #include "../../common/Types.h"
 #include "../../common/RunFlags.h"
+#include "../../common/AudioExcludeShm.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -288,6 +290,45 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
 /// for every guest of this native host, and publishes each frame on a local
 /// pipe their workers subscribe to. No session, no relay, no signaling: the
 /// engine and the pipe, and the server's commands on stdin.
+/// The apps kept out of this stream's sound (AudioAppFilter): the list the
+/// server handed over at start, then whatever it publishes while the stream
+/// runs (AudioExcludeShm), so a box ticked mid-stream applies within half a
+/// second. Set BEFORE the session starts: the capture must never open on the
+/// whole mix when apps are meant to be left out.
+void watchAudioExclusions(const QJsonArray& initial)
+{
+    std::vector<std::string> names;
+    for (const QJsonValue& v : initial)
+        names.push_back(v.toString().toStdString());
+    QStringList published;
+    quint32 sequence = 0;
+    const bool fromServer = AudioExcludeShm::read(&published, &sequence);
+    if (fromServer) {
+        names.clear();
+        for (const QString& n : published)
+            names.push_back(n.toStdString());
+    }
+    mw::native::AudioAppFilter::set(names);
+    qInfo() << "[StreamWorker] audio:" << names.size() << "app(s) excluded"
+            << (fromServer ? "(live list)" : "(start list)");
+
+    auto* timer = new QTimer(qApp);
+    timer->setInterval(500);
+    auto last = std::make_shared<quint32>(fromServer ? sequence : ~quint32(0));
+    QObject::connect(timer, &QTimer::timeout, qApp, [last]() {
+        QStringList list;
+        quint32 seq = 0;
+        if (!AudioExcludeShm::read(&list, &seq) || seq == *last) return;
+        *last = seq;
+        std::vector<std::string> v;
+        for (const QString& n : list)
+            v.push_back(n.toStdString());
+        mw::native::AudioAppFilter::set(v);
+        qInfo() << "[StreamWorker] audio: exclusions now" << list.join(QStringLiteral(", "));
+    });
+    timer->start();
+}
+
 int runFeedWorker(const QJsonObject& cfg)
 {
     const int appId = cfg["appId"].toInt();
@@ -632,6 +673,8 @@ int runStreamWorker(QCoreApplication& app)
     session->setDebugIceDropUdp(cfg["debugIceDropUdp"].toBool(false));
     session->setLowAudio(cfg["lowAudio"].toBool());
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));
+    // Absent (an older parent) → nothing excluded, the whole mix as before.
+    watchAudioExclusions(cfg["audioExcludedApps"].toArray());
     // Absent (an older parent, a guest) → no microphone.
     session->setMicRequested(cfg["mic"].toBool(false));
     session->setMicDevice(cfg["micDevice"].toString());

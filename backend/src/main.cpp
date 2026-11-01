@@ -116,6 +116,7 @@
 #include "streaming/SharedFeed.h"
 #include "streaming/StreamEnds.h"
 #include "streaming/StreamWorkerHost.h"
+#include "common/AudioExcludeShm.h"
 #include "streaming/WorkerService.h"
 #include "streaming/worker/StreamWorkerMain.h"
 #include "server/HostAppImage.h"
@@ -2151,6 +2152,10 @@ int main(int argc, char* argv[])
         Logger::info("OpenSSL initialized");
     }
 
+    // The apps kept out of the stream's sound, where every stream worker can
+    // read them — including a SYSTEM one, which cannot open settings.json.
+    AudioExcludeShm::publish(appSettings.audioExcludedApps());
+
     // Read remaining persistent settings
     quint16 httpsPort = appSettings.httpsPort(devMode ? kDevHttpsPort : 443);
     VideoCodec preferredCodec = appSettings.videoCodec();
@@ -3945,6 +3950,9 @@ int main(int argc, char* argv[])
             cfg["iceTcp"] = enableIceTcp;
             cfg["lowAudio"] = reqLowAudio;
             cfg["muteHostAudio"] = reqMuteHost;
+            // The apps kept out of the stream's sound; the worker then follows
+            // the live list (AudioExcludeShm) for changes made mid-stream.
+            cfg["audioExcludedApps"] = QJsonArray::fromStringList(appSettings.audioExcludedApps());
             // The viewer's microphone; the device it plays into travels with
             // the other settings a SYSTEM worker cannot read (StreamWorkerHost).
             cfg["mic"] = reqMic;
@@ -5637,6 +5645,8 @@ int main(int argc, char* argv[])
         cfg["iceTcp"] = mode.endsWith(QStringLiteral("-tcp"));
         cfg["lowAudio"] = false;
         cfg["muteHostAudio"] = false;
+        // A guest hears what the owner's stream would: the same apps left out.
+        cfg["audioExcludedApps"] = QJsonArray::fromStringList(appSettings.audioExcludedApps());
         // The guest's browser decodes through a gap, as the owner's /start
         // says it (ride_out_loss): a native host then refreshes their stream
         // in a wave, and a lost frame costs no keyframe. The shared feed sets

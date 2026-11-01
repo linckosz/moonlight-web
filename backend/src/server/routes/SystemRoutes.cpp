@@ -20,6 +20,8 @@
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "server/AppSettings.h"
+#include "server/AudioSources.h"
+#include "common/AudioExcludeShm.h"
 #include "common/DetachedProcess.h"
 #include "server/AuthManager.h"
 #include "server/Provisioning.h"
@@ -1359,6 +1361,45 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // Debug mode (--debug, or its box in the admin page) shows the same
         // options on any build.
         obj["debug_mode"] = mw::run::debug();
+        return HttpResponse::json(obj);
+    });
+
+    // — Apps kept out of the stream's sound (per-app capture) —
+    //
+    // GET lists what plays on this PC, with icons, and which apps are left out;
+    // POST {"excluded": ["chrome.exe", …]} replaces the list. Like the other
+    // streaming settings, only the host itself may change it — a viewer sees
+    // the list read-only (can_edit). Saved, then published to every running
+    // stream worker (AudioExcludeShm): applied mid-stream, no restart.
+    server.router()->get("/api/audio-sources", [&appSettings](const HttpRequest& req) {
+        QJsonObject obj = AudioSources::list(appSettings.audioExcludedApps());
+        obj["can_edit"] = req.isLocal;
+        return HttpResponse::json(obj);
+    });
+
+    server.router()->post("/api/audio-sources", [&appSettings](const HttpRequest& req) {
+        if (!req.isLocal)
+            return HttpResponse::error(403, "Audio sources can only be changed from the host PC");
+        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        if (!body.value("excluded").isArray())
+            return HttpResponse::error(400, "\"excluded\" must be an array of executable names");
+        QStringList names;
+        for (const QJsonValue& v : body.value("excluded").toArray()) {
+            const QString name = v.toString().trimmed().toLower();
+            // A file name, nothing more: it only ever matches a process's own.
+            if (name.isEmpty() || name.size() > 260 || name.contains(QLatin1Char('/')) ||
+                name.contains(QLatin1Char('\\')) || name.contains(QLatin1Char('\n')))
+                continue;
+            if (!names.contains(name)) names.append(name);
+            if (names.size() >= 64) break;
+        }
+        appSettings.setAudioExcludedApps(names);
+        AudioExcludeShm::publish(names);
+        Logger::info(QStringLiteral("[audio] Apps excluded from the stream: %1")
+                         .arg(names.isEmpty() ? QStringLiteral("(none)")
+                                              : names.join(QStringLiteral(", "))));
+        QJsonObject obj = AudioSources::list(names);
+        obj["can_edit"] = true;
         return HttpResponse::json(obj);
     });
 

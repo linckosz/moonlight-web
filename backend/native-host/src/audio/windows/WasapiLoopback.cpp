@@ -17,7 +17,10 @@
 
 #include "WasapiLoopback.h"
 
+#include "AppAudioCapture.h"
+
 #include "../../core/Log.h"
+#include "mw/native/AudioAppFilter.h"
 #include "../AudioPacer.h"
 #include "../OpusEncoder.h"
 
@@ -40,6 +43,7 @@
 #include <cstring>
 #include <exception>
 #include <future>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -326,6 +330,13 @@ void WasapiLoopback::runLoop()
     int64_t lastReportUs = steadyNowUs();
     int64_t reportedDropped = 0, reportedUnderruns = 0;
     bool deviceLost = false;
+    // With apps excluded (AudioAppFilter), the whole-mix client gives way to
+    // one client per app that may be heard (AppAudioCapture). Checked every
+    // tick against the filter's generation, so a box ticked mid-stream takes
+    // effect within one scan; never both at once, so an excluded app cannot
+    // leak through the whole mix while the per-app clients come up.
+    uint64_t filterGeneration = ~uint64_t(0);
+    std::unique_ptr<AppAudioCapture> apps;
 
     while (m_Running.load(std::memory_order_acquire)) {
         // Wake on the endpoint's data, or on the 5 ms tick, whichever first.
@@ -342,7 +353,34 @@ void WasapiLoopback::runLoop()
 
         const int64_t now = steadyNowUs();
 
-        if (device && !device->drain(pacer)) {
+        const uint64_t generation = AudioAppFilter::generation();
+        if (generation != filterGeneration) {
+            filterGeneration = generation;
+            const std::vector<std::string> excluded = AudioAppFilter::get();
+            if (!excluded.empty() && !apps) {
+                device.reset();
+                deviceLost = false;
+                apps = std::make_unique<AppAudioCapture>();
+                std::string names;
+                for (const auto& e : excluded)
+                    names += (names.empty() ? "" : ", ") + e;
+                log::info("[native] audio: per-app capture, excluding " + names);
+            } else if (excluded.empty() && apps) {
+                apps.reset();
+                lastReopenAttemptUs = 0; // reopen the whole mix below, now
+                log::info("[native] audio: no app excluded — back to the whole mix");
+            } else if (apps) {
+                std::string names;
+                for (const auto& e : excluded)
+                    names += (names.empty() ? "" : ", ") + e;
+                log::info("[native] audio: exclusions now " + names);
+                apps->wake();
+            }
+        }
+
+        if (apps) apps->pump(pacer, now);
+
+        if (!apps && device && !device->drain(pacer)) {
             // The endpoint went away — unplugged, or the user picked another
             // default output. Reopen on whatever is the default now; the
             // pacer keeps the wire fed with silence meanwhile.
@@ -351,7 +389,7 @@ void WasapiLoopback::runLoop()
             deviceLost = true;
             lastReopenAttemptUs = now;
         }
-        if (!device && now - lastReopenAttemptUs >= 1'000'000) {
+        if (!apps && !device && now - lastReopenAttemptUs >= 1'000'000) {
             lastReopenAttemptUs = now;
             auto fresh = std::make_unique<LoopbackDevice>();
             std::string reopenError;
@@ -429,6 +467,7 @@ void WasapiLoopback::runLoop()
 
     if (timer) CloseHandle(timer);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+    apps.reset();
     device.reset();
     if (coOwned) CoUninitialize();
 }

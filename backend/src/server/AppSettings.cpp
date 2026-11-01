@@ -596,6 +596,34 @@ void AppSettings::setMuteHostAudio(bool enabled)
     writeAll(obj);
 }
 
+// ── Apps kept out of the stream's sound ───────────────────────────────────────
+
+QStringList AppSettings::audioExcludedApps() const
+{
+    QStringList out;
+    const QJsonArray arr = readAll().value("audio_excluded_apps").toArray();
+    for (const QJsonValue& v : arr) {
+        const QString name = v.toString().trimmed().toLower();
+        if (!name.isEmpty() && !out.contains(name)) out.append(name);
+    }
+    return out;
+}
+
+void AppSettings::setAudioExcludedApps(const QStringList& exeNames)
+{
+    QJsonArray arr;
+    QStringList seen;
+    for (const QString& raw : exeNames) {
+        const QString name = raw.trimmed().toLower();
+        if (name.isEmpty() || seen.contains(name)) continue;
+        seen.append(name);
+        arr.append(name);
+    }
+    QJsonObject obj = readAll();
+    obj["audio_excluded_apps"] = arr;
+    writeAll(obj);
+}
+
 // ── Streaming notifications ────────────────────────────────────────────────────
 
 bool AppSettings::streamNotifications() const

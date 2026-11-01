@@ -302,6 +302,7 @@ add_executable(mw-server
     src/server/LauncherDetect.cpp
     src/server/routes/ShareRoutes.cpp
     src/server/routes/SystemRoutes.cpp
+    src/server/AudioSources.cpp
     src/server/routes/LogRoutes.cpp
     src/server/LogArchive.cpp
     src/server/LogScrubber.cpp
@@ -311,6 +312,7 @@ add_executable(mw-server
     src/common/CrashHandler.cpp
     src/common/DesktopSession.cpp
     src/common/Edition.cpp
+    src/common/AudioExcludeShm.cpp
     src/common/LinuxCapabilities.cpp
     src/common/RendezvousId.cpp
     src/common/InheritedEnvironment.cpp
@@ -628,7 +630,10 @@ if(WIN32)
     # wintrust: the update installer's Authenticode check (UpdateApply.cpp).
     target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi Dbghelp avrt
                                             wtsapi32 userenv taskschd ole32 oleaut32
-                                            setupapi newdev cfgmgr32 advapi32 shell32 wintrust)
+                                            setupapi newdev cfgmgr32 advapi32 shell32 wintrust
+                                            # version: the apps' names on the audio page
+                                            # (AudioSources.cpp, GetFileVersionInfo).
+                                            version)
     # OpenSSL is linked dynamically (import libs) — ship the DLLs next to the exe.
     file(GLOB _mw_ssl_dlls "${_mw_ssl}/lib/${_mw_ssl_arch}/*-3-${_mw_ssl_arch}.dll")
     foreach(_dll ${_mw_ssl_dlls})

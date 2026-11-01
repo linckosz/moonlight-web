@@ -335,6 +335,16 @@ public:
     bool muteHostAudio() const;
     void setMuteHostAudio(bool enabled);
 
+    // ── Apps kept out of the stream's sound ──────────────────────────────────
+    //
+    // Executable names ("chrome.exe", "discord.exe") whose audio the native
+    // host leaves out of the stream (per-app capture, Windows 11). Stored as the
+    // JSON array "audio_excluded_apps", lower case, default empty — the whole
+    // mix, as before. The host's speakers are not affected.
+
+    QStringList audioExcludedApps() const;
+    void setAudioExcludedApps(const QStringList& exeNames);
+
     // ── Streaming notifications (tray) ────────────────────────────────────────
     //
     // Whether the desktop gets a notification when someone starts — or stops —

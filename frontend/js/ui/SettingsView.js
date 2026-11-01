@@ -160,6 +160,15 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
+        // Apps kept out of the stream's sound (GET /api/audio-sources): null
+        // until the first answer, then repainted in place — never through a
+        // full render(), so a click on one row does not scroll the page.
+        /** @type {null | {supported: boolean, reason?: string, can_edit: boolean,
+         *   sources: Array<{exe: string, name: string, icon: string, running: boolean,
+         *   playing: boolean, excluded: boolean}>}} */
+        this._audioSources = null;
+        this._audioSourcesError = false;
+        this._audioSourcesBusy = false;
         // Send this device's microphone to the host (off by default): opened
         // only once the host said it can take it (audio/MicUplink.js), and how
         // it sounds (MIC_QUALITY: voice cleanup, or none at a higher bitrate).
@@ -1879,6 +1888,8 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.muteHostDesc')}</span>
                     </div>
 
+                    ${this._audioSourcesFieldHtml()}
+
                     <div class="settings-field${micSupported() ? '' : ' settings-field-locked'}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-mic-enabled"
@@ -2192,7 +2203,127 @@ export class SettingsView {
         if (grid) grid.outerHTML = shortcutsGridHtml(opts);
     }
 
+    // ── Apps kept out of the stream's sound ─────────────────────────────────
+
+    /** The field around the list; the list itself is _audioSourcesListHtml(). */
+    _audioSourcesFieldHtml() {
+        return `
+                    <div class="settings-field" id="settings-audio-sources-field">
+                        <div class="audio-sources-head">
+                            <span class="settings-label">${t('settings.audioSources')}</span>
+                            <button type="button" class="audio-sources-refresh"
+                                    id="settings-audio-sources-refresh">
+                                ${t('settings.audioSourcesRefresh')}
+                            </button>
+                        </div>
+                        <span class="setting-desc">${t('settings.audioSourcesDesc')}</span>
+                        <div class="audio-sources" id="settings-audio-sources">
+                            ${this._audioSourcesListHtml()}
+                        </div>
+                    </div>`;
+    }
+
+    _audioSourcesListHtml() {
+        const data = this._audioSources;
+        if (this._audioSourcesError && !data)
+            return `<p class="audio-sources-note">${t('settings.audioSourcesError')}</p>`;
+        if (!data) return `<p class="audio-sources-note">${t('settings.audioSourcesLoading')}</p>`;
+        if (!data.supported)
+            return `<p class="audio-sources-note">${escapeHtml(data.reason || '')}</p>`;
+
+        const sources = [...(data.sources || [])].sort(
+            (a, b) =>
+                Number(b.playing) - Number(a.playing) ||
+                Number(b.running) - Number(a.running) ||
+                a.name.localeCompare(b.name),
+        );
+        const locked = !data.can_edit || this._audioSourcesBusy;
+        const rows = sources
+            .map((src) => {
+                const status = src.playing
+                    ? t('settings.audioSourcesPlaying')
+                    : src.running
+                      ? t('settings.audioSourcesIdle')
+                      : t('settings.audioSourcesNotRunning');
+                // The icon is a data: URL the host made from the app's own file;
+                // anything else is not shown.
+                const icon =
+                    typeof src.icon === 'string' && src.icon.startsWith('data:image/png;base64,')
+                        ? `<img class="audio-source-icon" src="${escapeHtml(src.icon)}" alt="" />`
+                        : `<span class="audio-source-icon audio-source-icon--blank"></span>`;
+                return `
+                        <label class="audio-source${src.excluded ? ' is-excluded' : ''}${
+                            src.playing ? ' is-playing' : ''
+                        }" title="${escapeHtml(src.exe)}">
+                            ${icon}
+                            <span class="audio-source-text">
+                                <span class="audio-source-name">${escapeHtml(src.name)}</span>
+                                <span class="audio-source-status">${escapeHtml(status)}</span>
+                            </span>
+                            <span class="audio-source-mute">${t('settings.audioSourcesMute')}</span>
+                            <input type="checkbox" class="audio-source-check"
+                                data-exe="${escapeHtml(src.exe)}"
+                                ${src.excluded ? 'checked' : ''} ${locked ? 'disabled' : ''} />
+                        </label>`;
+            })
+            .join('');
+        const empty = sources.length
+            ? ''
+            : `<p class="audio-sources-note">${t('settings.audioSourcesEmpty')}</p>`;
+        const readOnly = data.can_edit
+            ? ''
+            : `<p class="audio-sources-note">${t('settings.audioSourcesReadOnly')}</p>`;
+        const systemNote = sources.some((src) => src.excluded)
+            ? `<p class="audio-sources-note">${t('settings.audioSourcesSilentNote')}</p>`
+            : '';
+        return rows + empty + readOnly + systemNote;
+    }
+
+    _repaintAudioSources() {
+        const list = this.container.querySelector('#settings-audio-sources');
+        if (list) list.innerHTML = this._audioSourcesListHtml();
+    }
+
+    async _loadAudioSources() {
+        try {
+            this._audioSources = await BackendClient.getAudioSources();
+            this._audioSourcesError = false;
+        } catch {
+            this._audioSourcesError = true;
+        }
+        this._repaintAudioSources();
+    }
+
+    _bindAudioSources() {
+        const list = this.container.querySelector('#settings-audio-sources');
+        if (!list) return;
+        if (!this._audioSources) this._loadAudioSources();
+
+        const refresh = this.container.querySelector('#settings-audio-sources-refresh');
+        if (refresh) refresh.addEventListener('click', () => this._loadAudioSources());
+
+        list.addEventListener('change', async (e) => {
+            const box = /** @type {HTMLInputElement} */ (e.target);
+            if (!box.classList?.contains('audio-source-check') || !this._audioSources) return;
+            const exe = box.dataset.exe || '';
+            const excluded = this._audioSources.sources
+                .filter((src) => (src.exe === exe ? box.checked : src.excluded))
+                .map((src) => src.exe);
+            this._audioSourcesBusy = true;
+            this._repaintAudioSources();
+            try {
+                this._audioSources = await BackendClient.setAudioExcluded(excluded);
+            } catch {
+                Toast.error(t('settings.audioSourcesSaveFailed'));
+            }
+            this._audioSourcesBusy = false;
+            this._repaintAudioSources();
+        });
+    }
+
     bindEvents() {
+        this._bindAudioSources();
+
         // Update: the section's body is repainted as the run goes, so the
         // button is reached through its section rather than bound itself.
         const updateSection = this.container.querySelector('#settings-section-update');

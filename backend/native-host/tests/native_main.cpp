@@ -99,6 +99,7 @@ void run_reference_slots_tests();
 void run_intra_refresh_sweep_tests();
 void run_audio_pacer_tests();
 void run_audio_interleave_tests();
+void run_audio_app_filter_tests();
 void run_cursor_blend_tests();
 void run_frame_fit_tests();
 void run_painted_pointer_tests();
@@ -197,6 +198,7 @@ int main(int argc, char** argv)
     RUN(intra_refresh_sweep);
     RUN(audio_pacer);
     RUN(audio_interleave);
+    RUN(audio_app_filter);
     RUN(cursor_blend);
     RUN(frame_fit);
     RUN(painted_pointer);
