@@ -97,6 +97,8 @@ From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (7
 **FPS** (15–240), **codec** (auto / H.264 / HEVC / AV1 / **PyroWave (Wired LAN only)**, unsupported options greyed out),\
 **HDR**, **4:4:4 chroma**, **Mouse Gaming Mode** (pointer‑lock), perf stats and aspect ratio.
 
+**Settings → Stream audio by app** (Windows 11 host) lists every app playing sound on the PC, with its icon, and a **Mute in stream** box for each: Discord, a browser or a music player stay audible on the host and out of the stream, while any game you launch is still heard. A box ticked mid‑stream applies within a second. Per‑process loopback, one client per app that may be heard: an app with an excluded one running under it is left out rather than letting it leak, and system sounds are left out while any app is muted.
+
 **Settings → Start streams in fullscreen** (off by default) opens every stream in fullscreen. On an iPhone, Safari keeps its bars and the stream fills the page; added to the Home Screen, MoonlightWeb is fullscreen anyway.
 
 <div align="center">
