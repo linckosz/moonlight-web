@@ -25,7 +25,7 @@ void testUdpCandidatesAreRecognised()
     // libjuice's own lines, and Chrome's.
     CHECK(mw::ice::isUdpCandidate("candidate:1 1 UDP 2122317823 192.168.1.66 48552 typ host"));
     CHECK(mw::ice::isUdpCandidate(
-        "candidate:3 1 udp 1686052607 78.241.142.129 61234 typ srflx raddr 0.0.0.0 rport 0"));
+        "candidate:3 1 udp 1686052607 198.51.100.129 61234 typ srflx raddr 0.0.0.0 rport 0"));
     CHECK(mw::ice::isUdpCandidate(
         "a=candidate:842163049 1 udp 2122260223 c0a8a9e2-1f3e.local 53172 typ host\r\n"));
     CHECK(mw::ice::isUdpCandidate("candidate:9 1 Udp 1 10.0.0.1 9 typ host"));

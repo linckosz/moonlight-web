@@ -24,7 +24,7 @@ const QStringList kOwnPublic{QStringLiteral("198.51.100.10")};
 QList<QHostAddress> ownAddresses()
 {
     return {QHostAddress(QStringLiteral("192.168.1.66")),
-            QHostAddress(QStringLiteral("2a01:e0a:ac9:df50:2242:b0cb:4184:4389")),
+            QHostAddress(QStringLiteral("2001:db8:abc:de50:aaaa:bbbb:cccc:0001")),
             QHostAddress(QStringLiteral("fd7a:115c:a1e0::c036:292d")),
             QHostAddress(QStringLiteral("fe80::1"))};
 }
@@ -50,11 +50,11 @@ void testAnotherPublicIpv4IsNot()
 
 void testSameIpv6PrefixIsOurNetwork()
 {
-    // The Mac's temporary address of 14:39, in the host's /64.
-    CHECK(NetClassify::sharesHostNetwork(QStringLiteral("2a01:e0a:ac9:df50:adf6:ad3e:98e2:4ae5"),
+    // A temporary address, in the host's /64.
+    CHECK(NetClassify::sharesHostNetwork(QStringLiteral("2001:db8:abc:de50:aaaa:bbbb:cccc:0002"),
                                          kOwnPublic, ownAddresses()));
     // Same /56, another /64: another link, maybe another subscriber.
-    CHECK(!NetClassify::sharesHostNetwork(QStringLiteral("2a01:e0a:ac9:df51::1"), kOwnPublic,
+    CHECK(!NetClassify::sharesHostNetwork(QStringLiteral("2001:db8:abc:de51::1"), kOwnPublic,
                                           ownAddresses()));
 }
 
