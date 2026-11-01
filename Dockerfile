@@ -96,7 +96,7 @@ RUN cmake -S backend -B /tmp/build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DMW_VERSION="${MW_VERSION}" \
  && cmake --build /tmp/build -j "$(nproc)" \
- && cmake --install /tmp/build --prefix /stage \
+ && cmake --install /tmp/build --prefix /stage --component app \
  && rm -rf /tmp/build
 
 # ── Runtime ──────────────────────────────────────────────────────────────────

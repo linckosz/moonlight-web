@@ -239,7 +239,7 @@ jobs:
           if-no-files-found: error
 
       - name: Stage bundle
-        run: cmake --install build --prefix dist
+        run: cmake --install build --prefix dist --component app
 
       - name: Deploy Qt runtime
         run: windeployqt --release dist/${{ needs.setup.outputs.app }}.exe
@@ -585,7 +585,7 @@ jobs:
           APP: ${{ needs.setup.outputs.app }}
           EDITION: ${{ needs.setup.outputs.edition }}
         run: |
-          cmake --install build --prefix stage
+          cmake --install build --prefix stage --component app
           mkdir -p AppDir/usr/bin
           cp "build/$APP" build/moonlightweb-launch AppDir/usr/bin/
           cp -r stage/frontend AppDir/usr/bin/frontend
@@ -819,7 +819,7 @@ jobs:
           # backend falls back to ../Resources/frontend at runtime. `cmake
           # --install` applies the frontend excludes (node_modules, tests,
           # .claude — the dev files that also trip codesign).
-          cmake --install build --prefix stage
+          cmake --install build --prefix stage --component app
           cp -r stage/frontend "$APP/Contents/Resources/frontend"
 
           # App icon: Finder/Dock ignore the bundle without a real .icns, so
