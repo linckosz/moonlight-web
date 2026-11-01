@@ -1602,6 +1602,37 @@ begin
   end;
 end;
 
+// The rights Program Files gives, on a folder chosen outside it: the elevated
+// tasks run our exe from {app} and count on only administrators writing there.
+function InstallDirUnderProgramFiles(): Boolean;
+var
+  dir: String;
+begin
+  dir := Lowercase(ExpandConstant('{app}')) + '\';
+  Result := Pos(Lowercase(ExpandConstant('{commonpf32}')) + '\', dir) = 1;
+  if (not Result) and IsWin64 then
+    Result := Pos(Lowercase(ExpandConstant('{commonpf64}')) + '\', dir) = 1;
+end;
+
+procedure ProtectInstallDir();
+var
+  dir, icacls: String;
+  rc: Integer;
+begin
+  if InstallDirUnderProgramFiles() then Exit;
+  dir := ExpandConstant('{app}');
+  icacls := ExpandConstant('{sys}\icacls.exe');
+  ForceDirectories(dir);
+  // Well-known SIDs, not names: those are translated. Administrators own it, so
+  // nobody else keeps the owner's right to change these rules.
+  Exec(icacls, '"' + dir + '" /setowner *S-1-5-32-544 /T /C /Q', '', SW_HIDE,
+       ewWaitUntilTerminated, rc);
+  if not Exec(icacls, '"' + dir + '" /inheritance:r /remove:g *S-1-1-0 *S-1-5-11 ' +
+              '/grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX ' +
+              '/T /C /Q', '', SW_HIDE, ewWaitUntilTerminated, rc) or (rc <> 0) then
+    Log(Format('install folder rights not set (icacls: %d)', [rc]));
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   lines: TArrayOfString;
@@ -1613,6 +1644,7 @@ begin
   // Before the file copy: nothing under {app} can be replaced while the server
   // is holding it open.
   if CurStep = ssInstall then begin
+    ProtectInstallDir();
     ServiceInstalled := DetectService();
     // The FileExists arm covers a half-removed install (no uninstall entry, so
     // UpdateMode is False) whose exe is still there and possibly running. {app}
