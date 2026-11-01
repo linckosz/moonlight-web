@@ -666,9 +666,22 @@ describe('BrowserDetect.supportsGamingMode', () => {
         expect(m.supportsGamingMode()).toBe(true);
     });
 
-    it('a touchscreen PC with no mouse or trackpad does not', async () => {
+    it('a Windows touchscreen PC has it even when no fine pointer is reported (Surface Pro, issue #46)', async () => {
         const m = await fresh(UA.desktop, 10, false);
+        expect(m.supportsGamingMode()).toBe(true);
+    });
+
+    it('another touchscreen device with no mouse or trackpad does not', async () => {
+        const m = await fresh('Mozilla/5.0 (X11; Linux x86_64) Chrome/120', 10, false);
         expect(m.supportsGamingMode()).toBe(false);
+        const tablet = await fresh(UA.androidTablet, 10, false);
+        expect(tablet.supportsGamingMode()).toBe(false);
+    });
+
+    it('a Windows tablet user agent still asks for a fine pointer', async () => {
+        const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; Touch) Chrome/120';
+        expect((await fresh(ua, 10, false)).supportsGamingMode()).toBe(false);
+        expect((await fresh(ua, 10, true)).supportsGamingMode()).toBe(true);
     });
 
     it('a phone never has it, even with a mouse paired', async () => {

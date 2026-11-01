@@ -1996,13 +1996,13 @@ export class SettingsView {
                         <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> keeps it off: measured slower on macOS (22 ms) and no faster elsewhere. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
                     </div>
 
-                    <!-- Finger input, mobile/tablet only. A touchscreen laptop is
-                         driven by its trackpad or a mouse: both settings only act on
-                         the touch path (StreamViewTouch), so neither is offered
-                         there — gate on the platform type, not on IS_TOUCH_DEVICE.
-                         Nor on a TV, whose user agent reads like a phone's. -->
+                    <!-- Finger input: on whatever has a touch screen, a touchscreen
+                         PC included. Its fingers go through the same touch path
+                         (StreamViewTouch) as a tablet's, and a Surface asked for
+                         both modes, mouse and finger (issue #46). Not on a TV,
+                         whose user agent reads like a phone's (IS_TOUCH_DEVICE). -->
                     ${
-                        IS_HANDHELD
+                        IS_TOUCH_DEVICE
                             ? `
                     <div class="settings-field">
                         <label class="settings-checkbox-label">

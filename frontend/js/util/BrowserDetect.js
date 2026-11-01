@@ -175,10 +175,18 @@ export const IS_LOW_MEMORY = isLowMemory();
  * to take the mode away: `maxTouchPoints > 0` is true on those PCs too, and
  * gating on it hid the option from every one of them (issue #16). Phones stay
  * out. Asked at call time, so a mouse plugged in later counts.
+ *
+ * A Windows PC always has it, whatever `any-pointer` says. On a Surface Pro
+ * with its type cover and trackpad, the browser answered that no fine pointer
+ * was there (issue #46, 31/10/2026): both modes vanished, while a Surface Go
+ * kept them. The answer follows what the browser makes of the device's
+ * posture, not of the mouse in the user's hand. A PC whose answer was wrong
+ * lost the mode for good, so the media query only decides elsewhere.
  */
 export function supportsGamingMode() {
     if (!platform.isTouchDevice) return true;
     if (platform.type === 'mobile') return false;
+    if (platform.type === 'desktop' && /windows nt/i.test(navigator.userAgent || '')) return true;
     try {
         return !!window.matchMedia && window.matchMedia('(any-pointer: fine)').matches;
     } catch {
