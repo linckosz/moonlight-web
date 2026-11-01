@@ -47,6 +47,11 @@ export const Icons = {
         '<path d="M6.5 7h11a4.5 4.5 0 0 1 4.4 5.4l-.9 4.4a2.6 2.6 0 0 1-4.5 1.2L14.6 16H9.4l-1.9 2a2.6 2.6 0 0 1-4.5-1.2l-.9-4.4A4.5 4.5 0 0 1 6.5 7z"/>' +
             '<path d="M7.5 10.5v3M6 12h3"/><path d="M15.5 11h0M17.5 13h0"/>',
     ),
+    // Two people — who is in a shared session, in a guest's stream header
+    users: svg(
+        '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>' +
+            '<path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+    ),
     // Maximize (was ⛶) — fullscreen button
     fullscreen: svg(
         '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>',

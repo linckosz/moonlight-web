@@ -640,6 +640,32 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
             return HttpResponse::json(QJsonObject{{QStringLiteral("state"), state}});
         });
 
+    // GET /api/share/player/presence — who is watching the host this guest's
+    // invitation leads to: whether the owner is, and every guest streaming it,
+    // this one included (issue #47). A guest sees no more than the names the
+    // owner gave its fellow guests' rows, never a link, a PIN or a device.
+    router->get(
+        QStringLiteral("/api/share/player/presence"), [&share, &deps](const HttpRequest& req) {
+            const int self = share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie));
+            if (self < 0) return HttpResponse::error(403, "Forbidden");
+            const QString hostUuid = share.hostForSlot(self);
+
+            QJsonArray players;
+            for (const ShareManager::SlotStatus& st : share.status()) {
+                if (!st.streaming || share.hostForSlot(st.slot) != hostUuid) continue;
+                QJsonObject p;
+                p[QStringLiteral("slot")] = st.slot;
+                p[QStringLiteral("name")] = st.name;
+                players.append(p);
+            }
+            QJsonObject obj;
+            obj[QStringLiteral("self")] = self;
+            obj[QStringLiteral("owner")] =
+                !hostUuid.isEmpty() && deps.ownerWatching && deps.ownerWatching(hostUuid);
+            obj[QStringLiteral("players")] = players;
+            return HttpResponse::json(obj);
+        });
+
     // POST /api/share/player/leave — the player pressed Leave.
     router->post(
         QStringLiteral("/api/share/player/leave"), [&share, &deps](const HttpRequest& req) {

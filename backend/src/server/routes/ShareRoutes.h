@@ -69,6 +69,11 @@ struct ShareRoutesDeps
     /// the link can never later be routed to a different machine.
     std::function<std::pair<QString, int>()> currentOwnerContext;
 
+    /// Whether the owner has a stream of @p hostUuid up right now: what a
+    /// guest's header counts them by (/api/share/player/presence). Not
+    /// currentOwnerContext, which outlives the owner's Leave on purpose.
+    std::function<bool(const QString& hostUuid)> ownerWatching;
+
     /// Whether @p hostUuid is a known, paired host and @p appId one of its apps.
     /// Checked when an invitation is opened cold — with no stream running, the
     /// host and app come from the board rather than from what is already up, so

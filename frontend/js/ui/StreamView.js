@@ -155,6 +155,7 @@ import { escapeHtml } from '../util/escapeHtml.js';
 import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { Icons } from './icons.js';
 import { ShareMenu } from './ShareMenu.js';
+import { GuestPresence } from './SharePresence.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
@@ -600,6 +601,8 @@ export class StreamView {
         /** Called when the owner ended the shared session (backend notice). */
         this.onSessionEnded = opts.onSessionEnded || null;
         this._shareMenu = null;
+        /** @type {GuestPresence|null} a guest's header count (issue #47) */
+        this._presence = null;
         this._shareExitOverlay = null;
         this._stallPopinOverlay = null;
         // A TV remote's menu (long press of OK), the press being held for it,
@@ -4402,7 +4405,22 @@ export class StreamView {
         this._mountGamepadButton();
         this._mountMicButton();
         this._mountShareMenu();
+        this._mountGuestPresence();
         this._mountSupportButton();
+    }
+
+    /**
+     * A guest's count of who is on this stream, the owner's Share button's
+     * counterpart: names on hover, a toast for each arrival and departure
+     * (issue #47). Guests only. Idempotent.
+     */
+    _mountGuestPresence() {
+        if (!this._playerMode || this._presence || !this._rootEl) return;
+        const header = /** @type {HTMLElement} */ (this._rootEl.querySelector('.stream-header'));
+        if (!header) return;
+        const quitBtn = /** @type {HTMLElement} */ (this._rootEl.querySelector('#btn-stream-quit'));
+        this._presence = new GuestPresence(header, quitBtn);
+        this._presence.mount();
     }
 
     /**
@@ -13464,6 +13482,10 @@ export class StreamView {
         if (this._shareMenu) {
             this._shareMenu.destroy();
             this._shareMenu = null;
+        }
+        if (this._presence) {
+            this._presence.destroy();
+            this._presence = null;
         }
         if (this._shareExitOverlay) {
             this._shareExitOverlay.remove();

@@ -1338,8 +1338,35 @@ body.streaming-active::after {
 .btn-stream-kbd,
 .btn-stream-pad,
 .btn-stream-fs,
-.stream-volume {
+.stream-volume,
+.stream-presence {
     z-index: 300;
+}
+/* A guest's count of who is on the stream (SharePresence.GuestPresence): the
+   pad button's frame, wide enough for the people icon and the number. */
+.stream-presence {
+    position: relative;
+    margin-right: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 30px;
+    padding: 0 9px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 16px;
+    cursor: default;
+    user-select: none;
+}
+.stream-presence[hidden] {
+    display: none;
+}
+.stream-presence-count {
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
 }
 .stream-quit-btn,
 .stream-console-btn,

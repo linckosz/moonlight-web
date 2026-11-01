@@ -633,6 +633,11 @@ export class BackendClient {
     static async playerLeave() {
         return this.post('/api/share/player/leave', {}, { timeoutMs: 5000 });
     }
+    /** Who watches the host this guest's invitation leads to: {self, owner,
+     *  players: [{slot, name}]} (issue #47). */
+    static async playerPresence() {
+        return this.get('/api/share/player/presence');
+    }
 
     // Open macOS' Screen Recording privacy pane on the host so the user can
     // grant capture permission — to this app when it hosts the Mac, or to a

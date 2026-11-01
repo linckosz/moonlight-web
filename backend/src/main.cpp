@@ -5239,6 +5239,11 @@ int main(int argc, char* argv[])
         return picture;
     };
     shareDeps.currentOwnerContext = ownerContext;
+    shareDeps.ownerWatching = [&g_Pool](const QString& hostUuid) {
+        for (int i = 0; i < kOwnerSlots; ++i)
+            if (g_Pool.at(i).worker && g_Pool.at(i).hostUuid == hostUuid) return true;
+        return false;
+    };
     shareDeps.hostAppExists = [&computerManager](const QString& hostUuid, int appId) {
         NvComputer* host = computerManager.getHost(hostUuid);
         if (!host || appId <= 0) return false;

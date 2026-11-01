@@ -21,12 +21,19 @@
  * two places it makes sense to reach it from.
  *
  * The count is people *streaming*, not links that exist: "Share (2)" means two
- * guests are looking at this screen right now.
+ * guests are looking at this screen right now. Hovering it names them, and each
+ * one's arrival and departure comes as a toast (issue #47, SharePresence).
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { ShareBoard } from './ShareBoard.js';
+import {
+    announceChanges,
+    ownerSidePeople,
+    presenceChanges,
+    presenceTitle,
+} from './SharePresence.js';
 
 const POLL_MS = 5000;
 
@@ -43,6 +50,8 @@ export class ShareMenu {
         this.slots = [];
         this._board = null;
         this._pollTimer = null;
+        /** @type {Map<string, string>|null} the guests of the last look, null before one */
+        this._people = null;
     }
 
     /**
@@ -54,6 +63,7 @@ export class ShareMenu {
         try {
             const data = await BackendClient.getShareStatus();
             this.slots = Array.isArray(data.slots) ? data.slots : [];
+            this._people = ownerSidePeople(this.slots);
         } catch (err) {
             if (err && err.statusCode === 404) return false;
             // Any other failure (a hiccup, a slow backend) still gets the
@@ -101,6 +111,9 @@ export class ShareMenu {
         try {
             const data = await BackendClient.getShareStatus();
             this.slots = Array.isArray(data.slots) ? data.slots : [];
+            const people = ownerSidePeople(this.slots);
+            if (this._people && this.root) announceChanges(presenceChanges(this._people, people));
+            this._people = people;
             this._paintCount();
         } catch (err) {
             // A share status that cannot be read is not worth interrupting a
@@ -146,5 +159,9 @@ export class ShareMenu {
         this.btn.textContent =
             streaming > 0 ? t('sharing.shareCount', { count: streaming }) : t('sharing.share');
         this.btn.classList.toggle('has-streams', streaming > 0);
+        // Everyone on the stream, the owner first, when anyone joined them.
+        const guests = [...(this._people || new Map()).values()];
+        this.btn.title =
+            guests.length > 0 ? presenceTitle([t('sharing.presenceYouHost'), ...guests]) : '';
     }
 }
