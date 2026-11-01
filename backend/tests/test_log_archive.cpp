@@ -413,10 +413,10 @@ void run_log_scrubber_tests()
     CHECK_EQ(s.scrubLine("[2026-09-30 10:00:00.123] [INFO] Chrome/153.0.0.0 Safari/537.36"),
              QString("[2026-09-30 10:00:00.123] [INFO] Chrome/153.0.0.0 Safari/537.36"));
     CHECK_EQ(
-        s.scrubLine(R"~(candidate:1 1 UDP 2122 2a01:e0a:ac5:df0:5d3a:b3cb:1:2 5000 typ host)~"),
-        QString(R"~(candidate:1 1 UDP 2122 2xxx::{3} 5000 typ host)~"));
-    CHECK_EQ(s.scrubLine("from [2a01:e0a:ac5:df0:5d3a:b3cb:1:2]:443 and fd12:3456::c1 fe80::1 ::1"),
-             QString("from [2xxx::{3}]:443 and fd::{g1} fe80::{h1} ::1"));
+        s.scrubLine(R"~(candidate:1 1 UDP 2122 3fff:abc:abc:de0:aaaa:bbbb:1:2 5000 typ host)~"),
+        QString(R"~(candidate:1 1 UDP 2122 3xxx::{3} 5000 typ host)~"));
+    CHECK_EQ(s.scrubLine("from [3fff:abc:abc:de0:aaaa:bbbb:1:2]:443 and fd12:3456::c1 fe80::1 ::1"),
+             QString("from [3xxx::{3}]:443 and fd::{g1} fe80::{h1} ::1"));
     CHECK_EQ(s.scrubLine("mapped ::ffff:88.12.34.56 at 12:34:56"),
              QString("mapped ::ffff:256.x.x.{1} at 12:34:56"));
 
@@ -445,8 +445,8 @@ void run_log_scrubber_tests()
                 R"~(Selected candidate pair: local "host fd7a:115c:a1e0::c036:292d:48550/UDP" -> remote "prflx fd7a:115c:a1e0::c036:292d:63433/UDP")~"),
             QString(
                 R"~(Selected candidate pair: local "host fd::{a1}:48550/UDP" -> remote "prflx fd::{a1}:63433/UDP")~"));
-        CHECK_EQ(pair.scrubLine("srflx 2a01:e0a:ac5:df0:5d3a:b3cb:1:2:5000/UDP at 10:00:00.123"),
-                 QString("srflx 2xxx::{1}:5000/UDP at 10:00:00.123"));
+        CHECK_EQ(pair.scrubLine("srflx 3fff:abc:abc:de0:aaaa:bbbb:1:2:5000/UDP at 10:00:00.123"),
+                 QString("srflx 3xxx::{1}:5000/UDP at 10:00:00.123"));
     }
 
     // Whole files: PEM blocks go, line endings stay.
