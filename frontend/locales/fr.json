@@ -348,7 +348,12 @@
         "resumeAria": "Reprendre {{name}}",
         "quitConfirm": "Quitter {{name}} sur l'hôte ? La progression non sauvegardée sera perdue, et toute personne qui le streame sera déconnectée.",
         "quitting": "Fermeture…",
-        "quitFailed": "Impossible de quitter {{name}} sur l'hôte."
+        "quitFailed": "Impossible de quitter {{name}} sur l'hôte.",
+        "gpuNumbered": "{{name}} · n° {{n}}",
+        "gpuAuto": "Auto",
+        "gpuChoiceAria": "GPU qui dessine {{name}}",
+        "gpuChoiceHint": "Pris en compte au prochain allumage de l'écran virtuel",
+        "gpuSaveFailed": "Impossible de changer le GPU de l'écran virtuel."
     },
     "login": {
         "connecting": "Connexion au serveur...",

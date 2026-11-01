@@ -116,6 +116,12 @@ public:
     /// turns it off.
     static int virtualDisplayAppId();
 
+    /// Whether @p gpu may be chosen to draw the virtual display: empty (the
+    /// driver's own choice), or the name of a GPU this machine has now, on a
+    /// machine with several, while the driver's settings file is ours to write
+    /// — the same test that puts the choice on the display's card.
+    static bool virtualDisplayGpuChoosable(const QString& gpu);
+
     /// The display an app id stands for, on this machine now, by its
     /// DisplayInfo::key — or empty with @p error saying why (the virtual
     /// display is off, the display was unplugged, native streaming is

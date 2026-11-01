@@ -42,4 +42,12 @@ QJsonObject toJson(const mw::native::Capabilities& caps);
 /// as an unavailable result with ProbeFailed and a diagnostic.
 bool fromJson(const QJsonObject& obj, mw::native::Capabilities& out);
 
+/// What a display card says about the GPU that draws it (issue raised on
+/// DualRTX, 01/11/2026: two GPUs, and nothing told which screen was on which):
+/// {"gpu": its name} with {"gpuNumber": n} when another GPU of the machine has
+/// the same name — n counts those namesakes in the OS's order, from 1. Empty on
+/// a machine with a single GPU, where the line would say nothing, and for a
+/// @p gpuId that names none.
+QJsonObject displayGpu(const mw::native::Capabilities& caps, int gpuId);
+
 } // namespace NativeCapabilitiesJson

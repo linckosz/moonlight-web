@@ -204,6 +204,57 @@
     word-break: break-word;
 }
 
+/* The GPU drawing a native host's display, on a PC with several: one quiet
+   line under the name, the size of the host's own GPU line. On the virtual
+   display's card, for its administrator, the same line is a list. */
+.app-card-gpu {
+    max-width: 100%;
+    margin-top: calc(-1 * var(--space-1));
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.app-card-gpu--choice {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    cursor: pointer;
+}
+.app-card-gpu--choice::after {
+    content: '▾';
+    flex: none;
+    pointer-events: none;
+}
+.app-card-gpu-select {
+    appearance: none;
+    -webkit-appearance: none;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.app-card-gpu--choice:hover,
+.app-card-gpu--choice:focus-within {
+    color: var(--text-2);
+}
+.app-card-gpu-select:focus-visible {
+    outline: 1px solid var(--neon-cyan);
+    outline-offset: 2px;
+}
+.app-card-gpu-select option {
+    color: var(--text-1);
+    background: var(--surface-2);
+}
+
 /* ── Running on the host (issue #24) ────────────────────────────────────
    The app a stopped stream left running: a cyan edge and a badge say "this
    one is live", clicking the card resumes it, and the small Quit under the

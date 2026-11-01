@@ -730,6 +730,53 @@ void run_virtual_display_tests()
         CHECK(!toJson(r).contains("exclusive"));
     }
 
+    SECTION("VirtualDisplay — the GPU the owner chose travels as a name, and only as text");
+    {
+        // A GPU as Windows names it, into the helper and back.
+        auto req =
+            parseRequest("{\"action\":\"activate\",\"gpu\":\"NVIDIA GeForce RTX 5060 Ti\"}", &err);
+        CHECK(req.has_value() && req->gpu == QStringLiteral("NVIDIA GeForce RTX 5060 Ti"));
+        Request r;
+        r.gpu = QStringLiteral("Intel(R) Arc(TM) A380 Graphics");
+        req = parseRequest(toJson(r), &err);
+        CHECK(req.has_value() && req->gpu == r.gpu);
+        CHECK(!toJson(Request{}).contains("gpu"));
+        // Nothing the driver's XML could read as markup, nothing that is not
+        // a string: the whole request is refused, not half kept.
+        CHECK(!parseRequest("{\"action\":\"activate\",\"gpu\":\"</friendlyname><x>\"}", &err)
+                   .has_value());
+        CHECK(!parseRequest("{\"action\":\"activate\",\"gpu\":\"A & B\"}", &err).has_value());
+        CHECK(!parseRequest("{\"action\":\"activate\",\"gpu\":7}", &err).has_value());
+        CHECK(!parseRequest("{\"action\":\"activate\",\"gpu\":\" \"}", &err).has_value());
+        // Another verb never carries it into the helper.
+        req = parseRequest("{\"action\":\"deactivate\",\"gpu\":\"AMD Radeon(TM) Graphics\"}", &err);
+        CHECK(req.has_value() && req->gpu.isEmpty());
+        CHECK(validGpuName(QStringLiteral("AMD Radeon(TM) Graphics")));
+        CHECK(!validGpuName(QString()));
+        CHECK(!validGpuName(QString(129, QLatin1Char('x'))));
+        CHECK(!validGpuName(QStringLiteral("RTX\n5060")));
+
+        // Into the file we write — unless a bench names its own GPU — and
+        // read back, ours or an owner's; "default" is no GPU at all.
+        if (qEnvironmentVariableIsEmpty("MW_VDD_GPU")) {
+            const QString chosen = settingsXml(0, 0, 0, QStringLiteral("AMD Radeon(TM) Graphics"));
+            CHECK(chosen.contains(
+                QStringLiteral("<friendlyname>AMD Radeon(TM) Graphics</friendlyname>")));
+            CHECK_EQ(gpuOfSettings(chosen), QStringLiteral("AMD Radeon(TM) Graphics"));
+            CHECK(isOurSettings(chosen));
+            CHECK(settingsXml().contains(QStringLiteral("<friendlyname>default</friendlyname>")));
+            CHECK(gpuOfSettings(settingsXml()).isEmpty());
+            // A name that could not travel never reaches the file either.
+            CHECK(settingsXml(0, 0, 0, QStringLiteral("<x>"))
+                      .contains(QStringLiteral("<friendlyname>default</friendlyname>")));
+        }
+        const QString theirs = QStringLiteral("<vdd_settings>\n  <gpu>\n    <friendlyname>"
+                                              "NVIDIA GeForce RTX 5060 Ti</friendlyname>\n"
+                                              "  </gpu>\n</vdd_settings>\n");
+        CHECK_EQ(gpuOfSettings(theirs), QStringLiteral("NVIDIA GeForce RTX 5060 Ti"));
+        CHECK(gpuOfSettings(QStringLiteral("<vdd_settings/>")).isEmpty());
+    }
+
     SECTION("VirtualDisplay — a layout with the other displays off is never saved");
     {
         const LayoutStep all[] = {LayoutStep::Impose,  LayoutStep::Prune,     LayoutStep::Mode,

@@ -448,6 +448,14 @@ public:
     bool virtualDisplayExclusive() const;
     void setVirtualDisplayExclusive(bool enabled);
 
+    // Stored as JSON string "virtual_display_gpu", DEFAULT "" (the driver's
+    // own choice), set from the virtual display's card on a PC with several
+    // GPUs: the GPU, by the name the OS gives it, that draws our virtual
+    // display (VirtualDisplay::Request::gpu). Read as each activation starts.
+    // Anything but a VirtualDisplay::validGpuName reads as "".
+    QString virtualDisplayGpu() const;
+    void setVirtualDisplayGpu(const QString& gpu);
+
     // ── The native host's display cards ─────────────────────────────────────
     //
     // A card per display, whose id a grid fetched earlier sends back: it has

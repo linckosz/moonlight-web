@@ -171,4 +171,27 @@ void registerHostAppRoutes(HttpServer& server, AppSettings& appSettings)
         HostAppImage::remove(appSettings.hostAppImagesDir(), id);
         return HttpResponse::json(listJson(appSettings));
     });
+
+    // The GPU that draws the virtual display, chosen on its card on a PC with
+    // several (device.gpuChoice). Under the host's own path, so a booth
+    // (--noadmin) refuses it like every host route it does not play on; the
+    // administrator's alone, as the host's apps are. "" gives the choice back
+    // to the driver. The next activation follows (VirtualDisplayJob).
+    server.router()->post("/api/hosts/:id/virtual-display-gpu", [&appSettings](
+                                                                    const HttpRequest& req) {
+        if (!req.isLocal)
+            return HttpResponse::error(
+                403, "Only the host's administrator chooses the virtual display's GPU");
+        if (req.pathParams.value("id") != NativeHostBackend::hostUuid())
+            return HttpResponse::error(404, "Only this PC's own host has a virtual display");
+        const QJsonValue gpu = QJsonDocument::fromJson(req.body).object().value("gpu");
+        if (!gpu.isString()) return HttpResponse::error(400, "gpu must be a string");
+        if (!NativeHostBackend::virtualDisplayGpuChoosable(gpu.toString()))
+            return HttpResponse::error(409, "That GPU cannot be chosen for the virtual display");
+        appSettings.setVirtualDisplayGpu(gpu.toString());
+        Logger::info(QStringLiteral("[HostApp] virtual display drawn by %1 from its next start")
+                         .arg(gpu.toString().isEmpty() ? QStringLiteral("the driver's choice")
+                                                       : gpu.toString()));
+        return HttpResponse::json(QJsonObject{{"gpu", appSettings.virtualDisplayGpu()}});
+    });
 }

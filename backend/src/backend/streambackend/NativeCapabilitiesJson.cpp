@@ -164,4 +164,23 @@ bool fromJson(const QJsonObject& obj, Capabilities& out)
     return true;
 }
 
+QJsonObject displayGpu(const Capabilities& caps, int gpuId)
+{
+    if (caps.gpus.size() < 2) return {};
+    const GpuInfo* gpu = nullptr;
+    for (const GpuInfo& g : caps.gpus)
+        if (g.id == gpuId) gpu = &g;
+    if (!gpu || gpu->name.empty()) return {};
+    int namesakes = 0;
+    int number = 0;
+    for (const GpuInfo& g : caps.gpus) {
+        if (g.name != gpu->name) continue;
+        ++namesakes;
+        if (&g == gpu) number = namesakes;
+    }
+    QJsonObject out{{QStringLiteral("gpu"), QString::fromStdString(gpu->name)}};
+    if (namesakes > 1) out[QStringLiteral("gpuNumber")] = number;
+    return out;
+}
+
 } // namespace NativeCapabilitiesJson

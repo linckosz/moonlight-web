@@ -859,6 +859,7 @@ export const MoonlightApp = {
         this.hostListView = new HostListView(main);
         this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
         this.hostListView.memoryKey = currentInstanceRef(tunnelHostId()).id;
+        this.hostListView.canAdminister = !!this._hasAdminAccess;
         bootMark('host-page');
         this.hostListView.start();
 

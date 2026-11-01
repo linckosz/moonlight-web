@@ -304,6 +304,9 @@ void VirtualDisplayJob::startNext()
     m_Request.hdr = next.hdr;
     m_Request.exclusive =
         next.action == Action::Activate && AppSettings().virtualDisplayExclusive();
+    // The GPU the owner chose on the display's card, read as each activation
+    // starts like the choice above: the next stream follows a change.
+    if (next.action == Action::Activate) m_Request.gpu = AppSettings().virtualDisplayGpu();
     m_Callbacks.clear();
     if (next.cb) m_Callbacks.append(std::move(next.cb));
     m_Error.clear();

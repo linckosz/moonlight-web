@@ -348,7 +348,12 @@
         "resumeAria": "Resume {{name}}",
         "quitConfirm": "Quit {{name}} on the host? Unsaved progress is lost, and anyone streaming it is disconnected.",
         "quitting": "Quitting…",
-        "quitFailed": "Could not quit {{name}} on the host."
+        "quitFailed": "Could not quit {{name}} on the host.",
+        "gpuNumbered": "{{name}} · #{{n}}",
+        "gpuAuto": "Auto",
+        "gpuChoiceAria": "GPU that draws {{name}}",
+        "gpuChoiceHint": "Used from the virtual display's next start",
+        "gpuSaveFailed": "Could not change the virtual display's GPU."
     },
     "login": {
         "connecting": "Connecting to server...",

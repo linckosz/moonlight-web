@@ -437,11 +437,15 @@ void forgetAddedModes()
 /// Ours is rewritten whenever the wanted mode changes, and @p changed says
 /// so, since the driver only reads this file when the device starts.
 /// @p refreshMilliHz is the rate the display is to run at, 0 for the default.
-bool writeSettings(int width, int height, int refreshMilliHz, bool* changed, QString* error)
+/// @p gpu is the GPU the owner chose to draw it (Request::gpu): it goes into a
+/// file of ours only — an owner's file keeps the GPU it names, which draws
+/// that owner's own displays too.
+bool writeSettings(int width, int height, int refreshMilliHz, const QString& gpu, bool* changed,
+                   QString* error)
 {
     *changed = false;
     const QString path = VirtualDisplay::settingsXmlPath();
-    const QString wanted = VirtualDisplay::settingsXml(width, height, refreshMilliHz);
+    const QString wanted = VirtualDisplay::settingsXml(width, height, refreshMilliHz, gpu);
     QFile f(path);
     if (f.exists()) {
         QString current;
@@ -520,11 +524,13 @@ bool writeSettings(int width, int height, int refreshMilliHz, bool* changed, QSt
     f.write(wanted.toUtf8());
     f.close();
     *changed = true;
-    Logger::info(QStringLiteral("[vdisplay-apply] mode list rewritten with %1x%2 at %3 Hz first")
+    Logger::info(QStringLiteral("[vdisplay-apply] mode list rewritten with %1x%2 at %3 Hz first, "
+                                "drawn by %4")
                      .arg(width > 0 ? width : VirtualDisplay::kWidth)
                      .arg(height > 0 ? height : VirtualDisplay::kHeight)
                      .arg(refreshMilliHz > 0 ? VirtualDisplay::rateText(refreshMilliHz)
-                                             : QString::number(VirtualDisplay::kRefreshHz)));
+                                             : QString::number(VirtualDisplay::kRefreshHz))
+                     .arg(gpu.isEmpty() ? QStringLiteral("the driver's choice of GPU") : gpu));
     return true;
 }
 
@@ -568,7 +574,7 @@ int stageDriver(Context& ctx)
         // wrote any. An owner's own VDD configured that file, and ours takes
         // the modes it lists.
         bool wrote = false;
-        if (!writeSettings(0, 0, 0, &wrote, &error)) return failAt(ctx, stage, error);
+        if (!writeSettings(0, 0, 0, QString(), &wrote, &error)) return failAt(ctx, stage, error);
 
         DriverPackage::PublisherTrust trust;
         if (!DriverPackage::trustCatalogSigner(catPath, VirtualDisplay::catalogSignerThumbprint(),
@@ -643,7 +649,7 @@ int stageDriver(Context& ctx)
         if (enable) {
             bool listChanged = false;
             if (!writeSettings(ctx.request.width, ctx.request.height, ctx.request.refreshMilliHz,
-                               &listChanged, &error)) {
+                               ctx.request.gpu, &listChanged, &error)) {
                 Logger::warning(
                     QStringLiteral("[vdisplay-apply] %1 — the default mode stands").arg(error));
             } else if (listChanged && nodeIsEnabled(*ours)) {

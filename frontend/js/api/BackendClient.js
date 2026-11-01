@@ -292,6 +292,11 @@ export class BackendClient {
     static async restartHost(uuid) {
         return this.post(`/api/hosts/${uuid}/restart`, {}, { timeoutMs: 30000 });
     }
+    /** The GPU that draws the native host's virtual display from its next
+     *  start, by name; '' gives the choice back to the driver. Admin only. */
+    static async setVirtualDisplayGpu(uuid, gpu) {
+        return this.post(`/api/hosts/${encodeURIComponent(uuid)}/virtual-display-gpu`, { gpu });
+    }
     static async startPairing(hostId) {
         return this.post(`/api/hosts/${hostId}/pair/start`);
     }

@@ -28,8 +28,12 @@ extern "C" {
 #include "HostOsProbe.h"
 #include "NativeProbeService.h"
 
+#include "NativeCapabilitiesJson.h"
+
 #include <QCollator>
+#include <QFile>
 #include <QHash>
+#include <QJsonArray>
 #include <QHostInfo>
 
 #include <algorithm>
@@ -222,11 +226,49 @@ void gpusApart(const mw::native::Capabilities& caps, int displayId,
     }
 }
 
-NvApp virtualDisplayApp(const mw::native::Capabilities& caps)
+/// @p device with what displayGpu says of the GPU behind it, if anything.
+void addGpu(QJsonObject& device, const QJsonObject& gpu)
+{
+    for (auto it = gpu.begin(); it != gpu.end(); ++it)
+        device.insert(it.key(), it.value());
+}
+
+/// The virtual display driver's settings file as it stands: whether it is
+/// ours to write (none yet counts: the next activation writes ours), and the
+/// GPU it names. Not ours — an owner's own VDD, whose file draws that owner's
+/// displays too — and the card only says which GPU that file names.
+struct DriverSettings
+{
+    bool ours = false;
+    QString gpu;
+};
+
+DriverSettings driverSettings()
+{
+#ifdef Q_OS_WIN
+    QFile f(VirtualDisplay::settingsXmlPath());
+    if (!f.exists()) return {true, QString()};
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
+    const QString xml = QString::fromUtf8(f.readAll());
+    if (xml.trimmed().isEmpty()) return {true, QString()};
+    return {VirtualDisplay::isOurSettings(xml), VirtualDisplay::gpuOfSettings(xml)};
+#else
+    // Only the Windows driver is told which GPU to draw on.
+    return {};
+#endif
+}
+
+/// The virtual display's card. @p on is the display while it is on, which
+/// says the GPU that draws it; off, the card names the GPU it will be drawn by
+/// when one is set — and, where the settings file is ours, offers the choice
+/// (device.gpuChoice: the owner's pick, "" for the driver's own, and the GPUs
+/// by name — the driver tells two GPUs apart by nothing else).
+NvApp virtualDisplayApp(const mw::native::Capabilities& caps,
+                        const mw::native::DisplayInfo* on = nullptr)
 {
     NvApp app(kVirtualDisplayAppId, VirtualDisplay::displayName(), /*hdr=*/false);
     app.setHasBoxArt(false);
-    app.setDevice(QJsonObject{
+    QJsonObject device{
         {QStringLiteral("os"), HostOsProbe::toString(HostOsProbe::thisMachine())},
         {QStringLiteral("display"), QStringLiteral("virtual")},
         {QStringLiteral("model"), VirtualDisplay::displayName()},
@@ -235,7 +277,29 @@ NvApp virtualDisplayApp(const mw::native::Capabilities& caps)
         // What the card says about itself: MoonlightWeb's own display, not a
         // monitor somebody plugged in.
         {QStringLiteral("owned"), true},
-    });
+    };
+    if (caps.gpus.size() > 1) {
+        const DriverSettings settings = driverSettings();
+        const QString chosen = settings.ours ? AppSettings().virtualDisplayGpu() : QString();
+        if (on) {
+            addGpu(device, NativeCapabilitiesJson::displayGpu(caps, on->gpuId));
+        } else {
+            const QString named = settings.ours ? chosen : settings.gpu;
+            if (!named.isEmpty()) device[QStringLiteral("gpu")] = named;
+        }
+        if (settings.ours) {
+            QJsonArray names;
+            for (const mw::native::GpuInfo& gpu : caps.gpus) {
+                const QString name = QString::fromStdString(gpu.name);
+                if (VirtualDisplay::validGpuName(name) && !names.contains(name)) names.append(name);
+            }
+            device[QStringLiteral("gpuChoice")] = QJsonObject{
+                {QStringLiteral("selected"), chosen},
+                {QStringLiteral("options"), names},
+            };
+        }
+    }
+    app.setDevice(device);
     return app;
 }
 
@@ -282,6 +346,17 @@ void appendHostApps(const mw::native::Capabilities& caps, QVector<NvApp>& apps)
 int NativeHostBackend::virtualDisplayAppId()
 {
     return kVirtualDisplayAppId;
+}
+
+bool NativeHostBackend::virtualDisplayGpuChoosable(const QString& gpu)
+{
+    if (!VirtualDisplay::probe().installed || !driverSettings().ours) return false;
+    if (gpu.isEmpty()) return true;
+    const mw::native::Capabilities caps = probeEngine();
+    if (caps.gpus.size() < 2 || !VirtualDisplay::validGpuName(gpu)) return false;
+    for (const mw::native::GpuInfo& known : caps.gpus)
+        if (QString::fromStdString(known.name) == gpu) return true;
+    return false;
 }
 
 bool NativeHostBackend::gamescopeAppFor(int appId, QString* name, QString* command)
@@ -595,7 +670,7 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
             // On right now (a stream is running on it): the same card as
             // when it is off, under its own name and its fixed id.
             virtualListed = true;
-            apps.append(virtualDisplayApp(caps));
+            apps.append(virtualDisplayApp(caps, &display));
             continue;
         }
         const bool hdrCapable = display.hdrActive && [&] {
@@ -613,13 +688,16 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
         // What the card draws instead: the machine this display belongs to.
         // The OS is the one this server was built for — the native host is
         // this machine by definition.
-        app.setDevice(QJsonObject{
+        QJsonObject device{
             {QStringLiteral("os"), HostOsProbe::toString(HostOsProbe::thisMachine())},
             {QStringLiteral("display"), QString::fromLatin1(mw::native::toString(display.kind))},
             {QStringLiteral("model"), QString::fromStdString(display.model)},
             {QStringLiteral("key"), QString::fromStdString(display.key)},
             {QStringLiteral("battery"), caps.hasBattery},
-        });
+        };
+        // And, on a PC with several GPUs, the one that draws this display.
+        addGpu(device, NativeCapabilitiesJson::displayGpu(caps, display.gpuId));
+        app.setDevice(device);
         apps.append(app);
     }
     // The owner's apps (AppSettings::hostApps), in the settings' order.

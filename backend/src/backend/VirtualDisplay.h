@@ -400,6 +400,14 @@ struct Request
     /// (issue #39), the owner's choice (AppSettings::virtualDisplayExclusive).
     /// Never saved to Windows' database: see savesLayout().
     bool exclusive = false;
+    /// Activate, Windows: the GPU the display is to be drawn by, as the OS
+    /// names it (AppSettings::virtualDisplayGpu, the owner's choice on the
+    /// display's card). Empty — the default — leaves it to the driver. The
+    /// driver goes by the name alone, so of two GPUs that share one it takes
+    /// whichever it meets first. Only ever written into a settings file of
+    /// ours (settingsXml), never into an owner's own. Always a validGpuName()
+    /// once parsed.
+    QString gpu;
 };
 
 /// Parse and validate a request. The file is read by an elevated process, so
@@ -498,7 +506,31 @@ std::optional<Result> readResult(const QString& path);
 /// Written when none exists, and rewritten — with the node restarted so the
 /// driver re-reads it — when the mode changes. Never over a file this project
 /// did not write: an owner's own VDD configured that one (see isOurSettings).
-QString settingsXml(int width = 0, int height = 0, int refreshMilliHz = 0);
+///
+/// @p gpu is the GPU to draw it (Request::gpu), empty for the driver's own
+/// choice; a bench's MW_VDD_GPU still comes first.
+QString settingsXml(int width = 0, int height = 0, int refreshMilliHz = 0,
+                    const QString& gpu = QString());
+
+/// The GPU a vdd_settings.xml names (<gpu><friendlyname>), ours or an owner's:
+/// empty when it names none, or "default" — the driver's own choice.
+QString gpuOfSettings(const QString& xml);
+
+/// Whether @p name may name a GPU in a request and in the settings file:
+/// non-empty, at most 128 characters, and nothing the XML or an elevated
+/// reader would read as anything but text (no control character, no < > & " ').
+/// Inline: AppSettings checks it too, in every binary that builds the settings.
+inline bool validGpuName(const QString& name)
+{
+    if (name.trimmed().isEmpty() || name.size() > 128) return false;
+    for (const QChar c : name) {
+        if (c.category() == QChar::Other_Control) return false;
+        if (c == QLatin1Char('<') || c == QLatin1Char('>') || c == QLatin1Char('&') ||
+            c == QLatin1Char('"') || c == QLatin1Char('\''))
+            return false;
+    }
+    return true;
+}
 
 /// Does this vdd_settings.xml carry our marker, i.e. did we write it?
 bool isOurSettings(const QString& xml);

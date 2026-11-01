@@ -120,6 +120,10 @@ export class HostListView {
         // before start(): the host list it last answered with is drawn at once
         // under that name (hostListCache.js). Unset, nothing is remembered.
         this.memoryKey = '';
+        // Whether this browser holds the server's admin rights (the app's
+        // /api/auth/status reading): the virtual display's GPU is chosen on its
+        // card by the administrator only.
+        this.canAdminister = false;
         // The cards on screen came from that memory and the machine has not
         // answered yet: its first answer replaces them, and drops any host it
         // no longer has.
@@ -436,6 +440,9 @@ export class HostListView {
                 return;
             }
 
+            // The GPU list on the virtual display's card is its own control.
+            if (e.target.closest('.app-card-gpu--choice')) return;
+
             // ── App card launch ───────────────────────────────────────────
             const appCard = e.target.closest('.app-card');
             if (appCard) {
@@ -475,12 +482,40 @@ export class HostListView {
             if (e.key !== 'Enter' && e.key !== ' ') return;
             // The Quit button of a running app is a real <button>: let it act.
             if (e.target.closest && e.target.closest('.app-card-quit')) return;
+            // So is the GPU list: Enter and Space open it, never the stream.
+            if (e.target.closest && e.target.closest('.app-card-gpu--choice')) return;
             const appCard = e.target.closest && e.target.closest('.app-card');
             if (!appCard) return;
             e.preventDefault();
             appCard.click();
         };
         this.container.addEventListener('keydown', this._keydownHandler);
+
+        // The GPU the virtual display is drawn by, picked on its card: saved
+        // for its next start, and the grid asks the host again, which repaints
+        // the card with what it now says. Refused, the list goes back to what
+        // it showed.
+        this._changeHandler = (e) => {
+            if (this._destroyed) return;
+            const select = e.target.closest && e.target.closest('.app-card-gpu-select');
+            if (!select) return;
+            const hostCard = select.closest('.host-card');
+            const uuid = hostCard && hostCard.dataset.uuid;
+            if (!uuid) return;
+            const before = select.dataset.selected || '';
+            select.disabled = true;
+            BackendClient.setVirtualDisplayGpu(uuid, select.value)
+                .then(() => this._refreshApps(uuid))
+                .catch((err) => {
+                    console.error('[MW] Virtual display GPU not saved:', err);
+                    select.value = before;
+                    Toast.error(t('apps.gpuSaveFailed'));
+                })
+                .finally(() => {
+                    if (select.isConnected) select.disabled = false;
+                });
+        };
+        this.container.addEventListener('change', this._changeHandler);
     }
 
     // --- Public API ---
@@ -709,6 +744,10 @@ export class HostListView {
         if (this._keydownHandler) {
             this.container.removeEventListener('keydown', this._keydownHandler);
             this._keydownHandler = null;
+        }
+        if (this._changeHandler) {
+            this.container.removeEventListener('change', this._changeHandler);
+            this._changeHandler = null;
         }
         if (this._docClickHandler) {
             document.removeEventListener('click', this._docClickHandler);
@@ -1580,6 +1619,7 @@ export class HostListView {
                     ${running ? `<span class="app-card-badge">${this.esc(t('apps.running'))}</span>` : ''}
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
+                ${drawsMachine ? this._gpuLine(app) : ''}
                 ${
                     running
                         ? `<button type="button" class="app-card-quit" data-app-id="${app.id}"
@@ -1588,6 +1628,49 @@ export class HostListView {
                 }
             </div>
         `;
+    }
+
+    /**
+     * The line under a native display's card that names the GPU drawing it,
+     * on a PC with several (01/11/2026: DualRTX, and nothing said which screen
+     * was on which card). Two GPUs of one name carry their number.
+     *
+     * On the virtual display's card, where the driver's settings are
+     * MoonlightWeb's own, the line is where its administrator picks that GPU:
+     * a list, "Auto" — the driver's own choice — first, then the GPUs by name,
+     * the only thing the driver tells them apart by. Anyone else, and a booth,
+     * sees the line only.
+     */
+    _gpuLine(app) {
+        const d = app.device;
+        const name = typeof d.gpu === 'string' ? d.gpu : '';
+        const label =
+            name && d.gpuNumber > 0 ? t('apps.gpuNumbered', { name, n: d.gpuNumber }) : name;
+        const choice = d.gpuChoice;
+        if (
+            choice &&
+            Array.isArray(choice.options) &&
+            this.canAdminister &&
+            !BackendClient.adminLocked
+        ) {
+            const selected = typeof choice.selected === 'string' ? choice.selected : '';
+            const names = choice.options.filter((n) => typeof n === 'string' && n);
+            if (selected && !names.includes(selected)) names.push(selected);
+            // While the display is on, the GPU really drawing it is said too.
+            const auto = label && !selected ? `${t('apps.gpuAuto')} · ${label}` : t('apps.gpuAuto');
+            const option = (value, text) =>
+                `<option value="${this.esc(value)}"${value === selected ? ' selected' : ''}>${this.esc(text)}</option>`;
+            const options = [
+                option('', auto),
+                ...names.map((n) => option(n, n === selected && n === name ? label : n)),
+            ];
+            return `
+                <label class="app-card-gpu app-card-gpu--choice" title="${this.esc(t('apps.gpuChoiceHint'))}">
+                    <select class="app-card-gpu-select" data-selected="${this.esc(selected)}"
+                            aria-label="${this.esc(t('apps.gpuChoiceAria', { name: app.displayName }))}">${options.join('')}</select>
+                </label>`;
+        }
+        return label ? `<div class="app-card-gpu">${this.esc(label)}</div>` : '';
     }
 
     // Switch a card into the "launching" state: a discreet Cyberpunk scan/glow

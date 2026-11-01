@@ -127,7 +127,25 @@ std::optional<Request> parseRequest(const QByteArray& json, QString* error)
         return std::nullopt;
     }
     req.exclusive = req.action == Request::Action::Activate && exclusive.toBool(false);
+    const QJsonValue gpu = obj.value(QLatin1String("gpu"));
+    if (!gpu.isUndefined() && !gpu.isNull()) {
+        if (!gpu.isString() || !validGpuName(gpu.toString())) {
+            if (error) *error = QStringLiteral("gpu is not a GPU name");
+            return std::nullopt;
+        }
+        if (req.action == Request::Action::Activate) req.gpu = gpu.toString();
+    }
     return req;
+}
+
+QString gpuOfSettings(const QString& xml)
+{
+    static const QRegularExpression re(
+        QStringLiteral("<gpu>\\s*<friendlyname>([^<]*)</friendlyname>"));
+    const QRegularExpressionMatch m = re.match(xml);
+    if (!m.hasMatch()) return QString();
+    const QString name = m.captured(1).trimmed();
+    return name.compare(QLatin1String("default"), Qt::CaseInsensitive) == 0 ? QString() : name;
 }
 
 bool savesLayout(LayoutStep step, bool othersOff)
@@ -192,6 +210,7 @@ QByteArray toJson(const Request& req)
     }
     if (req.refreshMilliHz > 0) obj["refresh_mhz"] = req.refreshMilliHz;
     if (req.exclusive) obj["exclusive"] = true;
+    if (!req.gpu.isEmpty()) obj["gpu"] = req.gpu;
     return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 
@@ -474,7 +493,7 @@ QString addedModesText(const QList<AddedMode>& modes)
     return out;
 }
 
-QString settingsXml(int width, int height, int refreshMilliHz)
+QString settingsXml(int width, int height, int refreshMilliHz, const QString& gpu)
 {
     // The layout the driver ships (its own sample, verified on the bench):
     //   <monitors><count>, <gpu><friendlyname>, <global><g_refresh_rate>*,
@@ -500,12 +519,14 @@ QString settingsXml(int width, int height, int refreshMilliHz)
     xml += settingsMarker() + QLatin1Char('\n');
     xml += QStringLiteral("<vdd_settings>\n");
     xml += QStringLiteral("  <monitors>\n    <count>1</count>\n  </monitors>\n");
-    // The GPU that renders the display: the driver's own choice, unless the
+    // The GPU that renders the display: the one the owner chose on the
+    // display's card (Request::gpu), else the driver's own choice — unless the
     // bench names one. MW_VDD_GPU is how a GPU with no screen of its own (the
     // RTX of DualRTX) gets a display to capture, so its encoder can be measured
     // in a real stream rather than headless. Never set by the product.
-    xml += QStringLiteral("  <gpu>\n    <friendlyname>%1</friendlyname>\n  </gpu>\n")
-               .arg(qEnvironmentVariable("MW_VDD_GPU", QStringLiteral("default")));
+    QString renderer = qEnvironmentVariable("MW_VDD_GPU");
+    if (renderer.isEmpty()) renderer = validGpuName(gpu) ? gpu : QStringLiteral("default");
+    xml += QStringLiteral("  <gpu>\n    <friendlyname>%1</friendlyname>\n  </gpu>\n").arg(renderer);
     xml += QStringLiteral("  <global>\n");
     xml += QStringLiteral("    <g_refresh_rate>%1</g_refresh_rate>\n").arg(rateText(refresh));
     for (const int milli : rates)

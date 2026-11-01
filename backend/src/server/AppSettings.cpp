@@ -16,6 +16,7 @@
  */
 
 #include "AppSettings.h"
+#include "backend/VirtualDisplay.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
@@ -799,6 +800,22 @@ void AppSettings::setVirtualDisplayExclusive(bool enabled)
 {
     QJsonObject obj = readAll();
     obj["virtual_display_exclusive"] = enabled;
+    writeAll(obj);
+}
+
+QString AppSettings::virtualDisplayGpu() const
+{
+    const QString gpu = readAll().value("virtual_display_gpu").toString();
+    return VirtualDisplay::validGpuName(gpu) ? gpu : QString();
+}
+
+void AppSettings::setVirtualDisplayGpu(const QString& gpu)
+{
+    QJsonObject obj = readAll();
+    if (VirtualDisplay::validGpuName(gpu))
+        obj["virtual_display_gpu"] = gpu;
+    else
+        obj.remove("virtual_display_gpu");
     writeAll(obj);
 }
 

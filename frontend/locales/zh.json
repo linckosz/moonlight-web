@@ -348,7 +348,12 @@
         "resumeAria": "继续 {{name}}",
         "quitConfirm": "在主机上退出 {{name}}？未保存的进度将丢失，正在串流的人都会断开连接。",
         "quitting": "正在退出…",
-        "quitFailed": "无法在主机上退出 {{name}}。"
+        "quitFailed": "无法在主机上退出 {{name}}。",
+        "gpuNumbered": "{{name}} · {{n}} 号",
+        "gpuAuto": "自动",
+        "gpuChoiceAria": "绘制 {{name}} 的 GPU",
+        "gpuChoiceHint": "虚拟显示器下次启动时生效",
+        "gpuSaveFailed": "无法更改虚拟显示器的 GPU。"
     },
     "login": {
         "connecting": "正在连接服务器…",
