@@ -15,7 +15,7 @@ What it asks, for every name the stack serves and every address they resolve to:
   - Google Safe Browsing and the Spamhaus domain record;
   - filtering resolvers (Cloudflare security and family, AdGuard, Quad9): each
     must answer the same addresses as an unfiltered one;
-  - threat and filter feeds (URLhaus, OpenPhish, Phishing Army, HaGeZi TIF,
+  - threat and filter feeds (OpenPhish, Phishing Army, HaGeZi TIF,
     OISD, FireHOL, Spamhaus DROP) and HaGeZi's spam-TLD list, which blocks whole
     TLDs (.top among them) save for an allowlist;
   - the records that keep the domain from being used to send phishing: SPF,
@@ -40,6 +40,12 @@ import sys
 import time
 import urllib.request
 
+try:  # the OS verifier, when installed: it fetches missing roots as browsers do
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 NAMES = ("", "www", "stats", "stream", "stream.dev", "ns1", "ns2", "api",
          "dnsapi", "updates", "metrics", "packages", "app")
 
@@ -55,8 +61,10 @@ URIBL_NS = "aa.uribl.com"
 
 # name: (DoH URL or None, UDP server or None)
 FILTERING_RESOLVERS = {
-    "Cloudflare security": ("https://security.cloudflare-dns.com/dns-query", None),
-    "Cloudflare family": ("https://family.cloudflare-dns.com/dns-query", None),
+    # Over UDP: Python reads the Windows root store as it is on disk, and the
+    # root behind Cloudflare's DoH names is one Windows only fetches on demand.
+    "Cloudflare security": (None, "1.1.1.2"),
+    "Cloudflare family": (None, "1.1.1.3"),
     "AdGuard": ("https://dns.adguard-dns.com/dns-query", None),
     "Quad9": (None, "9.9.9.9"),  # its DoH wants HTTP/2, which urllib lacks
 }
@@ -64,7 +72,6 @@ FILTERING_RESOLVERS = {
 REFERENCE = "1.1.1.1"
 
 DOMAIN_FEEDS = {
-    "URLhaus": "https://urlhaus.abuse.ch/downloads/hostfile/",
     "OpenPhish": "https://openphish.com/feed.txt",
     "Phishing Army": "https://phishing.army/download/phishing_army_blocklist_extended.txt",
     "HaGeZi TIF": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt",
@@ -380,6 +387,7 @@ def main():
     for ip in sorted(ips):
         print(f"  https://www.abuseipdb.com/check/{ip}")
     print(f"  https://www.virustotal.com/gui/domain/{domain}")
+    print(f"  https://urlhaus.abuse.ch/browse.php?search={domain}")  # its feeds now want an Auth-Key
     print(f"  https://talosintelligence.com/reputation_center/lookup?search={domain}")
     print(f"  https://www.fortiguard.com/webfilter?q=stream.{domain}")
 
