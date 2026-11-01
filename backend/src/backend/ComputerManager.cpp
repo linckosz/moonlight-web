@@ -1542,6 +1542,15 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
         return;
     }
 
+    // The token and pair fields hold secrets; the address is shown back.
+    if (!QUrl(apiUrl).userInfo().isEmpty()) {
+        respond(
+            HttpResponse::json({{"status", "error"},
+                                {"message", "The address cannot carry a user name or a password"}},
+                               400));
+        return;
+    }
+
     // No type given: this is the first-time setup of a backend we could not find
     // by ourselves. The admin supplied the one thing only they know — where it
     // is — and the product identifies itself from there. Asking them to NAME it

@@ -28,9 +28,20 @@
 
 void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
 {
-    server.router()->get("/api/hosts", [&computerManager](const HttpRequest&) {
+    server.router()->get("/api/hosts", [&computerManager](const HttpRequest& req) {
+        QJsonArray hosts = computerManager.getHostsJson();
+        // Where a backend is and whom it knows are for the dialog that sets them,
+        // which only an administrator opens. backendConfigured stays.
+        if (!req.isLocal) {
+            for (qsizetype i = 0; i < hosts.size(); ++i) {
+                QJsonObject host = hosts[i].toObject();
+                host.remove(QStringLiteral("backendApiUrl"));
+                host.remove(QStringLiteral("backendPairUser"));
+                hosts[i] = host;
+            }
+        }
         QJsonObject obj;
-        obj["hosts"] = computerManager.getHostsJson();
+        obj["hosts"] = hosts;
         return HttpResponse::json(obj);
     });
 
@@ -157,6 +168,7 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
 
         auto [status, result] = computerManager.handleGetBackend(uuid);
+        if (!req.isLocal) result.remove(QStringLiteral("apiUrl"));
         return HttpResponse::json(result, status);
     });
 
