@@ -69,6 +69,7 @@ add_executable(run_tests
     test_request_guard.cpp
     test_api_csrf.cpp
     test_session_pool.cpp
+    test_loopback_key.cpp
     test_port_fallback.cpp
     test_host_persistence.cpp
     test_rendezvous_id.cpp
@@ -159,6 +160,7 @@ add_executable(run_tests
     ${_src}/src/server/SessionPool.cpp
     # The single-tab control channel: the port it lands on when its own is taken.
     ${_src}/src/server/ControlChannel.cpp
+    ${_src}/src/common/LoopbackKey.cpp
     ${_src}/src/common/RendezvousId.cpp
     # The host's line to the introduction server, against a local stand-in:
     # how fast it comes back when the line fails under it.

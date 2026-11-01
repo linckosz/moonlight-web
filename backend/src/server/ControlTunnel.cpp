@@ -20,6 +20,7 @@
 #include "server/TunnelFrame.h"
 
 #include "common/Logger.h"
+#include "common/LoopbackKey.h"
 #include "streaming/PacketMarking.h"
 #include "common/PairingCrypto.h"
 #include "network/RendezvousClient.h"
@@ -36,6 +37,7 @@
 #include <QHostAddress>
 #include <QJsonDocument>
 #include <QMetaObject>
+#include <QNetworkRequest>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
@@ -1108,7 +1110,9 @@ void ControlTunnel::handleWsOpen(Peer& p, quint32 id, const QByteArray& payload)
         sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsClose, id, why));
     });
 
-    ws->open(QUrl(QStringLiteral("ws://127.0.0.1:%1/").arg(port)));
+    QNetworkRequest request(QUrl(QStringLiteral("ws://127.0.0.1:%1/").arg(port)));
+    request.setRawHeader(mw::loopback::kHeader, mw::loopback::key());
+    ws->open(request);
 }
 
 void ControlTunnel::handleWsText(Peer& p, quint32 id, const QString& text)

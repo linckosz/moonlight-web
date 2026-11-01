@@ -17,6 +17,7 @@
 
 #include "StreamRelay.h"
 #include "ClipboardBridge.h"
+#include "common/LoopbackKey.h"
 #include "InputMessageCodec.h"
 #include "IMediaEngine.h"
 #include "MicUplink.h"
@@ -543,19 +544,26 @@ void StreamRelay::onNewWsConnection()
 {
     qInfo() << "[StreamRelay] onNewWsConnection, existing client=" << (m_WsClient != nullptr);
 
-    if (m_WsClient) {
-        QWebSocket* rejected = m_WsServer->nextPendingConnection();
-        qWarning() << "[StreamRelay] Rejecting second client";
-        rejected->close(QWebSocketProtocol::CloseCodeNormal, "Single client only");
-        rejected->deleteLater();
-        return;
-    }
-
-    m_WsClient = m_WsServer->nextPendingConnection();
-    if (!m_WsClient) {
+    QWebSocket* incoming = m_WsServer->nextPendingConnection();
+    if (!incoming) {
         qWarning() << "[StreamRelay] nextPendingConnection returned null";
         return;
     }
+    // Before anything else: what is turned away here leaves the session as it was.
+    if (!mw::loopback::accepts(*incoming, mw::loopback::key())) {
+        qWarning() << "[StreamRelay] Refusing a connection that did not come through the server";
+        incoming->close(QWebSocketProtocol::CloseCodePolicyViolated);
+        incoming->deleteLater();
+        return;
+    }
+    if (m_WsClient) {
+        qWarning() << "[StreamRelay] Rejecting second client";
+        incoming->close(QWebSocketProtocol::CloseCodeNormal, "Single client only");
+        incoming->deleteLater();
+        return;
+    }
+
+    m_WsClient = incoming;
     // Bounded: Qt takes a message of up to 2 GB by default, and buffers all of
     // it before anyone sees a byte. 16 MiB is far past anything this socket
     // legitimately carries.

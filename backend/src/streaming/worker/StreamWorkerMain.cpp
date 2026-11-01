@@ -18,6 +18,7 @@
 #include "StreamWorkerMain.h"
 
 #include "../Session.h"
+#include "../../common/LoopbackKey.h"
 #include "../InputMessageCodec.h"
 #include "../../server/AppSettings.h"
 #include "mw/native/FeedArbiter.h"
@@ -612,6 +613,9 @@ int runStreamWorker(QCoreApplication& app)
     };
 
     // ── Build the session exactly like main.cpp's createSession ─────────────
+    // On stdin with the rest of the configuration, like the MW-BIND material.
+    mw::loopback::setKey(cfg["loopbackKey"].toString().toLatin1());
+
     auto* session = new StreamSession(
         host, cfg["appId"].toInt(), http, std::move(respond),
         static_cast<quint16>(cfg["signalingPort"].toInt(48001)), cfg["serverHost"].toString(),

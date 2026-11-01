@@ -105,6 +105,7 @@
 #include "backend/VirtualDisplayApply.h"
 #include "backend/VirtualHidApply.h"
 #include "common/InheritedEnvironment.h"
+#include "common/LoopbackKey.h"
 #include "network/UpdateApply.h"
 #include "backend/VirtualDisplayJob.h"
 #include "backend/streambackend/NativeHostBackend.h"
@@ -4063,6 +4064,7 @@ int main(int argc, char* argv[])
             // Every slot owns a port pair so all children can listen at once
             // (HttpServer proxies /ws1../ws4 to them).
             cfg["signalingPort"] = static_cast<int>(slotSignalingPort(reqSlot));
+            cfg["loopbackKey"] = QString::fromLatin1(mw::loopback::key());
             cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(reqSlot) + 1);
             cfg["mediaPort"] = static_cast<int>(kMediaBasePort + reqSlot);
             cfg["wsPath"] = slotWsPath(reqSlot);
@@ -5704,6 +5706,7 @@ int main(int argc, char* argv[])
         cfg["serverHost"] = serverHost;
         cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
         cfg["signalingPort"] = static_cast<int>(slotSignalingPort(slot));
+        cfg["loopbackKey"] = QString::fromLatin1(mw::loopback::key());
         cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(slot) + 1);
         cfg["mediaPort"] = static_cast<int>(kMediaBasePort + slot);
         cfg["wsPath"] = slotWsPath(slot);

@@ -16,6 +16,7 @@
  */
 
 #include "HttpServer.h"
+#include "common/LoopbackKey.h"
 #include "HttpParser.h"
 #include "PortFallback.h"
 #include "RequestGuard.h"
@@ -1591,7 +1592,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // Copy the upgrade request BEFORE removing from m_Buffers.  requestData is a
     // const reference to the QByteArray inside m_Buffers — remove() destroys it.
     // NOLINTNEXTLINE(performance-unnecessary-copy-initialization) — copy is required.
-    QByteArray upgradeRequest = requestData;
+    QByteArray upgradeRequest = mw::loopback::stampUpgrade(requestData, mw::loopback::key());
 
     // Remove from our tracking — HttpServer should no longer manage this socket.
     m_Buffers.remove(clientSocket);
