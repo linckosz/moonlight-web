@@ -522,6 +522,26 @@ void RouterPortAllocator::onRenewed(const QList<RouterPortCore::Lost>& lost)
     }
 }
 
+void RouterPortAllocator::releaseTunnelPort(quint16 externalPort)
+{
+    for (const Claim& held : std::as_const(m_Held)) {
+        if (held.purpose != Purpose::Tunnel || held.external != externalPort) continue;
+        const Claim claim = held;
+        m_Held.removeAll(claim);
+        QMetaObject::invokeMethod(
+            m_Worker, [w = m_Worker, claim]() { w->release(claim); }, Qt::QueuedConnection);
+        Logger::info(QStringLiteral("[UPNP] %1: released %2")
+                         .arg(purposeName(Purpose::Tunnel, -1))
+                         .arg(claim.external));
+        return;
+    }
+}
+
+void RouterPortAllocator::switchChanged()
+{
+    if (!enabled()) emit switchedOff();
+}
+
 QList<RouterPortAllocator::Claim> RouterPortAllocator::heldTunnelPorts() const
 {
     QList<Claim> out;

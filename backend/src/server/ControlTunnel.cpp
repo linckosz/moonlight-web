@@ -131,13 +131,19 @@ ControlTunnel::ControlTunnel(HttpServer* http, AuthManager* auth, AppSettings* s
         m_Ports->ensureStarted();
         // Already discovered on behalf of a stream: the signal below has fired.
         if (m_Ports->gatewayState() == RouterPortAllocator::GatewayState::Ready &&
-            m_PublicIP.empty())
+            (m_PublicIP.empty() || m_Ports->heldTunnelPorts().isEmpty()))
             onGatewayReady(m_Ports->publicIp());
     });
     connect(m_Ports, &RouterPortAllocator::gatewayReady, this, &ControlTunnel::onGatewayReady);
     connect(m_Ports, &RouterPortAllocator::gatewayMissing, this,
             [this]() { giveUpWaiting(QStringLiteral("no IGD on this network")); });
     connect(m_Ports, &RouterPortAllocator::portLost, this, &ControlTunnel::onPortLost);
+    connect(m_Ports, &RouterPortAllocator::switchedOff, this, [this]() {
+        const QList<uint16_t> spare = m_FreePorts;
+        m_FreePorts.clear();
+        for (const uint16_t port : spare)
+            m_Ports->releaseTunnelPort(port);
+    });
 
     Logger::info(QStringLiteral("[Tunnel] Ready — host key %1").arg(hostKeyFingerprint()));
 }
@@ -173,6 +179,12 @@ void ControlTunnel::requestTunnelPort()
                                           const QString& why) {
         if (claim.external == 0) {
             giveUpWaiting(why);
+            return;
+        }
+        // Switched off while the router was answering.
+        if (!m_Ports->enabled()) {
+            m_Ports->releaseTunnelPort(claim.external);
+            giveUpWaiting(QStringLiteral("UPnP is off"));
             return;
         }
         if (m_PublicIP.empty()) m_PublicIP = m_Ports->publicIp().toStdString();
@@ -249,6 +261,10 @@ uint16_t ControlTunnel::takeTunnelPort()
 void ControlTunnel::releaseTunnelPort(uint16_t port)
 {
     if (port == 0 || m_FreePorts.contains(port)) return;
+    if (!m_Ports->enabled()) {
+        m_Ports->releaseTunnelPort(port);
+        return;
+    }
     // Only a hole this host still holds: one lost at renewal is gone for good.
     for (const RouterPortAllocator::Claim& c : m_Ports->heldTunnelPorts()) {
         if (c.external != port) continue;

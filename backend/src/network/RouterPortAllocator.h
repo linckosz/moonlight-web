@@ -138,6 +138,14 @@ public:
     /// remembered, so the next claim on the slot asks for the same one.
     void releaseMediaPort(int slot);
 
+    /// Take a tunnel hole off the router. Remembered, like a media port.
+    void releaseTunnelPort(quint16 externalPort);
+
+    /// UPnP or Internet Access was just switched. Off, whoever holds a hole it
+    /// is not using gives it back (switchedOff); a stream or a tunnel still on
+    /// one gives it back when it ends.
+    void switchChanged();
+
     QList<Claim> heldTunnelPorts() const;
     std::optional<Claim> heldMediaPort(int slot) const;
     /// Claims handed to the router and not yet answered.
@@ -150,6 +158,7 @@ signals:
     /// Already dropped and forgotten here; the owner of the port stops
     /// offering it.
     void portLost(int purpose, int slot, quint16 externalPort, const QString& owner);
+    void switchedOff();
 
 private:
     class Worker;

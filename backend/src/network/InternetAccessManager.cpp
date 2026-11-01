@@ -203,9 +203,8 @@ void InternetAccessManager::stop()
 {
     m_PeriodicCheckTimer->stop();
 
-    // No mapping to close: this manager forwards no port of its own. The only
-    // hole it ever authorises is the per-session media port, opened and closed
-    // by the signaling server for the length of a stream.
+    // No mapping to close here: this manager forwards no port of its own. The
+    // router's holes are RouterPortAllocator's (see its switchChanged()).
     m_Active = false;
     m_Phase.clear();
     qInfo() << "[InternetAccess] Stopped";

@@ -255,6 +255,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             appSettings.setInternetAccessEnabled(body["internet_access_enabled"].toBool());
         if (body.contains("upnp_enabled"))
             appSettings.setUpnpEnabled(body["upnp_enabled"].toBool());
+        if (RouterPortAllocator* ports = internetAccess.routerPorts()) ports->switchChanged();
 
         // Legal traceability: record the exact agreement text the user read when
         // they ticked the checkbox. The mechanism is decided here, not by the
@@ -1052,6 +1053,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
             internetAccess.stop();
             appSettings.setInternetAccessEnabled(false);
+            if (RouterPortAllocator* ports = internetAccess.routerPorts()) ports->switchChanged();
             if (onInternetAccessToggled) onInternetAccessToggled(false);
 
             QJsonObject obj;
@@ -1400,7 +1402,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         return HttpResponse::json(obj);
     });
 
-    server.router()->post("/api/settings/streaming", [&appSettings](const HttpRequest& req) {
+    server.router()->post("/api/settings/streaming", [&appSettings,
+                                                      &internetAccess](const HttpRequest& req) {
         // Only localhost can modify server-side streaming settings
         if (!req.isLocal)
             return HttpResponse::error(403,
@@ -1537,6 +1540,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         if (body.contains("upnp_enabled")) {
             bool enabled = body["upnp_enabled"].toBool();
             appSettings.setUpnpEnabled(enabled);
+            if (RouterPortAllocator* ports = internetAccess.routerPorts()) ports->switchChanged();
             obj["upnp_enabled"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
