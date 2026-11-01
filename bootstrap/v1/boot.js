@@ -178,11 +178,19 @@ function fail(message, hint, heading = 'Not connected') {
     // help them. This is the moment the caption becomes a way out.
     paintInstances(true);
     paintForget(true);
+    // Failing while put away: the failure is for whoever comes back, who will
+    // get a fresh attempt instead (see "Coming back to a page that had failed").
+    if (document.visibilityState === 'hidden') {
+        failedWhenHidden = true;
+        lookLikeOpening();
+    }
 }
 
 /** Back to work after a failure the page had already shown: the bar runs again
  *  from where it stopped, and leaving is no longer on offer. */
 function resume() {
+    // Recovered: coming back to this page is no reason to start it over.
+    failedWhenHidden = false;
     document.body.dataset.state = 'working';
     if (ui.note) ui.note.textContent = '';
     paintInstances(false);
@@ -191,6 +199,45 @@ function resume() {
     heartbeat = setInterval(render, 250);
     requestAnimationFrame(raf);
 }
+
+/* ── Coming back to a page that had failed ────────────────────────────────
+ *
+ * A phone keeps a tab it has put away, and shows it again as it was when the
+ * person comes back — on iOS often first as the picture it took on the way out,
+ * while the page itself wakes or reloads behind it. A failure from the last
+ * visit was then the first thing the next one saw: "Not connected" for a couple
+ * of seconds over a machine that was switched on by now, before the page
+ * started over (01/11/2026, Chrome on an iPhone).
+ *
+ * So a failure does not outlive the page being put away. The moment it is
+ * hidden, the page goes back to its opening look — that is what the phone's
+ * picture shows next time — and the moment it is shown again, it starts over:
+ * a fresh attempt now, rather than whenever the slow retries below would have
+ * got round to it. The same goes for a page the browser brings back from its
+ * back-forward cache. */
+let failedWhenHidden = false;
+
+function lookLikeOpening() {
+    document.body.dataset.state = 'working';
+    if (ui.note) ui.note.textContent = '';
+    paintInstances(false);
+    paintForget(false);
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        if (document.body.dataset.state !== 'failed') return;
+        failedWhenHidden = true;
+        lookLikeOpening();
+        return;
+    }
+    if (failedWhenHidden) location.reload();
+});
+
+window.addEventListener('pageshow', (event) => {
+    if (event.persisted && (failedWhenHidden || document.body.dataset.state === 'failed'))
+        location.reload();
+});
 
 /* ── The machine, and the way to another one ───────────────────────────────
  *
