@@ -195,7 +195,12 @@ void run_mic_uplink_tests()
         CHECK_EQ(cableRank("CABLE-A Input (VB-Audio Cable A)"), 0);
         CHECK_EQ(cableRank("Hi-Fi Cable Input (VB-Audio Hi-Fi Cable)"), 0);
         CHECK_EQ(cableRank("cable input (vb-audio virtual cable)"), 0);
-        CHECK_EQ(cableRank("Speakers (Steam Streaming Microphone)"), 1);
+        // Steam's microphone cable hands its 48 kHz stereo side to its 44.1 kHz
+        // mono side unconverted: a voice an octave low. Named, never automatic.
+        CHECK_EQ(cableRank("Speakers (Steam Streaming Microphone)"), kNotACable);
+        CHECK(mw::mic::isSteamMicrophone("Speakers (Steam Streaming Microphone)"));
+        CHECK(!mw::mic::isSteamMicrophone("Speakers (Steam Streaming Speakers)"));
+        CHECK(!mw::mic::isSteamMicrophone("CABLE Input (VB-Audio Virtual Cable)"));
         // VoiceMeeter mixes its inputs into the PC's speakers.
         CHECK_EQ(cableRank("VoiceMeeter Input (VB-Audio VoiceMeeter VAIO)"), kNotACable);
         CHECK_EQ(cableRank("VoiceMeeter Aux Input (VB-Audio VoiceMeeter AUX VAIO)"), kNotACable);
@@ -217,6 +222,9 @@ void run_mic_uplink_tests()
         CHECK(mw::mic::nameMatches("CABLE-A Input (VB-Audio Cable A)", "cable-a input"));
         CHECK(!mw::mic::nameMatches("CABLE-A Input (VB-Audio Cable A)", "CABLE-B"));
         CHECK(!mw::mic::nameMatches("anything", ""));
+        // Named by the admin, Steam's cable is still taken.
+        CHECK(mw::mic::nameMatches("Speakers (Steam Streaming Microphone)",
+                                   "steam streaming microphone"));
     }
 
     SECTION("JitterRing — silent until primed, then plays in order");

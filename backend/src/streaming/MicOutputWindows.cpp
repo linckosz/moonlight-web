@@ -102,14 +102,18 @@ std::wstring friendlyName(IMMDevice* device)
     return out;
 }
 
-std::string noCableReason(const std::string& device)
+std::string noCableReason(const std::string& device, bool steamSeen)
 {
     if (!wantsAutoDevice(device))
         return "no playback device named like \"" + device +
                "\" (settings.json mic_device) is active on this PC";
-    return "this PC has no virtual audio cable to play the microphone into. Install VB-CABLE "
-           "(vb-audio.com/Cable): MoonlightWeb plays into its \"CABLE Input\", and apps record "
-           "it as \"CABLE Output\"";
+    std::string why = "this PC has no virtual audio cable to play the microphone into. Install "
+                      "VB-CABLE (vb-audio.com/Cable): MoonlightWeb plays into its \"CABLE "
+                      "Input\", and apps record it as \"CABLE Output\"";
+    if (steamSeen)
+        why += ". Steam's \"Steam Streaming Microphone\" is not used: it does not convert the "
+               "sound, and the voice would arrive an octave low";
+    return why;
 }
 
 /// The render endpoint to play into (MicCable.h says which), and its name.
@@ -138,12 +142,14 @@ std::string findDevice(IMMDeviceEnumerator* enumerator, const std::string& devic
     const bool automatic = wantsAutoDevice(device);
     int bestRank = 0;
     std::string skippedDefault;
+    bool steamSeen = false;
     for (UINT i = 0; i < count; ++i) {
         ComPtr<IMMDevice> candidate;
         if (FAILED(devices->Item(i, &candidate))) continue;
         const std::wstring friendly = friendlyName(candidate.p);
         const std::string utf8 = narrow(friendly);
         const int rank = automatic ? cableRank(utf8) : (nameMatches(utf8, device) ? 0 : kNotACable);
+        steamSeen = steamSeen || isSteamMicrophone(utf8);
         if (rank == kNotACable) continue;
         if (!defaultId.empty() && endpointId(candidate.p) == defaultId) {
             skippedDefault = utf8;
@@ -161,7 +167,7 @@ std::string findDevice(IMMDeviceEnumerator* enumerator, const std::string& devic
         return "\"" + skippedDefault +
                "\" is this PC's default output: the host's own sound would carry the voice "
                "back. Choose your speakers as the default output";
-    return noCableReason(device);
+    return noCableReason(device, steamSeen);
 }
 
 /// COM for the scope of one call, whatever the thread already had.

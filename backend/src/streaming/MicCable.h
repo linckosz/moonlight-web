@@ -25,11 +25,16 @@
 // read the same rule on every OS.
 //
 // Only the render side of a virtual cable, whose capture side is what the
-// host's apps record. Never a real output, and never:
+// host's apps record. Never a real output, and never on its own:
 //   - "Steam Streaming Speakers": Sunshine captures it, and the viewer would
 //     hear their own voice come back;
 //   - VoiceMeeter's inputs, although they are VB-Audio's too: VoiceMeeter
-//     mixes them into its outputs, which are the PC's speakers.
+//     mixes them into its outputs, which are the PC's speakers;
+//   - "Steam Streaming Microphone": its driver hands the bytes of its render
+//     side (48 kHz stereo as Steam installs it) to its capture side (44.1 kHz
+//     mono) unconverted, so a voice arrives more than an octave low and
+//     slowed — a 440 Hz tone recorded at 202 Hz (01/11/2026). An admin who
+//     lined both formats up can still name it in mic_device.
 namespace mw::mic {
 
 constexpr int kNotACable = -1;
@@ -41,11 +46,9 @@ inline std::string lowerAscii(std::string s)
     return s;
 }
 
-/// Preference among the cables people already have, lower first:
+/// Preference among the cables the automatic choice takes, lower first:
 ///   0 — VB-CABLE and its A/B/C/D and Hi-Fi variants, whose render sides are
-///       all named "… Input (VB-Audio … Cable …)";
-///   1 — "Speakers (Steam Streaming Microphone)", installed with Steam Remote
-///       Play.
+///       all named "… Input (VB-Audio … Cable …)".
 /// kNotACable for anything else. `friendlyName` is UTF-8.
 inline int cableRank(const std::string& friendlyName)
 {
@@ -53,8 +56,14 @@ inline int cableRank(const std::string& friendlyName)
     auto has = [&n](const char* part) { return n.find(part) != std::string::npos; };
     if (has("voicemeeter")) return kNotACable;
     if (has("vb-audio") && has("cable") && has("input")) return 0;
-    if (has("steam streaming microphone")) return 1;
     return kNotACable;
+}
+
+/// Steam Remote Play's microphone cable, which the automatic choice passes
+/// over (see the top of this file): named, so the viewer is told why.
+inline bool isSteamMicrophone(const std::string& friendlyName)
+{
+    return lowerAscii(friendlyName).find("steam streaming microphone") != std::string::npos;
 }
 
 /// The admin's `mic_device`, matched as part of a device's name, any case.

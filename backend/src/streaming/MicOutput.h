@@ -25,8 +25,8 @@
 // them includes Qt, so each compiles on its own (MicUplink logs for them).
 //
 //   Windows — WASAPI playback into the render side of a virtual cable (VB-CABLE's
-//             "CABLE Input", Steam's "Steam Streaming Microphone"): its capture
-//             side is the microphone the apps see. Windows has no virtual
+//             "CABLE Input", or the admin's mic_device): its capture side is
+//             the microphone the apps see. Windows has no virtual
 //             microphone of its own, and MoonlightWeb ships no audio driver.
 //   Linux   — PipeWire: a virtual source, "MoonlightWeb Microphone", made once
 //             and left in the graph (object.linger), and a playback stream into
