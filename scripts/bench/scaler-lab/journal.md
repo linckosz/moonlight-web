@@ -3198,5 +3198,13 @@ f16 reste pour l'instant : sur l'iGPU elle ne gagne plus rien (−56,0 % contre 
 **Vérifié.** Dorés réécrits puis relus, conformité des jumeaux WebGPU et WebGL2, jumeau HLSL sur WARP, cellules du labo, `node mwsr/generate.mjs --check`,
 `node scripts/website/build-site.mjs --check`, 200 fichiers de tests et 2211 tests verts. Le texte appliqué rend les mêmes pixels que la copie de labo mesurée, sur 6 cas, avec et sans zones. Aucune réduction ne change dans les dorés. Le contrôle HDR garde les cinq alertes de la loi commitée, aux mêmes valeurs à 0,005 près, et n'en ajoute aucune.
 
-**Reste.** La 780M, les téléphones (Bruno lit le temps sur le comparateur en ligne, après le signal de 59), la Mi TV ; les temps définitifs du README,
-au dernier créneau, avec FSR1, NIS et SGSR1 dans la même page ; puis le retrait des anciens chemins et la décision sur la f16.
+**Les temps définitifs (02/11, 10:37-10:41, le texte de ce commit, même page).** RTX : 0 A.D., texte, re9-street et gta-city ; iGPU : les trois
+premiers. Contre la v0.4.1 : RTX −47,1 % (−37 à −59), iGPU −57,0 % (−45 à −66) ; avec les zones −40,2 % et −54,2 %. FSR1, à sa meilleure précision, coûte
+4,79 fois MWSR sur la RTX (4,3 à 5,1) et 4,98 fois sur l'iGPU (4,3 à 5,9) ; avec les zones 4,23 et 4,68 fois ; la v0.4.1 était à 2,54 et 2,11 fois. MWSR
+devient le plus rapide des quatre sur ces deux GPU. La RTX était à P0 d'un bout à l'autre, et la mesure confirme celle de 09:19.
+
+Le README, la page et le graphique prennent ces temps. La colonne de la Radeon 780M reste celle du 30/10 et est dite ancienne : l'UM790Pro sert au banc de
+sécurité. Les scores (`cmp_lab.py`, 75 cas) sont refaits sur ce texte, les figures par `mwsr_charts.py`, et la colonne MWSR des zooms est redessinée sur la RTX.
+
+**Reste.** La 780M, les téléphones (Bruno lit le temps sur le comparateur en ligne, après le signal de 59), la Mi TV ; puis le retrait des anciens chemins et
+la décision sur la f16.

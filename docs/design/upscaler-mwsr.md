@@ -1480,7 +1480,7 @@ upscalers spatiaux.
 - [x] Décidé par Bruno le 02/11 : les termes d'écran de la loi restent à zéro ; les écrans 1080 et 2160 avec zones restent à 89-93 % du gain LPIPS (règle : 95 %) ; le texte à ×1,333 garde la loi et se juge à l'œil
 - [ ] L'activation par défaut des zones, au oui de Bruno, après son coup d'œil et le coût côté hôte. Ce coût est mesuré (`upscaler-mwsr-b.md` §12 f.3 et f.4) : 64 µs dans un vrai stream sur la RTX en 1440p, budget de 1 ms tenu en direct, puis la légère, puis la loi. Un vrai stream hors de ce cas n'est pas mesuré (§12 g) [`medium`]
 - [x] L'optimisation du shader livré, journal J56 : sans lectures le long des bords ni cohérence, un poids par image, zéro perte mesurée ; puis, à la décision de Bruno du 02/11, le chemin plat à une lecture (`FLAT_TAPS 2`) partout, seuil 0,0025. WebGPU contre la v0.4.1 : RTX −48 %, iGPU −57 %
-- [ ] Les temps définitifs du README, avec FSR1, NIS et SGSR1 dans la même page, au dernier créneau de 59 [`medium`]
+- [x] Les temps définitifs du README sur la RTX et l'iGPU, avec FSR1, NIS et SGSR1 dans la même page, les scores et les figures (J56). La colonne de la Radeon 780M reste à refaire avec sa lecture
 - [ ] La lecture sur la 780M (créneau de 59), sur téléphone (Bruno, sur le comparateur en ligne, après le signal de 59) et sur la Mi TV (WebGL2, `mediump` contre `highp`, créneau de 59) [`medium`]
 - [ ] Après cette lecture : retirer les chemins à 3, 5 et 9 échantillons et `fc` (décidé par Bruno le 02/11), et décider de la f16 [`medium`]
 

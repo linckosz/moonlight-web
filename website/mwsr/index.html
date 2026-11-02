@@ -237,8 +237,8 @@
       beside one at the law keeps the law, so text next to a photo stays crisp. This page measures the native frame as
       the host does. It is not in the mwsr folder: the MWSR anyone downloads draws by the law, the MWSR line above.</p>
     <h3>Measured on three GPUs</h3>
-    <p class="small">The README's figures: its times from 28/10/2026 (the Radeon 780M's from 30/10/2026, MWSR's with its
-      previous defaults, to be measured again), in Chrome's WebGPU on Windows 11
+    <p class="small">The README's figures: its times from 02/11/2026 (the Radeon 780M's from 30/10/2026, MWSR's there from
+      before its speed work, to be measured again), in Chrome's WebGPU on Windows 11
       (on Ubuntu for the Radeon 780M), the input already in an 8-bit texture, on the 0 A.D. picture (game) and the text
       chart (text). LPIPS, VMAF NEG and overshoot as in the table above (the lab's, at 4:4:4); the times per draw,
       each upscaler at its faster precision. The Ryzen 9 9900X's integrated Radeon and the Radeon 780M ran at their own clocks: read their times as
@@ -252,11 +252,11 @@
           <th scope="col">Overshoot, game</th><th scope="col">RTX 5060 Ti</th>
           <th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M</th></tr></thead>
         <tbody>
-          <tr><th scope="row">MWSR</th><td><strong>0.1239</strong></td><td><strong>0.0348</strong></td><td>83.5</td><td>58.9</td><td>&lt; 0.01 %</td><td>0.116 ms</td><td>3.80 ms (f16)</td><td>0.267 ms (f16)</td></tr>
-          <tr><th scope="row">FSR1</th><td>0.1401</td><td>0.0493</td><td><strong>84.8</strong></td><td>57.3</td><td>13.7 %</td><td>0.265 ms (f16)</td><td>6.33 ms (f16)</td><td>0.707 ms (f16)</td></tr>
-          <tr><th scope="row">NIS</th><td>0.1863</td><td>0.0414</td><td>70.5</td><td><strong>62.2</strong></td><td>42.6 %</td><td>0.904 ms</td><td>13.78 ms</td><td>0.953 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>0.1838</td><td>0.0402</td><td>83.1</td><td>59.9</td><td>6.6 %</td><td>0.118 ms</td><td>2.97 ms (f16)</td><td>0.216 ms (f16)</td></tr>
-          <tr><th scope="row">Bilinear</th><td>0.2665</td><td>0.0697</td><td>76.8</td><td>49.9</td><td>0 %</td><td>0.029 ms</td><td>0.449 ms</td><td>0.110 ms</td></tr>
+          <tr><th scope="row">MWSR</th><td><strong>0.1239</strong></td><td><strong>0.0348</strong></td><td>83.5</td><td>58.9</td><td>0 %</td><td>0.063 ms</td><td>1.29 ms</td><td>0.267 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>0.1401</td><td>0.0493</td><td><strong>84.8</strong></td><td>57.3</td><td>13.7 %</td><td>0.322 ms</td><td>6.31 ms (f16)</td><td>0.707 ms (f16)</td></tr>
+          <tr><th scope="row">NIS</th><td>0.1863</td><td>0.0414</td><td>70.5</td><td><strong>62.2</strong></td><td>42.6 %</td><td>1.054 ms</td><td>13.69 ms</td><td>0.953 ms</td></tr>
+          <tr><th scope="row">SGSR1</th><td>0.1838</td><td>0.0402</td><td>83.1</td><td>59.9</td><td>6.6 %</td><td>0.123 ms</td><td>2.97 ms (f16)</td><td>0.216 ms (f16)</td></tr>
+          <tr><th scope="row">Bilinear</th><td>0.2665</td><td>0.0697</td><td>76.8</td><td>49.9</td><td>0 %</td><td>0.042 ms</td><td>0.453 ms</td><td>0.110 ms</td></tr>
         </tbody>
       </table>
     </div>
@@ -268,11 +268,11 @@
           <th scope="col">Overshoot, game</th><th scope="col">RTX 5060 Ti</th>
           <th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M</th></tr></thead>
         <tbody>
-          <tr><th scope="row">MWSR</th><td><strong>0.3356</strong></td><td><strong>0.0885</strong></td><td>69.9</td><td>25.1</td><td>0 %</td><td>0.113 ms</td><td>3.69 ms (f16)</td><td>0.231 ms (f16)</td></tr>
-          <tr><th scope="row">FSR1</th><td>0.3594</td><td>0.1032</td><td>70.7</td><td>24.6</td><td>2.9 %</td><td>0.273 ms</td><td>6.32 ms (f16)</td><td>0.685 ms (f16)</td></tr>
-          <tr><th scope="row">NIS</th><td>0.3714</td><td>0.0970</td><td>59.4</td><td><strong>36.5</strong></td><td>41.7 %</td><td>0.614 ms</td><td>12.99 ms</td><td>0.886 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>0.3939</td><td>0.0984</td><td><strong>71.1</strong></td><td><strong>36.5</strong></td><td>6.3 %</td><td>0.118 ms</td><td>2.95 ms (f16)</td><td>0.204 ms (f16)</td></tr>
-          <tr><th scope="row">Bilinear</th><td>0.4865</td><td>0.1658</td><td>58.4</td><td>15.1</td><td>0 %</td><td>0.029 ms</td><td>0.422 ms</td><td>0.094 ms</td></tr>
+          <tr><th scope="row">MWSR</th><td><strong>0.3355</strong></td><td><strong>0.0879</strong></td><td>69.9</td><td>25.1</td><td>0 %</td><td>0.069 ms</td><td>1.28 ms</td><td>0.231 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>0.3594</td><td>0.1032</td><td>70.7</td><td>24.6</td><td>2.9 %</td><td>0.311 ms</td><td>6.32 ms (f16)</td><td>0.685 ms (f16)</td></tr>
+          <tr><th scope="row">NIS</th><td>0.3714</td><td>0.0970</td><td>59.4</td><td><strong>36.5</strong></td><td>41.7 %</td><td>0.842 ms</td><td>13.02 ms</td><td>0.886 ms</td></tr>
+          <tr><th scope="row">SGSR1</th><td>0.3939</td><td>0.0984</td><td><strong>71.1</strong></td><td><strong>36.5</strong></td><td>6.3 %</td><td>0.144 ms</td><td>2.95 ms (f16)</td><td>0.204 ms (f16)</td></tr>
+          <tr><th scope="row">Bilinear</th><td>0.4865</td><td>0.1658</td><td>58.4</td><td>15.1</td><td>0 %</td><td>0.043 ms</td><td>0.424 ms</td><td>0.094 ms</td></tr>
         </tbody>
       </table>
     </div>
