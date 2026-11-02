@@ -137,6 +137,10 @@ public:
 
     QString baseUrl() const { return m_BaseUrl; }
 
+    /// The machine this service runs on, as its administrator gave it. Seats run
+    /// there too; empty when the address names no host.
+    QString host() const;
+
     /// GET /api/seats
     void listSeats(MultiSeatSeatsCallback cb);
 

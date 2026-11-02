@@ -63,6 +63,15 @@ QJsonObject obj(const char* json)
 
 void run_multiseat_tests()
 {
+    // Where a seat's credentials go: the machine the administrator named.
+    const auto hostOf = [](const char* url) {
+        return MultiSeatApiClient(QString::fromLatin1(url), QString(), nullptr).host();
+    };
+    CHECK_EQ(hostOf("http://192.0.2.9:9550"), QStringLiteral("192.0.2.9"));
+    CHECK_EQ(hostOf("http://seats.example:9550/"), QStringLiteral("seats.example"));
+    CHECK_EQ(hostOf("http://[2001:db8::9]:9550"), QStringLiteral("2001:db8::9"));
+    CHECK_EQ(hostOf(""), QString());
+
     SECTION("MultiSeat seat parsing");
 
     const MultiSeatSeat ready = MultiSeatApiClient::parseSeat(obj(kReadySeat));

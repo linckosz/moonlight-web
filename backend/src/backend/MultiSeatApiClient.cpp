@@ -37,6 +37,11 @@ constexpr const char* kApiKeyHeader = "X-MultiSeat-Key";
 
 } // namespace
 
+QString MultiSeatApiClient::host() const
+{
+    return QUrl(m_BaseUrl).host();
+}
+
 MultiSeatApiClient::MultiSeatApiClient(QString baseUrl, QString apiKey, QNetworkAccessManager* nam,
                                        QObject* parent)
     : QObject(parent)
