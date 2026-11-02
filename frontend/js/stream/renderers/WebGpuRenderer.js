@@ -2353,11 +2353,11 @@ export class WebGpuRenderer extends VideoRenderer {
     }
 
     /**
-     * The mwsr kernel's per-draw values (MwsrShader's MWSR_UNIFORMS: the
-     * vote threshold `tau`, the sharpness `sharp`), for the laboratory's
-     * side-by-side viewer; the product draws with the defaults. Takes effect
-     * at the next draw.
-     * @param {{tau?: number, sharp?: number}|null} tuning null: the defaults
+     * The mwsr kernel's per-draw values (MwsrShader's mwsrLaw: the vote
+     * threshold `tau`, the sharpness `sharp` and the others), for the
+     * laboratory's side-by-side viewer; the product draws with the law. Takes
+     * effect at the next draw.
+     * @param {{tau?: number, sharp?: number}|null} tuning null: the law
      */
     setMwsrTuning(tuning) {
         this._mwsrTuning = tuning || null;
@@ -3184,7 +3184,18 @@ export class WebGpuRenderer extends VideoRenderer {
                 // The gaze zone's weight for this draw, 0 without a zone: it
                 // moves in steps of 1/64, so the block is rewritten rarely.
                 const gaze = this._mwsrGazeFor(inW * inH);
-                const uniKey = inW + 'x' + inH + '>' + cw + 'x' + ch + '@' + gaze;
+                // The host's zones for this frame, read by the kernel's second
+                // text where they fit the scale it is drawn at (a reduction
+                // reads none); any other frame takes the first. Each has its
+                // own law: the zones' is tuned with their drops under it.
+                const zoned =
+                    this._zoneMap &&
+                    this._zonesReady(
+                        frame.timestamp,
+                        reg.mode === 'up' ? Math.min(cw / inW, ch / inH) : 0,
+                    );
+                const uniKey =
+                    inW + 'x' + inH + '>' + cw + 'x' + ch + '@' + gaze + (zoned ? 'z' : '');
                 if (this._mwsrUniKey !== uniKey) {
                     this._mwsrUniKey = uniKey;
                     this._device.queue.writeBuffer(
@@ -3192,6 +3203,7 @@ export class WebGpuRenderer extends VideoRenderer {
                         0,
                         mwsrUniforms(inW, inH, cw, ch, {
                             ...(this._mwsrTuning || {}),
+                            zones: zoned,
                             gaze,
                             zone: this._mwsrZone || undefined,
                         }),
@@ -3200,15 +3212,6 @@ export class WebGpuRenderer extends VideoRenderer {
                 // mwsr 2 / 3: the frame deblocked into dbTex, which the kernel
                 // then reads; a frame mwsr 3 finds fine enough skips both passes.
                 const db = this._deblock && this._dbTex ? this._deblockFor(frame.timestamp) : null;
-                // The host's zones for this frame, read by the kernel's second
-                // text where they fit the scale it is drawn at (a reduction
-                // reads none); any other frame takes the first, and the law.
-                const zoned =
-                    this._zoneMap &&
-                    this._zonesReady(
-                        frame.timestamp,
-                        reg.mode === 'up' ? Math.min(cw / inW, ch / inH) : 0,
-                    );
                 if (db) {
                     const dbKey = inW + 'x' + inH + ':' + db.thr + ':' + db.cmax;
                     if (this._dbUniKey !== dbKey) {
@@ -3240,7 +3243,8 @@ export class WebGpuRenderer extends VideoRenderer {
                     pd.draw(3);
                     pd.end();
                 }
-                // The eye test's split screen: both texts, side by side.
+                // The eye test's split screen: both texts, side by side, under
+                // one law, the zones': what differs is the grid.
                 if (zoned && this._split) {
                     this._drawMwsrSplit(
                         encoder,

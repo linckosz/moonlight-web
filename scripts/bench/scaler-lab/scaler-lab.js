@@ -90,9 +90,8 @@ const CELL_SETS = {
   // it, and the picture.
   glchain: ["chain-gl-off", "chain-gl-sgsr", "chain-gl-nis", "chain-gl-fsr1", "chain-gl-mwsr"],
   // The mwsr kernel (plan §3.2, §4.3): `mwsr[:key=val;key=val…]` sets its
-  // overrides (show, walong, wacross, ralong, racross, sfull, wmin, dering,
-  // c444, rdown, ll, flat, fc, gz, fz: MWSR_KEYS), the uniforms (tau,
-  // sharp), half=1 (the f16
+  // overrides (show, dering, c444, rdown, ll, flat, gz, fz: MWSR_KEYS),
+  // the uniforms (tau, sharp, wmin, racross, fc, sfull: MWSR_LAW_KEYS), half=1 (the f16
   // module; the page needs f16=1), mode=up|down (default: by the scale),
   // taps=1|4|9|16 (the reduction's grid) and srgb=1 (SDR only: the input
   // read and the output written through `-srgb` views, the sampler decoding
@@ -1627,21 +1626,16 @@ async function runLabInner(p, log) {
   // (pipeline constants) and uniforms. The override defaults are the text's.
   const MWSR_KEYS = {
     show: "SHOW",
-    walong: "W_ALONG",
-    wacross: "W_ACROSS",
-    ralong: "R_ALONG",
-    racross: "R_ACROSS",
-    sfull: "S_FULL",
-    wmin: "W_MIN",
     dering: "DERING",
     c444: "CHROMA444",
     rdown: "R_DOWN",
     ll: "LINEAR_LIGHT",
     flat: "FLAT_TAPS",
-    fc: "FLAT_C",
     gz: "GAZE",
     fz: "FLAT_ZONE",
   };
+  // The law's values, the uniform block's (mwsrUniforms() takes them by name).
+  const MWSR_LAW_KEYS = ["tau", "sharp", "wmin", "racross", "fc", "sfull"];
   // The gaze zone's uniforms (MwsrShader's MWSR_ZONE): a cell naming one of
   // them, or gaze=, takes the GAZE text unless gz= says otherwise.
   const ZONE_KEYS = {
@@ -1788,7 +1782,7 @@ async function runLabInner(p, log) {
       over.LINEAR_LIGHT = reg.linearLight;
     }
     for (const [k, v] of Object.entries(opts)) {
-      if (k === "tau" || k === "sharp") uni[k] = Number(v);
+      if (MWSR_LAW_KEYS.includes(k)) uni[k] = Number(v);
       else if (["map", "mapv", "ana", "cells", "q", "nb", "rot", "tree", "via"].includes(k)) continue; // mwsr-map.js
       else if (k === "gaze") {
         uni.gaze = Number(v);
@@ -1965,7 +1959,7 @@ async function runLabInner(p, log) {
       let half = false;
       for (const [k, val] of Object.entries(opts)) {
         if (k === "v" || k === "c" || k === "bits") continue;
-        if (k === "tau" || k === "sharp") uni[k] = Number(val);
+        if (MWSR_LAW_KEYS.includes(k)) uni[k] = Number(val);
         else if (k === "half") half = val === "1";
         else if (k in MWSR_KEYS) over[MWSR_KEYS[k]] = Number(val);
         else throw new Error(name + ": option " + k + "?");

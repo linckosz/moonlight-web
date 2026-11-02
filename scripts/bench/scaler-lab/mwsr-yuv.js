@@ -176,12 +176,6 @@ export function yKernel(up, out = "rgb") {
   let c = withFeed(up, "y");
   c = once(
     c,
-    "fn blend(C : h3, T1 : h3, T2 : h3, X1 : h3, X2 : h3, wT : h3, wX : h3) -> h3 {",
-    "fn blend(C : hf, T1 : hf, T2 : hf, X1 : hf, X2 : hf, wT : hf, wX : hf) -> hf {",
-    "blend",
-  );
-  c = once(
-    c,
     "fn flatPath(uv : vec2f, C : vec3f, zg : f32) -> vec3f {",
     "fn flatPath(uv : vec2f, C : f32, zg : f32) -> f32 {",
     "flatPath",
@@ -198,46 +192,17 @@ export function yKernel(up, out = "rgb") {
     "fn texelBound(uv : vec2f, R : f32) -> f32 {",
     "texelBound",
   );
-  c = once(c, "    let lC = luma(C);", "    let lC = C;", "the centre luma");
   c = span(
     c,
-    "    let dx = dpdxCoarse(C) * u.scale.x;",
-    "    let flat = select(",
+    "    var gx : f32;",
+    "        flat = abs(gx) + abs(gy) < tau;\n    }",
     "    let gx = dpdxCoarse(C) * u.scale.x;\n    let gy = dpdyCoarse(C) * u.scale.y;\n    let flat = abs(gx) + abs(gy) < tau;",
     "the vote",
   );
-  for (const t of [
-    "Ch = h3(C)",
-    "T1 = h3(S(uv - dt))",
-    "T2 = h3(S(uv + dt))",
-    "X1 = h3(S(uv - dn))",
-    "X2 = h3(S(uv + dn))",
-  ])
-    c = once(
-      c,
-      "    let " + t + ";",
-      "    let " + t.replace("h3(", "hf(") + ";",
-      t,
-    );
-  for (const t of ["T1", "T2", "X1", "X2"])
-    c = once(
-      c,
-      `    let l${t} = lumah(${t});`,
-      `    let l${t} = ${t};`,
-      "l" + t,
-    );
-  c = span(
-    c,
-    "    var a : h3;",
-    "        a = h3(coherence(lCh, lT1, lT2, lX1, lX2) * hf(strength));\n    }",
-    "    let a = coherence(lCh, lT1, lT2, lX1, lX2) * hf(strength);",
-    "the coherence",
-  );
-  c = once(c, "a, h3(hf(W_MIN)));", "a, hf(W_MIN));", "the across weight");
   c = once(
     c,
-    "    var R = vec3f(blend(",
-    "    var R = f32(blend(",
+    "    var R = vec3f((h3(C) + hf(wX) * h3(X1 + X2)) * hf(kB));",
+    "    var R = f32((hf(C) + hf(wX) * hf(X1 + X2)) * hf(kB));",
     "the edge blend",
   );
   return withOut(c, out === "plane" ? OUT_PLANE : OUT_RGB_FROM_Y);

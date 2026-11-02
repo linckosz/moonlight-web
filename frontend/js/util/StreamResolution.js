@@ -145,15 +145,43 @@ export function tvOverAsk({ height, fps, autoFps }) {
     };
 }
 
-/** The tallest box Auto asks for on this kind of screen. */
-function autoCeiling(tv) {
-    return tv ? TV_AUTO_MAX_HEIGHT : AUTO_MAX_HEIGHT;
+/** The tallest box Auto asks for on this kind of screen.
+ *  @param {boolean} [tv]
+ *  @param {number} [maxHeight] a computer's own ceiling (autoMaxHeightFor) */
+function autoCeiling(tv, maxHeight) {
+    if (tv) return TV_AUTO_MAX_HEIGHT;
+    return maxHeight > 0 ? maxHeight : AUTO_MAX_HEIGHT;
 }
 
 /** How many pixels a second the whole chain is asked to carry, at most, when
  *  either half of the choice was left to us. 1920×1080 at 120 fps is 249
  *  million of them — the reference this number was read off. */
 export const PIXEL_RATE_BUDGET = 250000000;
+
+/** The tallest box Auto asks for once a machine holds more than that budget.
+ *  The budget alone then decides: at a fixed 1440 lines a 4K 60 Hz screen
+ *  would stay at 1440p60 (221 Mpx/s) up to 450 M, then jump to 4K60 (498 M),
+ *  more than twice the load on no evidence. */
+export const AUTO_RAISED_MAX_HEIGHT = 2160;
+
+/** The tallest box Auto may ask for under this budget.
+ *  @param {number} [budget] pixels a second; none is PIXEL_RATE_BUDGET */
+export function autoMaxHeightFor(budget) {
+    return budget > PIXEL_RATE_BUDGET ? AUTO_RAISED_MAX_HEIGHT : AUTO_MAX_HEIGHT;
+}
+
+/** How close under a budget's height a standard one must lie to be preferred
+ *  to it: 1448 lines is 1440p with eight lines nobody asked for. */
+const STANDARD_HEIGHT_MAX_LOSS = 0.01;
+
+/** The standard height just under `height` when it costs almost nothing. */
+function nearStandardHeight(height) {
+    for (const standard of FIXED_HEIGHTS) {
+        if (standard <= height && height - standard < height * STANDARD_HEIGHT_MAX_LOSS)
+            return standard;
+    }
+    return height;
+}
 
 /** How far down the budget may push each half. An Auto resolution goes first
  *  and stops at 1080 lines, an Auto frame rate follows and stops at 60 (a
@@ -273,23 +301,33 @@ export function nearlySameStreamSize(a, b) {
 /**
  * A size brought under Auto's ceiling, its shape kept: a 3840×2160 screen is
  * 2560×1440, a 2560×1080 ultrawide is itself. Even, as every encoder wants.
+ * A ceiling above AUTO_MAX_HEIGHT also holds the width to CUSTOM_SIZE_MAX, the
+ * widest every decoder takes: 2160 lines on a 5120×2160 screen would pass it.
  * @param {number} [maxHeight] the ceiling: TV_AUTO_MAX_HEIGHT on a TV
  */
 export function capAutoHeight(size, maxHeight = AUTO_MAX_HEIGHT) {
     if (!size || !(size.width > 0) || !(size.height > 0)) return null;
-    if (size.height <= maxHeight) return { width: size.width, height: size.height };
+    const box =
+        size.height <= maxHeight
+            ? { width: size.width, height: size.height }
+            : {
+                  width: Math.round((size.width * maxHeight) / size.height) & ~1,
+                  height: maxHeight,
+              };
+    if (maxHeight <= AUTO_MAX_HEIGHT || box.width <= CUSTOM_SIZE_MAX) return box;
     return {
-        width: Math.round((size.width * maxHeight) / size.height) & ~1,
-        height: maxHeight,
+        width: CUSTOM_SIZE_MAX,
+        height: Math.round((box.height * CUSTOM_SIZE_MAX) / box.width) & ~1,
     };
 }
 
 /** Auto's box for a native host: this screen under Auto's ceiling on a
  *  computer or a TV, MOBILE_AUTO_BOX on a phone or a tablet, null when
- *  neither is known. */
-export function autoBox(device, touch, tv) {
+ *  neither is known.
+ *  @param {number} [maxHeight] a computer's ceiling (autoMaxHeightFor) */
+export function autoBox(device, touch, tv, maxHeight) {
     if (touch) return MOBILE_AUTO_BOX;
-    return capAutoHeight(device, autoCeiling(tv));
+    return capAutoHeight(device, autoCeiling(tv, maxHeight));
 }
 
 /**
@@ -303,8 +341,9 @@ export function autoBox(device, touch, tv) {
  * only hand the compositor three million pixels to throw away. Custom is the
  * typed pair, portrait included. A rung is its lines at this screen's shape.
  * @param {boolean} [tv] this screen is a TV's: Auto's ceiling is then 720 lines
+ * @param {number} [maxHeight] a computer's ceiling (autoMaxHeightFor)
  */
-export function virtualDisplaySize(choice, device, tv) {
+export function virtualDisplaySize(choice, device, tv, maxHeight) {
     const c = choice || {};
     if (c.mode === 'custom')
         return fitModeBounds(
@@ -314,7 +353,7 @@ export function virtualDisplaySize(choice, device, tv) {
     if (!device || !(device.width > 0) || !(device.height > 0)) return null;
     if (c.mode === 'device') return fitModeBounds(device.width, device.height);
     if (c.mode === 'auto') {
-        const box = capAutoHeight(device, autoCeiling(tv));
+        const box = capAutoHeight(device, autoCeiling(tv, maxHeight));
         return box ? fitModeBounds(box.width, box.height) : null;
     }
     const lines = c.height > 0 ? c.height : HOST_FALLBACK_HEIGHT;
@@ -327,12 +366,13 @@ export function virtualDisplaySize(choice, device, tv) {
  * @param {{mode:string, height:number, customWidth:number, customHeight:number}} choice
  *        the Settings choice; `height` is the `fixed` rung
  * @param {{nativeHost:boolean, touch?:boolean, tv?:boolean, virtualDisplay?:boolean,
- *          device?: {width:number,height:number}|null}} ctx
+ *          device?: {width:number,height:number}|null, autoMaxHeight?:number}} ctx
  *        whether the host is MoonlightWeb's own native host, whether this is a
  *        phone or a tablet, or a TV (Auto's ceiling: TV_AUTO_MAX_HEIGHT),
  *        whether the app launched is "MoonlightWeb Virtual Display" (every
  *        choice then names an exact size, made to order — see
- *        virtualDisplaySize), and this screen (devicePixelSize() when omitted)
+ *        virtualDisplaySize), this screen (devicePixelSize() when omitted),
+ *        and a computer's own ceiling (AUTO_MAX_HEIGHT when omitted)
  * @returns {{height:number, aspect:string|null, fitBox:boolean, allowUpscale:boolean,
  *            matchDisplay:boolean, followsScreen:boolean,
  *            fallback:{width:number,height:number}|null}}
@@ -351,8 +391,10 @@ export function resolveStreamSize(choice, ctx) {
     const touch = !!(ctx && ctx.touch);
     const tv = !!(ctx && ctx.tv);
     const dev = ctx && ctx.device !== undefined ? ctx.device : devicePixelSize();
+    // A phone or a tablet keeps its 1440 lines at any budget.
+    const maxHeight = ctx && !touch ? ctx.autoMaxHeight : undefined;
     if (nativeHost && ctx && ctx.virtualDisplay) {
-        const made = virtualDisplaySize(c, dev, tv);
+        const made = virtualDisplaySize(c, dev, tv, maxHeight);
         if (made)
             return {
                 height: made.height,
@@ -386,7 +428,7 @@ export function resolveStreamSize(choice, ctx) {
             // kept, never upscaled (frameForDisplay's box rule). No screen to
             // read: the host's own size, whatever it is — on a TV, still no
             // more than its ceiling.
-            const box = autoBox(dev, touch, tv);
+            const box = autoBox(dev, touch, tv, maxHeight);
             if (!box) return tv ? fixed(TV_AUTO_MAX_HEIGHT) : { height: 0, aspect: null, ...plain };
             return {
                 height: box.height,
@@ -408,7 +450,7 @@ export function resolveStreamSize(choice, ctx) {
                 allowUpscale: true,
                 matchDisplay: true,
                 followsScreen: true,
-                fallback: autoBox(dev, touch, tv),
+                fallback: autoBox(dev, touch, tv, maxHeight),
             };
         case 'custom': {
             // Even sizes: what every encoder takes (4:2:0 chroma is half-size).
@@ -437,14 +479,15 @@ export function resolveStreamSize(choice, ctx) {
  * unknown, the estimate's reference (720p on a TV). The pixel budget is
  * applied on top by the caller, which alone knows the frame rate
  * (fitPixelBudget).
+ * @param {number} [maxHeight] a computer's ceiling (autoMaxHeightFor)
  */
-export function bitrateReference(choice, device, touch, tv) {
+export function bitrateReference(choice, device, touch, tv, maxHeight) {
     const c = choice || {};
     const dev = device !== undefined ? device : devicePixelSize();
     switch (c.mode) {
         case 'auto': {
             if (touch) return { height: MOBILE_AUTO_BOX.height, aspect: '16:9' };
-            const box = capAutoHeight(dev, autoCeiling(tv));
+            const box = capAutoHeight(dev, autoCeiling(tv, maxHeight));
             if (box) return { height: box.height, aspect: box.width + ':' + box.height };
             return { height: tv ? TV_AUTO_MAX_HEIGHT : 1080, aspect: '16:9' };
         }
@@ -472,6 +515,23 @@ function aspectRatio(aspect) {
 }
 
 /**
+ * What a launch size and rate come to, in pixels: all zero when the size is
+ * "the host's own", which nothing here can weigh.
+ * @param {{height:number, aspect:string|null}} size
+ * @param {number} fps 0 (unknown) counts as 60
+ * @param {string|null} [aspect] the ratio to assume when the size fixes none
+ * @returns {{width:number, height:number, fps:number, pixelRate:number}}
+ */
+export function streamFootprint(size, fps, aspect) {
+    const height = size && size.height > 0 ? size.height : 0;
+    const rate = fps > 0 ? fps : 60;
+    if (!height) return { width: 0, height: 0, fps: rate, pixelRate: 0 };
+    const ratio = aspectRatio(size.aspect) || aspectRatio(aspect) || 16 / 9;
+    const width = Math.round(height * ratio) & ~1;
+    return { width, height, fps: rate, pixelRate: width * height * rate };
+}
+
+/**
  * The rate a budget-cut frame rate lands on: the budget's own, never under
  * `floor` — or the highest whole divisor of this screen's refresh under it,
  * when that gives up no more than BUDGET_GRID_MAX_LOSS of it, so that every
@@ -494,7 +554,8 @@ function onScreenGrid(fits, floor, screenFps) {
 }
 
 /**
- * Hold a size and a frame rate under PIXEL_RATE_BUDGET together.
+ * Hold a size and a frame rate under a budget together: PIXEL_RATE_BUDGET,
+ * or the one this machine has earned (`ctx.budget`).
  *
  * Called only when ONE of the two was left to us — Auto resolution or Auto
  * frame rate; a viewer who named both is answered as asked. The resolution
@@ -510,22 +571,25 @@ function onScreenGrid(fits, floor, screenFps) {
  *
  * The height that comes back is a multiple of eight, so a 4K screen at 120 fps
  * asks for the 1920×1080 that 249 Mpx/s was read off and not the 1924×1082 the
- * arithmetic alone would give.
+ * arithmetic alone would give. Under a raised budget a standard height just
+ * below is preferred, 1440 to the 1448 that 450 M gives at 120 fps.
  *
  * @param {{height:number, aspect:string|null}} size resolveStreamSize's answer
  * @param {number} fps the rate this launch asks for; 0 (unknown) counts as 60
  * @param {{device?: {width:number,height:number}|null, clientFps?:number,
  *          aspect?:string|null, resolutionNamed?:boolean,
- *          rateNamed?:boolean}} [ctx]
+ *          rateNamed?:boolean, budget?:number}} [ctx]
  *        this screen and its rate — the two floors and the divisors are read
  *        off them — the ratio to assume when the size does not fix one (a
- *        `fixed` rung, whose width belongs to the Auto ratio), and which half
- *        the viewer named, which leaves the other one alone to pay.
+ *        `fixed` rung, whose width belongs to the Auto ratio), which half the
+ *        viewer named, which leaves the other one alone to pay, and the budget
+ *        (PIXEL_RATE_BUDGET when omitted).
  * @returns {{size:object, fps:number, capped:boolean}}
  */
 export function fitPixelBudget(size, fps, ctx) {
     const s = /** @type {{height:number, aspect:string|null}} */ (size || {});
     const c = ctx || {};
+    const budget = c.budget > 0 ? c.budget : PIXEL_RATE_BUDGET;
     const rate = fps > 0 ? fps : 60;
     const height = s.height;
     const ratio = aspectRatio(s.aspect) || aspectRatio(c.aspect) || 16 / 9;
@@ -535,7 +599,7 @@ export function fitPixelBudget(size, fps, ctx) {
 
     const widthFor = (h) => Math.round(h * ratio) & ~1;
     const pixelsAt = (h) => widthFor(h) * h;
-    if (pixelsAt(height) * rate <= PIXEL_RATE_BUDGET) return { size: s, fps, capped: false };
+    if (pixelsAt(height) * rate <= budget) return { size: s, fps, capped: false };
 
     const dev = c.device !== undefined ? c.device : devicePixelSize();
     const floorHeight = Math.min(
@@ -548,15 +612,19 @@ export function fitPixelBudget(size, fps, ctx) {
     //    A named one is the viewer's and is not ours to spend.
     let h = height;
     if (!c.resolutionNamed && h > floorHeight) {
-        const room = Math.floor(Math.sqrt(PIXEL_RATE_BUDGET / (ratio * rate)));
-        h = Math.max(floorHeight, Math.min(h, room - (room % 8)));
+        const room = Math.floor(Math.sqrt(budget / (ratio * rate)));
+        const fits = room - (room % 8);
+        h = Math.max(
+            floorHeight,
+            Math.min(h, budget > PIXEL_RATE_BUDGET ? nearStandardHeight(fits) : fits),
+        );
     }
     // 2. The frame rate, down to its floor, for what the resolution still
     //    costs — a named one excepted, as above.
     let f = rate;
     const cost = pixelsAt(h);
-    if (!c.rateNamed && cost * f > PIXEL_RATE_BUDGET && f > floorFps)
-        f = onScreenGrid(Math.floor(PIXEL_RATE_BUDGET / cost), floorFps, c.clientFps);
+    if (!c.rateNamed && cost * f > budget && f > floorFps)
+        f = onScreenGrid(Math.floor(budget / cost), floorFps, c.clientFps);
 
     const capped = h !== height || f !== rate;
     if (!capped) return { size: s, fps, capped: false };

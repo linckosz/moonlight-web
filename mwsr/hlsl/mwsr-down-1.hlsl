@@ -49,15 +49,21 @@ VSOut MwsrVS(uint vid : SV_VertexID) {
 cbuffer MwsrConstants : register(MWSR_CB_REGISTER) {
     float2 texel;
     float2 scale;
+    float2 dims;
+    float2 across;
     float tau;
-    float sharp;
-    float gaze;
-    float pad;
+    float fc;
+    float wacross;
+    float kblend;
     float2 zc;
     float2 zr;
     float zring;
     float ztau;
     float zsharp;
+    float gaze;
+    float sharp;
+    float strength;
+    float wmin;
     float pad2;
 };
 
@@ -73,36 +79,11 @@ float3 L(int2 c) {
 
 typedef float hf;
 typedef float3 h3;
-static const hf EPS_H = 0.00001;
 
 #ifndef MWSR_SHOW
 #define MWSR_SHOW 0u
 #endif
 static const uint SHOW = MWSR_SHOW;
-#ifndef MWSR_W_ALONG
-#define MWSR_W_ALONG 0.15
-#endif
-static const float W_ALONG = MWSR_W_ALONG;
-#ifndef MWSR_W_ACROSS
-#define MWSR_W_ACROSS 0.3
-#endif
-static const float W_ACROSS = MWSR_W_ACROSS;
-#ifndef MWSR_R_ALONG
-#define MWSR_R_ALONG 0.5
-#endif
-static const float R_ALONG = MWSR_R_ALONG;
-#ifndef MWSR_R_ACROSS
-#define MWSR_R_ACROSS 1.0
-#endif
-static const float R_ACROSS = MWSR_R_ACROSS;
-#ifndef MWSR_S_FULL
-#define MWSR_S_FULL 1.5
-#endif
-static const float S_FULL = MWSR_S_FULL;
-#ifndef MWSR_W_MIN
-#define MWSR_W_MIN -0.5
-#endif
-static const float W_MIN = MWSR_W_MIN;
 #ifndef MWSR_DERING
 #define MWSR_DERING 2u
 #endif
@@ -112,13 +93,9 @@ static const uint DERING = MWSR_DERING;
 #endif
 static const uint CHROMA444 = MWSR_CHROMA444;
 #ifndef MWSR_FLAT_TAPS
-#define MWSR_FLAT_TAPS 5u
+#define MWSR_FLAT_TAPS 2u
 #endif
 static const uint FLAT_TAPS = MWSR_FLAT_TAPS;
-#ifndef MWSR_FLAT_C
-#define MWSR_FLAT_C 0.5
-#endif
-static const float FLAT_C = MWSR_FLAT_C;
 #ifndef MWSR_GAZE
 #define MWSR_GAZE 0u
 #endif
@@ -137,14 +114,7 @@ static const float R_DOWN = MWSR_R_DOWN;
 static const uint LINEAR_LIGHT = MWSR_LINEAR_LIGHT;
 
 static const float3 LUMA = float3(0.25, 0.625, 0.125);
-
-float luma(float3 c) {
-    return dot(c, LUMA);
-}
-
-hf lumah(h3 c) {
-    return dot(c, (h3)LUMA);
-}
+static const float W_ACROSS = 0.3;
 
 float3 srgbToLin(float3 c) {
     float3 lo = c / 12.92;
@@ -181,8 +151,5 @@ float3 enc(float3 c) {
 
 float4 MwsrPS(VSOut i) : SV_Target {
     float2 uv = i.uv;
-    float2 span = texel / scale * R_DOWN;
-    float3 acc = 0.0;
-    acc += dec(S(uv + float2(0.0, 0.0) * span));
-    return float4(enc(acc * 1.0), 1.0);
+    return float4(enc(dec(S(uv))), 1.0);
 }

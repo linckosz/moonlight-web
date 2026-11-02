@@ -49,15 +49,21 @@ VSOut MwsrVS(uint vid : SV_VertexID) {
 cbuffer MwsrConstants : register(MWSR_CB_REGISTER) {
     float2 texel;
     float2 scale;
+    float2 dims;
+    float2 across;
     float tau;
-    float sharp;
-    float gaze;
-    float pad;
+    float fc;
+    float wacross;
+    float kblend;
     float2 zc;
     float2 zr;
     float zring;
     float ztau;
     float zsharp;
+    float gaze;
+    float sharp;
+    float strength;
+    float wmin;
     float pad2;
 };
 
@@ -73,36 +79,11 @@ float3 L(int2 c) {
 
 typedef min16float hf;
 typedef min16float3 h3;
-static const hf EPS_H = 0.001;
 
 #ifndef MWSR_SHOW
 #define MWSR_SHOW 0u
 #endif
 static const uint SHOW = MWSR_SHOW;
-#ifndef MWSR_W_ALONG
-#define MWSR_W_ALONG 0.15
-#endif
-static const float W_ALONG = MWSR_W_ALONG;
-#ifndef MWSR_W_ACROSS
-#define MWSR_W_ACROSS 0.3
-#endif
-static const float W_ACROSS = MWSR_W_ACROSS;
-#ifndef MWSR_R_ALONG
-#define MWSR_R_ALONG 0.5
-#endif
-static const float R_ALONG = MWSR_R_ALONG;
-#ifndef MWSR_R_ACROSS
-#define MWSR_R_ACROSS 1.0
-#endif
-static const float R_ACROSS = MWSR_R_ACROSS;
-#ifndef MWSR_S_FULL
-#define MWSR_S_FULL 1.5
-#endif
-static const float S_FULL = MWSR_S_FULL;
-#ifndef MWSR_W_MIN
-#define MWSR_W_MIN -0.5
-#endif
-static const float W_MIN = MWSR_W_MIN;
 #ifndef MWSR_DERING
 #define MWSR_DERING 2u
 #endif
@@ -112,13 +93,9 @@ static const uint DERING = MWSR_DERING;
 #endif
 static const uint CHROMA444 = MWSR_CHROMA444;
 #ifndef MWSR_FLAT_TAPS
-#define MWSR_FLAT_TAPS 5u
+#define MWSR_FLAT_TAPS 2u
 #endif
 static const uint FLAT_TAPS = MWSR_FLAT_TAPS;
-#ifndef MWSR_FLAT_C
-#define MWSR_FLAT_C 0.5
-#endif
-static const float FLAT_C = MWSR_FLAT_C;
 #ifndef MWSR_GAZE
 #define MWSR_GAZE 0u
 #endif
@@ -137,31 +114,7 @@ static const float R_DOWN = MWSR_R_DOWN;
 static const uint LINEAR_LIGHT = MWSR_LINEAR_LIGHT;
 
 static const float3 LUMA = float3(0.25, 0.625, 0.125);
-
-float luma(float3 c) {
-    return dot(c, LUMA);
-}
-
-hf lumah(h3 c) {
-    return dot(c, (h3)LUMA);
-}
-
-h3 blend(h3 C, h3 T1, h3 T2, h3 X1, h3 X2, h3 wT, h3 wX) {
-    h3 R = (C + wT * (T1 + T2) + wX * (X1 + X2)) / (1.0 + 2.0 * (wT + wX));
-    if (DERING == 2u) {
-        return R;
-    }
-    h3 lo = min(min(C, T1), min(T2, min(X1, X2)));
-    h3 hi = max(max(C, T1), max(T2, max(X1, X2)));
-    return clamp(R, lo, hi);
-}
-
-hf coherence(hf c, hf t1, hf t2, hf x1, hf x2) {
-    hf jump = abs(x2 - x1);
-    hf ridge = abs(x1 + x2 - 2.0 * c);
-    hf variation = abs(x2 - c) + abs(c - x1) + abs(t2 - c) + abs(c - t1) + EPS_H;
-    return max(jump, ridge) / variation;
-}
+static const float W_ACROSS = 0.3;
 
 // The gaze zone's weight, the WGSL text's gazeWeight line for line.
 float gazeWeight(float2 uv) {
@@ -174,13 +127,20 @@ float gazeWeight(float2 uv) {
 
 // The flat path's picture, the WGSL text's flatPath line for line.
 float3 flatPath(float2 uv, float3 C, float zg) {
+    if (FLAT_TAPS == 2u) {
+        float2 sn = uv * dims;
+        float2 tn = floor(sn);
+        float2 dn = abs(sn - tn - 0.5);
+        float f = max(dn.x, dn.y);
+        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(int2(tn)) - C);
+    }
     if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
         return C;
     }
     if (GAZE == 1u && FLAT_ZONE == 1u && zg <= 0.0) {
         return C;
     }
-    float2 sp = uv / texel;
+    float2 sp = uv * dims;
     float3 R;
     if (FLAT_TAPS == 3u) {
         float2 tn = floor(sp) + 0.5;
@@ -203,7 +163,7 @@ float3 flatPath(float2 uv, float3 C, float zg) {
     } else {
         float2 tc = floor(sp - 0.5) + 0.5;
         float2 f = sp - tc;
-        float c = FLAT_C;
+        float c = fc;
         float2 w0 = -c * f * (1.0 - f) * (1.0 - f);
         float2 w1 = (2.0 - c) * f * f * f - (3.0 - c) * f * f + 1.0;
         float2 w3 = -c * (1.0 - f) * f * f;
@@ -242,12 +202,9 @@ float3 flatPath(float2 uv, float3 C, float zg) {
 
 // The exact bound, the WGSL text's texelBound line for line.
 float3 texelBound(float2 uv, float3 R) {
-    uint w, h;
-    tex.GetDimensions(w, h);
-    int2 dims = int2(w, h);
-    float2 pt = uv * float2(dims) - 0.5;
-    int2 i0 = clamp(int2(floor(pt)), int2(0, 0), dims - 1);
-    int2 i1 = min(i0 + 1, dims - 1);
+    int2 f = int2(floor(uv * dims - 0.5));
+    int2 i0 = max(f, int2(0, 0));
+    int2 i1 = min(f + 1, int2(dims) - 1);
     float3 q00 = L(i0);
     float3 q10 = L(int2(i1.x, i0.y));
     float3 q01 = L(int2(i0.x, i1.y));
@@ -258,54 +215,51 @@ float3 texelBound(float2 uv, float3 R) {
 float4 MwsrPS(VSOut i) : SV_Target {
     float2 uv = i.uv;
     float3 C = S(uv);
-    float lC = luma(C);
     float zg = gazeWeight(uv);
-    float t = lerp(tau, ztau, zg);
-    float3 dx = ddx_coarse(C) * scale.x;
-    float3 dy = ddy_coarse(C) * scale.y;
-    float3 m = abs(dx) + abs(dy);
-    bool rg = m.g > m.r;
-    bool b = m.b > max(m.r, m.g);
-    bool c444 = CHROMA444 == 1u;
-    float gx = c444 ? (b ? dx.b : (rg ? dx.g : dx.r)) : dot(dx, LUMA);
-    float gy = c444 ? (b ? dy.b : (rg ? dy.g : dy.r)) : dot(dy, LUMA);
-    bool isFlat = (c444 ? max(m.r, max(m.g, m.b)) : abs(gx) + abs(gy)) < t;
+    float t = tau;
+    if (GAZE == 1u) {
+        t = lerp(tau, ztau, zg);
+    }
+    float gx;
+    float gy;
+    bool isFlat;
+    if (CHROMA444 == 1u) {
+        float3 dx = ddx_coarse(C) * scale.x;
+        float3 dy = ddy_coarse(C) * scale.y;
+        float3 m = abs(dx) + abs(dy);
+        bool rg = m.g > m.r;
+        bool b = m.b > max(m.r, m.g);
+        gx = b ? dx.b : (rg ? dx.g : dx.r);
+        gy = b ? dy.b : (rg ? dy.g : dy.r);
+        isFlat = max(m.r, max(m.g, m.b)) < t;
+    } else {
+        float lC = dot(C, LUMA);
+        gx = ddx_coarse(lC) * scale.x;
+        gy = ddy_coarse(lC) * scale.y;
+        isFlat = abs(gx) + abs(gy) < t;
+    }
     if (SHOW == 1u) {
         return float4((isFlat ? 0.0 : 1.0).xxx, 1.0);
     }
     if (SHOW == 2u) {
         return float4(zg.xxx, 1.0);
     }
-    float smin = min(scale.x, scale.y);
-    float strength = clamp((smin - 1.0) / (S_FULL - 1.0), 0.0, 1.0);
     if (isFlat) {
         return float4(flatPath(uv, C, zg), 1.0);
     }
-    float2 n = float2(gx, gy) * rsqrt(max(gx * gx + gy * gy, 1e-12));
-    float2 dt = float2(-n.y, n.x) * texel * R_ALONG;
-    float2 dn = n * texel * R_ACROSS;
-    h3 Ch = (h3)C;
-    h3 T1 = (h3)S(uv - dt);
-    h3 T2 = (h3)S(uv + dt);
-    h3 X1 = (h3)S(uv - dn);
-    h3 X2 = (h3)S(uv + dn);
-    hf lCh = (hf)lC;
-    hf lT1 = lumah(T1);
-    hf lT2 = lumah(T2);
-    hf lX1 = lumah(X1);
-    hf lX2 = lumah(X2);
-    h3 a;
-    if (CHROMA444 == 1u) {
-        a = h3(coherence(Ch.r, T1.r, T2.r, X1.r, X2.r),
-               coherence(Ch.g, T1.g, T2.g, X1.g, X2.g),
-               coherence(Ch.b, T1.b, T2.b, X1.b, X2.b)) * (hf)strength;
-    } else {
-        a = (coherence(lCh, lT1, lT2, lX1, lX2) * (hf)strength).xxx;
+    float2 dn = float2(gx, gy) * rsqrt(max(gx * gx + gy * gy, 1e-12)) * across;
+    float3 X1 = S(uv - dn);
+    float3 X2 = S(uv + dn);
+    float wX = wacross;
+    float kB = kblend;
+    if (GAZE == 1u) {
+        wX = max(-W_ACROSS * lerp(sharp, zsharp, zg) * strength, wmin);
+        kB = 1.0 / (1.0 + 2.0 * wX);
     }
-    h3 wT = (hf)W_ALONG * a;
-    float sh = lerp(sharp, zsharp, zg);
-    h3 wX = max(-(hf)W_ACROSS * (hf)sh * a, ((hf)W_MIN).xxx);
-    float3 R = (float3)blend(Ch, T1, T2, X1, X2, wT, wX);
+    float3 R = (float3)(((h3)C + (hf)wX * (h3)(X1 + X2)) * (hf)kB);
+    if (DERING != 2u) {
+        R = clamp(R, min(C, min(X1, X2)), max(C, max(X1, X2)));
+    }
     if (DERING != 0u) {
         R = texelBound(uv, R);
     }

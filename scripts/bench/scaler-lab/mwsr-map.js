@@ -17,17 +17,17 @@ function once(text, needle) {
   if (n !== 1) throw new Error(`mwsr-map: "${needle.trim().slice(0, 60)}" found ${n} times, not once`);
 }
 
+// The line before the blend, where the across weight is settled for the pixel.
+const BLEND = "    // From here the arithmetic is hf (f32, or f16 when the module says so).\n";
+const scaled = (factor) => `    wX *= ${factor};\n    kB = 1.0 / (1.0 + 2.0 * wX);\n${BLEND}`;
+
 export function mapKernel(up) {
   const decl = "@group(0) @binding(2) var<uniform> u : U;";
-  const line = "    let sharp = mix(u.sharp, u.zsharp, zg);";
   once(up, decl);
-  once(up, line);
+  once(up, BLEND);
   return up
     .replace(decl, decl + "\n@group(0) @binding(3) var sharpMap : texture_2d<f32>;")
-    .replace(
-      line,
-      "    let sharp = mix(u.sharp, u.zsharp, zg) * textureSampleLevel(sharpMap, samp, uv, 0.0).r;",
-    );
+    .replace(BLEND, scaled("textureSampleLevel(sharpMap, samp, uv, 0.0).r"));
 }
 
 // The same, the factor carried by the vertices instead of a texture read per
@@ -48,8 +48,7 @@ fn vs(@builtin(vertex_index) vid : u32) -> VSOut {
     out.pos = vec4f(uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);
     return out;
 }`;
-  const line = "    let sharp = mix(u.sharp, u.zsharp, zg);";
-  for (const n of [decl, field, vs, line]) once(up, n);
+  for (const n of [decl, field, vs, BLEND]) once(up, n);
   const grid = `@vertex
 fn vs(@builtin(vertex_index) vid : u32) -> VSOut {
     var out : VSOut;
@@ -69,7 +68,7 @@ fn vs(@builtin(vertex_index) vid : u32) -> VSOut {
     .replace(decl, decl + "\n@group(0) @binding(3) var sharpMap : texture_2d<f32>;")
     .replace(field, "    @location(0) uv : vec2f,\n    @location(1) k : f32,\n};")
     .replace(vs, grid)
-    .replace(line, "    let sharp = mix(u.sharp, u.zsharp, zg) * in.k;");
+    .replace(BLEND, scaled("in.k"));
 }
 
 export const vtxCount = (w, h) => 6 * (w + 1) * (h + 1);

@@ -95,7 +95,7 @@ const NOTES = {
 // MWSR zones: MoonlightWeb's own, not in the MWSR anyone downloads (that one is the law, MWSR above)
 const ZONES_ONLY =
   "MoonlightWeb only: its native host measures each zone of the native frame and lowers MWSR's sharpness there; the MWSR anyone downloads is the law, MWSR above";
-const ZONES_NONE = 'the law here: zones from ×1.3 up, in SDR, from a native frame';
+const ZONES_NONE = 'the law here: zones from ×1.15 up, in SDR, from a native frame';
 // A reduction scores against the picture reduced by Lanczos-3: no native frame, a reference
 const reducing = () => C && C.outW < C.inW;
 const nameOf = (id) => (id === 'native' && reducing() ? 'Reference' : NAMES[id]);
@@ -114,9 +114,25 @@ const SCALES = [
   [2, '2'],
 ];
 
+// LPIPS and VMAF NEG come from the lab (lab-scores.json, scripts/bench/scaler-lab/cmp_lab.py: this page on
+// SwiftShader, its pictures read back and measured), for the page's own SDR pictures only
+const LAB_PICS = new Set(['text', '0ad', 'gears', 'junkshop', 'iso']);
+let LAB = null;
+const scaleKey = () => SCALES.find(([v]) => v === S.scale)[1];
+function lab(id) {
+  if (!LAB || !LAB_PICS.has(S.pic)) return null;
+  const row = LAB.scores[`${S.pic}|${scaleKey()}|${S.chroma}|${S.c444 ? 1 : 0}`];
+  return (row && row[id]) || null;
+}
+const lp = (x) => x.toFixed(4);
+const vn = (x) => x.toFixed(1);
+// ?soft=1&lab=1: the lab reads the native frame and each upscaler's picture (cmp_lab.py)
+const LABMODE = SOFT && new URLSearchParams(location.search).get('lab') === '1';
+let labRef = null;
+
 // ── the state, and its mirror in the address (#pic=…&scale=…) ──
 const S = {
-  pic: 'text',
+  pic: 'junkshop',
   role: 'native',
   scale: 4 / 3,
   chroma: '444',
@@ -126,7 +142,7 @@ const S = {
   b: 'fsr1',
   flipped: false, // the flip view shows B
   zoom: matchMedia('(max-width: 560px)').matches ? 2 : 4, // a phone's panes are small
-  center: [960, 220], // in the picture's pixels, whatever the scale draws it at
+  center: [1808, 300], // in the picture's pixels, whatever the scale draws it at
   split: 0.5,
   file: null,
 };
@@ -208,6 +224,10 @@ async function boot() {
     );
     return;
   }
+  // the lab's scores: their absence leaves the two columns empty, not the page
+  const labScores = fetch(ME.dataset.lab)
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
   try {
     const [E, K, mwsr, nis] = await Promise.all(
       [ME.dataset.engine, ME.dataset.kernels, ME.dataset.mwsr, ME.dataset.nis].map((u) => import(u)),
@@ -239,8 +259,44 @@ async function boot() {
     sel.innerHTML = ['native', ...KERNELS.map((k) => k.id)]
       .map((id) => `<option value="${id}">${NAMES[id]}${id === 'mwsrz' ? ' (MoonlightWeb only)' : ''}</option>`)
       .join('');
+  LAB = await labScores;
   syncControls();
+  if (LABMODE) labHook();
   await load();
+}
+
+// The lab's hook (?soft=1&lab=1 only): cmp_lab.py sets each case and reads its pictures, RGBA8.
+function labHook() {
+  const failed = () => $('status').classList.contains('bad');
+  window.mwsrLab = {
+    kernels: () => KERNELS.map((k) => k.id),
+    // one case: picture, scale key, chroma, c444; resolves once it is drawn and scored, rejects on the
+    // status line's first failure (a dead worker leaves load() waiting, its message there)
+    async run(pic, scale, chroma, c444) {
+      S.pic = pic;
+      S.scale = SCALES.find(([, k]) => k === scale)[0];
+      S.chroma = chroma;
+      S.c444 = c444 && chroma === '444';
+      S.center = PICS[pic].spots[0].slice(1);
+      syncControls();
+      let poll;
+      const bad = new Promise((_, reject) => {
+        poll = setInterval(() => failed() && reject(new Error($('status').textContent)), 500);
+      });
+      try {
+        await Promise.race([load(), bad]);
+      } finally {
+        clearInterval(poll);
+      }
+      if (failed()) throw new Error($('status').textContent);
+      return { outW: C.outW, outH: C.outH, inW: C.inW, inH: C.inH, hdr: C.hdr, native: !!labRef };
+    },
+    ref: () => labRef,
+    // the 32-bit picture (the 16-bit gate draws into the scratch texture, never here)
+    read: (id) => engine.readOut(id),
+    // the overshoot this page measured on it (the three-GPU tables' column)
+    overshoot: (id) => (R[id] && R[id].overshoot != null ? R[id].overshoot : null),
+  };
 }
 
 // ── the settings ──
@@ -414,6 +470,7 @@ async function load() {
   clampCenter();
   await makePreview();
   // the pixels are on the GPU and in the worker now: keep only whether there is a native frame
+  if (LABMODE) labRef = C.native;
   C.native = !!C.native;
   C.input = null;
   C.zones = null;
@@ -551,7 +608,8 @@ function line(id) {
   const r = R[id];
   if (!r) return '…';
   const bits = id === 'mwsrz' && !engine.hasZones() ? [ZONES_NONE] : [];
-  if (r.ssimY != null) bits.push(fid(r.ssimY));
+  const l = lab(id);
+  if (l) bits.push('LPIPS ' + lp(l[0]));
   if (r.overshoot != null) bits.push(pct(r.overshoot) + ' over');
   const t = best(id);
   if (t) bits.push(ms3(t.ms) + ' ms');
@@ -722,7 +780,6 @@ function drawOverview() {
 }
 
 // ── the table ──
-const fid = (s) => (100 * s).toFixed(1);
 function pct(x) {
   if (x === 0) return '0 %';
   const p = 100 * x;
@@ -744,11 +801,18 @@ const ms3 = (ms) => ms.toFixed(ms < 1 ? 3 : 2);
 function renderTable() {
   const times = KERNELS.map((k) => best(k.id)).filter(Boolean);
   const max = Math.max(...times.map((t) => t.ms), 0);
-  $('table').tBodies[0].innerHTML = KERNELS.map((k) => {
+  // the lab's scores of this picture, scale and chroma; the best of each column in bold
+  const L = KERNELS.map((k) => lab(k.id));
+  const have = L.filter(Boolean);
+  const bestL = have.length ? Math.min(...have.map((x) => x[0])) : null;
+  const bestV = have.length ? Math.max(...have.map((x) => x[1])) : null;
+  const cell = (s, top) => (top ? `<strong>${s}</strong>` : s);
+  labNote();
+  $('table').tBodies[0].innerHTML = KERNELS.map((k, i) => {
     const r = R[k.id] || {};
-    const scored = C && C.native;
-    const f = r.ssimY != null ? fid(r.ssimY) : scored ? '…' : '—';
-    const col = r.ssimRgb != null ? fid(r.ssimRgb) : scored ? '…' : '—';
+    const l = L[i];
+    const f = l ? cell(lp(l[0]), l[0] === bestL) : '—';
+    const col = l ? cell(vn(l[1]), l[1] === bestV) : '—';
     const o = r.overshoot != null ? pct(r.overshoot) : '…';
     const t = best(k.id);
     let time = '—';
@@ -770,6 +834,19 @@ function renderTable() {
           : '';
     return `<tr><th scope="row">${k.name}${star}</th><td class="num fid">${f}</td><td class="num">${col}</td><td class="num">${o}</td><td class="num">${time}${gate}</td></tr>`;
   }).join('');
+}
+// what the two lab columns hold for this picture, or why they are empty
+function labNote() {
+  const n = $('lab-note');
+  if (!n) return;
+  const kind = PICS[S.pic].kind;
+  n.textContent = kind.startsWith('hdr')
+    ? 'No lab score in HDR: LPIPS and VMAF NEG are made for SDR pictures. The overshoot and the GPU time are measured here.'
+    : S.pic === 'file'
+      ? 'No lab score for your picture: the lab measured the page’s own pictures only. The overshoot and the GPU time are measured here.'
+      : !LAB
+        ? 'The lab’s scores could not be loaded.'
+        : `LPIPS and VMAF NEG: measured in the lab on this picture, at this scale and chroma (${LAB.measured}). The overshoot and the GPU time: measured here, on this device.`;
 }
 
 // ── the timing ──

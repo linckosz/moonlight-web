@@ -62,7 +62,7 @@ describe('candidates that arrive before the offer has been applied', () => {
         const { t, added } = tunnelWithFakePc(null);
 
         await t._onRemoteCandidate(ice('192.168.1.66'));
-        await t._onRemoteCandidate(ice('2a01:e0a:ac9:df50::1'));
+        await t._onRemoteCandidate(ice('2001:db8:abc:de50::1'));
 
         // Nothing could be added yet — that is not the bug. The bug was that
         // nothing was kept either.

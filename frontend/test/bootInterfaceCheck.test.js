@@ -344,9 +344,10 @@ describe('where the check only reports', () => {
         // Both words: an older worker opens on the second.
         expect(sw.told).toEqual(['mw-shell-verified', 'mw-shell-checked']);
         expect(cachesStub.shell()).toContain('/js/app.js');
-        expect(warnings.some((w) => w.includes('/js/app.js differ from the official 0.4.0'))).toBe(
-            true,
-        );
+        // Once: the check of the fresh cache after the download keeps quiet.
+        expect(
+            warnings.filter((w) => w.includes('/js/app.js differ from the official 0.4.0')),
+        ).toHaveLength(1);
     });
 
     it('keeps what is not part of the interface, as before', async () => {

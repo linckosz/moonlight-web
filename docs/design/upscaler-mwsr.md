@@ -1239,6 +1239,8 @@ Elles fixent ce que P6 appliquera sur les résultats de P5 ; rien ne devient dé
   iPhone et Android : il l'est (iPhone 4,41 contre 4,82 ms, −9 % ; realme Note 60 51,6 contre 59,2, −13 %), sauf
   comportement différent d'Android ; les deux TV (Mi TV Mali-G31, Freebox POP) peuvent servir à mesurer Android
   (optionnel : « tu peux aussi »).
+- **Depuis le 02/11/2026 (J56, décision de Bruno) : le chemin plat à une lecture (`FLAT_TAPS 2`) partout**, téléphones et tablettes
+  compris. CR5 et Q3 restent au labo jusqu'à la lecture sur téléphone et 780M.
 - **Netteté : 1,85 pour tout** (message de Bruno de 11:50, fait à midi, journal J38) ; il veut garder la
   possibilité d'une netteté dynamique selon le facteur d'agrandissement et de réduction : étude proposée au §12.
 - **Borne : les texels seuls**, confirmée (« le résultat est bien meilleur » ; le défaut depuis J37).
@@ -1462,7 +1464,7 @@ upscalers spatiaux.
 - [x] **Loi d'échelle de la netteté (J39), câblée le 24/10 au oui de Bruno (journal J40)** : `mwsrUniforms()` prend `mwsrSharpness(min(outW/inW, outH/inH))` quand l'appelant ne nomme pas de netteté (1,85 jusqu'à ×1,33, 1,542 à ×1,4, 1,233 dès ×1,5 ; réduction inchangée), le comparateur part de la loi (« (loi) » au réglage, `sharp=` du lien prime) ; dorés refaits, conformité des deux côtés ; aucune UI touchée
 - [x] **La netteté à ×2 passe à 1,5, au choix de Bruno du 29/10 (plan B §8)** : `MWSR_SHARP_X2` ; la loi d'avant jusqu'à ×1,75 (1,85 jusqu'à ×1,33, 1,23 dès ×1,5), puis une rampe jusqu'à 1,5 à ×2, tenue au-delà ; vérifiée à ×1,5 et ×1,75 (rien n'y gagnait) ; texte ×2 86,1 → 86,5, jeu 66,2 ; dorés des trois cas ×2 refaits, conformité des deux jumeaux ; `cpp/mwsr.h`, README et comparateur suivent
 - [x] **Le nom de l'iGPU AMD corrigé, oui de Bruno du 29/10** : « Radeon iGPU (Ryzen 9 9900X) » dans le README de `mwsr/`, ses figures de vitesse et /mwsr/ ; « AMD iGPU » dans les commentaires du code ; notes de correction ici (§1.8), dans P0 et dans le journal du labo. Les chiffres ne changent pas
-- [ ] **Le vrai Radeon 780M, oui de Bruno du 29/10** : les temps du README sur l'UM790Pro, quand elle sera libre (elle est sous Ubuntu pour les tests du clavier) ; même labo, Chrome épinglé sur son LUID, créneau de 59 (plan B §9) [`high`]
+- [x] **Le vrai Radeon 780M, oui de Bruno du 29/10** : les temps du README sur l'UM790Pro, le 30/10 sous Ubuntu, puis le 02/11 sous Windows 11 sur le texte final (journal J56)
 - [ ] En réduction, un affûtage après la grille seulement si Bruno le demande [`low`]
 - [x] **Le HDR dans le chemin du produit, testé les 25 et 26/10 à la demande de Bruno (journal J45).** `hdr_check.py` fait dessiner au vrai `WebGpuRenderer` des images PQ BT.2020 en 10 bits, agrandies et réduites, sur les chemins `linear` et `tonemap`. Le mode « off » en HDR mettait à l'échelle au plus proche voisin : corrigé en 1d6f92f5
 - [x] La réduction HDR assombrit le contraste fin (rayures de 1000 et 0,5 nit : −8 % à ×0,5, −28 % à ×0,667). Proposé : sur un feed flottant, la passe 0 écrit de la lumière linéaire quand on réduit (exact, sans coût en plus) ; à la décision de Bruno [`high`] — oui de Bruno le 26/10, fait (journal J47) : `LINEAR_LIGHT 3`, les rayures gardent 0,987 à 1,004 de leur lumière ; RTX : −7 à −11 % de temps GPU sur les réductions HDR, SDR inchangé (dorés au bit près, temps à 1 % près)
@@ -1471,6 +1473,17 @@ upscalers spatiaux.
 - [x] La traîne p99 de la réduction HDR à ×0,667 (J47), et la vitesse HDR + SDR refaite sur la RTX qui ne décode pas [`high`] — V10 du 28/10 (journal J51) : gains de J47 confirmés (−11,6, −7,6 et −11,5 % ; témoin +0,1 %), SDR à 1 % près ; la traîne est l'état d'énergie de la carte (P5, mémoire à 810 MHz : 2,5 à 3,5 ms pour les deux variantes), pas le shader ; rien à changer
 - [x] MWSR pour les autres programmes, à la demande de Bruno le 28/10 (MIT, dossier `mwsr/`, nom MWSR, shaders + module + C++) [`high`] — cb766889 puis journal J52 : WGSL, GLSL, jumeau HLSL (FXC et DXC), `cpp/mwsr.h`, exemple D3D11, README anglais ; HLSL sur WARP contre WGSL sur SwiftShader à 1/255 hors bascules du vote ; `X2_FLAT` (labo, neutre par défaut) instable d'un GPU à l'autre, correctif à la décision de Bruno
 - [x] **A29, la loi ×2 retirée avant le tag v0.4.1**, à la demande de Bruno le 28/10 (« supprimer X2 pour la v0.4.1 ») — journal J54 : `S_X2`, `X2_BASE`, `X2_FLAT`, `X2_R_ACROSS` (J39, neutres par défaut) sortis des trois jumeaux, des tests, du labo, du comparateur et du README de `mwsr/` ; dorés au bit près, conformité WebGL2 et HLSL inchangées
+
+**v0.4.2 — le réglage livré, demandé par Bruno le 01/11/2026**
+- [x] Le balayage LPIPS puis VMAF NEG et la loi : `sharp` et `racross` suivent l'échelle, deux tables (avec les zones et sans), `walong` 0 — journal J55. Zones lues dès ×1,15. Comparateur public et README de `mwsr/` en LPIPS et VMAF NEG, le SSIM retiré
+- [ ] Le coup d'œil de Bruno sur le comparateur en ligne, le texte à ×1,333 compris (VMAF NEG 57,5 avec zones et 58,9 sans, contre 62,65 au livré) [`low`]
+- [x] Décidé par Bruno le 02/11 : les termes d'écran de la loi restent à zéro ; les écrans 1080 et 2160 avec zones restent à 89-93 % du gain LPIPS (règle : 95 %) ; le texte à ×1,333 garde la loi et se juge à l'œil
+- [ ] L'activation par défaut des zones, au oui de Bruno, après son coup d'œil et le coût côté hôte. Ce coût est mesuré (`upscaler-mwsr-b.md` §12 f.3 et f.4) : 64 µs dans un vrai stream sur la RTX en 1440p, budget de 1 ms tenu en direct, puis la légère, puis la loi. Un vrai stream hors de ce cas n'est pas mesuré (§12 g) [`medium`]
+- [x] L'optimisation du shader livré, journal J56 : sans lectures le long des bords ni cohérence, un poids par image, zéro perte mesurée ; puis, à la décision de Bruno du 02/11, le chemin plat à une lecture (`FLAT_TAPS 2`) partout, seuil 0,0025. WebGPU contre la v0.4.1 : RTX −48 %, iGPU −57 %
+- [x] Les temps définitifs du README sur la RTX et l'iGPU, avec FSR1, NIS et SGSR1 dans la même page, les scores et les figures (J56). La colonne de la Radeon 780M le 02/11, sous Windows 11 (J56)
+- [x] La lecture sur la 780M, le 02/11 : −20 % contre la v0.4.1, le plus rapide des quatre sur les six images, la f16 sans gain (J56)
+- [ ] La lecture sur téléphone (Bruno, sur le comparateur en ligne, après le signal de 59) et sur la Mi TV (WebGL2, `mediump` contre `highp`, créneau de 59) [`medium`]
+- [ ] Après cette lecture : retirer les chemins à 3, 5 et 9 échantillons et `fc` (décidé par Bruno le 02/11), et décider de la f16 [`medium`]
 
 **Hors v0.4.1 — étude optionnelle (§14, proposée le 21/10/2026, à la décision de Bruno)**
 - [x] **P7.0, faite le 25/10 (journal J42, §14.4) : la porte reste fermée.** Mode séquence du labo (`seq-lab.js`, `p7_flows.py`), WebCodecs logiciel à deux débits, sept variantes d'historique contre `mwsr` seul, vingt séquences sur SwiftShader. Aucune variante ne passe : sans mouvement connu, de −0,01 à −0,13 dB et pas de stabilité gagnée ; même avec le mouvement exact, +0,11 dB en moyenne et des traînées

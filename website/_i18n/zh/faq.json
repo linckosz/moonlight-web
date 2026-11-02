@@ -18,7 +18,7 @@
   "q17.a": "<p>不是。它们是两个名字相近、彼此独立的开源项目。<a href=\"https://github.com/MrCreativ3001/moonlight-web-stream\" target=\"_blank\" rel=\"noopener\">moonlight-web-stream</a> 是一个用于 Sunshine 主机的网页客户端。MoonlightWeb（本站，<a href=\"https://github.com/linckosz/moonlight-web\" target=\"_blank\" rel=\"noopener\">linckosz/moonlight-web</a>）拥有自己的采集和编码引擎：安装在游戏 PC 上，它就能独立串流这台 PC，无需 Sunshine。它也可以<a href=\"/sunshine-web-client.html\">与 Sunshine 配对</a>，以及 Apollo、Wolf 和 MultiSeat。</p>",
   "h2.devices": "设备",
   "q5.s": "我能在 iPhone 或 iPad 上玩 PC 游戏吗？",
-  "q5.a": "<p>能——在 Safari 里打开网址，无需从 App Store 下载。你的手机化身完整客户端：多点触控触控板（1 指瞄准，2 指滚动和缩放）、带修饰键的原生虚拟键盘，以及带振动的游戏手柄——最高 240 fps，Wi-Fi 延迟低于 20 毫秒。</p>",
+  "q5.a": "<p>能——在 Safari 里打开网址，无需从 App Store 下载。你的手机化身完整客户端：多点触控触控板（1 指瞄准，2 指滚动和缩放）、带修饰键的原生虚拟键盘，以及游戏手柄——最高 120 fps，Wi-Fi 延迟低于 20 毫秒。</p>",
   "q6.s": "我能在智能电视上玩吗？",
   "q6.a": "<p>任何带现代浏览器的设备都能作为客户端。在电视上，体验取决于内置浏览器；带硬件视频解码的较新浏览器效果最佳，再加一只有线或蓝牙手柄，客厅设置就完整了。Android TV 盒子同样可用：已用 TV Bro 浏览器测试，遥控器既能浏览页面，也能操控串流。</p>",
   "q7.s": "它支持游戏手柄吗？",

@@ -1231,10 +1231,6 @@ body.streaming-active::after {
 .btn-stream-mic.is-off {
     color: var(--c-danger-text, #ff6b8b);
 }
-.btn-stream-mic:disabled {
-    cursor: default;
-    opacity: 0.6;
-}
 /* The owner's "Buy me a coffee" button (StreamView._mountSupportButton): the
    official cup alone — white outline, yellow coffee — with no button around
    it, first of the bar's right-hand controls; the wordmark or a frame would

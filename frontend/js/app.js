@@ -97,6 +97,8 @@ import {
     readResolutionChoice,
     resolveStreamSize,
     fitPixelBudget,
+    autoMaxHeightFor,
+    streamFootprint,
     tvOverAsk,
     devicePixelSize,
     nearlySameStreamSize,
@@ -105,8 +107,10 @@ import {
     hardwareDecodeLimit,
     knownHardwareDecodeLimit,
     capSizeToDecoder,
+    decoderRefuses,
 } from './util/DecoderLimit.js';
 import { startAspectProbe } from './stream/AspectProbe.js';
+import { AutoCeilingSession } from './stream/AutoCeilingSession.js';
 import {
     recordCrashRelaunch,
     settledStreamState,
@@ -115,6 +119,7 @@ import {
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
+import { micRequested, micSupported } from './audio/MicUplink.js';
 import { IDENTITY_REFUSED } from './util/pairingCrypto.js';
 import {
     startTunnel,
@@ -188,6 +193,8 @@ const SIDE_KEYS_STORE = 'mw-hs-side-keys';
 /** A screen change seen while a relaunch is on its way is looked at again
  *  this long after (App._onClientScreenChanged), until none is. */
 const SCREEN_RECHECK_MS = 1500;
+/** What a launch may wait for the browser's word on a rung of Auto's ceiling. */
+const AUTO_CEILING_GUARD_MS = 300;
 
 /** An address rendered as a clickable, copyable link in a banner. */
 const linkHtml = (u) =>
@@ -2032,6 +2039,10 @@ export const MoonlightApp = {
         // settings) is never touched.
         Object.assign(streamingSettings, this._degradeOverrides || {});
 
+        // The microphone asked of the host: the list's choice, by default the
+        // system's, and never from a browser that could not capture it.
+        streamingSettings.mic_enabled = micSupported() && micRequested(streamingSettings);
+
         // Override codec if provided (codec fallback chain)
         if (codecOverride) {
             streamingSettings.video_codec = codecOverride;
@@ -2248,32 +2259,48 @@ export const MoonlightApp = {
         // below weighs the two together.
         const fpsAuto = !(streamingSettings.stream_fps > 0);
         this._applyResolvedFps(streamingSettings);
+        // What this browser has earned from this host: read once per launch the
+        // viewer asked for, a codec fallback carries on with it.
+        if (!codecOverride || !this._autoCeiling) this._startAutoCeiling(host, streamingSettings);
+        else this._autoCeiling.reopen();
         const choice = readResolutionChoice(streamingSettings);
-        const size = resolveStreamSize(
-            {
-                mode: choice.mode,
-                height: streamingSettings.stream_height,
-                customWidth: choice.customWidth,
-                customHeight: choice.customHeight,
-            },
-            {
-                nativeHost,
-                touch: IS_HANDHELD,
-                // A TV's Auto stops at 720 lines: latency first.
-                tv: IS_TV,
-                // "MoonlightWeb Virtual Display" or an app in gamescope: the
-                // screen is made for this stream, so every choice names an
-                // exact size instead of a box to fit into (see
-                // util/StreamResolution.js).
-                virtualDisplay: app?.isMadeForStream === true,
-            },
-        );
+        const sizeAt = (autoMaxHeight) =>
+            resolveStreamSize(
+                {
+                    mode: choice.mode,
+                    height: streamingSettings.stream_height,
+                    customWidth: choice.customWidth,
+                    customHeight: choice.customHeight,
+                },
+                {
+                    nativeHost,
+                    touch: IS_HANDHELD,
+                    // A TV's Auto stops at 720 lines: latency first.
+                    tv: IS_TV,
+                    // "MoonlightWeb Virtual Display" or an app in gamescope: the
+                    // screen is made for this stream, so every choice names an
+                    // exact size instead of a box to fit into (see
+                    // util/StreamResolution.js).
+                    virtualDisplay: app?.isMadeForStream === true,
+                    autoMaxHeight,
+                },
+            );
         this._fpsAuto = fpsAuto;
-        const budgeted = this._applyPixelBudget(streamingSettings, size, choice.mode, fpsAuto);
-        const bounded = this._capToDecoder(
-            budgeted,
-            await hardwareDecodeLimit(streamingSettings.video_codec),
+        const askedFps = streamingSettings.stream_fps;
+        const decodeLimit = await hardwareDecodeLimit(streamingSettings.video_codec);
+        const askAt = this._autoCeilingAsk(
+            sizeAt,
+            streamingSettings,
+            askedFps,
+            choice.mode,
+            fpsAuto,
+            decodeLimit,
         );
+        if (!codecOverride) await this._guardAutoCeiling(askAt, streamingSettings);
+        const size = sizeAt(autoMaxHeightFor(this._autoCeilingBudget()));
+        const budgeted = this._applyPixelBudget(streamingSettings, size, choice.mode, fpsAuto);
+        const bounded = this._capToDecoder(budgeted, decodeLimit);
+        if (this._autoCeiling) this._autoCeiling.weigh(askAt, choice.mode === 'auto' || fpsAuto);
         this._applyResolvedSize(streamingSettings, bounded);
         if (IS_TV) this._warnTvOverAsk(streamingSettings, choice.mode === 'auto' && fpsAuto);
         // A gamescope session keeps the size it was started at (a new size
@@ -2398,6 +2425,7 @@ export const MoonlightApp = {
             }
         } catch (err) {
             console.error('[MW] Launch failed:', err);
+            if (this._retryBelowAutoCeiling(err, host, app, codecOverride, opts)) return;
             // Launch failed before the audio pipeline could take over the iOS
             // session hold — release it so we don't keep a silent element looping.
             iosAudioUnlock.release();
@@ -2812,10 +2840,16 @@ export const MoonlightApp = {
             );
         }
 
-        // The microphone was asked for and the host could not take it: said
+        // The viewer picked a microphone and the host could not take it: said
         // once per user-initiated launch, like the transport above, with the
-        // host's own reason (a remote host, no virtual cable…).
-        if (streamingSettings.mic_enabled === true && result.mic === false && !suppressShortcuts) {
+        // host's own reason (a remote host, no virtual cable…). Not for the
+        // default: nobody asked for it, and it would be said at every launch.
+        if (
+            streamingSettings.mic_chosen === true &&
+            streamingSettings.mic_enabled === true &&
+            result.mic === false &&
+            !suppressShortcuts
+        ) {
             Toast.warning(t('stream.micUnavailable', { why: result.mic_why || '' }));
         }
 
@@ -3010,6 +3044,7 @@ export const MoonlightApp = {
             aspect: settings.stream_aspect,
             resolutionNamed: mode !== 'auto',
             rateNamed: !fpsAuto,
+            budget: this._autoCeilingBudget(),
         });
         if (bounded.capped) {
             console.log(
@@ -3027,6 +3062,118 @@ export const MoonlightApp = {
         }
         if (fpsAuto || bounded.capped) settings.stream_fps_max = settings.stream_fps || 60;
         return bounded.size;
+    },
+
+    /** The pixels a second this launch may spend: see AutoCeilingSession. */
+    _autoCeilingBudget() {
+        return this._autoCeiling ? this._autoCeiling.budget : undefined;
+    },
+
+    /** Read what this browser has earned from @p host, for this launch. */
+    _startAutoCeiling(host, settings) {
+        // A launch that gave up before any view ended: nothing crashed.
+        if (this._autoCeiling) this._autoCeiling.end();
+        this._autoCeiling = new AutoCeilingSession({
+            host: host.uuid,
+            codec: settings.video_codec,
+            native: host.backendType === 'native',
+            device: {
+                tv: IS_TV,
+                handheld: IS_HANDHELD,
+                lowMemory: IS_LOW_MEMORY,
+                powerSave: settings.power_save === true,
+            },
+        });
+        if (this._autoCeilingPageWatch) return;
+        // A tab killed from the background, or a page left, is no crash.
+        this._autoCeilingPageWatch = true;
+        window.addEventListener('pagehide', () => {
+            if (this._autoCeiling) this._autoCeiling.pause();
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (!this._autoCeiling) return;
+            if (document.hidden) this._autoCeiling.pause();
+            else this._autoCeiling.resume();
+        });
+    },
+
+    /**
+     * What this launch comes to under a budget, the way _applyPixelBudget and
+     * _capToDecoder would make it.
+     * @param {(autoMaxHeight: number) => object} sizeAt the size for a ceiling
+     * @param {object} settings
+     * @param {number} fps the rate asked for, before any budget
+     * @param {string} mode the resolution's mode
+     * @param {boolean} fpsAuto
+     * @param {{width:number, height:number}|null} limit the decoder's
+     * @returns {(budget: number) => {width:number, height:number, fps:number,
+     *            pixelRate:number}}
+     */
+    _autoCeilingAsk(sizeAt, settings, fps, mode, fpsAuto, limit) {
+        const aspect = settings.stream_aspect;
+        const clientFps = measuredFps();
+        return (budget) => {
+            const size = sizeAt(autoMaxHeightFor(budget));
+            const fit =
+                mode !== 'auto' && !fpsAuto
+                    ? { size, fps }
+                    : fitPixelBudget(size, fps, {
+                          clientFps,
+                          aspect,
+                          resolutionNamed: mode !== 'auto',
+                          rateNamed: !fpsAuto,
+                          budget,
+                      });
+            return streamFootprint(capSizeToDecoder(fit.size, limit).size, fit.fps, aspect);
+        };
+    },
+
+    /** The browser's outright "no" brings this launch down a rung, in the time
+     *  a launch can spare. See AutoCeilingSession.guard. */
+    async _guardAutoCeiling(askAt, settings) {
+        if (!this._autoCeiling) return;
+        await this._autoCeiling.guard(
+            askAt,
+            (ask, left) =>
+                decoderRefuses(
+                    settings.video_codec,
+                    {
+                        width: ask.width,
+                        height: ask.height,
+                        fps: ask.fps,
+                        bitrate:
+                            this._autoBitrateFor(
+                                settings,
+                                ask.height,
+                                ask.width + ':' + ask.height,
+                            ) * 1000,
+                    },
+                    left,
+                ),
+            AUTO_CEILING_GUARD_MS,
+        );
+    },
+
+    /**
+     * The host refused a launch at a rung on trial: once, it goes again a rung
+     * down, with no message. Not for a host that did not answer (the network
+     * then, not the rung), nor for the refusals that have their own dialog.
+     * @returns {boolean} the launch is on its way again
+     */
+    _retryBelowAutoCeiling(err, host, app, codecOverride, opts) {
+        const session = this._autoCeiling;
+        if (!session || codecOverride || (opts && opts.autoCeilingRetried)) return false;
+        if (this._startupAborted || !err || !(err.statusCode >= 500)) return false;
+        const code = err.responseBody && err.responseBody.code;
+        if (code === 'app_running' || code === 'video_capture_failed') return false;
+        if (!session.refused()) return false;
+        this.transition('app_list');
+        this.launchApp(host, app, undefined, undefined, {
+            ...opts,
+            skipSelfStreamWarn: true,
+            autoCeilingRetried: true,
+        });
+        return true;
     },
 
     /** The estimate's bitrate, in kbps, for a frame of that size. */
@@ -3114,21 +3261,24 @@ export const MoonlightApp = {
         const host = this._lastStreamHost;
         if (!settings || !host) return;
         const choice = readResolutionChoice(settings);
-        const size = resolveStreamSize(
-            {
-                mode: choice.mode,
-                height: settings.stream_height,
-                customWidth: choice.customWidth,
-                customHeight: choice.customHeight,
-            },
-            {
-                nativeHost: host.backendType === 'native',
-                device,
-                touch: IS_HANDHELD,
-                tv: IS_TV,
-                virtualDisplay: this._sizeOnVirtualDisplay === true,
-            },
-        );
+        const sizeAt = (autoMaxHeight) =>
+            resolveStreamSize(
+                {
+                    mode: choice.mode,
+                    height: settings.stream_height,
+                    customWidth: choice.customWidth,
+                    customHeight: choice.customHeight,
+                },
+                {
+                    nativeHost: host.backendType === 'native',
+                    device,
+                    touch: IS_HANDHELD,
+                    tv: IS_TV,
+                    virtualDisplay: this._sizeOnVirtualDisplay === true,
+                    autoMaxHeight,
+                },
+            );
+        const size = sizeAt(autoMaxHeightFor(this._autoCeilingBudget()));
         // The new screen carries its own budget: a window moved from a 1080p
         // monitor to a 4K one asks for more pixels, and the pair is weighed
         // again before anything is relaunched. An Auto rate is read from the
@@ -3138,9 +3288,11 @@ export const MoonlightApp = {
         const fps = settings.stream_fps;
         const fpsAuto = this._fpsAuto === true;
         if (fpsAuto) settings.stream_fps = autoFps() || settings.stream_fps;
+        const askedFps = settings.stream_fps;
+        const decodeLimit = knownHardwareDecodeLimit(settings.video_codec);
         const bounded = this._capToDecoder(
             this._applyPixelBudget(settings, size, choice.mode, fpsAuto),
-            knownHardwareDecodeLimit(settings.video_codec),
+            decodeLimit,
         );
         if (
             nearlySameStreamSize(bounded, {
@@ -3159,6 +3311,11 @@ export const MoonlightApp = {
                 (settings.stream_fps || 60) +
                 ' fps',
         );
+        if (this._autoCeiling)
+            this._autoCeiling.weigh(
+                this._autoCeilingAsk(sizeAt, settings, askedFps, choice.mode, fpsAuto, decodeLimit),
+                choice.mode === 'auto' || fpsAuto,
+            );
         this._applyResolvedSize(settings, bounded);
         this._qualityRelaunch(this._transportIndex || 0);
     },
@@ -3349,6 +3506,12 @@ export const MoonlightApp = {
         };
         sv.onHostDisplayFormat = (msg) => this._onHostDisplayFormat(msg);
         sv.onClientScreenChanged = (device) => this._onClientScreenChanged(device);
+        sv.autoCeilingIdle = () => !!(this._standbyView || this._relaunching);
+        const ceiling = this._autoCeiling;
+        sv.autoCeilingMeter = ceiling ? ceiling.meter(performance.now()) : null;
+        sv.autoCeilingOnTrial = () => !!(ceiling && ceiling.onTrial);
+        sv.autoCeilingMaxPixelRate = ceiling ? ceiling.stepCeiling : 0;
+        sv.autoCeilingLine = () => (ceiling ? ceiling.statsLine : null);
     },
 
     /**
@@ -3608,6 +3771,8 @@ export const MoonlightApp = {
             sv._linkLostDefault();
             return;
         }
+        if (state === 'crashed' && sv.autoCeilingMeter)
+            sv.autoCeilingMeter.noteSick('worker_crash', true);
         this._crashRelaunches = recordCrashRelaunch(this._crashRelaunches, now);
         // Named to the host until a launch succeeds (_doRelaunchTransport).
         this._reconnectOf = sv.streamId;
@@ -4698,12 +4863,25 @@ export const MoonlightApp = {
      * automatically re-launch with H.264 forced. The fallback counter prevents
      * infinite loops if H.264 also fails.
      */
+    _endAutoCeiling() {
+        const session = this._autoCeiling;
+        if (!session) return;
+        const sv = this.streamView;
+        const fallback = sv && sv._codecFallbackRequested ? sv._codecFallback : null;
+        // Opaque HDR frames say nothing of this machine's strength.
+        if (fallback && fallback.reason !== 'opaque-hdr-frames' && sv.autoCeilingMeter)
+            sv.autoCeilingMeter.noteSick('codec_fallback', true);
+        session.end();
+        if (!fallback) this._autoCeiling = null;
+    },
+
     _onStreamingQuit() {
         // A stream that lasted counts toward the coffee thank-you — read before
         // anything below drops the view. A codec fallback is not an end: the
         // relaunch carries the same stream on.
         if (!(this.streamView && this.streamView._codecFallbackRequested))
             this._noteSupportSession();
+        this._endAutoCeiling();
 
         // Drop any lingering transport-relaunch loader and the upgrade poll,
         // and any standby leg of a seamless transition (the live stream ended).

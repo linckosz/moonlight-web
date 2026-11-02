@@ -51,7 +51,14 @@ QString LogArchive::kindOf(const QString& fileName)
 QList<QFileInfo> LogArchive::latestPerKind(const QList<QFileInfo>& files)
 {
     QHash<QString, QFileInfo> latest;
-    for (const QFileInfo& f : files) {
+    for (const QFileInfo& listed : files) {
+        // Asked again by its path, not taken from the directory listing. On
+        // Windows the listing says what the file was when its writer last
+        // closed it: a log held open is 0 bytes there however much it holds.
+        // The client log is opened at the first batch and never closed, so it
+        // was never in an archive (issue #48, 01/11/2026); a server log born
+        // in this run (a first install, a rotation) is the same.
+        const QFileInfo f(listed.absoluteFilePath());
         if (!f.isFile() || f.size() == 0) continue;
         const QString kind = kindOf(f.fileName());
         auto it = latest.find(kind);

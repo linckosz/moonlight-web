@@ -2,9 +2,11 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 
 import { StreamView } from '../js/ui/StreamView.js';
+import { Toast } from '../js/ui/Toast.js';
+import { t } from '../js/i18n/i18n.js';
 
 /**
  * The viewer's microphone button, in the stream header: right of the speaker,
@@ -67,10 +69,13 @@ function view(has = {}) {
             muted: false,
             toggleMuted() {
                 this.muted = !this.muted;
-                return this.muted;
+                this.state = this.muted ? 'muted' : 'live';
+                return Promise.resolve(!this.muted);
             },
         },
         _syncMicButton: StreamView.prototype._syncMicButton,
+        _toggleMicSaid: StreamView.prototype._toggleMicSaid,
+        _showMicHintOnce() {},
         _positionGamingOverlay: StreamView.prototype._positionGamingOverlay,
     };
 }
@@ -106,6 +111,32 @@ const ids = (v) =>
 describe('the microphone button beside the speaker', () => {
     afterEach(() => {
         document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    it('says on screen that a click cut it, then opened it', async () => {
+        const info = vi.spyOn(Toast, 'info').mockImplementation(() => {});
+        const v = view();
+        const btn = mount(v);
+        btn.click();
+        await Promise.resolve();
+        expect(info).toHaveBeenLastCalledWith(t('stream.micOff'), { durationMs: 1500 });
+        btn.click();
+        await Promise.resolve();
+        expect(info).toHaveBeenLastCalledWith(t('stream.micOn'), { durationMs: 1500 });
+        expect(info).toHaveBeenCalledTimes(2);
+    });
+
+    it('says nothing when a click did not open it: a refusal has its own message', async () => {
+        const info = vi.spyOn(Toast, 'info').mockImplementation(() => {});
+        const v = view();
+        v._mic.state = 'denied';
+        v._mic.muted = true;
+        v._mic.toggleMuted = () => Promise.resolve(false);
+        const btn = mount(v);
+        btn.click();
+        await Promise.resolve();
+        expect(info).not.toHaveBeenCalled();
     });
 
     it('comes right after the volume, before Fullscreen', () => {
@@ -163,5 +194,29 @@ describe('the microphone button beside the speaker', () => {
         expect(v._mic.muted).toBe(true);
         expect(btn.classList.contains('is-off')).toBe(true);
         expect(btn.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('is lit only once the microphone really sends', () => {
+        const v = view();
+        // Open asked for, the permission prompt still up.
+        v._mic.state = 'muted';
+        v._mic.muted = false;
+        const btn = mount(v);
+        expect(btn.classList.contains('is-off')).toBe(true);
+        expect(btn.getAttribute('aria-pressed')).toBe('true');
+        v._mic.state = 'live';
+        v._syncMicButton();
+        expect(btn.classList.contains('is-off')).toBe(false);
+    });
+
+    it('stays clickable after a refusal, to try again', () => {
+        const v = view();
+        v._mic.state = 'denied';
+        v._mic.muted = true;
+        const btn = mount(v);
+        expect(btn.disabled).toBe(false);
+        expect(btn.classList.contains('is-off')).toBe(true);
+        btn.click();
+        expect(v._mic.muted).toBe(false);
     });
 });

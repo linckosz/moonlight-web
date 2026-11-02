@@ -58,6 +58,7 @@ import {
 import {
     SUPPORTS_CANVAS_TEARING,
     IS_HANDHELD,
+    IS_LOW_MEMORY,
     IS_TOUCH_DEVICE,
     IS_TV,
     resolveTearing,
@@ -91,8 +92,10 @@ import {
     clampCustomSize,
     devicePixelSize,
     fitPixelBudget,
+    autoMaxHeightFor,
     readResolutionChoice,
 } from '../util/StreamResolution.js';
+import { previewCeiling } from '../util/AutoCeiling.js';
 import {
     CODEC_PYROWAVE,
     PYROWAVE_FALLBACK,
@@ -100,9 +103,20 @@ import {
     pyrowaveBlocker,
 } from '../util/PyrowaveCodec.js';
 import { CODEC_AUTO, codecAfterAutoMigration } from '../util/CodecAuto.js';
-import { micSupported } from '../audio/MicUplink.js';
+import {
+    loadMicDevice,
+    micRequested,
+    micSupported,
+    namedMicrophones,
+    saveMicDevice,
+} from '../audio/MicUplink.js';
 
 const STORAGE_KEY = 'mw-streaming-settings';
+// The microphone list's values, a device being its prefix and its id.
+const MIC_OFF = 'off';
+const MIC_SYSTEM = 'system';
+const MIC_PICK = 'pick';
+const MIC_DEVICE_PREFIX = 'device:';
 
 /** Why PyroWave is greyed out, by pyrowaveBlocker()'s answer. */
 const PYROWAVE_REASON_KEYS = {
@@ -173,7 +187,10 @@ export class SettingsView {
         // Send this device's microphone to the host (off by default): opened
         // only once the host said it can take it (audio/MicUplink.js), and how
         // it sounds (MIC_QUALITY: voice cleanup, or none at a higher bitrate).
-        this._micEnabled = false;
+        this._micEnabled = true;
+        this._micChosen = false;
+        /** @type {{id: string, label: string}|null} null follows the system */
+        this._micDevice = loadMicDevice();
         this._micQuality = 'voice';
         this._quitAppOnStop = false;
         // Enter fullscreen at launch (off by default): asked on the launch
@@ -627,7 +644,8 @@ export class SettingsView {
         this._chroma444 = data.chroma_444_enabled === true;
         this._muteHostAudio = data.mute_host_audio !== false;
         this._audioSource = data.audio_source === 'focused' ? 'focused' : 'all';
-        this._micEnabled = data.mic_enabled === true;
+        this._micEnabled = micRequested(data);
+        this._micChosen = data.mic_chosen === true;
         this._micQuality = data.mic_quality === 'clean' ? 'clean' : 'voice';
         this._quitAppOnStop = data.quit_app_on_stop === true;
         this._fullscreenOnStart = data.fullscreen_on_start === true;
@@ -706,7 +724,20 @@ export class SettingsView {
      * is what the estimate wants.
      */
     _budgetedStream(choice, rate, rateNamed) {
-        const ref = bitrateReference(choice, undefined, IS_HANDHELD, IS_TV);
+        // No host here: what was learned from the one launched last.
+        const budget = previewCeiling({
+            tv: IS_TV,
+            handheld: IS_HANDHELD,
+            lowMemory: IS_LOW_MEMORY,
+            powerSave: this._powerSave,
+        });
+        const ref = bitrateReference(
+            choice,
+            undefined,
+            IS_HANDHELD,
+            IS_TV,
+            autoMaxHeightFor(budget),
+        );
         const aspect =
             choice.mode === 'fixed'
                 ? this.container.querySelector('#settings-stream-aspect')?.value ||
@@ -718,6 +749,7 @@ export class SettingsView {
             clientFps: measuredFps(),
             resolutionNamed: choice.mode !== 'auto',
             rateNamed,
+            budget,
         });
         return {
             size: { ...bounded.size, aspect: bounded.size.aspect || aspect },
@@ -800,6 +832,90 @@ export class SettingsView {
         this._streamBitrateMbps = mbps;
     }
 
+    /** The list's value for what is chosen. */
+    _micValue() {
+        if (!this._micEnabled) return MIC_OFF;
+        return this._micDevice ? MIC_DEVICE_PREFIX + this._micDevice.id : MIC_SYSTEM;
+    }
+
+    /**
+     * The list's options: off, the system's, then the named microphones. The one
+     * picked earlier stays there when it is not listed (not plugged in, or no
+     * name to compare with yet). Nothing named yet: the entry that asks for names.
+     *
+     * @param {{id: string, label: string}[]} named
+     */
+    _micListHtml(named) {
+        const value = this._micValue();
+        const option = (v, text) =>
+            '<option value="' +
+            escapeHtml(v) +
+            '"' +
+            (v === value ? ' selected' : '') +
+            '>' +
+            escapeHtml(text) +
+            '</option>';
+        const devices = [...named];
+        const saved = this._micDevice;
+        if (saved && !devices.some((d) => d.id === saved.id)) devices.push(saved);
+        return [
+            option(MIC_OFF, t('settings.micOff')),
+            option(MIC_SYSTEM, t('settings.micSystem')),
+            ...devices.map((d) => option(MIC_DEVICE_PREFIX + d.id, d.label || d.id)),
+            ...(named.length === 0 ? [option(MIC_PICK, t('settings.micPick'))] : []),
+        ].join('');
+    }
+
+    /** The named microphones into the list, as far as this site may see them. */
+    async _fillMicList(list) {
+        let named = [];
+        try {
+            named = namedMicrophones(await navigator.mediaDevices.enumerateDevices());
+        } catch (e) {
+            console.info('[Mic] could not list the microphones:', e && e.message);
+        }
+        list.innerHTML = this._micListHtml(named);
+        return named;
+    }
+
+    /**
+     * "Choose a microphone…": a browser names its microphones only once one has
+     * been allowed, so one is opened for the time of the question. The viewer's
+     * choice stands until they pick in the list that comes back.
+     */
+    async _askMicNames(list) {
+        list.value = this._micValue();
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach((track) => track.stop());
+        } catch (e) {
+            const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+            Toast.warning(t(denied ? 'stream.micDenied' : 'stream.micError'));
+            return;
+        }
+        await this._fillMicList(list);
+        try {
+            list.showPicker();
+        } catch (_e) {
+            /* no picker, or the gesture is spent: the list is there to open */
+        }
+    }
+
+    /** What the viewer just selected, kept. */
+    _takeMicChoice(list) {
+        const value = list.value;
+        this._micChosen = true;
+        this._micEnabled = value !== MIC_OFF;
+        if (value === MIC_OFF) return;
+        this._micDevice = value.startsWith(MIC_DEVICE_PREFIX)
+            ? {
+                  id: value.slice(MIC_DEVICE_PREFIX.length),
+                  label: list.selectedOptions[0]?.textContent || '',
+              }
+            : null;
+        saveMicDevice(this._micDevice);
+    }
+
     /** Persist current internal state to localStorage (all clients)
      *  and to the server (localhost only — updates defaults for all browsers). */
     async _saveToStorage() {
@@ -842,6 +958,7 @@ export class SettingsView {
             video_enhancement_algo: this._videoEnhancementAlgo,
             // Per-device only (server ignores these unknown fields).
             mic_enabled: this._micEnabled,
+            mic_chosen: this._micChosen,
             mic_quality: this._micQuality,
             quit_app_on_stop: this._quitAppOnStop,
             fullscreen_on_start: this._fullscreenOnStart,
@@ -1382,7 +1499,10 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
-        this._micEnabled = false;
+        this._micEnabled = true;
+        this._micChosen = false;
+        this._micDevice = null;
+        saveMicDevice(null);
         this._micQuality = 'voice';
         this._audioSource = 'all';
         this._quitAppOnStop = false;
@@ -1953,17 +2073,16 @@ export class SettingsView {
                     </div>
 
                     <div class="settings-field${micSupported() ? '' : ' settings-field-locked'}">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-mic-enabled"
-                                ${this._micEnabled && micSupported() ? 'checked' : ''}
-                                ${micSupported() ? '' : 'disabled'} />
-                            <span class="settings-checkbox-text">
-                                <strong>${t('settings.micEnabled')}</strong>
-                            </span>
+                        <label class="settings-label" for="settings-mic-device">
+                            ${t('settings.micDevice')}
                         </label>
                         <span class="setting-desc">${t(
-                            micSupported() ? 'settings.micEnabledDesc' : 'settings.micUnsupported',
+                            micSupported() ? 'settings.micDeviceDesc' : 'settings.micUnsupported',
                         )}</span>
+                        <select id="settings-mic-device" class="settings-select"
+                                ${micSupported() ? '' : 'disabled'}>
+                            ${this._micListHtml([])}
+                        </select>
                         <select id="settings-mic-quality" class="settings-select u-mt-2"
                                 aria-label="${t('settings.micQuality')}"
                                 ${this._micEnabled && micSupported() ? '' : 'disabled'}>
@@ -2415,16 +2534,25 @@ export class SettingsView {
                 this._autoSave();
             });
 
-        const micCheck = this.container.querySelector('#settings-mic-enabled');
+        const micList = /** @type {HTMLSelectElement|null} */ (
+            this.container.querySelector('#settings-mic-device')
+        );
         const micQuality = /** @type {HTMLSelectElement|null} */ (
             this.container.querySelector('#settings-mic-quality')
         );
-        if (micCheck)
-            micCheck.addEventListener('change', () => {
-                this._micEnabled = micCheck.checked;
-                if (micQuality) micQuality.disabled = !micCheck.checked;
+        if (micList && !micList.disabled) {
+            micList.addEventListener('change', () => {
+                if (micList.value === MIC_PICK) {
+                    this._askMicNames(micList);
+                    return;
+                }
+                this._takeMicChoice(micList);
+                if (micQuality) micQuality.disabled = !this._micEnabled;
                 this._autoSave();
             });
+            // Names already allowed on this site show without a prompt.
+            this._fillMicList(micList);
+        }
         if (micQuality)
             micQuality.addEventListener('change', () => {
                 this._micQuality = micQuality.value === 'clean' ? 'clean' : 'voice';

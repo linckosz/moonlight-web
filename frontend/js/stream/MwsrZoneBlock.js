@@ -49,12 +49,12 @@ export const MWSR_ZONE_CODES = 12;
  * The scales the zones are read at: the client's, the smaller axis, within
  * a tenth of the host's (plan B §12 c: a shrunk window, a zoom, a capture of
  * a physical screen, and the tree's statistics no longer see the client's
- * pixels), and never under ×1.3. The bench measured from ×1.33 up; below, the
+ * pixels), and never under ×1.15. The bench measured from there up; below, the
  * kernel's strength falls to 0 at 1:1, and the drop over it, of the across
  * weight, would grow without a bound.
  */
 export const MWSR_ZONE_SCALE_TOLERANCE = 0.1;
-export const MWSR_ZONE_MIN_SCALE = 1.3;
+export const MWSR_ZONE_MIN_SCALE = 1.15;
 
 /**
  * The drop a code takes off the sharpness law, as the weight across an edge

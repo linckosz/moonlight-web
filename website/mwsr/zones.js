@@ -16,8 +16,8 @@ export const ZONES_X = 32;
 export const ZONES_Y = 18;
 const STATS = 8;
 const PER = CELLS_X / ZONES_X; // 4 x 4 cells a zone
-/** The client reads zones from x1.3 up (MwsrZoneBlock.js MWSR_ZONE_MIN_SCALE). */
-export const ZONE_MIN_SCALE = 1.3;
+/** The client reads zones from x1.15 up (MwsrZoneBlock.js MWSR_ZONE_MIN_SCALE). */
+export const ZONE_MIN_SCALE = 1.15;
 
 const f = Math.fround;
 

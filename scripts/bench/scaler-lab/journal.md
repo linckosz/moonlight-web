@@ -3037,3 +3037,184 @@ souhaiterai en profiter pour supprimer X2 pour la v0.4.1 ». A29, prévue pour l
 
 Aucun GPU réel n'a servi : le code retiré ne tournait pas aux valeurs par défaut, et les dorés le montrent au bit
 près. À l'œil de Bruno, comme avant, le ×2 (720p → 1440p) sur texte et sur jeu.
+
+## 2026-11-02 — J55, le réglage livré change : une loi mesurée en LPIPS, puis en VMAF NEG
+
+**La demande de Bruno (01/11).** Remplacer les défauts livrés par le meilleur réglage en LPIPS, puis en VMAF NEG, dans une
+tolérance de 5 % du gain LPIPS sur le livré, avec une loi par taille du stream et de l'écran, et non un point fixe. Le SSIM
+quitte le README et le comparateur. Le test à l'aveugle S/F/P est abandonné : Bruno juge à l'œil, sur le comparateur en ligne.
+
+**La mesure.**
+- 15 images de recherche (jeux récents, 0 A.D., interfaces, texte), chacune propre et passée par HEVC au débit d'un stream.
+  4 images de contrôle, jamais vues pendant les recherches. L'écran 2160 n'a que 4 images de recherche : il est moins sûr.
+- LPIPS AlexNet v0.1, sur la RTX pour la vitesse : même réseau qu'en processeur, écart de 3e-8 au plus sur 276 rendus.
+  VMAF NEG par `vmaf_v0.6.1neg`.
+- Recherches locales aux échelles ×1,15, ×1,333, ×1,5, ×2, ×2,5 et ×3 à l'écran 1440, et ×1,333 et ×2 aux écrans 1080 et 2160,
+  avec les zones de l'hôte natif et sans. Puis des grilles sur `racross`, `walong` et `sharp`, et la mesure de chaque loi candidate
+  dans le vrai shader, avec les échelles ×1,4 et ×2,25 tenues à part.
+
+**Ce que disent les mesures.**
+- `sharp` et `walong` s'échangent sur une crête : à ×2,5, `sharp` ≈ 1,25 + 2,5 `walong` tient le LPIPS. Une fois sur cette crête,
+  **`walong` 0 suffit partout**, sans zones comme avec, à condition de baisser `sharp` aux grandes échelles.
+- Le VMAF NEG du texte suit `racross` (à ×1,333 : 0,625 donne environ 57, 0,75 environ 59, 1,0 environ 64), mais le LPIPS moyen s'en
+  éloigne. À ×1,333, égaler le livré sur le texte coûte un tiers du gain LPIPS (`sharp` 0,875, `racross` 0,9375 : 67 % du gain,
+  62,45). À ×2, le compromis existe : 24,81 avec zones, 25,13 sans, contre 25,27.
+- La taille de l'écran ne donne pas d'effet qu'un terme linéaire puisse suivre : l'optimum de `sharp` reste à 1,125 à ×1,333 et ×2
+  sur les trois écrans, avec zones, et `racross` varie sans suivre l'écran. Les termes d'écran de l'essai précédent dégradaient
+  ces écrans (76 % du gain à ×1,333 sur 1080). Ils restent dans la forme, à zéro.
+
+**La loi.** `value = c0 + c1 x + c2 x² + c3 x³ + c4 x⁴ + c5 y + c6 x y`, x = ln(échelle) tenu dans ×1,15..×3, y = ln(h / 1440) tenu dans
+1080..2160. `sharp` et `racross` suivent x, deux tables (avec les zones et sans). `tau` 0,0025, `walong` 0, `ralong` 0, `fc` 0,5, et
+`wmin` constante, qui ne mord plus. Le x⁴ est là pour le creux de `racross` vers ×1,5 et la remontée à ×2, qu'un degré 3 ne suit pas
+(texte à ×2 : 20,89 au degré 3, 24,81 au degré 4). Les zones sont lues dès ×1,15, où elles gagnent encore.
+
+**Les chiffres**, écran 1440, images de recherche (LPIPS / VMAF NEG ; écart de VMAF NEG au livré ; part du gain LPIPS gardée) :
+
+| Échelle | Avec zones | Sans zones | Livré, zones | Livré, sans | FSR1 |
+|---|---|---|---|---|---|
+| ×1,15 | 0,02510 / 87,54 ; −0,06 ; 95 % | 0,02541 / 87,63 ; −0,16 ; 97 % | 0,03206 / 87,59 | 0,03145 / 87,79 | 0,02950 / 86,64 |
+| ×1,333 | 0,03937 / 83,87 ; +0,21 ; 95 % | 0,04083 / 84,20 ; +1,03 ; 96 % | 0,04808 / 83,65 | 0,05056 / 83,17 | 0,04590 / 84,52 |
+| ×1,4 (à part) | 0,04534 / 82,77 ; −0,10 | 0,04722 / 83,11 ; +0,73 | 0,05510 / 82,86 | 0,05716 / 82,37 | 0,05390 / 83,28 |
+| ×1,5 | 0,05227 / 81,19 ; −0,27 ; 100 % | 0,05464 / 81,74 ; +0,74 | 0,06464 / 81,47 | 0,06633 / 81,01 | 0,06200 / 81,68 |
+| ×2 | 0,10638 / 72,16 ; +0,67 ; 95 % | 0,11086 / 72,80 ; +2,42 ; 95 % | 0,12318 / 71,50 | 0,12993 / 70,38 | 0,12075 / 72,54 |
+| ×2,25 (à part) | 0,13256 / 67,97 ; +0,33 | 0,13951 / 68,13 ; +1,68 | 0,14371 / 67,63 | 0,15017 / 66,45 | 0,15026 / 67,86 |
+| ×2,5 | 0,15325 / 63,78 ; +0,20 ; 101 % | 0,16156 / 63,56 ; +1,15 | 0,16745 / 63,59 | 0,17309 / 62,41 | 0,18215 / 63,58 |
+| ×3 | 0,19283 / 56,30 ; +0,82 ; 96 % | 0,20221 / 54,80 ; +0,51 ; 94 % | 0,20853 / 55,47 | 0,21491 / 54,29 | 0,23548 / 55,13 |
+
+Le texte, en VMAF NEG (avec zones / sans ; livré ; FSR1) : ×1,15 72,27 / 70,92 ; 69,88 ; 64,86. ×1,333 57,52 / 58,87 ; 62,65 ; 57,31.
+×1,5 46,39 / 48,72 ; 53,21 ; 48,64. ×2 24,81 / 25,13 ; 25,27 ; 24,60. ×2,5 16,91 / 14,46 ; 13,42 ; 7,67. Son LPIPS bat le livré et FSR1
+à toutes ces échelles.
+
+**Hors de la règle, ou en perte.**
+- Avec zones, les écrans 1080 et 2160 gardent de 89 à 93 % du gain (1080 : ×1,333 91 %, ×2 90 % ; 2160 : ×1,333 93 %, ×2 89 %). Le
+  LPIPS y bat quand même le livré et FSR1. Sans zones à l'écran 1440, ×3 garde 94 %.
+- VMAF NEG moyen contre le livré, images de recherche : ×1,5 −0,27, ×1,4 −0,10 et ×1,15 −0,06 avec zones, ×1,15 −0,16 sans.
+- Images de contrôle : le LPIPS bat le livré et FSR1 partout. VMAF NEG contre le livré : ×1,15 −0,32 avec zones et −0,25 sans, ×2,5
+  −0,20 avec zones, partout ailleurs au moins à égalité. Contre FSR1, il reste le plus souvent derrière (89,75 contre 90,34 à
+  ×1,333, 81,24 contre 81,81 à ×2, sans zones).
+
+**Le coût.** Le seuil 0,0025 envoie 78 à 97 % d'une image de jeu sur le chemin de bord, contre 8 à 63 % au livré, et 39 à 47 % du
+texte, contre 26 à 35 %. Une première mesure sur la RTX, sur la version précédente de la loi au même seuil, donnait de −24 % à +35 %
+selon l'image, bruitée : la carte change d'horloge pendant la mesure (plancher bilinéaire à 0,032 ou 0,049 ms). Aucun téléphone n'a été
+mesuré. Les temps du README restent ceux du 28/10 jusqu'à l'optimisation, qui pourra retirer les lectures le long des bords :
+`walong` 0 et `ralong` 0 les rendent inutiles.
+
+**Un incident.** Une image de sortie a porté exactement un bit retourné (6,8 Mo, CRC du bloc faux, prouvé en la redessinant), et un
+autre PNG avait fait échouer ffmpeg la veille, relu sans erreur au deuxième essai. Aucune erreur matérielle ni disque au journal de
+Windows ; barrettes sans ECC, vitesse de base 5600, réglées à 6000. La mémoire vive est la piste principale, sans preuve. Une image
+corrompue fait échouer le calcul au lieu de fausser un score, et le balayage reprend depuis son cache.
+
+**Vérifié.**
+- dorés réécrits (`--golden`) puis relus (`--golden-check`) sur SwiftShader : OK ;
+- conformité des jumeaux WebGPU et WebGL2 (`--conformity`, les deux côtés) : OK, FLIP 0,000 sur le cas relevé ;
+- jumeau HLSL sur WARP contre WGSL sur SwiftShader, 5 cas : PSNR de 66 à 69 dB, moins de 0,001 % des pixels au-delà de 1/255, écart
+  maximal de 21/255 sur quelques pixels ;
+- `node mwsr/generate.mjs --check`, `node scripts/website/build-site.mjs --check`, 197 fichiers de tests et 2090 tests verts ;
+- `website/mwsr/lab-scores.json` : 75 cas (`cmp_lab.py`), figures du README par `mwsr_charts.py`, zooms redessinés sur la RTX.
+
+**Une relecture de ce changement** a trouvé un piège réel : avec `walong` 0, le mélange divise par 1 + 2 fois le poids en travers, et un `wmin` nommé à −0,5 avec une netteté de 1,67 ou plus annulait ce diviseur. La loi n'y va pas ; `mwsrUniforms()` et le C++ tiennent maintenant un `wmin` nommé au-dessus de −0,49 − `walong`. Les lignes `j11*` de `hdr-check.js` nomment aussi toutes les valeurs de J11, que la loi aurait remplacées, et le curseur τ du labo descend jusqu'à la valeur de la loi.
+
+**Non fait, à la décision de Bruno.** L'activation par défaut des zones (elles restent derrière la clé de labo), le coup d'œil sur le
+comparateur en ligne, l'optimisation du shader : zéro perte mesurée d'abord, puis les chiffres de ce que 2 % de perte apporteraient.
+
+## 2026-11-02 — J56, le shader allégé : zéro perte, puis une seule lecture sur le chemin plat
+
+**La demande de Bruno (02/11).** « Optimisation sans régression » : d'abord ce qui ne perd rien de mesurable, ensuite les chiffres de ce
+que 2 % de perte apporteraient. Mesures de temps sur la RTX du bus 3 et l'iGPU du 9900X, dans des créneaux donnés par 59 ; la qualité
+sur SwiftShader, 4 cœurs en priorité basse, LPIPS sur la RTX, contre la loi de J55.
+
+**Ce qui part sans perte (`efd72cbb`).** Avec `ralong` 0, les deux échantillons le long des bords sont sur le centre, avec un poids nul.
+Et la cohérence vaut S / (S + EPS), car max(|p + q|, |p − q|) = |p| + |q| : elle n'est plus qu'un garde. Les trois jumeaux perdent donc
+deux échantillons, deux produits scalaires et une division par pixel de bord. Le poids en travers et le diviseur du mélange deviennent
+des valeurs du bloc, calculées une fois par image (le bloc passe de 20 à 24 flottants) ; la zone du regard et les zones de l'hôte les
+recalculent par pixel. Le vote prend la dérivée de la luma seule hors `CHROMA444`, la taille de l'entrée vient du bloc, la réduction à
+un échantillon perd son `span`. Au passage, la borne suit l'empreinte exacte aux bords de l'image.
+
+Sur tout le corpus (19 images, 12 géométries, avec et sans zones) : LPIPS moyen de −0,000009 à +0,000006, VMAF NEG de −0,0015 à +0,0029 ;
+pire image +0,00005 et −0,0047. De 0,04 à 0,34 % des pixels changent, de 1/255, sauf quelques bascules du vote (7/255 au plus) et les bords
+de l'image (28/255 au plus). Aucune réduction ne change dans les dorés. WebGL2 et la f16 avaient un garde 100 fois plus grand, qui leur
+coûtait environ 1 % de LPIPS sur les écrans 1080 et 1440 : ils rejoignent la loi mesurée. En WebGPU contre la v0.4.1 : RTX −30 à −33 %,
+iGPU −37 % ; avec les zones −31 % et −35 %.
+
+**Essayé, puis écarté.**
+- `textureGather` : RTX −29 % contre −33 %, iGPU −39 % contre −37 % : aucun gain net.
+- `s12 = C` dans le cubique : +0,00009 de LPIPS à ×2 : pas zéro perte.
+- `DERING 0` : +35 % de LPIPS à ×1,333.
+- Une borne sans lecture de texel (`DERING 3`, `ridge` 2) : ×1,333 LPIPS −1,8 à −2,7 % mais VMAF NEG −0,37 à −0,52, ×2 LPIPS +1 à +2,1 % et
+  VMAF NEG −0,32 à −0,47 ; RTX −41 %, iGPU −36 %, soit rien de gagné sur l'iGPU, et des traits qui dépassent leurs texels.
+- Une sortie rapide du chemin plat (`FLAT_EARLY` 0,002 : une lecture du texel le plus proche, et C rendu s'il en est tout près) : qualité
+  tenue (LPIPS −0,000027 à +0,000013), iGPU −48 %, mais re9-street ne passe que de 2,14 à 2,01 ms.
+
+**Ce que cette sortie rapide a appris.** Un GPU exécute les pixels par paquets, et un paquet paie un chemin dès qu'un seul de ses pixels le
+prend (TexBench le mesure : écarter un pixel sur deux ne gagne rien). Éviter le cubique à la plupart des pixels gagne donc peu. Il faut
+retirer ses échantillons.
+
+**Le chemin plat à une lecture (`FLAT_TAPS 2`).** Ce que le cubique faisait d'utile : à ×2 exact, chaque quad est centré sur un texel, donc
+un trait d'un texel a une pente nulle et passe par le chemin plat, où le cubique garde sa profondeur. Une lecture y suffit, le texel n le
+plus proche du pixel :
+
+    R = C + k (n − C),    k = (1 − f) (1 − 1,5 f),    f = la plus grande distance par axe au centre de ce texel
+
+Sur un tel trait, à la distance f de son centre, le Catmull-Rom donne h(f) L, avec h(f) = 1,5 f³ − 2,5 f² + 1, là où C vaut (1 − f) L, et n
+vaut L : k = (h(f) − (1 − f)) / f. R reste entre C et le texel, donc rien ne sonne, et sur une cellule vraiment plate n vaut C. Un point
+isolé relevé sur le texte, vu en diagonale, sur fond blanc (texel 227 en rouge) : le cubique à cinq échantillons, sans ses coins, donne 254 ;
+celui-ci 239, près du Catmull-Rom complet (240).
+
+Sur tout le corpus, contre la loi : images de recherche, LPIPS moyen de −0,29 à +0,01 %, VMAF NEG de −0,0087 à +0,0026, pire image +0,00018
+(re9-street ×2 hevc) et −0,117 (texte ×2, écran 1080). À ×2 sur l'écran 1440, le LPIPS s'améliore : 0,10638 → 0,10610 avec zones, 0,11086 →
+0,11055 sans. Images de contrôle, de −0,09 à +0,07 %, VMAF NEG de −0,0038 à +0,0041, pire image +0,00058 (re9-grace ×2 hevc) et −0,011.
+Contre le chemin à cinq échantillons, sur 4 images, 0,6 à 3 % des pixels changent, presque tous de 1 ou 2 niveaux ; moins de 0,05 % bougent
+de 4 niveaux ou plus (33 au maximum), des points isolés et de petits détails de texte, qui se rapprochent du pixel source.
+
+**Les temps (créneau du 02/11, 09:19-09:24 ; 0 A.D., texte, re9-street ; 1080 et 720 vers 1440 ; même page, blocs entrelacés), contre la v0.4.1.**
+- WebGPU, RTX : −48,1 % (−26 à −62), contre −29,6 % au chemin à cinq échantillons ; iGPU : −57,1 % (−44 à −66), contre −37,2 %.
+- Avec les zones : −42,4 % et −54,3 %.
+- Face à FSR1 à sa meilleure précision : 4,82 fois plus rapide sur la RTX (3,5 à 6,5), 4,99 fois sur l'iGPU (4,3 à 5,9) ; avec zones 4,35 et
+  4,69 fois. Le chemin à cinq échantillons était à 3,64 et 3,58 fois, la v0.4.1 à 2,43 et 2,11.
+- WebGL2, la passe seule, v0.4.1 → cinq échantillons → une lecture : iGPU texte 1,590 → 1,124 → 0,483 ms, re9-street 1,501 → 1,263 → 0,768 ms ;
+  RTX re9-street 0,0596 → 0,0452 → 0,0252 ms ; RTX texte 0,0704 → 0,0445 ms puis trop de bruit pour conclure. Image finie sur l'iGPU : texte 4,28
+  → 3,83 → 3,44 ms, re9-street 3,71 → 3,46 → 2,82 ms.
+- La RTX reste bruitée (horloge bimodale, J51) ; l'iGPU stable (0,2 % entre passes).
+
+**Une erreur de banc, corrigée.** Le premier temps WebGL2 de ce chantier (créneau de 06:52, −16 à −44 %) était faux : les copies de labo
+gardaient le `WebGlRenderer.js` de la loi, qui ne pose pas les nouvelles valeurs du bloc, et le shader dessinait avec elles à 0 (0,47 et 13 dB
+contre la même image en WebGPU). WebGPU prend le bloc entier et n'est pas touché, ni les mesures de qualité. Avec le renderer du dépôt : 32 et 48 dB,
+au lieu de 25 et 36 dB pour le texte d'avant : l'écart de dérivées entre WebGL2 et WebGPU, déjà connu, se réduit.
+
+**Monter le seuil du vote, ou retirer aussi cette lecture.** Les chiffres des 2 %, contre −48,1 % et −57,1 % à `tau` 0,0025 :
+- `tau` 0,005 : RTX −50,5 %, iGPU −57,7 %, LPIPS au pire +0,32 % ;
+- `tau` 0,0075 : −51,7 %, −58,5 %, au pire +0,92 % ;
+- `tau` 0,015 : −54,7 %, −60,0 %, au pire +3,19 %, hors de la règle. Le gain vient surtout de re9-street (iGPU 1,42 → 1,16 ms), et 0 A.D. ralentit
+  (1,27 → 1,41 ms), sans doute parce que ses paquets paient alors les deux chemins.
+- Aucune lecture sur le chemin plat (`FLAT_TAPS 1`) : −54,5 % et −62,1 %, mais un trait d'un texel s'y affadit à ×2 ; pas mesuré sur tout le corpus.
+
+**Les décisions de Bruno (02/11).** Le chemin à une lecture par défaut, partout, téléphones et tablettes compris. Le seuil reste à 0,0025. Les
+chemins à 3, 5 et 9 échantillons et `fc` restent jusqu'à la lecture sur téléphone et 780M : le comparateur en a besoin pour comparer les temps. La
+f16 reste pour l'instant : sur l'iGPU elle ne gagne plus rien (−56,0 % contre −57,1 %), elle attend la 780M et l'iPhone.
+
+**Sa question sur la Mi TV.** Elle n'a pas d'adaptateur WebGPU (relevé le 06/10) : la f16 ne s'y teste pas. Son WebGL2 peut comparer le mélange en
+`mediump`, le jumeau de la f16, à `highp`, et les chemins entre eux, sur une puce où les écarts se voient : à faire sur un créneau de 59.
+
+**Vérifié.** Dorés réécrits puis relus, conformité des jumeaux WebGPU et WebGL2, jumeau HLSL sur WARP, cellules du labo, `node mwsr/generate.mjs --check`,
+`node scripts/website/build-site.mjs --check`, 200 fichiers de tests et 2211 tests verts. Le texte appliqué rend les mêmes pixels que la copie de labo mesurée, sur 6 cas, avec et sans zones. Aucune réduction ne change dans les dorés. Le contrôle HDR garde les cinq alertes de la loi commitée, aux mêmes valeurs à 0,005 près, et n'en ajoute aucune.
+
+**Les temps définitifs (02/11, 10:37-10:41, le texte de ce commit, même page).** RTX : 0 A.D., texte, re9-street et gta-city ; iGPU : les trois
+premiers. Contre la v0.4.1 : RTX −47,1 % (−37 à −59), iGPU −57,0 % (−45 à −66) ; avec les zones −40,2 % et −54,2 %. FSR1, à sa meilleure précision, coûte
+4,79 fois MWSR sur la RTX (4,3 à 5,1) et 4,98 fois sur l'iGPU (4,3 à 5,9) ; avec les zones 4,23 et 4,68 fois ; la v0.4.1 était à 2,54 et 2,11 fois. MWSR
+devient le plus rapide des quatre sur ces deux GPU. La RTX était à P0 d'un bout à l'autre, et la mesure confirme celle de 09:19.
+
+Le README, la page et le graphique prennent ces temps. La colonne de la Radeon 780M reste celle du 30/10 et est dite ancienne : l'UM790Pro sert au banc de
+sécurité. Les scores (`cmp_lab.py`, 75 cas) sont refaits sur ce texte, les figures par `mwsr_charts.py`, et la colonne MWSR des zooms est redessinée sur la RTX.
+
+**La Radeon 780M (02/11, 12:44-12:48, à la demande de Bruno).** Un Chrome lancé par SSH tourne en session 0 : il voit la carte, mais `requestAdapter` rend null,
+comme sur mw-arm le 22/10. Sur l'accord de Bruno, une tâche `Interactive` l'a lancé dans la session console de Minis, sans fenêtre, muet, sur un profil à part, et
+WebGPU y répond. Six images, deux passes de 3 tours de 6 lots de 100 dessins, `lab-time` identique au dépôt, 2,4 % d'écart entre passes au pire, aucun autre programme
+au-dessus de 2 % du moteur 3D. Contre la v0.4.1 : −20,3 % (−14,5 à −31,5), avec les zones −18,0 %. L'écart avec la RTX et l'iGPU vient du plancher : une bilinéaire seule
+y prend 0,21 à 0,32 ms, et ce que le shader ajoute au-dessus baisse de 72 % (60 à 90), contre 68 % et 66 %. FSR1 à sa meilleure précision 3,21 fois MWSR (2,65 à 3,54),
+SGSR1 1,21 fois (1,08 à 1,39), NIS 4,68 fois (4,03 à 5,06) : MWSR est le plus rapide des quatre sur les six images. Le chemin à une lecture contre celui à 5 : −6,4 %
+(−0,7 à −10,9). La f16 n'apporte rien : +1,0 % (−0,2 à +1,6). Chaque texte 16 bits est tenu à son texte 32 bits sur cette carte : MWSR à 1/255 au plus, FSR1 et SGSR1 à
+0,045 % de pixels au pire au-delà de 4/255. La colonne du 30/10 venait d'Ubuntu, et ses valeurs ne se comparent pas à celles-ci : la bilinéaire y valait 0,110 ms, contre
+0,322 ms ici. Le README, la page et le graphique prennent cette colonne, et la réserve sur la précision de cette carte disparaît.
+
+**Reste.** Les téléphones (Bruno lit le temps sur le comparateur en ligne, après le signal de 59), la Mi TV ; puis le retrait des anciens chemins et
+la décision sur la f16.

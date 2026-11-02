@@ -217,6 +217,34 @@ void run_log_archive_tests()
         CHECK(!again.contains("moonlightweb.log"));
     }
 
+    // A log still open for writing, as the client log always is: on Windows
+    // the directory listing says 0 bytes until its writer closes it, and the
+    // archive left it out (issue #48: a Tesla's console, never in the zip).
+    {
+        QTemporaryDir live;
+        CHECK(live.isValid());
+        QFile writer(live.path() + "/moonlightweb-client.log");
+        CHECK(writer.open(QIODevice::WriteOnly | QIODevice::Append));
+        const QByteArray lines = "[Caps] browser {}\n[Life] visibility hidden\n";
+        CHECK_EQ(writer.write(lines), qint64(lines.size()));
+        CHECK(writer.flush()); // written, as the Logger does: no FlushFileBuffers
+        const QList<QFileInfo> picked =
+            LogArchive::latestPerKind(QDir(live.path()).entryInfoList(QDir::Files));
+        CHECK_EQ(picked.size(), qsizetype(1));
+        if (!picked.isEmpty()) CHECK_EQ(picked.first().size(), qint64(lines.size()));
+
+        LogArchive archive;
+        CHECK(archive.start(live.path(), QString(), "about\n", "logs.zip"));
+        QElapsedTimer t;
+        t.start();
+        while (archive.status().state == QLatin1String("running") && t.elapsed() < 10000)
+            QThread::msleep(10);
+        CHECK_EQ(archive.status().state, QString("done"));
+        CHECK_EQ(archive.status().doneBytes, qint64(lines.size()));
+        CHECK(holds(readZip(archive.result()).value("moonlightweb-client.log"), lines));
+        writer.close();
+    }
+
     // The Logger's threshold: DEBUG dropped unless asked for.
     {
         Logger* log = Logger::client();
@@ -385,10 +413,10 @@ void run_log_scrubber_tests()
     CHECK_EQ(s.scrubLine("[2026-09-30 10:00:00.123] [INFO] Chrome/153.0.0.0 Safari/537.36"),
              QString("[2026-09-30 10:00:00.123] [INFO] Chrome/153.0.0.0 Safari/537.36"));
     CHECK_EQ(
-        s.scrubLine(R"~(candidate:1 1 UDP 2122 2a01:e0a:ac5:df0:5d3a:b3cb:1:2 5000 typ host)~"),
-        QString(R"~(candidate:1 1 UDP 2122 2xxx::{3} 5000 typ host)~"));
-    CHECK_EQ(s.scrubLine("from [2a01:e0a:ac5:df0:5d3a:b3cb:1:2]:443 and fd12:3456::c1 fe80::1 ::1"),
-             QString("from [2xxx::{3}]:443 and fd::{g1} fe80::{h1} ::1"));
+        s.scrubLine(R"~(candidate:1 1 UDP 2122 3fff:abc:abc:de0:aaaa:bbbb:1:2 5000 typ host)~"),
+        QString(R"~(candidate:1 1 UDP 2122 3xxx::{3} 5000 typ host)~"));
+    CHECK_EQ(s.scrubLine("from [3fff:abc:abc:de0:aaaa:bbbb:1:2]:443 and fd12:3456::c1 fe80::1 ::1"),
+             QString("from [3xxx::{3}]:443 and fd::{g1} fe80::{h1} ::1"));
     CHECK_EQ(s.scrubLine("mapped ::ffff:88.12.34.56 at 12:34:56"),
              QString("mapped ::ffff:256.x.x.{1} at 12:34:56"));
 
@@ -417,8 +445,8 @@ void run_log_scrubber_tests()
                 R"~(Selected candidate pair: local "host fd7a:115c:a1e0::c036:292d:48550/UDP" -> remote "prflx fd7a:115c:a1e0::c036:292d:63433/UDP")~"),
             QString(
                 R"~(Selected candidate pair: local "host fd::{a1}:48550/UDP" -> remote "prflx fd::{a1}:63433/UDP")~"));
-        CHECK_EQ(pair.scrubLine("srflx 2a01:e0a:ac5:df0:5d3a:b3cb:1:2:5000/UDP at 10:00:00.123"),
-                 QString("srflx 2xxx::{1}:5000/UDP at 10:00:00.123"));
+        CHECK_EQ(pair.scrubLine("srflx 3fff:abc:abc:de0:aaaa:bbbb:1:2:5000/UDP at 10:00:00.123"),
+                 QString("srflx 3xxx::{1}:5000/UDP at 10:00:00.123"));
     }
 
     // Whole files: PEM blocks go, line endings stay.

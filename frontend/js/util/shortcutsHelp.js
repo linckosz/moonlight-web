@@ -53,6 +53,7 @@ export function keyboardShortcutRows(isMac) {
         [t('stream.scRelease'), ...mods, 'Z'],
         [t('stream.scMouseMode'), ...mods, 'M'],
         [t('stream.scMute'), ...mods, 'S'],
+        [t('stream.scMic'), ...mods, 'P'],
         [t('stream.scStats'), ...mods, 'I'],
         [t('stream.scDesktopPrev'), ...mods, '←'],
         [t('stream.scDesktopNext'), ...mods, '→'],

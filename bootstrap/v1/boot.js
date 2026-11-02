@@ -607,15 +607,16 @@ async function officialCheck(manifestVersion) {
  * Whether the cache holds what this machine's interface should be: the official
  * one, file for file, where a list applies — this machine's own hashes
  * otherwise, as before. Where production only reports, the list's verdict is
- * said and the hashes decide.
+ * said and the hashes decide, unless `report` is false: the download has
+ * just said it, and the console would show the same line twice.
  */
-async function shellIsTrusted(cache, files, manifest, check) {
+async function shellIsTrusted(cache, files, manifest, check, { report = true } = {}) {
     if (check.list) {
         const { ok, differs } = await cacheMatchesList(cache, check.list, location.origin, {
             prune: check.enforce,
         });
         if (check.enforce) return ok;
-        if (differs.length)
+        if (report && differs.length)
             reportOnly(`${differs.join(', ')} differ from the official ${check.version}`);
     }
     return cacheMatchesManifest(cache, files, manifest.sha256);
@@ -750,7 +751,7 @@ async function fetchShell(tunnel, hostId) {
     await fresh.put('/', index.clone());
     // Checked like a cached copy: another page of this origin could have
     // written over it while it came down.
-    if (!(await shellIsTrusted(fresh, files, manifest, check))) {
+    if (!(await shellIsTrusted(fresh, files, manifest, check, { report: false }))) {
         await caches.delete(SHELL_CACHE);
         throw new Error('the interface changed while it was being fetched');
     }

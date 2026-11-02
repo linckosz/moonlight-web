@@ -29,7 +29,7 @@ import { Toast } from './Toast.js';
 import { StatsGraph } from './StatsGraph.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
 import * as streamVolume from '../audio/streamVolume.js';
-import { MicUplink, micSupported } from '../audio/MicUplink.js';
+import { MicUplink, loadMicDevice, micSupported } from '../audio/MicUplink.js';
 import { JitterController } from '../stream/JitterController.js';
 import { FramePacer } from '../stream/FramePacer.js';
 import {
@@ -126,6 +126,7 @@ import { DecodeRateGovernor } from '../stream/DecodeRateGovernor.js';
 import { SilentDecoderWatch } from '../stream/SilentDecoderWatch.js';
 import { ByteRate } from '../stream/ByteRate.js';
 import {
+    ENHANCER_LADDER,
     EnhancerGovernor,
     ladderRung,
     rendererAlgo,
@@ -144,6 +145,7 @@ import {
 import { cropToAnnounced } from '../stream/FrameCrop.js';
 import { VsyncGrid } from '../stream/VsyncGrid.js';
 import { CadenceStepper, autostepEnabled, stepMemory } from '../stream/CadenceStepper.js';
+import { frameMatchesAsked } from '../stream/AutoCeilingMeter.js';
 import { LatencyProbe } from '../stream/LatencyProbe.js';
 import { InputUplink } from '../stream/InputUplink.js';
 import { LINK_STALL_MS, LINK_STALL_PROBE_MS } from '../stream/CrashRelaunch.js';
@@ -163,6 +165,9 @@ import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 import { flushClientLog, serverDiag } from '../util/ClientLog.js';
 import { UltraPlayer, presentMode, ultraPlayerSupported } from '../stream/ultra/UltraPlayer.js';
+
+// Set once the viewer has been told the microphone starts cut.
+const MIC_HINT_KEY = 'mw-mic-hint-seen';
 
 /**
  * Lane name → the i18n key the card already uses for that value. The graph
@@ -1098,8 +1103,13 @@ export class StreamView {
         /** @type {HTMLButtonElement|null} */
         this._micBtn = null;
         if (opts.mic === true && micSupported()) {
-            this._mic = new MicUplink({ held: this._standby, quality: opts.micQuality });
+            this._mic = new MicUplink({
+                held: this._standby,
+                quality: opts.micQuality,
+                device: loadMicDevice(),
+            });
             this._mic.onStateChange = (state) => this._onMicState(state);
+            this._mic.onDeviceMissing = () => Toast.warning(t('stream.micDeviceMissing'));
             this.webrtc.mic = this._mic;
         }
 
@@ -1201,6 +1211,20 @@ export class StreamView {
         // only for a rate left to Auto — see _noteHostCadence. Off on a TV.
         this._autostep = opts.fpsAuto === true && autostepEnabled(IS_TV);
         this._stepper = null;
+        // Does this stream prove the rung of Auto's ceiling it runs at? The app
+        // hands the live view a meter (stream/AutoCeilingSession.js), fed here.
+        /** @type {import('../stream/AutoCeilingMeter.js').AutoCeilingMeter|null} */
+        this.autoCeilingMeter = null;
+        /** @type {(() => boolean)|null} a transition is under way */
+        this.autoCeilingIdle = null;
+        /** @type {(() => boolean)|null} this stream tries a rung not yet held */
+        this.autoCeilingOnTrial = null;
+        /** The most a step of the cadence may reach, pixels a second; 0: no bound. */
+        this.autoCeilingMaxPixelRate = 0;
+        /** @type {(() => {size: string, trial: boolean}|null)|null} the stats card's line */
+        this.autoCeilingLine = null;
+        this._hostPresentsFps = 0;
+        this._decodeRateCap = 0;
         // Native host: mouse motion goes out on `pointerrawupdate` — every
         // report the device makes, not the one-per-display-frame sum that
         // `mousemove` delivers. Decided in _bindPointerRaw; while it is on, the
@@ -2869,6 +2893,7 @@ export class StreamView {
                 // The worker's governor stepped the enhancer up or down. The
                 // user's setting is untouched — only what runs right now, and
                 // what the overlay names.
+                this._noteEnhancerStep(m.algo);
                 this._videoEnhancementAlgo = m.algo;
                 this._enhancerDegraded = !!m.degraded;
                 this._rememberEnhancer(m.kind, ladderRung(m.algo), m.recoverAfterMs);
@@ -3134,6 +3159,7 @@ export class StreamView {
             this._congFiredAt = now;
             this._congEvents.length = 0;
             console.warn('[StreamView] Sustained congestion detected (last: ' + reason + ')');
+            if (this.autoCeilingMeter) this.autoCeilingMeter.noteCongestion();
             this.onCongestion();
         }
     }
@@ -3735,6 +3761,7 @@ export class StreamView {
                 (ridingOut ? ' — under the refresh wave' : '') +
                 (repaired ? " — under the host's reference repairs" : ''),
         );
+        if (this.autoCeilingMeter) this.autoCeilingMeter.noteSick('decoder_silent', true);
         if (ridingOut) noteDecoderCannotRideOut();
         if (repaired) noteDecoderRefusesReferenceRepairs();
         if ((ridingOut || repaired) && !this._playerMode) {
@@ -4503,7 +4530,7 @@ export class StreamView {
         btn.className = 'btn-stream-pad btn-stream-mic';
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (this._mic) this._mic.toggleMuted();
+            this._toggleMicSaid();
             this._syncMicButton();
             // Space in the game would toggle it again.
             btn.blur();
@@ -4515,36 +4542,73 @@ export class StreamView {
         this._micBtn = btn;
         this._syncMicButton();
         this._positionGamingOverlay();
+        this._showMicHintOnce();
     }
 
-    /** The button as the microphone stands: live, muted, or refused. */
+    /**
+     * It starts cut, which a viewer who left the default has no reason to guess:
+     * said once on this browser, at the first stream that offers it.
+     */
+    _showMicHintOnce() {
+        if (this._standby) return;
+        try {
+            if (localStorage.getItem(MIC_HINT_KEY)) return;
+            localStorage.setItem(MIC_HINT_KEY, '1');
+        } catch (_e) {
+            /* a blocked storage would say it at every stream: not said at all */
+            return;
+        }
+        const combo = /Mac/.test(navigator.platform) ? 'Cmd+Option+Ctrl+P' : 'Ctrl+Alt+Shift+P';
+        Toast.info(t('stream.micStartsOff', { combo }));
+    }
+
+    /**
+     * Opens or cuts the microphone, from the button or the shortcut. Said on
+     * screen once it really changed: in fullscreen the button is out of sight,
+     * and a refusal has its own message.
+     */
+    _toggleMicSaid() {
+        const mic = this._mic;
+        if (!mic) return;
+        const before = mic.state === 'live';
+        mic.toggleMuted().then(() => {
+            const now = mic.state === 'live';
+            if (now !== before) {
+                Toast.info(t(now ? 'stream.micOn' : 'stream.micOff'), { durationMs: 1500 });
+            }
+        });
+    }
+
+    /**
+     * The button as the microphone stands. Lit only once it really sends: not
+     * while the permission prompt is up. Still clickable after a refusal, as
+     * the viewer may have allowed it in the browser since.
+     */
     _syncMicButton() {
         const btn = this._micBtn;
         if (!btn || !this._mic) return;
         const state = this._mic.state;
-        const off = this._mic.muted || state === 'denied' || state === 'error';
+        const off = state !== 'live';
         btn.innerHTML = off ? Icons.micOff : Icons.mic;
         btn.classList.toggle('is-off', off);
-        btn.disabled = state === 'denied' || state === 'error';
         const label =
             state === 'denied'
                 ? t('stream.micDenied')
                 : state === 'error'
                   ? t('stream.micError')
-                  : this._mic.muted
+                  : off
                     ? t('stream.micUnmute')
                     : t('stream.micMute');
         btn.title = label;
         btn.setAttribute('aria-label', label);
-        btn.setAttribute('aria-pressed', this._mic.muted ? 'true' : 'false');
+        btn.setAttribute('aria-pressed', off ? 'true' : 'false');
     }
 
     /** @param {string} state - MicUplink.state */
     _onMicState(state) {
         this._syncMicButton();
-        // Said once per stream: a standby leg's own refusal would only repeat it.
-        if ((state === 'denied' || state === 'error') && !this._micWarned && !this._standby) {
-            this._micWarned = true;
+        // A standby leg's own refusal would only repeat the live one's.
+        if ((state === 'denied' || state === 'error') && !this._standby) {
             Toast.warning(t(state === 'denied' ? 'stream.micDenied' : 'stream.micError'));
         }
     }
@@ -4867,6 +4931,7 @@ export class StreamView {
         if (!r || !r.failed || r === this._failedRenderer) return;
         if (this._quitting || this._swappingRenderer) return;
         this._failedRenderer = r;
+        if (this.autoCeilingMeter) this.autoCeilingMeter.noteSick('renderer_failed', true);
         this._replaceFailedRenderer();
     }
 
@@ -6808,6 +6873,7 @@ export class StreamView {
             (this._resolution || '?') +
             '</span>' +
             '</div>';
+        html += this._autoCeilingRow();
 
         // Framerate
         html +=
@@ -7605,6 +7671,67 @@ export class StreamView {
             this._applyEnhancerGovernor(diag, now);
         }
         this._applyDecodeRateGovernor(diag, fps, now);
+        this._tickAutoCeiling(diag, now);
+    }
+
+    /**
+     * Feed the meter of Auto's ceiling (stream/AutoCeilingMeter.js). What a
+     * share, a transition, a hidden page or a step of the cadence does to the
+     * numbers says nothing of this machine: those windows count for nothing.
+     */
+    _tickAutoCeiling(diag, now) {
+        const meter = this.autoCeilingMeter;
+        if (!meter || this._quitting) return;
+        const stepped = !!(this._stepper && this._stepper.stepFps > 0);
+        const idle = !!(this.autoCeilingIdle && this.autoCeilingIdle());
+        meter.tick(now, {
+            neutral:
+                (typeof document !== 'undefined' && document.hidden) ||
+                this.hasActiveShare() ||
+                idle ||
+                stepped,
+            arrivalFps: diag && diag.arrivalAvgMs > 0 ? 1000 / diag.arrivalAvgMs : 0,
+            sizeMatches: frameMatchesAsked(this._resolution, meter.asked),
+            frames: this.stats.received,
+            drops: diag ? (diag.dropQueueFull || 0) + (diag.dropBackpressure || 0) : 0,
+            rebuilds: diag ? diag.recoverReset || 0 : 0,
+            fpsCap: this._decodeRateCap,
+            presentsFps: this._hostPresentsFps,
+        });
+    }
+
+    /** The stats card's line on what Auto learned from this host; '' when it
+     *  has nothing to say. */
+    _autoCeilingRow() {
+        const line = this.autoCeilingLine ? this.autoCeilingLine() : null;
+        if (!line) return '';
+        return (
+            '<div class="stats-row">' +
+            '<span class="stats-label">' +
+            t('stream.statAuto') +
+            '</span>' +
+            '<span class="stats-value">' +
+            t(line.trial ? 'stream.statAutoTrial' : 'stream.statAutoLearned', { size: line.size }) +
+            '</span>' +
+            '</div>'
+        );
+    }
+
+    /** The fastest step of the cadence Auto's ceiling allows at this frame; 0: no bound. */
+    _autoCeilingMaxFps() {
+        const m = /^(\d+)[×x](\d+)/.exec(this._resolution || '');
+        if (!(this.autoCeilingMaxPixelRate > 0) || !m) return 0;
+        return Math.floor(this.autoCeilingMaxPixelRate / (Number(m[1]) * Number(m[2])));
+    }
+
+    /** The enhancer is about to run @p algo: a step down is a signal for the
+     *  meter of Auto's ceiling. Starting low on its memory is none: only a step
+     *  taken in this stream comes through here. */
+    _noteEnhancerStep(algo) {
+        if (!this.autoCeilingMeter) return;
+        const from = ENHANCER_LADDER.indexOf(ladderRung(this._videoEnhancementAlgo));
+        const to = ENHANCER_LADDER.indexOf(ladderRung(algo));
+        if (from >= 0 && to > from) this.autoCeilingMeter.noteSick('enhancer');
     }
 
     /**
@@ -7634,6 +7761,7 @@ export class StreamView {
             now,
         });
         if (cap === null) return;
+        this._decodeRateCap = cap > 0 ? cap : 0;
         console.log(
             '[StreamView] Decode rate: ' +
                 (cap > 0
@@ -7678,6 +7806,7 @@ export class StreamView {
         if (!algo) return;
         const pass = rendererAlgo(algo, this._renderer.kind);
         if (!this._renderer.setAlgo(pass)) return;
+        this._noteEnhancerStep(pass);
         this._videoEnhancementAlgo = pass;
         this._enhancerDegraded = this._governor.degraded;
         this._rememberEnhancer(this._renderer.kind, algo, this._governor.recoverAfterMs);
@@ -7704,6 +7833,9 @@ export class StreamView {
      *  a guest's ladder follows its own fixed rule). */
     _rememberEnhancer(kind, rung, recoverAfterMs) {
         if (this._playerMode) return;
+        // A verdict from a rung on trial would follow the viewer back down to a
+        // size where it means nothing: the memory holds no size.
+        if (this.autoCeilingOnTrial && this.autoCeilingOnTrial()) return;
         rememberRung(kind, ladderRung(this._enhancerCeiling), rung, recoverAfterMs);
     }
 
@@ -7998,6 +8130,7 @@ export class StreamView {
      */
     _noteHostCadence(cadence) {
         const now = performance.now();
+        this._hostPresentsFps = cadence.presents > 0 ? cadence.presents : 0;
         if (!this._stepper) {
             if (!this._autostep || this._standby || this._quitting || !this._nativeHost) return;
             if (!this._immediateRender || this._useWorker || this._framePacer) return;
@@ -8011,6 +8144,7 @@ export class StreamView {
                 },
                 // The steps this device failed at, for this host at this size.
                 memory: stepMemory((this.host.uuid || '') + '|' + (this._resolution || '')),
+                maxFps: this._autoCeilingMaxFps(),
             });
             window.mwCadenceStepper = this._stepper;
             this._stepper.start();
@@ -10673,6 +10807,14 @@ export class StreamView {
                         durationMs: 1500,
                     });
                 }
+                return;
+            }
+
+            // Microphone open / cut: Ctrl+Alt+Shift+P (Win) / Cmd+Option+Ctrl+P
+            // (Mac).
+            if (chk('p', 'KeyP')) {
+                e.preventDefault();
+                if (!e.repeat) this._toggleMicSaid();
                 return;
             }
 

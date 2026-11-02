@@ -104,14 +104,16 @@ describe('MwsrZoneBlock — the side block of the native host', () => {
         expect(Array.from(t.slice(MWSR_ZONE_CODES))).toEqual([0, 0, 0, 0]);
     });
 
-    it('fits the scale they were decided for, to a tenth, from ×1.3 up', () => {
+    it('fits the scale they were decided for, to a tenth, from ×1.15 up', () => {
         expect(mwsrZonesFit({ scale: 1.333 }, 2560 / 1920)).toBe(true);
         expect(mwsrZonesFit({ scale: 2 }, 1.81)).toBe(true);
         expect(mwsrZonesFit({ scale: 2 }, 2.19)).toBe(true);
         expect(mwsrZonesFit({ scale: 2 }, 1.79)).toBe(false);
         expect(mwsrZonesFit({ scale: 1.333 }, 2)).toBe(false);
         expect(mwsrZonesFit({ scale: 1.333 }, 1.3)).toBe(true);
-        expect(mwsrZonesFit({ scale: 1.25 }, 1.25)).toBe(false);
+        expect(mwsrZonesFit({ scale: 1.25 }, 1.25)).toBe(true);
+        expect(mwsrZonesFit({ scale: 1.15 }, 1.15)).toBe(true);
+        expect(mwsrZonesFit({ scale: 1.15 }, 1.14)).toBe(false);
         expect(mwsrZonesFit({ scale: 1.333 }, 1)).toBe(false);
     });
 });

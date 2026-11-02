@@ -28,9 +28,9 @@
 //                [--define NAME=VALUE]... [--tau T] [--sharp S]
 //
 // --srgb reads the input and writes the output through sRGB views, the
-// reduction's exact path; --half takes the upscale whose edge path runs in
+// reduction's exact path; --half takes the upscale whose blend runs in
 // min16float; --define sets a constant of the upscale over its default
-// (--define FLAT_TAPS=3).
+// (--define CHROMA444=1).
 //
 // Build, in a Visual Studio developer prompt:
 //     cl /std:c++17 /EHsc /W4 /O2 example_d3d11.cpp d3d11.lib d3dcompiler.lib windowscodecs.lib ole32.lib

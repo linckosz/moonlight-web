@@ -266,6 +266,7 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
           ]),
         ),
         mwsr: ubo(mwsrUniforms(inW, inH, outW, outH, {})),
+        mwsrz: ubo(mwsrUniforms(inW, inH, outW, outH, { zones: true })),
       },
       zoneView: null,
     };
@@ -298,7 +299,7 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     const dv = dst.createView();
     switch (id) {
       case 'mwsrz': {
-        // without zones (a reduction, under x1.3, HDR, no native frame), the law: MWSR's own passes
+        // without zones (a reduction, under x1.15, HDR, no native frame), the law: MWSR's own passes
         if (!C.zoneView) return passes('mwsr', half, { c444 }, src, dst);
         const constants = c444 ? { CHROMA444: 1 } : {};
         const pl = pipeline(
@@ -309,7 +310,7 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
           ['vs', 'fs'],
           constants,
         );
-        return [{ pipeline: pl, group: bind(pl, [sampler, sv, { buffer: C.u.mwsr }, C.zoneView]), view: dv }];
+        return [{ pipeline: pl, group: bind(pl, [sampler, sv, { buffer: C.u.mwsrz }, C.zoneView]), view: dv }];
       }
       case 'mwsr': {
         const r = C.reg;
