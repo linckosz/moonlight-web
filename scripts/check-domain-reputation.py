@@ -5,7 +5,7 @@ Since 0.3.0 every connection goes through stream.{domain}: a blocklist that
 catches one of the names breaks MoonlightWeb outright for whoever it protects,
 and nobody sees it from here. Run before a release, or whenever in doubt:
 
-    python scripts/check-domain-reputation.py              # everything (~60 MB of feeds)
+    python scripts/check-domain-reputation.py              # everything (~70 MB of feeds)
     python scripts/check-domain-reputation.py --no-feeds   # DNS + HTTP lookups only
 
 What it asks, for every name the stack serves and every address they resolve to:
@@ -18,6 +18,8 @@ What it asks, for every name the stack serves and every address they resolve to:
   - threat and filter feeds (OpenPhish, Phishing Army, HaGeZi TIF,
     OISD, FireHOL, Spamhaus DROP) and HaGeZi's spam-TLD list, which blocks whole
     TLDs (.top among them) save for an allowlist;
+  - HaGeZi's general lists (Pro, Ultimate): a name the app can live without is
+    a warning there, any other name is a failure;
   - the records that keep the domain from being used to send phishing: SPF,
     DMARC, null MX.
 
@@ -83,6 +85,12 @@ IP_FEEDS = {
     "FireHOL level 3": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level3.netset",
     "Spamhaus DROP": "https://www.spamhaus.org/drop/drop.txt",
 }
+HAGEZI_GENERAL = {
+    "HaGeZi Pro": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt",
+    "HaGeZi Ultimate": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/ultimate-onlydomains.txt",
+}
+# Counters only: blocking them costs a statistic, never a stream.
+DISPENSABLE = ("metrics", "stats")
 SPAM_TLDS = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/spam-tlds.txt"
 
 UA = "Mozilla/5.0 (compatible; moonlightweb-reputation-check)"
@@ -294,17 +302,29 @@ def check_filtering_resolvers(fqdns):
             report("OK", name, f"{len(reference)} names resolve as unfiltered")
 
 
+def feed_hits(text, domain):
+    return {w.strip("*.|^") for line in text.lower().splitlines() if domain in line
+            for w in line.replace("\t", " ").split() if w.strip("*.|^").endswith(domain)}
+
+
 def check_feeds(domain, ips):
     print("\nThreat and filter feeds", flush=True)
     for name, url in DOMAIN_FEEDS.items():
         try:
-            text = fetch(url).lower()
+            hits = feed_hits(fetch(url), domain)
         except Exception as e:
             report("UNKNOWN", name, str(e))
             continue
-        hits = {w.strip("*.|^") for line in text.splitlines() if domain in line
-                for w in line.replace("\t", " ").split() if w.strip("*.|^").endswith(domain)}
-        report("FAIL" if hits else "OK", name, ", ".join(sorted(hits)) if hits else "")
+        report("FAIL" if hits else "OK", name, ", ".join(sorted(hits)))
+    dispensable = {f"{n}.{domain}" for n in DISPENSABLE}
+    for name, url in HAGEZI_GENERAL.items():
+        try:
+            hits = feed_hits(fetch(url), domain)
+        except Exception as e:
+            report("UNKNOWN", name, str(e))
+            continue
+        level = "FAIL" if hits - dispensable else "WARN" if hits else "OK"
+        report(level, name, ", ".join(sorted(hits)))
     addrs = [ipaddress.ip_address(ip) for ip in ips]
     for name, url in IP_FEEDS.items():
         try:
