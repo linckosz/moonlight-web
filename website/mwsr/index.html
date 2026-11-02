@@ -225,7 +225,7 @@
     <h2 id="about-title">What MWSR is</h2>
     <p>MWSR is a spatial upscaler: it rebuilds each frame from that frame alone, in one GPU pass, with no motion vectors,
       no frame history and no neural network, so it waits for no other frame and suits a live stream. It decides once
-      per 2×2 block of pixels: a flat block keeps a smooth cubic, an edge gets two more samples across it.
+      per 2×2 block of pixels: a flat block moves its sample towards the nearest texel, an edge gets two more samples across it.
       Each pixel stays within its four input texels, so nothing rings. It also reduces a stream larger than its screen,
       averaging in linear light; it reads HDR past 1.0 as it is; and on a 4:4:4 stream it sharpens colour edges too.</p>
     <p>MoonlightWeb runs it in the browser, on WebGPU or WebGL2. The

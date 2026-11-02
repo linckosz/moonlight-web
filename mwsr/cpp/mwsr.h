@@ -139,7 +139,7 @@ constexpr Constant kConstants[] = {
     {"SHOW", true, 0.0},
     {"DERING", true, 2.0},
     {"CHROMA444", true, 0.0},
-    {"FLAT_TAPS", true, 5.0},
+    {"FLAT_TAPS", true, 2.0},
     {"GAZE", true, 0.0},
     {"FLAT_ZONE", true, 0.0},
     {"R_DOWN", false, 1.0},
@@ -257,8 +257,7 @@ inline std::string number(double v)
 
 // The defines of a regime's shader: a reduction's span and light, or, for the
 // upscale, the constants given (by name, without the prefix) over the
-// defaults, such as {{"FLAT_TAPS", "3"}} on a phone or {{"CHROMA444", "1"}}
-// on a 4:4:4 stream.
+// defaults, such as {{"CHROMA444", "1"}} on a 4:4:4 stream.
 inline std::vector<Define> defines(const Regime& r, const std::vector<Define>& up = {})
 {
     std::vector<Define> d;

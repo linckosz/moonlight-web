@@ -104,11 +104,13 @@ let mwsrModule = null;
 const SHARP_RANGE = [0.5, 3, 0.05];
 const TAU_RANGE = [0.0025, 0.1, 0.0025];
 // The flat path's reconstruction (MwsrShader's FLAT_TAPS override, its fc uniform):
-// one bilinear sample, a quadratic of 3 bilinear taps (Dodgson), or a
+// one bilinear sample, one read of the nearest texel (the product's, J56), a
+// quadratic of 3 bilinear taps (Dodgson), or a
 // Catmull-Rom of 5 or 9 with the depth of its negative lobe; a pipeline
 // constant, so the renderer rebuilds.
 const FLAT_CHOICES = [
   [1, "bilinéaire (1 échantillon)"],
+  [2, "texel le plus proche, 1 lecture"],
   [3, "quadratique, 3 échantillons"],
   [5, "Catmull-Rom, 5 échantillons"],
   [9, "Catmull-Rom, 9 échantillons"],
@@ -224,11 +226,13 @@ const tuningText = () =>
   (state.sharp === null ? " (loi)" : "") +
   " · τ " +
   fr(state.tau, 3) +
-  (state.flat === 3
-    ? " · plat Q3"
-    : state.flat !== 1
-      ? " · plat CR" + state.flat + " C " + fr(state.fc, 2)
-      : "") +
+  (state.flat === 2
+    ? " · plat une lecture"
+    : state.flat === 3
+      ? " · plat Q3"
+      : state.flat !== 1
+        ? " · plat CR" + state.flat + " C " + fr(state.fc, 2)
+        : "") +
   (state.dr === 2
     ? " · borne texels"
     : state.dr === 1
@@ -1848,9 +1852,11 @@ function buildPanel() {
           " · " +
           (MWSR_DEF.flat === 1
             ? "bilinéaire"
-            : MWSR_DEF.flat === 3
-              ? "Q3"
-              : "CR" + MWSR_DEF.flat) +
+            : MWSR_DEF.flat === 2
+              ? "une lecture"
+              : MWSR_DEF.flat === 3
+                ? "Q3"
+                : "CR" + MWSR_DEF.flat) +
           ")",
       ),
     ),
@@ -2222,7 +2228,7 @@ async function boot() {
     if (m.MWSR_OVERRIDES && m.MWSR_OVERRIDES.FLAT_TAPS !== undefined) {
       MWSR_DEF.flat = m.MWSR_OVERRIDES.FLAT_TAPS;
     }
-    // the product's own class layer (a phone or a tablet takes Q3), so
+    // the product's own class layer (empty since J56, the one read everywhere), so
     // that the defaults shown and restored are this device's
     if (m.mwsrClassOverrides) {
       try {

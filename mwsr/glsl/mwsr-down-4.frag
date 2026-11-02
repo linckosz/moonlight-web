@@ -46,7 +46,7 @@ vec3 L(ivec2 c) {
 const uint SHOW = 0u;
 const uint DERING = 2u;
 const uint CHROMA444 = 0u;
-const uint FLAT_TAPS = 5u;
+const uint FLAT_TAPS = 2u;
 const uint GAZE = 0u;
 const uint FLAT_ZONE = 0u;
 const float R_DOWN = 1.0;

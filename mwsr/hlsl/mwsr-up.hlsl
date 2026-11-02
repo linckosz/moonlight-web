@@ -93,7 +93,7 @@ static const uint DERING = MWSR_DERING;
 #endif
 static const uint CHROMA444 = MWSR_CHROMA444;
 #ifndef MWSR_FLAT_TAPS
-#define MWSR_FLAT_TAPS 5u
+#define MWSR_FLAT_TAPS 2u
 #endif
 static const uint FLAT_TAPS = MWSR_FLAT_TAPS;
 #ifndef MWSR_GAZE
@@ -127,6 +127,13 @@ float gazeWeight(float2 uv) {
 
 // The flat path's picture, the WGSL text's flatPath line for line.
 float3 flatPath(float2 uv, float3 C, float zg) {
+    if (FLAT_TAPS == 2u) {
+        float2 sn = uv * dims;
+        float2 tn = floor(sn);
+        float2 dn = abs(sn - tn - 0.5);
+        float f = max(dn.x, dn.y);
+        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(int2(tn)) - C);
+    }
     if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
         return C;
     }

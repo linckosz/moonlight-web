@@ -96,7 +96,8 @@ describe('the mwsr shader text', () => {
 
     it("has a second up text that takes the native host's zone drop off the law (plan B §12 c)", () => {
         const decl = '@group(0) @binding(3) var zoneMap : texture_2d<f32>;';
-        const law = '    // From here the arithmetic is hf (f32, or f16 when the module says so).\n';
+        const law =
+            '    // From here the arithmetic is hf (f32, or f16 when the module says so).\n';
         const zoned =
             '    wX += W_ACROSS * textureSampleLevel(zoneMap, samp, uv, 0.0).r;\n' +
             '    kB = 1.0 / (1.0 + 2.0 * wX);\n' +
@@ -361,7 +362,9 @@ describe('the mwsr shader text', () => {
             expect(w.length).toBe(taps);
             expect(offs(mwsrGlsl({ mode: 'down', taps }))).toEqual(w);
         }
-        expect(mwsrGlsl({ mode: 'down', taps: 1 })).toContain('oColor = vec4(enc(dec(S(uv))), 1.0);');
+        expect(mwsrGlsl({ mode: 'down', taps: 1 })).toContain(
+            'oColor = vec4(enc(dec(S(uv))), 1.0);',
+        );
         expect(mwsrGlsl({ mode: 'down', overrides: { LINEAR_LIGHT: 0, R_DOWN: 1.25 } })).toContain(
             'const float R_DOWN = 1.25;',
         );
@@ -454,7 +457,9 @@ describe('the mwsr shader text', () => {
             const w = offs(mwsrWgsl({ mode: 'down', taps }));
             expect(offs(mwsrHlsl({ mode: 'down', taps }))).toEqual(w);
         }
-        expect(mwsrHlsl({ mode: 'down', taps: 1 })).toContain('return float4(enc(dec(S(uv))), 1.0);');
+        expect(mwsrHlsl({ mode: 'down', taps: 1 })).toContain(
+            'return float4(enc(dec(S(uv))), 1.0);',
+        );
         expect(hlslDown).toContain('if (LINEAR_LIGHT >= 2u) {\n        return linToSrgb(c);');
         expect(() => mwsrHlsl({ mode: 'side' })).toThrow(/mode/);
     });
@@ -549,7 +554,9 @@ describe('the mwsr shader text', () => {
         // and the sharpness slide by it, in both twins
         expect(tex).toContain('let zg = gazeWeight(uv);');
         expect(tex).toContain('tau = mix(u.tau, u.ztau, zg);');
-        expect(tex).toContain('wX = max(-W_ACROSS * mix(u.sharp, u.zsharp, zg) * u.strength, u.wmin);');
+        expect(tex).toContain(
+            'wX = max(-W_ACROSS * mix(u.sharp, u.zsharp, zg) * u.strength, u.wmin);',
+        );
         expect(tex.indexOf('let zg = gazeWeight(uv);')).toBeLessThan(
             tex.indexOf('if (CHROMA444 == 1u) {'),
         );
@@ -565,18 +572,34 @@ describe('the mwsr shader text', () => {
         expect(zoned).toContain('const uint FLAT_ZONE = 1u;');
     });
 
-    it('reconstructs the flat path by a cubic of bilinear taps when FLAT_TAPS asks (J33)', () => {
-        // the product's default on a computer since 24/10/2026 (Bruno): the
-        // Catmull-Rom of five taps in both twins; a phone or a tablet takes
-        // the quadratic of three, laid by the renderers under the lab's set
-        expect(MWSR_OVERRIDES.FLAT_TAPS).toBe(5);
-        expect(mwsrLaw(1920, 1080, 2560, 1440).fc).toBeCloseTo(0.5, 6);
-        expect(glsl).toContain('const uint FLAT_TAPS = 5u;');
+    it('reads one texel on the flat path by default, on every device (J56)', () => {
+        // Bruno's decision of 02/11/2026: one read, in the three twins, a phone
+        // or a tablet too: the class layer lays nothing over the default
+        expect(MWSR_OVERRIDES.FLAT_TAPS).toBe(2);
+        expect(glsl).toContain('const uint FLAT_TAPS = 2u;');
         expect(mwsrClassOverrides({ handheld: false })).toEqual({});
-        expect(mwsrClassOverrides({ handheld: true })).toEqual({ FLAT_TAPS: 3 });
-        expect(mwsrGlsl({ overrides: mwsrClassOverrides({ handheld: true }) })).toContain(
-            'const uint FLAT_TAPS = 3u;',
-        );
+        expect(mwsrClassOverrides({ handheld: true })).toEqual({});
+        for (const text of [tex, mwsrWgsl({ feed: 'tex', half: true }), glsl, hlsl]) {
+            expect(text).toContain('if (FLAT_TAPS == 2u) {');
+            // the nearest texel, and what the cubic gives on a line one texel wide
+            expect(text).toMatch(
+                /return C \+ \(1\.0 - f\) \* \(1\.0 - 1\.5 \* f\) \* \(L\([\w.]*\(?tn\)?\) - C\);/,
+            );
+            // before the older paths, and with no sample of its own
+            const branch = text.slice(
+                text.indexOf('if (FLAT_TAPS == 2u) {'),
+                text.indexOf('if (FLAT_TAPS != 3u'),
+            );
+            expect(branch).not.toMatch(/\bS\(/);
+            expect(branch.match(/\bL\(/g)).toHaveLength(1);
+        }
+    });
+
+    it('reconstructs the flat path by a cubic of bilinear taps when FLAT_TAPS asks (J33)', () => {
+        // the product's default on a computer from 24/10 to 02/11/2026: the
+        // Catmull-Rom of five taps in the twins, the quadratic of three on a
+        // phone or a tablet; the lab's until phones and the 780M are read
+        expect(mwsrLaw(1920, 1080, 2560, 1440).fc).toBeCloseTo(0.5, 6);
         for (const text of [tex, glsl]) {
             expect(text).toContain('if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {');
             expect(text).toContain('if (FLAT_TAPS == 9u) {');

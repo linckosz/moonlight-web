@@ -1239,6 +1239,8 @@ Elles fixent ce que P6 appliquera sur les résultats de P5 ; rien ne devient dé
   iPhone et Android : il l'est (iPhone 4,41 contre 4,82 ms, −9 % ; realme Note 60 51,6 contre 59,2, −13 %), sauf
   comportement différent d'Android ; les deux TV (Mi TV Mali-G31, Freebox POP) peuvent servir à mesurer Android
   (optionnel : « tu peux aussi »).
+- **Depuis le 02/11/2026 (J56, décision de Bruno) : le chemin plat à une lecture (`FLAT_TAPS 2`) partout**, téléphones et tablettes
+  compris. CR5 et Q3 restent au labo jusqu'à la lecture sur téléphone et 780M.
 - **Netteté : 1,85 pour tout** (message de Bruno de 11:50, fait à midi, journal J38) ; il veut garder la
   possibilité d'une netteté dynamique selon le facteur d'agrandissement et de réduction : étude proposée au §12.
 - **Borne : les texels seuls**, confirmée (« le résultat est bien meilleur » ; le défaut depuis J37).
@@ -1477,7 +1479,10 @@ upscalers spatiaux.
 - [ ] Le coup d'œil de Bruno sur le comparateur en ligne, le texte à ×1,333 compris (VMAF NEG 57,5 avec zones et 58,9 sans, contre 62,65 au livré) [`low`]
 - [x] Décidé par Bruno le 02/11 : les termes d'écran de la loi restent à zéro ; les écrans 1080 et 2160 avec zones restent à 89-93 % du gain LPIPS (règle : 95 %) ; le texte à ×1,333 garde la loi et se juge à l'œil
 - [ ] L'activation par défaut des zones, au oui de Bruno, après son coup d'œil et le coût côté hôte. Ce coût est mesuré (`upscaler-mwsr-b.md` §12 f.3 et f.4) : 64 µs dans un vrai stream sur la RTX en 1440p, budget de 1 ms tenu en direct, puis la légère, puis la loi. Un vrai stream hors de ce cas n'est pas mesuré (§12 g) [`medium`]
-- [ ] L'optimisation du shader livré : retirer les lectures le long des bords (`walong` 0, `ralong` 0), types, regroupements ; zéro perte mesurée d'abord, puis les chiffres de ce que 2 % de perte apporteraient ; temps du README et des téléphones mesurés de nouveau [`max`]
+- [x] L'optimisation du shader livré, journal J56 : sans lectures le long des bords ni cohérence, un poids par image, zéro perte mesurée ; puis, à la décision de Bruno du 02/11, le chemin plat à une lecture (`FLAT_TAPS 2`) partout, seuil 0,0025. WebGPU contre la v0.4.1 : RTX −48 %, iGPU −57 %
+- [ ] Les temps définitifs du README, avec FSR1, NIS et SGSR1 dans la même page, au dernier créneau de 59 [`medium`]
+- [ ] La lecture sur la 780M (créneau de 59), sur téléphone (Bruno, sur le comparateur en ligne, après le signal de 59) et sur la Mi TV (WebGL2, `mediump` contre `highp`, créneau de 59) [`medium`]
+- [ ] Après cette lecture : retirer les chemins à 3, 5 et 9 échantillons et `fc` (décidé par Bruno le 02/11), et décider de la f16 [`medium`]
 
 **Hors v0.4.1 — étude optionnelle (§14, proposée le 21/10/2026, à la décision de Bruno)**
 - [x] **P7.0, faite le 25/10 (journal J42, §14.4) : la porte reste fermée.** Mode séquence du labo (`seq-lab.js`, `p7_flows.py`), WebCodecs logiciel à deux débits, sept variantes d'historique contre `mwsr` seul, vingt séquences sur SwiftShader. Aucune variante ne passe : sans mouvement connu, de −0,01 à −0,13 dB et pas de stabilité gagnée ; même avec le mouvement exact, +0,11 dB en moyenne et des traînées

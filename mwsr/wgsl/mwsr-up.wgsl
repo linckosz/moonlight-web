@@ -75,7 +75,7 @@ alias h3 = vec3<f32>;
 override SHOW : u32 = 0u;
 override DERING : u32 = 2u;
 override CHROMA444 : u32 = 0u;
-override FLAT_TAPS : u32 = 5u;
+override FLAT_TAPS : u32 = 2u;
 override GAZE : u32 = 0u;
 override FLAT_ZONE : u32 = 0u;
 override R_DOWN : f32 = 1.0;
@@ -96,7 +96,14 @@ fn gazeWeight(uv : vec2f) -> f32 {
     return (1.0 - smoothstep(1.0, 1.0 + u.zring, d)) * u.gaze;
 }
 
-// The flat path's picture: the bilinear sample C, or (FLAT_TAPS 5 or 9) the
+// The flat path's picture. FLAT_TAPS 2, the product's: C moved towards n, the
+// texel nearest the pixel. The vote is per quad and by a symmetric difference:
+// at exactly ×2 every quad is centred on a texel, so a line one texel wide has a
+// slope of 0 and comes here. On it, at a distance f from its centre, the cubic
+// below gives h(f) L (h: Catmull-Rom's middle weight) where C holds (1 - f) L,
+// and n holds L: k = (h(f) - (1 - f)) / f = (1 - f) (1 - 1.5 f). R stays between
+// C and the texel, so nothing rings, and on a truly flat cell n is C.
+// Otherwise: the bilinear sample C, or (FLAT_TAPS 5 or 9) the
 // cubic of Mitchell and Netravali with B 0 and C u.fc (0.5: Catmull-Rom)
 // over the 4×4 texels around the position, read as the bilinear samples the
 // GPU weighs for free: on each axis the middle two texels by one sample at
@@ -109,6 +116,13 @@ fn gazeWeight(uv : vec2f) -> f32 {
 // the corner (J34). Bounded by the samples themselves, as the edge path is.
 // Inside the gaze zone only when FLAT_ZONE asks, blended by its weight zg.
 fn flatPath(uv : vec2f, C : vec3f, zg : f32) -> vec3f {
+    if (FLAT_TAPS == 2u) {
+        let sn = uv * u.dims;
+        let tn = floor(sn);
+        let dn = abs(sn - tn - 0.5);
+        let f = max(dn.x, dn.y);
+        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(vec2i(tn)) - C);
+    }
     if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
         return C;
     }

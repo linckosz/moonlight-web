@@ -43,8 +43,9 @@
  *   1. one bilinear sample C at the pixel's position in the input, its luma;
  *   2. the vote: the screen derivatives of that luma, scaled to luma per input
  *      texel, decide per 2×2 quad whether the pixel sits on an edge; a flat
- *      quad takes the flat path, which reconstructs by a few more samples
- *      (FLAT_TAPS) or returns C;
+ *      quad takes the flat path: one texel read, the nearest, and C moved
+ *      towards it, which is what keeps the depth of a line one texel wide
+ *      (FLAT_TAPS 2; J56);
  *   3. on an edge, two more bilinear samples, laid across the edge the
  *      derivatives measure: the pair sharpens the ramp, by one weight per draw
  *      (mwsrLaw's sharpness), which fades to none near 1:1;
@@ -103,11 +104,11 @@ export const MWSR_OVERRIDE_SPEC = Object.freeze({
     DERING: ['u32', 2],
     /** 1: the vote and the edge's direction from the channel with the steepest ramp (4:4:4 streams); 0: from the luma. */
     CHROMA444: ['u32', 0],
-    /** The flat path's reconstruction: 1 the bilinear sample itself; 5 or 9 bilinear taps of a cubic (Mitchell-Netravali, B 0, C the uniform fc) over the 4×4 texels around, the four corners dropped at 5 (J33); 3 the interpolating quadratic of Dodgson over the 3×3 texels around, its corner dropped (J34). 5 is the product's default on a computer, 3 on a phone or a tablet (mwsrClassOverrides; Bruno, 24/10/2026, journal J36-J38). */
-    FLAT_TAPS: ['u32', 5],
+    /** The flat path's reconstruction: 2, the product's (J56), C moved towards the texel nearest the pixel, one read; 1 the bilinear sample itself; 5 or 9 bilinear taps of a cubic (Mitchell-Netravali, B 0, C the uniform fc) over the 4×4 texels around, the four corners dropped at 5 (J33); 3 the interpolating quadratic of Dodgson over the 3×3 texels around, its corner dropped (J34). */
+    FLAT_TAPS: ['u32', 2],
     /** 1: the gaze zone (plan §15.2): the vote threshold and the sharpness slide from the table's values to MWSR_ZONE's at the centre of the picture, by the pixel's place and the stream's motion (the uniform `gaze`); 0: the text has no zone. */
     GAZE: ['u32', 0],
-    /** With GAZE 1: 1 the flat path's cubic or quadratic (FLAT_TAPS) inside the zone only, blended by its weight, the periphery keeping the bilinear sample; 0 everywhere. */
+    /** With GAZE 1: 1 the flat path's cubic or quadratic (FLAT_TAPS) inside the zone only, blended by its weight, the periphery keeping the bilinear sample; 0 everywhere. FLAT_TAPS 2, one read, ignores it. */
     FLAT_ZONE: ['u32', 0],
     /** Reduction: the span of the tap grid, as a fraction of the pixel's footprint in the input (mwsrRegime() sets it by the grid). */
     R_DOWN: ['f32', 1.0],
@@ -122,16 +123,16 @@ export const MWSR_OVERRIDES = Object.freeze(
 
 /**
  * The constants the product lays over the defaults by device class, under
- * the laboratory's own overrides (Bruno's decisions of 24/10/2026, journal
- * J36-J38): a computer keeps the defaults, the flat path's Catmull-Rom of
- * five taps; a phone or a tablet takes the quadratic of three (FLAT_TAPS 3),
- * 9 to 13 % faster there (iPhone 13 Pro, realme Note 60) for a hundredth of
- * SSIM. The renderers call it once, with BrowserDetect's IS_HANDHELD.
+ * the laboratory's own overrides. None since the flat path's one read (J56):
+ * on the RTX and the 9900X's iGPU it costs less than the quadratic of three
+ * taps that phones and tablets took (journal J36-J38) and a computer's
+ * Catmull-Rom of five; phones are still to be read. The renderers call it
+ * once, with BrowserDetect's IS_HANDHELD.
  * @param {{handheld: boolean}} device a phone or a tablet, not a TV
- * @returns {Object<string, number>} name → value, empty on a computer
+ * @returns {Object<string, number>} name → value
  */
-export function mwsrClassOverrides({ handheld }) {
-    return handheld ? { FLAT_TAPS: 3 } : {};
+export function mwsrClassOverrides(device) {
+    return {};
 }
 
 /** Constants shared by the WGSL text and, later, its GLSL twin. */
@@ -505,7 +506,14 @@ fn gazeWeight(uv : vec2f) -> f32 {
     return (1.0 - smoothstep(1.0, 1.0 + u.zring, d)) * u.gaze;
 }
 
-// The flat path's picture: the bilinear sample C, or (FLAT_TAPS 5 or 9) the
+// The flat path's picture. FLAT_TAPS 2, the product's: C moved towards n, the
+// texel nearest the pixel. The vote is per quad and by a symmetric difference:
+// at exactly ×2 every quad is centred on a texel, so a line one texel wide has a
+// slope of 0 and comes here. On it, at a distance f from its centre, the cubic
+// below gives h(f) L (h: Catmull-Rom's middle weight) where C holds (1 - f) L,
+// and n holds L: k = (h(f) - (1 - f)) / f = (1 - f) (1 - 1.5 f). R stays between
+// C and the texel, so nothing rings, and on a truly flat cell n is C.
+// Otherwise: the bilinear sample C, or (FLAT_TAPS 5 or 9) the
 // cubic of Mitchell and Netravali with B 0 and C u.fc (0.5: Catmull-Rom)
 // over the 4×4 texels around the position, read as the bilinear samples the
 // GPU weighs for free: on each axis the middle two texels by one sample at
@@ -518,6 +526,13 @@ fn gazeWeight(uv : vec2f) -> f32 {
 // the corner (J34). Bounded by the samples themselves, as the edge path is.
 // Inside the gaze zone only when FLAT_ZONE asks, blended by its weight zg.
 fn flatPath(uv : vec2f, C : vec3f, zg : f32) -> vec3f {
+    if (FLAT_TAPS == 2u) {
+        let sn = uv * u.dims;
+        let tn = floor(sn);
+        let dn = abs(sn - tn - 0.5);
+        let f = max(dn.x, dn.y);
+        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(vec2i(tn)) - C);
+    }
     if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
         return C;
     }
@@ -806,6 +821,13 @@ float gazeWeight(vec2 uv) {
 
 // The flat path's picture, the WGSL text's flatPath line for line.
 vec3 flatPath(vec2 uv, vec3 C, float zg) {
+    if (FLAT_TAPS == 2u) {
+        vec2 sn = uv * uDimsAcross.xy;
+        vec2 tn = floor(sn);
+        vec2 dn = abs(sn - tn - 0.5);
+        float f = max(dn.x, dn.y);
+        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(ivec2(tn)) - C);
+    }
     if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
         return C;
     }
@@ -1160,6 +1182,13 @@ float gazeWeight(float2 uv) {
 
 // The flat path's picture, the WGSL text's flatPath line for line.
 float3 flatPath(float2 uv, float3 C, float zg) {
+    if (FLAT_TAPS == 2u) {
+        float2 sn = uv * dims;
+        float2 tn = floor(sn);
+        float2 dn = abs(sn - tn - 0.5);
+        float f = max(dn.x, dn.y);
+        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(int2(tn)) - C);
+    }
     if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
         return C;
     }

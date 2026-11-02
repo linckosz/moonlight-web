@@ -15,8 +15,9 @@ copyright and licence notice stay with it. The rest of MoonlightWeb is under the
 
 1. One bilinear sample of the input at the pixel's position.
 2. A vote: the screen derivatives of that sample, scaled to a change per input texel, decide for each 2×2 quad of
-   pixels whether it sits on an edge. A flat quad keeps a smooth reconstruction (a 5-tap Catmull-Rom by default) and
-   stops there.
+   pixels whether it sits on an edge. A flat quad reads one more texel, the one nearest the pixel, moves the sample
+   towards it and stops there: at exactly ×2 a line one texel wide has a slope of 0 and comes this way, and this keeps
+   its depth.
 3. On an edge, two more bilinear samples across it, along the normal the derivatives measure. Their weight, negative,
    sharpens the ramp; it is one value per frame, which fades out near 1:1.
 4. The result is bounded by the four input texels around the pixel: no ringing halo, and a line one texel wide keeps
@@ -61,8 +62,8 @@ a port of each beside MWSR. They spend their work in different places:
   areas and finds edges on the green channel. On the game picture at ×2 it has the best VMAF NEG of the four, with a
   lighter halo than FSR1 (6.6 %). In half precision, as Qualcomm writes it, it is the fastest of the four on the two
   integrated GPUs.
-- **MWSR** runs one pass and decides per 2×2 quad: a flat quad keeps a smooth cubic, an edge gets two more samples
-  across it. It bounds every pixel by its four input texels, so nothing rings (under 0.01 % of the pixels).
+- **MWSR** runs one pass and decides per 2×2 quad: a flat quad moves its sample towards the nearest texel, an edge gets
+  two more samples across it. It bounds every pixel by its four input texels, so nothing rings (under 0.01 % of the pixels).
   It has the best LPIPS of the four on both pictures, at both scales. Its VMAF NEG stays below FSR1's on the game
   picture, and below NIS's and SGSR1's on text. It is the only one of the four that reduces and that reads the colour
   edges of a 4:4:4 stream, and with NIS the only one that runs on HDR without a tone map around it.
@@ -174,13 +175,13 @@ The 0 A.D. picture is © Wildfire Games; the screenshot is by PantheraLeo1359531
 | File | What it is |
 |---|---|
 | `wgsl/mwsr-up.wgsl` | The upscale, WebGPU (WGSL). Its parameters are `override` constants, set at pipeline creation. |
-| `wgsl/mwsr-up-f16.wgsl` | The same, its edge path in f16. Needs the `shader-f16` feature. |
+| `wgsl/mwsr-up-f16.wgsl` | The same, its blend in f16. Needs the `shader-f16` feature. |
 | `wgsl/mwsr-down-1.wgsl`, `-4`, `-9`, `-16` | The reduction, with 1, 2×2, 3×3 or 4×4 samples. |
 | `glsl/mwsr.vert` | The full-screen triangle every GLSL fragment text expects. |
 | `glsl/mwsr-up.frag` | The upscale, GLSL ES 3.00 (WebGL2, OpenGL ES 3.0). The parameters are constants at the top. |
 | `glsl/mwsr-down-4.frag`, `-9`, `-16` | The reduction, GLSL ES 3.00. |
 | `hlsl/mwsr-up.hlsl` | The upscale, HLSL, for Direct3D 11 (FXC, `ps_5_0`) and 12 (DXC, `ps_6_0`). Its parameters are `MWSR_*` defines. |
-| `hlsl/mwsr-up-half.hlsl` | The same, its edge path in `min16float`. |
+| `hlsl/mwsr-up-half.hlsl` | The same, its blend in `min16float`. |
 | `hlsl/mwsr-down-1.hlsl`, `-4`, `-9`, `-16` | The reduction, HLSL. |
 | `cpp/mwsr.h` | The CPU side for a native renderer, C++17, header only: the mode for a scale and its shader file, the kernel's values by the law, the 96 bytes of the constant buffer, the defines to compile with. |
 | `cpp/example_d3d11.cpp` | A whole Direct3D 11 integration in one file, which also serves as a test: it reads a PNG, draws it at another size and writes a PNG. |
@@ -230,7 +231,7 @@ The C++ header gives the JavaScript module's modes and floats bit for bit.
   | 4, 5 | `inW`, `inH` |
   | 6, 7 | `racross / inW`, `racross / inH`, the across taps' distance: see [the law](#per-frame-values) |
   | 8 | `tau`, the vote's threshold: by the law |
-  | 9 | `fc`, the flat path cubic's C: by the law |
+  | 9 | `fc`, the C of the flat path's cubic, read only with `FLAT_TAPS` 5 or 9: by the law |
   | 10 | the weight of each across tap: `max(-0.3 * sharp * strength, wmin)`, `strength` going from 0 at 1:1 to 1 at ×1.1 |
   | 11 | `1 / (1 + 2 * weight)`, the blend's inverse divisor |
   | 12 to 19 | the gaze zone (centre, half-axes, ring, its tau and sharpness, its weight `gaze`), read only with `GAZE 1` |
@@ -297,9 +298,9 @@ Draw with `gl.drawArrays(gl.TRIANGLES, 0, 3)`.
 ```js
 import { mwsrGlsl, mwsrUniforms } from './js/MwsrShader.js';
 
-// a phone, 1280×720 drawn at 2340×1080: the 3-tap flat path
+// a phone, 1280×720 drawn at 2340×1080
 // (link: your own compile-and-link helper; vertSource: glsl/mwsr.vert)
-const program = link(gl, vertSource, mwsrGlsl({ mode: 'up', overrides: { FLAT_TAPS: 3 } }));
+const program = link(gl, vertSource, mwsrGlsl({ mode: 'up' }));
 const u = mwsrUniforms(1280, 720, 2340, 1080);
 gl.useProgram(program);
 gl.uniform1i(gl.getUniformLocation(program, 'uTex'), 0);
@@ -318,7 +319,7 @@ Each `hlsl/` file holds both stages: `MwsrVS`, the full-screen triangle from `SV
 `b0` the constant buffer (`cbuffer MwsrConstants`, the 24 floats above), `t0` the input (`Texture2D<float4>`), `s0`
 a sampler with linear filtering and clamp addressing. Each register is a define as well (`MWSR_CB_REGISTER`,
 `MWSR_TEX_REGISTER`, `MWSR_SAMPLER_REGISTER`), for a root signature that wants others. Every parameter is a define of
-its name prefixed `MWSR_`, at its default unless you pass another: `MWSR_FLAT_TAPS=3`, `MWSR_R_DOWN=1.25`.
+its name prefixed `MWSR_`, at its default unless you pass another: `MWSR_CHROMA444=1`, `MWSR_R_DOWN=1.25`.
 
 `cpp/mwsr.h` does the CPU side, with no dependency:
 
@@ -328,7 +329,7 @@ its name prefixed `MWSR_`, at its default unless you pass another: `MWSR_FLAT_TA
 // once per size: the mode, the file, the defines
 const mwsr::Regime reg = mwsr::regime(inW, inH, outW, outH);   // Mode::Copy at 1:1: copy the frame instead
 const std::string file = "hlsl/" + mwsr::shaderFile(reg);        // "mwsr-up.hlsl", "mwsr-down-9.hlsl"...
-const std::vector<mwsr::Define> defines = mwsr::defines(reg, {{"FLAT_TAPS", "3"}});  // a phone; {} on a computer
+const std::vector<mwsr::Define> defines = mwsr::defines(reg, {{"CHROMA444", "1"}});  // a 4:4:4 stream; {} otherwise
 // compile MwsrVS (vs_5_0 / vs_6_0) and MwsrPS (ps_5_0 / ps_6_0) from `file` with `defines`
 // (D3D_SHADER_MACRO for D3DCompile, -D NAME=VALUE for DXC)
 
@@ -344,7 +345,7 @@ constant buffer, the compilation and the draw. It runs on WARP, the software ras
 
 ```
 cl /std:c++17 /EHsc /W4 /O2 example_d3d11.cpp d3d11.lib d3dcompiler.lib windowscodecs.lib ole32.lib
-example_d3d11 frame_720p.png 2560 1440 out.png --hlsl ../hlsl --define FLAT_TAPS=3
+example_d3d11 frame_720p.png 2560 1440 out.png --hlsl ../hlsl --define CHROMA444=1
 ```
 
 **On Direct3D 12**, the same files compile with DXC, `-T ps_6_0 -E MwsrPS`, HLSL 2021 included. With
@@ -375,7 +376,7 @@ sfull, gaze, zone })` computes it all; a value you name replaces the law's.
 | `racross` | the law below | The distance of the taps across the edge, in input texels. |
 | `wmin` | `-0.4` | The most negative an across weight may go. At the law's sharpness it does not bite. `mwsrUniforms()` holds a named value above `-0.49`, where the blend's divisor would near 0. |
 | `sfull` | `1.1` | The scale from which the kernel is at full strength. It fades in from 1:1. |
-| `fc` | `0.5` | The flat path cubic's C, the depth of its negative lobe. `0.5` is Catmull-Rom; higher is steeper, with more ringing (still bounded). |
+| `fc` | `0.5` | Read only with `FLAT_TAPS` 5 or 9: the C of the flat path's cubic, the depth of its negative lobe. `0.5` is Catmull-Rom; higher is steeper, with more ringing (still bounded). |
 | `gaze` | `0` | The gaze zone's weight, 0 to 1. Read only by a text built with `GAZE 1`. |
 
 **The law** (`mwsrLaw(inW, inH, outW, outH)`). The curved values follow the size of the stream and of the surface:
@@ -412,9 +413,9 @@ prefixed `MWSR_`.
 | `SHOW` | u32 | `0` | Debug: `1` paints the vote (white = edge quad, black = flat), `2` the gaze zone's weight. |
 | `DERING` | u32 | `2` | The edge path's bound. `2`: the four input texels around the pixel, so a one-texel line keeps its depth. `1`: the three samples, then those texels. `0`: the three samples only. |
 | `CHROMA444` | u32 | `0` | `1` takes the vote and the edge's direction from the channel with the steepest ramp, so that a border between two colours of one luma is sharpened too. For 4:4:4 streams. |
-| `FLAT_TAPS` | u32 | `5` | The flat path's reconstruction. `1`: the bilinear sample. `5`: a Catmull-Rom cubic in 5 bilinear taps. `9`: the same with its corners. `3`: Dodgson's quadratic in 3 taps. |
+| `FLAT_TAPS` | u32 | `2` | The flat path's reconstruction. `2`: the sample moved towards the texel nearest the pixel, one read. `1`: the bilinear sample. `5`: a Catmull-Rom cubic in 5 bilinear taps. `9`: the same with its corners. `3`: Dodgson's quadratic in 3 taps. |
 | `GAZE` | u32 | `0` | `1`: a gaze zone. The vote's threshold and the sharpness slide from the per-frame values at the border to the zone's at its centre, weighted by `gaze`. |
-| `FLAT_ZONE` | u32 | `0` | With `GAZE 1`: `1` keeps the flat path's cubic inside the zone only, and the periphery keeps the bilinear sample. |
+| `FLAT_ZONE` | u32 | `0` | With `GAZE 1`: `1` keeps the flat path's cubic or quadratic inside the zone only, and the periphery keeps the bilinear sample. `FLAT_TAPS` 2 ignores it. |
 | `R_DOWN` | f32 | `1.0` | Reduction: the span of the grid, as a fraction of the pixel's footprint. Set it from [the mode table](#what-every-version-needs). |
 | `LINEAR_LIGHT` | u32 | `1` | Reduction: the light the samples are averaged in. `0`: the hardware's, through sRGB views. `1`: gamma 2 (a square and a square root). `2`: the exact sRGB curve (at most 0.35 dB better, 15 `pow` per pixel). `3`: the input already holds linear light, and the output is encoded once. WGSL only for `3`. |
 
@@ -422,10 +423,8 @@ prefixed `MWSR_`.
 
 | Case | Set | Why |
 |---|---|---|
-| A computer | the defaults | They are MoonlightWeb's on desktop and laptop. |
-| A phone or a tablet | `FLAT_TAPS 3` | 9 to 13 % faster on an iPhone 13 Pro and a realme Note 60, for a hundredth of SSIM, measured with the previous defaults, when far more pixels took the flat path. MoonlightWeb's choice there. |
+| A computer, a phone or a tablet | the defaults | They are MoonlightWeb's on all of them. |
 | A 4:4:4 stream (desktop work, text) | `CHROMA444 1` | Colour borders of one luma, such as red text on green, get sharpened too. |
-| An AMD integrated GPU (Ryzen 9 9900X) | `wgsl/mwsr-up-f16.wgsl` | 9 to 10 % faster. Nothing gained on NVIDIA. |
 | A softer picture | `sharp` lower, `tau` higher | Less sharpening, and fewer pixels on the edge path. |
 | An HDR float input | the defaults | Unchanged for the upscale. A reduction takes `LINEAR_LIGHT 3` if the input holds linear light. |
 

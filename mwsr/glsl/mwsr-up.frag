@@ -46,7 +46,7 @@ vec3 L(ivec2 c) {
 const uint SHOW = 0u;
 const uint DERING = 2u;
 const uint CHROMA444 = 0u;
-const uint FLAT_TAPS = 5u;
+const uint FLAT_TAPS = 2u;
 const uint GAZE = 0u;
 const uint FLAT_ZONE = 0u;
 const float R_DOWN = 1.0;
@@ -66,6 +66,13 @@ float gazeWeight(vec2 uv) {
 
 // The flat path's picture, the WGSL text's flatPath line for line.
 vec3 flatPath(vec2 uv, vec3 C, float zg) {
+    if (FLAT_TAPS == 2u) {
+        vec2 sn = uv * uDimsAcross.xy;
+        vec2 tn = floor(sn);
+        vec2 dn = abs(sn - tn - 0.5);
+        float f = max(dn.x, dn.y);
+        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(ivec2(tn)) - C);
+    }
     if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
         return C;
     }

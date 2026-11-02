@@ -93,7 +93,7 @@ static const uint DERING = MWSR_DERING;
 #endif
 static const uint CHROMA444 = MWSR_CHROMA444;
 #ifndef MWSR_FLAT_TAPS
-#define MWSR_FLAT_TAPS 5u
+#define MWSR_FLAT_TAPS 2u
 #endif
 static const uint FLAT_TAPS = MWSR_FLAT_TAPS;
 #ifndef MWSR_GAZE
