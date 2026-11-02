@@ -257,3 +257,147 @@ describe('AutoCeilingSession: a stream that never came back', () => {
         expect(session().budget).toBe(450e6);
     });
 });
+
+describe('AutoCeilingSession: the guard', () => {
+    const atTop = () => {
+        const r = rig('on');
+        for (let i = 0; i < 5; i++) r.memory.raise(HOST, CODEC);
+        return r;
+    };
+
+    it('comes down a rung for this launch on a "no", and keeps what was learned', async () => {
+        const { session } = atTop();
+        const s = session();
+        const asked = [];
+        await s.guard(
+            uhdAuto,
+            async (ask) => {
+                asked.push(ask.height);
+                return ask.height > 1440;
+            },
+            300,
+        );
+        expect(asked).toEqual([2160, 1808, 1528, 1440]);
+        expect(s.budget).toBe(450e6);
+        expect(s.trial).toBe(false);
+        expect(session().budget).toBe(1000e6);
+    });
+
+    it('stays where it is on anything but a "no"', async () => {
+        const { session } = atTop();
+        const s = session();
+        await s.guard(uhdAuto, async () => false, 300);
+        expect(s.budget).toBe(1000e6);
+    });
+
+    it('never goes under the base budget, and never asks there', async () => {
+        const { session } = rig('on');
+        const s = session();
+        let asked = 0;
+        await s.guard(
+            uhdAuto,
+            async () => {
+                asked++;
+                return true;
+            },
+            300,
+        );
+        expect(asked).toBe(0);
+        expect(s.budget).toBe(PIXEL_RATE_BUDGET);
+    });
+
+    it('does not ask about a stream the rung below would allow anyway', async () => {
+        const { session } = atTop();
+        const s = session();
+        let asked = 0;
+        await s.guard(
+            () => streamFootprint({ height: 1080, aspect: '16:9' }, 60),
+            async () => {
+                asked++;
+                return true;
+            },
+            300,
+        );
+        expect(asked).toBe(0);
+        expect(s.budget).toBe(1000e6);
+    });
+
+    it('stops asking once the launch has waited long enough', async () => {
+        const { session } = atTop();
+        const s = session();
+        let now = 0;
+        const asked = [];
+        await s.guard(
+            uhdAuto,
+            async (ask, left) => {
+                asked.push(left);
+                now += 200;
+                return true;
+            },
+            300,
+            () => now,
+        );
+        expect(asked).toEqual([300, 100]);
+        expect(s.budget).toBe(500e6);
+    });
+
+    it('asks nothing of a session that does not learn', async () => {
+        const { session } = rig('log');
+        let asked = 0;
+        await session().guard(
+            uhdAuto,
+            async () => {
+                asked++;
+                return true;
+            },
+            300,
+        );
+        expect(asked).toBe(0);
+    });
+});
+
+describe('AutoCeilingSession: a launch the host refused', () => {
+    it('costs a rung on trial, and asks for one more try', () => {
+        const { session, memory } = rig('on');
+        memory.raise(HOST, CODEC);
+        expect(session().refused()).toBe(true);
+        expect(session().budget).toBe(PIXEL_RATE_BUDGET);
+    });
+
+    it('costs nothing at a rung already held', () => {
+        const { session, memory } = rig('on');
+        memory.raise(HOST, CODEC);
+        memory.hold(HOST, CODEC);
+        expect(session().refused()).toBe(false);
+        expect(session().budget).toBe(330e6);
+    });
+
+    it('costs nothing in journal mode', () => {
+        const { session, storage } = rig('log');
+        expect(session().refused()).toBe(false);
+        expect(storage.written()).toBe(false);
+    });
+});
+
+describe('AutoCeilingSession: what it tells the view', () => {
+    it('bounds the cadence at twice the rung, and at the top rung', () => {
+        const { session, memory } = rig('on');
+        expect(session().stepCeiling).toBe(500e6);
+        for (let i = 0; i < 5; i++) memory.raise(HOST, CODEC);
+        expect(session().stepCeiling).toBe(1000e6);
+    });
+
+    it('bounds nothing while it does not learn', () => {
+        expect(rig('log').session().stepCeiling).toBe(0);
+    });
+
+    it('is on trial only for a rung yet to be held', () => {
+        const { session, memory } = rig('on');
+        expect(session().onTrial).toBe(false);
+        memory.raise(HOST, CODEC);
+        expect(session().onTrial).toBe(true);
+        memory.hold(HOST, CODEC);
+        expect(session().onTrial).toBe(false);
+        expect(rig('log').session().onTrial).toBe(false);
+    });
+});

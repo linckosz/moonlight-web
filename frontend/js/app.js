@@ -107,6 +107,7 @@ import {
     hardwareDecodeLimit,
     knownHardwareDecodeLimit,
     capSizeToDecoder,
+    decoderRefuses,
 } from './util/DecoderLimit.js';
 import { startAspectProbe } from './stream/AspectProbe.js';
 import { AutoCeilingSession } from './stream/AutoCeilingSession.js';
@@ -192,6 +193,8 @@ const SIDE_KEYS_STORE = 'mw-hs-side-keys';
 /** A screen change seen while a relaunch is on its way is looked at again
  *  this long after (App._onClientScreenChanged), until none is. */
 const SCREEN_RECHECK_MS = 1500;
+/** What a launch may wait for the browser's word on a rung of Auto's ceiling. */
+const AUTO_CEILING_GUARD_MS = 300;
 
 /** An address rendered as a clickable, copyable link in a banner. */
 const linkHtml = (u) =>
@@ -2282,13 +2285,10 @@ export const MoonlightApp = {
                     autoMaxHeight,
                 },
             );
-        const size = sizeAt(autoMaxHeightFor(this._autoCeilingBudget()));
         this._fpsAuto = fpsAuto;
         const askedFps = streamingSettings.stream_fps;
-        const budgeted = this._applyPixelBudget(streamingSettings, size, choice.mode, fpsAuto);
         const decodeLimit = await hardwareDecodeLimit(streamingSettings.video_codec);
-        const bounded = this._capToDecoder(budgeted, decodeLimit);
-        this._weighAutoCeiling(
+        const askAt = this._autoCeilingAsk(
             sizeAt,
             streamingSettings,
             askedFps,
@@ -2296,6 +2296,11 @@ export const MoonlightApp = {
             fpsAuto,
             decodeLimit,
         );
+        if (!codecOverride) await this._guardAutoCeiling(askAt, streamingSettings);
+        const size = sizeAt(autoMaxHeightFor(this._autoCeilingBudget()));
+        const budgeted = this._applyPixelBudget(streamingSettings, size, choice.mode, fpsAuto);
+        const bounded = this._capToDecoder(budgeted, decodeLimit);
+        if (this._autoCeiling) this._autoCeiling.weigh(askAt);
         this._applyResolvedSize(streamingSettings, bounded);
         if (IS_TV) this._warnTvOverAsk(streamingSettings, choice.mode === 'auto' && fpsAuto);
         // A gamescope session keeps the size it was started at (a new size
@@ -2420,6 +2425,7 @@ export const MoonlightApp = {
             }
         } catch (err) {
             console.error('[MW] Launch failed:', err);
+            if (this._retryBelowAutoCeiling(err, host, app, codecOverride, opts)) return;
             // Launch failed before the audio pipeline could take over the iOS
             // session hold — release it so we don't keep a silent element looping.
             iosAudioUnlock.release();
@@ -3092,20 +3098,21 @@ export const MoonlightApp = {
     },
 
     /**
-     * Tell the session what this launch comes to under its rung and the next
-     * one, the way _applyPixelBudget and _capToDecoder would make it.
+     * What this launch comes to under a budget, the way _applyPixelBudget and
+     * _capToDecoder would make it.
      * @param {(autoMaxHeight: number) => object} sizeAt the size for a ceiling
      * @param {object} settings
      * @param {number} fps the rate asked for, before any budget
      * @param {string} mode the resolution's mode
      * @param {boolean} fpsAuto
      * @param {{width:number, height:number}|null} limit the decoder's
+     * @returns {(budget: number) => {width:number, height:number, fps:number,
+     *            pixelRate:number}}
      */
-    _weighAutoCeiling(sizeAt, settings, fps, mode, fpsAuto, limit) {
-        if (!this._autoCeiling) return;
+    _autoCeilingAsk(sizeAt, settings, fps, mode, fpsAuto, limit) {
         const aspect = settings.stream_aspect;
         const clientFps = measuredFps();
-        this._autoCeiling.weigh((budget) => {
+        return (budget) => {
             const size = sizeAt(autoMaxHeightFor(budget));
             const fit =
                 mode !== 'auto' && !fpsAuto
@@ -3118,7 +3125,55 @@ export const MoonlightApp = {
                           budget,
                       });
             return streamFootprint(capSizeToDecoder(fit.size, limit).size, fit.fps, aspect);
+        };
+    },
+
+    /** The browser's outright "no" brings this launch down a rung, in the time
+     *  a launch can spare. See AutoCeilingSession.guard. */
+    async _guardAutoCeiling(askAt, settings) {
+        if (!this._autoCeiling) return;
+        await this._autoCeiling.guard(
+            askAt,
+            (ask, left) =>
+                decoderRefuses(
+                    settings.video_codec,
+                    {
+                        width: ask.width,
+                        height: ask.height,
+                        fps: ask.fps,
+                        bitrate:
+                            this._autoBitrateFor(
+                                settings,
+                                ask.height,
+                                ask.width + ':' + ask.height,
+                            ) * 1000,
+                    },
+                    left,
+                ),
+            AUTO_CEILING_GUARD_MS,
+        );
+    },
+
+    /**
+     * The host refused a launch at a rung on trial: once, it goes again a rung
+     * down, with no message. Not for a host that did not answer (the network
+     * then, not the rung), nor for the refusals that have their own dialog.
+     * @returns {boolean} the launch is on its way again
+     */
+    _retryBelowAutoCeiling(err, host, app, codecOverride, opts) {
+        const session = this._autoCeiling;
+        if (!session || codecOverride || (opts && opts.autoCeilingRetried)) return false;
+        if (this._startupAborted || !err || !(err.statusCode >= 500)) return false;
+        const code = err.responseBody && err.responseBody.code;
+        if (code === 'app_running' || code === 'video_capture_failed') return false;
+        if (!session.refused()) return false;
+        this.transition('app_list');
+        this.launchApp(host, app, undefined, undefined, {
+            ...opts,
+            skipSelfStreamWarn: true,
+            autoCeilingRetried: true,
         });
+        return true;
     },
 
     /** The estimate's bitrate, in kbps, for a frame of that size. */
@@ -3256,7 +3311,10 @@ export const MoonlightApp = {
                 (settings.stream_fps || 60) +
                 ' fps',
         );
-        this._weighAutoCeiling(sizeAt, settings, askedFps, choice.mode, fpsAuto, decodeLimit);
+        if (this._autoCeiling)
+            this._autoCeiling.weigh(
+                this._autoCeilingAsk(sizeAt, settings, askedFps, choice.mode, fpsAuto, decodeLimit),
+            );
         this._applyResolvedSize(settings, bounded);
         this._qualityRelaunch(this._transportIndex || 0);
     },
@@ -3448,7 +3506,10 @@ export const MoonlightApp = {
         sv.onHostDisplayFormat = (msg) => this._onHostDisplayFormat(msg);
         sv.onClientScreenChanged = (device) => this._onClientScreenChanged(device);
         sv.autoCeilingIdle = () => !!(this._standbyView || this._relaunching);
-        sv.autoCeilingMeter = this._autoCeiling ? this._autoCeiling.meter(performance.now()) : null;
+        const ceiling = this._autoCeiling;
+        sv.autoCeilingMeter = ceiling ? ceiling.meter(performance.now()) : null;
+        sv.autoCeilingOnTrial = () => !!(ceiling && ceiling.onTrial);
+        sv.autoCeilingMaxPixelRate = ceiling ? ceiling.stepCeiling : 0;
     },
 
     /**

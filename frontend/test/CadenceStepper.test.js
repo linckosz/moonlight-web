@@ -189,6 +189,10 @@ describe('ladder', () => {
 
     it('doubles without a cap while the display is unknown', () => {
         expect(ladder(144, 0)).toEqual([144, 288]);
+        // Under Auto's learned ceiling: 4K120 on a 240 Hz screen does not double.
+        expect(ladder(120, 240, 120)).toEqual([120]);
+        expect(ladder(60, 240, 120)).toEqual([60, 120]);
+        expect(ladder(120, 240, 241)).toEqual([120, 240]);
         expect(ladder(0, 240)).toEqual([]);
     });
 });

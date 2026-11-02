@@ -25,6 +25,7 @@
  */
 
 import {
+    CEILING_RUNGS,
     HOLD_BASE_MS,
     autoCeilingMemory,
     autoLearnMode,
@@ -102,6 +103,68 @@ export class AutoCeilingSession {
         this.rung = e.ceiling;
         this.trial = e.trial;
         this._holdMs = e.holdMs;
+    }
+
+    /** The most a step of the cadence may reach: twice the rung, at most the
+     *  top rung, so 4K120 never doubles to 2 billion pixels a second. 0 means no
+     *  bound: nothing changes for a session that does not learn. */
+    get stepCeiling() {
+        if (!this.active) return 0;
+        return Math.min(2 * this.rung, CEILING_RUNGS[CEILING_RUNGS.length - 1]);
+    }
+
+    /** A rung on trial writes nothing in the enhancer's memory: a step down
+     *  would follow the viewer back to the rung below, which has no such size. */
+    get onTrial() {
+        return this.active && this.trial;
+    }
+
+    /**
+     * Ask the browser about what this launch would stream: on its outright "no",
+     * this launch comes down a rung and asks again. What was learned stays: the
+     * browser may say otherwise tomorrow.
+     * @param {(budget: number) => {width:number, height:number, fps:number,
+     *          pixelRate:number}} askAt
+     * @param {(ask: object, timeLeftMs: number) => Promise<boolean>} refuses
+     * @param {number} timeoutMs what the whole launch may wait, at most
+     * @param {() => number} [clock]
+     */
+    async guard(askAt, refuses, timeoutMs, clock = () => performance.now()) {
+        if (!this.active) return;
+        const deadline = clock() + timeoutMs;
+        for (;;) {
+            const below = rungBelow(this.rung);
+            const left = deadline - clock();
+            if (!below || !(left > 0)) return;
+            const ask = askAt(this.rung);
+            if (!(ask.pixelRate > below) || !(await refuses(ask, left))) return;
+            this._log(
+                '[MW] Auto ceiling: the browser refuses ' +
+                    millions(ask.pixelRate) +
+                    ' — this launch runs at ' +
+                    millions(below),
+            );
+            this.rung = below;
+            this.trial = false;
+            this._holdMs = HOLD_BASE_MS;
+        }
+    }
+
+    /**
+     * The host refused this launch. A rung on trial takes the blame: one down,
+     * and the launch may be tried again. A rung already held is not at fault.
+     * @returns {boolean} whether to try again
+     */
+    refused() {
+        if (!this.onTrial) return false;
+        const fell = this._memory.fail(this._host, this._codec, this.rung);
+        this._log(
+            '[MW] Auto ceiling: the host refused a launch at ' +
+                millions(this.rung) +
+                ' — trying again at ' +
+                millions(fell),
+        );
+        return fell > 0;
     }
 
     /**

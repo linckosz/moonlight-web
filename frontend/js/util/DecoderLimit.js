@@ -108,6 +108,51 @@ export function resetHardwareDecodeLimits() {
     settled.clear();
 }
 
+/**
+ * Whether this browser says outright that it will not decode a stream smoothly:
+ * the guard on a rung of Auto's learned ceiling (stream/AutoCeilingSession.js).
+ * A "yes" proves little, Chrome often says "smooth" without measuring, so only a
+ * "no" is heard. No API, an error, or no answer in time: no "no".
+ * @param {string} codec 'h264', 'hevc', 'av1'
+ * @param {{width:number, height:number, fps:number, bitrate:number}} stream bitrate in bit/s
+ * @param {number} timeoutMs how long a launch may wait for the answer
+ * @param {any} [capabilities] navigator.mediaCapabilities by default
+ * @returns {Promise<boolean>}
+ */
+export async function decoderRefuses(codec, stream, timeoutMs, capabilities) {
+    const string = PROBE_CODECS[codec];
+    const mc =
+        capabilities ||
+        (typeof navigator !== 'undefined'
+            ? /** @type {any} */ (navigator).mediaCapabilities
+            : null);
+    if (!string || !mc || typeof mc.decodingInfo !== 'function') return false;
+    let timer = null;
+    const late = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    try {
+        const info = await Promise.race([
+            mc.decodingInfo({
+                type: 'media-source',
+                video: {
+                    contentType: 'video/mp4; codecs="' + string + '"',
+                    width: stream.width,
+                    height: stream.height,
+                    bitrate: stream.bitrate,
+                    framerate: stream.fps,
+                },
+            }),
+            late,
+        ]);
+        return !!info && (info.supported === false || info.smooth === false);
+    } catch (e) {
+        return false;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 const even = (n) => Math.max(2, Math.round(n) & ~1);
 
 /**

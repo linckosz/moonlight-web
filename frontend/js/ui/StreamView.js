@@ -1217,6 +1217,10 @@ export class StreamView {
         this.autoCeilingMeter = null;
         /** @type {(() => boolean)|null} a transition is under way */
         this.autoCeilingIdle = null;
+        /** @type {(() => boolean)|null} this stream tries a rung not yet held */
+        this.autoCeilingOnTrial = null;
+        /** The most a step of the cadence may reach, pixels a second; 0: no bound. */
+        this.autoCeilingMaxPixelRate = 0;
         this._hostPresentsFps = 0;
         this._decodeRateCap = 0;
         // Native host: mouse motion goes out on `pointerrawupdate` — every
@@ -7693,6 +7697,13 @@ export class StreamView {
         });
     }
 
+    /** The fastest step of the cadence Auto's ceiling allows at this frame; 0: no bound. */
+    _autoCeilingMaxFps() {
+        const m = /^(\d+)[×x](\d+)/.exec(this._resolution || '');
+        if (!(this.autoCeilingMaxPixelRate > 0) || !m) return 0;
+        return Math.floor(this.autoCeilingMaxPixelRate / (Number(m[1]) * Number(m[2])));
+    }
+
     /** The enhancer is about to run @p algo: a step down is a signal for the
      *  meter of Auto's ceiling. Starting low on its memory is none: only a step
      *  taken in this stream comes through here. */
@@ -7802,6 +7813,9 @@ export class StreamView {
      *  a guest's ladder follows its own fixed rule). */
     _rememberEnhancer(kind, rung, recoverAfterMs) {
         if (this._playerMode) return;
+        // A verdict from a rung on trial would follow the viewer back down to a
+        // size where it means nothing: the memory holds no size.
+        if (this.autoCeilingOnTrial && this.autoCeilingOnTrial()) return;
         rememberRung(kind, ladderRung(this._enhancerCeiling), rung, recoverAfterMs);
     }
 
@@ -8110,6 +8124,7 @@ export class StreamView {
                 },
                 // The steps this device failed at, for this host at this size.
                 memory: stepMemory((this.host.uuid || '') + '|' + (this._resolution || '')),
+                maxFps: this._autoCeilingMaxFps(),
             });
             window.mwCadenceStepper = this._stepper;
             this._stepper.start();

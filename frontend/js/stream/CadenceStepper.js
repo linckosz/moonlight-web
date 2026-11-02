@@ -221,13 +221,15 @@ export function autostepEnabled(tv = false) {
  * each capped at that refresh and above the one before. [] without a rate.
  * @param {number} baseFps
  * @param {number} displayHz 0 when unknown: no cap, no display step
+ * @param {number} [maxFps] no step above this; 0 or none: no bound
  * @returns {number[]}
  */
-export function ladder(baseFps, displayHz) {
+export function ladder(baseFps, displayHz, maxFps = 0) {
     if (!(baseFps > 0)) return [];
     const levels = [Math.round(baseFps)];
     const add = (fps) => {
         const capped = displayHz > 0 ? Math.min(fps, displayHz) : fps;
+        if (maxFps > 0 && capped > maxFps) return;
         if (capped > levels[levels.length - 1]) levels.push(capped);
     };
     add(levels[0] * 2);
@@ -323,8 +325,10 @@ export class CadenceStepper {
      * @param {{every: (fn: () => void, ms: number) => any, stop: (id: any) => void}} [deps.timers]
      * @param {ReturnType<typeof stepMemory>} [deps.memory] the steps this
      *        device failed at, for this host at this resolution
+     * @param {number} [deps.maxFps] no step above this (Auto's learned ceiling)
      */
-    constructor({ baseFps, send, sendPing, now, log, timers, memory }) {
+    constructor({ baseFps, send, sendPing, now, log, timers, memory, maxFps }) {
+        this._maxFps = maxFps > 0 ? maxFps : 0;
         this._send = send;
         this._sendPing = sendPing || (() => {});
         this._now = now || (() => performance.now());
@@ -336,7 +340,7 @@ export class CadenceStepper {
         this._clock = new ClockEstimator();
         this._base = baseFps > 0 ? Math.round(baseFps) : 0;
         this._display = 0;
-        this._levels = ladder(this._base, 0);
+        this._levels = ladder(this._base, 0, this._maxFps);
         this._presents = 0;
         /** @type {number[]} the display's presents a second, the host's latest reports last */
         this._samples = [];
@@ -454,7 +458,7 @@ export class CadenceStepper {
             const moved = this._base > 0 && base !== this._base;
             this._base = base;
             this._display = display;
-            this._levels = ladder(base, display);
+            this._levels = ladder(base, display, this._maxFps);
             if (moved) this._restart("the stream's own rate moved", now);
             else if (this._level >= this._levels.length) this._fallBack('no such step', now);
         }

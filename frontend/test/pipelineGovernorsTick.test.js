@@ -132,3 +132,29 @@ describe('StreamView — the governors on the tick', () => {
         expect(v._fpsTimestamps).toEqual([]);
     });
 });
+
+describe("StreamView — what Auto's ceiling asks of the rest", () => {
+    it('keeps the verdict of a rung on trial out of the enhancer memory', () => {
+        localStorage.removeItem('mw_enhancer_rung');
+        const v = {
+            _enhancerCeiling: 'mwsr',
+            autoCeilingOnTrial: () => true,
+            _rememberEnhancer: P._rememberEnhancer,
+        };
+        v._rememberEnhancer('webgl', 'off', 1000);
+        expect(localStorage.getItem('mw_enhancer_rung')).toBeNull();
+        v.autoCeilingOnTrial = () => false;
+        v._rememberEnhancer('webgl', 'off', 1000);
+        expect(JSON.parse(localStorage.getItem('mw_enhancer_rung')).webgl.rung).toBe('off');
+        localStorage.removeItem('mw_enhancer_rung');
+    });
+
+    it('turns the cadence bound into a rate at this frame, 1080p240 allowed at the base', () => {
+        const at = (autoCeilingMaxPixelRate, _resolution) =>
+            P._autoCeilingMaxFps.call({ autoCeilingMaxPixelRate, _resolution });
+        expect(at(500e6, '1920×1080')).toBe(241);
+        expect(at(1000e6, '3840×2160')).toBe(120);
+        expect(at(0, '3840×2160')).toBe(0);
+        expect(at(500e6, '')).toBe(0);
+    });
+});

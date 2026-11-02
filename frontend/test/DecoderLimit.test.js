@@ -5,6 +5,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
     capSizeToDecoder,
+    decoderRefuses,
     hardwareDecodeLimit,
     knownHardwareDecodeLimit,
     resetHardwareDecodeLimits,
@@ -114,5 +115,50 @@ describe('DecoderLimit.hardwareDecodeLimit', () => {
     it('stays out of the way without WebCodecs', async () => {
         vi.stubGlobal('VideoDecoder', undefined);
         expect(await hardwareDecodeLimit('h264')).toBeNull();
+    });
+});
+
+describe('DecoderLimit.decoderRefuses', () => {
+    const stream = { width: 3840, height: 2160, fps: 120, bitrate: 150e6 };
+    const answering = (info) => ({ decodingInfo: async () => info });
+
+    it('hears an outright no', async () => {
+        const no = [{ supported: false, smooth: false }, { supported: true, smooth: false }];
+        for (const info of no)
+            expect(await decoderRefuses('hevc', stream, 300, answering(info))).toBe(true);
+    });
+
+    it('takes a yes for no answer at all', async () => {
+        const yes = answering({ supported: true, smooth: true, powerEfficient: false });
+        expect(await decoderRefuses('hevc', stream, 300, yes)).toBe(false);
+    });
+
+    it('says what it asks about', async () => {
+        const decodingInfo = vi.fn(async () => ({ supported: true, smooth: true }));
+        await decoderRefuses('h264', stream, 300, { decodingInfo });
+        expect(decodingInfo.mock.calls[0][0].type).toBe('media-source');
+        expect(decodingInfo.mock.calls[0][0].video).toMatchObject({
+            width: 3840,
+            height: 2160,
+            framerate: 120,
+            bitrate: 150e6,
+        });
+    });
+
+    it('takes a missing API, an error or an unknown codec for no no', async () => {
+        expect(await decoderRefuses('hevc', stream, 300, {})).toBe(false);
+        const broken = {
+            decodingInfo: async () => {
+                throw new TypeError('bad config');
+            },
+        };
+        expect(await decoderRefuses('hevc', stream, 300, broken)).toBe(false);
+        const no = answering({ supported: false, smooth: false });
+        expect(await decoderRefuses('pyrowave', stream, 300, no)).toBe(false);
+    });
+
+    it('does not wait past its time for an answer', async () => {
+        const never = { decodingInfo: () => new Promise(() => {}) };
+        expect(await decoderRefuses('hevc', stream, 5, never)).toBe(false);
     });
 });
