@@ -58,6 +58,7 @@ import {
 import {
     SUPPORTS_CANVAS_TEARING,
     IS_HANDHELD,
+    IS_LOW_MEMORY,
     IS_TOUCH_DEVICE,
     IS_TV,
     resolveTearing,
@@ -91,8 +92,10 @@ import {
     clampCustomSize,
     devicePixelSize,
     fitPixelBudget,
+    autoMaxHeightFor,
     readResolutionChoice,
 } from '../util/StreamResolution.js';
+import { previewCeiling } from '../util/AutoCeiling.js';
 import {
     CODEC_PYROWAVE,
     PYROWAVE_FALLBACK,
@@ -707,7 +710,20 @@ export class SettingsView {
      * is what the estimate wants.
      */
     _budgetedStream(choice, rate, rateNamed) {
-        const ref = bitrateReference(choice, undefined, IS_HANDHELD, IS_TV);
+        // No host here: what was learned from the one launched last.
+        const budget = previewCeiling({
+            tv: IS_TV,
+            handheld: IS_HANDHELD,
+            lowMemory: IS_LOW_MEMORY,
+            powerSave: this._powerSave,
+        });
+        const ref = bitrateReference(
+            choice,
+            undefined,
+            IS_HANDHELD,
+            IS_TV,
+            autoMaxHeightFor(budget),
+        );
         const aspect =
             choice.mode === 'fixed'
                 ? this.container.querySelector('#settings-stream-aspect')?.value ||
@@ -719,6 +735,7 @@ export class SettingsView {
             clientFps: measuredFps(),
             resolutionNamed: choice.mode !== 'auto',
             rateNamed,
+            budget,
         });
         return {
             size: { ...bounded.size, aspect: bounded.size.aspect || aspect },

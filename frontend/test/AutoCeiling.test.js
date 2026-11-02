@@ -20,6 +20,7 @@ import {
     autoLearnMode,
     deviceMaxCeiling,
     holdMsFor,
+    previewCeiling,
     rungAbove,
     rungBelow,
 } from '../js/util/AutoCeiling.js';
@@ -297,5 +298,32 @@ describe('autoCeilingMemory', () => {
         expect(mem.entry(HOST, CODEC).ceiling).toBe(PIXEL_RATE_BUDGET);
         const none = autoCeilingMemory(null, () => 1);
         expect(none.entry(HOST, CODEC).ceiling).toBe(PIXEL_RATE_BUDGET);
+    });
+});
+
+describe('previewCeiling', () => {
+    const learned = (mode) => {
+        const storage = fakeStorage(mode ? { [AUTO_LEARN_KEY]: mode } : {});
+        const mem = autoCeilingMemory(storage, () => 1000);
+        mem.raise(HOST, CODEC);
+        mem.raise(HOST, CODEC);
+        mem.noteLast(HOST, CODEC);
+        return storage;
+    };
+
+    it('is the base budget until learning is on', () => {
+        expect(previewCeiling({}, learned())).toBe(PIXEL_RATE_BUDGET);
+        expect(previewCeiling({}, learned('0'))).toBe(PIXEL_RATE_BUDGET);
+    });
+
+    it('reads the host launched last, under what this device may reach', () => {
+        expect(previewCeiling({}, learned('1'))).toBe(450e6);
+        expect(previewCeiling({ handheld: true }, learned('1'))).toBe(450e6);
+        expect(previewCeiling({ tv: true }, learned('1'))).toBe(PIXEL_RATE_BUDGET);
+        expect(previewCeiling({ powerSave: true }, learned('1'))).toBe(PIXEL_RATE_BUDGET);
+    });
+
+    it('is the base budget when nothing was launched yet', () => {
+        expect(previewCeiling({}, fakeStorage({ [AUTO_LEARN_KEY]: '1' }))).toBe(PIXEL_RATE_BUDGET);
     });
 });

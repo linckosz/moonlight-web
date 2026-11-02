@@ -99,6 +99,20 @@ export function deviceMaxCeiling(device) {
     return CEILING_RUNGS[CEILING_RUNGS.length - 1];
 }
 
+/**
+ * The budget a preview that knows no host should assume: what was learned from
+ * the host launched last, under what this device may reach.
+ * @param {{tv?:boolean, handheld?:boolean, lowMemory?:boolean, powerSave?:boolean}} [device]
+ * @param {Storage|null} [storage] localStorage by default
+ * @returns {number} pixels a second
+ */
+export function previewCeiling(device, storage) {
+    if (autoLearnMode(storage) !== 'on') return PIXEL_RATE_BUDGET;
+    const top = deviceMaxCeiling(device);
+    if (top <= PIXEL_RATE_BUDGET) return PIXEL_RATE_BUDGET;
+    return autoCeilingMemory(storage).lastCeiling(top);
+}
+
 /** The rung at or just under @p pixels, never under the first. */
 function snapToRung(pixels) {
     let rung = CEILING_RUNGS[0];
