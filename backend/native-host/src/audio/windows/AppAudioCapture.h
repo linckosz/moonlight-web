@@ -29,15 +29,15 @@ namespace mw::native::audio {
 
 class AudioPacer;
 
-/// The sound of the focused app only — Settings → "Stream audio from: Focused
-/// app" (AudioSource.h). One per-process loopback client (Windows 10 build
+/// The sound of the app in front only — Settings → "Stream audio from: App in
+/// front" (AudioSource.h). One per-process loopback client (Windows 10 build
 /// 20348+, i.e. Windows 11) in INCLUDE-tree mode, aimed at the process that
 /// owns the foreground window, so the app's own child processes (a browser's
 /// audio service, a game's helper) are heard with it and nothing else is.
 ///
-/// Which app is "focused" is FocusTarget.h's rule: a full-screen app in front
-/// becomes the target and stays it while the user alt-tabs to a windowed one
-/// (Discord, a browser), so a game keeps its sound and only its sound.
+/// Which app that is follows FocusTarget.h's rule: focus moving to an app on
+/// the streamed screen switches to it; focus on another screen, the taskbar or
+/// the desktop changes nothing; an app that closes leaves silence.
 ///
 /// Two threads:
 ///  - a scanner (ordinary priority) that every 500 ms reads the foreground

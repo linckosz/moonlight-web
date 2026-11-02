@@ -19,6 +19,7 @@
 
 #include "../../core/Log.h"
 #include "../AudioPacer.h"
+#include "mw/native/AudioSource.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -402,26 +403,21 @@ DWORD uwpChildProcess(HWND frame, DWORD framePid)
     return search.found;
 }
 
-/// The window covers its whole monitor with no title bar: exclusive or
-/// borderless full screen. A maximized window keeps its caption, so it is not.
-bool isFullscreen(HWND window)
+/// The window is on the display being streamed: the monitor that holds most
+/// of it is that display. True when the streamed display is not known.
+bool onStreamedScreen(HWND window, const std::string& streamed)
 {
-    if (IsIconic(window)) return false;
-    const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
-    if ((style & WS_CAPTION) == WS_CAPTION) return false;
-    RECT rect{};
-    if (!GetWindowRect(window, &rect)) return false;
-    HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONULL);
-    if (!monitor) return false;
-    MONITORINFO info{};
+    if (streamed.empty()) return true;
+    HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    if (!monitor) return true;
+    MONITORINFOEXW info{};
     info.cbSize = sizeof(info);
-    if (!GetMonitorInfoW(monitor, &info)) return false;
-    return rect.left <= info.rcMonitor.left && rect.top <= info.rcMonitor.top &&
-           rect.right >= info.rcMonitor.right && rect.bottom >= info.rcMonitor.bottom;
+    if (!GetMonitorInfoW(monitor, &info)) return true;
+    return _stricmp(narrow(info.szDevice).c_str(), streamed.c_str()) == 0;
 }
 
 /// What is in front now.
-FocusSample sampleForeground(const std::string& selfExe)
+FocusSample sampleForeground(const std::string& selfExe, const std::string& streamed)
 {
     FocusSample out;
     HWND window = GetForegroundWindow();
@@ -437,7 +433,7 @@ FocusSample sampleForeground(const std::string& selfExe)
         }
     }
     out.pid = pid;
-    out.fullscreen = isFullscreen(window);
+    out.onStreamedScreen = onStreamedScreen(window, streamed);
     // This host itself (the stream worker, the server's own window) is never
     // the target either: it plays no sound worth streaming.
     out.ignored =
@@ -466,6 +462,7 @@ AppAudioCapture::~AppAudioCapture()
     m_Cv.notify_all();
     if (m_Scanner.joinable()) m_Scanner.join();
     if (m_TargetProcess) CloseHandle(static_cast<HANDLE>(m_TargetProcess));
+    setFocusedAppName(std::string());
 }
 
 void AppAudioCapture::pump(AudioPacer& pacer, int64_t /*nowUs*/)
@@ -522,8 +519,8 @@ void AppAudioCapture::scanOnce()
     static const std::string selfExe = exeName(GetCurrentProcess());
 
     HANDLE targetProcess = static_cast<HANDLE>(m_TargetProcess);
-    const FocusTarget next =
-        nextFocusTarget(m_Target, processAlive(targetProcess), sampleForeground(selfExe));
+    const FocusTarget next = nextFocusTarget(m_Target, processAlive(targetProcess),
+                                             sampleForeground(selfExe, streamedDisplay()));
 
     std::shared_ptr<Client> current;
     {
@@ -540,6 +537,9 @@ void AppAudioCapture::scanOnce()
                      : nullptr;
         m_TargetProcess = targetProcess;
         m_RetryPid = 0;
+        // Shown in Settings ("App in front — huntgame.exe") whether or not its
+        // capture opens: it is what the host considers in front.
+        setFocusedAppName(next.pid ? exeName(targetProcess) : std::string());
         // Silence while the new client comes up: the old app must not keep
         // playing into the stream once something else is in front.
         if (current) {
@@ -547,7 +547,8 @@ void AppAudioCapture::scanOnce()
             m_Client.reset();
             current.reset();
         }
-        if (next.pid == 0) log::info("[native] audio: focused app closed — the stream is silent");
+        if (next.pid == 0)
+            log::info("[native] audio: the app in front closed — the stream is silent");
     }
 
     if (next.pid == 0) return;
@@ -574,7 +575,7 @@ void AppAudioCapture::scanOnce()
             log::error("[native] audio: per-app capture is not available on this Windows (" + step +
                        " " + hresultString(hr) +
                        ") — Windows 11 is required. The stream stays SILENT; set "
-                       "Settings → Stream audio from → All apps to stream the whole mix.");
+                       "Settings → Stream audio from → All apps to stream everything.");
         } else if (!unsupported) {
             log::warning("[native] audio: could not capture " + client->exe + ": " + step + " " +
                          hresultString(hr));
@@ -586,8 +587,8 @@ void AppAudioCapture::scanOnce()
         return;
     }
     m_RetryPid = 0;
-    log::info("[native] audio: streaming the focused app, " + client->exe + " (pid " +
-              std::to_string(next.pid) + (next.fullscreen ? ", full screen" : "") + ")");
+    log::info("[native] audio: streaming the app in front, " + client->exe + " (pid " +
+              std::to_string(next.pid) + ")");
     std::lock_guard<std::mutex> lock(m_Mutex);
     m_Client = std::move(client);
 }

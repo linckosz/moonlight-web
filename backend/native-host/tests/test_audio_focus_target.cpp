@@ -33,14 +33,15 @@ constexpr uint32_t kGame = 100;
 constexpr uint32_t kDiscord = 200;
 constexpr uint32_t kBrowser = 300;
 constexpr uint32_t kShell = 400;
+constexpr uint32_t kNextGame = 500;
 
-FocusSample windowed(uint32_t pid)
-{
-    return FocusSample{pid, false, false};
-}
-FocusSample fullscreen(uint32_t pid)
+FocusSample here(uint32_t pid)
 {
     return FocusSample{pid, true, false};
+}
+FocusSample otherScreen(uint32_t pid)
+{
+    return FocusSample{pid, false, false};
 }
 FocusSample shell()
 {
@@ -57,24 +58,18 @@ void run_audio_focus_target_tests()
     CHECK(audioSourceFromString("") == AudioSource::AllApps);
     CHECK(audioSourceFromString("Focused") == AudioSource::AllApps);
 
-    SECTION("FocusTarget: nothing yet → the windowed app in front");
-    FocusTarget t = nextFocusTarget(FocusTarget{}, false, windowed(kBrowser));
+    SECTION("FocusTarget: the app in front on the streamed screen is the target");
+    FocusTarget t = nextFocusTarget(FocusTarget{}, false, here(kGame));
+    CHECK_EQ(t.pid, kGame);
+
+    SECTION("FocusTarget: alt-tab on the streamed screen switches to that app");
+    t = nextFocusTarget(t, true, here(kBrowser));
     CHECK_EQ(t.pid, kBrowser);
-    CHECK(!t.fullscreen);
-
-    SECTION("FocusTarget: a windowed target follows focus");
-    t = nextFocusTarget(t, true, windowed(kDiscord));
-    CHECK_EQ(t.pid, kDiscord);
-
-    SECTION("FocusTarget: a full-screen app always takes over");
-    t = nextFocusTarget(t, true, fullscreen(kGame));
+    t = nextFocusTarget(t, true, here(kGame));
     CHECK_EQ(t.pid, kGame);
-    CHECK(t.fullscreen);
 
-    SECTION("FocusTarget: alt-tab to a windowed app keeps the game");
-    t = nextFocusTarget(t, true, windowed(kDiscord));
-    CHECK_EQ(t.pid, kGame);
-    t = nextFocusTarget(t, true, windowed(kBrowser));
+    SECTION("FocusTarget: focus on another screen keeps the current app");
+    t = nextFocusTarget(t, true, otherScreen(kDiscord));
     CHECK_EQ(t.pid, kGame);
 
     SECTION("FocusTarget: the shell or no window in front changes nothing");
@@ -83,31 +78,17 @@ void run_audio_focus_target_tests()
     t = nextFocusTarget(t, true, FocusSample{});
     CHECK_EQ(t.pid, kGame);
 
-    SECTION("FocusTarget: the game in a window again stays sticky");
-    t = nextFocusTarget(t, true, windowed(kGame));
-    CHECK_EQ(t.pid, kGame);
-    CHECK(t.fullscreen);
-
-    SECTION("FocusTarget: another full-screen app replaces the game");
-    t = nextFocusTarget(t, true, fullscreen(kBrowser));
-    CHECK_EQ(t.pid, kBrowser);
-    CHECK(t.fullscreen);
-
-    SECTION("FocusTarget: a target that exited is dropped — silence, not the mix");
+    SECTION("FocusTarget: the game closes or crashes — silence, never the mix");
     t = nextFocusTarget(t, false, shell());
     CHECK_EQ(t.pid, 0u);
-    t = nextFocusTarget(t, false, FocusSample{});
+    t = nextFocusTarget(t, false, otherScreen(kDiscord));
     CHECK_EQ(t.pid, 0u);
 
-    SECTION("FocusTarget: after an exit, the next app in front is taken");
-    t = nextFocusTarget(FocusTarget{kGame, true}, false, windowed(kDiscord));
-    CHECK_EQ(t.pid, kDiscord);
-    CHECK(!t.fullscreen);
+    SECTION("FocusTarget: the next game in front is taken");
+    t = nextFocusTarget(t, false, here(kNextGame));
+    CHECK_EQ(t.pid, kNextGame);
 
-    SECTION("FocusTarget: a windowed app gone full screen becomes sticky");
-    t = nextFocusTarget(FocusTarget{kGame, false}, true, fullscreen(kGame));
-    CHECK_EQ(t.pid, kGame);
-    CHECK(t.fullscreen);
-    t = nextFocusTarget(t, true, windowed(kDiscord));
-    CHECK_EQ(t.pid, kGame);
+    SECTION("FocusTarget: a target that exited while focus stays elsewhere is dropped");
+    t = nextFocusTarget(FocusTarget{kGame}, false, otherScreen(kDiscord));
+    CHECK_EQ(t.pid, 0u);
 }

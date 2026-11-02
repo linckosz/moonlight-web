@@ -165,6 +165,11 @@ export class SettingsView {
         // can (Windows 11 native host); elsewhere the choice is shown locked.
         this._audioSource = 'all';
         this._audioSourceSupported = false;
+        // The app whose sound a running stream carries in 'focused' mode, as
+        // the host reports it (GET /api/audio/focused), shown in the option:
+        // "App in front — huntgame.exe". Empty when no stream reports one.
+        this._audioFocusApp = '';
+        this._audioFocusTimer = null;
         // Send this device's microphone to the host (off by default): opened
         // only once the host said it can take it (audio/MicUplink.js), and how
         // it sounds (MIC_QUALITY: voice cleanup, or none at a higher bitrate).
@@ -264,6 +269,7 @@ export class SettingsView {
         await this._loadUpdateState();
         this.render();
         this.bindEvents();
+        this._startAudioFocusPoll();
         this._unsubUpdate = hostUpdate.subscribe((view) => {
             this._updateRun = view;
             this._paintUpdateSection();
@@ -1024,6 +1030,42 @@ export class SettingsView {
         if (this._unsubUpdate) this._unsubUpdate();
         this._unsubUpdate = null;
         this._stopPadWatch();
+        if (this._audioFocusTimer) {
+            clearInterval(this._audioFocusTimer);
+            this._audioFocusTimer = null;
+        }
+    }
+
+    // --- Stream audio from: the app in front ---
+
+    /** The 'focused' option's text: "App in front", plus the app when known. */
+    _audioFocusOptionText() {
+        const label = t('settings.audioSourceFocused');
+        return this._audioFocusApp ? `${label} — ${this._audioFocusApp}` : label;
+    }
+
+    /**
+     * While Settings is open on a host that can do it, ask every 2 s which app
+     * the running stream follows, and repaint the option in place (never a
+     * full render, which would move the page). A failed read keeps the last.
+     */
+    _startAudioFocusPoll() {
+        if (!this._audioSourceSupported || this._audioFocusTimer) return;
+        const tick = async () => {
+            if (this._destroyed) return;
+            try {
+                const data = await BackendClient.getAudioFocused();
+                const app = typeof data?.app === 'string' ? data.app : '';
+                if (app === this._audioFocusApp) return;
+                this._audioFocusApp = app;
+                const option = this.container.querySelector('#settings-audio-source-focused');
+                if (option) option.textContent = this._audioFocusOptionText();
+            } catch {
+                // The host is busy or gone: the next tick asks again.
+            }
+        };
+        tick();
+        this._audioFocusTimer = setInterval(tick, 2000);
     }
 
     // --- Controllers ---
@@ -1903,8 +1945,9 @@ export class SettingsView {
                             <option value="all" ${this._audioSource !== 'focused' ? 'selected' : ''}>
                                 ${t('settings.audioSourceAll')}
                             </option>
-                            <option value="focused" ${this._audioSource === 'focused' ? 'selected' : ''}>
-                                ${t('settings.audioSourceFocused')}
+                            <option value="focused" id="settings-audio-source-focused"
+                                    ${this._audioSource === 'focused' ? 'selected' : ''}>
+                                ${escapeHtml(this._audioFocusOptionText())}
                             </option>
                         </select>
                     </div>

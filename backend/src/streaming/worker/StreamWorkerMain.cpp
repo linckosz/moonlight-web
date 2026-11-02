@@ -637,6 +637,22 @@ int runStreamWorker(QCoreApplication& app)
     // (an older parent) → the whole mix, as before.
     mw::native::setAudioSource(
         mw::native::audioSourceFromString(cfg["audioSource"].toString().toStdString()));
+    // The app in front, for Settings ("App in front — huntgame.exe"): told to
+    // the parent each time the capture's choice changes. Only the parent
+    // serves the page, and the worker may run in another session than it.
+    if (mw::native::audioSource() == mw::native::AudioSource::FocusedApp) {
+        auto* focusTimer = new QTimer(&app);
+        focusTimer->setInterval(1000);
+        auto last = std::make_shared<std::string>();
+        QObject::connect(focusTimer, &QTimer::timeout, &app, [last]() {
+            const std::string now = mw::native::focusedAppName();
+            if (now == *last) return;
+            *last = now;
+            emitEvent({{QStringLiteral("event"), QStringLiteral("audioFocus")},
+                       {QStringLiteral("app"), QString::fromStdString(now)}});
+        });
+        focusTimer->start();
+    }
     // Absent (an older parent, a guest) → no microphone.
     session->setMicRequested(cfg["mic"].toBool(false));
     session->setMicDevice(cfg["micDevice"].toString());

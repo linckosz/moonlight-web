@@ -18,6 +18,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 #include <string>
 
 namespace mw::native {
@@ -25,8 +26,9 @@ namespace mw::native {
 /// Which sound the stream carries (Settings → "Stream audio from").
 ///
 ///  - AllApps: the whole mix the host plays, as the engine always did. Default.
-///  - FocusedApp: only the app in front (AppAudioCapture.h) — a game, so that
-///    Discord or a browser stay on the host's speakers and out of the stream.
+///  - FocusedApp: only the app in front on the streamed screen
+///    (AppAudioCapture.h) — the game being played, so that Discord or a
+///    browser stay on the host's speakers and out of the stream.
 ///
 /// Set once by the stream worker before the session starts, read by the audio
 /// capture when it opens. Only the Windows capture honours FocusedApp today
@@ -60,6 +62,55 @@ inline AudioSource audioSource()
 inline AudioSource audioSourceFromString(const std::string& value)
 {
     return value == "focused" ? AudioSource::FocusedApp : AudioSource::AllApps;
+}
+
+namespace detail {
+struct AudioFocusState
+{
+    std::mutex mutex;
+    std::string streamedDisplay;
+    std::string focusedApp;
+};
+inline AudioFocusState& audioFocusState()
+{
+    static AudioFocusState state;
+    return state;
+}
+} // namespace detail
+
+/// The GDI name of the display this stream shows ("\\.\DISPLAY2"), set by the
+/// capture whenever it locates its output. "Focused app" follows focus only to
+/// windows on it, so apps on another screen never reach the stream. Empty:
+/// not known, and focus is followed on every screen.
+inline void setStreamedDisplay(const std::string& gdiName)
+{
+    auto& s = detail::audioFocusState();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    s.streamedDisplay = gdiName;
+}
+
+inline std::string streamedDisplay()
+{
+    auto& s = detail::audioFocusState();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    return s.streamedDisplay;
+}
+
+/// The executable whose sound "Focused app" streams right now ("huntgame.exe"),
+/// for the Settings page to show; empty when none (another mode, no stream,
+/// or the app closed). Written by the capture, read by whoever reports it.
+inline void setFocusedAppName(const std::string& exe)
+{
+    auto& s = detail::audioFocusState();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    s.focusedApp = exe;
+}
+
+inline std::string focusedAppName()
+{
+    auto& s = detail::audioFocusState();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    return s.focusedApp;
 }
 
 } // namespace mw::native

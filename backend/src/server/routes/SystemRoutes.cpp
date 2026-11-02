@@ -34,6 +34,8 @@
 #include "backend/streambackend/NativeHostBackend.h"
 #include "backend/streambackend/NativeProbeService.h"
 #include "streaming/ConsoleSession.h"
+#include "streaming/StreamWorkerHost.h"
+#include "mw/native/AudioSource.h"
 #include "mw/native/Capabilities.h"
 #include "mw/native/HostKeyboardLayout.h"
 #include "mw/native/VideoPipeline.h"
@@ -1376,6 +1378,21 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // Debug mode (--debug, or its box in the admin page) shows the same
         // options on any build.
         obj["debug_mode"] = mw::run::debug();
+        return HttpResponse::json(obj);
+    });
+
+    // — The app whose sound the stream carries ("Stream audio from: App in front") —
+    //
+    // {"app": "huntgame.exe"} while a stream runs in that mode and an app is in
+    // front, {"app": ""} otherwise. Settings shows it beside the choice. Read
+    // from the stream worker's reports, or from this process when the native
+    // host runs here.
+    server.router()->get("/api/audio/focused", [](const HttpRequest&) {
+        QString app = StreamWorkerHost::audioFocusApp();
+        if (app.isEmpty()) app = QString::fromStdString(mw::native::focusedAppName());
+        QJsonObject obj;
+        obj["app"] = app;
+        obj["supported"] = audioSourceFocusedSupported();
         return HttpResponse::json(obj);
     });
 

@@ -406,6 +406,21 @@ void StreamWorkerHost::onChildFinished(int exitCode, bool crashed)
     onFinished(exitCode, crashed ? QProcess::CrashExit : QProcess::NormalExit);
 }
 
+namespace {
+/// audioFocusApp(): written and read on the main thread (the workers' stdout
+/// and the HTTP routes both run there).
+QString& audioFocusSlot()
+{
+    static QString app;
+    return app;
+}
+} // namespace
+
+QString StreamWorkerHost::audioFocusApp()
+{
+    return audioFocusSlot();
+}
+
 void StreamWorkerHost::onStdoutData(const QByteArray& data)
 {
     m_Buf += data;
@@ -443,6 +458,9 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
         } else if (type == QLatin1String("hidParked")) {
             // The stream is over, its wheels stay: their handles are ours now.
             HidParkingTransfer::takeIn(event);
+        } else if (type == QLatin1String("audioFocus")) {
+            audioFocusSlot() = event["app"].toString().left(260);
+            m_ReportedAudioFocus = true;
         } else if (type == QLatin1String("mouseKeys")) {
             m_MouseKeysHeld = event["on"].toBool();
             m_MouseKeysSaved = m_MouseKeysHeld ? event["saved"].toObject() : QJsonObject();
@@ -455,6 +473,10 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
 void StreamWorkerHost::onFinished(int exitCode, QProcess::ExitStatus status)
 {
     qInfo() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode << "status=" << status;
+    if (m_ReportedAudioFocus) {
+        audioFocusSlot().clear();
+        m_ReportedAudioFocus = false;
+    }
     // Gone without taking the kept devices: they answer the game here again.
     if (m_HidBatch) HidParkingTransfer::settle(m_HidBatch, false);
     m_HidBatch = 0;

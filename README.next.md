@@ -97,7 +97,7 @@ From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (7
 **FPS** (15–240), **codec** (auto / H.264 / HEVC / AV1 / **PyroWave (Wired LAN only)**, unsupported options greyed out),\
 **HDR**, **4:4:4 chroma**, **Mouse Gaming Mode** (pointer‑lock), perf stats and aspect ratio.
 
-**Settings → Stream audio from** (Windows 11 host, **All apps** by default): **Focused app** streams only the game or app in front, so Discord, a browser or a music player stay on the host's speakers and out of the stream. A full‑screen app keeps its sound while you alt‑tab to a windowed one; when it closes the stream goes silent until another app takes focus, never back to the whole mix. Applies at the next stream.
+**Settings → Stream audio from** (Windows 11 host, **All apps** by default): **App in front** streams only the app you are using on the streamed screen, so Discord, a browser or a music player stay on the host's speakers and out of the stream — and apps on your other screens never reach it. Alt‑tab on the streamed screen switches to that app; a click on the taskbar or the desktop changes nothing; when the app closes or crashes the stream goes silent until another one takes focus, never back to the whole mix. The option names the app it follows while a stream runs (*App in front — huntgame.exe*). Applies at the next stream.
 
 **Settings → Start streams in fullscreen** (off by default) opens every stream in fullscreen. On an iPhone, Safari keeps its bars and the stream fills the page; added to the Home Screen, MoonlightWeb is fullscreen anyway.
 
