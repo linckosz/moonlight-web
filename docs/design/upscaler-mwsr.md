@@ -1475,7 +1475,8 @@ upscalers spatiaux.
 **v0.4.2 — le réglage livré, demandé par Bruno le 01/11/2026**
 - [x] Le balayage LPIPS puis VMAF NEG et la loi : `sharp` et `racross` suivent l'échelle, deux tables (avec les zones et sans), `walong` 0 — journal J55. Zones lues dès ×1,15. Comparateur public et README de `mwsr/` en LPIPS et VMAF NEG, le SSIM retiré
 - [ ] Le coup d'œil de Bruno sur le comparateur en ligne, le texte à ×1,333 compris (VMAF NEG 57,5 avec zones et 58,9 sans, contre 62,65 au livré) [`low`]
-- [ ] L'activation par défaut des zones, à la décision de Bruno ; le coût côté hôte n'est pas mesuré [`medium`]
+- [x] Décidé par Bruno le 02/11 : les termes d'écran de la loi restent à zéro ; les écrans 1080 et 2160 avec zones restent à 89-93 % du gain LPIPS (règle : 95 %) ; le texte à ×1,333 garde la loi et se juge à l'œil
+- [ ] L'activation par défaut des zones, au oui de Bruno, après son coup d'œil et le coût côté hôte. Ce coût est mesuré (`upscaler-mwsr-b.md` §12 f.3 et f.4) : 64 µs dans un vrai stream sur la RTX en 1440p, budget de 1 ms tenu en direct, puis la légère, puis la loi. Un vrai stream hors de ce cas n'est pas mesuré (§12 g) [`medium`]
 - [ ] L'optimisation du shader livré : retirer les lectures le long des bords (`walong` 0, `ralong` 0), types, regroupements ; zéro perte mesurée d'abord, puis les chiffres de ce que 2 % de perte apporteraient ; temps du README et des téléphones mesurés de nouveau [`max`]
 
 **Hors v0.4.1 — étude optionnelle (§14, proposée le 21/10/2026, à la décision de Bruno)**
