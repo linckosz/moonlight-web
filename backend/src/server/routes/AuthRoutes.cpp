@@ -627,8 +627,6 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QString token = doc.object().value("token").toString();
-        Logger::info(QString("[Auth] Revoke request — token='%1', size=%2")
-                         .arg(token, QString::number(token.size())));
         if (token.isEmpty()) return HttpResponse::error(400, "Missing 'token' in request body");
 
         // Never the session making the request. Revoking yourself is not an

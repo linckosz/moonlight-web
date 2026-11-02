@@ -957,9 +957,7 @@ void AuthManager::destroySession(const QString& token)
             emit streamingSessionRevoked();
         }
     } else {
-        Logger::warning(QString("[Auth] destroySession: token not found — token='%1' (len=%2)")
-                            .arg(token)
-                            .arg(token.size()));
+        Logger::warning("[Auth] destroySession: no such session");
     }
 }
 
@@ -968,7 +966,7 @@ bool AuthManager::renameSession(const QString& token, const QString& machineName
     // The id exposed to the admin UI is already the token hash (the map key).
     auto it = m_sessions.find(token);
     if (it == m_sessions.end()) {
-        Logger::warning(QString("[Auth] renameSession: token not found — token='%1'").arg(token));
+        Logger::warning("[Auth] renameSession: no such session");
         return false;
     }
 

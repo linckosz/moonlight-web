@@ -2,11 +2,13 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
  */
 #include "test_framework.h"
+#include "common/Logger.h"
 #include "common/PairingCrypto.h"
 #include "server/AuthManager.h"
 #include "server/AppSettings.h"
 
 #include <QDateTime>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -67,6 +69,25 @@ void run_auth_manager_tests()
     CHECK(id != token);
     CHECK(auth.renameSession(id, "Renamed"));
     CHECK(!auth.renameSession("unknown-id", "x"));
+
+    // What identifies a session stays out of the log, found or not.
+    {
+        QTemporaryDir logDir;
+        const QString before = Logger::instance()->logFilePath();
+        const QString logPath = logDir.path() + "/auth.log";
+        Logger::instance()->setLogFile(logPath, false);
+        auth.destroySession("canary-session-id");
+        auth.renameSession("canary-session-id", "x");
+        CHECK(auth.renameSession(id, "Renamed"));
+        Logger::instance()->setLogFile(before);
+
+        QFile written(logPath);
+        CHECK(written.open(QIODevice::ReadOnly));
+        const QByteArray lines = written.readAll();
+        CHECK(lines.contains("no such session"));
+        CHECK(!lines.contains("canary-session-id"));
+        CHECK(!lines.contains(id.toUtf8()));
+    }
 
     // Persistence round-trip.
     auth.saveSessions();
