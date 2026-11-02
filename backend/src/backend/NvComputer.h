@@ -149,6 +149,9 @@ public:
 
     // — Pairing state (persisted) —
     QByteArray serverCertPem;
+    // The last HTTPS answer came from a machine without that certificate. Not
+    // persisted: the next check of the pairing says again.
+    bool certificateChanged = false;
     quint16 activeHttpsPort = 0;
 
     // — Stream backend (persisted) —

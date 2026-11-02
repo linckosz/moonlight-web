@@ -54,6 +54,12 @@ BackendError::Kind transportErrorKind(QNetworkReply::NetworkError err)
     }
 }
 
+BackendError::Kind replyErrorKind(const QNetworkReply* reply)
+{
+    if (NvHTTP::serverCertRefused(reply)) return BackendError::CertificateChanged;
+    return transportErrorKind(reply->error());
+}
+
 } // namespace
 
 GameStreamBackend::GameStreamBackend(QString hostUuid, HostResolver resolver, NvHTTP* http,
@@ -169,8 +175,8 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
     // always was. A MultiSeat seat was paired under its own certificate and
     // knows no other, so it has to be the one presented here too.
     const ClientIdentity identity = im->identityForSeat(m_IdentitySeat);
-    QNetworkReply* reply =
-        m_Http->getAppListAsync(addr, httpsPort, identity.certPem, identity.keyPem);
+    QNetworkReply* reply = m_Http->getAppListAsync(addr, httpsPort, identity.certPem,
+                                                   identity.keyPem, host->serverCertPem);
 
     // One-shot guard: the timeout and finished() race each other.
     auto answered = std::make_shared<bool>(false);
@@ -204,8 +210,7 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
                     {});
             } else {
                 answer(false,
-                       BackendError::make(transportErrorKind(reply->error()), reply->errorString(),
-                                          httpStatus),
+                       BackendError::make(replyErrorKind(reply), reply->errorString(), httpStatus),
                        {});
             }
             reply->deleteLater();
@@ -260,7 +265,7 @@ void GameStreamBackend::launch(const QString& seatId, const LaunchRequest& req,
     QNetworkReply* reply = m_Http->launchAppAsync(
         host->activeAddress, host->activeHttpsPort, req.appId, uniqueId, req.rikey, req.rikeyid,
         req.width, req.height, req.fps, req.bitrateKbps, identity.certPem, identity.keyPem,
-        req.hdrEnabled ? 1 : 0, req.muteHostAudio ? 0 : 1, req.timeoutMs);
+        host->serverCertPem, req.hdrEnabled ? 1 : 0, req.muteHostAudio ? 0 : 1, req.timeoutMs);
 
     finishLaunchReply(reply, req, std::move(cb));
 }
@@ -283,9 +288,10 @@ void GameStreamBackend::resume(const QString& seatId, const LaunchRequest& req,
     // before and no browser has to pair again.
     const ClientIdentity identity = im->identityForSeat(req.clientIdentitySeat);
 
-    QNetworkReply* reply = m_Http->resumeAppAsync(
-        host->activeAddress, host->activeHttpsPort, uniqueId, req.rikey, req.rikeyid,
-        identity.certPem, identity.keyPem, req.muteHostAudio ? 0 : 1, req.timeoutMs);
+    QNetworkReply* reply =
+        m_Http->resumeAppAsync(host->activeAddress, host->activeHttpsPort, uniqueId, req.rikey,
+                               req.rikeyid, identity.certPem, identity.keyPem, host->serverCertPem,
+                               req.muteHostAudio ? 0 : 1, req.timeoutMs);
 
     finishLaunchReply(reply, req, std::move(cb));
 }
@@ -321,7 +327,7 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
             // restarted and dropped our session) is a Protocol-level answer the
             // launch<->resume self-heal can act on. Only a status-less failure
             // (connection refused, DNS, timeout) is a genuine transport error.
-            BackendError::Kind kind = transportErrorKind(reply->error());
+            BackendError::Kind kind = replyErrorKind(reply);
             if (httpStatus == 401)
                 kind = BackendError::NotPaired;
             else if (httpStatus >= 400)
@@ -409,8 +415,9 @@ void GameStreamBackend::quit(const QString& seatId, const QString& clientUniqueI
     // Under the certificate this host paired: a seat's Apollo refuses any other
     // (empty m_IdentitySeat = the default identity, as for every plain host).
     const ClientIdentity identity = im->identityForSeat(m_IdentitySeat);
-    QNetworkReply* reply = m_Http->quitAppAsync(host->uniqueAddresses().first(), httpsPort,
-                                                identity.certPem, identity.keyPem, uniqueId);
+    QNetworkReply* reply =
+        m_Http->quitAppAsync(host->uniqueAddresses().first(), httpsPort, identity.certPem,
+                             identity.keyPem, host->serverCertPem, uniqueId);
 
     auto answered = std::make_shared<bool>(false);
     auto answer = [answered, cb](bool ok, const BackendError& e) {
@@ -428,7 +435,7 @@ void GameStreamBackend::quit(const QString& seatId, const QString& clientUniqueI
     connect(reply, &QNetworkReply::finished, this, [reply, answer]() {
         if (reply->error() != QNetworkReply::NoError) {
             answer(false, BackendError::make(
-                              transportErrorKind(reply->error()), reply->errorString(),
+                              replyErrorKind(reply), reply->errorString(),
                               reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()));
         } else {
             answer(true, BackendError{});
@@ -470,8 +477,9 @@ void GameStreamBackend::runningApp(const QString& seatId, BackendIntCallback cb)
     // certificate (m_IdentitySeat) and knows no other; empty = the default one.
     IdentityManager* im = IdentityManager::get();
     const ClientIdentity identity = im->identityForSeat(m_IdentitySeat);
-    QNetworkReply* reply = m_Http->getServerInfoAsyncHttps(
-        addr, im->getUniqueId(), identity.certPem, identity.keyPem, host->activeHttpsPort);
+    QNetworkReply* reply =
+        m_Http->getServerInfoAsyncHttps(addr, im->getUniqueId(), identity.certPem, identity.keyPem,
+                                        host->serverCertPem, host->activeHttpsPort);
 
     auto answered = std::make_shared<bool>(false);
     auto answer = [answered, cb](bool ok, const BackendError& e, int appId) {
@@ -491,7 +499,7 @@ void GameStreamBackend::runningApp(const QString& seatId, BackendIntCallback cb)
         if (reply->error() != QNetworkReply::NoError) {
             answer(false,
                    BackendError::make(
-                       transportErrorKind(reply->error()), reply->errorString(),
+                       replyErrorKind(reply), reply->errorString(),
                        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()),
                    0);
         } else {

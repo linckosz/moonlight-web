@@ -75,11 +75,13 @@ public:
     QNetworkReply* getServerInfoAsyncHttps(const NvAddress& address, const QString& uniqueId,
                                            const QByteArray& clientCertPem,
                                            const QByteArray& clientKeyPem,
+                                           const QByteArray& serverCertPem,
                                            quint16 httpsPort = MW_HTTPS_PORT);
 
     // App list (HTTPS, requires client cert, async)
     QNetworkReply* getAppListAsync(const NvAddress& address, quint16 httpsPort,
-                                   const QByteArray& clientCertPem, const QByteArray& clientKeyPem);
+                                   const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
+                                   const QByteArray& serverCertPem);
 
     // Launch / quit app (HTTPS, requires client cert, async)
     // timeoutMs 0 → LAUNCH_TIMEOUT_MS. A caller that is spending a shared
@@ -88,7 +90,8 @@ public:
                                   const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                   int width, int height, int fps, int bitrate,
                                   const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
-                                  int hdrMode = 0, int localAudioPlayMode = 0, int timeoutMs = 0);
+                                  const QByteArray& serverCertPem, int hdrMode = 0,
+                                  int localAudioPlayMode = 0, int timeoutMs = 0);
 
     // Resume an existing session for this uniqueId (reconnect to our own
     // orphaned session without relaunching the app). Keyed by uniqueId so it
@@ -96,12 +99,23 @@ public:
     QNetworkReply* resumeAppAsync(const NvAddress& address, quint16 httpsPort,
                                   const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                   const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
-                                  int localAudioPlayMode = 0, int timeoutMs = 0);
+                                  const QByteArray& serverCertPem, int localAudioPlayMode = 0,
+                                  int timeoutMs = 0);
 
     // uniqueId empty → falls back to the shared Moonlight unique ID.
     QNetworkReply* quitAppAsync(const NvAddress& address, quint16 httpsPort,
                                 const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
+                                const QByteArray& serverCertPem,
                                 const QString& uniqueId = QString());
+
+    // Every HTTPS call to a host goes through this: once the TLS handshake is
+    // done and before the request leaves, the machine must have shown the
+    // certificate the host was paired with, or the reply is aborted. A host with
+    // none on record (not paired yet) has nothing to compare.
+    static void requireServerCert(QNetworkReply* reply, const QByteArray& serverCertPem);
+    // Whether a reply ended that way, which says nothing about the pairing: it is
+    // never a reason to forget the certificate on record.
+    static bool serverCertRefused(const QNetworkReply* reply);
 
     // Closes the request's connection as soon as its reply is done. Qt keeps a
     // finished socket pooled ~120s for reuse, whatever "Connection: close" the

@@ -198,6 +198,7 @@ void ComputerManager::registerStreamBackends()
             NvComputer* host = findHostByUuid(uuid);
             if (!host) return;
             host->serverCertPem = serverCertPem;
+            host->certificateChanged = false;
             host->pairState = NvComputer::PS_PAIRED;
             host->state = NvComputer::CS_ONLINE;
             saveHosts();
@@ -571,8 +572,9 @@ void ComputerManager::onPollTick()
                                      .arg(pairAddr.address())
                                      .arg(httpsPort)
                                      .arg(host->name));
-                    QNetworkReply* reply = m_Http->getAppListAsync(
-                        pairAddr, httpsPort, im->getCertificate(), im->getPrivateKey());
+                    QNetworkReply* reply =
+                        m_Http->getAppListAsync(pairAddr, httpsPort, im->getCertificate(),
+                                                im->getPrivateKey(), host->serverCertPem);
                     reply->setProperty("mwHostUuid", uuid);
                     connect(reply, &QNetworkReply::finished, this,
                             &ComputerManager::onPairCheckFinished);
@@ -1518,6 +1520,7 @@ void ComputerManager::startPairingChain(const QString& uuid)
                 NvComputer* host = findHostByUuid(uuid);
                 if (host) {
                     host->serverCertPem = result.serverCertPem;
+                    host->certificateChanged = false;
                     host->pairState = NvComputer::PS_PAIRED;
                     host->state = NvComputer::CS_ONLINE;
                     saveHosts();
@@ -2022,6 +2025,16 @@ void ComputerManager::onPairCheckFinished()
 
     bool pairLost = false;
 
+    // Another machine's certificate says nothing about the pairing: the one on
+    // record stays. Only a machine that showed it can say the pairing is gone.
+    const bool refused = NvHTTP::serverCertRefused(reply);
+    if (refused || reply->error() == QNetworkReply::NoError) {
+        if (host->certificateChanged != refused) {
+            host->certificateChanged = refused;
+            emit hostsChanged();
+        }
+    }
+
     if (reply->error() == QNetworkReply::NoError) {
         QString xml = QString::fromUtf8(reply->readAll());
         try {
@@ -2201,6 +2214,7 @@ void ComputerManager::startBoxArtFetch(const QString& uuid, int appId)
     artReq.setSslConfiguration(sslConfig);
 
     QNetworkReply* artReply = m_Nam->get(artReq);
+    NvHTTP::requireServerCert(artReply, host->serverCertPem);
 
     QTimer::singleShot(5000, artReply, [artReply]() {
         if (!artReply->isFinished()) artReply->abort();
@@ -2380,6 +2394,20 @@ void ComputerManager::handleGetAppList(const QString& uuid, const QString& devic
                 case BackendError::NoAddress:
                     respond(HttpResponse::json(
                         {{"status", "error"}, {"message", "Host has no reachable address"}}, 400));
+                    return;
+
+                case BackendError::CertificateChanged:
+                    if (!host->certificateChanged) {
+                        host->certificateChanged = true;
+                        emit hostsChanged();
+                    }
+                    respond(HttpResponse::json(
+                        {{"status", "error"},
+                         {"code", "certificate_changed"},
+                         {"message", "This host is not showing the certificate it was paired "
+                                     "with. If its software was reinstalled, remove the host "
+                                     "and add it again."}},
+                        409));
                     return;
 
                 case BackendError::Timeout:

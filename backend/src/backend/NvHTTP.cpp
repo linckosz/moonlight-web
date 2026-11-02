@@ -18,6 +18,9 @@
 #include "NvHTTP.h"
 
 #include <QDebug>
+#include "backend/HostCertCheck.h"
+#include "common/Logger.h"
+
 #include <QSslConfiguration>
 #include <QSslCertificate>
 #include <QSslError>
@@ -55,6 +58,10 @@ QUrl NvHTTP::buildUrl(const NvAddress& address, const QString& command, const QS
     return url;
 }
 
+namespace {
+constexpr const char* kServerCertRefused = "mwServerCertRefused";
+} // namespace
+
 QNetworkReply* NvHTTP::getServerInfoAsync(const NvAddress& address, const QString& uniqueId)
 {
     QUrl url = buildUrl(address, "serverinfo", uniqueId);
@@ -72,7 +79,8 @@ QNetworkReply* NvHTTP::getServerInfoAsync(const NvAddress& address, const QStrin
 
 QNetworkReply* NvHTTP::getServerInfoAsyncHttps(const NvAddress& address, const QString& uniqueId,
                                                const QByteArray& clientCertPem,
-                                               const QByteArray& clientKeyPem, quint16 httpsPort)
+                                               const QByteArray& clientKeyPem,
+                                               const QByteArray& serverCertPem, quint16 httpsPort)
 {
     // Build URL as string to avoid any QUrl encoding quirks
     QString urlStr = QString("https://%1:%2/serverinfo?uniqueid=%3&uuid=%4")
@@ -96,7 +104,27 @@ QNetworkReply* NvHTTP::getServerInfoAsyncHttps(const NvAddress& address, const Q
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(sslConfig);
 
-    return m_Nam->get(req);
+    QNetworkReply* reply = m_Nam->get(req);
+    requireServerCert(reply, serverCertPem);
+    return reply;
+}
+
+void NvHTTP::requireServerCert(QNetworkReply* reply, const QByteArray& serverCertPem)
+{
+    if (serverCertPem.isEmpty()) return;
+    QObject::connect(reply, &QNetworkReply::encrypted, reply, [reply, serverCertPem]() {
+        const QSslCertificate shown = reply->sslConfiguration().peerCertificate();
+        if (HostCertCheck::sameCertificate(serverCertPem, shown.toPem())) return;
+        Logger::warning(QStringLiteral("Refused %1: not the certificate this host was paired with")
+                            .arg(reply->url().authority()));
+        reply->setProperty(kServerCertRefused, true);
+        reply->abort();
+    });
+}
+
+bool NvHTTP::serverCertRefused(const QNetworkReply* reply)
+{
+    return reply->property(kServerCertRefused).toBool();
 }
 
 // --- Static XML helpers ----------------------------------------------------
@@ -193,7 +221,8 @@ int NvHTTP::getCurrentGame(const QString& serverInfo)
 
 QNetworkReply* NvHTTP::getAppListAsync(const NvAddress& address, quint16 httpsPort,
                                        const QByteArray& clientCertPem,
-                                       const QByteArray& clientKeyPem)
+                                       const QByteArray& clientKeyPem,
+                                       const QByteArray& serverCertPem)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QUrl url(QString("https://%1:%2/applist?uniqueid=%3&uuid=%4")
@@ -217,7 +246,9 @@ QNetworkReply* NvHTTP::getAppListAsync(const NvAddress& address, quint16 httpsPo
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(sslConfig);
 
-    return m_Nam->get(req);
+    QNetworkReply* reply = m_Nam->get(req);
+    requireServerCert(reply, serverCertPem);
+    return reply;
 }
 
 QVector<NvApp> NvHTTP::parseAppList(const QString& xml)
@@ -264,7 +295,8 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
                                       const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                       int width, int height, int fps, int bitrate,
                                       const QByteArray& clientCertPem,
-                                      const QByteArray& clientKeyPem, int hdrMode,
+                                      const QByteArray& clientKeyPem,
+                                      const QByteArray& serverCertPem, int hdrMode,
                                       int localAudioPlayMode, int timeoutMs)
 {
     Q_UNUSED(bitrate) // sent via RTSP ANNOUNCE, not /launch
@@ -300,15 +332,18 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(sslConfig);
 
-    // SSL errors are expected (Sunshine self-signed cert) and ignored via
-    // VerifyNone above; no handler needed.
-    return m_Nam->get(req);
+    // The host's certificate is self-signed, so the chain says nothing (VerifyNone):
+    // it is compared with the one on record instead, before rikey leaves.
+    QNetworkReply* reply = m_Nam->get(req);
+    requireServerCert(reply, serverCertPem);
+    return reply;
 }
 
 QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPort,
                                       const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                       const QByteArray& clientCertPem,
-                                      const QByteArray& clientKeyPem, int localAudioPlayMode,
+                                      const QByteArray& clientKeyPem,
+                                      const QByteArray& serverCertPem, int localAudioPlayMode,
                                       int timeoutMs)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -339,12 +374,14 @@ QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPor
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(sslConfig);
 
-    return m_Nam->get(req);
+    QNetworkReply* reply = m_Nam->get(req);
+    requireServerCert(reply, serverCertPem);
+    return reply;
 }
 
 QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
                                     const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
-                                    const QString& uniqueId)
+                                    const QByteArray& serverCertPem, const QString& uniqueId)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString uid = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
@@ -374,7 +411,9 @@ QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(sslConfig);
 
-    return m_Nam->get(req);
+    QNetworkReply* reply = m_Nam->get(req);
+    requireServerCert(reply, serverCertPem);
+    return reply;
 }
 
 void NvHTTP::closeWhenDone(QNetworkRequest& req)

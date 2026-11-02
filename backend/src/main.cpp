@@ -2676,7 +2676,7 @@ int main(int argc, char* argv[])
                 auto* identity = IdentityManager::get();
                 auto* quitReply = computerManager.http()->quitAppAsync(
                     host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                    identity->getPrivateKey(), g_ActiveClientUniqueId);
+                    identity->getPrivateKey(), host->serverCertPem, g_ActiveClientUniqueId);
                 QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                  &QNetworkReply::deleteLater);
             }
@@ -3662,7 +3662,8 @@ int main(int argc, char* argv[])
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     host->activeAddress, host->activeHttpsPort,
-                                    identity->getCertificate(), identity->getPrivateKey(), quitUid);
+                                    identity->getCertificate(), identity->getPrivateKey(),
+                                    host->serverCertPem, quitUid);
                                 QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                                  &QNetworkReply::deleteLater);
                             }
@@ -3704,7 +3705,8 @@ int main(int argc, char* argv[])
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     host->activeAddress, host->activeHttpsPort,
-                                    identity->getCertificate(), identity->getPrivateKey(), quitUid);
+                                    identity->getCertificate(), identity->getPrivateKey(),
+                                    host->serverCertPem, quitUid);
                                 QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                                  &QNetworkReply::deleteLater);
                             }
@@ -3749,7 +3751,8 @@ int main(int argc, char* argv[])
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     host->activeAddress, host->activeHttpsPort,
-                                    identity->getCertificate(), identity->getPrivateKey(), quitUid);
+                                    identity->getCertificate(), identity->getPrivateKey(),
+                                    host->serverCertPem, quitUid);
                                 QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                                  &QNetworkReply::deleteLater);
                             }
@@ -4374,7 +4377,8 @@ int main(int argc, char* argv[])
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     h->activeAddress, h->activeHttpsPort,
-                                    identity->getCertificate(), identity->getPrivateKey(), uid);
+                                    identity->getCertificate(), identity->getPrivateKey(),
+                                    h->serverCertPem, uid);
                                 // Report the outcome. This /cancel used to be
                                 // pure fire-and-forget, so a refused or failed
                                 // one left Sunshine holding the app with nothing
@@ -5003,7 +5007,7 @@ int main(int argc, char* argv[])
             auto* identity = IdentityManager::get();
             QNetworkReply* reply = computerManager.http()->quitAppAsync(
                 host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                identity->getPrivateKey(), quitUniqueId);
+                identity->getPrivateKey(), host->serverCertPem, quitUniqueId);
             qInfo() << "[quit] quitAppAsync reply=" << reply;
 
             // Wait for quit to complete, then respond
@@ -5162,7 +5166,7 @@ int main(int argc, char* argv[])
                 const QString uid = cancelQueue.at(idx++);
                 auto* reply = computerManager.http()->quitAppAsync(
                     host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                    identity->getPrivateKey(), uid);
+                    identity->getPrivateKey(), host->serverCertPem, uid);
                 QObject::connect(reply, &QNetworkReply::finished, reply, [reply, sendNext]() {
                     reply->deleteLater();
                     (*sendNext)();
@@ -5417,7 +5421,7 @@ int main(int argc, char* argv[])
                              auto* identity = IdentityManager::get();
                              auto* quitReply = computerManager.http()->quitAppAsync(
                                  h->activeAddress, h->activeHttpsPort, identity->getCertificate(),
-                                 identity->getPrivateKey(), uid);
+                                 identity->getPrivateKey(), h->serverCertPem, uid);
                              QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
                                               &QNetworkReply::deleteLater);
                          });

@@ -152,8 +152,11 @@ struct BackendError
     enum Kind
     {
         None,
-        NotFound,    // no such host/seat/app
-        NotPaired,   // upstream rejected our client cert
+        NotFound,  // no such host/seat/app
+        NotPaired, // upstream rejected our client cert
+        // The machine did not show the certificate on record, so nothing was sent.
+        // Says nothing about the pairing: never a reason to forget that certificate.
+        CertificateChanged,
         NoAddress,   // nothing to dial (host known, but no usable address)
         Unreachable, // transport failure while dialing
         Timeout,

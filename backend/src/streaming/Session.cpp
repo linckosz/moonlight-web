@@ -532,6 +532,20 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         }
         const BackendError& refusal = m_LaunchRefusal && m_ResumeAttempted ? *m_LaunchRefusal : err;
 
+        if (refusal.kind == BackendError::CertificateChanged) {
+            QJsonObject errObj;
+            errObj["error"] = QString("\"%1\" is not showing the certificate it was paired with, "
+                                      "so nothing was sent to it. If its software was reinstalled, "
+                                      "remove the host and add it again.")
+                                  .arg(m_Host->name);
+            errObj["code"] = QStringLiteral("certificate_changed");
+            errObj["status"] = 409;
+            m_Respond(HttpResponse::json(errObj, 409));
+            emit sessionFailed(refusal.message);
+            deleteLater();
+            return;
+        }
+
         // Sunshine 503 = the host could not initialize video capture/encoding.
         // Almost always a display problem on the HOST: no display connected, or
         // the session is locked with the screen asleep — a blanked output stops

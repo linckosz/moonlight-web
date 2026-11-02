@@ -429,6 +429,7 @@ QJsonObject NvComputer::toJson() const
     // stored; the password only ever surfaces as a boolean.
     obj["backendPairUser"] = backendPairUser;
     obj["backendPairConfigured"] = !backendPairPassword.isEmpty();
+    obj["certificateChanged"] = certificateChanged;
 
     // A MultiSeat control API answered on this host. The UI offers its setup
     // only when this is true, which is how a plain Sunshine card stays plain

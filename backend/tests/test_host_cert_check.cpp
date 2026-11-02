@@ -8,10 +8,13 @@
 
 #include "backend/HostCertCheck.h"
 #include "backend/NvComputer.h"
+#include "backend/NvHTTP.h"
 
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QHostAddress>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QSslCertificate>
 #include <QSslConfiguration>
 #include <QSslKey>
@@ -96,6 +99,54 @@ std::optional<bool> ask(quint16 port, const QByteArray& expected, const Identity
     QTimer::singleShot(timeoutMs + 3000, &loop, &QEventLoop::quit);
     loop.exec();
     return answer;
+}
+
+/// What reaches a host's HTTPS port when a launch is sent to it, and how the
+/// reply ends. The key must be on the wire only for the host's own certificate.
+struct LaunchSeen
+{
+    QByteArray received;
+    bool refused = false;
+    QNetworkReply::NetworkError error = QNetworkReply::NoError;
+};
+
+LaunchSeen launchAt(const Identity& shown, const QByteArray& onRecord, const Identity& client)
+{
+    QSslServer server;
+    listen(server, shown);
+
+    LaunchSeen seen;
+    QObject::connect(&server, &QSslServer::pendingConnectionAvailable, &server, [&]() {
+        auto* peer = qobject_cast<QSslSocket*>(server.nextPendingConnection());
+        if (!peer) return;
+        QObject::connect(peer, &QIODevice::readyRead, &server, [&seen, peer]() {
+            seen.received += peer->readAll();
+            if (seen.received.contains("\r\n\r\n"))
+                peer->write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        });
+    });
+
+    QNetworkAccessManager nam;
+    NvHTTP http(&nam);
+    QNetworkReply* reply =
+        http.launchAppAsync(NvAddress(QStringLiteral("127.0.0.1"), 47989), server.serverPort(), 1,
+                            QStringLiteral("id"), QByteArray::fromHex("c0ffee"), 7, 1280, 720, 60,
+                            0, client.certPem, client.keyPem, onRecord);
+
+    QEventLoop loop;
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    QTimer::singleShot(8000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    // Long enough for anything sent before the abort to arrive.
+    QEventLoop settle;
+    QTimer::singleShot(500, &settle, &QEventLoop::quit);
+    settle.exec();
+
+    seen.refused = NvHTTP::serverCertRefused(reply);
+    seen.error = reply->error();
+    reply->deleteLater();
+    return seen;
 }
 
 const char* kServerInfo = "<root status_code=\"200\"><hostname>Tower</hostname>"
@@ -190,6 +241,29 @@ void run_host_cert_check_tests()
         const quint16 port = closed.serverPort();
         closed.close();
         CHECK(ask(port, host.certPem, client) == std::optional<bool>(false));
+    }
+
+    // A launch: the key goes to the host's own certificate, and to nothing else.
+    {
+        const LaunchSeen good = launchAt(host, host.certPem, client);
+        CHECK(!good.refused);
+        CHECK(good.error == QNetworkReply::NoError);
+        CHECK(good.received.contains("rikey=c0ffee"));
+
+        const LaunchSeen other = launchAt(impostor, host.certPem, client);
+        CHECK(other.refused);
+        CHECK(other.error != QNetworkReply::NoError);
+        CHECK(other.received.isEmpty());
+
+        // Same PEM, written differently: not a different certificate.
+        QByteArray rewritten = host.certPem;
+        rewritten.replace("\n", "\r\n");
+        CHECK(!launchAt(host, rewritten, client).refused);
+
+        // Nothing on record: nothing to compare, nothing refused.
+        const LaunchSeen unpaired = launchAt(impostor, {}, client);
+        CHECK(!unpaired.refused);
+        CHECK(unpaired.received.contains("rikey=c0ffee"));
     }
 
     // Nothing is reported to a caller that has gone.
