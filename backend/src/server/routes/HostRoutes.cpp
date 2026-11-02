@@ -148,8 +148,9 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(result, status);
     });
 
-    // Seat administration. One set of routes for every backend, because they go
-    // through IStreamBackend: a "seat" is whatever the provider says it is.
+    // Seats. One set of routes for every backend, because they go through
+    // IStreamBackend: a "seat" is whatever the provider says it is. Reading them
+    // is any session's; changing them is in registerHostBackendWrites.
     server.router()->getAsync("/api/hosts/:id/seats",
                               [&computerManager](const HttpRequest& req, ResponseCallback respond) {
                                   QString uuid = req.pathParams.value("id");
@@ -158,45 +159,6 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
                                       return;
                                   }
                                   computerManager.handleListSeats(uuid, std::move(respond));
-                              });
-
-    server.router()->postAsync(
-        "/api/hosts/:id/seats",
-        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-            QString uuid = req.pathParams.value("id");
-            if (uuid.isEmpty()) {
-                respond(HttpResponse::error(400, "Missing host ID"));
-                return;
-            }
-            // The body is the provider's own provisioning payload, passed
-            // through untouched: MultiSeat's SeatRequest grows upstream and
-            // mirroring it here would silently drop new fields.
-            computerManager.handleProvisionSeat(uuid, QJsonDocument::fromJson(req.body).object(),
-                                                std::move(respond));
-        });
-
-    server.router()->delAsync("/api/hosts/:id/seats/:seatId",
-                              [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-                                  QString uuid = req.pathParams.value("id");
-                                  QString seatId = req.pathParams.value("seatId");
-                                  if (uuid.isEmpty() || seatId.isEmpty()) {
-                                      respond(HttpResponse::error(400, "Missing host or seat ID"));
-                                      return;
-                                  }
-                                  computerManager.handleTeardownSeat(uuid, seatId,
-                                                                     std::move(respond));
-                              });
-
-    server.router()->delAsync("/api/hosts/:id/seats/:seatId/owner",
-                              [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-                                  QString uuid = req.pathParams.value("id");
-                                  QString seatId = req.pathParams.value("seatId");
-                                  if (uuid.isEmpty() || seatId.isEmpty()) {
-                                      respond(HttpResponse::error(400, "Missing host or seat ID"));
-                                      return;
-                                  }
-                                  computerManager.handleReleaseSeatOwner(uuid, seatId,
-                                                                         std::move(respond));
                               });
 
     server.router()->getAsync("/api/hosts/:id/profiles",

@@ -25,14 +25,14 @@
 
 #include <utility>
 
-/// Setting or clearing a host's backend, the administrator's alone
-/// (HttpRequest::isLocal). A template so the tests can drive these very routes
-/// without a ComputerManager.
+/// Setting or clearing a host's backend and changing its seats, the
+/// administrator's alone (HttpRequest::isLocal). A template so the tests can
+/// drive these very routes without a ComputerManager.
 template <typename Manager> void registerHostBackendWrites(RestRouter& router, Manager& manager)
 {
     static const auto refused = []() {
-        return HttpResponse::error(403,
-                                   "A host's backend can only be changed by its administrator");
+        return HttpResponse::error(
+            403, "A host's backend and seats can only be changed by its administrator");
     };
 
     router.postAsync(
@@ -75,4 +75,52 @@ template <typename Manager> void registerHostBackendWrites(RestRouter& router, M
         auto [status, result] = manager.handleClearBackend(uuid);
         return HttpResponse::json(result, status);
     });
+
+    router.postAsync("/api/hosts/:id/seats",
+                     [&manager](const HttpRequest& req, ResponseCallback respond) {
+                         if (!req.isLocal) {
+                             respond(refused());
+                             return;
+                         }
+                         QString uuid = req.pathParams.value("id");
+                         if (uuid.isEmpty()) {
+                             respond(HttpResponse::error(400, "Missing host ID"));
+                             return;
+                         }
+                         // The body is the provider's own provisioning payload, passed
+                         // through untouched: MultiSeat's SeatRequest grows upstream and
+                         // mirroring it here would silently drop new fields.
+                         manager.handleProvisionSeat(
+                             uuid, QJsonDocument::fromJson(req.body).object(), std::move(respond));
+                     });
+
+    router.delAsync("/api/hosts/:id/seats/:seatId",
+                    [&manager](const HttpRequest& req, ResponseCallback respond) {
+                        if (!req.isLocal) {
+                            respond(refused());
+                            return;
+                        }
+                        QString uuid = req.pathParams.value("id");
+                        QString seatId = req.pathParams.value("seatId");
+                        if (uuid.isEmpty() || seatId.isEmpty()) {
+                            respond(HttpResponse::error(400, "Missing host or seat ID"));
+                            return;
+                        }
+                        manager.handleTeardownSeat(uuid, seatId, std::move(respond));
+                    });
+
+    router.delAsync("/api/hosts/:id/seats/:seatId/owner",
+                    [&manager](const HttpRequest& req, ResponseCallback respond) {
+                        if (!req.isLocal) {
+                            respond(refused());
+                            return;
+                        }
+                        QString uuid = req.pathParams.value("id");
+                        QString seatId = req.pathParams.value("seatId");
+                        if (uuid.isEmpty() || seatId.isEmpty()) {
+                            respond(HttpResponse::error(400, "Missing host or seat ID"));
+                            return;
+                        }
+                        manager.handleReleaseSeatOwner(uuid, seatId, std::move(respond));
+                    });
 }
