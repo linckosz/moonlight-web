@@ -29,6 +29,7 @@ void run_request_guard_tests();
 void run_api_csrf_tests();
 void run_session_pool_tests();
 void run_loopback_key_tests();
+void run_host_backend_writes_tests();
 void run_port_fallback_tests();
 void run_host_persistence_tests();
 void run_rendezvous_id_tests();
@@ -106,6 +107,7 @@ int main(int argc, char** argv)
     run_api_csrf_tests();
     run_session_pool_tests();
     run_loopback_key_tests();
+    run_host_backend_writes_tests();
     run_port_fallback_tests();
     run_host_persistence_tests();
     run_rendezvous_id_tests();

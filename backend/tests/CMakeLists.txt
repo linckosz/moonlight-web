@@ -70,6 +70,7 @@ add_executable(run_tests
     test_api_csrf.cpp
     test_session_pool.cpp
     test_loopback_key.cpp
+    test_host_backend_writes.cpp
     test_port_fallback.cpp
     test_host_persistence.cpp
     test_rendezvous_id.cpp
