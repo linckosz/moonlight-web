@@ -36,10 +36,11 @@ and through HEVC at a stream's bit rate, and checked on 4 others. It holds the s
 surfaces: searches on those sizes did not move the best values in a way a term for the surface could follow.
 
 **Cost** (GPU timestamps, from 720p and from 1080p to 1440p, a game picture and a text chart, 02/11/2026): 0.06 to 0.08 ms per
-frame on an RTX 5060 Ti, and 1.1 to 1.5 ms on the Ryzen 9 9900X's integrated Radeon. That is 47 % and 57 % less than v0.4.1
-on average, and 4.8 and 5.0 times less than FSR1 at its faster precision. An edge pixel takes three bilinear samples and
+frame on an RTX 5060 Ti, 1.1 to 1.5 ms on the Ryzen 9 9900X's integrated Radeon, and 0.24 to 0.37 ms on a Radeon 780M, where
+a bilinear draw alone takes 0.21 to 0.32 ms. That is 47 %, 57 % and 20 % less than v0.4.1 on average, and 4.8, 5.0 and 3.2
+times less than FSR1 at its faster precision. An edge pixel takes three bilinear samples and
 four texels, a flat one a sample and a texel. The law's low threshold sends most of a game picture to the edge path: 78
-to 97 % of the pixels, and 39 to 47 % of a text chart. Phones and the Radeon 780M are to be measured again.
+to 97 % of the pixels, and 39 to 47 % of a text chart. Phones are to be measured again.
 
 The design, the measurements against FSR1, SGSR1, NIS and the host's Lanczos, and every decision behind the defaults
 are in the lab journal, [`scripts/bench/scaler-lab/journal.md`](../scripts/bench/scaler-lab/journal.md), and the
@@ -52,7 +53,7 @@ a port of each beside MWSR. They spend their work in different places:
 
 - **FSR1** (AMD FidelityFX Super Resolution 1) runs two passes. EASU rebuilds each pixel from 12 input texels with a
   Lanczos-like kernel stretched along the local edge, then RCAS sharpens the whole picture. On the game picture at
-  ×1.33 it has the best VMAF NEG of the four. It costs 4.3 to 5.9 times what MWSR costs on the RTX 5060 Ti and the 9900X's iGPU, and its sharpening leaves
+  ×1.33 it has the best VMAF NEG of the four. It costs 4.3 to 5.9 times what MWSR costs on the RTX 5060 Ti and the 9900X's iGPU, 2.7 to 3.5 times on the Radeon 780M, and its sharpening leaves
   the local range on 14 % of the pixels: a light halo along strong edges.
 - **NIS** (NVIDIA Image Scaling) runs one pass over 6×6 texels: a filter bank chosen by the edge's direction, plus a
   sharpening of the luma. It is the sharpest of the four, which gives it the best VMAF NEG on text and the worst on the
@@ -60,11 +61,11 @@ a port of each beside MWSR. They spend their work in different places:
 - **SGSR1** (Snapdragon Game Super Resolution 1) runs one pass of 12 texels read in four gathers, skips the flat
   areas and finds edges on the green channel. On the game picture at ×2 it has the best VMAF NEG of the four, with a
   lighter halo than FSR1 (6.6 %). In half precision, as Qualcomm writes it, it held the best time on the two integrated GPUs until
-  MWSR's speed work; the Radeon 780M is still to be measured again.
+  MWSR's speed work.
 - **MWSR** runs one pass and decides per 2×2 quad: a flat quad moves its sample towards the nearest texel, an edge gets
   two more samples across it. It bounds every pixel by its four input texels, so nothing rings (under 0.01 % of the pixels).
   It has the best LPIPS of the four on both pictures, at both scales. Its VMAF NEG stays below FSR1's on the game
-  picture, and below NIS's and SGSR1's on text. It is the fastest of the four on the RTX 5060 Ti and the 9900X's iGPU, the
+  picture, and below NIS's and SGSR1's on text. It is the fastest of the four on all three GPUs, the
   only one that reduces and that reads the colour edges of a 4:4:4 stream, and with NIS the only one that runs on HDR without a tone map around it.
 
 **[Compare them on your own GPU](https://moonlightweb.top/mwsr/)**: the pictures below or your own, in SDR, HDR or
@@ -90,25 +91,25 @@ lab's text chart.*
 upscalers and image restoration: lower is closer. VMAF NEG is Netflix's VMAF without the credit plain VMAF gives to
 added sharpening, and judges a video stream's pictures: higher is closer. Overshoot: the share of pixels that leave the
 range of their four input texels by more than 2/255, which measures halos and ringing. Times: the game picture, each at
-its faster precision, each GPU's in one page; the Radeon 780M's are older, its MWSR from before the speed work.
+its faster precision, each GPU's in one page.
 
 | | LPIPS, game | LPIPS, text | VMAF NEG, game | VMAF NEG, text | Overshoot, game | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
 |---|---|---|---|---|---|---|---|---|
-| MWSR | 0.1239 | 0.0348 | 83.5 | 58.9 | 0 % | 0.063 ms | 1.29 ms | 0.267 ms (f16) |
-| FSR1 | 0.1401 | 0.0493 | 84.8 | 57.3 | 13.7 % | 0.322 ms | 6.31 ms (f16) | 0.707 ms (f16) |
-| NIS * | 0.1863 | 0.0414 | 70.5 | 62.2 | 42.6 % | 1.054 ms | 13.69 ms | 0.953 ms |
-| SGSR1 | 0.1838 | 0.0402 | 83.1 | 59.9 | 6.6 % | 0.123 ms | 2.97 ms (f16) | 0.216 ms (f16) |
-| Bilinear | 0.2665 | 0.0697 | 76.8 | 49.9 | 0 % | 0.042 ms | 0.453 ms | 0.110 ms |
+| MWSR | 0.1239 | 0.0348 | 83.5 | 58.9 | 0 % | 0.063 ms | 1.29 ms | 0.370 ms |
+| FSR1 | 0.1401 | 0.0493 | 84.8 | 57.3 | 13.7 % | 0.322 ms | 6.31 ms (f16) | 0.982 ms (f16) |
+| NIS * | 0.1863 | 0.0414 | 70.5 | 62.2 | 42.6 % | 1.054 ms | 13.69 ms | 1.49 ms |
+| SGSR1 | 0.1838 | 0.0402 | 83.1 | 59.9 | 6.6 % | 0.123 ms | 2.97 ms (f16) | 0.439 ms (f16) |
+| Bilinear | 0.2665 | 0.0697 | 76.8 | 49.9 | 0 % | 0.042 ms | 0.453 ms | 0.322 ms |
 
 **720p → 1440p**, the same columns:
 
 | | LPIPS, game | LPIPS, text | VMAF NEG, game | VMAF NEG, text | Overshoot, game | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
 |---|---|---|---|---|---|---|---|---|
-| MWSR | 0.3355 | 0.0879 | 69.9 | 25.1 | 0 % | 0.069 ms | 1.28 ms | 0.231 ms (f16) |
-| FSR1 | 0.3594 | 0.1032 | 70.7 | 24.6 | 2.9 % | 0.311 ms | 6.32 ms (f16) | 0.685 ms (f16) |
-| NIS * | 0.3714 | 0.0970 | 59.4 | 36.5 | 41.7 % | 0.842 ms | 13.02 ms | 0.886 ms |
-| SGSR1 | 0.3939 | 0.0984 | 71.1 | 36.5 | 6.3 % | 0.144 ms | 2.95 ms (f16) | 0.204 ms (f16) |
-| Bilinear | 0.4865 | 0.1658 | 58.4 | 15.1 | 0 % | 0.043 ms | 0.424 ms | 0.094 ms |
+| MWSR | 0.3355 | 0.0879 | 69.9 | 25.1 | 0 % | 0.069 ms | 1.28 ms | 0.275 ms |
+| FSR1 | 0.3594 | 0.1032 | 70.7 | 24.6 | 2.9 % | 0.311 ms | 6.32 ms (f16) | 0.897 ms (f16) |
+| NIS * | 0.3714 | 0.0970 | 59.4 | 36.5 | 41.7 % | 0.842 ms | 13.02 ms | 1.39 ms |
+| SGSR1 | 0.3939 | 0.0984 | 71.1 | 36.5 | 6.3 % | 0.144 ms | 2.95 ms (f16) | 0.382 ms (f16) |
+| Bilinear | 0.4865 | 0.1658 | 58.4 | 15.1 | 0 % | 0.043 ms | 0.424 ms | 0.248 ms |
 
 \* MoonlightWeb's per-fragment port of NIS. NVIDIA ships a compute shader with shared memory, which is faster: these
 times are those of the port, not of NIS.
@@ -136,17 +137,17 @@ What each one does:
 
 </details>
 
-**How it was measured** (the times and the scores on 02/11/2026, the Radeon 780M's times on 30/10/2026):
+**How it was measured** (the times and the scores on 02/11/2026):
 - **The pictures.** The native frame is a 4K screenshot of 0 A.D. reduced to 2560×1440, or the lab's text chart drawn
   at 2560×1440. The input is that frame reduced to 1920×1080 or 1280×720. Both reductions are Lanczos-3 in linear
   light. Each upscaler draws the input back at 2560×1440.
 - **The scores.** LPIPS and VMAF NEG (`vmaf_v0.6.1neg`, both pictures in 4:2:0 BT.709 limited range) against the
   native frame, on these pictures as they are: reduced, never encoded. The law was tuned on pictures that also went
   through a video encoder, where the order between the upscalers can differ.
-- **The times.** WebGPU in Chrome on Windows 11, and on Ubuntu for the Radeon 780M, with the input already in an
+- **The times.** WebGPU in Chrome on Windows 11, with the input already in an
   8-bit RGBA texture (no video decoding in it). GPU timestamps wrap batches of draws, every upscaler's in one page and
   interleaved, and the figure is the median per draw: on the RTX 5060 Ti, 6 rounds of 4 batches of 100 draws, twice; on the
-  9900X's iGPU, 3 rounds of 2 batches of 30; on the Radeon 780M, 3 rounds of 6 batches of 100. The RTX 5060 Ti ran at P0 throughout. The Ryzen 9 9900X's integrated Radeon
+  9900X's iGPU, 3 rounds of 2 batches of 30; on the Radeon 780M, 3 rounds of 6 batches of 100, twice. The RTX 5060 Ti ran at P0 throughout. The Ryzen 9 9900X's integrated Radeon
   (RDNA 2, 2 compute units) and the Radeon 780M (RDNA 3, 12 compute units) ran at their own clocks, which nothing
   fixed, so read their figures as ratios.
 - **The ports.** These are MoonlightWeb's ports, not the vendors' own builds:
@@ -155,9 +156,8 @@ What each one does:
   - NIS: a per-fragment transcription of NVScaler, SDK 1.0.3, with its filter tables, at sharpness 0.5.
   - SGSR1: a port of `sgsr1.h` (mode 1, edge threshold 6/255, edge sharpness 1.5), in 32-bit and in half precision.
   - MWSR: its defaults, in 32-bit and in 16-bit (`mwsr-up-f16.wgsl`).
-- **The precision.** Each upscaler is timed at its faster precision on each GPU. On the RTX and the 9900X's iGPU,
-  before any timing, each 16-bit text is held to its 32-bit one on that GPU: fewer than 0.05 % of the pixels differ
-  by more than 4/255. The Radeon 780M was timed without that check.
+- **The precision.** Each upscaler is timed at its faster precision on each GPU. Each 16-bit text is held to its
+  32-bit one on that GPU: fewer than 0.05 % of the pixels differ by more than 4/255.
 - **To run it again**: `scripts/bench/scaler-lab/cmp_lab.py` for the scores, and `scaler_lab.py`, its `cells=` cases,
   for the times (cells `mwsr`, `mwsr:half=1`, `fsr1`, `fsr1h`, `nis`, `sgsr-repo`, `sgsrh`, `tex-s1`).
   In a browser with WebGPU, on your own GPU: [moonlightweb.top/mwsr](https://moonlightweb.top/mwsr/), with the same

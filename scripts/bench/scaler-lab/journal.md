@@ -3206,5 +3206,15 @@ devient le plus rapide des quatre sur ces deux GPU. La RTX était à P0 d'un bou
 Le README, la page et le graphique prennent ces temps. La colonne de la Radeon 780M reste celle du 30/10 et est dite ancienne : l'UM790Pro sert au banc de
 sécurité. Les scores (`cmp_lab.py`, 75 cas) sont refaits sur ce texte, les figures par `mwsr_charts.py`, et la colonne MWSR des zooms est redessinée sur la RTX.
 
-**Reste.** La 780M, les téléphones (Bruno lit le temps sur le comparateur en ligne, après le signal de 59), la Mi TV ; puis le retrait des anciens chemins et
+**La Radeon 780M (02/11, 12:44-12:48, à la demande de Bruno).** Un Chrome lancé par SSH tourne en session 0 : il voit la carte, mais `requestAdapter` rend null,
+comme sur mw-arm le 22/10. Sur l'accord de Bruno, une tâche `Interactive` l'a lancé dans la session console de Minis, sans fenêtre, muet, sur un profil à part, et
+WebGPU y répond. Six images, deux passes de 3 tours de 6 lots de 100 dessins, `lab-time` identique au dépôt, 2,4 % d'écart entre passes au pire, aucun autre programme
+au-dessus de 2 % du moteur 3D. Contre la v0.4.1 : −20,3 % (−14,5 à −31,5), avec les zones −18,0 %. L'écart avec la RTX et l'iGPU vient du plancher : une bilinéaire seule
+y prend 0,21 à 0,32 ms, et ce que le shader ajoute au-dessus baisse de 72 % (60 à 90), contre 68 % et 66 %. FSR1 à sa meilleure précision 3,21 fois MWSR (2,65 à 3,54),
+SGSR1 1,21 fois (1,08 à 1,39), NIS 4,68 fois (4,03 à 5,06) : MWSR est le plus rapide des quatre sur les six images. Le chemin à une lecture contre celui à 5 : −6,4 %
+(−0,7 à −10,9). La f16 n'apporte rien : +1,0 % (−0,2 à +1,6). Chaque texte 16 bits est tenu à son texte 32 bits sur cette carte : MWSR à 1/255 au plus, FSR1 et SGSR1 à
+0,045 % de pixels au pire au-delà de 4/255. La colonne du 30/10 venait d'Ubuntu, et ses valeurs ne se comparent pas à celles-ci : la bilinéaire y valait 0,110 ms, contre
+0,322 ms ici. Le README, la page et le graphique prennent cette colonne, et la réserve sur la précision de cette carte disparaît.
+
+**Reste.** Les téléphones (Bruno lit le temps sur le comparateur en ligne, après le signal de 59), la Mi TV ; puis le retrait des anciens chemins et
 la décision sur la f16.
