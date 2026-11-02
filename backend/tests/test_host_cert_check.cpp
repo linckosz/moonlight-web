@@ -130,6 +130,22 @@ void run_host_cert_check_tests()
     const NvAddress moved(QStringLiteral("192.0.2.77"), 47989);
     NvComputer tower(QString::fromLatin1(kServerInfo), current);
     CHECK(!tower.movesOnlyWithProof(moved)); // not paired: nothing to compare
+
+    // Not paired, but a backend's secrets would follow it: no proof to offer.
+    tower.backendApiToken = QStringLiteral("t");
+    CHECK(tower.movesOnlyWithProof(moved));
+    CHECK(!tower.movesOnlyWithProof(current));
+    tower.backendApiToken.clear();
+    tower.backendPairPassword = QStringLiteral("p");
+    CHECK(tower.movesOnlyWithProof(moved));
+    tower.backendPairPassword.clear();
+    // A user name alone is no secret, and an address not yet known has no rival.
+    tower.backendPairUser = QStringLiteral("u");
+    CHECK(!tower.movesOnlyWithProof(moved));
+    NvComputer unplaced;
+    unplaced.backendApiToken = QStringLiteral("t");
+    CHECK(!unplaced.movesOnlyWithProof(moved));
+
     tower.serverCertPem = host.certPem;
     CHECK(tower.movesOnlyWithProof(moved));
     CHECK(!tower.movesOnlyWithProof(current));

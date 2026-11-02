@@ -330,7 +330,10 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
 
 bool NvComputer::movesOnlyWithProof(const NvAddress& address) const
 {
-    return !serverCertPem.isEmpty() && address != activeAddress;
+    if (address == activeAddress) return false;
+    if (!serverCertPem.isEmpty()) return true;
+    return !activeAddress.isNull() &&
+           (!backendApiToken.isEmpty() || !backendPairPassword.isEmpty());
 }
 
 // --- Local-machine detection ------------------------------------------------

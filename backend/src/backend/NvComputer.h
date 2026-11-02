@@ -68,7 +68,9 @@ public:
 
     // Whether an answer from this address may change this host only once the
     // machine there has shown the certificate it was paired with. The address in
-    // use needs no proof, and nothing can be compared before a host is paired.
+    // use needs no proof. A host never paired has nothing to compare, and moves
+    // freely, unless it holds a backend's secrets: then it has no proof to offer
+    // and stays.
     bool movesOnlyWithProof(const NvAddress& address) const;
 
     // True when this host resolves to the machine MoonlightWeb runs on (loopback

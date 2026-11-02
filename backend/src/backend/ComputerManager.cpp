@@ -1003,6 +1003,11 @@ void ComputerManager::updateHostOnProof(const NvComputer& answer, const QString&
 {
     const NvComputer* host = findHostByUuid(answer.uuid);
     if (!host || m_AddressProofs.contains(answer.uuid)) return;
+    if (host->serverCertPem.isEmpty()) {
+        Logger::warning(QString("%1 stays where it is: it has no certificate for %2 to show")
+                            .arg(host->name, addr.toString()));
+        return;
+    }
     m_AddressProofs.insert(answer.uuid);
 
     IdentityManager* identity = IdentityManager::get();
