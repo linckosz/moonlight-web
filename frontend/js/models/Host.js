@@ -93,6 +93,11 @@ export class Host {
         // name the product, and the product names itself once the address is
         // given.
         this.mayHaveControlApi = data.mayHaveControlApi === true;
+
+        // The machine at this host's address did not show the certificate of the
+        // pairing, so the server sends it nothing. Not a verdict on the pairing:
+        // the server's next check clears it once the right machine answers.
+        this.certificateChanged = data.certificateChanged === true;
     }
 
     get isOnline() {
@@ -105,7 +110,7 @@ export class Host {
         return this.isOnline && !this.isPaired;
     }
     get isAvailable() {
-        return this.isOnline && this.isPaired;
+        return this.isOnline && this.isPaired && !this.certificateChanged;
     }
 
     // The native host with nothing attached AND no "MoonlightWeb Virtual
@@ -179,6 +184,7 @@ export class Host {
         if (this.needsVirtualDisplay) return t('hosts.statusNoDisplay');
         if (this.isUnavailable) return t('hosts.statusUnavailable');
         if (!this.isOnline) return t('hosts.statusOffline');
+        if (this.certificateChanged) return t('hosts.statusCertificateChanged');
         if (this.isPaired) return t('hosts.statusReady');
         return t('hosts.statusNotPaired');
     }
@@ -187,6 +193,7 @@ export class Host {
         if (this.needsVirtualDisplay) return 'nodisplay';
         if (this.isUnavailable) return 'unavailable';
         if (!this.isOnline) return 'offline';
+        if (this.certificateChanged) return 'locked';
         if (this.isPaired) return 'ready';
         return 'locked';
     }
@@ -195,6 +202,7 @@ export class Host {
         if (this.needsVirtualDisplay) return Icons.unavailable; // no screen to stream
         if (this.isUnavailable) return Icons.unavailable; // reachable, service down
         if (!this.isOnline) return Icons.power; // power off
+        if (this.certificateChanged) return Icons.lock; // nothing goes to it
         if (this.isPaired) return Icons.check; // checkmark
         return Icons.lock; // lock
     }

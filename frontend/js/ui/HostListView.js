@@ -917,6 +917,7 @@ export class HostListView {
             // The native host's display state: a screen appearing or leaving
             // must repaint the card from empty state to grid and back.
             JSON.stringify(host.nativeDisplay),
+            host.certificateChanged,
         ].join('|');
     }
 
@@ -1217,6 +1218,11 @@ export class HostListView {
                         }
                     </div>`;
         }
+        if (host.isOnline && host.certificateChanged) {
+            // Another machine answers at this address, and nothing is asked of
+            // it. "Remove", in the menu, is the way out this text names.
+            return `<div class="host-body-center host-offline-msg">${t('hosts.certificateChangedMessage')}</div>`;
+        }
         if (host.isAvailable) {
             // App grid filled asynchronously by _ensureAppsLoaded(). A Mac that
             // lost Accessibility still streams, but takes no input: said above
@@ -1263,6 +1269,7 @@ export class HostListView {
      * @property {Promise<AppsEntry>} [pending] fetch in flight
      * @property {string} [error]
      * @property {boolean} [sticky] the error is definitive — don't retry
+     * @property {boolean} [certificateChanged] the host showed another certificate
      */
 
     // Ensure the app grid for an available host is on screen, and current.
@@ -1377,6 +1384,8 @@ export class HostListView {
                 // answer forever, and the spinner below would never come down,
                 // so show what it said instead.
                 console.error('[MW] Failed to load app list:', err);
+                if (err.responseBody?.code === 'certificate_changed')
+                    return /** @type {AppsEntry} */ ({ certificateChanged: true });
                 const verdict = err.statusCode >= 400 && err.statusCode < 500;
                 return /** @type {AppsEntry} */ ({
                     error: err.message,
@@ -1385,6 +1394,18 @@ export class HostListView {
             })
             .then((result) => {
                 if (this._destroyed) return result;
+
+                // The card says this one itself, and nothing stays behind here:
+                // a sticky verdict would outlast it once the right machine is
+                // back, and the grid would never return without a reload.
+                if (result.certificateChanged) {
+                    delete this.appsByHost[uuid];
+                    const refused = this.hosts.find((h) => h.uuid === uuid);
+                    if (refused) refused.certificateChanged = true;
+                    this.renderList();
+                    return result;
+                }
+
                 const current = this.appsByHost[uuid];
                 const shown = current && current.apps ? current.apps : null;
 

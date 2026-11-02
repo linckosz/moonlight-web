@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { App } from '../js/models/App.js';
 import { Host } from '../js/models/Host.js';
+import { t } from '../js/i18n/i18n.js';
 
 describe('App model', () => {
     it('applies defaults for missing fields', () => {
@@ -81,6 +82,21 @@ describe('Host model', () => {
 
         const offline = new Host({ state: 'offline' });
         expect(offline.isOnline).toBe(false);
+    });
+
+    it('is not available while its certificate is not the one of the pairing', () => {
+        const refused = new Host({
+            state: 'online',
+            pairState: 'paired',
+            certificateChanged: true,
+        });
+        expect(refused.isAvailable).toBe(false);
+        expect(refused.isLocked).toBe(false);
+        expect(refused.statusClass).toBe('locked');
+        expect(refused.statusLabel).toBe(t('hosts.statusCertificateChanged'));
+        // Off the network it is simply offline: nothing answers to refuse.
+        const gone = new Host({ state: 'offline', pairState: 'paired', certificateChanged: true });
+        expect(gone.statusClass).toBe('offline');
     });
 
     // The MAC never reaches the browser — the backend sends wakeSupported, which

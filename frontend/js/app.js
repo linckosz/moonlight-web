@@ -212,6 +212,10 @@ function selfStreamWarnMuted() {
     }
 }
 
+// The server's word for a host that did not show the certificate of its pairing.
+const CERTIFICATE_CHANGED = 'certificate_changed';
+const isCertificateChanged = (err) => err?.responseBody?.code === CERTIFICATE_CHANGED;
+
 export const MoonlightApp = {
     // ── View instances persisted across overlays ─────────────────────────────
     state: 'loading',
@@ -2458,6 +2462,11 @@ export const MoonlightApp = {
                 this.transition('app_list');
                 return;
             }
+            if (isCertificateChanged(err)) {
+                this._sayCertificateChanged(host, app);
+                this.transition('app_list');
+                return;
+            }
             // The card may have been painted from the list this browser
             // remembered, and an app deleted in Sunshine since then fails here
             // like anything else — with a message that blames the wrong thing.
@@ -3815,6 +3824,16 @@ export const MoonlightApp = {
     },
 
     /**
+     * Said in the viewer's language, where the server's own answer is English.
+     * The list asked for here is what marks the host on the server, whose next
+     * answer keeps the card on the message for as long as it holds.
+     */
+    _sayCertificateChanged(host, app) {
+        Toast.error(t('hosts.certificateChangedMessage'));
+        if (this.hostListView) this.hostListView.confirmAppExists(host, app).catch(() => {});
+    },
+
+    /**
      * A transport failed to establish a connection. If there is a next entry in
      * the priority chain, relaunch with it (warning toast). Otherwise show a
      * final error and return to the apps view.
@@ -3847,6 +3866,15 @@ export const MoonlightApp = {
         if (reason === 'reconnect_refused') {
             console.warn('[MW] The host refused the restart after a crash — ending the stream');
             Toast.error(t('stream.streamDisconnected'));
+            this._endAfterFailedLaunch();
+            return;
+        }
+
+        // Another machine answers at this host's address: the server sent it
+        // nothing, and no retry or other transport changes who answers there.
+        if (reason === CERTIFICATE_CHANGED) {
+            console.error(`[MW] ${chain[cur] || '?'}: the host showed another certificate`);
+            this._sayCertificateChanged(this._lastStreamHost, this._lastStreamApp);
             this._endAfterFailedLaunch();
             return;
         }
@@ -4323,6 +4351,7 @@ export const MoonlightApp = {
             // The host would not take this stream back after its crash.
             if (reconnectOf && err && err.statusCode === 409 && err.message === 'reconnect_refused')
                 return 'reconnect_refused';
+            if (isCertificateChanged(err)) return CERTIFICATE_CHANGED;
             // The host never gave us a session — a timeout, a 502, a Sunshine
             // refusal. That is a verdict on the HOST, not on this transport, so
             // it must not be charged to the chain (see _onTransportFailed).
@@ -4428,6 +4457,7 @@ export const MoonlightApp = {
             result = await BackendClient.launchApp(host.uuid, app.id, settings);
         } catch (err) {
             this._standbyLaunching = false;
+            if (isCertificateChanged(err)) return this._onTransportFailed(CERTIFICATE_CHANGED);
             console.warn('[MW] Standby launch failed — legacy relaunch:', err);
             return this._relaunchTransport(relaunchIndex);
         }
