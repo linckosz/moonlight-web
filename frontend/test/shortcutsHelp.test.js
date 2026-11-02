@@ -38,6 +38,13 @@ describe('the keyboard rows', () => {
         const next = rows.find((r) => r[0] === 'stream.scDesktopNext');
 
         expect(quit).toEqual(['stream.scQuit', 'Ctrl', 'Option', 'Cmd', 'Q']);
+        expect(rows.find((r) => r[0] === 'stream.scMic')).toEqual([
+            'stream.scMic',
+            'Ctrl',
+            'Option',
+            'Cmd',
+            'P',
+        ]);
         expect(prev).toEqual(['stream.scDesktopPrev', 'Ctrl', 'Option', 'Cmd', '←']);
         expect(next).toEqual(['stream.scDesktopNext', 'Ctrl', 'Option', 'Cmd', '→']);
     });

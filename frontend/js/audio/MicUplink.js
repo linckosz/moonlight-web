@@ -18,24 +18,28 @@
 /**
  * The viewer's microphone, sent to the host.
  *
- * Settings → "Send my microphone" asks for it at launch (`mic_enabled`). The
- * host grants it only when the microphone can land where the game is — the
- * host is the machine MoonlightWeb runs on, the viewer is its owner — and says
- * so (/start's `mic: true`, or `mic_why`). Then, by transport:
+ * Settings → "Microphone" says which one, or none. Unless it is off, the launch
+ * asks the host for it (`mic_enabled`). The host grants it only when the
+ * microphone can land where the game is — the host is the machine MoonlightWeb
+ * runs on, the viewer is its owner — and says so (/start's `mic: true`, or
+ * `mic_why`). Then, by transport:
  *   - WebRTC: the host offers the audio section sendrecv instead of sendonly;
- *     this side answers it sendrecv and puts its getUserMedia track on the
- *     sender, at the quality's bitrate. No second track, no renegotiation, and
- *     the stream's own sound keeps its native player;
+ *     this side answers it sendrecv, and the sender carries the getUserMedia
+ *     track while the microphone is open, at the quality's bitrate. No second
+ *     track, no renegotiation, and the stream's own sound keeps its native
+ *     player;
  *   - WebSocket (a tunnel with no UDP): MicSocketSender encodes the track and
  *     sends it on the stream's socket.
  *
  * Settings → "Microphone sound" picks the quality (MIC_QUALITY): the call-style
  * cleanup at 64 kbit/s, or none at all at 128 for a headset or a good mic.
  *
- * The microphone is opened only once the host said yes, so a viewer is never
- * asked for a permission that would lead nowhere. A standby view (seamless
- * quality switch) holds its microphone back until it is promoted, or the host
- * would hear the voice twice for as long as both legs run.
+ * Every stream starts with the microphone closed: it opens on the viewer's click
+ * or shortcut, and only then is the permission asked. Cutting it stops the track,
+ * so the browser's indicator goes out and nothing is captured; the host then
+ * receives nothing rather than silence. A standby view (seamless quality switch)
+ * holds its microphone back until it is promoted, or the host would hear the
+ * voice twice for as long as both legs run.
  */
 
 import { MicSocketSender } from './MicSocketSender.js';
@@ -50,6 +54,73 @@ import { MicSocketSender } from './MicSocketSender.js';
  */
 export function micSupported(nav = globalThis.navigator, secure = globalThis.isSecureContext) {
     return secure !== false && typeof nav?.mediaDevices?.getUserMedia === 'function';
+}
+
+/**
+ * Whether the launch should ask the host for the microphone. A viewer who never
+ * touched the list has the default, the system's microphone; `mic_enabled` alone
+ * cannot say that, as every saved settings object carries it.
+ *
+ * @param {{mic_chosen?: boolean, mic_enabled?: boolean}} [settings]
+ * @returns {boolean}
+ */
+export function micRequested(settings) {
+    return settings?.mic_chosen === true ? settings.mic_enabled === true : true;
+}
+
+const DEVICE_KEY = 'mw-mic-device';
+
+/**
+ * The microphone picked on this browser, or null for the system's. Its own key,
+ * not a field of the streaming settings: those go to the host with every launch,
+ * and a device's name has no business there.
+ *
+ * @param {Pick<Storage, 'getItem'>} [storage]
+ * @returns {{id: string, label: string}|null}
+ */
+export function loadMicDevice(storage) {
+    try {
+        const d = JSON.parse((storage || globalThis.localStorage).getItem(DEVICE_KEY));
+        if (!d || typeof d.id !== 'string' || !d.id) return null;
+        return { id: d.id, label: typeof d.label === 'string' ? d.label : '' };
+    } catch (_e) {
+        return null;
+    }
+}
+
+/**
+ * @param {{id: string, label: string}|null} device
+ * @param {Pick<Storage, 'setItem'|'removeItem'>} [storage]
+ */
+export function saveMicDevice(device, storage) {
+    try {
+        const s = storage || globalThis.localStorage;
+        if (device) s.setItem(DEVICE_KEY, JSON.stringify({ id: device.id, label: device.label }));
+        else s.removeItem(DEVICE_KEY);
+    } catch (_e) {
+        /* a blocked storage: the choice lasts until the page closes */
+    }
+}
+
+/**
+ * The microphones a viewer can name: enumerateDevices without the entries that
+ * only stand for the system's choice (Chrome's `default` and `communications`),
+ * and without the nameless ones a browser lists before the permission.
+ *
+ * @param {MediaDeviceInfo[]} devices
+ * @returns {{id: string, label: string}[]}
+ */
+export function namedMicrophones(devices) {
+    return (devices || [])
+        .filter(
+            (d) =>
+                d.kind === 'audioinput' &&
+                d.label &&
+                d.deviceId &&
+                d.deviceId !== 'default' &&
+                d.deviceId !== 'communications',
+        )
+        .map((d) => ({ id: d.deviceId, label: d.label }));
 }
 
 /**
@@ -89,27 +160,29 @@ export function micQuality(name) {
  * What getUserMedia is asked for, at a quality.
  *
  * @param {{processing: boolean}} quality
+ * @param {string} [deviceId] - that microphone and no other; none follows the system
  * @returns {MediaStreamConstraints}
  */
-export function micConstraints(quality) {
+export function micConstraints(quality, deviceId) {
     const p = quality.processing;
-    return {
-        audio: {
-            echoCancellation: p,
-            noiseSuppression: p,
-            autoGainControl: p,
-            channelCount: 1,
-            sampleRate: 48000,
-        },
-        video: false,
+    /** @type {MediaTrackConstraints} */
+    const audio = {
+        echoCancellation: p,
+        noiseSuppression: p,
+        autoGainControl: p,
+        channelCount: 1,
+        sampleRate: 48000,
     };
+    if (deviceId) audio.deviceId = { exact: deviceId };
+    return { audio, video: false };
 }
 
 /**
  * Muted or not, carried from a retiring view to the one replacing it, so a
- * quality switch never unmutes a viewer who muted. A new stream starts live.
+ * quality switch neither opens a microphone the viewer cut nor cuts one in use.
+ * A new stream starts cut.
  */
-let carriedMute = false;
+let carriedMute = true;
 
 /** The audio transceiver of the stream (mid `audio`), or null. */
 function soundTransceiver(pc) {
@@ -122,7 +195,9 @@ export class MicUplink {
      * @param {object} [opts]
      * @param {boolean} [opts.held] - a standby view's: nothing is sent until release().
      * @param {string} [opts.quality] - a MIC_QUALITY name
+     * @param {{id: string, label: string}|null} [opts.device] - null follows the system
      * @param {(c: MediaStreamConstraints) => Promise<MediaStream>} [opts.getUserMedia]
+     * @param {() => Promise<MediaDeviceInfo[]>} [opts.enumerateDevices]
      * @param {typeof MicSocketSender} [opts.SocketSender] - for tests
      */
     constructor(opts = {}) {
@@ -133,10 +208,15 @@ export class MicUplink {
         this._socketSend = null;
         /** @type {MicSocketSender|null} */
         this._socket = null;
+        /** Where the next socket sender numbers from (see _closeTrack). */
+        this._socketSequence = 0;
+        this._device = opts.device || null;
         this._getUserMedia =
             opts.getUserMedia || ((c) => globalThis.navigator.mediaDevices.getUserMedia(c));
-        // A standby takes over the live view's mute; a new stream starts live.
-        if (!this._held) carriedMute = false;
+        this._enumerateDevices =
+            opts.enumerateDevices || (() => globalThis.navigator.mediaDevices.enumerateDevices());
+        // A standby takes over the live view's mute; a new stream starts cut.
+        if (!this._held) carriedMute = true;
         this._muted = carriedMute;
         /** @type {RTCPeerConnection|null} */
         this._pc = null;
@@ -149,6 +229,8 @@ export class MicUplink {
         this.state = 'idle';
         /** @type {((state: string) => void)|null} */
         this.onStateChange = null;
+        /** @type {(() => void)|null} the picked microphone is gone: the system's is used */
+        this.onDeviceMissing = null;
     }
 
     get muted() {
@@ -178,21 +260,27 @@ export class MicUplink {
     }
 
     /**
-     * After setLocalDescription: the microphone on the sender. Opens it on
-     * the first call (the permission prompt, if any). Never throws.
+     * After setLocalDescription, and at every opening: the microphone on the
+     * sender, unless the viewer has it cut (the permission prompt, if any, comes
+     * with the opening). Never throws.
      *
      * @returns {Promise<boolean>} whether a track is on the sender
      */
     async attach() {
         if (this._closed || this._held || !this._pc) return false;
+        if (this._muted) {
+            this._setState('muted');
+            return false;
+        }
         const track = await this._acquire();
         const t = soundTransceiver(this._pc);
-        if (!track || !t || this._closed) return false;
+        if (!track || !t || this._track !== track) return false;
         try {
             if (t.sender.track !== track) await t.sender.replaceTrack(track);
-            track.enabled = !this._muted;
+            // Cut again while that ran.
+            if (this._track !== track) return false;
             await this._applyBitrate(t.sender);
-            this._setState(this._muted ? 'muted' : 'live');
+            this._setState('live');
             console.info(
                 '[Mic] sending "' +
                     (track.label || 'microphone') +
@@ -203,15 +291,15 @@ export class MicUplink {
             return true;
         } catch (e) {
             console.warn('[Mic] could not put the microphone on the stream:', e);
-            this._setState('error');
+            this._fail('error');
             return false;
         }
     }
 
     /**
      * The WebSocket transport's open socket: the microphone goes on it as
-     * frames (MicSocketSender). Opens the microphone on the first call. Never
-     * throws.
+     * frames (MicSocketSender), unless the viewer has it cut. Also called at
+     * every opening. Never throws.
      *
      * @param {(bytes: Uint8Array) => boolean} send
      * @returns {Promise<boolean>} whether it is sending
@@ -219,21 +307,24 @@ export class MicUplink {
     async attachSocket(send) {
         this._socketSend = send;
         if (this._closed || this._held || this._socket) return false;
+        if (this._muted) {
+            this._setState('muted');
+            return false;
+        }
         const track = await this._acquire();
-        if (!track || this._closed) return false;
-        track.enabled = !this._muted;
-        const sender = new this._SocketSender(track, send, this._quality);
+        // A second click may have started the sender while the first waited.
+        if (!track || this._track !== track || this._socket) return false;
+        const sender = new this._SocketSender(track, send, this._quality, this._socketSequence);
         this._socket = sender;
         try {
             await sender.start();
-            if (this._closed) return false;
-            this._setState(this._muted ? 'muted' : 'live');
+            if (this._socket !== sender) return false;
+            this._setState('live');
             return true;
         } catch (e) {
             console.warn('[Mic] could not send the microphone on the WebSocket:', e);
-            sender.stop();
-            this._socket = null;
-            this._setState('error');
+            if (this._socket === sender) this._fail('error');
+            else sender.stop();
             return false;
         }
     }
@@ -243,6 +334,11 @@ export class MicUplink {
         if (!this._held) return Promise.resolve(false);
         this._held = false;
         this._muted = carriedMute;
+        return this._send();
+    }
+
+    /** The microphone on whichever transport this stream has. */
+    _send() {
         return this._socketSend ? this.attachSocket(this._socketSend) : this.attach();
     }
 
@@ -259,54 +355,122 @@ export class MicUplink {
         }
     }
 
-    /** @param {boolean} muted */
+    /**
+     * Cut: the track stops, so the browser's indicator goes out. Open: the
+     * microphone comes back, a refusal being reported like the first one.
+     *
+     * @param {boolean} muted
+     * @returns {Promise<boolean>} whether it is sending once this settles
+     */
     setMuted(muted) {
         this._muted = muted === true;
         carriedMute = this._muted;
-        if (this._track) this._track.enabled = !this._muted;
-        if (this.state === 'live' || this.state === 'muted')
-            this._setState(this._muted ? 'muted' : 'live');
+        if (this._closed || this._held) return Promise.resolve(false);
+        if (this._muted) {
+            this._closeTrack();
+            this._setState('muted');
+            return Promise.resolve(false);
+        }
+        // Back from a refusal, or a second one would go unreported.
+        if (this.state === 'denied' || this.state === 'error') this._setState('muted');
+        return this._send();
     }
 
+    /** @returns {Promise<boolean>} whether it is sending once this settles */
     toggleMuted() {
-        this.setMuted(!this._muted);
-        return this._muted;
+        return this.setMuted(!this._muted);
     }
 
     /** The stream ended: the microphone is closed, its indicator goes out. */
     close() {
         this._closed = true;
-        if (this._socket) this._socket.stop();
-        this._socket = null;
+        this._closeTrack();
+        this._pc = null;
+    }
+
+    /** Nothing captured and nothing sent; the section stays negotiated. */
+    _closeTrack() {
+        if (this._socket) {
+            // Numbered on from here: the host's single socket source would take
+            // a sender starting again at 0 for late frames, and drop the voice.
+            if (Number.isInteger(this._socket.sequence)) {
+                this._socketSequence = this._socket.sequence;
+            }
+            this._socket.stop();
+            this._socket = null;
+        }
+        const sender = soundTransceiver(this._pc)?.sender;
+        if (sender && sender.track) {
+            Promise.resolve(sender.replaceTrack(null)).catch((e) => {
+                console.info('[Mic] the sender kept its stopped track:', e && e.message);
+            });
+        }
         if (this._track) {
             try {
                 this._track.stop();
-            } catch (e) {
+            } catch (_e) {
                 /* already ended */
             }
         }
         this._track = null;
-        this._pc = null;
+    }
+
+    /** It could not be opened: back to cut, and said. */
+    _fail(state) {
+        this._muted = true;
+        carriedMute = true;
+        this._closeTrack();
+        this._setState(state);
+    }
+
+    /**
+     * The stream for the microphone asked for. An id does not last (a browser may
+     * draw new ones, the device may be gone), so a stale one falls back on the
+     * name, which only shows once a microphone is open: the system's is opened
+     * first, and kept when nothing bears that name.
+     */
+    async _openStream() {
+        const open = (id) => this._getUserMedia(micConstraints(this._quality, id));
+        const wanted = this._device;
+        if (!wanted) return open();
+        try {
+            return await open(wanted.id);
+        } catch (e) {
+            if (e?.name !== 'OverconstrainedError' && e?.name !== 'NotFoundError') throw e;
+        }
+        const stream = await open();
+        const listed = await this._enumerateDevices().catch(() => []);
+        const found = namedMicrophones(listed).find((d) => d.label === wanted.label);
+        this._device = found || null;
+        if (!found) {
+            console.info('[Mic] "' + wanted.label + '" is gone: using the system microphone');
+            if (this.onDeviceMissing) this.onDeviceMissing();
+            return stream;
+        }
+        if (stream.getAudioTracks()[0]?.label === found.label) return stream;
+        stream.getTracks().forEach((x) => x.stop());
+        return open(found.id);
     }
 
     _acquire() {
         if (this._track && this._track.readyState !== 'ended') return Promise.resolve(this._track);
         if (this._acquiring) return this._acquiring;
-        this._acquiring = this._getUserMedia(micConstraints(this._quality))
+        this._acquiring = this._openStream()
             .then((stream) => {
                 const track = stream.getAudioTracks()[0] || null;
-                if (this._closed) {
+                // Cut, or the stream ended, while the prompt was up.
+                if (this._closed || this._muted) {
                     stream.getTracks().forEach((x) => x.stop());
                     return null;
                 }
                 this._track = track;
-                if (!track) this._setState('error');
+                if (!track) this._fail('error');
                 return track;
             })
             .catch((e) => {
                 const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
                 console.warn('[Mic] getUserMedia refused:', e && e.name, e && e.message);
-                this._setState(denied ? 'denied' : 'error');
+                this._fail(denied ? 'denied' : 'error');
                 return null;
             })
             .finally(() => {

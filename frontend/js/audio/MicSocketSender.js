@@ -93,12 +93,13 @@ export class MicSocketSender {
      * @param {(bytes: Uint8Array) => boolean} send - false when the socket is
      *   too backed up to take it (the frame is then dropped)
      * @param {{bitrate: number}} quality
+     * @param {number} [firstSequence] - where the last sender of this stream stopped
      */
-    constructor(track, send, quality) {
+    constructor(track, send, quality, firstSequence = 0) {
         this._track = track;
         this._send = send;
         this._bitrate = quality.bitrate;
-        this._seq = 0;
+        this._seq = firstSequence & 0xffff;
         this._ts = 0;
         this._ctx = null;
         this._node = null;
@@ -106,6 +107,11 @@ export class MicSocketSender {
         this._stopped = false;
         /** 'opus' | 'pcm' once started */
         this.codec = '';
+    }
+
+    /** The number the next frame takes. */
+    get sequence() {
+        return this._seq;
     }
 
     /** Starts capturing. Throws when the page cannot capture at all. */

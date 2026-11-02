@@ -115,6 +115,7 @@ import {
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
+import { micRequested, micSupported } from './audio/MicUplink.js';
 import { IDENTITY_REFUSED } from './util/pairingCrypto.js';
 import {
     startTunnel,
@@ -2032,6 +2033,10 @@ export const MoonlightApp = {
         // settings) is never touched.
         Object.assign(streamingSettings, this._degradeOverrides || {});
 
+        // The microphone asked of the host: the list's choice, by default the
+        // system's, and never from a browser that could not capture it.
+        streamingSettings.mic_enabled = micSupported() && micRequested(streamingSettings);
+
         // Override codec if provided (codec fallback chain)
         if (codecOverride) {
             streamingSettings.video_codec = codecOverride;
@@ -2812,10 +2817,16 @@ export const MoonlightApp = {
             );
         }
 
-        // The microphone was asked for and the host could not take it: said
+        // The viewer picked a microphone and the host could not take it: said
         // once per user-initiated launch, like the transport above, with the
-        // host's own reason (a remote host, no virtual cable…).
-        if (streamingSettings.mic_enabled === true && result.mic === false && !suppressShortcuts) {
+        // host's own reason (a remote host, no virtual cable…). Not for the
+        // default: nobody asked for it, and it would be said at every launch.
+        if (
+            streamingSettings.mic_chosen === true &&
+            streamingSettings.mic_enabled === true &&
+            result.mic === false &&
+            !suppressShortcuts
+        ) {
             Toast.warning(t('stream.micUnavailable', { why: result.mic_why || '' }));
         }
 

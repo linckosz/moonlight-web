@@ -29,7 +29,7 @@ import { Toast } from './Toast.js';
 import { StatsGraph } from './StatsGraph.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
 import * as streamVolume from '../audio/streamVolume.js';
-import { MicUplink, micSupported } from '../audio/MicUplink.js';
+import { MicUplink, loadMicDevice, micSupported } from '../audio/MicUplink.js';
 import { JitterController } from '../stream/JitterController.js';
 import { FramePacer } from '../stream/FramePacer.js';
 import {
@@ -163,6 +163,9 @@ import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 import { flushClientLog, serverDiag } from '../util/ClientLog.js';
 import { UltraPlayer, presentMode, ultraPlayerSupported } from '../stream/ultra/UltraPlayer.js';
+
+// Set once the viewer has been told the microphone starts cut.
+const MIC_HINT_KEY = 'mw-mic-hint-seen';
 
 /**
  * Lane name → the i18n key the card already uses for that value. The graph
@@ -1098,8 +1101,13 @@ export class StreamView {
         /** @type {HTMLButtonElement|null} */
         this._micBtn = null;
         if (opts.mic === true && micSupported()) {
-            this._mic = new MicUplink({ held: this._standby, quality: opts.micQuality });
+            this._mic = new MicUplink({
+                held: this._standby,
+                quality: opts.micQuality,
+                device: loadMicDevice(),
+            });
             this._mic.onStateChange = (state) => this._onMicState(state);
+            this._mic.onDeviceMissing = () => Toast.warning(t('stream.micDeviceMissing'));
             this.webrtc.mic = this._mic;
         }
 
@@ -4515,36 +4523,56 @@ export class StreamView {
         this._micBtn = btn;
         this._syncMicButton();
         this._positionGamingOverlay();
+        this._showMicHintOnce();
     }
 
-    /** The button as the microphone stands: live, muted, or refused. */
+    /**
+     * It starts cut, which a viewer who left the default has no reason to guess:
+     * said once on this browser, at the first stream that offers it.
+     */
+    _showMicHintOnce() {
+        if (this._standby) return;
+        try {
+            if (localStorage.getItem(MIC_HINT_KEY)) return;
+            localStorage.setItem(MIC_HINT_KEY, '1');
+        } catch (_e) {
+            /* a blocked storage would say it at every stream: not said at all */
+            return;
+        }
+        const combo = /Mac/.test(navigator.platform) ? 'Cmd+Option+Ctrl+P' : 'Ctrl+Alt+Shift+P';
+        Toast.info(t('stream.micStartsOff', { combo }));
+    }
+
+    /**
+     * The button as the microphone stands. Lit only once it really sends: not
+     * while the permission prompt is up. Still clickable after a refusal, as
+     * the viewer may have allowed it in the browser since.
+     */
     _syncMicButton() {
         const btn = this._micBtn;
         if (!btn || !this._mic) return;
         const state = this._mic.state;
-        const off = this._mic.muted || state === 'denied' || state === 'error';
+        const off = state !== 'live';
         btn.innerHTML = off ? Icons.micOff : Icons.mic;
         btn.classList.toggle('is-off', off);
-        btn.disabled = state === 'denied' || state === 'error';
         const label =
             state === 'denied'
                 ? t('stream.micDenied')
                 : state === 'error'
                   ? t('stream.micError')
-                  : this._mic.muted
+                  : off
                     ? t('stream.micUnmute')
                     : t('stream.micMute');
         btn.title = label;
         btn.setAttribute('aria-label', label);
-        btn.setAttribute('aria-pressed', this._mic.muted ? 'true' : 'false');
+        btn.setAttribute('aria-pressed', off ? 'true' : 'false');
     }
 
     /** @param {string} state - MicUplink.state */
     _onMicState(state) {
         this._syncMicButton();
-        // Said once per stream: a standby leg's own refusal would only repeat it.
-        if ((state === 'denied' || state === 'error') && !this._micWarned && !this._standby) {
-            this._micWarned = true;
+        // A standby leg's own refusal would only repeat the live one's.
+        if ((state === 'denied' || state === 'error') && !this._standby) {
             Toast.warning(t(state === 'denied' ? 'stream.micDenied' : 'stream.micError'));
         }
     }
@@ -10671,6 +10699,26 @@ export class StreamView {
                     const muted = this.toggleMute();
                     Toast.info(t(muted ? 'stream.soundOff' : 'stream.soundOn'), {
                         durationMs: 1500,
+                    });
+                }
+                return;
+            }
+
+            // Microphone open / cut: Ctrl+Alt+Shift+P (Win) / Cmd+Option+Ctrl+P
+            // (Mac). Said on screen for the same reason as the sound, once it
+            // really changed: a refusal has its own message.
+            if (chk('p', 'KeyP')) {
+                e.preventDefault();
+                const mic = this._mic;
+                if (!e.repeat && mic) {
+                    const before = mic.state === 'live';
+                    mic.toggleMuted().then(() => {
+                        const now = mic.state === 'live';
+                        if (now !== before) {
+                            Toast.info(t(now ? 'stream.micOn' : 'stream.micOff'), {
+                                durationMs: 1500,
+                            });
+                        }
                     });
                 }
                 return;

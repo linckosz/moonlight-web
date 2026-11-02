@@ -67,10 +67,12 @@ function view(has = {}) {
             muted: false,
             toggleMuted() {
                 this.muted = !this.muted;
-                return this.muted;
+                this.state = this.muted ? 'muted' : 'live';
+                return Promise.resolve(!this.muted);
             },
         },
         _syncMicButton: StreamView.prototype._syncMicButton,
+        _showMicHintOnce() {},
         _positionGamingOverlay: StreamView.prototype._positionGamingOverlay,
     };
 }
@@ -163,5 +165,29 @@ describe('the microphone button beside the speaker', () => {
         expect(v._mic.muted).toBe(true);
         expect(btn.classList.contains('is-off')).toBe(true);
         expect(btn.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('is lit only once the microphone really sends', () => {
+        const v = view();
+        // Open asked for, the permission prompt still up.
+        v._mic.state = 'muted';
+        v._mic.muted = false;
+        const btn = mount(v);
+        expect(btn.classList.contains('is-off')).toBe(true);
+        expect(btn.getAttribute('aria-pressed')).toBe('true');
+        v._mic.state = 'live';
+        v._syncMicButton();
+        expect(btn.classList.contains('is-off')).toBe(false);
+    });
+
+    it('stays clickable after a refusal, to try again', () => {
+        const v = view();
+        v._mic.state = 'denied';
+        v._mic.muted = true;
+        const btn = mount(v);
+        expect(btn.disabled).toBe(false);
+        expect(btn.classList.contains('is-off')).toBe(true);
+        btn.click();
+        expect(v._mic.muted).toBe(false);
     });
 });
