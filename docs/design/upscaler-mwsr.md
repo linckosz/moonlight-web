@@ -1472,6 +1472,12 @@ upscalers spatiaux.
 - [x] MWSR pour les autres programmes, à la demande de Bruno le 28/10 (MIT, dossier `mwsr/`, nom MWSR, shaders + module + C++) [`high`] — cb766889 puis journal J52 : WGSL, GLSL, jumeau HLSL (FXC et DXC), `cpp/mwsr.h`, exemple D3D11, README anglais ; HLSL sur WARP contre WGSL sur SwiftShader à 1/255 hors bascules du vote ; `X2_FLAT` (labo, neutre par défaut) instable d'un GPU à l'autre, correctif à la décision de Bruno
 - [x] **A29, la loi ×2 retirée avant le tag v0.4.1**, à la demande de Bruno le 28/10 (« supprimer X2 pour la v0.4.1 ») — journal J54 : `S_X2`, `X2_BASE`, `X2_FLAT`, `X2_R_ACROSS` (J39, neutres par défaut) sortis des trois jumeaux, des tests, du labo, du comparateur et du README de `mwsr/` ; dorés au bit près, conformité WebGL2 et HLSL inchangées
 
+**v0.4.2 — le réglage livré, demandé par Bruno le 01/11/2026**
+- [x] Le balayage LPIPS puis VMAF NEG et la loi : `sharp` et `racross` suivent l'échelle, deux tables (avec les zones et sans), `walong` 0 — journal J55. Zones lues dès ×1,15. Comparateur public et README de `mwsr/` en LPIPS et VMAF NEG, le SSIM retiré
+- [ ] Le coup d'œil de Bruno sur le comparateur en ligne, le texte à ×1,333 compris (VMAF NEG 57,5 avec zones et 58,9 sans, contre 62,65 au livré) [`low`]
+- [ ] L'activation par défaut des zones, à la décision de Bruno ; le coût côté hôte n'est pas mesuré [`medium`]
+- [ ] L'optimisation du shader livré : retirer les lectures le long des bords (`walong` 0, `ralong` 0), types, regroupements ; zéro perte mesurée d'abord, puis les chiffres de ce que 2 % de perte apporteraient ; temps du README et des téléphones mesurés de nouveau [`max`]
+
 **Hors v0.4.1 — étude optionnelle (§14, proposée le 21/10/2026, à la décision de Bruno)**
 - [x] **P7.0, faite le 25/10 (journal J42, §14.4) : la porte reste fermée.** Mode séquence du labo (`seq-lab.js`, `p7_flows.py`), WebCodecs logiciel à deux débits, sept variantes d'historique contre `mwsr` seul, vingt séquences sur SwiftShader. Aucune variante ne passe : sans mouvement connu, de −0,01 à −0,13 dB et pas de stabilité gagnée ; même avec le mouvement exact, +0,11 dB en moyenne et des traînées
 - [ ] ~~P7.1 (si go) noyau `mwsr` avec histoire adaptative au mouvement, cran `mwsr-t` des deux renderers, campagne allégée, A/B de Bruno à faible débit~~ : sans objet, la porte de P7.0 est restée fermée
