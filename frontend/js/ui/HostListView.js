@@ -123,7 +123,7 @@ export class HostListView {
         this.memoryKey = '';
         // Whether this browser holds the server's admin rights (the app's
         // /api/auth/status reading): the virtual display's GPU is chosen on its
-        // card by the administrator only.
+        // card, and a host's backend from its menu, by the administrator only.
         this.canAdminister = false;
         // The cards on screen came from that memory and the machine has not
         // answered yet: its first answer replaces them, and drops any host it
@@ -1161,6 +1161,7 @@ export class HostListView {
                                 // the test is a Sunshine one, a Sunshine card
                                 // still shows nothing at all.
                                 !booth &&
+                                this.canAdminister &&
                                 (host.backendType ||
                                     host.multiSeatDetected ||
                                     host.mayHaveControlApi)
