@@ -1027,6 +1027,9 @@ void ComputerManager::updateHostOnProof(const NvComputer& answer, const QString&
                 return;
             }
             known->consecutivePollFailures = 0;
+            // It has just shown the certificate on record: this is the host,
+            // whatever answered at the address it leaves.
+            known->certificateChanged = false;
             m_PollAddrIndex.remove(uuid);
             addOrUpdateHost(serverInfo, addr);
         });
