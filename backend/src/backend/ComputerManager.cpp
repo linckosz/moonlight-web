@@ -22,6 +22,7 @@
 #include "streambackend/GameStreamBackend.h"
 #include "streambackend/StreamBackendRegistry.h"
 #include "NvComputer.h"
+#include "HostCertCheck.h"
 #include "NvPairingManager.h"
 #include "PairingChain.h"
 #include "WolfApiClient.h"
@@ -557,8 +558,10 @@ void ComputerManager::onPollTick()
             if (!m_LastPairCheck.contains(uuid) ||
                 m_LastPairCheck[uuid].secsTo(now) >= PAIR_CHECK_INTERVAL_SEC) {
                 m_LastPairCheck[uuid] = now;
+                // Only the address in use can say the pairing is gone: the answer
+                // clears the certificate that a move is checked against.
                 const NvAddress pairAddr = pollAddressFor(host);
-                if (!pairAddr.isNull()) {
+                if (!pairAddr.isNull() && pairAddr == host->activeAddress) {
                     IdentityManager* im = IdentityManager::get();
                     quint16 httpsPort =
                         host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
@@ -722,7 +725,13 @@ void ComputerManager::onPollReplyFinished()
 
             NvComputer newState(xml, pollAddr);
 
-            if (newState.uuid == host->uuid) {
+            if (newState.uuid == host->uuid && host->movesOnlyWithProof(pollAddr)) {
+                // Not this host yet: it stays down until the machine here has
+                // shown its certificate, and the poll moves on meanwhile.
+                registerFailure(QStringLiteral("%1 has not shown the host's certificate yet")
+                                    .arg(pollAddr.toString()));
+                updateHostOnProof(newState, xml, pollAddr);
+            } else if (newState.uuid == host->uuid) {
                 host->consecutivePollFailures = 0;
                 // This address works: update() has just made it activeAddress, so
                 // index 0 is it. Stay there until it stops answering.
@@ -939,7 +948,13 @@ void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns
 
             try {
                 NvHTTP::verifyResponseStatus(xml);
-                addOrUpdateHost(xml, addr);
+                const NvComputer answer(xml, addr);
+                const NvComputer* known = findHostByUuid(answer.uuid);
+                if (known && known->movesOnlyWithProof(addr)) {
+                    updateHostOnProof(answer, xml, addr);
+                } else {
+                    addOrUpdateHost(xml, addr);
+                }
             } catch (const std::exception& e) {
                 Logger::warning(
                     QString("Failed to query host at %1: %2").arg(addr.toString(), e.what()));
@@ -981,6 +996,33 @@ void ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
         Logger::info(QString("Host added: %1 (%2) at %3")
                          .arg(computer->name, computer->uuid, addr.toString()));
     }
+}
+
+void ComputerManager::updateHostOnProof(const NvComputer& answer, const QString& serverInfo,
+                                        const NvAddress& addr)
+{
+    const NvComputer* host = findHostByUuid(answer.uuid);
+    if (!host || m_AddressProofs.contains(answer.uuid)) return;
+    m_AddressProofs.insert(answer.uuid);
+
+    IdentityManager* identity = IdentityManager::get();
+    HostCertCheck::verify(
+        addr.address(), answer.activeHttpsPort, host->serverCertPem, identity->getCertificate(),
+        identity->getPrivateKey(), this, NvHTTP::REQUEST_TIMEOUT_MS,
+        [this, uuid = answer.uuid, serverInfo, addr](bool proven) {
+            m_AddressProofs.remove(uuid);
+            NvComputer* known = findHostByUuid(uuid);
+            if (!known) return;
+            if (!proven) {
+                Logger::warning(QString("%1 stays where it is: %2 answers for it without its "
+                                        "certificate")
+                                    .arg(known->name, addr.toString()));
+                return;
+            }
+            known->consecutivePollFailures = 0;
+            m_PollAddrIndex.remove(uuid);
+            addOrUpdateHost(serverInfo, addr);
+        });
 }
 
 NvComputer* ComputerManager::findHostByUuid(const QString& uuid) const

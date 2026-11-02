@@ -265,6 +265,16 @@ void run_host_backend_writes_tests()
     CHECK_EQ(asAdmin["backendApiUrl"].toString(), QStringLiteral("http://192.0.2.30:8080"));
     CHECK_EQ(asAdmin["backendPairUser"].toString(), QStringLiteral("ada"));
 
+    // Once paired, even an address it has does not switch it: the poll does, on
+    // proof. The answer still shows the host.
+    tower->serverCertPem = QByteArrayLiteral("paired");
+    tower->manualAddress = NvAddress(QStringLiteral("192.0.2.10"), 47989);
+    const HttpResponse paired = addHost(addRouter, home, false);
+    CHECK_EQ(paired.statusCode, 200);
+    CHECK_EQ(firstHost(paired)["uuid"].toString(), QStringLiteral("uuid-a"));
+    CHECK_EQ(tower->activeAddress.toString(), homeLan);
+    tower->serverCertPem.clear();
+
     // The administrator can move it.
     CHECK_EQ(addHost(addRouter, elsewhere, true).statusCode, 200);
     CHECK_EQ(tower->activeAddress.toString(), elsewhere);

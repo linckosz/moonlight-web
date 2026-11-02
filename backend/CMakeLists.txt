@@ -343,6 +343,7 @@ add_executable(mw-server
     src/LatencyBeep.cpp
     src/backend/NvHTTP.cpp
     src/backend/NvComputer.cpp
+    src/backend/HostCertCheck.cpp
     src/backend/ComputerManager.cpp
     src/backend/IdentityManager.cpp
     src/backend/NvPairingManager.cpp

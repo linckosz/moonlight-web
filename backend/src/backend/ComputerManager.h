@@ -230,6 +230,9 @@ private:
     // Resolve a host MAC from the OS ARP cache (Windows). Empty if unavailable.
     static QByteArray resolveMacFromArp(const QString& ip);
     void addOrUpdateHost(const QString& serverInfo, const NvAddress& addr);
+    // The same, once the machine at addr has shown the host's certificate.
+    void updateHostOnProof(const NvComputer& answer, const QString& serverInfo,
+                           const NvAddress& addr);
     void tryAddHostFromAddress(const NvAddress& addr, bool fromMdns,
                                const QString& name = QString());
 
@@ -262,6 +265,8 @@ private:
     // first candidate has gone dead is found again on one of the others instead
     // of staying offline forever. Absent uuid means 0.
     QHash<QString, int> m_PollAddrIndex;
+    // Hosts with a certificate check under way: one at a time for each.
+    QSet<QString> m_AddressProofs;
 
     // The state each host was last logged in ("[NETWORK] <host> is online"):
     // one line when it changes, rather than one per poll.

@@ -28,8 +28,10 @@
 
 /// What a machine's answer does to the host list once someone has typed its
 /// address. Any session can add a new host, or name an address its host already
-/// has; taking a known host to another address is for mayMoveHost alone. A
-/// template so the tests can drive it with a list of their own.
+/// has; taking a known host to another address is for mayMoveHost alone, and a
+/// paired host is not switched to another of its addresses by that answer either:
+/// the poll does it, on proof. A template so the tests can drive it with a list of
+/// their own.
 template <typename Hosts>
 std::pair<int, QJsonObject> mergeManualHost(Hosts& hosts, const QString& serverInfo,
                                             const NvAddress& address, bool mayMoveHost)
@@ -44,6 +46,12 @@ std::pair<int, QJsonObject> mergeManualHost(Hosts& hosts, const QString& serverI
                 {{"status", "error"},
                  {"message", "This host is known at another address; only its administrator "
                              "can change it"}}};
+    }
+
+    if (known && !mayMoveHost && known->movesOnlyWithProof(address)) {
+        QJsonArray unchanged;
+        unchanged.append(known->toJson());
+        return {200, QJsonObject{{"hosts", unchanged}}};
     }
 
     hosts.addOrUpdateHost(serverInfo, address);

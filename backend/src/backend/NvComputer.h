@@ -66,6 +66,11 @@ public:
     // Helpers for address iteration during polling
     QVector<NvAddress> uniqueAddresses() const;
 
+    // Whether an answer from this address may change this host only once the
+    // machine there has shown the certificate it was paired with. The address in
+    // use needs no proof, and nothing can be compared before a host is paired.
+    bool movesOnlyWithProof(const NvAddress& address) const;
+
     // True when this host resolves to the machine MoonlightWeb runs on (loopback
     // or one of our own interface addresses). Surfaced in toJson() so the
     // frontend can warn about streaming your own PC ("Inception" loop).

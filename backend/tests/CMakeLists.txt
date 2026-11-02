@@ -71,6 +71,7 @@ add_executable(run_tests
     test_session_pool.cpp
     test_loopback_key.cpp
     test_host_backend_writes.cpp
+    test_host_cert_check.cpp
     test_port_fallback.cpp
     test_host_persistence.cpp
     test_rendezvous_id.cpp
@@ -173,6 +174,7 @@ add_executable(run_tests
     ${_src}/src/network/GeoIpService.cpp
     # Host persistence: the restart path for a paired host (issue #9).
     ${_src}/src/backend/NvComputer.cpp
+    ${_src}/src/backend/HostCertCheck.cpp
     ${_src}/src/backend/NvHTTP.cpp
     # Backend detection: what a host runs, worked out rather than asked for.
     ${_src}/src/backend/streambackend/BackendProbe.cpp

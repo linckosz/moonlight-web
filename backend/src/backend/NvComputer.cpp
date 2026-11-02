@@ -328,6 +328,11 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
     return addrs;
 }
 
+bool NvComputer::movesOnlyWithProof(const NvAddress& address) const
+{
+    return !serverCertPem.isEmpty() && address != activeAddress;
+}
+
 // --- Local-machine detection ------------------------------------------------
 
 bool NvComputer::isLocalMachine() const
