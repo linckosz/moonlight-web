@@ -126,6 +126,7 @@ import { DecodeRateGovernor } from '../stream/DecodeRateGovernor.js';
 import { SilentDecoderWatch } from '../stream/SilentDecoderWatch.js';
 import { ByteRate } from '../stream/ByteRate.js';
 import {
+    ENHANCER_LADDER,
     EnhancerGovernor,
     ladderRung,
     rendererAlgo,
@@ -144,6 +145,7 @@ import {
 import { cropToAnnounced } from '../stream/FrameCrop.js';
 import { VsyncGrid } from '../stream/VsyncGrid.js';
 import { CadenceStepper, autostepEnabled, stepMemory } from '../stream/CadenceStepper.js';
+import { frameMatchesAsked } from '../stream/AutoCeilingMeter.js';
 import { LatencyProbe } from '../stream/LatencyProbe.js';
 import { InputUplink } from '../stream/InputUplink.js';
 import { LINK_STALL_MS, LINK_STALL_PROBE_MS } from '../stream/CrashRelaunch.js';
@@ -1209,6 +1211,14 @@ export class StreamView {
         // only for a rate left to Auto — see _noteHostCadence. Off on a TV.
         this._autostep = opts.fpsAuto === true && autostepEnabled(IS_TV);
         this._stepper = null;
+        // Does this stream prove the rung of Auto's ceiling it runs at? The app
+        // hands the live view a meter (stream/AutoCeilingSession.js), fed here.
+        /** @type {import('../stream/AutoCeilingMeter.js').AutoCeilingMeter|null} */
+        this.autoCeilingMeter = null;
+        /** @type {(() => boolean)|null} a transition is under way */
+        this.autoCeilingIdle = null;
+        this._hostPresentsFps = 0;
+        this._decodeRateCap = 0;
         // Native host: mouse motion goes out on `pointerrawupdate` — every
         // report the device makes, not the one-per-display-frame sum that
         // `mousemove` delivers. Decided in _bindPointerRaw; while it is on, the
@@ -2877,6 +2887,7 @@ export class StreamView {
                 // The worker's governor stepped the enhancer up or down. The
                 // user's setting is untouched — only what runs right now, and
                 // what the overlay names.
+                this._noteEnhancerStep(m.algo);
                 this._videoEnhancementAlgo = m.algo;
                 this._enhancerDegraded = !!m.degraded;
                 this._rememberEnhancer(m.kind, ladderRung(m.algo), m.recoverAfterMs);
@@ -3142,6 +3153,7 @@ export class StreamView {
             this._congFiredAt = now;
             this._congEvents.length = 0;
             console.warn('[StreamView] Sustained congestion detected (last: ' + reason + ')');
+            if (this.autoCeilingMeter) this.autoCeilingMeter.noteCongestion();
             this.onCongestion();
         }
     }
@@ -3743,6 +3755,7 @@ export class StreamView {
                 (ridingOut ? ' — under the refresh wave' : '') +
                 (repaired ? " — under the host's reference repairs" : ''),
         );
+        if (this.autoCeilingMeter) this.autoCeilingMeter.noteSick('decoder_silent', true);
         if (ridingOut) noteDecoderCannotRideOut();
         if (repaired) noteDecoderRefusesReferenceRepairs();
         if ((ridingOut || repaired) && !this._playerMode) {
@@ -4912,6 +4925,7 @@ export class StreamView {
         if (!r || !r.failed || r === this._failedRenderer) return;
         if (this._quitting || this._swappingRenderer) return;
         this._failedRenderer = r;
+        if (this.autoCeilingMeter) this.autoCeilingMeter.noteSick('renderer_failed', true);
         this._replaceFailedRenderer();
     }
 
@@ -7650,6 +7664,43 @@ export class StreamView {
             this._applyEnhancerGovernor(diag, now);
         }
         this._applyDecodeRateGovernor(diag, fps, now);
+        this._tickAutoCeiling(diag, now);
+    }
+
+    /**
+     * Feed the meter of Auto's ceiling (stream/AutoCeilingMeter.js). What a
+     * share, a transition, a hidden page or a step of the cadence does to the
+     * numbers says nothing of this machine: those windows count for nothing.
+     */
+    _tickAutoCeiling(diag, now) {
+        const meter = this.autoCeilingMeter;
+        if (!meter || this._quitting) return;
+        const stepped = !!(this._stepper && this._stepper.stepFps > 0);
+        const idle = !!(this.autoCeilingIdle && this.autoCeilingIdle());
+        meter.tick(now, {
+            neutral:
+                (typeof document !== 'undefined' && document.hidden) ||
+                this.hasActiveShare() ||
+                idle ||
+                stepped,
+            arrivalFps: diag && diag.arrivalAvgMs > 0 ? 1000 / diag.arrivalAvgMs : 0,
+            sizeMatches: frameMatchesAsked(this._resolution, meter.asked),
+            frames: this.stats.received,
+            drops: diag ? (diag.dropQueueFull || 0) + (diag.dropBackpressure || 0) : 0,
+            rebuilds: diag ? diag.recoverReset || 0 : 0,
+            fpsCap: this._decodeRateCap,
+            presentsFps: this._hostPresentsFps,
+        });
+    }
+
+    /** The enhancer is about to run @p algo: a step down is a signal for the
+     *  meter of Auto's ceiling. Starting low on its memory is none: only a step
+     *  taken in this stream comes through here. */
+    _noteEnhancerStep(algo) {
+        if (!this.autoCeilingMeter) return;
+        const from = ENHANCER_LADDER.indexOf(ladderRung(this._videoEnhancementAlgo));
+        const to = ENHANCER_LADDER.indexOf(ladderRung(algo));
+        if (from >= 0 && to > from) this.autoCeilingMeter.noteSick('enhancer');
     }
 
     /**
@@ -7679,6 +7730,7 @@ export class StreamView {
             now,
         });
         if (cap === null) return;
+        this._decodeRateCap = cap > 0 ? cap : 0;
         console.log(
             '[StreamView] Decode rate: ' +
                 (cap > 0
@@ -7723,6 +7775,7 @@ export class StreamView {
         if (!algo) return;
         const pass = rendererAlgo(algo, this._renderer.kind);
         if (!this._renderer.setAlgo(pass)) return;
+        this._noteEnhancerStep(pass);
         this._videoEnhancementAlgo = pass;
         this._enhancerDegraded = this._governor.degraded;
         this._rememberEnhancer(this._renderer.kind, algo, this._governor.recoverAfterMs);
@@ -8043,6 +8096,7 @@ export class StreamView {
      */
     _noteHostCadence(cadence) {
         const now = performance.now();
+        this._hostPresentsFps = cadence.presents > 0 ? cadence.presents : 0;
         if (!this._stepper) {
             if (!this._autostep || this._standby || this._quitting || !this._nativeHost) return;
             if (!this._immediateRender || this._useWorker || this._framePacer) return;

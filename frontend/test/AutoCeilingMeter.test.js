@@ -12,6 +12,7 @@ import {
     DROP_WINDOW_MS,
     GRACE_MS,
     HOST_WINDOW_MS,
+    frameMatchesAsked,
 } from '../js/stream/AutoCeilingMeter.js';
 
 const TICK = 500;
@@ -268,5 +269,30 @@ describe('AutoCeilingMeter: what makes a stream sick', () => {
         r.run(TICK, { sizeMatches: null });
         r.meter.noteSick('decoder_silent', true);
         expect(r.events[0]).toMatchObject({ type: 'sick', atRung: true });
+    });
+});
+
+describe('frameMatchesAsked', () => {
+    const asked = { width: 2560, height: 1440, fps: 120, below: 330e6 };
+
+    it('cannot tell before the first frame, or for a size it was not told', () => {
+        expect(frameMatchesAsked('', asked)).toBeNull();
+        expect(frameMatchesAsked('2560×1440', null)).toBeNull();
+        expect(frameMatchesAsked('2560×1440', { ...asked, height: 0 })).toBeNull();
+    });
+
+    it('takes the size asked for, and a host fitting its own shape inside the box', () => {
+        expect(frameMatchesAsked('2560×1440', asked)).toBe(true);
+        expect(frameMatchesAsked('2304×1440', asked)).toBe(true);
+    });
+
+    it('refuses a host much smaller than the box', () => {
+        expect(frameMatchesAsked('1920×1080', asked)).toBe(false);
+    });
+
+    it('refuses a frame the rung below would have allowed anyway', () => {
+        // A 1080p host in a 1240p box at 330 M: 249 M is the base budget's.
+        const box = { width: 2204, height: 1240, fps: 120, below: 250e6 };
+        expect(frameMatchesAsked('1920×1080', box)).toBe(false);
     });
 });

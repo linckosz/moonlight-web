@@ -68,6 +68,27 @@ export const HOST_ARRIVAL_SHARE = 0.85;
 /** …over at least this long. */
 export const HOST_WINDOW_MS = 60000;
 
+/** A frame this share of the size asked for still counts as that size: the
+ *  native host fits its own shape inside the box, 2304×1440 in a 2560×1440 one. */
+export const FRAME_MIN_SHARE = 0.7;
+
+/**
+ * Whether the frame streamed is the stream asked for, as far as a rung goes: its
+ * share of the size, and above what the rung below already allows. A 1920×1080
+ * host under a 2204×1240 box says nothing of a rung of 330 M.
+ * @param {string} resolution the view's "W×H", '' before the first frame
+ * @param {{width:number, height:number, fps:number, below:number}|null} asked
+ * @returns {boolean|null} null while nothing can be told
+ */
+export function frameMatchesAsked(resolution, asked) {
+    if (!asked || !(asked.height > 0)) return null;
+    const m = /^(\d+)[×x](\d+)/.exec(resolution || '');
+    if (!m) return null;
+    const pixels = Number(m[1]) * Number(m[2]);
+    if (pixels < asked.width * asked.height * FRAME_MIN_SHARE) return false;
+    return pixels * asked.fps > asked.below;
+}
+
 /** How much a cumulative counter grew; a new pipeline starts it over. */
 function grown(value, last) {
     return value > last ? value - last : 0;
@@ -98,12 +119,15 @@ export class AutoCeilingMeter {
      *   allows: only then does it say anything about this rung
      * @param {number} deps.holdMs loaded time that earns the next rung
      * @param {number} deps.confirmMs loaded time that confirms this rung
+     * @param {{width:number, height:number, fps:number, below:number}|null} [deps.asked]
+     *   what this launch asked for (frameMatchesAsked)
      * @param {(event: {type: 'held'|'earned'|'sick', reason?: string,
      *          loadedMs: number, atRung: boolean}) => void} deps.onEvent
      *   `held`: this rung is proved. `earned`: the next one is. `sick`: the
      *   stream failed, and `atRung` says whether this rung is to blame.
      */
-    constructor({ startedAt, fps, limited, provesRung, holdMs, confirmMs, onEvent }) {
+    constructor({ startedAt, fps, limited, provesRung, holdMs, confirmMs, asked, onEvent }) {
+        this.asked = asked || null;
         this._startedAt = startedAt;
         this._fps = fps > 0 ? fps : 0;
         this._limited = !!limited;

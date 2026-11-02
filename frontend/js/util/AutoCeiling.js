@@ -50,8 +50,11 @@ export const CEILING_RUNGS = Object.freeze([
 export const HANDHELD_MAX_CEILING = 450000000;
 
 export const AUTO_CEILING_KEY = 'mw_auto_ceiling';
-/** The switch: '0' holds Auto at PIXEL_RATE_BUDGET and learns nothing. */
+/** The switch: '0' holds Auto at PIXEL_RATE_BUDGET and measures nothing, '1'
+ *  learns, 'log' measures and only says what it would do. */
 export const AUTO_LEARN_KEY = 'mw_auto_learn';
+/** What the switch means when it says nothing: on a bench's word, not before. */
+const DEFAULT_LEARN_MODE = 'log';
 
 /** How long a stream must hold its rung to earn the next one. */
 export const HOLD_BASE_MS = 5 * 60 * 1000;
@@ -65,17 +68,22 @@ export const ENTRIES_KEPT = 32;
 const VERSION = 1;
 
 /**
- * Whether Auto may learn here at all.
+ * Whether Auto learns here, only measures, or does neither.
  * @param {Storage|null} [storage] localStorage by default
- * @returns {boolean}
+ * @returns {'off'|'log'|'on'}
  */
-export function autoLearnEnabled(storage) {
+export function autoLearnMode(storage) {
+    let v = null;
     try {
         const store = storage === undefined ? localStorage : storage;
-        return !store || store.getItem(AUTO_LEARN_KEY) !== '0';
+        v = store ? store.getItem(AUTO_LEARN_KEY) : null;
     } catch (e) {
-        return true;
+        // Storage refused: the default.
     }
+    if (v === '0') return 'off';
+    if (v === '1') return 'on';
+    if (v === 'log') return 'log';
+    return DEFAULT_LEARN_MODE;
 }
 
 /**

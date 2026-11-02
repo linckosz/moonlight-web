@@ -515,6 +515,23 @@ function aspectRatio(aspect) {
 }
 
 /**
+ * What a launch size and rate come to, in pixels: all zero when the size is
+ * "the host's own", which nothing here can weigh.
+ * @param {{height:number, aspect:string|null}} size
+ * @param {number} fps 0 (unknown) counts as 60
+ * @param {string|null} [aspect] the ratio to assume when the size fixes none
+ * @returns {{width:number, height:number, fps:number, pixelRate:number}}
+ */
+export function streamFootprint(size, fps, aspect) {
+    const height = size && size.height > 0 ? size.height : 0;
+    const rate = fps > 0 ? fps : 60;
+    if (!height) return { width: 0, height: 0, fps: rate, pixelRate: 0 };
+    const ratio = aspectRatio(size.aspect) || aspectRatio(aspect) || 16 / 9;
+    const width = Math.round(height * ratio) & ~1;
+    return { width, height, fps: rate, pixelRate: width * height * rate };
+}
+
+/**
  * The rate a budget-cut frame rate lands on: the budget's own, never under
  * `floor` — or the highest whole divisor of this screen's refresh under it,
  * when that gives up no more than BUDGET_GRID_MAX_LOSS of it, so that every

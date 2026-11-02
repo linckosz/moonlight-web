@@ -17,7 +17,7 @@ import {
     HOLD_BASE_MS,
     HOLD_MAX_MS,
     autoCeilingMemory,
-    autoLearnEnabled,
+    autoLearnMode,
     deviceMaxCeiling,
     holdMsFor,
     rungAbove,
@@ -78,12 +78,13 @@ describe('deviceMaxCeiling', () => {
     });
 });
 
-describe('autoLearnEnabled', () => {
-    it('is on unless switched off, and when storage says nothing', () => {
-        expect(autoLearnEnabled(fakeStorage())).toBe(true);
-        expect(autoLearnEnabled(fakeStorage({ [AUTO_LEARN_KEY]: '0' }))).toBe(false);
-        expect(autoLearnEnabled(fakeStorage({ [AUTO_LEARN_KEY]: '1' }))).toBe(true);
-        expect(autoLearnEnabled(null)).toBe(true);
+describe('autoLearnMode', () => {
+    it('reads the switch, and only measures when it says nothing', () => {
+        expect(autoLearnMode(fakeStorage())).toBe('log');
+        expect(autoLearnMode(fakeStorage({ [AUTO_LEARN_KEY]: '0' }))).toBe('off');
+        expect(autoLearnMode(fakeStorage({ [AUTO_LEARN_KEY]: '1' }))).toBe('on');
+        expect(autoLearnMode(fakeStorage({ [AUTO_LEARN_KEY]: 'log' }))).toBe('log');
+        expect(autoLearnMode(null)).toBe('log');
     });
 });
 

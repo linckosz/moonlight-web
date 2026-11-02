@@ -30,6 +30,7 @@ import {
     nearlySameStreamSize,
     readResolutionChoice,
     resolveStreamSize,
+    streamFootprint,
     tvOverAsk,
 } from '../js/util/StreamResolution.js';
 
@@ -571,6 +572,23 @@ describe('fitPixelBudget', () => {
         const out = fitPixelBudget({ height: 0, aspect: null }, 120, { device: uhd });
         expect(out.capped).toBe(false);
         expect(out.fps).toBe(120);
+    });
+});
+
+describe('streamFootprint', () => {
+    it('weighs a size that fixes its shape, a rung at the ratio given, and an unknown rate', () => {
+        expect(streamFootprint({ height: 1080, aspect: '1920:1080' }, 120)).toEqual({
+            width: 1920,
+            height: 1080,
+            fps: 120,
+            pixelRate: 1920 * 1080 * 120,
+        });
+        expect(streamFootprint({ height: 1440, aspect: null }, 60, '4:3').width).toBe(1920);
+        expect(streamFootprint({ height: 1080, aspect: null }, 0).fps).toBe(60);
+    });
+
+    it("says nothing of the host's own size", () => {
+        expect(streamFootprint({ height: 0, aspect: null }, 120).pixelRate).toBe(0);
     });
 });
 

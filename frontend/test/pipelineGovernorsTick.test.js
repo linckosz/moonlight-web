@@ -24,6 +24,7 @@ function view(over = {}) {
         _fpsTimestamps: [],
         _applyEnhancerGovernor: vi.fn(),
         _applyDecodeRateGovernor: vi.fn(),
+        _tickAutoCeiling: vi.fn(),
         _decodedFps: P._decodedFps,
         _runPipelineGovernors: P._runPipelineGovernors,
         ...over,
@@ -55,7 +56,73 @@ describe('StreamView — the governors on the tick', () => {
             v._runPipelineGovernors(10000);
             expect(v._applyEnhancerGovernor).not.toHaveBeenCalled();
             expect(v._applyDecodeRateGovernor).not.toHaveBeenCalled();
+            expect(v._tickAutoCeiling).not.toHaveBeenCalled();
         }
+    });
+
+    it('feeds the meter of Auto\'s ceiling what the pipeline saw', () => {
+        const tick = vi.fn();
+        const v = {
+            autoCeilingMeter: {
+                tick,
+                asked: { width: 1920, height: 1080, fps: 120, below: 0 },
+            },
+            hasActiveShare: () => false,
+            stats: { received: 500 },
+            _resolution: '1920×1080',
+            _decodeRateCap: 0,
+            _hostPresentsFps: 118,
+            _tickAutoCeiling: P._tickAutoCeiling,
+        };
+        v._tickAutoCeiling(
+            { arrivalAvgMs: 10, dropQueueFull: 2, dropBackpressure: 3, recoverReset: 1 },
+            10000,
+        );
+        expect(tick).toHaveBeenCalledWith(10000, {
+            neutral: false,
+            arrivalFps: 100,
+            sizeMatches: true,
+            frames: 500,
+            drops: 5,
+            rebuilds: 1,
+            fpsCap: 0,
+            presentsFps: 118,
+        });
+    });
+
+    it('calls a share, a transition or a cadence step neutral for that meter', () => {
+        const neutral = (over) => {
+            const tick = vi.fn();
+            const v = {
+                autoCeilingMeter: { tick, asked: null },
+                hasActiveShare: () => false,
+                stats: { received: 0 },
+                _tickAutoCeiling: P._tickAutoCeiling,
+                ...over,
+            };
+            v._tickAutoCeiling(DIAG, 10000);
+            return tick.mock.calls[0][1].neutral;
+        };
+        expect(neutral({})).toBe(false);
+        expect(neutral({ hasActiveShare: () => true })).toBe(true);
+        expect(neutral({ autoCeilingIdle: () => true })).toBe(true);
+        expect(neutral({ _stepper: { stepFps: 240 } })).toBe(true);
+        expect(neutral({ _stepper: { stepFps: 0 } })).toBe(false);
+    });
+
+    it('tells that meter of a step down of the enhancer, not of a step up', () => {
+        const steps = (from, to) => {
+            const noteSick = vi.fn();
+            P._noteEnhancerStep.call(
+                { autoCeilingMeter: { noteSick }, _videoEnhancementAlgo: from },
+                to,
+            );
+            return noteSick.mock.calls.length;
+        };
+        expect(steps('mwsr', 'off')).toBe(1);
+        expect(steps('gl-sgsr', 'gl-mwsr')).toBe(1);
+        expect(steps('off', 'mwsr')).toBe(0);
+        expect(steps('auto', 'off')).toBe(0);
     });
 
     it('prunes the decoded-frame window every tick, card or not', () => {
