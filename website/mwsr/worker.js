@@ -1,13 +1,13 @@
 // The comparison page's CPU side (website/mwsr/): the pictures, the reduced
-// inputs, the 4:2:0 stream, and the metrics. Nothing here leaves the browser:
+// inputs, the 4:2:0 stream, and the overshoot. Nothing here leaves the browser:
 // a picture loaded from the disk is decoded, reduced and measured in this
 // worker and goes nowhere else.
 //
 // The arithmetic follows the lab that made the README's figures
 // (scripts/bench/scaler-lab/): the reduction is scaler_lab.make_input
 // (Pillow's Lanczos-3 on float planes, in linear light, the float32 steps of
-// NumPy emulated by Math.fround), the SSIM is scikit-image's (Gaussian window,
-// sigma 1.5, reflect borders), the overshoot is metrics.overshoot.
+// NumPy emulated by Math.fround), the overshoot is metrics.overshoot. LPIPS and
+// VMAF NEG are the lab's (lab-scores.json), not measured here.
 
 const f = Math.fround;
 
@@ -268,86 +268,8 @@ function to420(rgba, w, h) {
 
 // ── the metrics ─────────────────────────────────────────────────────────────
 
-// scipy.ndimage.gaussian_filter's window at sigma 1.5, truncate 3.5: radius 5
-const GW = (() => {
-  const r = 5;
-  const w = new Float64Array(2 * r + 1);
-  let s = 0;
-  for (let i = -r; i <= r; i++) s += w[i + r] = Math.exp((-0.5 / (1.5 * 1.5)) * i * i);
-  for (let i = 0; i < w.length; i++) w[i] /= s;
-  return w;
-})();
-/**
- * structural_similarity(X, Y, data_range=1, gaussian_weights=True, sigma=1.5,
- * use_sample_covariance=False): the mean over the picture less 5 pixels on each
- * side, the rows where the window never leaves the picture, so the borders'
- * reflection never counts. One row at a time, the window's sums taken in the
- * order gaussian_filter takes them (down the rows, then along them): the same
- * result, and five rows of memory instead of five pictures (a phone's tab).
- */
-function ssim(X, Y, w, h) {
-  const r = 5;
-  const ax = new Float64Array(w);
-  const ay = new Float64Array(w);
-  const axx = new Float64Array(w);
-  const ayy = new Float64Array(w);
-  const axy = new Float64Array(w);
-  const C1 = 0.01 ** 2;
-  const C2 = 0.03 ** 2;
-  let sum = 0;
-  let cnt = 0;
-  for (let y = r; y < h - r; y++) {
-    ax.fill(0);
-    ay.fill(0);
-    axx.fill(0);
-    ayy.fill(0);
-    axy.fill(0);
-    for (let k = -r; k <= r; k++) {
-      const g = GW[k + r];
-      const row = (y + k) * w;
-      for (let x = 0; x < w; x++) {
-        const a = X[row + x];
-        const b = Y[row + x];
-        ax[x] += a * g;
-        ay[x] += b * g;
-        axx[x] += a * a * g;
-        ayy[x] += b * b * g;
-        axy[x] += a * b * g;
-      }
-    }
-    for (let x = r; x < w - r; x++) {
-      let mx = 0;
-      let my = 0;
-      let sxx = 0;
-      let syy = 0;
-      let sxy = 0;
-      for (let k = -r; k <= r; k++) {
-        const g = GW[k + r];
-        mx += ax[x + k] * g;
-        my += ay[x + k] * g;
-        sxx += axx[x + k] * g;
-        syy += ayy[x + k] * g;
-        sxy += axy[x + k] * g;
-      }
-      const vx = sxx - mx * mx;
-      const vy = syy - my * my;
-      const vxy = sxy - mx * my;
-      sum += ((2 * mx * my + C1) * (2 * vxy + C2)) / ((mx * mx + my * my + C1) * (vx + vy + C2));
-      cnt++;
-    }
-  }
-  return sum / cnt;
-}
-
-// What the SSIM reads. SDR (metrics.measure): the luma, Rec. 709 weights on
-// the encoded values in float32, and the three channels for the colour SSIM.
-// HDR (metrics_hdr.measure): the feed decoded to BT.2020 nits, each channel PQ
-// encoded (0..1 over 0..10000 nits), and the luma as BT.2020 weights on them.
-const PQ = { m1: 0.1593017578125, m2: 78.84375, c1: 0.8359375, c2: 18.8515625, c3: 18.6875 };
-const pqOetf = (nits) => {
-  const y = Math.pow(Math.min(Math.max(nits / 10000, 0), 1), PQ.m1);
-  return Math.pow((PQ.c1 + PQ.c2 * y) / (1 + PQ.c3 * y), PQ.m2);
-};
+// What the overshoot reads in HDR (metrics_hdr.overshoot_linear): the feed
+// decoded to BT.2020 nits.
 // the renderer's P3 → BT.2020 (metrics_hdr.M_P3_TO_2020)
 const P3_2020 = [
   [0.7538332633935425, 0.19859767443089404, 0.04757001460650134],
@@ -369,29 +291,6 @@ function nits2020(enc, n) {
   return out;
 }
 const F8 = Float32Array.from({ length: 256 }, (_, v) => f(v / 255));
-function metricPlanes(rgba, n, hdr) {
-  const Y = new Float32Array(n);
-  const ch = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
-  if (!hdr) {
-    for (let i = 0; i < n; i++) {
-      const r = F8[rgba[i * 4]];
-      const g = F8[rgba[i * 4 + 1]];
-      const b = F8[rgba[i * 4 + 2]];
-      ch[0][i] = r;
-      ch[1][i] = g;
-      ch[2][i] = b;
-      Y[i] = f(f(f(f(0.2126) * r) + f(f(0.7152) * g)) + f(f(0.0722) * b));
-    }
-  } else {
-    const nits = nits2020(rgba, n);
-    for (let i = 0; i < n; i++) {
-      for (let k = 0; k < 3; k++) ch[k][i] = pqOetf(nits[i * 4 + k]);
-      Y[i] = 0.2627 * ch[0][i] + 0.678 * ch[1][i] + 0.0593 * ch[2][i];
-    }
-  }
-  return { Y, ch };
-}
-const lumaOf = (rgba, n, hdr) => metricPlanes(rgba, n, hdr).Y;
 
 /** Share of the output pixels beyond the range of their 2×2 input texels.
  *  SDR (metrics.overshoot): by more than 2/255, in its float32 steps, which
@@ -556,8 +455,8 @@ function drawCodeIso(w, h) {
   return data;
 }
 
-// The HDR pictures of the lab (hdr_mires.py), in linear nits.
-const M = PQ;
+// The HDR pictures of the lab (hdr_mires.py), in linear nits: SMPTE ST 2084's constants.
+const M = { m1: 0.1593017578125, m2: 78.84375, c1: 0.8359375, c2: 18.8515625, c3: 18.6875 };
 const pqEotf = (e) => {
   const ep = Math.pow(Math.min(Math.max(e, 0), 1), 1 / M.m2);
   return 10000 * Math.pow(Math.max(ep - M.c1, 0) / (M.c2 - M.c3 * ep), 1 / M.m1);
@@ -782,8 +681,7 @@ async function prepare({ pic: p, scale, chroma, role, zoneUrls = null }) {
     native = fromHalves(res.native);
     input = fromHalves(res.input);
   }
-  const ref = native ? metricPlanes(native, outW * outH, pic.hdr) : null;
-  current = { ...res, ref, inputData: pic.hdr ? nits2020(input, inW * inH) : input };
+  current = { ...res, inputData: pic.hdr ? nits2020(input, inW * inH) : input };
   // copies (new Uint8Array(…) and halves(…) copy): the arrays above stay the worker's
   return { result: res, transfer: [res.input.buffer, ...(res.native ? [res.native.buffer] : [])] };
 }
@@ -794,14 +692,7 @@ function measure({ out }) {
   const n = c.outW * c.outH;
   const data = c.hdr ? fromHalves(out) : out;
   const over = c.hdr ? nits2020(data, n) : data;
-  const r = { overshoot: overshoot(over, c.outW, c.outH, c.inputData, c.inW, c.inH, c.hdr) };
-  if (c.ref) {
-    const P = metricPlanes(data, n, c.hdr);
-    r.ssimY = ssim(c.ref.Y, P.Y, c.outW, c.outH);
-    // the colour SSIM: the mean of the three channels' (channel_axis=2)
-    r.ssimRgb = P.ch.reduce((t, p, k) => t + ssim(c.ref.ch[k], p, c.outW, c.outH), 0) / 3;
-  }
-  return { result: r };
+  return { result: { overshoot: overshoot(over, c.outW, c.outH, c.inputData, c.inW, c.inH, c.hdr) } };
 }
 
 function gate({ a, b }) {
@@ -829,4 +720,4 @@ self.onmessage = (e) => {
 };
 
 // for the tests (node): the same functions, without the messages
-export const _test = { reduceSdr, ssim, lumaOf, metricPlanes, overshoot, to420, toHalf, HALF };
+export const _test = { reduceSdr, overshoot, to420, toHalf, HALF };

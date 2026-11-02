@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MWSR, a real-time upscaler, next to FSR1, NIS and SGSR1 — MoonlightWeb</title>
-<meta name="description" content="MWSR, MoonlightWeb's open-source real-time upscaler, next to FSR1, NIS and SGSR1 on your own GPU: each picture zoomed, its fidelity and its GPU time.">
+<meta name="description" content="MWSR, MoonlightWeb's open-source real-time upscaler, next to FSR1, NIS and SGSR1 on your own GPU: each picture zoomed, its LPIPS and VMAF NEG scores and its GPU time.">
 <meta name="author" content="Bruno Martin">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="theme-color" content="#05080d">
 <meta property="og:site_name" content="MoonlightWeb">
 <meta property="og:title" content="MWSR, a real-time upscaler, next to FSR1, NIS and SGSR1 — MoonlightWeb">
-<meta property="og:description" content="MWSR, MoonlightWeb's open-source real-time upscaler, next to FSR1, NIS and SGSR1 on your own GPU: each picture zoomed, its fidelity and its GPU time.">
+<meta property="og:description" content="MWSR, MoonlightWeb's open-source real-time upscaler, next to FSR1, NIS and SGSR1 on your own GPU: each picture zoomed, its LPIPS and VMAF NEG scores and its GPU time.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://moonlightweb.top/mwsr/">
 <meta property="og:image" content="https://moonlightweb.top/mwsr/img/og.png">
@@ -20,7 +20,7 @@
 <meta property="og:locale" content="en_US">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="MWSR, a real-time upscaler, next to FSR1, NIS and SGSR1 — MoonlightWeb">
-<meta name="twitter:description" content="MWSR, MoonlightWeb's open-source real-time upscaler, next to FSR1, NIS and SGSR1 on your own GPU: each picture zoomed, its fidelity and its GPU time.">
+<meta name="twitter:description" content="MWSR, MoonlightWeb's open-source real-time upscaler, next to FSR1, NIS and SGSR1 on your own GPU: each picture zoomed, its LPIPS and VMAF NEG scores and its GPU time.">
 <meta name="twitter:image" content="https://moonlightweb.top/mwsr/img/og.png">
 <link rel="canonical" href="https://moonlightweb.top/mwsr/">
 <link rel="icon" href="/assets/favicon.ico" sizes="48x48">
@@ -94,8 +94,8 @@
   <p class="lede"><strong>MWSR (MoonlightWeb Super Resolution)</strong> is the real-time upscaler of MoonlightWeb's
     browser client, open source under the MIT License. Here it and three other single-frame upscalers draw the same
     picture on <em>your</em> GPU. Each pane shows its output pixel for pixel, next to the native frame it tries to
-    rebuild. The table scores each one against that frame and
-    times it on this device. <a href="https://github.com/linckosz/moonlight-web/tree/main/mwsr#next-to-fsr1-nis-and-sgsr1" target="_blank" rel="noopener">The README</a>
+    rebuild. The table gives each one's LPIPS and VMAF NEG against that frame, measured in MoonlightWeb's lab, and
+    its overshoot and GPU time on this device. <a href="https://github.com/linckosz/moonlight-web/tree/main/mwsr#next-to-fsr1-nis-and-sgsr1" target="_blank" rel="noopener">The README</a>
     explains the method and gives the figures for two GPUs.</p>
   <p class="privacy"><strong>Your picture stays on this device.</strong> This page decodes, upscales and measures it
     inside this tab and uploads nothing. The site counts page views without cookies, and that count carries nothing
@@ -108,10 +108,10 @@
     <fieldset>
       <legend>Picture</legend>
       <div class="seg" id="pic">
-        <label><input type="radio" name="pic" value="text" checked> Text chart</label>
+        <label><input type="radio" name="pic" value="text"> Text chart</label>
         <label><input type="radio" name="pic" value="0ad"> 0 A.D. <small>6 MB</small></label>
         <label><input type="radio" name="pic" value="gears"> Gears of War: E-Day <small>4 MB</small></label>
-        <label><input type="radio" name="pic" value="junkshop"> Junk Shop <small>3 MB</small></label>
+        <label><input type="radio" name="pic" value="junkshop" checked> Junk Shop <small>3 MB</small></label>
         <label><input type="radio" name="pic" value="iso"> Colour text</label>
         <label><input type="radio" name="pic" value="hdr-text"> HDR text</label>
         <label><input type="radio" name="pic" value="hdr-ramp"> HDR ramp</label>
@@ -204,14 +204,15 @@
       <table id="table">
         <thead><tr>
           <th scope="col">Upscaler</th>
-          <th scope="col">Fidelity <small>SSIM of the luma ×100, higher is closer</small></th>
-          <th scope="col">Colour <small>SSIM of R, G and B ×100</small></th>
+          <th scope="col">LPIPS <small>lab, lower is closer</small></th>
+          <th scope="col">VMAF NEG <small>lab, higher is closer</small></th>
           <th scope="col">Overshoot <small>pixels past their 4 input texels</small></th>
           <th scope="col">GPU time <small>per draw, ms</small></th>
         </tr></thead>
         <tbody></tbody>
       </table>
     </div>
+    <p class="small" id="lab-note"></p>
     <div class="timing">
       <button type="button" class="btn btn-primary" id="measure" disabled>Measure the GPU time</button>
       <label class="check"><input type="checkbox" id="full"> As in the README: 3 rounds of 6 batches (longer)</label>
@@ -236,39 +237,42 @@
       beside one at the law keeps the law, so text next to a photo stays crisp. This page measures the native frame as
       the host does. It is not in the mwsr folder: the MWSR anyone downloads draws by the law, the MWSR line above.</p>
     <h3>Measured on three GPUs</h3>
-    <p class="small">The README's figures (28/10/2026, the Radeon 780M on 30/10/2026), in Chrome's WebGPU on Windows 11
+    <p class="small">The README's figures: its times from 28/10/2026 (the Radeon 780M's from 30/10/2026, MWSR's with its
+      previous defaults, to be measured again), in Chrome's WebGPU on Windows 11
       (on Ubuntu for the Radeon 780M), the input already in an 8-bit texture, on the 0 A.D. picture (game) and the text
-      chart (text). Fidelity and overshoot as in the table above; the times per draw, each upscaler at its faster
-      precision. The Ryzen 9 9900X's integrated Radeon and the Radeon 780M ran at their own clocks: read their times as
+      chart (text). LPIPS, VMAF NEG and overshoot as in the table above (the lab's, at 4:4:4); the times per draw,
+      each upscaler at its faster precision. The Ryzen 9 9900X's integrated Radeon and the Radeon 780M ran at their own clocks: read their times as
       ratios. On the Radeon 780M, the 16-bit texts were not held to their 32-bit ones. NIS is MoonlightWeb's port (see
       the ports below).</p>
     <div class="table-wrap">
       <table>
         <caption>1080p → 1440p (×1.33)</caption>
-        <thead><tr><th scope="col">Upscaler</th><th scope="col">Fidelity, game</th><th scope="col">Fidelity, text</th>
+        <thead><tr><th scope="col">Upscaler</th><th scope="col">LPIPS, game</th><th scope="col">LPIPS, text</th>
+          <th scope="col">VMAF NEG, game</th><th scope="col">VMAF NEG, text</th>
           <th scope="col">Overshoot, game</th><th scope="col">RTX 5060 Ti</th>
           <th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M</th></tr></thead>
         <tbody>
-          <tr><th scope="row">MWSR</th><td>85.9</td><td>96.0</td><td>0.03 %</td><td>0.116 ms</td><td>3.80 ms (f16)</td><td>0.267 ms (f16)</td></tr>
-          <tr><th scope="row">FSR1</th><td>87.5</td><td>94.4</td><td>13.7 %</td><td>0.265 ms (f16)</td><td>6.33 ms (f16)</td><td>0.707 ms (f16)</td></tr>
-          <tr><th scope="row">NIS</th><td>82.8</td><td>95.6</td><td>42.6 %</td><td>0.904 ms</td><td>13.78 ms</td><td>0.953 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>85.6</td><td>95.3</td><td>6.5 %</td><td>0.118 ms</td><td>2.97 ms (f16)</td><td>0.216 ms (f16)</td></tr>
-          <tr><th scope="row">Bilinear</th><td>81.8</td><td>92.6</td><td>0 %</td><td>0.029 ms</td><td>0.449 ms</td><td>0.110 ms</td></tr>
+          <tr><th scope="row">MWSR</th><td><strong>0.1239</strong></td><td><strong>0.0348</strong></td><td>83.5</td><td>58.9</td><td>&lt; 0.01 %</td><td>0.116 ms</td><td>3.80 ms (f16)</td><td>0.267 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>0.1401</td><td>0.0493</td><td><strong>84.8</strong></td><td>57.3</td><td>13.7 %</td><td>0.265 ms (f16)</td><td>6.33 ms (f16)</td><td>0.707 ms (f16)</td></tr>
+          <tr><th scope="row">NIS</th><td>0.1863</td><td>0.0414</td><td>70.5</td><td><strong>62.2</strong></td><td>42.6 %</td><td>0.904 ms</td><td>13.78 ms</td><td>0.953 ms</td></tr>
+          <tr><th scope="row">SGSR1</th><td>0.1838</td><td>0.0402</td><td>83.1</td><td>59.9</td><td>6.6 %</td><td>0.118 ms</td><td>2.97 ms (f16)</td><td>0.216 ms (f16)</td></tr>
+          <tr><th scope="row">Bilinear</th><td>0.2665</td><td>0.0697</td><td>76.8</td><td>49.9</td><td>0 %</td><td>0.029 ms</td><td>0.449 ms</td><td>0.110 ms</td></tr>
         </tbody>
       </table>
     </div>
     <div class="table-wrap">
       <table>
         <caption>720p → 1440p (×2)</caption>
-        <thead><tr><th scope="col">Upscaler</th><th scope="col">Fidelity, game</th><th scope="col">Fidelity, text</th>
+        <thead><tr><th scope="col">Upscaler</th><th scope="col">LPIPS, game</th><th scope="col">LPIPS, text</th>
+          <th scope="col">VMAF NEG, game</th><th scope="col">VMAF NEG, text</th>
           <th scope="col">Overshoot, game</th><th scope="col">RTX 5060 Ti</th>
           <th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M</th></tr></thead>
         <tbody>
-          <tr><th scope="row">MWSR</th><td>66.2</td><td>86.5</td><td>0.01 %</td><td>0.113 ms</td><td>3.69 ms (f16)</td><td>0.231 ms (f16)</td></tr>
-          <tr><th scope="row">FSR1</th><td>68.0</td><td>84.7</td><td>2.9 %</td><td>0.273 ms</td><td>6.32 ms (f16)</td><td>0.685 ms (f16)</td></tr>
-          <tr><th scope="row">NIS</th><td>69.5</td><td>87.6</td><td>41.7 %</td><td>0.614 ms</td><td>12.99 ms</td><td>0.886 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>66.9</td><td>87.6</td><td>6.3 %</td><td>0.118 ms</td><td>2.95 ms (f16)</td><td>0.204 ms (f16)</td></tr>
-          <tr><th scope="row">Bilinear</th><td>61.6</td><td>81.8</td><td>0 %</td><td>0.029 ms</td><td>0.422 ms</td><td>0.094 ms</td></tr>
+          <tr><th scope="row">MWSR</th><td><strong>0.3356</strong></td><td><strong>0.0885</strong></td><td>69.9</td><td>25.1</td><td>0 %</td><td>0.113 ms</td><td>3.69 ms (f16)</td><td>0.231 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>0.3594</td><td>0.1032</td><td>70.7</td><td>24.6</td><td>2.9 %</td><td>0.273 ms</td><td>6.32 ms (f16)</td><td>0.685 ms (f16)</td></tr>
+          <tr><th scope="row">NIS</th><td>0.3714</td><td>0.0970</td><td>59.4</td><td><strong>36.5</strong></td><td>41.7 %</td><td>0.614 ms</td><td>12.99 ms</td><td>0.886 ms</td></tr>
+          <tr><th scope="row">SGSR1</th><td>0.3939</td><td>0.0984</td><td><strong>71.1</strong></td><td><strong>36.5</strong></td><td>6.3 %</td><td>0.118 ms</td><td>2.95 ms (f16)</td><td>0.204 ms (f16)</td></tr>
+          <tr><th scope="row">Bilinear</th><td>0.4865</td><td>0.1658</td><td>58.4</td><td>15.1</td><td>0 %</td><td>0.029 ms</td><td>0.422 ms</td><td>0.094 ms</td></tr>
         </tbody>
       </table>
     </div>
@@ -289,13 +293,19 @@
         pixel's footprint, averaged in linear light (through the textures' sRGB views; on HDR, from the light itself).
         FSR1, NIS and SGSR1 are made to enlarge (NIS from ×1 to ×2): below ×1 they run as they are, as the client runs
         them.</li>
-      <li><strong>Fidelity</strong> is the SSIM of the luma against the native frame, ×100: the README's measure,
-        computed here on what your GPU drew. <strong>Colour</strong> is the mean SSIM of the red, green and blue
-        channels, which sees the edges the luma misses: those of the colour text, whose colours all have one luma. On
-        HDR both are taken on the PQ code of each BT.2020 channel, and the overshoot in nits (past 1 % + 0.5 nit), as
-        the lab measures HDR.</li>
+      <li><strong>LPIPS and VMAF NEG</strong> are the two measures MoonlightWeb tunes MWSR on. LPIPS (AlexNet, v0.1)
+        says how far a picture looks from the native frame to a human eye: it was made to judge upscalers and image
+        restoration, and lower is closer. VMAF NEG is Netflix's VMAF in its no-enhancement-gain mode: it judges a
+        video stream's pictures as viewers rate them, without crediting the added sharpening that plain VMAF rewards;
+        higher is better. MWSR follows LPIPS first, then VMAF NEG among the settings within 5 % of the best LPIPS.
+        Neither runs in a browser tab (LPIPS is a neural network, VMAF a library of its own), so both come from the
+        lab: this page drawn on SwiftShader, each picture read back and scored against the native frame (below ×1,
+        against the reference), for each of the page's SDR pictures, scales and chromas. The HDR pictures and your
+        own get no lab score: both measures are made for SDR, and the lab has only the page's pictures. This page's
+        inputs are reduced, never encoded; MoonlightWeb tuned MWSR on pictures that went through a video encoder at a
+        stream's bit rate, where the order between the upscalers can differ.</li>
       <li><strong>Overshoot</strong> is the share of pixels that leave the range of their four input texels by more
-        than 2/255. It counts halos and ringing.</li>
+        than 2/255 (on HDR, in BT.2020 nits, past 1 % + 0.5 nit). It counts halos and ringing.</li>
       <li><strong>GPU time</strong> is the median of batches of 100 draws, each batch timed by two GPU timestamps. The
         browser rounds those timestamps (to 0.1 ms in Chrome), and a batch of 100 makes the rounding a small share. When
         your GPU has <code>shader-f16</code>, MWSR (its enlargement), FSR1 and SGSR1 are also timed in 16-bit and the
@@ -361,6 +371,7 @@
         data-mwsr="/mwsr/MwsrShader.js?v={{(fileStat `/mwsr/MwsrShader.js`).ModTime.Unix}}"
         data-nis="/mwsr/NisTables.js?v={{(fileStat `/mwsr/NisTables.js`).ModTime.Unix}}"
         data-zones="/mwsr/zones.js?v={{(fileStat `/mwsr/zones.js`).ModTime.Unix}}"
-        data-zonetree="/mwsr/zonetree.js?v={{(fileStat `/mwsr/zonetree.js`).ModTime.Unix}}"></script>
+        data-zonetree="/mwsr/zonetree.js?v={{(fileStat `/mwsr/zonetree.js`).ModTime.Unix}}"
+        data-lab="/mwsr/lab-scores.json?v={{(fileStat `/mwsr/lab-scores.json`).ModTime.Unix}}"></script>
 </body>
 </html>
