@@ -61,7 +61,7 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 |---|---|---|
 | `GET /api/hosts` | 🔑 | Known hosts with state, pair status, apps. **No addresses**: `activeAddress`, `localAddress`, `remoteAddress`, `manualAddress` and `macAddress` are deliberately not serialized (`NvComputer::toJson`) — the browser only ever talks to this server, routes are keyed by `uuid`, and Wake-on-LAN is sent host-side, so the LAN topology has no reason to reach the page. Waking is advertised as the boolean `wakeSupported`. Persistence is unaffected (it uses `serialize(QSettings&)`). |
 | `POST /api/hosts/scan` | 🔑 | Trigger an ephemeral mDNS scan. |
-| `POST /api/hosts/manual` | 🔑 | Add a host by IP/hostname. |
+| `POST /api/hosts/manual` | 🔑 | Add a host by IP/hostname. 409 without admin rights when that machine answers for a known host at another address. |
 | `DELETE /api/hosts/:id` | 🔑 | Forget a host. |
 | `POST /api/hosts/:id/wol` | 🔑 | Wake-on-LAN. |
 | `POST /api/hosts/:id/pair/start` / `POST /api/hosts/:id/pair` (async) | 🔑 | Start pairing (returns the PIN to type into Sunshine) / poll status. Fully event-driven (no nested loop). Starting is a POST because it acts on the host: a GET gets fetched by link-preview bots, prefetchers and URL-following antivirus, and those arrive as ordinary navigations that no cross-site check can tell apart from the user. |

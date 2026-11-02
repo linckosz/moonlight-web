@@ -70,7 +70,8 @@ public:
     // REST API methods
     QJsonArray getHostsJson() const;
     void handleScanRequest();
-    std::pair<int, QJsonObject> handleAddManualHost(const QString& address);
+    /// mayMoveHost: whether the answer may take a known host to another address.
+    std::pair<int, QJsonObject> handleAddManualHost(const QString& address, bool mayMoveHost);
     std::pair<int, QJsonObject> handleDeleteHost(const QString& uuid);
 
     // Give a host a name of our own. Purely local: nothing is written to the
@@ -211,6 +212,10 @@ private:
     NvAddress pollAddressFor(const NvComputer* host) const;
     // allowEmpty guards the one destructive case: writing an empty array wipes
     // the stored list for good. Only the explicit delete route may do that.
+    template <typename Hosts>
+    friend std::pair<int, QJsonObject> mergeManualHost(Hosts& hosts, const QString& serverInfo,
+                                                       const NvAddress& address, bool mayMoveHost);
+
     void saveHosts(bool allowEmpty = false);
     void startPolling();
     void startMdnsDiscovery();

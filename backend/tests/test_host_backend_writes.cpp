@@ -3,9 +3,14 @@
  */
 #include "test_framework.h"
 
+#include "backend/ManualHostMerge.h"
+#include "server/RequestGuard.h"
 #include "server/routes/HostBackendWrites.h"
+#include "server/routes/HostManualAdd.h"
 
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QStringList>
 
 #include <utility>
@@ -74,6 +79,58 @@ HttpResponse send(const RestRouter& router, const QString& method, bool admin,
     return sendTo(router, method, QStringLiteral("/api/hosts/uuid-1/backend"), admin, body);
 }
 
+/// The host list and its merge as the server has them; only the network is
+/// replaced, by what each address answers.
+struct FakeHosts
+{
+    QMap<QString, QString> answers; // "address:port" -> serverinfo
+    QMap<QString, NvComputer*> known;
+    int saves = 0;
+
+    ~FakeHosts() { qDeleteAll(known); }
+
+    NvComputer* findHostByUuid(const QString& uuid) const { return known.value(uuid, nullptr); }
+
+    void saveHosts() { ++saves; }
+
+    void addOrUpdateHost(const QString& serverInfo, const NvAddress& address)
+    {
+        const NvComputer answer(serverInfo, address);
+        if (NvComputer* existing = findHostByUuid(answer.uuid)) {
+            if (existing->update(answer)) saveHosts();
+        } else {
+            known[answer.uuid] = new NvComputer(answer);
+            saveHosts();
+        }
+    }
+
+    std::pair<int, QJsonObject> handleAddManualHost(const QString& address, bool mayMoveHost)
+    {
+        const int colon = address.lastIndexOf(QLatin1Char(':'));
+        return mergeManualHost(*this, answers.value(address),
+                               NvAddress(address.left(colon), address.mid(colon + 1).toUShort()),
+                               mayMoveHost);
+    }
+};
+
+HttpResponse addHost(const RestRouter& router, const QString& address, bool admin)
+{
+    return sendTo(router, "POST", QStringLiteral("/api/hosts/manual"), admin,
+                  QJsonDocument(QJsonObject{{"address", address}}).toJson());
+}
+
+QJsonObject firstHost(const HttpResponse& reply)
+{
+    return QJsonDocument::fromJson(reply.body).object()["hosts"].toArray().first().toObject();
+}
+
+QString serverInfo(const char* uuid, const char* localIp)
+{
+    return QStringLiteral("<root status_code=\"200\"><hostname>Tower</hostname>"
+                          "<uniqueid>%1</uniqueid><LocalIP>%2</LocalIP></root>")
+        .arg(QLatin1String(uuid), QLatin1String(localIp));
+}
+
 const QByteArray kFullBody = R"({"type":"wolf","apiUrl":"http://192.0.2.1:8080","apiToken":"t",)"
                              R"("pairUser":"u","pairPassword":"p"})";
 
@@ -126,4 +183,90 @@ void run_host_backend_writes_tests()
     CHECK_EQ(manager.tornDown, QStringLiteral("uuid-1|seat-2"));
     CHECK_EQ(sendTo(router, "DELETE", owner, true).statusCode, 200);
     CHECK_EQ(manager.released, QStringLiteral("uuid-1|seat-2"));
+
+    SECTION("Adding a host by address");
+
+    // A browser that paired with a PIN, behind Docker's bridge: its session lets
+    // it through, without the administrator's rights.
+    {
+        RequestGuard::Request r;
+        r.method = "POST";
+        r.path = "/api/hosts/manual";
+        r.headers = {{"sec-fetch-site", "same-origin"},
+                     {"origin", "http://192.0.2.200:8080"},
+                     {"host", "192.0.2.200:8080"},
+                     {"content-type", "application/json"}};
+        r.bodySize = 2;
+        const RequestGuard::Decision d = RequestGuard::evaluate(r, RequestGuard::Context{});
+        CHECK(d.outcome == RequestGuard::Outcome::Allow);
+        CHECK(!d.adminPrivilege);
+    }
+
+    RestRouter addRouter;
+    FakeHosts hosts;
+    registerHostManualAdd(addRouter, hosts);
+
+    const QString home = QStringLiteral("192.0.2.10:47989");
+    const QString homeLan = QStringLiteral("192.0.2.11:47989");
+    const QString homeOtherPort = QStringLiteral("192.0.2.10:48000");
+    const QString elsewhere = QStringLiteral("198.51.100.7:47989");
+    const QString neighbour = QStringLiteral("192.0.2.20:47989");
+    hosts.answers[home] = serverInfo("uuid-a", "192.0.2.11");
+    hosts.answers[homeLan] = serverInfo("uuid-a", "192.0.2.11");
+    hosts.answers[homeOtherPort] = serverInfo("uuid-a", "192.0.2.11");
+    hosts.answers[elsewhere] = serverInfo("uuid-a", "198.51.100.7");
+    hosts.answers[neighbour] = serverInfo("uuid-b", "192.0.2.20");
+
+    CHECK_EQ(sendTo(addRouter, "POST", QStringLiteral("/api/hosts/manual"), false, "{}").statusCode,
+             400);
+
+    // The "Add computer" of that browser: a new host joins the list, and stays.
+    const HttpResponse added = addHost(addRouter, home, false);
+    CHECK_EQ(added.statusCode, 200);
+    CHECK_EQ(firstHost(added)["uuid"].toString(), QStringLiteral("uuid-a"));
+    NvComputer* tower = hosts.findHostByUuid(QStringLiteral("uuid-a"));
+    CHECK(tower != nullptr);
+    if (!tower) return;
+    CHECK_EQ(tower->activeAddress.toString(), home);
+    CHECK_EQ(tower->manualAddress.toString(), home);
+
+    // Typing it again, or another address it reports for itself, changes nothing
+    // it should not.
+    CHECK_EQ(addHost(addRouter, home, false).statusCode, 200);
+    CHECK_EQ(tower->activeAddress.toString(), home);
+    CHECK_EQ(addHost(addRouter, homeLan, false).statusCode, 200);
+    CHECK_EQ(tower->activeAddress.toString(), homeLan);
+
+    // Another host beside it is just as welcome.
+    CHECK_EQ(addHost(addRouter, neighbour, false).statusCode, 200);
+    CHECK(hosts.findHostByUuid(QStringLiteral("uuid-b")) != nullptr);
+
+    // A known host does not move, not even by a port, and nothing of the answer
+    // is kept.
+    const int savesBefore = hosts.saves;
+    for (const QString& away : {elsewhere, homeOtherPort}) {
+        const HttpResponse refused = addHost(addRouter, away, false);
+        CHECK_EQ(refused.statusCode, 409);
+        CHECK(!QJsonDocument::fromJson(refused.body).object().contains("hosts"));
+        CHECK_EQ(tower->activeAddress.toString(), homeLan);
+        CHECK_EQ(tower->manualAddress.toString(), homeLan);
+        CHECK_EQ(tower->localAddress.toString(), homeLan);
+    }
+    CHECK_EQ(hosts.saves, savesBefore);
+
+    // The answer shows a host's backend as the host list does.
+    tower->backendApiUrl = QStringLiteral("http://192.0.2.30:8080");
+    tower->backendPairUser = QStringLiteral("ada");
+    const QJsonObject asSession = firstHost(addHost(addRouter, homeLan, false));
+    CHECK_EQ(asSession["uuid"].toString(), QStringLiteral("uuid-a"));
+    CHECK(!asSession.contains("backendApiUrl"));
+    CHECK(!asSession.contains("backendPairUser"));
+    const QJsonObject asAdmin = firstHost(addHost(addRouter, homeLan, true));
+    CHECK_EQ(asAdmin["backendApiUrl"].toString(), QStringLiteral("http://192.0.2.30:8080"));
+    CHECK_EQ(asAdmin["backendPairUser"].toString(), QStringLiteral("ada"));
+
+    // The administrator can move it.
+    CHECK_EQ(addHost(addRouter, elsewhere, true).statusCode, 200);
+    CHECK_EQ(tower->activeAddress.toString(), elsewhere);
+    CHECK_EQ(tower->manualAddress.toString(), elsewhere);
 }

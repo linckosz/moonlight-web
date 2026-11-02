@@ -18,6 +18,7 @@
 #include "server/routes/HostRoutes.h"
 
 #include "server/routes/HostBackendWrites.h"
+#include "server/routes/HostManualAdd.h"
 #include "server/ClientUniqueId.h"
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
@@ -31,16 +32,8 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
 {
     server.router()->get("/api/hosts", [&computerManager](const HttpRequest& req) {
         QJsonArray hosts = computerManager.getHostsJson();
-        // Where a backend is and whom it knows are the administrator's, like
-        // changing them. backendConfigured stays.
-        if (!req.isLocal) {
-            for (qsizetype i = 0; i < hosts.size(); ++i) {
-                QJsonObject host = hosts[i].toObject();
-                host.remove(QStringLiteral("backendApiUrl"));
-                host.remove(QStringLiteral("backendPairUser"));
-                hosts[i] = host;
-            }
-        }
+        for (qsizetype i = 0; i < hosts.size(); ++i)
+            hosts[i] = hostForReader(hosts[i].toObject(), req.isLocal);
         QJsonObject obj;
         obj["hosts"] = hosts;
         return HttpResponse::json(obj);
@@ -53,15 +46,7 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(obj);
     });
 
-    server.router()->post("/api/hosts/manual", [&computerManager](const HttpRequest& req) {
-        QJsonDocument doc = QJsonDocument::fromJson(req.body);
-        QJsonObject body = doc.object();
-        QString address = body["address"].toString();
-        if (address.isEmpty()) return HttpResponse::error(400, "Missing 'address' field");
-
-        auto [status, result] = computerManager.handleAddManualHost(address);
-        return HttpResponse::json(result, status);
-    });
+    registerHostManualAdd(*server.router(), computerManager);
 
     server.router()->del("/api/hosts/:id", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");

@@ -113,7 +113,8 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
     const qint64 deadline = QDateTime::currentMSecsSinceEpoch() + 20000;
     bool ready = false;
     while (QDateTime::currentMSecsSinceEpoch() < deadline) {
-        auto [addStatus, addResult] = computers.handleAddManualHost(QStringLiteral("127.0.0.1"));
+        auto [addStatus, addResult] =
+            computers.handleAddManualHost(QStringLiteral("127.0.0.1"), /*mayMoveHost=*/true);
         if (addStatus != 200) {
             Logger::info(QStringLiteral("Provisioning: Sunshine GameStream port not ready yet — "
                                         "waiting"));

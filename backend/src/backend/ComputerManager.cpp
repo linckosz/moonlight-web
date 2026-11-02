@@ -16,6 +16,7 @@
  */
 
 #include "ComputerManager.h"
+#include "backend/ManualHostMerge.h"
 
 #include "streambackend/BackendProbe.h"
 #include "streambackend/GameStreamBackend.h"
@@ -1076,7 +1077,8 @@ void ComputerManager::handleScanRequest()
     Logger::info("Scan started");
 }
 
-std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& address)
+std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& address,
+                                                                 bool mayMoveHost)
 {
     // Parse address: "IP" or "IP:port"
     QString addrStr = address.trimmed();
@@ -1157,32 +1159,7 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
         return {400, {{"status", "error"}, {"message", e.what()}}};
     }
 
-    addOrUpdateHost(xml, nvAddr);
-
-    // Look up the resulting host to return its JSON
-    NvComputer parsedHost(xml, nvAddr);
-    NvComputer* host = findHostByUuid(parsedHost.uuid);
-    if (!host) {
-        return {500,
-                {{"status", "error"}, {"message", "Host was added but could not be retrieved"}}};
-    }
-
-    // Remember it as the manual address. This is the operator's answer to a host
-    // discovery cannot reach, so it has to outlive the process — until now it
-    // only landed in activeAddress and was gone at the next restart.
-    if (host->manualAddress != nvAddr) {
-        host->manualAddress = nvAddr;
-        saveHosts();
-    }
-
-    Logger::info(
-        QString("Manual host added: %1 (%2) at %3").arg(host->name, host->uuid, nvAddr.toString()));
-
-    QJsonObject obj;
-    QJsonArray arr;
-    arr.append(host->toJson());
-    obj["hosts"] = arr;
-    return {200, obj};
+    return mergeManualHost(*this, xml, nvAddr, mayMoveHost);
 }
 
 std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uuid)
