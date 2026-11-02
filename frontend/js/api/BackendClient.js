@@ -949,6 +949,13 @@ export class BackendClient {
     static async getStreamingSettings() {
         return this.get('/api/settings/streaming');
     }
+    /**
+     * The app whose sound a running stream carries under "Stream audio from:
+     * App in front": `{app: "huntgame.exe" | "", supported: boolean}`.
+     */
+    static async getAudioFocused() {
+        return this.get('/api/audio/focused');
+    }
     static async saveStreamingSettings(settings) {
         return this.post('/api/settings/streaming', settings);
     }

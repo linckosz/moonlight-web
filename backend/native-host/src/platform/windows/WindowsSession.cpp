@@ -48,6 +48,7 @@
 #include "InputDesktop.h"
 #include "StreamPriority.h"
 #include "Win32PointerSystem.h"
+#include "mw/native/AudioSource.h"
 #include "video/D3d11VideoPipeline.h"
 #include "video/D3d12VideoPipeline.h"
 
@@ -588,6 +589,8 @@ public:
                 m_Info.hostMuted = strategy != audio::HostMute::Strategy::None;
                 log::info(std::string("[native] audio: ") + how);
             }
+            // Known once the capture located its output; refreshed there.
+            if (!m_Target.displayOsName.empty()) setStreamedDisplay(m_Target.displayOsName);
             auto audio = std::make_unique<audio::WasapiLoopback>(
                 m_Callbacks.onAudio, m_Config.tuning.audioFrameSamples(),
                 m_Config.tuning.audioGraceUs < 0 ? audio::WasapiLoopback::kDefaultGraceUs
@@ -2012,6 +2015,10 @@ private:
         // the paths go missing. Matched by name, it is the same one; matched
         // by path, the path stays the key.
         if (!name.empty()) m_Target.displayOsName = name;
+        // "Stream audio from: App in front" follows focus on this display
+        // only (AudioSource.h): a window on another screen is not what the
+        // viewer sees, so its sound stays out.
+        setStreamedDisplay(m_Target.displayOsName);
         return true;
     }
 

@@ -174,6 +174,16 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
+        // Which sound the stream carries: 'all' (default, as an OS behaves) or
+        // 'focused' — only the app in front, a game. The host says whether it
+        // can (Windows 11 native host); elsewhere the choice is shown locked.
+        this._audioSource = 'all';
+        this._audioSourceSupported = false;
+        // The app whose sound a running stream carries in 'focused' mode, as
+        // the host reports it (GET /api/audio/focused), shown in the option:
+        // "App in front — huntgame.exe". Empty when no stream reports one.
+        this._audioFocusApp = '';
+        this._audioFocusTimer = null;
         // Send this device's microphone to the host (off by default): opened
         // only once the host said it can take it (audio/MicUplink.js), and how
         // it sounds (MIC_QUALITY: voice cleanup, or none at a higher bitrate).
@@ -276,6 +286,7 @@ export class SettingsView {
         await this._loadUpdateState();
         this.render();
         this.bindEvents();
+        this._startAudioFocusPoll();
         this._unsubUpdate = hostUpdate.subscribe((view) => {
             this._updateRun = view;
             this._paintUpdateSection();
@@ -582,6 +593,8 @@ export class SettingsView {
             this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
             // A debug build, or debug mode (--debug, or Admin → Advanced).
             this._debugBuild = data.debug_build === true || data.debug_mode === true;
+            // What the host can do, not a preference: always the server's.
+            this._audioSourceSupported = data.audio_source_focused_supported === true;
 
             if (!stored) {
                 this._applySettings(data);
@@ -630,6 +643,7 @@ export class SettingsView {
         this._hdrEnabled = data.hdr_enabled === true;
         this._chroma444 = data.chroma_444_enabled === true;
         this._muteHostAudio = data.mute_host_audio !== false;
+        this._audioSource = data.audio_source === 'focused' ? 'focused' : 'all';
         this._micEnabled = micRequested(data);
         this._micChosen = data.mic_chosen === true;
         this._micQuality = data.mic_quality === 'clean' ? 'clean' : 'voice';
@@ -926,6 +940,7 @@ export class SettingsView {
             hdr_enabled: this._hdrEnabled,
             chroma_444_enabled: this._chroma444,
             mute_host_audio: this._muteHostAudio,
+            audio_source: this._audioSource,
             seamless_switching: true,
             touch_sensitivity: this._touchSensitivity,
             // Per device: it answers this device's mouse.
@@ -1132,6 +1147,42 @@ export class SettingsView {
         if (this._unsubUpdate) this._unsubUpdate();
         this._unsubUpdate = null;
         this._stopPadWatch();
+        if (this._audioFocusTimer) {
+            clearInterval(this._audioFocusTimer);
+            this._audioFocusTimer = null;
+        }
+    }
+
+    // --- Stream audio from: the app in front ---
+
+    /** The 'focused' option's text: "App in front", plus the app when known. */
+    _audioFocusOptionText() {
+        const label = t('settings.audioSourceFocused');
+        return this._audioFocusApp ? `${label} — ${this._audioFocusApp}` : label;
+    }
+
+    /**
+     * While Settings is open on a host that can do it, ask every 2 s which app
+     * the running stream follows, and repaint the option in place (never a
+     * full render, which would move the page). A failed read keeps the last.
+     */
+    _startAudioFocusPoll() {
+        if (!this._audioSourceSupported || this._audioFocusTimer) return;
+        const tick = async () => {
+            if (this._destroyed) return;
+            try {
+                const data = await BackendClient.getAudioFocused();
+                const app = typeof data?.app === 'string' ? data.app : '';
+                if (app === this._audioFocusApp) return;
+                this._audioFocusApp = app;
+                const option = this.container.querySelector('#settings-audio-source-focused');
+                if (option) option.textContent = this._audioFocusOptionText();
+            } catch {
+                // The host is busy or gone: the next tick asks again.
+            }
+        };
+        tick();
+        this._audioFocusTimer = setInterval(tick, 2000);
     }
 
     // --- Controllers ---
@@ -1453,6 +1504,7 @@ export class SettingsView {
         this._micDevice = null;
         saveMicDevice(null);
         this._micQuality = 'voice';
+        this._audioSource = 'all';
         this._quitAppOnStop = false;
         this._fullscreenOnStart = false;
         this._touchSensitivity = 2.2;
@@ -1999,6 +2051,27 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.muteHostDesc')}</span>
                     </div>
 
+                    <div class="settings-field${this._audioSourceSupported ? '' : ' settings-field-locked'}">
+                        <label class="settings-label" for="settings-audio-source">
+                            ${t('settings.audioSource')}
+                        </label>
+                        <span class="setting-desc">${t(
+                            this._audioSourceSupported
+                                ? 'settings.audioSourceDesc'
+                                : 'settings.audioSourceUnsupported',
+                        )}</span>
+                        <select id="settings-audio-source" class="settings-select"
+                                ${this._audioSourceSupported ? '' : 'disabled'}>
+                            <option value="all" ${this._audioSource !== 'focused' ? 'selected' : ''}>
+                                ${t('settings.audioSourceAll')}
+                            </option>
+                            <option value="focused" id="settings-audio-source-focused"
+                                    ${this._audioSource === 'focused' ? 'selected' : ''}>
+                                ${escapeHtml(this._audioFocusOptionText())}
+                            </option>
+                        </select>
+                    </div>
+
                     <div class="settings-field${micSupported() ? '' : ' settings-field-locked'}">
                         <label class="settings-label" for="settings-mic-device">
                             ${t('settings.micDevice')}
@@ -2449,6 +2522,15 @@ export class SettingsView {
         if (muteHostCheck)
             muteHostCheck.addEventListener('change', () => {
                 this._muteHostAudio = muteHostCheck.checked;
+                this._autoSave();
+            });
+
+        const audioSourceSelect = /** @type {HTMLSelectElement|null} */ (
+            this.container.querySelector('#settings-audio-source')
+        );
+        if (audioSourceSelect)
+            audioSourceSelect.addEventListener('change', () => {
+                this._audioSource = audioSourceSelect.value === 'focused' ? 'focused' : 'all';
                 this._autoSave();
             });
 

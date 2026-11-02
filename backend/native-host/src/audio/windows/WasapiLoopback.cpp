@@ -17,7 +17,10 @@
 
 #include "WasapiLoopback.h"
 
+#include "AppAudioCapture.h"
+
 #include "../../core/Log.h"
+#include "mw/native/AudioSource.h"
 #include "../AudioPacer.h"
 #include "../OpusEncoder.h"
 
@@ -40,6 +43,7 @@
 #include <cstring>
 #include <exception>
 #include <future>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -288,6 +292,18 @@ void WasapiLoopback::runLoop()
               "), endpoint buffer " + std::to_string(device->bufferFrames) + " frames");
     resolveFirst(std::string());
 
+    // "Stream audio from: Focused app" (AudioSource.h): the whole-mix client
+    // gives way to the focused app's own (AppAudioCapture). Chosen once, at
+    // start, and never both at once: nothing else can reach the stream
+    // through the whole mix. The device above was still opened, so a host
+    // with no playback device at all fails the same way in either mode.
+    std::unique_ptr<AppAudioCapture> focused;
+    if (audioSource() == AudioSource::FocusedApp) {
+        device.reset();
+        focused = std::make_unique<AppAudioCapture>();
+        log::info("[native] audio: streaming the focused app only (Stream audio from)");
+    }
+
     // Pro Audio: the class the OS reserves for exactly this loop. Refused in
     // a service session, in which case the thread keeps an ordinary priority.
     DWORD taskIndex = 0;
@@ -342,7 +358,9 @@ void WasapiLoopback::runLoop()
 
         const int64_t now = steadyNowUs();
 
-        if (device && !device->drain(pacer)) {
+        if (focused) focused->pump(pacer, now);
+
+        if (!focused && device && !device->drain(pacer)) {
             // The endpoint went away — unplugged, or the user picked another
             // default output. Reopen on whatever is the default now; the
             // pacer keeps the wire fed with silence meanwhile.
@@ -351,7 +369,7 @@ void WasapiLoopback::runLoop()
             deviceLost = true;
             lastReopenAttemptUs = now;
         }
-        if (!device && now - lastReopenAttemptUs >= 1'000'000) {
+        if (!focused && !device && now - lastReopenAttemptUs >= 1'000'000) {
             lastReopenAttemptUs = now;
             auto fresh = std::make_unique<LoopbackDevice>();
             std::string reopenError;
@@ -429,6 +447,7 @@ void WasapiLoopback::runLoop()
 
     if (timer) CloseHandle(timer);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+    focused.reset();
     device.reset();
     if (coOwned) CoUninitialize();
 }
