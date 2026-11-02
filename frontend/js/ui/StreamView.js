@@ -4511,7 +4511,7 @@ export class StreamView {
         btn.className = 'btn-stream-pad btn-stream-mic';
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (this._mic) this._mic.toggleMuted();
+            this._toggleMicSaid();
             this._syncMicButton();
             // Space in the game would toggle it again.
             btn.blur();
@@ -4541,6 +4541,23 @@ export class StreamView {
         }
         const combo = /Mac/.test(navigator.platform) ? 'Cmd+Option+Ctrl+P' : 'Ctrl+Alt+Shift+P';
         Toast.info(t('stream.micStartsOff', { combo }));
+    }
+
+    /**
+     * Opens or cuts the microphone, from the button or the shortcut. Said on
+     * screen once it really changed: in fullscreen the button is out of sight,
+     * and a refusal has its own message.
+     */
+    _toggleMicSaid() {
+        const mic = this._mic;
+        if (!mic) return;
+        const before = mic.state === 'live';
+        mic.toggleMuted().then(() => {
+            const now = mic.state === 'live';
+            if (now !== before) {
+                Toast.info(t(now ? 'stream.micOn' : 'stream.micOff'), { durationMs: 1500 });
+            }
+        });
     }
 
     /**
@@ -10705,22 +10722,10 @@ export class StreamView {
             }
 
             // Microphone open / cut: Ctrl+Alt+Shift+P (Win) / Cmd+Option+Ctrl+P
-            // (Mac). Said on screen for the same reason as the sound, once it
-            // really changed: a refusal has its own message.
+            // (Mac).
             if (chk('p', 'KeyP')) {
                 e.preventDefault();
-                const mic = this._mic;
-                if (!e.repeat && mic) {
-                    const before = mic.state === 'live';
-                    mic.toggleMuted().then(() => {
-                        const now = mic.state === 'live';
-                        if (now !== before) {
-                            Toast.info(t(now ? 'stream.micOn' : 'stream.micOff'), {
-                                durationMs: 1500,
-                            });
-                        }
-                    });
-                }
+                if (!e.repeat) this._toggleMicSaid();
                 return;
             }
 
