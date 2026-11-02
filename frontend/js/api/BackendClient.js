@@ -953,26 +953,6 @@ export class BackendClient {
         return this.post('/api/settings/streaming', settings);
     }
 
-    // ── Apps kept out of the stream's sound ─────────────────────────────────────
-
-    /**
-     * What plays sound on the host, with icons, and which apps are left out of
-     * the stream.
-     * @returns {Promise<{supported: boolean, reason?: string, can_edit: boolean,
-     *   sources: Array<{exe: string, name: string, icon: string, running: boolean,
-     *   playing: boolean, excluded: boolean}>}>}
-     */
-    static async getAudioSources() {
-        return this.get('/api/audio-sources');
-    }
-    /**
-     * Replace the list of executables left out of the stream's sound.
-     * @param {string[]} excluded e.g. ["chrome.exe", "discord.exe"]
-     */
-    static async setAudioExcluded(excluded) {
-        return this.post('/api/audio-sources', { excluded });
-    }
-
     // ── The native host's apps (host administrator only) ─────────────────────
     // Each answer is the whole section's state: {supported, max, screen, apps,
     // detected}.

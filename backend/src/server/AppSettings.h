@@ -335,15 +335,16 @@ public:
     bool muteHostAudio() const;
     void setMuteHostAudio(bool enabled);
 
-    // ── Apps kept out of the stream's sound ──────────────────────────────────
+    // ── Which sound the stream carries ───────────────────────────────────────
     //
-    // Executable names ("chrome.exe", "discord.exe") whose audio the native
-    // host leaves out of the stream (per-app capture, Windows 11). Stored as the
-    // JSON array "audio_excluded_apps", lower case, default empty — the whole
-    // mix, as before. The host's speakers are not affected.
+    // "audio_source": "all" (default) streams everything the host plays, as an
+    // OS normally would; "focused" streams only the app in front — a game —
+    // on the native Windows 11 host (per-process loopback), so Discord or a
+    // browser stay on the host's speakers and out of the stream. Anything else
+    // reads as "all".
 
-    QStringList audioExcludedApps() const;
-    void setAudioExcludedApps(const QStringList& exeNames);
+    QString audioSource() const;
+    void setAudioSource(const QString& source);
 
     // ── Streaming notifications (tray) ────────────────────────────────────────
     //

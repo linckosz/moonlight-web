@@ -17,44 +17,37 @@
 
 #pragma once
 
+#include "../FocusTarget.h"
+
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 namespace mw::native::audio {
 
 class AudioPacer;
 
-/// The host's sound WITHOUT the apps AudioAppFilter names: one per-process
-/// loopback client (Windows 10 build 20348+, i.e. Windows 11) for each app that
-/// has an audio session and is not excluded, mixed back into one stereo stream.
+/// The sound of the focused app only — Settings → "Stream audio from: Focused
+/// app" (AudioSource.h). One per-process loopback client (Windows 10 build
+/// 20348+, i.e. Windows 11) in INCLUDE-tree mode, aimed at the process that
+/// owns the foreground window, so the app's own child processes (a browser's
+/// audio service, a game's helper) are heard with it and nothing else is.
 ///
-/// Why not one "everything except" client: Windows offers exactly that
-/// (PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE), but for ONE process
-/// tree per client, and clients cannot be subtracted from one another. Several
-/// exclusions therefore mean the inverse: include each app that may be heard.
+/// Which app is "focused" is FocusTarget.h's rule: a full-screen app in front
+/// becomes the target and stays it while the user alt-tabs to a windowed one
+/// (Discord, a browser), so a game keeps its sound and only its sound.
 ///
 /// Two threads:
-///  - a scanner (ordinary priority) that, every 750 ms or at once when woken,
-///    lists the processes that own an audio session, decides which process
-///    trees to capture, and activates/initialises clients for the new ones —
-///    the slow part, kept off the audio thread;
-///  - the caller's audio thread, which pump()s: drains every client into its
-///    own FIFO and pushes the mix into the AudioPacer.
+///  - a scanner (ordinary priority) that every 500 ms reads the foreground
+///    window, applies the rule, and activates a client for a new target — the
+///    slow part, kept off the audio thread;
+///  - the caller's audio thread, which pump()s the client into the AudioPacer.
 ///
-/// Process trees: an INCLUDE client takes the target's child processes too. So
-/// a session owner that has an excluded app among its descendants (Explorer,
-/// which launched Discord from the Start menu, say) is NOT captured — its own
-/// sound is lost rather than the excluded app's leaked — and an owner whose
-/// ancestor is already captured is skipped, or its sound would play twice.
-///
-/// Never a silent fallback to the whole mix: with exclusions set, an app that
-/// cannot be captured is missing from the stream, never the reverse. A machine
-/// where per-process loopback does not exist at all streams silence and says
-/// so in the log; clearing the exclusions brings the whole mix back.
+/// Never a fallback to the whole mix: with no target, or a target that cannot
+/// be captured, the stream is silent (the pacer pads it). A Windows without
+/// per-process loopback says so in the log once.
 class AppAudioCapture
 {
 public:
@@ -63,14 +56,8 @@ public:
     AppAudioCapture(const AppAudioCapture&) = delete;
     AppAudioCapture& operator=(const AppAudioCapture&) = delete;
 
-    /// Audio thread: move what every client captured into the pacer, mixed.
+    /// Audio thread: move what the client captured into the pacer.
     void pump(AudioPacer& pacer, int64_t nowUs);
-
-    /// Ask the scanner for a pass now (the exclusion list changed).
-    void wake();
-
-    /// Clients currently captured (for the log).
-    int clientCount() const;
 
     struct Client;
 
@@ -79,18 +66,20 @@ private:
     void scanOnce();
 
     std::thread m_Scanner;
-    mutable std::mutex m_Mutex;
+    std::mutex m_Mutex;
     std::condition_variable m_Cv;
     bool m_Stop = false;
-    bool m_Wake = true;
 
-    /// The clients the audio thread mixes. The scanner builds a new list and
-    /// swaps it in under m_Mutex; the audio thread takes a copy of the pointer.
-    std::shared_ptr<const std::vector<std::shared_ptr<Client>>> m_Clients;
+    /// The client the audio thread drains. The scanner swaps it under m_Mutex;
+    /// the audio thread takes a copy of the pointer.
+    std::shared_ptr<Client> m_Client;
 
-    /// Audio thread only: the mix buffer, kept to avoid an allocation a tick.
-    std::vector<float> m_Mix;
-    int64_t m_LastReportUs = 0;
+    // Scanner thread only.
+    FocusTarget m_Target;
+    void* m_TargetProcess = nullptr; ///< HANDLE, held so a reused PID is not mistaken for it.
+    uint32_t m_RetryPid = 0;
+    int64_t m_RetryAfterUs = 0;
+    bool m_ReportedUnsupported = false;
 };
 
 } // namespace mw::native::audio

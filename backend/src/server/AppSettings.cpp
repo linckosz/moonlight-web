@@ -596,31 +596,20 @@ void AppSettings::setMuteHostAudio(bool enabled)
     writeAll(obj);
 }
 
-// ── Apps kept out of the stream's sound ───────────────────────────────────────
+// ── Which sound the stream carries ────────────────────────────────────────────
 
-QStringList AppSettings::audioExcludedApps() const
+QString AppSettings::audioSource() const
 {
-    QStringList out;
-    const QJsonArray arr = readAll().value("audio_excluded_apps").toArray();
-    for (const QJsonValue& v : arr) {
-        const QString name = v.toString().trimmed().toLower();
-        if (!name.isEmpty() && !out.contains(name)) out.append(name);
-    }
-    return out;
+    return readAll().value("audio_source").toString() == QLatin1String("focused")
+               ? QStringLiteral("focused")
+               : QStringLiteral("all");
 }
 
-void AppSettings::setAudioExcludedApps(const QStringList& exeNames)
+void AppSettings::setAudioSource(const QString& source)
 {
-    QJsonArray arr;
-    QStringList seen;
-    for (const QString& raw : exeNames) {
-        const QString name = raw.trimmed().toLower();
-        if (name.isEmpty() || seen.contains(name)) continue;
-        seen.append(name);
-        arr.append(name);
-    }
     QJsonObject obj = readAll();
-    obj["audio_excluded_apps"] = arr;
+    obj["audio_source"] =
+        source == QLatin1String("focused") ? QStringLiteral("focused") : QStringLiteral("all");
     writeAll(obj);
 }
 

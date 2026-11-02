@@ -20,7 +20,7 @@
 #include "AppAudioCapture.h"
 
 #include "../../core/Log.h"
-#include "mw/native/AudioAppFilter.h"
+#include "mw/native/AudioSource.h"
 #include "../AudioPacer.h"
 #include "../OpusEncoder.h"
 
@@ -292,6 +292,18 @@ void WasapiLoopback::runLoop()
               "), endpoint buffer " + std::to_string(device->bufferFrames) + " frames");
     resolveFirst(std::string());
 
+    // "Stream audio from: Focused app" (AudioSource.h): the whole-mix client
+    // gives way to the focused app's own (AppAudioCapture). Chosen once, at
+    // start, and never both at once: nothing else can reach the stream
+    // through the whole mix. The device above was still opened, so a host
+    // with no playback device at all fails the same way in either mode.
+    std::unique_ptr<AppAudioCapture> focused;
+    if (audioSource() == AudioSource::FocusedApp) {
+        device.reset();
+        focused = std::make_unique<AppAudioCapture>();
+        log::info("[native] audio: streaming the focused app only (Stream audio from)");
+    }
+
     // Pro Audio: the class the OS reserves for exactly this loop. Refused in
     // a service session, in which case the thread keeps an ordinary priority.
     DWORD taskIndex = 0;
@@ -330,13 +342,6 @@ void WasapiLoopback::runLoop()
     int64_t lastReportUs = steadyNowUs();
     int64_t reportedDropped = 0, reportedUnderruns = 0;
     bool deviceLost = false;
-    // With apps excluded (AudioAppFilter), the whole-mix client gives way to
-    // one client per app that may be heard (AppAudioCapture). Checked every
-    // tick against the filter's generation, so a box ticked mid-stream takes
-    // effect within one scan; never both at once, so an excluded app cannot
-    // leak through the whole mix while the per-app clients come up.
-    uint64_t filterGeneration = ~uint64_t(0);
-    std::unique_ptr<AppAudioCapture> apps;
 
     while (m_Running.load(std::memory_order_acquire)) {
         // Wake on the endpoint's data, or on the 5 ms tick, whichever first.
@@ -353,34 +358,9 @@ void WasapiLoopback::runLoop()
 
         const int64_t now = steadyNowUs();
 
-        const uint64_t generation = AudioAppFilter::generation();
-        if (generation != filterGeneration) {
-            filterGeneration = generation;
-            const std::vector<std::string> excluded = AudioAppFilter::get();
-            if (!excluded.empty() && !apps) {
-                device.reset();
-                deviceLost = false;
-                apps = std::make_unique<AppAudioCapture>();
-                std::string names;
-                for (const auto& e : excluded)
-                    names += (names.empty() ? "" : ", ") + e;
-                log::info("[native] audio: per-app capture, excluding " + names);
-            } else if (excluded.empty() && apps) {
-                apps.reset();
-                lastReopenAttemptUs = 0; // reopen the whole mix below, now
-                log::info("[native] audio: no app excluded — back to the whole mix");
-            } else if (apps) {
-                std::string names;
-                for (const auto& e : excluded)
-                    names += (names.empty() ? "" : ", ") + e;
-                log::info("[native] audio: exclusions now " + names);
-                apps->wake();
-            }
-        }
+        if (focused) focused->pump(pacer, now);
 
-        if (apps) apps->pump(pacer, now);
-
-        if (!apps && device && !device->drain(pacer)) {
+        if (!focused && device && !device->drain(pacer)) {
             // The endpoint went away — unplugged, or the user picked another
             // default output. Reopen on whatever is the default now; the
             // pacer keeps the wire fed with silence meanwhile.
@@ -389,7 +369,7 @@ void WasapiLoopback::runLoop()
             deviceLost = true;
             lastReopenAttemptUs = now;
         }
-        if (!apps && !device && now - lastReopenAttemptUs >= 1'000'000) {
+        if (!focused && !device && now - lastReopenAttemptUs >= 1'000'000) {
             lastReopenAttemptUs = now;
             auto fresh = std::make_unique<LoopbackDevice>();
             std::string reopenError;
@@ -467,7 +447,7 @@ void WasapiLoopback::runLoop()
 
     if (timer) CloseHandle(timer);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-    apps.reset();
+    focused.reset();
     device.reset();
     if (coOwned) CoUninitialize();
 }

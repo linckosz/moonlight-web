@@ -30,6 +30,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QOperatingSystemVersion>
 #include <QPointer>
 #include <QProcess>
 #include <QRegularExpression>
@@ -116,7 +117,6 @@
 #include "streaming/SharedFeed.h"
 #include "streaming/StreamEnds.h"
 #include "streaming/StreamWorkerHost.h"
-#include "common/AudioExcludeShm.h"
 #include "streaming/WorkerService.h"
 #include "streaming/worker/StreamWorkerMain.h"
 #include "server/HostAppImage.h"
@@ -136,6 +136,7 @@
 #include "LatencyFlag.h"
 #include "streaming/InputMessageCodec.h"
 
+#include "mw/native/AudioSource.h"
 #include "mw/native/NativeHost.h"
 
 #include <openssl/ssl.h>
@@ -2152,10 +2153,6 @@ int main(int argc, char* argv[])
         Logger::info("OpenSSL initialized");
     }
 
-    // The apps kept out of the stream's sound, where every stream worker can
-    // read them — including a SYSTEM one, which cannot open settings.json.
-    AudioExcludeShm::publish(appSettings.audioExcludedApps());
-
     // Read remaining persistent settings
     quint16 httpsPort = appSettings.httpsPort(devMode ? kDevHttpsPort : 443);
     VideoCodec preferredCodec = appSettings.videoCodec();
@@ -3404,6 +3401,26 @@ int main(int argc, char* argv[])
         bool reqMuteHost = body.contains("mute_host_audio") ? body["mute_host_audio"].toBool()
                                                             : appSettings.muteHostAudio();
 
+        // Which sound the stream carries (Settings → Stream audio from): the
+        // browser's choice, else the host's default. "all" unless "focused".
+        // A host that cannot capture one app (below Windows 11) streams the
+        // whole mix rather than silence: the browser's stored choice may predate
+        // the host it now reaches.
+        QString reqAudioSource =
+            (body.contains("audio_source") ? body["audio_source"].toString()
+                                           : appSettings.audioSource()) == QLatin1String("focused")
+                ? QStringLiteral("focused")
+                : QStringLiteral("all");
+#if defined(Q_OS_WIN)
+        if (reqAudioSource == QLatin1String("focused") &&
+            QOperatingSystemVersion::current() <
+                QOperatingSystemVersion(QOperatingSystemVersion::Windows, 10, 0, 20348)) {
+            Logger::info("[audio] Stream audio from: Focused app needs Windows 11 — streaming "
+                         "all apps");
+            reqAudioSource = QStringLiteral("all");
+        }
+#endif
+
         // Video enhancement (WebGPU): the browser renders via canvas, so when it
         // is on the transport negotiation must avoid webrtc-media (<video>).
         bool reqVideoEnhancement = body.contains("video_enhancement")
@@ -3777,6 +3794,10 @@ int main(int argc, char* argv[])
             s->setDebugIceDropUdp(AppSettings().debugIceDropUdp());
             s->setLowAudio(reqLowAudio);
             s->setMuteHostAudio(reqMuteHost);
+            // A native host run in this process (no stream worker) reads the
+            // choice from here; a worker gets it as cfg["audioSource"] below.
+            mw::native::setAudioSource(
+                mw::native::audioSourceFromString(reqAudioSource.toStdString()));
             s->setMicRequested(reqMic);
             s->setMicDevice(appSettings.micDevice());
             s->setClientUniqueId(reqClientUniqueId);
@@ -3950,9 +3971,7 @@ int main(int argc, char* argv[])
             cfg["iceTcp"] = enableIceTcp;
             cfg["lowAudio"] = reqLowAudio;
             cfg["muteHostAudio"] = reqMuteHost;
-            // The apps kept out of the stream's sound; the worker then follows
-            // the live list (AudioExcludeShm) for changes made mid-stream.
-            cfg["audioExcludedApps"] = QJsonArray::fromStringList(appSettings.audioExcludedApps());
+            cfg["audioSource"] = reqAudioSource;
             // The viewer's microphone; the device it plays into travels with
             // the other settings a SYSTEM worker cannot read (StreamWorkerHost).
             cfg["mic"] = reqMic;
@@ -5645,8 +5664,8 @@ int main(int argc, char* argv[])
         cfg["iceTcp"] = mode.endsWith(QStringLiteral("-tcp"));
         cfg["lowAudio"] = false;
         cfg["muteHostAudio"] = false;
-        // A guest hears what the owner's stream would: the same apps left out.
-        cfg["audioExcludedApps"] = QJsonArray::fromStringList(appSettings.audioExcludedApps());
+        // A guest hears what the host's default stream would.
+        cfg["audioSource"] = appSettings.audioSource();
         // The guest's browser decodes through a gap, as the owner's /start
         // says it (ride_out_loss): a native host then refreshes their stream
         // in a wave, and a lost frame costs no keyframe. The shared feed sets

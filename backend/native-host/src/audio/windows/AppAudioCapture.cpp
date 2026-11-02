@@ -18,9 +18,7 @@
 #include "AppAudioCapture.h"
 
 #include "../../core/Log.h"
-#include "../AppTreeSelect.h"
 #include "../AudioPacer.h"
-#include "mw/native/AudioAppFilter.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -34,19 +32,18 @@
 #include <audiopolicy.h>
 #include <mmdeviceapi.h>
 #include <propidl.h>
-#include <tlhelp32.h>
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <new>
-#include <set>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
+#include <vector>
 
 namespace mw::native::audio {
 
@@ -178,19 +175,13 @@ int64_t steadyNowUs()
         .count();
 }
 
-/// Frames of 48 kHz stereo — the units every FIFO below counts in.
+/// Frames of 48 kHz stereo — the units the FIFO counts in.
 constexpr size_t kChannels = static_cast<size_t>(AudioPacer::kChannels);
 constexpr size_t framesFromMs(int ms)
 {
     return static_cast<size_t>(AudioPacer::kSampleRate) * static_cast<size_t>(ms) / 1000;
 }
-/// A client that delivered nothing for this long is idle: it no longer holds
-/// the mix back waiting for its next packet.
-constexpr int64_t kIdleUs = 60'000;
-/// One client this far ahead of the slowest active one means that one is
-/// stuck, not late: mix what there is and pad the laggard with silence.
-constexpr size_t kResyncFrames = framesFromMs(40);
-/// No FIFO grows past this; the oldest audio goes first.
+/// The FIFO never grows past this; the oldest audio goes first.
 constexpr size_t kMaxFifoFrames = framesFromMs(200);
 
 } // namespace
@@ -204,26 +195,15 @@ struct AppAudioCapture::Client
     ComPtr<IAudioCaptureClient> capture;
     HANDLE event = nullptr;
 
-    // Audio thread only.
+    // Audio thread only: what drain() collected and pump() has not pushed yet.
     std::vector<float> fifo;
-    size_t readFrames = 0;
-    int64_t lastDataUs = 0;
-    /// Written by the audio thread, read by the scanner (which retires it).
+    /// Written by the audio thread, read by the scanner (which reopens it).
     std::atomic<bool> lost{false};
 
     ~Client()
     {
         if (client) client->Stop();
         if (event) CloseHandle(event);
-    }
-
-    size_t queuedFrames() const { return fifo.size() / kChannels - readFrames; }
-
-    void compact()
-    {
-        if (readFrames == 0) return;
-        fifo.erase(fifo.begin(), fifo.begin() + static_cast<ptrdiff_t>(readFrames * kChannels));
-        readFrames = 0;
     }
 
     /// Activate and start. Returns the failing HRESULT, S_OK on success.
@@ -302,7 +282,7 @@ struct AppAudioCapture::Client
         }
 
         // Event-driven as Microsoft's sample is, though nobody waits on it:
-        // the audio thread polls every client on its own 5 ms tick.
+        // the audio thread polls the client on its own 5 ms tick.
         event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         if (!event) {
             step = "CreateEvent";
@@ -319,7 +299,7 @@ struct AppAudioCapture::Client
     }
 
     /// Audio thread: move what the client has into the FIFO.
-    void drain(int64_t nowUs)
+    void drain()
     {
         if (lost || !capture) return;
         for (;;) {
@@ -346,13 +326,133 @@ struct AppAudioCapture::Client
                 fifo.insert(fifo.end(), f, f + floats);
             }
             capture->ReleaseBuffer(frames);
-            lastDataUs = nowUs;
         }
     }
 };
 
+namespace {
+
+/// The executable's file name, lower case ("discord.exe"); empty if unreadable.
+std::string exeName(HANDLE process)
+{
+    std::array<wchar_t, MAX_PATH> path{};
+    DWORD size = static_cast<DWORD>(path.size());
+    if (!process || !QueryFullProcessImageNameW(process, 0, path.data(), &size)) return {};
+    std::string full = narrow(path.data());
+    const size_t slash = full.find_last_of("\\/");
+    std::string name = slash == std::string::npos ? full : full.substr(slash + 1);
+    for (char& ch : name)
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return name;
+}
+
+std::string exeName(DWORD pid)
+{
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return {};
+    std::string name = exeName(h);
+    CloseHandle(h);
+    return name;
+}
+
+/// Windows' own surfaces: in front often (the taskbar, Start, the lock screen,
+/// alt-tab), never what anyone means by "the game". Focus moving to one of
+/// them keeps the current target.
+bool isShell(const std::string& exe)
+{
+    static const char* const kShell[] = {
+        "explorer.exe",
+        "shellexperiencehost.exe",
+        "startmenuexperiencehost.exe",
+        "searchhost.exe",
+        "searchapp.exe",
+        "lockapp.exe",
+        "textinputhost.exe",
+        "applicationframehost.exe",
+        "logonui.exe",
+        "shellhost.exe",
+    };
+    for (const char* s : kShell)
+        if (exe == s) return true;
+    return false;
+}
+
+/// A UWP app's window belongs to ApplicationFrameHost; the app itself owns a
+/// child window. Its PID, or 0 when there is none.
+DWORD uwpChildProcess(HWND frame, DWORD framePid)
+{
+    struct Search
+    {
+        DWORD framePid;
+        DWORD found;
+    } search{framePid, 0};
+    EnumChildWindows(
+        frame,
+        [](HWND child, LPARAM param) -> BOOL {
+            auto* s = reinterpret_cast<Search*>(param);
+            DWORD pid = 0;
+            GetWindowThreadProcessId(child, &pid);
+            if (pid != 0 && pid != s->framePid) {
+                s->found = pid;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
+
+/// The window covers its whole monitor with no title bar: exclusive or
+/// borderless full screen. A maximized window keeps its caption, so it is not.
+bool isFullscreen(HWND window)
+{
+    if (IsIconic(window)) return false;
+    const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+    if ((style & WS_CAPTION) == WS_CAPTION) return false;
+    RECT rect{};
+    if (!GetWindowRect(window, &rect)) return false;
+    HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONULL);
+    if (!monitor) return false;
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(monitor, &info)) return false;
+    return rect.left <= info.rcMonitor.left && rect.top <= info.rcMonitor.top &&
+           rect.right >= info.rcMonitor.right && rect.bottom >= info.rcMonitor.bottom;
+}
+
+/// What is in front now.
+FocusSample sampleForeground(const std::string& selfExe)
+{
+    FocusSample out;
+    HWND window = GetForegroundWindow();
+    if (!window) return out;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(window, &pid);
+    if (pid == 0) return out;
+    std::string exe = exeName(pid);
+    if (exe == "applicationframehost.exe") {
+        if (const DWORD app = uwpChildProcess(window, pid)) {
+            pid = app;
+            exe = exeName(pid);
+        }
+    }
+    out.pid = pid;
+    out.fullscreen = isFullscreen(window);
+    // This host itself (the stream worker, the server's own window) is never
+    // the target either: it plays no sound worth streaming.
+    out.ignored =
+        pid == GetCurrentProcessId() || isShell(exe) || (!selfExe.empty() && exe == selfExe);
+    return out;
+}
+
+bool processAlive(HANDLE process)
+{
+    return process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+}
+
+} // namespace
+
 AppAudioCapture::AppAudioCapture()
-    : m_Clients(std::make_shared<const std::vector<std::shared_ptr<Client>>>())
 {
     m_Scanner = std::thread([this] { scannerLoop(); });
 }
@@ -365,88 +465,31 @@ AppAudioCapture::~AppAudioCapture()
     }
     m_Cv.notify_all();
     if (m_Scanner.joinable()) m_Scanner.join();
+    if (m_TargetProcess) CloseHandle(static_cast<HANDLE>(m_TargetProcess));
 }
 
-void AppAudioCapture::wake()
+void AppAudioCapture::pump(AudioPacer& pacer, int64_t /*nowUs*/)
 {
+    std::shared_ptr<Client> client;
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
-        m_Wake = true;
+        client = m_Client;
     }
-    m_Cv.notify_all();
-}
+    // No target: nothing is pushed, and the pacer keeps the wire fed with
+    // silence — never the whole mix.
+    if (!client) return;
 
-int AppAudioCapture::clientCount() const
-{
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    return static_cast<int>(m_Clients->size());
-}
-
-void AppAudioCapture::pump(AudioPacer& pacer, int64_t nowUs)
-{
-    std::shared_ptr<const std::vector<std::shared_ptr<Client>>> clients;
-    {
-        std::lock_guard<std::mutex> lock(m_Mutex);
-        clients = m_Clients;
-    }
-    if (clients->empty()) return;
-
-    for (const auto& c : *clients) {
-        c->drain(nowUs);
-        // A runaway FIFO (a client the mix could not keep up with) loses its
-        // oldest audio rather than growing without bound.
-        const size_t queued = c->queuedFrames();
-        if (queued > kMaxFifoFrames) c->readFrames += queued - kMaxFifoFrames;
-    }
-
-    // How much to mix now. Every process loopback stream is cut from the same
-    // engine pass, so active clients deliver in step: mix what the slowest
-    // active one has, which keeps them aligned without a clock of our own. An
-    // idle client (nothing for 60 ms — its app is quiet or gone) does not hold
-    // the others back, and one stuck far behind is padded rather than waited for.
-    size_t minActive = SIZE_MAX, maxAny = 0;
-    bool anyActive = false;
-    for (const auto& c : *clients) {
-        const size_t q = c->queuedFrames();
-        maxAny = std::max(maxAny, q);
-        if (nowUs - c->lastDataUs < kIdleUs && !c->lost) {
-            anyActive = true;
-            minActive = std::min(minActive, q);
-        }
-    }
-    size_t frames = 0;
-    if (!anyActive)
-        frames = maxAny; // only leftovers: flush them
-    else if (maxAny > minActive + kResyncFrames)
-        frames = maxAny;
-    else
-        frames = minActive;
+    client->drain();
+    size_t frames = client->fifo.size() / kChannels;
     if (frames == 0) return;
-
-    m_Mix.assign(frames * kChannels, 0.0f);
-    for (const auto& c : *clients) {
-        const size_t take = std::min(frames, c->queuedFrames());
-        const float* src = c->fifo.data() + c->readFrames * kChannels;
-        for (size_t i = 0; i < take * kChannels; ++i)
-            m_Mix[i] += src[i];
-        c->readFrames += take;
-        if (c->readFrames * kChannels * 2 > c->fifo.size() || c->readFrames > framesFromMs(100))
-            c->compact();
+    // A backlog (the audio thread stalled) loses its oldest audio.
+    const float* src = client->fifo.data();
+    if (frames > kMaxFifoFrames) {
+        src += (frames - kMaxFifoFrames) * kChannels;
+        frames = kMaxFifoFrames;
     }
-    // The system mixer clips the sum the same way; nothing subtler is needed
-    // for a handful of apps.
-    for (float& s : m_Mix)
-        s = std::clamp(s, -1.0f, 1.0f);
-    pacer.push(m_Mix.data(), frames);
-
-    if (nowUs - m_LastReportUs >= 60'000'000) {
-        m_LastReportUs = nowUs;
-        std::string names;
-        for (const auto& c : *clients)
-            names += (names.empty() ? "" : ", ") + c->exe;
-        log::info("[native] audio: per-app capture of " + std::to_string(clients->size()) +
-                  " app(s): " + names);
-    }
+    pacer.push(src, frames);
+    client->fifo.clear();
 }
 
 void AppAudioCapture::scannerLoop() noexcept
@@ -455,246 +498,98 @@ void AppAudioCapture::scannerLoop() noexcept
     const bool coOwned = SUCCEEDED(coInit);
     try {
         for (;;) {
-            {
-                std::unique_lock<std::mutex> lock(m_Mutex);
-                m_Cv.wait_for(lock, std::chrono::milliseconds(750),
-                              [this] { return m_Stop || m_Wake; });
-                if (m_Stop) break;
-                m_Wake = false;
-            }
             scanOnce();
+            std::unique_lock<std::mutex> lock(m_Mutex);
+            m_Cv.wait_for(lock, std::chrono::milliseconds(500), [this] { return m_Stop; });
+            if (m_Stop) break;
         }
     } catch (const std::exception& e) {
-        log::error(std::string("[native] audio: per-app scanner threw: ") + e.what());
+        log::error(std::string("[native] audio: focused-app scanner threw: ") + e.what());
     } catch (...) {
-        log::error("[native] audio: per-app scanner threw");
+        log::error("[native] audio: focused-app scanner threw");
     }
     {
-        // The clients are COM objects created on this thread's apartment (MTA,
-        // shared with the audio thread): drop them before leaving it.
+        // The client is a COM object created on this thread's apartment (MTA,
+        // shared with the audio thread): drop it before leaving it.
         std::lock_guard<std::mutex> lock(m_Mutex);
-        m_Clients = std::make_shared<const std::vector<std::shared_ptr<Client>>>();
+        m_Client.reset();
     }
     if (coOwned) CoUninitialize();
 }
 
-namespace {
-
-struct ProcInfo
-{
-    DWORD parent = 0;
-    std::string exe; // normalised (AudioAppFilter::normalise)
-};
-
-/// Every process, with its parent and normalised executable name.
-std::unordered_map<DWORD, ProcInfo> snapshotProcesses()
-{
-    std::unordered_map<DWORD, ProcInfo> out;
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return out;
-    PROCESSENTRY32W pe{};
-    pe.dwSize = sizeof(pe);
-    if (Process32FirstW(snap, &pe)) {
-        do {
-            ProcInfo info;
-            info.parent = pe.th32ParentProcessID;
-            info.exe = AudioAppFilter::normalise(narrow(pe.szExeFile));
-            out.emplace(pe.th32ProcessID, std::move(info));
-        } while (Process32NextW(snap, &pe));
-    }
-    CloseHandle(snap);
-    return out;
-}
-
-/// When a process started, for telling a real parent from a recycled PID.
-/// 0 when it cannot be read.
-uint64_t creationTime(DWORD pid, std::unordered_map<DWORD, uint64_t>& cache)
-{
-    auto it = cache.find(pid);
-    if (it != cache.end()) return it->second;
-    uint64_t t = 0;
-    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
-        FILETIME created, exited, kernel, user;
-        if (GetProcessTimes(h, &created, &exited, &kernel, &user))
-            t = (static_cast<uint64_t>(created.dwHighDateTime) << 32) | created.dwLowDateTime;
-        CloseHandle(h);
-    }
-    cache.emplace(pid, t);
-    return t;
-}
-
-/// The chain of real ancestors of `pid`, nearest first. A parent PID that has
-/// been reused by a younger process is where the chain stops.
-std::vector<DWORD> ancestors(DWORD pid, const std::unordered_map<DWORD, ProcInfo>& procs,
-                             std::unordered_map<DWORD, uint64_t>& times)
-{
-    std::vector<DWORD> out;
-    DWORD cur = pid;
-    for (int depth = 0; depth < 64; ++depth) {
-        auto it = procs.find(cur);
-        if (it == procs.end()) break;
-        const DWORD parent = it->second.parent;
-        if (parent == 0 || parent == cur || procs.find(parent) == procs.end()) break;
-        const uint64_t childT = creationTime(cur, times);
-        const uint64_t parentT = creationTime(parent, times);
-        if (childT && parentT && parentT > childT) break; // recycled PID
-        if (std::find(out.begin(), out.end(), parent) != out.end()) break;
-        out.push_back(parent);
-        cur = parent;
-    }
-    return out;
-}
-
-/// The processes that own an audio session on any active render endpoint.
-std::set<DWORD> sessionOwners()
-{
-    std::set<DWORD> pids;
-    ComPtr<IMMDeviceEnumerator> enumerator;
-    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                IID_PPV_ARGS(&enumerator))))
-        return pids;
-    ComPtr<IMMDeviceCollection> devices;
-    if (FAILED(enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices))) return pids;
-    UINT count = 0;
-    devices->GetCount(&count);
-    for (UINT i = 0; i < count; ++i) {
-        ComPtr<IMMDevice> device;
-        if (FAILED(devices->Item(i, &device))) continue;
-        ComPtr<IAudioSessionManager2> manager;
-        if (FAILED(device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
-                                    reinterpret_cast<void**>(manager.GetAddressOf()))))
-            continue;
-        ComPtr<IAudioSessionEnumerator> sessions;
-        if (FAILED(manager->GetSessionEnumerator(&sessions))) continue;
-        int n = 0;
-        sessions->GetCount(&n);
-        for (int s = 0; s < n; ++s) {
-            ComPtr<IAudioSessionControl> control;
-            if (FAILED(sessions->GetSession(s, &control))) continue;
-            ComPtr<IAudioSessionControl2> control2;
-            if (FAILED(control.As(&control2))) continue;
-            if (control2->IsSystemSoundsSession() == S_OK) continue;
-            AudioSessionState state = AudioSessionStateInactive;
-            if (SUCCEEDED(control2->GetState(&state)) && state == AudioSessionStateExpired)
-                continue;
-            DWORD pid = 0;
-            if (SUCCEEDED(control2->GetProcessId(&pid)) && pid != 0) pids.insert(pid);
-        }
-    }
-    return pids;
-}
-
-} // namespace
-
 void AppAudioCapture::scanOnce()
 {
-    const std::vector<std::string> excludedList = AudioAppFilter::get();
-    const std::unordered_set<std::string> excluded(excludedList.begin(), excludedList.end());
+    static const std::string selfExe = exeName(GetCurrentProcess());
 
-    const auto procs = snapshotProcesses();
-    std::unordered_map<DWORD, uint64_t> times;
-    const DWORD self = GetCurrentProcessId();
+    HANDLE targetProcess = static_cast<HANDLE>(m_TargetProcess);
+    const FocusTarget next =
+        nextFocusTarget(m_Target, processAlive(targetProcess), sampleForeground(selfExe));
 
-    // Every running process of an excluded app, session or not: one launched
-    // by an app we capture must not be swept in through that app's tree.
-    std::vector<DWORD> excludedPids;
-    for (const auto& [pid, info] : procs)
-        if (excluded.count(info.exe)) excludedPids.push_back(pid);
-
-    // Session owners that may be heard.
-    std::set<DWORD> candidates;
-    for (DWORD pid : sessionOwners()) {
-        auto it = procs.find(pid);
-        if (it == procs.end() || pid == self) continue;
-        if (excluded.count(it->second.exe)) continue;
-        candidates.insert(pid);
-    }
-
-    // Which trees to open: no owner with an excluded app under it, no owner
-    // already carried by its ancestor's tree (AppTreeSelect.h).
-    std::set<uint32_t> candidateIds(candidates.begin(), candidates.end());
-    std::vector<uint32_t> excludedIds(excludedPids.begin(), excludedPids.end());
-    const TreeChoice choice = chooseCaptureTrees(candidateIds, excludedIds, [&](uint32_t pid) {
-        const std::vector<DWORD> chain = ancestors(static_cast<DWORD>(pid), procs, times);
-        return std::vector<uint32_t>(chain.begin(), chain.end());
-    });
-    const std::set<uint32_t>& wanted = choice.wanted;
-
-    // Report each owner we leave out on purpose, once per run.
-    static std::set<std::string> s_reported;
-    for (uint32_t u : choice.unsafe) {
-        const std::string& exe = procs.at(u).exe;
-        if (s_reported.insert(exe).second)
-            log::info("[native] audio: not capturing " + exe +
-                      " — an excluded app runs under it, and its tree would carry that app too");
-    }
-
-    std::shared_ptr<const std::vector<std::shared_ptr<Client>>> current;
+    std::shared_ptr<Client> current;
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
-        current = m_Clients;
+        current = m_Client;
     }
 
-    auto next = std::make_shared<std::vector<std::shared_ptr<Client>>>();
-    std::set<DWORD> have;
-    bool changed = false;
-    for (const auto& c : *current) {
-        // Keep a client that is still wanted, still the same process, and alive.
-        auto it = procs.find(c->pid);
-        if (wanted.count(c->pid) && it != procs.end() && it->second.exe == c->exe && !c->lost) {
-            next->push_back(c);
-            have.insert(c->pid);
-        } else {
-            changed = true;
+    const bool newTarget = next.pid != m_Target.pid;
+    m_Target = next;
+    if (newTarget) {
+        if (targetProcess) CloseHandle(targetProcess);
+        targetProcess =
+            next.pid ? OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, next.pid)
+                     : nullptr;
+        m_TargetProcess = targetProcess;
+        m_RetryPid = 0;
+        // Silence while the new client comes up: the old app must not keep
+        // playing into the stream once something else is in front.
+        if (current) {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_Client.reset();
+            current.reset();
         }
+        if (next.pid == 0) log::info("[native] audio: focused app closed — the stream is silent");
     }
 
-    // New owners. A PID that failed is not retried for 5 s; the first failure
-    // that says the API itself is missing is reported loudly, once.
-    static std::unordered_map<DWORD, int64_t> s_retryAfterUs;
-    static bool s_reportedUnsupported = false;
+    if (next.pid == 0) return;
+    if (current && !current->lost) return; // capturing it already
+
+    // A client to (re)open. A PID that failed is not retried for 5 s.
     const int64_t now = steadyNowUs();
-    for (uint32_t wantedPid : wanted) {
-        const DWORD pid = static_cast<DWORD>(wantedPid);
-        if (have.count(pid)) continue;
-        auto retry = s_retryAfterUs.find(pid);
-        if (retry != s_retryAfterUs.end() && now < retry->second) continue;
-        auto client = std::make_shared<Client>();
-        client->pid = pid;
-        client->exe = procs.at(pid).exe;
-        // Idle until its first packet: a new app must not hold the mix back
-        // while its client warms up.
-        client->lastDataUs = 0;
-        std::string step;
-        const HRESULT hr = client->open(step);
-        if (FAILED(hr)) {
-            s_retryAfterUs[pid] = now + 5'000'000;
-            const bool unsupported = hr == E_NOTIMPL || hr == E_INVALIDARG ||
-                                     hr == HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED) ||
-                                     hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
-            if (unsupported && !s_reportedUnsupported) {
-                s_reportedUnsupported = true;
-                log::error("[native] audio: per-app capture is not available on this Windows (" +
-                           step + " " + hresultString(hr) +
-                           ") — Windows 11 is required. The stream stays SILENT while apps are "
-                           "excluded; clear the exclusions to stream the whole mix.");
-            } else {
-                log::warning("[native] audio: could not capture " + client->exe + " (pid " +
-                             std::to_string(pid) + "): " + step + " " + hresultString(hr));
-            }
-            continue;
-        }
-        s_retryAfterUs.erase(pid);
-        log::info("[native] audio: capturing " + client->exe + " (pid " + std::to_string(pid) +
-                  ")");
-        next->push_back(std::move(client));
-        changed = true;
-    }
+    if (m_RetryPid == next.pid && now < m_RetryAfterUs) return;
 
-    if (changed) {
-        std::lock_guard<std::mutex> lock(m_Mutex);
-        m_Clients = std::move(next);
+    auto client = std::make_shared<Client>();
+    client->pid = next.pid;
+    client->exe = exeName(targetProcess);
+    if (client->exe.empty()) client->exe = "pid " + std::to_string(next.pid);
+    std::string step;
+    const HRESULT hr = client->open(step);
+    if (FAILED(hr)) {
+        m_RetryPid = next.pid;
+        m_RetryAfterUs = now + 5'000'000;
+        const bool unsupported = hr == E_NOTIMPL || hr == E_INVALIDARG ||
+                                 hr == HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED) ||
+                                 hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+        if (unsupported && !m_ReportedUnsupported) {
+            m_ReportedUnsupported = true;
+            log::error("[native] audio: per-app capture is not available on this Windows (" + step +
+                       " " + hresultString(hr) +
+                       ") — Windows 11 is required. The stream stays SILENT; set "
+                       "Settings → Stream audio from → All apps to stream the whole mix.");
+        } else if (!unsupported) {
+            log::warning("[native] audio: could not capture " + client->exe + ": " + step + " " +
+                         hresultString(hr));
+        }
+        if (current) {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_Client.reset();
+        }
+        return;
     }
+    m_RetryPid = 0;
+    log::info("[native] audio: streaming the focused app, " + client->exe + " (pid " +
+              std::to_string(next.pid) + (next.fullscreen ? ", full screen" : "") + ")");
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    m_Client = std::move(client);
 }
 
 } // namespace mw::native::audio
