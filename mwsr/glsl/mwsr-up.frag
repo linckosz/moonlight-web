@@ -28,10 +28,11 @@ precision highp float;
 precision highp int;
 uniform sampler2D uTex;
 uniform vec4 uTexelScale; // texel.xy, scale.xy: the first four of mwsrUniforms()
-uniform vec4 uTauSharp; // tau, sharp, the gaze zone's weight, fc: the next four
+uniform vec4 uDimsAcross; // the input's size, the across taps' distance
+uniform vec4 uTauFc; // tau, fc, the across weight, the blend's inverse divisor
 uniform vec4 uZone; // the gaze zone's centre.xy and half-axes.xy (GAZE 1)
-uniform vec4 uZoneBonus; // its ring, and its tau and sharpness at the centre, 0
-uniform vec4 uLaw; // walong, wmin, racross, ralong: the last four
+uniform vec4 uZoneBonus; // its ring, its tau and sharpness at the centre, its weight
+uniform vec4 uGaze; // the law's sharpness, the kernel's strength, wmin, 0 (GAZE 1)
 in vec2 vUv;
 out vec4 oColor;
 
@@ -42,11 +43,7 @@ vec3 L(ivec2 c) {
     return texelFetch(uTex, c, 0).rgb;
 }
 
-const mediump float EPS_H = 0.001;
-
 const uint SHOW = 0u;
-const float W_ACROSS = 0.3;
-const float S_FULL = 1.1;
 const uint DERING = 2u;
 const uint CHROMA444 = 0u;
 const uint FLAT_TAPS = 5u;
@@ -56,33 +53,7 @@ const float R_DOWN = 1.0;
 const uint LINEAR_LIGHT = 1u;
 
 const vec3 LUMA = vec3(0.25, 0.625, 0.125);
-
-float luma(vec3 c) {
-    return dot(c, LUMA);
-}
-
-mediump float lumah(mediump vec3 c) {
-    return dot(c, LUMA);
-}
-
-mediump vec3 blend(mediump vec3 C, mediump vec3 T1, mediump vec3 T2, mediump vec3 X1, mediump vec3 X2,
-                   mediump vec3 wT, mediump vec3 wX) {
-    mediump vec3 R = (C + wT * (T1 + T2) + wX * (X1 + X2)) / (1.0 + 2.0 * (wT + wX));
-    if (DERING == 2u) {
-        return R;
-    }
-    mediump vec3 lo = min(min(C, T1), min(T2, min(X1, X2)));
-    mediump vec3 hi = max(max(C, T1), max(T2, max(X1, X2)));
-    return clamp(R, lo, hi);
-}
-
-mediump float coherence(mediump float c, mediump float t1, mediump float t2, mediump float x1,
-                        mediump float x2) {
-    mediump float jump = abs(x2 - x1);
-    mediump float ridge = abs(x1 + x2 - 2.0 * c);
-    mediump float variation = abs(x2 - c) + abs(c - x1) + abs(t2 - c) + abs(c - t1) + EPS_H;
-    return max(jump, ridge) / variation;
-}
+const float W_ACROSS = 0.3;
 
 // The gaze zone's weight, the WGSL text's gazeWeight line for line.
 float gazeWeight(vec2 uv) {
@@ -90,7 +61,7 @@ float gazeWeight(vec2 uv) {
         return 0.0;
     }
     float d = length((uv - uZone.xy) / uZone.zw);
-    return (1.0 - smoothstep(1.0, 1.0 + uZoneBonus.x, d)) * uTauSharp.z;
+    return (1.0 - smoothstep(1.0, 1.0 + uZoneBonus.x, d)) * uZoneBonus.w;
 }
 
 // The flat path's picture, the WGSL text's flatPath line for line.
@@ -102,7 +73,7 @@ vec3 flatPath(vec2 uv, vec3 C, float zg) {
         return C;
     }
     vec2 texel = uTexelScale.xy;
-    vec2 sp = uv / texel;
+    vec2 sp = uv * uDimsAcross.xy;
     vec3 R;
     if (FLAT_TAPS == 3u) {
         vec2 tn = floor(sp) + 0.5;
@@ -125,7 +96,7 @@ vec3 flatPath(vec2 uv, vec3 C, float zg) {
     } else {
         vec2 tc = floor(sp - 0.5) + 0.5;
         vec2 f = sp - tc;
-        float c = uTauSharp.w;
+        float c = uTauFc.y;
         vec2 w0 = -c * f * (1.0 - f) * (1.0 - f);
         vec2 w1 = (2.0 - c) * f * f * f - (3.0 - c) * f * f + 1.0;
         vec2 w3 = -c * (1.0 - f) * f * f;
@@ -164,10 +135,9 @@ vec3 flatPath(vec2 uv, vec3 C, float zg) {
 
 // The exact bound, the WGSL text's texelBound line for line.
 vec3 texelBound(vec2 uv, vec3 R) {
-    ivec2 dims = textureSize(uTex, 0);
-    vec2 pt = uv * vec2(dims) - 0.5;
-    ivec2 i0 = clamp(ivec2(floor(pt)), ivec2(0), dims - 1);
-    ivec2 i1 = min(i0 + 1, dims - 1);
+    ivec2 f = ivec2(floor(uv * uDimsAcross.xy - 0.5));
+    ivec2 i0 = max(f, ivec2(0));
+    ivec2 i1 = min(f + 1, ivec2(uDimsAcross.xy) - 1);
     vec3 q00 = L(i0);
     vec3 q10 = L(ivec2(i1.x, i0.y));
     vec3 q01 = L(ivec2(i0.x, i1.y));
@@ -178,21 +148,32 @@ vec3 texelBound(vec2 uv, vec3 R) {
 void main() {
     vec2 uv = vUv;
     vec3 C = S(uv);
-    float lC = luma(C);
     float zg = gazeWeight(uv);
-    float tau = mix(uTauSharp.x, uZoneBonus.y, zg);
+    float tau = uTauFc.x;
+    if (GAZE == 1u) {
+        tau = mix(uTauFc.x, uZoneBonus.y, zg);
+    }
     // GL's window y runs up, WebGPU's framebuffer y runs down: dFdy is the
     // WGSL text's dpdy negated, or the edge normal comes out mirrored and the
-    // along and across taps swap on every diagonal (the first conformity run).
-    vec3 dx = dFdx(C) * uTexelScale.z;
-    vec3 dy = -dFdy(C) * uTexelScale.w;
-    vec3 m = abs(dx) + abs(dy);
-    bool rg = m.g > m.r;
-    bool b = m.b > max(m.r, m.g);
-    bool c444 = CHROMA444 == 1u;
-    float gx = c444 ? (b ? dx.b : (rg ? dx.g : dx.r)) : dot(dx, LUMA);
-    float gy = c444 ? (b ? dy.b : (rg ? dy.g : dy.r)) : dot(dy, LUMA);
-    bool isFlat = (c444 ? max(m.r, max(m.g, m.b)) : abs(gx) + abs(gy)) < tau;
+    // across taps fall along the edge on every diagonal (the first conformity run).
+    float gx;
+    float gy;
+    bool isFlat;
+    if (CHROMA444 == 1u) {
+        vec3 dx = dFdx(C) * uTexelScale.z;
+        vec3 dy = -dFdy(C) * uTexelScale.w;
+        vec3 m = abs(dx) + abs(dy);
+        bool rg = m.g > m.r;
+        bool b = m.b > max(m.r, m.g);
+        gx = b ? dx.b : (rg ? dx.g : dx.r);
+        gy = b ? dy.b : (rg ? dy.g : dy.r);
+        isFlat = max(m.r, max(m.g, m.b)) < tau;
+    } else {
+        float lC = dot(C, LUMA);
+        gx = dFdx(lC) * uTexelScale.z;
+        gy = -dFdy(lC) * uTexelScale.w;
+        isFlat = abs(gx) + abs(gy) < tau;
+    }
     if (SHOW == 1u) {
         oColor = vec4(vec3(isFlat ? 0.0 : 1.0), 1.0);
         return;
@@ -201,37 +182,27 @@ void main() {
         oColor = vec4(vec3(zg), 1.0);
         return;
     }
-    float smin = min(uTexelScale.z, uTexelScale.w);
-    float strength = clamp((smin - 1.0) / (S_FULL - 1.0), 0.0, 1.0);
     if (isFlat) {
         oColor = vec4(flatPath(uv, C, zg), 1.0);
         return;
     }
-    vec2 n = vec2(gx, gy) * inversesqrt(max(gx * gx + gy * gy, 1e-12));
-    vec2 dt = vec2(-n.y, n.x) * uTexelScale.xy * uLaw.w;
-    vec2 dn = n * uTexelScale.xy * uLaw.z;
-    mediump vec3 Ch = C;
-    mediump vec3 T1 = S(uv - dt);
-    mediump vec3 T2 = S(uv + dt);
-    mediump vec3 X1 = S(uv - dn);
-    mediump vec3 X2 = S(uv + dn);
-    mediump float lCh = lC;
-    mediump float lT1 = lumah(T1);
-    mediump float lT2 = lumah(T2);
-    mediump float lX1 = lumah(X1);
-    mediump float lX2 = lumah(X2);
-    mediump vec3 a;
-    if (CHROMA444 == 1u) {
-        a = vec3(coherence(Ch.r, T1.r, T2.r, X1.r, X2.r),
-                 coherence(Ch.g, T1.g, T2.g, X1.g, X2.g),
-                 coherence(Ch.b, T1.b, T2.b, X1.b, X2.b)) * strength;
-    } else {
-        a = vec3(coherence(lCh, lT1, lT2, lX1, lX2) * strength);
+    vec2 dn = vec2(gx, gy) * inversesqrt(max(gx * gx + gy * gy, 1e-12)) * uDimsAcross.zw;
+    vec3 X1 = S(uv - dn);
+    vec3 X2 = S(uv + dn);
+    float wX = uTauFc.z;
+    float kB = uTauFc.w;
+    if (GAZE == 1u) {
+        wX = max(-W_ACROSS * mix(uGaze.x, uZoneBonus.z, zg) * uGaze.y, uGaze.z);
+        kB = 1.0 / (1.0 + 2.0 * wX);
     }
-    mediump vec3 wT = uLaw.x * a;
-    float sharp = mix(uTauSharp.y, uZoneBonus.z, zg);
-    mediump vec3 wX = max(-W_ACROSS * sharp * a, vec3(uLaw.y));
-    vec3 R = blend(Ch, T1, T2, X1, X2, wT, wX);
+    mediump vec3 Ch = C;
+    mediump vec3 Xh = X1 + X2;
+    mediump float wh = wX;
+    mediump float kh = kB;
+    vec3 R = (Ch + wh * Xh) * kh;
+    if (DERING != 2u) {
+        R = clamp(R, min(C, min(X1, X2)), max(C, max(X1, X2)));
+    }
     if (DERING != 0u) {
         R = texelBound(uv, R);
     }

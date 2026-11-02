@@ -28,10 +28,11 @@ precision highp float;
 precision highp int;
 uniform sampler2D uTex;
 uniform vec4 uTexelScale; // texel.xy, scale.xy: the first four of mwsrUniforms()
-uniform vec4 uTauSharp; // tau, sharp, the gaze zone's weight, fc: the next four
+uniform vec4 uDimsAcross; // the input's size, the across taps' distance
+uniform vec4 uTauFc; // tau, fc, the across weight, the blend's inverse divisor
 uniform vec4 uZone; // the gaze zone's centre.xy and half-axes.xy (GAZE 1)
-uniform vec4 uZoneBonus; // its ring, and its tau and sharpness at the centre, 0
-uniform vec4 uLaw; // walong, wmin, racross, ralong: the last four
+uniform vec4 uZoneBonus; // its ring, its tau and sharpness at the centre, its weight
+uniform vec4 uGaze; // the law's sharpness, the kernel's strength, wmin, 0 (GAZE 1)
 in vec2 vUv;
 out vec4 oColor;
 
@@ -42,11 +43,7 @@ vec3 L(ivec2 c) {
     return texelFetch(uTex, c, 0).rgb;
 }
 
-const mediump float EPS_H = 0.001;
-
 const uint SHOW = 0u;
-const float W_ACROSS = 0.3;
-const float S_FULL = 1.1;
 const uint DERING = 2u;
 const uint CHROMA444 = 0u;
 const uint FLAT_TAPS = 5u;
@@ -56,14 +53,7 @@ const float R_DOWN = 1.25;
 const uint LINEAR_LIGHT = 1u;
 
 const vec3 LUMA = vec3(0.25, 0.625, 0.125);
-
-float luma(vec3 c) {
-    return dot(c, LUMA);
-}
-
-mediump float lumah(mediump vec3 c) {
-    return dot(c, LUMA);
-}
+const float W_ACROSS = 0.3;
 
 vec3 srgbToLin(vec3 c) {
     vec3 lo = c / 12.92;

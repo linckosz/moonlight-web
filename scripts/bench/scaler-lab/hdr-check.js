@@ -50,12 +50,13 @@ const DERING_SETS = [
 // path, W_MIN -0.3, sharpness 1 at every scale) and today's (DERING 2, the
 // Catmull-Rom of five taps, the law): each one alone on J11's, and each one
 // alone taken back from today's. `sharp` null is the law (mwsrLaw); a number
-// pins the sharpness. `rest`: J11's other values, which the law now also sets.
+// pins the sharpness. `rest`: J11's other values, which the law now also sets;
+// its along taps left the kernel (J56), so these rows are J11 without them.
 const J11 = {
-  overrides: { DERING: 1, FLAT_TAPS: 1, S_FULL: 1.5 },
+  overrides: { DERING: 1, FLAT_TAPS: 1 },
   sharp: 1.0,
   wmin: -0.3,
-  rest: { tau: 0.05, walong: 0.15, ralong: 0.5, racross: 1.0 },
+  rest: { tau: 0.05, racross: 1.0, sfull: 1.5 },
 };
 const TODAY = { overrides: {}, sharp: null };
 const ABLATIONS = [

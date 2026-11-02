@@ -17,7 +17,7 @@
 //                      choice (plan §9, 22/10/2026): WebGL2, WebGPU on iOS
 //   iters=300          draws per algorithm for the time
 //   sharp=, tau=       MWSR's per-draw values (MwsrShader's mwsrLaw):
-//                      the sharpness (× W_ACROSS) and the edge vote's
+//                      the sharpness (× MWSR_CONSTANTS.W_ACROSS) and the edge vote's
 //                      threshold; the defaults are the product's, the
 //                      sharpness by the law at the case's sizes (mwsrLaw)
 //                      unless the link names one
@@ -114,11 +114,11 @@ const FLAT_CHOICES = [
   [9, "Catmull-Rom, 9 échantillons"],
 ];
 const FC_RANGE = [0.25, 1, 0.05];
-// The edge path's bound (MwsrShader's DERING): the five samples of the blend,
+// The edge path's bound (MwsrShader's DERING): the three samples of the blend,
 // then the four texels around the pixel (the product until 23/10); or the texels alone,
 // which lets a line one texel wide keep its depth past its bilinear mix (J35; the product since 23/10).
 const BOUND_CHOICES = [
-  [1, "cinq échantillons, puis texels"],
+  [1, "trois échantillons, puis texels"],
   [2, "texels seuls"],
 ];
 // The gaze zone (MwsrShader's MWSR_ZONE and its GAZE constant, plan §15.2):
@@ -232,7 +232,7 @@ const tuningText = () =>
   (state.dr === 2
     ? " · borne texels"
     : state.dr === 1
-      ? " · borne cinq puis texels"
+      ? " · borne trois puis texels"
       : "") +
   (state.gaze ? zoneText() : "");
 const currentCase = () => CASE_BY[state.caseId];

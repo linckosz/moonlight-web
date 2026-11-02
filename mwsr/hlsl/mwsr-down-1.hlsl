@@ -49,20 +49,22 @@ VSOut MwsrVS(uint vid : SV_VertexID) {
 cbuffer MwsrConstants : register(MWSR_CB_REGISTER) {
     float2 texel;
     float2 scale;
+    float2 dims;
+    float2 across;
     float tau;
-    float sharp;
-    float gaze;
     float fc;
+    float wacross;
+    float kblend;
     float2 zc;
     float2 zr;
     float zring;
     float ztau;
     float zsharp;
-    float pad2;
-    float walong;
+    float gaze;
+    float sharp;
+    float strength;
     float wmin;
-    float racross;
-    float ralong;
+    float pad2;
 };
 
 Texture2D<float4> tex : register(MWSR_TEX_REGISTER);
@@ -77,20 +79,11 @@ float3 L(int2 c) {
 
 typedef float hf;
 typedef float3 h3;
-static const hf EPS_H = 0.00001;
 
 #ifndef MWSR_SHOW
 #define MWSR_SHOW 0u
 #endif
 static const uint SHOW = MWSR_SHOW;
-#ifndef MWSR_W_ACROSS
-#define MWSR_W_ACROSS 0.3
-#endif
-static const float W_ACROSS = MWSR_W_ACROSS;
-#ifndef MWSR_S_FULL
-#define MWSR_S_FULL 1.1
-#endif
-static const float S_FULL = MWSR_S_FULL;
 #ifndef MWSR_DERING
 #define MWSR_DERING 2u
 #endif
@@ -121,14 +114,7 @@ static const float R_DOWN = MWSR_R_DOWN;
 static const uint LINEAR_LIGHT = MWSR_LINEAR_LIGHT;
 
 static const float3 LUMA = float3(0.25, 0.625, 0.125);
-
-float luma(float3 c) {
-    return dot(c, LUMA);
-}
-
-hf lumah(h3 c) {
-    return dot(c, (h3)LUMA);
-}
+static const float W_ACROSS = 0.3;
 
 float3 srgbToLin(float3 c) {
     float3 lo = c / 12.92;
@@ -165,8 +151,5 @@ float3 enc(float3 c) {
 
 float4 MwsrPS(VSOut i) : SV_Target {
     float2 uv = i.uv;
-    float2 span = texel / scale * R_DOWN;
-    float3 acc = 0.0;
-    acc += dec(S(uv + float2(0.0, 0.0) * span));
-    return float4(enc(acc * 1.0), 1.0);
+    return float4(enc(dec(S(uv))), 1.0);
 }

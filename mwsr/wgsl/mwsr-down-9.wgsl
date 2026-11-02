@@ -40,20 +40,22 @@ fn vs(@builtin(vertex_index) vid : u32) -> VSOut {
 struct U {
     texel : vec2f,
     scale : vec2f,
+    dims : vec2f,
+    across : vec2f,
     tau : f32,
-    sharp : f32,
-    gaze : f32,
     fc : f32,
+    wacross : f32,
+    kblend : f32,
     zc : vec2f,
     zr : vec2f,
     zring : f32,
     ztau : f32,
     zsharp : f32,
-    pad2 : f32,
-    walong : f32,
+    gaze : f32,
+    sharp : f32,
+    strength : f32,
     wmin : f32,
-    racross : f32,
-    ralong : f32,
+    pad2 : f32,
 };
 
 @group(0) @binding(0) var samp : sampler;
@@ -69,11 +71,8 @@ fn L(c : vec2i) -> vec3f {
 
 alias hf = f32;
 alias h3 = vec3<f32>;
-const EPS_H : hf = 0.00001;
 
 override SHOW : u32 = 0u;
-override W_ACROSS : f32 = 0.3;
-override S_FULL : f32 = 1.1;
 override DERING : u32 = 2u;
 override CHROMA444 : u32 = 0u;
 override FLAT_TAPS : u32 = 5u;
@@ -83,14 +82,7 @@ override R_DOWN : f32 = 1.0;
 override LINEAR_LIGHT : u32 = 1u;
 
 const LUMA : vec3f = vec3f(0.25, 0.625, 0.125);
-
-fn luma(c : vec3f) -> f32 {
-    return dot(c, LUMA);
-}
-
-fn lumah(c : h3) -> hf {
-    return dot(c, h3(LUMA));
-}
+const W_ACROSS : f32 = 0.3;
 
 // The sRGB transfer, both ways, for LINEAR_LIGHT 2 (the encode alone for 3);
 // past 1.0 (HDR) the same formula continues, as the renderer's HDR pass 0

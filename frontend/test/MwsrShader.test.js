@@ -68,16 +68,15 @@ describe('the mwsr shader text', () => {
     });
 
     it('votes from the luma, or from the steepest channel when CHROMA444 is set', () => {
+        expect(tex).toContain('let lC = dot(C, LUMA);');
+        expect(tex).toContain('gx = dpdxCoarse(lC) * u.scale.x;');
+        expect(tex).toContain('if (CHROMA444 == 1u) {');
         expect(tex).toContain('let dx = dpdxCoarse(C) * u.scale.x;');
-        expect(tex).toContain('let c444 = CHROMA444 == 1u;');
-        expect(tex).toContain(
-            'let gx = select(dot(dx, LUMA), select(select(dx.r, dx.g, rg), dx.b, b), c444);',
-        );
-        expect(tex).toContain('coherence(Ch.r, T1.r, T2.r, X1.r, X2.r)');
+        expect(tex).toContain('gx = select(select(dx.r, dx.g, rg), dx.b, b);');
         expect(tex).not.toContain('LUMA_SHARP');
     });
 
-    it('has a half-precision variant for the edge path of the up mode only', () => {
+    it('has a half-precision variant for the blend of the up mode only', () => {
         const half = mwsrWgsl({ feed: 'ext', half: true });
         expect(half.startsWith('enable f16;')).toBe(true);
         expect(half).toContain('alias hf = f16;');
@@ -86,9 +85,9 @@ describe('the mwsr shader text', () => {
         expect(tex).toContain('alias hf = f32;');
         // the vote and the frame stay in f32 whatever the variant
         for (const text of [tex, half]) {
-            expect(text).toContain('let dx = dpdxCoarse(C) * u.scale.x;');
-            expect(text).toContain('let n = vec2f(gx, gy) * inverseSqrt(');
-            expect(text).toContain('var R = vec3f(blend(Ch, T1, T2, X1, X2, wT, wX));');
+            expect(text).toContain('gx = dpdxCoarse(lC) * u.scale.x;');
+            expect(text).toContain('let dn = vec2f(gx, gy) * inverseSqrt(');
+            expect(text).toContain('var R = vec3f((h3(C) + hf(wX) * h3(X1 + X2)) * hf(kB));');
         }
         expect(kernel(half)).toBe(kernel(mwsrWgsl({ feed: 'tex', half: true })));
         // the reduction ignores `half`: its sums stay in f32
@@ -97,10 +96,11 @@ describe('the mwsr shader text', () => {
 
     it("has a second up text that takes the native host's zone drop off the law (plan B §12 c)", () => {
         const decl = '@group(0) @binding(3) var zoneMap : texture_2d<f32>;';
-        const law = '    let sharp = mix(u.sharp, u.zsharp, zg);';
+        const law = '    // From here the arithmetic is hf (f32, or f16 when the module says so).\n';
         const zoned =
-            '    let sharp = mix(u.sharp, u.zsharp, zg)\n' +
-            '        - textureSampleLevel(zoneMap, samp, uv, 0.0).r / max(strength, 0.01);';
+            '    wX += W_ACROSS * textureSampleLevel(zoneMap, samp, uv, 0.0).r;\n' +
+            '    kB = 1.0 / (1.0 + 2.0 * wX);\n' +
+            law;
         for (const opts of [{ feed: 'tex' }, { feed: 'ext' }, { feed: 'tex', half: true }]) {
             const base = mwsrWgsl(opts);
             const map = mwsrWgsl({ ...opts, map: true });
@@ -112,8 +112,6 @@ describe('the mwsr shader text', () => {
             expect(map).toContain('var<uniform> u : U;\n' + decl + '\n');
             expect(map.split(zoned)).toHaveLength(2);
             expect(map.replace('\n' + decl, '').replace(zoned, law)).toBe(base);
-            // the strength the line divides by is the kernel's, taken before it
-            expect(map.indexOf('let strength = clamp(')).toBeLessThan(map.indexOf(zoned));
         }
         expect(() => mwsrWgsl({ mode: 'down', map: true })).toThrow(/up mode only/);
     });
@@ -135,9 +133,8 @@ describe('the mwsr shader text', () => {
             expect(() => mwsrWgsl({ mode: 'down', taps })).toThrow(/taps/);
         // one sample through sRGB views: the hardware's bilinear in linear light
         const one = mwsrWgsl({ mode: 'down', taps: 1 });
-        expect(one.match(/acc \+= dec\(S\(uv \+ vec2f\(/g)).toHaveLength(1);
-        expect(one).toContain('acc += dec(S(uv + vec2f(0.0, 0.0) * span));');
-        expect(one).toContain('enc(acc * 1.0)');
+        expect(one).toContain('return vec4f(enc(dec(S(uv))), 1.0);');
+        expect(one).not.toContain('span');
     });
 
     it('picks the mode, the grid, its span and its light by the scale and the views', () => {
@@ -330,40 +327,41 @@ describe('the mwsr shader text', () => {
             }
             expect(text).toContain('const vec3 LUMA = vec3(0.25, 0.625, 0.125);');
             expect(text).toContain('uniform vec4 uTexelScale;');
-            expect(text).toContain('uniform vec4 uTauSharp;');
+            expect(text).toContain('uniform vec4 uDimsAcross;');
+            expect(text).toContain('uniform vec4 uTauFc;');
             expect(text).not.toMatch(/\btexture\(/);
         }
         // the overrides are baked into the text, by name
-        const c444 = mwsrGlsl({ overrides: { CHROMA444: 1, W_ACROSS: 0.2 } });
+        const c444 = mwsrGlsl({ overrides: { CHROMA444: 1, DERING: 1 } });
         expect(c444).toContain('const uint CHROMA444 = 1u;');
-        expect(c444).toContain('const float W_ACROSS = 0.2;');
-        expect(c444).toContain('const float S_FULL = 1.1;');
+        expect(c444).toContain('const uint DERING = 1u;');
+        expect(c444).toContain('const float W_ACROSS = 0.3;');
         expect(() => mwsrGlsl({ overrides: { NOPE: 1 } })).toThrow(/override/);
         expect(() => mwsrGlsl({ mode: 'side' })).toThrow(/mode/);
         // the same kernel: derivatives first, explicit level and texel fetches, the bound
         const main = glsl.slice(glsl.indexOf('void main()'));
-        expect(main.indexOf('dFdx(C)')).toBeGreaterThan(0);
+        expect(main.indexOf('dFdx(lC)')).toBeGreaterThan(0);
         // GL's window y runs up: the WGSL dpdy is -dFdy here
+        expect(main).toContain('gy = -dFdy(lC) * uTexelScale.w;');
+        expect(tex).toContain('gy = dpdyCoarse(lC) * u.scale.y;');
         expect(main).toContain('vec3 dy = -dFdy(C) * uTexelScale.w;');
         expect(tex).toContain('let dy = dpdyCoarse(C) * u.scale.y;');
-        expect(main.indexOf('dFdx(C)')).toBeLessThan(main.indexOf('if (isFlat)'));
+        expect(main.indexOf('dFdx(lC)')).toBeLessThan(main.indexOf('if (isFlat)'));
         expect(main.slice(main.indexOf('if (isFlat)'))).not.toMatch(/dFd[xy]/);
         expect(glsl).toContain('textureLod(uTex, uv, 0.0)');
         expect(glsl).toContain('texelFetch(uTex, c, 0)');
-        expect(glsl).toContain('mediump vec3 T1 = S(uv - dt);');
-        for (const line of ['let strength = clamp((smin - 1.0) / (S_FULL - 1.0), 0.0, 1.0);'])
-            expect(tex).toContain(line);
-        expect(glsl).toContain('float strength = clamp((smin - 1.0) / (S_FULL - 1.0), 0.0, 1.0);');
+        expect(glsl).toContain('mediump vec3 Xh = X1 + X2;');
         // the same grids, from the same offsets
         const offs = (t) =>
             [...t.matchAll(/vec2f?\(([-\d.]+), ([-\d.]+)\) \* span/g)].map(
                 (m) => m[1] + ',' + m[2],
             );
-        for (const taps of [1, 4, 9, 16]) {
+        for (const taps of [4, 9, 16]) {
             const w = offs(mwsrWgsl({ mode: 'down', taps }));
             expect(w.length).toBe(taps);
             expect(offs(mwsrGlsl({ mode: 'down', taps }))).toEqual(w);
         }
+        expect(mwsrGlsl({ mode: 'down', taps: 1 })).toContain('oColor = vec4(enc(dec(S(uv))), 1.0);');
         expect(mwsrGlsl({ mode: 'down', overrides: { LINEAR_LIGHT: 0, R_DOWN: 1.25 } })).toContain(
             'const float R_DOWN = 1.25;',
         );
@@ -414,34 +412,36 @@ describe('the mwsr shader text', () => {
             expect(text).toContain('tex.SampleLevel(samp, uv, 0.0)');
             expect(text).not.toMatch(/\.Sample\(/);
         }
-        // the block's 20 floats, in the order of mwsrUniforms()
+        // the block's 24 floats, in the order of mwsrUniforms()
         const cb = hlsl.slice(hlsl.indexOf('cbuffer'), hlsl.indexOf('};', hlsl.indexOf('cbuffer')));
         expect([...cb.matchAll(/^\s+(float\d?) (\w+);/gm)].map((m) => m[2])).toEqual([
             'texel',
             'scale',
+            'dims',
+            'across',
             'tau',
-            'sharp',
-            'gaze',
             'fc',
+            'wacross',
+            'kblend',
             'zc',
             'zr',
             'zring',
             'ztau',
             'zsharp',
-            'pad2',
-            'walong',
+            'gaze',
+            'sharp',
+            'strength',
             'wmin',
-            'racross',
-            'ralong',
+            'pad2',
         ]);
         // Direct3D's y runs down as WebGPU's: the derivatives keep their sign
         const ps = hlsl.slice(hlsl.indexOf('float4 MwsrPS'));
+        expect(ps).toContain('gy = ddy_coarse(lC) * scale.y;');
         expect(ps).toContain('float3 dy = ddy_coarse(C) * scale.y;');
-        expect(ps.indexOf('ddx_coarse(C)')).toBeGreaterThan(0);
-        expect(ps.indexOf('ddx_coarse(C)')).toBeLessThan(ps.indexOf('if (isFlat)'));
+        expect(ps.indexOf('ddx_coarse(lC)')).toBeGreaterThan(0);
+        expect(ps.indexOf('ddx_coarse(lC)')).toBeLessThan(ps.indexOf('if (isFlat)'));
         expect(ps.slice(ps.indexOf('if (isFlat)'))).not.toMatch(/dd[xy]/);
-        expect(hlsl).toContain('float strength = clamp((smin - 1.0) / (S_FULL - 1.0), 0.0, 1.0);');
-        // the edge path in min16float for the half text, and in f32 otherwise
+        // the blend in min16float for the half text, and in f32 otherwise
         expect(mwsrHlsl({ half: true })).toContain('typedef min16float3 h3;');
         expect(hlsl).toContain('typedef float3 h3;');
         expect(mwsrHlsl({ mode: 'down', half: true })).toBe(hlslDown);
@@ -450,10 +450,11 @@ describe('the mwsr shader text', () => {
             [...t.matchAll(/(?:vec2f?|float2)\(([-\d.]+), ([-\d.]+)\) \* span/g)].map(
                 (m) => m[1] + ',' + m[2],
             );
-        for (const taps of [1, 4, 9, 16]) {
+        for (const taps of [4, 9, 16]) {
             const w = offs(mwsrWgsl({ mode: 'down', taps }));
             expect(offs(mwsrHlsl({ mode: 'down', taps }))).toEqual(w);
         }
+        expect(mwsrHlsl({ mode: 'down', taps: 1 })).toContain('return float4(enc(dec(S(uv))), 1.0);');
         expect(hlslDown).toContain('if (LINEAR_LIGHT >= 2u) {\n        return linToSrgb(c);');
         expect(() => mwsrHlsl({ mode: 'side' })).toThrow(/mode/);
     });
@@ -465,45 +466,66 @@ describe('the mwsr shader text', () => {
         expect(u[1]).toBeCloseTo(1 / 720, 7);
         expect(u[2]).toBe(2);
         expect(u[3]).toBe(2);
+        expect(u[4]).toBe(1280);
+        expect(u[5]).toBe(720);
         // every value not named comes from the law at these sizes, in the block's order
         const law = mwsrLaw(1280, 720, 2560, 1440);
-        expect(u[4]).toBeCloseTo(law.tau, 6);
-        expect(u[5]).toBeCloseTo(law.sharp, 6);
-        expect(u[7]).toBeCloseTo(law.fc, 6);
-        expect(u[16]).toBeCloseTo(law.walong, 6);
-        expect(u[17]).toBeCloseTo(law.wmin, 6);
-        expect(u[18]).toBeCloseTo(law.racross, 6);
-        expect(u[19]).toBeCloseTo(law.ralong, 6);
+        expect(u[6]).toBeCloseTo(law.racross / 1280, 7);
+        expect(u[7]).toBeCloseTo(law.racross / 720, 7);
+        expect(u[8]).toBeCloseTo(law.tau, 6);
+        expect(u[9]).toBeCloseTo(law.fc, 6);
+        // the across weight and the blend's inverse divisor, once per draw
+        expect(u[10]).toBeCloseTo(-MWSR_CONSTANTS.W_ACROSS * law.sharp, 6);
+        expect(u[11]).toBeCloseTo(1 / (1 + 2 * u[10]), 5);
+        expect(u[20]).toBeCloseTo(law.sharp, 6);
+        expect(u[21]).toBe(1);
+        expect(u[22]).toBeCloseTo(law.wmin, 6);
         const zoned = mwsrLaw(1280, 720, 2560, 1440, { zones: true });
         const uz = mwsrUniforms(1280, 720, 2560, 1440, { zones: true });
-        expect(uz[5]).toBeCloseTo(zoned.sharp, 6);
-        expect(uz[18]).toBeCloseTo(zoned.racross, 6);
+        expect(uz[10]).toBeCloseTo(-MWSR_CONSTANTS.W_ACROSS * zoned.sharp, 6);
+        expect(uz[6]).toBeCloseTo(zoned.racross / 1280, 7);
         const v = mwsrUniforms(1920, 1080, 2560, 1440, { tau: 0.03, sharp: 0.5 });
         expect(v[2]).toBeCloseTo(4 / 3, 6);
-        expect(v[4]).toBeCloseTo(0.03, 6);
-        expect(v[5]).toBe(0.5);
+        expect(v[8]).toBeCloseTo(0.03, 6);
+        expect(v[20]).toBe(0.5);
+        expect(v[10]).toBeCloseTo(-MWSR_CONSTANTS.W_ACROSS * 0.5, 6);
         const d = mwsrUniforms(2560, 1440, 1280, 720);
         expect(d[2]).toBe(0.5);
         expect(d[3]).toBe(0.5);
-        expect(d[5]).toBeCloseTo(mwsrLaw(2560, 1440, 1280, 720).sharp, 6); // a reduction does not read it
+        expect(d[21]).toBe(0); // a reduction does not read the weight: no strength
+        expect(d[11]).toBe(1);
         // the gaze zone (J34): no weight and the defaults unless asked
-        expect(MWSR_UNIFORM_FLOATS).toBe(20);
-        expect(u[6]).toBe(0);
+        expect(MWSR_UNIFORM_FLOATS).toBe(24);
+        expect(u[19]).toBe(0);
         for (const [i, k] of [
-            [8, 'cx'],
-            [9, 'cy'],
-            [10, 'rx'],
-            [11, 'ry'],
-            [12, 'ring'],
-            [13, 'tau'],
-            [14, 'sharp'],
+            [12, 'cx'],
+            [13, 'cy'],
+            [14, 'rx'],
+            [15, 'ry'],
+            [16, 'ring'],
+            [17, 'tau'],
+            [18, 'sharp'],
         ])
             expect(u[i]).toBeCloseTo(MWSR_ZONE[k], 6);
         const z = mwsrUniforms(1920, 1080, 2560, 1440, { gaze: 2, zone: { tau: 0.01, ring: 0 } });
-        expect(z[6]).toBe(1); // clamped
-        expect(z[13]).toBeCloseTo(0.01, 6);
-        expect(z[12]).toBeCloseTo(0.001, 6); // a ring of no width would fold the smoothstep
-        expect(z[14]).toBeCloseTo(MWSR_ZONE.sharp, 6);
+        expect(z[19]).toBe(1); // clamped
+        expect(z[17]).toBeCloseTo(0.01, 6);
+        expect(z[16]).toBeCloseTo(0.001, 6); // a ring of no width would fold the smoothstep
+        expect(z[18]).toBeCloseTo(MWSR_ZONE.sharp, 6);
+    });
+
+    it('fades the across weight in from 1:1, to full strength at S_FULL', () => {
+        // none at 1:1, half way at half way, full from S_FULL on
+        const at = (s, u) => mwsrUniforms(1000, 1000, 1000 * s, 1000 * s, { sharp: 1, ...u });
+        expect(at(1)[21]).toBe(0);
+        expect(at(1)[10]).toBe(-0);
+        expect(at(1)[11]).toBe(1);
+        expect(at(1.05)[21]).toBeCloseTo(0.5, 6);
+        expect(at(1.05)[10]).toBeCloseTo(-MWSR_CONSTANTS.W_ACROSS * 0.5, 6);
+        expect(at(MWSR_CONSTANTS.S_FULL)[21]).toBeCloseTo(1, 6);
+        expect(at(2)[21]).toBe(1);
+        // a named S_FULL moves it
+        expect(at(1.25, { sfull: 1.5 })[21]).toBeCloseTo(0.5, 6);
     });
 
     it("slides the threshold and the sharpness towards the centre's values in the gaze zone (J34)", () => {
@@ -526,14 +548,16 @@ describe('the mwsr shader text', () => {
         // the weight before the vote, in uniform control flow; the threshold
         // and the sharpness slide by it, in both twins
         expect(tex).toContain('let zg = gazeWeight(uv);');
-        expect(tex).toContain('let tau = mix(u.tau, u.ztau, zg);');
-        expect(tex).toContain('let sharp = mix(u.sharp, u.zsharp, zg);');
+        expect(tex).toContain('tau = mix(u.tau, u.ztau, zg);');
+        expect(tex).toContain('wX = max(-W_ACROSS * mix(u.sharp, u.zsharp, zg) * u.strength, u.wmin);');
         expect(tex.indexOf('let zg = gazeWeight(uv);')).toBeLessThan(
-            tex.indexOf('let dx = dpdxCoarse(C)'),
+            tex.indexOf('if (CHROMA444 == 1u) {'),
         );
         expect(glsl).toContain('float zg = gazeWeight(uv);');
-        expect(glsl).toContain('float tau = mix(uTauSharp.x, uZoneBonus.y, zg);');
-        expect(glsl).toContain('float sharp = mix(uTauSharp.y, uZoneBonus.z, zg);');
+        expect(glsl).toContain('tau = mix(uTauFc.x, uZoneBonus.y, zg);');
+        expect(glsl).toContain(
+            'wX = max(-W_ACROSS * mix(uGaze.x, uZoneBonus.z, zg) * uGaze.y, uGaze.z);',
+        );
         expect(glsl).toContain('uniform vec4 uZone;');
         expect(glsl).toContain('uniform vec4 uZoneBonus;');
         const zoned = mwsrGlsl({ overrides: { GAZE: 1, FLAT_ZONE: 1, FLAT_TAPS: 5 } });
@@ -572,7 +596,7 @@ describe('the mwsr shader text', () => {
         // the twin bakes a chosen reconstruction into its text
         const nine = mwsrGlsl({ overrides: { FLAT_TAPS: 9 } });
         expect(nine).toContain('const uint FLAT_TAPS = 9u;');
-        expect(nine).toContain('float c = uTauSharp.w;');
+        expect(nine).toContain('float c = uTauFc.y;');
         expect(mwsrGlsl({ overrides: { FLAT_TAPS: 3 } })).toContain('const uint FLAT_TAPS = 3u;');
     });
 
@@ -580,8 +604,8 @@ describe('the mwsr shader text', () => {
         // the product's default since 23/10/2026 (Bruno): the texels alone
         expect(MWSR_OVERRIDES.DERING).toBe(2);
         for (const text of [tex, glsl]) {
-            // the blend's own bound is lifted at 2 only, the texels' kept at 1 and 2
-            expect(text).toContain('if (DERING == 2u) {');
+            // the samples' own bound is lifted at 2 only, the texels' kept at 1 and 2
+            expect(text).toContain('if (DERING != 2u) {');
             expect(text).toContain('if (DERING != 0u) {');
             // the bound is one function (J39)
             expect(text).toContain(
@@ -590,6 +614,10 @@ describe('the mwsr shader text', () => {
             expect(text).toContain('R = texelBound(uv, R);');
         }
         expect(mwsrGlsl({ overrides: { DERING: 1 } })).toContain('const uint DERING = 1u;');
+        // the sampler's own footprint, at the picture's borders too
+        expect(tex).toContain('let i0 = max(f, vec2i(0));');
+        expect(glsl).toContain('ivec2 i0 = max(f, ivec2(0));');
+        expect(hlsl).toContain('int2 i0 = max(f, int2(0, 0));');
     });
 
     it('has no ×2 law left, in the three twins (A29: neutral by default, never used)', () => {
@@ -598,19 +626,29 @@ describe('the mwsr shader text', () => {
             expect(MWSR_OVERRIDES).not.toHaveProperty(k);
         for (const text of [tex, mwsrWgsl({ feed: 'tex', half: true }), glsl, hlsl]) {
             expect(text).not.toMatch(/X2_|S_X2|\bx2 = /);
-            // the across pair at racross; the blend and the coherence on the one bilinear sample
-            expect(text).toMatch(/dn = n \* [\w.]+ \* (?:u\.racross|uLaw\.z|racross);/);
-            expect(text).toContain('coherence(Ch.r, T1.r, T2.r, X1.r, X2.r)');
+            // the across pair at the block's distance
+            expect(text).toMatch(/ \* (?:u\.across|uDimsAcross\.zw|across);/);
+        }
+    });
+
+    it('has no along taps and no coherence left, in the three twins (J56: walong and ralong 0 in the law)', () => {
+        for (const text of [tex, mwsrWgsl({ feed: 'tex', half: true }), glsl, hlsl]) {
+            expect(text).not.toMatch(/walong|ralong|\bT[12]\b|coherence|EPS_H|lumah|\bdt\b/);
+            // three samples on an edge: the centre and the pair across it
+            expect(text.match(/\bS\(uv [-+] dn\)/g)).toHaveLength(2);
         }
     });
 
     it('keeps the blend divisor above 0 under a named wmin', () => {
         const u = mwsrUniforms(1920, 1080, 2560, 1440, { sharp: 2, wmin: -0.5 });
-        expect(u[16]).toBe(0);
-        expect(1 + 2 * (u[16] + u[17])).toBeGreaterThan(0);
-        // a walong gives it more room, and a wmin within it stays as named
-        const v = mwsrUniforms(1920, 1080, 2560, 1440, { walong: 0.35, wmin: -0.6 });
-        expect(v[17]).toBeCloseTo(-0.6, 6);
+        expect(u[22]).toBeCloseTo(-0.49, 6);
+        expect(u[10]).toBeCloseTo(-0.49, 6);
+        expect(u[11]).toBeCloseTo(50, 3);
+        // a wmin within it stays as named, and holds the weight
+        const v = mwsrUniforms(1920, 1080, 2560, 1440, { sharp: 2, wmin: -0.3 });
+        expect(v[22]).toBeCloseTo(-0.3, 6);
+        expect(v[10]).toBeCloseTo(-0.3, 6);
+        expect(v[11]).toBeCloseTo(2.5, 5);
     });
 
     it('gives the kernel its values by the size of the stream and of the surface', () => {
@@ -658,18 +696,16 @@ describe('the mwsr shader text', () => {
                     const l = at(s, h, opts);
                     expect(l.tau, `tau ${s} ${h}`).toBeGreaterThanOrEqual(0);
                     expect(l.sharp, `sharp ${s} ${h}`).toBeGreaterThan(0);
-                    expect(l.walong, `walong ${s} ${h}`).toBeGreaterThanOrEqual(0);
                     expect(l.wmin, `wmin ${s} ${h}`).toBeLessThan(0);
                     // the blend's divisor stays positive at the across weight's most negative
-                    const across = Math.max(-MWSR_OVERRIDES.W_ACROSS * l.sharp, l.wmin);
+                    const across = Math.max(-MWSR_CONSTANTS.W_ACROSS * l.sharp, l.wmin);
                     expect(1 + 2 * across, `across ${s} ${h}`).toBeGreaterThan(0);
                     expect(l.racross, `racross ${s} ${h}`).toBeGreaterThan(0);
-                    expect(l.ralong, `ralong ${s} ${h}`).toBeGreaterThanOrEqual(0);
                     expect(l.fc, `fc ${s} ${h}`).toBeGreaterThanOrEqual(0);
                 }
             }
         }
         // the kernel ramps from 1:1 to the law's first scale
-        expect(MWSR_OVERRIDES.S_FULL).toBeLessThanOrEqual(MWSR_LAW.scale[0]);
+        expect(MWSR_CONSTANTS.S_FULL).toBeLessThanOrEqual(MWSR_LAW.scale[0]);
     });
 });

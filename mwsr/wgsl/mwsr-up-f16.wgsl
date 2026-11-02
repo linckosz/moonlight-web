@@ -42,20 +42,22 @@ fn vs(@builtin(vertex_index) vid : u32) -> VSOut {
 struct U {
     texel : vec2f,
     scale : vec2f,
+    dims : vec2f,
+    across : vec2f,
     tau : f32,
-    sharp : f32,
-    gaze : f32,
     fc : f32,
+    wacross : f32,
+    kblend : f32,
     zc : vec2f,
     zr : vec2f,
     zring : f32,
     ztau : f32,
     zsharp : f32,
-    pad2 : f32,
-    walong : f32,
+    gaze : f32,
+    sharp : f32,
+    strength : f32,
     wmin : f32,
-    racross : f32,
-    ralong : f32,
+    pad2 : f32,
 };
 
 @group(0) @binding(0) var samp : sampler;
@@ -71,11 +73,8 @@ fn L(c : vec2i) -> vec3f {
 
 alias hf = f16;
 alias h3 = vec3<f16>;
-const EPS_H : hf = 0.001h;
 
 override SHOW : u32 = 0u;
-override W_ACROSS : f32 = 0.3;
-override S_FULL : f32 = 1.1;
 override DERING : u32 = 2u;
 override CHROMA444 : u32 = 0u;
 override FLAT_TAPS : u32 = 5u;
@@ -85,40 +84,7 @@ override R_DOWN : f32 = 1.0;
 override LINEAR_LIGHT : u32 = 1u;
 
 const LUMA : vec3f = vec3f(0.25, 0.625, 0.125);
-
-fn luma(c : vec3f) -> f32 {
-    return dot(c, LUMA);
-}
-
-fn lumah(c : h3) -> hf {
-    return dot(c, h3(LUMA));
-}
-
-// Five samples blended in the frame of an edge: the centre, a pair along it
-// (weight wT each, smoothing) and a pair across it (weight wX each, negative:
-// sharpening), per channel, the result bounded by the five (DERING 0, 1).
-fn blend(C : h3, T1 : h3, T2 : h3, X1 : h3, X2 : h3, wT : h3, wX : h3) -> h3 {
-    let R = (C + wT * (T1 + T2) + wX * (X1 + X2)) / (1.0 + 2.0 * (wT + wX));
-    if (DERING == 2u) {
-        // The texels alone bound it (below): on a line one texel wide, the
-        // centre sample is the extremum of the five, and this bound would pin
-        // the pixel at its bilinear mix, paler than the line.
-        return R;
-    }
-    let lo = min(min(C, T1), min(T2, min(X1, X2)));
-    let hi = max(max(C, T1), max(T2, max(X1, X2)));
-    return clamp(R, lo, hi);
-}
-
-// A step (|X2 - X1|) or a ridge (|X1 + X2 - 2C|) across the edge, against
-// all the variation around: 1 on a clean edge or line, near 0 on texture,
-// grain and compression blocks.
-fn coherence(c : hf, t1 : hf, t2 : hf, x1 : hf, x2 : hf) -> hf {
-    let step = abs(x2 - x1);
-    let ridge = abs(x1 + x2 - 2.0 * c);
-    let variation = abs(x2 - c) + abs(c - x1) + abs(t2 - c) + abs(c - t1) + EPS_H;
-    return max(step, ridge) / variation;
-}
+const W_ACROSS : f32 = 0.3;
 
 // The gaze zone's weight at a pixel (GAZE 1, plan §15.2): 1 inside the
 // ellipse of centre u.zc and half-axes u.zr, falling by a smoothstep over the
@@ -151,7 +117,7 @@ fn flatPath(uv : vec2f, C : vec3f, zg : f32) -> vec3f {
     if (GAZE == 1u && FLAT_ZONE == 1u && zg <= 0.0) {
         return C;
     }
-    let sp = uv / u.texel;
+    let sp = uv * u.dims;
     var R : vec3f;
     if (FLAT_TAPS == 3u) {
         let tn = floor(sp) + 0.5;
@@ -214,10 +180,9 @@ fn flatPath(uv : vec2f, C : vec3f, zg : f32) -> vec3f {
 // The exact bound: the four input texels around the pixel, the footprint of
 // its bilinear sample (DERING 1 and 2).
 fn texelBound(uv : vec2f, R : vec3f) -> vec3f {
-    let dims = vec2i(textureDimensions(tex));
-    let pt = uv * vec2f(dims) - 0.5;
-    let i0 = clamp(vec2i(floor(pt)), vec2i(0), dims - vec2i(1));
-    let i1 = min(i0 + vec2i(1), dims - vec2i(1));
+    let f = vec2i(floor(uv * u.dims - 0.5));
+    let i0 = max(f, vec2i(0));
+    let i1 = min(f + vec2i(1), vec2i(u.dims) - vec2i(1));
     let q00 = L(i0);
     let q10 = L(vec2i(i1.x, i0.y));
     let q01 = L(vec2i(i0.x, i1.y));
@@ -229,65 +194,65 @@ fn texelBound(uv : vec2f, R : vec3f) -> vec3f {
 fn fs(in : VSOut) -> @location(0) vec4f {
     let uv = in.uv;
     let C = S(uv);
-    let lC = luma(C);
     // The gaze zone's weight, 0 without one: the vote threshold and, on the
     // edge path, the sharpness slide from the table's values to the centre's.
     let zg = gazeWeight(uv);
-    let tau = mix(u.tau, u.ztau, zg);
+    var tau = u.tau;
+    if (GAZE == 1u) {
+        tau = mix(u.tau, u.ztau, zg);
+    }
     // The vote: the screen derivatives of the bilinear sample, scaled to a
     // change per input texel; coarse, so the whole quad takes the same branch.
     // From the luma, or (CHROMA444) from the channel with the steepest ramp,
     // so that a border between two colours of one luma is an edge too.
-    let dx = dpdxCoarse(C) * u.scale.x;
-    let dy = dpdyCoarse(C) * u.scale.y;
-    let m = abs(dx) + abs(dy);
-    let rg = m.g > m.r;
-    let b = m.b > max(m.r, m.g);
-    let c444 = CHROMA444 == 1u;
-    let gx = select(dot(dx, LUMA), select(select(dx.r, dx.g, rg), dx.b, b), c444);
-    let gy = select(dot(dy, LUMA), select(select(dy.r, dy.g, rg), dy.b, b), c444);
-    let flat = select(abs(gx) + abs(gy), max(m.r, max(m.g, m.b)), c444) < tau;
+    var gx : f32;
+    var gy : f32;
+    var flat : bool;
+    if (CHROMA444 == 1u) {
+        let dx = dpdxCoarse(C) * u.scale.x;
+        let dy = dpdyCoarse(C) * u.scale.y;
+        let m = abs(dx) + abs(dy);
+        let rg = m.g > m.r;
+        let b = m.b > max(m.r, m.g);
+        gx = select(select(dx.r, dx.g, rg), dx.b, b);
+        gy = select(select(dy.r, dy.g, rg), dy.b, b);
+        flat = max(m.r, max(m.g, m.b)) < tau;
+    } else {
+        let lC = dot(C, LUMA);
+        gx = dpdxCoarse(lC) * u.scale.x;
+        gy = dpdyCoarse(lC) * u.scale.y;
+        flat = abs(gx) + abs(gy) < tau;
+    }
     if (SHOW == 1u) {
         return vec4f(vec3f(select(1.0, 0.0, flat)), 1.0);
     }
     if (SHOW == 2u) {
         return vec4f(vec3f(zg), 1.0);
     }
-    // Strength: none at 1:1 (the renderer copies the frame there), full from
-    // S_FULL on.
-    let smin = min(u.scale.x, u.scale.y);
-    let strength = clamp((smin - 1.0) / (S_FULL - 1.0), 0.0, 1.0);
     if (flat) {
         return vec4f(flatPath(uv, C, zg), 1.0);
     }
-    // The normal of the edge the derivatives measure, and the taps along and
-    // across it.
-    let n = vec2f(gx, gy) * inverseSqrt(max(gx * gx + gy * gy, 1e-12));
-    let dt = vec2f(-n.y, n.x) * u.texel * u.ralong;
-    let dn = n * u.texel * u.racross;
-    // From here the arithmetic is hf (f32, or f16 when the module says so).
-    let Ch = h3(C);
-    let T1 = h3(S(uv - dt));
-    let T2 = h3(S(uv + dt));
-    let X1 = h3(S(uv - dn));
-    let X2 = h3(S(uv + dn));
-    let lCh = hf(lC);
-    let lT1 = lumah(T1);
-    let lT2 = lumah(T2);
-    let lX1 = lumah(X1);
-    let lX2 = lumah(X2);
-    var a : h3;
-    if (CHROMA444 == 1u) {
-        a = h3(coherence(Ch.r, T1.r, T2.r, X1.r, X2.r),
-               coherence(Ch.g, T1.g, T2.g, X1.g, X2.g),
-               coherence(Ch.b, T1.b, T2.b, X1.b, X2.b)) * hf(strength);
-    } else {
-        a = h3(coherence(lCh, lT1, lT2, lX1, lX2) * hf(strength));
+    // On an edge, the two samples across it, along the normal the derivatives
+    // measure.
+    let dn = vec2f(gx, gy) * inverseSqrt(max(gx * gx + gy * gy, 1e-12)) * u.across;
+    let X1 = S(uv - dn);
+    let X2 = S(uv + dn);
+    // Their weight, negative: it sharpens. One value per draw, the blend's
+    // divisor with it, which the gaze zone moves per pixel.
+    var wX = u.wacross;
+    var kB = u.kblend;
+    if (GAZE == 1u) {
+        wX = max(-W_ACROSS * mix(u.sharp, u.zsharp, zg) * u.strength, u.wmin);
+        kB = 1.0 / (1.0 + 2.0 * wX);
     }
-    let wT = hf(u.walong) * a;
-    let sharp = mix(u.sharp, u.zsharp, zg);
-    let wX = max(-hf(W_ACROSS) * hf(sharp) * a, h3(hf(u.wmin)));
-    var R = vec3f(blend(Ch, T1, T2, X1, X2, wT, wX));
+    // From here the arithmetic is hf (f32, or f16 when the module says so).
+    var R = vec3f((h3(C) + hf(wX) * h3(X1 + X2)) * hf(kB));
+    if (DERING != 2u) {
+        // The three bound it (DERING 0, 1). Not by default: on a line one texel
+        // wide, the centre sample is their extremum, and this bound would pin
+        // the pixel at its bilinear mix, paler than the line.
+        R = clamp(R, min(C, min(X1, X2)), max(C, max(X1, X2)));
+    }
     if (DERING != 0u) {
         R = texelBound(uv, R);
     }
