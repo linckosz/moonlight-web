@@ -3,6 +3,8 @@
  * GPLv3 — see repository LICENSE.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { StreamView } from '../js/ui/StreamView.js';
 
 /**
@@ -156,5 +158,43 @@ describe("StreamView — what Auto's ceiling asks of the rest", () => {
         expect(at(1000e6, '3840×2160')).toBe(120);
         expect(at(0, '3840×2160')).toBe(0);
         expect(at(500e6, '')).toBe(0);
+    });
+});
+
+describe("StreamView — the stats card's line on Auto's ceiling", () => {
+    const row = (line) =>
+        P._autoCeilingRow.call({ autoCeilingLine: line === undefined ? null : () => line });
+
+    it('says nothing when nothing was learned', () => {
+        expect(row()).toBe('');
+        expect(row(null)).toBe('');
+    });
+
+    it('adds one row of the card when there is something to say', () => {
+        const html = row({ size: '1440p120', trial: true });
+        expect(html.match(/class="stats-row"/g)).toHaveLength(1);
+        expect(html).toContain('class="stats-label"');
+        expect(html).toContain('class="stats-value"');
+    });
+});
+
+describe("the words for Auto's ceiling, as Bruno validated them", () => {
+    const words = (code) => {
+        const path = fileURLToPath(new URL('../locales/' + code + '.json', import.meta.url));
+        const s = JSON.parse(readFileSync(path, 'utf8')).stream;
+        const fill = (text) => text.replace('{{size}}', '1440p120');
+        return [
+            s.statAuto + ' ' + fill(s.statAutoLearned),
+            s.statAuto + ' ' + fill(s.statAutoTrial),
+        ];
+    };
+
+    it('reads the same in the three languages', () => {
+        expect(words('fr')).toEqual(['Auto : 1440p120, appris', "Auto : 1440p120, à l'essai"]);
+        expect(words('en')).toEqual(['Auto: 1440p120, learned', 'Auto: 1440p120, on trial']);
+        expect(words('zh').map((w) => w.replace(' ', ''))).toEqual([
+            '自动：1440p120，已学习',
+            '自动：1440p120，试用中',
+        ]);
     });
 });

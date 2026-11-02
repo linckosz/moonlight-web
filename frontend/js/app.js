@@ -2300,7 +2300,7 @@ export const MoonlightApp = {
         const size = sizeAt(autoMaxHeightFor(this._autoCeilingBudget()));
         const budgeted = this._applyPixelBudget(streamingSettings, size, choice.mode, fpsAuto);
         const bounded = this._capToDecoder(budgeted, decodeLimit);
-        if (this._autoCeiling) this._autoCeiling.weigh(askAt);
+        if (this._autoCeiling) this._autoCeiling.weigh(askAt, choice.mode === 'auto' || fpsAuto);
         this._applyResolvedSize(streamingSettings, bounded);
         if (IS_TV) this._warnTvOverAsk(streamingSettings, choice.mode === 'auto' && fpsAuto);
         // A gamescope session keeps the size it was started at (a new size
@@ -3314,6 +3314,7 @@ export const MoonlightApp = {
         if (this._autoCeiling)
             this._autoCeiling.weigh(
                 this._autoCeilingAsk(sizeAt, settings, askedFps, choice.mode, fpsAuto, decodeLimit),
+                choice.mode === 'auto' || fpsAuto,
             );
         this._applyResolvedSize(settings, bounded);
         this._qualityRelaunch(this._transportIndex || 0);
@@ -3510,6 +3511,7 @@ export const MoonlightApp = {
         sv.autoCeilingMeter = ceiling ? ceiling.meter(performance.now()) : null;
         sv.autoCeilingOnTrial = () => !!(ceiling && ceiling.onTrial);
         sv.autoCeilingMaxPixelRate = ceiling ? ceiling.stepCeiling : 0;
+        sv.autoCeilingLine = () => (ceiling ? ceiling.statsLine : null);
     },
 
     /**

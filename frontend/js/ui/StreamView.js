@@ -1221,6 +1221,8 @@ export class StreamView {
         this.autoCeilingOnTrial = null;
         /** The most a step of the cadence may reach, pixels a second; 0: no bound. */
         this.autoCeilingMaxPixelRate = 0;
+        /** @type {(() => {size: string, trial: boolean}|null)|null} the stats card's line */
+        this.autoCeilingLine = null;
         this._hostPresentsFps = 0;
         this._decodeRateCap = 0;
         // Native host: mouse motion goes out on `pointerrawupdate` — every
@@ -6871,6 +6873,7 @@ export class StreamView {
             (this._resolution || '?') +
             '</span>' +
             '</div>';
+        html += this._autoCeilingRow();
 
         // Framerate
         html +=
@@ -7695,6 +7698,23 @@ export class StreamView {
             fpsCap: this._decodeRateCap,
             presentsFps: this._hostPresentsFps,
         });
+    }
+
+    /** The stats card's line on what Auto learned from this host; '' when it
+     *  has nothing to say. */
+    _autoCeilingRow() {
+        const line = this.autoCeilingLine ? this.autoCeilingLine() : null;
+        if (!line) return '';
+        return (
+            '<div class="stats-row">' +
+            '<span class="stats-label">' +
+            t('stream.statAuto') +
+            '</span>' +
+            '<span class="stats-value">' +
+            t(line.trial ? 'stream.statAutoTrial' : 'stream.statAutoLearned', { size: line.size }) +
+            '</span>' +
+            '</div>'
+        );
     }
 
     /** The fastest step of the cadence Auto's ceiling allows at this frame; 0: no bound. */

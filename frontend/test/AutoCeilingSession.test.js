@@ -401,3 +401,57 @@ describe('AutoCeilingSession: what it tells the view', () => {
         expect(rig('log').session().onTrial).toBe(false);
     });
 });
+
+describe('AutoCeilingSession: the line on the stats card', () => {
+    const at1440 = () => streamFootprint({ height: 1440, aspect: '16:9' }, 120);
+
+    it('names what Auto chose, on trial until the rung has held', () => {
+        const { session, memory } = rig('on');
+        memory.raise(HOST, CODEC);
+        memory.raise(HOST, CODEC);
+        const s = session();
+        s.weigh(at1440, true);
+        expect(s.statsLine).toEqual({ size: '1440p120', trial: true });
+        memory.hold(HOST, CODEC);
+        const held = session();
+        held.weigh(at1440, true);
+        expect(held.statsLine).toEqual({ size: '1440p120', trial: false });
+    });
+
+    it('turns to held during the stream that proved the rung', () => {
+        const { session, memory } = rig('on');
+        memory.raise(HOST, CODEC);
+        memory.raise(HOST, CODEC);
+        const s = session();
+        s.weigh(uhdAuto, true);
+        runLoaded(s.meter(0), 5 * MIN);
+        expect(s.statsLine.trial).toBe(false);
+    });
+
+    it('stays away at the base budget, when the viewer named both, and in journal mode', () => {
+        const base = rig('on').session();
+        base.weigh(at1440, true);
+        expect(base.statsLine).toBeNull();
+
+        const named = rig('on');
+        named.memory.raise(HOST, CODEC);
+        const s = named.session();
+        s.weigh(at1440, false);
+        expect(s.statsLine).toBeNull();
+
+        const journal = rig('log');
+        journal.memory.raise(HOST, CODEC);
+        const j = journal.session();
+        j.weigh(at1440, true);
+        expect(j.statsLine).toBeNull();
+    });
+
+    it('stays away when the guard has brought this launch back to the base budget', async () => {
+        const { session, memory } = rig('on');
+        memory.raise(HOST, CODEC);
+        const s = session();
+        await s.guard(uhdAuto, async () => true, 300);
+        s.weigh(uhdAuto, true);
+        expect(s.statsLine).toBeNull();
+    });
+});

@@ -68,6 +68,7 @@ export class AutoCeilingSession {
         this._ended = false;
         this._limited = false;
         this._provesRung = false;
+        this._autoChose = false;
         this._asked = null;
         /** Whether this launch measures at all. */
         this.learns = !!native && this._mode !== 'off' && this._deviceMax > PIXEL_RATE_BUDGET;
@@ -111,6 +112,16 @@ export class AutoCeilingSession {
     get stepCeiling() {
         if (!this.active) return 0;
         return Math.min(2 * this.rung, CEILING_RUNGS[CEILING_RUNGS.length - 1]);
+    }
+
+    /** What the stats card says of it: the size and rate Auto chose, and whether
+     *  the rung is held or on trial. Null at the base budget, where nothing was
+     *  learned, or when the viewer named both halves. */
+    get statsLine() {
+        const a = this._asked;
+        if (!this.active || !this._autoChose || !a || !(a.height > 0)) return null;
+        if (!(this.rung > PIXEL_RATE_BUDGET)) return null;
+        return { size: a.height + 'p' + Math.round(a.fps), trial: this.trial };
     }
 
     /** A rung on trial writes nothing in the enhancer's memory: a step down
@@ -171,9 +182,11 @@ export class AutoCeilingSession {
      * Weigh this launch against its rung and the next one.
      * @param {(budget: number) => {width:number, height:number, fps:number,
      *          pixelRate:number}} askAt what the launch would come to under a budget
+     * @param {boolean} [autoChose] Auto chose at least one half of the pair
      */
-    weigh(askAt) {
+    weigh(askAt, autoChose = false) {
         if (!this.learns) return;
+        this._autoChose = autoChose;
         const now = askAt(this.rung);
         const next = rungAbove(this.rung);
         const reachable = next > 0 && next <= this._deviceMax;
