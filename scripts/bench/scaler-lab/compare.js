@@ -16,10 +16,10 @@
 //   api=auto|webgpu|webgl  the shader renderers' API; auto is the product's
 //                      choice (plan §9, 22/10/2026): WebGL2, WebGPU on iOS
 //   iters=300          draws per algorithm for the time
-//   sharp=, tau=0.05   MWSR's per-draw values (MwsrShader's MWSR_UNIFORMS):
+//   sharp=, tau=       MWSR's per-draw values (MwsrShader's mwsrLaw):
 //                      the sharpness (× W_ACROSS) and the edge vote's
 //                      threshold; the defaults are the product's, the
-//                      sharpness by the scale law (mwsrSharpness, J40)
+//                      sharpness by the law at the case's sizes (mwsrLaw)
 //                      unless the link names one
 //   soft=1             the WebGPU fallback adapter (SwiftShader), for a test
 //   viewer=2d          the bands drawn by Canvas2D drawImage, not WebGL2 (a test)
@@ -102,8 +102,8 @@ const MWSR_DEF = {
 // MwsrShader's module once loaded (boot): its sharpness law by the scale
 let mwsrModule = null;
 const SHARP_RANGE = [0.5, 3, 0.05];
-const TAU_RANGE = [0.01, 0.1, 0.005];
-// The flat path's reconstruction (MwsrShader's FLAT_TAPS, FLAT_C overrides):
+const TAU_RANGE = [0.0025, 0.1, 0.0025];
+// The flat path's reconstruction (MwsrShader's FLAT_TAPS override, its fc uniform):
 // one bilinear sample, a quadratic of 3 bilinear taps (Dodgson), or a
 // Catmull-Rom of 5 or 9 with the depth of its negative lobe; a pipeline
 // constant, so the renderer rebuilds.
@@ -164,7 +164,7 @@ const state = {
   zone: "same",
   api: "auto",
   iters: 300,
-  sharp: null, // null: the product's scale law (mwsrSharpness, J40)
+  sharp: null, // null: the product's law (mwsrLaw)
   tau: MWSR_DEF.tau,
   flat: MWSR_DEF.flat,
   fc: MWSR_DEF.fc,
@@ -178,12 +178,11 @@ const state = {
   soft: false,
 };
 const shown = () => state.order.filter((a) => state.on.has(a));
-// the sharpness law at this case's scale (MwsrShader's mwsrSharpness):
-// 1.85 up to ×1.33, 1.23 from ×1.5 on
+// the law's sharpness at this case's sizes (MwsrShader's mwsrLaw)
 const lawSharp = () => {
   const c = currentCase();
-  return mwsrModule && mwsrModule.mwsrSharpness && c
-    ? mwsrModule.mwsrSharpness(c.outLevel / c.inLevel)
+  return mwsrModule && mwsrModule.mwsrLaw && c
+    ? mwsrModule.mwsrLaw((c.inLevel * 16) / 9, c.inLevel, (c.outLevel * 16) / 9, c.outLevel).sharp
     : MWSR_DEF.sharp;
 };
 const sharpNow = () => (state.sharp === null ? lawSharp() : state.sharp);
@@ -191,12 +190,12 @@ const sharpNow = () => (state.sharp === null ? lawSharp() : state.sharp);
 const tuning = () => ({
   ...(state.sharp === null ? {} : { sharp: state.sharp }),
   tau: state.tau,
+  fc: state.fc,
 });
 const overrides = () => ({
   // always named: the product's own default differs by device class
   // (MwsrShader's mwsrClassOverrides), so a bare set would not mean bilinear
   FLAT_TAPS: state.flat,
-  FLAT_C: state.fc,
   ...(state.dr === MWSR_DEF.dr ? {} : { DERING: state.dr }),
   ...(state.gaze && state.fz ? { FLAT_ZONE: 1 } : {}),
 });
@@ -1777,8 +1776,8 @@ function buildPanel() {
     );
   };
   slider("sharp", "netteté", SHARP_RANGE, "sharp", 2);
-  // back to the product's sharpness law by the scale (MwsrShader's
-  // mwsrSharpness, J40): the slider follows the case's scale again
+  // back to the product's law (MwsrShader's mwsrLaw): the slider follows
+  // the case's sizes again
   body.append(
     el(
       "div",
@@ -1796,7 +1795,7 @@ function buildPanel() {
       ),
     ),
   );
-  slider("tau", "seuil τ", TAU_RANGE, "tau", 3);
+  slider("tau", "seuil τ", TAU_RANGE, "tau", 4);
   const flatSel = el("select", {
     id: "flat",
     onchange: () => {
@@ -1860,7 +1859,7 @@ function buildPanel() {
     el(
       "p",
       { class: "note" },
-      "Netteté : multiplie le poids des deux échantillons pris en travers du contour (W_ACROSS 0,3 ; borne W_MIN −0,5, atteinte à 1,67 sur un contour net). Seuil τ : la pente de luma par texel en dessous de laquelle le quad reste bilinéaire ; plus bas, plus de pixels passent par le noyau, pour plus de temps. Chemin plat : ce que rend un quad sous le seuil, l'échantillon bilinéaire, un quadratique de 3 échantillons bilinéaires (Dodgson : bilinéaire à mi-chemin entre deux texels, le lobe C ne s'applique pas) ou un Catmull-Rom de 5 ou 9 (lobe C : 0,5 = Catmull-Rom, plus haut = plus net, plus de sonnerie). Loi d'échelle (J39, proposée) : le poids en travers que l'œil a réglé à ×1,33 (1,85 × force 2/3) tenu au-delà, soit 1,23 dès ×1,5 ; à ×2 le même poids qu'à ×1,33, là où 1,85 épingle les pixels aux texels et bave. Loi ×2 (constantes du noyau, de ×1,5 à ×2, rien à ×1,33) : base, le chemin de contour part du chemin plat au lieu de l'échantillon bilinéaire ; distance en travers, celle des deux échantillons pris en travers du contour, en texels (1,25 sert le texte, 0,75 les contours doux d'un jeu) ; affûtage plat, le masque flou borné par les texels sur le chemin plat. La bande MWSR seule est refaite.",
+      "Netteté : multiplie le poids des deux échantillons pris en travers du contour (W_ACROSS 0,3 ; borne W_MIN, que la loi n'atteint pas). Seuil τ : la pente de luma par texel en dessous de laquelle le quad reste bilinéaire ; plus bas, plus de pixels passent par le noyau, pour plus de temps. Chemin plat : ce que rend un quad sous le seuil, l'échantillon bilinéaire, un quadratique de 3 échantillons bilinéaires (Dodgson : bilinéaire à mi-chemin entre deux texels, le lobe C ne s'applique pas) ou un Catmull-Rom de 5 ou 9 (lobe C : 0,5 = Catmull-Rom, plus haut = plus net, plus de sonnerie). Par défaut, les valeurs viennent de la loi (J55) : la netteté et la distance en travers suivent l'échelle. La bande MWSR seule est refaite.",
     ),
   );
   // the gaze zone: on or off, its six values, the rings, the flat path in it
@@ -2219,10 +2218,9 @@ async function boot() {
     // start from them and the "defaults" button means the product's
     const m = await import(MWSR_URL);
     mwsrModule = m;
-    Object.assign(MWSR_DEF, m.MWSR_UNIFORMS);
+    Object.assign(MWSR_DEF, m.mwsrLaw(1280, 720, 2560, 1440));
     if (m.MWSR_OVERRIDES && m.MWSR_OVERRIDES.FLAT_TAPS !== undefined) {
       MWSR_DEF.flat = m.MWSR_OVERRIDES.FLAT_TAPS;
-      MWSR_DEF.fc = m.MWSR_OVERRIDES.FLAT_C;
     }
     // the product's own class layer (a phone or a tablet takes Q3), so
     // that the defaults shown and restored are this device's
@@ -2231,7 +2229,6 @@ async function boot() {
         const bd = await import(BROWSER_DETECT_URL);
         const cls = m.mwsrClassOverrides({ handheld: !!bd.IS_HANDHELD });
         if (cls.FLAT_TAPS !== undefined) MWSR_DEF.flat = cls.FLAT_TAPS;
-        if (cls.FLAT_C !== undefined) MWSR_DEF.fc = cls.FLAT_C;
       } catch (e) {
         console.warn(
           "classe d'appareil inconnue, défauts de l'ordinateur :",

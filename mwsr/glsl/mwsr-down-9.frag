@@ -28,9 +28,10 @@ precision highp float;
 precision highp int;
 uniform sampler2D uTex;
 uniform vec4 uTexelScale; // texel.xy, scale.xy: the first four of mwsrUniforms()
-uniform vec4 uTauSharp; // tau, sharp, the gaze zone's weight, 0: the next four
+uniform vec4 uTauSharp; // tau, sharp, the gaze zone's weight, fc: the next four
 uniform vec4 uZone; // the gaze zone's centre.xy and half-axes.xy (GAZE 1)
 uniform vec4 uZoneBonus; // its ring, and its tau and sharpness at the centre, 0
+uniform vec4 uLaw; // walong, wmin, racross, ralong: the last four
 in vec2 vUv;
 out vec4 oColor;
 
@@ -44,16 +45,11 @@ vec3 L(ivec2 c) {
 const mediump float EPS_H = 0.001;
 
 const uint SHOW = 0u;
-const float W_ALONG = 0.15;
 const float W_ACROSS = 0.3;
-const float R_ALONG = 0.5;
-const float R_ACROSS = 1.0;
-const float S_FULL = 1.5;
-const float W_MIN = -0.5;
+const float S_FULL = 1.1;
 const uint DERING = 2u;
 const uint CHROMA444 = 0u;
 const uint FLAT_TAPS = 5u;
-const float FLAT_C = 0.5;
 const uint GAZE = 0u;
 const uint FLAT_ZONE = 0u;
 const float R_DOWN = 1.25;

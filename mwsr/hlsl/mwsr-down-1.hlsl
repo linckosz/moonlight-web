@@ -52,13 +52,17 @@ cbuffer MwsrConstants : register(MWSR_CB_REGISTER) {
     float tau;
     float sharp;
     float gaze;
-    float pad;
+    float fc;
     float2 zc;
     float2 zr;
     float zring;
     float ztau;
     float zsharp;
     float pad2;
+    float walong;
+    float wmin;
+    float racross;
+    float ralong;
 };
 
 Texture2D<float4> tex : register(MWSR_TEX_REGISTER);
@@ -79,30 +83,14 @@ static const hf EPS_H = 0.00001;
 #define MWSR_SHOW 0u
 #endif
 static const uint SHOW = MWSR_SHOW;
-#ifndef MWSR_W_ALONG
-#define MWSR_W_ALONG 0.15
-#endif
-static const float W_ALONG = MWSR_W_ALONG;
 #ifndef MWSR_W_ACROSS
 #define MWSR_W_ACROSS 0.3
 #endif
 static const float W_ACROSS = MWSR_W_ACROSS;
-#ifndef MWSR_R_ALONG
-#define MWSR_R_ALONG 0.5
-#endif
-static const float R_ALONG = MWSR_R_ALONG;
-#ifndef MWSR_R_ACROSS
-#define MWSR_R_ACROSS 1.0
-#endif
-static const float R_ACROSS = MWSR_R_ACROSS;
 #ifndef MWSR_S_FULL
-#define MWSR_S_FULL 1.5
+#define MWSR_S_FULL 1.1
 #endif
 static const float S_FULL = MWSR_S_FULL;
-#ifndef MWSR_W_MIN
-#define MWSR_W_MIN -0.5
-#endif
-static const float W_MIN = MWSR_W_MIN;
 #ifndef MWSR_DERING
 #define MWSR_DERING 2u
 #endif
@@ -115,10 +103,6 @@ static const uint CHROMA444 = MWSR_CHROMA444;
 #define MWSR_FLAT_TAPS 5u
 #endif
 static const uint FLAT_TAPS = MWSR_FLAT_TAPS;
-#ifndef MWSR_FLAT_C
-#define MWSR_FLAT_C 0.5
-#endif
-static const float FLAT_C = MWSR_FLAT_C;
 #ifndef MWSR_GAZE
 #define MWSR_GAZE 0u
 #endif

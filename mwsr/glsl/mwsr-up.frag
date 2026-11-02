@@ -28,9 +28,10 @@ precision highp float;
 precision highp int;
 uniform sampler2D uTex;
 uniform vec4 uTexelScale; // texel.xy, scale.xy: the first four of mwsrUniforms()
-uniform vec4 uTauSharp; // tau, sharp, the gaze zone's weight, 0: the next four
+uniform vec4 uTauSharp; // tau, sharp, the gaze zone's weight, fc: the next four
 uniform vec4 uZone; // the gaze zone's centre.xy and half-axes.xy (GAZE 1)
 uniform vec4 uZoneBonus; // its ring, and its tau and sharpness at the centre, 0
+uniform vec4 uLaw; // walong, wmin, racross, ralong: the last four
 in vec2 vUv;
 out vec4 oColor;
 
@@ -44,16 +45,11 @@ vec3 L(ivec2 c) {
 const mediump float EPS_H = 0.001;
 
 const uint SHOW = 0u;
-const float W_ALONG = 0.15;
 const float W_ACROSS = 0.3;
-const float R_ALONG = 0.5;
-const float R_ACROSS = 1.0;
-const float S_FULL = 1.5;
-const float W_MIN = -0.5;
+const float S_FULL = 1.1;
 const uint DERING = 2u;
 const uint CHROMA444 = 0u;
 const uint FLAT_TAPS = 5u;
-const float FLAT_C = 0.5;
 const uint GAZE = 0u;
 const uint FLAT_ZONE = 0u;
 const float R_DOWN = 1.0;
@@ -129,7 +125,7 @@ vec3 flatPath(vec2 uv, vec3 C, float zg) {
     } else {
         vec2 tc = floor(sp - 0.5) + 0.5;
         vec2 f = sp - tc;
-        float c = FLAT_C;
+        float c = uTauSharp.w;
         vec2 w0 = -c * f * (1.0 - f) * (1.0 - f);
         vec2 w1 = (2.0 - c) * f * f * f - (3.0 - c) * f * f + 1.0;
         vec2 w3 = -c * (1.0 - f) * f * f;
@@ -212,8 +208,8 @@ void main() {
         return;
     }
     vec2 n = vec2(gx, gy) * inversesqrt(max(gx * gx + gy * gy, 1e-12));
-    vec2 dt = vec2(-n.y, n.x) * uTexelScale.xy * R_ALONG;
-    vec2 dn = n * uTexelScale.xy * R_ACROSS;
+    vec2 dt = vec2(-n.y, n.x) * uTexelScale.xy * uLaw.w;
+    vec2 dn = n * uTexelScale.xy * uLaw.z;
     mediump vec3 Ch = C;
     mediump vec3 T1 = S(uv - dt);
     mediump vec3 T2 = S(uv + dt);
@@ -232,9 +228,9 @@ void main() {
     } else {
         a = vec3(coherence(lCh, lT1, lT2, lX1, lX2) * strength);
     }
-    mediump vec3 wT = W_ALONG * a;
+    mediump vec3 wT = uLaw.x * a;
     float sharp = mix(uTauSharp.y, uZoneBonus.z, zg);
-    mediump vec3 wX = max(-W_ACROSS * sharp * a, vec3(W_MIN));
+    mediump vec3 wX = max(-W_ACROSS * sharp * a, vec3(uLaw.y));
     vec3 R = blend(Ch, T1, T2, X1, X2, wT, wX);
     if (DERING != 0u) {
         R = texelBound(uv, R);

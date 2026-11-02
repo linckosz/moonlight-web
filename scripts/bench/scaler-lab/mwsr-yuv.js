@@ -233,7 +233,7 @@ export function yKernel(up, out = "rgb") {
     "    let a = coherence(lCh, lT1, lT2, lX1, lX2) * hf(strength);",
     "the coherence",
   );
-  c = once(c, "a, h3(hf(W_MIN)));", "a, hf(W_MIN));", "the across weight");
+  c = once(c, "a, h3(hf(u.wmin)));", "a, hf(u.wmin));", "the across weight");
   c = once(
     c,
     "    var R = vec3f(blend(",

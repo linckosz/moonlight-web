@@ -43,13 +43,17 @@ struct U {
     tau : f32,
     sharp : f32,
     gaze : f32,
-    pad : f32,
+    fc : f32,
     zc : vec2f,
     zr : vec2f,
     zring : f32,
     ztau : f32,
     zsharp : f32,
     pad2 : f32,
+    walong : f32,
+    wmin : f32,
+    racross : f32,
+    ralong : f32,
 };
 
 @group(0) @binding(0) var samp : sampler;
@@ -68,16 +72,11 @@ alias h3 = vec3<f32>;
 const EPS_H : hf = 0.00001;
 
 override SHOW : u32 = 0u;
-override W_ALONG : f32 = 0.15;
 override W_ACROSS : f32 = 0.3;
-override R_ALONG : f32 = 0.5;
-override R_ACROSS : f32 = 1.0;
-override S_FULL : f32 = 1.5;
-override W_MIN : f32 = -0.5;
+override S_FULL : f32 = 1.1;
 override DERING : u32 = 2u;
 override CHROMA444 : u32 = 0u;
 override FLAT_TAPS : u32 = 5u;
-override FLAT_C : f32 = 0.5;
 override GAZE : u32 = 0u;
 override FLAT_ZONE : u32 = 0u;
 override R_DOWN : f32 = 1.0;

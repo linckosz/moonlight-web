@@ -26,15 +26,18 @@
 //
 // What it gives a Direct3D 11 or 12 renderer (or any other), with no
 // dependency: the mode a frame of inW x inH drawn at outW x outH takes and its
-// shader file (regime, shaderFile), the 64 bytes of the constant buffer at
-// register b0 (constants), and the defines to compile the shader with
-// (defines), each the twin of the JavaScript module's function of that name.
+// shader file (regime, shaderFile), the kernel's values for those sizes (law),
+// the 80 bytes of the constant buffer at register b0 (constants), and the
+// defines to compile the shader with (defines), each the twin of the JavaScript
+// module's function of that name.
 // example_d3d11.cpp shows them at work.
 
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -57,15 +60,19 @@ struct Constants {
     float tau;             // the vote's threshold, luma per input texel
     float sharp;           // the sharpness (x W_ACROSS)
     float gaze;            // the gaze zone's weight, 0 without one
-    float pad0;
+    float fc;              // the flat path cubic's C
     float zoneCentre[2];   // the gaze zone, read only with MWSR_GAZE 1
     float zoneHalfAxes[2];
     float zoneRing;
     float zoneTau;
     float zoneSharp;
     float pad1;
+    float walong;          // the weight of each tap along the edge
+    float wmin;            // the most negative weight of an across tap
+    float racross;         // the distance of the across taps, input texels
+    float ralong;          // the distance of the along taps, input texels
 };
-static_assert(sizeof(Constants) == 64, "the constant buffer is 16 floats");
+static_assert(sizeof(Constants) == 80, "the constant buffer is 20 floats");
 
 // The gaze zone: its centre and half-axes as fractions of the picture, the
 // ring's width as a fraction of the half-axes, its threshold and sharpness.
@@ -76,14 +83,29 @@ struct Zone {
     double tau = 0.02, sharp = 2.5;
 };
 
-// The per-frame defaults, the scale whose across weight the sharpness law holds,
-// and the sharpness from x2 up with the scale its ramp starts from.
-constexpr double kTau = 0.05;
-constexpr double kSharp = 1.85;
-constexpr double kSharpRefScale = 1.3333333333333333;
-constexpr double kSharpX2 = 1.5;
-constexpr double kSharpX2From = 1.75;
-constexpr double kSFull = 1.5;  // MWSR_S_FULL's default
+// The law's coefficients (mwsrLaw()), value = c0 + c1 x + c2 x^2 + c3 x^3 + c4 x^4 + c5 y + c6 x y,
+// in the order of the struct Law below, and the ranges it holds at their ends.
+constexpr double kLawPlain[7][7] = {
+    {0.0025, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // tau
+    {-0.3343, 11.3937, -32.6773, 36.7278, -13.9478, 0.0, 0.0},  // sharp
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // walong
+    {-0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // wmin
+    {1.547, -7.8961, 22.004, -23.4416, 8.6001, 0.0, 0.0},  // racross
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // ralong
+    {0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // fc
+};
+constexpr double kLawZones[7][7] = {
+    {0.0025, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // tau
+    {-0.2384, 10.3176, -26.8143, 28.681, -10.6546, 0.0, 0.0},  // sharp
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // walong
+    {-0.45, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // wmin
+    {1.8516, -9.6685, 24.2518, -23.0206, 7.4397, 0.0, 0.0},  // racross
+    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // ralong
+    {0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // fc
+};
+constexpr double kLawScaleMin = 1.15, kLawScaleMax = 3.0;
+constexpr double kLawHeightMin = 1080.0, kLawHeightMax = 2160.0;
+constexpr double kLawHeightRef = 1440.0;
 
 // The reduction's grids, by the smallest scale they serve: {minimum scale, samples, R_DOWN}.
 struct Grid {
@@ -112,16 +134,11 @@ struct Constant {
 };
 constexpr Constant kConstants[] = {
     {"SHOW", true, 0.0},
-    {"W_ALONG", false, 0.15},
     {"W_ACROSS", false, 0.3},
-    {"R_ALONG", false, 0.5},
-    {"R_ACROSS", false, 1.0},
-    {"S_FULL", false, 1.5},
-    {"W_MIN", false, -0.5},
+    {"S_FULL", false, 1.1},
     {"DERING", true, 2.0},
     {"CHROMA444", true, 0.0},
     {"FLAT_TAPS", true, 5.0},
-    {"FLAT_C", false, 0.5},
     {"GAZE", true, 0.0},
     {"FLAT_ZONE", true, 0.0},
     {"R_DOWN", false, 1.0},
@@ -155,32 +172,38 @@ inline std::string shaderFile(const Regime& r, bool half = false)
     return half ? "mwsr-up-half.hlsl" : "mwsr-up.hlsl";
 }
 
-// The sharpness law (mwsrSharpness()): sharp up to the reference scale, then
-// held so that the across weight stays the one of that scale; from x2From a
-// ramp to x2 at x2, held above (never above sharp).
-inline double sharpness(double scale, double sharp = kSharp, double ref = kSharpRefScale, double x2 = kSharpX2,
-                        double x2From = kSharpX2From)
+// The kernel's values for an input of inW x inH drawn at outW x outH (mwsrLaw()):
+// each a curve over the scale (the smaller axis) and the surface's height at
+// 16:9 for the same area. zones: the table of the frames read with the native
+// host's zones.
+struct Law {
+    double tau, sharp, walong, wmin, racross, ralong, fc;
+};
+
+inline Law law(int inW, int inH, int outW, int outH, bool zones = false)
 {
-    auto strength = [](double s) { return std::min(std::max((s - 1.0) / (kSFull - 1.0), 0.0), 1.0); };
-    const double at = strength(scale);
-    if (at <= 0.0)
-        return sharp;
-    const double held = sharp * std::min(1.0, strength(ref) / at);
-    const double t = std::min(std::max((scale - x2From) / (2.0 - x2From), 0.0), 1.0);
-    return std::min(sharp, held + t * (x2 - held));
+    auto hold = [](double v, double lo, double hi) { return std::min(std::max(v, lo), hi); };
+    const double s = std::min(double(outW) / inW, double(outH) / inH);
+    const double x = std::log(hold(s, kLawScaleMin, kLawScaleMax));
+    const double h = std::sqrt(double(outW) * outH * 9.0 / 16.0);
+    const double y = std::log(hold(h, kLawHeightMin, kLawHeightMax) / kLawHeightRef);
+    const double (*t)[7] = zones ? kLawZones : kLawPlain;
+    auto value = [&](int i) { return t[i][0] + x * (t[i][1] + x * (t[i][2] + x * (t[i][3] + x * t[i][4]))) + y * (t[i][5] + t[i][6] * x); };
+    return {value(0), value(1), std::max(value(2), 0.0), value(3), value(4), value(5), value(6)};
 }
 
 struct Options {
-    double tau = kTau;
-    double sharp = -1.0;  // below 0: the sharpness law at this scale
-    double gaze = 0.0;    // 0 to 1, read only with MWSR_GAZE 1
+    bool zones = false;  // the law's table of the frames read with the native host's zones
+    // a value named here replaces the law's
+    std::optional<double> tau, sharp, walong, wmin, racross, ralong, fc;
+    double gaze = 0.0;  // 0 to 1, read only with MWSR_GAZE 1
     Zone zone;
 };
 
 // The constant buffer for an input of inW x inH drawn at outW x outH (mwsrUniforms()).
 inline Constants constants(int inW, int inH, int outW, int outH, const Options& o = {})
 {
-    const double sharp = o.sharp >= 0.0 ? o.sharp : sharpness(std::min(double(outW) / inW, double(outH) / inH));
+    const Law l = law(inW, inH, outW, outH, o.zones);
     // a ring of no width would put the smoothstep's two edges together
     const double ring = std::max(o.zone.ring, 1e-3);
     Constants c{};
@@ -188,9 +211,10 @@ inline Constants constants(int inW, int inH, int outW, int outH, const Options& 
     c.texel[1] = float(1.0 / inH);
     c.scale[0] = float(double(outW) / inW);
     c.scale[1] = float(double(outH) / inH);
-    c.tau = float(o.tau);
-    c.sharp = float(sharp);
+    c.tau = float(o.tau.value_or(l.tau));
+    c.sharp = float(o.sharp.value_or(l.sharp));
     c.gaze = float(std::min(std::max(o.gaze, 0.0), 1.0));
+    c.fc = float(o.fc.value_or(l.fc));
     c.zoneCentre[0] = float(o.zone.cx);
     c.zoneCentre[1] = float(o.zone.cy);
     c.zoneHalfAxes[0] = float(o.zone.rx);
@@ -198,6 +222,12 @@ inline Constants constants(int inW, int inH, int outW, int outH, const Options& 
     c.zoneRing = float(ring);
     c.zoneTau = float(o.zone.tau);
     c.zoneSharp = float(o.zone.sharp);
+    const double walong = o.walong.value_or(l.walong);
+    c.walong = float(walong);
+    // the blend divides by 1 + 2 (walong + the across weight): a named wmin stops short of 0
+    c.wmin = float(std::max(o.wmin.value_or(l.wmin), -0.49 - walong));
+    c.racross = float(o.racross.value_or(l.racross));
+    c.ralong = float(o.ralong.value_or(l.ralong));
     return c;
 }
 

@@ -1575,14 +1575,12 @@ export async function runSeq(p, log = () => {}) {
   const uni = {};
   const MW_KEYS = {
     flat: "FLAT_TAPS",
-    fc: "FLAT_C",
     dering: "DERING",
-    walong: "W_ALONG",
     wacross: "W_ACROSS",
   };
   for (const kv of (p.mw || "").split(";").filter(Boolean)) {
     const [k, val] = kv.split("=");
-    if (k === "tau" || k === "sharp") uni[k] = Number(val);
+    if (["tau", "sharp", "walong", "fc"].includes(k)) uni[k] = Number(val);
     else if (k in MW_KEYS) mwOpts[MW_KEYS[k]] = Number(val);
     else throw new Error("mw: " + k + "?");
   }

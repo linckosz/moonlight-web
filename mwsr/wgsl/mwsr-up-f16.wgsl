@@ -45,13 +45,17 @@ struct U {
     tau : f32,
     sharp : f32,
     gaze : f32,
-    pad : f32,
+    fc : f32,
     zc : vec2f,
     zr : vec2f,
     zring : f32,
     ztau : f32,
     zsharp : f32,
     pad2 : f32,
+    walong : f32,
+    wmin : f32,
+    racross : f32,
+    ralong : f32,
 };
 
 @group(0) @binding(0) var samp : sampler;
@@ -70,16 +74,11 @@ alias h3 = vec3<f16>;
 const EPS_H : hf = 0.001h;
 
 override SHOW : u32 = 0u;
-override W_ALONG : f32 = 0.15;
 override W_ACROSS : f32 = 0.3;
-override R_ALONG : f32 = 0.5;
-override R_ACROSS : f32 = 1.0;
-override S_FULL : f32 = 1.5;
-override W_MIN : f32 = -0.5;
+override S_FULL : f32 = 1.1;
 override DERING : u32 = 2u;
 override CHROMA444 : u32 = 0u;
 override FLAT_TAPS : u32 = 5u;
-override FLAT_C : f32 = 0.5;
 override GAZE : u32 = 0u;
 override FLAT_ZONE : u32 = 0u;
 override R_DOWN : f32 = 1.0;
@@ -134,7 +133,7 @@ fn gazeWeight(uv : vec2f) -> f32 {
 }
 
 // The flat path's picture: the bilinear sample C, or (FLAT_TAPS 5 or 9) the
-// cubic of Mitchell and Netravali with B 0 and C FLAT_C (0.5: Catmull-Rom)
+// cubic of Mitchell and Netravali with B 0 and C u.fc (0.5: Catmull-Rom)
 // over the 4×4 texels around the position, read as the bilinear samples the
 // GPU weighs for free: on each axis the middle two texels by one sample at
 // their weighted midpoint, the outer two by one sample each — nine samples,
@@ -175,7 +174,7 @@ fn flatPath(uv : vec2f, C : vec3f, zg : f32) -> vec3f {
     } else {
         let tc = floor(sp - 0.5) + 0.5;
         let f = sp - tc;
-        let c = FLAT_C;
+        let c = u.fc;
         let w0 = -c * f * (1.0 - f) * (1.0 - f);
         let w1 = (2.0 - c) * f * f * f - (3.0 - c) * f * f + 1.0;
         let w3 = -c * (1.0 - f) * f * f;
@@ -264,8 +263,8 @@ fn fs(in : VSOut) -> @location(0) vec4f {
     // The normal of the edge the derivatives measure, and the taps along and
     // across it.
     let n = vec2f(gx, gy) * inverseSqrt(max(gx * gx + gy * gy, 1e-12));
-    let dt = vec2f(-n.y, n.x) * u.texel * R_ALONG;
-    let dn = n * u.texel * R_ACROSS;
+    let dt = vec2f(-n.y, n.x) * u.texel * u.ralong;
+    let dn = n * u.texel * u.racross;
     // From here the arithmetic is hf (f32, or f16 when the module says so).
     let Ch = h3(C);
     let T1 = h3(S(uv - dt));
@@ -285,9 +284,9 @@ fn fs(in : VSOut) -> @location(0) vec4f {
     } else {
         a = h3(coherence(lCh, lT1, lT2, lX1, lX2) * hf(strength));
     }
-    let wT = hf(W_ALONG) * a;
+    let wT = hf(u.walong) * a;
     let sharp = mix(u.sharp, u.zsharp, zg);
-    let wX = max(-hf(W_ACROSS) * hf(sharp) * a, h3(hf(W_MIN)));
+    let wX = max(-hf(W_ACROSS) * hf(sharp) * a, h3(hf(u.wmin)));
     var R = vec3f(blend(Ch, T1, T2, X1, X2, wT, wX));
     if (DERING != 0u) {
         R = texelBound(uv, R);

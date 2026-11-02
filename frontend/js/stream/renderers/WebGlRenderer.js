@@ -879,11 +879,11 @@ export class WebGlRenderer extends VideoRenderer {
     }
 
     /**
-     * The gl-mwsr kernel's per-draw values (MwsrShader's MWSR_UNIFORMS: the
-     * vote threshold `tau`, the sharpness `sharp`), for the laboratory's
-     * side-by-side viewer; the product draws with the defaults. Takes effect
-     * at the next draw.
-     * @param {{tau?: number, sharp?: number}|null} tuning null: the defaults
+     * The gl-mwsr kernel's per-draw values (MwsrShader's mwsrLaw: the vote
+     * threshold `tau`, the sharpness `sharp` and the others), for the
+     * laboratory's side-by-side viewer; the product draws with the law. Takes
+     * effect at the next draw.
+     * @param {{tau?: number, sharp?: number}|null} tuning null: the law
      */
     setMwsrTuning(tuning) {
         this._mwsrTuning = tuning || null;
@@ -1062,6 +1062,7 @@ export class WebGlRenderer extends VideoRenderer {
                         'uTauSharp',
                         'uZone',
                         'uZoneBonus',
+                        'uLaw',
                     ]),
                 );
             }
@@ -1236,7 +1237,7 @@ export class WebGlRenderer extends VideoRenderer {
             } else if (pass === 'gl-mwsr') {
                 // The regime by the frame and canvas sizes — never 'copy', the
                 // 1:1 frame took the plain copy; the uniform block of the WGSL
-                // twin, kept while the sizes hold, in two vec4.
+                // twin, kept while the sizes hold, in five vec4.
                 const reg = mwsrRegime(inW, inH, cw, ch);
                 const p = this._mwsr.get(mwsrRegimeKey(reg));
                 // The gaze zone's weight for this draw, 0 without a zone: it
@@ -1263,6 +1264,7 @@ export class WebGlRenderer extends VideoRenderer {
                 // locations silently ignored, in a text built without GAZE.
                 gl.uniform4fv(p.u.uZone, this._mwsrUni.subarray(8, 12));
                 gl.uniform4fv(p.u.uZoneBonus, this._mwsrUni.subarray(12, 16));
+                gl.uniform4fv(p.u.uLaw, this._mwsrUni.subarray(16, 20));
                 gl.drawArrays(gl.TRIANGLES, 0, 3);
             } else if (pass === 'off') {
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);

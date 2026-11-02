@@ -48,21 +48,26 @@ const DERING_SETS = [
 // ?ablate=1 (hdr_check.py --ablate, journal J48): the upscale's defaults one
 // at a time, between those of J11 (21/10/2026: DERING 1, the bilinear flat
 // path, W_MIN -0.3, sharpness 1 at every scale) and today's (DERING 2, the
-// Catmull-Rom of five taps, W_MIN -0.5, the sharpness law from 1.85): each
-// one alone on J11's, and each one alone taken back from today's. `tuning`
-// null is the law (mwsrSharpness); a number pins the sharpness.
-const J11 = { overrides: { DERING: 1, FLAT_TAPS: 1, W_MIN: -0.3 }, sharp: 1.0 };
+// Catmull-Rom of five taps, the law): each one alone on J11's, and each one
+// alone taken back from today's. `sharp` null is the law (mwsrLaw); a number
+// pins the sharpness. `rest`: J11's other values, which the law now also sets.
+const J11 = {
+  overrides: { DERING: 1, FLAT_TAPS: 1, S_FULL: 1.5 },
+  sharp: 1.0,
+  wmin: -0.3,
+  rest: { tau: 0.05, walong: 0.15, ralong: 0.5, racross: 1.0 },
+};
 const TODAY = { overrides: {}, sharp: null };
 const ABLATIONS = [
   ["today", TODAY],
   ["j11", J11],
   ["j11_dering2", { ...J11, overrides: { ...J11.overrides, DERING: 2 } }],
   ["j11_cr5", { ...J11, overrides: { ...J11.overrides, FLAT_TAPS: 5 } }],
-  ["j11_wmin", { ...J11, overrides: { ...J11.overrides, W_MIN: -0.5 } }],
+  ["j11_wmin", { ...J11, wmin: -0.5 }],
   ["j11_law", { ...J11, sharp: null }],
   ["today-dering1", { ...TODAY, overrides: { DERING: 1 } }],
   ["today-bilin", { ...TODAY, overrides: { FLAT_TAPS: 1 } }],
-  ["today-wmin", { ...TODAY, overrides: { W_MIN: -0.3 } }],
+  ["today-wmin", { ...TODAY, wmin: -0.3 }],
   ["today-sharp1", { ...TODAY, sharp: 1.0 }],
 ];
 
@@ -179,7 +184,11 @@ async function drawOnce(c, planes, mode, variant, set = null) {
   const { r, canvas, cfg, errors, out } = await makeRenderer(c, mode, set ? "mwsr" : variant);
   if (set) {
     r.setMwsrOverrides(set.overrides);
-    r.setMwsrTuning(set.sharp === null ? null : { sharp: set.sharp });
+    r.setMwsrTuning({
+      ...(set.rest || {}),
+      ...(set.sharp === null ? {} : { sharp: set.sharp }),
+      ...(set.wmin === undefined ? {} : { wmin: set.wmin }),
+    });
   }
   await r.draw(hdrFrame(c, planes, 1000, mode));
   const [w, h] = c.in;

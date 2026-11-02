@@ -52,13 +52,17 @@ cbuffer MwsrConstants : register(MWSR_CB_REGISTER) {
     float tau;
     float sharp;
     float gaze;
-    float pad;
+    float fc;
     float2 zc;
     float2 zr;
     float zring;
     float ztau;
     float zsharp;
     float pad2;
+    float walong;
+    float wmin;
+    float racross;
+    float ralong;
 };
 
 Texture2D<float4> tex : register(MWSR_TEX_REGISTER);
@@ -79,30 +83,14 @@ static const hf EPS_H = 0.001;
 #define MWSR_SHOW 0u
 #endif
 static const uint SHOW = MWSR_SHOW;
-#ifndef MWSR_W_ALONG
-#define MWSR_W_ALONG 0.15
-#endif
-static const float W_ALONG = MWSR_W_ALONG;
 #ifndef MWSR_W_ACROSS
 #define MWSR_W_ACROSS 0.3
 #endif
 static const float W_ACROSS = MWSR_W_ACROSS;
-#ifndef MWSR_R_ALONG
-#define MWSR_R_ALONG 0.5
-#endif
-static const float R_ALONG = MWSR_R_ALONG;
-#ifndef MWSR_R_ACROSS
-#define MWSR_R_ACROSS 1.0
-#endif
-static const float R_ACROSS = MWSR_R_ACROSS;
 #ifndef MWSR_S_FULL
-#define MWSR_S_FULL 1.5
+#define MWSR_S_FULL 1.1
 #endif
 static const float S_FULL = MWSR_S_FULL;
-#ifndef MWSR_W_MIN
-#define MWSR_W_MIN -0.5
-#endif
-static const float W_MIN = MWSR_W_MIN;
 #ifndef MWSR_DERING
 #define MWSR_DERING 2u
 #endif
@@ -115,10 +103,6 @@ static const uint CHROMA444 = MWSR_CHROMA444;
 #define MWSR_FLAT_TAPS 5u
 #endif
 static const uint FLAT_TAPS = MWSR_FLAT_TAPS;
-#ifndef MWSR_FLAT_C
-#define MWSR_FLAT_C 0.5
-#endif
-static const float FLAT_C = MWSR_FLAT_C;
 #ifndef MWSR_GAZE
 #define MWSR_GAZE 0u
 #endif
@@ -203,7 +187,7 @@ float3 flatPath(float2 uv, float3 C, float zg) {
     } else {
         float2 tc = floor(sp - 0.5) + 0.5;
         float2 f = sp - tc;
-        float c = FLAT_C;
+        float c = fc;
         float2 w0 = -c * f * (1.0 - f) * (1.0 - f);
         float2 w1 = (2.0 - c) * f * f * f - (3.0 - c) * f * f + 1.0;
         float2 w3 = -c * (1.0 - f) * f * f;
@@ -282,8 +266,8 @@ float4 MwsrPS(VSOut i) : SV_Target {
         return float4(flatPath(uv, C, zg), 1.0);
     }
     float2 n = float2(gx, gy) * rsqrt(max(gx * gx + gy * gy, 1e-12));
-    float2 dt = float2(-n.y, n.x) * texel * R_ALONG;
-    float2 dn = n * texel * R_ACROSS;
+    float2 dt = float2(-n.y, n.x) * texel * ralong;
+    float2 dn = n * texel * racross;
     h3 Ch = (h3)C;
     h3 T1 = (h3)S(uv - dt);
     h3 T2 = (h3)S(uv + dt);
@@ -302,9 +286,9 @@ float4 MwsrPS(VSOut i) : SV_Target {
     } else {
         a = (coherence(lCh, lT1, lT2, lX1, lX2) * (hf)strength).xxx;
     }
-    h3 wT = (hf)W_ALONG * a;
+    h3 wT = (hf)walong * a;
     float sh = lerp(sharp, zsharp, zg);
-    h3 wX = max(-(hf)W_ACROSS * (hf)sh * a, ((hf)W_MIN).xxx);
+    h3 wX = max(-(hf)W_ACROSS * (hf)sh * a, ((hf)wmin).xxx);
     float3 R = (float3)blend(Ch, T1, T2, X1, X2, wT, wX);
     if (DERING != 0u) {
         R = texelBound(uv, R);
