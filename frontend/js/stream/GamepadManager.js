@@ -204,7 +204,6 @@ export class GamepadManager {
      *           onVirtualYield?: () => void,
      *           single?: boolean, preferredKey?: string|null,
      *           probe?: {notePadRead: (gapMs: number) => void, notePadSend: () => void}|null,
-     *           onVirtualYield?: () => void,
      *           platform?: string, db?: object|null, user?: (key: string) => object|null }} [options]
      *   `profile` forces the pad the host presents instead of following what we
      *   detect. It is offered in debug builds only (see SettingsView): in

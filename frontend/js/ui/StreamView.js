@@ -164,6 +164,7 @@ import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
+import { StreamViewTouchPad } from './StreamViewTouchPad.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 import { flushClientLog, refreshClientLog, serverDiag } from '../util/ClientLog.js';
 import { UltraPlayer, presentMode, ultraPlayerSupported } from '../stream/ultra/UltraPlayer.js';
@@ -1148,6 +1149,8 @@ export class StreamView {
         // (`inputcaps`).
         this._mouseAllowed = !this._playerMode || opts.keyboardMouseAllowed === true;
         this._padKey = opts.padKey || null;
+        // The on-screen controller's settings (StreamViewTouchPad._touchPadPref).
+        this._touchPadPrefs = opts.touchPad || null;
         // Click-to-photon probe (debug builds, Windows host): the launch reply
         // says whether the host raises its flag on every click. Only then is
         // the measuring side installed — see stream/LatencyProbe.js.
@@ -1747,9 +1750,9 @@ export class StreamView {
         this._onContextMenu = (e) => e.preventDefault();
 
         // ── Touch event handlers (mobile) ─────────────────────────────────
-        this._onTouchStart = (e) => this.handleTouchStart(e);
-        this._onTouchMove = (e) => this.handleTouchMove(e);
-        this._onTouchEnd = (e) => this.handleTouchEnd(e);
+        this._onTouchStart = (e) => this.handleTouchStart(this._touchesBesidePad(e));
+        this._onTouchMove = (e) => this.handleTouchMove(this._touchesBesidePad(e));
+        this._onTouchEnd = (e) => this.handleTouchEnd(this._touchesBesidePad(e));
 
         // Touch state — laptop-trackpad model: relative cursor deltas,
         // tap = left click, two-finger tap = right click, two-finger drag =
@@ -1884,7 +1887,10 @@ export class StreamView {
         this._onVisibilityChange = () => {
             // Going to background can swallow keyups — release everything so no
             // modifier stays stuck on the host.
-            if (document.visibilityState === 'hidden') this._releaseAllPhysKeys();
+            if (document.visibilityState === 'hidden') {
+                this._releaseAllPhysKeys();
+                this._touchPadLetGo();
+            }
             if (document.visibilityState === 'visible' && !this._quitting) {
                 this._resyncAfterHidden();
                 // Coming back to the tab may leave the pointer over the picture
@@ -4446,6 +4452,7 @@ export class StreamView {
         if (consoleBtn) consoleBtn.classList.remove('stream-ctl-prestart');
         if (this._kbdBtn) this._kbdBtn.classList.remove('stream-ctl-prestart');
         this._mountGamepadButton();
+        this._mountTouchPad();
         this._mountMicButton();
         this._mountShareMenu();
         this._mountGuestPresence();
@@ -4519,7 +4526,9 @@ export class StreamView {
         btn.setAttribute('aria-label', t('stream.gamepadButton'));
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this._openGamepadDialog(this._gamepadManager?.forwardedKey() || this._padKey);
+            // The on-screen controller is no pad the dialog can show.
+            const gm = this._gamepadManager;
+            this._openGamepadDialog((!gm?.hasVirtual() && gm?.forwardedKey()) || this._padKey);
         });
         header.insertBefore(btn, quitBtn || null);
         this._padBtn = btn;
@@ -4649,6 +4658,8 @@ export class StreamView {
             onPadChange: (k) => {
                 if (!this._playerMode) return;
                 this._padKey = k;
+                // Picking a real pad is putting the on-screen one away.
+                if (gm?.hasVirtual()) this._unplugTouchPad();
                 if (gm) gm.setPreferredPad(k);
             },
         });
@@ -4707,6 +4718,7 @@ export class StreamView {
             panY: this._panY,
             kbdVisible: this._kbdVisible === true,
             statsClosed: this._statsClosed === true,
+            touchPad: this._touchPadSnapshot(),
         };
     }
 
@@ -4722,6 +4734,7 @@ export class StreamView {
         // ahead of the deferral below — the overlays tick on their own timer,
         // independently of frames.
         this._adoptOverlayDismissals(state);
+        this._adoptTouchPad(state.touchPad);
         if (!this._firstFrameRendered) {
             this._pendingViewState = state;
             return;
@@ -5616,7 +5629,7 @@ export class StreamView {
 
             // Start polling connected gamepads (Xbox/PlayStation). Sends a
             // controller snapshot over the input transport only on change.
-            if (!this._gamepadManager && navigator.getGamepads) {
+            if (!this._gamepadManager && (navigator.getGamepads || this._touchPadEligible())) {
                 this._gamepadManager = new GamepadManager(
                     (msg) => {
                         if (!this._quitting) this.webrtc.send(msg);
@@ -5637,6 +5650,7 @@ export class StreamView {
                         // On a TV a pad has no Stop button either: its
                         // Select + Start + LB + RB opens the remote's menu.
                         onMenuChord: RemoteNav.isActive() ? () => this._openRemoteMenu() : null,
+                        onVirtualYield: () => this._onTouchPadYielded(),
                         // A pad nothing maps is not forwarded; say so, or the
                         // player pushes buttons at a game that never hears
                         // them — and offer the wizard that fixes it. Longer
@@ -5679,6 +5693,8 @@ export class StreamView {
             }
             // Standby: created but not polling — started in activate().
             if (this._gamepadManager && !this._standby) this._gamepadManager.start();
+            // Its picture may have come first: now it has a manager to plug into.
+            if (this._firstFrameRendered) this._mountTouchPad();
 
             // The audio track's playout buffer, on either WebRTC transport.
             this._startAudioStatsPolling();
@@ -13153,6 +13169,7 @@ export class StreamView {
     _holdPads(who) {
         this._padHolds.add(who);
         if (this._gamepadManager) this._gamepadManager.setPaused(true);
+        if (this._touchPadView) this._syncTouchPad();
     }
 
     _releasePads(who) {
@@ -13160,6 +13177,7 @@ export class StreamView {
         if (this._gamepadManager && this._padHolds.size === 0) {
             this._gamepadManager.setPaused(false);
         }
+        if (this._touchPadView) this._syncTouchPad();
     }
 
     /**
@@ -13514,6 +13532,7 @@ export class StreamView {
             this._padBtn.remove();
             this._padBtn = null;
         }
+        this._destroyTouchPad();
         if (this._gamepadDialog) {
             this._gamepadDialog.close();
             this._gamepadDialog = null;
@@ -13917,6 +13936,7 @@ export class StreamView {
             this._padBtn.remove();
             this._padBtn = null;
         }
+        this._destroyTouchPad();
         if (this._gamepadDialog) {
             this._gamepadDialog.close();
             this._gamepadDialog = null;
@@ -13984,7 +14004,12 @@ export class StreamView {
 // methods live in separate files for readability but operate on the StreamView
 // instance (`this`). Class prototype methods are non-enumerable, so copy them
 // explicitly (Object.assign would skip them).
-for (const Mixin of [StreamViewKeyboard, StreamViewTouch, StreamViewFullscreen]) {
+for (const Mixin of [
+    StreamViewKeyboard,
+    StreamViewTouch,
+    StreamViewTouchPad,
+    StreamViewFullscreen,
+]) {
     for (const name of Object.getOwnPropertyNames(Mixin.prototype)) {
         if (name === 'constructor') continue;
         Object.defineProperty(

@@ -649,7 +649,9 @@ export class StreamViewTouch {
             // End the long-press drag — release the held left button.
             this._sendMouseButton(1, false);
         } else if (isTap) {
-            if (this._touchMaxFingers >= 3) {
+            if (this._touchMaxFingers >= 4 && this._touchPadAvailable()) {
+                this._toggleTouchPad(); // 4-finger tap → on-screen controller
+            } else if (this._touchMaxFingers >= 3) {
                 this._toggleVirtualKeyboard(); // 3-finger tap → keyboard
             } else if (this._touchMaxFingers === 2) {
                 this._sendMouseButton(3, true);

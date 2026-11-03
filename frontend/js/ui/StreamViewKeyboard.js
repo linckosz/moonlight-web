@@ -256,11 +256,13 @@ export class StreamViewKeyboard {
         cap.addEventListener('focus', () => {
             this._kbdVisible = true;
             if (this._kbdBtn) this._kbdBtn.classList.add('active');
+            this._touchPadKeyboardChanged();
         });
         cap.addEventListener('blur', () => {
             this._kbdVisible = false;
             this._kbdBlurAt = performance.now(); // for the toggle-button race
             if (this._kbdBtn) this._kbdBtn.classList.remove('active');
+            this._touchPadKeyboardChanged();
             // A genuine dismiss hides the bar; a tap on a toolbar button refocuses
             // immediately, so defer to let _refocusCapture cancel the hide.
             setTimeout(() => {

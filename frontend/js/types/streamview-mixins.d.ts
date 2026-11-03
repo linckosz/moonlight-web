@@ -1,5 +1,6 @@
 import { StreamViewKeyboard } from '../ui/StreamViewKeyboard.js';
 import { StreamViewTouch } from '../ui/StreamViewTouch.js';
+import { StreamViewTouchPad } from '../ui/StreamViewTouchPad.js';
 import { StreamViewFullscreen } from '../ui/StreamViewFullscreen.js';
 
 /**
@@ -14,7 +15,8 @@ import { StreamViewFullscreen } from '../ui/StreamViewFullscreen.js';
  * checker to infer the property from.
  */
 declare module '../ui/StreamView.js' {
-    interface StreamView extends StreamViewKeyboard, StreamViewTouch, StreamViewFullscreen {
+    interface StreamView
+        extends StreamViewKeyboard, StreamViewTouch, StreamViewTouchPad, StreamViewFullscreen {
         /**
          * Latched toolbar modifiers on the mobile soft keyboard. The index
          * signature is load-bearing: `_setMod`/`_resetMods` address entries
@@ -34,6 +36,18 @@ declare module '../ui/StreamView.js' {
         onQuitStart: (() => void) | null;
         /** Fired on every individual congestion hint (IDR/PLI/drops). */
         onCongestionSignal: (() => void) | null;
+        /** The on-screen controller: its parts, and what the viewer last decided. */
+        _touchPadBtn: HTMLElement | null;
+        _touchPadHandle: HTMLElement | null;
+        _touchPadState: any;
+        _touchPadView: any;
+        _touchPadShown: boolean;
+        _touchPadYields: boolean;
+        _touchPadStarted: boolean;
+        _touchPadStartQueued: boolean;
+        _touchPadCarry: { plugged: boolean; shown: boolean; yields: boolean } | null;
+        _touchPadKbdTimer: ReturnType<typeof setTimeout> | null;
+        _stopTouchWatch: (() => void) | null;
         /** Suppress the one-shot gesture-hint slide on the next activation. */
         _suppressShortcutsSlide: boolean;
     }
