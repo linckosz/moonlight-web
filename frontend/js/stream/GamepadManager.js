@@ -201,6 +201,7 @@ export class GamepadManager {
      * @param {{ profile?: 'auto'|'x360'|'ds4',
      *           onIgnored?: (gp: Gamepad) => void,
      *           onMapped?: (gp: Gamepad, res: object) => void,
+     *           onVirtualYield?: () => void,
      *           single?: boolean, preferredKey?: string|null,
      *           probe?: {notePadRead: (gapMs: number) => void, notePadSend: () => void}|null,
      *           onVirtualYield?: () => void,

@@ -50,6 +50,7 @@ export default defineConfig({
                 'js/stream/DecodeRateGovernor.js',
                 'js/stream/CrashRelaunch.js',
                 'js/stream/GamepadManager.js',
+                'js/stream/TouchPadState.js',
                 'js/stream/gamepadMapping.js',
                 'js/util/gamepadMappingsStore.js',
                 'js/stream/renderers/createRenderer.js',
