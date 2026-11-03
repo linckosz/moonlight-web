@@ -164,6 +164,12 @@ QJsonObject VirtualDisplayJob::statusJson() const
 
 void VirtualDisplayJob::activate(int width, int height, int refreshMilliHz, bool hdr, Callback cb)
 {
+    activateAs(VirtualDisplay::Asker::Owner, width, height, refreshMilliHz, hdr, std::move(cb));
+}
+
+void VirtualDisplayJob::activateAs(VirtualDisplay::Asker asker, int width, int height,
+                                   int refreshMilliHz, bool hdr, Callback cb)
+{
     m_Release.stop();
     // Linux: the stream's own portal session makes the display, at the
     // client's size, when the worker starts. Nothing to do first.
@@ -199,7 +205,9 @@ void VirtualDisplayJob::activate(int width, int height, int refreshMilliHz, bool
             return;
         }
     }
-    enqueue(Action::Activate, width, height, refresh, hdr, std::move(cb));
+    enqueue(Action::Activate, width, height, refresh, hdr,
+            VirtualDisplay::othersGoOff(asker, AppSettings().virtualDisplayExclusive()),
+            std::move(cb));
 }
 
 void VirtualDisplayJob::activateIfOff(int width, int height, int refreshMilliHz, Callback cb)
@@ -231,7 +239,7 @@ void VirtualDisplayJob::activateIfOff(int width, int height, int refreshMilliHz,
         if (cb) cb(true, QString());
         return;
     }
-    activate(width, height, refreshMilliHz, false, std::move(cb));
+    activateAs(VirtualDisplay::Asker::Guest, width, height, refreshMilliHz, false, std::move(cb));
 }
 
 void VirtualDisplayJob::deactivate(Callback cb)
@@ -245,7 +253,7 @@ void VirtualDisplayJob::deactivate(Callback cb)
             return;
         }
     }
-    enqueue(Action::Deactivate, 0, 0, 0, false, std::move(cb));
+    enqueue(Action::Deactivate, 0, 0, 0, false, false, std::move(cb));
 }
 
 void VirtualDisplayJob::releaseSoon(int graceMs)
@@ -262,12 +270,14 @@ void VirtualDisplayJob::releaseSoon(int graceMs)
 }
 
 void VirtualDisplayJob::enqueue(Action action, int width, int height, int refreshMilliHz, bool hdr,
-                                Callback cb)
+                                bool exclusive, Callback cb)
 {
     // The same verb AND the same mode as the running or last queued
     // operation: join it. A different mode is a different operation, and it
     // waits its turn rather than riding on one that will not deliver it.
     // While a mode falls back, the caller's own one is what it is running.
+    // A join keeps the operation's exclusive choice, so one that leaves the
+    // other displays on (a guest's) never starts turning them off.
     const VirtualDisplay::Request& runningAsked =
         m_AskedBeforeFallback ? *m_AskedBeforeFallback : m_Request;
     if (running() && runningAsked.action == action && runningAsked.width == width &&
@@ -288,7 +298,7 @@ void VirtualDisplayJob::enqueue(Action action, int width, int height, int refres
         }
         return;
     }
-    m_Queue.append(Pending{action, width, height, refreshMilliHz, hdr, std::move(cb)});
+    m_Queue.append(Pending{action, width, height, refreshMilliHz, hdr, exclusive, std::move(cb)});
     if (!running()) startNext();
 }
 
@@ -302,10 +312,9 @@ void VirtualDisplayJob::startNext()
     m_Request.height = next.height;
     m_Request.refreshMilliHz = next.refreshMilliHz;
     m_Request.hdr = next.hdr;
-    m_Request.exclusive =
-        next.action == Action::Activate && AppSettings().virtualDisplayExclusive();
+    m_Request.exclusive = next.exclusive;
     // The GPU the owner chose on the display's card, read as each activation
-    // starts like the choice above: the next stream follows a change.
+    // starts: the next stream follows a change.
     if (next.action == Action::Activate) m_Request.gpu = AppSettings().virtualDisplayGpu();
     m_Callbacks.clear();
     if (next.cb) m_Callbacks.append(std::move(next.cb));

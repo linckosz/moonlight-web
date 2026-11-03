@@ -148,6 +148,11 @@ QString gpuOfSettings(const QString& xml)
     return name.compare(QLatin1String("default"), Qt::CaseInsensitive) == 0 ? QString() : name;
 }
 
+bool othersGoOff(Asker asker, bool optionOn)
+{
+    return asker == Asker::Owner && optionOn;
+}
+
 bool savesLayout(LayoutStep step, bool othersOff)
 {
     switch (step) {

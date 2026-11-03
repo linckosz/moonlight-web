@@ -397,8 +397,9 @@ struct Request
     /// the request file: Windows' display is SDR, whatever this says.
     bool hdr = false;
     /// Activate, Windows: every other display goes off while ours streams
-    /// (issue #39), the owner's choice (AppSettings::virtualDisplayExclusive).
-    /// Never saved to Windows' database: see savesLayout().
+    /// (issue #39), the owner's choice (AppSettings::virtualDisplayExclusive),
+    /// for the owner's own streams only: see othersGoOff(). Never saved to
+    /// Windows' database: see savesLayout().
     bool exclusive = false;
     /// Activate, Windows: the GPU the display is to be drawn by, as the OS
     /// names it (AppSettings::virtualDisplayGpu, the owner's choice on the
@@ -429,6 +430,19 @@ QString notAppearedError();
 /// failure is not one a mode explains: a launch at the default mode is
 /// better than no launch, which is what normaliseMode() already promises.
 std::optional<Request> fallbackTowardsDefault(const Request& tried, const QString& error);
+
+/// Who a stream's activation of the display is for.
+enum class Asker
+{
+    Owner, ///< a signed-in session's /start
+    Guest, ///< someone with an invitation, who may be anywhere
+};
+
+/// Whether an activation turns every other display off (Request::exclusive):
+/// the option in force (@p optionOn), and the owner asking. A guest may open
+/// an invitation cold while someone works at the PC, and an invitation gives
+/// no say over its screens: the guest's stream runs with them on.
+bool othersGoOff(Asker asker, bool optionOn);
 
 /// The display layout changes the Windows helper makes, in the order an
 /// activation takes them (Restore is a deactivation's).

@@ -82,6 +82,9 @@ public:
     /// @p hdr: the viewer asked for HDR. macOS makes its display able to
     /// show it (EDR) only then — an SDR stream off a display declared in
     /// BT.2020 would come out washed. Windows ignores it: its display is SDR.
+    ///
+    /// The owner's: with the option on, the other displays go off when this
+    /// runs an operation. On already, it does not run one and they stay on.
     void activate(int width, int height, int refreshMilliHz, bool hdr, Callback cb);
     void activate(Callback cb) { activate(0, 0, 0, false, std::move(cb)); }
 
@@ -90,7 +93,8 @@ public:
     /// mode — or on its way on, it is left as it is and answers once it is
     /// there: another guest may be watching it, and a new mode would take it
     /// from them for as long as the driver restarts. SDR (Windows' display
-    /// is, and a guest's stream is). Cancels a pending releaseSoon().
+    /// is, and a guest's stream is). Cancels a pending releaseSoon(). Never
+    /// turns the other displays off (VirtualDisplay::othersGoOff).
     void activateIfOff(int width, int height, int refreshMilliHz, Callback cb);
 
     /// Turn it off (previous primary back, disable). @p cb may be null.
@@ -139,11 +143,14 @@ private:
         int height = 0;
         int refreshMilliHz = 0;
         bool hdr = false;
+        bool exclusive = false; ///< VirtualDisplay::Request::exclusive
         Callback cb;
     };
 
+    void activateAs(VirtualDisplay::Asker asker, int width, int height, int refreshMilliHz,
+                    bool hdr, Callback cb);
     void enqueue(VirtualDisplay::Request::Action action, int width, int height, int refreshMilliHz,
-                 bool hdr, Callback cb);
+                 bool hdr, bool exclusive, Callback cb);
     void startNext();
     void setState(State s);
     void fail(const QString& error);

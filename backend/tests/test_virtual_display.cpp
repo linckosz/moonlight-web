@@ -827,6 +827,12 @@ void run_virtual_display_tests()
         CHECK(othersOffAfter(LayoutStep::Mode, true, true));
     }
 
+    SECTION("VirtualDisplay — only the owner's stream turns the other displays off");
+    CHECK(othersGoOff(Asker::Owner, true));
+    CHECK(!othersGoOff(Asker::Owner, false));
+    CHECK(!othersGoOff(Asker::Guest, true));
+    CHECK(!othersGoOff(Asker::Guest, false));
+
     SECTION("VirtualDisplay — the guard restores only a dead server's displays left off");
     // Off and the server running: it waits. The server gone with them off:
     // it brings them back. Not off — or a marker it cannot read — whatever
