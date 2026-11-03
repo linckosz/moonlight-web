@@ -22,6 +22,8 @@ import {
     physicalScreenSize,
     pickAutoEnhancer,
     PLATFORM_TYPE,
+    touchEnabled,
+    watchTouchEnabled,
 } from '../js/util/BrowserDetect.js';
 
 const UA = {
@@ -727,5 +729,111 @@ describe('BrowserDetect.CANVAS_TEARING_IS_REAL', () => {
             ),
         ).toBe(false);
         expect(await realFor(UA.winTablet)).toBe(false);
+    });
+});
+
+describe('touchEnabled', () => {
+    /** A window whose (any-pointer: coarse) is what `coarse` says, and can change. */
+    function fakeWin(coarse) {
+        const win = new EventTarget();
+        const listeners = new Set();
+        const query = {
+            matches: coarse,
+            addEventListener: (_type, fn) => listeners.add(fn),
+            removeEventListener: (_type, fn) => listeners.delete(fn),
+        };
+        win.matchMedia = vi.fn((q) => (q === '(any-pointer: coarse)' ? query : { matches: false }));
+        win.setCoarse = (value) => {
+            query.matches = value;
+            for (const fn of listeners) fn();
+        };
+        win.listeners = listeners;
+        return win;
+    }
+    const touchNav = { userAgent: UA.winTablet, maxTouchPoints: 10 };
+
+    it('says yes for a touch screen the OS has switched on', () => {
+        expect(touchEnabled({ nav: touchNav, win: fakeWin(true) })).toBe(true);
+    });
+
+    it('goes by the screen, not by the kind of device', () => {
+        // A phone whose browser reports no touch at all, and a desktop agent with one.
+        const phone = { userAgent: UA.iphone, maxTouchPoints: 0 };
+        const desktop = { userAgent: UA.desktop, maxTouchPoints: 5 };
+        expect(touchEnabled({ nav: phone, win: fakeWin(true) })).toBe(false);
+        expect(touchEnabled({ nav: desktop, win: fakeWin(true) })).toBe(true);
+    });
+
+    it('says no when the OS has the touch screen off, whichever way that shows', () => {
+        const noPoints = { userAgent: UA.winTablet, maxTouchPoints: 0 };
+        expect(touchEnabled({ nav: noPoints, win: fakeWin(true) })).toBe(false);
+        expect(touchEnabled({ nav: touchNav, win: fakeWin(false) })).toBe(false);
+    });
+
+    it('says no without the media query', () => {
+        const win = new EventTarget();
+        expect(touchEnabled({ nav: touchNav, win })).toBe(false);
+        win.matchMedia = () => {
+            throw new Error('unsupported');
+        };
+        expect(touchEnabled({ nav: touchNav, win })).toBe(false);
+    });
+
+    it('never says yes on a TV, even after a touch', () => {
+        const tv = { userAgent: 'Mozilla/5.0 (Linux; Android 11; MiTV) Chrome', maxTouchPoints: 5 };
+        const win = fakeWin(true);
+        expect(touchEnabled({ nav: tv, win })).toBe(false);
+        const onChange = vi.fn();
+        const stop = watchTouchEnabled(onChange, { nav: tv, win });
+        win.dispatchEvent(new Event('touchstart'));
+        expect(touchEnabled({ nav: tv, win })).toBe(false);
+        expect(onChange).not.toHaveBeenCalled();
+        stop();
+    });
+
+    it('tells when the OS switches the screen off and back on', () => {
+        const win = fakeWin(true);
+        const onChange = vi.fn();
+        const stop = watchTouchEnabled(onChange, { nav: touchNav, win });
+        win.setCoarse(false);
+        expect(onChange).toHaveBeenLastCalledWith(false);
+        win.setCoarse(true);
+        expect(onChange).toHaveBeenLastCalledWith(true);
+        expect(onChange).toHaveBeenCalledTimes(2);
+        stop();
+    });
+
+    it('takes a real touch as proof when the browser still says no', () => {
+        const win = fakeWin(false);
+        const onChange = vi.fn();
+        const stop = watchTouchEnabled(onChange, { nav: touchNav, win });
+        win.dispatchEvent(new Event('touchstart'));
+        expect(onChange.mock.calls).toEqual([[true]]);
+        expect(touchEnabled({ nav: touchNav, win })).toBe(true);
+        // A second touch changes nothing.
+        win.dispatchEvent(new Event('touchstart'));
+        expect(onChange).toHaveBeenCalledTimes(1);
+        stop();
+    });
+
+    it('forgets the proof when the OS takes the screen away', () => {
+        const win = fakeWin(true);
+        const onChange = vi.fn();
+        const stop = watchTouchEnabled(onChange, { nav: touchNav, win });
+        win.dispatchEvent(new Event('touchstart'));
+        win.setCoarse(false);
+        expect(touchEnabled({ nav: touchNav, win })).toBe(false);
+        expect(onChange.mock.calls).toEqual([[false]]);
+        stop();
+    });
+
+    it('stops listening when told to', () => {
+        const win = fakeWin(true);
+        const onChange = vi.fn();
+        watchTouchEnabled(onChange, { nav: touchNav, win })();
+        expect(win.listeners.size).toBe(0);
+        win.setCoarse(false);
+        win.dispatchEvent(new Event('touchstart'));
+        expect(onChange).not.toHaveBeenCalled();
     });
 });

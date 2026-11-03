@@ -194,6 +194,72 @@ export function supportsGamingMode() {
     }
 }
 
+/** A finger on the page, or a stylus: the one pointer a touch screen brings. */
+const COARSE_POINTER = '(any-pointer: coarse)';
+
+/** Windows that have seen a real touch since their touch screen last went away. */
+const touchProven = new WeakSet();
+
+/**
+ * True when this device has a touch screen and the OS has it switched on — not
+ * what kind of device it is: IS_TOUCH_DEVICE answers from the user agent or
+ * from `ontouchstart`, and says yes for a phone, or for a laptop whose touch
+ * screen is disabled in Device Manager. Both `maxTouchPoints` and the media
+ * query fall when that driver goes. A real touch proves it, for a browser whose
+ * answers lag behind a screen just switched back on. Never on a TV.
+ * Asked at call time; watchTouchEnabled tells of a change.
+ * @param {{nav?: Navigator, win?: Window}} [env] replace the live sources (tests).
+ */
+export function touchEnabled({ nav = navigator, win = window } = {}) {
+    if (detectTv(nav)) return false;
+    if (touchProven.has(win)) return true;
+    if (!(nav.maxTouchPoints > 0)) return false;
+    try {
+        return !!win.matchMedia && win.matchMedia(COARSE_POINTER).matches;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Tell `onChange(enabled)` whenever touchEnabled's answer changes while the
+ * page is open: the touch screen switched off or on in the OS, or a first real
+ * touch. Returns what stops it.
+ * @param {(enabled: boolean) => void} onChange
+ * @param {{nav?: Navigator, win?: Window}} [env]
+ * @returns {() => void}
+ */
+export function watchTouchEnabled(onChange, { nav = navigator, win = window } = {}) {
+    let known = touchEnabled({ nav, win });
+    const update = () => {
+        const now = touchEnabled({ nav, win });
+        if (now === known) return;
+        known = now;
+        onChange(now);
+    };
+    const onTouch = () => {
+        touchProven.add(win);
+        update();
+    };
+    let query = null;
+    try {
+        query = win.matchMedia ? win.matchMedia(COARSE_POINTER) : null;
+    } catch {
+        /* no media query: a real touch is the only way to tell */
+    }
+    const onQuery = () => {
+        // The OS took the screen away: an earlier touch proves nothing now.
+        if (!query.matches) touchProven.delete(win);
+        update();
+    };
+    win.addEventListener('touchstart', onTouch, { capture: true, passive: true });
+    if (query && query.addEventListener) query.addEventListener('change', onQuery);
+    return () => {
+        win.removeEventListener('touchstart', onTouch, { capture: true });
+        if (query && query.removeEventListener) query.removeEventListener('change', onQuery);
+    };
+}
+
 /** The raw platform type string: 'mobile', 'tablet', or 'desktop'. */
 export const PLATFORM_TYPE = platform.type;
 
