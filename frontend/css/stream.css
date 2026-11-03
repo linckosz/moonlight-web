@@ -1338,6 +1338,148 @@ body.streaming-active::after {
 .stream-presence {
     z-index: 300;
 }
+/* The on-screen controller (TouchPadView). Lays over the picture, in the
+   canvas area so that it never covers the header, and follows that area into
+   fullscreen. Its controls are placed from JS: a finger is hit-tested on the
+   same rectangles. Only they take touches; the gaps are the trackpad's. */
+.touch-pad {
+    position: absolute;
+    inset: 0;
+    z-index: 200;
+    pointer-events: none;
+    touch-action: none;
+    opacity: var(--touch-pad-opacity, 0.5);
+    color: #fff;
+    font-weight: 600;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+.touch-pad[hidden] {
+    display: none;
+}
+.touch-pad.is-ignoring {
+    pointer-events: auto;
+}
+.touch-pad-insets {
+    position: absolute;
+    visibility: hidden;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+        env(safe-area-inset-left);
+}
+.touch-pad-btn,
+.touch-pad-dpad,
+.touch-pad-zone {
+    position: absolute;
+    pointer-events: auto;
+    touch-action: none;
+}
+.touch-pad-btn,
+.touch-pad-dpad-arm {
+    box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.18);
+    border: 1.5px solid rgba(255, 255, 255, 0.55);
+}
+.touch-pad-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+}
+.touch-pad-btn.is-round {
+    border-radius: 50%;
+}
+.touch-pad-btn.is-down,
+.touch-pad-dpad-arm.is-down {
+    background: rgba(255, 255, 255, 0.75);
+    color: #000;
+}
+.touch-pad-dpad-arm {
+    position: absolute;
+    width: 33.4%;
+    height: 33.4%;
+    border-radius: 6px;
+}
+.touch-pad-dpad-arm.arm-up {
+    left: 33.3%;
+    top: 0;
+}
+.touch-pad-dpad-arm.arm-down {
+    left: 33.3%;
+    bottom: 0;
+}
+.touch-pad-dpad-arm.arm-left {
+    left: 0;
+    top: 33.3%;
+}
+.touch-pad-dpad-arm.arm-right {
+    right: 0;
+    top: 33.3%;
+}
+/* A stick's ring rests where a thumb is expected and floats under it. */
+.touch-pad-ring {
+    position: absolute;
+    left: 0;
+    top: 0;
+    box-sizing: border-box;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-radius: 50%;
+}
+.touch-pad-ring.is-held {
+    border-color: rgba(255, 255, 255, 0.75);
+}
+.touch-pad-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44%;
+    height: 44%;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+    transform: translate(-50%, -50%);
+}
+/* In fullscreen there is no header, so no button: this takes its place. */
+.touch-pad-handle {
+    display: none;
+    position: absolute;
+    top: max(2px, env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 201;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 24px;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 16px;
+    cursor: pointer;
+    user-select: none;
+}
+:fullscreen .touch-pad-handle {
+    display: inline-flex;
+}
+:-webkit-full-screen .touch-pad-handle {
+    display: inline-flex;
+}
+.stream-css-fs .touch-pad-handle {
+    display: inline-flex;
+}
+.touch-pad-handle[hidden],
+.btn-stream-pad[hidden],
+.stream-input-gate:not([hidden]) ~ .touch-pad-handle {
+    /* Over the gate it would cover the only way out of a blocked session. */
+    display: none !important;
+}
+.btn-stream-pad.is-on,
+.touch-pad-handle.is-on {
+    background: var(--kbd-on);
+    color: var(--kbd-on-edge);
+    border-color: var(--kbd-on-edge);
+}
 /* A guest's count of who is on the stream (SharePresence.GuestPresence): the
    pad button's frame, wide enough for the people icon and the number. */
 .stream-presence {

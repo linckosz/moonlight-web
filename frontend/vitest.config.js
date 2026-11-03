@@ -68,6 +68,7 @@ export default defineConfig({
                 'js/hid/hidppRelay.js',
                 'js/ui/HidHelpDialog.js',
                 'js/ui/Toast.js',
+                'js/ui/TouchPadView.js',
                 'js/ui/RemoteNav.js',
             ],
             thresholds: {
