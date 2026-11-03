@@ -86,6 +86,32 @@ def psnr(a, b):
     return float(peak_signal_noise_ratio(a, b, data_range=1.0))
 
 
+MS_SSIM_WEIGHTS = (0.0448, 0.2856, 0.3001, 0.2363, 0.1333)
+
+
+def ms_ssim(a, b):
+    """MS-SSIM of two luma planes in [0, 1] (Wang, Simoncelli, Bovik 2003), 11-tap Gaussian, 5 scales."""
+    from scipy.ndimage import gaussian_filter
+    c1, c2 = 0.01 ** 2, 0.03 ** 2
+    vals = []
+    for s in range(5):
+        g = lambda x: gaussian_filter(x, 1.5, truncate=3.5)  # noqa: E731
+        mu_a, mu_b = g(a), g(b)
+        va = g(a * a) - mu_a ** 2
+        vb = g(b * b) - mu_b ** 2
+        cov = g(a * b) - mu_a * mu_b
+        cs = (2 * cov + c2) / (va + vb + c2)
+        if s == 4:
+            lum = (2 * mu_a * mu_b + c1) / (mu_a ** 2 + mu_b ** 2 + c1)
+            vals.append(max(float((lum * cs).mean()), 0.0))
+        else:
+            vals.append(max(float(cs.mean()), 0.0))
+            h, w = a.shape[0] // 2 * 2, a.shape[1] // 2 * 2
+            a = a[:h, :w].reshape(h // 2, 2, w // 2, 2).mean(axis=(1, 3))
+            b = b[:h, :w].reshape(h // 2, 2, w // 2, 2).mean(axis=(1, 3))
+    return float(np.prod([v ** w for v, w in zip(vals, MS_SSIM_WEIGHTS)]))
+
+
 def chroma(gt, out):
     """PSNR of the Cb and Cr planes (BT.709, full range, on the encoded
     values) and the CIEDE2000 colour difference, mean and p99."""

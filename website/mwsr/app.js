@@ -81,7 +81,6 @@ const NAMES = {
   native: 'Native',
   input: 'Input',
   mwsr: 'MWSR',
-  mwsrz: 'MWSR zones',
   fsr1: 'FSR1',
   nis: 'NIS',
   sgsr1: 'SGSR1',
@@ -92,10 +91,6 @@ const NOTES = {
   input: 'what the upscalers read, each texel enlarged',
   nis: "MoonlightWeb's per-fragment port",
 };
-// MWSR zones: MoonlightWeb's own, not in the MWSR anyone downloads (that one is the law, MWSR above)
-const ZONES_ONLY =
-  "MoonlightWeb only: its native host measures each zone of the native frame and lowers MWSR's sharpness there; the MWSR anyone downloads is the law, MWSR above";
-const ZONES_NONE = 'the law here: zones from ×1.15 up, in SDR, from a native frame';
 // A reduction scores against the picture reduced by Lanczos-3: no native frame, a reference
 const reducing = () => C && C.outW < C.inW;
 const nameOf = (id) => (id === 'native' && reducing() ? 'Reference' : NAMES[id]);
@@ -114,21 +109,42 @@ const SCALES = [
   [2, '2'],
 ];
 
-// LPIPS and VMAF NEG come from the lab (lab-scores.json, scripts/bench/scaler-lab/cmp_lab.py: this page on
-// SwiftShader, its pictures read back and measured), for the page's own SDR pictures only
-const LAB_PICS = new Set(['text', '0ad', 'gears', 'junkshop', 'iso']);
-let LAB = null;
-const scaleKey = () => SCALES.find(([v]) => v === S.scale)[1];
-function lab(id) {
-  if (!LAB || !LAB_PICS.has(S.pic)) return null;
-  const row = LAB.scores[`${S.pic}|${scaleKey()}|${S.chroma}|${S.c444 ? 1 : 0}`];
-  return (row && row[id]) || null;
-}
-const lp = (x) => x.toFixed(4);
-const vn = (x) => x.toFixed(1);
+// The scores, in the order they come: the cheapest first, each shown as soon as it is known.
+// [key in R, its name, its format, whether higher is closer]
+const SCORES = [
+  ['psnr', 'PSNR', (x) => x.toFixed(2), true],
+  ['msssim', 'MS-SSIM', (x) => x.toFixed(4), true],
+  ['ssim', 'SSIM', (x) => x.toFixed(4), true],
+  ['vmaf', 'VMAF NEG', (x) => x.toFixed(1), true],
+  ['flip', 'FLIP', (x) => x.toFixed(4), false],
+  ['lpips', 'LPIPS', (x) => x.toFixed(4), false],
+];
+const SCORE_COLUMNS = ['lpips', 'vmaf', 'psnr', 'ssim', 'msssim', 'flip'];
+const SCORE_OF = Object.fromEntries(SCORES.map((m) => [m[0], m]));
 // ?soft=1&lab=1: the lab reads the native frame and each upscaler's picture (cmp_lab.py)
 const LABMODE = SOFT && new URLSearchParams(location.search).get('lab') === '1';
 let labRef = null;
+// LPIPS' network on its own device, made when the first case wants it: null where it cannot run
+let lpipsNet = null;
+function lpipsReady() {
+  lpipsNet ||= (async () => {
+    const adapter = await navigator.gpu.requestAdapter(
+      SOFT ? { forceFallbackAdapter: true } : { powerPreference: 'high-performance' },
+    );
+    if (!adapter) return null;
+    const { maxStorageBufferBindingSize, maxBufferSize } = adapter.limits;
+    const device = await adapter.requestDevice({ requiredLimits: { maxStorageBufferBindingSize, maxBufferSize } });
+    const [{ createLpips }, weights] = await Promise.all([
+      import(ME.dataset.lpips),
+      fetch(ME.dataset.lpipsWeights).then((r) => r.arrayBuffer()),
+    ]);
+    return createLpips(device, new Float32Array(weights));
+  })().catch((e) => {
+    console.warn('LPIPS:', e);
+    return null;
+  });
+  return lpipsNet;
+}
 
 // ── the state, and its mirror in the address (#pic=…&scale=…) ──
 const S = {
@@ -224,10 +240,6 @@ async function boot() {
     );
     return;
   }
-  // the lab's scores: their absence leaves the two columns empty, not the page
-  const labScores = fetch(ME.dataset.lab)
-    .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null);
   try {
     const [E, K, mwsr, nis] = await Promise.all(
       [ME.dataset.engine, ME.dataset.kernels, ME.dataset.mwsr, ME.dataset.nis].map((u) => import(u)),
@@ -257,9 +269,8 @@ async function boot() {
     (engine.hasTs ? ' · GPU timestamps: yes' : ' · GPU timestamps: no (wall time, which includes the submission)');
   for (const sel of [$('a'), $('b')])
     sel.innerHTML = ['native', ...KERNELS.map((k) => k.id)]
-      .map((id) => `<option value="${id}">${NAMES[id]}${id === 'mwsrz' ? ' (MoonlightWeb only)' : ''}</option>`)
+      .map((id) => `<option value="${id}">${NAMES[id]}</option>`)
       .join('');
-  LAB = await labScores;
   syncControls();
   if (LABMODE) labHook();
   await load();
@@ -445,7 +456,6 @@ async function load() {
       scale: S.scale,
       chroma: S.chroma,
       role: S.pic === 'file' ? S.role : 'native',
-      zoneUrls: { zones: new URL(ME.dataset.zones, location.href).href, tree: new URL(ME.dataset.zonetree, location.href).href },
     });
   } catch (e) {
     if (my === token) status('The picture could not be prepared: ' + e.message, 'bad');
@@ -471,9 +481,9 @@ async function load() {
   await makePreview();
   // the pixels are on the GPU and in the worker now: keep only whether there is a native frame
   if (LABMODE) labRef = C.native;
+  const nativePixels = C.native;
   C.native = !!C.native;
   C.input = null;
-  C.zones = null;
   status('Drawing…');
   for (const k of KERNELS) await engine.draw(k.id, { c444: S.c444 });
   if (my !== token) return;
@@ -483,21 +493,73 @@ async function load() {
   status('Scoring…');
   try {
     await score(my);
+    if (my !== token) return;
+    // timed once the 16-bit gate has said which precisions may run
+    $('measure').disabled = false;
+    if (nativePixels && !C.hdr && !LABMODE) await liveScores(my, nativePixels);
   } catch (e) {
     if (my === token) status('The scoring failed: ' + e.message, 'bad');
     return;
   }
   if (my !== token) return;
-  // timed once the 16-bit gate has said which precisions may run
-  $('measure').disabled = false;
   status('');
 }
+
+// A timing in progress holds the scores back: they would be in its figures.
+async function scoreTurn(my) {
+  while (timing && my === token) await new Promise((done) => setTimeout(done, 200));
+  return my === token;
+}
+
+// The scores of SDR pictures with a native frame, one at a time, each on the page as soon as it is known.
+async function liveScores(my, nativePixels) {
+  const urls = {
+    scores: new URL(ME.dataset.scores, location.href).href,
+    vmaf: new URL(ME.dataset.vmaf, location.href).href,
+    model: new URL(ME.dataset.vmafModel, location.href).href,
+  };
+  for (const [metric, name] of SCORES) {
+    if (metric === 'lpips') continue;
+    for (const k of KERNELS) {
+      if (!(await scoreTurn(my))) return;
+      status(`Scoring: ${name}, ${k.name}…`);
+      const { value } = await call('scoreOne', { metric, id: k.id, urls });
+      if (my !== token) return;
+      R[k.id] = { ...R[k.id], [metric]: value };
+      renderTable();
+    }
+  }
+  await call('scoresDone', {});
+  if (!(await scoreTurn(my))) return;
+  status('Scoring: LPIPS, loading its network the first time…');
+  const net = await lpipsReady();
+  if (my !== token) return;
+  if (!net) {
+    lpipsOff = true;
+    renderTable();
+    return;
+  }
+  status('Scoring: LPIPS, the native frame…');
+  await net.reference(nativePixels, C.outW, C.outH);
+  for (const k of KERNELS) {
+    if (!(await scoreTurn(my))) return;
+    status(`Scoring: LPIPS, ${k.name}…`);
+    const out = await engine.readOut(k.id);
+    if (my !== token) return;
+    const { lpips } = await net.score(out);
+    if (my !== token) return;
+    R[k.id] = { ...R[k.id], lpips };
+    renderTable();
+    captions();
+  }
+}
+let lpipsOff = false;
 
 async function score(my, ids = KERNELS.map((k) => k.id)) {
   for (const id of ids) {
     const out = await engine.readOut(id);
     if (my !== token) return;
-    const m = await call('measure', { out }, [out.buffer]);
+    const m = await call('measure', { id, out }, [out.buffer]);
     if (my !== token) return;
     R[id] = { ...R[id], ...m };
     renderTable();
@@ -607,9 +669,8 @@ function line(id) {
   if (id === 'native' || id === 'input') return noteOf(id);
   const r = R[id];
   if (!r) return '…';
-  const bits = id === 'mwsrz' && !engine.hasZones() ? [ZONES_NONE] : [];
-  const l = lab(id);
-  if (l) bits.push('LPIPS ' + lp(l[0]));
+  const bits = [];
+  if (r.lpips != null) bits.push('LPIPS ' + r.lpips.toFixed(4));
   if (r.overshoot != null) bits.push(pct(r.overshoot) + ' over');
   const t = best(id);
   if (t) bits.push(ms3(t.ms) + ' ms');
@@ -801,18 +862,22 @@ const ms3 = (ms) => ms.toFixed(ms < 1 ? 3 : 2);
 function renderTable() {
   const times = KERNELS.map((k) => best(k.id)).filter(Boolean);
   const max = Math.max(...times.map((t) => t.ms), 0);
-  // the lab's scores of this picture, scale and chroma; the best of each column in bold
-  const L = KERNELS.map((k) => lab(k.id));
-  const have = L.filter(Boolean);
-  const bestL = have.length ? Math.min(...have.map((x) => x[0])) : null;
-  const bestV = have.length ? Math.max(...have.map((x) => x[1])) : null;
-  const cell = (s, top) => (top ? `<strong>${s}</strong>` : s);
-  labNote();
-  $('table').tBodies[0].innerHTML = KERNELS.map((k, i) => {
+  // each score as soon as it is known, the best of its column in bold once all are in
+  const scored = C && C.native && !C.hdr;
+  const top = {};
+  for (const key of SCORE_COLUMNS) {
+    const v = KERNELS.map((k) => R[k.id] && R[k.id][key]).filter((x) => x != null);
+    if (v.length === KERNELS.length) top[key] = SCORE_OF[key][3] ? Math.max(...v) : Math.min(...v);
+  }
+  scoreNote();
+  $('table').tBodies[0].innerHTML = KERNELS.map((k) => {
     const r = R[k.id] || {};
-    const l = L[i];
-    const f = l ? cell(lp(l[0]), l[0] === bestL) : '—';
-    const col = l ? cell(vn(l[1]), l[1] === bestV) : '—';
+    const cells = SCORE_COLUMNS.map((key) => {
+      const v = r[key];
+      const none = !scored || (key === 'lpips' && lpipsOff);
+      const text = v != null ? SCORE_OF[key][2](v) : none ? '—' : '…';
+      return `<td class="num${key === 'lpips' ? ' fid' : ''}">${v != null && v === top[key] ? `<strong>${text}</strong>` : text}</td>`;
+    }).join('');
     const o = r.overshoot != null ? pct(r.overshoot) : '…';
     const t = best(k.id);
     let time = '—';
@@ -827,26 +892,23 @@ function renderTable() {
     const star =
       k.id === 'nis'
         ? ' <small title="MoonlightWeb’s per-fragment port of NIS, not NVIDIA’s compute shader">port</small>'
-        : k.id === 'mwsrz'
-          ? ` <small title="${ZONES_ONLY}${engine.hasZones() ? '' : '. Here ' + ZONES_NONE}">MoonlightWeb</small>`
-          : k.id === 'mwsr' && engine.mwsrMode() === 'down'
-          ? ' <small title="MWSR’s reduction, as the client runs it: bilinear samples over each pixel’s footprint, averaged in linear light">reduction</small>'
+        : k.id === 'mwsr' && engine.mwsrMode() === 'down'
+          ? ' <small title="MWSR’s reduction, as the client runs it: bilinear samples over each pixel’s footprint, averaged in linear light, lightly sharpened from ×0.5 to 1:1">reduction</small>'
           : '';
-    return `<tr><th scope="row">${k.name}${star}</th><td class="num fid">${f}</td><td class="num">${col}</td><td class="num">${o}</td><td class="num">${time}${gate}</td></tr>`;
+    return `<tr><th scope="row">${k.name}${star}</th>${cells}<td class="num">${o}</td><td class="num">${time}${gate}</td></tr>`;
   }).join('');
 }
-// what the two lab columns hold for this picture, or why they are empty
-function labNote() {
+// what the score columns hold for this picture, or why they are empty
+function scoreNote() {
   const n = $('lab-note');
   if (!n) return;
   const kind = PICS[S.pic].kind;
   n.textContent = kind.startsWith('hdr')
-    ? 'No lab score in HDR: LPIPS and VMAF NEG are made for SDR pictures. The overshoot and the GPU time are measured here.'
-    : S.pic === 'file'
-      ? 'No lab score for your picture: the lab measured the page’s own pictures only. The overshoot and the GPU time are measured here.'
-      : !LAB
-        ? 'The lab’s scores could not be loaded.'
-        : `LPIPS and VMAF NEG: measured in the lab on this picture, at this scale and chroma (${LAB.measured}). The overshoot and the GPU time: measured here, on this device.`;
+    ? 'No score but the overshoot in HDR: LPIPS, VMAF NEG, PSNR, SSIM, MS-SSIM and this FLIP are made for SDR pictures.'
+    : C && !C.native
+      ? 'No score against a native frame: your picture is the input here. The overshoot and the GPU time are measured.'
+      : 'Every score is computed in this tab, on this device, against the native frame (below ×1, against the reference); nothing is sent anywhere.' +
+        (lpipsOff ? ' LPIPS cannot run here: this device refused its network.' : '');
 }
 
 // ── the timing ──
@@ -864,9 +926,8 @@ $('measure').addEventListener('click', async () => {
   if (!engine || !C) return;
   const my = (timing = token);
   $('measure').textContent = 'Stop';
-  const full = $('full').checked;
-  const rounds = full ? 3 : 1;
-  const batches = full ? 6 : 3;
+  const rounds = 3;
+  const batches = 6;
   const vars = [];
   for (const k of KERNELS) {
     vars.push({ id: k.id, half: false, t: [] });

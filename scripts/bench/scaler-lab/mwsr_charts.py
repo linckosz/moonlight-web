@@ -1,5 +1,5 @@
 """The scores chart of mwsr/README.md, in light and dark: LPIPS and VMAF NEG of the five upscalers on the game picture and
-the text chart at x1.33 and x2, from website/mwsr/lab-scores.json (cmp_lab.py). Each panel has its own scale, and in each
+the text chart at x1.33 and x2, from lab-scores.json (cmp_lab.py). Each panel has its own scale, and in each
 one the further right is the closer to the native frame.
 
     py -E -P mwsr_charts.py          writes mwsr/docs/scores-light.svg and scores-dark.svg
@@ -8,7 +8,7 @@ import json
 import os
 
 REPO = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
-SCORES = os.path.join(REPO, "website", "mwsr", "lab-scores.json")
+SCORES = os.path.join(REPO, "scripts", "bench", "scaler-lab", "lab-scores.json")
 OUT = os.path.join(REPO, "mwsr", "docs")
 THEMES = {
     "light": dict(ink="#0b0b0b", soft="#52514e", mute="#8a8984", grid="#e4e3df", mwsr="#2a78d6", dot="#9b9a95", low="#c9c8c3"),

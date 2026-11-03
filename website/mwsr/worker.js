@@ -6,8 +6,9 @@
 // The arithmetic follows the lab that made the README's figures
 // (scripts/bench/scaler-lab/): the reduction is scaler_lab.make_input
 // (Pillow's Lanczos-3 on float planes, in linear light, the float32 steps of
-// NumPy emulated by Math.fround), the overshoot is metrics.overshoot. LPIPS and
-// VMAF NEG are the lab's (lab-scores.json), not measured here.
+// NumPy emulated by Math.fround), the overshoot is metrics.overshoot. PSNR, SSIM,
+// MS-SSIM, FLIP and VMAF NEG are computed here (scores.js, vmaf.js), LPIPS on
+// the page's GPU (lpips.js): none of them leaves this tab.
 
 const f = Math.fround;
 
@@ -620,22 +621,7 @@ async function picture(p) {
  * reduction (scale < 1) takes the picture as the input and scores against
  * its Lanczos-3 reduction in linear light, the best the output can hold.
  */
-// MWSR zones (zones.js, zonetree.js): the native host's codes for its own
-// client, from the native frame, the host's capture. Loaded by their versioned
-// URLs, once.
-let zoneMods = null;
-async function hostZones(urls, native, outW, outH, inW, inH) {
-  if (!urls) return null;
-  zoneMods ||= Promise.all([import(urls.zones), import(urls.tree)]);
-  const [Z, T] = await zoneMods;
-  // the client reads zones from x1.3 up only
-  if (Math.min(outW / inW, outH / inH) < Z.ZONE_MIN_SCALE) return null;
-  // the host's scale is the capture's width over the stream's; it reduced in linear light
-  const codes = Z.decideZones(Z.zoneCells(native, outW, outH), f(outW / inW), true, T.ZONE_TREE);
-  return { cols: Z.ZONES_X, rows: Z.ZONES_Y, codes, texels: Z.zoneTexels(codes) };
-}
-
-async function prepare({ pic: p, scale, chroma, role, zoneUrls = null }) {
+async function prepare({ pic: p, scale, chroma, role }) {
   const pic = await picture(p);
   const { w, h } = pic;
   let outW, outH, inW, inH;
@@ -668,8 +654,6 @@ async function prepare({ pic: p, scale, chroma, role, zoneUrls = null }) {
     if (chroma === '420') input = to420(input, inW, inH);
     res.native = native && new Uint8Array(native);
     res.input = new Uint8Array(input);
-    // SDR with a native frame only: the host takes no zones in HDR
-    if (native) res.zones = await hostZones(zoneUrls, native, outW, outH, inW, inH);
   } else {
     const at = (W, H) => encodeHdr(own(W, H) ? pic.planes : reduceHdr(pic.planes, w, h, W, H), W * H);
     native = at(outW, outH);
@@ -681,18 +665,56 @@ async function prepare({ pic: p, scale, chroma, role, zoneUrls = null }) {
     native = fromHalves(res.native);
     input = fromHalves(res.input);
   }
-  current = { ...res, inputData: pic.hdr ? nits2020(input, inW * inH) : input };
+  current = { ...res, inputData: pic.hdr ? nits2020(input, inW * inH) : input, nativeData: pic.hdr ? null : native, outs: {}, refs: {} };
   // copies (new Uint8Array(…) and halves(…) copy): the arrays above stay the worker's
   return { result: res, transfer: [res.input.buffer, ...(res.native ? [res.native.buffer] : [])] };
 }
 
-function measure({ out }) {
+function measure({ id, out }) {
   const c = current;
   if (!c) throw new Error('no case');
   const n = c.outW * c.outH;
   const data = c.hdr ? fromHalves(out) : out;
   const over = c.hdr ? nits2020(data, n) : data;
+  // the picture stays here for its other scores, SDR with a native frame only
+  if (c.nativeData) c.outs[id] = data;
   return { result: { overshoot: overshoot(over, c.outW, c.outH, c.inputData, c.inW, c.inH, c.hdr) } };
+}
+
+// One score of one picture: the reference's part is kept for the others of the case.
+let mods = null;
+async function scoreOne({ metric, id, urls }) {
+  const c = current;
+  const out = c && c.outs[id];
+  if (!out) return { result: { value: null } };
+  mods ||= Promise.all([
+    import(urls.scores),
+    import(urls.vmaf),
+    fetch(urls.model).then((r) => r.json()),
+  ]);
+  const [S, V, json] = await mods;
+  const { outW: w, outH: h, refs } = c;
+  const nat = c.nativeData;
+  let value;
+  if (metric === 'psnr') value = S.psnr(nat, out, w, h);
+  else if (metric === 'ssim') value = S.ssim((refs.ssim ||= S.ssimPrepare(nat, w, h)), out, w, h);
+  else if (metric === 'msssim') value = S.msssim((refs.msssim ||= S.msssimPrepare(nat, w, h)), out, w, h);
+  else if (metric === 'flip') value = S.flipMean((refs.flip ||= S.flipPrepare(nat, w, h)), S.flipPrepare(out, w, h), w, h);
+  else if (metric === 'vmaf') {
+    refs.vmafY ||= V.lumaOf(nat, w, h);
+    refs.vmafModel ||= V.parseModel(json);
+    value = V.vmafNeg(refs.vmafModel, refs.vmafY, V.lumaOf(out, w, h), w, h).score;
+  } else throw new Error('score ' + metric + '?');
+  return { result: { value } };
+}
+
+// The scores are done: what they kept goes (a phone has little to spare).
+function scoresDone() {
+  if (current) {
+    current.outs = {};
+    current.refs = {};
+  }
+  return { result: true };
 }
 
 function gate({ a, b }) {
@@ -702,7 +724,7 @@ function gate({ a, b }) {
   return { result: { share: differs(A, B, c.outW * c.outH, 4 / 255, c.hdr) } };
 }
 
-const OPS = { prepare, measure, gate };
+const OPS = { prepare, measure, gate, scoreOne, scoresDone };
 
 // One message at a time, in their order: a case prepared while an earlier one
 // still decodes must not end before it.

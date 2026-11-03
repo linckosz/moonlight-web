@@ -1,5 +1,6 @@
-"""The lab's scores of the MWSR comparison (website/mwsr/): LPIPS and VMAF NEG of each upscaler, on
-each of the page's SDR pictures, at each scale and chroma, written to website/mwsr/lab-scores.json.
+"""The lab's scores of the MWSR comparison (website/mwsr/): LPIPS, VMAF NEG, PSNR, SSIM, MS-SSIM and FLIP
+of each upscaler, on each of the page's SDR pictures, at each scale and chroma, written to lab-scores.json
+next to this script: the figures of the page's and the README's tables (the page computes its own live).
 
 The page itself draws them: this script serves website/ (the templates' version stamps cut, the
 page-view counter left out), opens /mwsr/?soft=1&lab=1 in a headless Chrome on SwiftShader, and
@@ -9,6 +10,7 @@ the page shows them. Then, against that frame:
 
   LPIPS     AlexNet, v0.1 (the lpips package, 8 torch threads: --threads), the RGB in [-1, 1]
   VMAF NEG  libvmaf's vmaf_v0.6.1neg through ffmpeg, both pictures 4:2:0 BT.709 limited range
+  PSNR, SSIM (on RGB), MS-SSIM (on luma), FLIP (LDR)   metrics.py
 
 and the overshoot the page measured on SwiftShader (the three-GPU tables' column), as a third value.
 
@@ -45,7 +47,7 @@ from scaler_lab import CHROME, REPO, free_port  # noqa: E402
 import websocket  # noqa: E402
 
 SITE = os.path.join(REPO, "website")
-OUT_JSON = os.path.join(SITE, "mwsr", "lab-scores.json")
+OUT_JSON = os.path.join(HERE, "lab-scores.json")
 PICS = ["junkshop", "0ad", "gears", "text", "iso"]
 SCALES = ["0.5", "0.75", "1", "1.33", "2"]
 CHROMAS = [("444", False), ("444", True), ("420", False)]
@@ -110,6 +112,20 @@ class Site(http.server.SimpleHTTPRequestHandler):
             f.write(data)
         self.send_response(204)
         self.end_headers()
+
+
+def classics(ref, out):
+    """PSNR, SSIM on RGB, MS-SSIM on luma, FLIP."""
+    from skimage.metrics import structural_similarity
+    import metrics
+    a, b = metrics.load(ref), metrics.load(out)
+    flip_mean, _ = metrics.flip_ldr(a, b)
+    return [
+        round(metrics.psnr(a, b), 4),
+        round(float(structural_similarity(a, b, data_range=1.0, channel_axis=2, gaussian_weights=True, sigma=1.5, use_sample_covariance=False)), 6),
+        round(metrics.ms_ssim(metrics.luma(a).astype(np.float64), metrics.luma(b).astype(np.float64)), 6),
+        None if flip_mean is None else round(flip_mean, 6),
+    ]
 
 
 def vmaf_neg(ffmpeg, dist, ref):
@@ -214,7 +230,7 @@ def main():
                                        text=True, check=True)
                     lp = json.loads(r.stdout.strip().splitlines()[-1])
                     over = js("Object.fromEntries(mwsrLab.kernels().map((k) => [k, mwsrLab.overshoot(k)]))")
-                    scores[key] = {k: [round(lp[o], 6), round(vmaf_neg(ffmpeg, o, ref), 4), over[k]]
+                    scores[key] = {k: [round(lp[o], 6), round(vmaf_neg(ffmpeg, o, ref), 4), over[k], *classics(ref, o)]
                                    for k, o in zip(kernels, outs)}
                     print("%-22s %4.0f s  %s" % (key, time.time() - t0, "  ".join(
                         "%s %.4f/%.2f" % (k, *scores[key][k][:2]) for k in kernels)), flush=True)
@@ -233,9 +249,11 @@ def main():
         return
     doc = {
         "measured": time.strftime("%d/%m/%Y"),
-        "how": "scripts/bench/scaler-lab/cmp_lab.py: this page on SwiftShader, LPIPS (alex, v0.1) and VMAF NEG "
-               "(vmaf_v0.6.1neg, 4:2:0 BT.709) against the native frame, or the Lanczos-3 reference below x1",
-        "keys": "picture|scale|chroma|chroma444 -> upscaler: [LPIPS, VMAF NEG, the page's overshoot on SwiftShader]",
+        "how": "scripts/bench/scaler-lab/cmp_lab.py: this page on SwiftShader, LPIPS (alex, v0.1), VMAF NEG "
+               "(vmaf_v0.6.1neg, 4:2:0 BT.709), PSNR, SSIM, MS-SSIM and FLIP against the native frame, or the "
+               "Lanczos-3 reference below x1",
+        "keys": "picture|scale|chroma|chroma444 -> upscaler: [LPIPS, VMAF NEG, the page's overshoot on SwiftShader, "
+                "PSNR, SSIM, MS-SSIM, FLIP]",
         "scores": scores,
     }
     with open(OUT_JSON, "w", encoding="utf-8", newline="\n") as f:

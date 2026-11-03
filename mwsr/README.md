@@ -24,12 +24,14 @@ copyright and licence notice stay with it. The rest of MoonlightWeb is under the
    a little overshoot is left on purpose, which is what makes it look sharper, and it stays small.
 
 **Downscaling** (the output is smaller): a k×k grid of bilinear samples over the output pixel's footprint in the
-input, averaged in linear light. One sample through sRGB views is the whole filter down to ×0.5; 3×3 and 4×4 grids
-serve below.
+input, averaged in linear light. One sample through sRGB views, or a 2×2 grid without them, serves down to ×0.5; 3×3 and
+4×4 grids serve below. From ×0.5 to 1:1 a light sharpening follows: where the derivatives of the read's luma see detail, a cross
+of 4 reads one output pixel away gives the detail and the bound, the gain falling on a strong edge (`MWSR_DOWN_LAW`).
+That makes 5 reads through sRGB views, 8 with the 2×2 grid. Below ×0.5 it does not sharpen.
 
 **HDR**: both modes work per channel and clamp nothing to 1.0, so they run on a float texture whose values go past 1.0
-(1.0 = reference white). The upscale then takes no margin on its bound (`hdr: true`, or `kl` 0): with the margin, 1000-nit
-text reached about 1400 nits.
+(1.0 = reference white). The upscale then takes no margin on its bound and the reduction does not sharpen (`hdr: true`):
+with the margin, 1000-nit text reached about 1400 nits.
 
 **The law**: `kc`, `kg`, `kr` and `kl` follow a curve over the scale ([the law](#per-frame-values)), fitted from ×1.07 to
 ×4 on LPIPS first, then VMAF NEG, on 15 pictures of games, text and interfaces, clean and through HEVC at a stream's bit
@@ -38,12 +40,12 @@ force that goes from 1 at ×1.33 to 1.35 at ×2. Those two marks and ×1.5 were 
 pictures seen one at a time and not blind, by one person. Between ×1.33 and ×2 the eye and PSNR, SSIM, MS-SSIM and VMAF
 NEG can disagree on games: see the tables below.
 
-**Cost** (GPU timestamps, from 720p and from 1080p to 1440p, a game picture and a text chart, 02/11/2026): 0.06 to 0.08 ms per
-frame on an RTX 5060 Ti, 1.1 to 1.5 ms on the Ryzen 9 9900X's integrated Radeon, and 0.24 to 0.37 ms on a Radeon 780M, where
-a bilinear draw alone takes 0.21 to 0.32 ms. That is 47 %, 57 % and 20 % less than v0.4.1 on average, and 4.8, 5.0 and 3.2
-times less than FSR1 at its faster precision. An edge pixel takes three bilinear samples and
-four texels, a flat one a sample and a texel. The law's low threshold sends most of a game picture to the edge path: 78
-to 97 % of the pixels, and 39 to 47 % of a text chart. Phones are to be measured again.
+**Cost** (GPU timestamps, from 720p and from 1080p to 1440p, a game picture and a text chart, 03/11/2026): 0.08 to 0.09 ms per
+frame on an RTX 5060 Ti and 1.3 to 2.0 ms on the Ryzen 9 9900X's integrated Radeon, in 16-bit, and 0.25 to 0.40 ms on a Radeon 780M. That is 3.6 to 3.8 times less than FSR1 at
+its faster precision on the RTX, and 3.2 to 4.7 times less on that integrated Radeon. An edge pixel takes seven bilinear reads, a flat
+one a single read; after a video encoder, about 70 % of a game's pixels and 45 % of a page's are on the edge path at the law's threshold. A reduction from ×0.75
+to ×0.5, through sRGB views, takes 0.023 to 0.063 ms on the RTX, 0.65 to 1.91 ms on the integrated Radeon and 0.21 to 0.44 ms on the Radeon 780M, which is 4.4 to 6.5,
+3.3 to 5.7 and 1.7 to 2.4 times less than FSR1. Phones are to be measured again.
 
 The design, the measurements against FSR1, SGSR1, NIS and the host's Lanczos, and every decision behind the defaults
 are in the lab journal, [`scripts/bench/scaler-lab/journal.md`](../scripts/bench/scaler-lab/journal.md), and the
@@ -55,24 +57,24 @@ FSR1, NIS and SGSR1 are the single-frame upscalers a game or a video player usua
 a port of each beside MWSR. They spend their work in different places:
 
 - **FSR1** (AMD FidelityFX Super Resolution 1) runs two passes. EASU rebuilds each pixel from 12 input texels with a
-  Lanczos-like kernel stretched along the local edge, then RCAS sharpens the whole picture. On the game picture at
-  ×1.33 it has the best VMAF NEG of the four. It costs 4.3 to 5.9 times what MWSR costs on the RTX 5060 Ti and the 9900X's iGPU, 2.7 to 3.5 times on the Radeon 780M, and its sharpening leaves
-  the local range on 14 % of the pixels: a light halo along strong edges.
+  Lanczos-like kernel stretched along the local edge, then RCAS sharpens the whole picture. It has the best FLIP of the four on
+  the game picture and the best LPIPS at ×1.33 there, and its sharpening leaves the local range on 14 % of that picture's pixels
+  at ×1.33: a light halo along strong edges.
 - **NIS** (NVIDIA Image Scaling) runs one pass over 6×6 texels: a filter bank chosen by the edge's direction, plus a
-  sharpening of the luma. It is the sharpest of the four, which gives it the best VMAF NEG on text and the worst on the
-  game picture, and it overshoots on 42 % of the game picture's pixels: the bright rims and the grain in the zooms.
+  sharpening of the luma. It is the sharpest of the four, which gives it the best VMAF NEG and PSNR on text at ×2 and the worst
+  scores on the game picture, and it overshoots on 42 % of that picture's pixels: the bright rims and the grain in the zooms.
 - **SGSR1** (Snapdragon Game Super Resolution 1) runs one pass of 12 texels read in four gathers, skips the flat
-  areas and finds edges on the green channel. On the game picture at ×2 it has the best VMAF NEG of the four, with a
-  lighter halo than FSR1 (6.6 %). In half precision, as Qualcomm writes it, it held the best time on the two integrated GPUs until
-  MWSR's speed work.
-- **MWSR** runs one pass and decides per 2×2 quad: a flat quad moves its sample towards the nearest texel, an edge gets
-  two more samples across it. It bounds every pixel by its four input texels, so nothing rings (under 0.01 % of the pixels).
-  It has the best LPIPS of the four on both pictures, at both scales. Its VMAF NEG stays below FSR1's on the game
-  picture, and below NIS's and SGSR1's on text. It is the fastest of the four on all three GPUs, the
-  only one that reduces and that reads the colour edges of a 4:4:4 stream, and with NIS the only one that runs on HDR without a tone map around it.
+  areas and finds edges on the green channel. It shares the best VMAF NEG on text at ×2 with NIS, and has the best MS-SSIM there.
+- **MWSR** runs one pass and decides per 2×2 quad: a flat quad keeps a single read, an edge gets a cubic and the detail
+  measured across it. It leaves a little overshoot on purpose, on 2 to 7 % of the pixels here, because a person's eye
+  preferred it, in a blind test against FSR1, to a harder bound. It has the best LPIPS on text at both scales and on the game
+  picture at ×2, and the best VMAF NEG on the game picture and on text at ×1.33. FSR1 keeps the better FLIP on the game picture,
+  and on games through a video encoder FSR1 leads most scores at ×1.5 and ×2. It is the fastest of the four on these GPUs, the
+  only one that reduces and that reads the colour edges of a 4:4:4 stream, and with NIS the only one that runs on HDR without a
+  tone map around it.
 
 **[Compare them on your own GPU](https://moonlightweb.top/mwsr/)**: the pictures below or your own, in SDR, HDR or
-4:4:4, each upscaler's output pixel for pixel, its LPIPS and VMAF NEG, and its GPU time on your device. The page runs these same
+4:4:4, each upscaler's output pixel for pixel, its scores, and its GPU time on your device. The page runs these same
 ports and uploads nothing.
 
 ![Four zooms of a 1080p frame upscaled to 1440p: the native frame, then MWSR, FSR1, NIS and SGSR1](docs/zoom.png)
@@ -90,29 +92,52 @@ lab's text chart.*
   <img alt="GPU time per frame, in the tables below" src="docs/speed-light.svg">
 </picture>
 
-**1080p → 1440p**. LPIPS (AlexNet, v0.1) says how far a picture looks from the native frame, and was made to judge
-upscalers and image restoration: lower is closer. VMAF NEG is Netflix's VMAF without the credit plain VMAF gives to
-added sharpening, and judges a video stream's pictures: higher is closer. Overshoot: the share of pixels that leave the
-range of their four input texels by more than 2/255, which measures halos and ringing. Times: the game picture, each at
-its faster precision, each GPU's in one page.
+LPIPS (AlexNet, v0.1) says how far a picture looks from the native frame, and was made to judge upscalers and image restoration:
+lower is closer. VMAF NEG is Netflix's VMAF without the credit plain VMAF gives to added sharpening, and judges a video stream's
+pictures: higher is closer. PSNR, SSIM and MS-SSIM measure the pixels' and the structure's distance: higher is closer. FLIP is
+NVIDIA's measure of what a viewer sees when flipping between two pictures: lower is closer. Overshoot: the share of pixels that
+leave the range of their four input texels by more than 2/255. Times: each at its faster precision, each GPU's in one page. In
+bold, the best of each score.
 
-| | LPIPS, game | LPIPS, text | VMAF NEG, game | VMAF NEG, text | Overshoot, game | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
-|---|---|---|---|---|---|---|---|---|
-| MWSR | 0.1239 | 0.0348 | 83.5 | 58.9 | 0 % | 0.063 ms | 1.29 ms | 0.370 ms |
-| FSR1 | 0.1401 | 0.0493 | 84.8 | 57.3 | 13.7 % | 0.322 ms | 6.31 ms (f16) | 0.982 ms (f16) |
-| NIS * | 0.1863 | 0.0414 | 70.5 | 62.2 | 42.6 % | 1.054 ms | 13.69 ms | 1.49 ms |
-| SGSR1 | 0.1838 | 0.0402 | 83.1 | 59.9 | 6.6 % | 0.123 ms | 2.97 ms (f16) | 0.439 ms (f16) |
-| Bilinear | 0.2665 | 0.0697 | 76.8 | 49.9 | 0 % | 0.042 ms | 0.453 ms | 0.322 ms |
+**1080p → 1440p (×1.33), game**
 
-**720p → 1440p**, the same columns:
+|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|---|---|---|---|---|---|---|---|---|---|---|
+| MWSR | 0.1624 | **85.9** | **28.54** | **0.8792** | **0.9880** | 0.0360 | 6.6 % | 0.085 ms | 2.01 ms (f16) | 0.401 ms (f16) |
+| FSR1 | **0.1401** | 84.8 | 28.38 | 0.8776 | 0.9878 | **0.0346** | 13.7 % | 0.326 ms | 6.34 ms (f16) | 0.980 ms (f16) |
+| NIS * | 0.1863 | 70.5 | 24.68 | 0.8162 | 0.9587 | 0.0997 | 42.6 % | 1.22 ms | 13.69 ms | 1.50 ms |
+| SGSR1 | 0.1838 | 83.1 | 27.77 | 0.8554 | 0.9833 | 0.0422 | 6.6 % | 0.146 ms | 2.97 ms (f16) | 0.438 ms (f16) |
+| Bilinear | 0.2665 | 76.8 | 27.45 | 0.8228 | 0.9794 | 0.0450 | 0 % | 0.034 ms | 0.453 ms | 0.332 ms |
 
-| | LPIPS, game | LPIPS, text | VMAF NEG, game | VMAF NEG, text | Overshoot, game | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
-|---|---|---|---|---|---|---|---|---|
-| MWSR | 0.3355 | 0.0879 | 69.9 | 25.1 | 0 % | 0.069 ms | 1.28 ms | 0.275 ms |
-| FSR1 | 0.3594 | 0.1032 | 70.7 | 24.6 | 2.9 % | 0.311 ms | 6.32 ms (f16) | 0.897 ms (f16) |
-| NIS * | 0.3714 | 0.0970 | 59.4 | 36.5 | 41.7 % | 0.842 ms | 13.02 ms | 1.39 ms |
-| SGSR1 | 0.3939 | 0.0984 | 71.1 | 36.5 | 6.3 % | 0.144 ms | 2.95 ms (f16) | 0.382 ms (f16) |
-| Bilinear | 0.4865 | 0.1658 | 58.4 | 15.1 | 0 % | 0.043 ms | 0.424 ms | 0.248 ms |
+**1080p → 1440p (×1.33), text**
+
+|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|---|---|---|---|---|---|---|---|---|---|---|
+| MWSR | **0.0385** | **66.4** | **22.59** | **0.9578** | **0.9915** | 0.0424 | 2.8 % | 0.081 ms | 1.34 ms (f16) | 0.280 ms |
+| FSR1 | 0.0493 | 57.3 | 21.45 | 0.9422 | 0.9874 | **0.0416** | 0.2 % | 0.307 ms (f16) | 6.27 ms (f16) | 0.852 ms (f16) |
+| NIS * | 0.0414 | 62.2 | 22.05 | 0.9488 | 0.9893 | 0.0556 | 4.4 % | 0.677 ms | 10.76 ms | 1.23 ms |
+| SGSR1 | 0.0402 | 59.9 | 21.64 | 0.9463 | 0.9891 | 0.0500 | 2.7 % | 0.087 ms | 1.65 ms (f16) | 0.300 ms (f16) |
+| Bilinear | 0.0697 | 49.9 | 20.52 | 0.9234 | 0.9845 | 0.0627 | 0 % | 0.047 ms | 0.396 ms | 0.261 ms |
+
+**720p → 1440p (×2), game**
+
+|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|---|---|---|---|---|---|---|---|---|---|---|
+| MWSR | **0.3532** | **71.5** | 24.57 | 0.6886 | 0.9617 | 0.0634 | 5.4 % | 0.080 ms | 2.00 ms (f16) | 0.321 ms |
+| FSR1 | 0.3594 | 70.7 | **24.77** | 0.6880 | **0.9633** | **0.0525** | 2.9 % | 0.287 ms | 6.32 ms (f16) | 0.899 ms (f16) |
+| NIS * | 0.3714 | 59.4 | 23.13 | **0.6893** | 0.9307 | 0.1162 | 41.7 % | 0.820 ms | 13.00 ms | 1.39 ms |
+| SGSR1 | 0.3939 | 71.1 | 24.52 | 0.6736 | 0.9559 | 0.0621 | 6.3 % | 0.140 ms | 2.95 ms (f16) | 0.382 ms (f16) |
+| Bilinear | 0.4865 | 58.4 | 24.31 | 0.6261 | 0.9435 | 0.0730 | 0 % | 0.031 ms | 0.420 ms | 0.248 ms |
+
+**720p → 1440p (×2), text**
+
+|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|---|---|---|---|---|---|---|---|---|---|---|
+| MWSR | **0.0927** | 29.9 | 18.16 | **0.8730** | 0.9716 | **0.0586** | 2.4 % | 0.078 ms | 1.36 ms (f16) | 0.248 ms |
+| FSR1 | 0.1032 | 24.6 | 17.57 | 0.8450 | 0.9663 | 0.0677 | 0.3 % | 0.296 ms (f16) | 6.27 ms (f16) | 0.860 ms (f16) |
+| NIS * | 0.0970 | **36.5** | **18.30** | 0.8675 | 0.9736 | 0.0769 | 7.1 % | 0.564 ms | 10.74 ms | 1.19 ms |
+| SGSR1 | 0.0984 | **36.5** | 18.13 | 0.8693 | **0.9753** | 0.0669 | 4.4 % | 0.084 ms | 1.67 ms (f16) | 0.275 ms (f16) |
+| Bilinear | 0.1658 | 15.1 | 16.99 | 0.8157 | 0.9523 | 0.0901 | 0 % | 0.042 ms | 0.389 ms | 0.240 ms |
 
 \* MoonlightWeb's per-fragment port of NIS. NVIDIA ships a compute shader with shared memory, which is faster: these
 times are those of the port, not of NIS.
@@ -130,9 +155,9 @@ What each one does:
 | | MWSR | FSR1 | NIS | SGSR1 |
 |---|---|---|---|---|
 | Upscale | any factor | 1× to 4× the area (2× per axis) | 1× to 2× per axis | yes, no stated limit |
-| Downscale | yes: an area filter in linear light, 1 to 16 samples | no | no: refused | no |
-| HDR | yes: unchanged on a float texture past 1.0 | through a reversible tone map around it (`FsrSrtm`) | yes: `NIS_HDR_MODE`, linear or PQ | no: its output is clamped to 0..1 |
-| 4:4:4 colour edges | yes, with `CHROMA444`: the vote and the weights per channel | no: edges from the luma | no: edges from the luma | no: edges from green |
+| Downscale | yes: an area filter in linear light, 1 to 16 samples, lightly sharpened from ×0.5 to 1:1 | no | no: refused | no |
+| HDR | yes: on a float texture past 1.0, without its margin | through a reversible tone map around it (`FsrSrtm`) | yes: `NIS_HDR_MODE`, linear or PQ | no: its output is clamped to 0..1 |
+| 4:4:4 colour edges | yes, with `CHROMA444`: the vote per channel | no: edges from the luma | no: edges from the luma | no: edges from green |
 | Input | an RGB texture: 8-bit, read through sRGB views or not, or 16-bit float | RGB in 0..1, perceptual | RGB, or NV12 (`NIS_NV12_SUPPORT`) | RGB in 0..1 |
 | Precision | 32-bit, or 16-bit | 32-bit, or packed 16-bit | 32-bit, or 16-bit | 16-bit (`half`) only |
 | Passes | 1 | 2 | 1 (compute) | 1 |
@@ -140,19 +165,19 @@ What each one does:
 
 </details>
 
-**How it was measured** (the times and the scores on 02/11/2026):
+**How it was measured** (the times on 03/11/2026, the scores that night):
 - **The pictures.** The native frame is a 4K screenshot of 0 A.D. reduced to 2560×1440, or the lab's text chart drawn
   at 2560×1440. The input is that frame reduced to 1920×1080 or 1280×720. Both reductions are Lanczos-3 in linear
   light. Each upscaler draws the input back at 2560×1440.
-- **The scores.** LPIPS and VMAF NEG (`vmaf_v0.6.1neg`, both pictures in 4:2:0 BT.709 limited range) against the
-  native frame, on these pictures as they are: reduced, never encoded. The law was tuned on pictures that also went
-  through a video encoder, where the order between the upscalers can differ.
+- **The scores.** LPIPS, VMAF NEG (`vmaf_v0.6.1neg`, both pictures in 4:2:0 BT.709 limited range), PSNR and SSIM on RGB,
+  MS-SSIM on luma and FLIP (LDR, 67 pixels per degree) against the native frame, on these pictures as they are: reduced, never
+  encoded. The law was tuned on pictures that also went through a video encoder, where the order between the upscalers can
+  differ.
 - **The times.** WebGPU in Chrome on Windows 11, with the input already in an
   8-bit RGBA texture (no video decoding in it). GPU timestamps wrap batches of draws, every upscaler's in one page and
-  interleaved, and the figure is the median per draw: on the RTX 5060 Ti, 6 rounds of 4 batches of 100 draws, twice; on the
-  9900X's iGPU, 3 rounds of 2 batches of 30; on the Radeon 780M, 3 rounds of 6 batches of 100, twice. The RTX 5060 Ti ran at P0 throughout. The Ryzen 9 9900X's integrated Radeon
-  (RDNA 2, 2 compute units) and the Radeon 780M (RDNA 3, 12 compute units) ran at their own clocks, which nothing
-  fixed, so read their figures as ratios.
+  interleaved, and the figure is the median per draw: on the RTX 5060 Ti, 3 rounds of 6 batches of 100 draws, twice; on the
+  9900X's iGPU, 3 rounds of 2 batches of 30; on the Radeon 780M, 3 rounds of 6 batches of 100. The RTX 5060 Ti ran at P0 while it drew. The Ryzen 9 9900X's integrated Radeon
+  (RDNA 2, 2 compute units) and the Radeon 780M (RDNA 3, 12 compute units) ran at their own clocks, which nothing fixed, so read their figures as ratios.
 - **The ports.** These are MoonlightWeb's ports, not the vendors' own builds:
   - FSR1: firdawolf's WGSL port of EASU and RCAS (RCAS at 0.75 stops, its noise term on), and the lab's port of
     AMD's 16-bit path (`FsrEasuH`, `FsrRcasH`).
@@ -160,11 +185,11 @@ What each one does:
   - SGSR1: a port of `sgsr1.h` (mode 1, edge threshold 6/255, edge sharpness 1.5), in 32-bit and in half precision.
   - MWSR: its defaults, in 32-bit and in 16-bit (`mwsr-up-f16.wgsl`).
 - **The precision.** Each upscaler is timed at its faster precision on each GPU. Each 16-bit text is held to its
-  32-bit one on that GPU: fewer than 0.05 % of the pixels differ by more than 4/255.
+  32-bit one on that GPU: MWSR's by 2/255 at most in the lab's check, the others' on fewer than 0.05 % of the pixels by more than 4/255.
 - **To run it again**: `scripts/bench/scaler-lab/cmp_lab.py` for the scores, and `scaler_lab.py`, its `cells=` cases,
   for the times (cells `mwsr`, `mwsr:half=1`, `fsr1`, `fsr1h`, `nis`, `sgsr-repo`, `sgsrh`, `tex-s1`).
   In a browser with WebGPU, on your own GPU: [moonlightweb.top/mwsr](https://moonlightweb.top/mwsr/), with the same
-  reduction, metrics and timing, and the client's shaders.
+  reduction and timing, and the client's shaders.
 
 FSR and FidelityFX are trademarks of Advanced Micro Devices, NVIDIA is a trademark of NVIDIA Corporation, and
 Snapdragon is a trademark of Qualcomm. MoonlightWeb made this comparison with its own ports, and none of these
@@ -193,12 +218,14 @@ The 0 A.D. picture is © Wildfire Games; the screenshot is by PantheraLeo1359531
 | `docs/` | The figures of [the comparison](#next-to-fsr1-nis-and-sgsr1): the zooms, then the two charts and the table, in light and dark (`scripts/bench/scaler-lab/mwsr_charts.py` writes the scores chart). |
 
 Every shader here is generated from the module MoonlightWeb runs, so what you take is what the product draws. The
-WGSL, GLSL and HLSL texts are twins, written from the same tables of constants. MoonlightWeb's lab holds the GLSL
-one to 2/255 of the WGSL one. The HLSL one, drawn on WARP, against the WGSL one on SwiftShader, on 16 cases (28/10/2026):
+WGSL, GLSL and HLSL texts are twins, written from the same tables of constants. GLSL ES has no coarse derivative, so its
+vote falls on other quads: MoonlightWeb's lab holds the GLSL upscale to the WGSL one's quality against the ground truth,
+and its reduction to 45 dB of the WGSL one (with the vote out of both, the two are identical on every case). The HLSL one,
+drawn on WARP, against the WGSL one on SwiftShader:
 - **Bilinear filtering alone:** the two rasterisers differ by 1/255 at most.
-- **Upscales:** a few quads near the vote's threshold go the other way, on 0.0001 to 0.02 % of the pixels; PSNR 66 to
-  73 dB.
-- **Reductions:** 1/255 at most.
+- **Upscales, 9 cases (03/11/2026):** a few quads near the vote's threshold go the other way, on 0.01 to 0.07 % of the
+  pixels past 1/255; PSNR 60 to 67 dB.
+- **Reductions, 9 pictures (03/11/2026):** the same, on 0.04 % of the pixels past 1/255 at most, 58/255 at most on text.
 
 The C++ header gives the JavaScript module's modes and floats bit for bit.
 
@@ -234,12 +261,13 @@ The C++ header gives the JavaScript module's modes and floats bit for bit.
   | 4, 5 | `inW`, `inH` |
   | 6, 7 | `kr / inW`, `kr / inH`, the across reads' distance: see [the law](#per-frame-values) |
   | 8 | `kc`, the cubic's sharpness: by the law |
-  | 9 | `ft`, the vote's threshold: by the law |
-  | 10 | `kg * strength`, the sharpness, `strength` going from 0 at 1:1 to 1 at ×1.07 |
-  | 11 | `kwc * strength`, the colour's sharpness |
+  | 9 | `ft`, the vote's threshold: by the law, `0.003` on a reduction |
+  | 10 | `kg * strength`, the sharpness, `strength` going from 0 at 1:1 to 1 at ×1.07; on a reduction, [its gain](#the-reductions-values) |
+  | 11 | `kwc * strength`, the colour's sharpness; on a reduction, its gain on a strong edge |
   | 12 to 19 | the gaze zone (centre, half-axes, ring, its `ft`, its `kg`, its weight `gaze`), read only with `GAZE 1` |
-  | 20 | `kl`, the bound's margin: by the law, `0` on an HDR feed |
-  | 21 to 23 | `1`, `0`, `0`, read by nothing |
+  | 20 | `kl`, the bound's margin: by the law, `0` on an HDR feed; on a reduction, its margin |
+  | 21 | on a reduction, its margin on a strong edge; otherwise `1`, read by nothing |
+  | 22, 23 | `0`, read by nothing |
 
 ### WebGPU (WGSL)
 
@@ -374,7 +402,7 @@ gaze, zone, hdr })` computes it all; a value you name replaces the law's.
 
 | Value | Default | What it does |
 |---|---|---|
-| `ft` | `0.005` | The vote's threshold, in luma per input texel. Lower sends more quads to the edge path; higher sends more to the single read (softer, cheaper). |
+| `ft` | `0.005`, `0.003` on a reduction | The vote's threshold, in luma per input texel. Lower sends more quads to the edge path; higher sends more to the single read (softer, cheaper). |
 | `kc` | the law below | The cubic's sharpness: `0.5` is Catmull-Rom's. |
 | `kg` | the law below | The sharpness: how much of the detail measured across the edge is added back. |
 | `kr` | the law below | The distance of the reads across the edge, in input texels. |
@@ -382,7 +410,7 @@ gaze, zone, hdr })` computes it all; a value you name replaces the law's.
 | `kl` | the law below | The bound's margin, as a share of the range of the middle read and the pair across the edge. |
 | `sfull` | `1.07` | The scale from which `kg` and `kwc` are whole. They fade in from 1:1. |
 | `gaze` | `0` | The gaze zone's weight, 0 to 1. Read only by a text built with `GAZE 1`, whose values no eye or score has judged yet on this kernel. |
-| `hdr` | `false` | The feed holds values past 1.0: `kl` 0 unless named. |
+| `hdr` | `false` | The feed holds values past 1.0: `kl` 0 unless named, and a reduction does not sharpen. |
 
 **The law** (`mwsrLaw(inW, inH, outW, outH)`). The values follow the scale, and only it:
 
@@ -402,10 +430,25 @@ kl = value(kl) * force
 | `kr` | 1.00715 | -1.02091 | 0.56996 |
 | `kl` | 0.33417 | -0.29620 | 0.08628 |
 
-A reduction does not read the law. It was fitted on searches at 13 scales from ×1.07 to ×4 on a 1440p surface, each value
+The law is for the upscale. It was fitted on searches at 13 scales from ×1.07 to ×4 on a 1440p surface, each value
 a regular path through the best settings found, then measured back through the shader on pictures the searches never saw.
 No term for the surface's size is in it, and no upscale to a 4K surface has been measured with this law: measured at
 ×2 before the force, that case was the law's weakest.
+
+<a id="the-reductions-values"></a>**The reduction's values** (`MWSR_DOWN_LAW`, `mwsrDownLaw(inW, inH, outW, outH)`), by the scale `s`. The gain and the
+margin slide from the first value to the second as the local range grows, a smoothstep from 0.2 to 0.5 of the luma's
+square root:
+
+| Scale | Gain | Margin |
+|---|---|---|
+| below ×0.5 | 0 | 0 |
+| ×0.5 | 0.25 to 0.05 | 0.1 to 0 |
+| ×2/3 to ×0.93 | 0.45 to 0.2 | 0.25 to 0.1 |
+| ×1 | 0 | 0.25 to 0.1 |
+
+Straight lines in `s` between those rows. ×0.5, ×2/3 and ×0.75 were chosen by eye on eleven pictures, seen one at a time
+and not blind, by one person, against a reference that favours filters close to Lanczos-3; the ratios between them were
+not seen. An `hdr` feed takes a gain of 0: the pixels stay those of the average.
 
 **Example**, 1920×1080 drawn at 2560×1440:
 `[0.000520833, 0.000925926, 1.33333, 1.33333, 1920, 1080, 0.000396161, 0.000704286, 0.652221, 0.005, 0.510377, 0.1, 0.5, 0.5, 0.2, 0.45, 0.75, 0.005, 0.765566, 0, 0.256099, 1, 0, 0]`. Floats 12 to 19 are read only with `GAZE 1`.
@@ -430,7 +473,7 @@ prefixed `MWSR_`.
 | A computer, a phone or a tablet | the defaults | They are MoonlightWeb's on all of them. |
 | A 4:4:4 stream (desktop work, text) | `CHROMA444 1` | Colour borders of one luma, such as red text on green, get sharpened too. |
 | A softer picture | `kg` lower, `ft` higher | Less sharpening, and fewer pixels on the edge path. |
-| An HDR float input | `hdr: true` | No margin on the upscale's bound. A reduction takes `LINEAR_LIGHT 3` if the input holds linear light. |
+| An HDR float input | `hdr: true` | No margin on the upscale's bound, no sharpening on a reduction. A reduction takes `LINEAR_LIGHT 3` if the input holds linear light. |
 
 ### Example settings
 

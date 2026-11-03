@@ -35,7 +35,7 @@
 <text x="160" y="146" font-size="13" fill="#f0efec" dominant-baseline="middle">✓</text>
 <text x="178" y="146" font-size="13" fill="#f0efec" dominant-baseline="middle">yes: an area filter in</text>
 <text x="178" y="163" font-size="13" fill="#f0efec" dominant-baseline="middle">linear light, 1 to 16</text>
-<text x="178" y="180" font-size="13" fill="#f0efec" dominant-baseline="middle">samples</text>
+<text x="178" y="180" font-size="13" fill="#f0efec" dominant-baseline="middle">samples, lightly sharpened</text>
 <rect x="351" y="129" width="198" height="69" fill="#45242a"/>
 <text x="360" y="146" font-size="13" fill="#f0efec" dominant-baseline="middle">✗</text>
 <text x="378" y="146" font-size="13" fill="#f0efec" dominant-baseline="middle">no</text>
@@ -49,8 +49,9 @@
 <text x="10" y="234" font-size="13" font-weight="600" fill="#f0efec" dominant-baseline="middle">HDR</text>
 <rect x="151" y="200" width="198" height="69" fill="#173a1f"/>
 <text x="160" y="217" font-size="13" fill="#f0efec" dominant-baseline="middle">✓</text>
-<text x="178" y="217" font-size="13" fill="#f0efec" dominant-baseline="middle">yes: unchanged on a</text>
-<text x="178" y="234" font-size="13" fill="#f0efec" dominant-baseline="middle">float texture past 1.0</text>
+<text x="178" y="217" font-size="13" fill="#f0efec" dominant-baseline="middle">yes: on a float texture</text>
+<text x="178" y="234" font-size="13" fill="#f0efec" dominant-baseline="middle">past 1.0, without its</text>
+<text x="178" y="251" font-size="13" fill="#f0efec" dominant-baseline="middle">margin</text>
 <rect x="351" y="200" width="198" height="69" fill="#4a3d1e"/>
 <text x="360" y="217" font-size="13" fill="#f0efec" dominant-baseline="middle">◐</text>
 <text x="378" y="217" font-size="13" fill="#f0efec" dominant-baseline="middle">through a reversible</text>
@@ -69,8 +70,7 @@
 <rect x="151" y="271" width="198" height="69" fill="#173a1f"/>
 <text x="160" y="288" font-size="13" fill="#f0efec" dominant-baseline="middle">✓</text>
 <text x="178" y="288" font-size="13" fill="#f0efec" dominant-baseline="middle">yes, with CHROMA444: the</text>
-<text x="178" y="305" font-size="13" fill="#f0efec" dominant-baseline="middle">vote and the weights per</text>
-<text x="178" y="322" font-size="13" fill="#f0efec" dominant-baseline="middle">channel</text>
+<text x="178" y="305" font-size="13" fill="#f0efec" dominant-baseline="middle">vote per channel</text>
 <rect x="351" y="271" width="198" height="69" fill="#45242a"/>
 <text x="360" y="288" font-size="13" fill="#f0efec" dominant-baseline="middle">✗</text>
 <text x="378" y="288" font-size="13" fill="#f0efec" dominant-baseline="middle">no: edges from the luma</text>
