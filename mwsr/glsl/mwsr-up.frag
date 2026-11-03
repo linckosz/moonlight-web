@@ -32,7 +32,7 @@ uniform vec4 uDimsAcross; // the input's size, the across taps' distance
 uniform vec4 uKernel; // kc, ft, kg, kwc
 uniform vec4 uZone; // the gaze zone's centre.xy and half-axes.xy (GAZE 1)
 uniform vec4 uZoneBonus; // its ring, its threshold and kg at the centre, its weight
-uniform vec4 uBound; // kl, then the block's pad
+uniform vec4 uBound; // kl, zref, then the block's pad
 in vec2 vUv;
 out vec4 oColor;
 

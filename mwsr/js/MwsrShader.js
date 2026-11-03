@@ -72,7 +72,13 @@
  *   LINEAR_LIGHT 1 decodes each sample by a square (2: exact sRGB, three times
  *   the cost on the AMD iGPU) and the 2×2 grid serves between ×0.5 and 1:1
  *   (J12).
- *   No vote, no sharpening: a reduction sharpens by itself.
+ *   From ×0.5 to 1:1 a light sharpening follows, which Bruno's eye took on 11
+ *   pictures of 11 (MWSR_DOWN_LAW): coarse derivatives of the read's luma vote,
+ *   a flat quad keeps the read; elsewhere a cross of 4 reads, one output pixel
+ *   away, gives the detail (the read against their mean) and the bound (their
+ *   range, widened by a margin), in linear light, the gain and the margin
+ *   falling on a strong edge by that range. Below ×0.5, and on an HDR feed
+ *   (the gain is 0: mwsrUniforms' `hdr`), no sharpening.
  *
  * HDR (plan §4.1): the renderer's `linear` feed is sRGB-encoded past 1.0
  * (1.0 = reference white); both modes are per channel, bounded by their own
@@ -203,6 +209,54 @@ export function mwsrLaw(inW, inH, outW, outH) {
         kwc: MWSR_LAW.kwc,
         kl: value(kl) * force,
     };
+}
+
+/**
+ * The reduction's sharpening (Bruno, 03/11/2026): the setting his eye took on
+ * 11 pictures of 11, at ×0.75, ×2/3 and ×0.5, over a sharper one, a stronger
+ * one and FSR1. A straight line in s joins ×0.5 to ×2/3, held above; the gain
+ * falls to none between `fade` and 1:1, which the renderer copies. His eye saw
+ * those three scales through the sRGB views, not the values in between.
+ *
+ *     t = smoothstep(range[0], range[1], the cross's range of square-root luma)
+ *     R = c + mix(gain, edgeGain, t) (c - the cross's mean)
+ *     R is held within the range of the read and the cross, widened by mix(margin, edgeMargin, t) of it
+ *
+ * Each pair: at ×0.5, then at ×2/3 and above.
+ */
+export const MWSR_DOWN_LAW = Object.freeze({
+    /** The scales of each pair; below the first, no sharpening. */
+    scale: Object.freeze([0.5, 2 / 3]),
+    gain: Object.freeze([0.25, 0.45]),
+    edgeGain: Object.freeze([0.05, 0.2]),
+    margin: Object.freeze([0.1, 0.25]),
+    edgeMargin: Object.freeze([0, 0.1]),
+    /** From this scale to 1:1, both gains fall to none. */
+    fade: 0.93,
+    /** The vote's threshold, in square-root luma per output pixel. */
+    ft: 0.003,
+    /** Where a local range of square-root luma is a strong edge: from none to whole. */
+    range: Object.freeze([0.2, 0.5]),
+});
+
+/**
+ * The reduction's values for an input of inW×inH drawn at outW×outH, under the
+ * names of the uniform block's places that hold them: ft, kg the gain, kwc the
+ * gain at a strong edge, kl the margin, zref the margin at a strong edge.
+ * @param {number} inW
+ * @param {number} inH
+ * @param {number} outW
+ * @param {number} outH
+ * @returns {{ft: number, kg: number, kwc: number, kl: number, zref: number}}
+ */
+export function mwsrDownLaw(inW, inH, outW, outH) {
+    const { scale, gain, edgeGain, margin, edgeMargin, fade, ft } = MWSR_DOWN_LAW;
+    const s = Math.min(outW / inW, outH / inH);
+    if (s < scale[0]) return { ft, kg: 0, kwc: 0, kl: 0, zref: 0 };
+    const t = Math.min((s - scale[0]) / (scale[1] - scale[0]), 1);
+    const at = ([a, b]) => a + (b - a) * t;
+    const f = Math.min(Math.max((1 - s) / (1 - fade), 0), 1);
+    return { ft, kg: at(gain) * f, kwc: at(edgeGain) * f, kl: at(margin), zref: at(edgeMargin) };
 }
 
 /**
@@ -348,11 +402,13 @@ function zoneRef(sx, sy) {
  * @param {{kc?: number, ft?: number, kg?: number, kr?: number, kwc?: number, kl?: number,
  *           sfull?: number, gaze?: number, zone?: Object, zones?: boolean,
  *           hdr?: boolean}} [u]
- *   a value not named comes from mwsrLaw at these sizes; `sfull`: over
+ *   a value not named comes from mwsrLaw at these sizes, from mwsrDownLaw for
+ *   a reduction, whose values take the same places; `sfull`: over
  *   MWSR_CONSTANTS.S_FULL; `gaze`: the gaze zone's weight, 0 (none, the default)
  *   to 1, read by a text built with GAZE 1 only; `zone`: its values over
  *   MWSR_ZONE's; `zones`: the frame is read with the host's zones; `hdr`: the
- *   feed holds values past 1.0, the bound takes no margin.
+ *   feed holds values past 1.0, the bound takes no margin and a reduction does
+ *   not sharpen.
  * @returns {Float32Array}
  */
 export function mwsrUniforms(inW, inH, outW, outH, u = {}) {
@@ -364,8 +420,11 @@ export function mwsrUniforms(inW, inH, outW, outH, u = {}) {
     const kr = u.kr ?? law.kr;
     // the sharpening's strength: none at 1:1 (the renderer copies the frame there), whole from S_FULL on
     const sfull = u.sfull ?? MWSR_CONSTANTS.S_FULL;
-    const strength = Math.min(Math.max((Math.min(outW / inW, outH / inH) - 1) / (sfull - 1), 0), 1);
-    const kg = (u.kg ?? law.kg) * strength;
+    const s = Math.min(outW / inW, outH / inH);
+    const strength = Math.min(Math.max((s - 1) / (sfull - 1), 0), 1);
+    // a reduction's own values, in the same places: its text reads them under these names
+    const down = s < 1 ? mwsrDownLaw(inW, inH, outW, outH) : null;
+    const kg = down ? (u.kg ?? (u.hdr ? 0 : down.kg)) : (u.kg ?? law.kg) * strength;
     return new Float32Array([
         1 / inW,
         1 / inH,
@@ -377,9 +436,9 @@ export function mwsrUniforms(inW, inH, outW, outH, u = {}) {
         kr / inH,
         u.kc ?? law.kc,
         // the edge's direction divides by the slope's length: a vote of 0 would let a slope of 0 through
-        Math.max(u.ft ?? law.ft, 1e-6),
+        Math.max(u.ft ?? (down ? down.ft : law.ft), 1e-6),
         kg,
-        (u.kwc ?? law.kwc) * strength,
+        down ? (u.kwc ?? (u.hdr ? 0 : down.kwc)) : (u.kwc ?? law.kwc) * strength,
         z.cx,
         z.cy,
         z.rx,
@@ -388,8 +447,8 @@ export function mwsrUniforms(inW, inH, outW, outH, u = {}) {
         Math.max(z.ft, 1e-6),
         kg * z.boost,
         gaze,
-        u.kl ?? (u.hdr ? 0 : law.kl),
-        u.zones ? zoneRef(outW / inW, outH / inH) : 1,
+        u.kl ?? (down ? down.kl : u.hdr ? 0 : law.kl),
+        u.zones ? zoneRef(outW / inW, outH / inH) : down ? down.zref : 1,
         0,
         0,
     ]);
@@ -605,6 +664,32 @@ function downOffsets(taps) {
     return grid;
 }
 
+// The reduction's sharpening, in the block's places (MWSR_DOWN_LAW): after the
+// read `c`, in linear light; the grids below ×0.5 (9 and 16 samples) have none.
+// The derivatives come before the branch, in uniform control flow, as WGSL
+// requires; the 4 more reads are made past the vote only.
+function downSharpenWgsl() {
+    const [r0, r1] = MWSR_DOWN_LAW.range.map((v) => wgslNumber('f32', v));
+    return `    let l = dot(sqrt(max(c, vec3f(0.0))), LUMA);
+    let g = vec2f(dpdxCoarse(l), dpdyCoarse(l));
+    if (u.kg == 0.0 || abs(g.x) + abs(g.y) < u.ft) {
+        return vec4f(enc(c), 1.0);
+    }
+    let px = u.texel / u.scale;
+    let a = dec(S(uv - vec2f(px.x, 0.0)));
+    let b = dec(S(uv + vec2f(px.x, 0.0)));
+    let d = dec(S(uv - vec2f(0.0, px.y)));
+    let e = dec(S(uv + vec2f(0.0, px.y)));
+    let mean = 0.25 * (a + b + d + e);
+    let mn = min(c, min(a, min(b, min(d, e))));
+    let mx = max(c, max(a, max(b, max(d, e))));
+    // kwc and zref: the gain and the margin at a strong edge
+    let t = smoothstep(${r0}, ${r1}, dot(sqrt(max(mx, vec3f(0.0))) - sqrt(max(mn, vec3f(0.0))), LUMA));
+    let R = c + mix(u.kg, u.kwc, t) * (c - mean);
+    let mg = (mx - mn) * mix(u.kl, u.zref, t);
+    return vec4f(enc(clamp(R, max(mn - mg, vec3f(0.0)), mx + mg)), 1.0);`;
+}
+
 // The `down` fragment stage: a k×k grid of bilinear samples over the pixel's
 // footprint, averaged (plan §4.3), unrolled here so that the text holds no loop.
 function downFs(taps) {
@@ -655,13 +740,19 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 ${
     taps === 1
         ? `    // One sample at the pixel's centre is the whole filter.
-    return vec4f(enc(dec(S(uv))), 1.0);`
+    let c = dec(S(uv));
+${downSharpenWgsl()}`
         : `    // The pixel's footprint in the input, 1 / scale texels per axis, spanned
     // by the grid (R_DOWN 1); ${k}×${k} samples at its ${k}×${k} centres.
     let span = u.texel / u.scale * R_DOWN;
     var acc = vec3f(0.0);
 ${lines.join('\n')}
-    return vec4f(enc(acc * ${wgslNumber('f32', 1 / taps)}), 1.0);`
+${
+    taps === 4
+        ? `    let c = acc * ${wgslNumber('f32', 1 / taps)};
+${downSharpenWgsl()}`
+        : `    return vec4f(enc(acc * ${wgslNumber('f32', 1 / taps)}), 1.0);`
+}`
 }
 }
 `;
@@ -682,7 +773,7 @@ ${lines.join('\n')}
  *   f16`: the device must have 'shader-f16'); the coordinates, the vote and the
  *   down mode stay in f32.
  *   `mode` 'down' is the reduction with `taps` samples (1, 4, 9 or 16; see
- *   mwsrRegime()). `map`, the up mode only: the second text, which reads the
+ *   mwsrRegime()), which sharpens with 1 or 4 (MWSR_DOWN_LAW). `map`, the up mode only: the second text, which reads the
  *   native host's zones from binding 3 (a texture_2d<f32>, see UP_FS_MAP);
  *   without it the text is the same as before the zones, to the byte.
  * @returns {string}
@@ -802,6 +893,30 @@ void main() {
 }
 `;
 
+// The reduction's sharpening in GLSL, the WGSL text's line for line: kg in
+// uKernel.z, its value at a strong edge in .w; the margin and its own in uBound.
+function downSharpenGlsl() {
+    const [r0, r1] = MWSR_DOWN_LAW.range.map((v) => wgslNumber('f32', v));
+    return `    float l = dot(sqrt(max(c, vec3(0.0))), LUMA);
+    vec2 g = vec2(dFdx(l), dFdy(l));
+    if (uKernel.z == 0.0 || abs(g.x) + abs(g.y) < uKernel.y) {
+        oColor = vec4(enc(c), 1.0);
+        return;
+    }
+    vec2 px = uTexelScale.xy / uTexelScale.zw;
+    vec3 a = dec(S(uv - vec2(px.x, 0.0)));
+    vec3 b = dec(S(uv + vec2(px.x, 0.0)));
+    vec3 d = dec(S(uv - vec2(0.0, px.y)));
+    vec3 e = dec(S(uv + vec2(0.0, px.y)));
+    vec3 mean = 0.25 * (a + b + d + e);
+    vec3 mn = min(c, min(a, min(b, min(d, e))));
+    vec3 mx = max(c, max(a, max(b, max(d, e))));
+    float t = smoothstep(${r0}, ${r1}, dot(sqrt(max(mx, vec3(0.0))) - sqrt(max(mn, vec3(0.0))), LUMA));
+    vec3 R = c + mix(uKernel.z, uKernel.w, t) * (c - mean);
+    vec3 mg = (mx - mn) * mix(uBound.x, uBound.y, t);
+    oColor = vec4(enc(clamp(R, max(mn - mg, vec3(0.0)), mx + mg)), 1.0);`;
+}
+
 // The `down` fragment stage in GLSL: the same grid, from the same offsets.
 function downGlsl(taps) {
     const lines = downOffsets(taps).map(
@@ -845,11 +960,17 @@ void main() {
     vec2 uv = vUv;
 ${
     taps === 1
-        ? `    oColor = vec4(enc(dec(S(uv))), 1.0);`
+        ? `    vec3 c = dec(S(uv));
+${downSharpenGlsl()}`
         : `    vec2 span = uTexelScale.xy / uTexelScale.zw * R_DOWN;
     vec3 acc = vec3(0.0);
 ${lines.join('\n')}
-    oColor = vec4(enc(acc * ${wgslNumber('f32', 1 / taps)}), 1.0);`
+${
+    taps === 4
+        ? `    vec3 c = acc * ${wgslNumber('f32', 1 / taps)};
+${downSharpenGlsl()}`
+        : `    oColor = vec4(enc(acc * ${wgslNumber('f32', 1 / taps)}), 1.0);`
+}`
 }
 }
 `;
@@ -877,7 +998,7 @@ uniform vec4 uDimsAcross; // the input's size, the across taps' distance
 uniform vec4 uKernel; // kc, ft, kg, kwc
 uniform vec4 uZone; // the gaze zone's centre.xy and half-axes.xy (GAZE 1)
 uniform vec4 uZoneBonus; // its ring, its threshold and kg at the centre, its weight
-uniform vec4 uBound; // kl, then the block's pad
+uniform vec4 uBound; // kl, zref, then the block's pad
 in vec2 vUv;
 out vec4 oColor;
 
@@ -1071,6 +1192,28 @@ float4 MwsrPS(VSOut i) : SV_Target {
 }
 `;
 
+// The reduction's sharpening in HLSL, the WGSL text's line for line.
+function downSharpenHlsl() {
+    const [r0, r1] = MWSR_DOWN_LAW.range.map((v) => wgslNumber('f32', v));
+    return `    float l = dot(sqrt(max(c, 0.0)), LUMA);
+    float2 g = float2(ddx_coarse(l), ddy_coarse(l));
+    if (kg == 0.0 || abs(g.x) + abs(g.y) < ft) {
+        return float4(enc(c), 1.0);
+    }
+    float2 px = texel / scale;
+    float3 a = dec(S(uv - float2(px.x, 0.0)));
+    float3 b = dec(S(uv + float2(px.x, 0.0)));
+    float3 d = dec(S(uv - float2(0.0, px.y)));
+    float3 e = dec(S(uv + float2(0.0, px.y)));
+    float3 mean = 0.25 * (a + b + d + e);
+    float3 mn = min(c, min(a, min(b, min(d, e))));
+    float3 mx = max(c, max(a, max(b, max(d, e))));
+    float t = smoothstep(${r0}, ${r1}, dot(sqrt(max(mx, 0.0)) - sqrt(max(mn, 0.0)), LUMA));
+    float3 R = c + lerp(kg, kwc, t) * (c - mean);
+    float3 mg = (mx - mn) * lerp(kl, zref, t);
+    return float4(enc(clamp(R, max(mn - mg, 0.0), mx + mg)), 1.0);`;
+}
+
 // The `down` pixel stage in HLSL: the same grid, from the same offsets, and
 // the WGSL text's light, LINEAR_LIGHT 3 included (an HDR feed in linear light).
 function downHlsl(taps) {
@@ -1116,11 +1259,17 @@ float4 MwsrPS(VSOut i) : SV_Target {
     float2 uv = i.uv;
 ${
     taps === 1
-        ? `    return float4(enc(dec(S(uv))), 1.0);`
+        ? `    float3 c = dec(S(uv));
+${downSharpenHlsl()}`
         : `    float2 span = texel / scale * R_DOWN;
     float3 acc = 0.0;
 ${lines.join('\n')}
-    return float4(enc(acc * ${wgslNumber('f32', 1 / taps)}), 1.0);`
+${
+    taps === 4
+        ? `    float3 c = acc * ${wgslNumber('f32', 1 / taps)};
+${downSharpenHlsl()}`
+        : `    return float4(enc(acc * ${wgslNumber('f32', 1 / taps)}), 1.0);`
+}`
 }
 }
 `;

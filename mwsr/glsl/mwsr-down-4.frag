@@ -32,7 +32,7 @@ uniform vec4 uDimsAcross; // the input's size, the across taps' distance
 uniform vec4 uKernel; // kc, ft, kg, kwc
 uniform vec4 uZone; // the gaze zone's centre.xy and half-axes.xy (GAZE 1)
 uniform vec4 uZoneBonus; // its ring, its threshold and kg at the centre, its weight
-uniform vec4 uBound; // kl, then the block's pad
+uniform vec4 uBound; // kl, zref, then the block's pad
 in vec2 vUv;
 out vec4 oColor;
 
@@ -88,5 +88,23 @@ void main() {
     acc += dec(S(uv + vec2(0.25, -0.25) * span));
     acc += dec(S(uv + vec2(-0.25, 0.25) * span));
     acc += dec(S(uv + vec2(0.25, 0.25) * span));
-    oColor = vec4(enc(acc * 0.25), 1.0);
+    vec3 c = acc * 0.25;
+    float l = dot(sqrt(max(c, vec3(0.0))), LUMA);
+    vec2 g = vec2(dFdx(l), dFdy(l));
+    if (uKernel.z == 0.0 || abs(g.x) + abs(g.y) < uKernel.y) {
+        oColor = vec4(enc(c), 1.0);
+        return;
+    }
+    vec2 px = uTexelScale.xy / uTexelScale.zw;
+    vec3 a = dec(S(uv - vec2(px.x, 0.0)));
+    vec3 b = dec(S(uv + vec2(px.x, 0.0)));
+    vec3 d = dec(S(uv - vec2(0.0, px.y)));
+    vec3 e = dec(S(uv + vec2(0.0, px.y)));
+    vec3 mean = 0.25 * (a + b + d + e);
+    vec3 mn = min(c, min(a, min(b, min(d, e))));
+    vec3 mx = max(c, max(a, max(b, max(d, e))));
+    float t = smoothstep(0.2, 0.5, dot(sqrt(max(mx, vec3(0.0))) - sqrt(max(mn, vec3(0.0))), LUMA));
+    vec3 R = c + mix(uKernel.z, uKernel.w, t) * (c - mean);
+    vec3 mg = (mx - mn) * mix(uBound.x, uBound.y, t);
+    oColor = vec4(enc(clamp(R, max(mn - mg, vec3(0.0)), mx + mg)), 1.0);
 }

@@ -3245,3 +3245,45 @@ la décision sur la f16.
 **Zones contre loi sur J final (60 cas par ratio).** À ×1,33 sur les jeux : LPIPS −3,3 %, NEG +0,31, PSNR +0,25 dB ; à ×2 : −7,7 %, +1,28, +0,58 dB. Sur les pages rien ne bouge (+0,03 % au plus). NEG et PSNR ne passent jamais sous la loi ; le pire LPIPS est +2,81 %. Après HEVC le gain moyen est plus faible (−1,6 % et −4,8 %). Tout vient du labo, images figées : l'arbre a été réglé sur le noyau d'avant, et le passage de sa baisse à J (`zf`, sur `kg` et `kwc`) est nouveau. Coût de la passe hôte sur la RTX : 45, 64 et 94 µs en rafale de 1080p à 4K ; 80, 215 et 1359 µs à 60 Hz sur un bureau calme. Les zones restent coupées, derrière leur clé de labo.
 
 **Reste.** La colonne de la Radeon 780M, le tableau du site et du README sur ce texte, l'essai en vrai stream, les téléphones.
+
+## 2026-11-03 — J58, la réduction devient nette : la Mixte, au choix de Bruno
+
+**La décision de Bruno.** Sous ×1, MWSR ne faisait qu'une moyenne en lumière linéaire. Trois tours de comparateur, sur pages privées hors dépôt, noms affichés, un seul observateur, écran M27Q. Premier tour, 18 images : l'actuelle n'est choisie sur aucune, une version nette sur 12, FSR1 sur 4, une stricte sur 2. Deuxième tour, 6 images : une version moyenne sur 5, la nette sur 1. Troisième tour, 11 images : la Mixte sur les 11 (58 vues relues sur le canevas, 0 pixel différent, 0 empreinte fausse), « J'ai refait le test, je préfère Mixte. »
+
+**Le texte.** Le vote des dérivées grossières de la luma, puis, où il voit du détail, une croix de 4 lectures à un pixel de sortie donne le détail et la borne. Le gain et la marge suivent l'étendue locale en racine carrée (`smoothstep(0.2, 0.5, ...)`) : plus doux sur un bord franc. `MWSR_DOWN_LAW` : à ×0,5, gain ,25 vers ,05, marge ,1 vers 0 ; de ×2/3 à ×0,93, gain ,45 vers ,2, marge ,25 vers ,1 ; une droite en ratio entre ×0,5 et ×2/3 ; le gain s'éteint de ×0,93 à 1:1 ; aucune netteté sous ×0,5 ; en HDR, gain 0 et les pixels d'avant. Soit 5 lectures à travers les vues sRGB, 8 avec la grille 2×2 de la lumière logicielle. Les grilles 3×3 et 4×4 ne changent pas. Les textes de l'agrandissement non plus : WGSL et HLSL au bit près, GLSL un commentaire.
+
+**Vérifié, en logiciel (cœurs 16-21, priorité basse) :**
+- le produit contre ce qu'il a vu : 0 pixel sur ses 11 images ; 0 d'écart de score à ×0,75, ×0,67, ×0,5, ×0,6, ×0,85 et ×0,9 ; à ×0,95, 0,01 au plus, l'arrondi du paramètre du labo ;
+- HLSL sur WARP contre WGSL sur SwiftShader, 9 images : 0,04 % de pixels au-delà de 1/255 au plus, 58/255 au plus sur du texte ; `mwsr.h` donne les flottants du module au bit près sur 13 tailles ;
+- WebGL2 : `--conformity` refusait la réduction (35/255 au plus, 0,6 % de `code`). Le vote retiré des deux textes, les deux images sont identiques au bit près sur les trois cas : l'écart est le seul vote, GLSL ES n'a pas de dérivée grossière. Le contrôle tient désormais ce couple par un plancher de 45 dB (51 dB au pire ce jour-là), et non plus par l'écart des bilinéaires ;
+- dorés réécrits puis relus : 12 différences avant réécriture, toutes des réductions de 2560×1440 à 1280×720 (`mwsr`, `mwsr:srgb=1`, `mwsr:ll=2`, `chain-mwsr`) ; `taps=9`, `tex-s1` et les agrandissements intacts.
+
+Sur carte, l'image relue contre SwiftShader, qui dessinait ce que Bruno a vu : RTX à travers les vues sRGB, 3 % de pixels au-delà de 1/255 et 0,19 % au-delà de 4/255 sur le texte à ×0,75 (17/255 au plus), 0,11 % et 48/255 au plus sur le jeu ; iGPU, 0,06 % au plus, 40/255 au plus. Personne ne l'a regardée à l'œil sur ces cartes.
+
+**Les scores, après HEVC, contre Lanczos-3 en lumière linéaire (LPIPS, VMAF NEG, dépassement en %) ; avant → Mixte (FSR1).**
+- ×0,75 jeux, 24 cas : ,0171 → ,0113 (,0234) ; 89,00 → 93,38 (91,19) ; 0 → 2,30 (4,84).
+- ×0,75 texte, 6 cas : ,0179 → ,0141 (,0290) ; 71,97 → 82,77 (72,96) ; 0 → 2,83 (2,12).
+- ×0,67 jeux, 11 cas : ,0077 → ,0104 (,0231) ; 92,73 → 94,48 (93,75) ; 0 → 1,56 (3,47).
+- ×0,67 texte, 3 cas : ,0108 → ,0093 (,0260) ; 69,71 → 87,97 (69,41) ; 0 → 2,00 (,15).
+- ×0,5 jeux, 11 cas : ,0075 → ,0058 (,0210) ; 92,32 → 94,49 (93,20) ; 0 → ,57 (3,58).
+- ×0,5 texte, 3 cas : ,0138 → ,0157 (,0266) ; 82,15 → 82,69 (71,06) ; 0 → ,11 (,10).
+
+La Mixte perd donc en LPIPS sur les jeux à ×0,67 (11 sur 11, +51,7 % au pire) et sur le texte à ×0,5 (3 sur 3, +15,9 % au pire) : c'est l'œil qui a tranché, et la référence favorise les filtres proches de Lanczos-3.
+
+Entre les ratios, valeurs jamais vues à l'œil, Bruno n'en demandant plus le contrôle : ×0,6 jeux ,0073 → ,0102, 92,29 → 93,88, texte ,0220 → ,0219, 70,72 → 74,67 ; ×0,85 jeux ,0203 → ,0098, 87,43 → 93,08, texte ,0186 → ,0137, 60,43 → 76,48 ; ×0,9 jeux ,0229 → ,0106, 87,16 → 93,15, texte ,0190 → ,0132, 59,54 → 77,53 ; ×0,95 jeux ,0255 → ,0137, 86,78 → 91,79, texte ,0204 → ,0153, 58,60 → 72,16 (FSR1 80,06 : il la dépasse là).
+
+**La lumière logicielle, jamais vue à l'œil.** C'est le chemin de WebGL2, donc d'Auto sur un ordinateur. Sa Mixte s'écarte de ce que Bruno a vu : jusqu'à 21 % de pixels au-delà de 1/255 et 18 % au-delà de 4/255 sur du texte à ×0,75, 89/255 au plus. En scores, après HEVC, avant → Mixte sur ce chemin : ×0,75 jeux ,0269 → ,0093, 87,60 → 92,91 ; texte ,0301 → ,0168, 78,59 → 82,32 ; ×0,67 jeux ,0128 → ,0046, 91,07 → 95,14 ; texte ,0220 → ,0119, 78,09 → 84,91 ; ×0,5 jeux ,0076 → ,0067, 92,35 → 93,06 ; texte ,0131 → ,0142, 85,46 → 82,24, moins bon. Le FLIP du texte y reste au-dessus du chemin sRGB : ,0519 contre ,0372 à ×0,75.
+
+**La vitesse (`time_final2.py`, créneau de 59, 03/11 23:42-23:48, bus 3 et iGPU ; 780M 23:50-23:53 ; ms par image, jeu/texte).**
+- RTX, vues sRGB : ×0,75 ,033/,023 ; ×0,67 ,063/,040 ; ×0,5 ,035/,024. Lumière logicielle : ,047/,036 ; ,086/,065 ; ,046/,033. FSR1 : ,149/,144 ; ,278/,264 ; ,152/,145.
+- iGPU, vues sRGB : 1,045/,648 ; 1,914/1,092 ; 1,073/,652. Lumière logicielle : 1,494/1,051 ; 2,683/1,809 ; 1,524/1,037. FSR1 en f16 : 3,561/3,525 ; 6,326/6,254 ; 3,572/3,546.
+- 780M, vues sRGB : ,255/,215 ; ,442/,371 ; ,347/,287. Lumière logicielle : ,260/,227 ; ,452/,386 ; ,355/,293. FSR1 en f16 : ,546/,518 ; ,919/,866 ; ,601/,537. Horloge non fixée : à lire en rapports.
+- WebGL2, GPU seul : RTX ,078/,068 ; ,185/,163 ; ,115/,103 (FSR1 ,162/,160 ; ,309/,300 ; ,199/,195). iGPU 1,675/1,232 ; 3,127/2,251 ; 2,177/1,636 (FSR1 4,870/4,788 ; 8,792/8,580 ; 5,394/5,194).
+
+La copie simple reste plus rapide (RTX ,016 à ,029, iGPU ,258 à ,523). Une forme moins chère de l'étendue (`sqrt(dot(mx, LUMA)) - sqrt(dot(mn, LUMA))`) gagne 2 à 3,5 % sur la RTX et 3,4 à 6 % sur l'iGPU, mais change des pixels (25/255 au plus, 0,02 % au-delà de 2/255) : refusée, Bruno a choisi les autres.
+
+**Zones contre loi sur J final, plage centrée (0,64 à 1,15 fois la loi), après HEVC.** Jeux à ×1,33 : LPIPS -1,46 %, pire +7,0 %, NEG -0,26, PSNR -0,20 dB, dépassement 2,47 → 3,08. Jeux à ×2 : -1,72 %, pire +5,5 %, NEG +0,07, PSNR +0,04. Pages : -2,92 % et -3,30 %, NEG +0,32 et +0,27. Une plage plus large (force de 0,87 à 1,55) va plus mal à ×1,33 : +3,01 %, pire +55,2 %, NEG -1,71. Bruno, à l'œil : à ×1,33 la loi sur 3 images, la plage large sur 3, la centrée sur aucune ; à ×2 la loi sur 6 images sur 6. Les seuils fixés d'avance ne sont pas tenus : pas de section au site, aucune activation, pas de code de plus. Le code actuel reste dans le produit, coupé. Le coût côté client, le pompage et le vrai stream n'ont pas été mesurés pour cette plage.
+
+**Limites.** Le choix de la Mixte est une préférence d'un observateur sur des images fixes, noms affichés. Les ratios intermédiaires, le HDR à gain nul et la lumière logicielle n'ont pas été vus à l'œil. Les téléphones ne sont pas mesurés.
+
+**Reste.** Les téléphones, le test mémoire de DualRTX, puis le redémarrage prévu.

@@ -116,5 +116,23 @@ fn enc(c : vec3f) -> vec3f {
 fn fs(in : VSOut) -> @location(0) vec4f {
     let uv = in.uv;
     // One sample at the pixel's centre is the whole filter.
-    return vec4f(enc(dec(S(uv))), 1.0);
+    let c = dec(S(uv));
+    let l = dot(sqrt(max(c, vec3f(0.0))), LUMA);
+    let g = vec2f(dpdxCoarse(l), dpdyCoarse(l));
+    if (u.kg == 0.0 || abs(g.x) + abs(g.y) < u.ft) {
+        return vec4f(enc(c), 1.0);
+    }
+    let px = u.texel / u.scale;
+    let a = dec(S(uv - vec2f(px.x, 0.0)));
+    let b = dec(S(uv + vec2f(px.x, 0.0)));
+    let d = dec(S(uv - vec2f(0.0, px.y)));
+    let e = dec(S(uv + vec2f(0.0, px.y)));
+    let mean = 0.25 * (a + b + d + e);
+    let mn = min(c, min(a, min(b, min(d, e))));
+    let mx = max(c, max(a, max(b, max(d, e))));
+    // kwc and zref: the gain and the margin at a strong edge
+    let t = smoothstep(0.2, 0.5, dot(sqrt(max(mx, vec3f(0.0))) - sqrt(max(mn, vec3f(0.0))), LUMA));
+    let R = c + mix(u.kg, u.kwc, t) * (c - mean);
+    let mg = (mx - mn) * mix(u.kl, u.zref, t);
+    return vec4f(enc(clamp(R, max(mn - mg, vec3f(0.0)), mx + mg)), 1.0);
 }

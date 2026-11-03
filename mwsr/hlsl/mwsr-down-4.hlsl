@@ -141,5 +141,22 @@ float4 MwsrPS(VSOut i) : SV_Target {
     acc += dec(S(uv + float2(0.25, -0.25) * span));
     acc += dec(S(uv + float2(-0.25, 0.25) * span));
     acc += dec(S(uv + float2(0.25, 0.25) * span));
-    return float4(enc(acc * 0.25), 1.0);
+    float3 c = acc * 0.25;
+    float l = dot(sqrt(max(c, 0.0)), LUMA);
+    float2 g = float2(ddx_coarse(l), ddy_coarse(l));
+    if (kg == 0.0 || abs(g.x) + abs(g.y) < ft) {
+        return float4(enc(c), 1.0);
+    }
+    float2 px = texel / scale;
+    float3 a = dec(S(uv - float2(px.x, 0.0)));
+    float3 b = dec(S(uv + float2(px.x, 0.0)));
+    float3 d = dec(S(uv - float2(0.0, px.y)));
+    float3 e = dec(S(uv + float2(0.0, px.y)));
+    float3 mean = 0.25 * (a + b + d + e);
+    float3 mn = min(c, min(a, min(b, min(d, e))));
+    float3 mx = max(c, max(a, max(b, max(d, e))));
+    float t = smoothstep(0.2, 0.5, dot(sqrt(max(mx, 0.0)) - sqrt(max(mn, 0.0)), LUMA));
+    float3 R = c + lerp(kg, kwc, t) * (c - mean);
+    float3 mg = (mx - mn) * lerp(kl, zref, t);
+    return float4(enc(clamp(R, max(mn - mg, 0.0), mx + mg)), 1.0);
 }

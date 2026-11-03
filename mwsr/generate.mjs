@@ -21,6 +21,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
     MWSR_CONSTANTS,
+    MWSR_DOWN_LAW,
     MWSR_DOWN_TAPS,
     MWSR_DOWN_TAPS_SRGB,
     MWSR_LAW,
@@ -88,7 +89,7 @@ const cppNumber = (v) => (Number.isInteger(v) ? String(v) + '.0' : String(v));
 
 /**
  * cpp/mwsr.h: the CPU side of a native renderer, the twin of the module's
- * mwsrRegime(), mwsrLaw() and mwsrUniforms(), its tables written from
+ * mwsrRegime(), mwsrLaw(), mwsrDownLaw() and mwsrUniforms(), its tables written from
  * the module's own so that the defaults cannot drift apart.
  * @returns {string}
  */
@@ -104,6 +105,8 @@ function cppHeader() {
             .map(([k, c]) => `    {${c.map(cppNumber).join(', ')}},  // ${k}`)
             .join('\n');
     const { force } = MWSR_LAW;
+    const dl = MWSR_DOWN_LAW;
+    const pair = ([a, b]) => `{${cppNumber(a)}, ${cppNumber(b)}}`;
     return `${header('the CPU side for a native renderer (C++17, header only)', 'generate.mjs or the tables of that module')}
 //
 // What it gives a Direct3D 11 or 12 renderer (or any other), with no
@@ -250,12 +253,40 @@ inline Law law(int inW, int inH, int outW, int outH)
     return {value(0), kLawFt, value(1) * force, value(2), kLawKwc, value(3) * force};
 }
 
+// A reduction's sharpening (mwsrDownLaw()): each pair at x0.5, then at x2/3 and
+// above, a straight line in the scale between them; below x0.5 none, and both
+// gains fall to none between kDownFade and 1:1.
+constexpr double kDownScale[2] = ${pair(dl.scale)};
+constexpr double kDownGain[2] = ${pair(dl.gain)};
+constexpr double kDownEdgeGain[2] = ${pair(dl.edgeGain)};
+constexpr double kDownMargin[2] = ${pair(dl.margin)};
+constexpr double kDownEdgeMargin[2] = ${pair(dl.edgeMargin)};
+constexpr double kDownFade = ${cppNumber(dl.fade)}, kDownFt = ${cppNumber(dl.ft)};
+
+// Its values, under the names of the constant buffer's places that hold them:
+// kg the gain, kwc the gain at a strong edge, kl the margin, zref the margin
+// at a strong edge.
+struct DownLaw {
+    double ft, kg, kwc, kl, zref;
+};
+
+inline DownLaw downLaw(int inW, int inH, int outW, int outH)
+{
+    const double s = std::min(double(outW) / inW, double(outH) / inH);
+    if (s < kDownScale[0])
+        return {kDownFt, 0.0, 0.0, 0.0, 0.0};
+    const double t = std::min((s - kDownScale[0]) / (kDownScale[1] - kDownScale[0]), 1.0);
+    auto at = [&](const double (&p)[2]) { return p[0] + (p[1] - p[0]) * t; };
+    const double f = std::min(std::max((1.0 - s) / (1.0 - kDownFade), 0.0), 1.0);
+    return {kDownFt, at(kDownGain) * f, at(kDownEdgeGain) * f, at(kDownMargin), at(kDownEdgeMargin)};
+}
+
 struct Options {
     // a value named here replaces the law's
     std::optional<double> kc, ft, kg, kr, kwc, kl, sfull;
     double gaze = 0.0;  // 0 to 1, read only with MWSR_GAZE 1
     Zone zone;
-    bool hdr = false;  // the feed holds values past 1.0: the bound takes no margin
+    bool hdr = false;  // the feed holds values past 1.0: the bound takes no margin, a reduction does not sharpen
 };
 
 // The constant buffer for an input of inW x inH drawn at outW x outH (mwsrUniforms()).
@@ -277,12 +308,15 @@ inline Constants constants(int inW, int inH, int outW, int outH, const Options& 
     // the sharpening's strength: none at 1:1 (the renderer copies the frame there), whole from kFullScale on
     const double smin = std::min(double(outW) / inW, double(outH) / inH);
     const double strength = std::min(std::max((smin - 1.0) / (o.sfull.value_or(kFullScale) - 1.0), 0.0), 1.0);
-    const double kg = o.kg.value_or(l.kg) * strength;
+    // a reduction's own values, in the same places: its text reads them under these names
+    const bool down = smin < 1.0;
+    const DownLaw d = down ? downLaw(inW, inH, outW, outH) : DownLaw{};
+    const double kg = down ? o.kg.value_or(o.hdr ? 0.0 : d.kg) : o.kg.value_or(l.kg) * strength;
     c.kc = float(o.kc.value_or(l.kc));
     // the edge's direction divides by the slope's length: a vote of 0 would let a slope of 0 through
-    c.ft = float(std::max(o.ft.value_or(l.ft), 1e-6));
+    c.ft = float(std::max(o.ft.value_or(down ? d.ft : l.ft), 1e-6));
     c.kg = float(kg);
-    c.kwc = float(o.kwc.value_or(l.kwc) * strength);
+    c.kwc = float(down ? o.kwc.value_or(o.hdr ? 0.0 : d.kwc) : o.kwc.value_or(l.kwc) * strength);
     c.zoneCentre[0] = float(o.zone.cx);
     c.zoneCentre[1] = float(o.zone.cy);
     c.zoneHalfAxes[0] = float(o.zone.rx);
@@ -291,8 +325,8 @@ inline Constants constants(int inW, int inH, int outW, int outH, const Options& 
     c.zoneFt = float(std::max(o.zone.ft, 1e-6));
     c.zoneKg = float(kg * o.zone.boost);
     c.gaze = float(std::min(std::max(o.gaze, 0.0), 1.0));
-    c.kl = float(o.kl.value_or(o.hdr ? 0.0 : l.kl));
-    c.zoneRef = 1.0f;
+    c.kl = float(o.kl.value_or(down ? d.kl : o.hdr ? 0.0 : l.kl));
+    c.zoneRef = down ? float(d.zref) : 1.0f;
     return c;
 }
 

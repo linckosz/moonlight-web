@@ -7,15 +7,15 @@ as the kernel cells, are held to the kernel in two ways:
 - **pixels** — on the golden cases: the WebGPU chain must give the kernel
   cell's picture exactly (the same text, the same views); the WebGL2 chain
   the same picture to 2/255 per channel wherever no screen derivative is
-  involved (the reduction), and on the kernel the pixel statistics are
+  involved, and on the kernel the pixel statistics are
   reported: the vote and the edge frame come from the GPU's screen
   derivatives, whose quad (coarse) reference row is the implementation's
   choice and differs between the two APIs' window spaces (the first
   conformity run, 21/10/2026), so the twins cannot be identical on an edge;
-  on a reduction the 2/255 is widened to what the two APIs' bare bilinears
-  (`tex-s1`, `chain-gl-off`) differ by on the same pixels, when they differ
-  by more: the samplers' own subtexel precision, which Linux's SwiftShader
-  turns into 36/255 on 1.4 % of the zone plate (Bruno, 23/10/2026);
+  a reduction votes too since it sharpens (J58): held by a floor of PSNR, with
+  the two APIs' bare bilinears (`tex-s1`, `chain-gl-off`) beside it, the
+  samplers' own subtexel precision, which Linux's SwiftShader turns into
+  36/255 on 1.4 % of the zone plate;
 - **quality** — on the ground-truth pictures of the quality flow at ×2 (text,
   game, code): PSNR, SSIM, overshoot and FLIP of each twin against the ground
   truth must be the same to the noise (FLIP 0.002, PSNR 0.1 dB, overshoot
@@ -70,14 +70,15 @@ GL_CELLS = ["chain-gl-mwsr"]
 # (the lab's `tex-s1` on WebGPU, the product's plain copy `chain-gl-off` on
 # WebGL2) differ by the samplers' own subtexel precision — 1 to 3/255 on a
 # few pixels with Windows' SwiftShader, 36/255 on 1.4 % of the zone plate
-# with Linux's (J29). The GL twin's reduction is a 2×2 grid of such samples
-# averaged in gamma-2 light, so it is judged against that pair (Bruno,
-# 23/10/2026, option 2 of C11): a grid pixel can differ where any of its four
-# samples does, and the square root widens a sample's difference near black;
-# never below the fixed tolerance above.
+# with Linux's (J29).
 BASE_PAIR = ("chain-gl-off", "tex-s1")
-BASE_SHARE_X = 4
-BASE_WORST_X = 2
+# Since the reduction sharpens (J58) it votes on its derivatives, and GLSL ES
+# has no coarse one: the twin's vote falls on other quads. With the vote out of
+# both texts the two pictures are the same to the bit on every case here
+# (03/11/2026), so what this pair shows is that vote, up to 35/255 on 0.6 % of
+# `code`: held by a floor of PSNR (51 dB at worst that day), lowered with the
+# samplers' own difference on Linux's SwiftShader.
+DOWN_GL_PSNR = 45
 # The quality leg: the ground truth at this size, reduced to the input (×2).
 QUALITY_IN, QUALITY_OUT = "1280x720", "2560x1440"
 QUALITY_CONTENT = ["text", "game", "code"]
@@ -268,14 +269,14 @@ def conformity(a, run_page):
             worst, differ, over, psnr = r
             # the WebGL2 kernel is held by its quality (below), not by its pixels
             held = not (what == "chain-gl-mwsr" and not down)
-            share_lim, worst_lim = CONFORMITY_SHARE, CONFORMITY_MAX
             yard = ""
-            if held and what == "chain-gl-mwsr" and bil is not None:
-                # the GL twin's reduction against the bilinears' own difference
-                share_lim = max(share_lim, BASE_SHARE_X * bil[2])
-                worst_lim = max(worst_lim, BASE_WORST_X * bil[0])
-                yard = " (the bilinears differ by %d/255 on %.3f %%)" % (bil[0], 100 * bil[2])
-            ok = (over <= share_lim and worst <= worst_lim) if held else True
+            if held and what == "chain-gl-mwsr":
+                # its reduction by how far the vote takes it
+                floor = DOWN_GL_PSNR if bil is None else min(DOWN_GL_PSNR, bil[3] - 3)
+                ok = worst == 0 or psnr >= floor
+                yard = " (the vote's derivatives, floor %.1f dB)" % floor
+            else:
+                ok = (over <= CONFORMITY_SHARE and worst <= CONFORMITY_MAX) if held else True
             if not ok:
                 bad += 1
             rows.append((key, what, ref, worst, differ, over, psnr, ok, held))

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     MWSR_CONSTANTS,
+    MWSR_DOWN_LAW,
     MWSR_DOWN_TAPS,
     MWSR_DOWN_TAPS_SRGB,
     MWSR_LAW,
@@ -9,6 +10,7 @@ import {
     MWSR_UNIFORM_FLOATS,
     MWSR_ZONE,
     mwsrClassOverrides,
+    mwsrDownLaw,
     mwsrGlsl,
     mwsrHlsl,
     mwsrLaw,
@@ -124,11 +126,38 @@ describe('the mwsr shader text', () => {
         for (const taps of [4, 9, 16]) {
             const text = mwsrWgsl({ mode: 'down', taps });
             expect(text.match(/acc \+= dec\(S\(uv \+ vec2f\(/g)).toHaveLength(taps);
-            expect(text).toContain(`enc(acc * ${1 / taps})`);
+            expect(text).toContain(`acc * ${1 / taps}`);
             expect(text).toContain('let span = u.texel / u.scale * R_DOWN;');
             expect(text).toContain('if (LINEAR_LIGHT == 2u) {');
             expect(text).toContain('fn srgbToLin(');
-            expect(text).not.toMatch(/dpd[xy]|fwidth|blend\(/);
+        }
+        // below ×0.5 nothing sharpens; from ×0.5 the vote and a cross of 4 reads
+        for (const taps of [9, 16]) {
+            const text = mwsrWgsl({ mode: 'down', taps });
+            expect(text).toContain(`return vec4f(enc(acc * ${1 / taps}), 1.0);`);
+            expect(text).not.toMatch(/dpd[xy]|fwidth|blend\(|smoothstep/);
+            expect(mwsrGlsl({ mode: 'down', taps })).not.toMatch(/dFd[xy]|smoothstep/);
+            expect(mwsrHlsl({ mode: 'down', taps })).not.toMatch(/dd[xy]_coarse|smoothstep/);
+        }
+        for (const taps of [1, 4]) {
+            const wgsl = mwsrWgsl({ mode: 'down', taps });
+            expect(wgsl).toContain('let g = vec2f(dpdxCoarse(l), dpdyCoarse(l));');
+            expect(wgsl).toContain('if (u.kg == 0.0 || abs(g.x) + abs(g.y) < u.ft) {');
+            expect(wgsl).toContain('return vec4f(enc(c), 1.0);');
+            expect(wgsl.indexOf('dpdxCoarse')).toBeLessThan(wgsl.indexOf('if (u.kg == 0.0'));
+            expect(wgsl.indexOf('if (u.kg == 0.0')).toBeLessThan(wgsl.indexOf('let a = dec(S('));
+            expect(wgsl).toContain('let R = c + mix(u.kg, u.kwc, t) * (c - mean);');
+            expect(wgsl).toContain('let mg = (mx - mn) * mix(u.kl, u.zref, t);');
+            const [r0, r1] = MWSR_DOWN_LAW.range;
+            expect(wgsl).toContain(`smoothstep(${r0}, ${r1}, dot(sqrt(max(mx,`);
+            const glsl = mwsrGlsl({ mode: 'down', taps });
+            expect(glsl).toContain('vec2 g = vec2(dFdx(l), dFdy(l));');
+            expect(glsl).toContain('vec3 R = c + mix(uKernel.z, uKernel.w, t) * (c - mean);');
+            expect(glsl).toContain('vec3 mg = (mx - mn) * mix(uBound.x, uBound.y, t);');
+            const hlsl = mwsrHlsl({ mode: 'down', taps });
+            expect(hlsl).toContain('float2 g = float2(ddx_coarse(l), ddy_coarse(l));');
+            expect(hlsl).toContain('float3 R = c + lerp(kg, kwc, t) * (c - mean);');
+            expect(hlsl).toContain('float3 mg = (mx - mn) * lerp(kl, zref, t);');
         }
         expect(down).toBe(mwsrWgsl({ mode: 'down', taps: 4 }));
         expect(down).toContain('acc += dec(S(uv + vec2f(-0.25, -0.25) * span));');
@@ -137,8 +166,41 @@ describe('the mwsr shader text', () => {
             expect(() => mwsrWgsl({ mode: 'down', taps })).toThrow(/taps/);
         // one sample through sRGB views: the hardware's bilinear in linear light
         const one = mwsrWgsl({ mode: 'down', taps: 1 });
-        expect(one).toContain('return vec4f(enc(dec(S(uv))), 1.0);');
+        expect(one).toContain('let c = dec(S(uv));');
         expect(one).not.toContain('span');
+    });
+
+    it('joins the settings of the reduction by a line in the scale', () => {
+        const at = (s) => mwsrDownLaw(1000, 1000, 1000 * s, 1000 * s);
+        const { gain, edgeGain, margin, edgeMargin, ft } = MWSR_DOWN_LAW;
+        expect(at(0.5)).toEqual({
+            ft,
+            kg: gain[0],
+            kwc: edgeGain[0],
+            kl: margin[0],
+            zref: edgeMargin[0],
+        });
+        for (const s of [2 / 3, 0.75, 0.9]) {
+            const v = at(s);
+            expect(v.kg).toBeCloseTo(gain[1], 12);
+            expect(v.kwc).toBeCloseTo(edgeGain[1], 12);
+            expect(v.kl).toBeCloseTo(margin[1], 12);
+            expect(v.zref).toBeCloseTo(edgeMargin[1], 12);
+        }
+        const mid = at(0.6);
+        expect(mid.kg).toBeCloseTo(0.37, 12);
+        expect(mid.kwc).toBeCloseTo(0.14, 12);
+        expect(mid.kl).toBeCloseTo(0.19, 12);
+        expect(mid.zref).toBeCloseTo(0.06, 12);
+        // the gains fall to none on the way to 1:1, the margins stay
+        const near = at(0.965);
+        expect(near.kg).toBeCloseTo(gain[1] / 2, 9);
+        expect(near.kwc).toBeCloseTo(edgeGain[1] / 2, 9);
+        expect(near.kl).toBeCloseTo(margin[1], 12);
+        // below ×0.5, none
+        expect(at(0.4)).toEqual({ ft, kg: 0, kwc: 0, kl: 0, zref: 0 });
+        // the smaller axis, as the regime
+        expect(mwsrDownLaw(1000, 1000, 500, 900).kg).toBe(gain[0]);
     });
 
     it('picks the mode, the grid, its span and its light by the scale and the views', () => {
@@ -363,9 +425,7 @@ describe('the mwsr shader text', () => {
             expect(w.length).toBe(taps);
             expect(offs(mwsrGlsl({ mode: 'down', taps }))).toEqual(w);
         }
-        expect(mwsrGlsl({ mode: 'down', taps: 1 })).toContain(
-            'oColor = vec4(enc(dec(S(uv))), 1.0);',
-        );
+        expect(mwsrGlsl({ mode: 'down', taps: 1 })).toContain('vec3 c = dec(S(uv));');
         expect(mwsrGlsl({ mode: 'down', overrides: { LINEAR_LIGHT: 0, R_DOWN: 1.25 } })).toContain(
             'const float R_DOWN = 1.25;',
         );
@@ -458,9 +518,7 @@ describe('the mwsr shader text', () => {
             const w = offs(mwsrWgsl({ mode: 'down', taps }));
             expect(offs(mwsrHlsl({ mode: 'down', taps }))).toEqual(w);
         }
-        expect(mwsrHlsl({ mode: 'down', taps: 1 })).toContain(
-            'return float4(enc(dec(S(uv))), 1.0);',
-        );
+        expect(mwsrHlsl({ mode: 'down', taps: 1 })).toContain('float3 c = dec(S(uv));');
         expect(hlslDown).toContain('if (LINEAR_LIGHT >= 2u) {\n        return linToSrgb(c);');
         expect(() => mwsrHlsl({ mode: 'side' })).toThrow(/mode/);
     });
@@ -490,11 +548,24 @@ describe('the mwsr shader text', () => {
         expect(v[9]).toBeCloseTo(0.03, 6);
         expect(v[10]).toBe(0.5);
         expect(v[20]).toBeCloseTo(0.2, 6);
+        // a reduction's own values, in the same places
         const d = mwsrUniforms(2560, 1440, 1280, 720);
         expect(d[2]).toBe(0.5);
         expect(d[3]).toBe(0.5);
-        expect(d[10]).toBe(0); // a reduction does not read the sharpness
-        expect(d[11]).toBe(0);
+        expect(d[9]).toBeCloseTo(0.003, 6);
+        expect(d[10]).toBeCloseTo(0.25, 6);
+        expect(d[11]).toBeCloseTo(0.05, 6);
+        expect(d[20]).toBeCloseTo(0.1, 6);
+        expect(d[21]).toBe(0);
+        const third = mwsrUniforms(3840, 2160, 2560, 1440);
+        expect(third[10]).toBeCloseTo(0.45, 6);
+        expect(third[11]).toBeCloseTo(0.2, 6);
+        expect(third[20]).toBeCloseTo(0.25, 6);
+        expect(third[21]).toBeCloseTo(0.1, 6);
+        // an HDR feed does not sharpen on the way down
+        const hdrDown = mwsrUniforms(3840, 2160, 2560, 1440, { hdr: true });
+        expect(hdrDown[10]).toBe(0);
+        expect(hdrDown[11]).toBe(0);
         // the edge's direction divides by the slope: a vote of 0 stays above 0
         expect(mwsrUniforms(1920, 1080, 2560, 1440, { ft: 0 })[9]).toBeGreaterThan(0);
         // the gaze zone (J34): no weight and the defaults unless asked
