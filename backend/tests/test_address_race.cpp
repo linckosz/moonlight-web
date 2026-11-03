@@ -43,6 +43,12 @@ const QHostAddress k6b(QStringLiteral("2001:db8::2"));
 const QHostAddress k4a(QStringLiteral("192.0.2.1"));
 const QHostAddress k4b(QStringLiteral("192.0.2.2"));
 
+// The stagger of the tests that time it, and the least gap they accept. A coarse QTimer
+// may fire 5 % early and Windows rounds to its 15.6 ms tick: 47 ms was seen for 60. The
+// gap only has to show that the next leg waited, and half a stagger still shows it.
+constexpr int kStaggerMs = 60;
+constexpr int kLeastGapMs = kStaggerMs / 2;
+
 /// What the race did to one leg, kept outside the leg: the race deletes its
 /// legs once it is over, and the test reads this afterwards.
 struct LegRecord
@@ -133,7 +139,7 @@ void run_address_race_tests()
 
     SECTION("AddressRace — one leg at a time, a stagger apart; cancel aborts them all");
     {
-        Bench b(60);
+        Bench b(kStaggerMs);
         b.race.start({k6a, k4a, k6b}, 443);
         CHECK(b.race.isRunning());
         CHECK_EQ(b.started(), 1);
@@ -142,10 +148,10 @@ void run_address_race_tests()
 
         CHECK(waitFor([&]() { return b.started() == 2; }, 1000));
         CHECK(b.records[1].address == k4a);
-        CHECK(b.records[1].startedAt - b.records[0].startedAt >= 50);
+        CHECK(b.records[1].startedAt - b.records[0].startedAt >= kLeastGapMs);
         CHECK(waitFor([&]() { return b.started() == 3; }, 1000));
         CHECK(b.records[2].address == k6b);
-        CHECK(b.records[2].startedAt - b.records[1].startedAt >= 50);
+        CHECK(b.records[2].startedAt - b.records[1].startedAt >= kLeastGapMs);
         CHECK(b.wins.isEmpty());
         CHECK_EQ(b.losses, 0);
 
@@ -160,7 +166,7 @@ void run_address_race_tests()
 
     SECTION("AddressRace — the first to connect wins, the rest are aborted or never tried");
     {
-        Bench b(60);
+        Bench b(kStaggerMs);
         b.race.start({k6a, k4a, k6b}, 443);
         CHECK(waitFor([&]() { return b.started() == 2; }, 1000));
 
@@ -168,7 +174,7 @@ void run_address_race_tests()
         b.legs[1]->answerConnected();
         CHECK_EQ(b.wins.size(), 1);
         CHECK(b.wins.value(0) == k4a);
-        CHECK(b.wonAt >= 50);
+        CHECK(b.wonAt >= kLeastGapMs);
         CHECK(!b.race.isRunning());
         CHECK(b.records[0].aborted);
         CHECK(!b.records[1].aborted); // the winner hung up by itself
@@ -225,7 +231,7 @@ void run_address_race_tests()
 
     SECTION("AddressRace — no address at all is a loss, reported later, never from start()");
     {
-        Bench b(60);
+        Bench b(kStaggerMs);
         b.race.start({}, 443);
         CHECK_EQ(b.losses, 0);
         CHECK(waitFor([&]() { return b.losses == 1; }, 1000));
