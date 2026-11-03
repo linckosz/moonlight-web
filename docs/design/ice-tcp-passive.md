@@ -206,6 +206,12 @@ Reste, en amont et hors du patch :
    - Le premier écoute (`ACTIVE_PASSIVE`). Le second ne reçoit que ses candidats TCP passifs, et
      appelle en TCP actif.
    - On attend qu'ils se connectent et échangent des données sans aucun UDP.
+   - Le test choisit d'avance un port libre en TCP et en UDP pour l'agent qui écoute. Laissé au
+     système, le port UDP peut être refusé en TCP : Windows réserve des blocs de 100 ports ou plus
+     à un seul protocole (`netsh int ipv4 show excludedportrange protocol=tcp`, erreur 10013) et
+     distribue les ports UDP en séquence, donc l'agent suivant retombe dans le même bloc. Le test
+     échouait ainsi 4 fois sur 60 (03/11). En production le port est épinglé dans 48550-48573, hors
+     de la plage dynamique, sauf si tout le bloc est pris.
    - Tests de la porte : sans trame, la connexion est fermée en 2 s ; une longueur hors bornes, un
      message qui n'est pas du STUN, un mauvais ufrag ou un mauvais HMAC la ferment ; la 5ᵉ
      connexion en attente aussi ; après `COMPLETED`, l'écoute refuse.
