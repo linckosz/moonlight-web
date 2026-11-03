@@ -630,3 +630,352 @@ describe('GamepadManager and a TV remote seen as a pad', () => {
         gm.stop();
     });
 });
+
+describe('GamepadManager and an on-screen controller', () => {
+    /** A Gamepad-shaped on-screen controller: no browser index, always current. */
+    function touchPad(extra = {}) {
+        return {
+            index: -1,
+            id: 'MoonlightWeb Touch Controller',
+            mapping: 'standard',
+            vibrationActuator: null,
+            buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
+            axes: [0, 0, 0, 0],
+            ...extra,
+        };
+    }
+    const sent = (send, type) => send.mock.calls.map((c) => c[0]).filter((m) => m.type === type);
+
+    beforeEach(() => {
+        setPads([]);
+        rafCb = null;
+        vi.stubGlobal('requestAnimationFrame', (cb) => {
+            rafCb = cb;
+            return 1;
+        });
+        vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    });
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+    });
+
+    it('is announced as an Xbox pad, controller 0, when nothing else is there', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        gm.attachVirtual(touchPad());
+        expect(sent(send, 'gamepadconnect')).toEqual([
+            { type: 'gamepadconnect', index: 0, mask: 1, ctype: 1, rumble: false },
+        ]);
+        expect(gm.hasVirtual()).toBe(true);
+        expect(gm.hasPhysicalPad()).toBe(false);
+    });
+
+    it('waits for start, like any pad', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.attachVirtual(touchPad());
+        expect(send).not.toHaveBeenCalled();
+        gm.start();
+        rafCb();
+        expect(sent(send, 'gamepadconnect').length).toBe(1);
+    });
+
+    it('runs without the Gamepad API, from the moment it is plugged in', () => {
+        Object.defineProperty(navigator, 'getGamepads', { value: undefined, configurable: true });
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        expect(send).not.toHaveBeenCalled();
+        gm.attachVirtual(touchPad());
+        expect(sent(send, 'gamepadconnect').length).toBe(1);
+        gm.stop();
+        expect(sent(send, 'gamepaddisconnect').length).toBe(1);
+    });
+
+    it('takes the lowest number free beside a real pad', () => {
+        setPads([fakePad({ index: 0 })]);
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        gm.attachVirtual(touchPad());
+        expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0, 1]);
+        expect(sent(send, 'gamepadconnect')[1].mask).toBe(3);
+    });
+
+    it('moves a real pad off the number it holds, and renumbers nobody', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        const v = touchPad();
+        gm.attachVirtual(v);
+        setPads([fakePad({ index: 0, buttons: [1] })]);
+        rafCb();
+        const connects = sent(send, 'gamepadconnect');
+        expect(connects.map((m) => m.index)).toEqual([0, 1]);
+        // The real pad's state goes out under its own number.
+        expect(sent(send, 'gamepad').at(-1)).toMatchObject({ index: 1, buttons: 0x1000 });
+        // The on-screen one going away leaves the real pad where it is.
+        gm.detachVirtual();
+        expect(sent(send, 'gamepaddisconnect')).toEqual([
+            { type: 'gamepaddisconnect', index: 0, mask: 2 },
+        ]);
+        send.mockClear();
+        setPads([fakePad({ index: 0, buttons: [0, 1] })]);
+        rafCb();
+        expect(sent(send, 'gamepad')[0]).toMatchObject({ index: 1, buttons: 0x2000 });
+    });
+
+    it('leaves the browser index of a real pad alone without one', () => {
+        setPads([null, null, fakePad({ index: 2 })]);
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([2]);
+    });
+
+    it('sends at the touch, and nothing when nothing changed', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        const v = touchPad();
+        gm.attachVirtual(v);
+        send.mockClear();
+        gm.pokeVirtual();
+        expect(send).not.toHaveBeenCalled();
+        v.buttons[0] = { pressed: true, value: 1 };
+        v.buttons[7] = { pressed: true, value: 1 };
+        v.axes[1] = -1;
+        gm.pokeVirtual();
+        expect(send.mock.calls.length).toBe(1);
+        expect(send.mock.calls[0][0]).toMatchObject({
+            type: 'gamepad',
+            index: 0,
+            buttons: 0x1000,
+            rt: 255,
+            ly: 32767,
+        });
+        gm.pokeVirtual();
+        expect(send.mock.calls.length).toBe(1);
+        expect(gm.hasActiveState()).toBe(true);
+    });
+
+    it('is repeated by the frame loop while held, and not while at rest', () => {
+        vi.useFakeTimers({ toFake: ['performance'] });
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        const v = touchPad();
+        gm.attachVirtual(v);
+        v.axes[0] = 1;
+        gm.pokeVirtual();
+        send.mockClear();
+        vi.advanceTimersByTime(600);
+        rafCb();
+        expect(sent(send, 'gamepad').length).toBe(1);
+        v.axes[0] = 0;
+        gm.pokeVirtual();
+        send.mockClear();
+        vi.advanceTimersByTime(600);
+        rafCb();
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it('alone arms no 4 ms reader; beside a real pad, one is armed', () => {
+        vi.useFakeTimers();
+        const interval = vi.spyOn(globalThis, 'setInterval');
+        const gm = new GamepadManager(vi.fn());
+        gm.start();
+        gm.attachVirtual(touchPad());
+        expect(interval).not.toHaveBeenCalled();
+        setPads([fakePad({ index: 0 })]);
+        rafCb();
+        expect(interval).toHaveBeenCalledTimes(1);
+        gm.stop();
+        interval.mockRestore();
+    });
+
+    it('is put at rest and silenced by a pause, then repeated', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        const v = touchPad();
+        gm.attachVirtual(v);
+        v.buttons[0] = { pressed: true, value: 1 };
+        gm.pokeVirtual();
+        gm.setPaused(true);
+        expect(sent(send, 'gamepad').at(-1)).toMatchObject({ buttons: 0 });
+        send.mockClear();
+        gm.pokeVirtual();
+        expect(send).not.toHaveBeenCalled();
+        gm.setPaused(false);
+        gm.pokeVirtual();
+        expect(sent(send, 'gamepad')[0]).toMatchObject({ buttons: 0x1000 });
+    });
+
+    it('comes back after a stop and a start, still plugged in', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        gm.attachVirtual(touchPad());
+        gm.stop();
+        expect(sent(send, 'gamepaddisconnect').length).toBe(1);
+        gm.start();
+        rafCb();
+        expect(sent(send, 'gamepadconnect').length).toBe(2);
+    });
+
+    it('sends nothing more once unplugged', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        gm.attachVirtual(touchPad());
+        gm.detachVirtual();
+        expect(gm.hasVirtual()).toBe(false);
+        send.mockClear();
+        gm.pokeVirtual();
+        rafCb();
+        expect(send).not.toHaveBeenCalled();
+        gm.detachVirtual();
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it('plugging a second one in replaces the first', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        gm.start();
+        gm.attachVirtual(touchPad());
+        gm.attachVirtual(touchPad());
+        expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0, 0]);
+        expect(sent(send, 'gamepaddisconnect').map((m) => m.mask)).toEqual([0]);
+    });
+
+    describe('when it yields to a real pad', () => {
+        it('is unplugged first, so the real pad takes controller 0', () => {
+            const send = vi.fn();
+            const onVirtualYield = vi.fn();
+            const gm = new GamepadManager(send, { onVirtualYield });
+            gm.start();
+            gm.attachVirtual(touchPad(), { yields: true });
+            setPads([fakePad({ index: 0 })]);
+            rafCb();
+            expect(onVirtualYield).toHaveBeenCalledTimes(1);
+            expect(gm.hasVirtual()).toBe(false);
+            expect(sent(send, 'gamepaddisconnect').map((m) => m.index)).toEqual([0]);
+            expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0, 0]);
+            expect(sent(send, 'gamepadconnect')[1].mask).toBe(1);
+        });
+
+        it('does not yield to a pad nothing maps, nor when not asked to', () => {
+            const send = vi.fn();
+            const onVirtualYield = vi.fn();
+            const gm = new GamepadManager(send, { onVirtualYield, platform: 'ios' });
+            gm.start();
+            gm.attachVirtual(touchPad(), { yields: true });
+            setPads([fakePad({ index: 0, id: 'Mystery', mapping: '' })]);
+            rafCb();
+            expect(gm.hasVirtual()).toBe(true);
+            gm.attachVirtual(touchPad());
+            setPads([fakePad({ index: 0 })]);
+            rafCb();
+            expect(gm.hasVirtual()).toBe(true);
+            expect(onVirtualYield).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('in single mode (a guest)', () => {
+        it('takes controller 0 from the real pad, and gives it back', () => {
+            setPads([fakePad({ index: 1 })]);
+            const send = vi.fn();
+            const gm = new GamepadManager(send, { single: true, preferredKey: 'name:other' });
+            gm.start();
+            expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0]);
+            gm.attachVirtual(touchPad());
+            expect(sent(send, 'gamepaddisconnect').map((m) => m.index)).toEqual([0]);
+            expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0, 0]);
+            expect(gm.forwardedKey()).toBe('name:moonlightweb touch controller');
+            // The real pad does not get it back while the on-screen one is there.
+            rafCb();
+            expect(sent(send, 'gamepadconnect').length).toBe(2);
+            gm.detachVirtual();
+            rafCb();
+            expect(sent(send, 'gamepadconnect').length).toBe(3);
+            expect(gm.forwardedKey()).not.toBe('name:moonlightweb touch controller');
+        });
+
+        it('gives its place to a real pad when it yields', () => {
+            const send = vi.fn();
+            const onVirtualYield = vi.fn();
+            const gm = new GamepadManager(send, { single: true, onVirtualYield });
+            gm.start();
+            gm.attachVirtual(touchPad(), { yields: true });
+            setPads([fakePad({ index: 3 })]);
+            rafCb();
+            expect(onVirtualYield).toHaveBeenCalledTimes(1);
+            expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0, 0]);
+            expect(gm.forwardedKey()).not.toBe('name:moonlightweb touch controller');
+        });
+    });
+
+    describe('rumble', () => {
+        it('reaches the on-screen controller through its own number', () => {
+            vi.useFakeTimers();
+            const playEffect = vi.fn();
+            const reset = vi.fn();
+            const gm = new GamepadManager(vi.fn());
+            gm.start();
+            gm.attachVirtual(touchPad({ vibrationActuator: { playEffect, reset } }));
+            gm.rumble(0, 65535, 0);
+            expect(playEffect).toHaveBeenCalledTimes(1);
+            expect(playEffect.mock.calls[0][1]).toMatchObject({ strongMagnitude: 1 });
+            gm.rumble(0, 0, 0);
+            expect(reset).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(2000);
+            expect(playEffect).toHaveBeenCalledTimes(1);
+        });
+
+        it('stops when the controller is unplugged', () => {
+            vi.useFakeTimers();
+            const playEffect = vi.fn();
+            const reset = vi.fn();
+            const gm = new GamepadManager(vi.fn());
+            gm.start();
+            gm.attachVirtual(touchPad({ vibrationActuator: { playEffect, reset } }));
+            gm.rumble(0, 65535, 0);
+            gm.detachVirtual();
+            expect(reset).toHaveBeenCalledTimes(1);
+            vi.advanceTimersByTime(2000);
+            expect(playEffect).toHaveBeenCalledTimes(1);
+        });
+
+        it('finds the real pad behind its moved number', () => {
+            vi.useFakeTimers();
+            const send = vi.fn();
+            const gm = new GamepadManager(send);
+            gm.start();
+            const v = touchPad();
+            gm.attachVirtual(v);
+            const real = fakePad({ index: 0, vibration: true });
+            setPads([real]);
+            rafCb();
+            gm.rumble(1, 65535, 0);
+            expect(real.vibrationActuator.playEffect).toHaveBeenCalledTimes(1);
+            gm.stop();
+        });
+
+        it('leaves a real pad alone when a gone controller had its browser index', () => {
+            const send = vi.fn();
+            const gm = new GamepadManager(send);
+            gm.start();
+            gm.attachVirtual(touchPad());
+            const real = fakePad({ index: 0, vibration: true });
+            setPads([real]);
+            rafCb();
+            gm.detachVirtual();
+            // Controller 0 is gone; the real pad is browser index 0, controller 1.
+            gm.rumble(0, 65535, 0);
+            expect(real.vibrationActuator.playEffect).not.toHaveBeenCalled();
+        });
+    });
+});
