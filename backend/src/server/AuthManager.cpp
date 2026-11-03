@@ -832,8 +832,7 @@ void AuthManager::setSessionGeo(const QString& token, const QString& city, const
     it->city = city;
     it->country = country;
     saveSessions();
-    Logger::info(QString("[Auth] Geo data stored for session %1: %2, %3")
-                     .arg(token.left(12), city, country));
+    Logger::info(QString("[Auth] Geo data stored for a session: %1, %2").arg(city, country));
 }
 
 bool AuthManager::updateSessionAddress(const QString& token, const QString& ip)

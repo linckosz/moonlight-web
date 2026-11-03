@@ -79,6 +79,7 @@ void run_auth_manager_tests()
         auth.destroySession("canary-session-id");
         auth.renameSession("canary-session-id", "x");
         CHECK(auth.renameSession(id, "Renamed"));
+        auth.setSessionGeo(token, "Paris", "FR");
         Logger::instance()->setLogFile(before);
 
         QFile written(logPath);
@@ -87,6 +88,8 @@ void run_auth_manager_tests()
         CHECK(lines.contains("no such session"));
         CHECK(!lines.contains("canary-session-id"));
         CHECK(!lines.contains(id.toUtf8()));
+        CHECK(lines.contains("Geo data stored"));
+        CHECK(!lines.contains(token.left(8).toUtf8()));
     }
 
     // Persistence round-trip.
