@@ -162,6 +162,17 @@ void run_log_archive_tests()
              QString("moonlightweb-worker-service.log"));
     CHECK_EQ(LogArchive::kindOf("moonlightweb-client.log.20260930-101010"),
              QString("moonlightweb-client.log"));
+    // A bench's traces, one file per run: three kinds, not one per file.
+    CHECK_EQ(LogArchive::kindOf("click-trace-13372-1793000000000.csv"),
+             QString("click-trace-*.csv"));
+    CHECK_EQ(LogArchive::kindOf("relay-frames-13372-1793000000000.csv"),
+             QString("relay-frames-*.csv"));
+    CHECK_EQ(LogArchive::kindOf("relay-audio-13372-1793000000000.csv"),
+             QString("relay-audio-*.csv"));
+    // Numbers that do not end the name, or no separator before them: its own name.
+    CHECK_EQ(LogArchive::kindOf("internet-access-audit.log"), QString("internet-access-audit.log"));
+    CHECK_EQ(LogArchive::kindOf("h264-capture.log"), QString("h264-capture.log"));
+    CHECK_EQ(LogArchive::kindOf("trace2.csv"), QString("trace2.csv"));
 
     // Only the newest non-empty file of each kind, never the directory.
     QTemporaryDir tmp;
@@ -215,6 +226,38 @@ void run_log_archive_tests()
         const QMap<QString, Entry> again = readZip(archive.result());
         CHECK(again.contains("dev-run.log"));
         CHECK(!again.contains("moonlightweb.log"));
+    }
+
+    // A folder a bench has filled: the last trace of each sort goes in, and the
+    // others are not even read (1.5 GB in 6,000 files on the machine that showed it).
+    {
+        QTemporaryDir bench;
+        CHECK(bench.isValid());
+        const QString d = bench.path();
+        touch(d + "/moonlightweb.log", "server\n", now);
+        for (int i = 0; i < 50; ++i) {
+            const QString run = QStringLiteral("-%1-%2.csv").arg(1000 + i).arg(1793000000000LL + i);
+            const QDateTime when = now.addSecs(-3600 + i);
+            const QByteArray last = i == 49 ? "newest\n" : "older\n";
+            touch(d + "/click-trace" + run, last, when);
+            touch(d + "/relay-frames" + run, last, when);
+            touch(d + "/relay-audio" + run, last, when);
+        }
+        LogArchive archive;
+        CHECK(archive.start(d, QString(), "about\n", "logs.zip"));
+        QElapsedTimer t;
+        t.start();
+        while (archive.status().state == QLatin1String("running") && t.elapsed() < 10000)
+            QThread::msleep(10);
+        const LogArchive::Status s = archive.status();
+        CHECK_EQ(s.state, QString("done"));
+        CHECK_EQ(s.files, 4);
+        const QMap<QString, Entry> entries = readZip(archive.result());
+        CHECK_EQ(entries.size(), qsizetype(5)); // about.txt too
+        const QString lastRun = QStringLiteral("-1049-%1.csv").arg(1793000000049LL);
+        CHECK(holds(entries.value("click-trace" + lastRun), "newest\n"));
+        CHECK(holds(entries.value("relay-frames" + lastRun), "newest\n"));
+        CHECK(holds(entries.value("relay-audio" + lastRun), "newest\n"));
     }
 
     // A log still open for writing, as the client log always is: on Windows

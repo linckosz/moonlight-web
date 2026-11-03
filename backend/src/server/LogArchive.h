@@ -35,9 +35,10 @@ class QThread;
  * to an email or an issue so the problem they just had can be read.
  *
  * Only the latest non-empty file of each kind — the server's log, the last
- * stream worker's, the browsers', the probe's... — never the whole directory:
- * a busy host keeps a week of them, and what explains a problem is what was
- * written last. An about.txt says which build and which system wrote them.
+ * stream worker's, the browsers', the probe's, a bench's last traces... — never
+ * the whole directory: a busy host keeps a week of them (a bench machine, 1.5 GB
+ * in 6,000 files), and what explains a problem is what was written last. An
+ * about.txt says which build and which system wrote them.
  * Every file, about.txt included, goes through one LogScrubber first: the
  * archive is made to be posted, and what is secret or personal in a log is
  * taken out before it goes in.
@@ -75,7 +76,8 @@ public:
     QByteArray result() const;
 
     /// The kind a log file belongs to: its archives (`name.log.<stamp>`) are
-    /// its own kind, and every `…-worker-<pid>.log` is one kind.
+    /// its own kind, and the files one run names after itself are one kind:
+    /// every `…-worker-<pid>.log`, every `click-trace-<pid>-<ms>.csv`.
     static QString kindOf(const QString& fileName);
     /// The newest non-empty file of each kind among @p files, oldest first.
     /// Each file's size and date are asked again by its path: a directory
