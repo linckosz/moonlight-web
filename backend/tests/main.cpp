@@ -36,6 +36,7 @@ void run_host_persistence_tests();
 void run_rendezvous_id_tests();
 void run_rendezvous_line_tests();
 void run_address_race_tests();
+void run_relay_start_tests();
 void run_backend_probe_tests();
 void run_host_os_probe_tests();
 void run_send_backlog_tests();
@@ -115,6 +116,7 @@ int main(int argc, char** argv)
     run_rendezvous_id_tests();
     run_rendezvous_line_tests();
     run_address_race_tests();
+    run_relay_start_tests();
     run_backend_probe_tests();
     run_host_os_probe_tests();
     run_send_backlog_tests();

@@ -32,6 +32,7 @@ extern "C" {
 #include "common/Edition.h"
 #include "common/PairingCrypto.h"
 #include "network/RouterPortPools.h"
+#include "RelayStart.h"
 #include "server/NetClassify.h"
 
 #include <rtc/rtc.hpp>
@@ -51,17 +52,6 @@ extern "C" {
 #include <QMap>
 #include <memory>
 
-// Whether a UDP port can be bound right now. A pinned port libdatachannel
-// cannot bind leaves the session with no candidate at all, so the pin is only
-// taken when this succeeds.
-static bool udpPortFree(uint16_t port)
-{
-    QUdpSocket probe;
-    const bool ok = probe.bind(QHostAddress::AnyIPv4, port, QAbstractSocket::DontShareAddress);
-    probe.close();
-    return ok;
-}
-
 // The media block, as the packages' firewall rule and the log name it.
 static const QString kMediaBlock =
     QStringLiteral("%1-%2/udp")
@@ -77,10 +67,10 @@ static const QString kMediaBlock =
 // use. 0 when the whole block is held.
 static uint16_t freeMediaPort(uint16_t own)
 {
-    if (udpPortFree(own)) return own;
+    if (mw::relaystart::udpPortFree(own)) return own;
     for (int i = mw::routerports::kMediaPortCount - 1; i >= 0; --i) {
         const auto port = static_cast<uint16_t>(mw::routerports::kMediaBasePort + i);
-        if (port != own && udpPortFree(port)) return port;
+        if (port != own && mw::relaystart::udpPortFree(port)) return port;
     }
     return 0;
 }
@@ -402,7 +392,11 @@ void SignalingServer::onNewWsConnection()
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port
     // m_ForceIceTcp controls whether ICE-TCP candidates are generated
     // (true = UDP + TCP, false = UDP only).
-    const bool mapped = !m_UpnpPublicIP.isEmpty() && m_UpnpExternalPort > 0;
+    const bool hasHole = !m_UpnpPublicIP.isEmpty() && m_UpnpExternalPort > 0;
+    const bool mapped = mw::relaystart::holeUsable(hasHole, m_MediaPort);
+    if (hasHole && !mapped)
+        qWarning() << "[SignalingServer] UDP media port" << m_MediaPort
+                   << "is taken — this stream does not use the router's hole";
     rtc::Configuration config =
         buildIceConfig(isInternet, mapped, m_MediaPort, lanOnly ? QString() : m_StunServerUrl,
                        m_ForceIceTcp, m_IceTcpPassive);
@@ -432,7 +426,18 @@ void SignalingServer::onNewWsConnection()
 
     // Prepare the PeerConnection + DataChannels
     // This will trigger signalingSdpReady with the SDP offer to send to browser
-    m_Relay->prepare(config, isInternet);
+    QString why;
+    if (!mw::relaystart::prepareCaught([&]() { m_Relay->prepare(config, isInternet); }, why)) {
+        // The port can still go between the check above and the bind. Ending the
+        // session lets the chain try the next transport, as an ICE timeout does.
+        qCritical().noquote() << "[SignalingServer] The connection could not start:" << why;
+        if (m_WsClient && m_WsClient->isValid()) {
+            m_WsClient->close(QWebSocketProtocol::CloseCodeBadOperation,
+                              QStringLiteral("connection could not start"));
+        }
+        emit sessionEnded();
+        return;
+    }
 
     qInfo() << "[SignalingServer] Client connected, waiting for SDP offer from libdatachannel";
     emit clientConnected();

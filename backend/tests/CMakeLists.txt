@@ -77,6 +77,7 @@ add_executable(run_tests
     test_rendezvous_id.cpp
     test_rendezvous_line.cpp
     test_address_race.cpp
+    test_relay_start.cpp
     test_backend_probe.cpp
     test_host_os_probe.cpp
     test_send_backlog.cpp
