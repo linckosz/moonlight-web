@@ -2,7 +2,9 @@
 // docs/design/upscaler-mwsr-b.md §3). The variants are texts derived from the
 // product's own (MwsrShader.js's mwsrWgsl), each change checked to hit its
 // line exactly once, so that a kernel changed in the product breaks the lab
-// loudly instead of drifting from it:
+// loudly instead of drifting from it (V1 and V2 do since the kernel J, 03/11/2026:
+// their lines are the kernel before it, whose results stay in the journal, and
+// Bruno took J on every device):
 //   V1  Y through MWSR into a plane at the output size (yKernel, OUT 'plane'),
 //       then composed with UV by the sampler's bilinear (composeWgsl): the
 //       model of moonlight-qt's vt_metal.mm (MetalFX on Y, MPS on UV);

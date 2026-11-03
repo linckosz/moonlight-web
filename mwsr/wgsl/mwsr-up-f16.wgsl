@@ -1,4 +1,4 @@
-// MWSR — MoonlightWeb Super Resolution: the upscale's edge path in f16 (needs 'shader-f16'), WGSL.
+// MWSR — MoonlightWeb Super Resolution: the upscale's colour arithmetic in f16 (needs 'shader-f16'), WGSL.
 // Copyright (c) 2026 Bruno Martin <brunoocto@gmail.com>
 // SPDX-License-Identifier: MIT
 //
@@ -44,19 +44,19 @@ struct U {
     scale : vec2f,
     dims : vec2f,
     across : vec2f,
-    tau : f32,
-    fc : f32,
-    wacross : f32,
-    kblend : f32,
+    kc : f32,
+    ft : f32,
+    kg : f32,
+    kwc : f32,
     zc : vec2f,
     zr : vec2f,
     zring : f32,
-    ztau : f32,
-    zsharp : f32,
+    zft : f32,
+    zkg : f32,
     gaze : f32,
-    sharp : f32,
-    strength : f32,
-    wmin : f32,
+    kl : f32,
+    zref : f32,
+    pad1 : f32,
     pad2 : f32,
 };
 
@@ -67,29 +67,22 @@ struct U {
 fn S(uv : vec2f) -> vec3f {
     return textureSampleLevel(tex, samp, uv, 0.0).rgb;
 }
-fn L(c : vec2i) -> vec3f {
-    return textureLoad(tex, c, 0).rgb;
-}
 
 alias hf = f16;
 alias h3 = vec3<f16>;
 
 override SHOW : u32 = 0u;
-override DERING : u32 = 2u;
 override CHROMA444 : u32 = 0u;
-override FLAT_TAPS : u32 = 2u;
 override GAZE : u32 = 0u;
-override FLAT_ZONE : u32 = 0u;
 override R_DOWN : f32 = 1.0;
 override LINEAR_LIGHT : u32 = 1u;
 
 const LUMA : vec3f = vec3f(0.25, 0.625, 0.125);
-const W_ACROSS : f32 = 0.3;
 
 // The gaze zone's weight at a pixel (GAZE 1, plan §15.2): 1 inside the
 // ellipse of centre u.zc and half-axes u.zr, falling by a smoothstep over the
 // ring to 0 outside, times the stream's motion u.gaze — 0 on a still
-// picture, where the table rules the whole screen.
+// picture, where the law rules the whole screen.
 fn gazeWeight(uv : vec2f) -> f32 {
     if (GAZE != 1u) {
         return 0.0;
@@ -98,144 +91,44 @@ fn gazeWeight(uv : vec2f) -> f32 {
     return (1.0 - smoothstep(1.0, 1.0 + u.zring, d)) * u.gaze;
 }
 
-// The flat path's picture. FLAT_TAPS 2, the product's: C moved towards n, the
-// texel nearest the pixel. The vote is per quad and by a symmetric difference:
-// at exactly ×2 every quad is centred on a texel, so a line one texel wide has a
-// slope of 0 and comes here. On it, at a distance f from its centre, the cubic
-// below gives h(f) L (h: Catmull-Rom's middle weight) where C holds (1 - f) L,
-// and n holds L: k = (h(f) - (1 - f)) / f = (1 - f) (1 - 1.5 f). R stays between
-// C and the texel, so nothing rings, and on a truly flat cell n is C.
-// Otherwise: the bilinear sample C, or (FLAT_TAPS 5 or 9) the
-// cubic of Mitchell and Netravali with B 0 and C u.fc (0.5: Catmull-Rom)
-// over the 4×4 texels around the position, read as the bilinear samples the
-// GPU weighs for free: on each axis the middle two texels by one sample at
-// their weighted midpoint, the outer two by one sample each — nine samples,
-// or five without the four corners, whose weights are the smallest, the
-// rest renormalised. Or (FLAT_TAPS 3) the interpolating quadratic of Dodgson
-// (1997) over the 3×3 texels around: on each axis the nearest texel and its
-// neighbour on the sample's side by one sample at their weighted midpoint,
-// the far one, of negative weight, by one sample — three samples without
-// the corner (J34). Bounded by the samples themselves, as the edge path is.
-// Inside the gaze zone only when FLAT_ZONE asks, blended by its weight zg.
-fn flatPath(uv : vec2f, C : vec3f, zg : f32) -> vec3f {
-    if (FLAT_TAPS == 2u) {
-        let sn = uv * u.dims;
-        let tn = floor(sn);
-        let dn = abs(sn - tn - 0.5);
-        let f = max(dn.x, dn.y);
-        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(vec2i(tn)) - C);
-    }
-    if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
-        return C;
-    }
-    if (GAZE == 1u && FLAT_ZONE == 1u && zg <= 0.0) {
-        return C;
-    }
-    let sp = uv * u.dims;
-    var R : vec3f;
-    if (FLAT_TAPS == 3u) {
-        let tn = floor(sp) + 0.5;
-        let h = sp - tn;
-        let s = select(vec2f(-1.0), vec2f(1.0), h >= vec2f(0.0));
-        let ah = abs(h);
-        let wf = ah * ah - 0.5 * ah;
-        let wm = 1.0 - wf;
-        let wn = ah * ah + 0.5 * ah;
-        let pm = (tn + s * wn / wm) * u.texel;
-        let pf = (tn - s) * u.texel;
-        let sm = S(pm);
-        let sfx = S(vec2f(pf.x, pm.y));
-        let sfy = S(vec2f(pm.x, pf.y));
-        let acc = sm * (wm.x * wm.y) + sfx * (wf.x * wm.y) + sfy * (wm.x * wf.y);
-        let norm = wm.x * wm.y + wf.x * wm.y + wm.x * wf.y;
-        let lo = min(sm, min(sfx, sfy));
-        let hi = max(sm, max(sfx, sfy));
-        R = clamp(acc / norm, lo, hi);
-    } else {
-        let tc = floor(sp - 0.5) + 0.5;
-        let f = sp - tc;
-        let c = u.fc;
-        let w0 = -c * f * (1.0 - f) * (1.0 - f);
-        let w1 = (2.0 - c) * f * f * f - (3.0 - c) * f * f + 1.0;
-        let w3 = -c * (1.0 - f) * f * f;
-        let w2 = 1.0 - w0 - w1 - w3;
-        let w12 = w1 + w2;
-        let p0 = (tc - 1.0) * u.texel;
-        let p12 = (tc + w2 / w12) * u.texel;
-        let p3 = (tc + 2.0) * u.texel;
-        let s12 = S(p12);
-        let s02 = S(vec2f(p0.x, p12.y));
-        let s32 = S(vec2f(p3.x, p12.y));
-        let s20 = S(vec2f(p12.x, p0.y));
-        let s23 = S(vec2f(p12.x, p3.y));
-        var acc = s12 * (w12.x * w12.y) + s02 * (w0.x * w12.y) + s32 * (w3.x * w12.y)
-            + s20 * (w12.x * w0.y) + s23 * (w12.x * w3.y);
-        var norm = w12.x * w12.y + w0.x * w12.y + w3.x * w12.y + w12.x * w0.y + w12.x * w3.y;
-        var lo = min(min(s12, s02), min(s32, min(s20, s23)));
-        var hi = max(max(s12, s02), max(s32, max(s20, s23)));
-        if (FLAT_TAPS == 9u) {
-            let s00 = S(p0);
-            let s30 = S(vec2f(p3.x, p0.y));
-            let s03 = S(vec2f(p0.x, p3.y));
-            let s33 = S(p3);
-            acc += s00 * (w0.x * w0.y) + s30 * (w3.x * w0.y) + s03 * (w0.x * w3.y) + s33 * (w3.x * w3.y);
-            norm += w0.x * w0.y + w3.x * w0.y + w0.x * w3.y + w3.x * w3.y;
-            lo = min(lo, min(min(s00, s30), min(s03, s33)));
-            hi = max(hi, max(max(s00, s30), max(s03, s33)));
-        }
-        R = clamp(acc / norm, lo, hi);
-    }
-    if (GAZE == 1u && FLAT_ZONE == 1u) {
-        return mix(C, R, zg);
-    }
-    return R;
-}
-
-// The exact bound: the four input texels around the pixel, the footprint of
-// its bilinear sample (DERING 1 and 2).
-fn texelBound(uv : vec2f, R : vec3f) -> vec3f {
-    let f = vec2i(floor(uv * u.dims - 0.5));
-    let i0 = max(f, vec2i(0));
-    let i1 = min(f + vec2i(1), vec2i(u.dims) - vec2i(1));
-    let q00 = L(i0);
-    let q10 = L(vec2i(i1.x, i0.y));
-    let q01 = L(vec2i(i0.x, i1.y));
-    let q11 = L(i1);
-    return clamp(R, min(min(q00, q10), min(q01, q11)), max(max(q00, q10), max(q01, q11)));
-}
-
 @fragment
 fn fs(in : VSOut) -> @location(0) vec4f {
     let uv = in.uv;
-    let C = S(uv);
-    // The gaze zone's weight, 0 without one: the vote threshold and, on the
-    // edge path, the sharpness slide from the table's values to the centre's.
+    // The cubic of kc around the pixel, its middle pair on each axis read as one
+    // bilinear sample: the four texels around, by one read.
+    let sp = uv * u.dims;
+    let f0 = floor(sp - 0.5);
+    let t = sp - 0.5 - f0;
+    let s = 1.0 - t;
+    let ku = u.kc * t * s;
+    let w12 = 1.0 + ku;
+    let p12 = (f0 + 0.5 + (t * t * (3.0 - 2.0 * t) + ku * s) / w12) * u.texel;
+    let rM = S(p12);
+    // The gaze zone's weight, 0 without one: the vote threshold and, on an
+    // edge, the sharpness slide from the law's values to the centre's.
     let zg = gazeWeight(uv);
-    var tau = u.tau;
+    var ft = u.ft;
     if (GAZE == 1u) {
-        tau = mix(u.tau, u.ztau, zg);
+        ft = mix(u.ft, u.zft, zg);
     }
-    // The vote: the screen derivatives of the bilinear sample, scaled to a
-    // change per input texel; coarse, so the whole quad takes the same branch.
-    // From the luma, or (CHROMA444) from the channel with the steepest ramp,
-    // so that a border between two colours of one luma is an edge too.
-    var gx : f32;
-    var gy : f32;
+    // The vote: the screen derivatives of that read, scaled to a change per
+    // input texel; coarse, so the whole quad takes the same branch. From the
+    // luma, or (CHROMA444) from the channel with the steepest ramp, so that a
+    // border between two colours of one luma is an edge too.
+    var gM : vec2f;
     var flat : bool;
     if (CHROMA444 == 1u) {
-        let dx = dpdxCoarse(C) * u.scale.x;
-        let dy = dpdyCoarse(C) * u.scale.y;
+        let dx = dpdxCoarse(rM) * u.scale.x;
+        let dy = dpdyCoarse(rM) * u.scale.y;
         let m = abs(dx) + abs(dy);
         let rg = m.g > m.r;
         let b = m.b > max(m.r, m.g);
-        gx = select(select(dx.r, dx.g, rg), dx.b, b);
-        gy = select(select(dy.r, dy.g, rg), dy.b, b);
-        flat = max(m.r, max(m.g, m.b)) < tau;
+        gM = vec2f(select(select(dx.r, dx.g, rg), dx.b, b), select(select(dy.r, dy.g, rg), dy.b, b));
+        flat = max(m.r, max(m.g, m.b)) < ft;
     } else {
-        let lC = dot(C, LUMA);
-        gx = dpdxCoarse(lC) * u.scale.x;
-        gy = dpdyCoarse(lC) * u.scale.y;
-        flat = abs(gx) + abs(gy) < tau;
+        let lM = dot(rM, LUMA);
+        gM = vec2f(dpdxCoarse(lM), dpdyCoarse(lM)) * u.scale;
+        flat = abs(gM.x) + abs(gM.y) < ft;
     }
     if (SHOW == 1u) {
         return vec4f(vec3f(select(1.0, 0.0, flat)), 1.0);
@@ -244,31 +137,38 @@ fn fs(in : VSOut) -> @location(0) vec4f {
         return vec4f(vec3f(zg), 1.0);
     }
     if (flat) {
-        return vec4f(flatPath(uv, C, zg), 1.0);
+        return vec4f(rM, 1.0);
     }
-    // On an edge, the two samples across it, along the normal the derivatives
-    // measure.
-    let dn = vec2f(gx, gy) * inverseSqrt(max(gx * gx + gy * gy, 1e-12)) * u.across;
-    let X1 = S(uv - dn);
-    let X2 = S(uv + dn);
-    // Their weight, negative: it sharpens. One value per draw, the blend's
-    // divisor with it, which the gaze zone moves per pixel.
-    var wX = u.wacross;
-    var kB = u.kblend;
+    // On an edge: the cubic's outer lobes, one read per side.
+    let p0 = (f0 - 0.5) * u.texel;
+    let p3 = (f0 + 2.5) * u.texel;
+    let rT = S(vec2f(p12.x, p0.y));
+    let rL = S(vec2f(p0.x, p12.y));
+    let rR = S(vec2f(p3.x, p12.y));
+    let rB = S(vec2f(p12.x, p3.y));
+    // The two reads across the edge, along the normal the derivatives measure.
+    let dn = gM * inverseSqrt(dot(gM, gM)) * u.across;
+    let ra = S(uv - dn);
+    let rb = S(uv + dn);
+    var kg = u.kg;
     if (GAZE == 1u) {
-        wX = max(-W_ACROSS * mix(u.sharp, u.zsharp, zg) * u.strength, u.wmin);
-        kB = 1.0 / (1.0 + 2.0 * wX);
+        kg = mix(u.kg, u.zkg, zg);
     }
+    var kw = u.kwc;
     // From here the arithmetic is hf (f32, or f16 when the module says so).
-    var R = vec3f((h3(C) + hf(wX) * h3(X1 + X2)) * hf(kB));
-    if (DERING != 2u) {
-        // The three bound it (DERING 0, 1). Not by default: on a line one texel
-        // wide, the centre sample is their extremum, and this bound would pin
-        // the pixel at its bilinear mix, paler than the line.
-        R = clamp(R, min(C, min(X1, X2)), max(C, max(X1, X2)));
-    }
-    if (DERING != 0u) {
-        R = texelBound(uv, R);
-    }
-    return vec4f(R, 1.0);
+    let hM = h3(rM);
+    let hA = h3(ra);
+    let hB = h3(rb);
+    let hu = vec2<hf>(ku);
+    let hs = vec2<hf>(s);
+    let ht = vec2<hf>(t);
+    let h12 = vec2<hf>(w12);
+    let K = (h12.x * (h12.y * hM - hu.y * (hs.y * h3(rT) + ht.y * h3(rB))) - h12.y * hu.x * (hs.x * h3(rL) + ht.x * h3(rR))) / (hf(1.0) - hu.x * hu.y);
+    let D = K - hf(0.5) * (hA + hB);
+    let R = K + hf(kg) * D + hf(kw) * (D - h3(dot(D, h3(LUMA))));
+    let mn = min(hM, min(hA, hB));
+    let mx = max(hM, max(hA, hB));
+    let mg = (mx - mn) * hf(u.kl);
+    // A float target keeps what falls below zero: the feed holds none.
+    return vec4f(vec3f(clamp(R, max(mn - mg, h3(hf(0.0))), mx + mg)), 1.0);
 }

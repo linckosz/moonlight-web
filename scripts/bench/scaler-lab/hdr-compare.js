@@ -1,6 +1,7 @@
 // The HDR A/B for the eye (journal J48): mwsr's upscale through the product's
 // WebGpuRenderer on its HDR `linear` path (the float canvas, toneMapping
-// 'extended'), with today's DERING 2 on one side and DERING 1 on the other,
+// 'extended'), with the product's bound on one side (no margin on HDR) and the
+// law's margin, as on SDR, on the other,
 // drawn by lot behind the neutral labels A and B; the key on a button. The
 // pictures are hdr_check.py's (PQ, BT.2020, I420P10, 1000-nit text, the
 // 0 A.D. capture, the ramp with its 1-px stripes), served from its output
@@ -8,6 +9,7 @@
 // Two renderers, two canvases at one canvas pixel per device pixel; the panes
 // scroll together, or one pane shows at a time and Space flips it.
 import { WebGpuRenderer } from "/frontend/js/stream/renderers/WebGpuRenderer.js";
+import { mwsrLaw } from "/frontend/js/stream/renderers/MwsrShader.js";
 
 const CASES = [
   { name: "up720-text", label: "Texte 1000 nits, 720p → 1440p", w: 1280, h: 720, ow: 2560, oh: 1440 },
@@ -17,8 +19,8 @@ const CASES = [
   { name: "up720-ramp", label: "Traits fins (rampe, rayures 1 px), 720p → 1440p", w: 1280, h: 720, ow: 2560, oh: 1440 },
 ];
 const SETS = [
-  { key: "DERING 2 (le défaut actuel)", overrides: {} },
-  { key: "DERING 1 (proposé pour le HDR)", overrides: { DERING: 1 } },
+  { key: "sans marge (le défaut en HDR)", margin: false },
+  { key: "avec la marge de la loi (comme en SDR)", margin: true },
 ];
 // the lot: which set is A, drawn once per load (a reload draws again)
 const swap = Math.random() < 0.5;
@@ -39,7 +41,6 @@ async function makeRenderers() {
       hdrLinear: true,
       videoCodec: "hevc",
     });
-    r.setMwsrOverrides(sides[i].overrides);
     out.push(r);
   }
   return out;
@@ -48,9 +49,10 @@ async function makeRenderers() {
 async function show(c) {
   status("chargement de " + c.name + "…");
   const res = await fetch("/__dir/hdr-" + c.name + ".yuv");
-  if (!res.ok) throw new Error("hdr-" + c.name + ".yuv: HTTP " + res.status + " (lancer hdr_check.py --ablate une fois)");
+  if (!res.ok) throw new Error("hdr-" + c.name + ".yuv: HTTP " + res.status + " (lancer hdr_check.py --keep une fois)");
   const planes = new Uint8Array(await res.arrayBuffer());
   for (const [i, r] of renderers.entries()) {
+    r.setMwsrTuning(sides[i].margin ? { kl: mwsrLaw(c.w, c.h, c.ow, c.oh).kl } : null);
     r.setOutputSize(c.ow, c.oh);
     let frame;
     try {

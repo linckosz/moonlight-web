@@ -42,19 +42,19 @@ struct U {
     scale : vec2f,
     dims : vec2f,
     across : vec2f,
-    tau : f32,
-    fc : f32,
-    wacross : f32,
-    kblend : f32,
+    kc : f32,
+    ft : f32,
+    kg : f32,
+    kwc : f32,
     zc : vec2f,
     zr : vec2f,
     zring : f32,
-    ztau : f32,
-    zsharp : f32,
+    zft : f32,
+    zkg : f32,
     gaze : f32,
-    sharp : f32,
-    strength : f32,
-    wmin : f32,
+    kl : f32,
+    zref : f32,
+    pad1 : f32,
     pad2 : f32,
 };
 
@@ -65,24 +65,17 @@ struct U {
 fn S(uv : vec2f) -> vec3f {
     return textureSampleLevel(tex, samp, uv, 0.0).rgb;
 }
-fn L(c : vec2i) -> vec3f {
-    return textureLoad(tex, c, 0).rgb;
-}
 
 alias hf = f32;
 alias h3 = vec3<f32>;
 
 override SHOW : u32 = 0u;
-override DERING : u32 = 2u;
 override CHROMA444 : u32 = 0u;
-override FLAT_TAPS : u32 = 2u;
 override GAZE : u32 = 0u;
-override FLAT_ZONE : u32 = 0u;
 override R_DOWN : f32 = 1.0;
 override LINEAR_LIGHT : u32 = 1u;
 
 const LUMA : vec3f = vec3f(0.25, 0.625, 0.125);
-const W_ACROSS : f32 = 0.3;
 
 // The sRGB transfer, both ways, for LINEAR_LIGHT 2 (the encode alone for 3);
 // past 1.0 (HDR) the same formula continues, as the renderer's HDR pass 0

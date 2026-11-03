@@ -265,8 +265,8 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
             0,
           ]),
         ),
-        mwsr: ubo(mwsrUniforms(inW, inH, outW, outH, {})),
-        mwsrz: ubo(mwsrUniforms(inW, inH, outW, outH, { zones: true })),
+        mwsr: ubo(mwsrUniforms(inW, inH, outW, outH, { hdr })),
+        mwsrz: ubo(mwsrUniforms(inW, inH, outW, outH, { hdr, zones: true })),
       },
       zoneView: null,
     };

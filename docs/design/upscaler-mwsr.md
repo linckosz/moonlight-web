@@ -1900,3 +1900,11 @@ le laboratoire, qui tient le poids à 1. **Dans le produit, rien d'allumé** : l
 bureau — lecture de la consigne « en desktop », à confirmer par Bruno), coupée par défaut jusqu'à
 son verdict sur l'iPhone (comparateur : section « Zone du regard », les deux anneaux dessinés sur
 les bandes, `gaze=1` dans le lien). Les mesures sont au journal J34.
+
+## 16. Le noyau J (03/11/2026)
+
+Bruno adopte J, le noyau des recherches de la nuit du 02/11 : le §3.2 décrit le noyau d'avant, l'entête de `MwsrShader.js` celui d'aujourd'hui, et le journal J57 les mesures. Trois choix tiennent la suite :
+
+- **La loi suit l'œil.** Les polynômes de `kc`, `kg`, `kr`, `kl` viennent du labo (LPIPS, puis VMAF NEG) ; `kg` et `kl` sont multipliés par une force, 1 à ×1,33, 1,35 à ×2, droite en ln(ratio) entre les deux, tenue au-delà. Bruno l'a voulue plus nette que le labo.
+- **HDR sans marge.** `kl` 0 sur une entrée qui passe 1,0, sinon la borne fabrique des hautes lumières.
+- **Un seul noyau.** Sur tous les appareils, sans chemin Y seul (V1, V2) : `mwsr-yuv.js` casse donc bruyamment sur ces deux variantes, leurs résultats restent au journal.

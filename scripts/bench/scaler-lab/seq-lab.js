@@ -37,7 +37,7 @@
 //   accel=sw|hw                    WebCodecs' acceleration (sw under soft=1,
 //                                  whatever the query says)
 //   hist=none,pull:a=0.5;t=6,…     the variants (HIST; dbe, dbd: deblocking)
-//   mw=flat=3;sharp=1.5            the kernel's options, as a lab cell's
+//   mw=kg=1;ft=.01                 the kernel's options, as a lab cell's
 //   dump=10,30,61 crop=x,y,w,h     the frames whose outputs (and truth) are
 //                                  posted as crops of the screen-size picture,
 //                                  raw RGBA rows (the width a multiple of 64)
@@ -1573,14 +1573,9 @@ export async function runSeq(p, log = () => {}) {
   const kernel = await import(MWSR_URL);
   const mwOpts = {};
   const uni = {};
-  const MW_KEYS = {
-    flat: "FLAT_TAPS",
-    dering: "DERING",
-  };
   for (const kv of (p.mw || "").split(";").filter(Boolean)) {
     const [k, val] = kv.split("=");
-    if (["tau", "sharp", "fc"].includes(k)) uni[k] = Number(val);
-    else if (k in MW_KEYS) mwOpts[MW_KEYS[k]] = Number(val);
+    if (["kc", "ft", "kg", "kr", "kwc", "kl"].includes(k)) uni[k] = Number(val);
     else throw new Error("mw: " + k + "?");
   }
   if (kernel.mwsrRegime(inW, inH, outW, outH).mode !== "up")

@@ -24,12 +24,6 @@
 // that the GPU drops its P-state in front of both variants (V10, 28/10/2026:
 // at 810 MHz of memory, P5, a 4K reduction takes nine times longer).
 //
-// &ab=dering (hdr_check.py --dering, 26/10/2026): the edge path's bound
-// instead, today's DERING 2 against DERING 1, on 'linear' and, for a case
-// with an SDR picture beside its planes (c.sdr: 8-bit RGBA), on an SDR
-// renderer fed that picture as a VideoFrame, the product's SDR path on
-// WebGPU. With ?time=N, timed as above; without, each drawn once with 'off'
-// beside them, for the driver to measure.
 import { mwsrRegime } from "../../../frontend/js/stream/renderers/MwsrShader.js";
 import { WebGpuRenderer } from "../../../frontend/js/stream/renderers/WebGpuRenderer.js";
 
@@ -38,39 +32,6 @@ const B = GPUBufferUsage;
 const PARAMS = new URLSearchParams(location.search);
 const TIME = Math.max(0, parseInt(PARAMS.get("time") || "0", 10) || 0);
 const GAP = Math.max(0, parseInt(PARAMS.get("gap") || "0", 10) || 0);
-const ABLATE = PARAMS.get("ablate") === "1";
-const DERING_AB = PARAMS.get("ab") === "dering";
-const DERING_SETS = [
-  ["dering2", { overrides: {}, sharp: null }],
-  ["dering1", { overrides: { DERING: 1 }, sharp: null }],
-];
-
-// ?ablate=1 (hdr_check.py --ablate, journal J48): the upscale's defaults one
-// at a time, between those of J11 (21/10/2026: DERING 1, the bilinear flat
-// path, W_MIN -0.3, sharpness 1 at every scale) and today's (DERING 2, the
-// Catmull-Rom of five taps, the law): each one alone on J11's, and each one
-// alone taken back from today's. `sharp` null is the law (mwsrLaw); a number
-// pins the sharpness. `rest`: J11's other values, which the law now also sets;
-// its along taps left the kernel (J56), so these rows are J11 without them.
-const J11 = {
-  overrides: { DERING: 1, FLAT_TAPS: 1 },
-  sharp: 1.0,
-  wmin: -0.3,
-  rest: { tau: 0.05, racross: 1.0, sfull: 1.5 },
-};
-const TODAY = { overrides: {}, sharp: null };
-const ABLATIONS = [
-  ["today", TODAY],
-  ["j11", J11],
-  ["j11_dering2", { ...J11, overrides: { ...J11.overrides, DERING: 2 } }],
-  ["j11_cr5", { ...J11, overrides: { ...J11.overrides, FLAT_TAPS: 5 } }],
-  ["j11_wmin", { ...J11, wmin: -0.5 }],
-  ["j11_law", { ...J11, sharp: null }],
-  ["today-dering1", { ...TODAY, overrides: { DERING: 1 } }],
-  ["today-bilin", { ...TODAY, overrides: { FLAT_TAPS: 1 } }],
-  ["today-wmin", { ...TODAY, wmin: -0.3 }],
-  ["today-sharp1", { ...TODAY, sharp: 1.0 }],
-];
 
 /** The texture's pixels as RGBA half floats (rows packed), 8-bit ones in [0, 1]. */
 async function readTarget(device, tex) {
@@ -179,18 +140,9 @@ function hdrFrame(c, planes, timestamp, mode = "linear") {
   });
 }
 
-/** One frame of case c drawn by a renderer made for mode and variant; `set`,
- *  an ablation's constants and sharpness over the product's. */
-async function drawOnce(c, planes, mode, variant, set = null) {
-  const { r, canvas, cfg, errors, out } = await makeRenderer(c, mode, set ? "mwsr" : variant);
-  if (set) {
-    r.setMwsrOverrides(set.overrides);
-    r.setMwsrTuning({
-      ...(set.rest || {}),
-      ...(set.sharp === null ? {} : { sharp: set.sharp }),
-      ...(set.wmin === undefined ? {} : { wmin: set.wmin }),
-    });
-  }
+/** One frame of case c drawn by a renderer made for mode and variant. */
+async function drawOnce(c, planes, mode, variant) {
+  const { r, canvas, cfg, errors, out } = await makeRenderer(c, mode, variant);
   await r.draw(hdrFrame(c, planes, 1000, mode));
   const [w, h] = c.in;
   const res = {
@@ -312,23 +264,21 @@ function stats(xs) {
   return { p50: at(0.5), p99: at(0.99), mean: s.reduce((a, b) => a + b, 0) / s.length, n: s.length };
 }
 
-/** 'mwsr' and 'mwsr-enc' (or, with ab=dering, DERING 2 and 1) on case c by
+/** 'mwsr' and 'mwsr-enc' on case c by
  *  one renderer, switched by blocks (the same device, textures and pipelines
  *  for both: two renderers, two devices, put 13 % between two identical
- *  paths, 26/10/2026; DERING's pipelines are rebuilt at each switch, outside
- *  the stamped passes), n draws each after a warm-up of 100, in four ABBA
+ *  paths, 26/10/2026), n draws each after a warm-up of 100, in four ABBA
  *  rounds (the GPU's clocks, which no one pins at their maximum, move). */
 async function timeCase(c, planes, n, ts, mode = "linear") {
   const { r, canvas, errors, out } = await makeRenderer(c, mode, "mwsr");
-  const [A, Bv] = DERING_AB ? DERING_SETS.map(([v]) => v) : ["mwsr", "mwsr-enc"];
+  const [A, Bv] = ["mwsr", "mwsr-enc"];
   const draws = { [A]: [], [Bv]: [] };
   const regimes = {};
   // every draw in order, warm-up included, for the tails (hdr-time.json): the
   // variant (1 = A), its total, pass 0, the kernel (ms), its start (epoch ms)
   const seq = [];
   const run = async (v, k) => {
-    if (DERING_AB) r.setMwsrOverrides(DERING_SETS.find(([name]) => name === v)[1].overrides);
-    else r._mwsrLinearDown = v === "mwsr";
+    r._mwsrLinearDown = v === "mwsr";
     if (GAP) await new Promise((done) => setTimeout(done, GAP));
     const walls = [];
     const d = await timedDraws(r, c, planes, k, ts, mode, walls);
@@ -395,47 +345,16 @@ async function main() {
   for (const c of cases) {
     n++;
     const planes = new Uint8Array(await (await fetch("/__dir/" + c.yuv)).arrayBuffer());
-    // the modes this case is drawn on, each with its input
-    const inputs = [["linear", planes]];
-    if (DERING_AB && c.sdr) inputs.push(["sdr", new Uint8Array(await (await fetch("/__dir/" + c.sdr)).arrayBuffer())]);
     if (TIME) {
-      for (const [mode, input] of DERING_AB ? inputs : inputs.slice(0, 1)) {
-        window.__progress = `case ${n}/${cases.length} ${c.name} ${mode} timed`;
-        try {
-          results.push(...(await timeCase(c, input, TIME, ts, mode)));
-        } catch (e) {
-          results.push({ case: c.name, mode, error: String((e && e.stack) || e) });
-        }
-      }
-      continue;
-    }
-    if (DERING_AB) {
-      for (const [mode, input] of inputs) {
-        for (const [variant, set] of [["off", null], ...DERING_SETS]) {
-          window.__progress = `case ${n}/${cases.length} ${c.name} ${mode} ${variant}`;
-          try {
-            results.push(await drawOnce(c, input, mode, variant, set));
-          } catch (e) {
-            results.push({ case: c.name, mode, variant, error: String((e && e.stack) || e) });
-          }
-        }
+      window.__progress = `case ${n}/${cases.length} ${c.name} linear timed`;
+      try {
+        results.push(...(await timeCase(c, planes, TIME, ts, "linear")));
+      } catch (e) {
+        results.push({ case: c.name, mode: "linear", error: String((e && e.stack) || e) });
       }
       continue;
     }
     const down = c.out[0] < c.in[0];
-    if (ABLATE) {
-      for (const mode of ["linear", "tonemap"]) {
-        for (const [variant, set] of [["off", null], ...ABLATIONS]) {
-          window.__progress = `case ${n}/${cases.length} ${c.name} ${mode} ${variant}`;
-          try {
-            results.push(await drawOnce(c, planes, mode, variant, set));
-          } catch (e) {
-            results.push({ case: c.name, mode, variant, error: String((e && e.stack) || e) });
-          }
-        }
-      }
-      continue;
-    }
     for (const mode of ["linear", "tonemap"]) {
       const variants = ["off", "mwsr"];
       if (mode === "linear" && down) variants.push("mwsr-enc");

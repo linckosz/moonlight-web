@@ -19,7 +19,7 @@ function once(text, needle) {
 
 // The line before the blend, where the across weight is settled for the pixel.
 const BLEND = "    // From here the arithmetic is hf (f32, or f16 when the module says so).\n";
-const scaled = (factor) => `    wX *= ${factor};\n    kB = 1.0 / (1.0 + 2.0 * wX);\n${BLEND}`;
+const scaled = (factor) => `    kg *= ${factor};\n    kw *= ${factor};\n${BLEND}`;
 
 export function mapKernel(up) {
   const decl = "@group(0) @binding(2) var<uniform> u : U;";

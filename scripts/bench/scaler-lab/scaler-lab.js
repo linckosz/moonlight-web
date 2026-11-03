@@ -90,8 +90,8 @@ const CELL_SETS = {
   // it, and the picture.
   glchain: ["chain-gl-off", "chain-gl-sgsr", "chain-gl-nis", "chain-gl-fsr1", "chain-gl-mwsr"],
   // The mwsr kernel (plan §3.2, §4.3): `mwsr[:key=val;key=val…]` sets its
-  // overrides (show, dering, c444, rdown, ll, flat, gz, fz: MWSR_KEYS),
-  // the uniforms (tau, sharp, wmin, racross, fc, sfull: MWSR_LAW_KEYS), half=1 (the f16
+  // overrides (show, c444, rdown, ll, gz: MWSR_KEYS),
+  // the uniforms (kc, ft, kg, kr, kwc, kl, sfull: MWSR_LAW_KEYS), half=1 (the f16
   // module; the page needs f16=1), mode=up|down (default: by the scale),
   // taps=1|4|9|16 (the reduction's grid) and srgb=1 (SDR only: the input
   // read and the output written through `-srgb` views, the sampler decoding
@@ -100,7 +100,7 @@ const CELL_SETS = {
   // dpdyFine in the vote: the quad's other row, J18); `ext-mwsr` reads the
   // external texture (no pass 0), `blit+mwsr` pays the pass 0 first;
   // `tex-s1-srgb` is the bilinear floor through the same views.
-  mwsr: ["mwsr", "mwsr:dering=0", "mwsr:half=1", "blit+mwsr"],
+  mwsr: ["mwsr", "mwsr:half=1", "blit+mwsr"],
   // P3: the reduction grids and lights (the mode follows the scale), 4:4:4.
   p3: ["mwsr", "mwsr:srgb=1", "mwsr:taps=9", "mwsr:ll=2", "mwsr:c444=1", "smooth2d"],
   // Plan B (upscaler-mwsr-b.md §3): MWSR on the planes of a YUV frame.
@@ -1626,16 +1626,13 @@ async function runLabInner(p, log) {
   // (pipeline constants) and uniforms. The override defaults are the text's.
   const MWSR_KEYS = {
     show: "SHOW",
-    dering: "DERING",
     c444: "CHROMA444",
     rdown: "R_DOWN",
     ll: "LINEAR_LIGHT",
-    flat: "FLAT_TAPS",
     gz: "GAZE",
-    fz: "FLAT_ZONE",
   };
   // The law's values, the uniform block's (mwsrUniforms() takes them by name).
-  const MWSR_LAW_KEYS = ["tau", "sharp", "wmin", "racross", "fc", "sfull"];
+  const MWSR_LAW_KEYS = ["kc", "ft", "kg", "kr", "kwc", "kl", "sfull"];
   // The gaze zone's uniforms (MwsrShader's MWSR_ZONE): a cell naming one of
   // them, or gaze=, takes the GAZE text unless gz= says otherwise.
   const ZONE_KEYS = {
@@ -1644,8 +1641,8 @@ async function runLabInner(p, log) {
     zrx: "rx",
     zry: "ry",
     zring: "ring",
-    ztau: "tau",
-    zsharp: "sharp",
+    zft: "ft",
+    zboost: "boost",
   };
   const regimes = {
     soft: mwsrRegime(inW, inH, outW, outH),

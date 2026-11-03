@@ -25,7 +25,7 @@
 // software rasteriser of Direct3D, unless --hardware is given.
 //
 //     mwsr_d3d11 in.png outW outH out.png [--hlsl DIR] [--srgb] [--half] [--hardware]
-//                [--define NAME=VALUE]... [--tau T] [--sharp S]
+//                [--define NAME=VALUE]... [--ft T] [--kg S]
 //
 // --srgb reads the input and writes the output through sRGB views, the
 // reduction's exact path; --half takes the upscale whose blend runs in
@@ -144,7 +144,7 @@ int main(int argc, char** argv)
 {
     if (argc < 5) {
         std::fprintf(stderr, "usage: mwsr_d3d11 in.png outW outH out.png [--hlsl DIR] [--srgb] [--half] [--hardware] "
-                             "[--define NAME=VALUE]... [--tau T] [--sharp S]\n");
+                             "[--define NAME=VALUE]... [--ft T] [--kg S]\n");
         return 2;
     }
     const std::string in = argv[1], out = argv[4];
@@ -169,10 +169,10 @@ int main(int argc, char** argv)
             if (eq == std::string::npos)
                 fail("--define wants NAME=VALUE");
             up.push_back({d.substr(0, eq), d.substr(eq + 1)});
-        } else if (a == "--tau" && i + 1 < argc)
-            options.tau = std::atof(argv[++i]);
-        else if (a == "--sharp" && i + 1 < argc)
-            options.sharp = std::atof(argv[++i]);
+        } else if (a == "--ft" && i + 1 < argc)
+            options.ft = std::atof(argv[++i]);
+        else if (a == "--kg" && i + 1 < argc)
+            options.kg = std::atof(argv[++i]);
         else
             fail(("unknown argument " + a).c_str());
     }

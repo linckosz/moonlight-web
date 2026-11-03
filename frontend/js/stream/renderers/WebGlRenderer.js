@@ -880,10 +880,10 @@ export class WebGlRenderer extends VideoRenderer {
 
     /**
      * The gl-mwsr kernel's per-draw values (MwsrShader's mwsrLaw: the vote
-     * threshold `tau`, the sharpness `sharp` and the others), for the
-     * laboratory's side-by-side viewer; the product draws with the law. Takes
-     * effect at the next draw.
-     * @param {{tau?: number, sharp?: number}|null} tuning null: the law
+     * threshold `ft`, the sharpness `kg` and the others), for the laboratory's
+     * side-by-side viewer; the product draws with the law. Takes effect at the
+     * next draw.
+     * @param {{ft?: number, kg?: number}|null} tuning null: the law
      */
     setMwsrTuning(tuning) {
         this._mwsrTuning = tuning || null;
@@ -892,7 +892,7 @@ export class WebGlRenderer extends VideoRenderer {
 
     /**
      * The gl-mwsr kernel's constants of the `up` mode beyond the product's
-     * (MwsrShader's MWSR_OVERRIDE_SPEC: FLAT_TAPS, FLAT_C…), baked into the
+     * (MwsrShader's MWSR_OVERRIDE_SPEC: SHOW, CHROMA444…), baked into the
      * texts, for the laboratory's side-by-side viewer, over the device class's
      * (mwsrClassOverrides), the only ones the product sets. A changed set
      * rebuilds the kernel's programs now, when the pass is the current one,
@@ -918,7 +918,7 @@ export class WebGlRenderer extends VideoRenderer {
      * GAZE 1 (rebuilt now when the pass is the current one) and its weight
      * following the stream's motion (noteEncodedFrame, GazeZone) unless
      * setMwsrGaze pins it.
-     * @param {{cx?: number, cy?: number, rx?: number, ry?: number, ring?: number, tau?: number, sharp?: number}|null} zone
+     * @param {{cx?: number, cy?: number, rx?: number, ry?: number, ring?: number, ft?: number, boost?: number}|null} zone
      */
     setMwsrZone(zone) {
         const next = zone ? { ...zone } : null;
@@ -1060,10 +1060,10 @@ export class WebGlRenderer extends VideoRenderer {
                         'uTex',
                         'uTexelScale',
                         'uDimsAcross',
-                        'uTauFc',
+                        'uKernel',
                         'uZone',
                         'uZoneBonus',
-                        'uGaze',
+                        'uBound',
                     ]),
                 );
             }
@@ -1261,12 +1261,12 @@ export class WebGlRenderer extends VideoRenderer {
                 gl.uniform1i(p.u.uTex, 0);
                 gl.uniform4fv(p.u.uTexelScale, this._mwsrUni.subarray(0, 4));
                 gl.uniform4fv(p.u.uDimsAcross, this._mwsrUni.subarray(4, 8));
-                gl.uniform4fv(p.u.uTauFc, this._mwsrUni.subarray(8, 12));
-                // The zone's values and what it moves: inactive, so null
-                // locations silently ignored, in a text built without GAZE.
+                gl.uniform4fv(p.u.uKernel, this._mwsrUni.subarray(8, 12));
+                // The zone's values: inactive, so null locations silently
+                // ignored, in a text built without GAZE.
                 gl.uniform4fv(p.u.uZone, this._mwsrUni.subarray(12, 16));
                 gl.uniform4fv(p.u.uZoneBonus, this._mwsrUni.subarray(16, 20));
-                gl.uniform4fv(p.u.uGaze, this._mwsrUni.subarray(20, 24));
+                gl.uniform4fv(p.u.uBound, this._mwsrUni.subarray(20, 24));
                 gl.drawArrays(gl.TRIANGLES, 0, 3);
             } else if (pass === 'off') {
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);

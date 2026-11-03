@@ -3218,3 +3218,30 @@ SGSR1 1,21 fois (1,08 à 1,39), NIS 4,68 fois (4,03 à 5,06) : MWSR est le plus 
 
 **Reste.** Les téléphones (Bruno lit le temps sur le comparateur en ligne, après le signal de 59), la Mi TV ; puis le retrait des anciens chemins et
 la décision sur la f16.
+
+## 2026-11-03 — J57, le noyau change : J, sa loi réglée à l'œil de Bruno
+
+**La décision de Bruno (03/11).** Après ses comparaisons de la journée, il adopte J, le noyau rapide des recherches de la nuit : un cubique lu en cinq échantillons bilinéaires, le détail mesuré en travers du bord, et une borne à marge sur la plage de la lecture du milieu et de la paire en travers. Ses repères : le niveau C à ×1,33 (force 1 de la loi), le niveau D à ×2 (force 1,35), tous deux sur `kg` et `kl`. À ×1,5, six images sur six en C (force 1,10), qui est exactement la droite en ln(ratio) entre les deux. Limite : cette page-là n'était pas à l'aveugle et C y était la valeur centrale de cinq forces ; cela soutient la courbe sans la prouver. L'essai à l'aveugle J contre FSR1 de la journée donne J 11, FSR1 0, aucune différence 1 sur 12 séries, J étant seul réglé à son œil et sur ces mêmes images.
+
+**Le texte.** Sept lectures sur un bord, une seule sur un quad plat. La loi (`MWSR_LAW`) est le polynôme de degré 2 en ln(ratio) de `kc`, `kg`, `kr`, `kl` ajusté de ×1,07 à ×4 sur les recherches de la nuit, la force par-dessus, `ft` 0,005 et `kwc` 0,1 constants. Plus de terme de surface, et aucune montée vers la 4K mesurée avec cette loi. Au-delà de ×2 la force reste à 1,35 : rien de plus haut n'a été vu. `DERING`, `FLAT_TAPS`, `FLAT_ZONE`, `fc`, `wmin`, `sharp`, `tau` et `racross` quittent le bloc : la borne et le chemin plat sont ceux de J. Le bloc reste de 24 flottants. La zone du regard suit : son `kg` au centre est un multiple de la loi (`boost` 1,5), une valeur que ni l'œil ni un score n'ont vue sur ce noyau, derrière sa clé de labo.
+
+**Vérifié, en logiciel (cœurs 16-21, priorité basse) :**
+- le texte du produit contre celui du labo jugé par Bruno, aux mêmes valeurs : 6 à 15 pixels sur 3,7 millions, 1/255 au plus, sur 9 cas ;
+- WebGL2 : conformité `--conformity` OK ;
+- HLSL sur WARP contre WGSL sur SwiftShader, 9 cas : 60 à 67 dB, 0,01 à 0,07 % de pixels au-delà de 1/255 (des quads près du seuil basculent) ; FXC et DXC compilent ; `mwsr.h` donne les flottants du module au bit près sur 6 tailles ;
+- dorés réécrits puis relus (`--golden-check`).
+
+**HDR.** La marge de la borne fabrique des hautes lumières : du texte à 1000 nits monte vers 1400, soit 1,08 à 1,36 fois le pic d'entrée, et le dE ITP sur le texte et le jeu à ×2 passe au-dessus de la simple copie (`hdr_check.py`). Limiter la marge au-dessous du blanc supprime le pic mais pas le dE. Sans marge (`kl` 0, option `hdr` de `mwsrUniforms`, posée par `WebGpuRenderer` sur le chemin `linear`), tous les contrôles passent. Bruno n'a pas vu J en HDR. Le chemin `tonemap` reste le noyau SDR, sa marge voulue : le contrôle des texels n'y est plus que rapporté.
+
+**Sous ×1 et à ×1.** Le noyau ne s'y applique pas : ×1 est une copie, et jusqu'à ×0,5 la réduction est un échantillon bilinéaire en lumière linéaire, sans netteté. FSR1 n'est pas fait pour réduire ; il tourne tel quel. Moyennes sur 148 cas, images à 2160 ou 1440 selon le ratio (LPIPS, VMAF NEG, PSNR), jeux après HEVC, MWSR puis FSR1 : ×0,5 .0075 92,32 43,17 ; .0210 93,20 39,24. ×0,67 .0077 92,73 44,44 ; .0231 93,75 40,69. ×0,75 .0171 89,00 40,05 ; .0234 91,19 38,06. ×1 (copie) .0133 95,77 41,53 ; .0254 93,10 38,30. MWSR gagne partout sauf en VMAF NEG sous ×1. Contrôle : 30 cellules redessinées, 0 écart.
+
+**La vitesse (`final_time.py`, créneau de 59, 03/11 16:39-16:53, bus 3 et iGPU, ms par image).** Sur la RTX, J 0,08 à 0,11, FSR1 0,29 à 0,39 (2,7 à 4 fois J). Sur l'iGPU en f16, J 1,34 à 2,01, FSR1 6,24 à 6,34 (3,2 à 4,7 fois). Le noyau d'avant J valait 0,063 et 1,29 sur 0 A.D. à ×1,33 ; J y vaut 0,085 et 2,01 : J coûte plus cher, c'est le prix de la netteté retenue.
+
+**L'optimisation, sans perte.** La forme du texte vient des recherches de la nuit (`fa=1;fc=1;fb=1`). Trois essais de plus :
+- la f16 hors NVIDIA reste : −14 à −15 % sur l'iGPU pour 2/255 au plus ;
+- le calcul du cubique écrit autrement : −1,5 à −2 % sur la RTX, −1 % sur l'iGPU en f32, mais +1,6 % en f16 : gardé tel quel ;
+- un seuil de vote plus haut : à 0,0075, 9 % de pixels en moins sur le chemin à sept lectures, mais une image perd jusqu'à 4,8 % de LPIPS : refusé.
+
+**Zones contre loi sur J final (60 cas par ratio).** À ×1,33 sur les jeux : LPIPS −3,3 %, NEG +0,31, PSNR +0,25 dB ; à ×2 : −7,7 %, +1,28, +0,58 dB. Sur les pages rien ne bouge (+0,03 % au plus). NEG et PSNR ne passent jamais sous la loi ; le pire LPIPS est +2,81 %. Après HEVC le gain moyen est plus faible (−1,6 % et −4,8 %). Tout vient du labo, images figées : l'arbre a été réglé sur le noyau d'avant, et le passage de sa baisse à J (`zf`, sur `kg` et `kwc`) est nouveau. Coût de la passe hôte sur la RTX : 45, 64 et 94 µs en rafale de 1080p à 4K ; 80, 215 et 1359 µs à 60 Hz sur un bureau calme. Les zones restent coupées, derrière leur clé de labo.
+
+**Reste.** La colonne de la Radeon 780M, le tableau du site et du README sur ce texte, l'essai en vrai stream, les téléphones.

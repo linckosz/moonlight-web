@@ -29,31 +29,24 @@ precision highp int;
 uniform sampler2D uTex;
 uniform vec4 uTexelScale; // texel.xy, scale.xy: the first four of mwsrUniforms()
 uniform vec4 uDimsAcross; // the input's size, the across taps' distance
-uniform vec4 uTauFc; // tau, fc, the across weight, the blend's inverse divisor
+uniform vec4 uKernel; // kc, ft, kg, kwc
 uniform vec4 uZone; // the gaze zone's centre.xy and half-axes.xy (GAZE 1)
-uniform vec4 uZoneBonus; // its ring, its tau and sharpness at the centre, its weight
-uniform vec4 uGaze; // the law's sharpness, the kernel's strength, wmin, 0 (GAZE 1)
+uniform vec4 uZoneBonus; // its ring, its threshold and kg at the centre, its weight
+uniform vec4 uBound; // kl, then the block's pad
 in vec2 vUv;
 out vec4 oColor;
 
 vec3 S(vec2 uv) {
     return textureLod(uTex, uv, 0.0).rgb;
 }
-vec3 L(ivec2 c) {
-    return texelFetch(uTex, c, 0).rgb;
-}
 
 const uint SHOW = 0u;
-const uint DERING = 2u;
 const uint CHROMA444 = 0u;
-const uint FLAT_TAPS = 2u;
 const uint GAZE = 0u;
-const uint FLAT_ZONE = 0u;
 const float R_DOWN = 1.0;
 const uint LINEAR_LIGHT = 1u;
 
 const vec3 LUMA = vec3(0.25, 0.625, 0.125);
-const float W_ACROSS = 0.3;
 
 // The gaze zone's weight, the WGSL text's gazeWeight line for line.
 float gazeWeight(vec2 uv) {
@@ -64,122 +57,39 @@ float gazeWeight(vec2 uv) {
     return (1.0 - smoothstep(1.0, 1.0 + uZoneBonus.x, d)) * uZoneBonus.w;
 }
 
-// The flat path's picture, the WGSL text's flatPath line for line.
-vec3 flatPath(vec2 uv, vec3 C, float zg) {
-    if (FLAT_TAPS == 2u) {
-        vec2 sn = uv * uDimsAcross.xy;
-        vec2 tn = floor(sn);
-        vec2 dn = abs(sn - tn - 0.5);
-        float f = max(dn.x, dn.y);
-        return C + (1.0 - f) * (1.0 - 1.5 * f) * (L(ivec2(tn)) - C);
-    }
-    if (FLAT_TAPS != 3u && FLAT_TAPS != 5u && FLAT_TAPS != 9u) {
-        return C;
-    }
-    if (GAZE == 1u && FLAT_ZONE == 1u && zg <= 0.0) {
-        return C;
-    }
-    vec2 texel = uTexelScale.xy;
-    vec2 sp = uv * uDimsAcross.xy;
-    vec3 R;
-    if (FLAT_TAPS == 3u) {
-        vec2 tn = floor(sp) + 0.5;
-        vec2 h = sp - tn;
-        vec2 s = mix(vec2(-1.0), vec2(1.0), greaterThanEqual(h, vec2(0.0)));
-        vec2 ah = abs(h);
-        vec2 wf = ah * ah - 0.5 * ah;
-        vec2 wm = 1.0 - wf;
-        vec2 wn = ah * ah + 0.5 * ah;
-        vec2 pm = (tn + s * wn / wm) * texel;
-        vec2 pf = (tn - s) * texel;
-        vec3 sm = S(pm);
-        vec3 sfx = S(vec2(pf.x, pm.y));
-        vec3 sfy = S(vec2(pm.x, pf.y));
-        vec3 acc = sm * (wm.x * wm.y) + sfx * (wf.x * wm.y) + sfy * (wm.x * wf.y);
-        float norm = wm.x * wm.y + wf.x * wm.y + wm.x * wf.y;
-        vec3 lo = min(sm, min(sfx, sfy));
-        vec3 hi = max(sm, max(sfx, sfy));
-        R = clamp(acc / norm, lo, hi);
-    } else {
-        vec2 tc = floor(sp - 0.5) + 0.5;
-        vec2 f = sp - tc;
-        float c = uTauFc.y;
-        vec2 w0 = -c * f * (1.0 - f) * (1.0 - f);
-        vec2 w1 = (2.0 - c) * f * f * f - (3.0 - c) * f * f + 1.0;
-        vec2 w3 = -c * (1.0 - f) * f * f;
-        vec2 w2 = 1.0 - w0 - w1 - w3;
-        vec2 w12 = w1 + w2;
-        vec2 p0 = (tc - 1.0) * texel;
-        vec2 p12 = (tc + w2 / w12) * texel;
-        vec2 p3 = (tc + 2.0) * texel;
-        vec3 s12 = S(p12);
-        vec3 s02 = S(vec2(p0.x, p12.y));
-        vec3 s32 = S(vec2(p3.x, p12.y));
-        vec3 s20 = S(vec2(p12.x, p0.y));
-        vec3 s23 = S(vec2(p12.x, p3.y));
-        vec3 acc = s12 * (w12.x * w12.y) + s02 * (w0.x * w12.y) + s32 * (w3.x * w12.y)
-            + s20 * (w12.x * w0.y) + s23 * (w12.x * w3.y);
-        float norm = w12.x * w12.y + w0.x * w12.y + w3.x * w12.y + w12.x * w0.y + w12.x * w3.y;
-        vec3 lo = min(min(s12, s02), min(s32, min(s20, s23)));
-        vec3 hi = max(max(s12, s02), max(s32, max(s20, s23)));
-        if (FLAT_TAPS == 9u) {
-            vec3 s00 = S(p0);
-            vec3 s30 = S(vec2(p3.x, p0.y));
-            vec3 s03 = S(vec2(p0.x, p3.y));
-            vec3 s33 = S(p3);
-            acc += s00 * (w0.x * w0.y) + s30 * (w3.x * w0.y) + s03 * (w0.x * w3.y) + s33 * (w3.x * w3.y);
-            norm += w0.x * w0.y + w3.x * w0.y + w0.x * w3.y + w3.x * w3.y;
-            lo = min(lo, min(min(s00, s30), min(s03, s33)));
-            hi = max(hi, max(max(s00, s30), max(s03, s33)));
-        }
-        R = clamp(acc / norm, lo, hi);
-    }
-    if (GAZE == 1u && FLAT_ZONE == 1u) {
-        return mix(C, R, zg);
-    }
-    return R;
-}
-
-// The exact bound, the WGSL text's texelBound line for line.
-vec3 texelBound(vec2 uv, vec3 R) {
-    ivec2 f = ivec2(floor(uv * uDimsAcross.xy - 0.5));
-    ivec2 i0 = max(f, ivec2(0));
-    ivec2 i1 = min(f + 1, ivec2(uDimsAcross.xy) - 1);
-    vec3 q00 = L(i0);
-    vec3 q10 = L(ivec2(i1.x, i0.y));
-    vec3 q01 = L(ivec2(i0.x, i1.y));
-    vec3 q11 = L(i1);
-    return clamp(R, min(min(q00, q10), min(q01, q11)), max(max(q00, q10), max(q01, q11)));
-}
-
 void main() {
     vec2 uv = vUv;
-    vec3 C = S(uv);
+    vec2 texel = uTexelScale.xy;
+    vec2 sp = uv * uDimsAcross.xy;
+    vec2 f0 = floor(sp - 0.5);
+    vec2 t = sp - 0.5 - f0;
+    vec2 s = 1.0 - t;
+    vec2 ku = uKernel.x * t * s;
+    vec2 w12 = 1.0 + ku;
+    vec2 p12 = (f0 + 0.5 + (t * t * (3.0 - 2.0 * t) + ku * s) / w12) * texel;
+    vec3 rM = S(p12);
     float zg = gazeWeight(uv);
-    float tau = uTauFc.x;
+    float ft = uKernel.y;
     if (GAZE == 1u) {
-        tau = mix(uTauFc.x, uZoneBonus.y, zg);
+        ft = mix(uKernel.y, uZoneBonus.y, zg);
     }
     // GL's window y runs up, WebGPU's framebuffer y runs down: dFdy is the
     // WGSL text's dpdy negated, or the edge normal comes out mirrored and the
     // across taps fall along the edge on every diagonal (the first conformity run).
-    float gx;
-    float gy;
+    vec2 gM;
     bool isFlat;
     if (CHROMA444 == 1u) {
-        vec3 dx = dFdx(C) * uTexelScale.z;
-        vec3 dy = -dFdy(C) * uTexelScale.w;
+        vec3 dx = dFdx(rM) * uTexelScale.z;
+        vec3 dy = -dFdy(rM) * uTexelScale.w;
         vec3 m = abs(dx) + abs(dy);
         bool rg = m.g > m.r;
         bool b = m.b > max(m.r, m.g);
-        gx = b ? dx.b : (rg ? dx.g : dx.r);
-        gy = b ? dy.b : (rg ? dy.g : dy.r);
-        isFlat = max(m.r, max(m.g, m.b)) < tau;
+        gM = vec2(b ? dx.b : (rg ? dx.g : dx.r), b ? dy.b : (rg ? dy.g : dy.r));
+        isFlat = max(m.r, max(m.g, m.b)) < ft;
     } else {
-        float lC = dot(C, LUMA);
-        gx = dFdx(lC) * uTexelScale.z;
-        gy = -dFdy(lC) * uTexelScale.w;
-        isFlat = abs(gx) + abs(gy) < tau;
+        float lM = dot(rM, LUMA);
+        gM = vec2(dFdx(lM) * uTexelScale.z, -dFdy(lM) * uTexelScale.w);
+        isFlat = abs(gM.x) + abs(gM.y) < ft;
     }
     if (SHOW == 1u) {
         oColor = vec4(vec3(isFlat ? 0.0 : 1.0), 1.0);
@@ -190,28 +100,41 @@ void main() {
         return;
     }
     if (isFlat) {
-        oColor = vec4(flatPath(uv, C, zg), 1.0);
+        oColor = vec4(rM, 1.0);
         return;
     }
-    vec2 dn = vec2(gx, gy) * inversesqrt(max(gx * gx + gy * gy, 1e-12)) * uDimsAcross.zw;
-    vec3 X1 = S(uv - dn);
-    vec3 X2 = S(uv + dn);
-    float wX = uTauFc.z;
-    float kB = uTauFc.w;
+    vec2 p0 = (f0 - 0.5) * texel;
+    vec2 p3 = (f0 + 2.5) * texel;
+    vec3 rT = S(vec2(p12.x, p0.y));
+    vec3 rL = S(vec2(p0.x, p12.y));
+    vec3 rR = S(vec2(p3.x, p12.y));
+    vec3 rB = S(vec2(p12.x, p3.y));
+    vec2 dn = gM * inversesqrt(dot(gM, gM)) * uDimsAcross.zw;
+    vec3 ra = S(uv - dn);
+    vec3 rb = S(uv + dn);
+    float kg = uKernel.z;
     if (GAZE == 1u) {
-        wX = max(-W_ACROSS * mix(uGaze.x, uZoneBonus.z, zg) * uGaze.y, uGaze.z);
-        kB = 1.0 / (1.0 + 2.0 * wX);
+        kg = mix(uKernel.z, uZoneBonus.z, zg);
     }
-    mediump vec3 Ch = C;
-    mediump vec3 Xh = X1 + X2;
-    mediump float wh = wX;
-    mediump float kh = kB;
-    vec3 R = (Ch + wh * Xh) * kh;
-    if (DERING != 2u) {
-        R = clamp(R, min(C, min(X1, X2)), max(C, max(X1, X2)));
-    }
-    if (DERING != 0u) {
-        R = texelBound(uv, R);
-    }
-    oColor = vec4(R, 1.0);
+    mediump vec3 hM = rM;
+    mediump vec3 hA = ra;
+    mediump vec3 hB = rb;
+    mediump vec3 hTop = rT;
+    mediump vec3 hLeft = rL;
+    mediump vec3 hRight = rR;
+    mediump vec3 hBottom = rB;
+    mediump vec2 hu = ku;
+    mediump vec2 hs = s;
+    mediump vec2 ht = t;
+    mediump vec2 h12 = w12;
+    mediump vec3 K = (h12.x * (h12.y * hM - hu.y * (hs.y * hTop + ht.y * hBottom)) - h12.y * hu.x * (hs.x * hLeft + ht.x * hRight)) / (1.0 - hu.x * hu.y);
+    mediump vec3 D = K - 0.5 * (hA + hB);
+    mediump float hg = kg;
+    mediump float hw = uKernel.w;
+    mediump vec3 R = K + hg * D + hw * (D - vec3(dot(D, LUMA)));
+    mediump vec3 mn = min(hM, min(hA, hB));
+    mediump vec3 mx = max(hM, max(hA, hB));
+    mediump float hl = uBound.x;
+    mediump vec3 mg = (mx - mn) * hl;
+    oColor = vec4(clamp(R, max(mn - mg, vec3(0.0)), mx + mg), 1.0);
 }

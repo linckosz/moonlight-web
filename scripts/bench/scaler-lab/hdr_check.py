@@ -32,10 +32,11 @@ The checks, judged here in linear light (metrics_hdr.py):
     the truth's Lanczos rings past the input's peak, and past 1100 nits on
     the edges of 1000-nit text, a 4:2:0 input has its fringes); and none
     made, the output's peak at most 1.05 of the input's;
-  - bounds: no channel beyond the 4x4 input texels around the pixel, in the
-    kernel's own space (the encoded values; its flat path reads the 4x4, its
-    edge path is bounded by the middle 2x2), on an upscale and at x0.5; the
-    J11 measure (BT.2020 linear, the local 2x2) is reported beside it;
+  - bounds: on 'linear', no channel beyond the 4x4 input texels around the
+    pixel, in the kernel's own space (the encoded values), on an upscale and
+    at x0.5; the J11 measure (BT.2020 linear, the local 2x2) is reported beside
+    it. On 'tonemap' the kernel is the SDR one, whose margin is on purpose: the
+    share is reported only;
   - quality: mwsr's colour error to the truth (dE ITP) no worse than off's
     (+2 %) on 'linear', as on 21/10 (J11); on 'tonemap' the kernel is the SDR
     one on an SDR picture, judged by the SDR lab, its PSNR reported only;
@@ -127,9 +128,6 @@ CASES = [
     ("up720-etalon444", "etalon", (1280, 720), (2560, 1440), "444"),
     ("up1080-etalon444", "etalon", (1920, 1080), (2560, 1440), "444"),
 ]
-# --dering's cases: the yardstick in 4:4:4 (with its SDR picture beside it)
-# and in 4:2:0, and the two that split DERING 1 and 2 (J48)
-DERING_CASES = ["up720-etalon444", "up1080-etalon444", "up720-etalon", "up1080-etalon", "up720-text444", "up1080-ramp"]
 PNGS = {"game": GAME_PNG, "etalon": ETALON_PNG}
 
 
@@ -281,19 +279,6 @@ def prepare(a):
                       "sdr_feed": np.round(lin_to_srgb(sdr_in) * 255.0).astype(np.uint8),
                       "mire": mname, "in": size_in, "out": size_out}
         case = {"name": name, "mire": mname, "in": size_in, "out": size_out, "chroma": chroma, "yuv": yuv}
-        if mname == "etalon" and (chroma == "444" or a.time):
-            # the SDR picture (--dering), 4:4:4 as the 4:4:4 case's planes: the
-            # lab's recipe, its Lanczos-3 reduction in linear light
-            sdr = srgb_to_lin(np.asarray(Image.open(ETALON_PNG).convert("RGB"), dtype=np.float32) / 255.0)
-            if sdr.shape[:2] != (size_out[1], size_out[0]):
-                sdr = reduce_linear(sdr, size_out)
-            sdr_feed8 = np.round(lin_to_srgb(reduce_linear(sdr, size_in)) * 255.0).clip(0, 255).astype(np.uint8)
-            rgba = np.concatenate([sdr_feed8, np.full(sdr_feed8.shape[:2] + (1,), 255, np.uint8)], axis=2)
-            case["sdr"] = "sdr-%s.rgba" % name
-            with open(os.path.join(a.dir, case["sdr"]), "wb") as f:
-                f.write(np.ascontiguousarray(rgba).tobytes())
-            data[name]["sdr8_gt"] = lin_to_srgb(sdr).astype(np.float32)
-            data[name]["sdr8_feed"] = sdr_feed8
         cases.append(case)
         print("prepared %-14s %s %dx%d -> %dx%d, input peak %.0f nits" % (
             name, chroma, size_in[0], size_in[1], size_out[0], size_out[1],
@@ -327,9 +312,7 @@ def drive(a, cdp, port):
             if msg.get("id") == mid:
                 return msg.get("result", msg)
 
-    query = "?time=%d&vendor=%s" % (a.time, a.vendor) if a.time else "?ablate=1" if a.ablate else "?"
-    if a.dering:
-        query += "&ab=dering"
+    query = "?time=%d&vendor=%s" % (a.time, a.vendor) if a.time else "?"
     if a.dry:
         query += "&dry=1"
     if a.gap:
@@ -463,8 +446,6 @@ def judge(a, data, res):
             row["psnr"] = 10 * np.log10(1.0 / mse) if mse > 0 else 99.0
             if judged and (not down or x05):
                 row["bounds"] = beyond_texels(out, d["sdr_feed"].astype(np.float32) / 255.0, 1.5 / 255.0, 0.0)
-                check(row["bounds"] <= 0.0001, "%s: %.3f %% of the pixels beyond the 4x4 texels around" % (
-                    tag, 100 * row["bounds"]))
             lum_out = srgb_to_lin(out) @ np.array([0.2126, 0.7152, 0.0722])
             lum_gt = srgb_to_lin(gt) @ np.array([0.2126, 0.7152, 0.0722])
         if d["mire"] == "stripes":
@@ -523,104 +504,6 @@ def time_report(a, res):
     sys.exit(1 if fails else 0)
 
 
-def ablate_report(a, data, res):
-    """--ablate: each upscale case, on 'linear' its colour error to the truth
-    (dE ITP, PSNR in PQ), its peak against the input's and the J11 overshoot,
-    on 'tonemap' the SDR lab's measures (PSNR, SSIM, FLIP, overshoot), per
-    set of defaults, with the change against today's; hdr-ablate.json. No
-    check: a study (journal J48). Exit 1 on an error."""
-    import metrics  # the SDR lab's (scikit-image, FLIP)
-    fails, rows = [], []
-    for r in res["results"]:
-        if r.get("error") or r["errors"] or r["failed"]:
-            fails.append("%s %s %s: %s" % (r["case"], r["mode"], r["variant"],
-                                           (r.get("error") or str(r["errors"][:3]) or "failed")[:300]))
-            continue
-        d = data[r["case"]]
-        ow, oh = d["out"]
-        path = os.path.join(a.dir, r["dump"] + ".f16")
-        out = load_dump(path, ow, oh)
-        row = {"case": r["case"], "mode": r["mode"], "variant": r["variant"]}
-        if r["mode"] == "linear":
-            m = metrics_hdr.measure(d["gt"], d["feed"], out)
-            row.update({k: m[k] for k in ("dEitp", "dEitpP99", "psnrPQ", "ssimPQ", "maxRatio", "overshoot")})
-            row["dEitpCentre"] = m["centre"]["dEitp"]
-            row["bounds"] = beyond_texels(out, d["feed"], 0.002, 0.004)
-        else:
-            sdr_in = d["sdr_feed"].astype(np.float32) / 255.0
-            m = metrics.measure(d["sdr_gt"], sdr_in, out)
-            row.update({k: m.get(k) for k in ("psnr", "ssim", "flip", "overshoot")})
-            row["bounds"] = beyond_texels(out, sdr_in, 1.5 / 255.0, 0.0)
-        rows.append(row)
-        if not a.keep:
-            os.remove(path)
-    today = {(x["case"], x["mode"]): x for x in rows if x["variant"] == "today"}
-
-    def rel(x, key):
-        t = today.get((x["case"], x["mode"]))
-        if not t or t.get(key) in (None, 0) or x.get(key) is None:
-            return "-"
-        return "%+.1f %%" % (100 * (x[key] / t[key] - 1))
-    print("%-16s %-14s %8s %9s %8s %7s %8s %8s | %-14s %7s %7s %7s %9s" % (
-        "case", "variant", "dE ITP", "vs today", "PSNR PQ", "x in", "over %", "bounds", "tonemap", "PSNR", "SSIM",
-        "FLIP", "FLIP vs"))
-    for case in dict.fromkeys(x["case"] for x in rows):
-        lin = {x["variant"]: x for x in rows if x["case"] == case and x["mode"] == "linear"}
-        sdr = {x["variant"]: x for x in rows if x["case"] == case and x["mode"] == "tonemap"}
-        for v in lin:
-            x, y = lin[v], sdr.get(v, {})
-            print("%-16s %-14s %8.3f %9s %8.2f %7.3f %8.3f %8.4f | %-14s %7s %7s %7s %9s" % (
-                case, v, x["dEitp"], rel(x, "dEitp"), x["psnrPQ"], x["maxRatio"], 100 * x["overshoot"],
-                100 * x["bounds"], v, fmt(y.get("psnr"), "%.2f"), fmt(y.get("ssim"), "%.4f"),
-                fmt(y.get("flip"), "%.4f"), rel(y, "flip") if y else "-"))
-        print()
-    with open(os.path.join(a.dir, "hdr-ablate.json"), "w") as f:
-        json.dump({"adapter": res["adapter"], "rows": rows, "fails": fails}, f, indent=1)
-    print("FAIL:\n  " + "\n  ".join(fails) if fails else "ablation done, no error")
-    sys.exit(1 if fails else 0)
-
-
-def dering_report(a, data, res):
-    """--dering: DERING 2 (today's) against DERING 1 and 'off', on 'linear'
-    (PSNR in PQ, dE ITP) and on the SDR yardstick (the SDR lab's PSNR, SSIM
-    and FLIP, whole and in the central third); hdr-dering.json. The dumps
-    are kept, for the eye. No check. Exit 1 on an error."""
-    import metrics  # the SDR lab's (scikit-image, FLIP)
-    fails, rows = [], []
-    for r in res["results"]:
-        if r.get("error") or r["errors"] or r["failed"]:
-            fails.append("%s %s %s: %s" % (r["case"], r["mode"], r["variant"],
-                                           (r.get("error") or str(r["errors"][:3]) or "failed")[:300]))
-            continue
-        d = data[r["case"]]
-        ow, oh = d["out"]
-        out = load_dump(os.path.join(a.dir, r["dump"] + ".f16"), ow, oh)
-        row = {"case": r["case"], "mode": r["mode"], "variant": r["variant"], "path": r["path"], "dump": r["dump"]}
-        if r["mode"] == "linear":
-            m = metrics_hdr.measure(d["gt"], d["feed"], out)
-            row.update({"psnrPQ": m["psnrPQ"], "psnrPQCentre": m["centre"]["psnrPQ"], "ssimPQ": m["ssimPQ"],
-                        "dEitp": m["dEitp"], "dEitpCentre": m["centre"]["dEitp"], "maxRatio": m["maxRatio"]})
-        else:
-            # the 8-bit canvas, read back through half floats: back to its 1/255 steps
-            out = np.round(out * 255.0) / 255.0
-            m = metrics.measure(d["sdr8_gt"], d["sdr8_feed"].astype(np.float32) / 255.0, out)
-            row.update({"psnr": m["psnr"], "ssim": m["ssim"], "psnrCentre": m["centre"]["psnr"],
-                        "ssimCentre": m["centre"]["ssim"], "flip": m.get("flip"), "overshoot": m.get("overshoot")})
-        rows.append(row)
-    print("%-15s %-6s %-8s %8s %8s %8s %8s %8s %8s" % (
-        "case", "mode", "variant", "PSNR", "centre", "SSIM", "FLIP", "dE ITP", "x in"))
-    for x in rows:
-        sdr = x["mode"] == "sdr"
-        print("%-15s %-6s %-8s %8.2f %8.2f %8.4f %8s %8s %8s" % (
-            x["case"], x["mode"], x["variant"], x["psnr"] if sdr else x["psnrPQ"],
-            x["psnrCentre"] if sdr else x["psnrPQCentre"], x["ssim"] if sdr else x["ssimPQ"],
-            fmt(x.get("flip"), "%.4f"), fmt(x.get("dEitp"), "%.3f"), fmt(x.get("maxRatio"), "%.3f")))
-    with open(os.path.join(a.dir, "hdr-dering.json"), "w") as f:
-        json.dump({"adapter": res["adapter"], "rows": rows, "fails": fails}, f, indent=1)
-    print("FAIL:\n  " + "\n  ".join(fails) if fails else "DERING 1 against 2 done, no error")
-    sys.exit(1 if fails else 0)
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default=os.path.join(REPO, "bench-out", "scaler-lab", "hdr"))
@@ -632,22 +515,14 @@ def main():
     ap.add_argument("--cdp", type=int, default=0,
                     help="the DevTools port of a Chrome the caller launched, pinned on a GPU and checked")
     ap.add_argument("--vendor", default="nvidia", help="--time: a word the adapter's name must hold")
-    ap.add_argument("--ablate", action="store_true",
-                    help="the upscale's defaults one at a time between J11's and today's (SwiftShader; a study)")
-    ap.add_argument("--dering", action="store_true",
-                    help="DERING 2 against 1, on 'linear' and on the SDR yardstick (with --time: their speed)")
     ap.add_argument("--dry", action="store_true", help="--time on SwiftShader: the code alone, figures worth nothing")
     ap.add_argument("--gap", type=int, default=0,
                     help="--time: MS of idle before each block, for the GPU to drop its P-state (V10, 28/10/2026)")
     a = ap.parse_args()
     a.only = [s for s in a.only.split(",") if s]
     if not a.only:
-        # the yardstick's cases are --dering's alone (or named by --only)
-        a.only = list(DERING_CASES) if a.dering else [
-            name for name, mname, size_in, size_out, _ in CASES
-            if mname != "etalon" and (not a.ablate or size_out[0] > size_in[0])]
-    if a.dering:
-        a.keep = True
+        # the yardstick's cases only when named by --only
+        a.only = [name for name, mname, size_in, size_out, _ in CASES if mname != "etalon"]
     if a.time and not a.cdp and not a.dry:
         raise SystemExit("--time measures a GPU: give it the Chrome pinned and checked on one (--cdp)")
     os.makedirs(a.dir, exist_ok=True)
@@ -669,10 +544,6 @@ def main():
     print("adapter: %s, shader-f16 %s" % (res["adapter"], res["f16"]))
     if a.time:
         time_report(a, res)
-    if a.ablate:
-        ablate_report(a, data, res)
-    if a.dering:
-        dering_report(a, data, res)
     rows, fails = judge(a, data, res)
     print("%-16s %-7s %-9s %-9s %-14s %7s %7s %8s %6s %6s %7s %8s %7s %7s %8s %8s" % (
         "case", "mode", "variant", "path", "regime", "dE ITP", "PSNR", "peak", "x in", "kept", "over %", "bounds %",

@@ -13,27 +13,30 @@ copyright and licence notice stay with it. The rest of MoonlightWeb is under the
 
 **Upscaling** (the output is larger than the input), per output pixel:
 
-1. One bilinear sample of the input at the pixel's position.
-2. A vote: the screen derivatives of that sample, scaled to a change per input texel, decide for each 2×2 quad of
-   pixels whether it sits on an edge. A flat quad reads one more texel, the one nearest the pixel, moves the sample
-   towards it and stops there: at exactly ×2 a line one texel wide has a slope of 0 and comes this way, and this keeps
-   its depth.
-3. On an edge, two more bilinear samples across it, along the normal the derivatives measure. Their weight, negative,
-   sharpens the ramp; it is one value per frame, which fades out near 1:1.
-4. The result is bounded by the four input texels around the pixel: no ringing halo, and a line one texel wide keeps
-   its depth.
+1. One bilinear read, at the position that gives the middle of a cubic: the four input texels around the pixel, by
+   weights that sharpen with `kc`.
+2. A vote: the screen derivatives of that read's luma, scaled to a change per input texel, decide for each 2×2 quad of
+   pixels whether it sits on an edge. A flat quad keeps that one read.
+3. On an edge, four more reads complete the cubic, one for each outer lobe. Two more lie across the edge, along the
+   normal the derivatives measure: the difference between the cubic and their mean is the detail, added back by `kg`,
+   and its colour by `kwc`. That makes seven reads.
+4. The result stays within the range of the middle read and the pair across the edge, widened by `kl` of that range. So
+   a little overshoot is left on purpose, which is what makes it look sharper, and it stays small.
 
 **Downscaling** (the output is smaller): a k×k grid of bilinear samples over the output pixel's footprint in the
 input, averaged in linear light. One sample through sRGB views is the whole filter down to ×0.5; 3×3 and 4×4 grids
 serve below.
 
-**HDR**: both modes work per channel and clamp nothing to 1.0, so they run unchanged on a float texture whose values go
-past 1.0 (1.0 = reference white).
+**HDR**: both modes work per channel and clamp nothing to 1.0, so they run on a float texture whose values go past 1.0
+(1.0 = reference white). The upscale then takes no margin on its bound (`hdr: true`, or `kl` 0): with the margin, 1000-nit
+text reached about 1400 nits.
 
-**The law**: the sharpness and the distance of the across pair follow a curve over the scale
-([the law](#per-frame-values)), tuned on LPIPS first, then VMAF NEG, on 15 pictures of games, text and interfaces, clean
-and through HEVC at a stream's bit rate, and checked on 4 others. It holds the same curve on 1080p, 1440p and 2160p
-surfaces: searches on those sizes did not move the best values in a way a term for the surface could follow.
+**The law**: `kc`, `kg`, `kr` and `kl` follow a curve over the scale ([the law](#per-frame-values)), fitted from ×1.07 to
+×4 on LPIPS first, then VMAF NEG, on 15 pictures of games, text and interfaces, clean and through HEVC at a stream's bit
+rate, and measured back on 15 others. A person's eye then raised the sharpness above that fit: `kg` and `kl` times a
+force that goes from 1 at ×1.33 to 1.35 at ×2. Those two marks and ×1.5 were chosen by eye on six pictures each, the
+pictures seen one at a time and not blind, by one person. Between ×1.33 and ×2 the eye and PSNR, SSIM, MS-SSIM and VMAF
+NEG can disagree on games: see the tables below.
 
 **Cost** (GPU timestamps, from 720p and from 1080p to 1440p, a game picture and a text chart, 02/11/2026): 0.06 to 0.08 ms per
 frame on an RTX 5060 Ti, 1.1 to 1.5 ms on the Ryzen 9 9900X's integrated Radeon, and 0.24 to 0.37 ms on a Radeon 780M, where
@@ -175,13 +178,13 @@ The 0 A.D. picture is © Wildfire Games; the screenshot is by PantheraLeo1359531
 | File | What it is |
 |---|---|
 | `wgsl/mwsr-up.wgsl` | The upscale, WebGPU (WGSL). Its parameters are `override` constants, set at pipeline creation. |
-| `wgsl/mwsr-up-f16.wgsl` | The same, its blend in f16. Needs the `shader-f16` feature. |
+| `wgsl/mwsr-up-f16.wgsl` | The same, its colour arithmetic in f16. Needs the `shader-f16` feature. |
 | `wgsl/mwsr-down-1.wgsl`, `-4`, `-9`, `-16` | The reduction, with 1, 2×2, 3×3 or 4×4 samples. |
 | `glsl/mwsr.vert` | The full-screen triangle every GLSL fragment text expects. |
 | `glsl/mwsr-up.frag` | The upscale, GLSL ES 3.00 (WebGL2, OpenGL ES 3.0). The parameters are constants at the top. |
 | `glsl/mwsr-down-4.frag`, `-9`, `-16` | The reduction, GLSL ES 3.00. |
 | `hlsl/mwsr-up.hlsl` | The upscale, HLSL, for Direct3D 11 (FXC, `ps_5_0`) and 12 (DXC, `ps_6_0`). Its parameters are `MWSR_*` defines. |
-| `hlsl/mwsr-up-half.hlsl` | The same, its blend in `min16float`. |
+| `hlsl/mwsr-up-half.hlsl` | The same, its colour arithmetic in `min16float`. |
 | `hlsl/mwsr-down-1.hlsl`, `-4`, `-9`, `-16` | The reduction, HLSL. |
 | `cpp/mwsr.h` | The CPU side for a native renderer, C++17, header only: the mode for a scale and its shader file, the kernel's values by the law, the 96 bytes of the constant buffer, the defines to compile with. |
 | `cpp/example_d3d11.cpp` | A whole Direct3D 11 integration in one file, which also serves as a test: it reads a PNG, draws it at another size and writes a PNG. |
@@ -229,14 +232,14 @@ The C++ header gives the JavaScript module's modes and floats bit for bit.
   | 0, 1 | `1 / inW`, `1 / inH` |
   | 2, 3 | `outW / inW`, `outH / inH` |
   | 4, 5 | `inW`, `inH` |
-  | 6, 7 | `racross / inW`, `racross / inH`, the across taps' distance: see [the law](#per-frame-values) |
-  | 8 | `tau`, the vote's threshold: by the law |
-  | 9 | `fc`, the C of the flat path's cubic, read only with `FLAT_TAPS` 5 or 9: by the law |
-  | 10 | the weight of each across tap: `max(-0.3 * sharp * strength, wmin)`, `strength` going from 0 at 1:1 to 1 at ×1.1 |
-  | 11 | `1 / (1 + 2 * weight)`, the blend's inverse divisor |
-  | 12 to 19 | the gaze zone (centre, half-axes, ring, its tau and sharpness, its weight `gaze`), read only with `GAZE 1` |
-  | 20 to 22 | `sharp`, `strength`, `wmin`, read only with `GAZE 1` |
-  | 23 | `0` |
+  | 6, 7 | `kr / inW`, `kr / inH`, the across reads' distance: see [the law](#per-frame-values) |
+  | 8 | `kc`, the cubic's sharpness: by the law |
+  | 9 | `ft`, the vote's threshold: by the law |
+  | 10 | `kg * strength`, the sharpness, `strength` going from 0 at 1:1 to 1 at ×1.07 |
+  | 11 | `kwc * strength`, the colour's sharpness |
+  | 12 to 19 | the gaze zone (centre, half-axes, ring, its `ft`, its `kg`, its weight `gaze`), read only with `GAZE 1` |
+  | 20 | `kl`, the bound's margin: by the law, `0` on an HDR feed |
+  | 21 to 23 | `1`, `0`, `0`, read by nothing |
 
 ### WebGPU (WGSL)
 
@@ -284,8 +287,8 @@ Without the module, take `wgsl/mwsr-up.wgsl` as it is and write the 24 floats yo
 ### WebGL2 and OpenGL ES 3.0 (GLSL)
 
 Link `glsl/mwsr.vert` with one fragment text. Uniforms: `uTex` (the input, on texture unit 0), then the block above
-in six `vec4`: `uTexelScale` (floats 0 to 3), `uDimsAcross` (4 to 7), `uTauFc` (8 to 11), `uZone` (12 to 15),
-`uZoneBonus` (16 to 19) and `uGaze` (20 to 23).
+in six `vec4`: `uTexelScale` (floats 0 to 3), `uDimsAcross` (4 to 7), `uKernel` (8 to 11), `uZone` (12 to 15),
+`uZoneBonus` (16 to 19) and `uBound` (20 to 23).
 Draw with `gl.drawArrays(gl.TRIANGLES, 0, 3)`.
 
 - The vertex shader expects the texture's first row to be the top of the picture, as a `VideoFrame` or an image
@@ -306,10 +309,10 @@ gl.useProgram(program);
 gl.uniform1i(gl.getUniformLocation(program, 'uTex'), 0);
 gl.uniform4fv(gl.getUniformLocation(program, 'uTexelScale'), u.subarray(0, 4));
 gl.uniform4fv(gl.getUniformLocation(program, 'uDimsAcross'), u.subarray(4, 8));
-gl.uniform4fv(gl.getUniformLocation(program, 'uTauFc'), u.subarray(8, 12));
+gl.uniform4fv(gl.getUniformLocation(program, 'uKernel'), u.subarray(8, 12));
 gl.uniform4fv(gl.getUniformLocation(program, 'uZone'), u.subarray(12, 16));
 gl.uniform4fv(gl.getUniformLocation(program, 'uZoneBonus'), u.subarray(16, 20));
-gl.uniform4fv(gl.getUniformLocation(program, 'uGaze'), u.subarray(20, 24));
+gl.uniform4fv(gl.getUniformLocation(program, 'uBound'), u.subarray(20, 24));
 gl.drawArrays(gl.TRIANGLES, 0, 3);
 ```
 
@@ -366,42 +369,46 @@ read it through an `_UNORM_SRGB` view, write the output through one, and pass `s
 
 ### Per-frame values
 
-These are what the uniform block is made from. `mwsrUniforms(inW, inH, outW, outH, { tau, sharp, wmin, racross, fc,
-sfull, gaze, zone })` computes it all; a value you name replaces the law's.
+These are what the uniform block is made from. `mwsrUniforms(inW, inH, outW, outH, { kc, ft, kg, kr, kwc, kl, sfull,
+gaze, zone, hdr })` computes it all; a value you name replaces the law's.
 
 | Value | Default | What it does |
 |---|---|---|
-| `tau` | `0.0025` | The vote's threshold, in luma per input texel. Lower sends more quads to the edge path (sharper, a little more costly); higher sends more to the flat path (softer, cheaper). |
-| `sharp` | the law below | The sharpness: each across tap weighs `-0.3 * sharp`, at full strength. |
-| `racross` | the law below | The distance of the taps across the edge, in input texels. |
-| `wmin` | `-0.4` | The most negative an across weight may go. At the law's sharpness it does not bite. `mwsrUniforms()` holds a named value above `-0.49`, where the blend's divisor would near 0. |
-| `sfull` | `1.1` | The scale from which the kernel is at full strength. It fades in from 1:1. |
-| `fc` | `0.5` | Read only with `FLAT_TAPS` 5 or 9: the C of the flat path's cubic, the depth of its negative lobe. `0.5` is Catmull-Rom; higher is steeper, with more ringing (still bounded). |
-| `gaze` | `0` | The gaze zone's weight, 0 to 1. Read only by a text built with `GAZE 1`. |
+| `ft` | `0.005` | The vote's threshold, in luma per input texel. Lower sends more quads to the edge path; higher sends more to the single read (softer, cheaper). |
+| `kc` | the law below | The cubic's sharpness: `0.5` is Catmull-Rom's. |
+| `kg` | the law below | The sharpness: how much of the detail measured across the edge is added back. |
+| `kr` | the law below | The distance of the reads across the edge, in input texels. |
+| `kwc` | `0.1` | The colour's sharpness: how much of that detail's colour is added back on top. |
+| `kl` | the law below | The bound's margin, as a share of the range of the middle read and the pair across the edge. |
+| `sfull` | `1.07` | The scale from which `kg` and `kwc` are whole. They fade in from 1:1. |
+| `gaze` | `0` | The gaze zone's weight, 0 to 1. Read only by a text built with `GAZE 1`, whose values no eye or score has judged yet on this kernel. |
+| `hdr` | `false` | The feed holds values past 1.0: `kl` 0 unless named. |
 
-**The law** (`mwsrLaw(inW, inH, outW, outH)`). The curved values follow the size of the stream and of the surface:
+**The law** (`mwsrLaw(inW, inH, outW, outH)`). The values follow the scale, and only it:
 
 ```
-s = min(outW / inW, outH / inH)                          // the scale, held in 1.15 .. 3
-h = sqrt(outW * outH * 9 / 16)                           // the surface's height at 16:9, held in 1080 .. 2160
+s = min(outW / inW, outH / inH)                 // the scale, held in 1.07 .. 4
 x = ln(s)
-y = ln(h / 1440)
-value = c0 + c1 x + c2 x^2 + c3 x^3 + c4 x^4 + c5 y + c6 x y
+value = c0 + c1 x + c2 x^2
+force = 1 + 0.35 * clamp(ln(s / 1.3333) / ln(2 / 1.3333), 0, 1)
+kg = value(kg) * force
+kl = value(kl) * force
 ```
 
-| Value | c0 | c1 | c2 | c3 | c4 | c5 | c6 |
-|---|---|---|---|---|---|---|---|
-| `sharp` | -0.3343 | 11.3937 | -32.6773 | 36.7278 | -13.9478 | 0 | 0 |
-| `racross` | 1.547 | -7.8961 | 22.004 | -23.4416 | 8.6001 | 0 | 0 |
+| Value | c0 | c1 | c2 |
+|---|---|---|---|
+| `kc` | 0.63536 | 0.02185 | 0.12781 |
+| `kg` | -0.12884 | 2.58447 | -1.26009 |
+| `kr` | 1.00715 | -1.02091 | 0.56996 |
+| `kl` | 0.33417 | -0.29620 | 0.08628 |
 
-MoonlightWeb reads a second table on frames that carry its native host's zones; that table stays in the module, under
-`zones: true`. A reduction does not read the law. It was fitted on searches at ×1.15, ×1.33, ×1.5, ×2, ×2.5 and ×3 on a
-1440p surface, and at ×1.33 and ×2 on 1080p and 2160p surfaces with zones, then measured back through the shader, at
-×1.4 and ×2.25 as well, and on 4 pictures kept out of the searches. The surface's terms `c5` and `c6` are 0 for now, and
-the module's other values are constants. They stay in the form for a later measure.
+A reduction does not read the law. It was fitted on searches at 13 scales from ×1.07 to ×4 on a 1440p surface, each value
+a regular path through the best settings found, then measured back through the shader on pictures the searches never saw.
+No term for the surface's size is in it, and no upscale to a 4K surface has been measured with this law: measured at
+×2 before the force, that case was the law's weakest.
 
 **Example**, 1920×1080 drawn at 2560×1440:
-`[0.000520833, 0.000925926, 1.33333, 1.33333, 1920, 1080, 0.000311091, 0.00055305, 0.0025, 0.5, -0.305391, 2.56926, 0.5, 0.5, 0.2, 0.45, 0.75, 0.02, 2.5, 0, 1.01797, 1, -0.4, 0]`. Floats 12 to 22 are read only with `GAZE 1`.
+`[0.000520833, 0.000925926, 1.33333, 1.33333, 1920, 1080, 0.000396161, 0.000704286, 0.652221, 0.005, 0.510377, 0.1, 0.5, 0.5, 0.2, 0.45, 0.75, 0.005, 0.765566, 0, 0.256099, 1, 0, 0]`. Floats 12 to 19 are read only with `GAZE 1`.
 
 ### Pipeline constants
 
@@ -411,11 +418,8 @@ prefixed `MWSR_`.
 | Constant | Type | Default | What it does |
 |---|---|---|---|
 | `SHOW` | u32 | `0` | Debug: `1` paints the vote (white = edge quad, black = flat), `2` the gaze zone's weight. |
-| `DERING` | u32 | `2` | The edge path's bound. `2`: the four input texels around the pixel, so a one-texel line keeps its depth. `1`: the three samples, then those texels. `0`: the three samples only. |
 | `CHROMA444` | u32 | `0` | `1` takes the vote and the edge's direction from the channel with the steepest ramp, so that a border between two colours of one luma is sharpened too. For 4:4:4 streams. |
-| `FLAT_TAPS` | u32 | `2` | The flat path's reconstruction. `2`: the sample moved towards the texel nearest the pixel, one read. `1`: the bilinear sample. `5`: a Catmull-Rom cubic in 5 bilinear taps. `9`: the same with its corners. `3`: Dodgson's quadratic in 3 taps. |
-| `GAZE` | u32 | `0` | `1`: a gaze zone. The vote's threshold and the sharpness slide from the per-frame values at the border to the zone's at its centre, weighted by `gaze`. |
-| `FLAT_ZONE` | u32 | `0` | With `GAZE 1`: `1` keeps the flat path's cubic or quadratic inside the zone only, and the periphery keeps the bilinear sample. `FLAT_TAPS` 2 ignores it. |
+| `GAZE` | u32 | `0` | `1`: a gaze zone. The vote's threshold and the sharpness slide from the per-frame values at the border to the zone's at its centre, weighted by `gaze`. Not judged yet on this kernel. |
 | `R_DOWN` | f32 | `1.0` | Reduction: the span of the grid, as a fraction of the pixel's footprint. Set it from [the mode table](#what-every-version-needs). |
 | `LINEAR_LIGHT` | u32 | `1` | Reduction: the light the samples are averaged in. `0`: the hardware's, through sRGB views. `1`: gamma 2 (a square and a square root). `2`: the exact sRGB curve (at most 0.35 dB better, 15 `pow` per pixel). `3`: the input already holds linear light, and the output is encoded once. WGSL only for `3`. |
 
@@ -425,8 +429,8 @@ prefixed `MWSR_`.
 |---|---|---|
 | A computer, a phone or a tablet | the defaults | They are MoonlightWeb's on all of them. |
 | A 4:4:4 stream (desktop work, text) | `CHROMA444 1` | Colour borders of one luma, such as red text on green, get sharpened too. |
-| A softer picture | `sharp` lower, `tau` higher | Less sharpening, and fewer pixels on the edge path. |
-| An HDR float input | the defaults | Unchanged for the upscale. A reduction takes `LINEAR_LIGHT 3` if the input holds linear light. |
+| A softer picture | `kg` lower, `ft` higher | Less sharpening, and fewer pixels on the edge path. |
+| An HDR float input | `hdr: true` | No margin on the upscale's bound. A reduction takes `LINEAR_LIGHT 3` if the input holds linear light. |
 
 ### Example settings
 
@@ -444,7 +448,7 @@ const pipeline = device.createRenderPipeline({
     },
     primitive: { topology: 'triangle-list' },
 });
-// every value by the law at these sizes (sharp 0.875, racross 0.824 at ×2)
+// every value by the law at these sizes (kg 1.427, kr 0.573 at ×2)
 device.queue.writeBuffer(uniforms, 0, mwsrUniforms(1280, 720, 2560, 1440));
 ```
 
@@ -468,9 +472,10 @@ const fragment = {
 MWSR was written from scratch for MoonlightWeb. It takes ideas, and credits them:
 
 - bilinear taps instead of gathers: Atyuwen's mobile EASU, Jimenez, MJP;
+- a cubic read as bilinear taps: Sigg and Hadwiger, GPU Gems 2;
 - the early out on an edge vote: SGSR1, NEDI;
 - the local bound against ringing: EASU, SGSR1;
 - sharpening held by the local range: CAS, RCAS.
 
-The vote by screen derivatives and the taps laid along the measured edge are its own. No line, polynomial or
+The vote by screen derivatives and the reads laid across the measured edge are its own. No line, polynomial or
 constant of FSR1, SGSR1 or NIS is reproduced, and MoonlightWeb's tests check that none creeps in.

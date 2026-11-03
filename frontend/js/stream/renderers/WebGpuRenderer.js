@@ -2354,10 +2354,10 @@ export class WebGpuRenderer extends VideoRenderer {
 
     /**
      * The mwsr kernel's per-draw values (MwsrShader's mwsrLaw: the vote
-     * threshold `tau`, the sharpness `sharp` and the others), for the
-     * laboratory's side-by-side viewer; the product draws with the law. Takes
-     * effect at the next draw.
-     * @param {{tau?: number, sharp?: number}|null} tuning null: the law
+     * threshold `ft`, the sharpness `kg` and the others), for the laboratory's
+     * side-by-side viewer; the product draws with the law. Takes effect at the
+     * next draw.
+     * @param {{ft?: number, kg?: number}|null} tuning null: the law
      */
     setMwsrTuning(tuning) {
         this._mwsrTuning = tuning || null;
@@ -2366,7 +2366,7 @@ export class WebGpuRenderer extends VideoRenderer {
 
     /**
      * The mwsr kernel's pipeline constants of the `up` mode beyond the
-     * product's (MwsrShader's MWSR_OVERRIDE_SPEC: FLAT_TAPS, FLAT_C…), for
+     * product's (MwsrShader's MWSR_OVERRIDE_SPEC: SHOW, CHROMA444…), for
      * the laboratory's side-by-side viewer, over the device class's
      * (mwsrClassOverrides), the only ones the product sets. A changed set
      * drops the kernel's pipelines, rebuilt at the next draw.
@@ -2385,7 +2385,7 @@ export class WebGpuRenderer extends VideoRenderer {
      * zone's values over the defaults, the kernel's pipelines built with
      * GAZE 1 and its weight following the stream's motion (noteEncodedFrame,
      * GazeZone) unless setMwsrGaze pins it.
-     * @param {{cx?: number, cy?: number, rx?: number, ry?: number, ring?: number, tau?: number, sharp?: number}|null} zone
+     * @param {{cx?: number, cy?: number, rx?: number, ry?: number, ring?: number, ft?: number, boost?: number}|null} zone
      */
     setMwsrZone(zone) {
         const next = zone ? { ...zone } : null;
@@ -3206,6 +3206,7 @@ export class WebGpuRenderer extends VideoRenderer {
                             zones: zoned,
                             gaze,
                             zone: this._mwsrZone || undefined,
+                            hdr: this._hdrLinear,
                         }),
                     );
                 }

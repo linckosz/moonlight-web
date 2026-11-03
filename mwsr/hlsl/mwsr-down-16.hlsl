@@ -51,19 +51,19 @@ cbuffer MwsrConstants : register(MWSR_CB_REGISTER) {
     float2 scale;
     float2 dims;
     float2 across;
-    float tau;
-    float fc;
-    float wacross;
-    float kblend;
+    float kc;
+    float ft;
+    float kg;
+    float kwc;
     float2 zc;
     float2 zr;
     float zring;
-    float ztau;
-    float zsharp;
+    float zft;
+    float zkg;
     float gaze;
-    float sharp;
-    float strength;
-    float wmin;
+    float kl;
+    float zref;
+    float pad1;
     float pad2;
 };
 
@@ -73,9 +73,6 @@ SamplerState samp : register(MWSR_SAMPLER_REGISTER);
 float3 S(float2 uv) {
     return tex.SampleLevel(samp, uv, 0.0).rgb;
 }
-float3 L(int2 c) {
-    return tex.Load(int3(c, 0)).rgb;
-}
 
 typedef float hf;
 typedef float3 h3;
@@ -84,26 +81,14 @@ typedef float3 h3;
 #define MWSR_SHOW 0u
 #endif
 static const uint SHOW = MWSR_SHOW;
-#ifndef MWSR_DERING
-#define MWSR_DERING 2u
-#endif
-static const uint DERING = MWSR_DERING;
 #ifndef MWSR_CHROMA444
 #define MWSR_CHROMA444 0u
 #endif
 static const uint CHROMA444 = MWSR_CHROMA444;
-#ifndef MWSR_FLAT_TAPS
-#define MWSR_FLAT_TAPS 2u
-#endif
-static const uint FLAT_TAPS = MWSR_FLAT_TAPS;
 #ifndef MWSR_GAZE
 #define MWSR_GAZE 0u
 #endif
 static const uint GAZE = MWSR_GAZE;
-#ifndef MWSR_FLAT_ZONE
-#define MWSR_FLAT_ZONE 0u
-#endif
-static const uint FLAT_ZONE = MWSR_FLAT_ZONE;
 #ifndef MWSR_R_DOWN
 #define MWSR_R_DOWN 1.0
 #endif
@@ -114,7 +99,6 @@ static const float R_DOWN = MWSR_R_DOWN;
 static const uint LINEAR_LIGHT = MWSR_LINEAR_LIGHT;
 
 static const float3 LUMA = float3(0.25, 0.625, 0.125);
-static const float W_ACROSS = 0.3;
 
 float3 srgbToLin(float3 c) {
     float3 lo = c / 12.92;
