@@ -239,7 +239,28 @@ void run_host_backend_writes_tests()
 
     // Another host beside it is just as welcome.
     CHECK_EQ(addHost(addRouter, neighbour, false).statusCode, 200);
-    CHECK(hosts.findHostByUuid(QStringLiteral("uuid-b")) != nullptr);
+    NvComputer* beside = hosts.findHostByUuid(QStringLiteral("uuid-b"));
+    CHECK(beside != nullptr);
+    if (!beside) return;
+
+    // The manual address is the operator's. A session gives it to a host it adds...
+    CHECK_EQ(beside->manualAddress.toString(), neighbour);
+
+    // ...and not to one already known: same answer, nothing written...
+    beside->manualAddress = NvAddress();
+    const int savesKnown = hosts.saves;
+    const HttpResponse named = addHost(addRouter, neighbour, false);
+    CHECK_EQ(named.statusCode, 200);
+    CHECK_EQ(firstHost(named)["uuid"].toString(), QStringLiteral("uuid-b"));
+    CHECK(beside->manualAddress.isNull());
+    CHECK_EQ(hosts.saves, savesKnown);
+    // ...nor over the one it has...
+    CHECK_EQ(addHost(addRouter, homeLan, false).statusCode, 200);
+    CHECK_EQ(tower->manualAddress.toString(), home);
+
+    // ...while the administrator still writes it on a known host.
+    CHECK_EQ(addHost(addRouter, neighbour, true).statusCode, 200);
+    CHECK_EQ(beside->manualAddress.toString(), neighbour);
 
     // A known host does not move, not even by a port, and nothing of the answer
     // is kept.
@@ -249,7 +270,7 @@ void run_host_backend_writes_tests()
         CHECK_EQ(refused.statusCode, 409);
         CHECK(!QJsonDocument::fromJson(refused.body).object().contains("hosts"));
         CHECK_EQ(tower->activeAddress.toString(), homeLan);
-        CHECK_EQ(tower->manualAddress.toString(), homeLan);
+        CHECK_EQ(tower->manualAddress.toString(), home);
         CHECK_EQ(tower->localAddress.toString(), homeLan);
     }
     CHECK_EQ(hosts.saves, savesBefore);
