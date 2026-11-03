@@ -588,10 +588,14 @@ public:
                 m_Info.hostMuted = strategy != audio::HostMute::Strategy::None;
                 log::info(std::string("[native] audio: ") + how);
             }
+            // Known once the capture located its output; refreshed there.
+            if (!m_Target.displayOsName.empty()) m_StreamedDisplay->set(m_Target.displayOsName);
             auto audio = std::make_unique<audio::WasapiLoopback>(
                 m_Callbacks.onAudio, m_Config.tuning.audioFrameSamples(),
                 m_Config.tuning.audioGraceUs < 0 ? audio::WasapiLoopback::kDefaultGraceUs
-                                                 : m_Config.tuning.audioGraceUs);
+                                                 : m_Config.tuning.audioGraceUs,
+                AppAudioOptions{m_Config.audioSource, m_StreamedDisplay,
+                                m_Config.onAudioAppChanged});
             std::string audioError;
             if (audio->start(audioError)) {
                 m_Audio = std::move(audio);
@@ -2012,6 +2016,10 @@ private:
         // the paths go missing. Matched by name, it is the same one; matched
         // by path, the path stays the key.
         if (!name.empty()) m_Target.displayOsName = name;
+        // "Stream audio from: Automatic" follows focus on this display only
+        // (AudioSource.h): a window on another screen is not what the viewer
+        // sees, so its sound stays out.
+        m_StreamedDisplay->set(m_Target.displayOsName);
         return true;
     }
 
@@ -4754,6 +4762,8 @@ private:
     /// thread. Null when the consumer asked for none or no device could open.
     std::unique_ptr<audio::WasapiLoopback> m_Audio;
     audio::HostMute m_HostMute;
+    /// The display "Stream audio from: Automatic" follows focus on.
+    std::shared_ptr<StreamedDisplay> m_StreamedDisplay = std::make_shared<StreamedDisplay>();
 
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};

@@ -96,6 +96,7 @@ import {
     readResolutionChoice,
 } from '../util/StreamResolution.js';
 import { previewCeiling } from '../util/AutoCeiling.js';
+import { audioSourceOptions, normalizeAudioSource } from './audioSourceOptions.js';
 import {
     CODEC_PYROWAVE,
     PYROWAVE_FALLBACK,
@@ -174,6 +175,19 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
+        // Which sound the stream carries (audioSourceOptions.js): 'all' (default,
+        // as an OS behaves), 'focused' (Automatic: the app in focus, a game) or
+        // 'app:<exe>'. The host says whether it can (Windows 11 native host);
+        // elsewhere the choice is shown locked.
+        this._audioSource = 'all';
+        this._audioSourceSupported = false;
+        // The apps with sound on the host, to pick one from.
+        this._audioApps = [];
+        // The app whose sound a running stream carries, as the host reports it
+        // (GET /api/audio/focused), shown in the option: "Automatic (app in
+        // focus) — huntgame.exe". Empty when no stream reports one.
+        this._audioFocusApp = '';
+        this._audioFocusTimer = null;
         // Send this device's microphone to the host (off by default): opened
         // only once the host said it can take it (audio/MicUplink.js), and how
         // it sounds (MIC_QUALITY: voice cleanup, or none at a higher bitrate).
@@ -276,6 +290,7 @@ export class SettingsView {
         await this._loadUpdateState();
         this.render();
         this.bindEvents();
+        this._startAudioFocusPoll();
         this._unsubUpdate = hostUpdate.subscribe((view) => {
             this._updateRun = view;
             this._paintUpdateSection();
@@ -582,6 +597,8 @@ export class SettingsView {
             this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
             // A debug build, or debug mode (--debug, or Admin → Advanced).
             this._debugBuild = data.debug_build === true || data.debug_mode === true;
+            // What the host can do, not a preference: always the server's.
+            this._audioSourceSupported = data.audio_source_focused_supported === true;
 
             if (!stored) {
                 this._applySettings(data);
@@ -630,6 +647,7 @@ export class SettingsView {
         this._hdrEnabled = data.hdr_enabled === true;
         this._chroma444 = data.chroma_444_enabled === true;
         this._muteHostAudio = data.mute_host_audio !== false;
+        this._audioSource = normalizeAudioSource(data.audio_source);
         this._micEnabled = micRequested(data);
         this._micChosen = data.mic_chosen === true;
         this._micQuality = data.mic_quality === 'clean' ? 'clean' : 'voice';
@@ -926,6 +944,7 @@ export class SettingsView {
             hdr_enabled: this._hdrEnabled,
             chroma_444_enabled: this._chroma444,
             mute_host_audio: this._muteHostAudio,
+            audio_source: this._audioSource,
             seamless_switching: true,
             touch_sensitivity: this._touchSensitivity,
             // Per device: it answers this device's mouse.
@@ -1132,6 +1151,72 @@ export class SettingsView {
         if (this._unsubUpdate) this._unsubUpdate();
         this._unsubUpdate = null;
         this._stopPadWatch();
+        if (this._audioFocusTimer) {
+            clearInterval(this._audioFocusTimer);
+            this._audioFocusTimer = null;
+        }
+    }
+
+    // --- Stream audio from ---
+
+    /** The select's options as HTML, the choice selected. */
+    _audioSourceOptionsHtml() {
+        return audioSourceOptions({
+            selected: this._audioSource,
+            apps: this._audioApps,
+            followed: this._audioFocusApp,
+            allLabel: t('settings.audioSourceAll'),
+            focusedLabel: t('settings.audioSourceFocused'),
+        })
+            .map(
+                ({ value, label }) =>
+                    `<option value="${escapeHtml(value)}" ${value === this._audioSource ? 'selected' : ''}>${escapeHtml(label)}</option>`,
+            )
+            .join('');
+    }
+
+    /**
+     * Repaint the options in place (never a full render, which would move the
+     * page), and never under the user's hand: an open list would close.
+     */
+    _paintAudioSourceOptions() {
+        const select = this.container.querySelector('#settings-audio-source');
+        if (!select || document.activeElement === select) return;
+        select.innerHTML = this._audioSourceOptionsHtml();
+    }
+
+    /**
+     * While Settings is open on a host that can do it: every 2 s in Automatic,
+     * which app the running stream follows; every 10 s, which apps have sound.
+     * A failed read keeps the last answer.
+     */
+    _startAudioFocusPoll() {
+        if (!this._audioSourceSupported || this._audioFocusTimer) return;
+        let ticks = 0;
+        const tick = async () => {
+            if (this._destroyed) return;
+            const askApps = ticks++ % 5 === 0;
+            try {
+                const [focused, listed] = await Promise.all([
+                    this._audioSource === 'focused' ? BackendClient.getAudioFocused() : null,
+                    askApps ? BackendClient.getAudioApps() : null,
+                ]);
+                if (this._destroyed) return;
+                const app =
+                    this._audioSource === 'focused' && typeof focused?.app === 'string'
+                        ? focused.app
+                        : '';
+                const apps = Array.isArray(listed?.apps) ? listed.apps : this._audioApps;
+                if (app === this._audioFocusApp && apps === this._audioApps && !askApps) return;
+                this._audioFocusApp = app;
+                this._audioApps = apps;
+                this._paintAudioSourceOptions();
+            } catch {
+                // The host is busy or gone: the next tick asks again.
+            }
+        };
+        tick();
+        this._audioFocusTimer = setInterval(tick, 2000);
     }
 
     // --- Controllers ---
@@ -1453,6 +1538,7 @@ export class SettingsView {
         this._micDevice = null;
         saveMicDevice(null);
         this._micQuality = 'voice';
+        this._audioSource = 'all';
         this._quitAppOnStop = false;
         this._fullscreenOnStart = false;
         this._touchSensitivity = 2.2;
@@ -1999,6 +2085,21 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.muteHostDesc')}</span>
                     </div>
 
+                    <div class="settings-field${this._audioSourceSupported ? '' : ' settings-field-locked'}">
+                        <label class="settings-label" for="settings-audio-source">
+                            ${t('settings.audioSource')}
+                        </label>
+                        <span class="setting-desc">${t(
+                            this._audioSourceSupported
+                                ? 'settings.audioSourceDesc'
+                                : 'settings.audioSourceUnsupported',
+                        )}</span>
+                        <select id="settings-audio-source" class="settings-select"
+                                ${this._audioSourceSupported ? '' : 'disabled'}>
+                            ${this._audioSourceOptionsHtml()}
+                        </select>
+                    </div>
+
                     <div class="settings-field${micSupported() ? '' : ' settings-field-locked'}">
                         <label class="settings-label" for="settings-mic-device">
                             ${t('settings.micDevice')}
@@ -2449,6 +2550,15 @@ export class SettingsView {
         if (muteHostCheck)
             muteHostCheck.addEventListener('change', () => {
                 this._muteHostAudio = muteHostCheck.checked;
+                this._autoSave();
+            });
+
+        const audioSourceSelect = /** @type {HTMLSelectElement|null} */ (
+            this.container.querySelector('#settings-audio-source')
+        );
+        if (audioSourceSelect)
+            audioSourceSelect.addEventListener('change', () => {
+                this._audioSource = normalizeAudioSource(audioSourceSelect.value);
                 this._autoSave();
             });
 

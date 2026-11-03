@@ -34,6 +34,8 @@
 #include "backend/streambackend/NativeHostBackend.h"
 #include "backend/streambackend/NativeProbeService.h"
 #include "streaming/ConsoleSession.h"
+#include "server/AudioApps.h"
+#include "streaming/StreamWorkerHost.h"
 #include "mw/native/Capabilities.h"
 #include "mw/native/HostKeyboardLayout.h"
 #include "mw/native/VideoPipeline.h"
@@ -53,6 +55,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkInterface>
+#include <QOperatingSystemVersion>
 #include <QPointer>
 #include <QProcess>
 #include <QStandardPaths>
@@ -71,6 +74,20 @@ static constexpr int kServiceRestartExitCode = 79;
 // NVENC, AMF or oneVPL. A Snapdragon's Media Foundation encoder has none, nor
 // has a machine with no GPU encoder at all, and the admin hides the choice
 // there rather than offer a switch that changes nothing.
+// "Stream audio from" one app — the native Windows host's per-process loopback,
+// which arrived in Windows build 20348 (Windows 11). Elsewhere the choice is
+// shown locked: the stream carries the whole mix whatever is stored.
+static bool audioSourceFocusedSupported()
+{
+#if defined(Q_OS_WIN)
+    if (!NativeHostBackend::isEnabled()) return false;
+    return QOperatingSystemVersion::current() >=
+           QOperatingSystemVersion(QOperatingSystemVersion::Windows, 10, 0, 20348);
+#else
+    return false;
+#endif
+}
+
 static bool nativeVideoPipelineSupported()
 {
 #if defined(Q_OS_WIN)
@@ -1325,6 +1342,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["stream_fps"] = appSettings.streamFps();
         obj["hdr_enabled"] = appSettings.hdrEnabled();
         obj["mute_host_audio"] = appSettings.muteHostAudio();
+        obj["audio_source"] = appSettings.audioSource();
+        obj["audio_source_focused_supported"] = audioSourceFocusedSupported();
         obj["chroma_444_enabled"] = appSettings.chroma444Enabled();
         obj["video_enhancement"] = appSettings.videoEnhancement();
         obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
@@ -1359,6 +1378,25 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // Debug mode (--debug, or its box in the admin page) shows the same
         // options on any build.
         obj["debug_mode"] = mw::run::debug();
+        return HttpResponse::json(obj);
+    });
+
+    // — The apps "Stream audio from" can name —
+    //
+    // {"app": "huntgame.exe"} while a stream carries one app's sound, {"app": ""}
+    // otherwise, from the stream worker's reports. Settings shows it beside
+    // Automatic.
+    server.router()->get("/api/audio/focused", [](const HttpRequest&) {
+        QJsonObject obj;
+        obj["app"] = StreamWorkerHost::audioFocusApp();
+        obj["supported"] = audioSourceFocusedSupported();
+        return HttpResponse::json(obj);
+    });
+    // The apps with sound on this PC, to pick one from.
+    server.router()->get("/api/audio/apps", [](const HttpRequest&) {
+        QJsonObject obj;
+        obj["supported"] = audioSourceFocusedSupported();
+        obj["apps"] = audioSourceFocusedSupported() ? AudioApps::list() : QJsonArray();
         return HttpResponse::json(obj);
     });
 
@@ -1485,6 +1523,13 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["mute_host_audio"].toBool();
             appSettings.setMuteHostAudio(enabled);
             obj["mute_host_audio"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("audio_source")) {
+            appSettings.setAudioSource(body["audio_source"].toString());
+            obj["audio_source"] = appSettings.audioSource();
             obj["status"] = "saved";
             hadChange = true;
         }

@@ -146,6 +146,11 @@ public:
         /// Silence the host's speakers while the session runs — the same
         /// stream setting GameStream hosts receive as localAudioPlayMode.
         bool muteHostAudio = true;
+        /// Which sound the stream carries, as stored ("all", "focused",
+        /// "app:discord.exe") — see SessionConfig::audioSource.
+        std::string audioSource;
+        /// See SessionConfig::onAudioAppChanged.
+        std::function<void(const std::string&)> onAudioAppChanged;
         /// The desktop portal consent this machine was granted last time, if
         /// any — see SessionConfig::portalRestoreToken. Empty means the user
         /// will be asked; whatever comes back arrives as portalGrantReceived().

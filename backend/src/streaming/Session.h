@@ -91,6 +91,14 @@ public:
     /// true (default) → host muted; false → audio also plays on the host.
     void setMuteHostAudio(bool mute) { m_Config.muteHostAudio = mute; }
 
+    /// Native host, Windows: which sound the stream carries (AudioSource.h).
+    void setAudioSource(const QString& source) { m_Config.audioSource = source; }
+    /// Told the app that sound comes from, on the capture's own thread.
+    void setAudioAppObserver(std::function<void(const std::string&)> observer)
+    {
+        m_Config.onAudioAppChanged = std::move(observer);
+    }
+
     /// Enable auto-mode behavior: WS fallback is disabled so that ICE timeout
     /// emits sessionEnded() instead of starting the internal WS fallback.
     /// This allows the auto fallback chain in main.cpp to try the next transport.

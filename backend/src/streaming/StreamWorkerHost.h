@@ -111,6 +111,11 @@ public:
     void setStreamId(const QString& id) { m_StreamId = id; }
     const QString& streamId() const { return m_StreamId; }
 
+    /// The app whose sound a running stream carries under "Stream audio from"
+    /// ("huntgame.exe"), as its worker last reported it (an
+    /// `audioFocus` event); empty when no worker reports one. For Settings.
+    static QString audioFocusApp();
+
 signals:
     /// The worker's /start HTTP reply (exactly once — synthesized 502 when the
     /// worker dies without answering).
@@ -180,4 +185,7 @@ private:
     /// put back if it dies holding them (a `mouseKeys` event; Windows only).
     bool m_MouseKeysHeld = false;
     QJsonObject m_MouseKeysSaved;
+    /// This worker reported the app in front (audioFocusApp): cleared when it
+    /// exits, so a finished stream never shows a stale name.
+    bool m_ReportedAudioFocus = false;
 };

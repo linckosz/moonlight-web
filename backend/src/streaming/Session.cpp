@@ -711,6 +711,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // The "mute host audio" stream setting, honoured here as the GameStream
         // path honours it through localAudioPlayMode.
         nativeParams.muteHostAudio = m_Config.muteHostAudio;
+        nativeParams.audioSource = m_Config.audioSource.toStdString();
+        nativeParams.onAudioAppChanged = m_Config.onAudioAppChanged;
         // The portal consent this installation already holds. Only a machine
         // that captures through the portal has one at all.
         nativeParams.portalRestoreToken = m_PortalRestoreToken;

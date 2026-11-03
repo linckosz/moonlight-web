@@ -253,6 +253,8 @@ void NativeMediaEngine::startCapture(const StartParams& params)
                                          VirtualDisplay::kFasterThanStream);
     config.allowElevatedInput = params.viewerAdmin;
     config.muteHostAudio = params.muteHostAudio;
+    config.audioSource = mw::native::parseAudioSource(params.audioSource);
+    config.onAudioAppChanged = params.onAudioAppChanged;
     // The consent this machine was already given, replayed. Empty on the very
     // first session of an install that captures through the portal, which is
     // the one time the user sees a dialog.
@@ -507,6 +509,8 @@ void NativeMediaEngine::startSubscriber(const StartParams& params)
     config.externalBottom = feed.desktopBottom;
     config.allowElevatedInput = params.viewerAdmin;
     config.muteHostAudio = params.muteHostAudio;
+    config.audioSource = mw::native::parseAudioSource(params.audioSource);
+    config.onAudioAppChanged = params.onAudioAppChanged;
 
     std::string error;
     m_Session = mw::native::NativeHost::createSession(

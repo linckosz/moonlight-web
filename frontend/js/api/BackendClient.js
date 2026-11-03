@@ -949,6 +949,20 @@ export class BackendClient {
     static async getStreamingSettings() {
         return this.get('/api/settings/streaming');
     }
+    /**
+     * The app whose sound a running stream carries under "Stream audio from":
+     * `{app: "huntgame.exe" | "", supported: boolean}`.
+     */
+    static async getAudioFocused() {
+        return this.get('/api/audio/focused');
+    }
+    /**
+     * The apps with sound on the host, to pick one from under "Stream audio
+     * from": `{apps: [{exe: "chrome.exe", name: "Google Chrome"}], supported: boolean}`.
+     */
+    static async getAudioApps() {
+        return this.get('/api/audio/apps');
+    }
     static async saveStreamingSettings(settings) {
         return this.post('/api/settings/streaming', settings);
     }

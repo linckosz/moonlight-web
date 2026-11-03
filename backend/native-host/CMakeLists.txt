@@ -102,6 +102,7 @@ if(WIN32)
         src/encode/windows/d3d12/PyroWaveEncoder12.cpp
         src/encode/windows/d3d12/UltraEncoder12.cpp
         src/audio/windows/WasapiLoopback.cpp
+        src/audio/windows/AppAudioCapture.cpp
         src/audio/windows/HostMute.cpp
     )
 
@@ -144,7 +145,10 @@ if(WIN32)
     # dwmapi: the compositor's timing, read by the bench's click trace only.
     target_link_libraries(mw-native-host PRIVATE dxgi d3d11 d3d12 d3dcompiler user32 gdi32 setupapi
                                                  avrt ole32 oleaut32 runtimeobject mfuuid
-                                                 strmiids dwmapi wtsapi32 imm32)
+                                                 strmiids dwmapi wtsapi32 imm32
+                                                 # mmdevapi: ActivateAudioInterfaceAsync, the
+                                                 # focused-app loopback (AppAudioCapture).
+                                                 mmdevapi)
 elseif(APPLE)
     set(MW_NATIVE_PLATFORM "macos")
     # ScreenCaptureKit → VideoToolbox, with no conversion stage in between:
@@ -623,6 +627,7 @@ if(MW_BUILD_TESTS)
         tests/test_intra_refresh_sweep.cpp
         tests/test_audio_pacer.cpp
         tests/test_audio_interleave.cpp
+        tests/test_audio_focus_target.cpp
         tests/test_cursor_blend.cpp
         tests/test_frame_fit.cpp
         tests/test_painted_pointer.cpp

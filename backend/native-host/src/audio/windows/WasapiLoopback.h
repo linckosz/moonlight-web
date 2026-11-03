@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "mw/native/AudioSource.h"
 #include "mw/native/NativeHost.h"
 
 #include <atomic>
@@ -60,9 +61,10 @@ public:
     static constexpr int kDefaultGraceUs = 5000;
 
     /// `graceUs`: that wait (AudioPacer::take, `audiograce=<ms>`); 0 sends
-    /// silence at once.
+    /// silence at once. `appAudio`: which sound the stream carries; anything but
+    /// AllApps replaces the whole mix with one app's (AppAudioCapture).
     explicit WasapiLoopback(AudioCallback onPacket, int frameSamples = 240,
-                            int graceUs = kDefaultGraceUs);
+                            int graceUs = kDefaultGraceUs, AppAudioOptions appAudio = {});
     ~WasapiLoopback();
     WasapiLoopback(const WasapiLoopback&) = delete;
     WasapiLoopback& operator=(const WasapiLoopback&) = delete;
@@ -85,6 +87,7 @@ private:
     AudioCallback m_OnPacket;
     int m_FrameSamples;
     int m_GraceUs;
+    AppAudioOptions m_AppAudio;
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};
     std::atomic<int64_t> m_Packets{0};

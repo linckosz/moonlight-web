@@ -281,6 +281,7 @@ add_executable(mw-server
     src/streaming/SdpFingerprint.cpp
     src/server/AuthManager.cpp
     src/server/AppSettings.cpp
+    src/server/AudioApps.cpp
     src/server/Provisioning.cpp
     src/server/ConnectionGuard.cpp
     src/server/HttpServer.cpp
@@ -628,7 +629,10 @@ if(WIN32)
     # wintrust: the update installer's Authenticode check (UpdateApply.cpp).
     target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi Dbghelp avrt
                                             wtsapi32 userenv taskschd ole32 oleaut32
-                                            setupapi newdev cfgmgr32 advapi32 shell32 wintrust)
+                                            setupapi newdev cfgmgr32 advapi32 shell32 wintrust
+                                            # version: the apps' names in Stream audio from
+                                            # (AudioApps.cpp, GetFileVersionInfo).
+                                            version)
     # OpenSSL is linked dynamically (import libs) — ship the DLLs next to the exe.
     file(GLOB _mw_ssl_dlls "${_mw_ssl}/lib/${_mw_ssl_arch}/*-3-${_mw_ssl_arch}.dll")
     foreach(_dll ${_mw_ssl_dlls})

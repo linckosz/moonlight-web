@@ -30,6 +30,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QOperatingSystemVersion>
 #include <QPointer>
 #include <QProcess>
 #include <QRegularExpression>
@@ -1469,6 +1470,24 @@ static int concurrentSessionCap(const QString& backendType)
     if (backendType == QLatin1String("wolf")) return 10;
     if (backendType == QLatin1String("multiseat")) return 10;
     return 4; // gamestream (Sunshine / Apollo), and anything not yet known
+}
+
+/// Which sound a stream carries (Settings → Stream audio from), in its one form.
+/// A host that cannot capture one app (below Windows 11) streams the whole mix
+/// rather than silence: the browser's stored choice may predate the host it now
+/// reaches.
+static QString streamableAudioSource(const QString& requested)
+{
+    const QString source = AppSettings::canonicalAudioSource(requested);
+#if defined(Q_OS_WIN)
+    if (source != QLatin1String("all") &&
+        QOperatingSystemVersion::current() <
+            QOperatingSystemVersion(QOperatingSystemVersion::Windows, 10, 0, 20348)) {
+        Logger::info("[audio] Stream audio from: one app needs Windows 11 — streaming all apps");
+        return QStringLiteral("all");
+    }
+#endif
+    return source;
 }
 
 int main(int argc, char* argv[])
@@ -3399,6 +3418,12 @@ int main(int argc, char* argv[])
         bool reqMuteHost = body.contains("mute_host_audio") ? body["mute_host_audio"].toBool()
                                                             : appSettings.muteHostAudio();
 
+        // Which sound the stream carries: the browser's choice, else the host's
+        // default.
+        const QString reqAudioSource =
+            streamableAudioSource(body.contains("audio_source") ? body["audio_source"].toString()
+                                                                : appSettings.audioSource());
+
         // Video enhancement (WebGPU): the browser renders via canvas, so when it
         // is on the transport negotiation must avoid webrtc-media (<video>).
         bool reqVideoEnhancement = body.contains("video_enhancement")
@@ -3772,6 +3797,7 @@ int main(int argc, char* argv[])
             s->setDebugIceDropUdp(AppSettings().debugIceDropUdp());
             s->setLowAudio(reqLowAudio);
             s->setMuteHostAudio(reqMuteHost);
+            s->setAudioSource(reqAudioSource);
             s->setMicRequested(reqMic);
             s->setMicDevice(appSettings.micDevice());
             s->setClientUniqueId(reqClientUniqueId);
@@ -3945,6 +3971,8 @@ int main(int argc, char* argv[])
             cfg["iceTcp"] = enableIceTcp;
             cfg["lowAudio"] = reqLowAudio;
             cfg["muteHostAudio"] = reqMuteHost;
+            cfg["audioSource"] = reqAudioSource;
+            cfg["audioReportApp"] = true;
             // The viewer's microphone; the device it plays into travels with
             // the other settings a SYSTEM worker cannot read (StreamWorkerHost).
             cfg["mic"] = reqMic;
@@ -5637,6 +5665,8 @@ int main(int argc, char* argv[])
         cfg["iceTcp"] = mode.endsWith(QStringLiteral("-tcp"));
         cfg["lowAudio"] = false;
         cfg["muteHostAudio"] = false;
+        // A guest hears what the host's default stream would.
+        cfg["audioSource"] = streamableAudioSource(appSettings.audioSource());
         // The guest's browser decodes through a gap, as the owner's /start
         // says it (ride_out_loss): a native host then refreshes their stream
         // in a wave, and a lost frame costs no keyframe. The shared feed sets

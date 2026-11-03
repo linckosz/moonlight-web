@@ -632,6 +632,23 @@ int runStreamWorker(QCoreApplication& app)
     session->setDebugIceDropUdp(cfg["debugIceDropUdp"].toBool(false));
     session->setLowAudio(cfg["lowAudio"].toBool());
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));
+    // Absent (an older parent) → the whole mix, as before.
+    session->setAudioSource(cfg["audioSource"].toString());
+    // The app followed, for Settings ("Automatic — huntgame.exe"): told to the
+    // parent, which alone serves the page and may run in another session. Only
+    // the owner's worker reports: a guest's would overwrite and clear it.
+    if (cfg["audioReportApp"].toBool(false)) {
+        session->setAudioAppObserver([&app](const std::string& exe) {
+            const QString name = QString::fromStdString(exe);
+            QMetaObject::invokeMethod(
+                &app,
+                [name]() {
+                    emitEvent({{QStringLiteral("event"), QStringLiteral("audioFocus")},
+                               {QStringLiteral("app"), name}});
+                },
+                Qt::QueuedConnection);
+        });
+    }
     // Absent (an older parent, a guest) → no microphone.
     session->setMicRequested(cfg["mic"].toBool(false));
     session->setMicDevice(cfg["micDevice"].toString());

@@ -18,7 +18,10 @@
 #pragma once
 
 #include <QByteArray>
+#include <QString>
 #include <cstdint>
+#include <functional>
+#include <string>
 
 // Video codec preferences — controls RTSP negotiation and WebCodecs config.
 //
@@ -59,6 +62,11 @@ struct StreamConfig
     // Mute the host PC speakers while streaming (GameStream localAudioPlayMode).
     // true → localAudioPlayMode=0 (host muted, default), false → 1 (play on host).
     bool muteHostAudio = true;
+
+    // Native host, Windows: which sound the stream carries ("all", "focused",
+    // "app:discord.exe"), and who hears which app that is.
+    QString audioSource = QStringLiteral("all");
+    std::function<void(const std::string&)> onAudioAppChanged;
 
     // Audio: stereo Opus, 5ms packets
     static constexpr int kAudioChannels = 2;

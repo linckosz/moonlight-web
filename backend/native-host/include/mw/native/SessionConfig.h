@@ -17,11 +17,13 @@
 
 #pragma once
 
+#include "AudioSource.h"
 #include "Capabilities.h"
 #include "EncoderTuning.h"
 #include "VideoPipeline.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -140,8 +142,8 @@ struct SessionConfig
     int governorFloorPercent = 20;
 
     /// Where the pictures come from — see VideoSource. With External, only
-    /// `displayId`, `allowElevatedInput` and `muteHostAudio` are read, plus
-    /// the rectangle below; the video fields are the feed's business.
+    /// `displayId`, `allowElevatedInput`, `muteHostAudio` and `audioSource` are
+    /// read, plus the rectangle below; the video fields are the feed's business.
     VideoSource videoSource = VideoSource::Capture;
 
     /// With External: where the display sits on the host's desktop, which is
@@ -217,6 +219,15 @@ struct SessionConfig
     /// where the tap sits), and SessionInfo::hostMuted says what happened.
     /// False leaves the speakers alone.
     bool muteHostAudio = false;
+
+    /// Which sound the stream carries (AudioSource.h). Anything but AllApps is
+    /// Windows with per-process loopback only: the caller checks the build, and
+    /// other platforms stream the whole mix. The speakers are not concerned.
+    AudioSourceChoice audioSource;
+
+    /// The app that sound comes from, each time it changes, empty when none.
+    /// Called on the capture's own thread. May be empty.
+    std::function<void(const std::string&)> onAudioAppChanged;
 
     /// A consent the user gave the ScreenCast portal on an earlier session, to
     /// be replayed so it is not asked for again.

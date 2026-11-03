@@ -17,6 +17,8 @@
 
 #include "WasapiLoopback.h"
 
+#include "AppAudioCapture.h"
+
 #include "../../core/Log.h"
 #include "../AudioPacer.h"
 #include "../OpusEncoder.h"
@@ -40,6 +42,7 @@
 #include <cstring>
 #include <exception>
 #include <future>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -187,11 +190,13 @@ struct LoopbackDevice
 
 } // namespace
 
-WasapiLoopback::WasapiLoopback(AudioCallback onPacket, int frameSamples, int graceUs)
+WasapiLoopback::WasapiLoopback(AudioCallback onPacket, int frameSamples, int graceUs,
+                               AppAudioOptions appAudio)
     : m_OnPacket(std::move(onPacket))
     , m_FrameSamples(AudioPacer::isFrameSamples(frameSamples) ? frameSamples
                                                               : AudioPacer::kFrameSamples)
     , m_GraceUs(std::max(0, graceUs))
+    , m_AppAudio(std::move(appAudio))
 {}
 
 WasapiLoopback::~WasapiLoopback()
@@ -288,6 +293,20 @@ void WasapiLoopback::runLoop()
               "), endpoint buffer " + std::to_string(device->bufferFrames) + " frames");
     resolveFirst(std::string());
 
+    // "Stream audio from" other than All apps (AudioSource.h): the whole-mix
+    // client gives way to one app's own (AppAudioCapture). Chosen once, at
+    // start, and never both at once: nothing else can reach the stream
+    // through the whole mix. The device above was still opened, so a host
+    // with no playback device at all fails the same way in either mode.
+    std::unique_ptr<AppAudioCapture> focused;
+    if (m_AppAudio.choice.source != AudioSource::AllApps) {
+        device.reset();
+        focused = std::make_unique<AppAudioCapture>(m_AppAudio);
+        log::info(m_AppAudio.choice.source == AudioSource::OneApp
+                      ? "[native] audio: streaming " + m_AppAudio.choice.app + " only"
+                      : std::string("[native] audio: streaming the app in focus only"));
+    }
+
     // Pro Audio: the class the OS reserves for exactly this loop. Refused in
     // a service session, in which case the thread keeps an ordinary priority.
     DWORD taskIndex = 0;
@@ -342,7 +361,9 @@ void WasapiLoopback::runLoop()
 
         const int64_t now = steadyNowUs();
 
-        if (device && !device->drain(pacer)) {
+        if (focused) focused->pump(pacer, now);
+
+        if (!focused && device && !device->drain(pacer)) {
             // The endpoint went away — unplugged, or the user picked another
             // default output. Reopen on whatever is the default now; the
             // pacer keeps the wire fed with silence meanwhile.
@@ -351,7 +372,7 @@ void WasapiLoopback::runLoop()
             deviceLost = true;
             lastReopenAttemptUs = now;
         }
-        if (!device && now - lastReopenAttemptUs >= 1'000'000) {
+        if (!focused && !device && now - lastReopenAttemptUs >= 1'000'000) {
             lastReopenAttemptUs = now;
             auto fresh = std::make_unique<LoopbackDevice>();
             std::string reopenError;
@@ -429,6 +450,7 @@ void WasapiLoopback::runLoop()
 
     if (timer) CloseHandle(timer);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+    focused.reset();
     device.reset();
     if (coOwned) CoUninitialize();
 }

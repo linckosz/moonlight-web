@@ -335,6 +335,19 @@ public:
     bool muteHostAudio() const;
     void setMuteHostAudio(bool enabled);
 
+    // ── Which sound the stream carries ───────────────────────────────────────
+    //
+    // "audio_source": "all" (default) streams everything the host plays, as an
+    // OS normally would. On the native Windows 11 host (per-process loopback),
+    // "focused" streams only the app in focus, a game, so Discord or a browser
+    // stay on the host's speakers and out of the stream, and "app:discord.exe"
+    // streams one app picked by its executable. Anything else reads as "all".
+
+    QString audioSource() const;
+    void setAudioSource(const QString& source);
+    /// The value in its one form: "all", "focused" or "app:<lower-case exe>".
+    static QString canonicalAudioSource(const QString& source);
+
     // ── Streaming notifications (tray) ────────────────────────────────────────
     //
     // Whether the desktop gets a notification when someone starts — or stops —

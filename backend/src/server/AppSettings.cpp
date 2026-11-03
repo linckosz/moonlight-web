@@ -596,6 +596,32 @@ void AppSettings::setMuteHostAudio(bool enabled)
     writeAll(obj);
 }
 
+// ── Which sound the stream carries ────────────────────────────────────────────
+
+QString AppSettings::canonicalAudioSource(const QString& source)
+{
+    if (source == QLatin1String("focused")) return source;
+    if (source.startsWith(QLatin1String("app:"))) {
+        const QString exe = source.mid(4).trimmed().toLower();
+        if (exe.size() <= 260 && exe.endsWith(QLatin1String(".exe")) &&
+            !exe.contains(QLatin1Char('/')) && !exe.contains(QLatin1Char('\\')))
+            return QStringLiteral("app:") + exe;
+    }
+    return QStringLiteral("all");
+}
+
+QString AppSettings::audioSource() const
+{
+    return canonicalAudioSource(readAll().value("audio_source").toString());
+}
+
+void AppSettings::setAudioSource(const QString& source)
+{
+    QJsonObject obj = readAll();
+    obj["audio_source"] = canonicalAudioSource(source);
+    writeAll(obj);
+}
+
 // ── Streaming notifications ────────────────────────────────────────────────────
 
 bool AppSettings::streamNotifications() const

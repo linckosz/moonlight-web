@@ -15,6 +15,13 @@
 
 void run_app_settings_tests()
 {
+    SECTION("AppSettings: audio_source reads in its one form, all apps otherwise");
+    CHECK_EQ(AppSettings::canonicalAudioSource("focused"), QString("focused"));
+    CHECK_EQ(AppSettings::canonicalAudioSource("app:Discord.EXE"), QString("app:discord.exe"));
+    for (const char* other :
+         {"", "all", "Focused", "app:", "app:discord", "app:a\\b.exe", "app:a/b.exe"})
+        CHECK_EQ(AppSettings::canonicalAudioSource(other), QString("all"));
+
     SECTION("AppSettings");
 
     QTemporaryDir tmp;
