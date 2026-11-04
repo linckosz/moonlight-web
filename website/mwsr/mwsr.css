@@ -126,10 +126,15 @@ small{color:var(--muted); font-size:.78em}
 /* the width of a score from the start: the columns and the header's lines stay when the scores come */
 #table td.num{white-space:nowrap}
 #table td.num::before{content:""; display:block; width:3.4em}
-#table td.num:last-child::before{width:11em}
+/* the figure, the gap and the longest bar: every bar starts at one place, and nothing moves when they come */
+#table td.num:last-child::before{width:calc(4.1em + 90px)}
 #table tr.best td.num.fid{color:#fff; font-weight:700}
+.ms{display:inline-block; min-width:3.6em; font-variant-numeric:tabular-nums}
 .bar{display:inline-block; height:6px; border-radius:3px; background:var(--cyan); opacity:.7; margin-left:.5em; vertical-align:middle}
-.tag{font:600 .72rem var(--mono); color:var(--muted); margin-left:.35em}
+/* under the upscaler's name, its place kept by the longest words it can say */
+#table th small.precision{display:grid; white-space:nowrap}
+.precision > *{grid-area:1 / 1}
+.precision .widest{visibility:hidden}
 .timing{display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; margin-top:14px}
 .timing .check{margin-top:0}
 .timing .btn[disabled]{opacity:.5; cursor:default}

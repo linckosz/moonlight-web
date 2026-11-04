@@ -249,7 +249,7 @@
     <h3>Measured on three GPUs</h3>
     <p class="small">The README's figures: its times from 03/11/2026, the Radeon 780M's from 04/11/2026, in Chrome's WebGPU on Windows 11, the input already in an 8-bit
       texture, on the 0 A.D. picture (game) and the text chart (text). The scores are the lab's, on SwiftShader at 4:4:4, by the definitions of the table above;
-      the times per draw, MWSR in 32-bit, the text MoonlightWeb runs, the others at their faster precision. The Ryzen 9 9900X's integrated Radeon ran at its own clock: read
+      the times per draw, MWSR in 32-bit, the text MoonlightWeb runs, the others at their faster precision, marked <em>half</em> when it is half precision (16-bit). The Ryzen 9 9900X's integrated Radeon ran at its own clock: read
       its times as ratios. The Radeon 780M was held at 938 MHz, memory at 2800 MHz: a bench clock, not what a stream gets, as this GPU moves between 800 and 2800 MHz left to itself. NIS is MoonlightWeb's port (see the ports below). In bold, the best of each score.</p>
     <p class="small">On phones (04/11/2026, the whole draw of a frame up to the GPU's end, one pass per case, on clocks nothing fixed):
       on an iPhone 13 Pro, in Safari and Chrome, MWSR adds 0.5 to 2.1 ms to a frame, upscaling or reducing, where FSR1 adds 2.8 to 5.4 ms.
@@ -262,9 +262,9 @@
         <thead><tr><th scope="col">Upscaler</th><th scope="col">LPIPS</th><th scope="col">VMAF NEG</th><th scope="col">PSNR</th><th scope="col">SSIM</th><th scope="col">MS-SSIM</th><th scope="col">FLIP</th><th scope="col">Overshoot</th><th scope="col">RTX 5060 Ti</th><th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M (938 MHz)</th></tr></thead>
         <tbody>
           <tr><th scope="row">MWSR</th><td>0.1624</td><td><strong>85.9</strong></td><td><strong>28.54</strong></td><td><strong>0.8792</strong></td><td><strong>0.9880</strong></td><td>0.0360</td><td>6.6 %</td><td>0.085 ms</td><td>2.35 ms</td><td>0.610 ms</td></tr>
-          <tr><th scope="row">FSR1</th><td><strong>0.1401</strong></td><td>84.8</td><td>28.38</td><td>0.8776</td><td>0.9878</td><td><strong>0.0346</strong></td><td>13.7 %</td><td>0.326 ms</td><td>6.34 ms (f16)</td><td>1.99 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td><strong>0.1401</strong></td><td>84.8</td><td>28.38</td><td>0.8776</td><td>0.9878</td><td><strong>0.0346</strong></td><td>13.7 %</td><td>0.326 ms</td><td>6.34 ms (half)</td><td>1.99 ms (half)</td></tr>
           <tr><th scope="row">NIS</th><td>0.1863</td><td>70.5</td><td>24.68</td><td>0.8162</td><td>0.9587</td><td>0.0997</td><td>42.6 %</td><td>1.22 ms</td><td>13.69 ms</td><td>3.98 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>0.1838</td><td>83.1</td><td>27.77</td><td>0.8554</td><td>0.9833</td><td>0.0422</td><td>6.6 %</td><td>0.146 ms</td><td>2.97 ms (f16)</td><td>0.958 ms</td></tr>
+          <tr><th scope="row">SGSR1</th><td>0.1838</td><td>83.1</td><td>27.77</td><td>0.8554</td><td>0.9833</td><td>0.0422</td><td>6.6 %</td><td>0.146 ms</td><td>2.97 ms (half)</td><td>0.958 ms</td></tr>
           <tr><th scope="row">Bilinear</th><td>0.2665</td><td>76.8</td><td>27.45</td><td>0.8228</td><td>0.9794</td><td>0.0450</td><td>0 %</td><td>0.034 ms</td><td>0.453 ms</td><td>0.330 ms</td></tr>
         </tbody>
       </table>
@@ -275,9 +275,9 @@
         <thead><tr><th scope="col">Upscaler</th><th scope="col">LPIPS</th><th scope="col">VMAF NEG</th><th scope="col">PSNR</th><th scope="col">SSIM</th><th scope="col">MS-SSIM</th><th scope="col">FLIP</th><th scope="col">Overshoot</th><th scope="col">RTX 5060 Ti</th><th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M (938 MHz)</th></tr></thead>
         <tbody>
           <tr><th scope="row">MWSR</th><td><strong>0.0385</strong></td><td><strong>66.4</strong></td><td><strong>22.59</strong></td><td><strong>0.9578</strong></td><td><strong>0.9915</strong></td><td>0.0424</td><td>2.8 %</td><td>0.081 ms</td><td>1.52 ms</td><td>0.418 ms</td></tr>
-          <tr><th scope="row">FSR1</th><td>0.0493</td><td>57.3</td><td>21.45</td><td>0.9422</td><td>0.9874</td><td><strong>0.0416</strong></td><td>0.2 %</td><td>0.307 ms (f16)</td><td>6.27 ms (f16)</td><td>1.97 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>0.0493</td><td>57.3</td><td>21.45</td><td>0.9422</td><td>0.9874</td><td><strong>0.0416</strong></td><td>0.2 %</td><td>0.307 ms (half)</td><td>6.27 ms (half)</td><td>1.97 ms (half)</td></tr>
           <tr><th scope="row">NIS</th><td>0.0414</td><td>62.2</td><td>22.05</td><td>0.9488</td><td>0.9893</td><td>0.0556</td><td>4.4 %</td><td>0.677 ms</td><td>10.76 ms</td><td>3.36 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>0.0402</td><td>59.9</td><td>21.64</td><td>0.9463</td><td>0.9891</td><td>0.0500</td><td>2.7 %</td><td>0.087 ms</td><td>1.65 ms (f16)</td><td>0.622 ms (f16)</td></tr>
+          <tr><th scope="row">SGSR1</th><td>0.0402</td><td>59.9</td><td>21.64</td><td>0.9463</td><td>0.9891</td><td>0.0500</td><td>2.7 %</td><td>0.087 ms</td><td>1.65 ms (half)</td><td>0.622 ms (half)</td></tr>
           <tr><th scope="row">Bilinear</th><td>0.0697</td><td>49.9</td><td>20.52</td><td>0.9234</td><td>0.9845</td><td>0.0627</td><td>0 %</td><td>0.047 ms</td><td>0.396 ms</td><td>0.267 ms</td></tr>
         </tbody>
       </table>
@@ -288,9 +288,9 @@
         <thead><tr><th scope="col">Upscaler</th><th scope="col">LPIPS</th><th scope="col">VMAF NEG</th><th scope="col">PSNR</th><th scope="col">SSIM</th><th scope="col">MS-SSIM</th><th scope="col">FLIP</th><th scope="col">Overshoot</th><th scope="col">RTX 5060 Ti</th><th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M (938 MHz)</th></tr></thead>
         <tbody>
           <tr><th scope="row">MWSR</th><td><strong>0.3532</strong></td><td><strong>71.5</strong></td><td>24.57</td><td>0.6886</td><td>0.9617</td><td>0.0634</td><td>5.4 %</td><td>0.080 ms</td><td>2.36 ms</td><td>0.594 ms</td></tr>
-          <tr><th scope="row">FSR1</th><td>0.3594</td><td>70.7</td><td><strong>24.77</strong></td><td>0.6880</td><td><strong>0.9633</strong></td><td><strong>0.0525</strong></td><td>2.9 %</td><td>0.287 ms</td><td>6.32 ms (f16)</td><td>1.98 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>0.3594</td><td>70.7</td><td><strong>24.77</strong></td><td>0.6880</td><td><strong>0.9633</strong></td><td><strong>0.0525</strong></td><td>2.9 %</td><td>0.287 ms</td><td>6.32 ms (half)</td><td>1.98 ms (half)</td></tr>
           <tr><th scope="row">NIS</th><td>0.3714</td><td>59.4</td><td>23.13</td><td><strong>0.6893</strong></td><td>0.9307</td><td>0.1162</td><td>41.7 %</td><td>0.820 ms</td><td>13.00 ms</td><td>3.67 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>0.3939</td><td>71.1</td><td>24.52</td><td>0.6736</td><td>0.9559</td><td>0.0621</td><td>6.3 %</td><td>0.140 ms</td><td>2.95 ms (f16)</td><td>0.935 ms</td></tr>
+          <tr><th scope="row">SGSR1</th><td>0.3939</td><td>71.1</td><td>24.52</td><td>0.6736</td><td>0.9559</td><td>0.0621</td><td>6.3 %</td><td>0.140 ms</td><td>2.95 ms (half)</td><td>0.935 ms</td></tr>
           <tr><th scope="row">Bilinear</th><td>0.4865</td><td>58.4</td><td>24.31</td><td>0.6261</td><td>0.9435</td><td>0.0730</td><td>0 %</td><td>0.031 ms</td><td>0.420 ms</td><td>0.259 ms</td></tr>
         </tbody>
       </table>
@@ -301,9 +301,9 @@
         <thead><tr><th scope="col">Upscaler</th><th scope="col">LPIPS</th><th scope="col">VMAF NEG</th><th scope="col">PSNR</th><th scope="col">SSIM</th><th scope="col">MS-SSIM</th><th scope="col">FLIP</th><th scope="col">Overshoot</th><th scope="col">RTX 5060 Ti</th><th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M (938 MHz)</th></tr></thead>
         <tbody>
           <tr><th scope="row">MWSR</th><td><strong>0.0927</strong></td><td>29.9</td><td>18.16</td><td><strong>0.8730</strong></td><td>0.9716</td><td><strong>0.0586</strong></td><td>2.4 %</td><td>0.078 ms</td><td>1.53 ms</td><td>0.408 ms</td></tr>
-          <tr><th scope="row">FSR1</th><td>0.1032</td><td>24.6</td><td>17.57</td><td>0.8450</td><td>0.9663</td><td>0.0677</td><td>0.3 %</td><td>0.296 ms (f16)</td><td>6.27 ms (f16)</td><td>1.97 ms (f16)</td></tr>
+          <tr><th scope="row">FSR1</th><td>0.1032</td><td>24.6</td><td>17.57</td><td>0.8450</td><td>0.9663</td><td>0.0677</td><td>0.3 %</td><td>0.296 ms (half)</td><td>6.27 ms (half)</td><td>1.97 ms (half)</td></tr>
           <tr><th scope="row">NIS</th><td>0.0970</td><td><strong>36.5</strong></td><td><strong>18.30</strong></td><td>0.8675</td><td>0.9736</td><td>0.0769</td><td>7.1 %</td><td>0.564 ms</td><td>10.74 ms</td><td>3.23 ms</td></tr>
-          <tr><th scope="row">SGSR1</th><td>0.0984</td><td><strong>36.5</strong></td><td>18.13</td><td>0.8693</td><td><strong>0.9753</strong></td><td>0.0669</td><td>4.4 %</td><td>0.084 ms</td><td>1.67 ms (f16)</td><td>0.619 ms (f16)</td></tr>
+          <tr><th scope="row">SGSR1</th><td>0.0984</td><td><strong>36.5</strong></td><td>18.13</td><td>0.8693</td><td><strong>0.9753</strong></td><td>0.0669</td><td>4.4 %</td><td>0.084 ms</td><td>1.67 ms (half)</td><td>0.619 ms (half)</td></tr>
           <tr><th scope="row">Bilinear</th><td>0.1658</td><td>15.1</td><td>16.99</td><td>0.8157</td><td>0.9523</td><td>0.0901</td><td>0 %</td><td>0.042 ms</td><td>0.389 ms</td><td>0.247 ms</td></tr>
         </tbody>
       </table>
@@ -346,11 +346,11 @@
         tab or program asks of it stays in these figures. A slow draw splits its batch into pieces of about 100 ms of GPU,
         so that a change of menu never waits long. The browser rounds the timestamps (to 0.1 ms in Chrome), and a batch
         of 100 makes the rounding a small share. When
-        your GPU has <code>shader-f16</code>, FSR1 and SGSR1 are also timed in 16-bit and the
-        faster of their two precisions is shown. Within 2 % of each other the two are even, <code>f16 ≈ f32</code>:
+        your GPU has <code>shader-f16</code>, FSR1 and SGSR1 are also timed in half precision (16-bit) and the
+        faster of their two precisions is shown, with <em>Half precision</em> under the name when it is that one. Within 2 % of each other the two are even, <em>Half ≈ full</em>:
         such a gap changes sides from one run to the next. MWSR is shown in 32-bit, the text MoonlightWeb runs; its
         enlargement's 16-bit text is timed too, and that time only goes into what measuring sends. Each 16-bit picture
-        is first held to its 32-bit one: within 4/255 on 99.9 % of the pixels. The pictures and the scores are those of the 32-bit texts. Timings vary
+        is first held to its 32-bit one, within 4/255 on 99.9 % of the pixels, or the row says <em>Half refused</em> and gives its 32-bit time. The pictures and the scores are those of the 32-bit texts. Timings vary
         with the GPU's clock: run them twice before you trust a small gap.</li>
       <li><strong>4:2:0</strong> gives every upscaler the input a 4:2:0 stream would give it: its colour averaged over
         2×2 pixels and brought back by interpolation, as a decoder hands it over. This page makes both inputs itself,

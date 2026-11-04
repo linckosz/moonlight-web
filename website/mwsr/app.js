@@ -951,7 +951,9 @@ function best(id) {
   // MWSR shows its 32-bit text, the one the client runs: its 16-bit time goes with the report only
   if (id === 'mwsr' || r.t16 == null) return { ms: r.t32, tag: '' };
   const ms = Math.min(r.t16, r.t32);
-  const tag = Math.abs(r.t16 - r.t32) <= EVEN * Math.max(r.t16, r.t32) ? 'f16 ≈ f32' : r.t16 < r.t32 ? 'f16' : 'f32';
+  // what the row says under its name; nothing when the full precision is the faster
+  const tag =
+    Math.abs(r.t16 - r.t32) <= EVEN * Math.max(r.t16, r.t32) ? 'Half ≈ full' : r.t16 < r.t32 ? 'Half precision' : '';
   return { ms, tag, both: `32-bit ${ms3(r.t32)} ms, 16-bit ${ms3(r.t16)} ms` };
 }
 const ms3 = (ms) => ms.toFixed(ms < 1 ? 3 : 2);
@@ -984,19 +986,25 @@ function renderTable() {
     let time = measuring ? '…' : '—';
     if (t) {
       const w = max ? Math.max(2, Math.round((t.ms / max) * 90)) : 0;
-      const tag = t.tag ? `<span class="tag"${t.both ? ` title="${t.both}"` : ''}>${t.tag}</span>` : '';
-      time = `${ms3(t.ms)}${tag}<span class="bar" style="width:${w}px"></span>`;
+      time = `<span class="ms">${ms3(t.ms)}</span><span class="bar" style="width:${w}px"></span>`;
     }
-    let gate = '';
-    if (r.f16 === 'refused' && k.id !== 'mwsr')
-      gate = `<span class="tag" title="Its 16-bit picture differs from its 32-bit one by more than 4/255 on ${pct(r.f16share)} of the pixels on this GPU: timed in 32-bit only">f16 refused</span>`;
+    // under the name, what the time is; its place is kept from the start, so that nothing moves when it comes
+    const refused = r.f16 === 'refused';
+    const said = refused ? 'Half refused' : t ? t.tag : '';
+    const why = refused
+      ? `Its 16-bit picture differs from its 32-bit one by more than 4/255 on ${pct(r.f16share)} of the pixels on this GPU: timed in 32-bit only`
+      : t && t.both;
+    const precision =
+      k.id !== 'mwsr' && engine.halfOf(k.id)
+        ? `<small class="precision"><span class="widest">Half precision</span><span${said && why ? ` title="${why}"` : ''}>${said}</span></small>`
+        : '';
     const star =
       k.id === 'nis'
         ? ' <small title="MoonlightWeb’s per-fragment port of NIS, not NVIDIA’s compute shader">port</small>'
         : k.id === 'mwsr' && engine.mwsrMode() === 'down'
           ? ' <small title="MWSR’s reduction, as the client runs it: bilinear samples over each pixel’s footprint, averaged in linear light, lightly sharpened from ×0.5 to 1:1">reduction</small>'
           : '';
-    return `<tr><th scope="row">${k.name}${star}</th>${cells}<td class="num">${o}</td><td class="num">${time}${gate}</td></tr>`;
+    return `<tr><th scope="row">${k.name}${star}${precision}</th>${cells}<td class="num">${o}</td><td class="num">${time}</td></tr>`;
   }).join('');
   placePress();
 }
