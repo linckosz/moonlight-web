@@ -115,6 +115,20 @@ void run_launcher_detect_tests()
         FakeMachine none;
         CHECK(!LauncherDetect::steamLinux(none.lookup()).has_value());
     }
+    // The Flatpak alone, installed for the user, with its icon where Flatpak exports it.
+    {
+        FakeMachine m;
+        m.env["HOME"] = "/home/u";
+        m.files << "/home/u/.local/share/flatpak/app/com.valvesoftware.Steam"
+                << "/home/u/.local/share/flatpak/exports/share/icons/hicolor/128x128/apps/"
+                   "com.valvesoftware.Steam.png";
+        const auto steam = LauncherDetect::steamLinux(m.lookup());
+        CHECK(steam.has_value());
+        CHECK_EQ(steam->command, QString("steam://open/bigpicture"));
+        CHECK_EQ(steam->iconPath,
+                 QString("/home/u/.local/share/flatpak/exports/share/icons/hicolor/128x128/apps/"
+                         "com.valvesoftware.Steam.png"));
+    }
 
     // What AppSettings takes.
     {
@@ -132,6 +146,24 @@ void run_launcher_detect_tests()
     CHECK(!HostAppLauncher::isUrl("C:\\Games\\game.exe"));
     CHECK(!HostAppLauncher::isUrl("lutris lutris:rungameid/3"));
     CHECK(!HostAppLauncher::isUrl("retroarch"));
+
+    // Linux: a link's handler outlives xdg-open, which returns as soon as it
+    // has started it; everything before "--" belongs to systemd-run.
+    {
+        const QStringList run{QString("xdg-open"), QString("steam://open/bigpicture")};
+        const QStringList arguments = HostAppLauncher::systemdRunArguments(
+            QString("moonlightweb-app-1"),
+            {QString("DISPLAY=:0"), QString("XDG_CURRENT_DESKTOP=ubuntu:GNOME")}, run);
+        const qsizetype split = arguments.indexOf(QString("--"));
+        CHECK(split > 0);
+        const QStringList own = arguments.mid(0, split);
+        CHECK(own.contains(QString("--user")));
+        CHECK(own.contains(QString("--unit=moonlightweb-app-1")));
+        CHECK(own.contains(QString("--property=KillMode=process")));
+        CHECK(own.contains(QString("--setenv=DISPLAY=:0")));
+        CHECK(own.contains(QString("--setenv=XDG_CURRENT_DESKTOP=ubuntu:GNOME")));
+        CHECK(arguments.mid(split + 1) == run);
+    }
     {
         QString program, args;
         HostAppLauncher::splitWindowsCommand(

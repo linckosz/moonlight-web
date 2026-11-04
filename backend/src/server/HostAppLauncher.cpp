@@ -237,18 +237,18 @@ bool open(const QString& command, QString* error)
         // A transient unit of the user's: the program leaves the server's
         // cgroup, so a restart of the server does not take it along. The
         // user manager may not know the desktop's sockets: they are passed.
-        program = systemdRun;
-        arguments << QStringLiteral("--user") << QStringLiteral("--collect")
-                  << QStringLiteral("--quiet")
-                  << QStringLiteral("--unit=moonlightweb-app-%1")
-                         .arg(QUuid::createUuid().toString(QUuid::Id128).left(12));
+        QStringList environment;
         for (const char* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
                                  "DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP", "XAUTHORITY"}) {
             const QString value = qEnvironmentVariable(name);
             if (!value.isEmpty())
-                arguments << QStringLiteral("--setenv=%1=%2").arg(QLatin1String(name), value);
+                environment << QStringLiteral("%1=%2").arg(QLatin1String(name), value);
         }
-        arguments << QStringLiteral("--") << run;
+        program = systemdRun;
+        arguments =
+            systemdRunArguments(QStringLiteral("moonlightweb-app-%1")
+                                    .arg(QUuid::createUuid().toString(QUuid::Id128).left(12)),
+                                environment, run);
     } else {
         program = run.takeFirst();
         arguments = run;

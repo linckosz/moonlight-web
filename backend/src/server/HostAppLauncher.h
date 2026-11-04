@@ -22,6 +22,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 
 /**
  * @brief Opens one of the native host's apps (AppSettings::hostApps) on this
@@ -79,6 +80,22 @@ inline void splitWindowsCommand(const QString& command, QString* program, QStrin
     const int space = line.indexOf(QLatin1Char(' '));
     *program = space < 0 ? line : line.left(space);
     *arguments = space < 0 ? QString() : line.mid(space + 1).trimmed();
+}
+
+/// systemd-run's arguments for @p run in the transient user unit @p unit, with
+/// @p environment ("NAME=value"). xdg-open returns as soon as the link's
+/// handler is started, and that ends the unit: KillMode=process leaves the
+/// handler running, where the default would kill it along with the unit.
+inline QStringList systemdRunArguments(const QString& unit, const QStringList& environment,
+                                       const QStringList& run)
+{
+    QStringList arguments{QStringLiteral("--user"), QStringLiteral("--collect"),
+                          QStringLiteral("--quiet"), QStringLiteral("--unit=%1").arg(unit),
+                          QStringLiteral("--property=KillMode=process")};
+    for (const QString& variable : environment)
+        arguments << QStringLiteral("--setenv=%1").arg(variable);
+    arguments << QStringLiteral("--") << run;
+    return arguments;
 }
 
 /// Opens @p command on the desktop, without waiting for it. False with
