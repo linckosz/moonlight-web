@@ -1984,6 +1984,8 @@ export const MoonlightApp = {
             this._lastCongSignal = 0;
             this._lastUpgradeTime = 0;
             this._upgradeStableMs = 75000;
+            this._climbBack = null;
+            this._climbsOver = false;
             this._originalStreamHeight = undefined;
             // Aspect probe: one bar measurement per user-initiated launch,
             // and a watch on the host's own shape for as long as the stream
@@ -3764,6 +3766,10 @@ export const MoonlightApp = {
         // Stop pressed, a notice from the host, or a relaunch that replaced
         // this view while the answer came: the ending is theirs.
         if (sv !== this.streamView || sv._quitting || sv._manualQuitting || sv._takenOver) return;
+        if (state === 'ended' && !this._relaunching && this._climbInDoubt(sv)) {
+            this._stepBackFromClimb('the host ended the stream');
+            return;
+        }
         const now = Date.now();
         if (this._relaunching || !shouldRelaunchAfterCrash(state, this._crashRelaunches, now)) {
             if (state === 'crashed')
@@ -3830,6 +3836,7 @@ export const MoonlightApp = {
             console.warn(`[MW] Transport failure ignored (stopping): ${reason}`);
             return;
         }
+        if (this._climbInDoubt(this.streamView) && this._judgeFailedClimb(reason)) return;
 
         const chain = this._transportChain || [];
         const cur = this._transportIndex || 0;
@@ -4480,6 +4487,10 @@ export const MoonlightApp = {
                 : false;
         if (this._standbyView !== sv) return;
         this._restoreLiveQuality();
+        // A climb on a standby costs nothing when it fails: the live stream
+        // never stopped, and the next step takes the classic relaunch.
+        if (this._climbBack) this._enhancementAutoForced = this._climbBack.autoForced;
+        this._climbBack = null;
         if (crashed) {
             console.warn('[MW] The standby stream worker crashed — the host keeps two sessions');
             this._abortStandby(reason + ' (worker crashed)');
@@ -4548,6 +4559,7 @@ export const MoonlightApp = {
             typeof result.slot === 'number' ? result.slot : this._activeSlot === 0 ? 1 : 0;
         if (typeof result.dual_supported === 'boolean') this._dualSupported = result.dual_supported;
         this._noteLiveQuality();
+        this._climbBack = null;
 
         this.streamView = sv;
         sv.onFirstFrame = null;
@@ -4647,6 +4659,7 @@ export const MoonlightApp = {
         // that a still-choppy stream keeps escalating instead of lingering.
         if (this._lastDegradeTime && now - this._lastDegradeTime < 15000) return;
         this._lastDegradeTime = now;
+        this._climbBack = null;
 
         // Flap guard: congestion soon after an automatic upgrade means the
         // network hadn't really recovered — require a longer stable period
@@ -4778,6 +4791,9 @@ export const MoonlightApp = {
      * see _onStreamCongested). One knob per step, reverse of the degradation
      * ladder: fps → preferred transport → resolution (one rung up, restoring
      * the user's enhancement setting with the final rung) → bitrate.
+     *
+     * A step that fails before its first picture is undone (_stepBackFromClimb),
+     * and the session climbs no more.
      */
     _maybeUpgradeQuality() {
         if (this._nav.overlay !== 'streaming') return;
@@ -4787,6 +4803,10 @@ export const MoonlightApp = {
         if (this._sharePinsQuality()) return;
         const sv = this.streamView;
         if (!sv || !sv._firstFrameRendered || sv._quitting || sv._manualQuitting) return;
+        // This view has shown a picture: the climb that brought it succeeded.
+        // Not while a standby launch is out, whose climb is still in doubt.
+        if (!this._standbyLaunching) this._climbBack = null;
+        if (this._climbsOver) return;
         const o = this._degradeOverrides;
         if (!o || Object.keys(o).length === 0) return;
         const base = this._lastStreamingSettings || {};
@@ -4802,6 +4822,13 @@ export const MoonlightApp = {
         let relaunchIndex = this._transportIndex || 0;
         let toastKey;
         const toastParams = {};
+        // Read before any knob moves. _liveQuality is replaced, never written
+        // into, so this keeps the rung the stream is on past the relaunch.
+        const back = {
+            quality: this._liveQuality,
+            transportIndex: relaunchIndex,
+            autoForced: !!this._enhancementAutoForced,
+        };
 
         if (o.stream_fps !== undefined) {
             delete o.stream_fps;
@@ -4851,7 +4878,92 @@ export const MoonlightApp = {
 
         console.log('[MW] Network stable — upgrade step, remaining overrides:', JSON.stringify(o));
         Toast.info(t(toastKey, toastParams));
+        this._climbBack = back.quality ? back : null;
         this._qualityRelaunch(relaunchIndex);
+    },
+
+    /** A climb is out and @p sv has shown no picture of it yet. A view that has
+     *  settles it: whatever ends that view has nothing to do with the climb. */
+    _climbInDoubt(sv) {
+        if (!this._climbBack) return false;
+        if (sv && sv._firstFrameRendered) {
+            this._climbBack = null;
+            return false;
+        }
+        return true;
+    },
+
+    /**
+     * A transport failure while a climb is in doubt (_onTransportFailed).
+     * Returns true when the failure is taken here. Issue #36: the rung below
+     * was streaming a moment ago from this same browser and network, so a host
+     * or a decoder that cannot take the new rung is the climb's doing:
+     *  - launch_failed, after the retry every launch gets: the host refuses;
+     *  - no_video, decoder_unsupported: connected, and no picture ever came;
+     *  - any other reason (the link closed before connecting): only if the host
+     *    says the stream ended on its side. Sunshine can drop it that fast.
+     * Not the climb's doing, and left to the transport chain: an ICE timeout (a
+     * network that blocks this transport), a refused MW-BIND or restart.
+     */
+    _judgeFailedClimb(reason) {
+        if (reason === 'launch_failed' && !this._launchRetried) return false;
+        if (
+            reason === 'launch_failed' ||
+            reason === 'no_video' ||
+            reason === 'decoder_unsupported'
+        ) {
+            this._stepBackFromClimb(reason);
+            return true;
+        }
+        const sv = this.streamView;
+        const host = this._lastStreamHost;
+        const notTheClimb =
+            reason === IDENTITY_REFUSED ||
+            reason === 'reconnect_refused' ||
+            /ice timeout/i.test(String(reason)) ||
+            !sv ||
+            !sv.streamId ||
+            !host;
+        if (notTheClimb) {
+            this._climbBack = null;
+            return false;
+        }
+        settledStreamState(() => BackendClient.streamState(host.uuid, sv.streamId)).then(
+            (state) => {
+                // Stop pressed, or another relaunch took over, while the host answered.
+                if (!this._climbBack || sv !== this.streamView) return;
+                if (this._nav.overlay !== 'streaming' || this._startupAborted) return;
+                if (sv._quitting || sv._manualQuitting) return;
+                if (state === 'ended') {
+                    this._stepBackFromClimb(`${reason}, and the host ended the stream`);
+                } else {
+                    this._climbBack = null;
+                    this._onTransportFailed(reason);
+                }
+            },
+        );
+        return true;
+    },
+
+    /**
+     * The climb failed before its first picture (issue #36: Sunshine out of GPU
+     * memory for the bigger encoder, the session gone in half a second). The
+     * host had no standby, so the stream it replaced is already closed: resume
+     * on the rung that worked. The session climbs no more, or the next stable
+     * minute would knock the stream down again. Once only: if the rung below
+     * fails too, the stream ends the way any other does. A launch by the user
+     * starts from their own settings again.
+     */
+    _stepBackFromClimb(why) {
+        const back = this._climbBack;
+        this._climbBack = null;
+        this._climbsOver = true;
+        console.warn(`[MW] Quality climb failed (${why}) — back to the rung that worked`);
+        this._liveQuality = back.quality;
+        this._restoreLiveQuality();
+        this._enhancementAutoForced = back.autoForced;
+        this._launchRetried = false;
+        this._relaunchTransport(back.transportIndex);
     },
 
     /**
@@ -4891,6 +5003,7 @@ export const MoonlightApp = {
         this._nativeFormat = null;
         this._abortStandby('active stream ended');
         this._reconnectOf = null;
+        this._climbBack = null;
         // The session is over — no successor will claim the inherited display
         // state, and a bridged soft keyboard must not outlive the stream.
         this._carryViewState = null;
