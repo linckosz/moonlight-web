@@ -981,7 +981,9 @@ function renderTable() {
       const v = r[key];
       const none = !scored || (key === 'lpips' && lpipsOff);
       const text = v != null ? SCORE_OF[key][2](v) : none || !measuring ? '—' : '…';
-      return `<td class="num${key === 'lpips' ? ' fid' : ''}">${v != null && v === top[key] ? `<strong>${text}</strong>` : text}</td>`;
+      // the best as it reads: two figures that read the same are both in bold
+      const isTop = v != null && top[key] != null && text === SCORE_OF[key][2](top[key]);
+      return `<td class="num${key === 'lpips' ? ' fid' : ''}">${isTop ? `<strong>${text}</strong>` : text}</td>`;
     }).join('');
     const o = r.overshoot != null ? pct(r.overshoot) : measuring ? '…' : '—';
     const t = best(k.id);

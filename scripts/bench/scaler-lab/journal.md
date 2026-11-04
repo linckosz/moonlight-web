@@ -3353,3 +3353,5 @@ Prouvé sur la vraie carte : le texte f16 de MWSR, FSR1 et SGSR1 compile et pass
 SGSR1, à sa meilleure précision, n'est pas derrière MWSR partout sur cette image : M3 0,354 ms contre 0,390, iPhone 0,749 contre 0,816, RTX 0,077 contre 0,076. La phrase du README, « the fastest of the four on these GPUs », reste vraie de ses trois GPU sur 0 A.D. et le texte, en f32 compris : elle ne s'étend ni aux appareils Apple ni à cette image.
 
 Le tableau de la page : les barres partent d'un même point, la précision se lit sous le nom (« Half precision », « Half ≈ full », « Half refused »), toutes les lignes ont une hauteur, et « port » quitte la ligne de NIS, puisque la section « The ports » le dit. Reste la note de son volet, « MoonlightWeb's per-fragment port ».
+
+**Bruno confirme le f32 partout (04/11), au vu de ces mesures.** La question reste fermée jusqu'à ce que les envois de la page la rouvrent, l'iPhone et le Mac d'abord. Dans le tableau de la page, deux scores qui se lisent de la même façon sont tous les deux en gras, ce que les tableaux fixes faisaient déjà : la comparaison se fait sur la valeur arrondie, et non plus sur la valeur brute.
