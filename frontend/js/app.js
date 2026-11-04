@@ -55,8 +55,13 @@ import { SettingsView } from './ui/SettingsView.js';
 import { AdminView } from './ui/AdminView.js';
 import { LoginView } from './ui/LoginView.js';
 import { SetupView } from './ui/SetupView.js';
-import { PlayerJoinView } from './ui/PlayerJoinView.js';
+import {
+    PlayerJoinView,
+    guestTouchPadMode,
+    rememberGuestTouchPadMode,
+} from './ui/PlayerJoinView.js';
 import { openPairApprove, pairRequestFromPath } from './ui/PairApproveDialog.js';
+import { touchPadSettings } from './stream/TouchPadState.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { DiscordLink } from './ui/DiscordLink.js';
@@ -604,6 +609,8 @@ export const MoonlightApp = {
                         gamepadAllowed: view.info.permissions?.gamepad === true,
                         keyboardMouseAllowed: view.info.permissions?.keyboardMouse === true,
                         padKey: padKey || null,
+                        touchPad: { mode: guestTouchPadMode() },
+                        onTouchPadMode: rememberGuestTouchPadMode,
                     },
                 );
                 this.streamView = streamView;
@@ -3882,6 +3889,8 @@ export const MoonlightApp = {
             // learns the viewer's mouse resolution, so a low-DPI mouse makes a
             // game slow to aim with, and this is the one place to answer it.
             mouseSensitivity: streamingSettings.mouse_sensitivity,
+            // A guest has no settings page: only what they chose in their dialog.
+            touchPad: viewOpts.touchPad || touchPadSettings(streamingSettings),
             // Click-to-photon probe: the host says whether it raises its flag
             // on every click (debug builds on Windows, setting on). Only then
             // does the view install its measuring side.

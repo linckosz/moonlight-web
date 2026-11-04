@@ -1151,6 +1151,8 @@ export class StreamView {
         this._padKey = opts.padKey || null;
         // The on-screen controller's settings (StreamViewTouchPad._touchPadPref).
         this._touchPadPrefs = opts.touchPad || null;
+        // A guest's choice between it and a real pad, kept for their next visit.
+        this._touchPadRemember = opts.onTouchPadMode || null;
         // Click-to-photon probe (debug builds, Windows host): the launch reply
         // says whether the host raises its flag on every click. Only then is
         // the measuring side installed — see stream/LatencyProbe.js.
@@ -4650,6 +4652,7 @@ export class StreamView {
             container: this._rootEl || document.body,
             padKey: key || null,
             mode: 'auto',
+            touchPad: this._touchPadDialogEntry(),
             onOpen: () => this._holdPads('remap'),
             onClose: () => {
                 this._releasePads('remap');
@@ -4659,7 +4662,10 @@ export class StreamView {
                 if (!this._playerMode) return;
                 this._padKey = k;
                 // Picking a real pad is putting the on-screen one away.
-                if (gm?.hasVirtual()) this._unplugTouchPad();
+                if (gm?.hasVirtual()) {
+                    this._unplugTouchPad();
+                    if (this._touchPadRemember) this._touchPadRemember('auto');
+                }
                 if (gm) gm.setPreferredPad(k);
             },
         });
@@ -12532,6 +12538,7 @@ export class StreamView {
         const opts = {
             touch,
             touchScreen: this._touchScreen,
+            touchPad: this._touchPadAvailable(),
             isMac: /Mac/.test(navigator.platform),
             remote: RemoteNav.isActive(),
         };

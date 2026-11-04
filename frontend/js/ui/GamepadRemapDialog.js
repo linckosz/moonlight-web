@@ -287,16 +287,22 @@ export function resolvePad(gp) {
     return res;
 }
 
+/** The on-screen controller's value in the pad picker; a padKey has a colon. */
+const TOUCH_PAD_ENTRY = 'touch-pad';
+
 export class GamepadRemapDialog {
     /**
      * @param {{ container?: HTMLElement, padKey?: string|null,
      *           mode?: 'test'|'wizard'|'auto', required?: boolean,
      *           onOpen?: () => void, onClose?: () => void,
      *           onSaved?: (key: string) => void,
-     *           onPadChange?: (key: string) => void }} [opts]
+     *           onPadChange?: (key: string) => void,
+     *           touchPad?: { label: string, active: boolean, onPick: () => void }|null }} [opts]
      *   `mode: 'auto'` opens the wizard for a pad nothing maps, the test view
      *   otherwise. `required` (a guest who cannot join unmapped) closes the
-     *   dialog as soon as the mapping is saved.
+     *   dialog as soon as the mapping is saved. `touchPad` puts the on-screen
+     *   controller first in the picker; while it is `active`, no real pad is the
+     *   selected one, and none is picked just by being there.
      */
     constructor(opts = {}) {
         this._container = opts.container || document.body;
@@ -307,6 +313,7 @@ export class GamepadRemapDialog {
         this._onClose = opts.onClose || null;
         this._onSaved = opts.onSaved || null;
         this._onPadChange = opts.onPadChange || null;
+        this._touchPad = opts.touchPad || null;
         this._overlay = null;
         this._raf = null;
         this._padsSig = '';
@@ -410,9 +417,13 @@ export class GamepadRemapDialog {
 
     // ── Pads ─────────────────────────────────────────────────────────────
 
+    _touchPadActive() {
+        return !!this._touchPad && this._touchPad.active;
+    }
+
     _selectedPad() {
         const pads = connectedPads();
-        if (!this._key) return null;
+        if (!this._key || this._touchPadActive()) return null;
         return pads.find((gp) => padKey(gp) === this._key) || null;
     }
 
@@ -427,11 +438,16 @@ export class GamepadRemapDialog {
             const first = pads[0];
             const changed = first && padKey(first) !== this._key;
             this._key = first ? padKey(first) : this._key;
-            if (changed && this._onPadChange) this._onPadChange(this._key);
+            if (changed && this._onPadChange && !this._touchPadActive()) {
+                this._onPadChange(this._key);
+            }
             this._wiz = null;
         }
 
-        const res = pads.length ? resolvePad(this._selectedPad() || pads[0]) : null;
+        const res =
+            pads.length && !this._touchPadActive()
+                ? resolvePad(this._selectedPad() || pads[0])
+                : null;
         this._mountArt(res ? res.kind : this._artKind);
         // What the device is: deduced, and the user's to correct.
         const remote = !!res && res.kind === 'remote';
@@ -451,20 +467,32 @@ export class GamepadRemapDialog {
                     </select>
                 </label>`
                 : '';
-        if (pads.length > 1) {
+        if (pads.length > 1 || this._touchPad) {
+            const onScreen = this._touchPad
+                ? `<option value="${TOUCH_PAD_ENTRY}" ${this._touchPadActive() ? 'selected' : ''}>${escapeHtml(this._touchPad.label)}</option>`
+                : '';
             this._els.pad.innerHTML = `
                 <select class="gamepad-remap-select" aria-label="${escapeHtml(t('gamepad.remap.pick'))}">
+                    ${onScreen}
                     ${pads
                         .map((gp) => {
                             const k = padKey(gp);
-                            return `<option value="${escapeHtml(k)}" ${k === this._key ? 'selected' : ''}>${escapeHtml(padName(gp))}</option>`;
+                            return `<option value="${escapeHtml(k)}" ${k === this._key && !this._touchPadActive() ? 'selected' : ''}>${escapeHtml(padName(gp))}</option>`;
                         })
                         .join('')}
                 </select>
                 ${res && !remote ? sourceBadge(res.source) : ''}
                 ${kindPicker}`;
             this._els.pad.querySelector('select').addEventListener('change', (e) => {
-                this._key = /** @type {HTMLSelectElement} */ (e.target).value;
+                const value = /** @type {HTMLSelectElement} */ (e.target).value;
+                if (value === TOUCH_PAD_ENTRY) {
+                    this._touchPad.active = true;
+                    this._touchPad.onPick();
+                    this.close();
+                    return;
+                }
+                if (this._touchPad) this._touchPad.active = false;
+                this._key = value;
                 this._wiz = null;
                 if (this._onPadChange) this._onPadChange(this._key);
                 this._syncPads(true);

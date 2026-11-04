@@ -430,6 +430,38 @@ describe('the on-screen controller in the stream', () => {
         });
     });
 
+    describe('a guest choosing it in their dialog', () => {
+        const guest = (fields = {}) =>
+            makeView({ _playerMode: true, _gamepadAllowed: true, ...fields });
+
+        it('offers it to a guest with fingers and the invitation, to nobody else', () => {
+            const owner = makeView();
+            expect(owner._touchPadDialogEntry()).toBeNull();
+            expect(guest({ _gamepadAllowed: false })._touchPadDialogEntry()).toBeNull();
+            const view = guest();
+            expect(view._touchPadDialogEntry().active).toBe(false);
+            media['(any-pointer: coarse)'] = false;
+            expect(view._touchPadDialogEntry()).toBeNull();
+        });
+
+        it('says it is the one in use', () => {
+            const view = guest();
+            view._mountTouchPad();
+            view._toggleTouchPad();
+            expect(view._touchPadDialogEntry().active).toBe(true);
+        });
+
+        it('plugs it in, shows it and remembers, when picked', () => {
+            const remember = vi.fn();
+            const view = guest({ _touchPadRemember: remember });
+            view._mountTouchPad();
+            view._touchPadDialogEntry().onPick();
+            expect(view._gamepadManager.hasVirtual()).toBe(true);
+            expect(shown(view)).toBe(true);
+            expect(remember).toHaveBeenCalledWith('always');
+        });
+    });
+
     describe('a guest', () => {
         const guest = { _playerMode: true, _gamepadAllowed: true };
         const realPad = { index: 2, id: 'Xbox', mapping: 'standard', buttons: [], axes: [] };

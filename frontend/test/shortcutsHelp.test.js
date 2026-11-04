@@ -71,6 +71,15 @@ describe('the gesture rows', () => {
         }
     });
 
+    it('names the on-screen controller only where four fingers bring it', () => {
+        for (const touchScreen of [false, true]) {
+            const row = (touchPad) =>
+                gestureRows(touchScreen, touchPad).find((r) => r[0] === 'stream.tcTouchPad');
+            expect(row(false)).toBeUndefined();
+            expect(row(true)[1]).toBe('stream.tcTouchPadVal');
+        }
+    });
+
     it('changes what one finger does in touch-screen mode', () => {
         const trackpad = gestureRows(false).find((r) => r[0] === 'stream.tcMoveCursor');
         const screen = gestureRows(true).find((r) => r[0] === 'stream.tcMoveCursor');

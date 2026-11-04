@@ -59,9 +59,11 @@ function loadPrefs() {
             // The controller picked last time (gamepadMapping.padKey), taken
             // again when it is plugged in.
             padKey: typeof raw.padKey === 'string' ? raw.padKey : null,
+            // 'always' once they picked the on-screen controller in their dialog.
+            touchPadMode: raw.touchPadMode === 'always' ? 'always' : 'auto',
         };
     } catch (_) {
-        return { gaming: false, touchScreen: false, padKey: null };
+        return { gaming: false, touchScreen: false, padKey: null, touchPadMode: 'auto' };
     }
 }
 
@@ -71,6 +73,16 @@ function savePrefs(prefs) {
     } catch (_) {
         // Private mode with storage disabled: the choice just won't be remembered.
     }
+}
+
+/** What a guest last chose between the on-screen controller and a real pad. */
+export function guestTouchPadMode() {
+    return loadPrefs().touchPadMode;
+}
+
+/** @param {'always'|'auto'} mode */
+export function rememberGuestTouchPadMode(mode) {
+    savePrefs({ ...loadPrefs(), touchPadMode: mode });
 }
 
 export class PlayerJoinView {

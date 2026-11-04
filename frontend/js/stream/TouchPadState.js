@@ -332,6 +332,23 @@ export class TouchPadState {
 }
 
 /**
+ * The controller's settings as saved (Settings → On-screen controller, per
+ * device), with the defaults of a viewer who never opened them.
+ * @param {Record<string, any>} [data]
+ */
+export function touchPadSettings(data = {}) {
+    const within = (v, min, max, fallback) =>
+        typeof v === 'number' && v >= min && v <= max ? v : fallback;
+    return {
+        mode: ['always', 'never'].includes(data.touch_pad_mode) ? data.touch_pad_mode : 'auto',
+        scale: within(data.touch_pad_scale, 0.8, 1.4, 1),
+        opacity: within(data.touch_pad_opacity, 0.2, 1, 1),
+        vibrate: data.touch_pad_vibrate !== false,
+        outside: data.touch_pad_outside === 'ignore' ? 'ignore' : 'mouse',
+    };
+}
+
+/**
  * Where the controls sit: on each side the buttons high and outside, the stick
  * low and inside, L3 and R3 in the bottom corners. These are the places and
  * proportions of GeForce NOW's controller, the one players of this kind of

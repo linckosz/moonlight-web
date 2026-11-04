@@ -65,10 +65,11 @@ export function keyboardShortcutRows(isMac) {
  *
  * Touch-screen mode changes the 1-finger meaning from a relative trackpad move
  * to a direct, absolute touch — and the drag that follows scrolls the content
- * instead of moving the cursor.
+ * instead of moving the cursor. The on-screen controller's row is there only
+ * where a tap of four fingers does bring it (`touchPad`).
  */
-export function gestureRows(touchScreen) {
-    return touchScreen
+export function gestureRows(touchScreen, touchPad = false) {
+    const rows = touchScreen
         ? [
               [t('stream.tcMoveCursor'), t('stream.tsMoveCursorVal')],
               [t('stream.tcLeftClick'), t('stream.tsLeftClickVal')],
@@ -91,6 +92,8 @@ export function gestureRows(touchScreen) {
               [t('stream.tcDesktop'), t('stream.tcDesktopVal')],
               [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
           ];
+    if (touchPad) rows.push([t('stream.tcTouchPad'), t('stream.tcTouchPadVal')]);
+    return rows;
 }
 
 /**
@@ -122,13 +125,22 @@ export function shortcutsTitle({ touch, touchScreen, remote = false }) {
  * @param {object} opts
  * @param {boolean} opts.touch      device has touch → gestures instead of keys
  * @param {boolean} [opts.touchScreen] touch-screen mode rather than trackpad
+ * @param {boolean} [opts.touchPad] four fingers bring the on-screen controller
  * @param {boolean} [opts.isMac]    Mac keyboard labels (ignored when `touch`)
  * @param {boolean} [opts.remote]   a TV remote (RemoteNav) → its rows, first of all
  */
-export function shortcutsGridHtml({ touch, touchScreen = false, isMac = false, remote = false }) {
+export function shortcutsGridHtml({
+    touch,
+    touchScreen = false,
+    touchPad = false,
+    isMac = false,
+    remote = false,
+}) {
     let html = '<div class="shortcuts-slide-grid">';
     if (remote || touch) {
-        for (const [action, gesture] of remote ? remoteRows() : gestureRows(touchScreen)) {
+        for (const [action, gesture] of remote
+            ? remoteRows()
+            : gestureRows(touchScreen, touchPad)) {
             html += '<div class="shortcut-row">';
             html += '<span class="shortcut-action">' + escapeHtml(action) + '</span>';
             html +=

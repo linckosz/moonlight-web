@@ -8,6 +8,7 @@ import {
     TOUCH_PAD_ID,
     TouchPadState,
     buttonsAt,
+    touchPadSettings,
     layoutTouchPad,
     rumblePattern,
     stickAt,
@@ -339,6 +340,41 @@ describe('TouchPadState', () => {
             expect.objectContaining({ type: 'gamepad', buttons: 0, lt: 0, lx: 0 }),
         );
         gm.stop();
+    });
+});
+
+describe('touchPadSettings', () => {
+    it('gives the defaults of a viewer who never opened them', () => {
+        expect(touchPadSettings()).toEqual({
+            mode: 'auto',
+            scale: 1,
+            opacity: 1,
+            vibrate: true,
+            outside: 'mouse',
+        });
+    });
+
+    it('takes what was saved', () => {
+        expect(
+            touchPadSettings({
+                touch_pad_mode: 'never',
+                touch_pad_scale: 1.4,
+                touch_pad_opacity: 0.2,
+                touch_pad_vibrate: false,
+                touch_pad_outside: 'ignore',
+            }),
+        ).toEqual({ mode: 'never', scale: 1.4, opacity: 0.2, vibrate: false, outside: 'ignore' });
+    });
+
+    it('refuses what no setting could have saved', () => {
+        const odd = touchPadSettings({
+            touch_pad_mode: 'sometimes',
+            touch_pad_scale: 3,
+            touch_pad_opacity: 0,
+            touch_pad_outside: 'elsewhere',
+        });
+        expect(odd).toEqual(touchPadSettings());
+        expect(touchPadSettings({ touch_pad_opacity: '0.5' }).opacity).toBe(1);
     });
 });
 

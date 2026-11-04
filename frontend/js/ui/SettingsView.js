@@ -62,11 +62,13 @@ import {
     IS_TOUCH_DEVICE,
     IS_TV,
     resolveTearing,
+    touchEnabled,
     supportsDisplayHdr,
     hdrClientCapability,
     chroma444ClientCapability,
     supportsGamingMode,
 } from '../util/BrowserDetect.js';
+import { touchPadSettings } from '../stream/TouchPadState.js';
 import * as RemoteNav from './RemoteNav.js';
 import {
     HID_KINDS,
@@ -217,6 +219,7 @@ export class SettingsView {
         this._fullscreenOnStart = false;
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
+        this._touchPad = touchPadSettings();
         // Mobile only: direct touch-screen input (absolute) instead of the
         // relative trackpad model. Off by default.
         this._touchScreen = false;
@@ -683,6 +686,7 @@ export class SettingsView {
                 ? data.mouse_sensitivity
                 : 1;
         this._touchScreen = data.touch_screen === true;
+        this._touchPad = touchPadSettings(data);
         // Allow tearing (default on): resolveTearing() owns the default, the
         // legacy keys and the "cannot tear anyway" gate — see BrowserDetect.
         this._tearing = resolveTearing(data);
@@ -1024,6 +1028,11 @@ export class SettingsView {
             video_enhancement: this._videoEnhancement,
             video_enhancement_algo: this._videoEnhancementAlgo,
             // Per-device only (server ignores these unknown fields).
+            touch_pad_mode: this._touchPad.mode,
+            touch_pad_scale: this._touchPad.scale,
+            touch_pad_opacity: this._touchPad.opacity,
+            touch_pad_vibrate: this._touchPad.vibrate,
+            touch_pad_outside: this._touchPad.outside,
             mic_enabled: this._micEnabled,
             mic_chosen: this._micChosen,
             mic_quality: this._micQuality,
@@ -1556,6 +1565,7 @@ export class SettingsView {
             // which is 'auto' unless someone once ran a debug build here.
             const gpProfileEl = this.container.querySelector('#settings-gamepad-profile');
             const gamepadProfile = gpProfileEl ? gpProfileEl.value : this._gamepadProfile;
+            const touchPad = this._readTouchPadSection();
 
             // Update internal state
             this._videoCodec = codec;
@@ -1578,6 +1588,7 @@ export class SettingsView {
             this._videoEnhancement = videoEnhancement;
             this._videoEnhancementAlgo = videoEnhancementAlgo;
             this._gamepadProfile = gamepadProfile;
+            this._touchPad = touchPad;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
@@ -1616,6 +1627,7 @@ export class SettingsView {
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
         this._touchScreen = false;
+        this._touchPad = touchPadSettings();
         this._tearing = SUPPORTS_CANVAS_TEARING;
         this._videoWorker = 'auto';
         // Off: the plain Canvas2D path is the fastest first impression (see
@@ -2410,6 +2422,9 @@ export class SettingsView {
                     ${navigator.hid ? `<span class="setting-desc">${t('settings.hidDesc')}</span>` : ''}
                 </div>
 
+                <!-- ── On-screen controller ────────────────────────────────── -->
+                ${this._renderTouchPadSection()}
+
                 <!-- ── Privacy ─────────────────────────────────────────────── -->
                 <!-- Here rather than in Admin: it concerns everyone who streams
                      through this machine, and Admin is a door most users never
@@ -2496,9 +2511,99 @@ export class SettingsView {
         return {
             touch: IS_TOUCH_DEVICE,
             touchScreen: this._touchScreen,
+            touchPad: touchEnabled() && this._touchPad.mode !== 'never',
             isMac: /Mac/.test(navigator.platform),
             remote: RemoteNav.isActive(),
         };
+    }
+
+    /**
+     * Only on a screen with fingers the OS has switched on: elsewhere there is
+     * no controller to set, and the saved values wait untouched.
+     */
+    _renderTouchPadSection() {
+        if (!touchEnabled()) return '';
+        const pad = this._touchPad;
+        const option = (value, current, key) =>
+            `<option value="${value}" ${value === current ? 'selected' : ''}>${t(key)}</option>`;
+        const slider = (name, label, value, min, max) => `
+                    <div class="settings-field">
+                        <label class="settings-label" for="settings-touch-pad-${name}">
+                            ${t(label)} <strong id="settings-touch-pad-${name}-value">${value}</strong>%
+                        </label>
+                        <input type="range" id="settings-touch-pad-${name}"
+                               class="settings-slider"
+                               min="${min}" max="${max}" step="5"
+                               value="${value}" />
+                        <div class="settings-slider-labels">
+                            <span>${min}%</span>
+                            <span>${max}%</span>
+                        </div>
+                    </div>`;
+        return `
+                <div class="settings-section settings-section-touch-pad">
+                    <h3 class="settings-section-title">${t('settings.touchPad')}</h3>
+                    <div class="settings-field">
+                        <label class="settings-label" for="settings-touch-pad-mode">${t('settings.touchPadDisplay')}</label>
+                        <select id="settings-touch-pad-mode" class="settings-select">
+                            ${option('auto', pad.mode, 'settings.touchPadAuto')}
+                            ${option('always', pad.mode, 'settings.touchPadAlways')}
+                            ${option('never', pad.mode, 'settings.touchPadNever')}
+                        </select>
+                    </div>
+                    ${slider('scale', 'settings.touchPadSize', Math.round(pad.scale * 100), 80, 140)}
+                    ${slider('opacity', 'settings.touchPadOpacity', Math.round(pad.opacity * 100), 20, 100)}
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-touch-pad-vibrate"
+                                ${pad.vibrate ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.touchPadVibration')}</strong>
+                            </span>
+                        </label>
+                    </div>
+                    <div class="settings-field">
+                        <label class="settings-label" for="settings-touch-pad-outside">${t('settings.touchPadOutside')}</label>
+                        <select id="settings-touch-pad-outside" class="settings-select">
+                            ${option('mouse', pad.outside, 'settings.touchPadOutsideMouse')}
+                            ${option('ignore', pad.outside, 'settings.touchPadOutsideIgnore')}
+                        </select>
+                    </div>
+                </div>`;
+    }
+
+    /** What the section says, or what was saved when it is not on the page. */
+    _readTouchPadSection() {
+        const field = (name) => this.container.querySelector('#settings-touch-pad-' + name);
+        if (!field('mode')) return this._touchPad;
+        return touchPadSettings({
+            touch_pad_mode: field('mode').value,
+            touch_pad_scale: Number(field('scale').value) / 100,
+            touch_pad_opacity: Number(field('opacity').value) / 100,
+            touch_pad_vibrate: field('vibrate').checked,
+            touch_pad_outside: field('outside').value,
+        });
+    }
+
+    _bindTouchPadSection() {
+        const field = (name) => this.container.querySelector('#settings-touch-pad-' + name);
+        if (!field('mode')) return;
+        field('mode').addEventListener('change', () => {
+            this._autoSave();
+            // Debounced like the touch-screen switch: the help below must not wait.
+            this._touchPad = { ...this._touchPad, mode: field('mode').value };
+            this._refreshShortcutsSection();
+        });
+        for (const name of ['vibrate', 'outside']) {
+            field(name).addEventListener('change', () => this._autoSave());
+        }
+        for (const name of ['scale', 'opacity']) {
+            const value = field(name + '-value');
+            field(name).addEventListener('input', () => {
+                value.textContent = field(name).value;
+            });
+            field(name).addEventListener('change', () => this._autoSave());
+        }
     }
 
     /** Rebuild the in-stream cheat-sheet in place, after a setting changed it. */
@@ -2761,6 +2866,7 @@ export class SettingsView {
         if (sensSlider) sensSlider.addEventListener('change', () => this._autoSave());
         const mouseSensSlider = this.container.querySelector('#settings-mouse-sensitivity');
         if (mouseSensSlider) mouseSensSlider.addEventListener('change', () => this._autoSave());
+        this._bindTouchPadSection();
 
         // Language selector — changing it persists the choice and reloads.
         const langSelect = this.container.querySelector('#settings-language');

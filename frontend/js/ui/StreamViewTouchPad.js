@@ -294,6 +294,32 @@ export class StreamViewTouchPad {
     }
 
     /**
+     * A guest's way to it in their controller dialog: first in the list of pads,
+     * since it is one to them. The owner has a button of their own.
+     * @this {StreamViewInstance}
+     */
+    _touchPadDialogEntry() {
+        if (!this._playerMode || !this._touchPadAvailable() || !this._gamepadManager) return null;
+        return {
+            label: t('settings.touchPad'),
+            active: this._gamepadManager.hasVirtual(),
+            onPick: () => this._chooseTouchPad(),
+        };
+    }
+
+    /**
+     * The guest picked it: on screen now, and at their next visit.
+     * @this {StreamViewInstance}
+     */
+    _chooseTouchPad() {
+        this._touchPadStarted = true;
+        this._plugTouchPad();
+        this._touchPadShown = true;
+        this._syncTouchPad();
+        if (this._touchPadRemember) this._touchPadRemember('always');
+    }
+
+    /**
      * Put on screen what the state says. Shown only when plugged in and the
      * viewer wants it, and out of the way of the soft keyboard and of a dialog
      * listening to the pads. Everything held is let go when it goes (setVisible),
