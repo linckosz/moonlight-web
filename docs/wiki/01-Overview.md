@@ -54,7 +54,9 @@ Per-browser preferences (stored in `localStorage`, with server defaults) are edi
 - Changing quality mid-stream is **seamless**: a second stream is prepared in the background and the display switches on its first frame — no loader, no reconnection (the same mechanism the automatic congestion ladder uses).
 - **Video Enhancement** (GPU upscaling + sharpening): one switch, MoonlightWeb's own upscaler (MWSR) in the flavour the device runs best (WebGL2 on a computer and on Android, WebGPU on iPhone and iPad and in HDR), none on an entry-level Mali GPU:
 
-![Video Enhancement — 720p upscaled to 1440p](../screenshots/video_enhancement.gif)
+![The comparison page's opening view: the native frame and MWSR side by side, 1080p upscaled to 1440p, in 4:2:0](../screenshots/mwsr_compare.png)
+
+*The opening view of the [comparison page](https://moonlightweb.top/mwsr/), where you can compare the upscalers on your own GPU: the native frame against MWSR, from a 1080p 4:2:0 input to 1440p. The picture is Blender 2.81's splash screen, by Alex Treviño and Anaïs Maamar (original concept) / Blender Cloud, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), reduced to 2560×1440 and cropped.*
 
 ## 1.2 The Administrator's journey
 
