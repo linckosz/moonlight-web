@@ -1189,6 +1189,8 @@ export class WebGpuRenderer extends VideoRenderer {
         r._lostFrames = 0;
         r._framesOnDevice = 0;
         r._failed = false;
+        // The pipelines the device refused, and why (see _watchPipeline).
+        r._refused = new Map();
         r._drawCount = 0;
         r._drawErrors = new Set();
         r._adapter = adapter;
@@ -1485,7 +1487,7 @@ export class WebGpuRenderer extends VideoRenderer {
             ],
         });
         const blitModule = device.createShaderModule({ code: BLIT_WGSL });
-        this._blitPipeline = device.createRenderPipeline({
+        this._blitPipeline = this._renderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._blitLayout] }),
             vertex: { module: blitModule, entryPoint: 'vs' },
             fragment: {
@@ -1563,11 +1565,11 @@ export class WebGpuRenderer extends VideoRenderer {
         this._dbPipelines = {
             dctLayout,
             finLayout,
-            dct: device.createComputePipeline({
+            dct: this._computePipeline({
                 layout: device.createPipelineLayout({ bindGroupLayouts: [dctLayout] }),
                 compute: { module: dct, entryPoint: 'cs' },
             }),
-            fin: device.createRenderPipeline({
+            fin: this._renderPipeline({
                 layout: device.createPipelineLayout({ bindGroupLayouts: [finLayout] }),
                 vertex: { module: fin, entryPoint: 'vs' },
                 fragment: {
@@ -1717,7 +1719,7 @@ export class WebGpuRenderer extends VideoRenderer {
                 map,
             }),
         });
-        pipeline = this._device.createRenderPipeline({
+        pipeline = this._renderPipeline({
             layout: map ? this._mwsrMapPipelineLayout : this._mwsrPipelineLayout,
             vertex: { module, entryPoint: 'vs' },
             fragment: {
@@ -1745,7 +1747,7 @@ export class WebGpuRenderer extends VideoRenderer {
     _buildPassthroughResources() {
         const device = this._device;
         const blitModule = device.createShaderModule({ code: BLIT_WGSL });
-        this._passthroughPipeline = device.createRenderPipeline({
+        this._passthroughPipeline = this._renderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._blitLayout] }),
             vertex: { module: blitModule, entryPoint: 'vs' },
             fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: this._format }] },
@@ -1760,7 +1762,7 @@ export class WebGpuRenderer extends VideoRenderer {
             ],
         });
         const texModule = device.createShaderModule({ code: BLIT_TEX_WGSL });
-        this._texBlitPipeline = device.createRenderPipeline({
+        this._texBlitPipeline = this._renderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._texBlitLayout] }),
             vertex: { module: texModule, entryPoint: 'vs' },
             fragment: { module: texModule, entryPoint: 'fs', targets: [{ format: this._format }] },
@@ -1793,7 +1795,7 @@ export class WebGpuRenderer extends VideoRenderer {
             ],
         });
         const sgsrModule = device.createShaderModule({ code: SGSR_WGSL });
-        this._enhancePipeline = device.createRenderPipeline({
+        this._enhancePipeline = this._renderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._enhanceLayout] }),
             vertex: { module: sgsrModule, entryPoint: 'vs' },
             fragment: { module: sgsrModule, entryPoint: 'fs', targets: [{ format: this._format }] },
@@ -1839,7 +1841,7 @@ export class WebGpuRenderer extends VideoRenderer {
             ],
         });
         const nisModule = device.createShaderModule({ code: NIS_WGSL });
-        this._nisPipeline = device.createRenderPipeline({
+        this._nisPipeline = this._renderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._nisLayout] }),
             vertex: { module: nisModule, entryPoint: 'vs' },
             fragment: { module: nisModule, entryPoint: 'fs', targets: [{ format: this._format }] },
@@ -1873,7 +1875,7 @@ export class WebGpuRenderer extends VideoRenderer {
             bindGroupLayouts: [this._fsrLayout],
         });
         const easuModule = device.createShaderModule({ code: EASU_WGSL });
-        this._easuPipeline = device.createRenderPipeline({
+        this._easuPipeline = this._renderPipeline({
             layout: fsrPipelineLayout,
             vertex: { module: easuModule, entryPoint: 'vs_main' },
             fragment: {
@@ -1884,7 +1886,7 @@ export class WebGpuRenderer extends VideoRenderer {
             primitive: { topology: 'triangle-list' },
         });
         const rcasModule = device.createShaderModule({ code: RCAS_WGSL });
-        this._rcasPipeline = device.createRenderPipeline({
+        this._rcasPipeline = this._renderPipeline({
             layout: fsrPipelineLayout,
             vertex: { module: rcasModule, entryPoint: 'vs_main' },
             fragment: {
@@ -1918,7 +1920,7 @@ export class WebGpuRenderer extends VideoRenderer {
         // pass at 1:1). One pipeline serves both when the formats agree.
         const layout = device.createPipelineLayout({ bindGroupLayouts: [this._extLayout] });
         const build = (format) =>
-            device.createRenderPipeline({
+            this._renderPipeline({
                 layout,
                 vertex: { module: mod, entryPoint: 'vs' },
                 fragment: { module: mod, entryPoint: 'fs', targets: [{ format }] },
@@ -1972,7 +1974,7 @@ export class WebGpuRenderer extends VideoRenderer {
         // format differs on the SDR tone-map path. One pipeline when they agree.
         const layout = device.createPipelineLayout({ bindGroupLayouts: [this._yuvLayout] });
         const build = (format) =>
-            device.createRenderPipeline({
+            this._renderPipeline({
                 layout,
                 vertex: { module: mod, entryPoint: 'vs' },
                 fragment: { module: mod, entryPoint: 'fs', targets: [{ format }] },
@@ -2298,7 +2300,7 @@ export class WebGpuRenderer extends VideoRenderer {
         });
         if (!this._texPass0Pipeline) {
             const module = device.createShaderModule({ code: BLIT_TEX_WGSL });
-            this._texPass0Pipeline = device.createRenderPipeline({
+            this._texPass0Pipeline = this._renderPipeline({
                 layout: device.createPipelineLayout({ bindGroupLayouts: [this._texBlitLayout] }),
                 vertex: { module, entryPoint: 'vs' },
                 fragment: { module, entryPoint: 'fs', targets: [{ format: this._interFormat }] },
@@ -2465,7 +2467,7 @@ export class WebGpuRenderer extends VideoRenderer {
         const device = this._device;
         if (!this._splitPipeline) {
             const module = device.createShaderModule({ code: SPLIT_WGSL });
-            this._splitPipeline = device.createRenderPipeline({
+            this._splitPipeline = this._renderPipeline({
                 layout: 'auto',
                 vertex: { module, entryPoint: 'vs' },
                 fragment: { module, entryPoint: 'fs', targets: [{ format: this._format }] },
@@ -2512,13 +2514,13 @@ export class WebGpuRenderer extends VideoRenderer {
         });
         for (const grid of [true, false]) {
             const p = encoder.beginRenderPass(target(this._splitTex.views[grid ? 0 : 1]));
-            p.setPipeline(this._mwsrPipeline(reg, grid));
+            this._setPipeline(p, this._mwsrPipeline(reg, grid));
             p.setBindGroup(0, grid ? this._mwsrMapGroup(input) : lawGroup);
             p.draw(3);
             p.end();
         }
         const p = encoder.beginRenderPass(target(canvasTex.createView()));
-        p.setPipeline(this._splitPipeline);
+        this._setPipeline(p, this._splitPipeline);
         p.setBindGroup(0, this._splitGroup);
         p.draw(3);
         p.end();
@@ -2823,6 +2825,61 @@ export class WebGpuRenderer extends VideoRenderer {
             );
     }
 
+    /** A render pipeline, its refusal kept (see _watchPipeline). */
+    _renderPipeline(desc) {
+        return this._watchPipeline(() => this._device.createRenderPipeline(desc));
+    }
+
+    /** A compute pipeline, its refusal kept (see _watchPipeline). */
+    _computePipeline(desc) {
+        return this._watchPipeline(() => this._device.createComputePipeline(desc));
+    }
+
+    /**
+     * Create one pipeline and keep the device's refusal of it, if it comes. A
+     * refused pipeline draws nothing and tells the frame nothing: submit and
+     * onSubmittedWorkDone succeed, so _noteFrame counts the frame as drawn
+     * (WebKit, iOS 26.5, 04/11/2026). Nothing else happens here: most of the
+     * pipelines built are not for this frame's pass. See _setPipeline.
+     * @template T
+     * @param {function(): T} create
+     * @returns {T}
+     */
+    _watchPipeline(create) {
+        const device = this._device;
+        device.pushErrorScope('validation');
+        device.pushErrorScope('internal');
+        let pipeline;
+        try {
+            pipeline = create();
+        } finally {
+            Promise.all([device.popErrorScope(), device.popErrorScope()]).then(
+                ([internal, validation]) => {
+                    const error = internal || validation;
+                    if (!error || !pipeline) return;
+                    this._refused.set(pipeline, error.message);
+                    // The scope took it from the console's uncaptured errors.
+                    console.warn('[WebGpuRenderer] a pipeline was refused: ' + error.message);
+                },
+                () => {}, // the device is gone, which device.lost handles
+            );
+        }
+        return pipeline;
+    }
+
+    /**
+     * Set a frame's pass on its pipeline. If the device refused that pipeline
+     * (_watchPipeline), the renderer gives up, for the page to move the picture
+     * (Bruno, 04/11/2026: to the pass's WebGL2 twin rather than stay black).
+     * @param {GPURenderPassEncoder|GPUComputePassEncoder} pass
+     * @param {GPURenderPipeline|GPUComputePipeline} pipeline
+     */
+    _setPipeline(pass, pipeline) {
+        const refused = this._refused.get(pipeline);
+        if (refused !== undefined) this._giveUp('its pass uses a refused pipeline: ' + refused);
+        pass.setPipeline(pipeline);
+    }
+
     /** See VideoRenderer.failed: once, and said in the console. */
     _giveUp(why) {
         if (this._failed) return;
@@ -2981,7 +3038,7 @@ export class WebGpuRenderer extends VideoRenderer {
                             },
                         ],
                     });
-                    p0.setPipeline(this._yuvPipeline);
+                    this._setPipeline(p0, this._yuvPipeline);
                     p0.setBindGroup(0, this._yuvBindGroup);
                     p0.draw(3);
                     p0.end();
@@ -2997,19 +3054,22 @@ export class WebGpuRenderer extends VideoRenderer {
                     ],
                 });
                 if (yuvScaled) {
-                    pass.setPipeline(this._texBlitPipeline);
+                    this._setPipeline(pass, this._texBlitPipeline);
                     pass.setBindGroup(0, this._texBlitBindGroup);
                 } else if (useYuv) {
-                    pass.setPipeline(this._yuvCanvasPipeline);
+                    this._setPipeline(pass, this._yuvCanvasPipeline);
                     pass.setBindGroup(0, this._yuvBindGroup);
                 } else if (copied) {
-                    pass.setPipeline(this._texBlitPipeline);
+                    this._setPipeline(pass, this._texBlitPipeline);
                     pass.setBindGroup(
                         0,
                         copied === 'bitmap' ? this._texBlitBindGroup : this._readbackBindGroup,
                     );
                 } else {
-                    pass.setPipeline(useExt ? this._extCanvasPipeline : this._passthroughPipeline);
+                    this._setPipeline(
+                        pass,
+                        useExt ? this._extCanvasPipeline : this._passthroughPipeline,
+                    );
                     pass.setBindGroup(0, blitBindGroup);
                 }
                 pass.draw(3);
@@ -3058,14 +3118,14 @@ export class WebGpuRenderer extends VideoRenderer {
                 });
                 if (useYuv) {
                     // HDR YUV → SDR (ACES) tone-map into inputTex.
-                    p0.setPipeline(this._yuvPipeline);
+                    this._setPipeline(p0, this._yuvPipeline);
                     p0.setBindGroup(0, this._yuvBindGroup);
                 } else if (copied === 'readback') {
-                    p0.setPipeline(this._texPass0Pipeline);
+                    this._setPipeline(p0, this._texPass0Pipeline);
                     p0.setBindGroup(0, this._readbackBindGroup);
                 } else {
                     // Plain blit, or the same ACES tone-map fed by the external texture.
-                    p0.setPipeline(useExt ? this._extPipeline : this._blitPipeline);
+                    this._setPipeline(p0, useExt ? this._extPipeline : this._blitPipeline);
                     p0.setBindGroup(0, blitBindGroup);
                 }
                 p0.draw(3);
@@ -3098,7 +3158,7 @@ export class WebGpuRenderer extends VideoRenderer {
                         },
                     ],
                 });
-                p1.setPipeline(this._easuPipeline);
+                this._setPipeline(p1, this._easuPipeline);
                 p1.setBindGroup(0, this._enhanceBindGroup);
                 p1.draw(3);
                 p1.end();
@@ -3114,7 +3174,7 @@ export class WebGpuRenderer extends VideoRenderer {
                         },
                     ],
                 });
-                p2.setPipeline(this._rcasPipeline);
+                this._setPipeline(p2, this._rcasPipeline);
                 p2.setBindGroup(0, this._rcasBindGroup);
                 p2.draw(3);
                 p2.end();
@@ -3167,7 +3227,7 @@ export class WebGpuRenderer extends VideoRenderer {
                         },
                     ],
                 });
-                p1.setPipeline(this._nisPipeline);
+                this._setPipeline(p1, this._nisPipeline);
                 p1.setBindGroup(0, this._enhanceBindGroup);
                 p1.draw(3);
                 p1.end();
@@ -3226,7 +3286,7 @@ export class WebGpuRenderer extends VideoRenderer {
                     }
                     encoder.clearBuffer(this._dbAcc);
                     const pc = encoder.beginComputePass();
-                    pc.setPipeline(this._dbPipelines.dct);
+                    this._setPipeline(pc, this._dbPipelines.dct);
                     pc.setBindGroup(0, this._dbDctBindGroup);
                     pc.dispatchWorkgroups(...deblockDispatch(inW, inH));
                     pc.end();
@@ -3240,7 +3300,7 @@ export class WebGpuRenderer extends VideoRenderer {
                             },
                         ],
                     });
-                    pd.setPipeline(this._dbPipelines.fin);
+                    this._setPipeline(pd, this._dbPipelines.fin);
                     pd.setBindGroup(0, this._dbFinBindGroup);
                     pd.draw(3);
                     pd.end();
@@ -3272,7 +3332,7 @@ export class WebGpuRenderer extends VideoRenderer {
                             },
                         ],
                     });
-                    p1.setPipeline(this._mwsrPipeline(reg, zoned));
+                    this._setPipeline(p1, this._mwsrPipeline(reg, zoned));
                     if (zoned) {
                         p1.setBindGroup(
                             0,
@@ -3308,7 +3368,7 @@ export class WebGpuRenderer extends VideoRenderer {
                         },
                     ],
                 });
-                p1.setPipeline(this._enhancePipeline);
+                this._setPipeline(p1, this._enhancePipeline);
                 p1.setBindGroup(0, this._enhanceBindGroup);
                 p1.draw(3);
                 p1.end();

@@ -100,6 +100,8 @@ function fakeGpu() {
         createBindGroupLayout: () => ({}),
         createPipelineLayout: () => ({}),
         createShaderModule: vi.fn(() => ({ getCompilationInfo: async () => ({ messages: [] }) })),
+        pushErrorScope() {},
+        popErrorScope: async () => null,
         createRenderPipeline: vi.fn(() => ({})),
         createComputePipeline: vi.fn(() => ({})),
         createBindGroup: vi.fn(() => ({})),

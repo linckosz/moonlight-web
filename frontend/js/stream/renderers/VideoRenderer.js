@@ -197,8 +197,9 @@ export class VideoRenderer {
 
     /**
      * True once the renderer has given up putting frames on its canvas: the
-     * WebGPU one, when no frame has reached it for a run of frames or its
-     * device was lost for good (WebGpuRenderer._noteFrame). The page then
+     * WebGPU one, when no frame has reached it for a run of frames, its device
+     * was lost for good (WebGpuRenderer._noteFrame) or a frame's pass uses a
+     * pipeline the device refused (WebGpuRenderer._setPipeline). The page then
      * moves the picture to another renderer rather than leave it black
      * (StreamView._replaceFailedRenderer). The others never set it.
      */

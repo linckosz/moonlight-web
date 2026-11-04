@@ -49,6 +49,8 @@ function fakeGpu({ importThrows = false, bitmapThrows = false } = {}) {
             createBindGroupLayout: () => ({}),
             createPipelineLayout: () => ({}),
             createShaderModule: () => ({ getCompilationInfo: async () => ({ messages: [] }) }),
+            pushErrorScope() {},
+            popErrorScope: async () => null,
             createRenderPipeline: vi.fn(() => ({})),
             createComputePipeline: () => ({}),
             // A missing layout throws, as in a browser ('off' has none of SGSR's).

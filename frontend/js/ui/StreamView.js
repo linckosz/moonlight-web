@@ -4921,7 +4921,8 @@ export class StreamView {
 
     /**
      * A renderer that gave up (VideoRenderer.failed: a WebGPU renderer no
-     * frame could reach, or whose device did not come back) hands the picture
+     * frame could reach, whose device did not come back, or whose pass uses a
+     * pipeline the device refused) hands the picture
      * over, on the 500 ms tick and once. The main-thread path only: the
      * worker's canvas stays the worker's, its renderer gives up all the same
      * and says so in the console.

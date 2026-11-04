@@ -2188,6 +2188,10 @@ async function runLabInner(p, log) {
       passSeq.push(np);
     }
     if (flip) r.setOutputSize(outW, outH);
+    // A pipeline the renderer's device refused goes to the renderer, not to
+    // uncapturederror (WebGpuRenderer._watchPipeline): the run still lists it.
+    for (const m of r._refused ? r._refused.values() : [])
+      if (!HOOK.productErrors.includes(m)) HOOK.productErrors.push(m);
     // No frame reached its canvas: every way in refused the last one (its
     // path ends in `+lost`), or the renderer gave up (WebGpuRenderer.failed;
     // the page would move the picture to another renderer). Nothing to time
