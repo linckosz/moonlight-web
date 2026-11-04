@@ -261,6 +261,21 @@ stream.dev.@MW_DOMAIN@ {
 		-Server
 	}
 
+	# The MWSR page's measure log (mw-proxy, see mwsrlog.go): 3 posts per subscriber
+	# per 5 minutes, counted in memory only. No `log` directive in this block on
+	# purpose: an access log would keep the very addresses that page says are not.
+	handle /v1/mwsr {
+		import subscriber_key
+		rate_limit {
+			zone mw_mwsr_log {
+				key {mw_subscriber}
+				events 3
+				window 5m
+			}
+		}
+		reverse_proxy mw-proxy:8080
+	}
+
 	encode zstd gzip
 	root * /srv/site
 	# Evaluate Go templates in the HTML pages so cache-busting asset URLs can be

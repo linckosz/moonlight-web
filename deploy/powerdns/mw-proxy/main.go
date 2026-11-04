@@ -87,6 +87,9 @@ type config struct {
 
 	// The session census served on /v1/session — see session.go.
 	session sessionConfig
+
+	// The MWSR page's measure log served on /v1/mwsr — see mwsrlog.go.
+	mwsr mwsrConfig
 }
 
 func mustEnv(name string) string {
@@ -132,6 +135,16 @@ func loadConfig() config {
 			umamiURL:     strings.TrimRight(envOr("MW_UMAMI_URL", "http://umami:3000"), "/"),
 			umamiWebsite: os.Getenv("MW_UMAMI_SESSIONS_WEBSITE_ID"),
 			hostname:     "metrics." + domain,
+		},
+		// A website of its OWN again: there, "views" means "measures" and nothing else.
+		mwsr: mwsrConfig{
+			umamiURL:     strings.TrimRight(envOr("MW_UMAMI_URL", "http://umami:3000"), "/"),
+			umamiWebsite: os.Getenv("MW_UMAMI_MWSR_WEBSITE_ID"),
+			hostname:     domain,
+			origin:       "https://" + domain,
+			dir:          envOr("MW_MWSR_LOG_DIR", "/data/mwsr-measures"),
+			maxPerDay:    2000,
+			maxBytes:     2 << 30,
 		},
 	}
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv("MW_SUBDOMAIN_REGISTRATION"))); v != "" {
@@ -751,6 +764,9 @@ func main() {
 	// Session census (metrics.{domain} in the Caddyfile). Same reasoning as
 	// above: say out loud whether it counts, because it accepts and answers
 	// identically either way.
+	mwsr := newMwsrSink(cfg.mwsr)
+	mux.Handle("/v1/mwsr", mwsr)
+	log.Printf("[mw-proxy] MWSR measure log on /v1/mwsr: %s", mwsr.describe())
 	mux.Handle("/v1/session", newSessionSink(cfg.session, cfg.proxyKey))
 	if cfg.session.umamiWebsite == "" || cfg.session.umamiURL == "" {
 		log.Printf("[mw-proxy] session census on /v1/session — DISABLED " +

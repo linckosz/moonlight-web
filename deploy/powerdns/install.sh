@@ -277,6 +277,7 @@ if [ -f .env ]; then
     # Session census (0.3.0+): same rule — empty until the operator creates the
     # third Umami website; /v1/session answers either way.
     ensure_env MW_UMAMI_SESSIONS_WEBSITE_ID ""
+    ensure_env MW_UMAMI_MWSR_WEBSITE_ID ""
 else
     detected_ip="$(curl -fsS https://api.ipify.org 2>/dev/null || true)"
 
@@ -336,6 +337,7 @@ MW_UMAMI_DB_PASSWORD=${MW_UMAMI_DB_PASSWORD}
 MW_UMAMI_SECRET=${MW_UMAMI_SECRET}
 MW_UMAMI_TELEMETRY_WEBSITE_ID=
 MW_UMAMI_SESSIONS_WEBSITE_ID=
+MW_UMAMI_MWSR_WEBSITE_ID=
 EOF
     [ "$TARGET_USER" != "root" ] && chown "$TARGET_USER" .env 2>/dev/null || true
     ok ".env written"

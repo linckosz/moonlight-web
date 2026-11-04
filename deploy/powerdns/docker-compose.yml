@@ -96,6 +96,10 @@ services:
       # website, so "views" there means "sessions" and nothing else. Same rule:
       # leave it empty and the endpoint still answers, counting nothing.
       MW_UMAMI_SESSIONS_WEBSITE_ID: ${MW_UMAMI_SESSIONS_WEBSITE_ID:-}
+      # The MWSR page's measure log (/v1/mwsr, on the site's own host). Its OWN
+      # Umami website, so "views" there means "measures". Left empty, the file is
+      # still kept in the volume below, counting nothing.
+      MW_UMAMI_MWSR_WEBSITE_ID: ${MW_UMAMI_MWSR_WEBSITE_ID:-}
     volumes:
       - mwproxy_data:/data                          # ownership store persists
     networks: [mwnet]

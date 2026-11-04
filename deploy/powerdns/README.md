@@ -321,6 +321,26 @@ establish the browser connection counts as its own very short session, so a
 spike in `dur-0-1m` reads as "the first transport is not working here", not as
 "people leave immediately".
 
+## The MWSR page's measure log
+
+The page at `/mwsr/` times the upscalers on the visitor's GPU when they press its
+button, and posts that result once to `/v1/mwsr` on the site's own host
+(`mw-proxy/mwsrlog.go`). It carries technical data and measured metrics only: no
+address, cookie, identifier, User-Agent string, language, referrer or picture.
+
+- **Kept** in the `mwproxy_data` volume, one file per month:
+  `/data/mwsr-measures/YYYY-MM.jsonl`, each line's time stopping at the hour. The
+  production backup already copies that volume.
+- **Counted** in an Umami website of its own, with one fixed address and
+  User-Agent, so Visitors means nothing there. **Views** is the number of measures,
+  **Pages** splits them by path and GPU vendor, and **Events** `failed-*` by step.
+- **Bounded:** 3 posts per subscriber per 5 minutes (Caddy, in memory), then 2000 a
+  day and 2 GiB in all, past which a post is dropped without saying so.
+
+To turn the count on, add a website `MoonlightWeb MWSR measures` in Umami, append
+`MW_UMAMI_MWSR_WEBSITE_ID=<id>` to `.env`, then
+`docker compose up -d --force-recreate mw-proxy`. The startup log names the website.
+
 ## Linux package repository (APT + DNF)
 
 `release.yml`'s `linux-repo` job builds the signed APT and DNF repository tree
