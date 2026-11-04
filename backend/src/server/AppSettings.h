@@ -100,8 +100,8 @@ public:
 
     // ── Packet priority (DSCP) ────────────────────────────────────────────────
     // Stored as JSON bool "packet_marking", DEFAULT true, set from the admin
-    // page (« Network priority »): the stream's packets leave in AF41, the
-    // Wi-Fi's video queue (streaming/PacketMarking.h). false marks nothing —
+    // page (« Network priority »): the stream's sound leaves in EF, the rest in
+    // AF41, the Wi-Fi's video queue (streaming/PacketMarking.h). false marks nothing —
     // for a house whose other devices suffer while a stream runs, or a network
     // that mishandles marked packets. Read before each stream.
     bool packetMarking() const;

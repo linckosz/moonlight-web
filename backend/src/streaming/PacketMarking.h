@@ -24,15 +24,24 @@
 #include <utility>
 
 // The DSCP our WebRTC packets leave with (plan « le son et la priorité des
-// paquets », D5).
+// paquets », D5 and D9).
 //
-// AF41 for everything — sound, video, data channels — by default. On the
-// Freebox's Wi-Fi every AF4x value goes to the video queue (VI), ahead of the
-// house's downloads; the night of 11-12/10 measured what that buys against a
-// download onto the client's own station: 32 to 40 ms off every click, where
-// the unmarked stream fell under 8 Mbit/s each time. Upstream libdatachannel's
-// own values (EF / AF42 / AF11) put the SCTP video, the default, in AF11: the
-// Wi-Fi's background queue.
+// AF41 for video and data channels by default. On the Freebox's Wi-Fi every
+// AF4x value goes to the video queue (VI), ahead of the house's downloads; the
+// night of 11-12/10 measured what that buys against a download onto the
+// client's own station: 32 to 40 ms off every click, where the unmarked stream
+// fell under 8 Mbit/s each time. Upstream libdatachannel's own values (EF /
+// AF42 / AF11) put the SCTP video, the default, in AF11: the Wi-Fi's background
+// queue.
+//
+// EF for the sound: an access point that follows RFC 8325 puts it in the voice
+// queue (VO), ahead of the video's, where a key frame's packets can no longer
+// hold it back. The sound is ~0.25 Mbit/s, so VO costs the house nothing; the
+// video stays out of it, since VO does not aggregate (frames on the audio road
+// too: rtc::Track::setVideoDscp). The Freebox's mesh link sends EF to VI with
+// the rest: there the bench of 21/10 saw no loss either way, the same jitter
+// and a NetEq buffer within its noise. Each datagram carries its own class on
+// Windows, Linux and macOS alike.
 //
 // libjuice sets it on the socket: Linux; Windows through our patch
 // (libjuice-windows-diffserv.patch; an unelevated IP_TOS marks there, under
@@ -46,6 +55,8 @@
 // worker gets both from the server (Handover below).
 namespace PacketMarking {
 
+/// EF: Expedited Forwarding.
+constexpr unsigned int kEf = 46;
 /// AF41: Assured Forwarding class 4, low drop probability.
 constexpr unsigned int kAf41 = 34;
 
@@ -74,8 +85,8 @@ inline std::array<unsigned int, 3> resolve(bool marking, const std::string& over
         at = comma + 1;
     }
     if (i == 3) return out;
-    const unsigned int v = marking ? kAf41 : 0;
-    return {v, v, v};
+    if (!marking) return {0, 0, 0};
+    return {kEf, kAf41, kAf41};
 }
 
 /// What the server read, for a stream worker that cannot read it itself: a

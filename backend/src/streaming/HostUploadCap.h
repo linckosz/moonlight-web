@@ -38,7 +38,8 @@
 // Two Windows QoS policies, in the ActiveStore only (gone at the next reboot,
 // never in the registry), named after the worker's process id:
 //  - "MoonlightWeb stream <pid>": this executable's own traffic, its DSCP
-//    (PacketMarking's video value), no cap, precedence 255;
+//    (PacketMarking's video value; one policy holds one value, so the sound's
+//    EF is not expected to survive this key, not measured), no cap, precedence 255;
 //  - "MoonlightWeb host cap <pid>": all TCP and UDP, capped at the rate.
 // Microsoft's precedence rules ("Manage QoS Policy") say a policy that names
 // an application's path beats one that names none, so the stream would keep

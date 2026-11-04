@@ -2660,6 +2660,33 @@ cap, and worse as the minutes went on. Open points, none started:
 - Chrome's HEVC decoder on macOS breaking after a stall;
 - the panel's headline under-reading the delay.
 
+### 04/11/2026 — The sound leaves in EF by default, video and data in AF41 (audio + DSCP plan, D9)
+
+A decision, with no new measure. Until now everything left in AF41 and
+`MW_DSCP=46,34,34` was the bench's way to try the sound in EF.
+
+What is known of EF, all from the bench of 21/10 (host DualRTX, the N95 on
+Wi-Fi behind the repeater, a ~316 Mbit/s download and ~300 Mbit/s video bursts
+on its station, 2 rounds of 3 passes): no loss either way, the same jitter, a
+NetEq buffer within its noise (37-63 ms). The one hint, a better p95 of that
+buffer in EF under the download (2 pairs of 2), went the other way at rest.
+That path sends EF and AF41 to the same queue (TID = DSCP >> 3, 06/10), so it
+could not show what EF is for: **the voice queue of an access point that follows
+RFC 8325 has not been measured here**, nor has any harm from it.
+
+Why it is the default anyway: the sound is ~0.25 Mbit/s, so VO costs the house
+nothing, and there it no longer waits behind a key frame's packets. It is also
+RFC 8837's value for interactive audio.
+
+What keeps the video out: VO does not aggregate, and CS6 broke the video on
+10/10. libdatachannel chooses a track's class by the type of its section, so
+frames on the audio road would have followed the sound into EF.
+`Track::setVideoDscp` (`libdatachannel-track-video-dscp.patch`) keeps those
+tracks in the video's class, as `ultra-lan-poc.md` asked.
+
+Under `hostcap=`, a bench key, one QoS policy holds one value for the whole
+executable, so the sound is not expected to keep EF there. Not measured.
+
 ## 4. The model so far (04/10/2026)
 
 What the measurements support, in order of the path:

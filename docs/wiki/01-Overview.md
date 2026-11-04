@@ -70,7 +70,7 @@ The admin page controls:
 - **HTTPS port** (rebinds live; the HTTP port is displayed only), **transport mode** (auto or forced), and the **Internet Access** toggle.
 - **Stream notifications** — a desktop notification when someone starts or stops streaming *this* screen through the native host (server-side setting; the tray obeys it, and the tray may live in another process).
 - **Instance name** — the name this install shows in the header of every browser paired with it, and in the switcher those browsers use to reach the others.
-- **Give the stream priority on the network** (AF41 marking, on by default), the **remote administration** password; under **Advanced**, the **video pipeline**, debug mode and **Download logs**; on the native host, **Apps on this PC** (the cards it shows, Steam Big Picture's among them).
+- **Give the stream priority on the network** (DSCP marking, on by default), the **remote administration** password; under **Advanced**, the **video pipeline**, debug mode and **Download logs**; on the native host, **Apps on this PC** (the cards it shows, Steam Big Picture's among them).
 
 ### Internet access
 

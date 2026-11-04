@@ -186,8 +186,8 @@ function(mw_apply_patch dir patch)
 endfunction()
 
 # libdatachannel: the DSCP of outgoing packets settable (rtc::SetDscpSettings),
-# where upstream writes EF / AF42 / AF11 in. The server puts it all in AF41
-# (plan « le son et la priorité des paquets », D5).
+# where upstream writes EF / AF42 / AF11 in. The server puts the sound in EF and
+# the rest in AF41 (plan « le son et la priorité des paquets », D5 and D9).
 mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
                libdatachannel-dscp-settings.patch)
 # DtlsSrtpTransport copies every RTP packet with make_message(size, orig), which
@@ -196,6 +196,11 @@ mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
 # already applied takes it too.
 mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
                libdatachannel-srtp-dscp.patch)
+# A track's class follows the type of its section, so the frames on the audio
+# road (an audio section) would leave in the sound's class. Track::setVideoDscp
+# keeps them in the video's. A patch of its own, for the same reason.
+mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
+               libdatachannel-track-video-dscp.patch)
 # libjuice gives up marking on Windows without trying; on Windows 11 an
 # unelevated setsockopt(IP_TOS) does mark, under the service too. Chosen over a
 # QoS policy laid by the installer, which Windows leaves out of force after a

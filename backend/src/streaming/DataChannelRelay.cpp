@@ -3374,6 +3374,7 @@ void DataChannelRelay::createRtpVideoTracks()
         const uint32_t ssrc = rd();
         desc.addSSRC(ssrc, "vaudio");
         m_VideoTrack = m_Pc->addTrack(desc);
+        m_VideoTrack->setVideoDscp(); // frames, not sound: never in the sound's class
         auto cfg = std::make_shared<rtc::RtpPacketizationConfig>(
             ssrc, "vaudio", static_cast<uint8_t>(pt), rtc::OpusRtpPacketizer::DefaultClockRate);
         m_VideoTrack->setMediaHandler(std::make_shared<rtc::OpusRtpPacketizer>(cfg));
@@ -3446,6 +3447,7 @@ void DataChannelRelay::createRtpVideoTracks()
         const uint32_t ssrc = rd();
         desc.addSSRC(ssrc, "uaudio");
         m_UltraTrack = m_Pc->addTrack(desc);
+        m_UltraTrack->setVideoDscp(); // frames, not sound: never in the sound's class
         auto cfg = std::make_shared<rtc::RtpPacketizationConfig>(
             ssrc, "uaudio", static_cast<uint8_t>(pt), rtc::OpusRtpPacketizer::DefaultClockRate);
         m_UltraTrack->setMediaHandler(std::make_shared<rtc::OpusRtpPacketizer>(cfg));

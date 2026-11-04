@@ -1,0 +1,70 @@
+diff --git a/include/rtc/track.hpp b/include/rtc/track.hpp
+--- a/include/rtc/track.hpp
++++ b/include/rtc/track.hpp
+@@ -52,6 +52,10 @@
+ 	void chainMediaHandler(shared_ptr<MediaHandler> handler);
+ 	shared_ptr<MediaHandler> getMediaHandler();
+ 
++	// Mark this track's packets with the video class of SetDscpSettings(), whatever
++	// the media type of its section: for video carried in an audio section.
++	void setVideoDscp();
++
+ 	// Deprecated, use setMediaHandler() and getMediaHandler()
+ 	inline void setRtcpHandler(shared_ptr<MediaHandler> handler) { setMediaHandler(handler); }
+ 	inline shared_ptr<MediaHandler> getRtcpHandler() { return getMediaHandler(); }
+diff --git a/src/track.cpp b/src/track.cpp
+--- a/src/track.cpp
++++ b/src/track.cpp
+@@ -53,6 +53,8 @@
+ 	impl()->flushPendingMessages();
+ }
+ 
++void Track::setVideoDscp() { impl()->setVideoDscp(); }
++
+ void Track::setMediaHandler(shared_ptr<MediaHandler> handler) {
+ 	impl()->setMediaHandler(std::move(handler));
+ }
+diff --git a/src/impl/track.hpp b/src/impl/track.hpp
+--- a/src/impl/track.hpp
++++ b/src/impl/track.hpp
+@@ -55,6 +55,8 @@
+ 	shared_ptr<MediaHandler> getMediaHandler();
+ 	void setMediaHandler(shared_ptr<MediaHandler> handler);
+ 
++	void setVideoDscp();
++
+ #if RTC_ENABLE_MEDIA
+ 	void open(shared_ptr<DtlsSrtpTransport> transport);
+ #endif
+@@ -71,6 +73,7 @@
+ 
+ 	Description::Media mMediaDescription;
+ 	shared_ptr<MediaHandler> mMediaHandler;
++	bool mVideoDscp = false;
+ 
+ 	mutable std::shared_mutex mMutex;
+ 
+diff --git a/src/impl/track.cpp b/src/impl/track.cpp
+--- a/src/impl/track.cpp
++++ b/src/impl/track.cpp
+@@ -215,7 +215,7 @@
+ 
+ 		// Set recommended medium-priority DSCP value, or the one set by SetDscpSettings()
+ 		// See https://www.rfc-editor.org/rfc/rfc8837.html#section-5
+-		if (mMediaDescription.type() == "audio")
++		if (mMediaDescription.type() == "audio" && !mVideoDscp)
+ 			message->dscp = dscp::audio(); // EF by default: Expedited Forwarding
+ 		else
+ 			message->dscp = dscp::video(); // AF42 by default
+@@ -225,6 +225,11 @@
+ #else
+ 	throw std::runtime_error("Track is disabled (not compiled with media support)");
+ #endif
++}
++
++void Track::setVideoDscp() {
++	std::unique_lock lock(mMutex);
++	mVideoDscp = true;
+ }
+ 
+ void Track::setMediaHandler(shared_ptr<MediaHandler> handler) {
