@@ -973,6 +973,8 @@ function renderTable() {
   const shows = KERNELS.some((k) => best(k.id) || ['overshoot', ...SCORE_COLUMNS].some((key) => known(k.id, key)));
   $('press').classList.toggle('off', !waiting || shows);
   $('unfinished').hidden = !waiting || !shows;
+  // one line under every name where any row may need it: rows of one height, and nothing moves when a measure ends
+  const lines = engine.hasF16 || engine.mwsrMode() === 'down';
   $('table').tBodies[0].innerHTML = KERNELS.map((k) => {
     const r = R[k.id] || {};
     const cells = SCORE_COLUMNS.map((key) => {
@@ -988,23 +990,19 @@ function renderTable() {
       const w = max ? Math.max(2, Math.round((t.ms / max) * 90)) : 0;
       time = `<span class="ms">${ms3(t.ms)}</span><span class="bar" style="width:${w}px"></span>`;
     }
-    // under the name, what the time is; its place is kept from the start, so that nothing moves when it comes
-    const refused = r.f16 === 'refused';
-    const said = refused ? 'Half refused' : t ? t.tag : '';
-    const why = refused
-      ? `Its 16-bit picture differs from its 32-bit one by more than 4/255 on ${pct(r.f16share)} of the pixels on this GPU: timed in 32-bit only`
-      : t && t.both;
-    const precision =
-      k.id !== 'mwsr' && engine.halfOf(k.id)
-        ? `<small class="precision"><span class="widest">Half precision</span><span${said && why ? ` title="${why}"` : ''}>${said}</span></small>`
-        : '';
-    const star =
-      k.id === 'nis'
-        ? ' <small title="MoonlightWeb’s per-fragment port of NIS, not NVIDIA’s compute shader">port</small>'
-        : k.id === 'mwsr' && engine.mwsrMode() === 'down'
-          ? ' <small title="MWSR’s reduction, as the client runs it: bilinear samples over each pixel’s footprint, averaged in linear light, lightly sharpened from ×0.5 to 1:1">reduction</small>'
-          : '';
-    return `<tr><th scope="row">${k.name}${star}${precision}</th>${cells}<td class="num">${o}</td><td class="num">${time}</td></tr>`;
+    // under the name, what its time or its text is
+    const reduces = k.id === 'mwsr' && engine.mwsrMode() === 'down';
+    const refused = k.id !== 'mwsr' && r.f16 === 'refused';
+    const said = reduces ? 'reduction' : refused ? 'Half refused' : t ? t.tag : '';
+    const why = reduces
+      ? 'MWSR’s reduction, as the client runs it: bilinear samples over each pixel’s footprint, averaged in linear light, lightly sharpened from ×0.5 to 1:1'
+      : refused
+        ? `Its 16-bit picture differs from its 32-bit one by more than 4/255 on ${pct(r.f16share)} of the pixels on this GPU: timed in 32-bit only`
+        : t && t.both;
+    const under = lines
+      ? `<small class="subline"><span class="widest">Half precision</span><span${said && why ? ` title="${why}"` : ''}>${said}</span></small>`
+      : '';
+    return `<tr><th scope="row">${k.name}${under}</th>${cells}<td class="num">${o}</td><td class="num">${time}</td></tr>`;
   }).join('');
   placePress();
 }

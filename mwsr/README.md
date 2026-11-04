@@ -189,8 +189,8 @@ What each one does:
   memory at 2800 MHz and SoC at 1028 MHz, on all 135 readings taken during the run. Against the same GPU at its own clock, on the
   game picture, FSR1 takes 2.2 times as long and MWSR 1.8 times, while bilinear stays within 1 %, with one read per pixel or two.
   That floor moves with the picture and the input (0.19 to 0.42 ms), not with the core, which points to memory traffic: a
-  deduction, as the memory clock was not varied. At 938 MHz MWSR's 32-bit text is 7 to 9 % faster than its 16-bit one, the one
-  MoonlightWeb runs off NVIDIA, and FSR1's 16-bit text is about 9 % faster than its 32-bit one.
+  deduction, as the memory clock was not varied. At 938 MHz MWSR's 32-bit text, the one
+  MoonlightWeb runs, is 7 to 9 % faster than its 16-bit one, and FSR1's 16-bit text is about 9 % faster than its 32-bit one.
 - **The phones.** The lab's `chain-off`, `chain-mwsr` and `chain-fsr1` cells: the product's renderer drawing a `VideoFrame` to a
   canvas, timed from the draw to the GPU's end. An iPhone 13 Pro (iOS 26.5, WebGPU, Safari and Chrome 156, mean of 192 draws on a
   1 ms timer) and a Realme RMX3933 (Mali-G57 MP1, Android 14, Chrome 156, WebGPU and WebGL2, median). One pass per case, on clocks
