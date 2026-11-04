@@ -21,6 +21,20 @@
 
 {
 	order rate_limit before reverse_proxy
+	# No visitor's address in any log of this server. An error line carries its
+	# whole request (address, headers, URI) and the rate limiter names the address
+	# it refused, so without this a failing /v1/mwsr would keep what the MWSR page
+	# says is not kept. The cost: an error line no longer says which request.
+	log default {
+		format filter {
+			wrap console
+			fields {
+				request delete
+				remote_ip delete
+				client_ip delete
+			}
+		}
+	}
 }
 
 # The body of the stream.* site, shared with the staging Caddy so the two serve
@@ -264,6 +278,7 @@ stream.dev.@MW_DOMAIN@ {
 	# The MWSR page's measure log (mw-proxy, see mwsrlog.go): 3 posts per subscriber
 	# per 5 minutes, counted in memory only. No `log` directive in this block on
 	# purpose: an access log would keep the very addresses that page says are not.
+	# Error lines are covered by the filter in the global options above.
 	handle /v1/mwsr {
 		import subscriber_key
 		rate_limit {

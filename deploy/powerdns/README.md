@@ -337,6 +337,12 @@ address, cookie, identifier, User-Agent string, language, referrer or picture.
 - **Bounded:** 3 posts per subscriber per 5 minutes (Caddy, in memory), then 2000 a
   day and 2 GiB in all, past which a post is dropped without saying so.
 
+- **No address kept:** the handler never reads one, the site block has no access
+  log, and Caddy's global log filter removes the request and the address from every
+  log line. After deploying a change to that filter, go past the limit from a known
+  address, stop `mw-proxy` for one post, and check `docker compose logs caddy` does
+  not contain that address.
+
 To turn the count on, add a website `MoonlightWeb MWSR measures` in Umami, append
 `MW_UMAMI_MWSR_WEBSITE_ID=<id>` to `.env`, then
 `docker compose up -d --force-recreate mw-proxy`. The startup log names the website.
