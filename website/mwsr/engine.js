@@ -105,7 +105,8 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
   );
   if (!adapter) throw new Error('noadapter');
   const info = adapter.info || (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : {});
-  const label = [info.vendor, info.architecture, info.description].filter(Boolean).join(' ') || 'WebGPU adapter';
+  const label =
+    [...new Set([info.vendor, info.architecture, info.description].filter(Boolean))].join(' ') || 'WebGPU adapter';
   // soft=1 (the tests): SwiftShader or nothing, before anything is compiled
   if (soft && !(info.isFallbackAdapter || /swiftshader/i.test(label)))
     throw new Error('soft=1 asks for SwiftShader, and the adapter is ' + label);
@@ -115,6 +116,11 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     requiredLimits: { maxTextureDimension2D: Math.min(8192, adapter.limits.maxTextureDimension2D) },
   });
   device.lost.then((l) => onLost(l.message || l.reason || 'lost'));
+  // what the GPU refused, for a measure's report: the console gets it all the same
+  const refused = [];
+  device.addEventListener('uncapturederror', (e) => {
+    if (refused.length < 8) refused.push(e.error.message);
+  });
   const hasTs = device.features.has('timestamp-query');
   const hasF16 = device.features.has('shader-f16');
 
@@ -404,52 +410,56 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
 
   /**
    * `iters` draws of upscaler `id` (its own passes, not the tone map around it,
-   * into a scratch texture), in command buffers of `chunk` draws submitted
-   * together. One timestamp at the start of the first pass, one at the end of
-   * the last: the browser rounds timestamps (to 0.1 ms in Chrome), a batch of
-   * 100 draws makes that a small share. Without timestamp-query, the wall time
-   * from the submission to the completion.
+   * into a scratch texture), in pieces of `chunk` draws, each submitted once the
+   * one before is done. One timestamp at the start of a piece's first pass, one
+   * at the end of its last: the browser rounds timestamps (to 0.1 ms in Chrome),
+   * and the time per draw is the pieces' sum over `iters`. Without
+   * timestamp-query, the wall time from each submission to its completion.
+   * `stop` is asked before each piece: when it says yes the page wants the GPU,
+   * the batch is dropped and the answer is null.
    */
-  async function time(id, half, opts, iters = 100, chunk = iters) {
+  async function time(id, half, opts, iters = 100, chunk = iters, stop = () => false) {
     const src = C.hdr && KERNELS.find((x) => x.id === id).wrap ? C.tmIn : C.inTex;
     const list = passes(id, half, opts, src, C.scratch);
     const n = list.length;
-    const cbs = [];
+    let wall = 0;
+    let gpu = hasTs ? 0 : null;
     for (let i0 = 0; i0 < iters; i0 += chunk) {
+      if (stop()) return null;
+      const count = Math.min(chunk, iters - i0);
       const enc = device.createCommandEncoder();
-      for (let i = i0; i < Math.min(iters, i0 + chunk); i++) {
+      for (let i = 0; i < count; i++) {
         let stamps = null;
-        if (hasTs && (i === 0 || i === iters - 1)) {
+        if (hasTs && (i === 0 || i === count - 1)) {
           stamps = new Array(n).fill(null);
           const first = i === 0 ? { beginningOfPassWriteIndex: 0 } : {};
-          const last = i === iters - 1 ? { endOfPassWriteIndex: 1 } : {};
+          const last = i === count - 1 ? { endOfPassWriteIndex: 1 } : {};
           if (n === 1) stamps[0] = { querySet: qs, ...first, ...last };
           else {
             if (i === 0) stamps[0] = { querySet: qs, ...first };
-            if (i === iters - 1) stamps[n - 1] = { querySet: qs, ...last };
+            if (i === count - 1) stamps[n - 1] = { querySet: qs, ...last };
           }
         }
         encode(enc, list, stamps);
       }
-      if (hasTs && i0 + chunk >= iters) {
+      if (hasTs) {
         enc.resolveQuerySet(qs, 0, 2, qResolve, 0);
         enc.copyBufferToBuffer(qResolve, 0, qRead, 0, 16);
       }
-      cbs.push(enc.finish());
+      const t0 = performance.now();
+      device.queue.submit([enc.finish()]);
+      await device.queue.onSubmittedWorkDone();
+      wall += performance.now() - t0;
+      if (hasTs) {
+        await qRead.mapAsync(GPUMapMode.READ, 0, 16);
+        const q = new BigInt64Array(qRead.getMappedRange(0, 16));
+        const span = Number(q[1] - q[0]) / 1e6;
+        qRead.unmap();
+        if (span > 0 && gpu != null) gpu += span;
+        else gpu = null;
+      }
     }
-    const t0 = performance.now();
-    device.queue.submit(cbs);
-    await device.queue.onSubmittedWorkDone();
-    const wall = (performance.now() - t0) / iters;
-    let gpu = null;
-    if (hasTs) {
-      await qRead.mapAsync(GPUMapMode.READ, 0, 16);
-      const q = new BigInt64Array(qRead.getMappedRange(0, 16));
-      const span = Number(q[1] - q[0]) / 1e6;
-      qRead.unmap();
-      if (span > 0) gpu = span / iters;
-    }
-    return { gpu, wall };
+    return { gpu: gpu != null ? gpu / iters : null, wall: wall / iters };
   }
 
   // ── panes ──
@@ -539,6 +549,12 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
       hasF16 && KERNELS.find((k) => k.id === id).half && !(id === 'mwsr' && C.reg.mode === 'down'),
     /** MWSR's mode for this case: 'up' or 'down'. */
     mwsrMode: () => C && C.reg.mode,
+    /** The text MWSR runs in this case: 'up', 'down1', 'down9lin'… */
+    mwsrKey: () => C && mwsr.mwsrRegimeKey(C.reg),
+    vendor: info.vendor,
+    architecture: info.architecture,
+    /** What the GPU refused since the last call. */
+    takeRefused: () => refused.splice(0),
     setCase,
     draw,
     readOut,

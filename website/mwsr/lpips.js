@@ -249,8 +249,12 @@ export async function createLpips(device, weights, { onProgress = null, budgetMs
   // The rows of a pass, in submissions of about budgetMs each: no command buffer long enough for the system to
   // reset the GPU, and the page keeps its frames.
   let rowsPerMs = 0.02;
+  // The page's say between two submissions: resolves once it may go on, false to drop the picture.
+  let hold = null;
+  const DROPPED = new Error('dropped');
   async function rows(pipeline, group, widthGroups, total, setRow) {
     for (let row = 0; row < total; ) {
+      if (hold && !(await hold())) throw DROPPED;
       const n = Math.min(total - row, Math.max(1, Math.round(rowsPerMs * budgetMs)));
       await setRow(row);
       const enc = device.createCommandEncoder();
@@ -317,21 +321,31 @@ export async function createLpips(device, weights, { onProgress = null, budgetMs
     get sizes() {
       return shape;
     },
-    async reference(rgba, w, h) {
+    /** @returns {Promise<boolean>} false when `pause` dropped it */
+    async reference(rgba, w, h, pause = null) {
+      hold = pause;
       if (!shape || shape.w !== w || shape.h !== h) {
         if (shape) for (const b of [...shape.act, ...shape.pooled, ...shape.ref, shape.input, shape.sums, shape.read]) b && b.destroy();
         allocate(w, h);
       }
       upload(rgba);
-      await forward(async (i, l) => {
-        const g = pGroup(l.L.pNorm, shape.act[i], null, null, shape.ref[i]);
-        await rows(l.L.pNorm, g, Math.ceil(l.ow / 32), l.oh, (row) => setP(l.ow, l.oh, l.ow, row));
-      });
+      try {
+        await forward(async (i, l) => {
+          const g = pGroup(l.L.pNorm, shape.act[i], null, null, shape.ref[i]);
+          await rows(l.L.pNorm, g, Math.ceil(l.ow / 32), l.oh, (row) => setP(l.ow, l.oh, l.ow, row));
+        });
+      } catch (e) {
+        if (e === DROPPED) return false;
+        throw e;
+      }
+      return true;
     },
-    async score(rgba) {
+    /** @returns {Promise<?{lpips: number, layers: number[]}>} null when `pause` dropped it */
+    async score(rgba, pause = null) {
+      hold = pause;
       const per = [];
       upload(rgba);
-      await forward(async (i, l) => {
+      const each = async (i, l) => {
         const g = pGroup(l.L.pDiff, shape.act[i], shape.ref[i], l.L.gpuLin, shape.sums);
         setP(l.ow, l.oh, l.ow, 0);
         const enc = device.createCommandEncoder();
@@ -348,7 +362,13 @@ export async function createLpips(device, weights, { onProgress = null, budgetMs
         for (let y = 0; y < l.oh; y++) sum += s[y];
         shape.read.unmap();
         per.push(sum / (l.ow * l.oh));
-      });
+      };
+      try {
+        await forward(each);
+      } catch (e) {
+        if (e === DROPPED) return null;
+        throw e;
+      }
       let v = 0;
       for (const p of per) v += p;
       return { lpips: v, layers: per };

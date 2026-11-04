@@ -147,24 +147,32 @@ function lpipsReady() {
 }
 
 // ── the state, and its mirror in the address (#pic=…&scale=…) ──
-const S = {
+// what the page opens on, when its link holds no state
+const HOME = {
   pic: 'junkshop',
-  role: 'native',
   scale: 4 / 3,
-  chroma: '444',
+  chroma: '420',
   c444: false,
-  view: 'grid',
-  a: 'mwsr',
-  b: 'fsr1',
+  view: 'ab',
+  a: 'native',
+  b: 'mwsr',
+  zoom: 1,
+  center: [1610, 629], // in the picture's pixels, whatever the scale draws it at
+};
+const S = {
+  ...HOME,
+  role: 'native',
   flipped: false, // the flip view shows B
-  zoom: matchMedia('(max-width: 560px)').matches ? 2 : 4, // a phone's panes are small
-  center: [1808, 300], // in the picture's pixels, whatever the scale draws it at
   split: 0.5,
   file: null,
 };
-// a link with a state (#pic=…), at the start or pasted later into this tab
+// a link with a state (#pic=…), at the start or pasted later into this tab: one written earlier keeps its meaning
 function fromHash() {
   const h = new URLSearchParams(location.hash.slice(1));
+  if (![...h].length) {
+    Object.assign(S, HOME);
+    return;
+  }
   const pic = h.get('pic');
   if (PICS[pic] && pic !== 'file') S.pic = pic;
   S.scale = (SCALES.find(([, k]) => k === h.get('scale')) || [4 / 3])[0];
@@ -206,23 +214,40 @@ function status(text, kind = '') {
   s.className = 'msg' + (kind ? ' ' + kind : '');
 }
 
-// ── the worker ──
-const worker = new Worker(ME.dataset.worker, { type: 'module' });
-const pending = new Map();
-let seq = 0;
-worker.onmessage = (e) => {
-  const p = pending.get(e.data.id);
-  pending.delete(e.data.id);
-  if (e.data.ok) p.resolve(e.data.result);
-  else p.reject(new Error(e.data.error));
-};
-worker.onerror = (e) => status('The page’s worker failed: ' + (e.message || 'unknown error'), 'bad');
-const call = (op, args, transfer = []) =>
-  new Promise((resolve, reject) => {
-    const id = ++seq;
-    pending.set(id, { resolve, reject });
-    worker.postMessage({ id, op, args }, transfer);
-  });
+// ── the workers ──
+function startWorker() {
+  const worker = new Worker(ME.dataset.worker, { type: 'module' });
+  const pending = new Map();
+  let seq = 0;
+  worker.onmessage = (e) => {
+    const p = pending.get(e.data.id);
+    pending.delete(e.data.id);
+    if (e.data.ok) p.resolve(e.data.result);
+    else p.reject(new Error(e.data.error));
+  };
+  worker.onerror = (e) => status('The page’s worker failed: ' + (e.message || 'unknown error'), 'bad');
+  return {
+    call: (op, args, transfer = []) =>
+      new Promise((resolve, reject) => {
+        const id = ++seq;
+        pending.set(id, { resolve, reject });
+        worker.postMessage({ id, op, args }, transfer);
+      }),
+    end() {
+      worker.terminate();
+      for (const p of pending.values()) p.reject(new Error('ended'));
+      pending.clear();
+    },
+  };
+}
+const { call } = startWorker();
+// The scores of a case: their own worker, ended with the case. A score takes seconds on a phone, and
+// in the worker that prepares the pictures the next picture would wait for it.
+let scorer = null;
+function endScorer() {
+  if (scorer) scorer.end();
+  scorer = null;
+}
 
 // ── the engine ──
 let engine = null;
@@ -230,6 +255,7 @@ let KERNELS = [];
 let C = null; // the case on screen: sizes, hdr, and the native pixels for the overview
 const R = {}; // scores per upscaler
 let token = 0;
+let lostWhy = '';
 
 async function boot() {
   status('Starting WebGPU…');
@@ -250,7 +276,10 @@ async function boot() {
       mwsr,
       nis,
       soft: SOFT,
-      onLost: (m) => status('The GPU device was lost (' + m + '). Reload the page to start again.', 'bad'),
+      onLost: (m) => {
+        lostWhy = m;
+        status('The GPU device was lost (' + m + '). Reload the page to start again.', 'bad');
+      },
     });
   } catch (e) {
     const m = String(e.message || e);
@@ -309,6 +338,32 @@ function labHook() {
     overshoot: (id) => (R[id] && R[id].overshoot != null ? R[id].overshoot : null),
   };
 }
+
+// ── who has the GPU ──
+// What the eye waits for comes first: the page's load, a picture after a change of menu, a pan. The table is built
+// in what is left, one step at a time, and only on a GPU this page is not using: its draws would be in the
+// timing's figures. The page sees its own use alone: what another tab or program asks of the GPU stays in them.
+const QUIET_MS = 500;
+let eyeCount = 0;
+let eyeAt = 0;
+function eyeFirst() {
+  eyeCount++;
+  eyeAt = performance.now();
+}
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+/** Waits until the table may use the GPU. False once the work it is asked for no longer stands. */
+async function gpuFree(alive) {
+  if (LABMODE) return alive();
+  while (alive()) {
+    const page = document.readyState === 'complete' && document.visibilityState === 'visible';
+    if (page && performance.now() - eyeAt >= QUIET_MS) return true;
+    await sleep(100);
+  }
+  return false;
+}
+// scrolling is the compositor's work on the same GPU; the capture catches the table's own scroll too
+addEventListener('scroll', eyeFirst, { passive: true, capture: true });
+document.addEventListener('visibilitychange', eyeFirst);
 
 // ── the settings ──
 function radios(name) {
@@ -438,17 +493,26 @@ viewer.addEventListener('drop', (e) => {
   if (f) useFile(f);
 });
 
-// ── a case: the picture prepared, uploaded, drawn by every upscaler, scored ──
+// ── a case: the picture prepared, uploaded, drawn by every upscaler. Its table waits for the button ──
+let caseNative = null; // the native frame's pixels while the case is on screen: what a measure scores against
 async function load() {
   if (!engine) return;
   const my = ++token;
-  stopTiming();
+  eyeFirst();
+  measured = false;
+  stopMeasure();
   $('measure').disabled = true;
   const p = PICS[S.pic];
   const pic =
     p.kind === 'file' ? { kind: 'file', file: S.file } : { ...p, url: p.url && new URL(p.url, location.href).href };
   status((p.mb ? `Loading the picture (${p.mb} MB the first time)` : 'Preparing the picture') + '…');
   for (const k of Object.keys(R)) delete R[k];
+  caseNative = null;
+  // no figure of the last case next to the next one
+  if (C) {
+    renderTable();
+    captions();
+  }
   let c;
   try {
     c = await call('prepare', {
@@ -479,9 +543,10 @@ async function load() {
         (c.reduced ? ` Your picture (${c.reduced[0]}×${c.reduced[1]}) was first reduced to fit 3840×2160.` : '');
   clampCenter();
   await makePreview();
+  if (my !== token) return;
   // the pixels are on the GPU and in the worker now: keep only whether there is a native frame
   if (LABMODE) labRef = C.native;
-  const nativePixels = C.native;
+  caseNative = C.native;
   C.native = !!C.native;
   C.input = null;
   status('Drawing…');
@@ -490,92 +555,118 @@ async function load() {
   buildPanes();
   renderTable();
   toHash();
-  status('Scoring…');
-  try {
-    await score(my);
+  // the lab reads each case's overshoots with its pictures (cmp_lab.py)
+  if (LABMODE) {
+    status('Scoring…');
+    try {
+      await score(
+        () => my === token,
+        () => {},
+      );
+    } catch (e) {
+      if (my === token) status('The scoring failed: ' + e.message, 'bad');
+      return;
+    }
     if (my !== token) return;
-    // timed once the 16-bit gate has said which precisions may run
-    $('measure').disabled = false;
-    if (nativePixels && !C.hdr && !LABMODE) await liveScores(my, nativePixels);
-  } catch (e) {
-    if (my === token) status('The scoring failed: ' + e.message, 'bad');
-    return;
   }
-  if (my !== token) return;
+  $('measure').disabled = false;
   status('');
 }
 
-// A timing in progress holds the scores back: they would be in its figures.
-async function scoreTurn(my) {
-  while (timing && my === token) await new Promise((done) => setTimeout(done, 200));
-  return my === token;
-}
+const known = (id, key) => R[id] != null && R[id][key] != null;
 
 // The scores of SDR pictures with a native frame, one at a time, each on the page as soon as it is known.
-async function liveScores(my, nativePixels) {
+// A measure takes only those the table lacks: a measure stopped halfway goes on from there.
+async function liveScores(alive, tick) {
   const urls = {
     scores: new URL(ME.dataset.scores, location.href).href,
     vmaf: new URL(ME.dataset.vmaf, location.href).href,
     model: new URL(ME.dataset.vmafModel, location.href).href,
   };
-  for (const [metric, name] of SCORES) {
-    if (metric === 'lpips') continue;
-    for (const k of KERNELS) {
-      if (!(await scoreTurn(my))) return;
-      status(`Scoring: ${name}, ${k.name}…`);
-      const { value } = await call('scoreOne', { metric, id: k.id, urls });
-      if (my !== token) return;
-      R[k.id] = { ...R[k.id], [metric]: value };
-      renderTable();
+  const plain = SCORES.filter(([metric]) => metric !== 'lpips');
+  const lacking = KERNELS.filter((k) => plain.some(([metric]) => !known(k.id, metric)));
+  if (lacking.length) {
+    if (!(await gpuFree(alive))) return;
+    scorer = startWorker();
+    await scorer.call('scoreCase', { w: C.outW, h: C.outH, native: caseNative });
+    for (const k of lacking) {
+      if (!(await gpuFree(alive))) return;
+      const out = await engine.readOut(k.id);
+      if (!alive()) return;
+      await scorer.call('scoreOut', { id: k.id, out }, [out.buffer]);
     }
+    for (const [metric, name] of plain) {
+      for (const k of KERNELS) {
+        if (known(k.id, metric)) continue;
+        if (!(await gpuFree(alive))) return;
+        status(`Scoring: ${name}, ${k.name}…`);
+        const { value } = await scorer.call('scoreOne', { metric, id: k.id, urls });
+        if (!alive()) return;
+        R[k.id] = { ...R[k.id], [metric]: value };
+        renderTable();
+        tick();
+      }
+    }
+    endScorer();
   }
-  await call('scoresDone', {});
-  if (!(await scoreTurn(my))) return;
+  if (lpipsOff || KERNELS.every((k) => known(k.id, 'lpips'))) return;
+  if (!(await gpuFree(alive))) return;
   status('Scoring: LPIPS, loading its network the first time…');
   const net = await lpipsReady();
-  if (my !== token) return;
+  if (!alive()) return;
   if (!net) {
     lpipsOff = true;
     renderTable();
     return;
   }
+  // the network waits between two submissions, in place: what it reckons has no clock in it
+  const hold = () => gpuFree(alive);
   status('Scoring: LPIPS, the native frame…');
-  await net.reference(nativePixels, C.outW, C.outH);
+  if (!(await net.reference(caseNative, C.outW, C.outH, hold))) return;
   for (const k of KERNELS) {
-    if (!(await scoreTurn(my))) return;
+    if (known(k.id, 'lpips')) continue;
+    if (!(await gpuFree(alive))) return;
     status(`Scoring: LPIPS, ${k.name}…`);
     const out = await engine.readOut(k.id);
-    if (my !== token) return;
-    const { lpips } = await net.score(out);
-    if (my !== token) return;
+    if (!alive()) return;
+    const scored = await net.score(out, hold);
+    if (!scored || !alive()) return;
+    const { lpips } = scored;
     R[k.id] = { ...R[k.id], lpips };
     renderTable();
     captions();
+    tick();
   }
 }
 let lpipsOff = false;
 
-async function score(my, ids = KERNELS.map((k) => k.id)) {
-  for (const id of ids) {
+// The overshoot, and the 16-bit gate, which says which precisions the GPU time may run.
+async function score(alive, tick) {
+  for (const { id } of KERNELS) {
+    if (known(id, 'overshoot')) continue;
+    if (!(await gpuFree(alive))) return;
     const out = await engine.readOut(id);
-    if (my !== token) return;
+    if (!alive()) return;
     const m = await call('measure', { id, out }, [out.buffer]);
-    if (my !== token) return;
+    if (!alive()) return;
     R[id] = { ...R[id], ...m };
     renderTable();
     captions();
+    tick();
   }
   // the 16-bit gate: each 16-bit text held to its 32-bit picture on this GPU
   if (!engine.hasF16) return;
-  for (const k of KERNELS.filter((x) => engine.halfOf(x.id) && ids.includes(x.id))) {
+  for (const k of KERNELS.filter((x) => engine.halfOf(x.id) && !known(x.id, 'f16'))) {
+    if (!(await gpuFree(alive))) return;
     await engine.draw(k.id, { half: true, c444: S.c444 });
     const a = await engine.readOut(k.id);
     const b = await engine.readScratch();
-    if (my !== token) return;
+    if (!alive()) return;
     const g = await call('gate', { a, b }, [a.buffer, b.buffer]);
-    if (my !== token) return;
+    if (!alive()) return;
     R[k.id] = { ...R[k.id], f16: g.share <= 0.001 ? 'ok' : 'refused', f16share: g.share };
     renderTable();
+    tick();
   }
 }
 
@@ -592,6 +683,7 @@ const ro = new ResizeObserver((entries) => {
 });
 function buildPanes() {
   if (!C) return;
+  eyeFirst();
   for (const p of panes) {
     ro.unobserve(p.canvas);
     p.gpu.destroy();
@@ -665,19 +757,22 @@ function captions() {
     p.cap.innerHTML = `<b>${nameOf(p.a)}</b><span class="m">${line(p.a)}</span>`;
   }
 }
+// The figures come during a measure: their place is kept from the start (mwsr.css), or they would push the table
+// and its button down, under a visitor's finger, by up to two lines per row of panes on a phone.
+const WIDEST_FIGURES = 'LPIPS 0.0000 · < 0.00 % over · 0.000 ms';
 function line(id) {
   if (id === 'native' || id === 'input') return noteOf(id);
-  const r = R[id];
-  if (!r) return '…';
+  const r = R[id] || {};
   const bits = [];
   if (r.lpips != null) bits.push('LPIPS ' + r.lpips.toFixed(4));
   if (r.overshoot != null) bits.push(pct(r.overshoot) + ' over');
   const t = best(id);
   if (t) bits.push(ms3(t.ms) + ' ms');
-  return bits.join(' · ');
+  return `<span class="figs"><span class="widest">${WIDEST_FIGURES}</span><span>${bits.join(' · ')}</span></span>`;
 }
 let queued = false;
 function redraw() {
+  eyeFirst();
   if (queued) return;
   queued = true;
   requestAnimationFrame(() => {
@@ -870,17 +965,22 @@ function renderTable() {
     if (v.length === KERNELS.length) top[key] = SCORE_OF[key][3] ? Math.max(...v) : Math.min(...v);
   }
   scoreNote();
+  // until the table is built, what builds it: over the table while it is empty, under the button once it shows a figure
+  const waiting = C && !measuring && !measured;
+  const shows = KERNELS.some((k) => best(k.id) || ['overshoot', ...SCORE_COLUMNS].some((key) => known(k.id, key)));
+  $('press').classList.toggle('off', !waiting || shows);
+  $('unfinished').hidden = !waiting || !shows;
   $('table').tBodies[0].innerHTML = KERNELS.map((k) => {
     const r = R[k.id] || {};
     const cells = SCORE_COLUMNS.map((key) => {
       const v = r[key];
       const none = !scored || (key === 'lpips' && lpipsOff);
-      const text = v != null ? SCORE_OF[key][2](v) : none ? '—' : '…';
+      const text = v != null ? SCORE_OF[key][2](v) : none || !measuring ? '—' : '…';
       return `<td class="num${key === 'lpips' ? ' fid' : ''}">${v != null && v === top[key] ? `<strong>${text}</strong>` : text}</td>`;
     }).join('');
-    const o = r.overshoot != null ? pct(r.overshoot) : '…';
+    const o = r.overshoot != null ? pct(r.overshoot) : measuring ? '…' : '—';
     const t = best(k.id);
-    let time = '—';
+    let time = measuring ? '…' : '—';
     if (t) {
       const w = max ? Math.max(2, Math.round((t.ms / max) * 90)) : 0;
       const tag = t.tag ? `<span class="tag"${t.both ? ` title="${t.both}"` : ''}>${t.tag}</span>` : '';
@@ -897,7 +997,20 @@ function renderTable() {
           : '';
     return `<tr><th scope="row">${k.name}${star}</th>${cells}<td class="num">${o}</td><td class="num">${time}${gate}</td></tr>`;
   }).join('');
+  placePress();
 }
+// The badge lies over the table's figures, not over its titles: where they are depends on the page's width.
+function placePress() {
+  const body = $('table').tBodies[0];
+  if (!body.rows.length) return;
+  const box = $('press').parentElement.getBoundingClientRect();
+  const rows = body.getBoundingClientRect();
+  const { style } = $('press');
+  style.left = `${body.rows[0].cells[0].getBoundingClientRect().right - box.left}px`;
+  style.top = `${rows.top - box.top}px`;
+  style.height = `${rows.height}px`;
+}
+new ResizeObserver(placePress).observe($('table'));
 // what the score columns hold for this picture, or why they are empty
 function scoreNote() {
   const n = $('lab-note');
@@ -907,73 +1020,310 @@ function scoreNote() {
     ? 'No score but the overshoot in HDR: LPIPS, VMAF NEG, PSNR, SSIM, MS-SSIM and this FLIP are made for SDR pictures.'
     : C && !C.native
       ? 'No score against a native frame: your picture is the input here. The overshoot and the GPU time are measured.'
-      : 'Every score is computed in this tab, on this device, against the native frame (below ×1, against the reference); nothing is sent anywhere.' +
+      : 'Every score is computed in this tab, on this device, against the native frame (below ×1, against the reference). They leave it only at the end of a measure.' +
         (lpipsOff ? ' LPIPS cannot run here: this device refused its network.' : '');
 }
 
-// ── the timing ──
-let timing = 0;
-function stopTiming() {
-  if (timing) timing = 0;
-  $('measure').textContent = 'Measure the GPU time';
+// ── the report of a measure ──
+// At the end of a measure, one POST of technical values: the server keeps the fields it knows and nothing else.
+// An unknown value is left out. No retry, no word to the visitor if it fails, and the count is in memory only.
+const PAGE_VERSION = new URL(import.meta.url).searchParams.get('v');
+const REPORTS = 3;
+const REPORTS_MS = 5 * 60 * 1000;
+const reported = [];
+const num = (x) => (Number.isFinite(x) ? Number(x.toPrecision(6)) : undefined);
+const text = (x, n = 300) => (x ? String(x).slice(0, n) : undefined);
+/** The browser's family and the two major versions, worked out here: the user agent itself never leaves. */
+async function clientFacts() {
+  const ua = navigator.userAgent;
+  const data = navigator.userAgentData;
+  const major = (re) => {
+    const m = ua.match(re);
+    return m ? Number(m[1]) : undefined;
+  };
+  let browser = 'other';
+  let browserMajor;
+  if (/\bEdg(?:e|A|iOS)?\//.test(ua)) {
+    browser = 'edge';
+    browserMajor = major(/\bEdg(?:e|A|iOS)?\/(\d+)/);
+  } else if (/\b(?:OPR|OPiOS|SamsungBrowser|Vivaldi|YaBrowser|DuckDuckGo)\//.test(ua)) browser = 'other';
+  else if (/\b(?:CriOS|Chrome)\//.test(ua)) {
+    browser = 'chrome';
+    browserMajor = major(/\b(?:CriOS|Chrome)\/(\d+)/);
+  } else if (/\b(?:FxiOS|Firefox)\//.test(ua)) {
+    browser = 'firefox';
+    browserMajor = major(/\b(?:FxiOS|Firefox)\/(\d+)/);
+  } else if (/\bVersion\/\d+.*\bSafari\//.test(ua)) {
+    browser = 'safari';
+    browserMajor = major(/\bVersion\/(\d+)/);
+  }
+  const iPad = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+  let os = 'other';
+  let osMajor;
+  if (/iPhone|iPad|iPod/.test(ua) || iPad) {
+    os = 'ios';
+    osMajor = major(/\bOS (\d+)_/);
+  } else if (/Android/.test(ua)) {
+    os = 'android';
+    if (!data) osMajor = major(/Android (\d+)/); // Chrome's user agent freezes it, and states it below
+  } else if (/Windows/.test(ua)) os = 'windows';
+  else if (/Macintosh/.test(ua)) os = 'macos';
+  else if (/Linux|X11/.test(ua) && !/CrOS/.test(ua)) os = 'linux';
+  // Windows and macOS freeze theirs in the user agent: only what the browser states, reduced to its major
+  if (data && data.getHighEntropyValues && ['windows', 'macos', 'android'].includes(os)) {
+    const v = await data.getHighEntropyValues(['platformVersion']).catch(() => null);
+    const m = v ? parseInt(v.platformVersion, 10) : NaN;
+    if (Number.isFinite(m)) osMajor = os === 'windows' ? (m >= 13 ? 11 : 10) : m;
+  }
+  const mobile = data ? !!data.mobile : /Mobi|Android|iPhone|iPod/.test(ua) || iPad;
+  return { browser, browserMajor, os, osMajor, mobile };
+}
+async function report(vars, fail) {
+  const now = performance.now();
+  while (reported.length && now - reported[0] > REPORTS_MS) reported.shift();
+  if (reported.length >= REPORTS) return;
+  reported.push(now);
+  try {
+    const results = vars.map((v) => {
+      const r = R[v.id] || {};
+      const ms = median(v.t);
+      return {
+        k: v.id,
+        half: v.half,
+        // the scores are the 32-bit picture's
+        ...(v.half
+          ? {}
+          : {
+              lpips: num(r.lpips),
+              vmafNeg: num(r.vmaf),
+              psnr: num(r.psnr),
+              ssim: num(r.ssim),
+              msssim: num(r.msssim),
+              flip: num(r.flip),
+              overshoot: num(r.overshoot),
+            }),
+        gpuMs: num(ms),
+        gpuSpread: v.t.length && ms ? num((Math.max(...v.t) - Math.min(...v.t)) / ms) : undefined,
+        dropped: v.dropped,
+      };
+    });
+    const body = {
+      v: 1,
+      page: PAGE_VERSION || undefined,
+      shader: engine.mwsrKey(),
+      ...(await clientFacts()),
+      gpuVendor: text(engine.vendor, 64),
+      gpuArch: text(engine.architecture, 64),
+      f16: engine.hasF16,
+      timestamps: engine.hasTs,
+      // the size of a visitor's own picture stays here
+      ...(S.pic === 'file' ? {} : { canvasW: C.outW, canvasH: C.outH, inputW: C.inW, inputH: C.inH }),
+      dpr: num(devicePixelRatio),
+      gamut: ['rec2020', 'p3', 'srgb'].find((g) => matchMedia(`(color-gamut: ${g})`).matches),
+      hdr: !!C.hdr,
+      picture: S.pic === 'file' ? 'own' : S.pic,
+      scale: (SCALES.find(([v]) => v === S.scale) || [])[1],
+      chroma: S.chroma,
+      c444: !!S.c444,
+      path: 'webgpu',
+      results,
+      fail,
+    };
+    fetch('/v1/mwsr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      keepalive: true,
+      credentials: 'omit',
+      mode: 'same-origin',
+      referrerPolicy: 'no-referrer',
+      cache: 'no-store',
+    }).catch(() => {});
+  } catch {
+    /* a report never troubles the page */
+  }
+}
+
+// ── the measure ──
+// The whole table, on the button: the scores it lacks, then the GPU time. A batch the page's draws touched is
+// dropped and taken again, warm.
+let measuring = 0; // the run under way
+let measured = false; // the table of this case is built
+let runs = 0;
+let lastRun = Promise.resolve(); // two runs would share the timestamps' buffer
+const timed = { dropped: 0 };
+if (SOFT) window.mwsrTimed = timed;
+// How far it is, beside the button: the dots come and go in a place of their own and the percentage has its
+// own width, so nothing moves. A change of text only: no draw of the page, and it holds no batch back.
+let dotsTimer = 0;
+function showMeasuring() {
+  $('tprogress').innerHTML =
+    '<span class="measuring">Measuring<span class="dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span> <span class="pct">0 %</span></span>';
+  const dots = [...$('tprogress').querySelectorAll('.dots i')];
+  clearInterval(dotsTimer);
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  let lit = 0;
+  const step = () => {
+    dots.forEach((d, i) => d.classList.toggle('off', i > lit));
+    lit = (lit + 1) % 3;
+  };
+  step();
+  dotsTimer = setInterval(step, 500);
+}
+function showPercent(p) {
+  const el = $('tprogress').querySelector('.pct');
+  const t = p + ' %';
+  if (el && el.textContent !== t) el.textContent = t;
+}
+function stopMeasure() {
+  measuring = 0;
+  endScorer();
+  clearInterval(dotsTimer);
+  $('measure').textContent = measured ? 'Measure again' : 'Measure';
   $('tprogress').textContent = '';
 }
-$('measure').addEventListener('click', async () => {
-  if (timing) {
-    stopTiming();
-    return;
-  }
-  if (!engine || !C) return;
-  const my = (timing = token);
-  $('measure').textContent = 'Stop';
+function startMeasure() {
+  const run = (measuring = ++runs);
+  const my = token;
+  $('measure').textContent = 'Stop measuring';
+  showMeasuring();
+  renderTable();
+  captions();
+  lastRun = lastRun.then(() => measureCase(run, my)).catch((e) => console.warn('measure:', e));
+}
+$('measure').addEventListener('click', () => {
+  if (measuring) {
+    stopMeasure();
+    if (!$('status').classList.contains('bad')) status('');
+    renderTable();
+    captions();
+  } else if (engine && C) startMeasure();
+});
+function median(a) {
+  if (!a.length) return undefined;
+  const s = [...a].sort((x, y) => x - y);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+async function measureCase(run, my) {
+  const alive = () => measuring === run && token === my;
+  if (!alive()) return;
   const rounds = 3;
   const batches = 6;
+  // How far it is: every step counts one, and what is done never goes back. What the gate refuses leaves the plan.
+  let done = 0;
+  const scoring = caseNative && !C.hdr;
+  let steps = 0;
+  for (const k of KERNELS) {
+    const half = engine.hasF16 && engine.halfOf(k.id);
+    if (!known(k.id, 'overshoot')) steps++;
+    if (half && !known(k.id, 'f16')) steps++;
+    if (scoring) steps += SCORES.filter(([m]) => !known(k.id, m) && !(m === 'lpips' && lpipsOff)).length;
+    steps += (1 + rounds * batches) * (half && (!known(k.id, 'f16') || R[k.id].f16 === 'ok') ? 2 : 1);
+  }
+  const progress = () => showPercent(Math.floor((100 * done) / steps));
+  const tick = () => {
+    done++;
+    progress();
+  };
+  // what the GPU refused while this case was drawn, then during the scores and each batch
+  let fail;
+  const refusal = (step, id) => {
+    const [msg] = engine.takeRefused();
+    if (msg && !fail) fail = { step, shader: id, msg: text(msg), lost: text(lostWhy, 120), fallback: false };
+  };
+  refusal('draw');
+  let scoresFailed = false;
+  try {
+    progress();
+    await score(alive, tick);
+    if (!alive()) return;
+    if (scoring) await liveScores(alive, tick);
+    if (!alive()) return;
+    status('');
+  } catch (e) {
+    if (!alive()) return;
+    // the GPU time does not depend on them: it still runs, and the report says what failed
+    scoresFailed = true;
+    endScorer();
+    status('The scoring failed: ' + e.message, 'bad');
+    fail ||= { step: 'score', msg: text(e.message), lost: text(lostWhy, 120), fallback: false };
+  }
+  refusal('score');
   const vars = [];
   for (const k of KERNELS) {
-    vars.push({ id: k.id, half: false, t: [] });
-    if (engine.halfOf(k.id) && R[k.id] && R[k.id].f16 === 'ok') vars.push({ id: k.id, half: true, t: [] });
+    vars.push({ id: k.id, half: false, t: [], chunk: 10, dropped: 0 });
+    if (engine.halfOf(k.id) && R[k.id] && R[k.id].f16 === 'ok')
+      vars.push({ id: k.id, half: true, t: [], chunk: 10, dropped: 0 });
   }
   const opts = { c444: S.c444 };
   const total = vars.length * rounds * batches;
-  let done = 0;
-  const alive = () => timing === my && token === my;
-  try {
-    // a short warm-up, which also sizes the command buffers (none above ~0.2 s)
-    for (const v of vars) {
-      const w = await engine.time(v.id, v.half, opts, 10);
-      v.chunk = Math.max(1, Math.min(100, Math.floor(200 / Math.max(0.01, w.gpu != null ? w.gpu : w.wall))));
-      if (!alive()) return;
+  // the warm-ups count, one each; a batch dropped was not yet counted
+  steps = done + vars.length + total;
+  let at = 'warmup';
+  let current = null;
+  // one batch, on a GPU this page is not using; null when the run is over
+  const batch = async (v, iters) => {
+    for (;;) {
+      if (!(await gpuFree(alive))) return null;
+      await engine.done();
+      const seen = eyeCount;
+      const touched = () => eyeCount !== seen || !alive();
+      current = v.id;
+      const t = await engine.time(v.id, v.half, opts, iters, Math.min(iters, v.chunk), touched);
+      if (!alive()) return null;
+      refusal(at, v.id);
+      if (t && !touched()) return t;
+      v.dropped++;
+      timed.dropped++;
+      if (!(await gpuFree(alive))) return null;
+      await engine.time(v.id, v.half, opts, 10, Math.min(10, v.chunk));
+      if (!alive()) return null;
     }
+  };
+  try {
+    progress();
+    // a short warm-up, which also sizes the pieces of a batch (about 100 ms of GPU each: the most the page waits)
+    for (const v of vars) {
+      const w = await batch(v, 10);
+      if (!w) return;
+      v.chunk = Math.max(1, Math.min(100, Math.floor(100 / Math.max(0.01, w.gpu != null ? w.gpu : w.wall))));
+      tick();
+    }
+    at = 'batch';
     for (let r = 0; r < rounds; r++) {
       for (const v of r % 2 ? [...vars].reverse() : vars) {
         for (let b = 0; b < batches; b++) {
-          const t = await engine.time(v.id, v.half, opts, 100, v.chunk);
-          if (!alive()) return;
+          const t = await batch(v, 100);
+          if (!t) return;
           v.t.push(t.gpu != null ? t.gpu : t.wall);
-          $('tprogress').textContent = `${++done} / ${total} batches`;
+          tick();
         }
       }
     }
   } catch (e) {
+    if (!alive()) return;
     status('The timing failed: ' + e.message, 'bad');
-    stopTiming();
+    report(
+      vars,
+      fail || { step: at, shader: current, msg: text(e.message), lost: text(lostWhy, 120), fallback: false },
+    );
+    stopMeasure();
+    renderTable();
+    captions();
     return;
   }
-  const median = (a) => {
-    const s = [...a].sort((x, y) => x - y);
-    const m = s.length >> 1;
-    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-  };
   for (const v of vars) {
     R[v.id] = R[v.id] || {};
     R[v.id][v.half ? 't16' : 't32'] = median(v.t);
   }
-  timing = 0;
-  $('measure').textContent = 'Measure again';
+  measured = !scoresFailed;
+  stopMeasure();
   $('tprogress').textContent = `${total} batches of 100 draws, median per draw` + (engine.hasTs ? '' : ' (wall time)');
   renderTable();
   captions();
-});
+  report(vars, fail);
+}
 
 addEventListener('resize', redraw);
 boot();

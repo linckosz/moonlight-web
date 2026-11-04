@@ -665,7 +665,7 @@ async function prepare({ pic: p, scale, chroma, role }) {
     native = fromHalves(res.native);
     input = fromHalves(res.input);
   }
-  current = { ...res, inputData: pic.hdr ? nits2020(input, inW * inH) : input, nativeData: pic.hdr ? null : native, outs: {}, refs: {} };
+  current = { ...res, inputData: pic.hdr ? nits2020(input, inW * inH) : input };
   // copies (new Uint8Array(…) and halves(…) copy): the arrays above stay the worker's
   return { result: res, transfer: [res.input.buffer, ...(res.native ? [res.native.buffer] : [])] };
 }
@@ -676,9 +676,18 @@ function measure({ id, out }) {
   const n = c.outW * c.outH;
   const data = c.hdr ? fromHalves(out) : out;
   const over = c.hdr ? nits2020(data, n) : data;
-  // the picture stays here for its other scores, SDR with a native frame only
-  if (c.nativeData) c.outs[id] = data;
   return { result: { overshoot: overshoot(over, c.outW, c.outH, c.inputData, c.inW, c.inH, c.hdr) } };
+}
+
+// The scores have a worker of their own, which the page ends when it changes the
+// case (app.js): here it holds the native frame and each upscaler's picture.
+function scoreCase({ w, h, native }) {
+  current = { outW: w, outH: h, nativeData: native, outs: {}, refs: {} };
+  return { result: true };
+}
+function scoreOut({ id, out }) {
+  current.outs[id] = out;
+  return { result: true };
 }
 
 // One score of one picture: the reference's part is kept for the others of the case.
@@ -708,15 +717,6 @@ async function scoreOne({ metric, id, urls }) {
   return { result: { value } };
 }
 
-// The scores are done: what they kept goes (a phone has little to spare).
-function scoresDone() {
-  if (current) {
-    current.outs = {};
-    current.refs = {};
-  }
-  return { result: true };
-}
-
 function gate({ a, b }) {
   const c = current;
   const A = c.hdr ? fromHalves(a) : a;
@@ -724,7 +724,7 @@ function gate({ a, b }) {
   return { result: { share: differs(A, B, c.outW * c.outH, 4 / 255, c.hdr) } };
 }
 
-const OPS = { prepare, measure, gate, scoreOne, scoresDone };
+const OPS = { prepare, measure, gate, scoreCase, scoreOut, scoreOne };
 
 // One message at a time, in their order: a case prepared while an earlier one
 // still decodes must not end before it.

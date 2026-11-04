@@ -82,7 +82,7 @@ a port of each beside MWSR. They spend their work in different places:
 
 **[Compare them on your own GPU](https://moonlightweb.top/mwsr/)**: the pictures below or your own, in SDR, HDR or
 4:4:4, each upscaler's output pixel for pixel, its scores, and its GPU time on your device. The page runs these same
-ports and uploads nothing.
+ports. Your picture stays on your device; measuring sends technical figures to the server.
 
 ![Four zooms of a 1080p frame upscaled to 1440p: the native frame, then MWSR, FSR1, NIS and SGSR1](docs/zoom.png)
 

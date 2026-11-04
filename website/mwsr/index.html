@@ -53,7 +53,7 @@
     {
       "@type": "TechArticle",
       "@id": "https://moonlightweb.top/mwsr/#page",
-      "headline": "MWSR next to FSR1, NIS and SGSR1",
+      "headline": "MWSR (MoonlightWeb Super Resolution)",
       "url": "https://moonlightweb.top/mwsr/",
       "inLanguage": "en",
       "image": "https://moonlightweb.top/mwsr/img/og.png",
@@ -90,15 +90,16 @@
 <main class="cmp">
 <div class="wrap">
   <div class="kicker">Interactive comparison</div>
-  <h1>MWSR next to FSR1, NIS and SGSR1</h1>
-  <p class="lede"><strong>MWSR (MoonlightWeb Super Resolution)</strong> is the real-time upscaler of MoonlightWeb's
+  <h1>MWSR (MoonlightWeb Super Resolution)</h1>
+  <p class="lede"><strong>MWSR</strong> is the real-time upscaler of MoonlightWeb's
     browser client, open source under the MIT License. Here it and three other single-frame upscalers draw the same
     picture on <em>your</em> GPU. Each pane shows its output pixel for pixel, next to the native frame it tries to
     rebuild. The table gives each one's scores against that frame, its overshoot and its GPU time, all measured on
-    this device. <a href="https://github.com/linckosz/moonlight-web/tree/main/mwsr#next-to-fsr1-nis-and-sgsr1" target="_blank" rel="noopener">The README</a>
+    this device when you press its button. <a href="https://github.com/linckosz/moonlight-web/tree/main/mwsr#next-to-fsr1-nis-and-sgsr1" target="_blank" rel="noopener">The README</a>
     explains the method and gives the figures for three GPUs.</p>
-  <p class="privacy"><strong>Your picture stays on this device.</strong> This page decodes, upscales and measures it
-    inside this tab and uploads nothing. The site counts page views without cookies, and that count carries nothing
+  <p class="privacy"><strong>Your picture stays on this device.</strong> This page decodes, upscales and scores it
+    inside this tab, and never sends it. Pressing Measure sends technical figures to the server, as the note
+    under that button says. The site counts page views without cookies, and that count carries nothing
     of your picture.</p>
   <noscript><p class="msg bad">This page needs JavaScript and WebGPU.</p></noscript>
 </div>
@@ -133,8 +134,8 @@
     <fieldset>
       <legend>Chroma of the stream</legend>
       <div class="seg" id="chroma">
-        <label><input type="radio" name="chroma" value="444" checked> 4:4:4</label>
-        <label><input type="radio" name="chroma" value="420"> 4:2:0</label>
+        <label><input type="radio" name="chroma" value="444"> 4:4:4</label>
+        <label><input type="radio" name="chroma" value="420" checked> 4:2:0</label>
       </div>
       <div class="check-row">
         <label class="check"><input type="checkbox" id="c444"> MWSR sharpens colour edges too</label>
@@ -146,8 +147,8 @@
     <fieldset>
       <legend>View</legend>
       <div class="seg" id="view">
-        <label><input type="radio" name="view" value="grid" checked> All</label>
-        <label><input type="radio" name="view" value="ab"> Side by side</label>
+        <label><input type="radio" name="view" value="grid"> All</label>
+        <label><input type="radio" name="view" value="ab" checked> Side by side</label>
         <label><input type="radio" name="view" value="flip"> Flip</label>
         <label><input type="radio" name="view" value="wipe"> Wipe</label>
       </div>
@@ -160,9 +161,9 @@
     <fieldset>
       <legend>Zoom</legend>
       <div class="seg" id="zoom">
-        <label><input type="radio" name="zoom" value="1"> 1×</label>
+        <label><input type="radio" name="zoom" value="1" checked> 1×</label>
         <label><input type="radio" name="zoom" value="2"> 2×</label>
-        <label><input type="radio" name="zoom" value="4" checked> 4×</label>
+        <label><input type="radio" name="zoom" value="4"> 4×</label>
         <label><input type="radio" name="zoom" value="8"> 8×</label>
       </div>
     </fieldset>
@@ -200,6 +201,8 @@
 
   <section class="results" aria-labelledby="results-title">
     <h2 id="results-title">Scores on this device</h2>
+    <div class="table-box">
+    <p class="press off" id="press"><span>Press <strong>Measure</strong>, under this table, to see the results.</span></p>
     <div class="table-wrap">
       <table id="table">
         <thead><tr>
@@ -216,11 +219,14 @@
         <tbody></tbody>
       </table>
     </div>
+    </div>
     <p class="small" id="lab-note"></p>
     <div class="timing">
-      <button type="button" class="btn btn-primary" id="measure" disabled>Measure the GPU time</button>
+      <button type="button" class="btn btn-primary" id="measure" disabled>Measure</button>
       <span id="tprogress"></span>
     </div>
+    <p class="small" id="unfinished" hidden>The table is not finished: press Measure to go on.</p>
+    <p class="small send-note"><strong>Measuring sends the result to our server: technical data and measured metrics only, to improve the shader.</strong> It is used for nothing else. Your IP address, your language and your picture are not part of it, and no address is kept.</p>
     <p class="small" id="device"></p>
   </section>
 
@@ -316,7 +322,7 @@
         then from ×0.5 to 1:1 a light sharpening where the block sees detail, gentler on a strong edge and none on HDR.
         FSR1, NIS and SGSR1 are made to enlarge (NIS from ×1 to ×2): below ×1 they run as they are, as the client runs
         them.</li>
-      <li><strong>The scores</strong> are computed in this tab, each one as soon as it is ready, and nothing leaves it.
+      <li><strong>The scores</strong> are computed in this tab when you press the button, each one as soon as it is ready. They leave it only at the end of a measure.
         LPIPS (AlexNet, v0.1) says how far a picture looks from the native frame to a human eye: it was made to judge
         upscalers and image restoration, and lower is closer. Its network runs on your GPU, and the page fetches its
         9.9 MB of weights for it. VMAF NEG is Netflix's VMAF in its no-enhancement-gain mode: it judges a video stream's
@@ -330,8 +336,12 @@
         encoder at a stream's bit rate, where the order between the upscalers can differ.</li>
       <li><strong>Overshoot</strong> is the share of pixels that leave the range of their four input texels by more
         than 2/255 (on HDR, in BT.2020 nits, past 1 % + 0.5 nit). It counts halos and ringing.</li>
-      <li><strong>GPU time</strong> is the median of 3 rounds of 6 batches of 100 draws, each batch timed by two GPU timestamps. The
-        browser rounds those timestamps (to 0.1 ms in Chrome), and a batch of 100 makes the rounding a small share. When
+      <li><strong>GPU time</strong> is the median of 3 rounds of 6 batches of 100 draws, timed by GPU timestamps. It runs
+        when you press the button, after the scores. While this page draws or scrolls the table waits, and a batch it
+        touched is thrown away and taken again. The page sees only its own use of the GPU: what another
+        tab or program asks of it stays in these figures. A slow draw splits its batch into pieces of about 100 ms of GPU,
+        so that a change of menu never waits long. The browser rounds the timestamps (to 0.1 ms in Chrome), and a batch
+        of 100 makes the rounding a small share. When
         your GPU has <code>shader-f16</code>, MWSR (its enlargement), FSR1 and SGSR1 are also timed in 16-bit and the
         faster of their two precisions is shown. Within 2 % of each other the two are even, <code>f16 ≈ f32</code>:
         such a gap changes sides from one run to the next. Their 16-bit picture is first held to their 32-bit one:

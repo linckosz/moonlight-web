@@ -78,6 +78,10 @@ small{color:var(--muted); font-size:.78em}
   font-size:.8rem; line-height:1.35; border-top:1px solid var(--line); background:var(--panel)}
 .pane figcaption b{font:700 .82rem var(--mono); letter-spacing:.06em; color:#fff}
 .pane figcaption .m{color:var(--muted); font-variant-numeric:tabular-nums}
+/* the place of the figures, kept from the start: they come during a measure, above the table and its button */
+.pane figcaption .figs{display:inline-grid}
+.pane figcaption .figs > *{grid-area:1 / 1}
+.pane figcaption .widest{visibility:hidden}
 .pane .side{position:absolute; top:.5rem; font:700 .75rem var(--mono); color:#fff; background:rgba(4,7,11,.75);
   padding:.1rem .45rem; border-radius:6px; pointer-events:none}
 .pane figcaption .next{margin-left:auto}
@@ -100,16 +104,39 @@ small{color:var(--muted); font-size:.78em}
 .table-wrap th, .table-wrap td{padding:.5rem .7rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:baseline}
 .table-wrap th{font-weight:700; color:var(--txt)}
 #table th small{display:block; font-weight:400}
+/* over the table's figures until the button has built it, not over its titles (app.js places it), wherever the
+   table is scrolled; a finger scrolls the table through it */
+.table-box{position:relative}
+.press{position:absolute; z-index:2; right:0; display:flex; align-items:center; justify-content:center;
+  margin:0; padding:0 8px; pointer-events:none}
+.press span{padding:.5rem .9rem; border:1px solid var(--cyan); border-radius:8px;
+  background:linear-gradient(rgba(25,211,255,.12), rgba(25,211,255,.12)), var(--panel-2);
+  box-shadow:0 6px 24px rgba(0,0,0,.45); color:#fff; font-size:.92rem; line-height:1.35; text-align:center}
+.press.off{visibility:hidden}
+/* a line keeps its name when the table scrolls sideways, on a phone */
+.table-wrap th:first-child{position:sticky; left:0; z-index:1; background:var(--bg); box-shadow:1px 0 0 var(--line), 0 1px 0 var(--line)}
 .table-wrap td{font-variant-numeric:tabular-nums}
 .table-wrap caption{text-align:left; font-weight:700; color:var(--txt); padding:.9rem 0 .2rem}
 .about td{white-space:nowrap}
+/* the width of a score from the start: the columns and the header's lines stay when the scores come */
 #table td.num{white-space:nowrap}
+#table td.num::before{content:""; display:block; width:3.4em}
+#table td.num:last-child::before{width:11em}
 #table tr.best td.num.fid{color:#fff; font-weight:700}
 .bar{display:inline-block; height:6px; border-radius:3px; background:var(--cyan); opacity:.7; margin-left:.5em; vertical-align:middle}
 .tag{font:600 .72rem var(--mono); color:var(--muted); margin-left:.35em}
 .timing{display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; margin-top:14px}
 .timing .check{margin-top:0}
 .timing .btn[disabled]{opacity:.5; cursor:default}
+/* one size for its three labels, a colour under its gradient, no transition but its hover's: on an iPhone the
+   gradient was not painted when the label changed, at the start of a measure */
+#measure{min-width:11.2em; justify-content:center; background-color:#13bdeb; transition:filter .18s, transform .18s}
+.measuring{white-space:nowrap; font-variant-numeric:tabular-nums}
+.measuring .dots i{font-style:normal}
+.measuring .dots i.off{visibility:hidden}
+.measuring .pct{display:inline-block; min-width:5ch; text-align:right}
+.send-note{margin-top:.9rem}
+.send-note strong{color:var(--txt); font-size:.9rem; font-weight:600}
 #tprogress{font-size:.88rem; color:var(--muted); font-variant-numeric:tabular-nums}
 .foot-logo{border-radius:4px; vertical-align:-3px; margin-right:6px}
 
