@@ -7677,20 +7677,20 @@ export class StreamView {
 
     /**
      * Feed the meter of Auto's ceiling (stream/AutoCeilingMeter.js). What a
-     * share, a transition, a hidden page or a step of the cadence does to the
-     * numbers says nothing of this machine: those windows count for nothing.
+     * share, a transition or a hidden page does to the numbers says nothing of
+     * this machine: those windows count for nothing. A step of the cadence can
+     * only count for it.
      */
     _tickAutoCeiling(diag, now) {
         const meter = this.autoCeilingMeter;
         if (!meter || this._quitting) return;
-        const stepped = !!(this._stepper && this._stepper.stepFps > 0);
         const idle = !!(this.autoCeilingIdle && this.autoCeilingIdle());
         meter.tick(now, {
             neutral:
                 (typeof document !== 'undefined' && document.hidden) ||
                 this.hasActiveShare() ||
-                idle ||
-                stepped,
+                idle,
+            stepped: !!(this._stepper && this._stepper.stepFps > 0),
             arrivalFps: diag && diag.arrivalAvgMs > 0 ? 1000 / diag.arrivalAvgMs : 0,
             sizeMatches: frameMatchesAsked(this._resolution, meter.asked),
             frames: this.stats.received,

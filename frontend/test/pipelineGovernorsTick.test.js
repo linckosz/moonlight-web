@@ -82,6 +82,7 @@ describe('StreamView — the governors on the tick', () => {
         );
         expect(tick).toHaveBeenCalledWith(10000, {
             neutral: false,
+            stepped: false,
             arrivalFps: 100,
             sizeMatches: true,
             frames: 500,
@@ -92,8 +93,8 @@ describe('StreamView — the governors on the tick', () => {
         });
     });
 
-    it('calls a share, a transition or a cadence step neutral for that meter', () => {
-        const neutral = (over) => {
+    it('calls a share or a transition neutral for that meter, and says when the cadence steps', () => {
+        const sample = (over) => {
             const tick = vi.fn();
             const v = {
                 autoCeilingMeter: { tick, asked: null },
@@ -103,13 +104,13 @@ describe('StreamView — the governors on the tick', () => {
                 ...over,
             };
             v._tickAutoCeiling(DIAG, 10000);
-            return tick.mock.calls[0][1].neutral;
+            return tick.mock.calls[0][1];
         };
-        expect(neutral({})).toBe(false);
-        expect(neutral({ hasActiveShare: () => true })).toBe(true);
-        expect(neutral({ autoCeilingIdle: () => true })).toBe(true);
-        expect(neutral({ _stepper: { stepFps: 240 } })).toBe(true);
-        expect(neutral({ _stepper: { stepFps: 0 } })).toBe(false);
+        expect(sample({}).neutral).toBe(false);
+        expect(sample({ hasActiveShare: () => true }).neutral).toBe(true);
+        expect(sample({ autoCeilingIdle: () => true }).neutral).toBe(true);
+        expect(sample({ _stepper: { stepFps: 240 } })).toMatchObject({ neutral: false, stepped: true });
+        expect(sample({ _stepper: { stepFps: 0 } })).toMatchObject({ neutral: false, stepped: false });
     });
 
     it('tells that meter of a step down of the enhancer, not of a step up', () => {

@@ -163,6 +163,65 @@ describe('AutoCeilingMeter: neutral windows', () => {
     });
 });
 
+describe('AutoCeilingMeter: a step of the cadence', () => {
+    it('earns the next rung on a step kept to the end', () => {
+        const r = rig();
+        r.run(GRACE_MS, { stepped: true, arrivalFps: 2 * FPS });
+        expect(r.meter.loadedMs).toBe(0);
+        r.run(5 * MIN, { stepped: true, arrivalFps: 2 * FPS });
+        expect(r.types()).toEqual(['held', 'earned']);
+        expect(r.events[0].atRung).toBe(true);
+    });
+
+    it('holds nothing that happens on a step against the rung', () => {
+        const r = rig();
+        r.run(GRACE_MS);
+        r.rebuilds = 3;
+        r.run(TICK, { stepped: true, fpsCap: FPS });
+        r.meter.noteCongestion();
+        r.meter.noteCongestion();
+        r.meter.noteSick('enhancer');
+        r.run(DROP_WINDOW_MS, { stepped: true }, 50);
+        r.run(HOST_WINDOW_MS, { stepped: true, arrivalFps: 0, presentsFps: FPS });
+        expect(r.events).toEqual([]);
+    });
+
+    it('takes what comes after the step back again', () => {
+        const r = rig();
+        r.run(GRACE_MS);
+        r.rebuilds = 3;
+        r.run(TICK, { stepped: true });
+        r.run(TICK);
+        expect(r.events).toEqual([]);
+        r.rebuilds = 4;
+        r.run(TICK);
+        expect(r.events[0]).toMatchObject({ type: 'sick', reason: 'decoder_rebuilt' });
+    });
+
+    it('counts time only if the frames are there, at the size asked for', () => {
+        const r = rig();
+        r.run(GRACE_MS);
+        r.run(MIN, { stepped: true, arrivalFps: FPS / 2 });
+        r.run(MIN, { stepped: true, sizeMatches: false });
+        expect(r.meter.loadedMs).toBe(0);
+    });
+
+    it('counts for nothing in a window that is neutral anyway', () => {
+        const r = rig();
+        r.run(GRACE_MS);
+        r.run(10 * MIN, { stepped: true, neutral: true, arrivalFps: 2 * FPS });
+        expect(r.meter.loadedMs).toBe(0);
+        expect(r.events).toEqual([]);
+    });
+
+    it('still takes a crash', () => {
+        const r = rig();
+        r.run(GRACE_MS + TICK, { stepped: true });
+        r.meter.noteSick('worker_crash', true);
+        expect(r.events[0]).toMatchObject({ type: 'sick', reason: 'worker_crash' });
+    });
+});
+
 describe('AutoCeilingMeter: what makes a stream sick', () => {
     const startLoaded = () => {
         const r = rig();

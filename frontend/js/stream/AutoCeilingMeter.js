@@ -25,8 +25,10 @@
  * A still desktop sends few frames: no drop, no queue, a stream that looks
  * healthy and proved nothing. So only time at the rate asked for, at the size
  * asked for, counts towards a rung (a loaded window). Some time counts neither
- * for nor against: the start-up traffic, a hidden tab, a transition, a share, a
- * step of the cadence above the stream's own rate (`neutral`).
+ * for nor against: the start-up traffic, a hidden tab, a transition, a share
+ * (`neutral`). A step of the cadence above the stream's own rate counts for and
+ * never against (`stepped`): the frames it holds are more than the rung asks,
+ * and what goes wrong up there is the step's, which the stepper takes back.
  *
  * One signal is enough to call a stream sick, and it stays sick to its end:
  *   - drops: frames thrown away for want of room (`queueFull`, `backpressure`)
@@ -97,6 +99,8 @@ function grown(value, last) {
 /**
  * @typedef {object} AutoCeilingSample
  * @property {boolean} [neutral] this tick counts neither for nor against
+ * @property {boolean} [stepped] the cadence stands on a step above the stream's
+ *   own rate: this tick can count for the rung, not against it
  * @property {number} [arrivalFps] the frames arriving, a second
  * @property {boolean|null} [sizeMatches] the frame is the size asked for; null
  *   while no frame has said
@@ -173,13 +177,17 @@ export class AutoCeilingMeter {
         this._lastRebuilds = s.rebuilds > 0 ? s.rebuilds : 0;
         if (s.sizeMatches === true) this._sawAskedSize = true;
         else if (s.sizeMatches === false) this._sawOtherSize = true;
-        this._neutral = !!s.neutral || now - this._startedAt <= GRACE_MS;
-        if (this._done || this._neutral) return;
+        const neutral = !!s.neutral || now - this._startedAt <= GRACE_MS;
+        // noteCongestion and noteSick go by this: on a step, they say nothing.
+        this._neutral = neutral || !!s.stepped;
+        if (this._done || neutral) return;
 
-        if (s.fpsCap > 0) return this._sick('decode_rate');
-        if (rebuilds > 0) return this._sick('decoder_rebuilt');
-        if (this._weighDrops(dt, frames, drops)) return;
-        if (this._weighHost(dt, s)) return;
+        if (!s.stepped) {
+            if (s.fpsCap > 0) return this._sick('decode_rate');
+            if (rebuilds > 0) return this._sick('decoder_rebuilt');
+            if (this._weighDrops(dt, frames, drops)) return;
+            if (this._weighHost(dt, s)) return;
+        }
         if (s.sizeMatches === true && s.arrivalFps >= this._fps * LOADED_ARRIVAL_SHARE) {
             this._loadedMs += dt;
             this._checkHold();
