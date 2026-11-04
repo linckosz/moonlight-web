@@ -16,6 +16,7 @@ import {
     HANDHELD_MAX_CEILING,
     HOLD_BASE_MS,
     HOLD_MAX_MS,
+    autoCeilingKey,
     autoCeilingMemory,
     autoLearnMode,
     deviceMaxCeiling,
@@ -325,5 +326,60 @@ describe('previewCeiling', () => {
 
     it('is the base budget when nothing was launched yet', () => {
         expect(previewCeiling({}, fakeStorage({ [AUTO_LEARN_KEY]: '1' }))).toBe(PIXEL_RATE_BUDGET);
+    });
+});
+
+describe('one memory per machine behind the rendezvous', () => {
+    // Every native host answers to one uuid, and the rendezvous gives them one origin.
+    const machines = () => {
+        const storage = fakeStorage({ [AUTO_LEARN_KEY]: '1' });
+        return {
+            storage,
+            a: autoCeilingMemory(storage, () => 1000, 'machine-a'),
+            b: autoCeilingMemory(storage, () => 1000, 'machine-b'),
+        };
+    };
+
+    it('does not lend one machine what another has earned', () => {
+        const { a, b } = machines();
+        a.raise(HOST, CODEC);
+        expect(a.entry(HOST, CODEC).ceiling).toBe(330e6);
+        expect(b.entry(HOST, CODEC).ceiling).toBe(PIXEL_RATE_BUDGET);
+    });
+
+    it('does not make one machine pay for what another has failed', () => {
+        const { a, b } = machines();
+        a.raise(HOST, CODEC);
+        b.raise(HOST, CODEC);
+        b.fail(HOST, CODEC);
+        expect(a.entry(HOST, CODEC).ceiling).toBe(330e6);
+        expect(b.entry(HOST, CODEC).ceiling).toBe(PIXEL_RATE_BUDGET);
+    });
+
+    it('does not take a crash for another machine', () => {
+        const { a, b } = machines();
+        a.open(HOST, CODEC);
+        expect(a.entry(HOST, CODEC).crashed).toBe(true);
+        expect(b.entry(HOST, CODEC).crashed).toBe(false);
+    });
+
+    it('previews what was learned on the machine this page is on', () => {
+        const { storage, a, b } = machines();
+        a.raise(HOST, CODEC);
+        a.noteLast(HOST, CODEC);
+        expect(previewCeiling({}, storage, 'machine-a')).toBe(330e6);
+        expect(previewCeiling({}, storage, 'machine-b')).toBe(PIXEL_RATE_BUDGET);
+        b.noteLast(HOST, CODEC);
+        expect(previewCeiling({}, storage, 'machine-a')).toBe(330e6);
+    });
+
+    it('keeps a direct address where it was, apart from the rest', () => {
+        const { storage, a } = machines();
+        const direct = autoCeilingMemory(storage, () => 1000, null);
+        direct.raise(HOST, CODEC);
+        expect(storage.raw().hosts[HOST + '|' + CODEC].ceiling).toBe(330e6);
+        expect(a.entry(HOST, CODEC).ceiling).toBe(PIXEL_RATE_BUDGET);
+        expect(autoCeilingKey('machine-a')).toBe(AUTO_CEILING_KEY + ':machine-a');
+        expect(autoCeilingKey(null)).toBe(AUTO_CEILING_KEY);
     });
 });

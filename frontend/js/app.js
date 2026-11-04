@@ -111,6 +111,7 @@ import {
 } from './util/DecoderLimit.js';
 import { startAspectProbe } from './stream/AspectProbe.js';
 import { AutoCeilingSession } from './stream/AutoCeilingSession.js';
+import { autoCeilingMemory } from './util/AutoCeiling.js';
 import {
     recordCrashRelaunch,
     settledStreamState,
@@ -3094,6 +3095,7 @@ export const MoonlightApp = {
                 lowMemory: IS_LOW_MEMORY,
                 powerSave: settings.power_save === true,
             },
+            memory: autoCeilingMemory(undefined, undefined, tunnelHostId()),
         });
         if (this._autoCeilingPageWatch) return;
         // A tab killed from the background, or a page left, is no crash.

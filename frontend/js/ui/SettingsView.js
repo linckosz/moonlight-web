@@ -96,6 +96,7 @@ import {
     readResolutionChoice,
 } from '../util/StreamResolution.js';
 import { previewCeiling } from '../util/AutoCeiling.js';
+import { tunnelHostId } from '../net/tunnelBridge.js';
 import { audioSourceOptions, normalizeAudioSource } from './audioSourceOptions.js';
 import {
     CODEC_PYROWAVE,
@@ -729,12 +730,16 @@ export class SettingsView {
      */
     _budgetedStream(choice, rate, rateNamed) {
         // No host here: what was learned from the one launched last.
-        const budget = previewCeiling({
-            tv: IS_TV,
-            handheld: IS_HANDHELD,
-            lowMemory: IS_LOW_MEMORY,
-            powerSave: this._powerSave,
-        });
+        const budget = previewCeiling(
+            {
+                tv: IS_TV,
+                handheld: IS_HANDHELD,
+                lowMemory: IS_LOW_MEMORY,
+                powerSave: this._powerSave,
+            },
+            undefined,
+            tunnelHostId(),
+        );
         const ref = bitrateReference(
             choice,
             undefined,

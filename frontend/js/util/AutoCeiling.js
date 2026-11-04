@@ -25,8 +25,10 @@
  * (stream/AutoCeilingMeter.js). A stream that does not hold costs one rung.
  *
  * One entry per host and per codec: holding 4K120 in HEVC says nothing of H.264.
- * Kept in localStorage, so per origin: the LAN and Internet access learn apart.
- * Nothing goes to the server.
+ * Kept in localStorage, so per origin: a direct address and the rendezvous learn
+ * apart. Every machine reached through the rendezvous shares its origin and every
+ * native host answers to one uuid, so each such machine has a memory of its own
+ * (autoCeilingKey). Nothing goes to the server.
  *
  * A memory that keeps a bad session stays stuck (the enhancer's ladder did), so:
  * a rung lost is regained by holding the one below for twice as long, up to
@@ -68,6 +70,16 @@ export const ENTRIES_KEPT = 32;
 const VERSION = 1;
 
 /**
+ * Where one machine's memory is kept.
+ * @param {string|null} [instance] tunnelHostId(): its rendezvous identifier, or
+ *   nothing on a direct address, where the origin is the machine
+ * @returns {string} the localStorage key
+ */
+export function autoCeilingKey(instance) {
+    return instance ? AUTO_CEILING_KEY + ':' + instance : AUTO_CEILING_KEY;
+}
+
+/**
  * Whether Auto learns here, only measures, or does neither.
  * @param {Storage|null} [storage] localStorage by default
  * @returns {'off'|'log'|'on'}
@@ -104,13 +116,14 @@ export function deviceMaxCeiling(device) {
  * the host launched last, under what this device may reach.
  * @param {{tv?:boolean, handheld?:boolean, lowMemory?:boolean, powerSave?:boolean}} [device]
  * @param {Storage|null} [storage] localStorage by default
+ * @param {string|null} [instance] the machine this page is on (autoCeilingKey)
  * @returns {number} pixels a second
  */
-export function previewCeiling(device, storage) {
+export function previewCeiling(device, storage, instance) {
     if (autoLearnMode(storage) !== 'on') return PIXEL_RATE_BUDGET;
     const top = deviceMaxCeiling(device);
     if (top <= PIXEL_RATE_BUDGET) return PIXEL_RATE_BUDGET;
-    return autoCeilingMemory(storage).lastCeiling(top);
+    return autoCeilingMemory(storage, undefined, instance).lastCeiling(top);
 }
 
 /** The rung at or just under @p pixels, never under the first. */
@@ -143,8 +156,10 @@ export function holdMsFor(failures) {
  * and every answer is the base budget.
  * @param {Storage|null} [storage] localStorage by default
  * @param {() => number} [clock] Date.now by default
+ * @param {string|null} [instance] the machine this page is on (autoCeilingKey)
  */
-export function autoCeilingMemory(storage, clock) {
+export function autoCeilingMemory(storage, clock, instance) {
+    const storeKey = autoCeilingKey(instance);
     let store = storage;
     if (store === undefined) {
         try {
@@ -158,7 +173,7 @@ export function autoCeilingMemory(storage, clock) {
     const blank = () => ({ v: VERSION, last: '', hosts: {} });
     const read = () => {
         try {
-            const all = JSON.parse(store.getItem(AUTO_CEILING_KEY) || 'null');
+            const all = JSON.parse(store.getItem(storeKey) || 'null');
             if (!all || all.v !== VERSION || typeof all.hosts !== 'object' || !all.hosts)
                 return blank();
             return all;
@@ -168,7 +183,7 @@ export function autoCeilingMemory(storage, clock) {
     };
     const write = (all) => {
         try {
-            store.setItem(AUTO_CEILING_KEY, JSON.stringify(all));
+            store.setItem(storeKey, JSON.stringify(all));
         } catch (e) {
             // Storage refused: nothing remembered.
         }
