@@ -350,16 +350,32 @@ describe('layoutTouchPad', () => {
         ['a narrow phone held upright', 360, 740],
         ['a tablet', 1180, 820],
     ];
-    // Face buttons touch by design; only rounding could read that as overlapping.
-    const EDGE = 0.001;
     const byId = (layout, id) => layout.controls.find((c) => c.id === id);
-    const buttons = (layout) =>
-        layout.controls.filter((c) => c.kind === 'button' || c.kind === 'dpad');
-    const overlap = (a, b) =>
-        a.x < b.x + b.w - EDGE &&
-        b.x < a.x + a.w - EDGE &&
-        a.y < b.y + b.h - EDGE &&
-        b.y < a.y + a.h - EDGE;
+    // What is drawn: the cross is four round keys, the toggle one more.
+    const drawn = (layout) => {
+        const list = [];
+        const disc = (cx, cy, r) => ({ x: cx - r, y: cy - r, w: r * 2, h: r * 2, disc: true });
+        for (const c of layout.controls) {
+            if (c.kind === 'dpad') {
+                const r = layout.d / 2;
+                const far = c.w / 2 - r;
+                list.push(disc(c.cx, c.cy - far, r), disc(c.cx, c.cy + far, r));
+                list.push(disc(c.cx - far, c.cy, r), disc(c.cx + far, c.cy, r));
+            } else if (c.kind === 'button') {
+                list.push(c.r ? disc(c.cx, c.cy, c.w / 2) : c);
+            }
+        }
+        const t = layout.toggle;
+        list.push(disc(t.x + t.w / 2, t.y + t.h / 2, t.w / 2));
+        return list;
+    };
+    const overlap = (a, b) => {
+        if (a.disc && b.disc) {
+            const dist = Math.hypot(a.x + a.w / 2 - b.x - b.w / 2, a.y + a.h / 2 - b.y - b.h / 2);
+            return dist < (a.w + b.w) / 2 - 0.001;
+        }
+        return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    };
 
     describe.each(screens)('on %s', (_name, width, height) => {
         describe.each([0.8, 1, 1.4])('at scale %s', (scale) => {
@@ -372,10 +388,23 @@ describe('layoutTouchPad', () => {
                     expect(c.x + c.w).toBeLessThanOrEqual(width + 0.001);
                     expect(c.y + c.h).toBeLessThanOrEqual(height + 0.001);
                 }
+                const t = layout.toggle;
+                expect(t.y).toBeGreaterThanOrEqual(0);
+                expect(t.y + t.h).toBeLessThanOrEqual(height);
+                expect(t.w).toBeGreaterThanOrEqual(44);
+            });
+
+            it('rests each ring on screen', () => {
+                for (const side of ['stick-left', 'stick-right']) {
+                    const c = byId(layout, side);
+                    expect(c.restX - c.radius).toBeGreaterThanOrEqual(0);
+                    expect(c.restX + c.radius).toBeLessThanOrEqual(width);
+                    expect(c.restY + c.radius).toBeLessThanOrEqual(height);
+                }
             });
 
             it('never lays one control over another', () => {
-                const list = buttons(layout);
+                const list = drawn(layout);
                 for (let i = 0; i < list.length; i++) {
                     for (let j = i + 1; j < list.length; j++) {
                         expect(overlap(list[i], list[j])).toBe(false);
@@ -409,13 +438,54 @@ describe('layoutTouchPad', () => {
         const insets = { left: 47, right: 47, bottom: 21 };
         const layout = layoutTouchPad({ width: 844, height: 390, insets });
         expect(byId(layout, 'lt').x).toBe(47);
-        expect(byId(layout, 'rt').x + byId(layout, 'rt').w).toBe(844 - 47);
-        expect(byId(layout, 'dpad').y + byId(layout, 'dpad').h).toBe(390 - 21);
+        expect(byId(layout, 'rt').x + byId(layout, 'rt').w).toBeCloseTo(844 - 47);
+        expect(byId(layout, 'l3').y + byId(layout, 'l3').h).toBe(390 - 21);
+        expect(byId(layout, 'r3').y + byId(layout, 'r3').h).toBe(390 - 21);
+        expect(byId(layout, 'stick-left').restY + layout.radius).toBe(390 - 21);
     });
 
     it('gathers in the lower part of the screen held upright', () => {
         const layout = layoutTouchPad({ width: 390, height: 844 });
         expect(byId(layout, 'lt').y).toBeGreaterThan(844 / 2 - 50);
+    });
+
+    it('sits as GeForce NOW does, within a pixel or two, on a screen of the same shape', () => {
+        // Measured on a capture of 2000x923, brought down to 845x390.
+        const layout = layoutTouchPad({ width: 845, height: 390 });
+        const places = {
+            lt: [49, 62],
+            lb: [167, 62],
+            rb: [678, 62],
+            rt: [795, 62],
+            y: [736, 137],
+            x: [678, 195],
+            b: [795, 195],
+            a: [736, 254],
+            l3: [49, 340],
+            r3: [795, 340],
+        };
+        for (const [id, [x, y]] of Object.entries(places)) {
+            expect(Math.abs(byId(layout, id).cx - x)).toBeLessThan(3);
+            expect(Math.abs(byId(layout, id).cy - y)).toBeLessThan(3);
+        }
+        const dpad = byId(layout, 'dpad');
+        expect(Math.abs(dpad.cx - 108)).toBeLessThan(3);
+        expect(Math.abs(dpad.cy - 195)).toBeLessThan(3);
+        const stick = byId(layout, 'stick-left');
+        expect(Math.abs(stick.restX - 219)).toBeLessThan(3);
+        expect(Math.abs(stick.restY - 307)).toBeLessThan(3);
+    });
+
+    it('sits the toggle between View and Menu, on top, and below the cross upright', () => {
+        const wide = layoutTouchPad({ width: 844, height: 390 });
+        const middle = (c) => c.y + c.h / 2;
+        expect(middle(wide.toggle)).toBeCloseTo(middle(byId(wide, 'view')));
+        expect(byId(wide, 'view').x + byId(wide, 'view').w).toBeLessThan(wide.toggle.x);
+        expect(byId(wide, 'menu').x).toBeGreaterThan(wide.toggle.x + wide.toggle.w);
+        expect(wide.toggle.y + wide.toggle.h).toBeLessThan(byId(wide, 'stick-left').restY);
+        const upright = layoutTouchPad({ width: 390, height: 844 });
+        const cross = byId(upright, 'dpad');
+        expect(upright.toggle.y).toBeGreaterThan(cross.y + cross.h);
     });
 
     describe('under a finger', () => {
@@ -433,6 +503,8 @@ describe('layoutTouchPad', () => {
             ['rt', PAD.RT],
             ['view', PAD.VIEW],
             ['menu', PAD.MENU],
+            ['l3', PAD.L3],
+            ['r3', PAD.R3],
         ])('finds %s', (id, button) => {
             expect(buttonsAt(layout.controls, ...centre(byId(layout, id)))).toEqual([button]);
         });
@@ -448,7 +520,7 @@ describe('layoutTouchPad', () => {
         it('reads the cross in eight directions, with a dead middle', () => {
             const dpad = byId(layout, 'dpad');
             const [cx, cy] = centre(dpad);
-            const far = dpad.w * 0.4;
+            const far = layout.d * 0.95;
             const at = (dx, dy) => buttonsAt(layout.controls, cx + dx, cy + dy);
             expect(at(0, 0)).toEqual([]);
             expect(at(0, -far)).toEqual([PAD.UP]);
@@ -459,6 +531,23 @@ describe('layoutTouchPad', () => {
             expect(at(far, far).sort()).toEqual([PAD.DOWN, PAD.RIGHT].sort());
             expect(at(-far, far).sort()).toEqual([PAD.DOWN, PAD.LEFT].sort());
             expect(at(-far, -far).sort()).toEqual([PAD.UP, PAD.LEFT].sort());
+        });
+
+        it('leaves the corner of the cross under the ring to the stick', () => {
+            const dpad = byId(layout, 'dpad');
+            const corner = [dpad.x + dpad.w - 1, dpad.y + dpad.h - 1];
+            expect(buttonsAt(layout.controls, ...corner)).toBeNull();
+            expect(stickAt(layout.controls, ...corner)).toBe(byId(layout, 'stick-left'));
+        });
+
+        it('widens a thin View to a finger, beyond what it draws', () => {
+            const view = byId(layout, 'view');
+            const [cx] = centre(view);
+            expect(view.h).toBeLessThan(44);
+            expect(buttonsAt(layout.controls, cx, view.y - view.slack + 0.5)).toEqual([PAD.VIEW]);
+            expect(buttonsAt(layout.controls, cx, view.y + view.h + view.slack - 0.5)).toEqual([
+                PAD.VIEW,
+            ]);
         });
 
         it('says the stick zones are where no button is', () => {

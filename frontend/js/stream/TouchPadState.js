@@ -332,36 +332,41 @@ export class TouchPadState {
 }
 
 /**
- * Where the controls sit, laid out as an Xbox pad is: on the left the stick above
- * the cross, on the right the face buttons above the stick. Upright, everything
- * gathers in the lower part of the screen, where the thumbs are and where the
- * picture is not. Pure, in the layer's own pixels.
+ * Where the controls sit: on each side the buttons high and outside, the stick
+ * low and inside, L3 and R3 in the bottom corners. These are the places and
+ * proportions of GeForce NOW's controller, the one players of this kind of
+ * stream already have in their thumbs. Upright, everything gathers in the lower
+ * part of the screen, where the thumbs are and where the picture is not. Pure, in
+ * the layer's own pixels.
  *
- * A `button` control is a circle (`r`) or a box; a `dpad` splits its box into
- * eight directions; a `stick` is a zone a floating stick starts in, with the
- * place its ring rests at when no one holds it.
+ * A `button` control is a circle (`r`) or a box (`slack` widens what a finger can
+ * hit beyond what is drawn); a `dpad` splits a disc of `reach` into eight
+ * directions; a `stick` is a zone a floating stick starts in, with the place its
+ * ring rests at when no one holds it. `toggle` is where the button that hides the
+ * controller goes between View and Menu: it is not one of the pad's controls.
  *
  * @param {{width: number, height: number, scale?: number,
  *          insets?: {top?: number, right?: number, bottom?: number, left?: number}}} opts
  */
 export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) {
-    const left = Math.max(8, insets.left || 0);
-    const right = Math.max(8, insets.right || 0);
-    const bottom = Math.max(8, insets.bottom || 0);
     const short = Math.min(w, h);
-    // A face button's diameter. Past what fits, the scale gives way, so the two
-    // sides never meet on a phone held upright.
-    const d = Math.min(Math.max(40, Math.min(64, short * 0.135)) * scale, w / 7, h / 5.5);
+    // A button's diameter. Past what fits, the scale gives way, so the two sides
+    // never meet on a phone held upright.
+    const d = Math.min(Math.max(40, Math.min(66, short * 0.158)) * scale, w / 7, h / 5.5);
+    const edge = Math.max(8, d * 0.3);
+    const left = Math.max(edge, insets.left || 0);
+    const right = Math.max(edge, insets.right || 0);
     // Upright, the controls keep to the part of the screen a landscape one has.
-    const top = Math.max(Math.max(8, insets.top || 0), h - w * 1.1);
-    const shoulderW = d * 1.5;
-    const shoulderH = d * 0.8;
+    const top = Math.max(8, short * 0.08, insets.top || 0, h - w * 1.1);
     const gap = d * 0.15;
-    const belowShoulders = top + shoulderH + gap;
+    // Columns from each edge, one button apart with a sliver between them.
+    const pitch = d * 0.95;
+    const fromLeft = (n) => left + d / 2 + n * pitch;
+    const fromRight = (n) => w - right - d / 2 - n * pitch;
+    const shouldersY = top + d / 2;
+    const clusterY = shouldersY + d * 2.15;
     const controls = [];
 
-    const box = (id, x, y, bw, bh, buttons) =>
-        controls.push({ id, kind: 'button', x, y, w: bw, h: bh, buttons });
     const round = (id, cx, cy, button) =>
         controls.push({
             id,
@@ -376,45 +381,65 @@ export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) 
             buttons: [button],
         });
 
-    box('lt', left, top, shoulderW, shoulderH, [PAD.LT]);
-    box('lb', left + shoulderW + gap, top, shoulderW, shoulderH, [PAD.LB]);
-    box('rt', w - right - shoulderW, top, shoulderW, shoulderH, [PAD.RT]);
-    box('rb', w - right - shoulderW * 2 - gap, top, shoulderW, shoulderH, [PAD.RB]);
+    round('lt', fromLeft(0), shouldersY, PAD.LT);
+    round('lb', fromLeft(2), shouldersY, PAD.LB);
+    round('rt', fromRight(0), shouldersY, PAD.RT);
+    round('rb', fromRight(2), shouldersY, PAD.RB);
 
-    // Face buttons: a diamond under the right shoulders.
-    const faceCx = w - right - d * 1.5;
-    const faceCy = belowShoulders + d * 1.5;
-    round('y', faceCx, faceCy - d, PAD.Y);
-    round('x', faceCx - d, faceCy, PAD.X);
-    round('b', faceCx + d, faceCy, PAD.B);
-    round('a', faceCx, faceCy + d, PAD.A);
+    round('y', fromRight(1), clusterY - pitch, PAD.Y);
+    round('x', fromRight(2), clusterY, PAD.X);
+    round('b', fromRight(0), clusterY, PAD.B);
+    round('a', fromRight(1), clusterY + pitch, PAD.A);
 
-    // The cross, in the bottom left corner.
-    const dpadSize = d * 2.4;
+    // The cross answers on a disc, not its box: a corner of the box lies under
+    // the ring of the stick, where a thumb means the stick.
+    const dpadCx = fromLeft(1);
+    const dpadSize = pitch * 2 + d;
     controls.push({
         id: 'dpad',
         kind: 'dpad',
-        x: left,
-        y: h - bottom - dpadSize,
+        x: dpadCx - dpadSize / 2,
+        y: clusterY - dpadSize / 2,
         w: dpadSize,
         h: dpadSize,
+        cx: dpadCx,
+        cy: clusterY,
+        reach: dpadSize / 2 + d * 0.05,
     });
 
-    // View and Menu, side by side at the bottom centre.
-    const centerW = d * 1.05;
-    const centerH = d * 0.65;
-    // Upright, the cross reaches the middle: they go just above it.
-    const crossInTheWay = w / 2 - centerW - gap < left + dpadSize;
-    const centerY = crossInTheWay ? h - bottom - dpadSize - gap - centerH : h - bottom - centerH;
-    box('view', w / 2 - centerW - gap, centerY, centerW, centerH, [PAD.VIEW]);
-    box('menu', w / 2 + gap, centerY, centerW, centerH, [PAD.MENU]);
+    const cornerY = h - Math.max(8, d * 0.31, insets.bottom || 0) - d / 2;
+    round('l3', fromLeft(0), cornerY, PAD.L3);
+    round('r3', fromRight(0), cornerY, PAD.R3);
+
+    // View, the toggle and Menu, on top between the shoulders; upright there is
+    // no room between them, so below the cross.
+    const toggleSize = Math.max(44, d * 0.76);
+    const pillW = d * 1.03;
+    const pillH = Math.max(34, d * 0.51);
+    const roomOnTop = w / 2 - d * 1.28 - pillW / 2 >= Math.max(left, right) + d * 2.9 + gap;
+    const middleY = roomOnTop ? top + d * 0.25 : clusterY + pitch + d / 2 + gap + toggleSize / 2;
+    const pill = (id, cx, button) =>
+        controls.push({
+            id,
+            kind: 'button',
+            pill: true,
+            x: cx - pillW / 2,
+            y: middleY - pillH / 2,
+            w: pillW,
+            h: pillH,
+            slack: Math.max(0, (44 - pillH) / 2),
+            buttons: [button],
+        });
+    pill('view', w / 2 - d * 1.28, PAD.VIEW);
+    pill('menu', w / 2 + d * 1.28, PAD.MENU);
 
     // Stick zones: everything of each side that is not a button (hit-tested
     // after them), up to the centre strip, which stays the mouse's.
-    const zoneTop = belowShoulders;
+    const zoneTop = top + d;
     const zoneW = w * 0.42;
     const radius = d * 1.1;
-    const leftRestY = (zoneTop + (h - bottom - dpadSize)) / 2;
+    const restInward = Math.min(fromLeft(2) + d * 0.84, w / 2 - radius - gap);
+    const restY = h - Math.max(8, d * 0.23, insets.bottom || 0) - radius;
     controls.push({
         id: 'stick-left',
         kind: 'stick',
@@ -424,8 +449,8 @@ export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) 
         w: zoneW,
         h: h - zoneTop,
         radius,
-        restX: left + dpadSize / 2,
-        restY: leftRestY,
+        restX: restInward,
+        restY,
     });
     controls.push({
         id: 'stick-right',
@@ -436,16 +461,26 @@ export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) 
         w: zoneW,
         h: h - zoneTop,
         radius,
-        restX: w - right - d * 1.5,
-        restY: Math.max(faceCy + d * 1.5 + radius * 0.5, h - bottom - radius),
+        restX: w - restInward,
+        restY,
     });
-    return { d, radius, controls };
+    return {
+        d,
+        radius,
+        controls,
+        toggle: {
+            x: w / 2 - toggleSize / 2,
+            y: middleY - toggleSize / 2,
+            w: toggleSize,
+            h: toggleSize,
+        },
+    };
 }
 
-/** The buttons a dpad's box means under a finger, diagonals included. */
+/** The buttons a dpad means under a finger, diagonals included. */
 function dpadButtons(c, x, y) {
-    const dx = x - (c.x + c.w / 2);
-    const dy = y - (c.y + c.h / 2);
+    const dx = x - c.cx;
+    const dy = y - c.cy;
     // The middle says nothing: a thumb resting there presses no direction.
     if (Math.hypot(dx, dy) < c.w * 0.12) return [];
     const octant = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
@@ -463,7 +498,8 @@ function dpadButtons(c, x, y) {
 }
 
 function inBox(c, x, y) {
-    return x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h;
+    const slack = c.slack || 0;
+    return x >= c.x && x <= c.x + c.w && y >= c.y - slack && y <= c.y + c.h + slack;
 }
 
 /**
@@ -491,7 +527,9 @@ export function buttonsAt(controls, x, y) {
     }
     if (nearest) return nearest.buttons;
     for (const c of controls) {
-        if (c.kind === 'dpad' && inBox(c, x, y)) return dpadButtons(c, x, y);
+        if (c.kind === 'dpad' && Math.hypot(x - c.cx, y - c.cy) <= c.reach) {
+            return dpadButtons(c, x, y);
+        }
     }
     return null;
 }

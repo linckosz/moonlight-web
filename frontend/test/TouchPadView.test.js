@@ -88,7 +88,22 @@ describe('TouchPadView', () => {
         expect(mine[1].hidden).toBe(true);
         again.destroy();
         expect(view.isVisible()).toBe(true);
-        for (const id of ['a', 'b', 'x', 'y', 'lb', 'lt', 'rb', 'rt', 'view', 'menu', 'dpad']) {
+        const ids = [
+            'a',
+            'b',
+            'x',
+            'y',
+            'lb',
+            'lt',
+            'rb',
+            'rt',
+            'view',
+            'menu',
+            'dpad',
+            'l3',
+            'r3',
+        ];
+        for (const id of ids) {
             expect(el.querySelector(`[data-control="${id}"]`)).not.toBeNull();
         }
         expect(el.querySelectorAll('.touch-pad-zone').length).toBe(2);
@@ -102,6 +117,28 @@ describe('TouchPadView', () => {
         const a = el.querySelector('[data-control="a"]');
         const big = layoutTouchPad({ width: W, height: H, scale: 1.2 }).d;
         expect(parseFloat(a.style.width)).toBeCloseTo(big);
+    });
+
+    it('gives the toggle its place, and says when the controls have moved', () => {
+        expect(view.toggleRect()).toEqual(layout.toggle);
+        view.destroy();
+        const onLaidOut = vi.fn();
+        build({ onLaidOut });
+        expect(onLaidOut).toHaveBeenCalledTimes(1);
+        view.relayout();
+        expect(onLaidOut).toHaveBeenCalledTimes(1);
+    });
+
+    it('is at full opacity unless told otherwise', () => {
+        expect(el.style.getPropertyValue('--touch-pad-opacity')).toBe('1');
+    });
+
+    it('draws L3 and R3 as buttons, as held as the double tap', () => {
+        start(1, ...centre('l3'));
+        expect(el.querySelector('[data-control="l3"]').classList.contains('is-down')).toBe(true);
+        expect(state.buttons[PAD.L3].pressed).toBe(true);
+        end(1);
+        expect(state.buttons[PAD.L3].pressed).toBe(false);
     });
 
     it('takes the rest of the screen only when told to', () => {
@@ -174,9 +211,8 @@ describe('TouchPadView', () => {
     });
 
     it('goes round the cross through its diagonals', () => {
-        const dpad = control('dpad');
         const [cx, cy] = centre('dpad');
-        const far = dpad.w * 0.4;
+        const far = layout.d * 0.95;
         start(1, cx, cy - far);
         expect(state.buttons[PAD.UP].pressed).toBe(true);
         move(1, cx + far, cy - far);

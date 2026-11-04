@@ -63,7 +63,7 @@ export class StreamViewTouchPad {
      */
     _touchPadPref(name) {
         const prefs = this._touchPadPrefs || {};
-        const defaults = { mode: 'auto', scale: 1, opacity: 0.5, vibrate: true, outside: 'mouse' };
+        const defaults = { mode: 'auto', scale: 1, opacity: 1, vibrate: true, outside: 'mouse' };
         return prefs[name] === undefined ? defaults[name] : prefs[name];
     }
 
@@ -129,8 +129,10 @@ export class StreamViewTouchPad {
     }
 
     /**
-     * The button's stand-in in fullscreen, where there is no header. CSS shows
-     * it only there.
+     * The button's stand-in where the header's is not at hand. Beside the
+     * controller it is one of its round buttons, between View and Menu, wherever
+     * the stream is shown; with the controller hidden, CSS keeps it only in
+     * fullscreen, where there is no header, small at the top of the picture.
      * @this {StreamViewInstance}
      */
     _mountTouchPadHandle() {
@@ -211,6 +213,7 @@ export class StreamViewTouchPad {
                 }
             },
             onFourFingerTap: () => this._toggleTouchPad(),
+            onLaidOut: () => this._placeTouchPadHandle(),
         });
         this._touchPadView.mount();
     }
@@ -309,7 +312,26 @@ export class StreamViewTouchPad {
         }
         if (!this._touchPadView) return;
         this._touchPadView.setVisible(on && !this._kbdVisible && this._padHolds.size === 0);
+        this._placeTouchPadHandle();
         if (plugged) gm.pokeVirtual();
+    }
+
+    /**
+     * The handle takes its place among the controller's buttons while the
+     * controller is on screen, and gives it up when it goes.
+     * @this {StreamViewInstance}
+     */
+    _placeTouchPadHandle() {
+        const handle = this._touchPadHandle;
+        if (!handle) return;
+        const view = this._touchPadView;
+        const rect = view && view.isVisible() ? view.toggleRect() : null;
+        handle.classList.toggle('is-with-pad', !!rect);
+        handle.style.left = rect ? rect.x + 'px' : '';
+        handle.style.top = rect ? rect.y + 'px' : '';
+        handle.style.width = rect ? rect.w + 'px' : '';
+        handle.style.height = rect ? rect.h + 'px' : '';
+        handle.style.opacity = rect ? String(this._touchPadPref('opacity')) : '';
     }
 
     /**

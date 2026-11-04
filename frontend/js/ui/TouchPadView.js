@@ -43,16 +43,18 @@ const LABELS = {
     b: 'B',
     x: 'X',
     y: 'Y',
+    l3: 'L3',
+    r3: 'R3',
     view: '⧉',
     menu: '≡',
 };
 
-/** The cross's arms: the button each draws, and its place in the cross. */
+/** The cross's keys: the button each draws, its place and its arrow. */
 const DPAD_ARMS = [
-    [PAD.UP, 'up'],
-    [PAD.DOWN, 'down'],
-    [PAD.LEFT, 'left'],
-    [PAD.RIGHT, 'right'],
+    [PAD.UP, 'up', '▲'],
+    [PAD.DOWN, 'down', '▼'],
+    [PAD.LEFT, 'left', '◀'],
+    [PAD.RIGHT, 'right', '▶'],
 ];
 
 function place(el, x, y, w, h) {
@@ -68,27 +70,30 @@ export class TouchPadView {
      * @param {import('../stream/TouchPadState.js').TouchPadState} state
      * @param {{ scale?: number, opacity?: number, ignoreOutside?: boolean,
      *           onChanged?: () => void, onTouch?: () => void,
-     *           onFourFingerTap?: () => void }} [options]
+     *           onFourFingerTap?: () => void, onLaidOut?: () => void }} [options]
      *   `onChanged` is told when a touch event changed what is held, once that
      *   event is fully handled, so a slide from A to B is one state to send.
      *   `onTouch` is told of any finger coming down here.
      *   `onFourFingerTap`: a tap of four fingers, most of them landing here when
      *   the controller covers the screen.
+     *   `onLaidOut`: the controls have just moved, and with them toggleRect.
      */
     constructor(parent, state, options = {}) {
         this._parent = parent;
         this._state = state;
         this._scale = options.scale || 1;
-        this._opacity = options.opacity === undefined ? 0.5 : options.opacity;
+        this._opacity = options.opacity === undefined ? 1 : options.opacity;
         this._ignoreOutside = options.ignoreOutside === true;
         this._onChanged = options.onChanged || null;
         this._onTouch = options.onTouch || null;
         this._onFourFingerTap = options.onFourFingerTap || null;
+        this._onLaidOut = options.onLaidOut || null;
         // Touch.identifier → { buttons: number[], side: 'left'|'right'|null }
         this._fingers = new Map();
         this._gestureAt = 0;
         this._gestureMax = 0;
         this._controls = [];
+        this._toggle = null;
         this._rect = null;
         // What the layout was last made for (see relayout).
         this._laidOutFor = '';
@@ -146,6 +151,14 @@ export class TouchPadView {
         if (visible) this.relayout();
     }
 
+    /**
+     * Where the button that hides the controller goes, in the layer's pixels; null
+     * before the layer first has a size.
+     */
+    toggleRect() {
+        return this._toggle;
+    }
+
     /** Let go of every control: its fingers are forgotten until they come down again. */
     releaseAll() {
         const held = this._fingers.size > 0;
@@ -199,7 +212,9 @@ export class TouchPadView {
         this.releaseAll();
         const layout = layoutTouchPad({ width, height, scale: this._scale, insets });
         this._controls = layout.controls;
+        this._toggle = layout.toggle;
         this._draw(layout);
+        if (this._onLaidOut) this._onLaidOut();
         if (this._onChanged) this._onChanged();
     }
 
@@ -209,7 +224,7 @@ export class TouchPadView {
         }
         this._buttonEls.clear();
         this._rings = {};
-        this._el.style.fontSize = Math.round(layout.d * 0.36) + 'px';
+        this._el.style.fontSize = Math.round(layout.d * 0.3) + 'px';
         for (const c of layout.controls) {
             if (c.kind === 'stick') this._drawStick(c, layout);
             else if (c.kind === 'dpad') this._drawDpad(c);
@@ -219,7 +234,7 @@ export class TouchPadView {
 
     _drawButton(c) {
         const el = document.createElement('div');
-        el.className = 'touch-pad-btn' + (c.r ? ' is-round' : '');
+        el.className = 'touch-pad-btn' + (c.r ? ' is-round' : '') + (c.pill ? ' is-pill' : '');
         el.dataset.control = c.id;
         el.textContent = LABELS[c.id];
         place(el, c.x, c.y, c.w, c.h);
@@ -232,9 +247,10 @@ export class TouchPadView {
         el.className = 'touch-pad-dpad';
         el.dataset.control = c.id;
         place(el, c.x, c.y, c.w, c.h);
-        for (const [button, name] of DPAD_ARMS) {
+        for (const [button, name, arrow] of DPAD_ARMS) {
             const arm = document.createElement('div');
             arm.className = 'touch-pad-dpad-arm arm-' + name;
+            arm.textContent = arrow;
             el.appendChild(arm);
             this._buttonEls.set(button, arm);
         }
@@ -252,6 +268,9 @@ export class TouchPadView {
         const ring = document.createElement('div');
         ring.className = 'touch-pad-ring';
         place(ring, 0, 0, size, size);
+        const inner = document.createElement('div');
+        inner.className = 'touch-pad-ring-inner';
+        ring.appendChild(inner);
         const knob = document.createElement('div');
         knob.className = 'touch-pad-knob';
         ring.appendChild(knob);

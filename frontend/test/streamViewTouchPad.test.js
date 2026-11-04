@@ -167,6 +167,54 @@ describe('the on-screen controller in the stream', () => {
         });
     });
 
+    describe('the handle beside the controller', () => {
+        const sized = (view) => {
+            view._ensureTouchPad();
+            padEl(view).getBoundingClientRect = () => ({
+                left: 0,
+                top: 0,
+                width: 844,
+                height: 390,
+            });
+        };
+
+        it('joins its buttons while it is on screen, and goes back when it hides', () => {
+            const view = makeView();
+            view._mountTouchPad();
+            sized(view);
+            view._toggleTouchPad();
+            expect(shown(view)).toBe(true);
+            const rect = view._touchPadView.toggleRect();
+            expect(handle(view).classList.contains('is-with-pad')).toBe(true);
+            expect(handle(view).style.left).toBe(rect.x + 'px');
+            expect(handle(view).style.top).toBe(rect.y + 'px');
+            expect(handle(view).style.width).toBe(rect.w + 'px');
+            view._toggleTouchPad();
+            expect(shown(view)).toBe(false);
+            expect(handle(view).classList.contains('is-with-pad')).toBe(false);
+            expect(handle(view).style.left).toBe('');
+            expect(handle(view).style.opacity).toBe('');
+        });
+
+        it("takes the controller's opacity", () => {
+            const view = makeView({ _touchPadPrefs: { opacity: 0.4 } });
+            view._mountTouchPad();
+            sized(view);
+            view._toggleTouchPad();
+            expect(handle(view).style.opacity).toBe('0.4');
+        });
+
+        it('leaves with the controller when the keyboard opens', () => {
+            const view = makeView();
+            view._mountTouchPad();
+            sized(view);
+            view._toggleTouchPad();
+            view._kbdVisible = true;
+            view._syncTouchPad();
+            expect(handle(view).classList.contains('is-with-pad')).toBe(false);
+        });
+    });
+
     describe('at the start', () => {
         it('Auto: shown and plugged in with nothing else to play with', async () => {
             const view = makeView();
