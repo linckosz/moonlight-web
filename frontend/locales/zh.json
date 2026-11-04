@@ -600,7 +600,7 @@
         "nativeHost": "MoonlightWeb 主机",
         "nativeHostDesc": "这些设置只涉及这台电脑上的 MoonlightWeb 主机，与 Sunshine、Apollo 或 Wolf 无关。",
         "vdExclusive": "串流时关闭其他屏幕",
-        "vdExclusiveDesc": "仅适用于本机的 MoonlightWeb 原生主机，且仅在串流其虚拟显示器时生效。此类串流进行时，本机的其他屏幕会关闭，串流结束后自动重新点亮。如果屏幕仍然是黑的，请按 Windows+P 并选择“扩展”。从下一次串流起生效。",
+        "vdExclusiveDesc": "仅限原生主机的虚拟显示器。您串流时，本机其他屏幕会关闭；您离开后重新点亮。对访客无效。如果您开始时已有访客在串流，屏幕将保持点亮，直到您的下一次串流。如果屏幕仍然是黑的：按 Windows+P，选择“扩展”。从下一次串流起生效。",
         "vdExclusiveOn": "下次串流起开启",
         "vdExclusiveOff": "下次串流起关闭",
         "hostLayout": "使用本机的键盘布局（检测到：{{layout}}）",

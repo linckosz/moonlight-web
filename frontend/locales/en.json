@@ -600,7 +600,7 @@
         "nativeHost": "MoonlightWeb Host",
         "nativeHostDesc": "These settings only concern this PC's MoonlightWeb host, not Sunshine, Apollo or Wolf.",
         "vdExclusive": "Turn off the other screens during the stream",
-        "vdExclusiveDesc": "Only for this PC's MoonlightWeb native host, and only when you stream its virtual display. While such a stream runs, this PC's other screens go dark. They come back on when the stream ends. If they stay dark, press Windows+P and choose Extend. Applies from the next stream.",
+        "vdExclusiveDesc": "Native host, virtual display only. While you stream, this PC's other screens go dark; they come back when you leave. Ignored for guests. If a guest is already streaming when you start, the screens stay on until your next stream. If they stay dark: Windows+P, Extend. Applies from the next stream.",
         "vdExclusiveOn": "On from the next stream",
         "vdExclusiveOff": "Off from the next stream",
         "hostLayout": "Use this PC's keyboard layout (detected: {{layout}})",

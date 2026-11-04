@@ -600,7 +600,7 @@
         "nativeHost": "Hôte MoonlightWeb",
         "nativeHostDesc": "Ces réglages ne concernent que l'hôte MoonlightWeb de ce PC, pas Sunshine, Apollo ni Wolf.",
         "vdExclusive": "Éteindre les autres écrans pendant le stream",
-        "vdExclusiveDesc": "Seulement pour l'hôte natif MoonlightWeb de ce PC, et seulement quand vous streamez son écran virtuel. Pendant un tel stream, les autres écrans de ce PC s'éteignent. Ils se rallument à la fin du stream. S'ils restent noirs, appuyez sur Windows+P et choisissez Étendre. S'applique au prochain stream.",
+        "vdExclusiveDesc": "Hôte natif, écran virtuel seulement. Pendant votre stream, les autres écrans de ce PC s'éteignent ; ils se rallument quand vous partez. Ignorée pour les invités. Si un invité streame déjà quand vous commencez, les écrans restent allumés jusqu'à votre prochain stream. S'ils restent noirs : Windows+P, Étendre. S'applique au prochain stream.",
         "vdExclusiveOn": "Activé au prochain stream",
         "vdExclusiveOff": "Désactivé au prochain stream",
         "hostLayout": "Utiliser la disposition du clavier de ce PC (détectée : {{layout}})",
