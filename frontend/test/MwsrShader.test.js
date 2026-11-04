@@ -10,6 +10,7 @@ import {
     MWSR_UNIFORM_FLOATS,
     MWSR_ZONE,
     mwsrClassOverrides,
+    mwsrDownConstants,
     mwsrDownLaw,
     mwsrGlsl,
     mwsrHlsl,
@@ -120,6 +121,29 @@ describe('the mwsr shader text', () => {
             expect(map.replace('\n' + decl, '').replace(zoned, law)).toBe(base);
         }
         expect(() => mwsrWgsl({ mode: 'down', map: true })).toThrow(/up mode only/);
+    });
+
+    it('gives each reduction only the constants its text reads: WebKit refuses a pipeline otherwise', () => {
+        const regs = [
+            ...mwsrRegimes({ srgb: true }),
+            ...mwsrRegimes({ srgb: false }),
+            ...mwsrRegimes({ linear: true }),
+        ].filter((r) => r.mode === 'down');
+        expect(regs.map((r) => r.taps)).toContain(1);
+        for (const reg of regs) {
+            const read = mwsrWgsl({ mode: 'down', taps: reg.taps }).replace(/^override .*$/gm, '');
+            for (const name of Object.keys(mwsrDownConstants(reg)))
+                expect(read, `${name} in the ${reg.taps}-read text`).toMatch(
+                    new RegExp(`\\b${name}\\b`),
+                );
+        }
+        expect(mwsrDownConstants({ taps: 1, rDown: 1, linearLight: 3 })).toEqual({
+            LINEAR_LIGHT: 3,
+        });
+        expect(mwsrDownConstants({ taps: 9, rDown: 1.25, linearLight: 0 })).toEqual({
+            R_DOWN: 1.25,
+            LINEAR_LIGHT: 0,
+        });
     });
 
     it('reduces with an unrolled grid of 4, 9 or 16 samples over the footprint, or one sample', () => {

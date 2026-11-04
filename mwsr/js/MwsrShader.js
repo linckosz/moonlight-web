@@ -349,6 +349,21 @@ export function mwsrRegime(inW, inH, outW, outH, { srgb = false, linear = false 
 }
 
 /**
+ * The pipeline constants of a reduction's regime (mwsrRegime), for
+ * `fragment.constants`. The one-read text has no grid, so it reads no R_DOWN,
+ * and it must not be given one: WebKit refuses a pipeline a constant of which
+ * its text does not read ("Fragment library could not be created", iOS 26.5,
+ * 04/11/2026), and the frame then never reaches the canvas.
+ * @param {{taps: number, rDown: number, linearLight: number}} reg
+ * @returns {{R_DOWN?: number, LINEAR_LIGHT: number}}
+ */
+export function mwsrDownConstants(reg) {
+    return reg.taps === 1
+        ? { LINEAR_LIGHT: reg.linearLight }
+        : { R_DOWN: reg.rDown, LINEAR_LIGHT: reg.linearLight };
+}
+
+/**
  * Every regime mwsrRegime() can answer a renderer with — the `up` kernel and
  * each grid of the reduction's table, through sRGB views or not — so that the
  * renderer builds all of its pipelines at creation and compiles nothing while

@@ -1798,6 +1798,8 @@ async function runLabInner(p, log) {
     }
     if (half && !device.features.has("shader-f16"))
       throw new Error(name + ": the device has no shader-f16 (f16=1 asks for it)");
+    // the one-read text reads no R_DOWN (MwsrShader's mwsrDownConstants)
+    if (mode === "down" && taps === 1) delete over.R_DOWN;
     if (srgb) {
       if (!srgbViews || feed === "ext" || srcView !== inView)
         throw new Error(name + ": srgb=1 reads the SDR input texture only");

@@ -107,6 +107,7 @@ import { fitOutputSize, isIdentityScale } from './scaleRegime.js';
 import {
     MWSR_UNIFORM_FLOATS,
     mwsrClassOverrides,
+    mwsrDownConstants,
     mwsrRegime,
     mwsrRegimeKey,
     mwsrRegimes,
@@ -1730,7 +1731,7 @@ export class WebGpuRenderer extends VideoRenderer {
                               ...MWSR_CLASS,
                               ...(this._mwsrOverrides || {}),
                           }
-                        : { R_DOWN: reg.rDown, LINEAR_LIGHT: reg.linearLight },
+                        : mwsrDownConstants(reg),
                 targets: [{ format: srgb ? this._format + '-srgb' : this._format }],
             },
             primitive: { topology: 'triangle-list' },

@@ -171,7 +171,7 @@ describe("WebGpuRenderer — mwsr's HDR reduction in linear light", () => {
         expect([...r._mwsrPipelines.keys()].sort()).toEqual(
             ['up', 'down4', 'down9', 'down16', 'down1lin', 'down9lin', 'down16lin'].sort(),
         );
-        expect(r._mwsrPipelines.get('down1lin').constants).toEqual({ R_DOWN: 1, LINEAR_LIGHT: 3 });
+        expect(r._mwsrPipelines.get('down1lin').constants).toEqual({ LINEAR_LIGHT: 3 });
         expect(r._mwsrPipelines.get('down4').constants).toEqual({ R_DOWN: 1, LINEAR_LIGHT: 1 });
         expect(r._mwsrPipelines.get('down1lin').target).toBe('rgba16float');
         const sdr = fakeGpu();
@@ -239,6 +239,6 @@ describe("WebGpuRenderer — mwsr's HDR reduction in linear light", () => {
         await r.draw(hdrFrame());
         expect(curve(gpu, r)).toBe(1);
         expect(lastPipeline(gpu)).toBe(r._mwsrPipelines.get('down1'));
-        expect(r._mwsrPipelines.get('down1').constants).toEqual({ R_DOWN: 1, LINEAR_LIGHT: 0 });
+        expect(r._mwsrPipelines.get('down1').constants).toEqual({ LINEAR_LIGHT: 0 });
     });
 });

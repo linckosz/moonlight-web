@@ -243,14 +243,16 @@ The C++ header gives the JavaScript module's modes and floats bit for bit.
   |---|---|---|---|
   | exactly 1:1 | none: copy the frame | | |
   | s ≥ 1 | `mwsr-up` | | |
-  | 0.5 ≤ s < 1 | `mwsr-down-1` with sRGB views, `mwsr-down-4` without | 1.0 | 0 with sRGB views, 1 without |
+  | 0.5 ≤ s < 1 | `mwsr-down-1` with sRGB views, `mwsr-down-4` without | none for `mwsr-down-1`, 1.0 for `mwsr-down-4` | 0 with sRGB views, 1 without |
   | 0.25 ≤ s < 0.5 | `mwsr-down-9` | 1.25 | 0 with sRGB views, 1 without |
   | s < 0.25 | `mwsr-down-16` | 1.25 | 0 with sRGB views, 1 without |
 
   "With sRGB views" means the input is read through an `-srgb` view and the output written into one, so that the
   hardware decodes before it filters and encodes on write (WebGPU: `viewFormats` on both textures). That is exact
   and costs nothing. Without them, the shader approximates the light itself (`LINEAR_LIGHT 1`). On an HDR feed that
-  already holds linear light, use the grids of the sRGB-view column with `LINEAR_LIGHT 3`.
+  already holds linear light, use the grids of the sRGB-view column with `LINEAR_LIGHT 3`. In WebGPU, give
+  `mwsr-down-1` no `R_DOWN`: its text does not read it, and WebKit refuses the pipeline if it gets one.
+  `mwsrDownConstants(reg)` returns the right constants.
 
 - **The uniform block**, 24 floats (96 bytes), rewritten when a size changes:
 
@@ -287,7 +289,7 @@ const pipeline = device.createRenderPipeline({
         module,
         entryPoint: 'fs',
         targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-        // the defaults suit a computer; a reduction takes { R_DOWN: reg.rDown, LINEAR_LIGHT: reg.linearLight }
+        // the defaults suit a computer; a reduction takes mwsrDownConstants(reg)
         constants: {},
     },
     primitive: { topology: 'triangle-list' },
@@ -505,7 +507,7 @@ const fragment = {
     module,
     entryPoint: 'fs',
     targets: [{ format: format + '-srgb' }],
-    constants: { R_DOWN: reg.rDown, LINEAR_LIGHT: reg.linearLight },
+    constants: mwsrDownConstants(reg), // { LINEAR_LIGHT: 0 }
 };
 // bind frameTexture.createView({ format: 'rgba8unorm-srgb' }) and draw into the canvas' -srgb view
 ```

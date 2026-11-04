@@ -97,7 +97,7 @@ export const KERNELS = [
 ];
 
 export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => {} }) {
-  const { mwsrRegime, mwsrUniforms, mwsrWgsl } = mwsr;
+  const { mwsrDownConstants, mwsrRegime, mwsrUniforms, mwsrWgsl } = mwsr;
   const { nisCoefTexture, nisConfig } = nis;
   if (!navigator.gpu) throw new Error('nogpu');
   const adapter = await navigator.gpu.requestAdapter(
@@ -287,7 +287,7 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
             fv,
             plTex,
             ['vs', 'fs'],
-            { R_DOWN: r.rDown, LINEAR_LIGHT: r.linearLight },
+            mwsrDownConstants(r),
           );
           const from = C.hdr ? C.linIn.createView() : src.createView({ format: fv });
           return [
