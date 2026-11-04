@@ -3,6 +3,11 @@
 main.cmp{padding:40px 0 64px}
 .wrap.wide{max-width:1160px}
 .lede{color:var(--txt); max-width:72ch}
+/* the way to the code, sized as the site's Download button, and what the licence allows */
+.get{margin:1.5rem 0}
+.get .btn{font-size:1.1rem; padding:1rem 2.2rem}
+.get p{margin:.7rem 0 0; font-size:.92rem; color:var(--muted); max-width:72ch}
+.get strong{color:var(--txt)}
 .privacy{color:var(--muted); font-size:.92rem; max-width:72ch;
   border-left:3px solid var(--cyan); padding:.2em 0 .2em .9em; background:rgba(25,211,255,.04)}
 .small{font-size:.85rem; color:var(--muted)}
