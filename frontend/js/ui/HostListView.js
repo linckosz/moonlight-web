@@ -27,6 +27,7 @@
  * per-host "…" menu.
  */
 import { BackendClient } from '../api/BackendClient.js';
+import { shortGpuNames } from '../util/gpuName.js';
 import { Host } from '../models/Host.js';
 import { App } from '../models/App.js';
 import { PairDialog } from './PairDialog.js';
@@ -1619,7 +1620,7 @@ export class HostListView {
                     ${running ? `<span class="app-card-badge">${this.esc(t('apps.running'))}</span>` : ''}
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
-                ${drawsMachine ? this._gpuLine(app) : ''}
+                ${drawsMachine ? this._gpuLine(app, devices) : ''}
                 ${
                     running
                         ? `<button type="button" class="app-card-quit" data-app-id="${app.id}"
@@ -1640,13 +1641,24 @@ export class HostListView {
      * a list, "Auto" — the driver's own choice — first, then the GPUs by name,
      * the only thing the driver tells them apart by. Anyone else, and a booth,
      * sees the line only.
+     *
+     * Names read short (util/gpuName.js), each kept apart from the other cards'
+     * and the list's; the full name stays in the tooltip and goes to the driver.
      */
-    _gpuLine(app) {
+    _gpuLine(app, devices = []) {
         const d = app.device;
         const name = typeof d.gpu === 'string' ? d.gpu : '';
-        const label =
-            name && d.gpuNumber > 0 ? t('apps.gpuNumbered', { name, n: d.gpuNumber }) : name;
+        const numbered = (text) =>
+            text && d.gpuNumber > 0 ? t('apps.gpuNumbered', { name: text, n: d.gpuNumber }) : text;
         const choice = d.gpuChoice;
+        const offered = choice && Array.isArray(choice.options) ? choice.options : [];
+        const shown = shortGpuNames(
+            [...devices.map((o) => o.gpu), ...offered, choice && choice.selected, name].filter(
+                (n) => typeof n === 'string' && n,
+            ),
+        );
+        const label = numbered(shown.get(name) || name);
+        const fullLabel = numbered(name);
         if (
             choice &&
             Array.isArray(choice.options) &&
@@ -1662,15 +1674,21 @@ export class HostListView {
                 `<option value="${this.esc(value)}"${value === selected ? ' selected' : ''}>${this.esc(text)}</option>`;
             const options = [
                 option('', auto),
-                ...names.map((n) => option(n, n === selected && n === name ? label : n)),
+                ...names.map((n) =>
+                    option(n, n === selected && n === name ? label : shown.get(n) || n),
+                ),
             ];
+            const hint = t('apps.gpuChoiceHint');
+            const tip = selected || fullLabel ? `${selected || fullLabel}\n${hint}` : hint;
             return `
-                <label class="app-card-gpu app-card-gpu--choice" title="${this.esc(t('apps.gpuChoiceHint'))}">
+                <label class="app-card-gpu app-card-gpu--choice" title="${this.esc(tip)}">
                     <select class="app-card-gpu-select" data-selected="${this.esc(selected)}"
                             aria-label="${this.esc(t('apps.gpuChoiceAria', { name: app.displayName }))}">${options.join('')}</select>
                 </label>`;
         }
-        return label ? `<div class="app-card-gpu">${this.esc(label)}</div>` : '';
+        return label
+            ? `<div class="app-card-gpu" title="${this.esc(fullLabel)}">${this.esc(label)}</div>`
+            : '';
     }
 
     // Switch a card into the "launching" state: a discreet Cyberpunk scan/glow

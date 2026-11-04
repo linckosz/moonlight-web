@@ -86,7 +86,22 @@ describe('the GPU under a native display card', () => {
             { ...display({ gpu: AMD, key: 'k2' }), id: 2, name: 'Display 2' },
         ]);
         const lines = [...cont.querySelectorAll('.app-card-gpu')].map((l) => l.textContent);
-        expect(lines).toEqual([`${RTX} · n° 2`, AMD]);
+        expect(lines).toEqual([`RTX 5060 Ti · n° 2`, 'Radeon Graphics']);
+    });
+
+    it('keeps the full name in the tooltip', () => {
+        const cont = paint([display({ gpu: RTX, gpuNumber: 2 })]);
+        expect(cont.querySelector('.app-card-gpu').title).toBe(`${RTX} · n° 2`);
+    });
+
+    it('keeps full two different names that would read the same', () => {
+        const other = 'NVIDIA RTX 5060 Ti';
+        const cont = paint([
+            display({ gpu: RTX }),
+            { ...display({ gpu: other, key: 'k2' }), id: 2, name: 'Display 2' },
+        ]);
+        const lines = [...cont.querySelectorAll('.app-card-gpu')].map((l) => l.textContent);
+        expect(lines).toEqual([RTX, other]);
     });
 
     it('says nothing on a PC with one GPU', () => {
@@ -100,6 +115,14 @@ describe('the GPU under a native display card', () => {
         const select = cont.querySelector('.app-card-gpu-select');
         expect([...select.options].map((o) => o.value)).toEqual(['', RTX, AMD]);
         expect(select.value).toBe(AMD);
+        // Short to read, full to the driver.
+        expect([...select.options].map((o) => o.textContent)).toEqual([
+            'apps.gpuAuto',
+            'RTX 5060 Ti',
+            'Radeon Graphics',
+        ]);
+        expect(select.closest('label').title).toBe(`${AMD}
+apps.gpuChoiceHint`);
     });
 
     it('says, on Auto, which GPU draws the display while it is on', () => {
@@ -107,13 +130,13 @@ describe('the GPU under a native display card', () => {
         const cont = paint([virtualDisplay({ gpu: RTX, gpuNumber: 1 })]);
         const select = cont.querySelector('.app-card-gpu-select');
         expect(select.value).toBe('');
-        expect(select.options[0].textContent).toBe(`apps.gpuAuto · ${RTX} · n° 1`);
+        expect(select.options[0].textContent).toBe(`apps.gpuAuto · RTX 5060 Ti · n° 1`);
     });
 
     it('shows anyone else, and a booth, the line only', () => {
         const cont = paint([virtualDisplay({ gpu: RTX })]);
         expect(cont.querySelector('select')).toBe(null);
-        expect(cont.querySelector('.app-card-gpu').textContent).toBe(RTX);
+        expect(cont.querySelector('.app-card-gpu').textContent).toBe('RTX 5060 Ti');
 
         view.canAdminister = true;
         BackendClient.adminLocked = true;
