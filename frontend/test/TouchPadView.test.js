@@ -212,7 +212,7 @@ describe('TouchPadView', () => {
 
     it('goes round the cross through its diagonals', () => {
         const [cx, cy] = centre('dpad');
-        const far = layout.d * 0.95;
+        const far = layout.d * 0.85;
         start(1, cx, cy - far);
         expect(state.buttons[PAD.UP].pressed).toBe(true);
         move(1, cx + far, cy - far);

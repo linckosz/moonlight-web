@@ -1397,29 +1397,29 @@ body.streaming-active::after {
     color: #000;
     text-shadow: none;
 }
-/* The box is two steps of 0.95 buttons plus a button: 2.9 of them. */
+/* The box is two steps of 0.85 buttons plus a button: 2.7 of them. */
 .touch-pad-dpad-arm {
     position: absolute;
-    width: 34.48%;
-    height: 34.48%;
+    width: 37.04%;
+    height: 37.04%;
     border-radius: 50%;
     font-size: 0.73em;
 }
 .touch-pad-dpad-arm.arm-up {
-    left: 32.76%;
+    left: 31.48%;
     top: 0;
 }
 .touch-pad-dpad-arm.arm-down {
-    left: 32.76%;
+    left: 31.48%;
     bottom: 0;
 }
 .touch-pad-dpad-arm.arm-left {
     left: 0;
-    top: 32.76%;
+    top: 31.48%;
 }
 .touch-pad-dpad-arm.arm-right {
     right: 0;
-    top: 32.76%;
+    top: 31.48%;
 }
 /* A stick's ring rests where a thumb is expected and floats under it. */
 .touch-pad-ring {

@@ -335,9 +335,10 @@ export class TouchPadState {
  * Where the controls sit: on each side the buttons high and outside, the stick
  * low and inside, L3 and R3 in the bottom corners. These are the places and
  * proportions of GeForce NOW's controller, the one players of this kind of
- * stream already have in their thumbs. Upright, everything gathers in the lower
- * part of the screen, where the thumbs are and where the picture is not. Pure, in
- * the layer's own pixels.
+ * stream already have in their thumbs, with the cross and the face buttons drawn
+ * a little tighter. Upright, View, the toggle and Menu go to the top of the screen
+ * and the rest gathers at the bottom, where the thumbs are. Pure, in the layer's
+ * own pixels.
  *
  * A `button` control is a circle (`r`) or a box (`slack` widens what a finger can
  * hit beyond what is drawn); a `dpad` splits a disc of `reach` into eight
@@ -356,11 +357,21 @@ export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) 
     const edge = Math.max(8, d * 0.3);
     const left = Math.max(edge, insets.left || 0);
     const right = Math.max(edge, insets.right || 0);
-    // Upright, the controls keep to the part of the screen a landscape one has.
-    const top = Math.max(8, short * 0.08, insets.top || 0, h - w * 1.1);
     const gap = d * 0.15;
-    // Columns from each edge, one button apart with a sliver between them.
-    const pitch = d * 0.95;
+    const radius = d * 1.1;
+    const restY = h - Math.max(8, d * 0.23, insets.bottom || 0) - radius;
+    const toggleSize = Math.max(44, d * 0.76);
+    // From the top of the shoulders to the bottom of the A button.
+    const buttonsH = d * 4;
+    const screenTop = Math.max(8, insets.top || 0);
+    // Upright, with the height for it: the buttons right above the sticks.
+    const lowered = restY - radius - gap - buttonsH;
+    const stacked = h > w && lowered >= screenTop + toggleSize + gap;
+    // Otherwise the part of the screen a landscape one has.
+    const top = stacked ? lowered : Math.max(8, short * 0.08, insets.top || 0, h - w * 1.1);
+    // Columns from each edge: the cross and the face buttons, a sliver apart on
+    // their diagonals, and the shoulders in line with them.
+    const pitch = d * 0.85;
     const fromLeft = (n) => left + d / 2 + n * pitch;
     const fromRight = (n) => w - right - d / 2 - n * pitch;
     const shouldersY = top + d / 2;
@@ -411,13 +422,14 @@ export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) 
     round('l3', fromLeft(0), cornerY, PAD.L3);
     round('r3', fromRight(0), cornerY, PAD.R3);
 
-    // View, the toggle and Menu, on top between the shoulders; upright there is
-    // no room between them, so below the cross.
-    const toggleSize = Math.max(44, d * 0.76);
+    // View, the toggle and Menu: at the top of the screen upright, else on top
+    // between the shoulders, else below the cross when these leave them no room.
     const pillW = d * 1.03;
     const pillH = Math.max(34, d * 0.51);
-    const roomOnTop = w / 2 - d * 1.28 - pillW / 2 >= Math.max(left, right) + d * 2.9 + gap;
-    const middleY = roomOnTop ? top + d * 0.25 : clusterY + pitch + d / 2 + gap + toggleSize / 2;
+    const roomOnTop = w / 2 - d * 1.28 - pillW / 2 >= Math.max(left, right) + pitch * 2 + d + gap;
+    let middleY = clusterY + pitch + d / 2 + gap + toggleSize / 2;
+    if (stacked) middleY = screenTop + toggleSize / 2;
+    else if (roomOnTop) middleY = top + d * 0.25;
     const pill = (id, cx, button) =>
         controls.push({
             id,
@@ -437,9 +449,7 @@ export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) 
     // after them), up to the centre strip, which stays the mouse's.
     const zoneTop = top + d;
     const zoneW = w * 0.42;
-    const radius = d * 1.1;
-    const restInward = Math.min(fromLeft(2) + d * 0.84, w / 2 - radius - gap);
-    const restY = h - Math.max(8, d * 0.23, insets.bottom || 0) - radius;
+    const restInward = Math.min(left + d * 3.24, w / 2 - radius - gap);
     controls.push({
         id: 'stick-left',
         kind: 'stick',
