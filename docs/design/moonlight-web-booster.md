@@ -1030,13 +1030,13 @@ ceux de l'hôte sans être les siens), au débit d'Auto et à sa moitié, puis c
 en VMAF NEG (ffmpeg déjà installé sur DualRTX). Sur la RTX du bus 01, créneau de
 59. Environ 15 min.
 
-**Les portes, à confirmer par Bruno.** L'AV1 remplace le H.264 dans Auto seulement
-si, pour C1, C2 et C3 :
+**Les portes, confirmées par Bruno le 04/11/2026** (« Portes du banc Auto en AV1
+=> A »). L'AV1 remplace le H.264 dans Auto seulement si, pour C1, C2 et C3 :
 1. le surcoût reste dans le seuil que Bruno a fixé le 26/10 pour l'AV1 en HDR :
    médiane +5 ms, p95 +10 ms, 2 cœurs au plus, à chaque réglage ;
 2. pas plus d'images perdues qu'en H.264, et aucun retard qui s'accumule ;
-3. VMAF NEG gagne au moins 3 points à l'un des deux débits (proposition : sans
-   gain visible, changer de codec n'apporte rien).
+3. VMAF NEG gagne au moins 3 points à l'un des deux débits : sans gain visible,
+   changer de codec n'apporte rien.
 
 Si C2 échoue seul, l'AV1 ne peut pas être réservé aux machines à décodeur
 matériel sur la seule foi de `isConfigSupported` : ce serait une autre décision,
