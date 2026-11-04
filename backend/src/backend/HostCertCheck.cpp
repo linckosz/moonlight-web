@@ -36,9 +36,9 @@ bool sameCertificate(const QByteArray& expectedPem, const QByteArray& candidateP
     return !expected.isNull() && expected == candidate;
 }
 
-void verify(const QString& address, quint16 httpsPort, const QByteArray& expectedPem,
-            const QByteArray& clientCertPem, const QByteArray& clientKeyPem, QObject* context,
-            int timeoutMs, std::function<void(bool)> done)
+void look(const QString& address, quint16 httpsPort, const QByteArray& expectedPem,
+          const QByteArray& clientCertPem, const QByteArray& clientKeyPem, QObject* context,
+          int timeoutMs, std::function<void(Shown)> done)
 {
     auto* socket = new QSslSocket(context);
     socket->setProxy(QNetworkProxy::NoProxy);
@@ -55,24 +55,33 @@ void verify(const QString& address, quint16 httpsPort, const QByteArray& expecte
 
     // Every way out comes through here, and the first one wins.
     auto report = [socket, done = std::move(done),
-                   reported = std::make_shared<bool>(false)](bool proven) {
+                   reported = std::make_shared<bool>(false)](Shown shown) {
         if (*reported) return;
         *reported = true;
         socket->disconnect();
         socket->abort();
         socket->deleteLater();
-        done(proven);
+        done(shown);
     };
 
     QObject::connect(socket, &QSslSocket::encrypted, socket, [socket, expectedPem, report]() {
-        report(sameCertificate(expectedPem, socket->peerCertificate().toPem()));
+        report(sameCertificate(expectedPem, socket->peerCertificate().toPem()) ? Shown::Expected
+                                                                               : Shown::Another);
     });
     QObject::connect(socket, &QAbstractSocket::errorOccurred, socket,
-                     [report](QAbstractSocket::SocketError) { report(false); });
-    QObject::connect(timer, &QTimer::timeout, socket, [report]() { report(false); });
+                     [report](QAbstractSocket::SocketError) { report(Shown::Nothing); });
+    QObject::connect(timer, &QTimer::timeout, socket, [report]() { report(Shown::Nothing); });
 
     timer->start(timeoutMs);
     socket->connectToHostEncrypted(address, httpsPort);
+}
+
+void verify(const QString& address, quint16 httpsPort, const QByteArray& expectedPem,
+            const QByteArray& clientCertPem, const QByteArray& clientKeyPem, QObject* context,
+            int timeoutMs, std::function<void(bool)> done)
+{
+    look(address, httpsPort, expectedPem, clientCertPem, clientKeyPem, context, timeoutMs,
+         [done = std::move(done)](Shown shown) { done(shown == Shown::Expected); });
 }
 
 } // namespace HostCertCheck

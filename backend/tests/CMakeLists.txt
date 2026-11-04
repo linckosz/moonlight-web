@@ -78,6 +78,7 @@ add_executable(run_tests
     test_rendezvous_line.cpp
     test_address_race.cpp
     test_relay_start.cpp
+    test_wolf_seat_pairing.cpp
     test_backend_probe.cpp
     test_host_os_probe.cpp
     test_send_backlog.cpp
@@ -184,6 +185,11 @@ add_executable(run_tests
     # Wolf's control API: the wire shapes native co-op depends on. The selection
     # rules themselves are header-only (WolfCoop.h), so nothing else comes in.
     ${_src}/src/backend/WolfApiClient.cpp
+    # A browser's first launch on Wolf: the seat's pairing, through the real backend.
+    ${_src}/src/backend/NvPairingManager.cpp
+    ${_src}/src/backend/PairingChain.cpp
+    ${_src}/src/backend/streambackend/GameStreamBackend.cpp
+    ${_src}/src/backend/streambackend/WolfBackend.cpp
     # MultiSeat's control API: how a seat reads off the wire, and whether it can
     # be streamed. Both are pure enough to test without the service.
     ${_src}/src/backend/MultiSeatApiClient.cpp

@@ -27,6 +27,7 @@
 #include <QString>
 #include <memory>
 
+class NvAddress;
 class NvPairingManager;
 
 /**
@@ -129,6 +130,10 @@ private:
     /// Pair one identity: the default one when seatId is empty, otherwise the
     /// seat's own certificate. Idempotent.
     void pairIdentity(const QString& seatId, BackendVoidCallback cb);
+
+    /// The handshake itself, once it is settled that this address may be told
+    /// who is asking.
+    void startPairing(const QString& seatId, const NvAddress& addr, BackendVoidCallback cb);
 
     using PreparedLaunchCallback =
         std::function<void(bool ok, const BackendError& err, const LaunchRequest& req)>;

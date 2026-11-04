@@ -33,10 +33,22 @@ namespace HostCertCheck {
 /// empty or unreadable one.
 bool sameCertificate(const QByteArray& expectedPem, const QByteArray& candidatePem);
 
+/// What a machine showed when asked for its certificate.
+enum class Shown
+{
+    Expected, ///< the certificate on record
+    Another,  ///< a certificate, not that one
+    Nothing   ///< refused, silent or not TLS
+};
+
 /// Shakes hands with address:httpsPort, presenting the client identity as every
-/// HTTPS call to a host does, and reports once whether its certificate is the
-/// expected one. Refused, silent or not TLS all report false, within timeoutMs.
+/// HTTPS call to a host does, and reports once what it showed, within timeoutMs.
 /// Nothing is reported once context is gone.
+void look(const QString& address, quint16 httpsPort, const QByteArray& expectedPem,
+          const QByteArray& clientCertPem, const QByteArray& clientKeyPem, QObject* context,
+          int timeoutMs, std::function<void(Shown)> done);
+
+/// The same, for a caller to whom only the expected certificate is an answer.
 void verify(const QString& address, quint16 httpsPort, const QByteArray& expectedPem,
             const QByteArray& clientCertPem, const QByteArray& clientKeyPem, QObject* context,
             int timeoutMs, std::function<void(bool)> done);
