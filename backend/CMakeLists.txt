@@ -167,16 +167,22 @@ add_subdirectory(third_party/moonlight-common-c)
 
 # Our patches on submodules, kept as files in third_party/patches rather than a
 # fork: each is applied to the submodule's working tree at configure time, once
-# (a patch that already reverses cleanly is left alone).
+# (a patch that already reverses cleanly is left alone). A later patch may rewrite
+# lines an earlier one wrote, and the earlier one then no longer reverses on a tree
+# holding both: REQUIRED_BY names that later patch, and if it reverses, both are in.
 find_package(Git REQUIRED)
 function(mw_apply_patch dir patch)
-    set(p "${CMAKE_CURRENT_SOURCE_DIR}/third_party/patches/${patch}")
-    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" apply --reverse --check "${p}"
-                    RESULT_VARIABLE applied OUTPUT_QUIET ERROR_QUIET)
-    if(applied EQUAL 0)
-        return()
-    endif()
-    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" apply "${p}"
+    cmake_parse_arguments(PARSE_ARGV 2 ARG "" "REQUIRED_BY" "")
+    set(patches "${CMAKE_CURRENT_SOURCE_DIR}/third_party/patches")
+    foreach(in_tree IN ITEMS ${ARG_REQUIRED_BY} ${patch})
+        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" apply --reverse --check
+                                "${patches}/${in_tree}"
+                        RESULT_VARIABLE applied OUTPUT_QUIET ERROR_QUIET)
+        if(applied EQUAL 0)
+            return()
+        endif()
+    endforeach()
+    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" apply "${patches}/${patch}"
                     RESULT_VARIABLE failed ERROR_VARIABLE why)
     if(NOT failed EQUAL 0)
         message(FATAL_ERROR "${patch} does not apply to ${dir}: ${why}"
@@ -189,7 +195,8 @@ endfunction()
 # where upstream writes EF / AF42 / AF11 in. The server puts the sound in EF and
 # the rest in AF41 (plan « le son et la priorité des paquets », D5 and D9).
 mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
-               libdatachannel-dscp-settings.patch)
+               libdatachannel-dscp-settings.patch
+               REQUIRED_BY libdatachannel-track-video-dscp.patch)
 # DtlsSrtpTransport copies every RTP packet with make_message(size, orig), which
 # dropped the DSCP the track had set: the sound left in the video's class, never
 # its own (bench of 21/10). A patch of its own, so a tree with the one above
