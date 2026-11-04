@@ -3,7 +3,8 @@
 MWSR is a real-time spatial upscaler and downscaler for video, written for
 [MoonlightWeb](https://github.com/linckosz/moonlight-web), the game-streaming client that runs in a browser. It turns
 each decoded frame into the size of the screen in one fragment pass, from that frame alone: no history, no motion
-vectors, no neural network. That keeps it cheap enough for a phone and free of the latency a temporal method adds.
+vectors, no neural network. That keeps it free of the latency a temporal method adds, and light on an iPhone 13 Pro,
+though not on an entry-level phone: the figures are under **Cost**.
 
 By Bruno Martin, under the [MIT License](LICENSE): you may take it into any program, open or closed, as long as the
 copyright and licence notice stay with it. The rest of MoonlightWeb is under the GPL v3; this folder and
@@ -40,12 +41,18 @@ force that goes from 1 at ×1.33 to 1.35 at ×2. Those two marks and ×1.5 were 
 pictures seen one at a time and not blind, by one person. Between ×1.33 and ×2 the eye and PSNR, SSIM, MS-SSIM and VMAF
 NEG can disagree on games: see the tables below.
 
-**Cost** (GPU timestamps, from 720p and from 1080p to 1440p, a game picture and a text chart, 03/11/2026): 0.08 to 0.09 ms per
-frame on an RTX 5060 Ti and 1.3 to 2.0 ms on the Ryzen 9 9900X's integrated Radeon, in 16-bit, and 0.25 to 0.40 ms on a Radeon 780M. That is 3.6 to 3.8 times less than FSR1 at
-its faster precision on the RTX, and 3.2 to 4.7 times less on that integrated Radeon. An edge pixel takes seven bilinear reads, a flat
+**Cost** (GPU timestamps, from 720p and from 1080p to 1440p, a game picture and a text chart, 03/11/2026, the Radeon 780M on 04/11/2026): 0.08 to 0.09 ms per
+frame on an RTX 5060 Ti, 1.3 to 2.0 ms on the Ryzen 9 9900X's integrated Radeon, in 16-bit, and 0.41 to 0.61 ms on a Radeon 780M held at 938 MHz, in 32-bit.
+938 MHz is a bench clock, not what a stream gets: left to itself, this GPU moves between 800 and 2800 MHz. That is 3.6 to 3.8 times less than FSR1 at
+its faster precision on the RTX, 3.2 to 4.7 times less on that integrated Radeon and 3.3 to 4.8 times less on the 780M. An edge pixel takes seven bilinear reads, a flat
 one a single read; after a video encoder, about 70 % of a game's pixels and 45 % of a page's are on the edge path at the law's threshold. A reduction from ×0.75
-to ×0.5, through sRGB views, takes 0.023 to 0.063 ms on the RTX, 0.65 to 1.91 ms on the integrated Radeon and 0.21 to 0.44 ms on the Radeon 780M, which is 4.4 to 6.5,
-3.3 to 5.7 and 1.7 to 2.4 times less than FSR1. Phones are to be measured again.
+to ×0.5, through sRGB views, takes 0.023 to 0.063 ms on the RTX, 0.65 to 1.91 ms on the integrated Radeon and 0.25 to 0.56 ms on the Radeon 780M, which is 4.4 to 6.5,
+3.3 to 5.7 and 3.1 to 4.6 times less than FSR1.
+
+**On phones** (04/11/2026, the whole draw of a frame, up to the GPU's end, one pass per case): on an iPhone 13 Pro, in Safari and
+Chrome, MWSR adds 0.5 to 2.1 ms to a frame, upscaling or reducing, where FSR1 adds 2.8 to 5.4 ms. On a Realme with an entry-level
+Mali-G57, it adds 4 to 5 ms from half the screen's size (19 to 22 ms a frame, FSR1 44 ms) and 12 to 13 ms from 720p to 1440p
+(35 to 36 ms a frame, FSR1 108 to 115 ms). That does not hold 60 frames a second, and Auto leaves it off on that GPU.
 
 The design, the measurements against FSR1, SGSR1, NIS and the host's Lanczos, and every decision behind the defaults
 are in the lab journal, [`scripts/bench/scaler-lab/journal.md`](../scripts/bench/scaler-lab/journal.md), and the
@@ -101,43 +108,43 @@ bold, the best of each score.
 
 **1080p → 1440p (×1.33), game**
 
-|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | 0.1624 | **85.9** | **28.54** | **0.8792** | **0.9880** | 0.0360 | 6.6 % | 0.085 ms | 2.01 ms (f16) | 0.401 ms (f16) |
-| FSR1 | **0.1401** | 84.8 | 28.38 | 0.8776 | 0.9878 | **0.0346** | 13.7 % | 0.326 ms | 6.34 ms (f16) | 0.980 ms (f16) |
-| NIS * | 0.1863 | 70.5 | 24.68 | 0.8162 | 0.9587 | 0.0997 | 42.6 % | 1.22 ms | 13.69 ms | 1.50 ms |
-| SGSR1 | 0.1838 | 83.1 | 27.77 | 0.8554 | 0.9833 | 0.0422 | 6.6 % | 0.146 ms | 2.97 ms (f16) | 0.438 ms (f16) |
-| Bilinear | 0.2665 | 76.8 | 27.45 | 0.8228 | 0.9794 | 0.0450 | 0 % | 0.034 ms | 0.453 ms | 0.332 ms |
+| MWSR | 0.1624 | **85.9** | **28.54** | **0.8792** | **0.9880** | 0.0360 | 6.6 % | 0.085 ms | 2.01 ms (f16) | 0.610 ms |
+| FSR1 | **0.1401** | 84.8 | 28.38 | 0.8776 | 0.9878 | **0.0346** | 13.7 % | 0.326 ms | 6.34 ms (f16) | 1.99 ms (f16) |
+| NIS * | 0.1863 | 70.5 | 24.68 | 0.8162 | 0.9587 | 0.0997 | 42.6 % | 1.22 ms | 13.69 ms | 3.98 ms |
+| SGSR1 | 0.1838 | 83.1 | 27.77 | 0.8554 | 0.9833 | 0.0422 | 6.6 % | 0.146 ms | 2.97 ms (f16) | 0.958 ms |
+| Bilinear | 0.2665 | 76.8 | 27.45 | 0.8228 | 0.9794 | 0.0450 | 0 % | 0.034 ms | 0.453 ms | 0.330 ms |
 
 **1080p → 1440p (×1.33), text**
 
-|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | **0.0385** | **66.4** | **22.59** | **0.9578** | **0.9915** | 0.0424 | 2.8 % | 0.081 ms | 1.34 ms (f16) | 0.280 ms |
-| FSR1 | 0.0493 | 57.3 | 21.45 | 0.9422 | 0.9874 | **0.0416** | 0.2 % | 0.307 ms (f16) | 6.27 ms (f16) | 0.852 ms (f16) |
-| NIS * | 0.0414 | 62.2 | 22.05 | 0.9488 | 0.9893 | 0.0556 | 4.4 % | 0.677 ms | 10.76 ms | 1.23 ms |
-| SGSR1 | 0.0402 | 59.9 | 21.64 | 0.9463 | 0.9891 | 0.0500 | 2.7 % | 0.087 ms | 1.65 ms (f16) | 0.300 ms (f16) |
-| Bilinear | 0.0697 | 49.9 | 20.52 | 0.9234 | 0.9845 | 0.0627 | 0 % | 0.047 ms | 0.396 ms | 0.261 ms |
+| MWSR | **0.0385** | **66.4** | **22.59** | **0.9578** | **0.9915** | 0.0424 | 2.8 % | 0.081 ms | 1.34 ms (f16) | 0.418 ms |
+| FSR1 | 0.0493 | 57.3 | 21.45 | 0.9422 | 0.9874 | **0.0416** | 0.2 % | 0.307 ms (f16) | 6.27 ms (f16) | 1.97 ms (f16) |
+| NIS * | 0.0414 | 62.2 | 22.05 | 0.9488 | 0.9893 | 0.0556 | 4.4 % | 0.677 ms | 10.76 ms | 3.36 ms |
+| SGSR1 | 0.0402 | 59.9 | 21.64 | 0.9463 | 0.9891 | 0.0500 | 2.7 % | 0.087 ms | 1.65 ms (f16) | 0.622 ms (f16) |
+| Bilinear | 0.0697 | 49.9 | 20.52 | 0.9234 | 0.9845 | 0.0627 | 0 % | 0.047 ms | 0.396 ms | 0.267 ms |
 
 **720p → 1440p (×2), game**
 
-|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | **0.3532** | **71.5** | 24.57 | 0.6886 | 0.9617 | 0.0634 | 5.4 % | 0.080 ms | 2.00 ms (f16) | 0.321 ms |
-| FSR1 | 0.3594 | 70.7 | **24.77** | 0.6880 | **0.9633** | **0.0525** | 2.9 % | 0.287 ms | 6.32 ms (f16) | 0.899 ms (f16) |
-| NIS * | 0.3714 | 59.4 | 23.13 | **0.6893** | 0.9307 | 0.1162 | 41.7 % | 0.820 ms | 13.00 ms | 1.39 ms |
-| SGSR1 | 0.3939 | 71.1 | 24.52 | 0.6736 | 0.9559 | 0.0621 | 6.3 % | 0.140 ms | 2.95 ms (f16) | 0.382 ms (f16) |
-| Bilinear | 0.4865 | 58.4 | 24.31 | 0.6261 | 0.9435 | 0.0730 | 0 % | 0.031 ms | 0.420 ms | 0.248 ms |
+| MWSR | **0.3532** | **71.5** | 24.57 | 0.6886 | 0.9617 | 0.0634 | 5.4 % | 0.080 ms | 2.00 ms (f16) | 0.594 ms |
+| FSR1 | 0.3594 | 70.7 | **24.77** | 0.6880 | **0.9633** | **0.0525** | 2.9 % | 0.287 ms | 6.32 ms (f16) | 1.98 ms (f16) |
+| NIS * | 0.3714 | 59.4 | 23.13 | **0.6893** | 0.9307 | 0.1162 | 41.7 % | 0.820 ms | 13.00 ms | 3.67 ms |
+| SGSR1 | 0.3939 | 71.1 | 24.52 | 0.6736 | 0.9559 | 0.0621 | 6.3 % | 0.140 ms | 2.95 ms (f16) | 0.935 ms |
+| Bilinear | 0.4865 | 58.4 | 24.31 | 0.6261 | 0.9435 | 0.0730 | 0 % | 0.031 ms | 0.420 ms | 0.259 ms |
 
 **720p → 1440p (×2), text**
 
-|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M |
+|  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | **0.0927** | 29.9 | 18.16 | **0.8730** | 0.9716 | **0.0586** | 2.4 % | 0.078 ms | 1.36 ms (f16) | 0.248 ms |
-| FSR1 | 0.1032 | 24.6 | 17.57 | 0.8450 | 0.9663 | 0.0677 | 0.3 % | 0.296 ms (f16) | 6.27 ms (f16) | 0.860 ms (f16) |
-| NIS * | 0.0970 | **36.5** | **18.30** | 0.8675 | 0.9736 | 0.0769 | 7.1 % | 0.564 ms | 10.74 ms | 1.19 ms |
-| SGSR1 | 0.0984 | **36.5** | 18.13 | 0.8693 | **0.9753** | 0.0669 | 4.4 % | 0.084 ms | 1.67 ms (f16) | 0.275 ms (f16) |
-| Bilinear | 0.1658 | 15.1 | 16.99 | 0.8157 | 0.9523 | 0.0901 | 0 % | 0.042 ms | 0.389 ms | 0.240 ms |
+| MWSR | **0.0927** | 29.9 | 18.16 | **0.8730** | 0.9716 | **0.0586** | 2.4 % | 0.078 ms | 1.36 ms (f16) | 0.408 ms |
+| FSR1 | 0.1032 | 24.6 | 17.57 | 0.8450 | 0.9663 | 0.0677 | 0.3 % | 0.296 ms (f16) | 6.27 ms (f16) | 1.97 ms (f16) |
+| NIS * | 0.0970 | **36.5** | **18.30** | 0.8675 | 0.9736 | 0.0769 | 7.1 % | 0.564 ms | 10.74 ms | 3.23 ms |
+| SGSR1 | 0.0984 | **36.5** | 18.13 | 0.8693 | **0.9753** | 0.0669 | 4.4 % | 0.084 ms | 1.67 ms (f16) | 0.619 ms (f16) |
+| Bilinear | 0.1658 | 15.1 | 16.99 | 0.8157 | 0.9523 | 0.0901 | 0 % | 0.042 ms | 0.389 ms | 0.247 ms |
 
 \* MoonlightWeb's per-fragment port of NIS. NVIDIA ships a compute shader with shared memory, which is faster: these
 times are those of the port, not of NIS.
@@ -165,7 +172,7 @@ What each one does:
 
 </details>
 
-**How it was measured** (the times on 03/11/2026, the scores that night):
+**How it was measured** (the times on 03/11/2026, the scores that night, the Radeon 780M's times and the phones on 04/11/2026):
 - **The pictures.** The native frame is a 4K screenshot of 0 A.D. reduced to 2560×1440, or the lab's text chart drawn
   at 2560×1440. The input is that frame reduced to 1920×1080 or 1280×720. Both reductions are Lanczos-3 in linear
   light. Each upscaler draws the input back at 2560×1440.
@@ -177,7 +184,18 @@ What each one does:
   8-bit RGBA texture (no video decoding in it). GPU timestamps wrap batches of draws, every upscaler's in one page and
   interleaved, and the figure is the median per draw: on the RTX 5060 Ti, 3 rounds of 6 batches of 100 draws, twice; on the
   9900X's iGPU, 3 rounds of 2 batches of 30; on the Radeon 780M, 3 rounds of 6 batches of 100. The RTX 5060 Ti ran at P0 while it drew. The Ryzen 9 9900X's integrated Radeon
-  (RDNA 2, 2 compute units) and the Radeon 780M (RDNA 3, 12 compute units) ran at their own clocks, which nothing fixed, so read their figures as ratios.
+  (RDNA 2, 2 compute units) ran at its own clock, which nothing fixed, so read its figures as ratios.
+- **The Radeon 780M's clock.** This GPU (RDNA 3, 12 compute units) was held by D3D12's stable power state: graphics at 938 MHz,
+  memory at 2800 MHz and SoC at 1028 MHz, on all 135 readings taken during the run. Against the same GPU at its own clock, on the
+  game picture, FSR1 takes 2.2 times as long and MWSR 1.8 times, while bilinear stays within 1 %, with one read per pixel or two.
+  That floor moves with the picture and the input (0.19 to 0.42 ms), not with the core, which points to memory traffic: a
+  deduction, as the memory clock was not varied. At 938 MHz MWSR's 32-bit text is 7 to 9 % faster than its 16-bit one, the one
+  MoonlightWeb runs off NVIDIA, and FSR1's 16-bit text is about 9 % faster than its 32-bit one.
+- **The phones.** The lab's `chain-off`, `chain-mwsr` and `chain-fsr1` cells: the product's renderer drawing a `VideoFrame` to a
+  canvas, timed from the draw to the GPU's end. An iPhone 13 Pro (iOS 26.5, WebGPU, Safari and Chrome 156, mean of 192 draws on a
+  1 ms timer) and a Realme RMX3933 (Mali-G57 MP1, Android 14, Chrome 156, WebGPU and WebGL2, median). One pass per case, on clocks
+  nothing fixed: read the differences as orders of magnitude. One reading is left out: Chrome at ×0.67 of the screen put MWSR
+  under no filter at all, with a GPU time of 2.50 ms against 4.12 ms on the next pass of the same picture, which is noise.
 - **The ports.** These are MoonlightWeb's ports, not the vendors' own builds:
   - FSR1: firdawolf's WGSL port of EASU and RCAS (RCAS at 0.75 stops, its noise term on), and the lab's port of
     AMD's 16-bit path (`FsrEasuH`, `FsrRcasH`).

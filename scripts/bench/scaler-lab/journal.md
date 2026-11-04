@@ -3297,3 +3297,23 @@ Essais sur Safari. Refusés : le texte à une lecture avec `R_DOWN`, sur une cib
 Rien ne prenait le relais : `submit` et `onSubmittedWorkDone` réussissent, `failed` reste faux. D'après le code, l'image restait noire ou figée ; personne ne l'a vu en stream. Un iPhone en Auto y passait dès qu'un hôte 1440p ou 4K se réduisait à son écran. La v0.4.1 n'a pas ce défaut.
 
 `mwsrDownConstants(reg)` rend les constantes que le texte lit, et un test refuse le couple. Aucun texte de shader ne change, et le contrôle doré passe sur SwiftShader. Sur l'iPhone, Safari et Chrome dessinent désormais l'image, vue à l'œil dans les deux, sans erreur, avec du travail GPU sur chaque réduction essayée.
+
+**La Radeon 780M à horloge tenue (04/11, 06:06-06:13).** Les temps du 03/11 tournaient à l'horloge libre et ne valaient que comme rapports. Cette fois `ID3D12Device::SetStablePowerState` tient l'horloge ; il demande le mode développeur de Windows, posé par Bruno pour la mesure, retiré ensuite et vérifié absent. Relevé ADL : 135 lectures sur 135 à 938 MHz pour le cœur, 2800 pour la mémoire, 1028 pour le SoC, charge jusqu'à 98 %, 35 W au plus. Laissée à elle-même, la puce va de 800 à 2800 MHz : 938 MHz n'est pas la fréquence d'usage.
+
+En ms par image, 0 A.D. et texte, MWSR f32/f16 puis FSR1 f32/f16 : ×1,33 jeu ,610/,656/2,18/1,99 ; ×1,33 texte ,418/,449/2,16/1,97 ; ×2 jeu ,594/,647/2,16/1,98 ; ×2 texte ,408/,443/2,16/1,97. Réductions par vues sRGB, MWSR/FSR1 f16 : ×0,75 jeu ,314/1,14 ; ×0,75 texte ,251/1,14 ; ×0,67 jeu ,558/1,99 ; ×0,67 texte ,432/1,98 ; ×0,5 jeu ,371/1,16 ; ×0,5 texte ,303/1,16.
+
+Cellules seules, 1080p vers 1440p, horloge tenue contre libre, jeu : `tex-s1` ×1,01, `tex-s2` ×1,01, `tex-s5` ×1,45, `tex-s9` ×2,26, MWSR ×1,83, MWSR f16 ×1,91, FSR1 ×2,23, FSR1 f16 ×2,20. Texte : MWSR ×1,47, FSR1 ×2,31. Le plancher bilinéaire ne suit donc pas le cœur et ne bouge pas quand les lectures doublent ; il varie avec l'image et l'entrée (,19 à ,42 ms), alors que FSR1 reste à 2,16 ms. La mémoire est à 2800 MHz dans les deux cas : la circulation en mémoire est l'explication probable, déduite, la mémoire n'ayant pas varié. L'iGPU du 9900X reste à son horloge : à lire en rapports.
+
+À cette horloge le texte f32 de MWSR est 7 à 9 % plus rapide que le f16 ; à l'horloge libre ils sont égaux à 2,3 % près. FSR1 f16 gagne environ 9 %. Le produit garde le f16 hors NVIDIA : rien n'a changé, la question reste à trancher.
+
+**Les téléphones (04/11, une passe par cas, horloges libres).** Temps de `draw` jusqu'à la fin du GPU, sans filtre/MWSR/FSR1, en ms.
+
+iPhone 13 Pro, moyennes sur une minuterie à 1 ms, page non isolée, WebGPU. Agrandissements, relevés avant le correctif, qui ne les touche pas : Chrome écran ×2 texte 2,04/3,00/5,63 ; ×2 jeu 2,27/3,19/5,77 ; ×1,33 2,46/3,00/6,90. Safari écran ×2 texte 2,06/2,75/4,85 ; ×2 jeu 2,08/3,02/6,56 ; ×1,33 2,37/2,85/6,37 ; 720p vers 1440p texte 2,46/3,40/6,71, jeu 2,52/3,37/6,08 ; 1080p vers 1440p 2,35/3,48/5,75.
+
+Réductions, avec le correctif. Safari : écran ×0,67 2,90/4,48/6,50 ; à 60 i/s 3,06/5,17/8,42 ; 4K vers 1440p 3,48/4,77/6,92 ; 1440p vers l'écran 2,60/3,83/7,48 ; témoin écran ×2 2,48/3,62/6,02. Chrome : à 60 i/s 4,71/5,29/9,56 ; 4K vers 1440p 3,23/4,63/7,15 ; 1440p vers l'écran 2,90/4,10/6,85 ; témoin 2,48/4,10/6,48.
+
+Écartée : Chrome à écran ×0,67, 3,08/2,90/6,83. MWSR y passe sous « sans filtre », ce qui ne peut pas être vrai, et son temps GPU lit 2,50 ms contre 4,12 sur la passe suivante de la même image, Safari lisant 3,94 sur les deux. La cause de cet écart n'est pas établie : une passe, téléphone en charge, horloge inconnue, et la page n'a gardé que les moyennes.
+
+Realme RMX3933 (Mali-G57 MP1, Android 14, Chrome 156, page isolée, médianes, 18 pages sans erreur, 47 à 45 % de batterie, 19,9 à 22,6 °C), WebGPU puis WebGL2 : écran ×2 texte 14,6/19,3/43,4, 17,9/21,7/44,1 ; écran ×2 jeu 14,3/19,3/43,9, 17,7/21,7/44,3 ; ×1,33 15,5/20,1/42,7, 19,3/23,0/46,5 ; ×0,67 15,5/23,0/45,8, 35,2/41,1/62,0 ; 720p vers 1440p texte 22,3/35,7/108,0, 23,1/35,3/114,6 ; 1080p vers 1440p 22,5/36,3/111,4, 32,3/44,6/122,1 ; 4K vers 1440p 29,2/47,3/124,2, 88,5/103,7/180,6. MWSR n'y est pas plus lourd qu'en octobre (37,3 et 36,4 ms) et n'y tient pas 60 i/s ; Auto n'y met aucun filtre (`isEntryMaliGpu`). « Assez léger pour un téléphone » n'était donc vrai que d'un iPhone : le README et la FAQ donnent désormais les deux.
+
+**Reste.** Le test mémoire de DualRTX, puis le redémarrage prévu.
