@@ -26,8 +26,8 @@
 <path d="M406.0 106.0 h1.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-1.0 z" fill="#55544f"/>
 <text x="417.0" y="115.0" font-size="12" fill="#c3c2b7" dominant-baseline="middle">0.453 ms</text>
 <text x="328" y="145" font-size="13" fill="#f0efec" dominant-baseline="middle" font-weight="600">MWSR</text>
-<path d="M406.0 136.0 h18.3 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-18.3 z" fill="#3987e5"/>
-<text x="434.3" y="145.0" font-size="12" fill="#c3c2b7" dominant-baseline="middle">2.01 ms</text>
+<path d="M406.0 136.0 h22.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-22.0 z" fill="#3987e5"/>
+<text x="438.0" y="145.0" font-size="12" fill="#c3c2b7" dominant-baseline="middle">2.35 ms</text>
 <text x="328" y="175" font-size="13" fill="#c3c2b7" dominant-baseline="middle">SGSR1</text>
 <path d="M406.0 166.0 h29.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-29.0 z" fill="#8a8984"/>
 <text x="445.0" y="175.0" font-size="12" fill="#c3c2b7" dominant-baseline="middle">2.97 ms</text>
@@ -55,4 +55,4 @@
 <path d="M734.0 226.0 h148.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-148.0 z" fill="#8a8984"/>
 <text x="892.0" y="235.0" font-size="12" fill="#c3c2b7" dominant-baseline="middle">3.98 ms</text>
 <text x="0" y="276" font-size="12" fill="#8f8e88">WebGPU in Chrome, GPU timestamps around batches of draws; the RTX at P0, the 9900X iGPU at its own clock, the 780M held at a bench clock.</text>
-<text x="0" y="294" font-size="12" fill="#8f8e88">Each at its faster precision (f32 or f16). * MoonlightWeb's per-fragment port of NIS, not NVIDIA's compute shader.</text>
+<text x="0" y="294" font-size="12" fill="#8f8e88">MWSR in f32, the text MoonlightWeb runs; the others at their faster precision. * MoonlightWeb's per-fragment port of NIS, not NVIDIA's compute shader.</text>

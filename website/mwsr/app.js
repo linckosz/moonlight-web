@@ -948,7 +948,8 @@ const EVEN = 0.02;
 function best(id) {
   const r = R[id];
   if (!r || r.t32 == null) return null;
-  if (r.t16 == null) return { ms: r.t32, tag: '' };
+  // MWSR shows its 32-bit text, the one the client runs: its 16-bit time goes with the report only
+  if (id === 'mwsr' || r.t16 == null) return { ms: r.t32, tag: '' };
   const ms = Math.min(r.t16, r.t32);
   const tag = Math.abs(r.t16 - r.t32) <= EVEN * Math.max(r.t16, r.t32) ? 'f16 ≈ f32' : r.t16 < r.t32 ? 'f16' : 'f32';
   return { ms, tag, both: `32-bit ${ms3(r.t32)} ms, 16-bit ${ms3(r.t16)} ms` };
@@ -987,7 +988,7 @@ function renderTable() {
       time = `${ms3(t.ms)}${tag}<span class="bar" style="width:${w}px"></span>`;
     }
     let gate = '';
-    if (r.f16 === 'refused')
+    if (r.f16 === 'refused' && k.id !== 'mwsr')
       gate = `<span class="tag" title="Its 16-bit picture differs from its 32-bit one by more than 4/255 on ${pct(r.f16share)} of the pixels on this GPU: timed in 32-bit only">f16 refused</span>`;
     const star =
       k.id === 'nis'

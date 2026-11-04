@@ -42,9 +42,9 @@ pictures seen one at a time and not blind, by one person. Between ×1.33 and ×2
 NEG can disagree on games: see the tables below.
 
 **Cost** (GPU timestamps, from 720p and from 1080p to 1440p, a game picture and a text chart, 03/11/2026, the Radeon 780M on 04/11/2026): 0.08 to 0.09 ms per
-frame on an RTX 5060 Ti, 1.3 to 2.0 ms on the Ryzen 9 9900X's integrated Radeon, in 16-bit, and 0.41 to 0.61 ms on a Radeon 780M held at 938 MHz, in 32-bit.
+frame on an RTX 5060 Ti, 1.5 to 2.4 ms on the Ryzen 9 9900X's integrated Radeon and 0.41 to 0.61 ms on a Radeon 780M held at 938 MHz, in 32-bit, the text MoonlightWeb runs.
 938 MHz is a bench clock, not what a stream gets: left to itself, this GPU moves between 800 and 2800 MHz. That is 3.6 to 3.8 times less than FSR1 at
-its faster precision on the RTX, 3.2 to 4.7 times less on that integrated Radeon and 3.3 to 4.8 times less on the 780M. An edge pixel takes seven bilinear reads, a flat
+its faster precision on the RTX, 2.7 to 4.1 times less on that integrated Radeon and 3.3 to 4.8 times less on the 780M. An edge pixel takes seven bilinear reads, a flat
 one a single read; after a video encoder, about 70 % of a game's pixels and 45 % of a page's are on the edge path at the law's threshold. A reduction from ×0.75
 to ×0.5, through sRGB views, takes 0.023 to 0.063 ms on the RTX, 0.65 to 1.91 ms on the integrated Radeon and 0.25 to 0.56 ms on the Radeon 780M, which is 4.4 to 6.5,
 3.3 to 5.7 and 3.1 to 4.6 times less than FSR1.
@@ -103,14 +103,14 @@ LPIPS (AlexNet, v0.1) says how far a picture looks from the native frame, and wa
 lower is closer. VMAF NEG is Netflix's VMAF without the credit plain VMAF gives to added sharpening, and judges a video stream's
 pictures: higher is closer. PSNR, SSIM and MS-SSIM measure the pixels' and the structure's distance: higher is closer. FLIP is
 NVIDIA's measure of what a viewer sees when flipping between two pictures: lower is closer. Overshoot: the share of pixels that
-leave the range of their four input texels by more than 2/255. Times: each at its faster precision, each GPU's in one page. In
+leave the range of their four input texels by more than 2/255. Times: MWSR in 32-bit, the text MoonlightWeb runs, the others at their faster precision, each GPU's in one page. In
 bold, the best of each score.
 
 **1080p → 1440p (×1.33), game**
 
 |  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | 0.1624 | **85.9** | **28.54** | **0.8792** | **0.9880** | 0.0360 | 6.6 % | 0.085 ms | 2.01 ms (f16) | 0.610 ms |
+| MWSR | 0.1624 | **85.9** | **28.54** | **0.8792** | **0.9880** | 0.0360 | 6.6 % | 0.085 ms | 2.35 ms | 0.610 ms |
 | FSR1 | **0.1401** | 84.8 | 28.38 | 0.8776 | 0.9878 | **0.0346** | 13.7 % | 0.326 ms | 6.34 ms (f16) | 1.99 ms (f16) |
 | NIS * | 0.1863 | 70.5 | 24.68 | 0.8162 | 0.9587 | 0.0997 | 42.6 % | 1.22 ms | 13.69 ms | 3.98 ms |
 | SGSR1 | 0.1838 | 83.1 | 27.77 | 0.8554 | 0.9833 | 0.0422 | 6.6 % | 0.146 ms | 2.97 ms (f16) | 0.958 ms |
@@ -120,7 +120,7 @@ bold, the best of each score.
 
 |  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | **0.0385** | **66.4** | **22.59** | **0.9578** | **0.9915** | 0.0424 | 2.8 % | 0.081 ms | 1.34 ms (f16) | 0.418 ms |
+| MWSR | **0.0385** | **66.4** | **22.59** | **0.9578** | **0.9915** | 0.0424 | 2.8 % | 0.081 ms | 1.52 ms | 0.418 ms |
 | FSR1 | 0.0493 | 57.3 | 21.45 | 0.9422 | 0.9874 | **0.0416** | 0.2 % | 0.307 ms (f16) | 6.27 ms (f16) | 1.97 ms (f16) |
 | NIS * | 0.0414 | 62.2 | 22.05 | 0.9488 | 0.9893 | 0.0556 | 4.4 % | 0.677 ms | 10.76 ms | 3.36 ms |
 | SGSR1 | 0.0402 | 59.9 | 21.64 | 0.9463 | 0.9891 | 0.0500 | 2.7 % | 0.087 ms | 1.65 ms (f16) | 0.622 ms (f16) |
@@ -130,7 +130,7 @@ bold, the best of each score.
 
 |  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | **0.3532** | **71.5** | 24.57 | 0.6886 | 0.9617 | 0.0634 | 5.4 % | 0.080 ms | 2.00 ms (f16) | 0.594 ms |
+| MWSR | **0.3532** | **71.5** | 24.57 | 0.6886 | 0.9617 | 0.0634 | 5.4 % | 0.080 ms | 2.36 ms | 0.594 ms |
 | FSR1 | 0.3594 | 70.7 | **24.77** | 0.6880 | **0.9633** | **0.0525** | 2.9 % | 0.287 ms | 6.32 ms (f16) | 1.98 ms (f16) |
 | NIS * | 0.3714 | 59.4 | 23.13 | **0.6893** | 0.9307 | 0.1162 | 41.7 % | 0.820 ms | 13.00 ms | 3.67 ms |
 | SGSR1 | 0.3939 | 71.1 | 24.52 | 0.6736 | 0.9559 | 0.0621 | 6.3 % | 0.140 ms | 2.95 ms (f16) | 0.935 ms |
@@ -140,7 +140,7 @@ bold, the best of each score.
 
 |  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | **0.0927** | 29.9 | 18.16 | **0.8730** | 0.9716 | **0.0586** | 2.4 % | 0.078 ms | 1.36 ms (f16) | 0.408 ms |
+| MWSR | **0.0927** | 29.9 | 18.16 | **0.8730** | 0.9716 | **0.0586** | 2.4 % | 0.078 ms | 1.53 ms | 0.408 ms |
 | FSR1 | 0.1032 | 24.6 | 17.57 | 0.8450 | 0.9663 | 0.0677 | 0.3 % | 0.296 ms (f16) | 6.27 ms (f16) | 1.97 ms (f16) |
 | NIS * | 0.0970 | **36.5** | **18.30** | 0.8675 | 0.9736 | 0.0769 | 7.1 % | 0.564 ms | 10.74 ms | 3.23 ms |
 | SGSR1 | 0.0984 | **36.5** | 18.13 | 0.8693 | **0.9753** | 0.0669 | 4.4 % | 0.084 ms | 1.67 ms (f16) | 0.619 ms (f16) |
@@ -202,7 +202,7 @@ What each one does:
   - NIS: a per-fragment transcription of NVScaler, SDK 1.0.3, with its filter tables, at sharpness 0.5.
   - SGSR1: a port of `sgsr1.h` (mode 1, edge threshold 6/255, edge sharpness 1.5), in 32-bit and in half precision.
   - MWSR: its defaults, in 32-bit and in 16-bit (`mwsr-up-f16.wgsl`).
-- **The precision.** Each upscaler is timed at its faster precision on each GPU. Each 16-bit text is held to its
+- **The precision.** MWSR is timed in 32-bit, the text MoonlightWeb runs. FSR1 and SGSR1 are timed at their faster precision on each GPU. Each 16-bit text is held to its
   32-bit one on that GPU: MWSR's by 2/255 at most in the lab's check, the others' on fewer than 0.05 % of the pixels by more than 4/255.
 - **To run it again**: `scripts/bench/scaler-lab/cmp_lab.py` for the scores, and `scaler_lab.py`, its `cells=` cases,
   for the times (cells `mwsr`, `mwsr:half=1`, `fsr1`, `fsr1h`, `nis`, `sgsr-repo`, `sgsrh`, `tex-s1`).
@@ -221,7 +221,7 @@ The 0 A.D. picture is © Wildfire Games; the screenshot is by PantheraLeo1359531
 | File | What it is |
 |---|---|
 | `wgsl/mwsr-up.wgsl` | The upscale, WebGPU (WGSL). Its parameters are `override` constants, set at pipeline creation. |
-| `wgsl/mwsr-up-f16.wgsl` | The same, its colour arithmetic in f16. Needs the `shader-f16` feature. |
+| `wgsl/mwsr-up-f16.wgsl` | The same, its colour arithmetic in f16. Needs the `shader-f16` feature. It depends on the GPU: 11 to 15 % less time on the Ryzen 9 9900X's integrated Radeon, 7 to 9 % more on a Radeon 780M at 938 MHz. MoonlightWeb runs `mwsr-up.wgsl`. |
 | `wgsl/mwsr-down-1.wgsl`, `-4`, `-9`, `-16` | The reduction, with 1, 2×2, 3×3 or 4×4 samples. |
 | `glsl/mwsr.vert` | The full-screen triangle every GLSL fragment text expects. |
 | `glsl/mwsr-up.frag` | The upscale, GLSL ES 3.00 (WebGL2, OpenGL ES 3.0). The parameters are constants at the top. |
