@@ -65,9 +65,9 @@ void run_virtual_display_tests()
     CHECK_EQ(kHeight, 1080);
     CHECK_EQ(kRefreshHz, 120);
 
-    SECTION("VirtualDisplay — only the four verbs get through the request parser");
+    SECTION("VirtualDisplay — only the five verbs get through the request parser");
     QString err;
-    for (const char* verb : {"install", "uninstall", "activate", "deactivate"}) {
+    for (const char* verb : {"install", "uninstall", "activate", "deactivate", "others_back"}) {
         const auto req = parseRequest(QByteArray("{\"action\":\"") + verb + "\"}", &err);
         CHECK(req.has_value());
         if (req) CHECK_EQ(toString(req->action), QString::fromLatin1(verb));
@@ -828,10 +828,36 @@ void run_virtual_display_tests()
     }
 
     SECTION("VirtualDisplay — only the owner's stream turns the other displays off");
-    CHECK(othersGoOff(Asker::Owner, true));
-    CHECK(!othersGoOff(Asker::Owner, false));
-    CHECK(!othersGoOff(Asker::Guest, true));
-    CHECK(!othersGoOff(Asker::Guest, false));
+    // Alone on the display, the option decides.
+    CHECK(othersGoOff(Asker::Owner, true, false, false));
+    CHECK(!othersGoOff(Asker::Owner, false, false, false));
+    // A guest on it first: they stay on for this stream.
+    CHECK(!othersGoOff(Asker::Owner, true, true, false));
+    // Off already, a new mode of the owner's keeps them off beside a guest.
+    CHECK(othersGoOff(Asker::Owner, true, true, true));
+    // A guest never asks for it, whatever the rest says.
+    for (const bool option : {false, true})
+        for (const bool guest : {false, true})
+            for (const bool off : {false, true})
+                CHECK(!othersGoOff(Asker::Guest, option, guest, off));
+
+    SECTION("VirtualDisplay — the other displays come back with the owner gone");
+    CHECK(othersComeBack(false, true));
+    CHECK(!othersComeBack(true, true));
+    CHECK(!othersComeBack(false, false));
+    CHECK(!othersComeBack(true, false));
+    {
+        // The verb reaches the helper as itself, and asks for no exclusive.
+        Request back;
+        back.action = Request::Action::OthersBack;
+        back.exclusive = true;
+        const auto parsed = parseRequest(toJson(back), nullptr);
+        CHECK(parsed.has_value());
+        if (parsed) {
+            CHECK(parsed->action == Request::Action::OthersBack);
+            CHECK(!parsed->exclusive);
+        }
+    }
 
     SECTION("VirtualDisplay — the guard restores only a dead server's displays left off");
     // Off and the server running: it waits. The server gone with them off:

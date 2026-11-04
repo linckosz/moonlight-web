@@ -2492,6 +2492,21 @@ int main(int argc, char* argv[])
         }
         return false;
     });
+    // Slots 2..4 are the invited players'; every other one is a signed-in device.
+    const auto streamsVirtualDisplay = [&g_Pool](bool guests) {
+        for (int i = 0; i < g_Pool.size(); ++i) {
+            const SessionPool::Slot& sl = g_Pool.at(i);
+            if ((i >= kOwnerSlots && i < kTotalSlots) == guests && !sl.worker.isNull() &&
+                sl.hostUuid == NativeHostBackend::hostUuid() &&
+                NativeHostBackend::usesVirtualDisplay(sl.appId))
+                return true;
+        }
+        return false;
+    };
+    VirtualDisplayJob::instance().setOwnerOn(
+        [streamsVirtualDisplay]() { return streamsVirtualDisplay(false); });
+    VirtualDisplayJob::instance().setGuestOn(
+        [streamsVirtualDisplay]() { return streamsVirtualDisplay(true); });
     VirtualDisplayJob::instance().setBeforeRelease([]() {
         if (g_HostAppCloseOnRelease.isEmpty()) return false;
         for (const QString& command : std::as_const(g_HostAppCloseOnRelease)) {

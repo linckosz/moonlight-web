@@ -65,6 +65,7 @@ QString toString(Request::Action action)
     case Request::Action::Uninstall: return QStringLiteral("uninstall");
     case Request::Action::Activate: return QStringLiteral("activate");
     case Request::Action::Deactivate: return QStringLiteral("deactivate");
+    case Request::Action::OthersBack: return QStringLiteral("others_back");
     }
     return QString();
 }
@@ -81,8 +82,9 @@ std::optional<Request> parseRequest(const QByteArray& json, QString* error)
     Request req;
     const QString action = obj.value(QLatin1String("action")).toString();
     bool known = false;
-    for (const Request::Action a : {Request::Action::Install, Request::Action::Uninstall,
-                                    Request::Action::Activate, Request::Action::Deactivate}) {
+    for (const Request::Action a :
+         {Request::Action::Install, Request::Action::Uninstall, Request::Action::Activate,
+          Request::Action::Deactivate, Request::Action::OthersBack}) {
         if (action == toString(a)) {
             req.action = a;
             known = true;
@@ -148,9 +150,14 @@ QString gpuOfSettings(const QString& xml)
     return name.compare(QLatin1String("default"), Qt::CaseInsensitive) == 0 ? QString() : name;
 }
 
-bool othersGoOff(Asker asker, bool optionOn)
+bool othersGoOff(Asker asker, bool optionOn, bool guestOn, bool othersOff)
 {
-    return asker == Asker::Owner && optionOn;
+    return asker == Asker::Owner && optionOn && (!guestOn || othersOff);
+}
+
+bool othersComeBack(bool ownerOn, bool othersOff)
+{
+    return othersOff && !ownerOn;
 }
 
 bool savesLayout(LayoutStep step, bool othersOff)

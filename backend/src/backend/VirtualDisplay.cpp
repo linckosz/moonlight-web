@@ -72,6 +72,11 @@ QString resultPath()
     return stagingDir() + QStringLiteral("/result.json");
 }
 
+QString othersOffPath()
+{
+    return stagingDir() + QStringLiteral("/others-off");
+}
+
 QString bundledDriverDir()
 {
     return QCoreApplication::applicationDirPath() + QStringLiteral("/drivers/vdd");
@@ -519,7 +524,9 @@ bool applyInProcess(const Request& req, Result* result)
     switch (req.action) {
     case Request::Action::Install:
     case Request::Action::Uninstall:
-        // Nothing to install: the display is conjured at activation.
+    case Request::Action::OthersBack:
+        // Nothing to install: the display is conjured at activation. Nor are
+        // the other displays ever off here (Windows only).
         res.ok = true;
         res.stage = QStringLiteral("done");
         break;

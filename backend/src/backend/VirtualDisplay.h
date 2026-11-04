@@ -376,6 +376,7 @@ struct Request
         Uninstall,  ///< uninstaller: remove our node, the package if unused
         Activate,   ///< a stream starts: enable, set the mode, make primary
         Deactivate, ///< the last stream ended: restore the primary, disable
+        OthersBack, ///< the owner left, guests stay: the other displays back on
     };
     Action action = Action::Activate;
     /// Deactivate: the display to make primary again, as Activate reported
@@ -412,7 +413,7 @@ struct Request
 };
 
 /// Parse and validate a request. The file is read by an elevated process, so
-/// its contents are a choice among four verbs, one display key and a mode,
+/// its contents are a choice among five verbs, one display key and a mode,
 /// never free-form input. Returns nullopt with @p error filled on any deviation.
 std::optional<Request> parseRequest(const QByteArray& json, QString* error);
 QByteArray toJson(const Request& req);
@@ -438,11 +439,19 @@ enum class Asker
     Guest, ///< someone with an invitation, who may be anywhere
 };
 
-/// Whether an activation turns every other display off (Request::exclusive):
-/// the option in force (@p optionOn), and the owner asking. A guest may open
-/// an invitation cold while someone works at the PC, and an invitation gives
-/// no say over its screens: the guest's stream runs with them on.
-bool othersGoOff(Asker asker, bool optionOn);
+/// Whether an activation has every other display off (Request::exclusive): the
+/// option in force (@p optionOn), and the owner asking. A guest may open an
+/// invitation cold while someone works at the PC, and an invitation gives no
+/// say over its screens: the guest's stream runs with them on. An owner who
+/// finds a guest on the display (@p guestOn) leaves them as they are, on until
+/// the owner's next stream; off already (@p othersOff), they stay off through
+/// the owner's change of mode.
+bool othersGoOff(Asker asker, bool optionOn, bool guestOn, bool othersOff);
+
+/// With a stream still on the display: whether the other displays come back on
+/// now. They were the owner's to turn off, so they go with the owner's stream
+/// (@p ownerOn), whatever the guests still watching.
+bool othersComeBack(bool ownerOn, bool othersOff);
 
 /// The display layout changes the Windows helper makes, in the order an
 /// activation takes them (Restore is a deactivation's).
@@ -626,6 +635,8 @@ QPoint placeBeside(const QList<DesktopRect>& others);
 QString stagingDir();
 QString requestPath();
 QString resultPath();
+/// The helper's marker: an exclusive stream has the other displays off.
+QString othersOffPath();
 
 // ── Status ──────────────────────────────────────────────────────────────────
 

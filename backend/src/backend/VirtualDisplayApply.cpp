@@ -43,7 +43,7 @@
 #include <vector>
 #endif
 
-// The helper behind `--vdisplay-apply`: four verbs on "MoonlightWeb Virtual
+// The helper behind `--vdisplay-apply`: five verbs on "MoonlightWeb Virtual
 // Display" (VirtualDisplay.h), read from a request file, answered in a result
 // file and on stdout.
 //
@@ -677,6 +677,8 @@ int stageDriver(Context& ctx)
         ctx.result.stage = stage;
         return kExitOk; // the caller decides whether a mode stage follows
     }
+
+    case Action::OthersBack: break; // the desktop's business, never the node's
     }
     return failAt(ctx, stage, QStringLiteral("unknown action"));
 }
@@ -1380,6 +1382,45 @@ int stageMode(Context& ctx)
         }
         return kExitOk; // the driver stage (disable) follows
     }
+    // The owner left an exclusive stream and guests still watch ours: the other
+    // displays back, ours keeping its mode and the primary role, the node left
+    // alone. The guests' capture restarts on its own, as for any display change.
+    if (ctx.request.action == Action::OthersBack) {
+        if (othersOff(ctx)) {
+            const auto target = findOurTarget();
+            if (!target) return failAt(ctx, stage, QStringLiteral("the display is not on"));
+            QString error;
+            bool back = false;
+            if (const auto saved = loadTopology(ctx); saved && topologyStillAttached(*saved)) {
+                back = imposeTopology(*saved, target->devicePath, &error);
+                if (!back)
+                    Logger::warning(
+                        QStringLiteral("[vdisplay-apply] the layout from before not imposed: %1")
+                            .arg(error));
+            }
+            if (!back) {
+                const LONG rc =
+                    SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
+                back = rc == ERROR_SUCCESS;
+                if (!back)
+                    return failAt(ctx, stage,
+                                  QStringLiteral("the other displays not back on: %1")
+                                      .arg(lastErrorText(DWORD(rc))));
+            }
+            setOthersOff(ctx, false);
+            Logger::info(QStringLiteral("[vdisplay-apply] the owner left: the other displays "
+                                        "back on, the guests' stream goes on"));
+            if (const auto again = findOurTarget();
+                again && !makePrimary(again->devicePath,
+                                      VirtualDisplay::savesLayout(
+                                          VirtualDisplay::LayoutStep::Primary, false),
+                                      &error))
+                Logger::warning(QStringLiteral("[vdisplay-apply] not made primary: %1").arg(error));
+        }
+        ctx.result.ok = true;
+        ctx.result.stage = QStringLiteral("done");
+        return finish(ctx);
+    }
     if (ctx.request.action != Action::Activate) {
         ctx.result.ok = true;
         ctx.result.stage = QStringLiteral("done");
@@ -1616,6 +1657,8 @@ int run(const QString& stageArg, const QString& dirArg)
     } else if (ctx.request.action == Action::Deactivate) {
         if (wantMode) stages.push_back(&stageMode);
         if (wantDriver) stages.push_back(&stageDriver);
+    } else if (ctx.request.action == Action::OthersBack) {
+        if (wantMode) stages.push_back(&stageMode);
     } else {
         if (wantDriver) stages.push_back(&stageDriver);
         if (wantMode) stages.push_back(&stageMode);

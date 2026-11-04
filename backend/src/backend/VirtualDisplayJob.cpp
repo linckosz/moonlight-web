@@ -121,6 +121,7 @@ VirtualDisplayJob::VirtualDisplayJob(QObject* parent)
         // went off four seconds into the new stream.
         if (m_InUse && m_InUse()) {
             Logger::info(QStringLiteral("[vdisplay] still streamed — stays on"));
+            if (othersDueBack()) enqueue(Action::OthersBack, 0, 0, 0, false, false, nullptr);
             return;
         }
         Logger::info(QStringLiteral("[vdisplay] no stream left on the virtual display"));
@@ -135,6 +136,13 @@ VirtualDisplayJob::VirtualDisplayJob(QObject* parent)
         }
         deactivate(nullptr);
     });
+}
+
+bool VirtualDisplayJob::othersDueBack() const
+{
+    if (!m_OwnerOn) return false;
+    return VirtualDisplay::othersComeBack(m_OwnerOn(),
+                                          QFile::exists(VirtualDisplay::othersOffPath()));
 }
 
 bool VirtualDisplayJob::running() const
@@ -206,7 +214,9 @@ void VirtualDisplayJob::activateAs(VirtualDisplay::Asker asker, int width, int h
         }
     }
     enqueue(Action::Activate, width, height, refresh, hdr,
-            VirtualDisplay::othersGoOff(asker, AppSettings().virtualDisplayExclusive()),
+            VirtualDisplay::othersGoOff(asker, AppSettings().virtualDisplayExclusive(),
+                                        m_GuestOn && m_GuestOn(),
+                                        QFile::exists(VirtualDisplay::othersOffPath())),
             std::move(cb));
 }
 
@@ -217,12 +227,15 @@ void VirtualDisplayJob::activateIfOff(int width, int height, int refreshMilliHz,
         if (cb) cb(true, QString());
         return;
     }
-    // On its way on, in whatever mode: that operation's outcome is the
-    // answer. (One on its way off is followed by this one.)
-    const bool lastIsActivate = m_Queue.isEmpty()
-                                    ? running() && m_Request.action == Action::Activate
-                                    : m_Queue.last().action == Action::Activate;
-    if (lastIsActivate) {
+    // On its way on, in whatever mode, or on with the other displays coming
+    // back: that operation's outcome is the answer. (One on its way off is
+    // followed by this one.)
+    const auto keepsItOn = [](Action action) {
+        return action == Action::Activate || action == Action::OthersBack;
+    };
+    const bool lastKeepsItOn = m_Queue.isEmpty() ? running() && keepsItOn(m_Request.action)
+                                                 : keepsItOn(m_Queue.last().action);
+    if (lastKeepsItOn) {
         if (!cb) return;
         if (m_Queue.isEmpty()) {
             m_Callbacks.append(std::move(cb));
@@ -236,6 +249,12 @@ void VirtualDisplayJob::activateIfOff(int width, int height, int refreshMilliHz,
         return;
     }
     if (!running() && m_Queue.isEmpty() && VirtualDisplay::probe().active) {
+        // Arrived during the grace of an owner who left it exclusive: that grace
+        // was just cancelled, and nothing else would bring the others back.
+        if (othersDueBack()) {
+            enqueue(Action::OthersBack, 0, 0, 0, false, false, std::move(cb));
+            return;
+        }
         if (cb) cb(true, QString());
         return;
     }
@@ -397,7 +416,9 @@ void VirtualDisplayJob::fail(const QString& error)
     Logger::warning(QStringLiteral("[vdisplay] %1 failed: %2")
                         .arg(VirtualDisplay::toString(m_Request.action), error));
     setState(State::Failed);
-    settle(false, error);
+    // The other displays staying off takes nothing from a guest's stream: the
+    // display is on, and whoever waited on this goes ahead.
+    settle(m_Request.action == Action::OthersBack, error);
 }
 
 void VirtualDisplayJob::succeed(const VirtualDisplay::Result& res)
@@ -487,6 +508,7 @@ void VirtualDisplayJob::dispatch()
                 m_NextStages = {QStringLiteral("snapshot"), QStringLiteral("driver"),
                                 QStringLiteral("mode")};
                 break;
+            case Action::OthersBack: m_NextStages = {QStringLiteral("mode")}; break;
             case Action::Deactivate:
                 m_NextStages = {QStringLiteral("mode"), QStringLiteral("driver")};
                 break;
