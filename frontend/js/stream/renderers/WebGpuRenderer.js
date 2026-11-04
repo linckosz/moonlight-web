@@ -46,9 +46,10 @@
  *   refuses them. On the float canvas (HDR `linear`) the YUV pass 0 writes the
  *   linear light itself for a reduction, which the views' grids filter and
  *   encode at the output (LINEAR_LIGHT 3, journal J47); a frame that pass did
- *   not take keeps the software light. The f16 module (`half`) runs
- *   where the adapter has shader-f16 and is not NVIDIA's: 9-10 % off the
- *   kernel on the AMD iGPU for the same pixels, nothing on the RTX (P2.3).
+ *   not take keeps the software light. The kernel runs its f32 text on every
+ *   GPU. Its f16 text (`half`) is left to the lab and the comparison page,
+ *   whose reports time it on the visitors' GPUs: it takes 11-15 % less on the
+ *   9900X's Radeon and 7-9 % more on a 780M at a held clock (journal, 04/11).
  *
  * mwsr 2 and 3 (opts.deblock 'fixed' or 'qp': the debug menu's « MoonlightWeb
  *   2 » and « 3 », never 'auto'): the same kernel after a deblocking of the
@@ -1044,8 +1045,6 @@ export class WebGpuRenderer extends VideoRenderer {
         this._passthrough = false;
         /** 4:4:4 stream: mwsr votes and sharpens per channel (CHROMA444). */
         this._yuv444 = false;
-        /** mwsr's f16 module: shader-f16 granted (asked for off NVIDIA). */
-        this._mwsrHalf = false;
         /** SDR: inputTex and the canvas carry `-srgb` view formats (mwsr's reduction). */
         this._srgbViews = false;
         /** HDR `linear`: mwsr's reduction takes the linear light pass 0 writes for it
@@ -1111,7 +1110,7 @@ export class WebGpuRenderer extends VideoRenderer {
         // ── Steps that may fail on unsupported platforms — BEFORE getContext ──
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) throw new Error('WebGPU requestAdapter returned null');
-        const device = await WebGpuRenderer._requestDevice(adapter);
+        const device = await adapter.requestDevice();
 
         const r = new WebGpuRenderer();
         r.canvas = canvas;
@@ -1134,7 +1133,6 @@ export class WebGpuRenderer extends VideoRenderer {
         r._zoneMap = opts.zoneMap === true;
         // The eye test's split screen (BrowserDetect.mwsrSplitWanted).
         if (opts.mwsrSplit) r.setMwsrSplit(opts.mwsrSplit);
-        r._mwsrHalf = device.features.has('shader-f16');
         // HDR: rgba16float canvas in extended tone-mapping mode (values > 1.0
         // map to the display's HDR headroom). Gated on opts.hdr; _configure()
         // self-downgrades to SDR if the browser rejects the HDR canvas config.
@@ -1220,8 +1218,6 @@ export class WebGpuRenderer extends VideoRenderer {
                 r._hdrLinear +
                 ' hdrExtTonemap=' +
                 r._hdrExtTonemap +
-                ' half=' +
-                r._mwsrHalf +
                 ' srgbViews=' +
                 r._srgbViews +
                 ' yuv444=' +
@@ -1232,27 +1228,6 @@ export class WebGpuRenderer extends VideoRenderer {
                 r._zoneMap,
         );
         return r;
-    }
-
-    /**
-     * The device, with shader-f16 where the adapter has it and is not
-     * NVIDIA's: mwsr's f16 module took 9-10 % off the kernel on the AMD iGPU
-     * for the same pixels and nothing on the RTX (upscaler-mwsr-p2.md §3), and
-     * a feature granted costs nothing to the other passes. A device refused
-     * with it is asked for bare; the kernel then runs in f32.
-     * @param {GPUAdapter} adapter
-     * @returns {Promise<GPUDevice>}
-     */
-    static async _requestDevice(adapter) {
-        const vendor = String((adapter.info && adapter.info.vendor) || '').toLowerCase();
-        if (adapter.features.has('shader-f16') && vendor !== 'nvidia') {
-            try {
-                return await adapter.requestDevice({ requiredFeatures: ['shader-f16'] });
-            } catch (e) {
-                console.warn('[WebGpuRenderer] shader-f16 refused, f32 kernel: ' + e.message);
-            }
-        }
-        return await adapter.requestDevice();
     }
 
     get ready() {
@@ -1713,7 +1688,6 @@ export class WebGpuRenderer extends VideoRenderer {
         const module = this._device.createShaderModule({
             code: mwsrWgsl({
                 feed: 'tex',
-                half: this._mwsrHalf,
                 mode: reg.mode,
                 taps: reg.taps,
                 map,
@@ -2334,8 +2308,7 @@ export class WebGpuRenderer extends VideoRenderer {
             const adapter = await navigator.gpu.requestAdapter();
             if (!adapter) throw new Error('no adapter on recovery');
             this._adapter = adapter;
-            this._device = await WebGpuRenderer._requestDevice(adapter);
-            this._mwsrHalf = this._device.features.has('shader-f16');
+            this._device = await adapter.requestDevice();
             this._framesOnDevice = 0;
             this._armDeviceLost();
             this._configure();
