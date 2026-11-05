@@ -372,8 +372,10 @@ inline char positionModifiers(const QJsonObject& msg, KeyboardMode mode)
 /// A key that resolves to a CHARACTER is deliberately left out: the watchdog
 /// re-presses whatever it sees, and re-pressing a character ten times a second
 /// would not re-assert a held key, it would type the letter ten times. Their
-/// release comes from the real key-up, and from the client's own
-/// release-everything on focus loss, which sends one too.
+/// release comes from the real key-up, from the client's own
+/// release-everything on focus loss, which sends one too, and from the
+/// watchdog, which lets go of them on a silent link or a policy change and
+/// never presses them again (InputWatchdog::noteChar).
 inline QVector<IMediaEngine::HeldKey> parseHeldKeys(const QJsonObject& msg, KeyboardMode mode,
                                                     LayoutFidelity fidelity)
 {
@@ -664,6 +666,7 @@ inline void sendKey(IMediaEngine& engine, const QJsonObject& msg, bool down, boo
         hints.chord = plan.chord;
         hints.positionVk = plan.keyCode;
         hints.altGraph = msg["altGraph"].toBool(false);
+        hints.hold = withHold && msg["hold"].toBool(false);
         engine.sendKeyChar(plan.text, down, modifierMask(msg), hints);
         return;
     }

@@ -46,6 +46,10 @@ struct CharKeyHints
     /// AltGr, or a Mac's Option, chose the character on the client: the Ctrl
     /// and Alt the viewer holds are a level for the host, not a shortcut.
     bool altGraph = false;
+    /// A movement key the client wants kept down through a brief stall
+    /// (`hold`), typed as a character because the owner wants the client's
+    /// characters in gaming mode too: the watchdog gives it the long period.
+    bool hold = false;
 };
 
 /**

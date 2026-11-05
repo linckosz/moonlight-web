@@ -18,6 +18,8 @@ struct FakeWire
     QVector<short> keysUp;
     QVector<int> buttonsUp;
     QVector<short> padsZeroed;
+    QVector<QString> charsUp;
+    QVector<CharKeyHints> charHints;
 
     InputWatchdog::Sink sink()
     {
@@ -25,6 +27,10 @@ struct FakeWire
         s.releaseKey = [this](const InputWatchdog::HeldKey& k) { keysUp.append(k.keyCode); };
         s.releaseButton = [this](int b) { buttonsUp.append(b); };
         s.neutralizePad = [this](short c, short) { padsZeroed.append(c); };
+        s.releaseChar = [this](const QString& ch, const CharKeyHints& hints) {
+            charsUp.append(ch);
+            charHints.append(hints);
+        };
         return s;
     }
 
@@ -33,8 +39,17 @@ struct FakeWire
         keysUp.clear();
         buttonsUp.clear();
         padsZeroed.clear();
+        charsUp.clear();
+        charHints.clear();
     }
 };
+
+CharKeyHints hintsOf(bool hold = false)
+{
+    CharKeyHints h;
+    h.hold = hold;
+    return h;
+}
 
 InputWatchdog::HeldKey key(short code, bool hold = false)
 {
@@ -260,6 +275,110 @@ void run_input_watchdog_tests()
         // Released by the watchdog: the next press goes out again.
         wd.release(true);
         CHECK(!wd.noteKey(key('A'), true));
+    }
+
+    // ── A character held goes up as a key does, and never comes back ────────
+    //
+    // A guest's keyboard taken away while it held a "d" typed as a character:
+    // the key stayed down on the host for the 8 s the guest went without one
+    // (bench of 05/11/2026). The policy change lets go of it like the rest.
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        CHECK(wd.noteChar(QStringLiteral("d"), hintsOf(), true));
+        CHECK(wd.anythingHeld());
+        wd.release(true);
+        CHECK_EQ(wire.charsUp.size(), 1);
+        CHECK(wire.charsUp.value(0) == QStringLiteral("d"));
+        CHECK(!wd.anythingHeld());
+
+        // The client's key-up, when it comes, goes no further: no second
+        // CharUp reaches the platform, and nothing is left to release.
+        CHECK(!wd.noteChar(QStringLiteral("d"), hintsOf(), false));
+        wire.clear();
+        wd.release(true);
+        CHECK(wire.charsUp.isEmpty());
+
+        // Only once: the next press and its release go through as ever.
+        CHECK(wd.noteChar(QStringLiteral("d"), hintsOf(), true));
+        CHECK(wd.noteChar(QStringLiteral("d"), hintsOf(), false));
+        CHECK(!wd.anythingHeld());
+    }
+
+    // ── A new press after the release forwards its own key-up ───────────────
+    //
+    // The guest's key-up never came (its keyboard is still taken away); the
+    // owner then presses the same character, and lets go of it.
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        wd.noteChar(QStringLiteral("d"), hintsOf(), true);
+        wd.release(true);
+        CHECK(wd.noteChar(QStringLiteral("d"), hintsOf(), true));
+        CHECK(wd.noteChar(QStringLiteral("d"), hintsOf(), false));
+        // A key-up with no press before it is forwarded: only a release of
+        // the watchdog's own is swallowed.
+        CHECK(wd.noteChar(QStringLiteral("x"), hintsOf(), false));
+    }
+
+    // ── A silent link: a plain character goes at the short period ───────────
+    //
+    // A `hold` one, a movement key typed as a character, at the long one.
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        qint64 now = 0;
+        wd.setClock([&now]() { return now; });
+
+        wd.sync({}, 0, false);
+        wd.noteClientAlive();
+        wd.noteChar(QString(QChar(0x00E9)), hintsOf(), true);
+        wd.noteChar(QStringLiteral("z"), hintsOf(true), true);
+        now = InputWatchdog::kStaleMs;
+        wd.tick();
+        CHECK_EQ(wire.charsUp.size(), 1);
+        CHECK(wire.charsUp.value(0) == QString(QChar(0x00E9)));
+        CHECK(wd.anythingHeld());
+        now = InputWatchdog::kStaleHoldMs;
+        wd.tick();
+        CHECK_EQ(wire.charsUp.size(), 2);
+        CHECK(wire.charsUp.value(1) == QStringLiteral("z"));
+        CHECK(wire.charHints.value(1).hold);
+        CHECK(!wd.anythingHeld());
+    }
+
+    // ── The heartbeat neither presses a character nor lets go of one ────────
+    //
+    // It never lists them (InputMsg::parseHeldKeys): a beat without the
+    // character says nothing about it, and a re-press would type it again.
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        wd.noteChar(QStringLiteral("q"), hintsOf(), true);
+        const InputWatchdog::SyncDiff diff = wd.sync({}, 0, false);
+        CHECK(diff.press.isEmpty());
+        CHECK(diff.release.isEmpty());
+        CHECK(wire.charsUp.isEmpty());
+        CHECK(wd.anythingHeld());
+        wd.release(false);
+        CHECK_EQ(wire.charsUp.size(), 1);
+        CHECK(!wd.anythingHeld());
+    }
+
+    // ── The release says what the press said ────────────────────────────────
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        CharKeyHints chord;
+        chord.chord = true;
+        chord.positionVk = 'Z';
+        chord.altGraph = true;
+        wd.noteChar(QStringLiteral("z"), chord, true);
+        wd.release(true);
+        CHECK_EQ(wire.charHints.size(), 1);
+        CHECK(wire.charHints.value(0).chord);
+        CHECK_EQ(wire.charHints.value(0).positionVk, short('Z'));
+        CHECK(wire.charHints.value(0).altGraph);
     }
 
     // ── At rest is loose on purpose ─────────────────────────────────────────

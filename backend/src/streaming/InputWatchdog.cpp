@@ -20,6 +20,7 @@
 #include <QDebug>
 #include <QMetaObject>
 #include <QMutexLocker>
+#include <QPair>
 #include <QSet>
 #include <QThread>
 #include <QTimer>
@@ -53,6 +54,24 @@ bool InputWatchdog::noteKey(const HeldKey& key, bool down)
     }
     arm();
     return repeat;
+}
+
+bool InputWatchdog::noteChar(const QString& ch, const CharKeyHints& hints, bool down)
+{
+    if (ch.isEmpty()) return true;
+    bool forward = true;
+    {
+        QMutexLocker lock(&m_Mutex);
+        if (down) {
+            m_ReleasedChars.remove(ch);
+            m_HeldChars.insert(ch, hints);
+        } else {
+            forward = !m_ReleasedChars.remove(ch);
+            m_HeldChars.remove(ch);
+        }
+    }
+    arm();
+    return forward;
 }
 
 void InputWatchdog::noteButton(int button, bool down, bool hold)
@@ -174,6 +193,7 @@ void InputWatchdog::setClock(std::function<qint64()> nowMs)
 void InputWatchdog::release(bool includeHold)
 {
     QVector<HeldKey> keys;
+    QVector<QPair<QString, CharKeyHints>> chars;
     quint32 buttons = 0;
     QHash<short, short> pads;
     {
@@ -185,6 +205,15 @@ void InputWatchdog::release(bool includeHold)
             }
             keys.append(it.value());
             it = m_HeldKeys.erase(it);
+        }
+        for (auto it = m_HeldChars.begin(); it != m_HeldChars.end();) {
+            if (it->hold && !includeHold) {
+                ++it;
+                continue;
+            }
+            chars.append({it.key(), it.value()});
+            m_ReleasedChars.insert(it.key());
+            it = m_HeldChars.erase(it);
         }
         if (m_HeldButtons != 0 && (includeHold || !m_HeldButtonsHold)) {
             buttons = m_HeldButtons;
@@ -204,6 +233,10 @@ void InputWatchdog::release(bool includeHold)
     if (m_Sink.releaseKey) {
         for (const HeldKey& k : keys)
             m_Sink.releaseKey(k);
+    }
+    if (m_Sink.releaseChar) {
+        for (const auto& [ch, hints] : chars)
+            m_Sink.releaseChar(ch, hints);
     }
     if (m_Sink.releaseButton) {
         for (int b = 1; b <= 32; ++b) {

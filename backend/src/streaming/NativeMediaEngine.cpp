@@ -207,6 +207,18 @@ NativeMediaEngine::NativeMediaEngine(QObject* parent)
         event.activeGamepadMask = static_cast<uint16_t>(mask);
         m_Session->sendInput(event);
     };
+    sink.releaseChar = [this](const QString& ch, const CharKeyHints& hints) {
+        if (!m_Session) return;
+        // The release the client would have sent, its press's hints with it:
+        // the platform lets go of the key that press went down on.
+        mw::native::InputEvent event;
+        event.type = mw::native::InputEvent::Type::CharUp;
+        event.text = ch.toStdString();
+        event.chord = hints.chord;
+        event.keyCode = hints.positionVk;
+        event.altGraph = hints.altGraph;
+        m_Session->sendInput(event);
+    };
     m_Watchdog = new InputWatchdog(std::move(sink), this);
 }
 
@@ -1304,8 +1316,11 @@ void NativeMediaEngine::sendKeyChar(const QString& ch, bool down, char modifiers
     // The one host where a character can stay a real key: the platform layer
     // resolves it in the machine's own layout and presses THAT key, so the
     // scancode is real and Raw Input, DirectInput and typematic all still see
-    // it. Deliberately outside the watchdog — a re-press of a character during
-    // a stall would type it again rather than re-assert it.
+    // it. The watchdog lets go of it as of a key, on a silent link or a policy
+    // change, but never presses it again: a re-press of a character after a
+    // stall would type it once more rather than re-assert it. Its key-up after
+    // that has nothing left to let go of, and goes no further.
+    if (!m_Watchdog->noteChar(ch, hints, down)) return;
     mw::native::InputEvent event;
     event.type =
         down ? mw::native::InputEvent::Type::CharDown : mw::native::InputEvent::Type::CharUp;
