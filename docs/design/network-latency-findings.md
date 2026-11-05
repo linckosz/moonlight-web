@@ -2691,7 +2691,9 @@ executable, so the sound is not expected to keep EF there. Not measured.
 
 The 06/10 pass on a quiet Wi-Fi left one question: 10 ms halves the packets on
 the air, so could it win where the air is busy? **Not on this bench.** No pass
-lost a packet, and the case with half the packets concealed the most.
+lost a packet, and the case with half the packets concealed the most. **Bruno
+kept 5 ms and closed the question the same day**, with no more passes on a quiet
+Wi-Fi.
 
 Host DualRTX (native), client a Mac M1 with Chrome 156 on Wi-Fi (channel 44,
 -42 dBm), the N95 on the same channel as a second station. The load is direct TCP
