@@ -480,6 +480,10 @@ elseif(UNIX)
         if(X11_Xrandr_FOUND)
             target_compile_definitions(mw-server PRIVATE MW_HAVE_XRANDR)
             target_link_libraries(mw-server PRIVATE ${X11_Xrandr_LIB})
+            # A card's new X11 windows onto the virtual display, the primary
+            # monitor RandR names. Without it they stay where they open.
+            target_sources(mw-server PRIVATE src/server/HostAppLauncherX11.cpp)
+            target_compile_definitions(mw-server PRIVATE MW_HOST_APP_X11)
         else()
             message(STATUS "LatencyFlag: no libXrandr — the flag will not follow a monitor change")
         endif()

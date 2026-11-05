@@ -24,6 +24,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <array>
+
 /**
  * @brief Opens one of the native host's apps (AppSettings::hostApps) on this
  * PC's desktop, as the user who sits at it — never as anything the server or
@@ -52,6 +54,9 @@
  *    (openOnVirtualDisplay).
  *  - Linux: xdg-open for a URL, /bin/sh -c otherwise, each in a transient
  *    systemd user unit when there is one, out of the server's own cgroup.
+ *    As on macOS, Steam already running puts Big Picture on a screen of its
+ *    choosing, so the X11 windows opened next are moved to the virtual display
+ *    (openOnVirtualDisplay, HostAppLauncherX11.cpp).
  */
 namespace HostAppLauncher {
 
@@ -106,8 +111,9 @@ bool open(const QString& command, QString* error);
 /// main display by then. macOS: the windows the app opens in the next few
 /// seconds are moved onto it, those it had before left where they are; one
 /// in full screen (Big Picture) leaves it, moves, and goes back to it there.
-/// Elsewhere the same as open(): Windows puts a new window on the primary
-/// display, and Linux opens it in the stream's own session.
+/// Linux, the same for X11 windows, Xwayland's included: which program opened
+/// a window cannot be told there, so it is every new one in those seconds.
+/// Windows: the same as open(), a new window lands on the primary display.
 bool openOnVirtualDisplay(const QString& command, QString* error);
 
 /// One window of the app being opened, as the window server lists it.
@@ -131,6 +137,52 @@ inline QList<SeenWindow> windowsToMove(const QSet<int>& before, const QSet<int>&
         out.append(w);
     }
     return out;
+}
+
+/// Where a window of @p size goes on @p target: its top-left corner, no larger
+/// than the display.
+inline QRect placedOn(const QSize& size, const QRect& target)
+{
+    return QRect(target.topLeft(), size.boundedTo(target.size()));
+}
+
+/// The values of EWMH's _NET_MOVERESIZE_WINDOW that put a window at @p to, asked
+/// as a pager asks.
+inline std::array<long, 5> moveResizeValues(const QRect& to)
+{
+    const long northWestGravity = 1;
+    const long positionAndSize = 0xF << 8;
+    const long fromPager = 2 << 12;
+    return {northWestGravity | positionAndSize | fromPager, to.x(), to.y(), to.width(),
+            to.height()};
+}
+
+/// What moving one X11 window has done so far.
+struct WindowMove
+{
+    bool wasFullScreen = false;
+    int tries = 0;
+};
+
+enum class WindowStep
+{
+    LeaveFullScreen, ///< a window manager does not move one in full screen
+    Move,
+    EnterFullScreen, ///< on the target now, as it was before
+    Done,
+    GiveUp,
+};
+
+/// The next step for a window. A request may be lost while the window manager
+/// is busy with the one before, so each is repeated until the window shows it,
+/// @p maxTries times at most.
+inline WindowStep nextWindowStep(const WindowMove& move, bool fullScreen, bool onTarget,
+                                 int maxTries)
+{
+    if (onTarget)
+        return move.wasFullScreen && !fullScreen ? WindowStep::EnterFullScreen : WindowStep::Done;
+    if (move.tries >= maxTries) return WindowStep::GiveUp;
+    return fullScreen ? WindowStep::LeaveFullScreen : WindowStep::Move;
 }
 
 #ifdef Q_OS_WIN

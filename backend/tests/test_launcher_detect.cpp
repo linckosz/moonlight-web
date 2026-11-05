@@ -200,4 +200,41 @@ void run_launcher_detect_tests()
             HostAppLauncher::windowsToMove({}, {}, {client, bigPicture}, virtualDisplay).size(),
             qsizetype(2));
     }
+
+    // Linux: where a moved window lands, and the request that puts it there.
+    {
+        const QRect virtualDisplay(0, 0, 800, 600);
+        CHECK(HostAppLauncher::placedOn(QSize(1920, 1080), virtualDisplay) == virtualDisplay);
+        CHECK(HostAppLauncher::placedOn(QSize(446, 225), QRect(2560, 0, 800, 600)) ==
+              QRect(2560, 0, 446, 225));
+        const auto values = HostAppLauncher::moveResizeValues(QRect(10, 20, 800, 600));
+        CHECK_EQ(values[0] & 0xFF, 1L);         // north-west gravity
+        CHECK_EQ((values[0] >> 8) & 0xF, 0xFL); // x, y, width and height are all set
+        CHECK_EQ((values[0] >> 12) & 0xF, 2L);  // from a pager
+        CHECK_EQ(values[1], 10L);
+        CHECK_EQ(values[2], 20L);
+        CHECK_EQ(values[3], 800L);
+        CHECK_EQ(values[4], 600L);
+    }
+
+    // Linux: Big Picture in full screen on another screen leaves it, moves, and
+    // goes back to it; a window that never moves is given up on.
+    {
+        using HostAppLauncher::nextWindowStep;
+        using HostAppLauncher::WindowStep;
+        HostAppLauncher::WindowMove move;
+        CHECK(nextWindowStep(move, true, false, 8) == WindowStep::LeaveFullScreen);
+        move.wasFullScreen = true;
+        move.tries = 1;
+        CHECK(nextWindowStep(move, true, false, 8) == WindowStep::LeaveFullScreen);
+        CHECK(nextWindowStep(move, false, false, 8) == WindowStep::Move);
+        CHECK(nextWindowStep(move, false, true, 8) == WindowStep::EnterFullScreen);
+        CHECK(nextWindowStep(move, true, true, 8) == WindowStep::Done);
+        move.tries = 8;
+        CHECK(nextWindowStep(move, false, false, 8) == WindowStep::GiveUp);
+        CHECK(nextWindowStep(move, false, true, 8) == WindowStep::EnterFullScreen);
+        HostAppLauncher::WindowMove windowed;
+        CHECK(nextWindowStep(windowed, false, false, 8) == WindowStep::Move);
+        CHECK(nextWindowStep(windowed, false, true, 8) == WindowStep::Done);
+    }
 }

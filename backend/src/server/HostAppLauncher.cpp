@@ -265,8 +265,8 @@ bool open(const QString& command, QString* error)
 
 #endif
 
-#if !defined(Q_OS_MACOS)
-// macOS: HostAppLauncherMac.mm.
+#if !defined(Q_OS_MACOS) && !defined(MW_HOST_APP_X11)
+// macOS: HostAppLauncherMac.mm. Linux with X11's headers: HostAppLauncherX11.cpp.
 bool openOnVirtualDisplay(const QString& command, QString* error)
 {
     return open(command, error);
