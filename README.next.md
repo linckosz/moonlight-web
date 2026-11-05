@@ -330,7 +330,7 @@ Prefer to build it yourself? See [Fork & build](#fork--build).
 
 Browser‑side image enhancement on the GPU (WebGL2, or WebGPU in HDR and on iPhone): **MoonlightWeb's own upscaler**, FSR1's sharpness for less than SGSRv1's cost, its sharpening following the scale, to gain sharpness when the stream resolution differs from the display resolution.
 
-The upscaler, **MWSR**, is under the MIT License and packaged for other programs in [`mwsr/`](mwsr/README.md): its WebGPU, WebGL2 and Direct3D shaders, a C++ header, their parameters and examples.
+The upscaler, **MWSR**, is under the MIT License and packaged for other programs in [`mwsr/`](mwsr/README.md): its WebGPU, WebGL2 and Direct3D shaders, a C++ header, their parameters and examples. Compare it with FSR1, NIS and SGSR1 on your own GPU: [moonlightweb.top/mwsr](https://moonlightweb.top/mwsr/).
 
 <div align="center">
 
