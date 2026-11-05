@@ -768,12 +768,15 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // (standard installer deployment: backend runs next to Sunshine) — the
     // backend clipboard is then the host's. For remote Sunshine hosts the
     // relay stays clipboard-silent and the browser keeps today's behavior.
+    // The native host is this machine by construction, and its entry carries no
+    // address for isSelfAddress() to recognise.
     //
     // A restricted session (an invited player) never gets it either, whatever
     // the address: the host's clipboard is an exfiltration channel, and it is
     // not a guest's to read.
     const bool hostIsSelf = ClipboardBridge::isSelfAddress(m_Host->activeAddress.address());
-    const bool clipboardLocal = hostIsSelf && m_InputPolicy.unrestricted();
+    const bool hostIsHere = media.type == MediaType::NativeHost || hostIsSelf;
+    const bool clipboardLocal = hostIsHere && m_InputPolicy.unrestricted();
     qInfo() << "[Session] Clipboard sync" << (clipboardLocal ? "enabled" : "disabled")
             << "(host address:" << m_Host->activeAddress.address()
             << ", restricted:" << !m_InputPolicy.unrestricted() << ")";
@@ -796,11 +799,9 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // and the voice would come out on the wrong PC. Same gate as the clipboard
     // otherwise: the owner's, never an invited player's. Every transport
     // carries it: the WebRTC ones on the audio track, the WebSocket one as
-    // frames on its socket. The native host is this machine by construction,
-    // and its entry carries no address for isSelfAddress() to recognise.
+    // frames on its socket.
     if (m_MicRequested) {
-        const bool micHostHere = media.type == MediaType::NativeHost || hostIsSelf;
-        std::string why = MicUplink::refusal(micHostHere, m_InputPolicy.unrestricted());
+        std::string why = MicUplink::refusal(hostIsHere, m_InputPolicy.unrestricted());
         if (why.empty()) why = MicUplink::unavailable(m_MicDevice.toStdString());
         if (why.empty()) {
             auto mic = std::make_shared<MicUplink>(m_MicDevice.toStdString());

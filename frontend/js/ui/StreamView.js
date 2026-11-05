@@ -12103,11 +12103,26 @@ export class StreamView {
      * the host ignores. The cost is that a Cmd held ACROSS the paste is no
      * longer down for whatever follows it; nobody chords off a Cmd they just
      * pasted with, and the paste working matters more.
+     *
+     * The host saw the Windows key alone so far, and letting go of it now would
+     * open the Start menu, which then takes the paste. A Ctrl tap while it is
+     * held says it was part of a chord. A Cmd really pressed alone never comes
+     * through here, and still opens the menu.
      */
     _releaseHeldMeta() {
         for (const code of ['MetaLeft', 'MetaRight']) {
             const held = this._heldPhysKeys.get(code);
             if (!held) continue;
+            const ctrl = {
+                keyCode: StreamView.codeToWindowsVk('ControlLeft'),
+                code: 'ControlLeft',
+                key: 'Control',
+                shiftKey: false,
+                altKey: false,
+                metaKey: true,
+            };
+            this._sendKeyEvent({ ...ctrl, type: 'keydown', ctrlKey: true });
+            this._sendKeyEvent({ ...ctrl, type: 'keyup', ctrlKey: false });
             this._sendKeyEvent({
                 ...held,
                 ctrlKey: false,

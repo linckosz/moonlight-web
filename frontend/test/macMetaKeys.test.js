@@ -151,9 +151,28 @@ describe('Cmd+V reaching the host as a paste', () => {
         const v = macPasting();
         v.handlePaste(pasteEv('x'));
 
-        expect(v.sent[0]).toMatchObject({ type: 'keyup', keyCode: VK_LWIN });
-        expect(v.sent[1]).toMatchObject({ type: 'clipboardpaste', text: 'x', injectCtrl: true });
+        expect(v.sent[2]).toMatchObject({ type: 'keyup', keyCode: VK_LWIN });
+        expect(v.sent[3]).toMatchObject({ type: 'clipboardpaste', text: 'x', injectCtrl: true });
         expect(v._heldPhysKeys.has('MetaLeft')).toBe(false);
+    });
+
+    // Win down then up with nothing between is what opens the Start menu, and
+    // the injected chord would paste into its search box.
+    it('taps Ctrl under the Windows key so its release opens no Start menu', () => {
+        const v = macPasting();
+        v.handlePaste(pasteEv('x'));
+
+        expect(v.sent[0]).toMatchObject({ type: 'keydown', code: 'ControlLeft', metaKey: true });
+        expect(v.sent[1]).toMatchObject({ type: 'keyup', code: 'ControlLeft', metaKey: true });
+        expect(v._heldPhysKeys.has('ControlLeft')).toBe(false);
+    });
+
+    it('leaves a Cmd pressed alone a plain Windows key', () => {
+        const v = keySink({ _clipboardEnabled: true });
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+
+        expect(v.sent.map((m) => m.code)).toEqual(['MetaLeft', 'MetaLeft']);
     });
 
     // No text to ship (empty or non-text local clipboard): the host pastes its
@@ -163,8 +182,8 @@ describe('Cmd+V reaching the host as a paste', () => {
         const v = macPasting();
         v._sendPendingPasteKey(); // what the 150ms timer does
 
-        expect(v.sent.map((m) => m.type)).toEqual(['keyup', 'clipboardpaste']);
-        expect(v.sent[1]).toMatchObject({ text: '', injectCtrl: true });
+        expect(v.sent.map((m) => m.type)).toEqual(['keydown', 'keyup', 'keyup', 'clipboardpaste']);
+        expect(v.sent[3]).toMatchObject({ text: '', injectCtrl: true });
         expect(v._heldPhysKeys.size).toBe(0);
     });
 
@@ -172,7 +191,7 @@ describe('Cmd+V reaching the host as a paste', () => {
         const v = macPasting();
         v.handleKeyUp(ev('KeyV', 'v', { metaKey: true }));
 
-        expect(v.sent.map((m) => m.type)).toEqual(['keyup', 'clipboardpaste']);
+        expect(v.sent.map((m) => m.type)).toEqual(['keydown', 'keyup', 'keyup', 'clipboardpaste']);
         expect(v._heldPhysKeys.has('KeyV')).toBe(false);
     });
 });
