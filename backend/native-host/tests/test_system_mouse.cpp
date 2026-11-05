@@ -144,4 +144,84 @@ void run_system_mouse_tests()
         n.reset();
         CHECK_EQ(n.take(1), 0);
     }
+
+    SECTION("System mouse — while the console is its own session");
+    {
+        const uint8_t left = systemmouse::buttonBit(1);
+        const uint8_t right = systemmouse::buttonBit(3);
+
+        // On the console: what reports() says, and nothing to do about it.
+        systemmouse::ConsoleGuard guard;
+        auto s = guard.step(true, 0, 5, -3);
+        CHECK(!s.aside);
+        CHECK(!s.changed);
+        CHECK_EQ(s.forgotten, 0);
+        CHECK_EQ(s.reports.size(), size_t(1));
+        CHECK_EQ(read16(s.reports[0], 1), 5);
+        CHECK_EQ(read16(s.reports[0], 3), -3);
+
+        // Off it, with nothing down: not one byte, the caller told, once.
+        s = guard.step(false, 0, 5, 5, 1, 1);
+        CHECK(s.aside);
+        CHECK(s.changed);
+        CHECK(s.reports.empty());
+        CHECK_EQ(s.forgotten, 0);
+        s = guard.step(false, 0, 5, 5);
+        CHECK(s.aside);
+        CHECK(!s.changed);
+        CHECK(s.reports.empty());
+
+        // A press off it goes nowhere near the device, and is handed back.
+        s = guard.step(false, left, 0, 0);
+        CHECK(s.aside);
+        CHECK(s.reports.empty());
+        CHECK_EQ(s.forgotten, left);
+
+        // Back on it: the device again, the change said.
+        s = guard.step(true, left, 1, 0);
+        CHECK(!s.aside);
+        CHECK(s.changed);
+        CHECK_EQ(s.reports.size(), size_t(1));
+        CHECK_EQ(s.reports[0][0], left);
+
+        // Held when the console leaves: said up once, with no movement in it,
+        // and never again.
+        s = guard.step(false, left | right, 40, 40, 2, 2);
+        CHECK(s.aside);
+        CHECK_EQ(s.forgotten, static_cast<uint8_t>(left | right));
+        CHECK_EQ(s.reports.size(), size_t(1));
+        CHECK_EQ(s.reports[0][0], 0);
+        CHECK_EQ(read16(s.reports[0], 1), 0);
+        CHECK_EQ(read16(s.reports[0], 3), 0);
+        CHECK_EQ(s.reports[0][5], 0);
+        CHECK_EQ(s.reports[0][6], 0);
+        s = guard.step(false, 0, 40, 40);
+        CHECK(s.reports.empty());
+
+        // The viewer's own release, as the console leaves: the caller has
+        // already dropped the button, and the device still has to hear it.
+        systemmouse::ConsoleGuard released;
+        CHECK_EQ(released.step(true, left, 0, 0).reports.size(), size_t(1));
+        s = released.step(false, 0, 0, 0);
+        CHECK(s.aside);
+        CHECK_EQ(s.forgotten, 0);
+        CHECK_EQ(s.reports.size(), size_t(1));
+        CHECK_EQ(s.reports[0][0], 0);
+
+        // One button held, the console gone as another is pressed: one release
+        // for both, both handed back, and the device silent after it.
+        systemmouse::ConsoleGuard two;
+        CHECK_EQ(two.step(true, left, 0, 0).reports.size(), size_t(1));
+        s = two.step(false, left | right, 0, 0);
+        CHECK(s.aside);
+        CHECK(s.changed);
+        CHECK_EQ(s.forgotten, static_cast<uint8_t>(left | right));
+        CHECK_EQ(s.reports.size(), size_t(1));
+        CHECK_EQ(s.reports[0][0], 0);
+        s = two.step(false, right, 3, 3);
+        CHECK(s.aside);
+        CHECK(!s.changed);
+        CHECK(s.reports.empty());
+        CHECK_EQ(s.forgotten, right);
+    }
 }

@@ -817,8 +817,8 @@ DevicesListed listMice()
 constexpr const char* kNormalDesktop = "Default";
 
 /// Whether the console session is this process's: a device's input goes to
-/// whoever has the console, SendInput's to the session it was sent from. The
-/// same question holds for our mouse, which does not ask it.
+/// whoever has the console, SendInput's to the session it was sent from. Our
+/// mouse and our keyboard both ask, at every report that could press or move.
 bool consoleIsOurs()
 {
     static const DWORD ours = []() {
@@ -2189,14 +2189,23 @@ void Win32Input::startVirtualMouse()
 bool Win32Input::sendThroughMouseLocked(int dx, int dy, int notches, int panNotches)
 {
     if (!m_Mouse) return false;
-    for (const systemmouse::Report& report :
-         systemmouse::reports(m_MouseButtons, dx, dy, notches, panNotches)) {
+    const systemmouse::ConsoleGuard::Step step =
+        m_MouseConsole.step(consoleIsOurs(), m_MouseButtons, dx, dy, notches, panNotches);
+    if (step.changed)
+        log::info(step.aside ? "[native] input: another session has the console — our mouse is "
+                               "quiet, SendInput until it comes back"
+                             : "[native] input: the console is back — our mouse again");
+    for (const systemmouse::Report& report : step.reports) {
         if (!m_Mouse->input(report.data(), report.size())) {
             dropVirtualMouseLocked();
             return false;
         }
     }
-    return true;
+    if (!step.aside) return true;
+    for (int button = 1; button <= 5; ++button)
+        if (step.forgotten & systemmouse::buttonBit(button)) m_HeldButtons.erase(button);
+    m_MouseButtons = 0;
+    return false;
 }
 
 void Win32Input::dropVirtualMouseLocked()

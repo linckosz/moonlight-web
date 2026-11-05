@@ -103,4 +103,37 @@ private:
     int m_Rest = 0;
 };
 
+/// Who a report is for: a device's input goes to the session that has the
+/// console, whichever session made the device. So the mouse speaks while the
+/// console is the stream's own session, and is quiet otherwise; the stream's
+/// input then stays where it was sent from, by SendInput. No thread watches for
+/// the change, as one does for the keyboard: a mouse repeats nothing by itself,
+/// so a device left silent does nothing, and the next movement finds out.
+///
+/// What the device last said was down is said up once on the way out, whatever
+/// the console, as for the keyboard: it must not stay down until the console
+/// comes back. A release alone clicks nothing.
+class ConsoleGuard
+{
+public:
+    struct Step
+    {
+        /// What to send now. Nothing else may go to the device.
+        std::vector<Report> reports;
+        /// The movement was not sent: the caller does it the other way.
+        bool aside = false;
+        /// The buttons it no longer holds: released here, not by the viewer.
+        uint8_t forgotten = 0;
+        /// The first step since the console changed hands, to be said once.
+        bool changed = false;
+    };
+
+    /// One movement, as for reports(), with @p onConsole read just before it.
+    Step step(bool onConsole, uint8_t buttons, int dx, int dy, int notches = 0, int panNotches = 0);
+
+private:
+    uint8_t m_Said = 0;
+    bool m_Aside = false;
+};
+
 } // namespace mw::native::input::systemmouse

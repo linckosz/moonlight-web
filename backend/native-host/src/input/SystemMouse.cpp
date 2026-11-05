@@ -129,4 +129,22 @@ std::vector<Report> reports(uint8_t buttons, int dx, int dy, int notches, int pa
     return out;
 }
 
+ConsoleGuard::Step ConsoleGuard::step(bool onConsole, uint8_t buttons, int dx, int dy, int notches,
+                                      int panNotches)
+{
+    Step out;
+    out.changed = onConsole == m_Aside;
+    m_Aside = !onConsole;
+    out.aside = !onConsole;
+    if (onConsole) {
+        out.reports = reports(buttons, dx, dy, notches, panNotches);
+        m_Said = buttons;
+        return out;
+    }
+    if (m_Said != 0) out.reports = reports(0, 0, 0);
+    m_Said = 0;
+    out.forgotten = buttons;
+    return out;
+}
+
 } // namespace mw::native::input::systemmouse

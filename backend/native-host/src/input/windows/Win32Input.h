@@ -174,7 +174,8 @@ private:
     // device to say it: a report travels the HID stack and lands after a
     // SendInput sent at the same moment, so a click right after a placement
     // goes the same way as the placement, or it would land before it. A
-    // button is released the way it was pressed.
+    // button is released the way it was pressed. While another session has the
+    // console, it is quiet (systemmouse::ConsoleGuard) and everything is SendInput.
     //
     // Made in start() when it can be (a worker elevated or SYSTEM, the driver
     // 0.1.2.0 or later); when it cannot, everything is SendInput as before
@@ -183,8 +184,8 @@ private:
     /// Makes it, per m_MouseMode. Said in the log either way.
     void startVirtualMouse();
     /// One movement through it, with the buttons it holds. Under m_HeldMutex.
-    /// False when the device refused it — then it is let go of, and the
-    /// caller does it through SendInput instead.
+    /// False when the device refused it — then it is let go of — or when the
+    /// console is another session's; the caller does it through SendInput instead.
     bool sendThroughMouseLocked(int dx, int dy, int notches, int panNotches);
     /// The device let go of, after a refusal: what it held is released with it.
     void dropVirtualMouseLocked();
@@ -193,6 +194,8 @@ private:
     std::unique_ptr<IVirtualHid> m_Mouse;
     /// Its buttons down (systemmouse::buttonBit). Under m_HeldMutex.
     uint8_t m_MouseButtons = 0;
+    /// Whether its reports may go out. Under m_HeldMutex.
+    systemmouse::ConsoleGuard m_MouseConsole;
     /// Whether the viewer's last motion was relative: buttons and wheels go
     /// through the device then. Input-thread only.
     bool m_Relative = false;
