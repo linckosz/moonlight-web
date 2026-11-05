@@ -275,7 +275,8 @@ for (const page of PAGES) {
 }
 
 /* sitemap.xml — each URL dated by the newest of its sources (the English page,
-   the header/footer above, its dictionary). An uncommitted source dates today. */
+   its dictionary): a change to this builder alone dates no page. An uncommitted
+   source dates today. */
 function lastChange(files) {
   const today = new Date().toISOString().slice(0, 10);
   let best = '';
@@ -288,20 +289,19 @@ function lastChange(files) {
   }
   return best || today;
 }
-const builder = fileURLToPath(import.meta.url);
 const urls = [];
 for (const page of PAGES) {
   const alts = [...LANGS.map((l) => [l.code, localUrl(l.code, page.url)]), ['x-default', page.url]]
     .map(([h, u]) => `    <xhtml:link rel="alternate" hreflang="${h}" href="${ORIGIN}${u}"/>`)
     .join('\n');
   for (const { code } of LANGS) {
-    const sources = [path.join(SITE, page.src), builder];
+    const sources = [path.join(SITE, page.src)];
     if (code !== 'en') sources.push(path.join(SITE, '_i18n', code, pageId(page) + '.json'), path.join(SITE, '_i18n', code, '_chrome.json'));
     urls.push(`  <url>\n    <loc>${ORIGIN}${localUrl(code, page.url)}</loc>\n    <lastmod>${lastChange(sources)}</lastmod>\n${alts}\n  </url>`);
   }
 }
 for (const page of ENGLISH_ONLY)
-  urls.push(`  <url>\n    <loc>${ORIGIN}${page.url}</loc>\n    <lastmod>${lastChange([path.join(SITE, page.src), builder])}</lastmod>\n  </url>`);
+  urls.push(`  <url>\n    <loc>${ORIGIN}${page.url}</loc>\n    <lastmod>${lastChange([path.join(SITE, page.src)])}</lastmod>\n  </url>`);
 outputs.set(
   path.join(SITE, 'sitemap.xml'),
   '<?xml version="1.0" encoding="UTF-8"?>\n' +
