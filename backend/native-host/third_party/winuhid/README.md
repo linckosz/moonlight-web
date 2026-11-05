@@ -47,7 +47,8 @@ as upstream's, with that fix, without it:
   (`drivers/vhid/DescriptorCheck.cpp`): game devices only, as the host checks already. One
   exception, compared byte for byte: the host's own mouse (`src/input/SystemMouse.h`), which the
   stream's worker makes on a host with no pointing device. Driver 0.1.2.0, flag
-  `MOONLIGHTWEB_VHID_FIX_SYSTEM_MOUSE`.
+  `MOONLIGHTWEB_VHID_FIX_SYSTEM_MOUSE`. A second one, compared the same way: its own keyboard
+  (`src/input/SystemKeyboard.h`). Driver 0.1.3.0, flag `MOONLIGHTWEB_VHID_FIX_SYSTEM_KEYBOARD`.
 - `Public.h`, `WinUHid.c`: IOCTL_MOONLIGHTWEB_VHID_GET_FIXES answers the `MOONLIGHTWEB_VHID_FIX_*`
   flags of the driver (`WinUHid.h`), today `MOONLIGHTWEB_VHID_FIX_EVENT_WAKEUP`, the fix above. A
   driver older than it fails the IOCTL as unknown: no fixes.

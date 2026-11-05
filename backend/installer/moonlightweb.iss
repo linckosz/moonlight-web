@@ -1206,7 +1206,8 @@ end;
 // takes a driver signed by Microsoft only, 0x800b0109 on 20/10/2026) skips it
 // entirely.
 // Through it the stream also gives a host with no pointing device a mouse of
-// its own (SystemMouse.h). Exit 3010 asks for no restart: a game
+// its own (SystemMouse.h), and one with no keyboard a keyboard of its own for
+// gaming mode (SystemKeyboard.h). Exit 3010 asks for no restart: a game
 // still held a device made through the old driver, which stays loaded until
 // Windows next restarts, and the app works with either. An update that brings
 // the same driver installs nothing, so it never gets there.

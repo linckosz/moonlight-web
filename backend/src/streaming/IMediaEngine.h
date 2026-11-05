@@ -370,6 +370,16 @@ public:
         return m_GamingKeys.exchange(now, std::memory_order_relaxed) != now;
     }
 
+    /// Whether the key about to go through sendKeyEvent came from the client's
+    /// gaming mode, for that one call: every other caller of sendKeyEvent (typed
+    /// text, the watchdog's) finds it false. Set by InputMsg::sendKey, read by
+    /// the native engine.
+    void setKeyFromGamingMode(bool gaming)
+    {
+        m_KeyFromGamingMode.store(gaming, std::memory_order_relaxed);
+    }
+    bool keyFromGamingMode() const { return m_KeyFromGamingMode.load(std::memory_order_relaxed); }
+
     /// Snapshot the host's real lock-key state. Only possible when the streamed
     /// host IS this machine — which is always true for a native engine and
     /// conditional for GameStream, hence the parameter.
@@ -531,4 +541,5 @@ protected:
     /// std::atomic_load / atomic_store.
     std::shared_ptr<const mw::native::HostKeyboardLayout> m_HostTextLayout;
     std::atomic<int> m_GamingKeys{-1};
+    std::atomic<bool> m_KeyFromGamingMode{false};
 };

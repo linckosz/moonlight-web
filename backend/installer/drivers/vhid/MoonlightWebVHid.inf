@@ -11,7 +11,7 @@ Class       = System
 ClassGuid   = {4d36e97d-e325-11ce-bfc1-08002be10318}
 Provider    = %ManufacturerName%
 CatalogFile = MoonlightWebVHid.cat
-DriverVer = 10/19/2026,0.1.2.0
+DriverVer = 11/05/2026,0.1.3.0
 PnpLockdown = 1
 
 [Manufacturer]

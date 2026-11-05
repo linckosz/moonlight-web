@@ -752,26 +752,32 @@ bool contains(const capture::DesktopRect& rect, const POINT& p)
     return p.x >= rect.left && p.x < rect.right && p.y >= rect.top && p.y < rect.bottom;
 }
 
-/// The mice Windows lists for Raw Input, a mouse made through VHF told apart:
-/// one made with no hardware ids, as ours are (VhidDevice.cpp), enumerates
-/// under HID_DEVICE_SYSTEM_VHF, which no mouse plugged into the host does.
-/// Mouse Keys are no device and are not counted.
-struct MiceListed
+/// The devices of one kind Windows lists for Raw Input, one made through VHF
+/// told apart: made with no hardware ids, as ours are (VhidDevice.cpp), it
+/// enumerates under HID_DEVICE_SYSTEM_VHF, which nothing plugged into the host
+/// does. Mouse Keys are no device and are not counted.
+struct DevicesListed
 {
+    bool known = false; ///< false: Windows would not say, and the counts mean nothing
     int physical = 0;
     int virtualHid = 0;
 };
 
-MiceListed listMice()
+/// @p skipRemote leaves out what Remote Desktop keeps listed on any machine.
+DevicesListed listDevices(DWORD type, bool skipRemote = false)
 {
-    MiceListed mice;
+    DevicesListed devices;
     std::vector<RAWINPUTDEVICELIST> list;
     UINT count = 0;
     // A device that comes or goes between the two calls leaves the second one
     // short of room: asked again.
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        if (::GetRawInputDeviceList(nullptr, &count, sizeof(RAWINPUTDEVICELIST)) != 0) return mice;
-        if (count == 0) return mice;
+    for (int attempt = 0; attempt < 3 && !devices.known; ++attempt) {
+        if (::GetRawInputDeviceList(nullptr, &count, sizeof(RAWINPUTDEVICELIST)) != 0)
+            return devices;
+        if (count == 0) {
+            devices.known = true;
+            return devices;
+        }
         list.resize(count);
         const UINT got = ::GetRawInputDeviceList(list.data(), &count, sizeof(RAWINPUTDEVICELIST));
         if (got == static_cast<UINT>(-1)) {
@@ -779,10 +785,10 @@ MiceListed listMice()
             continue;
         }
         list.resize(got);
-        break;
+        devices.known = true;
     }
     for (const RAWINPUTDEVICELIST& device : list) {
-        if (device.dwType != RIM_TYPEMOUSE) continue;
+        if (device.dwType != type) continue;
         wchar_t name[512] = {};
         UINT chars = static_cast<UINT>(std::size(name) - 1);
         const bool named = ::GetRawInputDeviceInfoW(device.hDevice, RIDI_DEVICENAME, name,
@@ -791,11 +797,35 @@ MiceListed listMice()
         for (wchar_t& c : upper)
             c = static_cast<wchar_t>(std::towupper(c));
         if (named && upper.find(L"HID_DEVICE_SYSTEM_VHF") != std::wstring::npos)
-            ++mice.virtualHid;
-        else
-            ++mice.physical;
+            ++devices.virtualHid;
+        else if (!(named && skipRemote &&
+                   (upper.find(L"RDP_") != std::wstring::npos ||
+                    upper.find(L"TERMINPUT") != std::wstring::npos)))
+            ++devices.physical;
     }
-    return mice;
+    return devices;
+}
+
+DevicesListed listMice()
+{
+    return listDevices(RIM_TYPEMOUSE);
+}
+
+/// The input desktop's name when nothing secure is up: where our keyboard may
+/// speak (plan « souris HID virtuelle », Bruno, 05/11/2026).
+constexpr const char* kNormalDesktop = "Default";
+
+/// Whether the console session is this process's: a device's input goes to
+/// whoever has the console, SendInput's to the session it was sent from. The
+/// same question holds for our mouse, which does not ask it.
+bool consoleIsOurs()
+{
+    static const DWORD ours = []() {
+        DWORD session = 0xFFFFFFFF;
+        if (!::ProcessIdToSessionId(::GetCurrentProcessId(), &session)) session = 0xFFFFFFFF;
+        return session;
+    }();
+    return ours != 0xFFFFFFFF && ::WTSGetActiveConsoleSessionId() == ours;
 }
 
 } // namespace
@@ -830,6 +860,10 @@ bool Win32Input::start(std::string& error)
 {
     if (m_Started) return true;
     m_Recentre.reset();
+    {
+        std::lock_guard<std::mutex> lock(m_HeldMutex);
+        m_KeyboardQuit = false;
+    }
 
     // Nothing to open, nothing to allocate for keyboard and mouse: SendInput
     // needs no handle and no setup. Whether there IS a desktop to inject into
@@ -885,6 +919,13 @@ bool Win32Input::start(std::string& error)
 void Win32Input::stop()
 {
     if (!m_Started) return;
+    // No key starts through our keyboard from here on, and its thread goes:
+    // the release below is what still speaks to it.
+    {
+        std::lock_guard<std::mutex> lock(m_HeldMutex);
+        m_KeyboardQuit = true;
+    }
+    m_KeyboardWake.notify_all();
     // Before anything else it might report onto: the unblock thread ends by
     // telling the listener what the gate looks like now.
     {
@@ -916,6 +957,21 @@ void Win32Input::stop()
     if (m_Mouse) {
         m_Mouse.reset();
         log::info("[native] input: our mouse let go of");
+    }
+    if (m_KeyboardThread.joinable()) m_KeyboardThread.join();
+    {
+        std::lock_guard<std::mutex> lock(m_HeldMutex);
+        if (m_Keyboard) {
+            m_Keyboard.reset();
+            log::info("[native] input: our keyboard let go of");
+        }
+        m_HidKeys.clear();
+        m_HidForgotten.clear();
+        m_HidSent = {};
+        // m_KeyboardQuit stays up until the next start(): a press still on its
+        // way must not start a thread nobody will join.
+        m_KeyboardAsked = false;
+        m_KeyboardListed = false;
     }
     const uint64_t gated = m_Gated.load(std::memory_order_relaxed);
     log::info("[native] input: " + std::to_string(m_Injected.load(std::memory_order_relaxed)) +
@@ -955,6 +1011,7 @@ void Win32Input::forgetHeld()
         std::lock_guard<std::mutex> lock(m_HeldMutex);
         keys = m_HeldKeys.size();
         buttons = m_HeldButtons.size();
+        letGoKeyboardLocked();
         m_HeldKeys.clear();
         m_HeldButtons.clear();
         m_HeldScan.clear();
@@ -979,6 +1036,8 @@ void Win32Input::releaseAll()
     uint8_t mouseButtons = 0;
     {
         std::lock_guard<std::mutex> lock(m_HeldMutex);
+        // What our keyboard holds goes up through it, in one report.
+        letGoKeyboardLocked();
         keys.swap(m_HeldKeys);
         buttons.swap(m_HeldButtons);
         scans.swap(m_HeldScan);
@@ -1252,7 +1311,7 @@ bool Win32Input::anchored() const
     return !m_AllowElevated && !m_Relative && m_Placed;
 }
 
-void Win32Input::injectKey(const InputEvent& event, bool down)
+void Win32Input::injectKey(const InputEvent& event, bool down, bool throughKeyboard)
 {
     const int vk = event.keyCode;
     if (vk <= 0 || vk > 0xFF) return;
@@ -1261,11 +1320,45 @@ void Win32Input::injectKey(const InputEvent& event, bool down)
     uint16_t charScan = 0;
     {
         std::lock_guard<std::mutex> lock(m_HeldMutex);
+        // Let go of on the viewer's behalf: its repeats would land where they
+        // never aimed them, until the release says the hand has come off.
+        if (m_HidForgotten.count(vk)) {
+            if (!down) m_HidForgotten.erase(vk);
+            return;
+        }
+        // Up the way it went down. A repeat from the browser changes nothing:
+        // Windows repeats a key a device holds, on its own.
+        auto hid = m_HidKeys.find(vk);
+        if (hid != m_HidKeys.end()) {
+            if (down) return;
+            m_HidKeys.erase(hid);
+            m_HeldKeys.erase(vk);
+            sendKeyboardReportLocked();
+            return;
+        }
         // A heartbeat re-press of a key we never let go of would be an extra
         // character. A real repeat from the browser is NOT filtered here: the
         // user holding a key genuinely wants typematic, and only the resync
         // path is suppressed.
         if (down && event.resync && m_HeldKeys.count(vk)) return;
+
+        if (down && throughKeyboard && !event.resync && !m_HeldKeys.count(vk) &&
+            !(event.keyFlags & kFlagNonNormalized) && keyboardReadyLocked(event.gaming)) {
+            const systemkeyboard::Key key = systemkeyboard::keyOfScan(usScanCode(vk));
+            size_t usages = 0;
+            for (const auto& held : m_HidKeys)
+                usages += held.second.usage != 0 ? 1 : 0;
+            if (key.valid() && (key.usage == 0 || usages < systemkeyboard::kMaxKeys)) {
+                m_HidKeys[vk] = key;
+                m_HeldKeys.insert(vk);
+                if (sendKeyboardReportLocked()) {
+                    m_KeyboardWake.notify_all();
+                    return;
+                }
+                // Refused and let go of: this one goes the old way.
+                m_HidForgotten.erase(vk);
+            }
+        }
 
         if (down) {
             m_HeldKeys.insert(vk);
@@ -1284,6 +1377,9 @@ void Win32Input::injectKey(const InputEvent& event, bool down)
             for (auto it = m_CharKeys.begin(); it != m_CharKeys.end();)
                 it = it->second.vk == vk ? m_CharKeys.erase(it) : std::next(it);
         }
+        // A modifier SendInput holds counts in the report's rules: before it
+        // goes out, for a combination never to be seen whole.
+        if (!m_HidKeys.empty()) sendKeyboardReportLocked();
     }
     if (charKey) {
         WinKeyEvent up;
@@ -1440,7 +1536,7 @@ void Win32Input::injectChord(const InputEvent& event, char32_t ch, const WinKeyL
         InputEvent positional = event;
         positional.type = down ? InputEvent::Type::KeyDown : InputEvent::Type::KeyUp;
         positional.keyFlags = 0;
-        injectKey(positional, down);
+        injectKey(positional, down, false);
         return;
     }
     {
@@ -1562,6 +1658,10 @@ void Win32Input::injectMouseMove(int deltaX, int deltaY)
 void Win32Input::setAllowElevated(bool allow)
 {
     m_AllowElevated = allow;
+    if (allow) return;
+    // A viewer held back from here on holds nothing on a device.
+    std::lock_guard<std::mutex> lock(m_HeldMutex);
+    letGoKeyboardLocked();
 }
 
 void Win32Input::setGateCallback(InputGateCallback callback)
@@ -2035,6 +2135,163 @@ void Win32Input::dropVirtualMouseLocked()
         if (m_MouseButtons & systemmouse::buttonBit(button)) m_HeldButtons.erase(button);
     m_MouseButtons = 0;
     m_Mouse.reset();
+}
+
+bool Win32Input::keyboardReadyLocked(bool gaming)
+{
+    if (m_KeyboardQuit) return false;
+    systemkeyboard::Standing standing;
+    standing.mode = m_KeyboardMode;
+    standing.allowElevated = m_AllowElevated;
+    standing.gamingMode = gaming;
+    standing.onConsole = consoleIsOurs();
+    // Last, and only when it can still matter: it opens a desktop handle. One
+    // this worker may not read counts as not the normal one.
+    standing.onDefault = standing.mode != 0 && standing.allowElevated && standing.gamingMode &&
+                         standing.onConsole && platform::inputDesktopName() == kNormalDesktop;
+    if (!systemkeyboard::usable(standing)) return false;
+    if (!m_KeyboardAsked) {
+        m_KeyboardAsked = true;
+        m_KeyboardThread = std::thread([this, standing] { runKeyboardThread(standing); });
+        return false;
+    }
+    if (!m_Keyboard) return false;
+    if (m_KeyboardListed) return true;
+    // Windows drops a report until it has set the device up; listed, its
+    // keyboard stack is there. Any keyboard made through VHF counts, another
+    // stream's as well, as for the mouse.
+    constexpr int64_t kLookEveryUs = 50 * 1000;
+    const int64_t nowUs = steadyNowUs();
+    if (nowUs - m_KeyboardLookedUs < kLookEveryUs) return false;
+    m_KeyboardLookedUs = nowUs;
+    m_KeyboardListed = listDevices(RIM_TYPEKEYBOARD, true).virtualHid > 0;
+    if (m_KeyboardListed)
+        log::info("[native] input: Windows lists our keyboard, " +
+                  std::to_string((nowUs - m_KeyboardMadeUs) / 1000) + " ms after it was made");
+    return m_KeyboardListed;
+}
+
+void Win32Input::runKeyboardThread(systemkeyboard::Standing standing)
+{
+    const DevicesListed listed = listDevices(RIM_TYPEKEYBOARD, true);
+    if (!systemkeyboard::mayMake(standing, listed.known ? listed.physical : -1)) {
+        log::info(std::string("[native] input: no keyboard of our own: ") +
+                  (listed.known ? "the host has " + std::to_string(listed.physical) + " of its own"
+                                : std::string("Windows would not list the host's")));
+        return;
+    }
+    auto device = makeVirtualHid(false);
+    VirtualHidIdentity identity;
+    identity.descriptor = systemkeyboard::descriptor();
+    std::string why;
+    if (!device || !device->create(identity, why)) {
+        log::info("[native] input: no keyboard of our own (" + why +
+                  ": a driver older than 0.1.3.0, none, or a worker that is not elevated) — "
+                  "SendInput as before");
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_HeldMutex);
+        if (m_KeyboardQuit) return; // the device goes with this scope
+        m_Keyboard = std::move(device);
+        m_KeyboardMadeUs = steadyNowUs();
+        m_KeyboardLookedUs = 0;
+        m_KeyboardListed = false;
+    }
+    log::info(std::string("[native] input: ") +
+              (m_KeyboardMode > 0 ? "a keyboard of our own made beside the host's (vkeyboard=1)"
+                                  : "no keyboard on this host — a keyboard of our own made") +
+              ": games read a device; keys out of gaming mode, characters and the secure "
+              "desktop stay SendInput");
+    guardKeyboard();
+}
+
+void Win32Input::guardKeyboard()
+{
+    // How often a held key looks up. A desktop named otherwise is enough at once;
+    // one that cannot be read takes a second look, since OpenInputDesktop fails
+    // for a moment in the middle of a switch, and is what a worker that is not
+    // SYSTEM sees of the secure desktop.
+    constexpr auto kLookEvery = std::chrono::milliseconds(50);
+    constexpr int kUnreadable = 2;
+    int unreadable = 0;
+    std::unique_lock<std::mutex> lock(m_HeldMutex);
+    while (!m_KeyboardQuit && m_Keyboard) {
+        if (m_HidKeys.empty()) {
+            unreadable = 0;
+            m_KeyboardWake.wait(
+                lock, [this] { return m_KeyboardQuit || !m_Keyboard || !m_HidKeys.empty(); });
+            continue;
+        }
+        lock.unlock();
+        const bool console = consoleIsOurs();
+        const std::string current = platform::inputDesktopName();
+        lock.lock();
+        if (m_HidKeys.empty()) continue;
+        unreadable = current.empty() ? unreadable + 1 : 0;
+        const bool away = current.empty() ? unreadable >= kUnreadable : current != kNormalDesktop;
+        if (!console || away) {
+            // Counted, never named: what is held may be a password's key.
+            log::info("[native] input: our keyboard let go of " + std::to_string(m_HidKeys.size()) +
+                      " key(s): " + (console ? "the desktop switched" : "the console changed"));
+            letGoKeyboardLocked();
+            continue;
+        }
+        m_KeyboardWake.wait_for(lock, kLookEvery, [this] { return m_KeyboardQuit || !m_Keyboard; });
+    }
+}
+
+bool Win32Input::sendKeyboardReportLocked()
+{
+    if (!m_Keyboard) return false;
+    uint8_t modifiers = 0;
+    uint8_t others = 0;
+    std::vector<uint8_t> usages;
+    for (const auto& [vk, key] : m_HidKeys) {
+        (void)vk;
+        modifiers = static_cast<uint8_t>(modifiers | key.modifier);
+        if (key.usage) usages.push_back(key.usage);
+    }
+    for (int vk : m_HeldKeys)
+        if (!m_HidKeys.count(vk))
+            others =
+                static_cast<uint8_t>(others | systemkeyboard::keyOfScan(usScanCode(vk)).modifier);
+    const systemkeyboard::Report report = systemkeyboard::reportOf(modifiers, usages, others);
+    if (report == m_HidSent) return true;
+    if (!m_Keyboard->input(report.data(), report.size())) {
+        dropVirtualKeyboardLocked();
+        return false;
+    }
+    m_HidSent = report;
+    return true;
+}
+
+void Win32Input::letGoKeyboardLocked()
+{
+    for (const auto& [vk, key] : m_HidKeys) {
+        (void)key;
+        m_HeldKeys.erase(vk);
+        m_HidForgotten.insert(vk);
+    }
+    m_HidKeys.clear();
+    sendKeyboardReportLocked();
+}
+
+void Win32Input::dropVirtualKeyboardLocked()
+{
+    log::warning("[native] input: our keyboard refused a report (error " +
+                 std::to_string(::GetLastError()) + ") — let go of, SendInput from here on");
+    // Windows releases a device's keys when the device goes.
+    for (const auto& [vk, key] : m_HidKeys) {
+        (void)key;
+        m_HeldKeys.erase(vk);
+        m_HidForgotten.insert(vk);
+    }
+    m_HidKeys.clear();
+    m_HidSent = {};
+    m_Keyboard.reset();
+    m_KeyboardListed = false;
+    m_KeyboardWake.notify_all();
 }
 
 /// Whether our mouse is what shows the pointer: made, and listed by Windows —

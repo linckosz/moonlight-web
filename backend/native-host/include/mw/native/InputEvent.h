@@ -148,6 +148,12 @@ struct InputEvent
     /// it rides along so the two paths stay symmetrical.
     bool hold = false;
 
+    /// KeyDown / KeyUp: the client sent this key from its gaming mode. Absent
+    /// on an older frontend, on the touch keyboard's keys, and on what the
+    /// host makes up itself. The Windows backend's own keyboard goes by it
+    /// (input/SystemKeyboard.h).
+    bool gaming = false;
+
     /// True when this press comes from the client's held-state heartbeat rather
     /// than from the user doing something.
     ///

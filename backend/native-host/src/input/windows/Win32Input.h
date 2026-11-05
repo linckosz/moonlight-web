@@ -20,6 +20,7 @@
 #include "../../capture/windows/IWindowsCapture.h"
 #include "../IInputSink.h"
 #include "../RecentreDetector.h"
+#include "../SystemKeyboard.h"
 #include "../SystemMouse.h"
 #include "../VirtualHid.h"
 #include "../../core/ClickTrace.h"
@@ -94,6 +95,12 @@ public:
     /// too, for the bench (EncoderTuning::virtualMouse). Before start().
     void setVirtualMouse(int mode) { m_MouseMode = mode; }
 
+    /// The host's own keyboard (input/SystemKeyboard.h), made at the first key
+    /// that may go through it: -1 (the product) when the host has no keyboard
+    /// of its own, 0 never, 1 beside a real one too, for the bench
+    /// (EncoderTuning::virtualKeyboard). Before start().
+    void setVirtualKeyboard(int mode) { m_KeyboardMode = mode; }
+
     bool showsPointer() override;
 
 private:
@@ -111,7 +118,10 @@ private:
     /// switch that took the real state with it.
     void forgetHeld();
 
-    void injectKey(const InputEvent& event, bool down);
+    /// @p throughKeyboard false keeps it off our keyboard: a key the watchdog
+    /// above this module does not know of, which nothing would let go of in a
+    /// stall while Windows repeats it.
+    void injectKey(const InputEvent& event, bool down, bool throughKeyboard = true);
     /// One character the client's layout produced, pressed and released as the
     /// real key of the HOST's layout that carries it — so the scancode exists
     /// and games see a key. A character the layout reaches through a dead key
@@ -187,6 +197,75 @@ private:
     int64_t m_MouseLookedUs = 0;
     bool m_MouseListed = false;
     bool m_MouseUnlistedSaid = false;
+
+    // ── The host's own keyboard ─────────────────────────────────────────────
+    //
+    // On a host with no keyboard, a keyboard of our own, made through the driver
+    // (one fixed descriptor, input/SystemKeyboard.h): games that read Raw Input
+    // by device get one. A report is hardware input, which SendInput is not: it
+    // would reach the secure desktop, and Windows repeats a key it holds.
+    //
+    // What goes through it: the keys, by position, that the client sends from
+    // its gaming mode (InputEvent::gaming), for a viewer let into administrator
+    // windows, while the input desktop is the normal one, after the gate and the
+    // relay's policy, which stay the limit (the owner taking keys away from a
+    // guest under the stream comes down through InputWatchdog as releases). The
+    // gate's "uipi" is then a rule of ours: Windows no longer imposes it on a
+    // device.
+    //
+    // What stays SendInput:
+    //  - a key out of gaming mode. Those come as characters, typed by SendInput
+    //    under the modifiers held; a report lands after a SendInput sent at the
+    //    same moment, so a Shift through the device could land behind the letter
+    //    it was for.
+    //  - the secure desktop, a SYSTEM worker's way to a UAC prompt as before. The
+    //    desktop is read at each press: a switch in the instant after is not
+    //    caught there, and what is held then is let go of by the thread below.
+    //  - a character, in any mode: outside the watchdog, so nothing would let
+    //    go of it in a stall while Windows repeated it. Text as Unicode too.
+    //  - what the descriptor cannot say, a seventh key, a heartbeat's re-press,
+    //    a console that belongs to another session.
+    // A key goes up the way it went down.
+    //
+    // Made at the first key that may go through it, never before, on the thread
+    // below (some 60 ms, which a key should not wait for); until Windows lists
+    // it, keys stay SendInput. Never carried between streams (HidParking): held
+    // by a server that is not elevated, its handle could be duplicated by any
+    // process of the user's. It goes with the worker, and Windows lets go of
+    // what it held.
+
+    /// Whether a key, sent from gaming mode or not, may go through it now; asks
+    /// for it the first time. Under m_HeldMutex, on the input thread.
+    bool keyboardReadyLocked(bool gaming);
+    /// Makes it, then watches it while it holds a key: another session on the
+    /// console, or a desktop other than the normal one, and what it held is let
+    /// go of at once.
+    void runKeyboardThread(systemkeyboard::Standing standing);
+    void guardKeyboard();
+    /// The report for what is held, sent if it changed. False when the device
+    /// refused it: it is then let go of. Under m_HeldMutex.
+    bool sendKeyboardReportLocked();
+    /// An empty report, whatever the console or the desktop, and what it held
+    /// forgotten: a repeat or a release still on its way is dropped, or it would
+    /// land where the viewer never aimed it. Under m_HeldMutex.
+    void letGoKeyboardLocked();
+    void dropVirtualKeyboardLocked();
+
+    int m_KeyboardMode = -1;
+    /// Under m_HeldMutex, as all that follows but the thread's own handle.
+    std::unique_ptr<IVirtualHid> m_Keyboard;
+    /// The keys it holds, by the virtual key they came as; in m_HeldKeys too.
+    std::map<int, systemkeyboard::Key> m_HidKeys;
+    /// Keys let go of on the viewer's behalf, until their release comes.
+    std::set<int> m_HidForgotten;
+    systemkeyboard::Report m_HidSent{};
+    bool m_KeyboardAsked = false;
+    bool m_KeyboardQuit = false;
+    bool m_KeyboardListed = false;
+    int64_t m_KeyboardLookedUs = 0;
+    int64_t m_KeyboardMadeUs = 0;
+    std::condition_variable m_KeyboardWake;
+    std::thread m_KeyboardThread;
 
     /// Release everything still recorded as held. Called by stop().
     void releaseAll();

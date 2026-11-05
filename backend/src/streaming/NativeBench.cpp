@@ -287,6 +287,9 @@ const char* const kUsage =
     "  vmouse=0|1        the host's own mouse (Windows host): 1 made beside a real one too,\n"
     "                    0 never, Mouse Keys alone; the product: made when the host has\n"
     "                    no pointing device (plan souris HID virtuelle)\n"
+    "  vkeyboard=0|1     the host's own keyboard (Windows host): 1 made beside a real one too,\n"
+    "                    0 never; the product: made at the first key of the client's gaming\n"
+    "                    mode, when the host has no keyboard\n"
     "  inputadmit=0|1    for a moment after each press, every present the cadence gate\n"
     "                    skips goes out all the same, its grid untouched; 1 for every\n"
     "                    client, 0 for none; the product: a client whose tearing is\n"
@@ -668,6 +671,10 @@ bool applyTuningKey(const QString& key, const QString& value, mw::native::Encode
         const int v = value.toInt(&ok);
         ok = ok && (v == 0 || v == 1);
         tuning.virtualMouse = v;
+    } else if (key == "vkeyboard") {
+        const int v = value.toInt(&ok);
+        ok = ok && (v == 0 || v == 1);
+        tuning.virtualKeyboard = v;
     } else if (key == "inputadmit") {
         const int v = value.toInt(&ok);
         ok = ok && (v == 0 || v == 1);

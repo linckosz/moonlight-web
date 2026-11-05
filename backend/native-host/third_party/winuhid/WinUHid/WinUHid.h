@@ -300,6 +300,12 @@ WINUHID_API BOOL WinUHidIsServicingEvents(PWINUHID_DEVICE Device);
 #define MOONLIGHTWEB_VHID_FIX_SYSTEM_MOUSE 0x00000002
 
 //
+// It accepts the host's own keyboard too, one fixed descriptor compared byte
+// for byte (04/11/2026). An older driver refuses it with ERROR_ACCESS_DENIED.
+//
+#define MOONLIGHTWEB_VHID_FIX_SYSTEM_KEYBOARD 0x00000004
+
+//
 // The MOONLIGHTWEB_VHID_FIX_* flags of the driver loaded when the device was
 // created or adopted; 0 for a driver older than them.
 //

@@ -135,7 +135,7 @@ public:
         // names the device and needs its enumerator: without one, no device at
         // all (04/10). VHF puts its HID_DEVICE_SYSTEM_VHF, the id hidvhf.inf
         // installs, before both (bench of 20/10). A device with no vendor id
-        // (the host's own mouse) keeps VHF's.
+        // (the host's own mouse, its own keyboard) keeps VHF's.
         wchar_t ids[96] = {};
         if (id.vendorId) {
             const int n = swprintf_s(ids, L"VHF\\MOONLIGHTWEB_VHID&VID_%04X&PID_%04X", id.vendorId,

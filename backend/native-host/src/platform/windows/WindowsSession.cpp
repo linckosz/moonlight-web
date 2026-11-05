@@ -559,6 +559,7 @@ public:
         // On a host with no pointing device, a mouse of its own: the pointer,
         // and a device for games (SystemMouse.h). Mouse Keys when it cannot.
         sink->setVirtualMouse(m_Config.tuning.virtualMouse);
+        sink->setVirtualKeyboard(m_Config.tuning.virtualKeyboard);
         std::string inputError;
         if (sink->start(inputError)) {
             std::lock_guard<std::mutex> lock(m_InputMutex);

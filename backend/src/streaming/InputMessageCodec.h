@@ -669,8 +669,10 @@ inline void sendKey(IMediaEngine& engine, const QJsonObject& msg, bool down, boo
     }
     // `hold`: a movement key the client wants kept down through a brief stall
     // instead of released at the short grace period (see the shim).
+    engine.setKeyFromGamingMode(msg["gaming"].toBool(false));
     engine.sendKeyEvent(plan.keyCode, down, positionModifiers(msg, mode), plan.flags,
                         withHold && msg["hold"].toBool(false));
+    engine.setKeyFromGamingMode(false);
 }
 
 /// The key a US keyboard types @p c with, and whether it takes Shift. False for

@@ -3,7 +3,7 @@
 #
 # WinUHid's UMDF2 driver over Windows' Virtual HID Framework (third_party/winuhid, MIT), under our
 # own names, with the engine's descriptor validation inside (DescriptorCheck.cpp), and the host's own
-# mouse as its one exception (input/SystemMouse.cpp).
+# mouse and keyboard as its two exceptions (input/SystemMouse.cpp, input/SystemKeyboard.cpp).
 #
 # Nothing is installed on the machine: the WDK and the SDK come from NuGet (packages.config, restored
 # into packages/), and the WDK tools are called one by one — tracewpp, cl, link, stampinf, Inf2Cat,
@@ -46,8 +46,9 @@ param(
     # The INF's DriverVer, with the build's date. Raise it with every driver change: of two packages
     # for the node, Windows installs the newer DriverVer, and two builds of one day tie on the date.
     # 0.1.0.0 was the first (11/10/2026); 0.1.1.0 fixes the lost GET_NEXT_EVENT wakeup; 0.1.2.0
-    # takes the host's own mouse (input/SystemMouse.h, 19/10/2026).
-    [string]$Version = '0.1.2.0',
+    # takes the host's own mouse (input/SystemMouse.h, 19/10/2026); 0.1.3.0 its own keyboard
+    # (input/SystemKeyboard.h, 04/11/2026).
+    [string]$Version = '0.1.3.0',
     [ValidateSet('Test', 'Own', 'Product')]
     [string]$Sign = 'Test',
     [string]$CertThumbprint = '',
@@ -155,14 +156,15 @@ $common = @('/nologo', '/c', '/W4', '/WX-', '/Zi', '/guard:cf', '/GS', '/Gy', '/
 if ($Configuration -eq 'Release') { $common += @('/O2', '/MT', '/DNDEBUG') } else { $common += @('/Od', '/MTd', '/DDBG=1') }
 Run cl.exe ($common + @('/TC', (Join-Path $winuhid 'WinUHid.c')))
 Run cl.exe ($common + @('/TP', '/std:c++17', '/EHsc', (Join-Path $here 'DescriptorCheck.cpp'),
-        (Join-Path $engineSrc 'input\HidDescriptor.cpp'), (Join-Path $engineSrc 'input\SystemMouse.cpp')))
+        (Join-Path $engineSrc 'input\HidDescriptor.cpp'), (Join-Path $engineSrc 'input\SystemMouse.cpp'),
+        (Join-Path $engineSrc 'input\SystemKeyboard.cpp')))
 
 Step 'link'
 $dll = Join-Path $package 'MoonlightWebVHid.dll'
 Run link.exe @('/nologo', '/DLL', '/DEBUG', '/guard:cf', '/DYNAMICBASE', '/NXCOMPAT', '/OPT:REF',
     '/OPT:ICF', '/CETCOMPAT', "/OUT:$dll", "/PDB:$obj\MoonlightWebVHid.pdb",
     "/IMPLIB:$obj\MoonlightWebVHid.lib", "$obj\WinUHid.obj", "$obj\DescriptorCheck.obj",
-    "$obj\HidDescriptor.obj", "$obj\SystemMouse.obj",
+    "$obj\HidDescriptor.obj", "$obj\SystemMouse.obj", "$obj\SystemKeyboard.obj",
     'WdfDriverStubUm.lib', 'VhfUm.lib', 'ntdll.lib', 'kernel32.lib', 'advapi32.lib')
 
 # ── INF and catalog ─────────────────────────────────────────────────────────

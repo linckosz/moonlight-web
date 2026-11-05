@@ -1253,6 +1253,7 @@ void NativeMediaEngine::sendKeyEvent(short keyCode, bool down, char modifiers, c
     event.modifiersKnown = true;
     event.keyFlags = static_cast<uint8_t>(flags);
     event.hold = hold;
+    event.gaming = keyFromGamingMode();
     HeldKey k;
     k.keyCode = keyCode;
     k.modifiers = modifiers;

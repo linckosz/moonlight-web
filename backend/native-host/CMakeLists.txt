@@ -34,6 +34,8 @@ add_library(mw-native-host STATIC
     # The host's own mouse on a Windows host with no pointing device: its one
     # fixed descriptor and its reports. Pure, tested anywhere.
     src/input/SystemMouse.cpp
+    # Its own keyboard, on a Windows host with none: the same, and its rules.
+    src/input/SystemKeyboard.cpp
     src/input/HidPid.cpp
     # A wheel's force feedback as the game left it, replayed to the next page.
     src/input/HidFfbJournal.cpp
@@ -590,6 +592,7 @@ if(MW_BUILD_TESTS)
         tests/test_ds4_mapping.cpp
         tests/test_hid_descriptor.cpp
         tests/test_system_mouse.cpp
+        tests/test_system_keyboard.cpp
         tests/test_hid_passthrough.cpp
         tests/test_hid_pid.cpp
         tests/test_hid_evdev.cpp

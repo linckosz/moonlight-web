@@ -69,8 +69,8 @@ inline QString deviceName()
 }
 
 /// The package under backend/installer/drivers/vhid, as build.ps1 -Sign Own
-/// made it on 19/10/2026 (driver 0.1.2.0: the host's own mouse, after the
-/// event wakeup of 0.1.1.0), pinned file by file: any other bytes, and the
+/// made it on 05/11/2026 (driver 0.1.3.0: the host's own keyboard, after its
+/// own mouse in 0.1.2.0), pinned file by file: any other bytes, and the
 /// install refuses. A new driver means a new package there, a higher -Version,
 /// and new pins here, all printed by build.ps1. A test-signed package is never
 /// bundled. x64 only: Windows on ARM takes a driver package only signed by
@@ -80,11 +80,11 @@ inline const std::vector<DriverPackage::File>& driverFiles()
 {
     static const std::vector<DriverPackage::File> files = {
         {"MoonlightWebVHid.inf",
-         "c9b5843f81fd8e3e128c90eaac76b7724760862812b97acc2f212e8f6db75544"},
+         "368432013ac8999760910e89160e86cf53212338982098716d04f15d57cedf60"},
         {"MoonlightWebVHid.cat",
-         "b680ce2a6b8be715228b391e9c492f5d7e7f3e5ba068b9e805fea3800534b1db"},
+         "f12ce32191cfc56bc3f41eef1a2a73cb1ef60de62fd45a85578540972755d18a"},
         {"MoonlightWebVHid.dll",
-         "0a603918f1b9321badfb1dceaa56fb53c3cfec749db06634d03a3bdb1f2ec1c1"},
+         "c0f5c94aa8df60c36f00c5a116406e86bf2aacc4fc392a20cf6dd1917f1d209b"},
     };
     return files;
 }
