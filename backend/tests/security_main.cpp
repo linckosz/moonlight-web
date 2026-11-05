@@ -21,6 +21,7 @@ void run_api_csrf_tests();
 void run_share_manager_tests();
 void run_pairing_binding_tests();
 void run_owner_proof_tests();
+void run_pin_binding_tests();
 void run_gamepad_driver_tests();
 void run_virtual_display_tests();
 void run_driver_package_tests();
@@ -40,6 +41,7 @@ int main(int argc, char** argv)
     run_share_manager_tests();
     run_pairing_binding_tests();
     run_owner_proof_tests();
+    run_pin_binding_tests();
     run_gamepad_driver_tests();
     run_virtual_display_tests();
     run_driver_package_tests();

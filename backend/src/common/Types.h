@@ -61,6 +61,11 @@ struct HttpRequest
                                 // presented and its offer was signed over. A session
                                 // bound to another key is refused on it
                                 // (HttpServer::tunnelKeyRefused). Empty off the tunnel.
+    QByteArray tlsSpki;         // On a TLS socket: the SubjectPublicKeyInfo (DER) of
+                                // the certificate THIS connection was served, set by
+                                // HttpServer at the handshake. What the host key vouches
+                                // for (MW-TLS-v1) and a PIN is bound to (MW-PIN-v1).
+                                // Empty on plain HTTP and on the tunnel.
     bool malformed = false;     // The request line/headers could not be trusted —
                                 // currently set when the percent-decoded path
                                 // carries control characters (CR/LF smuggled in

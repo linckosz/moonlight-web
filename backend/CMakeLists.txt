@@ -290,6 +290,7 @@ target_link_libraries(qmdnsengine PUBLIC Qt6::Network)
 add_executable(mw-server
     src/main.cpp
     src/common/PairingCrypto.cpp
+    src/common/PinBinding.cpp
     src/streaming/SdpFingerprint.cpp
     src/server/AuthManager.cpp
     src/server/AppSettings.cpp
@@ -310,6 +311,7 @@ add_executable(mw-server
     src/server/SessionPool.cpp
     src/server/routes/AuthRoutes.cpp
     src/server/routes/AuthStatusRoute.cpp
+    src/server/routes/PinProofRoutes.cpp
     src/server/routes/HostRoutes.cpp
     src/server/routes/HostAppRoutes.cpp
     src/server/HostAppImage.cpp
@@ -771,6 +773,11 @@ if(MW_BUILD_TESTS)
         # paired with, before it hands out a guest's way in.
         tests/test_owner_proof.cpp
         src/server/OwnerProof.cpp
+        # MW-PIN-v1 and MW-TLS-v1: the PIN proved without being sent and bound to
+        # its channel (SPAKE2, RFC 9382's vectors), a TLS key vouched for by the
+        # host key. The same reason as MW-BIND: they decide who may pair.
+        tests/test_pin_binding.cpp
+        src/common/PinBinding.cpp
         src/common/Logger.cpp
     )
     set_target_properties(mw-security-tests PROPERTIES AUTOMOC ON)

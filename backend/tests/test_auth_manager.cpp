@@ -4,15 +4,575 @@
 #include "test_framework.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
+#include "common/PinBinding.h"
 #include "common/Types.h"
+#include "network/GeoIpService.h"
 #include "server/AuthManager.h"
 #include "server/AppSettings.h"
+#include "server/RestRouter.h"
+#include "server/routes/PinProofRoutes.h"
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QList>
 #include <QTemporaryDir>
+
+#include <openssl/bn.h>
+#include <openssl/ec.h>
+#include <openssl/obj_mac.h>
+
+#include <optional>
+#include <utility>
+
+namespace {
+
+// ── MW-PIN-v1 and MW-TLS-v1 through their routes ───────────────────────────
+
+/// A request as HttpServer hands it to a route: from @p peer, on a TLS socket
+/// that was served the key @p served (none: plain HTTP).
+HttpRequest requestFrom(const QString& peer, const QByteArray& served)
+{
+    HttpRequest req;
+    req.clientAddress = peer;
+    req.tlsSpki = served;
+    return req;
+}
+
+HttpResponse dispatch(const RestRouter& router, HttpRequest req, const QString& method,
+                      const QString& path, const QJsonObject& body = {})
+{
+    req.method = method;
+    req.path = path;
+    if (!body.isEmpty()) req.body = QJsonDocument(body).toJson(QJsonDocument::Compact);
+    HttpResponse reply;
+    reply.statusCode = 0; // a route that never answers shows as 0
+    router.dispatchAsync(req, [&reply](HttpResponse resp) { reply = std::move(resp); });
+    return reply;
+}
+
+QJsonObject bodyOf(const HttpResponse& reply)
+{
+    return QJsonDocument::fromJson(reply.body).object();
+}
+
+QString encoded(const QByteArray& bytes)
+{
+    return QString::fromLatin1(bytes.toBase64());
+}
+
+QByteArray decoded(const QJsonValue& value)
+{
+    return QByteArray::fromBase64(value.toString().toLatin1());
+}
+
+QString urlText(const QByteArray& bytes)
+{
+    return QString::fromLatin1(
+        bytes.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+}
+
+/// A TLS key as the routes name it: the SHA-256 of its SPKI, base64url.
+QString keyText(const QByteArray& spki)
+{
+    return urlText(QCryptographicHash::hash(spki, QCryptographicHash::Sha256));
+}
+
+/// A fresh P-256 public key, SPKI DER.
+QByteArray newKey()
+{
+    return PairingCrypto::publicKeySpkiFromPrivatePem(PairingCrypto::generatePrivateKeyPem());
+}
+
+/// w·M, uncompressed, M as RFC 9382 gives it: the first share under which, with
+/// the right w, the host's K is the identity.
+QByteArray wTimesM(const QByteArray& w)
+{
+    const QByteArray m = QByteArray::fromHex(
+        QByteArrayLiteral("02886e2f97ace46e55ba9dd7242579f2993b64e16ef3dcab95afd497333d8fa12f"));
+    QByteArray out;
+    EC_GROUP* group = EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1);
+    EC_POINT* point = group ? EC_POINT_new(group) : nullptr;
+    EC_POINT* product = group ? EC_POINT_new(group) : nullptr;
+    BIGNUM* scalar = BN_bin2bn(reinterpret_cast<const unsigned char*>(w.constData()),
+                               static_cast<int>(w.size()), nullptr);
+    unsigned char buf[65];
+    if (point && product && scalar &&
+        EC_POINT_oct2point(group, point, reinterpret_cast<const unsigned char*>(m.constData()),
+                           static_cast<size_t>(m.size()), nullptr) == 1 &&
+        EC_POINT_mul(group, product, nullptr, point, scalar, nullptr) == 1 &&
+        EC_POINT_point2oct(group, product, POINT_CONVERSION_UNCOMPRESSED, buf, sizeof buf,
+                           nullptr) == sizeof buf)
+        out = QByteArray(reinterpret_cast<const char*>(buf), sizeof buf);
+    BN_free(scalar);
+    EC_POINT_free(product);
+    EC_POINT_free(point);
+    EC_GROUP_free(group);
+    return out;
+}
+
+/// The client's half of a run: the PIN it typed, its MW-BIND key, and the
+/// channel it is on as it sees it.
+class PinClient
+{
+public:
+    PinClient(const QString& typed, QByteArray spki, QByteArray channel)
+        : m_W(PinBinding::pinScalar(typed))
+        , m_A(PinBinding::shareA(m_W))
+        , m_Key(std::move(spki))
+        , m_Channel(std::move(channel))
+    {}
+
+    const QByteArray& key() const { return m_Key; }
+
+    QJsonObject startBody() const
+    {
+        return QJsonObject{{"protocol", QString::fromLatin1(PinBinding::PROTOCOL)},
+                           {"public_key", encoded(m_Key)},
+                           {"pa", m_A ? encoded(m_A->element) : QString()}};
+    }
+
+    /// Its keys once the host's first answer @p start is in, from @p hostKey.
+    std::optional<PinBinding::Keys> keysFor(const QJsonObject& start,
+                                            const QByteArray& hostKey) const
+    {
+        if (!m_A) return std::nullopt;
+        return PinBinding::finishA(m_W, *m_A, decoded(start.value(QStringLiteral("pb"))), m_Key,
+                                   hostKey, PinBinding::associatedData(m_Channel));
+    }
+
+private:
+    QByteArray m_W;
+    std::optional<PinBinding::Share> m_A;
+    QByteArray m_Key;
+    QByteArray m_Channel;
+};
+
+QJsonObject finishBody(const QJsonObject& start, const QByteArray& confirm)
+{
+    return QJsonObject{{"exchange", start.value(QStringLiteral("exchange"))},
+                       {"confirm", encoded(confirm)},
+                       {"machine_name", "Living room TV"},
+                       {"remember", true}};
+}
+
+/// A PIN that is not @p pin.
+QString otherPin(const QString& pin)
+{
+    QString other = pin;
+    other[0] = pin.at(0) == QLatin1Char('0') ? QLatin1Char('1') : QLatin1Char('0');
+    return other;
+}
+
+bool isRoutesOwn404(const HttpResponse& reply)
+{
+    return reply.statusCode == 404 && !bodyOf(reply)
+                                           .value(QStringLiteral("error"))
+                                           .toString()
+                                           .startsWith(QStringLiteral("Not Found"));
+}
+
+void pinProofRouteTests()
+{
+    SECTION("MW-PIN-v1 and MW-TLS-v1 — through their routes");
+
+    QTemporaryDir tmp;
+    AppSettings settings;
+    settings.m_FilePath = tmp.path() + "/routes.json";
+    AuthManager auth(&settings);
+    GeoIpService geo(nullptr); // no lookup leaves the machine
+    const QByteArray hostPem = PairingCrypto::generatePrivateKeyPem();
+    const QByteArray hostKey = PairingCrypto::publicKeySpkiFromPrivatePem(hostPem);
+    const QString hostId = PairingCrypto::keyId(hostKey);
+    RestRouter router;
+    registerPinProofRoutes(router, auth, geo, hostPem);
+
+    // The TLS key this host's sockets serve, and the channel of a client that
+    // sees it.
+    const QByteArray served = newKey();
+    const QByteArray seen = PinBinding::tlsChannel(served);
+    const QString post = QStringLiteral("POST");
+    const QString start = QStringLiteral("/api/auth/pin/start");
+    const QString finish = QStringLiteral("/api/auth/pin/finish");
+    const QString proof = QStringLiteral("/api/auth/tls-proof");
+
+    // A run from start to finish: counted at its start and cleared by its proof,
+    // the session made with the run's key bound to it, this host's confirmation
+    // and identity in the answer. A second /finish of the same run finds nothing.
+    {
+        const QString pin = auth.generatePin();
+        const QString peer = QStringLiteral("198.51.100.60");
+        const PinClient tv(pin, newKey(), seen);
+        const HttpResponse first =
+            dispatch(router, requestFrom(peer, served), post, start, tv.startBody());
+        CHECK_EQ(first.statusCode, 200);
+        const QJsonObject s = bodyOf(first);
+        CHECK_EQ(s.value(QStringLiteral("protocol")).toString(), QStringLiteral("MW-PIN-v1"));
+        CHECK_EQ(decoded(s.value(QStringLiteral("host_public_key"))), hostKey);
+        CHECK_EQ(s.value(QStringLiteral("host_id")).toString(), hostId);
+        CHECK_EQ(s.value(QStringLiteral("tls_key")).toString(), keyText(served));
+        CHECK_EQ(auth.failedAttemptCount(peer), 1);
+        const std::optional<PinBinding::Keys> keys = tv.keysFor(s, hostKey);
+        CHECK(keys.has_value());
+        if (keys) {
+            const QJsonObject body = finishBody(s, keys->confirmA);
+            const HttpResponse done =
+                dispatch(router, requestFrom(peer, served), post, finish, body);
+            CHECK_EQ(done.statusCode, 200);
+            const QJsonObject f = bodyOf(done);
+            CHECK_EQ(decoded(f.value(QStringLiteral("confirm"))), keys->confirmB);
+            CHECK_EQ(f.value(QStringLiteral("pairing_key")).toString(), QStringLiteral("bound"));
+            CHECK_EQ(decoded(f.value(QStringLiteral("host_public_key"))), hostKey);
+            CHECK_EQ(f.value(QStringLiteral("host_id")).toString(), hostId);
+            CHECK(f.value(QStringLiteral("pin_regenerated")).toBool());
+            const QString cookie = done.headers.value(QStringLiteral("Set-Cookie"));
+            CHECK(cookie.startsWith(QStringLiteral("mw_session=")));
+            const QString token = cookie.section(QLatin1Char(';'), 0, 0).mid(11);
+            CHECK(auth.validateSession(token));
+            CHECK_EQ(auth.sessionPairingKey(token), tv.key());
+            CHECK_EQ(auth.failedAttemptCount(peer), 0);
+
+            const HttpResponse again =
+                dispatch(router, requestFrom(peer, served), post, finish, body);
+            CHECK_EQ(again.statusCode, 410);
+            CHECK_EQ(bodyOf(again).value(QStringLiteral("error")).toString(),
+                     QStringLiteral("exchange_unknown"));
+        }
+        CHECK_EQ(dispatch(router, requestFrom(peer, served), post, finish,
+                          finishBody(QJsonObject{{"exchange", "unknown"}}, QByteArray(32, '\1')))
+                     .statusCode,
+                 410);
+    }
+
+    // Only the address that began a run can finish it; it is still there for that one.
+    {
+        const QString pin = auth.generatePin();
+        const QString own = QStringLiteral("198.51.100.61");
+        const PinClient tv(pin, newKey(), seen);
+        const QJsonObject s =
+            bodyOf(dispatch(router, requestFrom(own, served), post, start, tv.startBody()));
+        const std::optional<PinBinding::Keys> keys = tv.keysFor(s, hostKey);
+        CHECK(keys.has_value());
+        if (keys) {
+            const QJsonObject body = finishBody(s, keys->confirmA);
+            CHECK_EQ(dispatch(router, requestFrom(QStringLiteral("198.51.100.62"), served), post,
+                              finish, body)
+                         .statusCode,
+                     410);
+            CHECK_EQ(dispatch(router, requestFrom(own, served), post, finish, body).statusCode,
+                     200);
+        }
+    }
+
+    // A wrong PIN, and the right one whose confirmation changed by one bit on its
+    // way: 401 as a wrong PIN, counted once, and the run spent.
+    {
+        const QString pin = auth.generatePin();
+        const QString peer = QStringLiteral("198.51.100.63");
+        const PinClient wrong(otherPin(pin), newKey(), seen);
+        const QJsonObject s =
+            bodyOf(dispatch(router, requestFrom(peer, served), post, start, wrong.startBody()));
+        const std::optional<PinBinding::Keys> keys = wrong.keysFor(s, hostKey);
+        CHECK(keys.has_value());
+        if (keys) {
+            const HttpResponse refused = dispatch(router, requestFrom(peer, served), post, finish,
+                                                  finishBody(s, keys->confirmA));
+            CHECK_EQ(refused.statusCode, 401);
+            CHECK_EQ(bodyOf(refused).value(QStringLiteral("error")).toString(),
+                     QStringLiteral("invalid_pin"));
+            CHECK_EQ(bodyOf(refused).value(QStringLiteral("remaining")).toInt(), 2);
+        }
+        CHECK_EQ(auth.failedAttemptCount(peer), 1);
+
+        const QString flippedPeer = QStringLiteral("198.51.100.64");
+        const PinClient tv(pin, newKey(), seen);
+        const QJsonObject s2 =
+            bodyOf(dispatch(router, requestFrom(flippedPeer, served), post, start, tv.startBody()));
+        const std::optional<PinBinding::Keys> keys2 = tv.keysFor(s2, hostKey);
+        CHECK(keys2.has_value());
+        if (keys2) {
+            QByteArray flipped = keys2->confirmA;
+            flipped[0] = static_cast<char>(flipped.at(0) ^ 1);
+            CHECK_EQ(dispatch(router, requestFrom(flippedPeer, served), post, finish,
+                              finishBody(s2, flipped))
+                         .statusCode,
+                     401);
+            CHECK_EQ(dispatch(router, requestFrom(flippedPeer, served), post, finish,
+                              finishBody(s2, keys2->confirmA))
+                         .statusCode,
+                     410);
+        }
+        CHECK_EQ(auth.failedAttemptCount(flippedPeer), 1);
+    }
+
+    // Elements replaced on their way by other points of the group, under the right
+    // PIN: pA on its way in, pB on its way out. Neither run proves.
+    {
+        const QString pin = auth.generatePin();
+        const QByteArray w = PinBinding::pinScalar(pin);
+        const std::optional<PinBinding::Share> otherA = PinBinding::shareA(w);
+        const std::optional<PinBinding::Share> otherB = PinBinding::shareB(w);
+        CHECK(otherA.has_value() && otherB.has_value());
+        if (otherA && otherB) {
+            const QString inPeer = QStringLiteral("198.51.100.65");
+            const PinClient tv(pin, newKey(), seen);
+            QJsonObject replaced = tv.startBody();
+            replaced[QStringLiteral("pa")] = encoded(otherA->element);
+            const QJsonObject s =
+                bodyOf(dispatch(router, requestFrom(inPeer, served), post, start, replaced));
+            const std::optional<PinBinding::Keys> keys = tv.keysFor(s, hostKey);
+            CHECK(keys && dispatch(router, requestFrom(inPeer, served), post, finish,
+                                   finishBody(s, keys->confirmA))
+                                  .statusCode == 401);
+
+            const QString outPeer = QStringLiteral("198.51.100.66");
+            const PinClient tv2(pin, newKey(), seen);
+            QJsonObject s2 = bodyOf(
+                dispatch(router, requestFrom(outPeer, served), post, start, tv2.startBody()));
+            s2[QStringLiteral("pb")] = encoded(otherB->element);
+            const std::optional<PinBinding::Keys> keys2 = tv2.keysFor(s2, hostKey);
+            CHECK(keys2 && dispatch(router, requestFrom(outPeer, served), post, finish,
+                                    finishBody(s2, keys2->confirmA))
+                                   .statusCode == 401);
+        }
+    }
+
+    // The right PIN through something that ends the client's TLS with a key of its
+    // own: /start names the key this socket served, which the client can compare
+    // with the one it sees, and the run does not prove.
+    {
+        const QString pin = auth.generatePin();
+        const QString peer = QStringLiteral("198.51.100.67");
+        const QByteArray between = newKey();
+        const PinClient tv(pin, newKey(), PinBinding::tlsChannel(between));
+        const QJsonObject s =
+            bodyOf(dispatch(router, requestFrom(peer, served), post, start, tv.startBody()));
+        CHECK_EQ(s.value(QStringLiteral("tls_key")).toString(), keyText(served));
+        CHECK(s.value(QStringLiteral("tls_key")).toString() != keyText(between));
+        const std::optional<PinBinding::Keys> keys = tv.keysFor(s, hostKey);
+        CHECK(keys && dispatch(router, requestFrom(peer, served), post, finish,
+                               finishBody(s, keys->confirmA))
+                              .statusCode == 401);
+    }
+
+    // The PIN changed between the two rounds: shown anew, or spent by another run.
+    {
+        const QString pin = auth.generatePin();
+        const QString peer = QStringLiteral("198.51.100.68");
+        const PinClient tv(pin, newKey(), seen);
+        const QJsonObject s =
+            bodyOf(dispatch(router, requestFrom(peer, served), post, start, tv.startBody()));
+        const std::optional<PinBinding::Keys> keys = tv.keysFor(s, hostKey);
+        // Another PIN: one draw in a million gives the same one back.
+        while (auth.generatePin() == pin) {}
+        CHECK(keys && dispatch(router, requestFrom(peer, served), post, finish,
+                               finishBody(s, keys->confirmA))
+                              .statusCode == 401);
+
+        const QString shown = auth.generatePin();
+        const QString one = QStringLiteral("198.51.100.69");
+        const QString two = QStringLiteral("198.51.100.70");
+        const PinClient first(shown, newKey(), seen);
+        const PinClient second(shown, newKey(), seen);
+        const QJsonObject s1 =
+            bodyOf(dispatch(router, requestFrom(one, served), post, start, first.startBody()));
+        const QJsonObject s2 =
+            bodyOf(dispatch(router, requestFrom(two, served), post, start, second.startBody()));
+        const std::optional<PinBinding::Keys> k1 = first.keysFor(s1, hostKey);
+        const std::optional<PinBinding::Keys> k2 = second.keysFor(s2, hostKey);
+        CHECK(k1.has_value() && k2.has_value());
+        if (k1 && k2) {
+            CHECK_EQ(dispatch(router, requestFrom(two, served), post, finish,
+                              finishBody(s2, k2->confirmA))
+                         .statusCode,
+                     200);
+            // The PIN made after it: one draw in a million is the same one.
+            if (auth.currentPin() != shown)
+                CHECK_EQ(dispatch(router, requestFrom(one, served), post, finish,
+                                  finishBody(s1, k1->confirmA))
+                             .statusCode,
+                         401);
+        }
+    }
+
+    // The share w·M under the right PIN: answered in the same shape as any run,
+    // counted the same, and never proved.
+    {
+        const QString pin = auth.generatePin();
+        const QString probePeer = QStringLiteral("198.51.100.71");
+        const PinClient tv(pin, newKey(), seen);
+        QJsonObject probe = tv.startBody();
+        probe[QStringLiteral("pa")] = encoded(wTimesM(PinBinding::pinScalar(pin)));
+        const HttpResponse odd =
+            dispatch(router, requestFrom(probePeer, served), post, start, probe);
+        const HttpResponse plain =
+            dispatch(router, requestFrom(QStringLiteral("198.51.100.72"), served), post, start,
+                     tv.startBody());
+        CHECK_EQ(odd.statusCode, 200);
+        CHECK_EQ(plain.statusCode, 200);
+        const QJsonObject a = bodyOf(odd);
+        const QJsonObject b = bodyOf(plain);
+        CHECK_EQ(a.keys(), b.keys());
+        CHECK_EQ(decoded(a.value(QStringLiteral("pb"))).size(),
+                 decoded(b.value(QStringLiteral("pb"))).size());
+        CHECK_EQ(a.value(QStringLiteral("exchange")).toString().size(),
+                 b.value(QStringLiteral("exchange")).toString().size());
+        CHECK_EQ(a.value(QStringLiteral("tls_key")).toString(), keyText(served));
+        CHECK_EQ(auth.failedAttemptCount(probePeer), 1);
+        CHECK_EQ(dispatch(router, requestFrom(probePeer, served), post, finish,
+                          finishBody(a, QByteArray(32, '\0')))
+                     .statusCode,
+                 401);
+        CHECK_EQ(auth.failedAttemptCount(probePeer), 1);
+    }
+
+    // Where the client does not see the key this socket served, both routes
+    // answer 404 as an older host does, and count nothing: plain HTTP, a peer on
+    // this machine, a request a proxy forwarded.
+    {
+        const PinClient tv(auth.generatePin(), newKey(), seen);
+        const QString direct = QStringLiteral("198.51.100.73");
+        const QString forwarded = QStringLiteral("198.51.100.74");
+        QList<HttpRequest> unseen;
+        unseen << requestFrom(direct, QByteArray())
+               << requestFrom(QStringLiteral("127.0.0.1"), served)
+               << requestFrom(QStringLiteral("::1"), served)
+               << requestFrom(QStringLiteral("::ffff:127.0.0.1"), served);
+        for (const char* name : {"cf-connecting-ip", "x-forwarded-for", "forwarded", "x-real-ip"}) {
+            HttpRequest req = requestFrom(forwarded, served);
+            req.headers.insert(QString::fromLatin1(name), QStringLiteral("203.0.113.9"));
+            unseen << req;
+        }
+        for (const HttpRequest& req : unseen) {
+            CHECK(isRoutesOwn404(dispatch(router, req, post, start, tv.startBody())));
+            HttpRequest asked = req;
+            asked.queryParams.insert(QStringLiteral("nonce"),
+                                     urlText(PairingCrypto::generateNonce()));
+            CHECK(isRoutesOwn404(dispatch(router, asked, QStringLiteral("GET"), proof)));
+        }
+        CHECK_EQ(auth.failedAttemptCount(direct), 0);
+        CHECK_EQ(auth.failedAttemptCount(forwarded), 0);
+        CHECK_EQ(auth.failedAttemptCount(QStringLiteral("203.0.113.9")), 0);
+    }
+
+    // Through the tunnel: the line's channel, the key its hello named and no other,
+    // no TLS key in the answer, and no TLS proof.
+    {
+        const QString pin = auth.generatePin();
+        const QString peer = QStringLiteral("198.51.100.75");
+        const PinClient tv(pin, newKey(), PinBinding::lineChannel(hostKey));
+        HttpRequest line = requestFrom(peer, QByteArray());
+        line.viaTunnel = true;
+        line.tunnelKey = newKey();
+        CHECK_EQ(dispatch(router, line, post, start, tv.startBody()).statusCode, 400);
+        CHECK_EQ(auth.failedAttemptCount(peer), 0);
+
+        line.tunnelKey = tv.key();
+        const HttpResponse first = dispatch(router, line, post, start, tv.startBody());
+        CHECK_EQ(first.statusCode, 200);
+        const QJsonObject s = bodyOf(first);
+        CHECK(!s.contains(QStringLiteral("tls_key")));
+        const std::optional<PinBinding::Keys> keys = tv.keysFor(s, hostKey);
+        CHECK(keys &&
+              dispatch(router, line, post, finish, finishBody(s, keys->confirmA)).statusCode ==
+                  200);
+
+        HttpRequest asked = line;
+        asked.queryParams.insert(QStringLiteral("nonce"), urlText(PairingCrypto::generateNonce()));
+        CHECK(isRoutesOwn404(dispatch(router, asked, QStringLiteral("GET"), proof)));
+    }
+
+    // What /start refuses up front is refused before anything is counted.
+    {
+        const PinClient tv(auth.generatePin(), newKey(), seen);
+        const QString peer = QStringLiteral("198.51.100.79");
+        QJsonObject unknown = tv.startBody();
+        unknown[QStringLiteral("protocol")] = QStringLiteral("MW-PIN-v0");
+        QJsonObject noKey = tv.startBody();
+        noKey[QStringLiteral("public_key")] = encoded(QByteArray("not a key"));
+        QJsonObject noPoint = tv.startBody();
+        noPoint[QStringLiteral("pa")] = encoded(QByteArray(65, '\x04'));
+        for (const QJsonObject& body : {unknown, noKey, noPoint})
+            CHECK_EQ(dispatch(router, requestFrom(peer, served), post, start, body).statusCode,
+                     400);
+        CHECK_EQ(auth.failedAttemptCount(peer), 0);
+    }
+
+    // GET /api/auth/tls-proof: the key this socket served, signed by the host key
+    // over the client's nonce; a nonce of 16 to 64 bytes; ten a minute per caller.
+    {
+        const QString peer = QStringLiteral("198.51.100.76");
+        const auto ask = [&](const QString& from, const QByteArray& nonce) {
+            HttpRequest req = requestFrom(from, served);
+            req.queryParams.insert(QStringLiteral("nonce"), urlText(nonce));
+            return dispatch(router, req, QStringLiteral("GET"), proof);
+        };
+        CHECK_EQ(ask(peer, QByteArray()).statusCode, 400);
+        CHECK_EQ(ask(peer, QByteArray(15, '\1')).statusCode, 400);
+        CHECK_EQ(ask(peer, QByteArray(65, '\1')).statusCode, 400);
+
+        const QByteArray nonce = PairingCrypto::generateNonce();
+        const HttpResponse given = ask(peer, nonce);
+        CHECK_EQ(given.statusCode, 200);
+        const QJsonObject p = bodyOf(given);
+        CHECK_EQ(p.value(QStringLiteral("protocol")).toString(), QStringLiteral("MW-TLS-v1"));
+        CHECK_EQ(p.value(QStringLiteral("host_id")).toString(), hostId);
+        CHECK_EQ(decoded(p.value(QStringLiteral("host_public_key"))), hostKey);
+        CHECK_EQ(p.value(QStringLiteral("tls_key")).toString(), keyText(served));
+        const QByteArray signedBytes = PairingCrypto::tlsProofInput(
+            hostId, nonce, QCryptographicHash::hash(served, QCryptographicHash::Sha256));
+        CHECK(PairingCrypto::verify(hostKey, signedBytes, decoded(p.value(QStringLiteral("sig")))));
+        CHECK_EQ(ask(peer, QByteArray(64, '\1')).statusCode, 200);
+
+        for (int i = 0; i < 8; ++i)
+            CHECK_EQ(ask(peer, PairingCrypto::generateNonce()).statusCode, 200);
+        CHECK_EQ(ask(peer, PairingCrypto::generateNonce()).statusCode, 429);
+        CHECK_EQ(ask(QStringLiteral("198.51.100.80"), PairingCrypto::generateNonce()).statusCode,
+                 200);
+    }
+
+    // A full table of runs takes no new caller's run, and counts nothing for it;
+    // every run it holds stays, and the first one still proves.
+    {
+        RestRouter full;
+        registerPinProofRoutes(full, auth, geo, hostPem);
+        const QString pin = auth.generatePin();
+        const QString first = QStringLiteral("198.51.100.77");
+        const PinClient tv(pin, newKey(), seen);
+        const QJsonObject kept =
+            bodyOf(dispatch(full, requestFrom(first, served), post, start, tv.startBody()));
+        // Other callers, three runs each (a fourth would find its caller locked
+        // out), up to the size of the table.
+        const QJsonObject other = PinClient(otherPin(pin), newKey(), seen).startBody();
+        int runs = 1;
+        for (int caller = 1; runs < PinBinding::Exchanges::MAX_RUNS; ++caller) {
+            const QString peer = QStringLiteral("198.18.0.%1").arg(caller);
+            for (int n = 0; n < 3 && runs < PinBinding::Exchanges::MAX_RUNS; ++n, ++runs)
+                CHECK_EQ(dispatch(full, requestFrom(peer, served), post, start, other).statusCode,
+                         200);
+        }
+        const QString late = QStringLiteral("198.51.100.78");
+        const PinClient next(pin, newKey(), seen);
+        CHECK_EQ(
+            dispatch(full, requestFrom(late, served), post, start, next.startBody()).statusCode,
+            503);
+        CHECK_EQ(auth.failedAttemptCount(late), 0);
+
+        const std::optional<PinBinding::Keys> keys = tv.keysFor(kept, hostKey);
+        CHECK(keys && dispatch(full, requestFrom(first, served), post, finish,
+                               finishBody(kept, keys->confirmA))
+                              .statusCode == 200);
+        // That run ended: room for one more.
+        CHECK_EQ(
+            dispatch(full, requestFrom(late, served), post, start, next.startBody()).statusCode,
+            200);
+    }
+}
+
+} // namespace
 
 void run_auth_manager_tests()
 {
@@ -120,6 +680,61 @@ void run_auth_manager_tests()
     CHECK(auth.lockoutSeconds(badIp) > 0);
     CHECK(auth.failedAttemptCount(badIp) > 0);
     CHECK(auth.remainingAttempts(badIp) >= 0); // sane, non-negative count
+
+    // ── The PIN proved without being sent (MW-PIN-v1) ──────────────────────
+    // A run is counted when it begins, on the typed PIN's bucket and tiers, and
+    // cleared by its proof; a run made under a PIN that has since changed proves
+    // nothing.
+    {
+        const QString shown = auth.generatePin();
+        const QString honest = "198.51.100.40";
+        CHECK(auth.beginPinProof(honest).result == AuthManager::Valid);
+        CHECK_EQ(auth.failedAttemptCount(honest), 1);
+        CHECK(auth.finishPinProof(honest, shown, true).result == AuthManager::Valid);
+        CHECK_EQ(auth.failedAttemptCount(honest), 0);
+
+        // A wrong proof is the failure its run began with, not a second one.
+        const QString wrong = "198.51.100.41";
+        auth.beginPinProof(wrong);
+        const auto refused = auth.finishPinProof(wrong, shown, false);
+        CHECK(refused.result == AuthManager::InvalidPin);
+        CHECK_EQ(refused.remainingAttempts, 2);
+        CHECK_EQ(auth.failedAttemptCount(wrong), 1);
+
+        // A run left unfinished stays a failure.
+        const QString left = "198.51.100.42";
+        auth.beginPinProof(left);
+        CHECK_EQ(auth.failedAttemptCount(left), 1);
+
+        // The PIN changed since the run began, or none is shown.
+        const QString late = "198.51.100.43";
+        auth.beginPinProof(late);
+        // Another PIN: one draw in a million gives the same one back.
+        while (auth.generatePin() == shown) {}
+        CHECK(auth.finishPinProof(late, shown, true).result == AuthManager::InvalidPin);
+        auth.clearPin();
+        auth.beginPinProof(late);
+        CHECK(auth.finishPinProof(late, auth.currentPin(), true).result == AuthManager::InvalidPin);
+
+        // Three runs lock the bucket as three wrong PINs do. The third is still
+        // admitted, and its proof still good.
+        const QString current = auth.generatePin();
+        const QString runs = "198.51.100.44";
+        CHECK(auth.beginPinProof(runs).result == AuthManager::Valid);
+        CHECK(auth.beginPinProof(runs).result == AuthManager::Valid);
+        CHECK(auth.beginPinProof(runs).result == AuthManager::Valid);
+        CHECK(auth.beginPinProof(runs).result == AuthManager::RateLimited);
+        CHECK(auth.validatePin(runs, current).result == AuthManager::RateLimited);
+        CHECK(auth.finishPinProof(runs, current, true).result == AuthManager::Valid);
+        CHECK(!auth.isRateLimited(runs));
+
+        // Wrong PINs typed lock the proof out too: one bucket for both ways in.
+        const QString typed = "198.51.100.45";
+        for (int i = 0; i < 3; ++i)
+            auth.validatePin(typed, "wrong");
+        CHECK(auth.beginPinProof(typed).result == AuthManager::RateLimited);
+        CHECK_EQ(auth.failedAttemptCount(typed), 3);
+    }
 
     // ── Sessions ───────────────────────────────────────────────────────────
     QString token = auth.createSession("198.51.100.20", "Laptop");
@@ -618,4 +1233,5 @@ void run_auth_manager_tests()
         CHECK(!AuthManager::mayKnowMachineName(line, false));
         CHECK(AuthManager::mayKnowMachineName(line, true));
     }
+    pinProofRouteTests();
 }

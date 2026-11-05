@@ -322,6 +322,9 @@ bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllow
         // A device asking in by the QR code it shows, and the page's answer to
         // it, are the PIN's door by another way (PhonePairing.h).
         if (seg.size() >= 3 && seg[2] == QLatin1String("pair-request")) return true;
+        // The PIN proved without being sent (MW-PIN-v1) is the PIN login's other
+        // door: both of its rounds, and whatever comes under it later.
+        if (seg.size() >= 3 && seg[2] == QLatin1String("pin")) return true;
         return seg.size() == 3 && doors.contains(seg[2]);
     }
     if (area == QLatin1String("share")) {

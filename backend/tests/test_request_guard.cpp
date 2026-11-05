@@ -509,6 +509,8 @@ void run_request_guard_tests()
     CHECK(lockedByNoAdmin("POST", "/api/auth/validate"));
     CHECK(lockedByNoAdmin("POST", "/api/auth/admin-unlock"));
     CHECK(lockedByNoAdmin("POST", "/api/auth/regenerate"));
+    CHECK(lockedByNoAdmin("POST", "/api/auth/pin/start"));
+    CHECK(lockedByNoAdmin("POST", "/api/auth/pin/finish"));
     CHECK(lockedByNoAdmin("POST", "/api/share/slots/2/activate"));
     CHECK(lockedByNoAdmin("POST", "/api/share/player/pin"));
     // Nor by the QR code a device shows: its request, its claim, the answer.
@@ -541,6 +543,7 @@ void run_request_guard_tests()
     CHECK(lockedByNoAdmin("POST", "/api/auth/validate", true));
     CHECK(lockedByNoAdmin("POST", "/api/auth/admin-unlock", true));
     CHECK(lockedByNoAdmin("POST", "/api/auth/regenerate", true));
+    CHECK(lockedByNoAdmin("POST", "/api/auth/pin/start", true));
     CHECK(lockedByNoAdmin("POST", "/api/hosts/manual", true));
     CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/pair", true));
     CHECK(lockedByNoAdmin("POST", "/api/update/start", true));

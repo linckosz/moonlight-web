@@ -17,11 +17,13 @@
 
 #pragma once
 
+#include <QJsonObject>
 #include <QString>
 
 /**
  * The session cookie handed back to the browser, by every route that opens a
- * session (routes/AuthRoutes.cpp, routes/PairRequestRoutes.cpp).
+ * session (routes/AuthRoutes.cpp, routes/PairRequestRoutes.cpp,
+ * routes/PinProofRoutes.cpp).
  *
  * Remembered sessions carry a 90-day Max-Age, matching the server-side sliding
  * TTL. A session the visitor asked not to remember deliberately carries none:
@@ -36,4 +38,17 @@ inline QString sessionCookie(const QString& token, bool remember)
         QStringLiteral("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict").arg(token);
     if (remember) cookie += QStringLiteral("; Max-Age=7776000");
     return cookie;
+}
+
+/// Expire the session cookie immediately (logout).
+inline QString clearedSessionCookie()
+{
+    return QStringLiteral("mw_session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0");
+}
+
+/// "remember me" is opt-out: a body without the field keeps the old 90-day
+/// behaviour, so older clients and the share flow are unaffected.
+inline bool wantsRemember(const QJsonObject& body)
+{
+    return body.value(QStringLiteral("remember")).toBool(true);
 }

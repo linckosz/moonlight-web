@@ -103,4 +103,26 @@ bool verify(const QByteArray& spkiDer, const QByteArray& message, const QByteArr
 /// A fresh 32-byte nonce from the system CSPRNG.
 QByteArray generateNonce();
 
+// ── MW-TLS-v1: a TLS key proved by the host key ────────────────────────────
+// A client that pinned this host's TLS key on first contact (the Android TV
+// app) follows a key that changed — local-key.pem deleted, a certificate of the
+// owner's renewed with a new key — without a new PIN, on this proof alone. See
+// docs/design/tls-key-proof.md.
+
+/// The protocol label of the proof.
+inline constexpr char TLS_PROOF_PROTOCOL[] = "MW-TLS-v1";
+
+/// The exact bytes the host signs to vouch for the TLS key a connection was
+/// served (GET /api/auth/tls-proof): its id, the client's nonce, and the SHA-256
+/// of the certificate's SubjectPublicKeyInfo. A label of its own in the first
+/// field: nothing else the host key signs starts with it, so a proof can never
+/// pass for an MW-BIND signature, nor one of those for a proof.
+QByteArray tlsProofInput(const QString& hostId, const QByteArray& nonce,
+                         const QByteArray& tlsKeyDigest);
+
+/// The SubjectPublicKeyInfo (DER) of a DER certificate, as a client hashes it
+/// to pin the key (Java's PublicKey.getEncoded(), OkHttp's sha256/ pins).
+/// Empty for anything that does not parse.
+QByteArray certificateSpki(const QByteArray& certDer);
+
 } // namespace PairingCrypto

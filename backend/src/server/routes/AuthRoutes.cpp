@@ -24,6 +24,7 @@
 #include "server/AppSettings.h"
 #include "server/NetClassify.h"
 #include "server/SessionCookie.h"
+#include "server/routes/PinProofRoutes.h"
 #include "network/GeoIpService.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
@@ -34,19 +35,6 @@
 #include <QJsonObject>
 
 namespace {
-
-/// Expire the session cookie immediately (logout).
-QString clearedSessionCookie()
-{
-    return QStringLiteral("mw_session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0");
-}
-
-/// "remember me" is opt-out: a body without the field keeps the old 90-day
-/// behaviour, so older clients and the share flow are unaffected.
-bool wantsRemember(const QJsonObject& body)
-{
-    return body.value(QStringLiteral("remember")).toBool(true);
-}
 
 /// The MW-BIND-v1 identity a browser needs to verify this host's SDP offers.
 /// `host_id` is the host key's own identifier: it goes inside every signature so
@@ -169,6 +157,11 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         }
         return HttpResponse::error(500, "Internal error");
     });
+
+    // MW-TLS-v1 and MW-PIN-v1 (docs/design/tls-key-proof.md): the TLS proof and
+    // the PIN proved without being sent, under the host key as it stands now.
+    registerPinProofRoutes(*server.router(), authManager, geoIpService,
+                           settings.hostSigningKeyPem());
 
     // POST /api/auth/home-screen — a home-screen shortcut's first start.
     //

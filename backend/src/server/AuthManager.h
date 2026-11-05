@@ -140,6 +140,21 @@ public:
 
     ValidateResult validatePin(const QString& ip, const QString& pin);
 
+    // ── The PIN proved without being sent (MW-PIN-v1, common/PinBinding.h) ──
+    // A run is the attempt, counted when it begins, on the typed PIN's own bucket
+    // and tiers: whatever its first round could reveal about the PIN is then no
+    // cheaper to collect than wrong PINs typed one by one.
+
+    /// POST /api/auth/pin/start: RateLimited while @p ip is locked out; else the
+    /// run is admitted and counted as a failure until its proof (finishPinProof).
+    ValidateResult beginPinProof(const QString& ip);
+
+    /// POST /api/auth/pin/finish: Valid when @p confirmed and @p pinAtStart, the
+    /// PIN the run was made with, is still the current one, which clears the
+    /// caller's failures as a typed PIN does. Not counted again otherwise, and no
+    /// lockout stops a run beginPinProof() already admitted.
+    ValidateResult finishPinProof(const QString& ip, const QString& pinAtStart, bool confirmed);
+
     // ── Remote admin password ──────────────────────────────────────────────
     // Second door into admin access, for a LAN machine that is not the host.
     // Unlike the PIN this one is persistent and reusable: it is a password, not

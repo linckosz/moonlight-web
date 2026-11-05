@@ -208,6 +208,9 @@ add_executable(run_tests
     # AppSettings and AuthManager both reach into MW-BIND-v1 now: the host
     # identity key, and the pairing key bound to a session.
     ${_src}/src/common/PairingCrypto.cpp
+    # MW-TLS-v1 and MW-PIN-v1, through their very routes (test_auth_manager.cpp).
+    ${_src}/src/common/PinBinding.cpp
+    ${_src}/src/server/routes/PinProofRoutes.cpp
     # The session census: what leaves the machine, and what must not.
     ${_src}/src/network/SessionMetrics.cpp
     # The guests' shared feed: the pipe between the feed worker and theirs.

@@ -539,6 +539,35 @@ AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QS
     return recordAttempt(bucket, matched, ip, QStringLiteral("PIN"));
 }
 
+AuthManager::ValidateResult AuthManager::beginPinProof(const QString& ip)
+{
+    cleanupExpired();
+
+    const QString bucket = rateLimitKey(ip);
+    if (const int locked = bucketLockout(bucket); locked > 0) {
+        Logger::info(QString("[Auth] Rate limited for %1: %2s remaining").arg(ip).arg(locked));
+        return {RateLimited, 0, locked};
+    }
+
+    // Counted now, as a PIN that has not matched yet: a run never finished stays
+    // a failure, and what its first round could reveal costs what a guess costs.
+    const ValidateResult counted =
+        recordAttempt(bucket, false, ip, QStringLiteral("PIN until proved"));
+    return {Valid, counted.remainingAttempts, counted.lockoutSeconds};
+}
+
+AuthManager::ValidateResult AuthManager::finishPinProof(const QString& ip,
+                                                        const QString& pinAtStart, bool confirmed)
+{
+    const QString bucket = rateLimitKey(ip);
+    // The same sentinel rule as a typed PIN, and the PIN of the run must still be
+    // the one shown: a run begun before the PIN was spent proves nothing now.
+    const bool matched = confirmed && hasValidPin() && constantTimeEquals(pinAtStart, m_currentPin);
+    if (matched) return recordAttempt(bucket, true, ip, QStringLiteral("PIN proof"));
+    // Counted when the run began: not a second time.
+    return {InvalidPin, bucketRemainingAttempts(bucket), bucketLockout(bucket)};
+}
+
 // ── Remote admin password ─────────────────────────────────────────────────────
 
 QString AuthManager::encodePassword(const QString& password)

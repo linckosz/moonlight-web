@@ -26,6 +26,7 @@
 #include "server/HomeScreenShell.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
+#include "common/PairingCrypto.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -52,6 +53,11 @@
 // sending headers/body that never complete.
 static constexpr int MAX_HEADER_BYTES = 32 * 1024;     // 32 KB of headers
 static constexpr int MAX_BODY_BYTES = 8 * 1024 * 1024; // 8 MB body
+
+// The SubjectPublicKeyInfo of the certificate a TLS socket was served, kept on
+// the socket once its handshake is done and copied into each of its requests
+// (HttpRequest::tlsSpki): what MW-TLS-v1 vouches for and MW-PIN-v1 binds to.
+static constexpr char TLS_SPKI_PROPERTY[] = "mw_tls_spki";
 
 // Drop anything that could end a header line early (CR, LF, NUL). Applied to
 // every header we emit so no value can ever inject a header of its own.
@@ -544,6 +550,10 @@ QTcpServer* HttpServer::createHttpsServer(quint16 port)
     auto* ssl = new SslServer(
         m_Certs.publicConfig(), m_Certs.localConfig(),
         [this](QSslSocket* socket) {
+            // Once per connection, and the certificate THIS one was served: the
+            // SNI choice above may differ from one connection to the next.
+            socket->setProperty(TLS_SPKI_PROPERTY,
+                                PairingCrypto::certificateSpki(socket->localCertificate().toDer()));
             m_Buffers[socket] = QByteArray();
             connect(socket, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
             connect(socket, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
@@ -1017,6 +1027,8 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 {
     HttpRequest req = HttpParser::parse(requestData);
     req.clientAddress = socket->peerAddress().toString();
+    // Empty on plain HTTP: no such property there.
+    req.tlsSpki = socket->property(TLS_SPKI_PROPERTY).toByteArray();
 
     // A request target carrying control characters is refused before anything
     // reads it: the redirect below puts the path in a Location header, and a
