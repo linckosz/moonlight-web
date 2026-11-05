@@ -362,6 +362,7 @@
         "serverSelection": "Choix du serveur",
         "serverCurrent": "Ce serveur",
         "pinSubtitle": "Saisissez le PIN affiché sur la page d'administration du serveur",
+        "sessionOtherBrowser": "Cette session a été appairée avec un autre navigateur. Saisissez un PIN pour appairer celui-ci ; l'autre reste connecté.",
         "certSubtitle": "Téléversez votre fichier de certificat pour vous authentifier",
         "nameSession": "Nommer cette session",
         "namePlaceholder": "ex. BrunoXT Chrome",
@@ -963,6 +964,7 @@
         "connectFailed": "Connexion {{from}} échouée — tentative avec {{to}}…",
         "allFailed": "Échec de la connexion — tous les modes de transport ont échoué",
         "identityRefused": "Cet hôte n'a pas pu prouver son identité, le stream n'a donc pas été lancé. Si MoonlightWeb y a été réinstallé, appairez à nouveau ce navigateur avec un PIN.",
+        "keyRefused": "Cette session a été appairée avec un autre navigateur, le stream n'a donc pas été lancé. Déconnectez-vous ici, puis appairez ce navigateur avec un PIN.",
         "launchFailed": "L'hôte n'a pas démarré le stream — réessayez dans un instant",
         "launchFailedNext": "L'hôte n'a pas démarré le stream en {{from}} — tentative avec {{to}}…"
     },

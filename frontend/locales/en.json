@@ -362,6 +362,7 @@
         "serverSelection": "Server selection",
         "serverCurrent": "This server",
         "pinSubtitle": "Enter the PIN shown on the server admin page",
+        "sessionOtherBrowser": "This session was paired with another browser. Enter a PIN to pair this one; the other stays signed in.",
         "certSubtitle": "Upload your certificate file to authenticate",
         "nameSession": "Name this session",
         "namePlaceholder": "e.g. BrunoXT Chrome",
@@ -963,6 +964,7 @@
         "connectFailed": "{{from}} connection failed — trying {{to}}…",
         "allFailed": "Connection failed — all transport modes failed",
         "identityRefused": "This host could not prove its identity, so the stream was not started. If MoonlightWeb was reinstalled on it, pair this browser again with a PIN.",
+        "keyRefused": "This session was paired with another browser, so the stream was not started. Sign out here, then pair this browser with a PIN.",
         "launchFailed": "The host did not start the stream — try again in a moment",
         "launchFailedNext": "The host did not start the stream on {{from}} — trying {{to}}…"
     },

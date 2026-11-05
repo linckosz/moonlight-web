@@ -121,7 +121,7 @@ import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
 import { micRequested, micSupported } from './audio/MicUplink.js';
-import { IDENTITY_REFUSED } from './util/pairingCrypto.js';
+import { KEY_REFUSED, isBindRefusal } from './util/pairingCrypto.js';
 import {
     startTunnel,
     tunnelHostId,
@@ -191,6 +191,9 @@ const SHELL_CACHE = 'mw-shell';
  *  machine's page, on this same origin, could read and spend from anywhere
  *  (security review R1, 26/10/2026). Emptied at start. */
 const SIDE_KEYS_STORE = 'mw-hs-side-keys';
+
+/** How long the boot waits for the host's answer on this browser's pairing key. */
+const PAIRING_KEY_WAIT_MS = 1500;
 /** A screen change seen while a relaunch is on its way is looked at again
  *  this long after (App._onClientScreenChanged), until none is. */
 const SCREEN_RECHECK_MS = 1500;
@@ -627,7 +630,7 @@ export const MoonlightApp = {
                     const next = at + 1;
                     // MW-BIND refused the host: no fallback, same rule as the
                     // owner's (the wss rung has nothing to bind).
-                    if (reason === IDENTITY_REFUSED || next >= chain.length) {
+                    if (isBindRefusal(reason) || next >= chain.length) {
                         console.error(`[MW] Guest: ${chain[at] || '?'} failed (${reason})`);
                         streamView.quit();
                         return;
@@ -1558,16 +1561,12 @@ export const MoonlightApp = {
             const status = await BackendClient.getAuthStatus();
             this._readAccess(status);
 
-            // Localhost or already authenticated — proceed
-            if (status.is_localhost || status.authenticated) {
-                // MW-BIND-v1: a session created before this mechanism existed has
-                // no pairing key. Register one now rather than asking the user for
-                // a PIN they already gave. The server only accepts it from
-                // loopback, the LAN or a mesh VPN, and answers 403 otherwise.
-                // Best-effort: never let it hold up the app.
-                BackendClient.ensurePairingKey().catch(() => {});
-                return true;
-            }
+            // Localhost or already authenticated — proceed, unless this session
+            // is another browser's and no stream could start from here.
+            const sessionKeyRefused =
+                (status.is_localhost || status.authenticated) &&
+                (await this._sessionHasAnotherKey(status));
+            if ((status.is_localhost || status.authenticated) && !sessionKeyRefused) return true;
 
             // Booth mode (--noadmin) lets no new device in: a PIN would be refused.
             if (status.admin_locked) {
@@ -1581,7 +1580,7 @@ export const MoonlightApp = {
             }
 
             // Not authenticated and not localhost — show login
-            this.loginView = new LoginView(main, async () => {
+            const onSignedIn = async () => {
                 // On successful login, re-initialize the app
                 console.log('[MW] Authentication successful, re-initializing...');
                 this.loginView = null;
@@ -1597,7 +1596,8 @@ export const MoonlightApp = {
                 this._initNavButtons();
                 this._initRouter();
                 this._initAsync();
-            });
+            };
+            this.loginView = new LoginView(main, onSignedIn, { sessionKeyRefused });
 
             main.innerHTML = '';
             this.transition('login');
@@ -1619,6 +1619,36 @@ export const MoonlightApp = {
             main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
             return false;
         }
+    },
+
+    /**
+     * MW-BIND-v1: a session created before this mechanism existed has no pairing
+     * key. Register one now rather than asking the user for a PIN they already
+     * gave. The server only accepts it from loopback, the LAN or a mesh VPN, and
+     * answers 403 otherwise.
+     *
+     * True when the session already belongs to another browser's key, which is
+     * what an iOS home-screen app gets: the cookie of the browser it was added
+     * from, in a storage of its own and so with a key of its own. The host refuses
+     * every stream from there, rightly, since it cannot tell this from a stolen
+     * cookie. A PIN gives this browser a session of its own and leaves the other
+     * one alone; logging out would end the other browser's session with it.
+     *
+     * The host machine has no PIN to ask for, and a booth refuses one. Waited for,
+     * so that the host list never shows only to be taken away, but not for long: a
+     * host slow to answer here is no reason to hold up the app, and a stream
+     * refused later still says why.
+     */
+    async _sessionHasAnotherKey(status) {
+        let timer;
+        const answer = await Promise.race([
+            BackendClient.ensurePairingKey().catch(() => null),
+            new Promise((resolve) => {
+                timer = setTimeout(resolve, PAIRING_KEY_WAIT_MS, null);
+            }),
+        ]);
+        clearTimeout(timer);
+        return !!answer?.sessionKeyRefused && !status.is_localhost && !status.admin_locked;
     },
 
     /**
@@ -3946,12 +3976,14 @@ export const MoonlightApp = {
         // refusal would stream to the very peer that failed to prove itself.
         // Before this, a browser whose pairing had gone stale spent 10–20 s on
         // three refused attempts and then streamed over wss without a word.
-        if (reason === IDENTITY_REFUSED) {
+        if (isBindRefusal(reason)) {
+            const hostRefusedUs = reason === KEY_REFUSED;
             console.error(
-                `[MW] ${chain[cur] || '?'}: the host failed MW-BIND — ending the launch, ` +
-                    'no fallback transport',
+                `[MW] ${chain[cur] || '?'}: ` +
+                    (hostRefusedUs ? 'the host refused our key' : 'the host failed MW-BIND') +
+                    ' — ending the launch, no fallback transport',
             );
-            Toast.error(t('transport.identityRefused'));
+            Toast.error(t(hostRefusedUs ? 'transport.keyRefused' : 'transport.identityRefused'));
             this._endAfterFailedLaunch();
             return;
         }
@@ -4950,7 +4982,7 @@ export const MoonlightApp = {
         const sv = this.streamView;
         const host = this._lastStreamHost;
         const notTheClimb =
-            reason === IDENTITY_REFUSED ||
+            isBindRefusal(reason) ||
             reason === 'reconnect_refused' ||
             /ice timeout/i.test(String(reason)) ||
             !sv ||

@@ -703,6 +703,9 @@ export class BackendClient {
      * internet it answers 403 and the visitor pairs with a PIN instead. Silent
      * and best-effort by design: a browser that cannot bind still streams, it
      * simply does so without the fingerprint binding.
+     *
+     * @returns the identity, with `sessionKeyRefused` set when the session is
+     *          already bound to another browser's key.
      */
     static async ensurePairingKey() {
         const identity = await loadOrCreateIdentity();
@@ -728,6 +731,11 @@ export class BackendClient {
                 console.log('[MW-BIND] Host-machine access, no session — binding not applicable');
             } else if (e.statusCode === 403) {
                 console.log('[MW-BIND] Remote peer — pair with a PIN to bind this browser');
+            } else if (e.statusCode === 409) {
+                // The one answer that is not a shrug: this session is bound to
+                // another browser's key, and no stream will start from here.
+                console.warn('[MW-BIND] This session belongs to another browser — PIN required');
+                return { ...identity, sessionKeyRefused: true };
             } else {
                 console.log('[MW-BIND] Silent pairing not available:', e.message);
             }

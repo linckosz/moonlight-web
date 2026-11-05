@@ -71,11 +71,24 @@ const PROTOCOL = 'MW-BIND-v1';
 export const IDENTITY_REFUSED = 'identity_refused';
 
 /**
+ * The same refusal seen from the other side: the HOST refused our key. It ends
+ * the launch for the same reason, and says something else to the person: the
+ * host proved nothing wrong about itself, this browser is the one that is not
+ * paired with the session it holds.
+ */
+export const KEY_REFUSED = 'key_refused';
+
+/** Either way round, the launch ends here: see IDENTITY_REFUSED. */
+export function isBindRefusal(reason) {
+    return reason === IDENTITY_REFUSED || reason === KEY_REFUSED;
+}
+
+/**
  * Is this signalling-socket close the HOST refusing the binding? The other half
  * of IDENTITY_REFUSED: the host closes with 1008 and this reason when our hello
  * names a key the session is not paired with (or our signature fails). Every
  * WebRTC rung would be refused the same way, and wss would walk around it — so
- * it ends the launch too.
+ * it ends the launch too, as KEY_REFUSED.
  */
 export function isBindRefusedClose(evt) {
     return evt?.code === 1008 && evt.reason === 'pairing verification failed';

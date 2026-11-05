@@ -37,9 +37,16 @@ import { tunnelHostId } from '../net/tunnelBridge.js';
 const MACHINE_NAME_KEY = 'mw-session-name';
 
 export class LoginView {
-    constructor(container, onAuthenticated) {
+    /**
+     * @param {object} [options]
+     * @param {boolean} [options.sessionKeyRefused] This browser holds a session
+     *        bound to another browser's key. It reads as signed in, and the PIN is
+     *        what it needs all the same.
+     */
+    constructor(container, onAuthenticated, { sessionKeyRefused = false } = {}) {
         this.container = container;
         this.onAuthenticated = onAuthenticated || (() => {});
+        this._sessionKeyRefused = sessionKeyRefused;
 
         // Internal state
         this._loading = true;
@@ -93,7 +100,7 @@ export class LoginView {
         // Check auth status — maybe already authenticated
         try {
             const status = await BackendClient.getAuthStatus();
-            if (status.authenticated) {
+            if (status.authenticated && !this._sessionKeyRefused) {
                 this._releaseServerField();
                 this.onAuthenticated();
                 return;
@@ -276,6 +283,7 @@ export class LoginView {
     _renderPinForm() {
         return `
             <div class="login-form login-form--pin">
+                ${this._sessionKeyRefused ? `<p class="login-subtitle" id="login-session-key-refused">${t('login.sessionOtherBrowser')}</p>` : ''}
                 <p class="login-subtitle">${t('login.pinSubtitle')}</p>
 
                 <!-- Machine name -->
