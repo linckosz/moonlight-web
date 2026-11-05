@@ -1145,7 +1145,9 @@ async function report(vars, fail) {
       keepalive: true,
       credentials: 'omit',
       mode: 'same-origin',
-      referrerPolicy: 'no-referrer',
+      // Not 'no-referrer': a POST may then say Origin: null (WebKit), which the server refuses. No Referer either way.
+      referrerPolicy: 'same-origin',
+      referrer: '',
       cache: 'no-store',
     }).catch(() => {});
   } catch {
