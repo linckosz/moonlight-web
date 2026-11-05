@@ -627,10 +627,8 @@ export const MoonlightApp = {
                     else view.refresh();
                 };
                 streamView.onConnectionFailed = async (reason) => {
-                    const next = at + 1;
-                    // MW-BIND refused the host: no fallback, same rule as the
-                    // owner's (the wss rung has nothing to bind).
-                    if (isBindRefusal(reason) || next >= chain.length) {
+                    const next = this._guestNextRung(reason, at, chain);
+                    if (next === null) {
                         console.error(`[MW] Guest: ${chain[at] || '?'} failed (${reason})`);
                         streamView.quit();
                         return;
@@ -1619,6 +1617,15 @@ export const MoonlightApp = {
             main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
             return false;
         }
+    },
+
+    /**
+     * The rung a guest tries after this failure, or null when there is none. A
+     * refused binding ends it whatever is left, same rule as the owner's: the wss
+     * rung has nothing to bind.
+     */
+    _guestNextRung(reason, at, chain) {
+        return isBindRefusal(reason) || at + 1 >= chain.length ? null : at + 1;
     },
 
     /**

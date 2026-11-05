@@ -192,6 +192,17 @@ describe('a key the host refuses, at launch', () => {
         expect(isBindRefusal(undefined)).toBe(false);
     });
 
+    it.each([IDENTITY_REFUSED, KEY_REFUSED])('%s leaves a guest no other rung', (reason) => {
+        const chain = ['webrtc-dc-udp', 'webrtc-dc-tcp', 'wss'];
+        expect(MoonlightApp._guestNextRung(reason, 0, chain)).toBeNull();
+    });
+
+    it('lets a guest walk on after any other failure, to the end of the chain', () => {
+        const chain = ['webrtc-dc-udp', 'wss'];
+        expect(MoonlightApp._guestNextRung('ice timeout', 0, chain)).toBe(1);
+        expect(MoonlightApp._guestNextRung('ice timeout', 1, chain)).toBeNull();
+    });
+
     describe('in the application', () => {
         let saved;
         const FIELDS = [
