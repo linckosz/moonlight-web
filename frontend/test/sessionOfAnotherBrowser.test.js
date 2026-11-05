@@ -155,6 +155,13 @@ describe('the boot of a page holding such a session', () => {
             expect(pinScreen()).toBeNull();
         });
 
+        it('shows it to a LAN admin who asked, having their PIN by then', async () => {
+            signedIn({ is_localhost: true, is_host_machine: false });
+            expect(await MoonlightApp._checkAuth()).toBe(false);
+            await vi.waitFor(() => expect(pinScreen()).not.toBeNull());
+            expect(note()).toBeNull();
+        });
+
         it.each([
             ['the host machine', { is_localhost: true, is_host_machine: true }],
             ['a booth', { admin_locked: true }],
@@ -166,13 +173,13 @@ describe('the boot of a page holding such a session', () => {
         });
     });
 
-    it('asks a LAN machine unlocked with the admin password for the PIN too', async () => {
+    it('never locks a LAN admin out of the page that generates the PIN', async () => {
         // is_localhost means "has admin access" since the remote admin password.
         signedIn({ is_localhost: true, is_host_machine: false });
         vi.spyOn(BackendClient, 'ensurePairingKey').mockResolvedValue({ sessionKeyRefused: true });
 
-        expect(await MoonlightApp._checkAuth()).toBe(false);
-        await vi.waitFor(() => expect(pinScreen()).not.toBeNull());
+        expect(await MoonlightApp._checkAuth()).toBe(true);
+        expect(pinScreen()).toBeNull();
     });
 
     it('lets a browser paired as it should be straight through', async () => {

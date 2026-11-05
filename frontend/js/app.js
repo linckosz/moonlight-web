@@ -1695,9 +1695,11 @@ export const MoonlightApp = {
      * cookie. A PIN gives this browser a session of its own and leaves the other
      * one alone; logging out would end the other browser's session with it.
      *
-     * The host machine has no PIN to ask for, and a booth refuses one; a LAN machine
-     * unlocked with the admin password reads as is_localhost and can take a PIN like
-     * any other. Waited for,
+     * The host machine has no PIN to ask for, and a booth refuses one. A LAN machine
+     * unlocked with the admin password reads as is_localhost too, and is left to the
+     * application as well: the PIN is generated on the admin page, and on a host with
+     * no screen this may be the only machine that can reach it. Should a stream be
+     * refused, the message offers it the PIN screen, once it has its PIN. Waited for,
      * so that the host list never shows only to be taken away, but not for long: a
      * host slow to answer here is no reason to hold up the app, and a stream
      * refused later still says why.
@@ -1711,7 +1713,7 @@ export const MoonlightApp = {
             }),
         ]);
         clearTimeout(timer);
-        return !!answer?.sessionKeyRefused && !status.is_host_machine && !status.admin_locked;
+        return !!answer?.sessionKeyRefused && !status.is_localhost && !status.admin_locked;
     },
 
     /**
