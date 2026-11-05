@@ -197,6 +197,17 @@ describe('AutoCeilingSession: learning', () => {
     });
 });
 
+describe('AutoCeilingSession: no codec stored', () => {
+    it('is HEVC: the line says so, and the memory is the one HEVC earned', () => {
+        const { session, memory, log } = rig('on', { codec: undefined });
+        memory.raise(HOST, CODEC);
+        const s = session();
+        expect(s.budget).toBe(330e6);
+        s.weigh(uhdAuto);
+        expect(log.join('\n')).toContain('on hevc');
+    });
+});
+
 describe('AutoCeilingSession: a stream that never came back', () => {
     const atRung = () => {
         const r = rig('on');

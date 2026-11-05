@@ -188,7 +188,7 @@ export function autoCeilingMemory(storage, clock, instance) {
             // Storage refused: nothing remembered.
         }
     };
-    const keyOf = (host, codec) => host + '|' + (codec || 'auto');
+    const keyOf = (host, codec) => host + '|' + (codec || 'hevc');
 
     /** The failures still counting on an entry, the expired ones gone. */
     const freshFails = (entry, now) => {

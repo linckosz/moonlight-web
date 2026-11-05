@@ -48,7 +48,7 @@ export class AutoCeilingSession {
     /**
      * @param {object} deps
      * @param {string} deps.host the host's uuid
-     * @param {string} deps.codec the codec launched
+     * @param {string} [deps.codec] the codec launched; none stored is HEVC
      * @param {boolean} deps.native the native host: no other can go past 1080p
      * @param {{tv?:boolean, handheld?:boolean, lowMemory?:boolean, powerSave?:boolean}} deps.device
      * @param {'off'|'log'|'on'} [deps.mode] autoLearnMode() by default
@@ -57,7 +57,7 @@ export class AutoCeilingSession {
      */
     constructor({ host, codec, native, device, mode, memory, log }) {
         this._host = host;
-        this._codec = codec;
+        this._codec = codec || 'hevc';
         this._mode = mode || autoLearnMode();
         this._deviceMax = deviceMaxCeiling(device);
         this._log = log || ((line) => console.log(line));

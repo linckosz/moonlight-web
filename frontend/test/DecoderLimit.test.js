@@ -145,6 +145,12 @@ describe('DecoderLimit.decoderRefuses', () => {
         });
     });
 
+    it('asks about HEVC when no codec is stored', async () => {
+        const decodingInfo = vi.fn(async () => ({ supported: false, smooth: false }));
+        expect(await decoderRefuses(undefined, stream, 300, { decodingInfo })).toBe(true);
+        expect(decodingInfo.mock.calls[0][0].video.contentType).toContain('hev1');
+    });
+
     it('takes a missing API, an error or an unknown codec for no no', async () => {
         expect(await decoderRefuses('hevc', stream, 300, {})).toBe(false);
         const broken = {

@@ -113,14 +113,14 @@ export function resetHardwareDecodeLimits() {
  * the guard on a rung of Auto's learned ceiling (stream/AutoCeilingSession.js).
  * A "yes" proves little, Chrome often says "smooth" without measuring, so only a
  * "no" is heard. No API, an error, or no answer in time: no "no".
- * @param {string} codec 'h264', 'hevc', 'av1'
+ * @param {string} [codec] 'h264', 'hevc', 'av1'; none stored is HEVC, as above
  * @param {{width:number, height:number, fps:number, bitrate:number}} stream bitrate in bit/s
  * @param {number} timeoutMs how long a launch may wait for the answer
  * @param {any} [capabilities] navigator.mediaCapabilities by default
  * @returns {Promise<boolean>}
  */
 export async function decoderRefuses(codec, stream, timeoutMs, capabilities) {
-    const string = PROBE_CODECS[codec];
+    const string = PROBE_CODECS[codec || 'hevc'];
     const mc =
         capabilities ||
         (typeof navigator !== 'undefined'
