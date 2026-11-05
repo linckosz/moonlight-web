@@ -42,11 +42,14 @@ export class LoginView {
      * @param {boolean} [options.sessionKeyRefused] This browser holds a session
      *        bound to another browser's key. It reads as signed in, and the PIN is
      *        what it needs all the same.
+     * @param {boolean} [options.askPin] The PIN screen stays although the session
+     *        reads as signed in: the person asked for it.
      */
-    constructor(container, onAuthenticated, { sessionKeyRefused = false } = {}) {
+    constructor(container, onAuthenticated, { sessionKeyRefused = false, askPin = false } = {}) {
         this.container = container;
         this.onAuthenticated = onAuthenticated || (() => {});
         this._sessionKeyRefused = sessionKeyRefused;
+        this._askPin = askPin || sessionKeyRefused;
 
         // Internal state
         this._loading = true;
@@ -100,7 +103,7 @@ export class LoginView {
         // Check auth status — maybe already authenticated
         try {
             const status = await BackendClient.getAuthStatus();
-            if (status.authenticated && !this._sessionKeyRefused) {
+            if (status.authenticated && !this._askPin) {
                 this._releaseServerField();
                 this.onAuthenticated();
                 return;

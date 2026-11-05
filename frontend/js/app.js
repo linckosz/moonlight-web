@@ -194,6 +194,9 @@ const SIDE_KEYS_STORE = 'mw-hs-side-keys';
 
 /** How long the boot waits for the host's answer on this browser's pairing key. */
 const PAIRING_KEY_WAIT_MS = 1500;
+/** The person asked for the PIN screen after a refused stream: read by the boot
+ *  that follows, and gone with it. */
+const PIN_ASKED_KEY = 'mw_pin_asked';
 /** A screen change seen while a relaunch is on its way is looked at again
  *  this long after (App._onClientScreenChanged), until none is. */
 const SCREEN_RECHECK_MS = 1500;
@@ -1560,11 +1563,12 @@ export const MoonlightApp = {
             this._readAccess(status);
 
             // Localhost or already authenticated — proceed, unless this session
-            // is another browser's and no stream could start from here.
-            const sessionKeyRefused =
-                (status.is_localhost || status.authenticated) &&
-                (await this._sessionHasAnotherKey(status));
-            if ((status.is_localhost || status.authenticated) && !sessionKeyRefused) return true;
+            // is another browser's and no stream could start from here, or the
+            // person just asked to pair this browser again.
+            const signedIn = status.is_localhost || status.authenticated;
+            const pinAsked = this._takePinAsked() && !status.is_localhost && !status.admin_locked;
+            const sessionKeyRefused = signedIn && (await this._sessionHasAnotherKey(status));
+            if (signedIn && !sessionKeyRefused && !pinAsked) return true;
 
             // Booth mode (--noadmin) lets no new device in: a PIN would be refused.
             if (status.admin_locked) {
@@ -1595,7 +1599,10 @@ export const MoonlightApp = {
                 this._initRouter();
                 this._initAsync();
             };
-            this.loginView = new LoginView(main, onSignedIn, { sessionKeyRefused });
+            this.loginView = new LoginView(main, onSignedIn, {
+                sessionKeyRefused,
+                askPin: pinAsked,
+            });
 
             main.innerHTML = '';
             this.transition('login');
@@ -1617,6 +1624,52 @@ export const MoonlightApp = {
             main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
             return false;
         }
+    },
+
+    /** Was the PIN screen asked for by the page before this one? Once only. */
+    _takePinAsked() {
+        try {
+            const asked = sessionStorage.getItem(PIN_ASKED_KEY) === '1';
+            sessionStorage.removeItem(PIN_ASKED_KEY);
+            return asked;
+        } catch {
+            return false;
+        }
+    },
+
+    /**
+     * The host refused this browser's key. The PIN makes it a session of its own
+     * and destroys none, where logging out would end the session of any other
+     * browser holding the same one. Through a reload, so that nothing of the page
+     * it replaces is still running behind the PIN screen.
+     */
+    _askPinAgain() {
+        try {
+            sessionStorage.setItem(PIN_ASKED_KEY, '1');
+        } catch {
+            return; // Nowhere to say it: the reload would change nothing.
+        }
+        this._reloadPage();
+    },
+
+    _reloadPage() {
+        window.location.reload();
+    },
+
+    /**
+     * Says the host refused this browser's key, once however many launches it took:
+     * the words stay until read. The host machine has no PIN screen to go to, and a
+     * booth refuses a PIN.
+     */
+    _showKeyRefused() {
+        this._keyRefusedToast?.dismiss();
+        const canAskPin = !this._isHostLocal() && !BackendClient.adminLocked;
+        this._keyRefusedToast = Toast.error(t('transport.keyRefused'), {
+            sticky: true,
+            action: canAskPin
+                ? { label: t('transport.enterPin'), onClick: () => this._askPinAgain() }
+                : undefined,
+        });
     },
 
     /**
@@ -3990,7 +4043,8 @@ export const MoonlightApp = {
                     (hostRefusedUs ? 'the host refused our key' : 'the host failed MW-BIND') +
                     ' — ending the launch, no fallback transport',
             );
-            Toast.error(t(hostRefusedUs ? 'transport.keyRefused' : 'transport.identityRefused'));
+            if (hostRefusedUs) this._showKeyRefused();
+            else Toast.error(t('transport.identityRefused'));
             this._endAfterFailedLaunch();
             return;
         }

@@ -132,6 +132,37 @@ describe('the boot of a page holding such a session', () => {
         expect(pinScreen()).toBeNull();
     });
 
+    describe('after the person asked for the PIN screen', () => {
+        beforeEach(() => {
+            sessionStorage.setItem('mw_pin_asked', '1');
+            vi.spyOn(BackendClient, 'ensurePairingKey').mockResolvedValue({ hostPublicKey: 'a2V5' });
+        });
+        afterEach(() => sessionStorage.clear());
+
+        it('shows it, without saying whose session this is, and only once', async () => {
+            signedIn();
+            expect(await MoonlightApp._checkAuth()).toBe(false);
+            await vi.waitFor(() => expect(pinScreen()).not.toBeNull());
+            expect(note()).toBeNull();
+            expect(sessionStorage.getItem('mw_pin_asked')).toBeNull();
+
+            MoonlightApp.loginView?.destroy?.();
+            document.getElementById('main-content').innerHTML = '';
+            expect(await MoonlightApp._checkAuth()).toBe(true);
+            expect(pinScreen()).toBeNull();
+        });
+
+        it.each([
+            ['the host machine', { is_localhost: true }],
+            ['a booth', { admin_locked: true }],
+        ])('leaves %s as it was, and forgets the request', async (_who, extra) => {
+            signedIn(extra);
+            expect(await MoonlightApp._checkAuth()).toBe(true);
+            expect(pinScreen()).toBeNull();
+            expect(sessionStorage.getItem('mw_pin_asked')).toBeNull();
+        });
+    });
+
     it('lets a browser paired as it should be straight through', async () => {
         signedIn();
         vi.spyOn(BackendClient, 'ensurePairingKey').mockResolvedValue({ hostPublicKey: 'a2V5' });
@@ -219,6 +250,8 @@ describe('a key the host refuses, at launch', () => {
             '_climbBack',
             '_climbsOver',
             '_reconnectOf',
+            '_hasAdminAccess',
+            '_keyRefusedToast',
         ];
 
         beforeEach(() => {
@@ -236,7 +269,10 @@ describe('a key the host refuses, at launch', () => {
                 _relaunching: false,
                 _climbBack: null,
                 _climbsOver: false,
+                _hasAdminAccess: false,
+                _keyRefusedToast: null,
             });
+            sessionStorage.clear();
             vi.spyOn(console, 'error').mockImplementation(() => {});
             vi.spyOn(console, 'warn').mockImplementation(() => {});
         });
@@ -263,6 +299,55 @@ describe('a key the host refuses, at launch', () => {
             expect(ended).toHaveBeenCalledTimes(1);
             expect(toast).toHaveBeenCalledTimes(1);
             expect(toast.mock.calls[0][0]).toBe(t(words));
+            MoonlightApp._keyRefusedToast = null;
+        });
+
+        const refusedToast = () => {
+            vi.spyOn(MoonlightApp, '_relaunchTransport').mockImplementation(() => {});
+            vi.spyOn(MoonlightApp, '_endAfterFailedLaunch').mockImplementation(() => {});
+            return vi.spyOn(Toast, 'error').mockImplementation(() => ({ dismiss: vi.fn() }));
+        };
+
+        it('offers the PIN screen, stays until read, and never logs out', () => {
+            const toast = refusedToast();
+            const logout = vi.spyOn(BackendClient, 'logout').mockResolvedValue({});
+            const reload = vi.spyOn(MoonlightApp, '_reloadPage').mockImplementation(() => {});
+
+            MoonlightApp._onTransportFailed(KEY_REFUSED);
+
+            const options = toast.mock.calls[0][1];
+            expect(options.sticky).toBe(true);
+            expect(options.action.label).toBe(t('transport.enterPin'));
+            options.action.onClick();
+            expect(sessionStorage.getItem('mw_pin_asked')).toBe('1');
+            expect(reload).toHaveBeenCalledTimes(1);
+            expect(logout).not.toHaveBeenCalled();
+        });
+
+        it('offers no PIN for a host that failed to prove itself', () => {
+            const toast = refusedToast();
+            MoonlightApp._onTransportFailed(IDENTITY_REFUSED);
+            expect(toast.mock.calls[0][1]).toBeUndefined();
+        });
+
+        it.each([
+            ['the host machine', () => (MoonlightApp._hasAdminAccess = true)],
+            ['a booth', () => (BackendClient.adminLocked = true)],
+        ])('offers no PIN on %s, which has none to ask for', (_who, arrange) => {
+            const wasLocked = BackendClient.adminLocked;
+            arrange();
+            const toast = refusedToast();
+            MoonlightApp._onTransportFailed(KEY_REFUSED);
+            BackendClient.adminLocked = wasLocked;
+            expect(toast.mock.calls[0][1].action).toBeUndefined();
+        });
+
+        it('keeps one message however many launches are refused', () => {
+            const dismiss = vi.fn();
+            refusedToast().mockImplementation(() => ({ dismiss }));
+            MoonlightApp._onTransportFailed(KEY_REFUSED);
+            MoonlightApp._onTransportFailed(KEY_REFUSED);
+            expect(dismiss).toHaveBeenCalledTimes(1);
         });
 
         it('is not taken for a quality climb the host could not hold', () => {
@@ -286,14 +371,16 @@ describe('the words', () => {
     it.each(['en', 'fr', 'zh'])('%s has both, and asks for a PIN in each', (lang) => {
         expect(locale(lang).login.sessionOtherBrowser).toMatch(/PIN/);
         expect(locale(lang).transport.keyRefused).toMatch(/PIN/);
+        expect(locale(lang).transport.enterPin).toMatch(/PIN/);
     });
 
     it('are the French ones Bruno accepted', () => {
         expect(locale('fr').login.sessionOtherBrowser).toBe(
             "Cette session a été appairée avec un autre navigateur. Saisissez un PIN pour appairer celui-ci ; l'autre reste connecté.",
         );
+        expect(locale('fr').transport.enterPin).toBe('Saisir un PIN');
         expect(locale('fr').transport.keyRefused).toBe(
-            "Cette session a été appairée avec un autre navigateur, le stream n'a donc pas été lancé. Déconnectez-vous ici, puis appairez ce navigateur avec un PIN.",
+            "Cet hôte a refusé ce navigateur, le stream n'a donc pas été lancé. Appairez-le à nouveau avec un PIN.",
         );
     });
 });
