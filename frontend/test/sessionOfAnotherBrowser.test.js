@@ -122,7 +122,10 @@ describe('the boot of a page holding such a session', () => {
     });
 
     it.each([
-        ['the host machine, which has no PIN to ask for', { is_localhost: true }],
+        [
+            'the host machine, which has no PIN to ask for',
+            { is_localhost: true, is_host_machine: true },
+        ],
         ['a booth, which would refuse the PIN', { admin_locked: true }],
     ])('leaves %s to the application', async (_who, extra) => {
         signedIn(extra);
@@ -153,7 +156,7 @@ describe('the boot of a page holding such a session', () => {
         });
 
         it.each([
-            ['the host machine', { is_localhost: true }],
+            ['the host machine', { is_localhost: true, is_host_machine: true }],
             ['a booth', { admin_locked: true }],
         ])('leaves %s as it was, and forgets the request', async (_who, extra) => {
             signedIn(extra);
@@ -161,6 +164,15 @@ describe('the boot of a page holding such a session', () => {
             expect(pinScreen()).toBeNull();
             expect(sessionStorage.getItem('mw_pin_asked')).toBeNull();
         });
+    });
+
+    it('asks a LAN machine unlocked with the admin password for the PIN too', async () => {
+        // is_localhost means "has admin access" since the remote admin password.
+        signedIn({ is_localhost: true, is_host_machine: false });
+        vi.spyOn(BackendClient, 'ensurePairingKey').mockResolvedValue({ sessionKeyRefused: true });
+
+        expect(await MoonlightApp._checkAuth()).toBe(false);
+        await vi.waitFor(() => expect(pinScreen()).not.toBeNull());
     });
 
     it('lets a browser paired as it should be straight through', async () => {
@@ -251,6 +263,7 @@ describe('a key the host refuses, at launch', () => {
             '_climbsOver',
             '_reconnectOf',
             '_hasAdminAccess',
+            '_isRealHostMachine',
             '_keyRefusedToast',
         ];
 
@@ -270,6 +283,7 @@ describe('a key the host refuses, at launch', () => {
                 _climbBack: null,
                 _climbsOver: false,
                 _hasAdminAccess: false,
+                _isRealHostMachine: false,
                 _keyRefusedToast: null,
             });
             sessionStorage.clear();
@@ -331,7 +345,7 @@ describe('a key the host refuses, at launch', () => {
         });
 
         it.each([
-            ['the host machine', () => (MoonlightApp._hasAdminAccess = true)],
+            ['the host machine', () => (MoonlightApp._isRealHostMachine = true)],
             ['a booth', () => (BackendClient.adminLocked = true)],
         ])('offers no PIN on %s, which has none to ask for', (_who, arrange) => {
             const wasLocked = BackendClient.adminLocked;
@@ -340,6 +354,13 @@ describe('a key the host refuses, at launch', () => {
             MoonlightApp._onTransportFailed(KEY_REFUSED);
             BackendClient.adminLocked = wasLocked;
             expect(toast.mock.calls[0][1].action).toBeUndefined();
+        });
+
+        it('offers the PIN on a LAN machine that merely has admin access', () => {
+            MoonlightApp._hasAdminAccess = true;
+            const toast = refusedToast();
+            MoonlightApp._onTransportFailed(KEY_REFUSED);
+            expect(toast.mock.calls[0][1].action).toBeDefined();
         });
 
         it('keeps one message however many launches are refused', () => {

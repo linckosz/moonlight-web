@@ -1566,7 +1566,8 @@ export const MoonlightApp = {
             // is another browser's and no stream could start from here, or the
             // person just asked to pair this browser again.
             const signedIn = status.is_localhost || status.authenticated;
-            const pinAsked = this._takePinAsked() && !status.is_localhost && !status.admin_locked;
+            const pinAsked =
+                this._takePinAsked() && !status.is_host_machine && !status.admin_locked;
             const sessionKeyRefused = signedIn && (await this._sessionHasAnotherKey(status));
             if (signedIn && !sessionKeyRefused && !pinAsked) return true;
 
@@ -1663,7 +1664,7 @@ export const MoonlightApp = {
      */
     _showKeyRefused() {
         this._keyRefusedToast?.dismiss();
-        const canAskPin = !this._isHostLocal() && !BackendClient.adminLocked;
+        const canAskPin = !this._isHostMachine() && !BackendClient.adminLocked;
         this._keyRefusedToast = Toast.error(t('transport.keyRefused'), {
             sticky: true,
             action: canAskPin
@@ -1694,7 +1695,9 @@ export const MoonlightApp = {
      * cookie. A PIN gives this browser a session of its own and leaves the other
      * one alone; logging out would end the other browser's session with it.
      *
-     * The host machine has no PIN to ask for, and a booth refuses one. Waited for,
+     * The host machine has no PIN to ask for, and a booth refuses one; a LAN machine
+     * unlocked with the admin password reads as is_localhost and can take a PIN like
+     * any other. Waited for,
      * so that the host list never shows only to be taken away, but not for long: a
      * host slow to answer here is no reason to hold up the app, and a stream
      * refused later still says why.
@@ -1708,7 +1711,7 @@ export const MoonlightApp = {
             }),
         ]);
         clearTimeout(timer);
-        return !!answer?.sessionKeyRefused && !status.is_localhost && !status.admin_locked;
+        return !!answer?.sessionKeyRefused && !status.is_host_machine && !status.admin_locked;
     },
 
     /**
@@ -2081,6 +2084,9 @@ export const MoonlightApp = {
             this._upgradeStableMs = 75000;
             this._climbBack = null;
             this._climbsOver = false;
+            // A new launch: what the last one was refused no longer holds.
+            this._keyRefusedToast?.dismiss();
+            this._keyRefusedToast = null;
             this._originalStreamHeight = undefined;
             // Aspect probe: one bar measurement per user-initiated launch,
             // and a watch on the host's own shape for as long as the stream
