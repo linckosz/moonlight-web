@@ -134,6 +134,12 @@ constexpr short kMaskVk = 0xE8;
 /// VK_MENU, and VK_RMENU: the client's right Alt, AltGr on a European layout.
 constexpr short kVkAlt = 0x12;
 constexpr short kVkRightAlt = 0xA5;
+/// VK_CONTROL and VK_SHIFT, which the client sends for either side, and the
+/// right ones (VK_RCONTROL, VK_RSHIFT), see resolveKey.
+constexpr short kVkCtrl = 0x11;
+constexpr short kVkShift = 0x10;
+constexpr short kVkRightCtrl = 0xA3;
+constexpr short kVkRightShift = 0xA1;
 
 /// The left Ctrl Windows puts under an AltGr, as the client marks it: a
 /// release it sends as the AltGr goes down, and the key in its heartbeats.
@@ -249,7 +255,26 @@ inline KeyPlan resolveKey(const QJsonObject& msg, KeyboardMode mode, LayoutFidel
     // keeps it as VK_MENU: it lets the viewer's Alt go for its own AltGr and
     // puts it back as that Alt (WinTextKeys). Held as the right one, it went
     // up with the symbol, and the Alt put back stayed down for good.
-    if (mode == KeyboardMode::Native && plan.keyCode == kVkRightAlt) plan.keyCode = kVkAlt;
+    //
+    // Gaming mode by position is the exception: its keys go by their place,
+    // not as characters, so none of them lets that Alt go (a toolbar chord
+    // still types one, the single case left), and a game may bind the two
+    // sides apart, as with a keyboard plugged into the host. The right Alt stays VK_RMENU, and the
+    // right Ctrl and Shift, which the client sends as the generic VK of
+    // either side, become VK_RCONTROL and VK_RSHIFT: they reached the host,
+    // its own keyboard included, as the left ones (bench of 05/11/2026). The
+    // client marks gaming on the press and replays it on the release and in
+    // the heartbeat, so all three name the same key.
+    if (mode == KeyboardMode::Native) {
+        if (msg["gaming"].toBool(false) && byPosition(msg, mode, fidelity)) {
+            if (plan.keyCode == kVkCtrl && code == QLatin1String("ControlRight"))
+                plan.keyCode = kVkRightCtrl;
+            else if (plan.keyCode == kVkShift && code == QLatin1String("ShiftRight"))
+                plan.keyCode = kVkRightShift;
+        } else if (plan.keyCode == kVkRightAlt) {
+            plan.keyCode = kVkAlt;
+        }
+    }
 
     // The numeric keypad is the same on every layout, and a key of its own:
     // its 1 typed as a character came out as the 1 of the main row — Shift+&

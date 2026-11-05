@@ -888,4 +888,69 @@ void run_keyboard_layout_tests()
         CHECK_EQ(both.size(), 2);
         if (both.size() == 2) CHECK((both[0].modifiers & MODIFIER_CTRL) != 0);
     }
+
+    // ── Gaming mode by position keeps the right side on the native host ──────
+    //
+    // The right Alt reached the native host as the left one, and the right
+    // Ctrl and Shift too, the client sending one VK for either side (bench of
+    // 05/11/2026). By position in gaming mode, nothing typed lets that Alt go,
+    // and a game may bind the two sides apart.
+    {
+        const auto gaming = [](QJsonObject msg) {
+            msg["gaming"] = true;
+            return msg;
+        };
+        const auto vkOf = [](const QJsonObject& msg, KeyboardMode mode, LayoutFidelity fidelity) {
+            return InputMsg::resolveKey(msg, mode, fidelity).keyCode;
+        };
+        const QJsonObject rightAlt = gaming(key(0xA5, "AltRight"));
+        const QJsonObject rightCtrl = gaming(key(0x11, "ControlRight"));
+        const QJsonObject rightShift = gaming(key(0x10, "ShiftRight"));
+        for (LayoutFidelity fidelity : {LayoutFidelity::Auto, LayoutFidelity::Never}) {
+            CHECK_EQ(vkOf(rightAlt, KeyboardMode::Native, fidelity), static_cast<short>(0xA5));
+            CHECK_EQ(vkOf(rightCtrl, KeyboardMode::Native, fidelity), static_cast<short>(0xA3));
+            CHECK_EQ(vkOf(rightShift, KeyboardMode::Native, fidelity), static_cast<short>(0xA1));
+        }
+        // The left ones stay as they come.
+        CHECK_EQ(vkOf(gaming(key(0x11, "ControlLeft")), KeyboardMode::Native, LayoutFidelity::Auto),
+                 static_cast<short>(0x11));
+        CHECK_EQ(vkOf(gaming(key(0x10, "ShiftLeft")), KeyboardMode::Native, LayoutFidelity::Auto),
+                 static_cast<short>(0x10));
+        CHECK_EQ(vkOf(gaming(key(0x12, "AltLeft")), KeyboardMode::Native, LayoutFidelity::Auto),
+                 static_cast<short>(0x12));
+
+        // Under "always", gaming mode types the client's characters: the right
+        // Alt is the one AltGr lets go of again, and both sides stay generic.
+        CHECK_EQ(vkOf(rightAlt, KeyboardMode::Native, LayoutFidelity::Always),
+                 static_cast<short>(0x12));
+        CHECK_EQ(vkOf(rightCtrl, KeyboardMode::Native, LayoutFidelity::Always),
+                 static_cast<short>(0x11));
+        CHECK_EQ(vkOf(rightShift, KeyboardMode::Native, LayoutFidelity::Always),
+                 static_cast<short>(0x10));
+        // At the desktop, even under "never", as before.
+        CHECK_EQ(vkOf(key(0xA5, "AltRight"), KeyboardMode::Native, LayoutFidelity::Never),
+                 static_cast<short>(0x12));
+        CHECK_EQ(vkOf(key(0x11, "ControlRight"), KeyboardMode::Native, LayoutFidelity::Never),
+                 static_cast<short>(0x11));
+
+        // The other hosts are left as they were.
+        for (KeyboardMode mode : {KeyboardMode::Positional, KeyboardMode::SunshineWindows}) {
+            CHECK_EQ(vkOf(rightAlt, mode, LayoutFidelity::Auto), static_cast<short>(0xA5));
+            CHECK_EQ(vkOf(rightCtrl, mode, LayoutFidelity::Auto), static_cast<short>(0x11));
+            CHECK_EQ(vkOf(rightShift, mode, LayoutFidelity::Auto), static_cast<short>(0x10));
+        }
+
+        // The heartbeat names the same keys, so the watchdog's set matches
+        // what was pressed.
+        QJsonObject beat;
+        beat["keys"] = QJsonArray{rightAlt, rightCtrl, rightShift};
+        const QVector<IMediaEngine::HeldKey> held =
+            InputMsg::parseHeldKeys(beat, KeyboardMode::Native, LayoutFidelity::Auto);
+        CHECK_EQ(held.size(), 3);
+        if (held.size() == 3) {
+            CHECK_EQ(held[0].keyCode, static_cast<short>(0xA5));
+            CHECK_EQ(held[1].keyCode, static_cast<short>(0xA3));
+            CHECK_EQ(held[2].keyCode, static_cast<short>(0xA1));
+        }
+    }
 }
