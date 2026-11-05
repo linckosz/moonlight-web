@@ -44,7 +44,7 @@ static VOID WINAPI onRegistered(DWORD status, PVOID, PDNS_SERVICE_INSTANCE insta
     if (instance) DnsServiceFreeInstance(instance);
 }
 
-bool MdnsAdvertiser::start(const QString& instance, quint16 httpsPort)
+bool MdnsAdvertiser::start(const QString& instance, quint16 httpsPort, const QString& hostId)
 {
     stop();
     if (httpsPort == 0) return false;
@@ -56,10 +56,11 @@ bool MdnsAdvertiser::start(const QString& instance, quint16 httpsPort)
     impl->host =
         (QSysInfo::machineHostName().section(QLatin1Char('.'), 0, 0) + QStringLiteral(".local"))
             .toStdWString();
-    PCWSTR keys[] = {L"v"};
-    PCWSTR values[] = {L"1"};
+    const std::wstring id = hostId.toStdWString();
+    PCWSTR keys[] = {L"v", L"id"};
+    PCWSTR values[] = {L"1", id.c_str()};
     impl->service = DnsServiceConstructInstance(impl->instance.c_str(), impl->host.c_str(), nullptr,
-                                                nullptr, httpsPort, 0, 0, 1, keys, values);
+                                                nullptr, httpsPort, 0, 0, 2, keys, values);
     if (!impl->service) {
         qWarning() << "mDNS: cannot build the service instance";
         delete impl;
@@ -98,7 +99,7 @@ void MdnsAdvertiser::stop()
 struct MdnsAdvertiser::Impl
 {};
 
-bool MdnsAdvertiser::start(const QString& instance, quint16)
+bool MdnsAdvertiser::start(const QString& instance, quint16, const QString&)
 {
     qInfo().noquote() << "mDNS: no announcement of" << instance << "on this platform yet";
     return false;

@@ -6100,7 +6100,7 @@ int main(int argc, char* argv[])
     MdnsAdvertiser mdnsAdvertiser;
     mdnsAdvertiser.start(
         MdnsAdvertiser::instanceName(QSysInfo::machineHostName(), mw::edition::isDev()),
-        server.activeHttpsPort());
+        server.activeHttpsPort(), PairingCrypto::keyId(appSettings.hostSigningPublicKey()));
 
     // URL for the host machine's own entry points (Desktop shortcut, installer
     // post-install page, Dock, tray, startup open).

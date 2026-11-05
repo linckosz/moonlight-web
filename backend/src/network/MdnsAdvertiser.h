@@ -29,7 +29,10 @@ public:
     static QString instanceName(const QString& hostName, bool dev);
 
     // Starts announcing; false when this platform cannot (nothing to undo).
-    bool start(const QString& instance, quint16 httpsPort);
+    // `hostId` goes in a TXT record `id`: the host key's name, what a pairing
+    // returns as host_id, so that a client paired already recognises this machine
+    // under another address or from its code. A claim, not a proof: it opens nothing.
+    bool start(const QString& instance, quint16 httpsPort, const QString& hostId);
     void stop();
 
 private:
