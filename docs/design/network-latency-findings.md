@@ -2753,6 +2753,41 @@ muted, and nobody listened. One client, 2 passes per case, no alternation, 7.4 G
 swap of 8 on the Mac. The screen was probably locked. Not measured: the cable witness
 the plan asked for. Packets on the air were not counted.
 
+### 05/11/2026 — The D9 defaults on the wire: the sound in EF, video and data in AF41 (audio + DSCP plan, D9a)
+
+Native host on DualRTX (Windows 11 26200, a --dev of the 05/11 build, not
+elevated, `packet_marking` on, no `MW_DSCP`), Chrome 156 on the N95 by cable.
+pktmon ran at DualRTX's NICs on the UDP leaving the media ports, about 66 s per
+pass. pktmon sees each datagram 4 times; the counts are of distinct datagrams.
+
+| Pass | Sound (RTP PT 111) | Frames (RTP PT 110) | SCTP (DTLS records) |
+|---|---|---|---|
+| video over SCTP, the default | EF, 13,326 | — | AF41, 32,715 |
+| audio road (`MW_RTP_VIDEO=native:h264+hevc+aroad`) | EF, 13,087 | AF41, 98,584 | AF41, 8,310 |
+
+STUN checks leave in 0, as libjuice does by design.
+
+- **The sound keeps EF next to a video in AF41.** `DtlsSrtpTransport` copies every
+  packet through `make_message`, which used to drop the class; on 21/10, without the
+  one-line fix in our submodule, the sound left with the video's value.
+- **On the audio road the frames ride an audio section and still leave in AF41**:
+  `Track::setVideoDscp` holds.
+- **One exception, in both passes**: the host's first two DTLS handshake datagrams
+  (ServerHello with the certificate, then ChangeCipherSpec and Finished, 34 ms after
+  the first packet) leave in AF11. libdatachannel's `DtlsTransport` starts from a
+  hard-coded `mCurrentDscp = 10` and only takes the class of the records it carries
+  later; `SetDscpSettings` does not reach it. The Mac's WebRTC session with the macOS
+  fix saw the same « 2 packets in AF11 ». Two datagrams before the stream starts: no effect expected.
+- **The three upstream branches pass their own suites** on Linux (WSL, GCC 14.2):
+  libdatachannel `keep-dscp-make-message` 29 tests of 29, libjuice `windows-diffserv`
+  and `macos-ipv4-tclass` `tests`. None of these tests reads a DSCP; the Windows and
+  Apple paths are not compiled there.
+
+Limits: one client, by cable, one pass per arm. The capture is at the host, so what
+the repeater and the Wi-Fi do with the marks is in the entries of 05/10 and 06/10.
+Not measured with these defaults: a host under the Windows service, Linux and macOS
+hosts.
+
 ## 4. The model so far (04/10/2026)
 
 What the measurements support, in order of the path:
