@@ -361,6 +361,7 @@
         "connecting": "Connecting to server...",
         "serverSelection": "Server selection",
         "serverCurrent": "This server",
+        "serverName": "Server: {{name}}",
         "pinSubtitle": "Enter the PIN shown on the server admin page",
         "sessionOtherBrowser": "This session was paired with another browser. Enter a PIN to pair this one; the other stays signed in.",
         "certSubtitle": "Upload your certificate file to authenticate",

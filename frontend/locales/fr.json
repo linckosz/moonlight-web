@@ -361,6 +361,7 @@
         "connecting": "Connexion au serveur...",
         "serverSelection": "Choix du serveur",
         "serverCurrent": "Ce serveur",
+        "serverName": "Serveur : {{name}}",
         "pinSubtitle": "Saisissez le PIN affiché sur la page d'administration du serveur",
         "sessionOtherBrowser": "Cette session a été appairée avec un autre navigateur. Saisissez un PIN pour appairer celui-ci ; l'autre reste connecté.",
         "certSubtitle": "Téléversez votre fichier de certificat pour vous authentifier",

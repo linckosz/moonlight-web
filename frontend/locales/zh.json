@@ -361,6 +361,7 @@
         "connecting": "正在连接服务器…",
         "serverSelection": "服务器选择",
         "serverCurrent": "当前服务器",
+        "serverName": "服务器：{{name}}",
         "pinSubtitle": "输入服务器管理页面显示的 PIN 码",
         "sessionOtherBrowser": "此会话已与另一个浏览器配对。请输入 PIN 码以配对当前浏览器；另一个浏览器将保持登录。",
         "certSubtitle": "上传你的证书文件以进行身份验证",

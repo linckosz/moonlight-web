@@ -100,6 +100,7 @@ describe('LoginView server selection', () => {
     });
 
     it('never names the machine being unlocked', async () => {
+        // The host gave no name (no display_name), as it does over the Internet.
         register([entry(HERE, 'DualRTX'), entry(THERE, 'UM790Pro')]);
         await open();
         expect(document.body.innerHTML).not.toContain('DualRTX');
