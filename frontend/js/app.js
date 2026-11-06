@@ -2316,6 +2316,11 @@ export const MoonlightApp = {
                     console.log('[MW] Auto: HEVC failed in this browser before — asking H.264');
             }
         }
+        // Whatever codec Auto named above, the host is told it was Auto: a
+        // native host whose hardware HEVC refuses to start then streams its
+        // hardware H.264 instead of HEVC in software (issue #54). A codec
+        // chosen by hand, or forced by a fallback relaunch, is kept.
+        streamingSettings.codec_auto = !codecOverride && this._codecAuto === true;
         // « PyroWave (Wired LAN only) »: asked of a host that says it codes it,
         // by a browser that decodes it, with the HDR box off; otherwise this
         // launch is an Auto one, without a word (util/PyrowaveCodec.js). Read

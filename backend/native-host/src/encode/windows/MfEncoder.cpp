@@ -214,6 +214,13 @@ bool MfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, i
             stop();
             return false;
         }
+        if (m_HardwareOnly) {
+            // The session asked for silicon or nothing: it has another codec
+            // to try on this transform's hardware sibling. See setHardwareOnly.
+            error = m_Name + " is not usable (" + error + ")";
+            stop();
+            return false;
+        }
         const std::string module = describeModule();
         log::warning("[native] " + m_Name + " is not usable (" + error +
                      ") — trying the software transform instead" +
@@ -227,6 +234,13 @@ bool MfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, i
             stop();
             return false;
         }
+    }
+    if (m_HardwareOnly && !m_Hardware) {
+        // No hardware transform for this codec at all: the enumeration went
+        // straight to the software one.
+        error = std::string("only a software transform encodes ") + toString(codec) + " here";
+        stop();
+        return false;
     }
 
     const std::string overrides = tuning.describe();

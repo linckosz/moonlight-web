@@ -1727,9 +1727,46 @@ private:
         encoder.intraRefresh = m_Config.intraRefresh;
         encoder.tuning = m_Config.tuning;
         encoder.encoder12 = encoder12;
-        if (!m_Pipeline->buildEncoder(*m_Capture, encoder, error)) return false;
+        encoder.hardwareOnly = hardwareCodecFirst();
+        if (!m_Pipeline->buildEncoder(*m_Capture, encoder, error)) {
+            if (!encoder.hardwareOnly) return false;
+            // Issue #54: Qualcomm's hardware HEVC refused to start (0x80070057),
+            // and the software HEVC that took over ran at 32 fps beside a
+            // hardware H.264 that works. Auto is an offer, and H.264 is in it.
+            log::warning(std::string("[native] ") + toString(m_Target.codec) +
+                         " has no working hardware encoder here (" + error +
+                         ") — Auto takes H.264 instead of " + toString(m_Target.codec) +
+                         " in software");
+            m_Target.codec = Codec::H264;
+            encoder.codec = Codec::H264;
+            encoder.hardwareOnly = false;
+            if (!m_Pipeline->buildEncoder(*m_Capture, encoder, error)) return false;
+        }
+        m_CodecSettled = true;
         m_EncoderKbps = encoder.bitrateKbps;
         return true;
+    }
+
+    /// Whether this build takes the hardware encoder of the codec picked, or
+    /// none, so that a failure can still change the codec. Media Foundation's
+    /// hardware tier lists H.264 and HEVC together, but one may refuse to
+    /// start while the other works, and the transform then falls to the
+    /// software encoder of the same codec (MfEncoder). Only where all of it
+    /// holds:
+    ///  - the session's first build: the client has seen no picture yet, so
+    ///    the codec is still the host's to change (m_Info.codec is read after);
+    ///  - Media Foundation on its hardware tier, for a codec other than H.264;
+    ///  - the viewer left the codec to Auto, and the browser decodes H.264;
+    ///  - no bench asked for a given transform (fallback=mf, mfsw, ...).
+    bool hardwareCodecFirst() const
+    {
+        if (m_CodecSettled || !m_Config.codecAuto) return false;
+        if (m_Target.encoder != EncoderApi::MediaFoundation || m_Target.codec == Codec::H264)
+            return false;
+        if (m_Config.tuning.fallback != EncoderTuning::Fallback::None) return false;
+        for (Codec c : m_Config.clientCodecs)
+            if (c == Codec::H264) return true;
+        return false;
     }
 
     /// The duplication was lost — a resolution change, a mode set, a desktop
@@ -4898,6 +4935,9 @@ private:
     /// setBitrate() it took — scaled to the cadence frames arrive at, boost
     /// included. Stamped on each frame (EncodedFrame::encoderKbps).
     int m_EncoderKbps = 0;
+    /// The codec is the client's to decode from the first picture on: only
+    /// the session's first build may still change it (see hardwareCodecFirst).
+    bool m_CodecSettled = false;
 };
 
 } // namespace

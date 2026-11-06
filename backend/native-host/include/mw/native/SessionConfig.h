@@ -95,6 +95,14 @@ struct SessionConfig
     /// needs to know what else the client would accept.
     std::vector<Codec> clientCodecs;
 
+    /// The viewer left the codec to the host ("Auto"): its list is an offer,
+    /// not a wish. Read where a backend learns late that the codec picked has
+    /// no hardware behind it — Media Foundation on Windows, whose hardware
+    /// HEVC may refuse to start beside a hardware H.264 that works (issue
+    /// #54): then H.264 on the hardware rather than HEVC in software. A
+    /// codec chosen by hand stays the codec, at whatever cost.
+    bool codecAuto = false;
+
     /// Ask for HDR. Honoured only when the display is actually in an HDR mode
     /// AND the chosen encoder does 10-bit; otherwise the session runs SDR and
     /// says so in SessionInfo, rather than failing.

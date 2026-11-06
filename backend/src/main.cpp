@@ -4039,6 +4039,8 @@ int main(int argc, char* argv[])
             // The viewer's aspect is "Auto": a native stream follows the
             // display's shape when it changes. Absent → the size is kept.
             s->setFollowDisplayShape(body["follow_display_shape"].toBool(false));
+            // The viewer's codec is "Auto", whatever codec the browser named.
+            s->setCodecAuto(body["codec_auto"].toBool(false));
             s->setFrameFit(reqFitBox, reqAllowUpscale, reqMatchDisplay, reqFallbackW, reqFallbackH);
             s->setClientKind(clientKind);
             s->setClientSameNetwork(clientSameNetwork);
@@ -4204,6 +4206,7 @@ int main(int argc, char* argv[])
             cfg["clientVsync"] = body["client_vsync"].toBool(false);
             cfg["clientTearingReal"] = body["client_tearing_real"].toBool(false);
             cfg["followDisplayShape"] = body["follow_display_shape"].toBool(false);
+            cfg["codecAuto"] = body["codec_auto"].toBool(false);
             cfg["fitRequestedBox"] = reqFitBox;
             cfg["allowUpscale"] = reqAllowUpscale;
             cfg["matchClientDisplay"] = reqMatchDisplay;

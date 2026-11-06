@@ -93,6 +93,14 @@ public:
     bool setBitrate(int bitrateKbps, std::string& error) override;
     bool intraRefreshEnabled() const override { return false; }
 
+    /// Before init(): take the hardware transform or nothing. A hardware
+    /// transform that fails its bring-up then fails init() rather than
+    /// handing over to the software transform of the same codec — the
+    /// session has a better answer than a software HEVC when the browser
+    /// decodes H.264 too (issue #54: Qualcomm's HEVC transform refused, the
+    /// software one ran at 32 fps beside a working hardware H.264).
+    void setHardwareOnly(bool on) { m_HardwareOnly = on; }
+
 private:
     /// Receives the transform's events on Media Foundation's own thread and
     /// hands them to encode(), which waits on the calling thread. The
@@ -152,6 +160,8 @@ private:
     bool m_D3dAware = false;
     bool m_ProvidesSamples = false;
     bool m_SkipHardware = false;
+    /// See setHardwareOnly().
+    bool m_HardwareOnly = false;
     DWORD m_OutputSize = 0;
     DWORD m_InputId = 0;
     DWORD m_OutputId = 0;

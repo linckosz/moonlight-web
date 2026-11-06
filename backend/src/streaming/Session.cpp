@@ -696,6 +696,10 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // The same codec bitmask the GameStream path negotiates with, so the
         // browser's decoder expectations are identical either way.
         nativeParams.clientVideoFormats = params.supportedVideoFormats;
+        // The mask says HEVC and H.264 alike for Auto and for HEVC chosen by
+        // hand, and the browser resolves Auto to a codec before asking: only
+        // its own word tells an offer from a wish. See setCodecAuto.
+        nativeParams.codecAuto = m_CodecAuto;
         nativeParams.hdr = media.nativeHost.hdrRequested;
         nativeParams.yuv444 = m_Config.chroma == ChromaSampling::C444;
         // Intra-refresh is only worth its cost when the client will decode

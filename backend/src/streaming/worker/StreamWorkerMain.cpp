@@ -705,6 +705,8 @@ int runStreamWorker(QCoreApplication& app)
     session->setStreamLimits(cfg["fpsLimit"].toInt(0), cfg["bitrateLimitKbps"].toInt(0));
     // Absent (an older parent) → the frame keeps its size, today's behaviour.
     session->setFollowDisplayShape(cfg["followDisplayShape"].toBool(false));
+    // Absent (an older parent) → the codec named is the codec kept.
+    session->setCodecAuto(cfg["codecAuto"].toBool(false));
     // Absent (an older parent) → the height is kept, today's behaviour.
     session->setFrameFit(cfg["fitRequestedBox"].toBool(false), cfg["allowUpscale"].toBool(false),
                          cfg["matchClientDisplay"].toBool(false), cfg["fallbackWidth"].toInt(0),

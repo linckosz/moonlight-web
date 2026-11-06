@@ -292,6 +292,11 @@ public:
     /// mw::native::SessionConfig::followDisplayShape. Other engines ignore it.
     void setFollowDisplayShape(bool follow) { m_FollowDisplayShape = follow; }
 
+    /// The viewer's codec setting is "Auto" (the browser asks for HEVC by
+    /// name either way) — see mw::native::SessionConfig::codecAuto. Other
+    /// engines ignore it.
+    void setCodecAuto(bool on) { m_CodecAuto = on; }
+
     /// The requested size is a box to fit (the display's shape inside it),
     /// and whether a native stream may then be larger than the display — the
     /// browser's "Same as your device" / "Custom" resolutions. See
@@ -646,6 +651,8 @@ private:
 
     /// See setFollowDisplayShape.
     bool m_FollowDisplayShape = false;
+    /// See setCodecAuto.
+    bool m_CodecAuto = false;
 
     /// See setFrameFit.
     bool m_FitRequestedBox = false;

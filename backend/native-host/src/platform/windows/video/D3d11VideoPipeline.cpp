@@ -118,7 +118,12 @@ bool D3d11VideoPipeline::buildEncoder(const capture::IWindowsCapture& capture,
     case EncoderApi::Nvenc: m_Encoder = std::make_unique<encode::NvencEncoder>(); break;
     case EncoderApi::Amf: m_Encoder = std::make_unique<encode::AmfEncoder>(); break;
     case EncoderApi::Vpl: m_Encoder = std::make_unique<encode::VplEncoder>(); break;
-    case EncoderApi::MediaFoundation: m_Encoder = std::make_unique<encode::MfEncoder>(); break;
+    case EncoderApi::MediaFoundation: {
+        auto mf = std::make_unique<encode::MfEncoder>();
+        mf->setHardwareOnly(build.hardwareOnly);
+        m_Encoder = std::move(mf);
+        break;
+    }
     case EncoderApi::Software: m_Encoder = std::make_unique<encode::SoftwareEncoder>(); break;
     default:
         error = std::string("no encoder implementation for ") + toString(build.encoder) + " yet";

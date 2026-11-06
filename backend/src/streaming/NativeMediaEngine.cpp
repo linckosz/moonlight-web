@@ -236,6 +236,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.maxFps = params.maxFps;
     config.bitrateKbps = params.bitrateKbps;
     config.clientCodecs = codecsFromMask(params.clientVideoFormats);
+    config.codecAuto = params.codecAuto;
     config.hdr = params.hdr;
     config.yuv444 = params.yuv444;
     config.intraRefresh = params.intraRefresh;

@@ -97,6 +97,10 @@ public:
         bool hdr = false;
         bool intraRefresh = false;
         EncoderTuning tuning;
+        /// Media Foundation only: the hardware transform or a failed build,
+        /// never the software transform of the same codec (MfEncoder::
+        /// setHardwareOnly). The session's own codec choice decides (issue #54).
+        bool hardwareOnly = false;
         /// The D3D12 route's encoder, as the choice resolved it
         /// (VideoPipelineChoice::encoder12); D3D11 reads nothing of it.
         EncoderTuning::Encoder12 encoder12 = EncoderTuning::Encoder12::VideoEncode;

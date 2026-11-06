@@ -121,6 +121,8 @@ public:
         /// Rebuild at the display's new shape when its mode changes under the
         /// session — see SessionConfig::followDisplayShape.
         bool followDisplayShape = false;
+        /// The viewer's codec setting is Auto — see SessionConfig::codecAuto.
+        bool codecAuto = false;
         /// width × height is a box to fit (the display's shape inside it),
         /// and whether the frame may then be larger than the display — see
         /// SessionConfig::fitRequestedBox and allowUpscale.
