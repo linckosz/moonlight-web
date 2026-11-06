@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +125,22 @@ func TestMwsrNothingAboutThePersonGoesAnywhere(t *testing.T) {
 	}
 	if c.xff != mwsrUmamiAddr || c.ua != mwsrUmamiUA {
 		t.Errorf("umami must see only the fixed address and UA, got %q / %q", c.xff, c.ua)
+	}
+}
+
+// Umami's bot filter drops a record without an error, so a wrong agent fails
+// silently. The census agents it does count all read "MoonlightWeb/version (a; b)":
+// keep that shape, with no word a bot list knows.
+func TestMwsrUmamiAgentHasTheShapeUmamiCounts(t *testing.T) {
+	shape := regexp.MustCompile(`^MoonlightWeb/[0-9.]+ \([a-z0-9]+; [a-z0-9]+\)$`)
+	if !shape.MatchString(mwsrUmamiUA) {
+		t.Errorf("%q does not read like the census agents Umami counts", mwsrUmamiUA)
+	}
+	lower := strings.ToLower(mwsrUmamiUA)
+	for _, bot := range []string{"bot", "crawl", "spider", "http", "headless", "fetch", "scan", "monitor", "check"} {
+		if strings.Contains(lower, bot) {
+			t.Errorf("%q contains %q, which a bot filter matches", mwsrUmamiUA, bot)
+		}
 	}
 }
 

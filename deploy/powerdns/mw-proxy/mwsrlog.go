@@ -62,8 +62,13 @@ const (
 	// Every record's address and User-Agent as Umami sees them, so that it cannot
 	// tell two visitors apart. Umami needs both: without an address it would use
 	// this container's, which is just as fixed but less obviously on purpose.
+	//
+	// The User-Agent has the shape of the update census's, "Name/version (a; b)",
+	// which Umami counts. With a single word, "MoonlightWeb-MWSR-page/1", the
+	// measures were kept on disk and never counted: most likely Umami's bot
+	// filter, which drops a record without an error.
 	mwsrUmamiAddr = "127.0.0.1"
-	mwsrUmamiUA   = "MoonlightWeb-MWSR-page/1"
+	mwsrUmamiUA   = "MoonlightWeb/1 (mwsr; measure)"
 )
 
 type mwsrConfig struct {
