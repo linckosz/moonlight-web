@@ -74,6 +74,9 @@ export class AdminView {
         // rendezvous. Off by default: the LAN's door does not turn into the
         // internet's unless the owner asks for exactly that.
         this._remoteAdminInternet = false;
+        // Whether a device may also ask to pair by its QR code from outside the
+        // LAN. Off by default; either way it gets in only with the code it shows.
+        this._pairRequestInternet = false;
 
         // Server settings state
         this._httpsPort = 443;
@@ -255,6 +258,7 @@ export class AdminView {
             this._httpsPort = admin.https_port || 443;
             this._httpPort = admin.http_port || 80;
             this._certAuthEnabled = admin.cert_auth_enabled || false;
+            this._pairRequestInternet = admin.pair_request_internet === true;
             this._streamNotifications = admin.stream_notifications !== false;
             this._packetMarking = admin.packet_marking !== false;
             this._vdExclusiveSupported = admin.virtual_display_exclusive_supported === true;
@@ -465,6 +469,26 @@ export class AdminView {
             { internet },
             internet ? t('admin.remoteAdminInternetOn') : t('admin.remoteAdminInternetOff'),
         );
+    }
+
+    // Take QR code pairing requests from outside the LAN too, or stop taking
+    // them. Saved on the spot through the admin settings; the box shows what
+    // the server kept, and goes back where it was when the save fails.
+    async _togglePairRequestInternet(enabled) {
+        try {
+            const res = await BackendClient.saveAdminSettings({ pair_request_internet: enabled });
+            this._pairRequestInternet = res?.pair_request_internet === true;
+            Toast.success(
+                this._pairRequestInternet
+                    ? t('admin.pairRequestInternetOn')
+                    : t('admin.pairRequestInternetOff'),
+            );
+        } catch (err) {
+            console.error('[Admin] Failed to save the QR code requests setting:', err);
+            Toast.error(t('admin.saveFailed', { message: err.message }));
+        }
+        const box = this.container.querySelector('#chk-pair-request-internet');
+        if (box) box.checked = this._pairRequestInternet;
     }
 
     async _postRemoteAdmin(body, successMessage) {
@@ -812,6 +836,7 @@ export class AdminView {
                             `
                                     : ''
                             }
+                            ${this._renderPairRequestInternet()}
                         </div>
                     </div>
                 `
@@ -1476,6 +1501,14 @@ export class AdminView {
         if (internetAdminChk) {
             internetAdminChk.addEventListener('change', () =>
                 this._toggleRemoteAdminInternet(internetAdminChk.checked),
+            );
+        }
+
+        // QR code requests from outside the LAN, under the PIN: saved on the spot.
+        const pairInternetChk = this.container.querySelector('#chk-pair-request-internet');
+        if (pairInternetChk) {
+            pairInternetChk.addEventListener('change', () =>
+                this._togglePairRequestInternet(pairInternetChk.checked),
             );
         }
         const setPassBtn = this.container.querySelector('#btn-set-admin-password');
@@ -2293,6 +2326,21 @@ export class AdminView {
 
     // --- Remote admin access: the password door, the LAN's and on request the
     // internet's (through the rendezvous only) ---
+    // Under the PIN: whether a device may also ask to pair by its QR code from
+    // outside the LAN. Off by default; either way the administrator types the
+    // code it shows before it gets in.
+    _renderPairRequestInternet() {
+        return `
+                            <div class="u-mt-3">
+                                <label class="settings-checkbox-label">
+                                    <input type="checkbox" id="chk-pair-request-internet"
+                                           ${this._pairRequestInternet ? 'checked' : ''} />
+                                    <span class="settings-checkbox-text">${t('admin.pairRequestInternet')}</span>
+                                </label>
+                                <p class="setting-desc">${t('admin.pairRequestInternetDesc')}</p>
+                            </div>`;
+    }
+
     _renderRemoteAdmin() {
         return `
                 <div class="settings-section">
