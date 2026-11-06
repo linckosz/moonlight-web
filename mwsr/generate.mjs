@@ -8,7 +8,8 @@
 // constants overridable at pipeline creation, the GLSL ES 3.00 twins (WebGL2,
 // OpenGL ES) with the product's defaults baked in, the HLSL twins (Direct3D
 // 11 and 12) with their constants as defines, the C++ header of the CPU side
-// (cpp/mwsr.h), and a copy of the module itself. cpp/example_d3d11.cpp is
+// (cpp/mwsr.h), the libplacebo / mpv user shader (Vulkan) with the law worked
+// out in it, the Metal text, and a copy of the module itself. cpp/example_d3d11.cpp is
 // written by hand. frontend/test/mwsrDist.test.js fails when a file here lags
 // behind.
 //
@@ -363,6 +364,251 @@ inline std::vector<Define> defines(const Regime& r, const std::vector<Define>& u
 `;
 }
 
+// A JavaScript number as a GLSL or MSL float literal.
+const glNumber = (v) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
+
+/**
+ * libplacebo/mwsr-up.hook: the upscale as a libplacebo / mpv user shader, one
+ * pass that needs nothing from its renderer: its per-draw values are the
+ * module's law, written here from MWSR_LAW, as cpp/mwsr.h's constants() works
+ * them out (the twin of mwsrUniforms() for an upscale).
+ * @returns {string}
+ */
+function hookText() {
+    const { curves, force, scale, ft, kwc } = MWSR_LAW;
+    const curve = ([c0, c1, c2]) => `${glNumber(c0)} + x * (${glNumber(c1)} + x * ${glNumber(c2)})`;
+    const luma = MWSR_CONSTANTS.LUMA.map(glNumber).join(', ');
+    return `${header('the upscale, a libplacebo / mpv user shader', 'generate.mjs or the tables of that module')}
+//
+// The kernel of hlsl/mwsr-up.hlsl line for line, one pass on the RGB picture
+// (MAIN) when both axes grow, drawn at the output's size: libplacebo's own
+// scalers then have nothing left to do. Its per-draw values are worked out here
+// from the input's and the output's sizes, as cpp/mwsr.h's constants() does.
+// In a libplacebo renderer: pl_mpv_user_shader_parse(), then the parameters
+// below. In mpv: --vo=gpu-next --glsl-shaders=mwsr-up.hook, with
+// --glsl-shader-opts=MWSR_HDR=1 on PQ content.
+
+//!PARAM MWSR_HDR
+//!DESC 1 when the input holds PQ code values (HDR): the bound then takes no margin
+//!TYPE DEFINE
+//!MINIMUM 0
+//!MAXIMUM 1
+0
+
+//!PARAM MWSR_CHROMA444
+//!DESC 1 for a 4:4:4 stream: the borders between two colours of one luma are sharpened too
+//!TYPE DEFINE
+//!MINIMUM 0
+//!MAXIMUM 1
+0
+
+//!HOOK MAIN
+//!BIND HOOKED
+//!DESC MWSR (MoonlightWeb Super Resolution)
+//!WIDTH OUTPUT.w
+//!HEIGHT OUTPUT.h
+//!WHEN OUTPUT.w HOOKED.w > OUTPUT.h HOOKED.h > *
+
+// The coarse derivatives of the other texts, where the GLSL version has them.
+#if __VERSION__ >= 450
+#define MWSR_DX dFdxCoarse
+#define MWSR_DY dFdyCoarse
+#else
+#define MWSR_DX dFdx
+#define MWSR_DY dFdy
+#endif
+
+const vec3 MWSR_LUMA = vec3(${luma});
+
+vec3 mwsrS(vec2 uv) {
+    return (HOOKED_mul * textureLod(HOOKED_raw, uv, 0.0)).rgb;
+}
+
+vec4 hook() {
+    // constants() for this input drawn at this output: the law's curves over the scale's logarithm,
+    // held at x${scale[0]} and x${scale[1]}, the sharpness forced from x${glNumber(force.from)} to x${force.to}, whole from x${MWSR_CONSTANTS.S_FULL} on
+    vec2 texel = HOOKED_pt;
+    vec2 dims = HOOKED_size;
+    vec2 scale = target_size / input_size;
+    float smin = min(scale.x, scale.y);
+    float sl = clamp(smin, ${glNumber(scale[0])}, ${glNumber(scale[1])});
+    float x = log(sl);
+    float force = 1.0 + (${glNumber(force.top)} - 1.0) * clamp(log(sl / ${glNumber(force.from)}) / log(${glNumber(force.to)} / ${glNumber(force.from)}), 0.0, 1.0);
+    float strength = clamp((smin - 1.0) / (${glNumber(MWSR_CONSTANTS.S_FULL)} - 1.0), 0.0, 1.0);
+    float kc = ${curve(curves.kc)};
+    float kg = (${curve(curves.kg)}) * force * strength;
+    float kr = ${curve(curves.kr)};
+#if MWSR_HDR
+    float kl = 0.0;
+#else
+    float kl = (${curve(curves.kl)}) * force;
+#endif
+    float ft = ${glNumber(ft)};
+    float kwc = ${glNumber(kwc)} * strength;
+    vec2 across = kr * texel;
+
+    vec2 uv = HOOKED_pos;
+    vec2 sp = uv * dims;
+    vec2 f0 = floor(sp - 0.5);
+    vec2 t = sp - 0.5 - f0;
+    vec2 s = 1.0 - t;
+    vec2 ku = kc * t * s;
+    vec2 w12 = 1.0 + ku;
+    vec2 p12 = (f0 + 0.5 + (t * t * (3.0 - 2.0 * t) + ku * s) / w12) * texel;
+    vec3 rM = mwsrS(p12);
+    // the slope per input texel along the texture's own axes, whichever way the target's rows run
+    vec2 dir = sign(vec2(dFdx(uv.x), dFdy(uv.y))) * scale;
+    vec2 gM;
+    bool isFlat;
+#if MWSR_CHROMA444
+    vec3 dx = MWSR_DX(rM) * dir.x;
+    vec3 dy = MWSR_DY(rM) * dir.y;
+    vec3 m = abs(dx) + abs(dy);
+    bool rg = m.g > m.r;
+    bool b = m.b > max(m.r, m.g);
+    gM = vec2(b ? dx.b : (rg ? dx.g : dx.r), b ? dy.b : (rg ? dy.g : dy.r));
+    isFlat = max(m.r, max(m.g, m.b)) < ft;
+#else
+    float lM = dot(rM, MWSR_LUMA);
+    gM = vec2(MWSR_DX(lM), MWSR_DY(lM)) * dir;
+    isFlat = abs(gM.x) + abs(gM.y) < ft;
+#endif
+    if (isFlat) {
+        return vec4(rM, 1.0);
+    }
+    vec2 p0 = (f0 - 0.5) * texel;
+    vec2 p3 = (f0 + 2.5) * texel;
+    vec3 rT = mwsrS(vec2(p12.x, p0.y));
+    vec3 rL = mwsrS(vec2(p0.x, p12.y));
+    vec3 rR = mwsrS(vec2(p3.x, p12.y));
+    vec3 rB = mwsrS(vec2(p12.x, p3.y));
+    vec2 dn = gM * inversesqrt(dot(gM, gM)) * across;
+    vec3 ra = mwsrS(uv - dn);
+    vec3 rb = mwsrS(uv + dn);
+    vec3 K = (w12.x * (w12.y * rM - ku.y * (s.y * rT + t.y * rB)) - w12.y * ku.x * (s.x * rL + t.x * rR)) / (1.0 - ku.x * ku.y);
+    vec3 D = K - 0.5 * (ra + rb);
+    vec3 R = K + kg * D + kwc * (D - vec3(dot(D, MWSR_LUMA)));
+    vec3 mn = min(rM, min(ra, rb));
+    vec3 mx = max(rM, max(ra, rb));
+    vec3 mg = (mx - mn) * kl;
+    return vec4(clamp(R, max(mn - mg, vec3(0.0)), mx + mg), 1.0);
+}
+`;
+}
+
+/**
+ * metal/mwsr-up.metal: the upscale in Metal Shading Language, its constants the
+ * 24 floats of cpp/mwsr.h's constants() at buffer(1).
+ * @returns {string}
+ */
+function mslText() {
+    const luma = MWSR_CONSTANTS.LUMA.map(glNumber).join(', ');
+    return `${header('the upscale, Metal Shading Language', 'generate.mjs or the tables of that module')}
+//
+// The kernel of hlsl/mwsr-up.hlsl line for line. The fragment function mwsr_up
+// reads the picture at texture(0) through a bilinear clamped sampler and its
+// constants, cpp/mwsr.h's constants(), at buffer(1). Its vertex stage hands it a
+// float4 position and a float2 texCoords, v down from the picture's top. Build
+// it with the preprocessor macro MWSR_CHROMA444 1 for a 4:4:4 stream.
+#include <metal_stdlib>
+using namespace metal;
+
+#ifndef MWSR_CHROMA444
+#define MWSR_CHROMA444 0
+#endif
+
+// What the vertex stage hands the fragment stage
+struct Vertex
+{
+    float4 position [[ position ]];
+    float2 texCoords;
+};
+
+// mwsr::Constants, 24 floats
+struct MwsrConstants
+{
+    float2 texel;
+    float2 scale;
+    float2 dims;
+    float2 across;
+    float kc;
+    float ft;
+    float kg;
+    float kwc;
+    float2 zc;
+    float2 zr;
+    float zring;
+    float zft;
+    float zkg;
+    float gaze;
+    float kl;
+    float zref;
+    float pad1;
+    float pad2;
+};
+
+constexpr sampler mwsrSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+
+constant float3 MWSR_LUMA = float3(${luma});
+
+static float3 mwsrS(texture2d<float> tex, float2 uv)
+{
+    return tex.sample(mwsrSampler, uv, level(0.0)).rgb;
+}
+
+fragment float4 mwsr_up(Vertex v [[ stage_in ]],
+                        constant MwsrConstants &c [[ buffer(1) ]],
+                        texture2d<float> tex [[ texture(0) ]])
+{
+    float2 uv = v.texCoords;
+    float2 sp = uv * c.dims;
+    float2 f0 = floor(sp - 0.5);
+    float2 t = sp - 0.5 - f0;
+    float2 s = 1.0 - t;
+    float2 ku = c.kc * t * s;
+    float2 w12 = 1.0 + ku;
+    float2 p12 = (f0 + 0.5 + (t * t * (3.0 - 2.0 * t) + ku * s) / w12) * c.texel;
+    float3 rM = mwsrS(tex, p12);
+    // the slope per input texel along the texture's own axes, whichever way the target's rows run
+    float2 dir = sign(float2(dfdx(uv.x), dfdy(uv.y))) * c.scale;
+    float2 gM;
+    bool isFlat;
+#if MWSR_CHROMA444
+    float3 dx = dfdx(rM) * dir.x;
+    float3 dy = dfdy(rM) * dir.y;
+    float3 m = abs(dx) + abs(dy);
+    bool rg = m.g > m.r;
+    bool b = m.b > max(m.r, m.g);
+    gM = float2(b ? dx.b : (rg ? dx.g : dx.r), b ? dy.b : (rg ? dy.g : dy.r));
+    isFlat = max(m.r, max(m.g, m.b)) < c.ft;
+#else
+    float lM = dot(rM, MWSR_LUMA);
+    gM = float2(dfdx(lM), dfdy(lM)) * dir;
+    isFlat = abs(gM.x) + abs(gM.y) < c.ft;
+#endif
+    if (isFlat) {
+        return float4(rM, 1.0);
+    }
+    float2 p0 = (f0 - 0.5) * c.texel;
+    float2 p3 = (f0 + 2.5) * c.texel;
+    float3 rT = mwsrS(tex, float2(p12.x, p0.y));
+    float3 rL = mwsrS(tex, float2(p0.x, p12.y));
+    float3 rR = mwsrS(tex, float2(p3.x, p12.y));
+    float3 rB = mwsrS(tex, float2(p12.x, p3.y));
+    float2 dn = gM * rsqrt(dot(gM, gM)) * c.across;
+    float3 ra = mwsrS(tex, uv - dn);
+    float3 rb = mwsrS(tex, uv + dn);
+    float3 K = (w12.x * (w12.y * rM - ku.y * (s.y * rT + t.y * rB)) - w12.y * ku.x * (s.x * rL + t.x * rR)) / (1.0 - ku.x * ku.y);
+    float3 D = K - 0.5 * (ra + rb);
+    float3 R = K + c.kg * D + c.kwc * (D - float3(dot(D, MWSR_LUMA)));
+    float3 mn = min(rM, min(ra, rb));
+    float3 mx = max(rM, max(ra, rb));
+    float3 mg = (mx - mn) * c.kl;
+    return float4(clamp(R, max(mn - mg, float3(0.0)), mx + mg), 1.0);
+}
+`;
+}
+
 /** A GLSL text with the header after its `#version` line, which must come first. */
 function glsl(what, text) {
     const nl = text.indexOf('\n');
@@ -394,6 +640,8 @@ export function mwsrDist() {
             '\n' +
             mwsrHlsl({ half: true }),
         'cpp/mwsr.h': cppHeader(),
+        'libplacebo/mwsr-up.hook': hookText(),
+        'metal/mwsr-up.metal': mslText(),
     };
     for (const taps of [1, 4, 9, 16]) {
         const k = Math.sqrt(taps);

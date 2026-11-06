@@ -229,6 +229,8 @@ The 0 A.D. picture is © Wildfire Games; the screenshot is by PantheraLeo1359531
 | `hlsl/mwsr-up.hlsl` | The upscale, HLSL, for Direct3D 11 (FXC, `ps_5_0`) and 12 (DXC, `ps_6_0`). Its parameters are `MWSR_*` defines. |
 | `hlsl/mwsr-up-half.hlsl` | The same, its colour arithmetic in `min16float`. |
 | `hlsl/mwsr-down-1.hlsl`, `-4`, `-9`, `-16` | The reduction, HLSL. |
+| `libplacebo/mwsr-up.hook` | The upscale as a libplacebo / mpv user shader: Vulkan through libplacebo, or mpv's `gpu-next`. One pass that works out its per-draw values from the input's and the output's sizes; `MWSR_HDR` and `MWSR_CHROMA444` are its parameters. No reduction. |
+| `metal/mwsr-up.metal` | The upscale, Metal Shading Language: the fragment function `mwsr_up`, the constant buffer of `cpp/mwsr.h` at `buffer(1)`. No reduction. |
 | `cpp/mwsr.h` | The CPU side for a native renderer, C++17, header only: the mode for a scale and its shader file, the kernel's values by the law, the 96 bytes of the constant buffer, the defines to compile with. |
 | `cpp/example_d3d11.cpp` | A whole Direct3D 11 integration in one file, which also serves as a test: it reads a PNG, draws it at another size and writes a PNG. |
 | `js/MwsrShader.js` | The JavaScript module the shaders come from: it writes the texts with any parameters, picks the mode for a scale and fills the uniform block. |
@@ -246,6 +248,15 @@ drawn on WARP, against the WGSL one on SwiftShader:
 - **Reductions, 9 pictures (03/11/2026):** the same, on 0.04 % of the pixels past 1/255 at most, 58/255 at most on text.
 
 The C++ header gives the JavaScript module's modes and floats bit for bit.
+
+The libplacebo and Metal texts are the HLSL upscale's twins too (06/11/2026):
+- **libplacebo:** through ffmpeg's libplacebo filter on lavapipe, Mesa's Vulkan on the CPU, from 1080p and 720p to
+  1440p on four pictures, it scores what the HLSL on WARP scores against the native frame, within 0.05 dB. Its PQ and
+  4:4:4 settings come through its parameters, as a renderer sets them. Not yet run on a GPU.
+- **Metal:** on an Apple M1 Pro (macOS 15.6), Junk Shop from 1080p 4:2:0 to 1440p, LPIPS 0.0154 and PSNR 38.87 dB,
+  against the browser's 0.0153 and 38.85 dB on the same input. On that Mac and that picture, Apple's MetalFX spatial
+  scaler scored LPIPS 0.0463, PSNR 36.62 dB and VMAF NEG 88.39 (MWSR 90.50), in 0.91 ms per draw against MWSR's
+  0.37 ms. One picture on one Mac, the times at the GPU's lowest-latency draws: a first reading, not a table.
 
 ## Integrating
 
@@ -412,6 +423,26 @@ Draw it as an ordinary pixel pass over the output: viewport and scissor of the o
 **The input on Direct3D**: a decoder hands YUV. Convert it to RGB in a pass before MWSR, at the stream's size, as
 MoonlightWeb does: MWSR reads RGB. For the exact reduction, create that RGB texture `DXGI_FORMAT_R8G8B8A8_TYPELESS`,
 read it through an `_UNORM_SRGB` view, write the output through one, and pass `srgbViews = true` to `mwsr::regime`.
+
+### Vulkan through libplacebo, and mpv
+
+Parse `libplacebo/mwsr-up.hook` once with `pl_mpv_user_shader_parse()` and put it in `pl_render_params.hooks`. It
+hooks `MAIN`, the RGB picture before libplacebo scales it, draws it at the output's size when both axes grow, and
+stands aside at 1:1 and on a reduction, where libplacebo's own scalers draw. Its two parameters are set by name
+through `hook->parameters[i].data->i`:
+- `MWSR_HDR` 1 on PQ frames: the bound then takes no margin. A stream that switches between SDR and HDR keeps two
+  hooks, one per setting.
+- `MWSR_CHROMA444` 1 on a 4:4:4 stream.
+
+In mpv: `--vo=gpu-next --glsl-shaders=mwsr-up.hook`, and `--glsl-shader-opts=MWSR_HDR=1` on PQ content.
+
+### Metal (MSL)
+
+Compile `metal/mwsr-up.metal` with `newLibraryWithSource:`, with the preprocessor macro `MWSR_CHROMA444` 1 for a 4:4:4
+stream, and build a pipeline from your vertex function and `mwsr_up`. The vertex stage hands it `float4 position
+[[position]]` and `float2 texCoords`, v down from the picture's top. Bind the RGB input at `texture(0)` and the 96 bytes
+of `mwsr::constants()` at `buffer(1)` (`setFragmentBytes:`), with `hdr` set on PQ frames, then draw the output's region.
+A decoder's YUV planes go to RGB first, at the stream's size, as on Direct3D.
 
 ## Parameters
 

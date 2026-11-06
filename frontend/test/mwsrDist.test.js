@@ -46,10 +46,12 @@ describe('the mwsr/ folder', () => {
             expect(read(join(MWSR, path)).startsWith('#version 300 es\n'), path).toBe(true);
     });
 
-    it('carries one text per regime the renderers build, in each language, and the C++ header', () => {
+    it('carries one text per regime the renderers build, in each language, the C++ header, and the libplacebo and Metal upscales', () => {
         expect(Object.keys(dist).sort()).toEqual(
             [
                 'cpp/mwsr.h',
+                'libplacebo/mwsr-up.hook',
+                'metal/mwsr-up.metal',
                 'glsl/mwsr-down-16.frag',
                 'glsl/mwsr-down-4.frag',
                 'glsl/mwsr-down-9.frag',
