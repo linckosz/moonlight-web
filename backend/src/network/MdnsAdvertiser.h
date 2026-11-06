@@ -3,6 +3,8 @@
  */
 #pragma once
 
+#include <QList>
+#include <QPair>
 #include <QString>
 
 // Announces this server on the LAN as `_moonlightweb._tcp` on its HTTPS port,
@@ -28,11 +30,20 @@ public:
     // label), at most 63 bytes of UTF-8 (one DNS label).
     static QString instanceName(const QString& hostName, bool dev);
 
+    // The TXT record announced with the service, keys and values in the order
+    // they go out: `v` "1", `id` @p hostId, and `name` @p name, at most 63 bytes
+    // of UTF-8 cut between two characters, without spaces at either end. `name`
+    // is left out when nothing is left of it.
+    static QList<QPair<QString, QString>> txtRecord(const QString& hostId, const QString& name);
+
     // Starts announcing; false when this platform cannot (nothing to undo).
     // `hostId` goes in a TXT record `id`: the host key's name, what a pairing
     // returns as host_id, so that a client paired already recognises this machine
     // under another address or from its code. A claim, not a proof: it opens nothing.
-    bool start(const QString& instance, quint16 httpsPort, const QString& hostId);
+    // `name` goes in a TXT record `name`: what this install calls itself
+    // (AppSettings::displayName), for a client to list it under that name.
+    bool start(const QString& instance, quint16 httpsPort, const QString& hostId,
+               const QString& name);
     void stop();
 
 private:

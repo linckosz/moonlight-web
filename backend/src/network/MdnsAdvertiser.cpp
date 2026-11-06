@@ -3,6 +3,7 @@
  */
 #include "MdnsAdvertiser.h"
 
+#include <QByteArray>
 #include <QDebug>
 #include <QSysInfo>
 
@@ -12,7 +13,16 @@
 #ifdef _MSC_VER
 #pragma comment(lib, "dnsapi.lib")
 #endif
+#include <string>
+#include <vector>
 #endif
+
+namespace {
+
+// One DNS label's worth: the longest name a TXT record carries.
+constexpr qsizetype kTxtNameMaxBytes = 63;
+
+} // namespace
 
 QString MdnsAdvertiser::instanceName(const QString& hostName, bool dev)
 {
@@ -25,6 +35,25 @@ QString MdnsAdvertiser::instanceName(const QString& hostName, bool dev)
     while (!name.isEmpty() && (name + suffix).toUtf8().size() > 63)
         name.chop(1);
     return name + suffix;
+}
+
+QList<QPair<QString, QString>> MdnsAdvertiser::txtRecord(const QString& hostId, const QString& name)
+{
+    QList<QPair<QString, QString>> txt{qMakePair(QStringLiteral("v"), QStringLiteral("1")),
+                                       qMakePair(QStringLiteral("id"), hostId)};
+    // A client reads the value as UTF-8, so the cut falls between two
+    // characters: back from the limit over the continuation bytes (10xxxxxx)
+    // of the character it would split.
+    QByteArray utf8 = name.trimmed().toUtf8();
+    if (utf8.size() > kTxtNameMaxBytes) {
+        qsizetype cut = kTxtNameMaxBytes;
+        while (cut > 0 && (static_cast<uchar>(utf8.at(cut)) & 0xC0) == 0x80)
+            --cut;
+        utf8.truncate(cut);
+    }
+    const QString kept = QString::fromUtf8(utf8).trimmed();
+    if (!kept.isEmpty()) txt.append(qMakePair(QStringLiteral("name"), kept));
+    return txt;
 }
 
 #ifdef Q_OS_WIN
@@ -44,7 +73,8 @@ static VOID WINAPI onRegistered(DWORD status, PVOID, PDNS_SERVICE_INSTANCE insta
     if (instance) DnsServiceFreeInstance(instance);
 }
 
-bool MdnsAdvertiser::start(const QString& instance, quint16 httpsPort, const QString& hostId)
+bool MdnsAdvertiser::start(const QString& instance, quint16 httpsPort, const QString& hostId,
+                           const QString& name)
 {
     stop();
     if (httpsPort == 0) return false;
@@ -56,11 +86,22 @@ bool MdnsAdvertiser::start(const QString& instance, quint16 httpsPort, const QSt
     impl->host =
         (QSysInfo::machineHostName().section(QLatin1Char('.'), 0, 0) + QStringLiteral(".local"))
             .toStdWString();
-    const std::wstring id = hostId.toStdWString();
-    PCWSTR keys[] = {L"v", L"id"};
-    PCWSTR values[] = {L"1", id.c_str()};
-    impl->service = DnsServiceConstructInstance(impl->instance.c_str(), impl->host.c_str(), nullptr,
-                                                nullptr, httpsPort, 0, 0, 2, keys, values);
+    // The TXT strings, held here while the instance below copies them.
+    const QList<QPair<QString, QString>> txt = txtRecord(hostId, name);
+    std::vector<std::wstring> text;
+    for (const QPair<QString, QString>& entry : txt) {
+        text.push_back(entry.first.toStdWString());
+        text.push_back(entry.second.toStdWString());
+    }
+    std::vector<PCWSTR> keys;
+    std::vector<PCWSTR> values;
+    for (size_t i = 0; i + 1 < text.size(); i += 2) {
+        keys.push_back(text[i].c_str());
+        values.push_back(text[i + 1].c_str());
+    }
+    impl->service = DnsServiceConstructInstance(
+        impl->instance.c_str(), impl->host.c_str(), nullptr, nullptr, httpsPort, 0, 0,
+        static_cast<DWORD>(keys.size()), keys.data(), values.data());
     if (!impl->service) {
         qWarning() << "mDNS: cannot build the service instance";
         delete impl;
@@ -99,7 +140,7 @@ void MdnsAdvertiser::stop()
 struct MdnsAdvertiser::Impl
 {};
 
-bool MdnsAdvertiser::start(const QString& instance, quint16, const QString&)
+bool MdnsAdvertiser::start(const QString& instance, quint16, const QString&, const QString&)
 {
     qInfo().noquote() << "mDNS: no announcement of" << instance << "on this platform yet";
     return false;
