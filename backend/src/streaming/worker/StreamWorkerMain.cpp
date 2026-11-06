@@ -701,6 +701,8 @@ int runStreamWorker(QCoreApplication& app)
     // Absent (an older parent, or a rate the viewer named) → no ceiling, and
     // the cadence keeps every freedom it had.
     session->setMaxFps(cfg["fpsCeiling"].toInt(0));
+    // The administrator's ceilings. Absent (an older parent) → none.
+    session->setStreamLimits(cfg["fpsLimit"].toInt(0), cfg["bitrateLimitKbps"].toInt(0));
     // Absent (an older parent) → the frame keeps its size, today's behaviour.
     session->setFollowDisplayShape(cfg["followDisplayShape"].toBool(false));
     // Absent (an older parent) → the height is kept, today's behaviour.

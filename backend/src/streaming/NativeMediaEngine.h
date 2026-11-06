@@ -96,6 +96,10 @@ public:
         /// A rate the session may not exceed, alignment included (0 = none) —
         /// see SessionConfig::maxFps.
         int maxFps = 0;
+        /// The administrator's ceilings (0 = none): no cadence step above
+        /// the one, no client bitrate above the other.
+        int fpsLimit = 0;
+        int bitrateLimitKbps = 0;
         int bitrateKbps = 20000;
         /// VIDEO_FORMAT_* bitmask of what the browser can decode.
         int clientVideoFormats = 0;
@@ -643,6 +647,9 @@ private:
     FeedPublisher* m_Publisher = nullptr;
     /// A guest's end of the feed's pipe; null for every other engine.
     std::unique_ptr<FeedSubscriber> m_Subscriber;
+    /// StartParams::fpsLimit and bitrateLimitKbps.
+    int m_FpsLimit = 0;
+    int m_BitrateLimitKbps = 0;
     /// The feed's session as its `info` said — what a guest's engine reports
     /// instead of its own — its overlay name and its log line. Under
     /// m_FeedMutex: read by the relay's thread, written on this engine's.

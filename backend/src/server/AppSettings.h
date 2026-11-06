@@ -319,6 +319,71 @@ public:
     int streamFps() const;
     void setStreamFps(int fps);
 
+    // ── The administrator's ceilings ──────────────────────────────────────────
+    //
+    // What no viewer may stream above, whatever its Settings say, on every
+    // host — the native one and its virtual display included (issue #53).
+    // 0 means no limit:
+    //
+    //   "max_allowed_frame_rate"         frames per second, e.g. 60.
+    //   "max_allowed_bitrate"            Mbps, e.g. 40.
+    //   "max_allowed_stream_resolution"  a box, "1920x1080". "1920" is a
+    //                                    1920x1920 box; a 0 side is free
+    //                                    ("0x1440" holds the height only);
+    //                                    "0" and "0x0" hold nothing.
+    //
+    // The server holds every launch to them (/start: the size keeps its shape,
+    // an automatic bitrate follows the frame rate and the pixels it lost), and
+    // so does the native session mid-stream (cadence steps, the bitrate that
+    // follows the frame). The browser reads them from GET
+    // /api/settings/streaming, so that Settings offers nothing above them.
+    // File-only — no UI writes them — seeded at 0 so they can be found, and
+    // set on the running instance by `moonlightweb --max-allowed-frame-rate`
+    // and its two siblings. Read at each stream start.
+    struct StreamLimits
+    {
+        int fps = 0;
+        int bitrateMbps = 0;
+        int width = 0;
+        int height = 0;
+        bool any() const { return fps > 0 || bitrateMbps > 0 || width > 0 || height > 0; }
+    };
+    StreamLimits streamLimits() const;
+    void setMaxAllowedFrameRate(int fps);
+    void setMaxAllowedBitrate(int mbps);
+    void setMaxAllowedStreamResolution(int width, int height);
+    /// "1920x1080", "1920" (a square box), "0x1440", "0", "0x0"; a JSON number
+    /// reads as "N". False, and both sides 0, for anything else.
+    static bool parseStreamResolution(const QString& text, int* width, int* height);
+    /// The written form: "1920x1080", "0x0".
+    static QString streamResolutionText(int width, int height);
+    /// A side, or a rate, as the file may hold it: 0 to kLimitMax.
+    static constexpr int kLimitMax = 16384;
+
+    /// A launch's size held to the resolution ceiling. The request as /start
+    /// reads it: `width` × `height` (height 0: the native display's own size),
+    /// a box to fit or not, "Match my screen" and its fallback box.
+    struct LimitedSize
+    {
+        int width = 0;
+        int height = 0;
+        bool fitBox = false;
+        int fallbackWidth = 0;
+        int fallbackHeight = 0;
+        bool changed = false;
+    };
+    /// - An explicit size keeps its shape: scaled down, both sides together,
+    ///   until it fits (a 2560x1440 asked under 1920x1080 is 1920x1080, a
+    ///   2560x1080 is 1920x810).
+    /// - A box (the native host fits its display's shape inside) is clipped
+    ///   side by side, except "Match my screen"'s, which is a size too.
+    /// - The native host keeps a height and takes its display's shape, so
+    ///   under a width ceiling its request becomes a box of that width; its
+    ///   "own size" (height 0) becomes the ceiling's box.
+    static LimitedSize limitStreamSize(const StreamLimits& limits, int width, int height,
+                                       bool fitBox, bool matchDisplay, bool nativeHost,
+                                       int fallbackWidth, int fallbackHeight);
+
     // ── HDR ───────────────────────────────────────────────────────────────────
     //
     // Whether HDR streaming is requested. Stored as JSON bool "hdr_enabled",

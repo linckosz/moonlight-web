@@ -277,6 +277,16 @@ public:
     /// native engine acts on it — see mw::native::SessionConfig::maxFps.
     void setMaxFps(int fps) { m_MaxFps = fps > 0 ? fps : 0; }
 
+    /// The administrator's ceilings (settings.json max_allowed_*), 0 for
+    /// none: the launch is already held to them, and the native engine holds
+    /// what moves mid-stream — a cadence step, the bitrate that follows the
+    /// frame. Other engines take a rate and a bitrate at launch only.
+    void setStreamLimits(int fps, int bitrateKbps)
+    {
+        m_FpsLimit = fps > 0 ? fps : 0;
+        m_BitrateLimitKbps = bitrateKbps > 0 ? bitrateKbps : 0;
+    }
+
     /// The viewer's aspect setting is "Auto", so a native stream rebuilds at
     /// the display's new shape when the host changes mode — see
     /// mw::native::SessionConfig::followDisplayShape. Other engines ignore it.
@@ -629,6 +639,10 @@ private:
 
     /// See setMaxFps.
     int m_MaxFps = 0;
+
+    /// See setStreamLimits.
+    int m_FpsLimit = 0;
+    int m_BitrateLimitKbps = 0;
 
     /// See setFollowDisplayShape.
     bool m_FollowDisplayShape = false;

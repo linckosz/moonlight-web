@@ -96,6 +96,16 @@ import {
     readResolutionChoice,
 } from '../util/StreamResolution.js';
 import { previewCeiling } from '../util/AutoCeiling.js';
+import {
+    bitrateSliderMax,
+    customSizeMax,
+    hasStreamLimits,
+    limitBitrateMbps,
+    limitFps,
+    rungAllowed,
+    setStreamLimits,
+    streamLimits,
+} from '../util/StreamLimits.js';
 import { tunnelHostId } from '../net/tunnelBridge.js';
 import { audioSourceOptions, normalizeAudioSource } from './audioSourceOptions.js';
 import {
@@ -600,6 +610,8 @@ export class SettingsView {
             this._debugBuild = data.debug_build === true || data.debug_mode === true;
             // What the host can do, not a preference: always the server's.
             this._audioSourceSupported = data.audio_source_focused_supported === true;
+            // The administrator's ceilings: what the controls below may offer.
+            setStreamLimits(data);
 
             if (!stored) {
                 this._applySettings(data);
@@ -688,7 +700,45 @@ export class SettingsView {
     }
 
     _computeAutoBitrate(height, fps, aspect, chroma444, hdr) {
-        return computeAutoBitrate(height, fps, aspect, chroma444, hdr, IS_HANDHELD);
+        return limitBitrateMbps(
+            computeAutoBitrate(height, fps, aspect, chroma444, hdr, IS_HANDHELD),
+        );
+    }
+
+    /**
+     * Bring the choices in step with the administrator's ceilings
+     * (util/StreamLimits.js), before the controls are drawn: a rung above
+     * them becomes the largest one under them, a custom pair and a frame
+     * rate come down to them, a bitrate too. Stored as such at the next save;
+     * a launch holds to them either way.
+     */
+    _fitToStreamLimits() {
+        if (!hasStreamLimits()) return;
+        if (this._streamResolution === 'fixed' && !rungAllowed(this._streamHeight)) {
+            const under = FIXED_HEIGHTS.filter((h) => rungAllowed(h));
+            if (under.length) this._streamHeight = under[under.length - 1];
+            else this._streamResolution = 'auto';
+        }
+        const most = customSizeMax(CUSTOM_SIZE_MAX);
+        this._customWidth = Math.max(CUSTOM_SIZE_MIN, Math.min(this._customWidth, most.width));
+        this._customHeight = Math.max(CUSTOM_SIZE_MIN, Math.min(this._customHeight, most.height));
+        this._streamFps = limitFps(this._streamFps);
+        this._streamBitrateMbps = limitBitrateMbps(this._streamBitrateMbps);
+    }
+
+    /** The line that says what the administrator holds streams to, or ''. */
+    _streamLimitsNote() {
+        if (!hasStreamLimits()) return '';
+        const { fps, bitrateMbps, width, height } = streamLimits();
+        const parts = [];
+        if (width > 0 && height > 0) parts.push(width + '×' + height);
+        else if (width > 0) parts.push(t('settings.adminLimitWidth', { width }));
+        else if (height > 0) parts.push(t('settings.adminLimitHeight', { height }));
+        if (fps > 0) parts.push(t('settings.fpsSuffix', { fps }));
+        if (bitrateMbps > 0) parts.push(bitrateMbps + ' ' + t('settings.bitrateUnit'));
+        return `<div class="settings-note">${this.esc(
+            t('settings.adminLimits', { limits: parts.join(' · ') }),
+        )}</div>`;
     }
 
     /**
@@ -711,11 +761,18 @@ export class SettingsView {
         }
         const wRaw = this.container.querySelector('#settings-custom-width')?.value;
         const hRaw = this.container.querySelector('#settings-custom-height')?.value;
+        const most = customSizeMax(CUSTOM_SIZE_MAX);
         return {
             mode,
             height,
-            customWidth: clampCustomSize(wRaw ?? this._customWidth, this._customWidth),
-            customHeight: clampCustomSize(hRaw ?? this._customHeight, this._customHeight),
+            customWidth: Math.min(
+                most.width,
+                clampCustomSize(wRaw ?? this._customWidth, this._customWidth),
+            ),
+            customHeight: Math.min(
+                most.height,
+                clampCustomSize(hRaw ?? this._customHeight, this._customHeight),
+            ),
         };
     }
 
@@ -1798,6 +1855,7 @@ export class SettingsView {
         // Resolution options: the three choices that follow a screen or a
         // typed pair — Auto, this screen, custom — then the fixed rungs, the
         // largest first (short labels: "1080p"). See util/StreamResolution.js.
+        this._fitToStreamLimits();
         const resolutionMode = this._streamResolution;
         const device = devicePixelSize();
         const modes = [
@@ -1805,7 +1863,8 @@ export class SettingsView {
             { value: 'device', label: t('settings.resolutionDevice') },
             { value: 'custom', label: t('settings.resolutionCustom') },
         ].map((m) => ({ ...m, selected: resolutionMode === m.value }));
-        const heights = FIXED_HEIGHTS.slice()
+        // Only the rungs inside the administrator's ceiling.
+        const heights = FIXED_HEIGHTS.filter((h) => rungAllowed(h))
             .reverse()
             .map((h) => ({
                 value: String(h),
@@ -1821,6 +1880,7 @@ export class SettingsView {
             .join('');
         // One line under the select says what the choice stands for.
         const sizeText = device ? device.width + '×' + device.height : '?';
+        const customMost = customSizeMax(CUSTOM_SIZE_MAX);
         const resolutionDesc =
             resolutionMode === 'auto'
                 ? t(IS_TV ? 'settings.resolutionAutoDescTv' : 'settings.resolutionAutoDesc', {
@@ -1831,7 +1891,7 @@ export class SettingsView {
                   : resolutionMode === 'custom'
                     ? t('settings.resolutionCustomDesc', {
                           min: CUSTOM_SIZE_MIN,
-                          max: CUSTOM_SIZE_MAX,
+                          max: Math.max(customMost.width, customMost.height),
                       })
                     : t('settings.resolutionDesc');
         const customSizeHtml =
@@ -1839,12 +1899,12 @@ export class SettingsView {
                 ? `<div class="settings-size-row">
                             <label>${t('settings.resolutionWidth')}
                                 <input type="number" id="settings-custom-width" class="settings-size-input"
-                                    min="${CUSTOM_SIZE_MIN}" max="${CUSTOM_SIZE_MAX}" step="2" inputmode="numeric"
+                                    min="${CUSTOM_SIZE_MIN}" max="${customMost.width}" step="2" inputmode="numeric"
                                     value="${this._customWidth}" />
                             </label>
                             <label>${t('settings.resolutionHeight')}
                                 <input type="number" id="settings-custom-height" class="settings-size-input"
-                                    min="${CUSTOM_SIZE_MIN}" max="${CUSTOM_SIZE_MAX}" step="2" inputmode="numeric"
+                                    min="${CUSTOM_SIZE_MIN}" max="${customMost.height}" step="2" inputmode="numeric"
                                     value="${this._customHeight}" />
                             </label>
                         </div>`
@@ -1881,7 +1941,16 @@ export class SettingsView {
         // frames encoded for nothing. Its label names the rate Auto will
         // stream at when there is a measurement (_autoFpsLabel).
         const autoLabel = this._autoFpsLabel();
-        const fpsValues = [15, 30, 60, 75, 90, 120, 144, 165, 240];
+        // Only the rates under the administrator's ceiling, the ceiling itself
+        // among them when it is not a rung of its own (a 50, a 100).
+        const fpsCap = streamLimits().fps;
+        const fpsValues = [15, 30, 60, 75, 90, 120, 144, 165, 240].filter(
+            (f) => !(fpsCap > 0) || f <= fpsCap,
+        );
+        if (fpsCap > 0 && !fpsValues.includes(fpsCap) && fpsCap < 240) {
+            fpsValues.push(fpsCap);
+            fpsValues.sort((a, b) => a - b);
+        }
         const fpsOptions = [
             `<option value="0" ${this._streamFps > 0 ? '' : 'selected'}>${this.esc(autoLabel)}</option>`,
         ]
@@ -2037,17 +2106,18 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.bitrateDesc')}</span>
                         <input type="range" id="settings-stream-bitrate"
                                class="settings-slider"
-                               min="1" max="150" step="1"
+                               min="1" max="${bitrateSliderMax()}" step="1"
                                value="${this._streamBitrateMbps}" />
                         <div class="settings-slider-labels">
                             <span>1 Mbps</span>
-                            <span>150 Mbps</span>
+                            <span>${bitrateSliderMax()} Mbps</span>
                         </div>
                         <button type="button" id="settings-bitrate-back-to-auto"
                                 class="btn btn-secondary btn-small"${this._bitrateAuto ? ' hidden' : ''}>
                             ${t('settings.bitrateBackToAuto')}
                         </button>
                     </div>
+                    ${this._streamLimitsNote()}
                 </div>
 
                 <!-- ── Advanced ────────────────────────────────────────────── -->
@@ -2493,7 +2563,9 @@ export class SettingsView {
             if (!input) continue;
             input.addEventListener('change', () => {
                 const fallback = id.endsWith('width') ? this._customWidth : this._customHeight;
-                input.value = String(clampCustomSize(input.value, fallback) & ~1);
+                const most =
+                    customSizeMax(CUSTOM_SIZE_MAX)[id.endsWith('width') ? 'width' : 'height'];
+                input.value = String(Math.min(most, clampCustomSize(input.value, fallback)) & ~1);
                 this._applyAutoBitrate();
                 this._syncAutoFpsLabel();
                 this._autoSave();

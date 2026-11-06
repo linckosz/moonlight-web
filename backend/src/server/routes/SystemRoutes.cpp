@@ -1342,6 +1342,15 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["stream_bitrate_auto"] = appSettings.streamBitrateAuto();
         obj["stream_aspect"] = appSettings.streamAspect();
         obj["stream_fps"] = appSettings.streamFps();
+        // The administrator's ceilings, 0 for none: Settings offers nothing
+        // above them, and a launch asks for nothing above them.
+        {
+            const AppSettings::StreamLimits limits = appSettings.streamLimits();
+            obj["max_allowed_frame_rate"] = limits.fps;
+            obj["max_allowed_bitrate"] = limits.bitrateMbps;
+            obj["max_allowed_stream_width"] = limits.width;
+            obj["max_allowed_stream_height"] = limits.height;
+        }
         obj["hdr_enabled"] = appSettings.hdrEnabled();
         obj["mute_host_audio"] = appSettings.muteHostAudio();
         obj["audio_source"] = appSettings.audioSource();
@@ -1502,6 +1511,58 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             int fps = body["stream_fps"].toInt(60);
             appSettings.setStreamFps(fps);
             obj["stream_fps"] = appSettings.streamFps();
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        // The administrator's ceilings: no Settings control writes them, the
+        // file and `moonlightweb --max-allowed-…` do (AppSettings.h). A value
+        // that does not read is refused rather than stored as "no limit".
+        const auto limitValue = [&body](const char* key) -> int {
+            const QJsonValue v = body.value(QLatin1String(key));
+            if (v.isDouble()) {
+                const double d = v.toDouble();
+                return d >= 0 && d <= AppSettings::kLimitMax && d == static_cast<int>(d)
+                           ? static_cast<int>(d)
+                           : -1;
+            }
+            bool ok = false;
+            const int n = v.toString().trimmed().toInt(&ok);
+            return ok && n >= 0 && n <= AppSettings::kLimitMax ? n : -1;
+        };
+        if (body.contains("max_allowed_frame_rate")) {
+            const int fps = limitValue("max_allowed_frame_rate");
+            if (fps < 0)
+                return HttpResponse::error(400, "max_allowed_frame_rate must be a whole number "
+                                                "of frames per second, 0 for no limit");
+            appSettings.setMaxAllowedFrameRate(fps);
+            obj["max_allowed_frame_rate"] = appSettings.streamLimits().fps;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+        if (body.contains("max_allowed_bitrate")) {
+            const int mbps = limitValue("max_allowed_bitrate");
+            if (mbps < 0)
+                return HttpResponse::error(
+                    400, "max_allowed_bitrate must be a whole number of Mbps, 0 for no limit");
+            appSettings.setMaxAllowedBitrate(mbps);
+            obj["max_allowed_bitrate"] = appSettings.streamLimits().bitrateMbps;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+        if (body.contains("max_allowed_stream_resolution")) {
+            const QJsonValue v = body.value("max_allowed_stream_resolution");
+            int width = 0, height = 0;
+            if (!AppSettings::parseStreamResolution(
+                    v.isDouble() ? QString::number(v.toDouble(), 'f', 0) : v.toString(), &width,
+                    &height))
+                return HttpResponse::error(400, "max_allowed_stream_resolution must be "
+                                                "WIDTHxHEIGHT (1920x1080, 1920, 0x1440), 0 "
+                                                "for no limit");
+            appSettings.setMaxAllowedStreamResolution(width, height);
+            const AppSettings::StreamLimits limits = appSettings.streamLimits();
+            obj["max_allowed_stream_resolution"] =
+                AppSettings::streamResolutionText(limits.width, limits.height);
             obj["status"] = "saved";
             hadChange = true;
         }

@@ -109,6 +109,13 @@ import {
     capSizeToDecoder,
     decoderRefuses,
 } from './util/DecoderLimit.js';
+import {
+    capSizeToLimits,
+    limitBitrateKbps,
+    limitFps,
+    setStreamLimits,
+    streamLimits,
+} from './util/StreamLimits.js';
 import { startAspectProbe } from './stream/AspectProbe.js';
 import { AutoCeilingSession } from './stream/AutoCeilingSession.js';
 import { autoCeilingMemory } from './util/AutoCeiling.js';
@@ -2126,6 +2133,11 @@ export const MoonlightApp = {
         // keep the flag so it bails out below).
         if (!codecOverride) this._startupAborted = false;
 
+        // The administrator's ceilings (util/StreamLimits.js): waited for once
+        // per page, then read again behind each launch for the next one — the
+        // server holds the launch to them either way.
+        await this._readStreamLimits();
+
         // Read per-browser streaming settings from localStorage
         // (defaults come from server on first visit via SettingsView)
         let streamingSettings = {};
@@ -2420,6 +2432,9 @@ export const MoonlightApp = {
             const o = this._degradeOverrides || {};
             if (o[key] !== undefined) streamingSettings[key] = o[key];
         }
+        // A bitrate the viewer set, under the administrator's ceiling.
+        if (streamingSettings.stream_bitrate > 0)
+            streamingSettings.stream_bitrate = limitBitrateKbps(streamingSettings.stream_bitrate);
         // A stored ratio counts only when a debug build forced it and said so
         // (SettingsView marks it): the dropdown left the product in 0.3.1, and
         // a "4:3" a user forced before then is Auto from here on.
@@ -3113,7 +3128,17 @@ export const MoonlightApp = {
     },
 
     _applyResolvedFps(settings) {
-        if (settings.stream_fps > 0) return;
+        // A rate the viewer named, under the administrator's ceiling (Auto's
+        // is already: util/RefreshRate.js, autoFps).
+        if (settings.stream_fps > 0) {
+            const held = limitFps(settings.stream_fps);
+            if (held !== settings.stream_fps)
+                console.log(
+                    '[MW] Frame rate limit: ' + settings.stream_fps + ' → ' + held + ' fps',
+                );
+            settings.stream_fps = held;
+            return;
+        }
         const fps = autoFps();
         if (!fps) return;
         const panel = measuredFps();
@@ -3235,7 +3260,11 @@ export const MoonlightApp = {
                           rateNamed: !fpsAuto,
                           budget,
                       });
-            return streamFootprint(capSizeToDecoder(fit.size, limit).size, fit.fps, aspect);
+            return streamFootprint(
+                capSizeToDecoder(capSizeToLimits(fit.size).size, limit).size,
+                fit.fps,
+                aspect,
+            );
         };
     },
 
@@ -3287,9 +3316,10 @@ export const MoonlightApp = {
         return true;
     },
 
-    /** The estimate's bitrate, in kbps, for a frame of that size. */
+    /** The estimate's bitrate, in kbps, for a frame of that size — under the
+     *  administrator's ceiling. */
     _autoBitrateFor(settings, height, aspect) {
-        return (
+        return limitBitrateKbps(
             computeAutoBitrate(
                 height,
                 settings.stream_fps > 0 ? settings.stream_fps : 60,
@@ -3297,8 +3327,24 @@ export const MoonlightApp = {
                 settings.chroma_444_enabled === true,
                 settings.hdr_enabled === true,
                 IS_HANDHELD,
-            ) * 1000
+            ) * 1000,
         );
+    },
+
+    /**
+     * Read the administrator's ceilings from the server: awaited the first
+     * time (a launch that knew none would ask, then show, more than it gets),
+     * in the background after that. Never more than a second and a half.
+     */
+    async _readStreamLimits() {
+        const read = BackendClient.getStreamingSettings()
+            .then((data) => {
+                setStreamLimits(data);
+                this._streamLimitsRead = true;
+            })
+            .catch((e) => console.info('[MW] Stream limits not read:', e && e.message));
+        if (this._streamLimitsRead) return;
+        await Promise.race([read, new Promise((resolve) => setTimeout(resolve, 1500))]);
     },
 
     /**
@@ -3308,6 +3354,23 @@ export const MoonlightApp = {
      * alternative to a smaller picture is none.
      */
     _capToDecoder(size, limit) {
+        // The administrator's resolution first (util/StreamLimits.js): every
+        // choice, a named one included, like the decoder's below.
+        const admin = capSizeToLimits(size);
+        if (admin.capped) {
+            const { width, height } = streamLimits();
+            console.log(
+                '[MW] Resolution limit ' +
+                    width +
+                    'x' +
+                    height +
+                    ': ' +
+                    (size.aspect || size.height + ' lines') +
+                    ' → ' +
+                    (admin.size.aspect || admin.size.height + ' lines'),
+            );
+            size = admin.size;
+        }
         const { size: capped, capped: changed } = capSizeToDecoder(size, limit);
         if (changed)
             console.log(

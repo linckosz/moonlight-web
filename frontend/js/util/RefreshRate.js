@@ -76,6 +76,7 @@
  */
 
 import { IS_LOW_MEMORY, IS_TV } from './BrowserDetect.js';
+import { limitFps } from './StreamLimits.js';
 
 /** @type {number} Last good measurement, millihertz. 0 = none yet. */
 let _milliHz = 0;
@@ -490,7 +491,8 @@ export function autoFps(milliHz, lowMemory = IS_LOW_MEMORY) {
     const fps = measuredFps(milliHz);
     if (!fps) return 0;
     const ceiling = lowMemory ? LOW_MEMORY_AUTO_FPS_MAX : AUTO_FPS_MAX;
-    return Math.min(ceiling, Math.max(AUTO_FPS_MIN, fps));
+    // And never above the administrator's (util/StreamLimits.js).
+    return limitFps(Math.min(ceiling, Math.max(AUTO_FPS_MIN, fps)));
 }
 
 /**

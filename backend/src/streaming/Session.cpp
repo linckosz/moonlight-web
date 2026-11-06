@@ -714,6 +714,10 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         nativeParams.clientTearingReal = m_ClientTearingReal;
         // And the ceiling that alignment may not cross — see setMaxFps.
         nativeParams.maxFps = m_MaxFps;
+        // And the administrator's, for what moves mid-stream — see
+        // setStreamLimits.
+        nativeParams.fpsLimit = m_FpsLimit;
+        nativeParams.bitrateLimitKbps = m_BitrateLimitKbps;
         nativeParams.followDisplayShape = m_FollowDisplayShape;
         nativeParams.fitRequestedBox = m_FitRequestedBox;
         nativeParams.allowUpscale = m_AllowUpscale;

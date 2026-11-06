@@ -679,6 +679,105 @@ void run_app_settings_tests()
         CHECK(s.nativeTuning().isEmpty());
     }
 
+    // The administrator's ceilings (issue #53): seeded at 0, read in every
+    // form Bruno's examples give, and anything else is no limit.
+    {
+        s.seedDocumentedDefaults();
+        const QJsonObject seeded = s.readAll();
+        CHECK_EQ(seeded.value("max_allowed_frame_rate").toInt(-1), 0);
+        CHECK_EQ(seeded.value("max_allowed_bitrate").toInt(-1), 0);
+        CHECK_EQ(seeded.value("max_allowed_stream_resolution").toString(), QString("0x0"));
+        CHECK(!s.streamLimits().any());
+
+        int w = -1, h = -1;
+        CHECK(AppSettings::parseStreamResolution("1920x1080", &w, &h));
+        CHECK(w == 1920 && h == 1080);
+        CHECK(AppSettings::parseStreamResolution("1920", &w, &h));
+        CHECK(w == 1920 && h == 1920);
+        CHECK(AppSettings::parseStreamResolution(" 0x1440 ", &w, &h));
+        CHECK(w == 0 && h == 1440);
+        CHECK(AppSettings::parseStreamResolution("0", &w, &h));
+        CHECK(w == 0 && h == 0);
+        CHECK(AppSettings::parseStreamResolution("0x0", &w, &h));
+        CHECK(w == 0 && h == 0);
+        CHECK(AppSettings::parseStreamResolution("2560X1440", &w, &h));
+        CHECK(w == 2560 && h == 1440);
+        for (const char* bad : {"", "x", "1920x", "1920*1080", "-1", "1080p", "1920x1080x2"})
+            CHECK(!AppSettings::parseStreamResolution(bad, &w, &h));
+
+        QJsonObject obj = s.readAll();
+        obj["max_allowed_frame_rate"] = 60;
+        obj["max_allowed_bitrate"] = "40";
+        obj["max_allowed_stream_resolution"] = 1920;
+        s.writeAll(obj);
+        AppSettings::StreamLimits limits = s.streamLimits();
+        CHECK_EQ(limits.fps, 60);
+        CHECK_EQ(limits.bitrateMbps, 40);
+        CHECK(limits.width == 1920 && limits.height == 1920);
+        obj["max_allowed_frame_rate"] = -5;
+        obj["max_allowed_bitrate"] = "a lot";
+        obj["max_allowed_stream_resolution"] = "big";
+        s.writeAll(obj);
+        CHECK(!s.streamLimits().any());
+
+        s.setMaxAllowedFrameRate(30);
+        s.setMaxAllowedBitrate(15);
+        s.setMaxAllowedStreamResolution(0, 1080);
+        CHECK_EQ(s.readAll().value("max_allowed_stream_resolution").toString(), QString("0x1080"));
+        limits = s.streamLimits();
+        CHECK(limits.fps == 30 && limits.bitrateMbps == 15 && limits.width == 0 &&
+              limits.height == 1080);
+        // A hand edit of the file stays as it was written at the next start.
+        s.seedDocumentedDefaults();
+        CHECK_EQ(s.streamLimits().fps, 30);
+        obj = s.readAll();
+        obj.remove("max_allowed_frame_rate");
+        obj.remove("max_allowed_bitrate");
+        obj.remove("max_allowed_stream_resolution");
+        s.writeAll(obj);
+    }
+
+    // The size a launch keeps under the resolution ceiling.
+    {
+        AppSettings::StreamLimits box;
+        box.width = 1920;
+        box.height = 1080;
+        // An explicit size keeps its shape.
+        auto r = AppSettings::limitStreamSize(box, 2560, 1440, false, false, false, 0, 0);
+        CHECK(r.changed && r.width == 1920 && r.height == 1080 && !r.fitBox);
+        r = AppSettings::limitStreamSize(box, 2560, 1080, false, false, false, 0, 0);
+        CHECK(r.width == 1920 && r.height == 810);
+        // Under it: untouched.
+        r = AppSettings::limitStreamSize(box, 1280, 720, false, false, false, 0, 0);
+        CHECK(!r.changed && r.width == 1280 && r.height == 720);
+        // A portrait phone's own size, literally inside 1920x1080.
+        r = AppSettings::limitStreamSize(box, 1170, 2532, false, false, false, 0, 0);
+        CHECK(r.height == 1080 && r.width == 498);
+        // The native host's box is clipped side by side; "Match my screen"
+        // keeps its shape, its fallback box is clipped.
+        r = AppSettings::limitStreamSize(box, 2560, 1600, true, false, true, 0, 0);
+        CHECK(r.fitBox && r.width == 1920 && r.height == 1080);
+        r = AppSettings::limitStreamSize(box, 2560, 1600, true, true, true, 2560, 1440);
+        CHECK(r.width == 1728 && r.height == 1080 && r.fallbackWidth == 1920 &&
+              r.fallbackHeight == 1080);
+        // Its own size becomes the ceiling's box; its fixed height, a box as
+        // wide as the ceiling.
+        r = AppSettings::limitStreamSize(box, 0, 0, false, false, true, 0, 0);
+        CHECK(r.fitBox && r.width == 1920 && r.height == 1080);
+        r = AppSettings::limitStreamSize(box, 1920, 1080, false, false, true, 0, 0);
+        CHECK(r.changed && r.fitBox && r.width == 1920 && r.height == 1080);
+        // The height alone: a free width.
+        AppSettings::StreamLimits tall;
+        tall.height = 1440;
+        r = AppSettings::limitStreamSize(tall, 3840, 2160, false, false, true, 0, 0);
+        CHECK(!r.fitBox && r.width == 2560 && r.height == 1440);
+        r = AppSettings::limitStreamSize(tall, 0, 0, false, false, true, 0, 0);
+        CHECK(r.fitBox && r.width == AppSettings::kLimitMax && r.height == 1440);
+        // No ceiling: nothing moves.
+        r = AppSettings::limitStreamSize({}, 0, 0, false, false, true, 0, 0);
+        CHECK(!r.changed && r.width == 0 && r.height == 0 && !r.fitBox);
+    }
+
     // Low-level access.
     QJsonObject all = s.readAll();
     CHECK(all.contains("http_port"));

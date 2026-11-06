@@ -429,6 +429,19 @@ void AppSettings::seedDocumentedDefaults()
         obj["ice_tcp_passive"] = true;
         changed = true;
     }
+    // The administrator's ceilings (AppSettings.h), none until one is written.
+    if (!obj.contains("max_allowed_frame_rate")) {
+        obj["max_allowed_frame_rate"] = 0;
+        changed = true;
+    }
+    if (!obj.contains("max_allowed_bitrate")) {
+        obj["max_allowed_bitrate"] = 0;
+        changed = true;
+    }
+    if (!obj.contains("max_allowed_stream_resolution")) {
+        obj["max_allowed_stream_resolution"] = QStringLiteral("0x0");
+        changed = true;
+    }
     // The admin's codec of a native session (8f8d9307, never released): PyroWave
     // moved to each browser's Settings → Video codec, where it is chosen per
     // device — the one on Ethernet — rather than for every browser at once.
@@ -563,6 +576,167 @@ void AppSettings::setStreamFps(int fps)
     if (fps < 0) fps = 0;
     if (fps > 240) fps = 240;
     obj["stream_fps"] = fps;
+    writeAll(obj);
+}
+
+// ── The administrator's ceilings ─────────────────────────────────────────────────
+
+namespace {
+
+/// A whole number from 0 to kLimitMax, or -1. Digits only: "60", " 60 ".
+int limitNumber(const QString& text)
+{
+    const QString t = text.trimmed();
+    if (t.isEmpty() || t.size() > 6) return -1;
+    for (const QChar c : t)
+        if (!c.isDigit()) return -1;
+    const int n = t.toInt();
+    return n <= AppSettings::kLimitMax ? n : -1;
+}
+
+/// A rate as the file holds it: a number, or the same written as a string.
+/// Anything else is no limit, said once per read.
+int readLimit(const QJsonObject& obj, const char* key)
+{
+    const QJsonValue v = obj.value(QLatin1String(key));
+    if (v.isUndefined() || v.isNull()) return 0;
+    int n = -1;
+    if (v.isDouble()) {
+        const double d = v.toDouble();
+        if (d >= 0 && d <= AppSettings::kLimitMax) n = static_cast<int>(d);
+    } else if (v.isString()) {
+        n = limitNumber(v.toString());
+    }
+    if (n < 0) {
+        Logger::warning(QString("settings.json: %1 is not a whole number from 0 to %2 — no limit")
+                            .arg(QLatin1String(key))
+                            .arg(AppSettings::kLimitMax));
+        return 0;
+    }
+    return n;
+}
+
+} // namespace
+
+bool AppSettings::parseStreamResolution(const QString& text, int* width, int* height)
+{
+    *width = 0;
+    *height = 0;
+    const QString t = text.trimmed().toLower();
+    int sep = t.indexOf(QLatin1Char('x'));
+    if (sep < 0) sep = t.indexOf(QChar(0x00D7)); // ×
+    if (sep < 0) {
+        const int n = limitNumber(t);
+        if (n < 0) return false;
+        *width = n;
+        *height = n;
+        return true;
+    }
+    const int w = limitNumber(t.left(sep));
+    const int h = limitNumber(t.mid(sep + 1));
+    if (w < 0 || h < 0) return false;
+    *width = w;
+    *height = h;
+    return true;
+}
+
+QString AppSettings::streamResolutionText(int width, int height)
+{
+    return QString("%1x%2").arg(qMax(0, width)).arg(qMax(0, height));
+}
+
+AppSettings::StreamLimits AppSettings::streamLimits() const
+{
+    const QJsonObject obj = readAll();
+    StreamLimits limits;
+    limits.fps = readLimit(obj, "max_allowed_frame_rate");
+    limits.bitrateMbps = readLimit(obj, "max_allowed_bitrate");
+    const QJsonValue res = obj.value("max_allowed_stream_resolution");
+    if (res.isDouble() || res.isString()) {
+        const QString text =
+            res.isDouble() ? QString::number(res.toDouble(), 'f', 0) : res.toString();
+        if (!parseStreamResolution(text, &limits.width, &limits.height))
+            Logger::warning(QString("settings.json: max_allowed_stream_resolution \"%1\" is not "
+                                    "WIDTHxHEIGHT (\"1920x1080\", \"1920\", \"0x1440\", \"0\") — "
+                                    "no limit")
+                                .arg(text));
+    } else if (!res.isUndefined() && !res.isNull()) {
+        Logger::warning("settings.json: max_allowed_stream_resolution is not WIDTHxHEIGHT — "
+                        "no limit");
+    }
+    // Encoders take even sides.
+    limits.width &= ~1;
+    limits.height &= ~1;
+    return limits;
+}
+
+AppSettings::LimitedSize AppSettings::limitStreamSize(const StreamLimits& limits, int width,
+                                                      int height, bool fitBox, bool matchDisplay,
+                                                      bool nativeHost, int fallbackWidth,
+                                                      int fallbackHeight)
+{
+    LimitedSize out;
+    out.width = width;
+    out.height = height;
+    out.fitBox = fitBox;
+    out.fallbackWidth = fallbackWidth;
+    out.fallbackHeight = fallbackHeight;
+    if (limits.width <= 0 && limits.height <= 0) return out;
+    const int maxW = limits.width > 0 ? limits.width : kLimitMax;
+    const int maxH = limits.height > 0 ? limits.height : kLimitMax;
+
+    if (height <= 0) {
+        // The display's own size, which only the native host answers: the
+        // largest frame of its shape inside the ceiling, never upscaled.
+        out.width = maxW;
+        out.height = maxH;
+        out.fitBox = true;
+    } else if (fitBox && !matchDisplay) {
+        out.width = qMin(width, maxW) & ~1;
+        out.height = qMin(height, maxH) & ~1;
+    } else {
+        const int w = width > 0 ? width : height * 16 / 9;
+        const double scale = qMin(1.0, qMin(double(maxW) / w, double(maxH) / height));
+        if (scale < 1.0) {
+            out.width = qRound(w * scale) & ~1;
+            out.height = qRound(height * scale) & ~1;
+        }
+        // The native host's fixed height takes its display's shape, which
+        // may be wider than the ceiling (a 21:9 display at 1080 lines): a
+        // box as wide as the ceiling, as tall as that height.
+        if (nativeHost && !fitBox && limits.width > 0) {
+            out.width = maxW;
+            out.fitBox = true;
+        }
+    }
+    if (fallbackWidth > 0 && fallbackHeight > 0) {
+        out.fallbackWidth = qMin(fallbackWidth, maxW) & ~1;
+        out.fallbackHeight = qMin(fallbackHeight, maxH) & ~1;
+    }
+    out.changed = out.width != width || out.height != height || out.fitBox != fitBox ||
+                  out.fallbackWidth != fallbackWidth || out.fallbackHeight != fallbackHeight;
+    return out;
+}
+
+void AppSettings::setMaxAllowedFrameRate(int fps)
+{
+    QJsonObject obj = readAll();
+    obj["max_allowed_frame_rate"] = qBound(0, fps, kLimitMax);
+    writeAll(obj);
+}
+
+void AppSettings::setMaxAllowedBitrate(int mbps)
+{
+    QJsonObject obj = readAll();
+    obj["max_allowed_bitrate"] = qBound(0, mbps, kLimitMax);
+    writeAll(obj);
+}
+
+void AppSettings::setMaxAllowedStreamResolution(int width, int height)
+{
+    QJsonObject obj = readAll();
+    obj["max_allowed_stream_resolution"] =
+        streamResolutionText(qBound(0, width, kLimitMax), qBound(0, height, kLimitMax));
     writeAll(obj);
 }
 

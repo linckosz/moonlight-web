@@ -63,6 +63,7 @@
 #include <clocale>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 #include "server/AppSettings.h"
 #include "common/DetachedProcess.h"
@@ -934,6 +935,98 @@ static int runClearAdminPasswordCommand(quint16 persistedHttpsPort, bool assumeY
         << "\n"
         << "  Only this machine can open the admin page now. Machines that unlocked it\n"
         << "  with the password have been signed out of it.\n\n";
+    out.flush();
+    return 0;
+}
+
+// `moonlightweb --max-allowed-frame-rate 60 --max-allowed-bitrate 40
+//  --max-allowed-stream-resolution 1920x1080`: the administrator's ceilings
+// (AppSettings::streamLimits), written by the running instance into its own
+// settings.json — a service runs as another user, with a file of its own.
+// Each is optional; 0 lifts it. Every stream started afterwards holds to them.
+static int runStreamLimitsCommand(quint16 persistedHttpsPort, const std::optional<QString>& fps,
+                                  const std::optional<QString>& mbps,
+                                  const std::optional<QString>& resolution)
+{
+    QTextStream out(stdout);
+    QJsonObject body;
+    const auto number = [](const QString& text) {
+        bool ok = false;
+        const int n = text.trimmed().toInt(&ok);
+        return ok && n >= 0 && n <= AppSettings::kLimitMax ? n : -1;
+    };
+    if (fps) {
+        const int n = number(*fps);
+        if (n < 0) {
+            out << "--max-allowed-frame-rate takes a whole number of frames per second "
+                   "(0 for no limit). Nothing was changed.\n";
+            out.flush();
+            return 1;
+        }
+        body["max_allowed_frame_rate"] = n;
+    }
+    if (mbps) {
+        const int n = number(*mbps);
+        if (n < 0) {
+            out << "--max-allowed-bitrate takes a whole number of Mbps (0 for no limit). "
+                   "Nothing was changed.\n";
+            out.flush();
+            return 1;
+        }
+        body["max_allowed_bitrate"] = n;
+    }
+    if (resolution) {
+        int w = 0, h = 0;
+        if (!AppSettings::parseStreamResolution(*resolution, &w, &h)) {
+            out << "--max-allowed-stream-resolution takes WIDTHxHEIGHT: 1920x1080, 1920 (a\n"
+                   "1920x1920 box), 0x1440 (the height only), 0 for no limit. Nothing was "
+                   "changed.\n";
+            out.flush();
+            return 1;
+        }
+        body["max_allowed_stream_resolution"] = AppSettings::streamResolutionText(w, h);
+    }
+
+    const QString base = findRunningInstance(persistedHttpsPort);
+    if (base.isEmpty()) {
+        out << "MoonlightWeb is not running — start it first "
+               "(sudo systemctl start moonlightweb).\n";
+        out.flush();
+        return 1;
+    }
+    const LoopbackReply reply = loopbackAdminPost(
+        base, "/api/settings/streaming", QJsonDocument(body).toJson(QJsonDocument::Compact));
+    if (!reply.ok) {
+        const QString apiError = reply.json.value("error").toString();
+        out << "Failed: "
+            << (!apiError.isEmpty()
+                    ? apiError
+                    : (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
+                                             : reply.error))
+            << "\n";
+        out.flush();
+        return 1;
+    }
+
+    // What the instance holds now, all three, read back.
+    const QJsonObject now =
+        loopbackRequest(base, "/api/settings/streaming", QByteArray(), 10000).json;
+    const auto shown = [](int v, const char* unit) {
+        return v > 0 ? QStringLiteral("%1 %2").arg(v).arg(QLatin1String(unit))
+                     : QStringLiteral("no limit");
+    };
+    const int w = now.value("max_allowed_stream_width").toInt(0);
+    const int h = now.value("max_allowed_stream_height").toInt(0);
+    out << "\n  Frame rate     " << shown(now.value("max_allowed_frame_rate").toInt(0), "FPS")
+        << "\n  Bitrate        " << shown(now.value("max_allowed_bitrate").toInt(0), "Mbps")
+        << "\n  Resolution     "
+        << (w > 0 || h > 0 ? AppSettings::streamResolutionText(w, h) +
+                                 (w > 0 && h > 0 ? QString()
+                                  : w > 0        ? QStringLiteral(" (the width only)")
+                                                 : QStringLiteral(" (the height only)"))
+                           : QStringLiteral("no limit"))
+        << "\n\n  Every stream started from now on is held to these, whatever the\n"
+        << "  viewer's Settings say. A stream already running keeps its own.\n\n";
     out.flush();
     return 0;
 }
@@ -1838,6 +1931,24 @@ int main(int argc, char* argv[])
         "enable-internet", "Enable the Internet link (asks for consent), then exit");
     parser.addOption(enableInternetOption);
 
+    // The administrator's ceilings, written into the running instance's
+    // settings.json (AppSettings::streamLimits). Any of the three, together.
+    QCommandLineOption maxFrameRateOption(
+        "max-allowed-frame-rate",
+        "Hold every stream to this frame rate (0 for no limit), then exit", "fps");
+    parser.addOption(maxFrameRateOption);
+    QCommandLineOption maxBitrateOption("max-allowed-bitrate",
+                                        "Hold every stream to this bitrate in Mbps (0 for no "
+                                        "limit), then exit",
+                                        "mbps");
+    parser.addOption(maxBitrateOption);
+    QCommandLineOption maxResolutionOption(
+        "max-allowed-stream-resolution",
+        "Hold every stream inside this size: 1920x1080, 1920 (a square box), 0x1440 (the "
+        "height only), 0 for no limit; then exit",
+        "WxH");
+    parser.addOption(maxResolutionOption);
+
     QCommandLineOption yesOption("yes", "Accept the --enable-internet agreement, or confirm "
                                         "--clear-admin-password, non-interactively");
     parser.addOption(yesOption);
@@ -2085,6 +2196,17 @@ int main(int argc, char* argv[])
     if (parser.isSet(enableInternetOption))
         return runEnableInternetCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
                                         parser.isSet(yesOption));
+    if (parser.isSet(maxFrameRateOption) || parser.isSet(maxBitrateOption) ||
+        parser.isSet(maxResolutionOption)) {
+        // Not given: nothing to change; given empty: a bad value.
+        const auto given = [&parser](const QCommandLineOption& o) -> std::optional<QString> {
+            if (!parser.isSet(o)) return std::nullopt;
+            return parser.value(o);
+        };
+        return runStreamLimitsCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
+                                      given(maxFrameRateOption), given(maxBitrateOption),
+                                      given(maxResolutionOption));
+    }
 
     appSettings.seedDocumentedDefaults(); // write documented file-only keys if absent
     appSettings.migrateHostApps();        // the betas' gamescope_apps → host_apps
@@ -3353,7 +3475,7 @@ int main(int argc, char* argv[])
         // browser's "Same as your device" and "Custom" resolutions; absent
         // (an older frontend, a fixed rung) → today's reading. Every other
         // host gets the explicit width and height above regardless.
-        const bool reqFitBox = body["stream_fit_box"].toBool(false);
+        bool reqFitBox = body["stream_fit_box"].toBool(false);
         const bool reqAllowUpscale = reqFitBox && body["stream_allow_upscale"].toBool(false);
         // "Match my screen": the native host puts its display in that very
         // mode for the session, when its driver lists one.
@@ -3365,8 +3487,35 @@ int main(int argc, char* argv[])
             return v >= AppSettings::kCustomSizeMin && v <= AppSettings::kCustomSizeMax ? v & ~1
                                                                                         : 0;
         };
-        const int reqFallbackW = reqMatchDisplay ? boxSide("stream_fallback_width") : 0;
-        const int reqFallbackH = reqMatchDisplay ? boxSide("stream_fallback_height") : 0;
+        int reqFallbackW = reqMatchDisplay ? boxSide("stream_fallback_width") : 0;
+        int reqFallbackH = reqMatchDisplay ? boxSide("stream_fallback_height") : 0;
+
+        // The administrator's ceilings (settings.json max_allowed_*, issue
+        // #53), on every host, the native one and its virtual display
+        // included. The browser holds itself to them already; this is what
+        // makes them hold for an older page, or one that ignores them.
+        const AppSettings::StreamLimits limits = appSettings.streamLimits();
+        // What the size cost in pixels, for an automatic bitrate (below).
+        const qint64 pixelsAsked = qint64(reqWidth) * reqHeight;
+        qint64 pixelsLimited = pixelsAsked;
+        {
+            const AppSettings::LimitedSize limited = AppSettings::limitStreamSize(
+                limits, reqWidth, reqHeight, reqFitBox, reqMatchDisplay,
+                backendType == QStringLiteral("native"), reqFallbackW, reqFallbackH);
+            if (limited.changed) {
+                qInfo().noquote() << "[Session] Resolution limit"
+                                  << AppSettings::streamResolutionText(limits.width, limits.height)
+                                  << ":" << reqWidth << "x" << reqHeight
+                                  << (reqFitBox ? "(box)" : "") << "→" << limited.width << "x"
+                                  << limited.height << (limited.fitBox ? "(box)" : "");
+                reqWidth = limited.width;
+                reqHeight = limited.height;
+                reqFitBox = limited.fitBox;
+                reqFallbackW = limited.fallbackWidth;
+                reqFallbackH = limited.fallbackHeight;
+                pixelsLimited = qint64(reqWidth) * reqHeight;
+            }
+        }
         qInfo() << "[Session] Aspect" << reqAspect << "→" << reqWidth << "x" << reqHeight
                 << (reqMatchDisplay ? "(box, the display's mode)"
                     : reqFitBox     ? (reqAllowUpscale ? "(box, may upscale)" : "(box)")
@@ -3400,7 +3549,45 @@ int main(int argc, char* argv[])
         // and a 144 Hz panel would answer an Auto 120 with 144. Absent — an
         // older frontend, a rate the viewer named — means no ceiling, and the
         // alignment keeps the freedom it was designed with.
-        const int reqFpsCeiling = qMax(0, body["stream_fps_max"].toInt(0));
+        int reqFpsCeiling = qMax(0, body["stream_fps_max"].toInt(0));
+
+        // The administrator's frame rate: the stream's, and the ceiling the
+        // native host's alignment may not cross either.
+        const int fpsAsked = reqFps;
+        if (limits.fps > 0) {
+            if (reqFps > limits.fps) {
+                qInfo() << "[Session] Frame rate limit" << limits.fps << ":" << reqFps << "→"
+                        << limits.fps << "fps";
+                reqFps = limits.fps;
+            }
+            reqFpsCeiling = reqFpsCeiling > 0 ? qMin(reqFpsCeiling, limits.fps) : limits.fps;
+        }
+
+        // An automatic bitrate was sized for the rate and the pixels asked
+        // (frontend/js/util/AutoBitrate.js, linear in both): what a ceiling
+        // took of them comes off it too, or the frames would get the bits of
+        // a stream twice as fast. A bitrate the viewer set is theirs, under
+        // the administrator's own ceiling like everything else.
+        const bool reqBitrateAuto = body.contains("stream_bitrate_auto")
+                                        ? body["stream_bitrate_auto"].toBool(true)
+                                        : appSettings.streamBitrateAuto();
+        if (reqBitrateAuto && !body["power_save"].toBool(false)) {
+            double ratio = 1.0;
+            if (reqFps < fpsAsked) ratio *= double(reqFps) / fpsAsked;
+            if (pixelsAsked > 0 && pixelsLimited > 0 && pixelsLimited < pixelsAsked)
+                ratio *= double(pixelsLimited) / pixelsAsked;
+            if (ratio < 1.0) {
+                const int scaled = qMax(1000, static_cast<int>(reqBitrate * ratio));
+                qInfo() << "[Session] Automatic bitrate follows the limits:" << reqBitrate << "→"
+                        << scaled << "kbps";
+                reqBitrate = scaled;
+            }
+        }
+        if (limits.bitrateMbps > 0 && reqBitrate > limits.bitrateMbps * 1000) {
+            qInfo() << "[Session] Bitrate limit" << limits.bitrateMbps << "Mbps:" << reqBitrate
+                    << "→" << limits.bitrateMbps * 1000 << "kbps";
+            reqBitrate = limits.bitrateMbps * 1000;
+        }
 
         bool reqYuv444 = body.contains("chroma_444_enabled") ? body["chroma_444_enabled"].toBool()
                                                              : appSettings.chroma444Enabled();
@@ -3832,6 +4019,9 @@ int main(int argc, char* argv[])
             // A rate chosen FOR the viewer states the ceiling it was chosen
             // against; one the viewer named states none.
             s->setMaxFps(reqFpsCeiling);
+            // And the administrator's, which the native session holds to
+            // mid-stream too (cadence steps, the bitrate following the frame).
+            s->setStreamLimits(limits.fps, limits.bitrateMbps * 1000);
             // The viewer's aspect is "Auto": a native stream follows the
             // display's shape when it changes. Absent → the size is kept.
             s->setFollowDisplayShape(body["follow_display_shape"].toBool(false));
@@ -3992,6 +4182,10 @@ int main(int argc, char* argv[])
             // And MWSR's zones, the same way (setMwsrZones).
             cfg["mwsrZones"] = body["mwsr_map"].toBool(false);
             cfg["fpsCeiling"] = reqFpsCeiling;
+            // The administrator's ceilings (setStreamLimits): a SYSTEM worker
+            // reads another profile's settings.json, so they travel here.
+            cfg["fpsLimit"] = limits.fps;
+            cfg["bitrateLimitKbps"] = limits.bitrateMbps * 1000;
             cfg["clientRefreshMilliHz"] = body["client_refresh_mhz"].toInt(0);
             cfg["clientVsync"] = body["client_vsync"].toBool(false);
             cfg["clientTearingReal"] = body["client_tearing_real"].toBool(false);

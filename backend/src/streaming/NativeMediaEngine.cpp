@@ -219,6 +219,8 @@ NativeMediaEngine::~NativeMediaEngine()
 
 void NativeMediaEngine::startCapture(const StartParams& params)
 {
+    m_FpsLimit = params.fpsLimit > 0 ? params.fpsLimit : 0;
+    m_BitrateLimitKbps = params.bitrateLimitKbps > 0 ? params.bitrateLimitKbps : 0;
     // A guest on the shared feed captures nothing: its pictures come down the
     // feed's pipe, its session is input and audio.
     if (!params.feedPipe.isEmpty()) {
@@ -1081,6 +1083,18 @@ mw::native::FpsStep NativeMediaEngine::setClientFpsStep(int fps)
         refused.why = m_Subscriber ? "the shared feed keeps its pace" : "no session";
         return refused;
     }
+    // The administrator's frame rate (settings.json max_allowed_frame_rate):
+    // a step goes no higher, and none at all when the stream is there already.
+    if (m_FpsLimit > 0 && fps > m_FpsLimit) {
+        const int base = m_Session->cadenceStatus().baseFps;
+        if (base > 0 && m_FpsLimit <= base) {
+            mw::native::FpsStep refused;
+            refused.askedFps = fps;
+            refused.why = "the administrator's frame-rate limit";
+            return refused;
+        }
+        fps = m_FpsLimit;
+    }
     return m_Session->setClientFpsStep(fps);
 }
 
@@ -1112,6 +1126,8 @@ void NativeMediaEngine::setClientBitrate(int kbps)
         qWarning() << "[NativeMediaEngine] Ignoring a client bitrate of" << kbps << "kbps";
         return;
     }
+    // Nor above the administrator's (settings.json max_allowed_bitrate).
+    if (m_BitrateLimitKbps > 0 && kbps > m_BitrateLimitKbps) kbps = m_BitrateLimitKbps;
     if (m_Session) m_Session->setTargetBitrate(kbps);
 }
 
