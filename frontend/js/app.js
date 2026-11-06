@@ -56,6 +56,7 @@ import { AdminView } from './ui/AdminView.js';
 import { LoginView } from './ui/LoginView.js';
 import { SetupView } from './ui/SetupView.js';
 import { PlayerJoinView } from './ui/PlayerJoinView.js';
+import { openPairApprove, pairRequestFromPath } from './ui/PairApproveDialog.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { DiscordLink } from './ui/DiscordLink.js';
@@ -794,6 +795,10 @@ export const MoonlightApp = {
         // travel over the internet link, whose fragment already carries the
         // single-use host key.
         const overlayOptions = path === '/sessions' ? { scrollTo: 'sessions' } : undefined;
+        // A device's QR code: /pair-<request>, read here once the page is signed
+        // in (a PIN typed on the way included), then put to the administrator
+        // over the hosts view. Anyone else is told it is the administrator's.
+        const pairRequest = pairRequestFromPath(path);
 
         if ((path === '/admin' || path === '/sessions') && this._canReachAdmin()) {
             // Admin survives refresh — shown as overlay on hosts. Admins only:
@@ -818,6 +823,7 @@ export const MoonlightApp = {
         if (initialOverlay) {
             this._openOverlay(initialOverlay, overlayOptions);
         }
+        if (pairRequest) openPairApprove(pairRequest);
     },
 
     // =========================================================================

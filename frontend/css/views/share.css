@@ -1274,3 +1274,54 @@ body.player-mode {
 .player-privacy-close {
     width: 100%;
 }
+
+/* A device asking in by the QR code it shows (PairApproveDialog.js): the code
+   it shows, typed here in a field as large as a share's PIN (.share-pin). */
+.pair-approve-lead {
+    margin: 0 0 14px;
+    color: var(--text-1);
+}
+
+/* A request from outside the server's network: that, and below it, smaller,
+   the address it comes from and its city when the host knows it. */
+.pair-approve-from {
+    margin: 0 0 14px;
+}
+
+.pair-approve-origin {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-1);
+}
+
+.pair-approve-where {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+}
+
+.pair-approve-label {
+    display: block;
+    margin: 0 0 6px;
+    font-size: 13px;
+    color: var(--text-1);
+}
+
+.pair-approve-code {
+    box-sizing: border-box;
+    width: 100%;
+    text-transform: uppercase;
+}
+
+.pair-approve-error {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--c-danger-text);
+}
+
+.pair-approve-hint {
+    margin: 12px 0 0;
+    font-size: 12px;
+    color: var(--text-2);
+}
