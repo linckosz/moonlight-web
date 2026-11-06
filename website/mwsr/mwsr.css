@@ -8,6 +8,23 @@ main.cmp{padding:40px 0 64px}
 .get .btn{font-size:1.1rem; padding:1rem 2.2rem}
 .get p{margin:.7rem 0 0; font-size:.92rem; color:var(--muted); max-width:72ch}
 .get strong{color:var(--txt)}
+/* where MWSR runs: each system and graphics API, its text in mwsr/ and how far it is checked */
+.where{margin:0 0 1.5rem}
+.where h2{font-size:1.1rem; margin:0 0 .4rem}
+.where table{border-collapse:collapse; width:100%; font-size:.88rem}
+.where th, .where td{padding:.5rem .7rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:baseline}
+.where th{font-weight:700; color:var(--txt)}
+.where th[scope="row"]{white-space:nowrap}
+.where code{font-size:.86em; white-space:nowrap}
+.where td:last-child{color:var(--muted)}
+/* on a phone each row on two lines: the system, its API and its folder, then how far it is checked, full width */
+@media (max-width:640px){
+  .where thead{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
+  .where table, .where tbody{display:block}
+  .where tr{display:grid; grid-template-columns:auto 1fr auto; gap:.2rem .8rem; padding:.6rem 0; border-bottom:1px solid var(--line)}
+  .where th, .where td{padding:0; border:0}
+  .where td:last-child{grid-column:1 / -1}
+}
 .privacy{color:var(--muted); font-size:.92rem; max-width:72ch;
   border-left:3px solid var(--cyan); padding:.2em 0 .2em .9em; background:rgba(25,211,255,.04)}
 .small{font-size:.85rem; color:var(--muted)}
