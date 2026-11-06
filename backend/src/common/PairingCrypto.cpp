@@ -236,8 +236,21 @@ QByteArray browserDigestInput(const QString& hostId, const QByteArray& nonceH,
 
 // ── Sign / verify ──────────────────────────────────────────────────────────
 
+namespace {
+
+/// Whatever the answer, the thread's OpenSSL error queue is left empty for the
+/// next caller on it.
+struct OpenSslErrorsCleared
+{
+    ~OpenSslErrorsCleared() { ERR_clear_error(); }
+};
+
+} // namespace
+
 QByteArray sign(const QByteArray& privatePem, const QByteArray& message)
 {
+    const OpenSslErrorsCleared clearErrors;
+
     PkeyPtr key = loadPrivatePem(privatePem);
     if (!key || message.isEmpty()) return {};
 
@@ -267,12 +280,7 @@ bool verify(const QByteArray& spkiDer, const QByteArray& message, const QByteArr
     // reason to continue.
     if (message.isEmpty() || signature.size() != SIGNATURE_BYTES) return false;
 
-    // Whatever the answer, the thread's OpenSSL error queue is left empty for
-    // the next caller on it.
-    const struct ClearErrors
-    {
-        ~ClearErrors() { ERR_clear_error(); }
-    } clearErrors;
+    const OpenSslErrorsCleared clearErrors;
 
     PkeyPtr key = loadPublicSpki(spkiDer);
     if (!key) return false;

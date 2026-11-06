@@ -84,6 +84,12 @@ public:
     void completePairing(const QString& pin,
                          std::function<void(PairState, const QByteArray& serverCertPem)> cb);
 
+    /// Whether @p signature is the server certificate's SHA-256 signature of
+    /// @p data. Whatever the answer, the thread's OpenSSL error queue is left
+    /// empty. Static and public for its test: it uses no member.
+    static bool verifySignature(const QByteArray& data, const QByteArray& signature,
+                                const QByteArray& serverCertificate);
+
 private:
     QByteArray generateRandomBytes(int length);
     QByteArray saltPin(const QByteArray& salt, const QString& pin);
@@ -91,8 +97,6 @@ private:
     QByteArray decrypt(const QByteArray& ciphertext, const QByteArray& key);
     QByteArray getSignatureFromCert(X509* cert);
     QByteArray getSignatureFromPemCert(const QByteArray& certificate);
-    bool verifySignature(const QByteArray& data, const QByteArray& signature,
-                         const QByteArray& serverCertificate);
     QByteArray signMessage(const QByteArray& message);
 
     // Asynchronous HTTP request. Invokes cb(body, error) when the reply

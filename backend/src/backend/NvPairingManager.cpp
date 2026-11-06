@@ -35,6 +35,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
@@ -259,6 +260,13 @@ QByteArray NvPairingManager::getSignatureFromPemCert(const QByteArray& certifica
 bool NvPairingManager::verifySignature(const QByteArray& data, const QByteArray& signature,
                                        const QByteArray& serverCertificate)
 {
+    // Whatever the answer, the thread's OpenSSL error queue is left empty for
+    // the next caller on it.
+    const struct ClearErrors
+    {
+        ~ClearErrors() { ERR_clear_error(); }
+    } clearErrors;
+
     BIO* bio = BIO_new_mem_buf(serverCertificate.data(), serverCertificate.size());
     X509* cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);

@@ -194,6 +194,14 @@ void run_pairing_binding_tests()
         ERR_clear_error();
         CHECK(verify(spki, honestMsg, sign(pem, honestMsg)));
         CHECK_EQ(ERR_peek_error(), 0ul);
+
+        // Signing too, refused or not.
+        ERR_clear_error();
+        CHECK(sign(QByteArray("not a key"), honestMsg).isEmpty());
+        CHECK_EQ(ERR_peek_error(), 0ul);
+        ERR_clear_error();
+        CHECK(!sign(pem, honestMsg).isEmpty());
+        CHECK_EQ(ERR_peek_error(), 0ul);
     }
 
     SECTION("MW-BIND — nonces");

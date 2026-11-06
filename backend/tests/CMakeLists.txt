@@ -79,6 +79,7 @@ add_executable(run_tests
     test_address_race.cpp
     test_relay_start.cpp
     test_wolf_seat_pairing.cpp
+    test_nv_pairing_signature.cpp
     test_backend_probe.cpp
     test_host_os_probe.cpp
     test_send_backlog.cpp
