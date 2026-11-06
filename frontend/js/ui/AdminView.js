@@ -1073,12 +1073,6 @@ export class AdminView {
                             <p class="setting-desc">
                                 ${t('admin.activeSessionsDesc')}
                             </p>
-                            <label class="settings-checkbox-label">
-                                <input type="checkbox" id="chk-stream-notifications"
-                                       ${this._streamNotifications ? 'checked' : ''} />
-                                <span class="settings-checkbox-text">${t('admin.streamNotifications')}</span>
-                            </label>
-                            <p class="setting-desc">${t('admin.streamNotificationsDesc')}</p>
                             <p class="settings-hint" id="admin-session-count">
                                 ${
                                     this._activeSessions > 0
@@ -1122,21 +1116,6 @@ export class AdminView {
                         </label>
                         <p class="setting-desc">${t('admin.packetMarkingDesc')}</p>
                     </div>
-
-                    ${
-                        this._vdExclusiveSupported
-                            ? `
-                    <div class="settings-field" id="admin-vd-exclusive">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="chk-vd-exclusive"
-                                   ${this._vdExclusive ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">${t('admin.vdExclusive')}</span>
-                        </label>
-                        <p class="setting-desc">${t('admin.vdExclusiveDesc')}</p>
-                    </div>
-                    `
-                            : ''
-                    }
 
                     ${
                         this._hostLayoutOffered
@@ -1212,7 +1191,7 @@ export class AdminView {
                         </div>
                     </div>
                 </div>
-                ${this._hostAppsSupported ? this._renderHostApps() : ''}
+                ${this._renderNativeHost()}
                 ${this._renderAdvanced()}
             </div>
         `;
@@ -2477,12 +2456,64 @@ export class AdminView {
                                 </div>`;
     }
 
+    /**
+     * What only this PC's own MoonlightWeb host uses, apart from what serves
+     * every host. Sunshine, Apollo and Wolf ignore all of it, and finding
+     * these boxes among the server's settings made them read as if they did.
+     * The section is shown only when it has at least one thing to offer.
+     */
+    _renderNativeHost() {
+        const notifications = this._isLocalhost();
+        if (
+            !this._vdExclusiveSupported &&
+            !notifications &&
+            !this._videoPipelineSupported &&
+            !this._hostAppsSupported
+        ) {
+            return '';
+        }
+        return `
+                <!-- MoonlightWeb Host -->
+                <div class="settings-section" id="admin-section-native-host">
+                    <h3 class="settings-section-title">${t('admin.nativeHost')}</h3>
+                    <p class="settings-section-desc">${t('admin.nativeHostDesc')}</p>
+                    ${
+                        this._vdExclusiveSupported
+                            ? `
+                    <div class="settings-field" id="admin-vd-exclusive">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-vd-exclusive"
+                                   ${this._vdExclusive ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.vdExclusive')}</span>
+                        </label>
+                        <p class="setting-desc">${t('admin.vdExclusiveDesc')}</p>
+                    </div>`
+                            : ''
+                    }
+                    ${
+                        notifications
+                            ? `
+                    <div class="settings-field" id="admin-stream-notifications">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-stream-notifications"
+                                   ${this._streamNotifications ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.streamNotifications')}</span>
+                        </label>
+                        <p class="setting-desc">${t('admin.streamNotificationsDesc')}</p>
+                    </div>`
+                            : ''
+                    }
+                    ${this._videoPipelineSupported ? this._renderVideoPipeline() : ''}
+                    ${this._hostAppsSupported ? this._renderHostApps() : ''}
+                </div>
+        `;
+    }
+
     _renderAdvanced() {
         return `
                 <!-- Advanced -->
                 <div class="settings-section" id="admin-section-advanced">
                     <h3 class="settings-section-title">${t('admin.advanced')}</h3>
-                    ${this._videoPipelineSupported ? this._renderVideoPipeline() : ''}
                     ${this._renderDiagMode('chk-debug-mode', this._debugMode, this._debugModeCli, 'debugMode', '--debug')}
                     ${this._renderDiagMode('chk-verbose-logs', this._verboseLogs, this._verboseLogsCli, 'verboseLogs', '--verbose')}
                     <div class="settings-field">
@@ -2658,9 +2689,10 @@ export class AdminView {
     // A card each on this host, beside the displays: the name the card shows,
     // the command or link that opens it, and its image. Where it opens is the
     // same for every app of this machine (screen): in its own gamescope, on
-    // the virtual display, or on the primary display. A section named for what
-    // it does, not for what runs it: folded under Advanced, it read as a
-    // diagnostic and explained nothing (Bruno, 13/10/2026).
+    // the virtual display, or on the primary display. Named for what it does:
+    // folded under Advanced, it read as a diagnostic and explained nothing
+    // (Bruno, 13/10/2026). It is the last part of the MoonlightWeb Host
+    // section, since only this PC's own host opens these cards.
     _renderHostApps() {
         const full = this._hostApps.length >= this._hostAppsMax;
         const screen = this._hostAppsScreen;
@@ -2720,8 +2752,8 @@ export class AdminView {
             )
             .join('');
         return `
-                <div class="settings-section host-apps" id="admin-section-host-apps">
-                    <h3 class="settings-section-title">${t('admin.hostApps')}</h3>
+                <div class="host-apps admin-subsection" id="admin-section-host-apps">
+                    <h4 class="admin-subsection-title">${t('admin.hostApps')}</h4>
                     <p class="settings-section-desc">${desc}</p>
                     ${
                         rows

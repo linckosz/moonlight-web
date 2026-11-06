@@ -270,6 +270,20 @@
 /* Apps on this PC: one row each — the card's image at the grid's 3:4, then
    name, command and actions; then the form, the name narrower than the
    command, and the image picked from a button. */
+/* A part of a section with its own heading: Apps on this PC, last in the
+   MoonlightWeb Host section. Set apart by a rule, one step below the
+   section's title. */
+.admin-subsection {
+    margin-top: var(--space-5);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border-1);
+}
+.admin-subsection-title {
+    font-size: var(--fs-md);
+    font-weight: 600;
+    margin: 0 0 var(--space-2);
+    color: var(--text-1);
+}
 .host-apps .settings-section-desc {
     margin-bottom: var(--space-4);
 }

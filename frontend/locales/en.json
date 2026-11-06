@@ -597,6 +597,8 @@
         "packetMarkingDesc": "The stream's packets ask the Wi-Fi to send them ahead of the house's other traffic, for the steadiest, smoothest picture. If other devices on your network struggle while a stream runs (a video call, a download), untick this: the stream steps back to the same rank as everyone else, at the cost of a picture that can turn less steady or less smooth when many devices load the network. Applies from the next stream.",
         "packetMarkingOn": "The next stream will have priority on the network",
         "packetMarkingOff": "The next stream will share the network like any other device",
+        "nativeHost": "MoonlightWeb Host",
+        "nativeHostDesc": "These settings only concern this PC's MoonlightWeb host, not Sunshine, Apollo or Wolf.",
         "vdExclusive": "Turn off the other screens during the stream",
         "vdExclusiveDesc": "Only for this PC's MoonlightWeb native host, and only when you stream its virtual display. While such a stream runs, this PC's other screens go dark. They come back on when the stream ends. If they stay dark, press Windows+P and choose Extend. Applies from the next stream.",
         "vdExclusiveOn": "On from the next stream",

@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// The admin's "Advanced" section: the picture chain of a native session —
+// The admin's "MoonlightWeb Host" section: the picture chain of a native session —
 // Auto / D3D11 / D3D12 on Windows, Auto / VA-API / Vulkan on Linux, as the
 // server lists them. Shown only where the server says the choice means
 // something, saved the moment it changes, and never left showing a value the
@@ -20,12 +20,12 @@ import { AdminView } from '../js/ui/AdminView.js';
 import { BackendClient } from '../js/api/BackendClient.js';
 import { Toast } from '../js/ui/Toast.js';
 
-describe('AdminView — video pipeline (Advanced)', () => {
+describe('AdminView — video pipeline (MoonlightWeb Host)', () => {
     let view;
 
     const select = () => document.querySelector('#select-video-pipeline');
     const mount = () => {
-        document.body.innerHTML = `<div>${view._renderAdvanced()}</div>`;
+        document.body.innerHTML = `<div>${view._renderNativeHost()}</div>`;
         view.container = document.body;
         view.bindEvents();
     };
@@ -58,7 +58,8 @@ describe('AdminView — video pipeline (Advanced)', () => {
         await view._loadStreamingState();
         expect(view._videoPipeline).toBe('auto');
         expect(view._videoPipelineSupported).toBe(false);
-        // The section stays for the diagnostics; the chain's menu does not.
+        // The chain's menu is not offered, and Advanced keeps the diagnostics.
+        expect(view._renderNativeHost()).not.toContain('select-video-pipeline');
         const html = view._renderAdvanced();
         expect(html).not.toContain('select-video-pipeline');
         expect(html).toContain('btn-download-logs');
@@ -146,7 +147,7 @@ describe('AdminView — no video codec (Advanced)', () => {
             native_video_codec_supported: true,
         });
         await view._loadStreamingState();
-        const html = view._renderAdvanced();
+        const html = view._renderNativeHost();
         expect(html).toContain('select-video-pipeline');
         expect(html).not.toContain('select-video-codec');
         view.destroy();

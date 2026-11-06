@@ -123,14 +123,16 @@ describe('AdminView — apps on this PC', () => {
         expect(rows[1].querySelector('[data-host-app-image-remove]')).not.toBeNull();
     });
 
-    it('is a section of its own, not under Advanced', () => {
+    it('is the last part of the MoonlightWeb Host section, not under Advanced', () => {
         view._hostAppsSupported = true;
         document.body.innerHTML = view._renderAdvanced();
         expect($('#admin-section-host-apps')).toBeNull();
+        document.body.innerHTML = view._renderNativeHost();
+        const host = $('#admin-section-native-host');
+        expect(host.lastElementChild.id).toBe('admin-section-host-apps');
         mount();
         const section = $('#admin-section-host-apps');
-        expect(section.classList.contains('settings-section')).toBe(true);
-        expect(section.querySelector('.settings-section-title').textContent).toBe('admin.hostApps');
+        expect(section.querySelector('.admin-subsection-title').textContent).toBe('admin.hostApps');
         expect($('#host-app-command').placeholder).toBe('admin.hostAppCommand');
         expect(section.textContent).toContain('admin.hostAppsHint');
     });

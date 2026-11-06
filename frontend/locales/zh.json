@@ -597,6 +597,8 @@
         "packetMarkingDesc": "串流的数据包会请求 Wi-Fi 优先于家中其他流量发送，以获得最稳定、最流畅的画面。如果串流时网络上的其他设备受到影响（视频通话、下载），请取消勾选：串流将与其他设备同等排队，代价是在许多设备占用网络时画面可能不够稳定或不够流畅。从下一次串流起生效。",
         "packetMarkingOn": "下一次串流将在网络上优先传输",
         "packetMarkingOff": "下一次串流将与其他设备平等共享网络",
+        "nativeHost": "MoonlightWeb 主机",
+        "nativeHostDesc": "这些设置只涉及这台电脑上的 MoonlightWeb 主机，与 Sunshine、Apollo 或 Wolf 无关。",
         "vdExclusive": "串流时关闭其他屏幕",
         "vdExclusiveDesc": "仅适用于本机的 MoonlightWeb 原生主机，且仅在串流其虚拟显示器时生效。此类串流进行时，本机的其他屏幕会关闭，串流结束后自动重新点亮。如果屏幕仍然是黑的，请按 Windows+P 并选择“扩展”。从下一次串流起生效。",
         "vdExclusiveOn": "下次串流起开启",

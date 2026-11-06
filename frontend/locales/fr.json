@@ -597,6 +597,8 @@
         "packetMarkingDesc": "Les paquets du stream demandent au Wi-Fi de passer devant le reste du trafic de la maison, pour l'image la plus stable et la plus fluide. Si vos autres appareils sont gênés pendant un stream (un appel vidéo, un téléchargement), décochez cette case : le stream reprend le même rang que les autres, au prix d'une image qui peut devenir moins stable ou moins fluide quand de nombreux appareils chargent le réseau. S'applique au prochain stream.",
         "packetMarkingOn": "Le prochain stream sera prioritaire sur le réseau",
         "packetMarkingOff": "Le prochain stream partagera le réseau comme les autres appareils",
+        "nativeHost": "Hôte MoonlightWeb",
+        "nativeHostDesc": "Ces réglages ne concernent que l'hôte MoonlightWeb de ce PC, pas Sunshine, Apollo ni Wolf.",
         "vdExclusive": "Éteindre les autres écrans pendant le stream",
         "vdExclusiveDesc": "Seulement pour l'hôte natif MoonlightWeb de ce PC, et seulement quand vous streamez son écran virtuel. Pendant un tel stream, les autres écrans de ce PC s'éteignent. Ils se rallument à la fin du stream. S'ils restent noirs, appuyez sur Windows+P et choisissez Étendre. S'applique au prochain stream.",
         "vdExclusiveOn": "Activé au prochain stream",
