@@ -58,6 +58,15 @@ Per-browser preferences (stored in `localStorage`, with server defaults) are edi
 
 *The opening view of the [comparison page](https://moonlightweb.top/mwsr/), where you can compare the upscalers on your own GPU: the native frame against MWSR, from a 1080p 4:2:0 input to 1440p. The picture is Blender 2.81's splash screen, by Alex Treviño and Anaïs Maamar (original concept) / Blender Cloud, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), reduced to 2560×1440 and cropped.*
 
+MWSR is also packaged for other programs, under the MIT License, in [`mwsr/`](../../mwsr/README.md). Each text there is generated from the module the client runs:
+
+| System | Graphics API | Text | Checked so far |
+|---|---|---|---|
+| Any browser | WebGPU, WebGL2 | WGSL, GLSL ES 3.00 | MoonlightWeb's client, measured on the comparison page and on three GPUs and two phones |
+| Windows | Direct3D 12, Direct3D 11 | HLSL, with the C++ header | Moonlight-qt on Windows (pull request #1557), the Direct3D 11 example on WARP |
+| Linux | Vulkan, through libplacebo or mpv | a libplacebo user shader | in testing for Moonlight-qt, on Mesa's CPU Vulkan only |
+| macOS | Vulkan through MoltenVK, or Metal | the same user shader, or MSL | in testing for Moonlight-qt; Metal run once on an M1 Pro |
+
 ## 1.2 The Administrator's journey
 
 The **Admin page** (`https://localhost/admin`, also reachable from the tray icon → *Server Settings*) configures the server itself. It is **only functional from the host machine**: all `/api/admin/*` routes return 403 for non-localhost requests (a *host-key* mechanism extends this to the host's own browser when it arrives through the remote entry link, and a LAN machine — or a device on the internet, when the owner allows it — can unlock it with the admin password; see [Security](06-Security.md)).
