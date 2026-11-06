@@ -163,7 +163,7 @@ import { BMC_LOGO } from './bmcLogo.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
-import { flushClientLog, serverDiag } from '../util/ClientLog.js';
+import { flushClientLog, refreshClientLog, serverDiag } from '../util/ClientLog.js';
 import { UltraPlayer, presentMode, ultraPlayerSupported } from '../stream/ultra/UltraPlayer.js';
 
 // Set once the viewer has been told the microphone starts cut.
@@ -1738,6 +1738,7 @@ export class StreamView {
         this._onMouseUp = (e) => this.handleMouseUp(e);
         this._onWheel = (e) => this.handleWheel(e);
         this._onPointerLockChange = () => this.handlePointerLockChange();
+        this._onPointerLockError = () => this._handlePointerLockError();
         this._onContextMenu = (e) => e.preventDefault();
 
         // ── Touch event handlers (mobile) ─────────────────────────────────
@@ -8899,6 +8900,16 @@ export class StreamView {
         // All platforms: keep Escape inside the host while in fullscreen.
         document.addEventListener('fullscreenchange', this._onFsChangeLock);
 
+        // Debug mode switched on in Admin after this page loaded (an iPad web
+        // app left open for days, 27/10/2026): the console mirror was off, and
+        // the archive held no browser line at all. Asked again at each stream.
+        void refreshClientLog();
+        console.log(
+            `[StreamView] Mouse: ${this._gamingMode ? 'gaming' : 'desktop'} mode,` +
+                ` pointer lock ${typeof this.inputEl?.requestPointerLock === 'function' ? 'offered' : 'absent'}` +
+                ` by this browser${IS_IOS ? ' (iOS/iPadOS' + (navigator.standalone ? ', home-screen app)' : ')') : ''}`,
+        );
+
         // Mode-specific events
         if (this._gamingMode) {
             this._bindGamingEvents();
@@ -9039,6 +9050,7 @@ export class StreamView {
 
     _bindGamingEvents() {
         document.addEventListener('pointerlockchange', this._onPointerLockChange);
+        document.addEventListener('pointerlockerror', this._onPointerLockError);
 
         // Pre-focus: default cursor until the first move; the first mousemove
         // hides it over the picture (the host cursor tracks the position and is
@@ -9088,6 +9100,9 @@ export class StreamView {
         // Click to capture focus: set host cursor at clicked position, then grab pointer.
         this._onGamingClick = (e) => {
             if (this._mouseFocused) return; // Already focused — click handled by mousedown/mouseup
+            // Refused already: the click went out as a click (mousedown/up),
+            // and asking again would only be refused again.
+            if (this._pointerLockRefused) return;
             e.preventDefault();
 
             // Send absolute position so the host cursor teleports to the clicked point
@@ -9103,20 +9118,17 @@ export class StreamView {
                 referenceWidth: refW,
                 referenceHeight: refH,
             });
-            const p = this._lockPointer();
-            if (p && typeof p.catch === 'function')
-                p.catch(() => {
-                    /* the "click to capture" hint stays up */
-                });
+            this._lockPointerOnClick();
         };
         this.inputEl.addEventListener('click', this._onGamingClick);
 
-        // Mouse button events: only send when focused (pre-focus click only captures)
+        // Mouse button events: only send when focused (pre-focus click only
+        // captures), or once the browser has refused the lock for good.
         this._onGamingMouseDown = (e) => {
-            if (this._mouseFocused) this.handleMouseDown(e);
+            if (this._mouseFocused || this._pointerLockRefused) this.handleMouseDown(e);
         };
         this._onGamingMouseUp = (e) => {
-            if (this._mouseFocused) this.handleMouseUp(e);
+            if (this._mouseFocused || this._pointerLockRefused) this.handleMouseUp(e);
         };
         this.inputEl.addEventListener('mousedown', this._onGamingMouseDown);
         this.inputEl.addEventListener('mouseup', this._onGamingMouseUp);
@@ -9949,7 +9961,9 @@ export class StreamView {
             this._pendingPasteKey = null;
         }
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+        document.removeEventListener('pointerlockerror', this._onPointerLockError);
         this._disarmPointerCapture();
+        clearTimeout(this._lockWatch);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
         window.removeEventListener('pagehide', this._onPageHide);
         window.removeEventListener('blur', this._onWindowBlur);
@@ -10090,6 +10104,67 @@ export class StreamView {
     }
 
     /**
+     * Ask for the lock on a click on the picture, and stop waiting for it if
+     * the browser says no.
+     *
+     * Until the lock arrives, gaming mode keeps a click for itself: it is the
+     * "click to capture". On an engine that never grants it — Safari on an
+     * iPad with a Magic Keyboard trackpad (27/10/2026) — every click went to
+     * the lock request and none reached the game. So a refusal (pointerlockerror,
+     * a rejected promise, or no pointerlockchange LOCK_WATCH_MS after a click)
+     * ends the wait for this stream: clicks go through as clicks, and the
+     * viewer is told once why aiming stops at the screen edge. Only a click
+     * counts: the first picture's attempt has no gesture of its own, and a
+     * refusal there means nothing.
+     */
+    _lockPointerOnClick() {
+        // The mouse is off for this viewer: nothing is asked, nothing refused.
+        if (!this._mouseAllowed) return;
+        clearTimeout(this._lockWatch);
+        this._lockWatch = setTimeout(() => {
+            if (!this.pointerLocked)
+                this._pointerLockRefusedForGood('no pointerlockchange after a click');
+        }, StreamView.LOCK_WATCH_MS);
+        let p = null;
+        try {
+            p = this._lockPointer();
+        } catch (e) {
+            this._pointerLockRefusedForGood(`request threw ${e && e.name}`);
+            return;
+        }
+        if (p && typeof p.catch === 'function')
+            p.catch((err) =>
+                this._pointerLockRefusedForGood(`request rejected (${err && err.name})`),
+            );
+    }
+
+    /** How long a click waits for the lock before the browser is taken at its silence. */
+    static LOCK_WATCH_MS = 500;
+
+    _handlePointerLockError() {
+        console.log('[StreamView] Mouse: pointerlockerror');
+        // A click is waiting on it: that is the refusal. Otherwise (the first
+        // picture's own attempt), the "click to capture" hint stays up.
+        if (this._lockWatch) this._pointerLockRefusedForGood('pointerlockerror after a click');
+    }
+
+    _pointerLockRefusedForGood(why) {
+        clearTimeout(this._lockWatch);
+        this._lockWatch = 0;
+        if (this._pointerLockRefused || this.pointerLocked || !this._gamingMode) return;
+        this._pointerLockRefused = true;
+        console.log(
+            `[StreamView] Mouse: pointer lock refused (${why}) — clicks now go to the host`,
+        );
+        // "Click to capture" would ask for something this browser won't give.
+        if (this.hintEl) this.hintEl.style.display = 'none';
+        if (!StreamView._lockRefusedToastShown) {
+            StreamView._lockRefusedToastShown = true;
+            Toast.info(t('stream.pointerLockRefused'), { durationMs: 8000 });
+        }
+    }
+
+    /**
      * Take the pointer, asking for the mouse's own counts.
      *
      * Without `unadjustedMovement`, movementX/Y is what the viewer's OS made
@@ -10112,6 +10187,12 @@ export class StreamView {
     _lockPointer() {
         const el = this.inputEl;
         if (!el || !this._mouseAllowed) return null;
+        // No API at all: the old-engine retry below would throw a TypeError.
+        if (typeof el.requestPointerLock !== 'function') {
+            return Promise.reject(
+                Object.assign(new Error('no requestPointerLock'), { name: 'NotSupportedError' }),
+            );
+        }
         let p = null;
         try {
             p = el.requestPointerLock({ unadjustedMovement: true });
@@ -12162,16 +12243,30 @@ export class StreamView {
     // =========================================================================
 
     handlePointerLockChange() {
+        const was = !!this.pointerLocked;
         this.pointerLocked = document.pointerLockElement === this.inputEl;
+        if (was !== this.pointerLocked)
+            console.log(
+                `[StreamView] Mouse: pointer ${this.pointerLocked ? 'locked' : 'released'}`,
+            );
         // However the mouse was taken, the one-shot that was waiting for a
-        // keystroke to ask for it has nothing left to do.
-        if (this.pointerLocked) this._disarmPointerCapture();
+        // keystroke to ask for it has nothing left to do — nor the watch on a
+        // click's request, and a refusal is history.
+        if (this.pointerLocked) {
+            this._disarmPointerCapture();
+            clearTimeout(this._lockWatch);
+            this._lockWatch = 0;
+            this._pointerLockRefused = false;
+        }
         this._mouseFocused = this.pointerLocked;
         // The hint asks for a click only gaming mode answers. Leaving gaming
         // mode lets the lock go afterwards, asynchronously: shown again there,
         // the hint stayed over the desktop-mode picture for good (12/10/2026).
         if (this.hintEl) {
-            this.hintEl.style.display = this._gamingMode && !this.pointerLocked ? 'flex' : 'none';
+            this.hintEl.style.display =
+                this._gamingMode && !this.pointerLocked && !this._pointerLockRefused
+                    ? 'flex'
+                    : 'none';
         }
         // Capturing/releasing the mouse drives both the full keyboard lock and
         // the gaming-mode exit-reminder overlay.

@@ -809,6 +809,7 @@
         "fullscreen": "全屏",
         "enterFullscreen": "进入全屏",
         "clickToCapture": "点击以捕获鼠标和键盘",
+        "pointerLockRefused": "此浏览器无法锁定鼠标：点击可以传到游戏，但视角转动会在屏幕边缘停止。",
         "showKeyboard": "显示屏幕键盘",
         "live": "直播中",
         "disconnected": "已断开连接",

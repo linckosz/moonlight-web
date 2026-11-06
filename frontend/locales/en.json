@@ -809,6 +809,7 @@
         "fullscreen": "Fullscreen",
         "enterFullscreen": "Enter fullscreen",
         "clickToCapture": "Click to capture mouse & keyboard",
+        "pointerLockRefused": "This browser won't lock the mouse: clicks reach the game, but turning stops at the screen edge.",
         "showKeyboard": "Show on-screen keyboard",
         "live": "Live",
         "disconnected": "Disconnected",
