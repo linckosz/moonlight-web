@@ -704,6 +704,89 @@ void test_link_address_is_per_host_and_kept()
     delete again;
 }
 
+void test_each_opening_is_named()
+{
+    SECTION("share: each opening of a row has a name of its own, kept");
+    ShareManager* mgr = freshManager();
+    const auto openingOf = [mgr](int slot) {
+        return mgr->status().at(slot - ShareManager::kFirstSlot).opening;
+    };
+
+    // Off: no opening.
+    CHECK(openingOf(kSlot).isEmpty());
+    CHECK(mgr->opening(kSlot).isEmpty());
+
+    QString token, pin;
+    ShareManager::SlotStatus st;
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st));
+    const QString first = st.opening;
+    CHECK(!first.isEmpty());
+    CHECK_EQ(openingOf(kSlot), first);
+    CHECK_EQ(mgr->opening(kSlot), first);
+    // Short, and nothing like a secret of the row.
+    CHECK(first.size() <= 16);
+    CHECK(first != token && first != pin);
+
+    // Rights and lifetime moving keep the opening; opening it again does not.
+    ShareManager::Permissions gamer;
+    gamer.gamepad = true;
+    CHECK(mgr->setPermissions(kSlot, gamer));
+    CHECK_EQ(openingOf(kSlot), first);
+    QString token2, pin2;
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, token2, pin2, st));
+    CHECK(st.opening != first);
+    CHECK_EQ(openingOf(kSlot), st.opening);
+    const QString second = st.opening;
+    // Another row has its own.
+    CHECK(mgr->activate(kSlot + 1, kHost, kApp, kTtl, token, pin, st));
+    CHECK(st.opening != second);
+    delete mgr;
+
+    // A restart keeps it: the row is the same opening, its board need not
+    // drop what it shows.
+    auto* restarted = new ShareManager();
+    CHECK_EQ(restarted->opening(kSlot), second);
+    restarted->deactivate(kSlot, ShareManager::EndReason::OwnerToggle);
+    CHECK(restarted->opening(kSlot).isEmpty());
+    restarted->deactivateAll(ShareManager::EndReason::OwnerStop);
+    delete restarted;
+}
+
+void test_revoking_one_hosts_guests()
+{
+    SECTION("share: a host's guests are revoked without another host's");
+    ShareManager* mgr = freshManager();
+    const QString hostB = QStringLiteral("host-uuid-B");
+
+    QString tA, pA, tB, pB, tA2, pA2;
+    ShareManager::SlotStatus st;
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, tA, pA, st));
+    CHECK(mgr->activate(kSlot + 1, hostB, 7, kTtl, tB, pB, st));
+    CHECK(mgr->activate(kSlot + 2, kHost, kApp, kTtl, tA2, pA2, st));
+
+    QVector<int> disconnects;
+    QObject::connect(mgr, &ShareManager::playerMustDisconnect,
+                     [&disconnects](int slot, int) { disconnects.append(slot); });
+    mgr->deactivateForHost(kHost, ShareManager::EndReason::OwnerStop);
+    CHECK(!mgr->tokenIsLive(tA));
+    CHECK(!mgr->tokenIsLive(tA2));
+    CHECK(mgr->tokenIsLive(tB));
+    CHECK_EQ(mgr->hostForSlot(kSlot + 1), hostB);
+    CHECK(!disconnects.contains(kSlot + 1));
+
+    // No host names nothing, and touches nothing.
+    mgr->deactivateForHost(QString(), ShareManager::EndReason::OwnerStop);
+    CHECK(mgr->tokenIsLive(tB));
+    delete mgr;
+
+    // What was revoked stays revoked, what was kept stays kept.
+    auto* restarted = new ShareManager();
+    CHECK(!restarted->tokenIsLive(tA));
+    CHECK(restarted->tokenIsLive(tB));
+    restarted->deactivateAll(ShareManager::EndReason::OwnerStop);
+    delete restarted;
+}
+
 } // namespace
 
 void run_share_manager_tests()
@@ -726,4 +809,6 @@ void run_share_manager_tests()
     test_share_is_bound_to_its_host();
     test_guests_picture_height();
     test_link_address_is_per_host_and_kept();
+    test_each_opening_is_named();
+    test_revoking_one_hosts_guests();
 }

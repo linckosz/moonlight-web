@@ -75,7 +75,11 @@ const RIDE_OUT_LOSS = true;
  * }} BackendError
  */
 
-import { loadOrCreateIdentity, rememberHostIdentity } from '../util/pairingCrypto.js';
+import {
+    loadOrCreateIdentity,
+    rememberHostIdentity,
+    signShareOwnerProof,
+} from '../util/pairingCrypto.js';
 import {
     CANVAS_TEARING_IS_REAL,
     decoderRidesOutGaps,
@@ -568,7 +572,7 @@ export class BackendClient {
      * @param {{host_uuid?: string, app_id?: number, ttl_secs?: number}} [target]
      */
     static async shareActivate(slot, target) {
-        return this.post(`/api/share/slots/${slot}/activate`, target || {});
+        return this._sharePostProven('activate', slot, target);
     }
     /**
      * The link and PIN of a share that is already live, for an owner reopening
@@ -576,14 +580,33 @@ export class BackendClient {
      * only the digests are persisted.
      */
     static async shareCredentials(slot) {
-        return this.post(`/api/share/slots/${slot}/credentials`);
+        return this._sharePostProven('credentials', slot);
     }
     /**
      * Move a player's input permissions. Accepted at any time — the backend
      * carries the change down to a running stream rather than freezing it.
      */
     static async sharePermissions(slot, permissions) {
-        return this.post(`/api/share/slots/${slot}/permissions`, permissions);
+        return this._sharePostProven('permissions', slot, permissions);
+    }
+    /**
+     * A board request that hands out a guest's way in — a link and PIN, or the
+     * rights they carry — signed by this browser's pairing key over the host's
+     * single-use challenge (OwnerProof on the backend). The host asks for it
+     * only where its line has not already proved the key: it answers
+     * {required:false} through the tunnel, and nothing is signed.
+     * @param {'activate'|'credentials'|'permissions'} action
+     * @param {number} slot
+     * @param {object} [body]
+     */
+    static async _sharePostProven(action, slot, body) {
+        const payload = { ...(body || {}) };
+        const challenge = await this.post('/api/share/owner-proof', {});
+        if (challenge?.required && challenge.nonce) {
+            const sig = await signShareOwnerProof(challenge.host_id, challenge.nonce, action, slot);
+            if (sig) payload.owner_proof = { nonce: challenge.nonce, sig };
+        }
+        return this.post(`/api/share/slots/${slot}/${action}`, payload);
     }
     /** How long this invitation lives; 0 is unlimited. */
     static async shareTtl(slot, ttlSecs) {

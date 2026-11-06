@@ -20,6 +20,9 @@
 #include "common/Types.h"
 #include "server/ShareManager.h"
 
+#include <QByteArray>
+#include <QString>
+
 #include <functional>
 #include <utility>
 
@@ -66,8 +69,23 @@ struct ShareRoutesDeps
 
     /// The host uuid + app id the owner is streaming *right now*, empty uuid when
     /// nothing is up. Read at activation time to bind the share to that host, so
-    /// the link can never later be routed to a different machine.
-    std::function<std::pair<QString, int>()> currentOwnerContext;
+    /// the link can never later be routed to a different machine. Asked for the
+    /// session the request comes from (@p sessionToken), and the host its board
+    /// was opened on (@p wantedHost, empty when it names none): the stream of
+    /// that device on that host first, so two devices of one owner streaming two
+    /// machines each invite to their own.
+    std::function<std::pair<QString, int>(const QString& sessionToken, const QString& wantedHost)>
+        currentOwnerContext;
+
+    /// The pairing key a board request that hands out a guest's way in must
+    /// prove it holds (OwnerProof): the session's own, off the tunnel. Empty when
+    /// there is nothing to prove — through the tunnel, whose line proved it
+    /// already, or for a session that never had a key.
+    std::function<QByteArray(const HttpRequest& req)> ownerProofKey;
+
+    /// This host's MW-BIND-v1 identity, as PairingCrypto::keyId gives it. Part
+    /// of what a board proof signs.
+    std::function<QString()> hostKeyId;
 
     /// Whether the owner has a stream of @p hostUuid up right now: what a
     /// guest's header counts them by (/api/share/player/presence). Not

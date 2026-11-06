@@ -305,7 +305,10 @@ describe('ShareBoard', () => {
 
         document.querySelector('.share-brow[data-slot="2"] .share-toggle-btn').click();
         await vi.waitFor(() =>
-            expect(BackendClient.shareActivate).toHaveBeenCalledWith(2, { ttl_secs: 48 * 3600 }),
+            expect(BackendClient.shareActivate).toHaveBeenCalledWith(2, {
+                ttl_secs: 48 * 3600,
+                host_uuid: 'h',
+            }),
         );
         // It rode along with the activation, so no second write says the same.
         expect(BackendClient.shareTtl).not.toHaveBeenCalled();
@@ -346,12 +349,48 @@ describe('ShareBoard', () => {
         });
     });
 
-    it('leaves the host and app out when a stream already decides them', async () => {
+    it('names its host but leaves the app to the stream that decides it', async () => {
+        // The host tells the backend which of this device's streams the guest
+        // joins, when the owner streams more than one machine.
         await openBoard([slot(2), slot(3), slot(4)]);
         rowFor(2).querySelector('.share-toggle-btn').click();
         await vi.waitFor(() => expect(BackendClient.shareActivate).toHaveBeenCalled());
 
-        expect(BackendClient.shareActivate).toHaveBeenCalledWith(2, { ttl_secs: 28800 });
+        expect(BackendClient.shareActivate).toHaveBeenCalledWith(2, {
+            ttl_secs: 28800,
+            host_uuid: 'h',
+        });
+    });
+
+    it('lets a link go once its row was opened again elsewhere', async () => {
+        const live = (opening) => slot(2, { state: 'shared', opening, devices: [] });
+        BackendClient.shareCredentials.mockResolvedValue({
+            available: true,
+            url: 'https://x/p/old',
+            pin: '111111',
+            opening: 'first',
+        });
+        await openBoard([live('first'), slot(3), slot(4)]);
+        expect(BackendClient.shareCredentials).toHaveBeenCalledTimes(1);
+
+        // The same opening on the next poll: nothing is asked again.
+        await board.refresh();
+        expect(BackendClient.shareCredentials).toHaveBeenCalledTimes(1);
+
+        // Closed and opened again from another device between two polls: the
+        // pair held is a dead one, and the new one is read.
+        BackendClient.shareCredentials.mockResolvedValue({
+            available: true,
+            url: 'https://x/p/new',
+            pin: '222222',
+            opening: 'second',
+        });
+        BackendClient.getShareStatus.mockResolvedValue(status([live('second'), slot(3), slot(4)]));
+        await board.refresh();
+        expect(BackendClient.shareCredentials).toHaveBeenCalledTimes(2);
+        const link = () =>
+            document.querySelector('.share-brow-detail[data-slot="2"] .share-link-input').value;
+        await vi.waitFor(() => expect(link()).toBe('https://x/p/new'));
     });
 
     it('shows a forwarded link on the row it was forwarded from', async () => {

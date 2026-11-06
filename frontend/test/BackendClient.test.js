@@ -17,13 +17,15 @@ function jsonResponse(body, { ok = true, status = 200 } = {}) {
 
 // Mock fetch that answers the admin-key probe every write performs, and routes
 // everything else to `handler`. Returns the mock so callers can inspect the
-// non-token calls via `apiCalls()`.
+// non-token calls via `apiCalls()`. The sharing board's challenge is a probe of
+// the same kind (shareOwnerProof.test.js covers it): left out of apiCalls() too.
+const PROBES = ['/api/admin/token', '/api/share/owner-proof'];
 function mockFetch(handler, { adminKey = 'ADMIN-KEY' } = {}) {
     const fetchMock = vi.fn().mockImplementation((path, init) => {
         if (path === '/api/admin/token') return Promise.resolve(jsonResponse({ token: adminKey }));
         return typeof handler === 'function' ? handler(path, init) : Promise.resolve(handler);
     });
-    fetchMock.apiCalls = () => fetchMock.mock.calls.filter((c) => c[0] !== '/api/admin/token');
+    fetchMock.apiCalls = () => fetchMock.mock.calls.filter((c) => !PROBES.includes(c[0]));
     vi.stubGlobal('fetch', fetchMock);
     return fetchMock;
 }

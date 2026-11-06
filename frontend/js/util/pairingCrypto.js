@@ -381,6 +381,45 @@ export async function verifyHostSignature(identity, message) {
     }
 }
 
+/**
+ * The exact bytes a sharing-board request is signed over: the backend's
+ * OwnerProof::message builds the same, field for field (both pinned to one
+ * vector in the TNR). Its own label, so it never stands for a signature of the
+ * handshake above.
+ */
+export function shareOwnerDigestInput(hostId, nonce, action, slot) {
+    return buildSignedMessage([`${PROTOCOL}|share-owner`, hostId, nonce, action, String(slot)]);
+}
+
+/**
+ * Prove a sharing-board request comes from this browser: sign the host's
+ * single-use challenge for @p action on @p slot with this browser's pairing key.
+ * Returns the base64 signature, or null when there is no key to sign with — the
+ * host then refuses the request, as it refuses this browser's streams.
+ *
+ * @param {string} hostId       the host's identity, as the challenge named it
+ * @param {string} nonceBase64  the challenge (POST /api/share/owner-proof)
+ * @param {string} action       'activate' | 'credentials' | 'permissions'
+ * @param {number} slot
+ */
+export async function signShareOwnerProof(hostId, nonceBase64, action, slot) {
+    const identity = await loadOrCreateIdentity();
+    if (!identity) return null;
+    try {
+        const signed = shareOwnerDigestInput(
+            hostId || '',
+            base64ToBytes(nonceBase64),
+            action,
+            slot,
+        );
+        const sig = await crypto.subtle.sign(SIGN_PARAMS, identity.privateKey, signed);
+        return bytesToBase64(new Uint8Array(sig));
+    } catch (e) {
+        console.error('[MW-BIND] Could not sign the sharing request:', e.message);
+        return null;
+    }
+}
+
 /** Sign our answer's fingerprint. Returns the base64 signature, or null. */
 export async function signAnswer(identity, hostId, nonceHBase64, fingerprintHost, answerSdp) {
     const fingerprintBrowser = extractFingerprint(answerSdp);

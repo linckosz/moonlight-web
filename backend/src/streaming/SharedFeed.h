@@ -121,6 +121,8 @@ public:
     void resize(int height);
 
     bool running() const { return !m_Worker.isNull(); }
+    /// The host the current feed is of, empty when none was ever asked for.
+    const QString& hostUuid() const { return m_Spec.hostUuid; }
 
 signals:
     /// The feed died kMaxFailures times in a row: the guests of @p guestSlots must

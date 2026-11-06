@@ -306,6 +306,7 @@ add_executable(mw-server
     src/server/HomeScreenShell.cpp
     src/server/RestRouter.cpp
     src/server/ShareManager.cpp
+    src/server/OwnerProof.cpp
     src/server/SessionPool.cpp
     src/server/routes/AuthRoutes.cpp
     src/server/routes/HostRoutes.cpp
@@ -763,6 +764,10 @@ if(MW_BUILD_TESTS)
         tests/test_pairing_binding.cpp
         src/common/PairingCrypto.cpp
         src/streaming/SdpFingerprint.cpp
+        # The sharing board's proof that it is the browser its session was
+        # paired with, before it hands out a guest's way in.
+        tests/test_owner_proof.cpp
+        src/server/OwnerProof.cpp
         src/common/Logger.cpp
     )
     set_target_properties(mw-security-tests PROPERTIES AUTOMOC ON)

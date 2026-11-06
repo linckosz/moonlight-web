@@ -163,4 +163,60 @@ void run_session_pool_tests()
     CHECK_EQ(grown.acquire(), 2);
     CHECK_EQ(grown.size(), 4);
     CHECK_EQ(opened.size(), 2);
+
+    // ── Whose stream a request is about ─────────────────────────────────────
+    SECTION("SessionPool: an owner's request is about its own stream");
+    {
+        // Two owner slots, two devices of one owner, two machines.
+        SessionPool two(48001, 48024, 2, 5);
+        QObject w0, w1;
+        two.at(0).worker = &w0;
+        two.at(0).hostUuid = QStringLiteral("host-A");
+        two.at(0).appId = 1;
+        two.at(0).sessionToken = QStringLiteral("device-x");
+        two.at(0).clientUniqueId = QStringLiteral("UID-X");
+        two.at(1).worker = &w1;
+        two.at(1).hostUuid = QStringLiteral("host-B");
+        two.at(1).appId = 2;
+        two.at(1).sessionToken = QStringLiteral("device-y");
+        two.at(1).clientUniqueId = QStringLiteral("UID-Y");
+        const QString x = QStringLiteral("device-x");
+        const QString y = QStringLiteral("device-y");
+
+        // Each device's board invites to the machine that device streams,
+        // whether or not it names the host, and whichever slot it sits in.
+        CHECK_EQ(two.ownerSlotFor(y, QString(), 2), 1);
+        CHECK_EQ(two.ownerSlotFor(y, QStringLiteral("host-B"), 2), 1);
+        CHECK_EQ(two.ownerSlotFor(x, QString(), 2), 0);
+        CHECK_EQ(two.ownerSlotFor(x, QStringLiteral("host-A"), 2), 0);
+        // A board opened on a host nobody streams finds nothing: it goes cold
+        // on the host it names.
+        CHECK_EQ(two.ownerSlotFor(y, QStringLiteral("host-C"), 2), -1);
+        // A device with no stream of its own, on a host another one streams:
+        // that stream, which is what a guest would join there anyway.
+        CHECK_EQ(two.ownerSlotFor(QStringLiteral("device-z"), QStringLiteral("host-B"), 2), 1);
+        CHECK_EQ(two.ownerSlotFor(QStringLiteral("device-z"), QString(), 2), 0);
+        // Localhost has no session row: unknown keeps the first live slot.
+        CHECK_EQ(two.ownerSlotFor(QString(), QString(), 2), 0);
+        // Only the owner slots count.
+        CHECK_EQ(two.ownerSlotFor(y, QStringLiteral("host-B"), 1), -1);
+        // A slot with no host is still setting up, and never answers.
+        two.at(1).hostUuid.clear();
+        CHECK_EQ(two.ownerSlotFor(y, QString(), 2), 0);
+        two.at(1).hostUuid = QStringLiteral("host-B");
+
+        // A stop from the device that holds the host is its own; one from a
+        // device that was taken over, or from another device, is not.
+        CHECK(!two.hostHeldByAnother(QStringLiteral("host-B"), y, QStringLiteral("UID-Y"), 2));
+        CHECK(two.hostHeldByAnother(QStringLiteral("host-B"), x, QStringLiteral("UID-X"), 2));
+        CHECK(two.hostHeldByAnother(QStringLiteral("host-B"), y, QStringLiteral("UID-OTHER"), 2));
+        // Unknown on either side counts as the same device, as everywhere.
+        CHECK(!two.hostHeldByAnother(QStringLiteral("host-B"), QString(), QString(), 2));
+        CHECK(!two.hostHeldByAnother(QStringLiteral("host-B"), y, QString(), 2));
+        // Nobody streams host C, so nobody else holds it.
+        CHECK(!two.hostHeldByAnother(QStringLiteral("host-C"), x, QStringLiteral("UID-X"), 2));
+        // A slot whose worker is gone holds nothing.
+        two.at(1).worker = nullptr;
+        CHECK(!two.hostHeldByAnother(QStringLiteral("host-B"), x, QStringLiteral("UID-X"), 2));
+    }
 }

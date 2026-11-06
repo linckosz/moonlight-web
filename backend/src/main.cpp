@@ -2658,14 +2658,18 @@ int main(int argc, char* argv[])
         return activity;
     };
 
-    // Tear every player worker down and revoke their shares. Called when the
-    // owner really stops — their session is the one the players resumed into.
-    auto endPlayerSessions = [&g_Pool, &detachWorkerSlot, &shareManager,
-                              &sharedFeed](ShareManager::EndReason reason) {
+    // Tear the player workers of @p hostUuid down and revoke their shares.
+    // Called when the app the players resumed into ends on that host. Guests
+    // invited to another host are not on that app, and stay.
+    auto endPlayerSessions = [&g_Pool, &detachWorkerSlot, &shareManager, &sharedFeed](
+                                 const QString& hostUuid, ShareManager::EndReason reason) {
+        if (hostUuid.isEmpty()) return;
         for (int i = kOwnerSlots; i < kTotalSlots; ++i)
-            if (g_Pool.at(i).worker) detachWorkerSlot(i, false, true);
-        shareManager.deactivateAll(reason);
-        sharedFeed.reset();
+            if (g_Pool.at(i).worker &&
+                (g_Pool.at(i).hostUuid == hostUuid || shareManager.hostForSlot(i) == hostUuid))
+                detachWorkerSlot(i, false, true);
+        shareManager.deactivateForHost(hostUuid, reason);
+        if (sharedFeed.hostUuid() == hostUuid) sharedFeed.reset();
     };
 
     // The feed died three times running: its guests leave, and rejoin on
@@ -5019,13 +5023,28 @@ int main(int argc, char* argv[])
             }
 
             // Anything that is not a retire ends with a Sunshine /cancel, which
-            // kills the app for everyone — so the invited players go first.
-            // Their workers must be gone before the owner's last slot ends, or
-            // anyOtherSlotLive() would suppress that /cancel and leave the game
-            // running with nobody attached. (A retire — keep_host_session — is
-            // one leg of the owner's dual stream stepping aside; the app, and
+            // kills the app for everyone — so the players invited to this host
+            // go first. Their workers must be gone before the owner's last slot
+            // ends, or anyOtherSlotLive() would suppress that /cancel and leave
+            // the game running with nobody attached. (A retire — keep_host_session
+            // — is one leg of the owner's dual stream stepping aside; the app, and
             // every player on it, carries on.)
-            if (!keepHostSession) endPlayerSessions(ShareManager::EndReason::OwnerStop);
+            //
+            // Only the stop of the device whose stream this host carries. One
+            // that was taken over may still send a late /quit, and the host's
+            // stream — with the guests on it — is another device's by then: it
+            // is asked before any slot is touched, while the pool still says
+            // who holds what. And only where a stop ends the app: on a host that
+            // takes no /cancel (the native host) the guests' picture outlives the
+            // owner's stream, and only quitting the app ends it for them.
+            const bool hostHeldByAnother =
+                g_Pool.hostHeldByAnother(host->uuid, quitSessionToken, quitUniqueId, kOwnerSlots);
+            if (hostHeldByAnother)
+                qInfo() << "[quit] Host" << host->name
+                        << "streams for another device — its guests stay";
+            const bool guestsEnd =
+                !keepHostSession && !hostHeldByAnother && (host->takesHostCancel() || quitApp);
+            if (guestsEnd) endPlayerSessions(host->uuid, ShareManager::EndReason::OwnerStop);
 
             bool workerStopped = false;
             for (int i = 0; i < kOwnerSlots; ++i) {
@@ -5315,7 +5334,8 @@ int main(int argc, char* argv[])
             }
 
             qInfo() << "[stop-session] Forcing the host session down";
-            endPlayerSessions(ShareManager::EndReason::OwnerStop);
+            // This host's guests: the cancels below end their app too.
+            endPlayerSessions(host->uuid, ShareManager::EndReason::OwnerStop);
             for (int i = 0; i < kOwnerSlots; ++i)
                 detachWorkerSlot(i, false);
 
@@ -5404,18 +5424,24 @@ int main(int argc, char* argv[])
     // already streaming, on a slot of their own. Everything that is not the
     // resolution is decided here — the browser on the other end is a stranger's.
 
-    // The owner's live context (host + app), taken from whichever owner slot is
-    // up. Empty uuid means nothing is running and no player can join.
-    auto ownerContext = [&g_Pool, &g_LiveSunshineUids]() {
-        for (int i = 0; i < kOwnerSlots; ++i)
-            if (g_Pool.at(i).worker && !g_Pool.at(i).hostUuid.isEmpty())
-                return std::pair<QString, int>{g_Pool.at(i).hostUuid, g_Pool.at(i).appId};
+    // The owner's live context (host + app), taken from an owner slot that is
+    // up. Empty uuid means nothing is running and no player can join. The device
+    // asking (its session) and the host its board is about decide which slot:
+    // that device's own stream of that host first, so an owner streaming two
+    // machines from two devices invites each guest to the machine they asked
+    // from (SessionPool::ownerSlotFor).
+    auto ownerContext = [&g_Pool, &g_LiveSunshineUids](const QString& session,
+                                                       const QString& wantedHost) {
+        const int i = g_Pool.ownerSlotFor(session, wantedHost, kOwnerSlots);
+        if (i >= 0) return std::pair<QString, int>{g_Pool.at(i).hostUuid, g_Pool.at(i).appId};
         // No owner leg left — they pressed Leave, or their stream dropped. While
         // the session is still held on Sunshine, the app is still up: fall back
-        // to what it was. Otherwise nothing runs, and the board's own choice of
-        // host and app decides (S9.2, 11/10: the last stream's display won over
-        // the one the owner had just picked, for every invitation after it).
-        if (!g_LastOwnerHostUuid.isEmpty() && !g_LiveSunshineUids.isEmpty())
+        // to what it was, on that host. Otherwise nothing runs, and the board's
+        // own choice of host and app decides (S9.2, 11/10: the last stream's
+        // display won over the one the owner had just picked, for every
+        // invitation after it).
+        if (!g_LastOwnerHostUuid.isEmpty() && !g_LiveSunshineUids.isEmpty() &&
+            (wantedHost.isEmpty() || wantedHost == g_LastOwnerHostUuid))
             return std::pair<QString, int>{g_LastOwnerHostUuid, g_LastOwnerAppId};
         return std::pair<QString, int>{};
     };
@@ -5467,6 +5493,16 @@ int main(int argc, char* argv[])
         return picture;
     };
     shareDeps.currentOwnerContext = ownerContext;
+    // Off the tunnel the cookie is all a request carries; the board's rows that
+    // hand out a guest's way in ask the session's pairing key for a proof there
+    // (OwnerProof). Through the tunnel the line proved that key already.
+    shareDeps.ownerProofKey = [&authManager](const HttpRequest& req) {
+        if (req.viaTunnel) return QByteArray();
+        return authManager.sessionPairingKey(HttpServer::sessionTokenFromRequest(req));
+    };
+    shareDeps.hostKeyId = [&appSettings]() {
+        return PairingCrypto::keyId(appSettings.hostSigningPublicKey());
+    };
     shareDeps.ownerWatching = [&g_Pool](const QString& hostUuid) {
         for (int i = 0; i < kOwnerSlots; ++i)
             if (g_Pool.at(i).worker && g_Pool.at(i).hostUuid == hostUuid) return true;

@@ -221,6 +221,7 @@ QList<ShareManager::SlotStatus> ShareManager::status()
             st.ttlSecs = s->activation.ttlSecs;
             st.expiresAt = s->activation.expiresAt();
             st.devices = s->activation.devices;
+            st.opening = openingOf(s->activation.id);
             st.lastRefusedAt = s->activation.lastRefusedAt;
             st.lastRefusedAgent = s->activation.lastRefusedAgent;
         }
@@ -274,6 +275,7 @@ bool ShareManager::activate(int slot, const QString& hostUuid, int appId, qint64
     outStatus.permissions = act.permissions;
     outStatus.ttlSecs = ttlSecs;
     outStatus.expiresAt = act.expiresAt();
+    outStatus.opening = openingOf(act.id);
 
     Logger::info(
         QStringLiteral("[Share] Slot %1 shared on host %2 (access=%3, ttl=%4)")
@@ -434,6 +436,31 @@ void ShareManager::deactivateAll(EndReason reason)
                          .arg(QLatin1String(reasonName(reason))));
         save();
     }
+}
+
+void ShareManager::deactivateForHost(const QString& hostUuid, EndReason reason)
+{
+    if (hostUuid.isEmpty()) return;
+    bool any = false;
+    for (int slot = kFirstSlot; slot <= kLastSlot; ++slot) {
+        const Activation& act = m_Slots[slot].activation;
+        if (!act.live() || act.hostUuid != hostUuid) continue;
+        clearActivation(slot, reason);
+        any = true;
+    }
+    if (any) {
+        Logger::info(QStringLiteral("[Share] Slots of host %1 revoked (%2)")
+                         .arg(hostUuid, QLatin1String(reasonName(reason))));
+        save();
+    }
+}
+
+QString ShareManager::opening(int slot)
+{
+    pruneExpired();
+    const Slot* s = slotFor(slot);
+    if (!s || !s->activation.live()) return {};
+    return openingOf(s->activation.id);
 }
 
 int ShareManager::streamingCount()
@@ -870,6 +897,14 @@ QString ShareManager::hash(const QString& value)
     const QByteArray h = QCryptographicHash::hash(value.toUtf8(), QCryptographicHash::Sha256);
     return QString::fromLatin1(
         h.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+}
+
+QString ShareManager::openingOf(const QString& activationId)
+{
+    if (activationId.isEmpty()) return {};
+    const QByteArray h = QCryptographicHash::hash(
+        QByteArrayLiteral("mw-share-opening|") + activationId.toUtf8(), QCryptographicHash::Sha256);
+    return QString::fromLatin1(h.left(9).toBase64(QByteArray::Base64UrlEncoding));
 }
 
 bool ShareManager::constantTimeEquals(const QString& a, const QString& b)

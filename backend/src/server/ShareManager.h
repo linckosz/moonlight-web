@@ -158,6 +158,13 @@ public:
         qint64 ttlSecs = kTtlSecs;
         qint64 expiresAt = 0; ///< unix secs; 0 when Off or unlimited
         QList<BoundDevice> devices;
+        /// Which opening of the row this is: a new value each time the row is
+        /// opened again, empty when Off. The board keeps the link and PIN it
+        /// was given under it and lets them go when it changes, since the row
+        /// may have been closed and opened again from another of the owner's
+        /// devices between two looks. Derived from the activation, so it tells
+        /// nothing about the activation's own id.
+        QString opening;
 
         /// Last time a correct PIN arrived from a device that was not the bound
         /// one. 0 when it never happened. The board surfaces it verbatim.
@@ -238,6 +245,15 @@ public:
 
     /// Revoke every slot at once (owner pressed Stop, or the host app is gone).
     void deactivateAll(EndReason reason);
+
+    /// Revoke the slots whose invitation leads to @p hostUuid, and only those:
+    /// a host's app ending says nothing about another host's guests.
+    void deactivateForHost(const QString& hostUuid, EndReason reason);
+
+    /// The opening a live slot carries right now (SlotStatus::opening), empty
+    /// when Off. Handed out with the link and PIN, so the board knows which
+    /// opening they belong to.
+    QString opening(int slot);
 
     /// Players currently streaming — the number shown as "Share (n)".
     int streamingCount();
@@ -417,6 +433,9 @@ private:
     void ratePurge();
 
     static QString hash(const QString& value);
+    /// SlotStatus::opening for @p activationId: a short digest under a label
+    /// of its own, so it never matches a digest stored anywhere else.
+    static QString openingOf(const QString& activationId);
     static bool constantTimeEquals(const QString& a, const QString& b);
     static QString randomToken();
     static QString randomPin();

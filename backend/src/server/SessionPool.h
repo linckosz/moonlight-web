@@ -140,6 +140,24 @@ public:
     // Slot held by an authenticated device (its AuthManager session token).
     int indexOfSessionToken(const QString& sessionToken) const;
 
+    // Whether the live slot @p index is the stream of @p sessionToken. Either
+    // side empty is "unknown" (localhost has no session row) and answers yes,
+    // like every other scoping rule here.
+    bool streamOf(int index, const QString& sessionToken) const;
+
+    // The owner stream a request from @p sessionToken is about, among the
+    // first @p ownerSlots: its own live slot on @p wantedHost (on any host when
+    // that is empty), else — so a page that names no host keeps its answer —
+    // the first live slot on @p wantedHost, or on any host. -1 when none
+    // streams there. Slots with no host never count.
+    int ownerSlotFor(const QString& sessionToken, const QString& wantedHost, int ownerSlots) const;
+
+    // Whether another device holds a live slot on @p hostUuid among the first
+    // @p ownerSlots: one whose stream is not @p sessionToken's, or whose device
+    // (@p clientUniqueId) is another. Either side empty counts as the same.
+    bool hostHeldByAnother(const QString& hostUuid, const QString& sessionToken,
+                           const QString& clientUniqueId, int ownerSlots) const;
+
 private:
     bool inUse(int index) const;
     // Appends one slot and announces it. Returns its index, or -1 at maxSlots.

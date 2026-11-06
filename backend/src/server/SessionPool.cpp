@@ -133,3 +133,40 @@ int SessionPool::indexOfSessionToken(const QString& sessionToken) const
         if (m_Slots[i].sessionToken == sessionToken) return i;
     return -1;
 }
+
+bool SessionPool::streamOf(int index, const QString& sessionToken) const
+{
+    if (!isValid(index)) return false;
+    const QString& owner = m_Slots[index].sessionToken;
+    return sessionToken.isEmpty() || owner.isEmpty() || owner == sessionToken;
+}
+
+int SessionPool::ownerSlotFor(const QString& sessionToken, const QString& wantedHost,
+                              int ownerSlots) const
+{
+    const int n = qMin(ownerSlots, m_Slots.size());
+    auto streams = [&](int i) {
+        return !m_Slots[i].worker.isNull() && !m_Slots[i].hostUuid.isEmpty() &&
+               (wantedHost.isEmpty() || m_Slots[i].hostUuid == wantedHost);
+    };
+    for (int i = 0; i < n; ++i)
+        if (streams(i) && streamOf(i, sessionToken)) return i;
+    for (int i = 0; i < n; ++i)
+        if (streams(i)) return i;
+    return -1;
+}
+
+bool SessionPool::hostHeldByAnother(const QString& hostUuid, const QString& sessionToken,
+                                    const QString& clientUniqueId, int ownerSlots) const
+{
+    const int n = qMin(ownerSlots, m_Slots.size());
+    for (int i = 0; i < n; ++i) {
+        const Slot& s = m_Slots[i];
+        if (s.worker.isNull() || s.hostUuid != hostUuid) continue;
+        const bool otherSession = !streamOf(i, sessionToken);
+        const bool otherDevice = !clientUniqueId.isEmpty() && !s.clientUniqueId.isEmpty() &&
+                                 s.clientUniqueId != clientUniqueId;
+        if (otherSession || otherDevice) return true;
+    }
+    return false;
+}
