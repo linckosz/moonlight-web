@@ -91,6 +91,6 @@ is gone. The virtual display's settings file can also gain a mode: put it back.
 ## After the switch goes on by default
 
 An Auto/Auto launch may climb on its own from then on. A bench that needs a known
-size names it, or sets `mw_auto_learn=0`. `acceptance/drive.py` is to do that for every
-pass before the switch goes on (`Driver.auto_learn`, not there yet), and this bench is
-the one that says otherwise.
+size names it, or sets `mw_auto_learn=0`. `acceptance/drive.py` does that for every
+pass (`Driver.auto_learn`, `"0"` unless told otherwise), and this bench is the one that
+says otherwise.

@@ -94,6 +94,11 @@ the wrong thing; a key the host does not list is not "restored" to anything.
  "hostSettings": {"native_video_pipeline": "d3d12"}}
 ```
 
+**Auto does not learn on the bench.** `drive.py` writes `mw_auto_learn=0` before every
+launch: an Auto/Auto pass streams at the base ceiling, whatever this browser learned
+from the passes before it. `Driver(auto_learn=None)` leaves the page's own default;
+`scripts/bench/auto-ceiling/` is the bench of the ceiling itself.
+
 ## What the colours mean
 
 🟩 clean · 🟨 works but off the mark · 🟥 fails · ⬜ not applicable, **always with

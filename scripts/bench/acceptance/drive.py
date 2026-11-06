@@ -44,8 +44,14 @@ class Driver:
     keeps sixty passes on one browser.
     """
 
-    def __init__(self, port=9333):
+    def __init__(self, port=9333, auto_learn="0"):
         self.port = port
+        # Auto's learned ceiling (frontend/js/util/AutoCeiling.js) stays at its
+        # base for every pass. Once it learns by default, an Auto/Auto launch may
+        # climb on what this browser learned from the passes before it, and a
+        # cell would measure the bench's history. The ceiling's own bench says
+        # otherwise (auto-ceiling/ceiling.py); None leaves the page's default.
+        self.auto_learn = auto_learn
         self.c = cdp.Cdp(port)
 
     def reconnect(self):
@@ -104,12 +110,19 @@ class Driver:
         self.call("Page.navigate", url=url)
         time.sleep(3)
 
+    def hold_auto_learn(self):
+        """Write `mw_auto_learn` (see __init__): the page reads it at each launch."""
+        if self.auto_learn is None:
+            return
+        self.eval("localStorage.setItem('mw_auto_learn', %s)" % json.dumps(str(self.auto_learn)))
+
     def apply_settings(self, settings):
         """Patch localStorage, then reload — the client reads it at launch only.
 
         mw-lang is pinned to English so the overlay labels this module scrapes
         read the same on every machine of the fleet.
         """
+        self.hold_auto_learn()
         payload = json.dumps(settings)
         self.eval("""(() => {
             const s = JSON.parse(localStorage.getItem('mw-streaming-settings') || '{}');
@@ -314,7 +327,11 @@ class Driver:
         element.click() is not enough. The app reads a scripted click on a tile
         as a hover, and the Fullscreen button that follows needs the user
         activation only a real event carries.
+
+        The switch of Auto's ceiling is written again here, for the benches
+        that launch without apply_settings (shared-feed/vd_cold.py, for one).
         """
+        self.hold_auto_learn()
         pos = self.json_eval("""(() => {
             const sel = '.host-card[data-uuid=%s] .app-card[data-app-id=%s]';
             const el = document.querySelector(sel);

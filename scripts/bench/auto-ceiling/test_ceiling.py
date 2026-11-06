@@ -187,6 +187,8 @@ class OneRung(Rig):
         self.assertEqual(s["rung"], 500)
         self.assertEqual(uuid, UUID)
         self.assertEqual(self.driver.store["mw_auto_learn"], "1")
+        # The Driver, which holds Auto at its base for other benches, says the same.
+        self.assertEqual(self.driver.auto_learn, "1")
         key = json.loads(self.driver.store[journal.KEY])
         self.assertEqual(key["hosts"][UUID + "|hevc"]["ceiling"], 500000000)
         # The page went on the screen the launch made, and came off.

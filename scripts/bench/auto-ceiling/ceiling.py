@@ -299,6 +299,9 @@ class Bench:
         else:
             self.run.kiosk_start(self.access["lan"])
             self.d = self.drive.Driver(self.run.DEBUG_PORT)
+        # The Driver holds Auto at its base for every other bench: this one is
+        # about the ceiling, and says what the switch is at each launch.
+        self.d.auto_learn = a.learn
         self.shown = False
         self.first = True
 
