@@ -42,7 +42,10 @@ void registerAuthStatusRoute(RestRouter& router, AuthManager& authManager, AuthS
         obj["admin_locked"] = req.adminLocked;
         // share_in_booth_mode: the booth still offers Share during a stream.
         if (req.adminLocked) obj["booth_share"] = req.boothShare;
-        const bool hostTrusted = isLocal || (req.adminLocked && req.isHostMachine);
+        // Signed in by where it is, never asked a PIN: an admin, or the booth's
+        // own machine. Not to be confused with req.hostTrusted, whether the Host
+        // header names this machine.
+        const bool trustedWithoutPin = isLocal || (req.adminLocked && req.isHostMachine);
 
         if (isLocal) {
             obj["authenticated"] = true; // localhost is always authenticated
@@ -54,7 +57,7 @@ void registerAuthStatusRoute(RestRouter& router, AuthManager& authManager, AuthS
             // password has been set, so the LAN door is advertised and shut. The
             // owner is the only one who can open it, and only from here.
             obj["admin_password_set"] = authManager.adminPasswordSet();
-        } else if (hostTrusted) {
+        } else if (trustedWithoutPin) {
             obj["authenticated"] = true; // the booth itself: streams, never asked a PIN
         } else {
             // Check session cookie
@@ -91,7 +94,7 @@ void registerAuthStatusRoute(RestRouter& router, AuthManager& authManager, AuthS
             }
         }
 
-        obj["requires_pin"] = !hostTrusted;
+        obj["requires_pin"] = !trustedWithoutPin;
         obj["active_sessions"] = authManager.activeSessionCount();
         obj["cert_auth_enabled"] = authManager.certAuthEnabled();
         // Tells the frontend to offer the admin page behind a password prompt.
