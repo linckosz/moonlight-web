@@ -559,4 +559,23 @@ void run_request_guard_tests()
         // A signalling socket opened through the tunnel carries the key alone.
         CHECK(tunnelKeyRefused(false, keyB, keyA));
     }
+
+    SECTION("RequestGuard — the admin key matches itself, and nothing else");
+
+    {
+        const QByteArray key("0123456789abcdef0123456789abcdef");
+        CHECK(secretMatches(key, key));
+        CHECK(!secretMatches(QByteArray("0123456789abcdef0123456789abcdee"), key));
+        CHECK(!secretMatches(key.left(31), key));
+        CHECK(!secretMatches(QByteArray(), key));
+        // Longer by any amount is another key, whatever the extra bytes are.
+        for (int extra : {1, 255, 256, 512}) {
+            CHECK(!secretMatches(key + QByteArray(extra, '\0'), key));
+            CHECK(!secretMatches(key + QByteArray(extra, 'x'), key));
+        }
+        CHECK(!secretMatches(key, key + QByteArray(256, '\0')));
+        // No key set: nothing matches, not even nothing.
+        CHECK(!secretMatches(QByteArray(), QByteArray()));
+        CHECK(!secretMatches(key, QByteArray()));
+    }
 }

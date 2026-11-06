@@ -344,4 +344,17 @@ bool tunnelKeyRefused(bool viaTunnel, const QByteArray& tunnelKey, const QByteAr
     return !boundKey.isEmpty() && boundKey != tunnelKey;
 }
 
+bool secretMatches(const QByteArray& given, const QByteArray& expected)
+{
+    if (expected.isEmpty()) return false;
+    const int n = qMax(given.size(), expected.size());
+    quint8 diff = given.size() == expected.size() ? 0 : 1;
+    for (int i = 0; i < n; ++i) {
+        const quint8 a = i < given.size() ? static_cast<quint8>(given[i]) : 0;
+        const quint8 b = i < expected.size() ? static_cast<quint8>(expected[i]) : 0;
+        diff |= static_cast<quint8>(a ^ b);
+    }
+    return diff == 0;
+}
+
 } // namespace RequestGuard

@@ -869,18 +869,8 @@ bool HttpServer::adminKeyMatches(const HttpRequest& req) const
 {
     const QByteArray given = req.headers.value(QStringLiteral("x-mw-admin-key")).toUtf8();
     const QByteArray expected = m_AdminKey.toUtf8();
-    if (expected.isEmpty()) return false; // fail closed
-
-    // Constant-time: fold the length difference into the accumulator so the
-    // running time never depends on where the first mismatch is.
-    const int n = qMax(given.size(), expected.size());
-    quint8 diff = static_cast<quint8>(given.size() ^ expected.size());
-    for (int i = 0; i < n; ++i) {
-        const quint8 a = i < given.size() ? static_cast<quint8>(given[i]) : 0;
-        const quint8 b = i < expected.size() ? static_cast<quint8>(expected[i]) : 0;
-        diff |= static_cast<quint8>(a ^ b);
-    }
-    return diff == 0;
+    // Constant-time, and closed on an empty key (RequestGuard::secretMatches).
+    return RequestGuard::secretMatches(given, expected);
 }
 
 // --- Abuse mitigation -------------------------------------------------------

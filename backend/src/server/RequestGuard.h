@@ -174,4 +174,10 @@ bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllow
 /// carries no key and is never refused here.
 bool tunnelKeyRefused(bool viaTunnel, const QByteArray& tunnelKey, const QByteArray& boundKey);
 
+/// Whether the key a request presents is @p expected, in a time that depends
+/// only on the longer of the two and never on where they first differ. Keys
+/// of different lengths never match, and an empty @p expected matches nothing
+/// (HttpServer::adminKeyMatches fails closed on it).
+bool secretMatches(const QByteArray& given, const QByteArray& expected);
+
 } // namespace RequestGuard
