@@ -125,6 +125,8 @@ add_executable(run_tests
     test_feed_ipc.cpp
     test_cert_manager.cpp
     test_mic_uplink.cpp
+    test_phone_pairing.cpp
+    test_pair_request_routes.cpp
     # In-scope production units (+ their real deps)
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.
@@ -155,6 +157,10 @@ add_executable(run_tests
     ${_src}/src/server/RestRouter.cpp
     ${_src}/src/server/AppSettings.cpp
     ${_src}/src/server/AuthManager.cpp
+    # A device paired from the QR code it shows: the book of its requests, and
+    # its routes, driven without the server around them.
+    ${_src}/src/server/PhonePairing.cpp
+    ${_src}/src/server/routes/PairRequestRoutes.cpp
     # The local self-signed cert: its key outlives a restart (clients pin it).
     ${_src}/src/server/CertManager.cpp
     ${_src}/src/server/ConnectionGuard.cpp

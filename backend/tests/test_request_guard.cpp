@@ -511,6 +511,13 @@ void run_request_guard_tests()
     CHECK(lockedByNoAdmin("POST", "/api/auth/regenerate"));
     CHECK(lockedByNoAdmin("POST", "/api/share/slots/2/activate"));
     CHECK(lockedByNoAdmin("POST", "/api/share/player/pin"));
+    // Nor by the QR code a device shows: its request, its claim, the answer.
+    CHECK(lockedByNoAdmin("POST", "/api/auth/pair-request"));
+    CHECK(lockedByNoAdmin("POST", "/api/auth/pair-request/AbCdEfGhIjKlMnOp/claim"));
+    CHECK(lockedByNoAdmin("POST", "/api/auth/pair-request/AbCdEfGhIjKlMnOp/approve"));
+    CHECK(lockedByNoAdmin("POST", "/api/auth/pair-request/AbCdEfGhIjKlMnOp/refuse"));
+    CHECK(lockedByNoAdmin("POST", "/api/auth/pair-request/AbCdEfGhIjKlMnOp/approve", true));
+    CHECK(!lockedByNoAdmin("GET", "/api/auth/pair-request/AbCdEfGhIjKlMnOp"));
 
     // What the booth is for, allowed: read, wake, play, stop, leave.
     CHECK(!lockedByNoAdmin("GET", "/api/hosts"));

@@ -2034,6 +2034,19 @@ void AppSettings::setRemoteAdminInternet(bool enabled)
     writeAll(obj);
 }
 
+bool AppSettings::pairRequestInternet() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("pair_request_internet").toBool(false);
+}
+
+void AppSettings::setPairRequestInternet(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["pair_request_internet"] = enabled;
+    writeAll(obj);
+}
+
 void AppSettings::setCertAuthEnabled(bool enabled)
 {
     QJsonObject obj = readAll();

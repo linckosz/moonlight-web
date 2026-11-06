@@ -22,6 +22,7 @@
 #include "server/AuthManager.h"
 #include "server/AppSettings.h"
 #include "server/NetClassify.h"
+#include "server/SessionCookie.h"
 #include "network/GeoIpService.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
@@ -32,24 +33,6 @@
 #include <QJsonObject>
 
 namespace {
-
-/**
- * The session cookie handed back to the browser.
- *
- * Remembered sessions carry a 90-day Max-Age, matching the server-side sliding
- * TTL. A session the visitor asked not to remember deliberately carries none:
- * a cookie without Max-Age/Expires is session-scoped and dies with the browser
- * process, which is what someone on a public machine expects. Never add one
- * later either — the periodic refresh in /api/auth/status would otherwise
- * promote a temporary login to 90 days behind the user's back.
- */
-QString sessionCookie(const QString& token, bool remember)
-{
-    QString cookie =
-        QStringLiteral("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict").arg(token);
-    if (remember) cookie += QStringLiteral("; Max-Age=7776000");
-    return cookie;
-}
 
 /// Expire the session cookie immediately (logout).
 QString clearedSessionCookie()

@@ -971,6 +971,14 @@ public:
     /// Open or close the internet side of the remote admin door.
     void setRemoteAdminInternet(bool enabled);
 
+    /// Whether a device may also ask to pair by its QR code from outside the
+    /// LAN (routes/PairRequestRoutes.cpp). Default: false. Either way only the
+    /// administrator lets it in, with the code it shows.
+    bool pairRequestInternet() const;
+
+    /// Take or stop taking QR code pairing requests from outside the LAN.
+    void setPairRequestInternet(bool enabled);
+
     // ── Rendezvous identity (0.3.0+) ────────────────────────────────────────
     //
     // How the instance is reached from the internet:

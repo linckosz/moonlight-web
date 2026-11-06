@@ -319,6 +319,9 @@ bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllow
         static const QStringList doors = {QStringLiteral("validate"),
                                           QStringLiteral("admin-unlock"),
                                           QStringLiteral("regenerate")};
+        // A device asking in by the QR code it shows, and the page's answer to
+        // it, are the PIN's door by another way (PhonePairing.h).
+        if (seg.size() >= 3 && seg[2] == QLatin1String("pair-request")) return true;
         return seg.size() == 3 && doors.contains(seg[2]);
     }
     if (area == QLatin1String("share")) {

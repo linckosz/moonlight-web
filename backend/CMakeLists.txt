@@ -317,6 +317,8 @@ add_executable(mw-server
     src/server/routes/ShareRoutes.cpp
     src/server/routes/SystemRoutes.cpp
     src/server/routes/LogRoutes.cpp
+    src/server/routes/PairRequestRoutes.cpp
+    src/server/PhonePairing.cpp
     src/server/LogArchive.cpp
     src/server/LogScrubber.cpp
     src/common/Logger.cpp

@@ -88,6 +88,7 @@
 #include "server/routes/HostAppRoutes.h"
 #include "server/routes/ShareRoutes.h"
 #include "server/routes/SystemRoutes.h"
+#include "server/routes/PairRequestRoutes.h"
 #include "common/Logger.h"
 #include "common/LinuxCapabilities.h"
 #include "common/PairingCrypto.h"
@@ -6678,6 +6679,34 @@ int main(int argc, char* argv[])
                 rdv[QStringLiteral("error")] = err;
             return rdv;
         });
+
+    // A device asking in by the QR code it shows, approved by the administrator
+    // (server/PhonePairing.h). Here, after the rendezvous client: the QR code
+    // opens this machine's public link while its line is up, which is where the
+    // administrator's phone holds its session.
+    registerPairRequestRoutes(
+        *server.router(), authManager,
+        {[&appSettings]() { return appSettings.hostSigningPublicKey(); },
+         &HttpServer::sessionTokenFromRequest,
+         [&server](const QString& address) { server.reportAuthFailure(address); },
+         [&authManager, &geoIpService](const QString& token, const QString& address) {
+             geoIpService.lookupIp(
+                 address, [&authManager, token](const QString& city, const QString& country) {
+                     authManager.setSessionGeo(token, city, country);
+                 });
+         },
+         [&rendezvous]() { return rendezvous.isOnline() ? rendezvous.entryUrl() : QString(); },
+         []() { return QDateTime::currentSecsSinceEpoch(); },
+         [&appSettings]() { return appSettings.pairRequestInternet(); },
+         [&appSettings]() { return appSettings.sessionLocationEnabled(); },
+         [&geoIpService](const QString& address) {
+             // Known, or asked for once: the answer lands in the cache, where
+             // the administrator's next look finds it.
+             const QString city = geoIpService.cachedLocation(address).first;
+             if (city.isEmpty())
+                 geoIpService.lookupIp(address, [](const QString&, const QString&) {});
+             return city;
+         }});
 
     // ── The application, carried to a browser that cannot reach us ───────────
     //

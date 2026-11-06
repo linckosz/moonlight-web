@@ -76,11 +76,18 @@ struct SessionInfo
     // secret, and it never leaves the machine anyway.
     QByteArray pairingKey;
 
+    // The session that let this one in, by its opaque id: a device approved
+    // by the QR code it showed, from that session (server/PhonePairing.h).
+    // Revoking that session revokes this one too (destroySession). Empty for
+    // every other way in, and when the host machine itself approved.
+    QString approvedBy;
+
     QJsonObject toJson() const
     {
         QJsonObject obj;
         obj["token"] = token;
         if (!pairingKey.isEmpty()) obj["pairing_key"] = QString::fromLatin1(pairingKey.toBase64());
+        if (!approvedBy.isEmpty()) obj["approved_by"] = approvedBy;
         obj["ip"] = ip;
         obj["machine_name"] = machineName;
         obj["city"] = city;
@@ -237,7 +244,8 @@ public:
      *  to, or empty when there is none (or no such session). */
     QByteArray sessionPairingKey(const QString& token) const;
     /** Revoke a session by its opaque id (the value exposed in sessions()/toJson,
-     *  i.e. the token hash), NOT the raw cookie token. */
+     *  i.e. the token hash), NOT the raw cookie token. Every session it let in
+     *  (SessionInfo::approvedBy) goes with it, and theirs in turn. */
     void destroySession(const QString& token);
     /** Rename a session by its opaque id (the token hash exposed in toJson),
      *  NOT the raw cookie token. No-op for unknown ids. Returns true on success. */
@@ -279,6 +287,15 @@ public:
      *  to, or an empty string when the token matches none. Lets the admin UI
      *  point at the row that is the caller's own device. */
     QString sessionIdForToken(const QString& token) const;
+
+    /** Record that the session behind raw cookie @p token was let in by the
+     *  session whose opaque id is @p approverId (SessionInfo::approvedBy).
+     *  Returns false when the token matches none. */
+    bool setSessionApprover(const QString& token, const QString& approverId);
+
+    /** True when @p id (an opaque id, as sessions() gives it) names a session
+     *  that has not expired. */
+    bool hasLiveSession(const QString& id) const;
 
     // ── Home-screen handoff ─────────────────────────────────────────────────
     // A shortcut added to an iPhone's home screen runs in a storage of its own,
@@ -349,6 +366,11 @@ public:
     int remainingAttempts(const QString& ip) const;
     int lockoutSeconds(const QString& ip) const;
     bool isRateLimited(const QString& ip) const;
+    /** Count a failed device pairing against @p ip, on the PIN's own counter: a
+     *  claim the device's key did not sign, a request the administrator refused,
+     *  one request more than an address may hold (PhonePairing.h). The two ways
+     *  in share one count, so neither is a way around the other's lockout. */
+    ValidateResult countPairingFailure(const QString& ip);
 
     // ── Address helpers ────────────────────────────────────────────────────
     /** Strip IPv4-mapped IPv6 prefix (e.g. "::ffff:192.168.1.5" -> "192.168.1.5") */

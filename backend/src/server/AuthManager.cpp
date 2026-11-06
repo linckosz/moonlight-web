@@ -38,6 +38,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <utility>
 
 AuthManager::AuthManager(AppSettings* settings, QObject* parent)
     : QObject(parent)
@@ -180,6 +181,7 @@ void AuthManager::loadSessions()
         info.isHost = obj["is_host"].toBool(false);
         info.viaTunnel = obj["via_tunnel"].toBool(false);
         info.isAdmin = keepAdminFlags && obj["is_admin"].toBool(false);
+        info.approvedBy = obj["approved_by"].toString();
 
         // MW-BIND-v1 pairing key. A stored key that no longer parses is dropped
         // rather than kept: the session survives, and the browser simply
@@ -962,6 +964,16 @@ void AuthManager::destroySession(const QString& token)
             Logger::info("[Auth] Revoked session was streaming — requesting stream teardown");
             emit streamingSessionRevoked();
         }
+
+        // The sessions this one let in go with it (a device it approved by the
+        // QR code it showed, PhonePairing.h), and theirs in turn. Each is out of
+        // the map before its own are looked for, so this ends.
+        QStringList approved;
+        for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+            if (it->approvedBy == token) approved.append(it.key());
+        }
+        for (const QString& id : std::as_const(approved))
+            destroySession(id);
     } else {
         Logger::warning("[Auth] destroySession: no such session");
     }
@@ -1054,6 +1066,24 @@ QString AuthManager::sessionIdForToken(const QString& token) const
     return m_sessions.contains(id) ? id : QString();
 }
 
+bool AuthManager::setSessionApprover(const QString& token, const QString& approverId)
+{
+    if (token.isEmpty()) return false;
+    auto it = m_sessions.find(hashToken(token));
+    if (it == m_sessions.end()) return false;
+    it->approvedBy = approverId;
+    if (!it->ephemeral) saveSessions();
+    return true;
+}
+
+bool AuthManager::hasLiveSession(const QString& id) const
+{
+    auto it = m_sessions.constFind(id);
+    if (it == m_sessions.constEnd()) return false;
+    const qint64 last = it->lastSeen > 0 ? it->lastSeen : it->createdAt;
+    return QDateTime::currentSecsSinceEpoch() - last <= ttlFor(*it);
+}
+
 int AuthManager::remainingAttempts(const QString& ip) const
 {
     return bucketRemainingAttempts(rateLimitKey(ip));
@@ -1074,4 +1104,10 @@ int AuthManager::failedAttemptCount(const QString& ip) const
     auto it = m_rateLimits.find(rateLimitKey(ip));
     if (it == m_rateLimits.end()) return 0;
     return it.value().failures;
+}
+
+AuthManager::ValidateResult AuthManager::countPairingFailure(const QString& ip)
+{
+    cleanupExpired();
+    return recordAttempt(rateLimitKey(ip), false, ip, QStringLiteral("device pairing"));
 }

@@ -78,6 +78,7 @@ const RIDE_OUT_LOSS = true;
 import {
     loadOrCreateIdentity,
     rememberHostIdentity,
+    signPairApproval,
     signShareOwnerProof,
 } from '../util/pairingCrypto.js';
 import {
@@ -820,6 +821,34 @@ export class BackendClient {
         }
         this._hadSession = true;
         return resp;
+    }
+
+    /**
+     * A device's request to pair, from the QR code it shows: its name, and
+     * whether it has sent its half of the code yet (`ready`). The
+     * administrator's alone; the code itself is never sent.
+     */
+    static async getPairRequest(id) {
+        return this.get(`/api/auth/pair-request/${encodeURIComponent(id)}`);
+    }
+
+    /**
+     * Let that device in, with the code typed from its screen. The yes is signed
+     * with this browser's own pairing key: the host refuses one from a cookie
+     * that left the browser it was made in.
+     */
+    static async approvePairRequest(id, code, hostId) {
+        const identity = await loadOrCreateIdentity();
+        const sig = identity ? await signPairApproval(identity, hostId, id, code) : null;
+        return this.post(`/api/auth/pair-request/${encodeURIComponent(id)}/approve`, {
+            code,
+            sig: sig || undefined,
+        });
+    }
+
+    /** Turn that device away. */
+    static async refusePairRequest(id) {
+        return this.post(`/api/auth/pair-request/${encodeURIComponent(id)}/refuse`);
     }
 
     /** Spend the remote admin password to give this (already authenticated)

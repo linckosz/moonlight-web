@@ -489,6 +489,35 @@ export async function signAnswer(identity, hostId, nonceHBase64, fingerprintHost
 }
 
 /**
+ * The bytes this page signs to let a device in by its QR code (MW-PAIR-v1,
+ * PhonePairing::approveMessage in backend/src/server/PhonePairing.h): the code
+ * typed from the device's screen, for that request on that host. Same framing as
+ * MW-BIND, under a label of its own. The host's tests and this page's share a
+ * vector for it.
+ */
+export function pairApprovalMessage(hostId, requestId, code) {
+    return buildSignedMessage(['MW-PAIR-v1|approve', hostId || '', requestId, code]);
+}
+
+/**
+ * Sign this page's yes to a device that asks in by its QR code: see
+ * pairApprovalMessage. The host checks it against the key of this browser's
+ * session, so a cookie copied out of this browser cannot let anyone in. It is
+ * made for the host this identity paired with, the one @p hostId names only when
+ * the identity remembers none. Returns the base64 signature, or null.
+ */
+export async function signPairApproval(identity, hostId, requestId, code) {
+    try {
+        const signed = pairApprovalMessage(identity.hostId || hostId, requestId, code);
+        const sig = await crypto.subtle.sign(SIGN_PARAMS, identity.privateKey, signed);
+        return bytesToBase64(new Uint8Array(sig));
+    } catch (e) {
+        console.error('[MW-PAIR] Could not sign the approval:', e.message);
+        return null;
+    }
+}
+
+/**
  * The single sha-256 fingerprint an SDP commits to, uppercase hex with colons,
  * or null.
  *

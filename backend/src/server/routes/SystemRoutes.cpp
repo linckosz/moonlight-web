@@ -16,6 +16,7 @@
  */
 
 #include "server/routes/SystemRoutes.h"
+#include "server/routes/PairRequestRoutes.h"
 
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
@@ -1089,6 +1090,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // active listener at startup, so they are identical.
         obj["https_port"] = static_cast<int>(appSettings.httpsPort(server.activeHttpsPort()));
         obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+        // Whether a device may also ask to pair by its QR code from outside
+        // the LAN (routes/PairRequestRoutes.cpp).
+        obj["pair_request_internet"] = appSettings.pairRequestInternet();
         // Whether the desktop is told when someone streams this screen.
         obj["stream_notifications"] = appSettings.streamNotifications();
         // Whether the stream's packets ask the Wi-Fi for its video queue.
@@ -1174,6 +1178,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             obj["cert_auth_enabled"] = enabled;
             hadChange = true;
         }
+
+        // ── QR code pairing requests from the internet ───────────────────
+        // Read by each request as it comes (routes/PairRequestRoutes.cpp).
+        if (writePairRequestInternet(req, body, appSettings, obj)) hadChange = true;
 
         // ── Streaming notifications ──────────────────────────────────────
         // Read by the tray on its next poll (both the in-process one and the
