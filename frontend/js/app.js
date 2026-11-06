@@ -1485,7 +1485,9 @@ export const MoonlightApp = {
      * out the worker's timeout and the shortcut is made with nothing; the
      * worker's cache answers on its own. Last, the manifest link is pointed at
      * a fresh URL, because the browser read it when the page loaded — before
-     * the PIN, on a first visit — and that copy carries no key.
+     * the PIN, on a first visit — and that copy carries no key. The shortcut's
+     * name is taken from that answer too: before the PIN, the host leaves the
+     * machine's name out of the shell.
      *
      * Not from a shortcut: it has no share sheet.
      */
@@ -1503,6 +1505,12 @@ export const MoonlightApp = {
             });
             if (!fresh.ok) return;
             const manifest = await fresh.json();
+            // The shell this page was drawn from may come from before the PIN,
+            // without the machine's name: the host gives it to a signed-in
+            // session only. The shortcut takes its name from this answer.
+            const title = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+            if (title && typeof manifest.name === 'string' && manifest.name)
+                title.setAttribute('content', manifest.name);
             // The bootstrap's cache, under the file's own name: what the worker
             // matches a request for /manifest.webmanifest against (sw.js).
             const shell = await caches.open(SHELL_CACHE);

@@ -20,6 +20,13 @@ void run_home_screen_shell_tests()
     CHECK_EQ(hs::title("MoonlightWebDev", "DualRTX"), QString("MoonlightWebDev [DualRTX]"));
     CHECK_EQ(hs::title("MoonlightWeb", "  "), QString("MoonlightWeb"));
 
+    SECTION("home screen — the machine's name for a signed-in session only");
+    CHECK_EQ(hs::shownMachineName("DualRTX", true), QString("DualRTX"));
+    CHECK(hs::shownMachineName("DualRTX", false).isEmpty());
+    // Without one, the shell and the manifest say the edition's name alone.
+    CHECK_EQ(hs::title("MoonlightWeb", hs::shownMachineName("DualRTX", false)),
+             QString("MoonlightWeb"));
+
     const QByteArray manifestJson = R"({
         "name": "MoonlightWeb",
         "short_name": "MoonlightWeb",

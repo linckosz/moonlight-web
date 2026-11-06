@@ -52,6 +52,11 @@ namespace mw::homescreen {
 /// "MoonlightWebDev [DualRTX]", or the edition's name alone with no machine name.
 QString title(const QString& editionName, const QString& machineName);
 
+/// The machine's name as the shell and the manifest may carry it: for a signed-in
+/// session (@p signedIn) only, which is where a shortcut is made. Anyone else,
+/// who may hold no more than the entry link, reads the edition's name alone.
+QString shownMachineName(const QString& machineName, bool signedIn);
+
 /// The manifest with @p title as its name, the machine's own address as where it
 /// opens (only when @p hostId is a rendezvous identifier) — carrying
 /// @p handoffKey in its fragment when there is one — and each icon whose bytes

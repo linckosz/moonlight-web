@@ -58,6 +58,11 @@ QString title(const QString& editionName, const QString& machineName)
     return machine.isEmpty() ? editionName : QStringLiteral("%1 [%2]").arg(editionName, machine);
 }
 
+QString shownMachineName(const QString& machineName, bool signedIn)
+{
+    return signedIn ? machineName : QString();
+}
+
 QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
                     const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512)
 {

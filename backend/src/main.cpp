@@ -122,6 +122,7 @@
 #include "streaming/StreamWorkerHost.h"
 #include "streaming/WorkerService.h"
 #include "streaming/worker/StreamWorkerMain.h"
+#include "server/HomeScreenShell.h"
 #include "server/HostAppImage.h"
 #include "server/HostAppLauncher.h"
 #include "server/LauncherDetect.h"
@@ -2331,9 +2332,13 @@ int main(int argc, char* argv[])
     server.setBoothShare(boothShare);
     if (boothShare)
         Logger::info("[Auth] Booth mode: sharing during a stream stays on (share_in_booth_mode)");
-    server.setHomeScreenIdentity([&appSettings, &authManager](const HttpRequest& req) {
+    // The machine's name for a signed-in session only: the entry link alone
+    // does not say whose machine is behind it (HomeScreenShell.h).
+    server.setHomeScreenIdentity([&appSettings, &authManager, &server](const HttpRequest& req) {
         return HttpServer::HomeScreenIdentity{
-            appSettings.rendezvousId(), appSettings.displayName(),
+            appSettings.rendezvousId(),
+            mw::homescreen::shownMachineName(appSettings.displayName(),
+                                             server.isAuthenticated(req)),
             req.viaTunnel ? authManager.homeScreenKey(HttpServer::sessionTokenFromRequest(req))
                           : QString()};
     });

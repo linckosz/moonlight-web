@@ -184,9 +184,9 @@ public:
     static QMap<QString, QString> securityHeaders(const QString& hostHeader);
 
     /// Who this machine is, for a home-screen shortcut made through the tunnel:
-    /// its rendezvous identifier, the name its owner reads and — for a request
-    /// from a signed-in session — the key the shortcut signs in with. Asked on
-    /// each request, so a rename or a new identifier needs no restart.
+    /// its rendezvous identifier and, for a request from a signed-in session
+    /// only, the name its owner reads and the key the shortcut signs in with.
+    /// Asked on each request, so a rename or a new identifier needs no restart.
     struct HomeScreenIdentity
     {
         QString hostId;
