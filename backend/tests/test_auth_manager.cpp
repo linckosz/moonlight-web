@@ -4,6 +4,7 @@
 #include "test_framework.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
+#include "common/Types.h"
 #include "server/AuthManager.h"
 #include "server/AppSettings.h"
 
@@ -577,5 +578,44 @@ void run_auth_manager_tests()
         const QString temporary = auth.createSession("198.51.100.43", "Kiosk", false, true);
         CHECK(auth.homeScreenKey(temporary).isEmpty());
         CHECK(auth.homeScreenKey(QString()).isEmpty());
+    }
+
+    // ── Who may know what this machine is called ───────────────────────────
+    {
+        const auto socket = [](const QString& address, const QString& host) {
+            HttpRequest req;
+            req.clientAddress = address;
+            req.hostTrusted = true;
+            req.headers.insert(QStringLiteral("host"), host);
+            return req;
+        };
+        const QString ours = QStringLiteral("192.168.1.10:8443");
+
+        // On this LAN, before any session.
+        CHECK(AuthManager::mayKnowMachineName(socket("192.168.1.20", ours), false));
+        // From the internet, once signed in only.
+        CHECK(!AuthManager::mayKnowMachineName(socket("203.0.113.7", ours), false));
+        CHECK(AuthManager::mayKnowMachineName(socket("203.0.113.7", ours), true));
+        // A Host this machine does not go by is not this LAN.
+        HttpRequest rebound = socket("192.168.1.20", "pc.example.test");
+        rebound.hostTrusted = false;
+        CHECK(!AuthManager::mayKnowMachineName(rebound, false));
+        // The internet a proxy on this machine forwards from loopback.
+        HttpRequest proxied = socket("127.0.0.1", "pc.example.test");
+        CHECK(!AuthManager::mayKnowMachineName(proxied, false));
+        proxied.headers.insert(QStringLiteral("x-forwarded-for"), QStringLiteral("203.0.113.50"));
+        CHECK(!AuthManager::mayKnowMachineName(proxied, false));
+        // The host machine itself, from loopback or with its host key from anywhere.
+        HttpRequest host = socket("203.0.113.7", "pc.example.test");
+        host.isHostMachine = true;
+        CHECK(AuthManager::mayKnowMachineName(host, false));
+        // On a line, by the address ICE settled on.
+        HttpRequest line;
+        line.viaTunnel = true;
+        line.clientAddress = QStringLiteral("192.168.1.30");
+        CHECK(AuthManager::mayKnowMachineName(line, false));
+        line.clientAddress = QStringLiteral("198.51.100.9");
+        CHECK(!AuthManager::mayKnowMachineName(line, false));
+        CHECK(AuthManager::mayKnowMachineName(line, true));
     }
 }

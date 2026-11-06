@@ -435,6 +435,11 @@ bool AuthManager::fromThisLan(const HttpRequest& req)
     return !loopback || RequestGuard::isLocalHostName(req.headers.value(QStringLiteral("host")));
 }
 
+bool AuthManager::mayKnowMachineName(const HttpRequest& req, bool signedIn)
+{
+    return signedIn || req.isHostMachine || fromThisLan(req);
+}
+
 void AuthManager::cleanupExpired()
 {
     // One failure forgiven per 10 minutes without a new one, by the clock: how

@@ -1446,15 +1446,18 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     }
 
     // ── Auth check for API routes ──────────────────────────────────────────
-    // Exemptions: localhost, /api/auth/*, /api/health, /api/server/hostname.
-    // Only /api/server/hostname is public (the login screen displays the PC name
-    // before authentication); /api/server/status (ports) now requires a session.
-    // /api/share/player/* is the one other public surface: a player has no
-    // MoonlightWeb session and never gets one — those routes authenticate the
-    // device from its own mw_player cookie and report their own failures.
-    if (m_AuthManager && !localPrivilege && req.path != "/api/health" &&
-        req.path != "/api/server/hostname" && !req.path.startsWith("/api/auth/") &&
-        !req.path.startsWith("/api/share/player/") && !isAuthenticated(req)) {
+    // Exemptions: localhost, /api/auth/*, /api/health, and /api/server/hostname
+    // for whoever may know this machine's name without a session (this LAN, the
+    // host machine: AuthManager::mayKnowMachineName); /api/server/status (ports)
+    // requires a session. /api/share/player/* is the one other public surface: a
+    // player has no MoonlightWeb session and never gets one — those routes
+    // authenticate the device from its own mw_player cookie and report their
+    // own failures.
+    const bool hostnameWithoutSession = req.path == QLatin1String("/api/server/hostname") &&
+                                        AuthManager::mayKnowMachineName(req, false);
+    if (m_AuthManager && !localPrivilege && req.path != "/api/health" && !hostnameWithoutSession &&
+        !req.path.startsWith("/api/auth/") && !req.path.startsWith("/api/share/player/") &&
+        !isAuthenticated(req)) {
         // Unauthenticated remote API hit = credential scanning; feed the guard
         // so repeated failures ban the source IP.
         m_ConnGuard.reportAuthFailure(req.clientAddress);

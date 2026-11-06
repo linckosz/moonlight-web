@@ -8,7 +8,7 @@ Everything the frontend (or any client) can call. Routes are registered in `back
 
 **Access levels**
 
-- 🌐 *public* — no auth (also exempted from the 401 guard: `health`, `server/hostname`, `auth/*`).
+- 🌐 *public* — no auth (also exempted from the 401 guard: `health`, `auth/*`, and `server/hostname` for a caller on the LAN or the host machine).
 - 🔑 *session* — localhost, or a valid `mw_session` cookie.
 - 🏠 *admin* — `req.isLocal`, i.e. a **loopback peer, a host-key session** (the host's own browser, arriving through the entry link with a single-use key) **or a session that unlocked the remote admin password** — on the LAN, or from the internet when the owner allows it ([Security §6.2.1](06-Security.md#621-remote-admin-password-lan-internet-on-request)) — **and** the admin key on writes (below). `/api/admin/*` returns 403 otherwise; the setup/internet/system/local routes apply the same check inside their handlers.
 - 🖥️ *host machine* — `req.isHostMachine`: 🏠 minus the password unlock. Reserved for what needs the local desktop or identifies the host itself (`local_key`, the first-run wizard).
@@ -31,8 +31,8 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 
 | Method & path | Access | Description |
 |---|---|---|
-| `GET /api/health` | 🌐 | `{status, version, name, debug, verbose}` liveness probe (the instance's name, and the diagnostic modes a page follows). |
-| `GET /api/server/hostname` | 🌐 | Server hostname + OS (used for display and self-stream detection). |
+| `GET /api/health` | 🌐 | `{status, version, name, debug, verbose}` liveness probe (the instance's name, and the diagnostic modes a page follows). `name` only to a caller on the LAN, the host machine or a session (`AuthManager::mayKnowMachineName`). |
+| `GET /api/server/hostname` | 🔑 | Server hostname + OS (used for display and self-stream detection). A session, or none on the LAN or from the host machine (`AuthManager::mayKnowMachineName`); 401 otherwise. |
 | `GET /api/server/status` | 🔑 | Version + actual HTTP/HTTPS ports. |
 | `GET /api/update/check` | 🔑 | Cached GitHub-Releases check: `{current, latest, update_available, download_url}` for this OS/arch; stale cache refreshes in background. Plus `self_update: {supported, method, requires_host_confirmation}` — what this host can do about it unattended. |
 | `POST /api/update/start` | 🔑 | Download + apply the update on the host, then relaunch. 409 when no update is available or one is already running. Deliberately **not** localhost-gated: the point is to update the host from wherever the user is. |

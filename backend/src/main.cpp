@@ -2895,15 +2895,17 @@ int main(int argc, char* argv[])
     }
 
     // Register API routes
-    server.router()->get("/api/health", [&appSettings](const HttpRequest&) {
+    server.router()->get("/api/health", [&appSettings, &server](const HttpRequest& req) {
         QJsonObject obj;
         obj["status"] = "ok";
         obj["version"] = QCoreApplication::applicationVersion();
         // What this install calls itself, for the header and for the switcher
-        // that lists the other machines a browser has paired with. Public, like
-        // the rest of this route and like /api/server/hostname next door, which
-        // has always answered the same question to anyone who asked.
-        obj["name"] = appSettings.displayName();
+        // that lists the other machines a browser has paired with: to a caller
+        // on this LAN, the host machine, or a session, like
+        // /api/server/hostname next door (AuthManager::mayKnowMachineName). A
+        // page from elsewhere reads it again once signed in (app.js).
+        if (AuthManager::mayKnowMachineName(req, server.isAuthenticated(req)))
+            obj["name"] = appSettings.displayName();
         // The diagnostic modes, for every page including a guest's, which can
         // reach nothing else before it joins: a page in debug mode sends its
         // console to the client log, one in verbose mode prints its pipeline
@@ -3039,7 +3041,9 @@ int main(int argc, char* argv[])
         return HttpResponse::json(obj);
     });
 
-    // GET /api/server/hostname — returns the server's hostname and OS info
+    // GET /api/server/hostname — returns the server's hostname and OS info, to
+    // whoever may know what this machine is called: HttpServer lets a caller on
+    // this LAN or the host machine in without a session, anyone else with one.
     server.router()->get("/api/server/hostname", [](const HttpRequest&) {
         QJsonObject obj;
         obj["hostname"] = AppSettings::machineName();

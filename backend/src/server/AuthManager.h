@@ -441,6 +441,11 @@ public:
      *  under a name that cannot come from outside (RequestGuard::isLocalHostName):
      *  a proxy here forwards the internet from loopback, under a public name. */
     static bool fromThisLan(const HttpRequest& req);
+    /** Whether @p req may be told what this machine is called (GET /api/health's
+     *  `name`, GET /api/server/hostname): a caller on this LAN (fromThisLan),
+     *  the host machine itself (HttpRequest::isHostMachine), or one with a
+     *  session (@p signedIn). Anyone else learns it once signed in. */
+    static bool mayKnowMachineName(const HttpRequest& req, bool signedIn);
 
     // ── Session persistence ───────────────────────────────────────────────────
     /** Save active sessions to disk (app data directory). */
