@@ -431,7 +431,8 @@ public:
      *  @p headers are the request's, with lower-case names. */
     static QString attemptAddress(const QString& peer, const QMap<QString, QString>& headers);
     /** Whether @p req comes from this machine's LAN: the one rule for what is
-     *  given to this LAN alone (routes/PairRequestRoutes.cpp).
+     *  given to this LAN alone (routes/PairRequestRoutes.cpp: a device asks to
+     *  pair by its QR code; routes/AuthStatusRoute.cpp: this machine's name).
      *
      *  On a line, by the address ICE settled on: a peer elsewhere cannot make a
      *  connectivity check to a private address succeed. On a socket, by the

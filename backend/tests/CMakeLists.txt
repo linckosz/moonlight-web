@@ -127,6 +127,7 @@ add_executable(run_tests
     test_mic_uplink.cpp
     test_phone_pairing.cpp
     test_pair_request_routes.cpp
+    test_auth_status_route.cpp
     # In-scope production units (+ their real deps)
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.

@@ -88,6 +88,7 @@ void run_cert_manager_tests();
 void run_mic_uplink_tests();
 void run_phone_pairing_tests();
 void run_pair_request_routes_tests();
+void run_auth_status_route_tests();
 
 int main(int argc, char** argv)
 {
@@ -171,6 +172,7 @@ int main(int argc, char** argv)
     run_mic_uplink_tests();
     run_phone_pairing_tests();
     run_pair_request_routes_tests();
+    run_auth_status_route_tests();
     // Last: it repoints the Logger singleton at its own temp files.
     run_logger_rotation_tests();
 

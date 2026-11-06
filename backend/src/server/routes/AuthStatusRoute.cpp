@@ -109,6 +109,12 @@ void registerAuthStatusRoute(RestRouter& router, AuthManager& authManager, AuthS
         // session, a host-key browser on the public domain has one.
         obj["has_session"] = authManager.validateSession(deps.sessionToken(req));
 
+        // What this install calls itself, for the PIN screen to say which
+        // machine it unlocks: to a caller on this LAN alone, by the rule a
+        // device's QR code request is held to. Everyone else gets the answer
+        // without it.
+        if (AuthManager::fromThisLan(req)) obj["display_name"] = deps.displayName();
+
         HttpResponse resp = HttpResponse::json(obj);
         // Slide the cookie browser-side too, so an active client keeps a fresh
         // 90-day window without ever re-entering the PIN. A session the visitor

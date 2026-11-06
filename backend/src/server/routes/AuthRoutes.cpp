@@ -472,7 +472,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                  address, [&authManager, token](const QString& city, const QString& country) {
                      authManager.setSessionGeo(token, city, country);
                  });
-         }});
+         },
+         [&settings]() { return settings.displayName(); }});
 
     // POST /api/auth/logout — end *this* browser's session.
     //

@@ -35,6 +35,9 @@ struct AuthStatusDeps
     /// Where a session is, looked up again and stored when its address has
     /// changed (GeoIpService); may be empty.
     std::function<void(const QString& token, const QString& address)> locate;
+    /// What this install calls itself (AppSettings::displayName), said to a
+    /// caller on this LAN.
+    std::function<QString()> displayName;
 };
 
 /// Register GET /api/auth/status: what this browser may do here, asked by the
