@@ -53,6 +53,7 @@ const ui = {
     note: document.getElementById('note'),
     instances: document.getElementById('instance-menu'),
     forget: document.getElementById('forget'),
+    reload: document.getElementById('reload'),
 };
 
 function say(stage, detail) {
@@ -178,6 +179,7 @@ function fail(message, hint, heading = 'Not connected') {
     // help them. This is the moment the caption becomes a way out.
     paintInstances(true);
     paintForget(true);
+    paintReload(heading);
     // Failing while put away: the failure is for whoever comes back, who will
     // get a fresh attempt instead (see "Coming back to a page that had failed").
     if (document.visibilityState === 'hidden') {
@@ -481,6 +483,24 @@ if (ui.forget) {
         paintInstances(true);
     });
 }
+
+/* ── Starting over by hand ─────────────────────────────────────────────────
+ *
+ * Beside "Not connected", in the same quiet voice as the removal above: a
+ * reload of the page, for whoever would rather not wait for its own tries
+ * (connectWhenReachable). Pressing F5 does the same, and a phone has no F5,
+ * nor any reload that is not tucked away in a menu.
+ *
+ * Only under "Not connected", and only for an address that names a machine.
+ * "Not opened" is a verdict on what the machine serves, and a reload would
+ * only ask for it again; an address that names nothing names nothing a second
+ * time either.
+ */
+function paintReload(heading) {
+    if (ui.reload) ui.reload.hidden = heading !== 'Not connected' || !paintedHostId;
+}
+
+if (ui.reload) ui.reload.addEventListener('click', () => location.reload());
 
 const STAGE_WORDS = {
     identity: 'Preparing this browser…',
@@ -841,13 +861,132 @@ async function connectThroughUpdate(hostId) {
    for about a minute, more slowly as it goes: each call counts against the
    server's limit on attempts per address. The first one through picks the start
    up where it stopped. Only failures the transport marks `transient` are
-   retried: a machine at its connection limit or a page out of date is a plain
-   answer. */
+   retried in that minute: a machine at its connection limit or a page out of
+   date is a plain answer, and what needs longer than a minute to pass is left
+   to the slower tries below. */
 const PASSING_WAIT_MS = 60 * 1000;
 const PASSING_PAUSES_MS = [2000, 3000, 5000, 5000, 10000];
 const PASSING_NOTE =
     'Trying again every few seconds for a minute — this page carries on by itself as soon ' +
     'as your machine answers.';
+
+/* ── Waiting for the machine to be reachable again ─────────────────────────
+ *
+ * Past that minute the page used to stop calling. Whatever came back after it —
+ * the Wi-Fi after a short cut, the machine after a reboot, the router's ports —
+ * went unnoticed until someone thought to refresh, and the page went on saying
+ * "Not connected" over a machine that had been answering for a while. A failure
+ * that takes longer than a minute to pass got no second try at all: "no direct
+ * connection", from a phone on 5G or an office Wi-Fi while the router's UPnP
+ * was off, failed once and for good (06/11/2026).
+ *
+ * So the page keeps trying under the failure for half an hour, and carries on
+ * by itself with the first try that gets through. Slowly — 30 s, 45 s, a
+ * minute, a minute and a half, then every two — because each try counts
+ * against the introduction server's limit on attempts per address (30 a
+ * minute), and a try at a machine that answers but cannot be reached costs it a
+ * peer connection for the whole deadline. Half an hour of it is about fifteen
+ * calls.
+ *
+ * Nothing is tried that cannot get through, and nothing that could is put off:
+ *
+ *   the network back  the browser's `online` event: a try a second later,
+ *                     whatever the pause had left, since this is the likeliest
+ *                     moment of all. After the half hour it starts another one:
+ *                     the network changing is news, and worth the calls.
+ *   no network        while the browser says it has none, no try at all; the
+ *                     event above ends that.
+ *   put away          no try either. A failed page starts over the moment it is
+ *                     shown again (see "Coming back to a page that had
+ *                     failed"), which is sooner than any pause.
+ *   removed           once the person has dropped the machine from the list,
+ *                     the page stops calling it (see paintForget).
+ *
+ * The failure stays on screen as it is, its own explanation included, since
+ * that is still the best account of what is wrong. One sentence after it says
+ * what the page is doing about it, and another says when it has stopped.
+ */
+const WATCH_MS = 30 * 60 * 1000;
+const WATCH_PAUSES_MS = [30000, 45000, 60000, 90000, 120000];
+/* Between the network coming back and the try: the event fires as the link
+   comes up, before an address or a name server is necessarily there. */
+const ONLINE_GRACE_MS = 1000;
+const WATCH_NOTE =
+    'This page keeps trying and carries on by itself as soon as your machine can be reached.';
+const WATCH_OVER_NOTE = 'This page has stopped trying. Reload it to try again.';
+
+/** A failure worth trying again under: one that can pass by itself. */
+function mayPass(e) {
+    return !!(e.transient || e.mayPass);
+}
+
+/* How many times the network has come back, and whoever is waiting for it. */
+let onlineCount = 0;
+let onOnline = null;
+window.addEventListener('online', () => {
+    onlineCount++;
+    if (onOnline) onOnline();
+});
+
+/** @p ms, or until the network comes back; Infinity waits for the network alone. */
+function sleepOrOnline(ms) {
+    return new Promise((resolve) => {
+        let timer = null;
+        const done = () => {
+            clearTimeout(timer);
+            onOnline = null;
+            resolve();
+        };
+        if (Number.isFinite(ms)) timer = setTimeout(done, ms);
+        onOnline = done;
+    });
+}
+
+/** Until the page is shown or put away, or the network comes back. */
+function nextChange() {
+    return new Promise((resolve) => {
+        const done = () => {
+            document.removeEventListener('visibilitychange', done);
+            window.removeEventListener('online', done);
+            resolve();
+        };
+        document.addEventListener('visibilitychange', done);
+        window.addEventListener('online', done);
+    });
+}
+
+/**
+ * The wait before the next try: @p ms, or a second once the network comes back
+ * (or came back since @p seen, while the last try was still out). Held for as
+ * long as the browser says it has no network, or the page is put away.
+ */
+async function waitForNextTry(ms, seen) {
+    if (onlineCount === seen) await sleepOrOnline(ms);
+    let woken = onlineCount !== seen;
+    for (;;) {
+        if (woken) await sleep(ONLINE_GRACE_MS);
+        if (navigator.onLine !== false && document.visibilityState !== 'hidden') return;
+        const before = onlineCount;
+        await nextChange();
+        woken = onlineCount !== before;
+    }
+}
+
+/** The line under the failure, rewritten in place: fail() again would close a
+ *  menu the person may have open. Left alone while the page wears its opening
+ *  look for being put away. */
+function sayNote(text) {
+    if (ui.note && document.body.dataset.state === 'failed') ui.note.textContent = text;
+}
+
+/** A try that reached the machine: the caption may no longer deny that it did. */
+function noteAnswered(e) {
+    if (!e.answered || answered) return;
+    answered = true;
+    // Only a dead caption says "No server found", and repainting it closes
+    // nothing; a menu is left as it is under the person's hand.
+    if (!closeMenu && document.body.dataset.state === 'failed') paintInstances(true);
+}
 
 /** The explanation under a failure: its own when it has one. */
 function failureHint(e) {
@@ -889,51 +1028,100 @@ function rememberOpenedHost(hostId) {
 }
 
 /**
- * Show a passing failure, and keep calling under it.
+ * Show a failure that may pass, and keep calling under it.
  * @returns {Promise<Tunnel | null>} the tunnel once a call gets through, or null
  *   once the page has given up and shows the last failure for good
  */
 async function connectThroughRestart(hostId, first) {
     const startedAt = Date.now();
-    fail(first.message, PASSING_NOTE);
-    const giveUpAt = startedAt + PASSING_WAIT_MS;
     let last = first;
-    for (let i = 0; ; i++) {
-        const pause = PASSING_PAUSES_MS[Math.min(i, PASSING_PAUSES_MS.length - 1)];
-        if (Date.now() + pause > giveUpAt) break;
-        await sleep(pause);
-        const tunnel = new Tunnel(hostId);
-        try {
-            await tunnel.connect();
-            return tunnel;
-        } catch (e) {
-            tunnel.close();
-            last = e;
-            if (!e.transient) break;
-            // The words can change underneath — the server back, the machine
-            // not yet. Only the words: fail() again would close a menu the
-            // person may have open.
-            say('Not connected', e.message);
+    // What a restart of the introduction server looks like: every few seconds,
+    // for a minute.
+    if (first.transient) {
+        fail(first.message, PASSING_NOTE);
+        const giveUpAt = startedAt + PASSING_WAIT_MS;
+        for (let i = 0; ; i++) {
+            const pause = PASSING_PAUSES_MS[Math.min(i, PASSING_PAUSES_MS.length - 1)];
+            if (Date.now() + pause > giveUpAt) break;
+            await sleep(pause);
+            if (forgotten) return null;
+            const tunnel = new Tunnel(hostId);
+            try {
+                await tunnel.connect();
+                return tunnel;
+            } catch (e) {
+                tunnel.close();
+                last = e;
+                if (!e.transient) break;
+                // The words can change underneath — the server back, the
+                // machine not yet. Only the words: fail() again would close a
+                // menu the person may have open.
+                say('Not connected', e.message);
+            }
         }
     }
-    if (last.answered) answered = true;
-    fail(last.message, failureHint(last));
-    if (!last.transient || openedHostHere() !== hostId) return null;
+    return connectWhenReachable(hostId, last, startedAt);
+}
 
-    // The machine this tab had open: the failure stays on screen as it is,
-    // and the page carries on by itself the moment the machine answers.
-    while (Date.now() + OPENED_RETRY_MS < startedAt + UPDATE_WAIT_MS) {
-        await sleep(OPENED_RETRY_MS);
+/**
+ * Past that minute, or straight away for a failure that takes longer to pass:
+ * the failure on screen as it is, and a try now and then under it until one
+ * gets through (see "Waiting for the machine to be reachable again").
+ */
+async function connectWhenReachable(hostId, first, startedAt) {
+    let last = first;
+    if (last.answered) answered = true;
+    if (!mayPass(last)) {
+        fail(last.message, failureHint(last));
+        return null;
+    }
+    fail(last.message, `${failureHint(last)} ${WATCH_NOTE}`);
+
+    // The machine this tab had open is called every 10 s for as long as an
+    // update of it may take (see OPENED_HOST_KEY), and then like any other.
+    const openedHere = openedHostHere() === hostId;
+    let watchUntil = startedAt + WATCH_MS;
+    let slow = 0;
+    for (;;) {
+        if (forgotten) return null;
+        const seen = onlineCount;
+        const updating =
+            openedHere &&
+            last.transient &&
+            Date.now() + OPENED_RETRY_MS < startedAt + UPDATE_WAIT_MS;
+        const pause = updating
+            ? OPENED_RETRY_MS
+            : WATCH_PAUSES_MS[Math.min(slow, WATCH_PAUSES_MS.length - 1)];
+        const due = Date.now() + pause <= watchUntil;
+        if (!due) sayNote(`${failureHint(last)} ${WATCH_OVER_NOTE}`);
+        await waitForNextTry(due ? pause : Infinity, seen);
+        if (forgotten) return null;
+        if (!due) {
+            // The network came back after the half hour: another one.
+            watchUntil = Date.now() + WATCH_MS;
+            slow = 0;
+            sayNote(`${failureHint(last)} ${WATCH_NOTE}`);
+        } else if (!updating) {
+            slow++;
+        }
+
         const tunnel = new Tunnel(hostId);
         try {
             await tunnel.connect();
             return tunnel;
         } catch (e) {
             tunnel.close();
-            if (!e.transient) return null;
+            if (forgotten) return null;
+            last = e;
+            noteAnswered(e);
+            if (!mayPass(e)) {
+                fail(e.message, failureHint(e));
+                return null;
+            }
+            say('Not connected', e.message);
+            sayNote(`${failureHint(e)} ${WATCH_NOTE}`);
         }
     }
-    return null;
 }
 
 /**
@@ -1022,7 +1210,7 @@ async function main() {
         // The failure names its own explanation when it has a better one than
         // "your machine is off" — a connection that was refused by the network
         // rather than never answered has nothing to do with the machine.
-        if (!e.transient) {
+        if (!mayPass(e)) {
             if (e.answered) answered = true;
             fail(e.message, failureHint(e));
             return;

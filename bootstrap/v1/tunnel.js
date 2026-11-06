@@ -160,9 +160,25 @@ const MAX_EARLY_CANDIDATES = 64;
 function noRouteError() {
     const err = new Error('Your machine answered, but no direct connection could be opened.');
     err.answered = true;
+    err.mayPass = true;
     err.hint =
         'This network is not letting the two ends reach each other. Company networks and ' +
         'public Wi-Fi often block what that takes. A phone hotspot is the quickest way to tell.';
+    return err;
+}
+
+/**
+ * A failure that may pass, but not within the minute, marked `mayPass`: the
+ * network between the two ends (above), or a machine on its line that said
+ * nothing in time. What fixes those is a router opening its ports again, a phone
+ * leaving the office Wi-Fi, a machine done with whatever held it — nothing this
+ * page can hurry. So a page may try again now and then, never every few
+ * seconds: each try waits out the whole deadline, and the explanation on screen
+ * is the one to read in the meantime (boot.js, connectWhenReachable).
+ */
+function silentError() {
+    const err = new Error('Your machine did not answer in time.');
+    err.mayPass = true;
     return err;
 }
 
@@ -511,7 +527,7 @@ export class Tunnel {
      * heard from it and the plain reading is the right one.
      */
     _deadlineError() {
-        return this._pc ? noRouteError() : new Error('Your machine did not answer in time.');
+        return this._pc ? noRouteError() : silentError();
     }
 
     _sendSignal(payload) {

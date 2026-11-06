@@ -279,6 +279,16 @@
     font-size: 1.2rem;
     font-weight: 600;
     letter-spacing: .02em;
+    margin: 0;
+    color: var(--neon-magenta);
+  }
+  /* The failure's heading, and on its line the way to start over by hand
+     (boot.js, paintReload). Read on one baseline; a screen too narrow for both
+     puts the link under it rather than squeeze the heading. */
+  .stage-row {
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 1rem;
     margin: 0 0 .4rem;
   }
   p { margin: 0; color: var(--text-2); font-size: .93rem; }
@@ -296,9 +306,8 @@
      paintForget). A quiet text button under the note — the usual reason for
      this page is a machine that is only switched off, and this must not read
      as the answer to that. */
-  #forget {
-    display: block;
-    margin: 1.1rem 0 0;
+  #forget,
+  #reload {
     padding: .3rem 0;
     border: 0;
     background: none;
@@ -309,9 +318,15 @@
     text-underline-offset: 3px;
     cursor: pointer;
   }
-  #forget:hover { color: var(--text-2); }
-  #forget:focus-visible { outline: 1px solid var(--border-2); outline-offset: 2px; }
-  #forget[hidden] { display: none; }
+  #forget { display: block; margin: 1.1rem 0 0; }
+  /* "Reload the page", beside the heading, in the same quiet voice. */
+  #reload { margin: 0; }
+  #forget:hover,
+  #reload:hover { color: var(--text-2); }
+  #forget:focus-visible,
+  #reload:focus-visible { outline: 1px solid var(--border-2); outline-offset: 2px; }
+  #forget[hidden],
+  #reload[hidden] { display: none; }
   code {
     font-family: var(--font-mono);
     color: var(--neon-cyan);
@@ -433,8 +448,8 @@
   body[data-state="secured"] #detail { display: none; }
   /* The headline is the failure voice: while this is working, the seal and the
      line under the bar say everything, and a second heading would compete. */
-  h1 { display: none; }
-  body[data-state="failed"] h1 { display: block; color: var(--neon-magenta); }
+  .stage-row { display: none; }
+  body[data-state="failed"] .stage-row { display: flex; }
   body[data-state="failed"] .seal,
   body[data-state="failed"] .track,
   body[data-state="failed"] #status { display: none; }
@@ -461,7 +476,10 @@
            it is, so nothing flashes a placeholder. -->
       <div class="instance-menu" id="instance-menu" hidden></div>
     </div>
-    <h1 id="stage">Starting…</h1>
+    <div class="stage-row">
+      <h1 id="stage">Starting…</h1>
+      <button type="button" id="reload" hidden>Reload the page</button>
+    </div>
     <div class="seal" aria-hidden="true">
       <div class="seal-face">
         <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2"
