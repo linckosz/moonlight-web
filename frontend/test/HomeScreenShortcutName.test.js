@@ -48,29 +48,51 @@ describe('the home-screen shortcut name after a PIN login', () => {
         );
 
     it('takes the name the signed-in answer carries', async () => {
+        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
         answer({
             name: 'MoonlightWeb [Living-room PC]',
             start_url: '/0123456789abcdefghjkmnpqrs#k=key',
         });
-        await MoonlightApp._offerHomeScreenHandoff();
+        expect(await MoonlightApp._offerHomeScreenHandoff()).toBe('ready');
         expect(shortcutName()).toBe('MoonlightWeb [Living-room PC]');
         expect(put).toHaveBeenCalledWith('/manifest.webmanifest', expect.anything());
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('Home-screen shortcut prepared'));
     });
 
     it("keeps the shell's name when the answer has none, or when there is no answer", async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'log').mockImplementation(() => {});
         answer({ start_url: '/0123456789abcdefghjkmnpqrs' });
         await MoonlightApp._offerHomeScreenHandoff();
         expect(shortcutName()).toBe('MoonlightWeb');
 
         answer({ name: 'MoonlightWeb [Living-room PC]' }, false);
-        await MoonlightApp._offerHomeScreenHandoff();
+        expect(await MoonlightApp._offerHomeScreenHandoff()).toBe('failed');
         expect(shortcutName()).toBe('MoonlightWeb');
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('Home-screen shortcut not prepared'),
+        );
+    });
+
+    it('says so when the manifest cannot be kept', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        answer({ name: 'MoonlightWeb [Living-room PC]' });
+        vi.stubGlobal('caches', {
+            open: vi.fn(async () => {
+                throw new Error('no cache');
+            }),
+        });
+        expect(await MoonlightApp._offerHomeScreenHandoff()).toBe('failed');
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining('Home-screen shortcut not prepared'),
+            expect.any(Error),
+        );
     });
 
     it('changes nothing in a shortcut, which has no share sheet', async () => {
         MoonlightApp._runsAsShortcut.mockReturnValue(true);
         answer({ name: 'MoonlightWeb [Living-room PC]' });
-        await MoonlightApp._offerHomeScreenHandoff();
+        expect(await MoonlightApp._offerHomeScreenHandoff()).toBe(null);
         expect(shortcutName()).toBe('MoonlightWeb');
         expect(fetch).not.toHaveBeenCalled();
     });

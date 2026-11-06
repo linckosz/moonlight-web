@@ -210,6 +210,9 @@ const PAIRING_KEY_WAIT_MS = 1500;
 /** The person asked for the PIN screen after a refused stream: read by the boot
  *  that follows, and gone with it. */
 const PIN_ASKED_KEY = 'mw_pin_asked';
+/** This tab has reloaded once after a PIN, for the home-screen shortcut
+ *  (App._reloadOnceForHomeScreen): never a second time, whatever follows. */
+const HOME_SCREEN_RELOAD_KEY = 'mw_hs_reloaded';
 /** A screen change seen while a relaunch is on its way is looked at again
  *  this long after (App._onClientScreenChanged), until none is. */
 const SCREEN_RECHECK_MS = 1500;
@@ -1490,6 +1493,11 @@ export const MoonlightApp = {
      * machine's name out of the shell.
      *
      * Not from a shortcut: it has no share sheet.
+     *
+     * Resolves 'ready' when the signed-in manifest is in place, 'failed' when it
+     * could not be (the shortcut then asks for the PIN, as before), and null
+     * where there is nothing to prepare: no tunnel, or a shortcut. The console
+     * says which of the first two it was.
      */
     async _offerHomeScreenHandoff() {
         try {
@@ -1498,12 +1506,15 @@ export const MoonlightApp = {
             /* nothing kept, or no storage */
         }
         const ownId = tunnelHostId();
-        if (!ownId || this._runsAsShortcut()) return;
+        if (!ownId || this._runsAsShortcut()) return null;
         try {
             const fresh = await fetch(`/api/app/web-manifest?t=${Date.now()}`, {
                 cache: 'no-store',
             });
-            if (!fresh.ok) return;
+            if (!fresh.ok) {
+                console.warn(`[MW] Home-screen shortcut not prepared: HTTP ${fresh.status}`);
+                return 'failed';
+            }
             const manifest = await fresh.json();
             // The shell this page was drawn from may come from before the PIN,
             // without the machine's name: the host gives it to a signed-in
@@ -1520,11 +1531,35 @@ export const MoonlightApp = {
                     headers: { 'Content-Type': 'application/manifest+json' },
                 }),
             );
-        } catch {
-            return; // the shortcut asks for the PIN, as before
+        } catch (err) {
+            console.warn('[MW] Home-screen shortcut not prepared:', err);
+            return 'failed';
         }
         const link = document.querySelector('link[rel="manifest"]');
         if (link) link.setAttribute('href', `/manifest.webmanifest?t=${Date.now()}`);
+        console.log('[MW] Home-screen shortcut prepared: a shortcut made now opens signed in');
+        return 'ready';
+    },
+
+    /**
+     * Reload this tab once after a PIN, so that a home-screen shortcut is made
+     * from what the page loads signed in (see onSignedIn in _checkAuth).
+     *
+     * Once per tab: the mark stays in this tab's session storage, so a later
+     * PIN in the same tab, or a reload that comes back to the PIN screen, never
+     * reloads again. Without session storage there is no mark to keep, and the
+     * page does not reload at all. True when the reload is under way.
+     */
+    _reloadOnceForHomeScreen() {
+        try {
+            if (sessionStorage.getItem(HOME_SCREEN_RELOAD_KEY) === '1') return false;
+            sessionStorage.setItem(HOME_SCREEN_RELOAD_KEY, '1');
+        } catch {
+            return false;
+        }
+        console.log('[MW] Reloading once so a home-screen shortcut takes the signed-in page');
+        this._reloadPage();
+        return true;
     },
 
     /** Whether this page IS an installed shortcut rather than a browser tab. */
@@ -1616,7 +1651,14 @@ export const MoonlightApp = {
                 // On successful login, re-initialize the app
                 console.log('[MW] Authentication successful, re-initializing...');
                 this.loginView = null;
-                this._offerHomeScreenHandoff();
+                // Seen on an iPhone (Safari 26.5): a shortcut made from this page
+                // without a reload was made from what the page loaded before the
+                // PIN, without the machine's name or the key; after a reload it
+                // had both. So once the signed-in manifest has been asked for,
+                // ready or not, a page reached through the tunnel reloads, once,
+                // before anything else is drawn.
+                const handoff = await this._offerHomeScreenHandoff();
+                if (handoff && this._reloadOnceForHomeScreen()) return;
                 // The host offers its admin page to signed-in sessions only, so
                 // the answer read above, from before the login, never offers it.
                 // Read again, the button is there from the first visit.
