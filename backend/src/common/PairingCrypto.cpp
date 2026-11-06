@@ -24,6 +24,7 @@
 #include <openssl/core_names.h>
 #include <openssl/ec.h>
 #include <openssl/ecdsa.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
@@ -265,6 +266,13 @@ bool verify(const QByteArray& spkiDer, const QByteArray& message, const QByteArr
     // distinguish "wrong signature" from "unparseable key" and treat one as a
     // reason to continue.
     if (message.isEmpty() || signature.size() != SIGNATURE_BYTES) return false;
+
+    // Whatever the answer, the thread's OpenSSL error queue is left empty for
+    // the next caller on it.
+    const struct ClearErrors
+    {
+        ~ClearErrors() { ERR_clear_error(); }
+    } clearErrors;
 
     PkeyPtr key = loadPublicSpki(spkiDer);
     if (!key) return false;

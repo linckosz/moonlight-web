@@ -14,6 +14,10 @@
 #include "common/PairingCrypto.h"
 #include "streaming/SdpFingerprint.h"
 
+#include <openssl/err.h>
+
+#include <QList>
+#include <QPair>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -167,6 +171,30 @@ void run_pairing_binding_tests()
     // An unusable key must return false, not throw and not pass.
     CHECK(!verify(QByteArray("not a key"), honestMsg, sign(pem, honestMsg)));
     CHECK(!verify(spki, QByteArray(), sign(pem, honestMsg)));
+
+    SECTION("MW-BIND — a check leaves the thread's OpenSSL error queue empty");
+
+    {
+        QByteArray noise(SIGNATURE_BYTES, Qt::Uninitialized);
+        for (int i = 0; i < noise.size(); ++i)
+            noise[i] = static_cast<char>(0x5A ^ (i * 37));
+        const QList<QPair<QByteArray, QByteArray>> refused = {
+            {spki, sign(generatePrivateKeyPem(), honestMsg)},
+            {spki, noise},
+            {spki, QByteArray(SIGNATURE_BYTES, '\0')},
+            {QByteArray("not a key"), sign(pem, honestMsg)},
+        };
+        int left = 0;
+        for (const auto& [key, sig] : refused) {
+            ERR_clear_error();
+            CHECK(!verify(key, honestMsg, sig));
+            if (ERR_peek_error() != 0) ++left;
+        }
+        CHECK_EQ(left, 0);
+        ERR_clear_error();
+        CHECK(verify(spki, honestMsg, sign(pem, honestMsg)));
+        CHECK_EQ(ERR_peek_error(), 0ul);
+    }
 
     SECTION("MW-BIND — nonces");
 
