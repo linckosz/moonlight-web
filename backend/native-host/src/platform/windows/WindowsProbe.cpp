@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "../../capture/windows/DisplayRotation.h"
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
 #include "../../encode/OpenH264Encoder.h"
@@ -181,6 +182,28 @@ std::unordered_map<std::string, DisplayMode> realDisplayModes()
             modes[sourceIdx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE) {
             mode.width = static_cast<int>(modes[sourceIdx].sourceMode.width);
             mode.height = static_cast<int>(modes[sourceIdx].sourceMode.height);
+
+            // ⚠️ The source mode is in the PANEL's orientation: a desktop
+            // turned a quarter against its panel reads swapped (issue #54, a
+            // phone's portrait panel under a landscape desktop, streamed as a
+            // portrait display with the desktop letterboxed into a quarter of
+            // it). EnumDisplaySettings' size is the desktop's own, and settles
+            // which way round it is — see DisplayRotation.h.
+            DEVMODEW gdi = {};
+            gdi.dmSize = sizeof(gdi);
+            const bool gdiKnown =
+                ::EnumDisplaySettingsW(source.viewGdiDeviceName, ENUM_CURRENT_SETTINGS, &gdi) != 0;
+            const int panelWidth = mode.width;
+            capture::desktopOrientedSize(mode.width, mode.height,
+                                         static_cast<int>(path.targetInfo.rotation),
+                                         gdiKnown ? static_cast<int>(gdi.dmPelsWidth) : 0,
+                                         gdiKnown ? static_cast<int>(gdi.dmPelsHeight) : 0);
+            if (mode.width != panelWidth)
+                log::info("[native] " + narrow(source.viewGdiDeviceName) + " is turned " +
+                          std::to_string(capture::rotationDegrees(
+                              static_cast<int>(path.targetInfo.rotation))) +
+                          "° against its panel — its desktop is " + std::to_string(mode.width) +
+                          "x" + std::to_string(mode.height));
         }
 
         const std::string device = narrow(source.viewGdiDeviceName);

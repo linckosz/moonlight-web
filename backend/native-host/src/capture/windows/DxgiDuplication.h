@@ -89,7 +89,8 @@ public:
     /// Whether the last start() was refused for a reason that can pass, so
     /// that a later one may succeed: the secure desktop below SYSTEM
     /// (E_ACCESSDENIED), another program's duplication in the way, a display
-    /// between two modes. False after a success, and for the refusals that
+    /// between two modes, a display turned against its panel (issue #54,
+    /// DisplayRotation.h). False after a success, and for the refusals that
     /// stay — DXGI_ERROR_UNSUPPORTED above all, a display another GPU drives,
     /// the hybrid laptop Windows.Graphics.Capture exists for.
     bool refusalMayPass() const { return m_RefusalMayPass; }

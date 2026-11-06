@@ -20,6 +20,7 @@
 #include "../../core/Log.h"
 #include "../../core/PresentLattice.h"
 #include "CursorShape.h"
+#include "DisplayRotation.h"
 
 #include <chrono>
 
@@ -147,6 +148,21 @@ bool DxgiDuplication::start(std::string& error)
 
     DXGI_OUTDUPL_DESC duplDesc = {};
     m_Duplication->GetDesc(&duplDesc);
+
+    // A desktop turned against its panel comes back as the panel scans it out,
+    // on its side or upside down, and turning it is left to the caller (issue
+    // #54). Windows.Graphics.Capture hands the desktop over upright, so the
+    // duplication steps aside for it. The refusal passes: the display may be
+    // turned upright again, and the session then comes back here.
+    if (rotationDegrees(static_cast<int>(duplDesc.Rotation)) != 0) {
+        error = "the display is turned " +
+                std::to_string(rotationDegrees(static_cast<int>(duplDesc.Rotation))) +
+                "° against its panel";
+        stop();
+        m_RefusalMayPass = true;
+        return false;
+    }
+
     m_Width = static_cast<int>(duplDesc.ModeDesc.Width);
     m_Height = static_cast<int>(duplDesc.ModeDesc.Height);
     // The mode's refresh as a rational, for the lattice the stream's gate
@@ -264,6 +280,13 @@ bool DxgiDuplication::retake(std::string& error)
     if (static_cast<int>(desc.ModeDesc.Width) != m_Width ||
         static_cast<int>(desc.ModeDesc.Height) != m_Height || desc.ModeDesc.Format != m_Format) {
         error = "the display changed mode meanwhile";
+        m_RetakeLost = true;
+        return false;
+    }
+    // A half turn keeps the size: only the rotation says the picture would now
+    // arrive upside down. start() then refuses it, see there.
+    if (rotationDegrees(static_cast<int>(desc.Rotation)) != 0) {
+        error = "the display was turned meanwhile";
         m_RetakeLost = true;
         return false;
     }
