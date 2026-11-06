@@ -32,6 +32,15 @@ void run_auth_manager_tests()
     auto ok = auth.validatePin("198.51.100.10", pin);
     CHECK(ok.result == AuthManager::Valid);
 
+    // The PIN itself and nothing more: whatever follows it, or comes before.
+    for (int pad : {1, 255, 256, 512, 1024}) {
+        const QString ip = QString("198.51.100.%1").arg(100 + pad % 100);
+        CHECK(auth.validatePin(ip, pin + QString(pad, QChar(0))).result != AuthManager::Valid);
+        CHECK(auth.validatePin(ip, QString(pad, QChar(0)) + pin).result != AuthManager::Valid);
+    }
+    CHECK(auth.validatePin("198.51.100.11", pin.left(pin.size() - 1)).result != AuthManager::Valid);
+    CHECK(auth.validatePin("198.51.100.11", pin).result == AuthManager::Valid);
+
     // clearPin invalidates.
     auth.clearPin();
     CHECK(!auth.hasValidPin());

@@ -21,6 +21,7 @@
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -35,6 +36,7 @@
 #include <QStandardPaths>
 #include <QHash>
 #include <QSet>
+#include <QThread>
 #include <QUuid>
 
 #include <algorithm>
@@ -45,7 +47,11 @@
 
 namespace {
 QString g_FileOverride;
-}
+// Every setter reads the whole file, changes one key and writes it all back, so
+// a read that did not get the file's content is never written back. Per thread:
+// a read and the write it feeds run on the same one.
+thread_local bool t_LastReadIncomplete = false;
+} // namespace
 
 AppSettings::AppSettings()
 {
@@ -75,17 +81,82 @@ QString AppSettings::fileOverride()
 
 QJsonObject AppSettings::readAll() const
 {
-    QFile file(m_FilePath);
-    if (!file.open(QIODevice::ReadOnly)) {
+    bool complete = false;
+    return readAll(&complete);
+}
+
+QJsonObject AppSettings::readAll(bool* complete) const
+{
+    *complete = true;
+    t_LastReadIncomplete = false;
+    if (!QFileInfo::exists(m_FilePath)) return {};
+
+    // Another process can hold the file for a moment (the installer reading it,
+    // an antivirus scan, a rename by another instance): try again shortly before
+    // concluding anything from a failed read.
+    bool opened = false;
+    QByteArray data;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        if (attempt > 0) QThread::msleep(15);
+        QFile file(m_FilePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            opened = false;
+            continue;
+        }
+        opened = true;
+        data = file.readAll();
+        if (file.error() != QFileDevice::NoError) {
+            opened = false;
+            continue;
+        }
+        if (data.trimmed().isEmpty()) return {};
+        QJsonParseError err{};
+        const QJsonDocument doc = QJsonDocument::fromJson(data, &err);
+        if (err.error == QJsonParseError::NoError && doc.isObject()) return doc.object();
+    }
+
+    if (!opened) {
+        if (!QFileInfo::exists(m_FilePath)) return {};
+        Logger::warning("[AppSettings] Could not read " + m_FilePath +
+                        ": settings are not saved until it can be read again");
+        *complete = false;
+        t_LastReadIncomplete = true;
         return {};
     }
-    QJsonObject obj = QJsonDocument::fromJson(file.readAll()).object();
-    file.close();
-    return obj;
+
+    // Readable but not a settings document. Keep it beside the new one rather
+    // than lose what it holds, then start from the defaults. Named after its
+    // content, so the reads before the next write keep one copy, not one each.
+    const QString aside =
+        m_FilePath + ".unreadable-" +
+        QString::fromLatin1(
+            QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex().left(12));
+    if (QFileInfo::exists(aside)) return {};
+    QFile copy(aside);
+    if (!copy.open(QIODevice::WriteOnly) || copy.write(data) != data.size() || !copy.flush()) {
+        copy.close();
+        QFile::remove(aside);
+        Logger::warning("[AppSettings] " + m_FilePath +
+                        " is not valid and could not be kept aside: settings are not saved");
+        *complete = false;
+        t_LastReadIncomplete = true;
+        return {};
+    }
+    copy.close();
+    Logger::warning("[AppSettings] " + m_FilePath + " is not valid: kept as " + aside +
+                    ", settings start from the defaults");
+    return {};
 }
 
 void AppSettings::writeAll(const QJsonObject& obj)
 {
+    const bool incomplete = t_LastReadIncomplete;
+    t_LastReadIncomplete = false;
+    if (incomplete) {
+        Logger::warning("[AppSettings] Not writing " + m_FilePath +
+                        ": its last read failed, and the write would replace what it holds");
+        return;
+    }
     // QSaveFile, not a plain truncate-and-rewrite: this file is read by other
     // processes while we run — the Windows installer reads it to decide which
     // wizard pages are already answered — and a truncating write leaves it empty
@@ -2062,9 +2133,13 @@ static QString generateLocalKey()
 
 QString AppSettings::localKey()
 {
-    QJsonObject obj = readAll();
+    bool complete = false;
+    QJsonObject obj = readAll(&complete);
     QString key = obj.value("local_key").toString();
     if (!key.isEmpty()) return key;
+    // A key is only made for a file read whole: one that could not be read may
+    // well hold one already.
+    if (!complete) return {};
 
     key = generateLocalKey();
     obj["local_key"] = key;
@@ -2074,7 +2149,9 @@ QString AppSettings::localKey()
 
 QString AppSettings::rotateLocalKey()
 {
-    QJsonObject obj = readAll();
+    bool complete = false;
+    QJsonObject obj = readAll(&complete);
+    if (!complete) return {}; // could not be saved: the stored key stays
     const QString key = generateLocalKey();
     obj["local_key"] = key;
     writeAll(obj);
@@ -2085,7 +2162,11 @@ QString AppSettings::rotateLocalKey()
 
 QByteArray AppSettings::hostSigningKeyPem()
 {
-    QJsonObject obj = readAll();
+    bool complete = false;
+    QJsonObject obj = readAll(&complete);
+    // As for the local key: a file that could not be read may well hold the
+    // key every paired browser knows, so none is made in its place.
+    if (!complete) return {};
     const QString stored = obj.value("host_signing_key").toString();
     if (!stored.isEmpty()) {
         const QByteArray pem = QByteArray::fromBase64(stored.toUtf8());

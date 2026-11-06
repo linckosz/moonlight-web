@@ -3,6 +3,7 @@
  */
 #include "test_framework.h"
 #include "server/AppSettings.h"
+#include "common/Logger.h"
 
 #include "mw/native/VideoPipeline.h"
 
@@ -12,6 +13,57 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDir>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+namespace {
+// Holds a file so that nobody else can read it, for as long as it lives, while
+// it can still be replaced by a rename: a handle shared for delete only on
+// Windows, no permissions elsewhere. held() is false where that does not stop
+// this process (running as root).
+class FileHold
+{
+public:
+    explicit FileHold(const QString& path)
+        : m_Path(path)
+    {
+#ifdef Q_OS_WIN
+        m_Handle = CreateFileW(
+            reinterpret_cast<const wchar_t*>(QDir::toNativeSeparators(path).utf16()), GENERIC_READ,
+            FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+#else
+        m_Perms = QFile::permissions(path);
+        QFile::setPermissions(path, QFileDevice::Permissions{});
+#endif
+        QFile probe(path);
+        m_Held = !probe.open(QIODevice::ReadOnly);
+    }
+    ~FileHold()
+    {
+#ifdef Q_OS_WIN
+        if (m_Handle != INVALID_HANDLE_VALUE) CloseHandle(m_Handle);
+#else
+        QFile::setPermissions(m_Path, m_Perms);
+#endif
+    }
+    bool held() const { return m_Held; }
+
+private:
+    QString m_Path;
+    bool m_Held = false;
+#ifdef Q_OS_WIN
+    HANDLE m_Handle = INVALID_HANDLE_VALUE;
+#else
+    QFileDevice::Permissions m_Perms;
+#endif
+};
+} // namespace
 
 void run_app_settings_tests()
 {
@@ -847,5 +899,95 @@ void run_app_settings_tests()
         AppSettings::setFileOverride(QString());
         CHECK(AppSettings::fileOverride().isEmpty());
         CHECK_EQ(AppSettings().filePath(), defaultPath);
+    }
+
+    SECTION("AppSettings: a file that cannot be read is never written over");
+    {
+        AppSettings h;
+        h.m_FilePath = tmp.path() + "/held/settings.json";
+        QDir().mkpath(tmp.path() + "/held");
+        h.setHttpPort(81);
+        const QString key = h.localKey();
+        const QByteArray signing = h.hostSigningKeyPem();
+        CHECK(!key.isEmpty());
+        CHECK(!signing.isEmpty());
+        bool complete = false;
+        CHECK_EQ(h.readAll(&complete).value("http_port").toInt(), 81);
+        CHECK(complete);
+
+        bool held = false;
+        {
+            FileHold hold(h.m_FilePath);
+            held = hold.held();
+            if (held) {
+                h.setHttpsPort(9443);          // not written
+                CHECK(h.localKey().isEmpty()); // none made in its place
+                CHECK(h.hostSigningKeyPem().isEmpty());
+                CHECK(h.rotateLocalKey().isEmpty());
+                h.readAll(&complete);
+                CHECK(!complete);
+            } else {
+                Logger::info("[test] the file could not be held here: skipping the held part");
+            }
+        }
+        if (held) {
+            // The file reads again by the time the write comes: what that read
+            // missed is still not written over it.
+            QJsonObject one;
+            one["https_port"] = 9443;
+            h.writeAll(one);
+        }
+
+        CHECK_EQ(h.httpPort(1), quint16(81));
+        CHECK_EQ(h.httpsPort(1), quint16(1));
+        CHECK_EQ(h.localKey(), key);
+        CHECK(h.hostSigningKeyPem() == signing);
+        h.setHttpsPort(9443); // and written again once it reads
+        CHECK_EQ(h.httpsPort(1), quint16(9443));
+        CHECK_EQ(h.httpPort(1), quint16(81));
+
+        // A missing file and an empty one hold nothing: read whole, written freely.
+        AppSettings e;
+        e.m_FilePath = tmp.path() + "/held/none.json";
+        e.readAll(&complete);
+        CHECK(complete);
+        QFile empty(e.m_FilePath);
+        CHECK(empty.open(QIODevice::WriteOnly));
+        empty.close();
+        e.readAll(&complete);
+        CHECK(complete);
+        e.setHttpPort(82);
+        CHECK_EQ(e.httpPort(1), quint16(82));
+    }
+
+    SECTION("AppSettings: a file that is not a settings document is kept aside");
+    {
+        const QString dir = tmp.path() + "/bad";
+        QDir().mkpath(dir);
+        AppSettings b;
+        b.m_FilePath = dir + "/settings.json";
+        for (const QByteArray& content :
+             {QByteArray("{\"http_port\": 81,"), QByteArray("[1, 2]")}) {
+            for (const QFileInfo& old : QDir(dir).entryInfoList(QDir::Files))
+                QFile::remove(old.absoluteFilePath());
+            QFile f(b.m_FilePath);
+            CHECK(f.open(QIODevice::WriteOnly));
+            f.write(content);
+            f.close();
+
+            bool complete = false;
+            CHECK(b.readAll(&complete).isEmpty());
+            CHECK(complete);
+            const QStringList aside =
+                QDir(dir).entryList({"settings.json.unreadable-*"}, QDir::Files);
+            CHECK_EQ(aside.size(), 1);
+            if (!aside.isEmpty()) {
+                QFile kept(dir + "/" + aside.first());
+                CHECK(kept.open(QIODevice::ReadOnly));
+                CHECK(kept.readAll() == content);
+            }
+            b.setHttpPort(83); // starts from the defaults
+            CHECK_EQ(b.httpPort(1), quint16(83));
+        }
     }
 }

@@ -1064,7 +1064,12 @@ public:
     /// Read the entire settings JSON object.
     QJsonObject readAll() const;
 
-    /// Write back a full JSON object.
+    /// The same, saying whether the file's content was read: false when the
+    /// file is there but could not be read. Such a read is never written back.
+    QJsonObject readAll(bool* complete) const;
+
+    /// Write back a full JSON object. Refused when this thread's last read
+    /// was not complete.
     void writeAll(const QJsonObject& obj);
 
     /// Full path to settings.json.

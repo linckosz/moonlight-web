@@ -877,7 +877,7 @@ bool ShareManager::constantTimeEquals(const QString& a, const QString& b)
     const QByteArray ba = a.toUtf8();
     const QByteArray bb = b.toUtf8();
     const int n = qMax(ba.size(), bb.size());
-    quint8 diff = static_cast<quint8>(ba.size() ^ bb.size());
+    quint8 diff = ba.size() == bb.size() ? 0 : 1; // different lengths never match
     for (int i = 0; i < n; ++i) {
         const quint8 ca = i < ba.size() ? static_cast<quint8>(ba[i]) : 0;
         const quint8 cb = i < bb.size() ? static_cast<quint8>(bb[i]) : 0;
