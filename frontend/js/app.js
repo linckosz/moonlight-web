@@ -128,7 +128,12 @@ import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
 import { micRequested, micSupported } from './audio/MicUplink.js';
-import { HOST_KEY_MISSING, KEY_REFUSED, isBindRefusal } from './util/pairingCrypto.js';
+import {
+    HOST_KEY_MISSING,
+    KEY_REFUSED,
+    isBindRefusal,
+    noteLocalPrivilege,
+} from './util/pairingCrypto.js';
 import {
     startTunnel,
     tunnelHostId,
@@ -1552,6 +1557,9 @@ export const MoonlightApp = {
     /** What /api/auth/status says this browser may do here. */
     _readAccess(status) {
         this._hasAdminAccess = !!status.is_localhost;
+        // Which offers a transport may take without the host's key: see
+        // mayTakeUncheckedOffer.
+        noteLocalPrivilege(status.is_localhost);
         this._isRealHostMachine = !!status.is_host_machine;
         // A LAN machine the operator gave the admin password to: it may ask
         // for the admin page even though it is not the host.
@@ -1662,6 +1670,28 @@ export const MoonlightApp = {
 
     _reloadPage() {
         window.location.reload();
+    },
+
+    /**
+     * A transport refused an offer for want of the host's key (HOST_KEY_MISSING).
+     * On the LAN the host hands it over to a session it already knows
+     * (BackendClient.ensurePairingKey); the same transport then starts again.
+     * Not got, from the internet for one, the refusal ends the launch with the PIN.
+     */
+    async _askHostKeyThenRelaunch(cur) {
+        let identity = null;
+        try {
+            identity = await BackendClient.ensurePairingKey();
+        } catch {
+            identity = null;
+        }
+        if (this._nav.overlay !== 'streaming' || this._startupAborted) return;
+        if (identity?.hostPublicKey) {
+            console.log('[MW-BIND] Host key collected — starting the same transport again');
+            this._relaunchTransport(cur);
+            return;
+        }
+        this._onTransportFailed(HOST_KEY_MISSING);
     },
 
     /**
@@ -2077,6 +2107,7 @@ export const MoonlightApp = {
             this._transportIndex = 0;
             this._firstTransportRetried = false;
             this._launchRetried = false;
+            this._hostKeyAsked = false;
             // Restarts after a worker crash (stream/CrashRelaunch.js): counted
             // from this launch on.
             this._crashRelaunches = [];
@@ -4111,6 +4142,13 @@ export const MoonlightApp = {
         if (isBindRefusal(reason)) {
             const hostRefusedUs = reason === KEY_REFUSED;
             const noHostKey = reason === HOST_KEY_MISSING;
+            // No key of the host's here: asked for once, the way the boot does on
+            // the LAN, before the PIN. Got, the same transport starts again.
+            if (noHostKey && !this._hostKeyAsked) {
+                this._hostKeyAsked = true;
+                this._askHostKeyThenRelaunch(cur);
+                return;
+            }
             console.error(
                 `[MW] ${chain[cur] || '?'}: ` +
                     (hostRefusedUs

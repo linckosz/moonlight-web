@@ -283,6 +283,7 @@ describe('a key the host refuses, at launch', () => {
             '_hasAdminAccess',
             '_isRealHostMachine',
             '_keyRefusedToast',
+            '_hostKeyAsked',
         ];
 
         beforeEach(() => {
@@ -303,6 +304,9 @@ describe('a key the host refuses, at launch', () => {
                 _hasAdminAccess: false,
                 _isRealHostMachine: false,
                 _keyRefusedToast: null,
+                // The host's key already asked for: the refusal goes straight to
+                // its words. The asking itself has tests of its own below.
+                _hostKeyAsked: true,
             });
             sessionStorage.clear();
             vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -365,6 +369,88 @@ describe('a key the host refuses, at launch', () => {
             expect(options.sticky).toBe(true);
             expect(options.action.label).toBe(t('transport.enterPin'));
         });
+
+        describe('without the host key', () => {
+            const launchSpies = () => ({
+                relaunch: vi.spyOn(MoonlightApp, '_relaunchTransport').mockImplementation(() => {}),
+                ended: vi.spyOn(MoonlightApp, '_endAfterFailedLaunch').mockImplementation(() => {}),
+                toast: vi.spyOn(Toast, 'error').mockImplementation(() => ({ dismiss: vi.fn() })),
+            });
+
+            it('asks the host for its key once, and starts the same transport again', async () => {
+                MoonlightApp._hostKeyAsked = false;
+                MoonlightApp._transportIndex = 1;
+                const { relaunch, ended, toast } = launchSpies();
+                const ask = vi
+                    .spyOn(BackendClient, 'ensurePairingKey')
+                    .mockResolvedValue({ hostPublicKey: 'AAAA' });
+
+                MoonlightApp._onTransportFailed(HOST_KEY_MISSING);
+                await vi.waitFor(() => expect(relaunch).toHaveBeenCalledTimes(1));
+
+                expect(ask).toHaveBeenCalledTimes(1);
+                expect(relaunch).toHaveBeenCalledWith(1);
+                expect(ended).not.toHaveBeenCalled();
+                expect(toast).not.toHaveBeenCalled();
+            });
+
+            it('offers the PIN when the host gives no key, and asks only once', async () => {
+                MoonlightApp._hostKeyAsked = false;
+                const { relaunch, ended, toast } = launchSpies();
+                const ask = vi
+                    .spyOn(BackendClient, 'ensurePairingKey')
+                    .mockResolvedValue({ hostPublicKey: null });
+
+                MoonlightApp._onTransportFailed(HOST_KEY_MISSING);
+                await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1));
+                MoonlightApp._onTransportFailed(HOST_KEY_MISSING);
+
+                expect(ask).toHaveBeenCalledTimes(1);
+                expect(relaunch).not.toHaveBeenCalled();
+                expect(toast.mock.calls[0][0]).toBe(t('transport.hostKeyMissing'));
+                expect(toast.mock.calls[0][1].action.label).toBe(t('transport.enterPin'));
+            });
+
+            it('offers the PIN when asking fails outright', async () => {
+                MoonlightApp._hostKeyAsked = false;
+                const { ended, toast } = launchSpies();
+                vi.spyOn(BackendClient, 'ensurePairingKey').mockRejectedValue(new Error('down'));
+
+                MoonlightApp._onTransportFailed(HOST_KEY_MISSING);
+                await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1));
+
+                expect(toast.mock.calls[0][0]).toBe(t('transport.hostKeyMissing'));
+            });
+
+            it('does nothing once the stream was left while the host answered', async () => {
+                MoonlightApp._hostKeyAsked = false;
+                const { relaunch, ended } = launchSpies();
+                let answer;
+                vi.spyOn(BackendClient, 'ensurePairingKey').mockReturnValue(
+                    new Promise((r) => (answer = r)),
+                );
+
+                MoonlightApp._onTransportFailed(HOST_KEY_MISSING);
+                MoonlightApp._nav = { ...MoonlightApp._nav, overlay: null };
+                answer({ hostPublicKey: 'AAAA' });
+                await new Promise((r) => setTimeout(r, 0));
+
+                expect(relaunch).not.toHaveBeenCalled();
+                expect(ended).not.toHaveBeenCalled();
+            });
+        });
+
+        it.each([
+            [true, true],
+            [false, false],
+        ])(
+            'on this LAN page, takes an unchecked offer when is_localhost is %s: %s',
+            (isLocalhost, may) => {
+                MoonlightApp._readAccess({ is_localhost: isLocalhost });
+                expect(pairing.mayTakeUncheckedOffer()).toBe(may);
+                pairing.noteLocalPrivilege(false);
+            },
+        );
 
         it('offers no PIN for a host that failed to prove itself', () => {
             const toast = refusedToast();

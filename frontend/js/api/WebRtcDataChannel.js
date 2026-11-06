@@ -28,6 +28,7 @@ import {
     IDENTITY_REFUSED,
     KEY_REFUSED,
     HOST_KEY_MISSING,
+    mayTakeUncheckedOffer,
     isBindRefusedClose,
 } from '../util/pairingCrypto.js';
 import { defaultIceServers } from './IceServers.js';
@@ -1241,12 +1242,7 @@ export class WebRtcDataChannel {
                 return;
             }
             console.log('[MW-BIND] Host signature verified');
-        } else if (!msg.nonce) {
-            // The host did not sign, so this session has no pairing key bound.
-            // Normal on the host machine itself, which gets local privilege
-            // without a session — and where no relay exists to guard against.
-            console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
-        } else if (this._mwBind) {
+        } else if (this._mwBind && msg.nonce) {
             // The host signed but we have no identity to check it against: our
             // stored record is incomplete (site data cleared, or paired before
             // the host had a key). Final, like a signature that fails: see
@@ -1254,6 +1250,18 @@ export class WebRtcDataChannel {
             console.error('[MW-BIND] No stored host identity — refusing an offer it cannot check');
             this._onError(HOST_KEY_MISSING);
             return;
+        } else if (!this._unpairedGuest && !mayTakeUncheckedOffer()) {
+            // No host key, and not the host machine: nothing here says who sent
+            // this offer, signed or not. Final too: see mayTakeUncheckedOffer.
+            console.error('[MW-BIND] No stored host identity off the host machine — refusing');
+            this._onError(HOST_KEY_MISSING);
+            return;
+        } else if (!msg.nonce) {
+            // The host did not sign, so this session has no pairing key bound.
+            // Normal on the host machine itself, which gets local privilege
+            // without a session — and where no relay exists to guard against —
+            // and for a share-link guest, which is never paired.
+            console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
         }
 
         // Safety net: if ice-config never arrived, create PC now.

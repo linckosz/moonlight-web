@@ -29,6 +29,7 @@ import {
     IDENTITY_REFUSED,
     KEY_REFUSED,
     HOST_KEY_MISSING,
+    mayTakeUncheckedOffer,
     isBindRefusedClose,
 } from '../util/pairingCrypto.js';
 import { defaultIceServers } from './IceServers.js';
@@ -774,16 +775,21 @@ export class WebRtcMedia {
                 return;
             }
             console.log('[MW-BIND] Host signature verified');
-        } else if (!msg.nonce) {
-            // The host did not sign: this session has no pairing key bound.
-            // Normal on the host machine itself (local privilege, no session),
-            // where there is no relay to guard against anyway.
-            console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
-        } else if (this._mwBind) {
+        } else if (this._mwBind && msg.nonce) {
             // Signed, with no host key here to check it: final, see HOST_KEY_MISSING.
             console.error('[MW-BIND] No stored host identity — refusing an offer it cannot check');
             this._onError(HOST_KEY_MISSING);
             return;
+        } else if (!this._unpairedGuest && !mayTakeUncheckedOffer()) {
+            // No host key, and not the host machine: final, see mayTakeUncheckedOffer.
+            console.error('[MW-BIND] No stored host identity off the host machine — refusing');
+            this._onError(HOST_KEY_MISSING);
+            return;
+        } else if (!msg.nonce) {
+            // The host did not sign: this session has no pairing key bound.
+            // Normal on the host machine itself (local privilege, no session),
+            // where there is no relay to guard against anyway, and for a guest.
+            console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
         }
 
         try {

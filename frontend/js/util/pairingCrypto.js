@@ -79,12 +79,49 @@ export const IDENTITY_REFUSED = 'identity_refused';
 export const KEY_REFUSED = 'key_refused';
 
 /**
- * The host signed its offer, and this browser holds no key of the host's to check
- * the signature with: its stored record lost it, or was made before the host had
- * one. A signature nobody can check proves nothing, so the launch ends here too,
- * and a PIN brings the host's key back.
+ * This browser holds no key of the host's to check its offer with: its stored
+ * record lost it, or was made before the host had one. Off the host machine (see
+ * mayTakeUncheckedOffer) an offer nobody can check proves nothing, signed or not,
+ * so the launch ends here too, and a PIN brings the host's key back.
  */
 export const HOST_KEY_MISSING = 'host_key_missing';
+
+/** What /api/auth/status last said of this browser: local privilege here. */
+let localPrivilegeSaid = false;
+
+/** Records what /api/auth/status says (is_localhost), for mayTakeUncheckedOffer. */
+export function noteLocalPrivilege(isLocalhost) {
+    localPrivilegeSaid = !!isLocalhost;
+}
+
+/** Whether a page's hostname is a private LAN address: an IPv4 or IPv6 literal. */
+export function isPrivateLanHostname(hostname) {
+    const h = String(hostname || '')
+        .replace(/^\[|\]$/g, '')
+        .toLowerCase();
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+    if (v4) {
+        const a = Number(v4[1]);
+        const b = Number(v4[2]);
+        return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+    }
+    // fc00::/7 (unique local) and fe80::/10 (link-local).
+    return /^(f[cd][0-9a-f]{0,2}|fe[89ab][0-9a-f]?):/.test(h);
+}
+
+/**
+ * Whether this page may take an offer it has no host key to check: on the host
+ * machine only, where no relay can sit in front of it. Known by the page's own
+ * address (localhost, 127.0.0.1, ::1); on a private LAN address, by the host's
+ * word that this browser has local privilege there. Anywhere else a browser
+ * without the host's key gets it first: on the LAN by ensurePairingKey, or by
+ * the PIN.
+ */
+export function mayTakeUncheckedOffer(hostname = globalThis.location?.hostname) {
+    const h = String(hostname || '').toLowerCase();
+    if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]') return true;
+    return localPrivilegeSaid && isPrivateLanHostname(h);
+}
 
 /** Whichever way round, the launch ends here: see IDENTITY_REFUSED. */
 export function isBindRefusal(reason) {
