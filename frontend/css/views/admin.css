@@ -58,6 +58,12 @@
     font-size: var(--fs-xs);
     color: var(--text-3);
 }
+/* The host's code: 26 characters read off a screen and typed on a remote, so
+   in the address rows' monospace, one character per cell. */
+.admin-host-code-input {
+    font-family: var(--font-mono);
+    letter-spacing: 0.08em;
+}
 .pin-consumed-hint {
     color: var(--c-warning);
     font-weight: 500;

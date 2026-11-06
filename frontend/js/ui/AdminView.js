@@ -939,6 +939,7 @@ export class AdminView {
                                           ? t('admin.rendezvousOffline')
                                           : t('admin.rendezvousReady')
                                 }</p>
+                                ${this._renderHostCode()}
                     `
                             : ''
                     }
@@ -1648,6 +1649,29 @@ export class AdminView {
                         sel.removeAllRanges();
                         sel.addRange(range);
                     }
+                }
+            });
+        }
+
+        // The code alone, for the Connect page and the TV app.
+        const copyCode = this.container.querySelector('#btn-copy-host-code');
+        const codeInput = /** @type {HTMLInputElement|null} */ (
+            this.container.querySelector('#admin-host-code-input')
+        );
+        if (codeInput) codeInput.addEventListener('focus', () => codeInput.select());
+        if (copyCode && codeInput) {
+            copyCode.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(codeInput.value);
+                    copyCode.textContent = t('common.copied');
+                    setTimeout(() => {
+                        copyCode.textContent = t('common.copy');
+                    }, 2000);
+                } catch (err) {
+                    console.warn('[Admin] Clipboard write failed:', err);
+                    // Selected, it can still be copied by hand.
+                    codeInput.focus();
+                    codeInput.select();
                 }
             });
         }
@@ -2413,6 +2437,46 @@ export class AdminView {
     // Always there, for the diagnostics. The picture chain only where the
     // choice means something: the server says whether this machine has a GPU
     // with a chain to choose.
+    /**
+     * This machine's code: the rendezvous id the link ends with. The Connect
+     * page and the TV app both ask for it, on devices where a whole link is
+     * painful to type, so it is shown on its own, in capitals (Crockford
+     * base32 reads them best: no I, L, O or U to mistake), with its own copy
+     * button. Both readers fold case. Nothing is shown for a link that does
+     * not end with a well-formed code.
+     * @returns {string} the code in capitals, or ''
+     */
+    _hostCode() {
+        let path = '';
+        try {
+            path = new URL(this._rendezvousUrl).pathname;
+        } catch (_) {
+            return '';
+        }
+        const last = path.split('/').filter(Boolean).pop() || '';
+        return /^[0-9abcdefghjkmnpqrstvwxyz]{26}$/i.test(last) ? last.toUpperCase() : '';
+    }
+
+    _renderHostCode() {
+        const code = this._hostCode();
+        if (!code) return '';
+        return `
+                                <div class="settings-field" id="admin-host-code">
+                                    <label class="settings-label" for="admin-host-code-input">
+                                        ${t('admin.hostCode')}
+                                    </label>
+                                    <div class="u-row">
+                                        <input type="text" id="admin-host-code-input"
+                                               class="settings-input u-grow admin-host-code-input"
+                                               readonly autocomplete="off" spellcheck="false"
+                                               value="${this.esc(code)}" />
+                                        <button class="btn btn-secondary u-shrink-0" id="btn-copy-host-code"
+                                                type="button">${t('common.copy')}</button>
+                                    </div>
+                                    <p class="settings-hint">${t('admin.hostCodeHint')}</p>
+                                </div>`;
+    }
+
     _renderAdvanced() {
         return `
                 <!-- Advanced -->
