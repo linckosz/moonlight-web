@@ -6328,7 +6328,8 @@ int main(int argc, char* argv[])
     // Announce this server on the LAN (_moonlightweb._tcp), so the TV app finds
     // it without typing an address. Through the OS's own mDNS responder: binding
     // UDP 5353 ourselves for good is what ComputerManager avoids. Its TXT record
-    // carries the name this install goes by, as it stands at start.
+    // carries the name this install goes by, read here once: a rename in the
+    // admin page reaches the announcement at the next start of the server.
     MdnsAdvertiser mdnsAdvertiser;
     mdnsAdvertiser.start(
         MdnsAdvertiser::instanceName(QSysInfo::machineHostName(), mw::edition::isDev()),
