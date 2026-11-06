@@ -78,9 +78,17 @@ export const IDENTITY_REFUSED = 'identity_refused';
  */
 export const KEY_REFUSED = 'key_refused';
 
-/** Either way round, the launch ends here: see IDENTITY_REFUSED. */
+/**
+ * The host signed its offer, and this browser holds no key of the host's to check
+ * the signature with: its stored record lost it, or was made before the host had
+ * one. A signature nobody can check proves nothing, so the launch ends here too,
+ * and a PIN brings the host's key back.
+ */
+export const HOST_KEY_MISSING = 'host_key_missing';
+
+/** Whichever way round, the launch ends here: see IDENTITY_REFUSED. */
 export function isBindRefusal(reason) {
-    return reason === IDENTITY_REFUSED || reason === KEY_REFUSED;
+    return reason === IDENTITY_REFUSED || reason === KEY_REFUSED || reason === HOST_KEY_MISSING;
 }
 
 /**

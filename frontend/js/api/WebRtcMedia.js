@@ -28,6 +28,7 @@ import {
     extractFingerprint,
     IDENTITY_REFUSED,
     KEY_REFUSED,
+    HOST_KEY_MISSING,
     isBindRefusedClose,
 } from '../util/pairingCrypto.js';
 import { defaultIceServers } from './IceServers.js';
@@ -779,7 +780,10 @@ export class WebRtcMedia {
             // where there is no relay to guard against anyway.
             console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
         } else if (this._mwBind) {
-            console.warn('[MW-BIND] No stored host identity — cannot verify this offer');
+            // Signed, with no host key here to check it: final, see HOST_KEY_MISSING.
+            console.error('[MW-BIND] No stored host identity — refusing an offer it cannot check');
+            this._onError(HOST_KEY_MISSING);
+            return;
         }
 
         try {

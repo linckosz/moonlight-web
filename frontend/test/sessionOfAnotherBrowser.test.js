@@ -23,7 +23,12 @@ import { t } from '../js/i18n/i18n.js';
 import { WebRtcDataChannel } from '../js/api/WebRtcDataChannel.js';
 import { WebRtcMedia } from '../js/api/WebRtcMedia.js';
 import * as pairing from '../js/util/pairingCrypto.js';
-import { IDENTITY_REFUSED, KEY_REFUSED, isBindRefusal } from '../js/util/pairingCrypto.js';
+import {
+    HOST_KEY_MISSING,
+    IDENTITY_REFUSED,
+    KEY_REFUSED,
+    isBindRefusal,
+} from '../js/util/pairingCrypto.js';
 
 function refusalFromHost(statusCode) {
     const err = new Error('refused');
@@ -138,7 +143,9 @@ describe('the boot of a page holding such a session', () => {
     describe('after the person asked for the PIN screen', () => {
         beforeEach(() => {
             sessionStorage.setItem('mw_pin_asked', '1');
-            vi.spyOn(BackendClient, 'ensurePairingKey').mockResolvedValue({ hostPublicKey: 'a2V5' });
+            vi.spyOn(BackendClient, 'ensurePairingKey').mockResolvedValue({
+                hostPublicKey: 'a2V5',
+            });
         });
         afterEach(() => sessionStorage.clear());
 
@@ -235,17 +242,21 @@ describe('a key the host refuses, at launch', () => {
         }
     });
 
-    it('counts both refusals as the same final one', () => {
+    it('counts every refusal as the same final one', () => {
         expect(isBindRefusal(IDENTITY_REFUSED)).toBe(true);
         expect(isBindRefusal(KEY_REFUSED)).toBe(true);
+        expect(isBindRefusal(HOST_KEY_MISSING)).toBe(true);
         expect(isBindRefusal('launch_failed')).toBe(false);
         expect(isBindRefusal(undefined)).toBe(false);
     });
 
-    it.each([IDENTITY_REFUSED, KEY_REFUSED])('%s leaves a guest no other rung', (reason) => {
-        const chain = ['webrtc-dc-udp', 'webrtc-dc-tcp', 'wss'];
-        expect(MoonlightApp._guestNextRung(reason, 0, chain)).toBeNull();
-    });
+    it.each([IDENTITY_REFUSED, KEY_REFUSED, HOST_KEY_MISSING])(
+        '%s leaves a guest no other rung',
+        (reason) => {
+            const chain = ['webrtc-dc-udp', 'webrtc-dc-tcp', 'wss'];
+            expect(MoonlightApp._guestNextRung(reason, 0, chain)).toBeNull();
+        },
+    );
 
     it('lets a guest walk on after any other failure, to the end of the chain', () => {
         const chain = ['webrtc-dc-udp', 'wss'];
@@ -305,6 +316,7 @@ describe('a key the host refuses, at launch', () => {
         it.each([
             [KEY_REFUSED, 'transport.keyRefused'],
             [IDENTITY_REFUSED, 'transport.identityRefused'],
+            [HOST_KEY_MISSING, 'transport.hostKeyMissing'],
         ])('%s ends the launch, says %s, and tries no other transport', async (reason, words) => {
             const relaunch = vi
                 .spyOn(MoonlightApp, '_relaunchTransport')
@@ -343,6 +355,15 @@ describe('a key the host refuses, at launch', () => {
             expect(sessionStorage.getItem('mw_pin_asked')).toBe('1');
             expect(reload).toHaveBeenCalledTimes(1);
             expect(logout).not.toHaveBeenCalled();
+        });
+
+        it('offers the PIN screen too when this browser holds no key of the host', () => {
+            const toast = refusedToast();
+            MoonlightApp._onTransportFailed(HOST_KEY_MISSING);
+            const options = toast.mock.calls[0][1];
+            expect(toast.mock.calls[0][0]).toBe(t('transport.hostKeyMissing'));
+            expect(options.sticky).toBe(true);
+            expect(options.action.label).toBe(t('transport.enterPin'));
         });
 
         it('offers no PIN for a host that failed to prove itself', () => {
@@ -399,6 +420,7 @@ describe('the words', () => {
     it.each(['en', 'fr', 'zh'])('%s has both, and asks for a PIN in each', (lang) => {
         expect(locale(lang).login.sessionOtherBrowser).toMatch(/PIN/);
         expect(locale(lang).transport.keyRefused).toMatch(/PIN/);
+        expect(locale(lang).transport.hostKeyMissing).toMatch(/PIN/);
         expect(locale(lang).transport.enterPin).toMatch(/PIN/);
     });
 

@@ -27,6 +27,7 @@ import {
     extractFingerprint,
     IDENTITY_REFUSED,
     KEY_REFUSED,
+    HOST_KEY_MISSING,
     isBindRefusedClose,
 } from '../util/pairingCrypto.js';
 import { defaultIceServers } from './IceServers.js';
@@ -1248,9 +1249,11 @@ export class WebRtcDataChannel {
         } else if (this._mwBind) {
             // The host signed but we have no identity to check it against: our
             // stored record is incomplete (site data cleared, or paired before
-            // the host had a key). We can still sign our own half, which is what
-            // the host verifies; re-pairing restores the other direction.
-            console.warn('[MW-BIND] No stored host identity — cannot verify this offer');
+            // the host had a key). Final, like a signature that fails: see
+            // HOST_KEY_MISSING. A PIN brings the host's key back.
+            console.error('[MW-BIND] No stored host identity — refusing an offer it cannot check');
+            this._onError(HOST_KEY_MISSING);
+            return;
         }
 
         // Safety net: if ice-config never arrived, create PC now.

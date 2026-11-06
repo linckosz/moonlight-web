@@ -128,7 +128,7 @@ import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
 import { micRequested, micSupported } from './audio/MicUplink.js';
-import { KEY_REFUSED, isBindRefusal } from './util/pairingCrypto.js';
+import { HOST_KEY_MISSING, KEY_REFUSED, isBindRefusal } from './util/pairingCrypto.js';
 import {
     startTunnel,
     tunnelHostId,
@@ -1665,14 +1665,15 @@ export const MoonlightApp = {
     },
 
     /**
-     * Says the host refused this browser's key, once however many launches it took:
-     * the words stay until read. The host machine has no PIN screen to go to, and a
-     * booth refuses a PIN.
+     * Says the host refused this browser's key, or that this browser holds no key of
+     * the host's to check it with: a PIN mends either. Once however many launches it
+     * took: the words stay until read. The host machine has no PIN screen to go to,
+     * and a booth refuses a PIN.
      */
-    _showKeyRefused() {
+    _showKeyRefused(words = 'transport.keyRefused') {
         this._keyRefusedToast?.dismiss();
         const canAskPin = !this._isHostMachine() && !BackendClient.adminLocked;
-        this._keyRefusedToast = Toast.error(t('transport.keyRefused'), {
+        this._keyRefusedToast = Toast.error(t(words), {
             sticky: true,
             action: canAskPin
                 ? { label: t('transport.enterPin'), onClick: () => this._askPinAgain() }
@@ -4109,12 +4110,18 @@ export const MoonlightApp = {
         // three refused attempts and then streamed over wss without a word.
         if (isBindRefusal(reason)) {
             const hostRefusedUs = reason === KEY_REFUSED;
+            const noHostKey = reason === HOST_KEY_MISSING;
             console.error(
                 `[MW] ${chain[cur] || '?'}: ` +
-                    (hostRefusedUs ? 'the host refused our key' : 'the host failed MW-BIND') +
+                    (hostRefusedUs
+                        ? 'the host refused our key'
+                        : noHostKey
+                          ? "no stored key of the host's to check its offer"
+                          : 'the host failed MW-BIND') +
                     ' — ending the launch, no fallback transport',
             );
             if (hostRefusedUs) this._showKeyRefused();
+            else if (noHostKey) this._showKeyRefused('transport.hostKeyMissing');
             else Toast.error(t('transport.identityRefused'));
             this._endAfterFailedLaunch();
             return;

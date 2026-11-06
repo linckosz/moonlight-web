@@ -5,7 +5,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WebRtcDataChannel } from '../js/api/WebRtcDataChannel.js';
 import { WebRtcMedia } from '../js/api/WebRtcMedia.js';
-import { IDENTITY_REFUSED, isBindRefusedClose } from '../js/util/pairingCrypto.js';
+import {
+    HOST_KEY_MISSING,
+    IDENTITY_REFUSED,
+    isBindRefusal,
+    isBindRefusedClose,
+} from '../js/util/pairingCrypto.js';
 
 /**
  * A host that fails MW-BIND must end the launch with IDENTITY_REFUSED — the one
@@ -46,6 +51,70 @@ describe.each([
         // No DTLS state was created for the peer that failed to prove itself.
         expect(createPc).not.toHaveBeenCalled();
         expect(t.pc).toBeNull();
+    });
+
+    // A browser whose stored record holds its own key and none of the host's.
+    const withoutHostKey = () => ({
+        hostPublicKey: null,
+        hostId: 'host-a',
+        keyId: 'k',
+        nonceB: new Uint8Array(32),
+    });
+
+    it('reports HOST_KEY_MISSING for a signed offer it holds no host key to check', async () => {
+        const t = make();
+        const onError = vi.fn();
+        t.onError = onError;
+        const createPc = vi.spyOn(t, '_createPeerConnection').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        t._mwBind = withoutHostKey();
+
+        await t._handleSdpOffer({
+            type: 'offer',
+            sdp: 'v=0\r\na=fingerprint:sha-256 AA:BB\r\n',
+            host_id: 'host-a',
+            nonce: 'bm9uY2U=',
+            sig: 'c2ln',
+        });
+
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError.mock.calls[0][0].message).toBe(HOST_KEY_MISSING);
+        expect(isBindRefusal(HOST_KEY_MISSING)).toBe(true);
+        expect(createPc).not.toHaveBeenCalled();
+        expect(t.pc).toBeNull();
+        vi.restoreAllMocks();
+    });
+
+    it('still takes an unsigned offer, as the host machine is sent', async () => {
+        const t = make();
+        const onError = vi.fn();
+        t.onError = onError;
+        // Stands in for the negotiation, which is not what this looks at.
+        // Kept apart: the error the missing rest of it raises closes the transport.
+        const pc = { setRemoteDescription: vi.fn(async () => {}) };
+        t.pc = pc;
+        vi.stubGlobal(
+            'RTCSessionDescription',
+            class {
+                constructor(init) {
+                    Object.assign(this, init);
+                }
+            },
+        );
+        vi.spyOn(t, '_createPeerConnection').mockImplementation(() => {});
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        t._mwBind = withoutHostKey();
+
+        await t._handleSdpOffer({ type: 'offer', sdp: 'v=0\r\n' });
+
+        expect(pc.setRemoteDescription).toHaveBeenCalledTimes(1);
+        const reasons = onError.mock.calls.map((c) => c[0].message);
+        expect(reasons).not.toContain(HOST_KEY_MISSING);
+        expect(reasons).not.toContain(IDENTITY_REFUSED);
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
     });
 });
 
