@@ -20,13 +20,11 @@
 #include "server/AppSettings.h"
 #include "server/AuthManager.h"
 #include "server/PhonePairing.h"
-#include "server/RequestGuard.h"
 #include "server/RestRouter.h"
 #include "server/SessionCookie.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
 
-#include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -112,12 +110,12 @@ bool mayAskFromElsewhere(const Context& c, const HttpRequest& req)
     return !req.adminLocked && boxTicked(c);
 }
 
-/// Whether @p req may ask, or claim what it asked: from this LAN always, from
-/// anywhere while the administrator allows it. The setting is read only for a
-/// caller from elsewhere.
+/// Whether @p req may ask, or claim what it asked: from this LAN always
+/// (AuthManager::fromThisLan), from anywhere while the administrator allows it.
+/// The setting is read only for a caller from elsewhere.
 bool mayAsk(const Context& c, const HttpRequest& req)
 {
-    return pairRequestFromLan(req) || mayAskFromElsewhere(c, req);
+    return AuthManager::fromThisLan(req) || mayAskFromElsewhere(c, req);
 }
 
 /// Requests from elsewhere live only while the box is ticked: unticked, they
@@ -134,17 +132,6 @@ void dropFromElsewhereOnceUnticked(Context& c)
 }
 
 } // namespace
-
-bool pairRequestFromLan(const HttpRequest& req)
-{
-    if (req.viaTunnel) return AuthManager::isLanAddress(req.clientAddress);
-    if (!req.hostTrusted) return false;
-    if (!AuthManager::isLanAddress(AuthManager::attemptAddress(req.clientAddress, req.headers)))
-        return false;
-    const bool loopback =
-        QHostAddress(AuthManager::cleanClientAddress(req.clientAddress)).isLoopback();
-    return !loopback || RequestGuard::isLocalHostName(req.headers.value(QStringLiteral("host")));
-}
 
 bool writePairRequestInternet(const HttpRequest& req, const QJsonObject& body,
                               AppSettings& settings, QJsonObject& reply)
@@ -165,7 +152,7 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
 
     // POST /api/auth/pair-request — a device asks to be let in, with no PIN.
     //
-    // From this LAN (pairRequestFromLan), or from anywhere while the
+    // From this LAN (AuthManager::fromThisLan), or from anywhere while the
     // administrator allows it (AppSettings::pairRequestInternet, off by
     // default); before any session like the PIN, and under the same lockout.
     // The body names the device's MW-BIND-v1 key and commits to its nonce. On a
@@ -185,7 +172,7 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
         const QString who = AuthManager::attemptAddress(req.clientAddress, req.headers);
         const int locked = c->auth.lockoutSeconds(who);
         if (locked > 0) return lockedOut(locked);
-        const bool fromLan = pairRequestFromLan(req);
+        const bool fromLan = AuthManager::fromThisLan(req);
         if (!fromLan && !mayAskFromElsewhere(*c, req)) return refusal(403, "lan_only");
 
         const QJsonObject body = QJsonDocument::fromJson(req.body).object();

@@ -17,8 +17,10 @@
 
 #include "AuthManager.h"
 #include "AppSettings.h"
+#include "RequestGuard.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
+#include "common/Types.h"
 
 #include <QRandomGenerator>
 #include <QMessageAuthenticationCode>
@@ -422,6 +424,15 @@ QString AuthManager::attemptAddress(const QString& peer, const QMap<QString, QSt
 qint64 AuthManager::rateNow() const
 {
     return m_rateClock ? m_rateClock() : QDateTime::currentSecsSinceEpoch();
+}
+
+bool AuthManager::fromThisLan(const HttpRequest& req)
+{
+    if (req.viaTunnel) return isLanAddress(req.clientAddress);
+    if (!req.hostTrusted) return false;
+    if (!isLanAddress(attemptAddress(req.clientAddress, req.headers))) return false;
+    const bool loopback = QHostAddress(cleanClientAddress(req.clientAddress)).isLoopback();
+    return !loopback || RequestGuard::isLocalHostName(req.headers.value(QStringLiteral("host")));
 }
 
 void AuthManager::cleanupExpired()

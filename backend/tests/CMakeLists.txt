@@ -161,6 +161,9 @@ add_executable(run_tests
     # its routes, driven without the server around them.
     ${_src}/src/server/PhonePairing.cpp
     ${_src}/src/server/routes/PairRequestRoutes.cpp
+    # What a browser may do here, asked before and after a PIN: the route, driven
+    # the same way.
+    ${_src}/src/server/routes/AuthStatusRoute.cpp
     # The local self-signed cert: its key outlives a restart (clients pin it).
     ${_src}/src/server/CertManager.cpp
     ${_src}/src/server/ConnectionGuard.cpp

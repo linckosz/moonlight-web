@@ -29,6 +29,7 @@
 #include <QJsonObject>
 
 class QTimer;
+struct HttpRequest;
 
 /**
  * Session metadata stored server-side keyed by token.
@@ -429,6 +430,16 @@ public:
      *
      *  @p headers are the request's, with lower-case names. */
     static QString attemptAddress(const QString& peer, const QMap<QString, QString>& headers);
+    /** Whether @p req comes from this machine's LAN: the one rule for what is
+     *  given to this LAN alone (routes/PairRequestRoutes.cpp).
+     *
+     *  On a line, by the address ICE settled on: a peer elsewhere cannot make a
+     *  connectivity check to a private address succeed. On a socket, by the
+     *  caller's address (the visitor a proxy on this machine names, see
+     *  attemptAddress) under a Host naming this machine, and from loopback only
+     *  under a name that cannot come from outside (RequestGuard::isLocalHostName):
+     *  a proxy here forwards the internet from loopback, under a public name. */
+    static bool fromThisLan(const HttpRequest& req);
 
     // ── Session persistence ───────────────────────────────────────────────────
     /** Save active sessions to disk (app data directory). */

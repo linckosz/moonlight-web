@@ -63,17 +63,6 @@ struct PairRequestDeps
 /// protocol and what each side may do).
 void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, PairRequestDeps deps);
 
-/// Whether @p req comes from this machine's LAN, where a device may always ask
-/// from; from elsewhere only while the administrator allows it
-/// (AppSettings::pairRequestInternet). On a line, by the address ICE settled
-/// on: a peer elsewhere cannot make a connectivity check to a private address
-/// succeed. On a socket, by the caller's address (the visitor a proxy on this
-/// machine names, see AuthManager::attemptAddress) under a Host naming this
-/// machine, and from loopback only under a name that cannot come from outside
-/// (RequestGuard::isLocalHostName): a proxy here forwards the internet from
-/// loopback, under a public name.
-bool pairRequestFromLan(const HttpRequest& req);
-
 /// POST /api/admin/settings's `pair_request_internet` (the admin page's box for
 /// QR code requests from the internet), written for the administrator alone,
 /// with the right every key of that route asks for (HttpRequest::isLocal).
