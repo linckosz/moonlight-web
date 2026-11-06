@@ -213,6 +213,10 @@ const PIN_ASKED_KEY = 'mw_pin_asked';
 /** This tab has reloaded once after a PIN, for the home-screen shortcut
  *  (App._reloadOnceForHomeScreen): never a second time, whatever follows. */
 const HOME_SCREEN_RELOAD_KEY = 'mw_hs_reloaded';
+/** How long a PIN login waits for the shortcut's manifest before it reloads
+ *  anyway: a request stuck in the tunnel fails only at its own timeout, with
+ *  the screen blank until then. */
+const HOME_SCREEN_HANDOFF_WAIT_MS = 5000;
 /** A screen change seen while a relaunch is on its way is looked at again
  *  this long after (App._onClientScreenChanged), until none is. */
 const SCREEN_RECHECK_MS = 1500;
@@ -1542,6 +1546,23 @@ export const MoonlightApp = {
     },
 
     /**
+     * _offerHomeScreenHandoff, waited for @p ms at most. Resolves what it
+     * resolved, or 'timeout' when the time ran out first; the handoff itself
+     * goes on, and the signed-in start after a reload asks for it again.
+     */
+    async _offerHomeScreenHandoffWithin(ms) {
+        let timer;
+        const late = new Promise((resolve) => {
+            timer = setTimeout(() => resolve('timeout'), ms);
+        });
+        const result = await Promise.race([this._offerHomeScreenHandoff(), late]);
+        clearTimeout(timer);
+        if (result === 'timeout')
+            console.warn(`[MW] Home-screen shortcut not prepared within ${ms} ms`);
+        return result;
+    },
+
+    /**
      * Reload this tab once after a PIN, so that a home-screen shortcut is made
      * from what the page loads signed in (see onSignedIn in _checkAuth).
      *
@@ -1656,8 +1677,11 @@ export const MoonlightApp = {
                 // PIN, without the machine's name or the key; after a reload it
                 // had both. So once the signed-in manifest has been asked for,
                 // ready or not, a page reached through the tunnel reloads, once,
-                // before anything else is drawn.
-                const handoff = await this._offerHomeScreenHandoff();
+                // before anything else is drawn. The wait is bounded: past it the
+                // page reloads anyway, and the signed-in start asks again.
+                const handoff = await this._offerHomeScreenHandoffWithin(
+                    HOME_SCREEN_HANDOFF_WAIT_MS,
+                );
                 if (handoff && this._reloadOnceForHomeScreen()) return;
                 // The host offers its admin page to signed-in sessions only, so
                 // the answer read above, from before the login, never offers it.

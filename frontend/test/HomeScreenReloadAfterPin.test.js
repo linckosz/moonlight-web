@@ -101,11 +101,56 @@ describe('the reload after a PIN, for the home-screen shortcut', () => {
         expect(MoonlightApp._initRouter).toHaveBeenCalledTimes(1);
     });
 
+    it('reloads anyway when the manifest takes too long, and says so', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // Stuck in the tunnel: never answers.
+        vi.spyOn(MoonlightApp, '_offerHomeScreenHandoff').mockReturnValue(new Promise(() => {}));
+        // The real bound, made short so the test does not wait 5 s.
+        const within = MoonlightApp._offerHomeScreenHandoffWithin;
+        vi.spyOn(MoonlightApp, '_offerHomeScreenHandoffWithin').mockImplementation(function () {
+            return within.call(this, 20);
+        });
+        await signIn();
+        expect(MoonlightApp._reloadPage).toHaveBeenCalledTimes(1);
+        expect(MoonlightApp._initRouter).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('not prepared within 20 ms'));
+    });
+
     it('does not reload without a session storage to keep the mark in', () => {
         vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
             throw new Error('storage refused');
         });
         expect(MoonlightApp._reloadOnceForHomeScreen()).toBe(false);
         expect(MoonlightApp._reloadPage).not.toHaveBeenCalled();
+    });
+});
+
+describe('the bounded wait for the home-screen manifest', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it('gives up at 5 s, not before, and leaves no timer behind', async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(MoonlightApp, '_offerHomeScreenHandoff').mockReturnValue(new Promise(() => {}));
+        let settled = null;
+        MoonlightApp._offerHomeScreenHandoffWithin(5000).then((r) => (settled = r));
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(settled).toBe(null);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(settled).toBe('timeout');
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('not prepared within 5000 ms'));
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("answers with the handoff's own result when it comes first", async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(MoonlightApp, '_offerHomeScreenHandoff').mockResolvedValue('ready');
+        expect(await MoonlightApp._offerHomeScreenHandoffWithin(5000)).toBe('ready');
+        expect(warn).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
     });
 });
