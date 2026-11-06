@@ -89,6 +89,7 @@ export class PlayerJoinView {
         this._padWatch = null;
         this._padSig = '';
         this._joinLabel = '';
+        this._enterKey = null;
     }
 
     async start() {
@@ -123,6 +124,7 @@ export class PlayerJoinView {
 
     _shell(inner, artKey) {
         this._stopPadWatch();
+        this._stopEnterKey();
         this.container.innerHTML = `
             <div class="player-page">
                 ${artKey ? `<div class="player-art">${PlayerArt[artKey]}</div>` : ''}
@@ -510,6 +512,47 @@ export class PlayerJoinView {
                 this._startPadWatch();
             }
         });
+        this._startEnterKey(/** @type {HTMLButtonElement} */ (joinBtn));
+    }
+
+    /**
+     * Enter on the join screen presses Join. The PIN was just typed on the
+     * keyboard, and reaching for the mouse for the one button on the page is
+     * a step nobody needs. A focused control (a quality button, the controller
+     * list, the privacy corner) keeps Enter for itself, and so does an open
+     * dialog; the button itself already answers Enter when it has the focus.
+     */
+    _startEnterKey(joinBtn) {
+        this._stopEnterKey();
+        const onKey = (e) => {
+            if (!joinBtn.isConnected) {
+                // The stream replaced the page: this screen is over.
+                this._stopEnterKey();
+                return;
+            }
+            if (e.key !== 'Enter' || e.repeat || e.isComposing || e.defaultPrevented) return;
+            if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+            if (joinBtn.disabled) return;
+            const active = document.activeElement;
+            if (
+                active &&
+                active !== document.body &&
+                active.closest('button, a[href], input, select, textarea, [contenteditable]')
+            ) {
+                return;
+            }
+            if (document.querySelector('[aria-modal="true"]')) return;
+            e.preventDefault();
+            joinBtn.click();
+        };
+        this._enterKey = onKey;
+        document.addEventListener('keydown', onKey);
+    }
+
+    _stopEnterKey() {
+        if (!this._enterKey) return;
+        document.removeEventListener('keydown', this._enterKey);
+        this._enterKey = null;
     }
 
     // ── Controller (invitations that allow a gamepad) ─────────────────────
