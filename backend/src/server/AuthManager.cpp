@@ -242,7 +242,9 @@ void AuthManager::clearPin()
 
 bool AuthManager::hasValidPin() const
 {
-    return m_currentPin != QStringLiteral("------") && !m_currentPin.isEmpty();
+    // A PIN let one device in: the next one is made at once but shown to
+    // nobody, and opens nothing until the administrator asks for a PIN again.
+    return !m_pinConsumed && m_currentPin != QStringLiteral("------") && !m_currentPin.isEmpty();
 }
 
 // ── Certificate Authentication ────────────────────────────────────────────────
@@ -415,9 +417,16 @@ QString AuthManager::attemptAddress(const QString& peer, const QMap<QString, QSt
     return clean;
 }
 
+qint64 AuthManager::rateNow() const
+{
+    return m_rateClock ? m_rateClock() : QDateTime::currentSecsSinceEpoch();
+}
+
 void AuthManager::cleanupExpired()
 {
-    qint64 now = QDateTime::currentSecsSinceEpoch();
+    // One failure forgiven per 10 minutes without a new one, by the clock: how
+    // often this runs, and for whom, changes nothing.
+    const qint64 now = rateNow();
     QMutableHashIterator<QString, RateLimitEntry> it(m_rateLimits);
     while (it.hasNext()) {
         it.next();
@@ -426,12 +435,10 @@ void AuthManager::cleanupExpired()
         // If currently locked out, skip
         if (e.lockoutUntilEpoch > now) continue;
 
-        // If last failure was more than 10 minutes ago, decrement
-        qint64 secsSinceFailure =
-            e.lastFailure.isValid() ? now - e.lastFailure.toSecsSinceEpoch() : 600;
-
-        if (secsSinceFailure >= 600) { // 10 minutes
-            e.failures = qMax(0, e.failures - 1);
+        const qint64 steps = (now - e.decayFromEpoch) / RATE_DECAY_SECS;
+        if (steps > 0) {
+            e.failures = static_cast<int>(qMax<qint64>(0, e.failures - steps));
+            e.decayFromEpoch += steps * RATE_DECAY_SECS;
         }
 
         // Remove entries with no failures
@@ -443,7 +450,7 @@ int AuthManager::bucketLockout(const QString& bucket) const
 {
     auto it = m_rateLimits.find(bucket);
     if (it == m_rateLimits.end()) return 0;
-    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const qint64 now = rateNow();
     if (it->lockoutUntilEpoch > now) return static_cast<int>(it->lockoutUntilEpoch - now);
     return 0;
 }
@@ -467,7 +474,7 @@ AuthManager::ValidateResult AuthManager::recordAttempt(const QString& bucket, bo
                                                        const QString& ip, const QString& what)
 {
     auto& entry = m_rateLimits[bucket]; // Creates entry if not exists
-    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const qint64 now = rateNow();
 
     if (matched) {
         // Success: reset all counters
@@ -478,7 +485,7 @@ AuthManager::ValidateResult AuthManager::recordAttempt(const QString& bucket, bo
     }
 
     entry.failures++;
-    entry.lastFailure = QDateTime::currentDateTime();
+    entry.decayFromEpoch = now;
 
     // Apply lockout based on failure count
     if (entry.failures >= 10) {

@@ -41,6 +41,66 @@ void run_auth_manager_tests()
     CHECK(auth.validatePin("198.51.100.11", pin.left(pin.size() - 1)).result != AuthManager::Valid);
     CHECK(auth.validatePin("198.51.100.11", pin).result == AuthManager::Valid);
 
+    // The PIN made after one was used is shown to nobody, and opens nothing
+    // until the administrator asks for a PIN again.
+    {
+        AppSettings used;
+        used.m_FilePath = tmp.path() + "/used-pin.json";
+        AuthManager a(&used);
+        const QString first = a.generatePin();
+        CHECK(a.validatePin("198.51.100.30", first).result == AuthManager::Valid);
+        a.autoRegeneratePin();
+        CHECK(a.isPinConsumed());
+        CHECK(!a.hasValidPin());
+        CHECK(a.validatePin("198.51.100.31", a.currentPin()).result != AuthManager::Valid);
+        CHECK(a.validatePin("198.51.100.32", first).result != AuthManager::Valid);
+        const QString fresh = a.generatePin();
+        CHECK(a.hasValidPin());
+        CHECK(a.validatePin("198.51.100.33", fresh).result == AuthManager::Valid);
+    }
+
+    // A failure is forgiven once per 10 minutes without a new one, by the clock:
+    // attempts from other addresses do not wind a bucket back faster.
+    {
+        AppSettings rl;
+        rl.m_FilePath = tmp.path() + "/rate.json";
+        AuthManager a(&rl);
+        a.generatePin();
+        qint64 now = 1'900'000'000;
+        a.setRateClockForTesting([&now] { return now; });
+        const QString target = "203.0.113.50";
+        for (int i = 0; i < 3; ++i)
+            a.validatePin(target, "wrong-pin");
+        CHECK_EQ(a.failedAttemptCount(target), 3);
+        CHECK(a.isRateLimited(target));
+        now += 31;
+        CHECK(!a.isRateLimited(target));
+
+        int other = 1;
+        const auto fromOthers = [&](int n) {
+            for (int i = 0; i < n; ++i, ++other) {
+                const QString ip = QString("198.18.%1.%2").arg(other / 250).arg(other % 250 + 1);
+                a.validatePin(ip, "wrong-pin");
+            }
+        };
+        fromOthers(20);
+        CHECK_EQ(a.failedAttemptCount(target), 3); // under 10 minutes: nothing forgiven
+
+        now += 600 - 31; // 10 minutes after the last failure
+        fromOthers(20);
+        CHECK_EQ(a.failedAttemptCount(target), 2);
+        now += 599;
+        fromOthers(20);
+        CHECK_EQ(a.failedAttemptCount(target), 2);
+        now += 1;
+        fromOthers(1);
+        CHECK_EQ(a.failedAttemptCount(target), 1);
+        now += 3 * 600; // a long quiet: every step it covers, once
+        fromOthers(1);
+        CHECK_EQ(a.failedAttemptCount(target), 0);
+        a.setRateClockForTesting({});
+    }
+
     // clearPin invalidates.
     auth.clearPin();
     CHECK(!auth.hasValidPin());

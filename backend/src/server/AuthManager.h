@@ -20,6 +20,7 @@
 #include <QObject>
 #include <QHash>
 #include <QMap>
+#include <functional>
 #include <optional>
 #include <QDateTime>
 #include <QByteArray>
@@ -110,7 +111,7 @@ public:
     // ── PIN management ─────────────────────────────────────────────────────
     QString generatePin();
     QString currentPin() const { return m_currentPin; }
-    bool hasValidPin() const; // true if a real PIN has been generated
+    bool hasValidPin() const; // true if a PIN is shown and not yet used
     void clearPin();          // reset PIN to "--------" (invalid)
     void regeneratePin();     // generates new PIN + invalidates all sessions
 
@@ -417,6 +418,13 @@ public:
     int activeSessionCount() const { return m_sessions.size(); }
     int failedAttemptCount(const QString& ip) const;
 
+    /// The clock of the attempt counters and lockouts, in seconds since the
+    /// epoch. For tests; empty puts back the wall clock.
+    void setRateClockForTesting(std::function<qint64()> nowSecs)
+    {
+        m_rateClock = std::move(nowSecs);
+    }
+
 signals:
     void pinChanged(const QString& newPin);
     void sessionCreated(const QString& ip, const QString& machineName);
@@ -432,9 +440,14 @@ private:
     struct RateLimitEntry
     {
         int failures = 0;
-        QDateTime lastFailure;
+        // One failure is forgiven per RATE_DECAY_SECS without a new one,
+        // counted from here: the last failure, then each step forgiven.
+        qint64 decayFromEpoch = 0;
         long long lockoutUntilEpoch = 0;
     };
+    static constexpr qint64 RATE_DECAY_SECS = 600;
+    std::function<qint64()> m_rateClock; // tests only; the wall clock otherwise
+    qint64 rateNow() const;
 
     AppSettings* m_settings = nullptr;
     QString m_currentPin;
