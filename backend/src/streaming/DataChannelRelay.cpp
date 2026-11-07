@@ -1344,7 +1344,7 @@ void DataChannelRelay::createDataChannels()
 
             // The bench's cap on the host's other uploads (hostcap=), the
             // stream exempt with its own marking.
-            if (m_HostCapMbps > 0) m_HostCap.start(m_HostCapMbps, PacketMarking::current()[1]);
+            if (m_HostCapMbps > 0) m_HostCap.start(m_HostCapMbps, PacketMarking::current());
 
             if (m_ClipboardEnabled) {
                 // Advertise clipboard sync, then push the current host
