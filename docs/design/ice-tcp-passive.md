@@ -183,10 +183,15 @@ Reste, en amont et hors du patch :
 - **Windows** : la règle de l'installeur porte sur le programme, tous protocoles : le TCP entrant
   passe sans autre règle. Une `--dev` est couverte par `scripts/dev-firewall-allow.ps1`, qui ouvre
   48550-48573 en TCP et en UDP.
-- **Linux** : les paquets n'ouvrent que `48550:48573/udp` dans ufw et firewalld. Il faudra
-  `48550:48573/tcp`, plus les ports du tunnel, pour qu'un hôte Linux au pare-feu actif accepte
-  l'appel. C'est une modification d'empaquetage, pas encore faite au passage du défaut à vrai
-  (26/10) : d'ici là, un tel hôte refuse la connexion TCP, comme avant.
+- **Linux** (D3, v0.4.2) : le `.deb`, le `.rpm` et le paquet AUR ouvrent désormais dans ufw et
+  firewalld, en plus de `48550:48573/udp`, le même bloc en TCP et les ports du tunnel en TCP
+  (`3478:3481`, `5349:5352`, `46000:46031`). L'édition DEV ouvre son propre bloc de tunnel,
+  `46064:46095/tcp`. Le README de Docker et `install.sh` donnent les mêmes lignes, puisqu'un
+  conteneur ne touche pas au pare-feu de sa machine. Un pare-feu à états laisse revenir une
+  réponse UDP, jamais un SYN venu de l'extérieur : sans ces règles, un hôte Linux au pare-feu
+  actif refuse la connexion TCP. Rien n'écoute sur ces ports entre deux connexions, et pendant
+  l'une d'elles seul un contrôle signé pour elle est admis (§3).
+  - Limite : sans UPnP, le tunnel prend un port éphémère, qu'aucune règle ne peut ouvrir d'avance.
 - **macOS** : le pare-feu applicatif porte sur le programme.
 - **Le trou TCP du routeur** suit maintenant la règle du trou UDP (26/10, revue de sécurité, T3).
   On ne l'écrit, ne le renouvelle et ne le retire que s'il est libre ou à nous. Avant, une

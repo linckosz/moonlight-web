@@ -34,11 +34,21 @@ EDITION=${4:-prod}
 # is the stream media block: one pinned port per slot, 48550 + slot, for the 24
 # slots (mw::routerports::kMediaBasePort / kMediaPortCount). postinst also
 # reserves it from the kernel's ephemeral ports (MEDIA_RANGE below).
+# The same block in TCP, and the rendezvous tunnel's ports in TCP (3478:3481,
+# 5349:5352, then 46000:46031: mw::routerports::kTunnelPreferred and the tunnel
+# pool), are for passive ICE-TCP (v0.4.1, on by default). It listens on the port
+# its UDP socket holds, and is what a browser on a network that lets no UDP out
+# connects to. A stateful firewall lets UDP answers back in, never a TCP SYN
+# from outside, so without these a Linux host behind ufw or firewalld is
+# unreachable from such a network. Nothing listens there between connections,
+# and what does listen during one admits only a check signed for it.
 # The DEV edition listens on its own TCP ports and leaves the media block alone:
 # production opens it, and a DEV uninstall closing it would cut production off.
+# Its tunnel holes are its own block (kDevTunnelPool), so it opens that.
 case "$EDITION" in
-    prod) NAME=moonlightweb;     APP=MoonlightWeb;    PORTS="443/tcp 80/tcp 48550:48573/udp" ;;
-    dev)  NAME=moonlightweb-dev; APP=MoonlightWebDev; PORTS="48443/tcp 48080/tcp" ;;
+    prod) NAME=moonlightweb;     APP=MoonlightWeb;
+          PORTS="443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp" ;;
+    dev)  NAME=moonlightweb-dev; APP=MoonlightWebDev; PORTS="48443/tcp 48080/tcp 46064:46095/tcp" ;;
     *) echo "error: edition must be prod or dev (got '$EDITION')" >&2; exit 1 ;;
 esac
 PREFIX=/opt/$NAME
@@ -198,20 +208,22 @@ MEDIA_RANGE=48550-48573
 # macOS, Linux netfilter firewalls are port-based (no per-program rule), and this
 # runs before the app picks a port, so we open the defaults: 443/tcp + 80/tcp
 # (HTTPS + HTTP→HTTPS redirect) and 48550-48573/udp (the stream's media ports).
-# Without the media block the page loads and every stream dies at ICE. A
+# Without the media block the page loads and every stream dies at ICE. The
+# media block and the tunnel's ports in TCP are for passive ICE-TCP, the way in
+# from a network that lets no UDP out (see PORTS at the top of this script). A
 # non-default or per-instance parity port under an *active* firewall would need
 # a manual rule. firewalld (Fedora/RHEL — active by default) and ufw
 # (Debian/Ubuntu) only; the AUR hook (moonlightweb-bin.install) does the same.
 # 48010:48033/udp was the media block up to 0.3.0, on Sunshine's RTSP port: an
 # upgrade closes it.
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    for p in 443/tcp 80/tcp 48550:48573/udp; do
+    for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp; do
         firewall-cmd --permanent --add-port="$(echo "$p" | tr : -)" >/dev/null 2>&1 || true
     done
     [ -n "$MEDIA_RANGE" ] && firewall-cmd --permanent --remove-port=48010-48033/udp >/dev/null 2>&1
     firewall-cmd --reload >/dev/null 2>&1 || true
 elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
-    for p in 443/tcp 80/tcp 48550:48573/udp; do
+    for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp; do
         ufw allow "$p" >/dev/null 2>&1 || true
     done
     [ -n "$MEDIA_RANGE" ] && ufw delete allow 48010:48033/udp >/dev/null 2>&1
@@ -426,12 +438,12 @@ if [ "${1:-}" != "upgrade" ] && [ "${1:-0}" != "1" ]; then
     fi
 
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        for p in 443/tcp 80/tcp 48550:48573/udp; do
+        for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp; do
             firewall-cmd --permanent --remove-port="$(echo "$p" | tr : -)" >/dev/null 2>&1 || true
         done
         firewall-cmd --reload >/dev/null 2>&1 || true
     elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
-        for p in 443/tcp 80/tcp 48550:48573/udp; do
+        for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp; do
             ufw delete allow "$p" >/dev/null 2>&1 || true
         done
     fi
@@ -464,7 +476,7 @@ if [ "$EDITION" = dev ]; then
     sed -i -e "s|/opt/moonlightweb/bin/MoonlightWeb|$PREFIX/bin/$APP|g" \
            -e "s|/opt/moonlightweb/|$PREFIX/|g" \
            -e "s|moonlightweb\.service|$NAME.service|g" \
-           -e "s|443/tcp 80/tcp 48550:48573/udp|$PORTS|g" \
+           -e "s|443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp|$PORTS|g" \
            -e "s|^\( *\)MEDIA_RANGE=.*|\1MEDIA_RANGE=|" \
            -e "s|^\( *\)REPO_KEYS=.*|\1REPO_KEYS=|" \
            -e "s|moonlightweb --|$NAME --|g" \

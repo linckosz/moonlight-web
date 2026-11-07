@@ -721,7 +721,8 @@ lan_access_note() {
         say "  ${bold}This is a container${reset} — nothing on your LAN reaches it unless the"
         say "  ports were published when it was started:"
         say ""
-        say "      ${dim}docker run -p 443:443 -p 80:80 -p 48550-48573:48550-48573/udp …${reset}"
+        say "      ${dim}docker run -p 443:443 -p 80:80 -p 48550-48573:48550-48573/udp \\${reset}"
+        say "      ${dim}     -p 48550-48573:48550-48573/tcp …${reset}"
         say ""
         say "  ${dim}Published ports cannot be added to a running container; it has to be${reset}"
         say "  ${dim}recreated. --net=host sidesteps the question entirely.${reset}"
@@ -743,6 +744,9 @@ lan_access_note() {
             say "      ${dim}sudo firewall-cmd --permanent --add-port=443/tcp \\${reset}"
             say "      ${dim}     --add-port=80/tcp --add-port=48550-48573/udp${reset}"
             say "      ${dim}sudo firewall-cmd --reload${reset}"
+            say ""
+            say "  ${dim}For browsers on networks that block UDP, add 48550-48573/tcp and the${reset}"
+            say "  ${dim}tunnel's 3478-3481/tcp, 5349-5352/tcp and 46000-46031/tcp the same way.${reset}"
         fi
         say ""
         return 0
@@ -759,6 +763,9 @@ lan_access_note() {
             say "      ${dim}sudo ufw allow 443/tcp${reset}"
             say "      ${dim}sudo ufw allow 80/tcp${reset}"
             say "      ${dim}sudo ufw allow 48550:48573/udp${reset}"
+            say ""
+            say "  ${dim}For browsers on networks that block UDP, also allow 48550:48573/tcp and${reset}"
+            say "  ${dim}the tunnel's 3478:3481/tcp, 5349:5352/tcp and 46000:46031/tcp.${reset}"
         fi
         say ""
         return 0

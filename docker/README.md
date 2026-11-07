@@ -34,14 +34,20 @@ container cannot and must not touch the host's firewall**, so this one is
 yours:
 
 ```sh
-sudo ufw allow 443/tcp        # the web UI — required
-sudo ufw allow 80/tcp         # HTTP-to-HTTPS redirect
+sudo ufw allow 443/tcp              # the web UI — required
+sudo ufw allow 80/tcp               # HTTP-to-HTTPS redirect
+sudo ufw allow 48550:48573/udp      # the stream's media
+sudo ufw allow 48550:48573/tcp      # the same, from networks that block UDP
+sudo ufw allow 3478:3481/tcp        # the rendezvous tunnel, from networks that block UDP
+sudo ufw allow 5349:5352/tcp
+sudo ufw allow 46000:46031/tcp
 sudo ufw reload
 ```
 
-`firewall-cmd --permanent --add-port=443/tcp --add-port=80/tcp && firewall-cmd
---reload` on Fedora/RHEL. If `ufw status` says *inactive*, nothing is blocking
-and there is nothing to do. Full table under [Ports](#ports).
+On Fedora/RHEL, `firewall-cmd --permanent` with one `--add-port=` per line above
+(a range written `48550-48573/udp`), then `firewall-cmd --reload`. If
+`ufw status` says *inactive*, nothing is blocking and there is nothing to do.
+Full table under [Ports](#ports).
 
 ### 3. Set the two credentials
 
@@ -215,10 +221,14 @@ outside the LAN.
 | **443** | TCP | **Always** | The web UI, the REST API, and the `wss://…/ws` upgrade that carries WebRTC signalling. The one port a browser cannot do without. |
 | **80** | TCP | Recommended | Redirect to HTTPS, so `http://server` reaches the app instead of failing. |
 | **48550–48573** | UDP | **Always** (host firewall) | WebRTC media, audio and input. Each stream slot binds `48550 + slot`, with or without UPnP, so a host firewall can let the block through; with UPnP the router forwards a port to it (the slot's own first). |
+| **48550–48573** | TCP | Networks that block UDP (host firewall) | The same ports in TCP: passive ICE-TCP listens on the port the slot's UDP socket holds. It is how a browser on a network that lets no UDP out reaches the stream. A stateful firewall lets UDP answers back in, but never a TCP connection from outside. |
+| **3478–3481**, **5349–5352**, **46000–46031** | TCP | Networks that block UDP, with Internet Access | The rendezvous tunnel's ports, taken in that order as browsers connect, and forwarded by UPnP. Passive ICE-TCP listens on them as on the media block. Nothing listens there between connections, and during one only a check signed for that connection is admitted. |
 | **47999** | UDP | Legacy Internet Access | Mapped alongside 80/443 only by an install that still holds a legacy `moonlightweb.top` sub-domain. |
 | *ephemeral* | UDP | Fallback | When the slot's port is already taken (a second instance on the same machine), the stream takes another free port of the block. Only when the whole block is taken does libdatachannel take whatever the kernel gives it, which a host firewall blocks. |
 
-> **In short:** on a LAN, **443/tcp**, **80/tcp** and **48550–48573/udp**.
+> **In short:** on a LAN, **443/tcp**, **80/tcp** and **48550–48573/udp**;
+> for networks that block UDP, also **48550–48573/tcp** and the tunnel's
+> **3478–3481**, **5349–5352** and **46000–46031/tcp**.
 > The `.deb`, `.rpm` and AUR package open them for you in
 > firewalld/ufw; a container does not touch the host's firewall, so that is
 > yours to do.
