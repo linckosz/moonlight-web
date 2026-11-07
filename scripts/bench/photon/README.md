@@ -6,12 +6,17 @@ client's own screen.
 
 - `flag-window.ps1`, on the **host**: a window over a whole screen that flips
   black ↔ white on every mouse button press. Optional `-Log` writes each
-  flip's host time.
+  flip's host time. It covers the whole screen at any display scaling.
 - `click-photon.ps1`, on the **client**: finds the streaming client's window by
   process (`streaming_client` for Steam, `chrome` with `-Title` for
   MoonlightWeb), clicks at its centre (SendInput) and reads that pixel back
   from the composed desktop until it flips. 60 clicks, 700 ms apart by
   default; median, p90, misses, every sample in `-Out <json>`.
+  - If several windows match, it stops and clicks nothing. For example, the user's own Chrome may be open
+    next to the bench one. `-CdpPort 9222` names the bench Chrome by the port it is driven on, and
+    `-ProcessId` names a window by its pid.
+  - Before every click, the window must be in front and under the pointer. Otherwise the click is not
+    sent, the run stops, and `guard` in the JSON says why.
 
 What a sample includes: the click's way up, the flip on the host, capture,
 encode, network, decode, the client's present and the DWM's composition, plus

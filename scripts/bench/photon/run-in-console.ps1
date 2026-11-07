@@ -2,11 +2,13 @@
 # ssh (an ssh session lands in session 0, which has no desktop: no pixel to
 # read, no window to click). A one-shot Interactive scheduled task, waited for,
 # then its output printed and the task removed.
-#   powershell -File run-in-console.ps1 -Tag steam-hevc-1 [-Process streaming_client] [-Title ...] [-Clicks 60]
+#   powershell -File run-in-console.ps1 -Tag steam-hevc-1 [-Process streaming_client] [-Title ...] [-CdpPort 9222] [-Clicks 60]
+# -CdpPort: the bench Chrome by the port it is driven on, when several windows match.
 param(
     [Parameter(Mandatory)] [string] $Tag,
     [string] $Process = 'streaming_client',
     [string] $Title = '',
+    [int] $CdpPort = 0,
     [int] $Clicks = 60,
     [int] $ReadDx = 0,
     [int] $ReadDy = 0,
@@ -17,7 +19,7 @@ $out = Join-Path $Dir "$Tag.json"
 $log = Join-Path $Dir "$Tag.txt"
 $task = 'MwClickPhoton'
 $args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"& '$script' -Process '$Process' " +
-        "-Title '$Title' -Clicks $Clicks -ReadDx $ReadDx -ReadDy $ReadDy -Out '$out' *> '$log'`""
+        "-Title '$Title' -CdpPort $CdpPort -Clicks $Clicks -ReadDx $ReadDx -ReadDy $ReadDy -Out '$out' *> '$log'`""
 Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $args
 $user = (Get-CimInstance Win32_ComputerSystem).UserName

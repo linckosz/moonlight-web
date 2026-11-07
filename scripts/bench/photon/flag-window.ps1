@@ -19,10 +19,9 @@ Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @"
 using System; using System.IO; using System.Diagnostics; using System.Windows.Forms; using System.Drawing;
 using System.Runtime.InteropServices;
 public class FlagForm : Form {
-  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr c);
+  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);
   bool white; StreamWriter log;
   public FlagForm(Rectangle area, string logPath) {
-    SetProcessDpiAwarenessContext((IntPtr)(-4));
     FormBorderStyle = FormBorderStyle.None; TopMost = true; StartPosition = FormStartPosition.Manual;
     Bounds = area; BackColor = Color.Black; Text = "MW click-photon flag"; Cursor = Cursors.Cross;
     DoubleBuffered = true;
@@ -38,6 +37,10 @@ public class FlagForm : Form {
   protected override void OnKeyDown(KeyEventArgs e) { if (e.KeyCode == Keys.Escape) Close(); }
 }
 "@
+# Per-monitor aware BEFORE any bounds are read: read first, at 125 % scaling the
+# screen is 2048x1152 logical pixels, and the flag then covered only 2048x1152
+# physical ones of a 2560x1440 screen (DualRTX, 07/11/2026).
+[void][FlagForm]::SetProcessDpiAwarenessContext([IntPtr](-4))
 $screens = [System.Windows.Forms.Screen]::AllScreens
 $s = if ($Screen -ge 0 -and $Screen -lt $screens.Count) { $screens[$Screen] } else { [System.Windows.Forms.Screen]::PrimaryScreen }
 $f = New-Object FlagForm $s.Bounds, $Log
