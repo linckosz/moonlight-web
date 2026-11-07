@@ -299,6 +299,22 @@ constexpr bool kVddMatchProduct = false;
 /// driver's own ceiling.
 int refreshForStream(int streamFps, int benchHz, bool faster = false);
 
+/// The size a stream asks of the display, 0 x 0 for the mode it has.
+///   - @p match ("Match my screen"): the client's own size, whatever it is.
+///   - Otherwise the stream's size when it holds more pixels than the default
+///     mode (kWidth x kHeight): a 1440p or 2160p stream gets a desktop of its
+///     size, instead of the 1080p one scaled up or, under a box the host
+///     never upscales, a stream that stays at 1080p without a word.
+///   - A smaller stream keeps the display's mode (the default 1080p desktop,
+///     scaled down), as before.
+/// The size still goes through normaliseMode where it is applied.
+struct ModeSize
+{
+    int width = 0;
+    int height = 0;
+};
+ModeSize sizeForStream(int width, int height, bool match);
+
 /// Whether this platform's virtual display runs faster than the stream
 /// (refreshForStream's @p faster): Windows (decision A of plan framerate-hote,
 /// 30/09/2026) and Linux, whose portal monitor the stream itself makes (C0 of

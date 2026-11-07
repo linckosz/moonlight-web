@@ -4739,12 +4739,17 @@ int main(int argc, char* argv[])
             // worker is spawned once the engine can see it. Several viewers
             // opening it at once share the one operation.
             //
-            // "Match my screen" is the one choice that names a size for it:
-            // a display nobody sees can be made at the client's own, phone
-            // shape and all, instead of the 1080p default. Every other choice
-            // passes 0 and takes the mode that is there.
-            const int vdWidth = reqMatchDisplay ? reqWidth : 0;
-            const int vdHeight = reqMatchDisplay ? reqHeight : 0;
+            // "Match my screen" names a size for it: a display nobody sees
+            // can be made at the client's own, phone shape and all, instead of
+            // the 1080p default. So does any stream larger than that default
+            // (a 1440p or 2160p choice, the browser's or a TV's): it gets a
+            // desktop of its size rather than 1080p scaled up, or 1080p left
+            // as it is under a box (VirtualDisplay::sizeForStream). A smaller
+            // stream passes 0 and takes the mode that is there.
+            const VirtualDisplay::ModeSize vdSize =
+                VirtualDisplay::sizeForStream(reqWidth, reqHeight, reqMatchDisplay);
+            const int vdWidth = vdSize.width;
+            const int vdHeight = vdSize.height;
             // Its refresh rate, on Windows, is 240 Hz whatever the stream's
             // (decision A of plan framerate-hote, 30/09/2026), or a whole
             // multiple of the client's screen under vddmatch (below). A

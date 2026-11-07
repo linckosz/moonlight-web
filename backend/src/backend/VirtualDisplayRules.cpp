@@ -335,6 +335,13 @@ int refreshForStream(int streamFps, int benchHz, bool faster)
     return std::min(kRateMax, std::max(kRateMin, streamFps));
 }
 
+ModeSize sizeForStream(int width, int height, bool match)
+{
+    if (width <= 0 || height <= 0) return {};
+    if (match || qint64(width) * height > qint64(kWidth) * kHeight) return {width, height};
+    return {};
+}
+
 std::optional<Result> parseResult(const QByteArray& json)
 {
     if (json.trimmed().isEmpty()) return std::nullopt;

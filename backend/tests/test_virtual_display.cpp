@@ -467,6 +467,28 @@ void run_virtual_display_tests()
         CHECK_EQ(settingsXml(0, 0, 0), settingsXml());
     }
 
+    SECTION("VirtualDisplay — a stream larger than the default mode gets a display of its size");
+    {
+        // "Match my screen": the client's size, smaller than the default too.
+        CHECK_EQ(sizeForStream(1280, 720, true).width, 1280);
+        CHECK_EQ(sizeForStream(1280, 720, true).height, 720);
+        // Larger than 1920 x 1080: its own size, without "Match my screen"
+        // (07/11: a TV's 1440p stream left at 1080p).
+        CHECK_EQ(sizeForStream(2560, 1440, false).width, 2560);
+        CHECK_EQ(sizeForStream(2560, 1440, false).height, 1440);
+        CHECK_EQ(sizeForStream(3840, 2160, false).width, 3840);
+        CHECK_EQ(sizeForStream(3440, 1440, false).width, 3440);
+        // 1920 x 1200 holds more pixels than 1080p: its own size too.
+        CHECK_EQ(sizeForStream(1920, 1200, false).height, 1200);
+        // The default size, or smaller: the display's own mode, as before.
+        CHECK_EQ(sizeForStream(1920, 1080, false).width, 0);
+        CHECK_EQ(sizeForStream(1280, 720, false).width, 0);
+        CHECK_EQ(sizeForStream(1280, 720, false).height, 0);
+        // No size asked (height 0, native): nothing either way.
+        CHECK_EQ(sizeForStream(0, 0, true).width, 0);
+        CHECK_EQ(sizeForStream(0, 0, false).width, 0);
+    }
+
     SECTION("VirtualDisplay — the stream's rate under the product's ceiling, the bench's past it");
     {
         // The product: the stream's own rate, never past kRateMax, whatever
