@@ -122,6 +122,7 @@ type mwsrRecord struct {
 	GpuArch      string       `json:"gpuArch,omitempty"`
 	F16          bool         `json:"f16,omitempty"`
 	Timestamps   bool         `json:"timestamps,omitempty"`
+	Batches      int          `json:"batches,omitempty"` // per text timed: 3 at the first measure after a load, 6 after
 	CanvasW      int          `json:"canvasW,omitempty"`
 	CanvasH      int          `json:"canvasH,omitempty"`
 	InputW       int          `json:"inputW,omitempty"`
@@ -233,6 +234,7 @@ func (r mwsrRecord) clean(now time.Time) mwsrRecord {
 		GpuArch:      mwsrGpu(r.GpuArch),
 		F16:          r.F16,
 		Timestamps:   r.Timestamps,
+		Batches:      mwsrInt(r.Batches, 1000),
 		CanvasW:      mwsrInt(r.CanvasW, 32768),
 		CanvasH:      mwsrInt(r.CanvasH, 32768),
 		InputW:       mwsrInt(r.InputW, 32768),

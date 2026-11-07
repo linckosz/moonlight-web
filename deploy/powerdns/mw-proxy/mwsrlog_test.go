@@ -171,6 +171,31 @@ func TestMwsrOutOfRangeValueIsDroppedNotClamped(t *testing.T) {
 	}
 }
 
+// The page times each text in 3 batches at the first measure after a load, 6 after: a spread
+// reads only next to its count, so the count is kept, and a count out of range is dropped.
+func TestMwsrKeepsTheBatchCount(t *testing.T) {
+	for _, c := range []struct {
+		body string
+		want int
+	}{
+		{`{"v":1,"batches":3,"results":[{"k":"mwsr","gpuMs":1.5,"gpuSpread":0.1}]}`, 3},
+		{`{"v":1,"batches":6,"results":[{"k":"mwsr","gpuMs":1.5,"gpuSpread":0.1}]}`, 6},
+		{`{"v":1,"batches":99999,"results":[{"k":"mwsr","gpuMs":1.5}]}`, 0},
+		{`{"v":1,"batches":-3,"results":[{"k":"mwsr","gpuMs":1.5}]}`, 0},
+	} {
+		s, got := testMwsrSink(t, nil)
+		postMwsr(t, s, c.body)
+		<-got
+		var rec mwsrRecord
+		if err := json.Unmarshal([]byte(readMwsrLog(t, s)), &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Batches != c.want {
+			t.Errorf("%s: kept %d batches, want %d", c.body, rec.Batches, c.want)
+		}
+	}
+}
+
 func TestMwsrFailureAddsANamedEvent(t *testing.T) {
 	s, got := testMwsrSink(t, nil)
 	postMwsr(t, s, `{"v":1,"path":"webgpu","fail":{"step":"pipeline","shader":"mwsr-down-1","msg":"Fragment library could not be created"}}`)
