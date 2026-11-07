@@ -49,22 +49,30 @@ function roundUpMbps(mbps) {
 }
 
 /**
+ * HDR's share on top, kept until an HDR game is measured: the HDR the bench
+ * measured is a desktop shown in HDR mode, which needs no more than SDR.
+ */
+const AUTO_HDR_RATIO = 1.5;
+
+/**
  * Recommended bitrate (Mbps):
  *   9.5 × P^0.75, P = the stream's pixels over 1920×1080's
- *   × 1.5 when HDR and/or YUV 4:4:4 is enabled (not cumulative — single 1.5×)
+ *   × 1.5 for HDR
  * rounded up (roundUpMbps), clamped to [1, 150] Mbps.
- * "Same as Host" (height 0) uses 1080p. Neither the frame rate nor the device
- * is a factor: the bench measured no frame-rate term worth one, and the
- * Internet target already is what a phone on mobile data needs.
+ * "Same as Host" (height 0) uses 1080p. Neither the frame rate, the device,
+ * 4:4:4 nor H.264 is a factor: the bench measured no frame-rate term worth
+ * one, the Internet target already is what a phone on mobile data needs, and
+ * 4:4:4 and H.264 reach the same picture at the same bitrate as HEVC 4:2:0.
  */
 export function computeAutoBitrate(height, aspect, chroma444, hdr) {
     const h = height > 0 ? height : 1080;
     // Pixel count = (h × aspectRatio) × h, normalised to 1920×1080.
     // Ultrawide (21:9, 32:9) therefore scales the bitrate up accordingly.
     const pixelRatio = (h * h * aspectToNumber(aspect)) / (1920 * 1080);
-    // HDR (10-bit) and 4:4:4 (4× chroma samples) each justify ~1.5× bitrate;
-    // not cumulative — a single 1.5× when either is enabled.
-    const richRatio = chroma444 || hdr ? 1.5 : 1.0;
+    // chroma444 adds nothing, measured: the full chroma of a desktop's text
+    // and flat colours costs NVENC no more than 4:2:0, and the host's QP
+    // floor stops a 4:4:4 stream short of the 4:2:0 one's bitrate.
+    const richRatio = hdr ? AUTO_HDR_RATIO : 1.0;
     const mbps = AUTO_MBPS_1080P * Math.pow(pixelRatio, AUTO_PIXEL_EXPONENT) * richRatio;
     return Math.max(1, Math.min(150, roundUpMbps(mbps)));
 }

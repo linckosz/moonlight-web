@@ -2626,7 +2626,8 @@ export class SettingsView {
                 this._autoSave();
             });
 
-        // 4:4:4 chroma bumps the recommended bitrate (higher bandwidth) before saving.
+        // 4:4:4 goes through the estimate before saving, as HDR does (today
+        // it adds nothing to it: measured, docs/wiki/16-Auto-Bitrate-Benchmarks.md).
         const chroma444Check = this.container.querySelector('#settings-chroma-444');
         if (chroma444Check)
             chroma444Check.addEventListener('change', () => {

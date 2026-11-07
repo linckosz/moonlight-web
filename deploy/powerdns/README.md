@@ -503,12 +503,7 @@ cd ~/moonlight-web/deploy/powerdns
 cd ~
 ```
 
-Rolling back is the same two blocks with the previous tag. A target that does
-not contain the latest release (the nearest `v*` tag on `origin/main`) is
-refused: a `srv-` tag cut from a branch without it would take the bootstrap,
-and its list of official interfaces, back to before that release, and
-production would then refuse every machine on it. A deliberate rollback past
-the latest release adds `--force` to both runs. The script refuses
+Rolling back is the same two blocks with the previous tag. The script refuses
 a dirty tree, refuses to run outside `~/moonlight-web`, and asks nothing
 interactively — a prompt in the middle of a paste would eat the next line. It
 reads nothing from its stdin either, so a script fed to `ssh box bash -s` can

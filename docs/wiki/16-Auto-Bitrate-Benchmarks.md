@@ -487,10 +487,40 @@ VMAF NEG unless stated.
 </details>
 
 
+### H.264, 4:4:4 and HDR
+
+The same bench, scenes and bitrates as HEVC 1080p60 (and 720p60 for H.264), NVENC, on 7 November 2026; the client page asks for H.264, for 4:4:4 or for HDR instead of its SDR 4:2:0 HEVC. A 4:4:4 stream is scored against a 4:4:4 reference: VMAF NEG on luma, plus PSNR on each chroma plane and libvmaf's CIEDE2000. An HDR stream is scored against the same page as the host's HDR desktop composes it (BT.2020 PQ, 10 bits, the page at the host's SDR white level): VMAF NEG and PSNR-Y on 10 bits, plus ΔE ITP (ITU-R BT.2124).
+
+The target (Mbit/s) at which a scene first reaches a VMAF NEG level, read as in *What each combination needs*, and its ratio to HEVC 4:2:0 SDR at the same size:
+
+| Stream | Search page scroll ≥ 93 | Search page scroll ≥ 95 | Web page scroll ≥ 93 |
+|---|---:|---:|---:|
+| HEVC 4:2:0 SDR, 1080p60 | 8.5 | 17.3 | 29.7 |
+| H.264, 1080p60 | 9.1 (×1.07) | 17.6 (×1.02) | 14.0 (×0.47) |
+| HEVC 4:4:4, 1080p60 | 7.8 (×0.92) | 16.8 (×0.97) | > 30 (93.0 at 30) |
+| HEVC HDR, 1080p60 | 6.6 (×0.77) | > 30 (94.95 at 30) | 29.8 (×1.01) |
+| HEVC 4:2:0 SDR, 720p60 | 4.4 | 8.8 | 5.5 |
+| H.264, 720p60 | 4.1 (×0.93) | 7.8 (×0.88) | 6.0 (×1.09) |
+
+The bitrate actually used while the search page scrolls (Mbit/s), 1080p60:
+
+| Set | HEVC 4:2:0 | H.264 | HEVC 4:4:4 | HEVC HDR |
+|---:|---:|---:|---:|---:|
+| 10 | 4.7 | 8.1 | 4.1 | 4.1 |
+| 15 | 7.0 | 12.3 | 5.1 | 4.7 |
+| 30 | 12.9 | 18.8 | 6.2 | 5.4 |
+
+Reading:
+
+- **H.264 needs what HEVC needs** at these sizes: within 12 % either way on the search page, and better on the web page at 1080p60. It spends more of the target to get there (8.1 Mbit/s used at a set 10, against 4.7), but the Auto rule sets the target, not the bitrate used.
+- **4:4:4 costs nothing more.** Its luma reaches each level at the same target or slightly below, and its chroma follows its luma: PSNR-Cb 40.3 dB and CIEDE2000 40.2 at a set 10 Mbit/s (a mean ΔE2000 of about 1.7, under the usual threshold of a visible difference), 44.0 and 43.8 at 30. The full chroma of text and flat colours is cheap to code, and the QP floor stops a 4:4:4 stream well short of the target (6.2 Mbit/s used at a set 30).
+- **The HDR desktop costs nothing more either**, but it is not an HDR game. Its curves bend where SDR's do, and the stills settle about 1.3 points of VMAF NEG lower (*Junk Shop* 92.9 against 94.3), flat from 8 to 30 Mbit/s while PSNR-Y is higher than in SDR (48.3 against 46.3 dB): an offset between the reference and what the host composes, not a coding loss, which is also why VMAF NEG 95 is never reached. ΔE ITP falls from 19.2 at 1.5 Mbit/s to 9.2 at 6, 7.8 at 10, 7.2 at 15 and 6.8 at 30, the same bend. What was measured is SDR content shown in HDR mode, which uses only the lower part of the PQ range; a game with real highlights was not measured.
+
 ### Not measured yet
 
-- **H.264** (1080p60, 720p60): only the 1.5 Mbit/s point of 1080p60 was recorded before the bench stopped. Whether H.264 needs a higher Auto than HEVC is still open.
-- **HDR and 4:4:4**: every point here is SDR 4:2:0. What 10-bit HDR and full chroma add to the bitrate a picture needs is still to be measured.
+- **An HDR game**, with highlights over the SDR white level.
+- **4:4:4 and HDR on AMF and on Intel**: the figures above are NVENC's.
+- **What 4:2:0 loses** against the same 4:4:4 reference (the 4:2:0 streams scored as 4:4:4).
 
 ## 16.7 Hardware decode against the reference decoder
 
@@ -510,7 +540,19 @@ Two different hardware decoders disagree with ffmpeg on NVENC streams only, in s
 - The same target is spent differently by different encoders (NVENC about half, AMF all of it), so a target picked on one encoder is not a quality level on another.
 - On NVENC, the host's QP floor caps what a scrolling page uses at 1440p and above (§16.6, *The QP floor*): past that point, a higher target buys about one point of VMAF NEG at most.
 
-The new rule itself is decided separately; this chapter keeps the measurements it rests on.
+- H.264 and 4:4:4 need no more than HEVC 4:2:0; the HDR desktop needs no more either, but an HDR game was not measured.
+
+**The rule since v0.4.2** (`computeAutoBitrate()`): 9.5 Mbit/s × P^0.75, P being the stream's pixels over 1920×1080's — VMAF NEG 93 on the scrolling search page, +10 % — ×1.5 for HDR, rounded up to a whole Mbit/s (the slider's step), to 5 above 30, within 1–150. No frame-rate term, no device factor, nothing for 4:4:4 or H.264. The ×1.5 for HDR stays until an HDR game is measured. The target is the Internet one, used everywhere: the page cannot tell at launch whether the stream will cross the LAN or the Internet, and on a cable the bitrate made no measurable difference to the latency.
+
+| Stream | Before v0.4.2 | Since v0.4.2 | HDR, since v0.4.2 |
+|---|---:|---:|---:|
+| 720p60 | 9 | 6 | 8 |
+| 1080p60 | 20 | 10 | 15 |
+| 1080p120 | 40 | 10 | 15 |
+| 1440p60 | 36 | 15 | 22 |
+| 2160p60 | 80 | 27 | 45 |
+| 1080p60 4:4:4 | 30 | 10 | 15 |
+| 1080p60 on a phone | 10 | 10 | 15 |
 
 
 
