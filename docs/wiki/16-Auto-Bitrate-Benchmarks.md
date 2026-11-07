@@ -218,10 +218,31 @@ Reading:
 
 - **The frame rate barely matters.** At 1080p, the search page reaches VMAF 95 at 13.7 Mbit/s at 30 fps, 17.3 at 60 and 16.3 at 120; at 1440p, 28.4 at 60 and 23.6 at 120. The page scrolls at the same speed in pixels per second at every frame rate, so at 120 fps each frame moves half as far and costs less. A fit over the combinations gives, for VMAF 95, *needed bitrate ∝ pixels^0.8 × fps^0.05*. Today's Auto is linear in both: it gives twice the 60 fps value at 120 fps, where nothing is gained, and half of it at 30 fps, where the picture falls short (720p30: VMAF 95 is not reached even at ×1.5 of Auto).
 - **The pixel count matters less than linearly** (exponent about 0.8): 1440p60 needs 1.6 times the bitrate of 1080p60 for the same quality, not 1.78. 2160p60 lands on the same line: VMAF 95 at 52 Mbit/s, which is 17.3 × 4^0.8 (four times the pixels of 1080p60, three times the bitrate); today's Auto gives it 80.
-- **Above a point, NVENC stops spending more.** While the search page scrolls, the bitrate actually used levels off at about 7.4 Mbit/s at 1440p60 from a set 18 Mbit/s, and at about 13 Mbit/s at 2160p60 from a set 24 Mbit/s, while VMAF still creeps up by about one point to the highest setting. At these sizes VMAF 95 lies on that flat part, so the set bitrate it needs (28 and 52 Mbit/s) says more about the encoder's rate control than about the picture. 1080p60 does not level off within the range measured (12.9 Mbit/s used at a set 30). Why the encoder stops there (its rate control, or the host's settings) is not known yet.
+- **Above a point, NVENC stops spending more.** While the search page scrolls, the bitrate actually used levels off at about 7.4 Mbit/s at 1440p60 from a set 18 Mbit/s, and at about 13 Mbit/s at 2160p60 from a set 24 Mbit/s, while VMAF still creeps up by about one point to the highest setting. At these sizes VMAF 95 lies on that flat part, so the set bitrate it needs (28 and 52 Mbit/s) says more about the encoder's rate control than about the picture. 1080p60 does not level off within the range measured (12.9 Mbit/s used at a set 30). The cause is the host's QP floor (next section).
 - **Still pictures are cheap.** A settled still reaches its plateau at 1–12 Mbit/s depending on the combination, well below any scrolling scene. The first frame after a scene change is the exception: its quality rises with the bitrate all the way up, but it lasts a few frames (three to four at today's Auto in 1080p60).
 - **The web page scene** is laid out for each size and is not comparable across combinations; at 1080p60 it is the hardest content measured (VMAF 90 at 16 Mbit/s).
 - These are NVENC figures. AMF spends the whole target (§16.5), so the same target costs an AMF host about twice the bandwidth for a similar picture.
+
+### The QP floor
+
+The native host gives NVENC a quantizer floor: QP 18 for HEVC and H.264, qindex 32 for AV1 (`backend/native-host/src/encode/windows/NvencConfig.cpp`). It was added so that a still screen is not refined over and over with the whole budget: a page of text with a spinner went from 7.7 to 1.0 Mbit/s at 1080p60 and 20 Mbit/s. It was measured then at 1080p60, where scrolling stays well above QP 18. At 1440p and 2160p, a scrolling page at these bitrates would go below it, so the floor is where the encoder stops.
+
+To check, six points of the main bench were run again with the floor removed (`MW_NATIVE_TUNING=nvminqp=-1`), same scenes and same bench, on 7 November 2026:
+
+| Combination | Set (Mbit/s) | Used while scrolling, floor → none (Mbit/s) | Search page scroll | Web page scroll | Junk Shop: settled | Search page scroll PSNR-Y |
+|---|---:|---:|---:|---:|---:|---:|
+| 1440p60 | 18 | 7.29 → 10.80 | 94.4 → 94.8 | 93.5 → 94.1 | 94.3 → 95.8 | 43.60 → 46.59 |
+| 1440p60 | 27 | 7.42 → 15.92 | 94.9 → 95.7 | 94.6 → 95.4 | 94.4 → 96.2 | 44.08 → 49.78 |
+| 1440p60 | 36 | 7.54 → 19.93 | 95.3 → 96.2 | 95.0 → 96.0 | 94.3 → 96.4 | 44.45 → 52.05 |
+| 1440p60 | 54 | 7.38 → 25.66 | 95.5 → 96.5 | 95.4 → 96.5 | 94.4 → 96.6 | 44.77 → 53.91 |
+| 2160p60 | 48 | 12.66 → 26.22 | 94.9 → 95.9 | 94.8 → 95.4 | 94.4 → 96.2 | 45.51 → 50.92 |
+| 2160p60 | 80 | 12.99 → 36.24 | 95.5 → 96.4 | 95.4 → 96.2 | 94.4 → 96.5 | 46.13 → 53.82 |
+
+VMAF NEG unless stated.
+
+- **The floor is the plateau.** Without it, the bitrate used follows the setting, and every scene gains 0.4 to 2.2 points of VMAF NEG. Still pictures gain the most (Junk Shop settles at 96 instead of 94.4), as the floor was designed to cut exactly that refinement.
+- **The gain costs about three times the bitrate.** At 1440p60, the picture without the floor at a set 18 Mbit/s is about the one with the floor at 54 (search page 94.8 against 95.5, web page 94.1 against 95.4), for 10.8 Mbit/s used instead of 7.4.
+- **The floor stays** (decision of 7 November 2026): VMAF NEG 95 against 96 is a small difference for three times the bandwidth, and the floor keeps still screens cheap. The Auto rule is computed with it. With the floor, a set bitrate above the plateau is not spent while scrolling; it still feeds the first frames after a scene change and the size of the encoder's buffer.
 
 ### Per combination
 
@@ -469,6 +490,7 @@ VMAF NEG unless stated.
 ### Not measured yet
 
 - **H.264** (1080p60, 720p60): only the 1.5 Mbit/s point of 1080p60 was recorded before the bench stopped. Whether H.264 needs a higher Auto than HEVC is still open.
+- **HDR and 4:4:4**: every point here is SDR 4:2:0. What 10-bit HDR and full chroma add to the bitrate a picture needs is still to be measured.
 
 ## 16.7 Hardware decode against the reference decoder
 
@@ -486,6 +508,7 @@ Two different hardware decoders disagree with ffmpeg on NVENC streams only, in s
 - The quality needed for text that moves sets the bitrate; still pictures need far less.
 - **The rule should scale with the pixel count to a power below 1 and hardly with the frame rate.** Today's linear rule is about right at 1080p60, too high at 120 fps (×2.5 at 1080p120, ×3 at 1440p120 for the same picture) and too low at 30 fps.
 - The same target is spent differently by different encoders (NVENC about half, AMF all of it), so a target picked on one encoder is not a quality level on another.
+- On NVENC, the host's QP floor caps what a scrolling page uses at 1440p and above (§16.6, *The QP floor*): past that point, a higher target buys about one point of VMAF NEG at most.
 
 The new rule itself is decided separately; this chapter keeps the measurements it rests on.
 
