@@ -107,6 +107,18 @@ describe('the native host card and the virtual display', () => {
         expect(BackendClient.getAppList).not.toHaveBeenCalled();
     });
 
+    it('headless where no virtual display is shipped: never names the installer', () => {
+        // Windows ARM64 (evo, Discord, 06/11): the card sent the owner to an
+        // installer that has no virtual display to offer there.
+        const card = mount(headless({ supported: false, installed: false, can_manage: false }));
+        expect(card.querySelector('.host-empty-display-text').textContent).toBe(
+            'vdisplay.emptyBodyNoDriver',
+        );
+        expect(card.querySelector('.host-apps')).toBeNull();
+        expect(card.querySelector('.status-badge').textContent).toBe('hosts.statusNoDisplay');
+        expect(BackendClient.getAppList).not.toHaveBeenCalled();
+    });
+
     it('never offers to add or remove the display — the installer owns it', () => {
         for (const data of [headless(), headless({ installed: false }), withDisplay()]) {
             const card = mount(data);
@@ -149,5 +161,12 @@ describe('the Host model', () => {
             new Host({ ...headless({ installed: false }), backendType: '' }).needsVirtualDisplay,
         ).toBe(false);
         expect(new Host(NATIVE).needsVirtualDisplay).toBe(false);
+    });
+
+    it('can have a virtual display unless the server says none is shipped', () => {
+        expect(new Host(headless({ installed: false })).canHaveVirtualDisplay).toBe(true);
+        expect(new Host(headless({ supported: false })).canHaveVirtualDisplay).toBe(false);
+        // An answer without the field keeps the old text rather than hiding it.
+        expect(new Host(NATIVE).canHaveVirtualDisplay).toBe(true);
     });
 });

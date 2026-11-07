@@ -46,6 +46,7 @@
         "hostTitle": "Streaming this computer",
         "hostNative": "This computer can stream its own screen — there is nothing else to install.",
         "hostNeedsDisplay": "This computer can stream its own screen, but no screen is attached. Its card on the hosts page opens \"MoonlightWeb Virtual Display\" — if that was declined at install time, run the installer again and accept it.",
+        "hostNeedsDisplayNoDriver": "This computer can stream its own screen, but no screen is attached.",
         "done": "Done",
         "hostPermission": "Allow MoonlightWeb to record the screen in System Settings → Privacy & Security → Screen Recording, then quit and reopen MoonlightWeb (macOS only applies it on relaunch). Until then this computer cannot stream its own screen.",
         "hostInputPermission": "Allow MoonlightWeb to control this computer in System Settings → Privacy & Security → Accessibility. Without it a stream shows a picture, but your keyboard and mouse never reach this computer — macOS gives no warning of its own.",
@@ -204,7 +205,8 @@
         "playerStatsOff": "The computer you are joining reports nothing at all about this session."
     },
     "vdisplay": {
-        "emptyBody": "No screen is attached to this computer, and \"MoonlightWeb Virtual Display\" is not installed. Run the MoonlightWeb installer again and accept the virtual display to stream it."
+        "emptyBody": "No screen is attached to this computer, and \"MoonlightWeb Virtual Display\" is not installed. Run the MoonlightWeb installer again and accept the virtual display to stream it.",
+        "emptyBodyNoDriver": "No screen is attached to this computer."
     },
     "gamepad": {
         "remote": {

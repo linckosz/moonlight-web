@@ -145,6 +145,9 @@ export class SetupView {
             this._nativeNeedsPermission = !!(status.native && status.native.needs_permission);
             this._nativeNeedsInput = !!(status.native && status.native.needs_input_permission);
             this._nativeNeedsDisplay = !!(status.native && status.native.needs_display);
+            // Said only where none is shipped (Windows ARM64); an older server
+            // says nothing and keeps the text that names the installer.
+            this._nativeNoVirtualDisplay = status.native?.virtual_display_supported === false;
             this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
             this._sunshinePaired = !!(status.sunshine && status.sunshine.paired);
             this._autostartInstalled = !!status.autostart_installed;
@@ -400,7 +403,13 @@ export class SetupView {
         // card itself; here it is enough to say that this is the missing step
         // — not to send the machine off to install a second streaming server.
         if (this._nativeNeedsDisplay)
-            return `<p class="setup-note setup-warn">${t('setup.hostNeedsDisplay')}</p>` + input;
+            return (
+                `<p class="setup-note setup-warn">${t(
+                    this._nativeNoVirtualDisplay
+                        ? 'setup.hostNeedsDisplayNoDriver'
+                        : 'setup.hostNeedsDisplay',
+                )}</p>` + input
+            );
         // `possible` without either flag is the Windows service case, which this
         // wizard never runs in. Say nothing rather than guess.
         return input;

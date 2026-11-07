@@ -111,8 +111,29 @@ describe('SetupView — a machine that streams itself', () => {
             }),
         );
         expect(html()).toContain('text:setup.hostNeedsDisplay');
+        expect(html()).not.toContain('text:setup.hostNeedsDisplayNoDriver');
         expect(html()).not.toContain('text:setup.sunshineTitle');
         expect(container.querySelector('#chk-install')).toBeNull();
+    });
+
+    it('never names the installer where no virtual display is shipped', async () => {
+        // Windows ARM64 (evo, Discord, 06/11): "run the installer again and
+        // accept it" sent the user to an installer that has none to offer.
+        await start(
+            status({
+                native: {
+                    available: false,
+                    reason: 'no display attached',
+                    needs_permission: false,
+                    needs_display: true,
+                    virtual_display_supported: false,
+                    possible: true,
+                },
+            }),
+        );
+        expect(html()).toContain('text:setup.hostNeedsDisplayNoDriver');
+        expect(html()).not.toMatch(/text:setup\.hostNeedsDisplay(?!NoDriver)/);
+        expect(html()).not.toContain('text:setup.sunshineTitle');
     });
 
     it('never sends native_host_enabled — the app does not write that setting', async () => {

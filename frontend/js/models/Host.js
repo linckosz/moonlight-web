@@ -127,6 +127,14 @@ export class Host {
         );
     }
 
+    // Whether this host can have "MoonlightWeb Virtual Display" at all. The
+    // server says no where none is shipped (Windows ARM64, a Linux desktop
+    // without the portal's virtual monitor): the card then never sends the
+    // owner to an installer that has nothing to offer.
+    get canHaveVirtualDisplay() {
+        return this.nativeDisplay?.virtual_display?.supported !== false;
+    }
+
     // A Mac whose Screen Recording grant is gone: the card stays, and says
     // which switch to flip instead of painting a grid that cannot stream.
     get needsCapturePermission() {

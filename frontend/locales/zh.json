@@ -46,6 +46,7 @@
         "hostTitle": "串流这台电脑",
         "hostNative": "这台电脑可以串流自己的屏幕 — 无需再安装任何东西。",
         "hostNeedsDisplay": "这台电脑可以串流自己的屏幕，但没有连接屏幕。主机页面上的卡片可以打开“MoonlightWeb Virtual Display”——如果安装时拒绝了它，请重新运行安装程序并接受。",
+        "hostNeedsDisplayNoDriver": "这台电脑可以串流自己的屏幕，但没有连接屏幕。",
         "done": "完成",
         "hostPermission": "请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 MoonlightWeb 录制屏幕，然后退出并重新打开 MoonlightWeb（macOS 只在重新启动后才应用该权限）。在此之前，这台电脑无法串流自己的屏幕。",
         "hostInputPermission": "请在“系统设置 → 隐私与安全性 → 辅助功能”中允许 MoonlightWeb 控制这台电脑。否则串流只会显示画面，你的键盘和鼠标永远到不了这台电脑——macOS 自己不会给出任何提示。",
@@ -204,7 +205,8 @@
         "playerStatsOff": "你要加入的那台电脑不会上报任何关于本次会话的信息。"
     },
     "vdisplay": {
-        "emptyBody": "这台电脑没有连接屏幕，也没有安装“MoonlightWeb Virtual Display”。请重新运行 MoonlightWeb 安装程序并接受虚拟显示器，即可串流。"
+        "emptyBody": "这台电脑没有连接屏幕，也没有安装“MoonlightWeb Virtual Display”。请重新运行 MoonlightWeb 安装程序并接受虚拟显示器，即可串流。",
+        "emptyBodyNoDriver": "这台电脑没有连接屏幕。"
     },
     "gamepad": {
         "remote": {

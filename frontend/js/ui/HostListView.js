@@ -1200,9 +1200,13 @@ export class HostListView {
         if (host.needsVirtualDisplay) {
             // Nothing plugged in and no "MoonlightWeb Virtual Display" to
             // open either: say what is missing. (With it installed the card
-            // is an ordinary grid — the display is its one app.)
+            // is an ordinary grid — the display is its one app.) Where none
+            // is shipped, the installer is never named.
+            const text = host.canHaveVirtualDisplay
+                ? t('vdisplay.emptyBody')
+                : t('vdisplay.emptyBodyNoDriver');
             return `<div class="host-body-center host-empty-display">
-                        <p class="host-empty-display-text">${t('vdisplay.emptyBody')}</p>
+                        <p class="host-empty-display-text">${text}</p>
                     </div>`;
         }
         if (host.needsCapturePermission) {

@@ -46,6 +46,7 @@
         "hostTitle": "Diffuser cet ordinateur",
         "hostNative": "Cet ordinateur peut diffuser son propre écran — il n'y a rien d'autre à installer.",
         "hostNeedsDisplay": "Cet ordinateur peut diffuser son propre écran, mais aucun écran n'est branché. Sa carte sur la page des hôtes ouvre « MoonlightWeb Virtual Display » — s'il a été refusé à l'installation, relancez l'installeur et acceptez-le.",
+        "hostNeedsDisplayNoDriver": "Cet ordinateur peut diffuser son propre écran, mais aucun écran n'est branché.",
         "done": "Terminé",
         "hostPermission": "Autorisez MoonlightWeb à enregistrer l'écran dans Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran, puis quittez et rouvrez MoonlightWeb (macOS ne l'applique qu'au redémarrage de l'application). D'ici là, cet ordinateur ne peut pas diffuser son propre écran.",
         "hostInputPermission": "Autorisez MoonlightWeb à contrôler cet ordinateur dans Réglages Système → Confidentialité et sécurité → Accessibilité. Sans cela, le flux affiche bien l'image, mais votre clavier et votre souris n'atteignent jamais cet ordinateur — macOS ne prévient de rien.",
@@ -204,7 +205,8 @@
         "playerStatsOff": "L’ordinateur que vous rejoignez n’envoie rien du tout au sujet de cette session."
     },
     "vdisplay": {
-        "emptyBody": "Aucun écran n'est branché à cet ordinateur, et « MoonlightWeb Virtual Display » n'est pas installé. Relancez l'installeur MoonlightWeb et acceptez l'écran virtuel pour le diffuser."
+        "emptyBody": "Aucun écran n'est branché à cet ordinateur, et « MoonlightWeb Virtual Display » n'est pas installé. Relancez l'installeur MoonlightWeb et acceptez l'écran virtuel pour le diffuser.",
+        "emptyBodyNoDriver": "Aucun écran n'est branché à cet ordinateur."
     },
     "gamepad": {
         "remote": {
