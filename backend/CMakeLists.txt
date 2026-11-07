@@ -669,6 +669,16 @@ elseif(APPLE)
         "-framework Security" "-framework CoreFoundation" "-framework Foundation")
 else() # Linux / other Unix
     target_link_libraries(mw-server PRIVATE dl)
+    # The LAN announcement goes through Avahi on the system bus
+    # (MdnsAdvertiser.cpp). Qt's DBus module comes with qtbase on Linux; without
+    # it the server still builds, and announces nothing.
+    find_package(Qt6 QUIET COMPONENTS DBus)
+    if(TARGET Qt6::DBus)
+        target_link_libraries(mw-server PRIVATE Qt6::DBus)
+        target_compile_definitions(mw-server PRIVATE MW_HAVE_QTDBUS)
+    else()
+        message(STATUS "mDNS: no Qt DBus module — the server will not announce itself on the LAN")
+    endif()
 endif()
 
 # ── Linux: the capability launcher ─────────────────────────────────────────

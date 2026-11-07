@@ -65,6 +65,24 @@ void testTxtRecord()
     CHECK_EQ(txtName(x61 + QLatin1Char(' ') + QString(2, QChar(0x00E9))), x61);
 }
 
+// The same record as Avahi takes it: one `key=value` string each, in UTF-8,
+// in the order announced, the name already cut.
+void testTxtStrings()
+{
+    SECTION("MdnsAdvertiser: the TXT strings");
+
+    const QString id = QStringLiteral("4f2a9c0e1b7d3a56");
+    const QList<QByteArray> named{"v=1", "id=4f2a9c0e1b7d3a56", "name=Salon \xC3\xA9t\xC3\xA9"};
+    CHECK(MdnsAdvertiser::txtStrings(id, QStringLiteral("  Salon %1t%1 ").arg(QChar(0x00E9))) ==
+          named);
+    const QList<QByteArray> bare{"v=1", "id=4f2a9c0e1b7d3a56"};
+    CHECK(MdnsAdvertiser::txtStrings(id, QString()) == bare);
+    // A name of 64 bytes goes out as 63, plus its key: one string under 255.
+    const QList<QByteArray> cut = MdnsAdvertiser::txtStrings(id, QString(64, QLatin1Char('x')));
+    CHECK_EQ(cut.size(), 3);
+    CHECK(cut.value(2) == QByteArray("name=") + QByteArray(63, 'x'));
+}
+
 } // namespace
 
 // The name the TV app lists this server under. A dot would make the instance
@@ -96,4 +114,5 @@ void run_mdns_advertiser_tests()
     CHECK_EQ(cut.toUtf8().size(), 62);
 
     testTxtRecord();
+    testTxtStrings();
 }
