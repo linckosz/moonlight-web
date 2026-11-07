@@ -2304,16 +2304,20 @@ export const MoonlightApp = {
         }
         // « Auto » (util/CodecAuto.js): HEVC, the codec the host is asked for,
         // unless HDR below finds that HEVC cannot do the job (hdrLaunchCodec),
-        // or H.264 in a browser whose HEVC already failed (hevcFailedHere).
-        // No codec stored at all is still the server's default, as before. A
-        // fallback relaunch keeps the word of the launch it follows: the
-        // overlay still says Auto.
+        // or, in a browser whose HEVC already failed (hevcFailedHere), AV1 of
+        // a host that encodes it, H.264 where AV1 failed too or the host has
+        // none. No codec stored at all is still the server's default, as
+        // before. A fallback relaunch keeps the word of the launch it follows:
+        // the overlay still says Auto.
         if (!codecOverride) {
             this._codecAuto = streamingSettings.video_codec === CODEC_AUTO;
             if (this._codecAuto) {
-                streamingSettings.video_codec = autoLaunchCodec();
-                if (streamingSettings.video_codec === 'h264')
-                    console.log('[MW] Auto: HEVC failed in this browser before — asking H.264');
+                streamingSettings.video_codec = autoLaunchCodec(host.serverCodecModeSupport || 0);
+                if (streamingSettings.video_codec !== 'hevc')
+                    console.log(
+                        '[MW] Auto: HEVC failed in this browser before — asking ' +
+                            (streamingSettings.video_codec === 'av1' ? 'AV1' : 'H.264'),
+                    );
             }
         }
         // Whatever codec Auto named above, the host is told it was Auto: a
@@ -2382,8 +2386,21 @@ export const MoonlightApp = {
         // Auto's H.264 (this browser's HEVC failed) is asked without HDR: H.264
         // HDR is High 4:4:4 Predictive 10-bit, which nearly nothing decodes, and
         // H.264 SDR is where the fallback from HEVC would have ended anyway.
-        if (this._codecAuto && !codecOverride && streamingSettings.video_codec === 'h264') {
-            if (streamingSettings.hdr_enabled) console.log('[MW] Auto in H.264: HDR not asked');
+        // Auto's AV1 in its place is asked in SDR too: what the bench measured
+        // (07/11/2026), and an AV1 HDR that failed would fall back through the
+        // HEVC this browser already failed (StreamView's fallback chain).
+        // With 4:4:4 asked it stays H.264, as before: AV1 4:4:4 was not measured.
+        const autoInstead =
+            streamingSettings.video_codec === 'h264' || streamingSettings.video_codec === 'av1';
+        if (this._codecAuto && !codecOverride && autoInstead) {
+            if (streamingSettings.video_codec === 'av1' && streamingSettings.chroma_444_enabled) {
+                console.log('[MW] Auto: 4:4:4 asked — H.264 rather than AV1');
+                streamingSettings.video_codec = 'h264';
+            }
+            if (streamingSettings.hdr_enabled)
+                console.log(
+                    `[MW] Auto in ${streamingSettings.video_codec === 'av1' ? 'AV1' : 'H.264'}: HDR not asked`,
+                );
             streamingSettings.hdr_enabled = false;
         }
         // The codec HDR asks for (hdrLaunchCodec): HEVC for an AV1 this

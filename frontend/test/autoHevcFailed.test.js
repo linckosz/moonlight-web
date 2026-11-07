@@ -8,8 +8,11 @@ import { StreamView } from '../js/ui/StreamView.js';
 import { Toast } from '../js/ui/Toast.js';
 import {
     HEVC_FAILED_DAYS,
+    SCM_MASK_AV1,
     autoLaunchCodec,
+    av1FailedHere,
     hevcFailedHere,
+    noteAv1Failed,
     noteHevcFailed,
 } from '../js/util/CodecAuto.js';
 
@@ -17,9 +20,14 @@ import {
  * Firefox on the UM790Pro (28/10/2026): « Auto » asked the host for HEVC, the
  * browser could not decode it, and 0.8 s later the stream came back in H.264,
  * at every launch, each time with an « HDR unavailable » toast although no HDR
- * had been asked. Now the browser keeps the verdict and Auto asks H.264 there
- * from the next launch on; and HDR is said lost only where it was asked.
+ * had been asked. Now the browser keeps the verdict and Auto asks AV1 there
+ * from the next launch on (Bruno, 07/11/2026), H.264 where AV1 failed too or
+ * the host has none; and HDR is said lost only where it was asked.
  */
+
+/** Sunshine on an RTX: H.264, HEVC Main/Main10, AV1 Main8/Main10. */
+const HOST_AV1 = 0x1 | 0x100 | 0x200 | 0x10000 | 0x20000;
+const HOST_NO_AV1 = 0x1 | 0x100 | 0x200;
 
 const DAY = 24 * 3600 * 1000;
 
@@ -35,13 +43,39 @@ function memoryStore(init = {}) {
 describe('CodecAuto: the verdict on a browser whose HEVC failed', () => {
     const FX = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0';
 
-    it('asks H.264 once HEVC failed here, HEVC before', () => {
+    it('asks AV1 once HEVC failed here, HEVC before', () => {
         const s = memoryStore();
         const now = 1000 * DAY;
-        expect(autoLaunchCodec(FX, s, now)).toBe('hevc');
+        expect(autoLaunchCodec(HOST_AV1, FX, s, now)).toBe('hevc');
         noteHevcFailed(FX, s, now);
         expect(hevcFailedHere(FX, s, now + DAY)).toBe(true);
-        expect(autoLaunchCodec(FX, s, now + DAY)).toBe('h264');
+        expect(autoLaunchCodec(HOST_AV1, FX, s, now + DAY)).toBe('av1');
+    });
+
+    it('asks H.264 of a host without AV1, or once AV1 failed here too', () => {
+        const s = memoryStore();
+        const now = 1000 * DAY;
+        noteHevcFailed(FX, s, now);
+        expect(autoLaunchCodec(HOST_NO_AV1, FX, s, now)).toBe('h264');
+        expect(autoLaunchCodec(undefined, FX, s, now)).toBe('h264');
+        expect(autoLaunchCodec(0x20000, FX, s, now)).toBe('av1');
+        noteAv1Failed(FX, s, now);
+        expect(av1FailedHere(FX, s, now)).toBe(true);
+        expect(autoLaunchCodec(HOST_AV1, FX, s, now)).toBe('h264');
+        // The AV1 verdict alone changes nothing: HEVC first, as long as it works.
+        const t = memoryStore();
+        noteAv1Failed(FX, t, now);
+        expect(autoLaunchCodec(HOST_AV1, FX, t, now)).toBe('hevc');
+        expect(SCM_MASK_AV1 & HOST_NO_AV1).toBe(0);
+    });
+
+    it('lets the AV1 verdict lapse like the HEVC one', () => {
+        const s = memoryStore();
+        const now = 1000 * DAY;
+        noteAv1Failed(FX, s, now);
+        expect(av1FailedHere(FX, s, now + HEVC_FAILED_DAYS * DAY)).toBe(false);
+        expect(av1FailedHere(FX, s, now - DAY)).toBe(false);
+        expect(hevcFailedHere(FX, s, now)).toBe(false);
     });
 
     it('asks a new version of the browser again', () => {
@@ -76,8 +110,9 @@ describe('CodecAuto: the verdict on a browser whose HEVC failed', () => {
             },
         };
         expect(() => noteHevcFailed(FX, broken, 0)).not.toThrow();
-        expect(autoLaunchCodec(FX, broken, 0)).toBe('hevc');
-        expect(autoLaunchCodec(FX, null, 0)).toBe('hevc');
+        expect(() => noteAv1Failed(FX, broken, 0)).not.toThrow();
+        expect(autoLaunchCodec(HOST_AV1, FX, broken, 0)).toBe('hevc');
+        expect(autoLaunchCodec(HOST_AV1, FX, null, 0)).toBe('hevc');
         expect(hevcFailedHere(FX, memoryStore({ mw_hevc_failed: 'not json' }), 0)).toBe(false);
     });
 });
@@ -100,8 +135,12 @@ describe('StreamView: the fallback keeps the verdict', () => {
             ...over,
         };
     }
-    beforeEach(() => localStorage.removeItem('mw_hevc_failed'));
-    afterEach(() => localStorage.removeItem('mw_hevc_failed'));
+    const clear = () => {
+        localStorage.removeItem('mw_hevc_failed');
+        localStorage.removeItem('mw_av1_failed');
+    };
+    beforeEach(clear);
+    afterEach(clear);
 
     it('an 8-bit HEVC that fails, Auto or chosen: H.264, and the verdict', () => {
         for (const videoCodec of ['hevc', 'auto']) {
@@ -125,6 +164,23 @@ describe('StreamView: the fallback keeps the verdict', () => {
             v._requestCodecFallback();
             expect(v._codecFallbackRequested, JSON.stringify(over)).toBe(true);
             expect(hevcFailedHere(), JSON.stringify(over)).toBe(false);
+        }
+    });
+
+    it('an 8-bit AV1 that fails: H.264, and the AV1 verdict, not the HEVC one', () => {
+        const v = view({ videoCodec: 'av1' });
+        v._requestCodecFallback();
+        expect(v._codecFallback).toEqual({ codec: 'h264', hdr: false });
+        expect(av1FailedHere()).toBe(true);
+        expect(hevcFailedHere()).toBe(false);
+    });
+
+    it('no AV1 verdict for an HDR AV1, nor for HEVC', () => {
+        for (const over of [{ videoCodec: 'av1', _hdrEnabled: true }, { videoCodec: 'hevc' }]) {
+            clear();
+            const v = view(over);
+            v._requestCodecFallback();
+            expect(av1FailedHere(), JSON.stringify(over)).toBe(false);
         }
     });
 });

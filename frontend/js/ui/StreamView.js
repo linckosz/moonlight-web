@@ -97,7 +97,7 @@ import {
     supportsGamingMode,
     lockFreeLookWanted,
 } from '../util/BrowserDetect.js';
-import { noteHevcFailed } from '../util/CodecAuto.js';
+import { noteAv1Failed, noteHevcFailed } from '../util/CodecAuto.js';
 import * as RemoteNav from './RemoteNav.js';
 import { StreamRemoteMenu } from './StreamRemoteMenu.js';
 import { RemotePointer } from '../stream/RemotePointer.js';
@@ -3679,6 +3679,10 @@ export class StreamView {
         // where plain HEVC may still decode.
         if (cur === 'hevc' && !this._hdrEnabled && !this._yuv444 && target.codec === 'h264')
             noteHevcFailed();
+        // The same for an 8-bit AV1, which Auto asks where HEVC failed: H.264
+        // from the next launch on (CodecAuto.av1FailedHere).
+        if (cur === 'av1' && !this._hdrEnabled && !this._yuv444 && target.codec === 'h264')
+            noteAv1Failed();
 
         console.warn(
             `[StreamView] Codec fallback: ${cur}${this._hdrEnabled ? ' HDR' : ''} → ` +

@@ -12,8 +12,14 @@
  * so it becomes Auto once per browser (codecAfterAutoMigration). Auto is HEVC
  * but where HEVC fails: nothing is lost, and a HEVC picked afterwards stays.
  *
- * Where HEVC failed, Auto remembers it (hevcFailedHere) and asks H.264 from
- * the next launch on, instead of failing HEVC first at every launch.
+ * Where HEVC failed, Auto remembers it (hevcFailedHere) and asks AV1 from the
+ * next launch on, of a host that encodes it, instead of failing HEVC first at
+ * every launch; H.264 where AV1 failed too (av1FailedHere), or from a host
+ * without AV1. AV1 rather than H.264, by Bruno's decision (07/11/2026): at
+ * the bitrate Auto picks, AV1 was faster from click to photon than H.264 in
+ * every case measured (3 to 10 ms, Firefox and Chrome, 1080p and 1440p),
+ * under 2 client cores, and as good or better in VMAF NEG
+ * (docs/design/moonlight-web-booster.md, §16).
  */
 
 export const CODEC_AUTO = 'auto';
@@ -76,6 +82,8 @@ export function migrateStoredCodecToAuto(s = store()) {
 
 /** The browsers whose HEVC failed to decode: user agent → when (ms). */
 const HEVC_FAILED_KEY = 'mw_hevc_failed';
+/** The same for AV1, asked by Auto where HEVC had failed. */
+const AV1_FAILED_KEY = 'mw_av1_failed';
 
 /** How long such a verdict holds. Past it, Auto asks HEVC again. */
 export const HEVC_FAILED_DAYS = 30;
@@ -83,10 +91,10 @@ const HEVC_FAILED_MS = HEVC_FAILED_DAYS * 24 * 3600 * 1000;
 
 const userAgent = () => (typeof navigator !== 'undefined' && navigator.userAgent) || '';
 
-/** @param {Storage|null} s @returns {Object<string, number>} */
-function hevcVerdicts(s) {
+/** @param {Storage|null} s @param {string} key @returns {Object<string, number>} */
+function verdicts(s, key) {
     try {
-        const kept = s && JSON.parse(s.getItem(HEVC_FAILED_KEY) || '{}');
+        const kept = s && JSON.parse(s.getItem(key) || '{}');
         return kept && typeof kept === 'object' ? kept : {};
     } catch (e) {
         return {};
@@ -106,7 +114,23 @@ function hevcVerdicts(s) {
  * @returns {boolean}
  */
 export function hevcFailedHere(ua = userAgent(), s = store(), now = Date.now()) {
-    const seen = hevcVerdicts(s)[ua];
+    return failedHere(HEVC_FAILED_KEY, ua, s, now);
+}
+
+/**
+ * Whether this browser's AV1 was seen failing in the same way (hevcFailedHere),
+ * kept as long.
+ * @param {string} [ua]
+ * @param {Storage|null} [s]
+ * @param {number} [now]
+ * @returns {boolean}
+ */
+export function av1FailedHere(ua = userAgent(), s = store(), now = Date.now()) {
+    return failedHere(AV1_FAILED_KEY, ua, s, now);
+}
+
+function failedHere(key, ua, s, now) {
+    const seen = verdicts(s, key)[ua];
     // A date ahead of the clock (the clock set back) holds no longer either.
     return typeof seen === 'number' && now >= seen && now - seen < HEVC_FAILED_MS;
 }
@@ -118,29 +142,50 @@ export function hevcFailedHere(ua = userAgent(), s = store(), now = Date.now()) 
  * @param {number} [now]
  */
 export function noteHevcFailed(ua = userAgent(), s = store(), now = Date.now()) {
+    noteFailed(HEVC_FAILED_KEY, ua, s, now);
+}
+
+/**
+ * Remember it for AV1 (av1FailedHere).
+ * @param {string} [ua]
+ * @param {Storage|null} [s]
+ * @param {number} [now]
+ */
+export function noteAv1Failed(ua = userAgent(), s = store(), now = Date.now()) {
+    noteFailed(AV1_FAILED_KEY, ua, s, now);
+}
+
+function noteFailed(key, ua, s, now) {
     if (!s) return;
     try {
         const kept = {};
-        for (const [k, seen] of Object.entries(hevcVerdicts(s))) {
+        for (const [k, seen] of Object.entries(verdicts(s, key))) {
             if (typeof seen === 'number' && now >= seen && now - seen < HEVC_FAILED_MS)
                 kept[k] = seen;
         }
         kept[ua] = now;
-        s.setItem(HEVC_FAILED_KEY, JSON.stringify(kept));
+        s.setItem(key, JSON.stringify(kept));
     } catch (e) {
         // Not kept: the next launch finds out again, a relaunch later.
     }
 }
 
+/** A host's codec mode bits for AV1, any profile (moonlight-common-c, SCM_MASK_AV1). */
+export const SCM_MASK_AV1 = 0xf0000;
+
 /**
- * The codec an Auto launch asks the host for: HEVC, or H.264 in a browser
- * whose HEVC failed (hevcFailedHere). The HDR route may still turn HEVC into
- * AV1 (BrowserDetect.hdrLaunchCodec).
+ * The codec an Auto launch asks the host for: HEVC; in a browser whose HEVC
+ * failed (hevcFailedHere), AV1 of a host that encodes it (SCM_MASK_AV1); H.264
+ * where AV1 failed too (av1FailedHere), or from a host without AV1. The HDR
+ * route may still turn HEVC into AV1 (BrowserDetect.hdrLaunchCodec).
+ * @param {number} [hostCodecs] the host's serverCodecModeSupport
  * @param {string} [ua]
  * @param {Storage|null} [s]
  * @param {number} [now]
- * @returns {'hevc'|'h264'}
+ * @returns {'hevc'|'av1'|'h264'}
  */
-export function autoLaunchCodec(ua, s, now) {
-    return hevcFailedHere(ua, s, now) ? 'h264' : 'hevc';
+export function autoLaunchCodec(hostCodecs = 0, ua, s, now) {
+    if (!hevcFailedHere(ua, s, now)) return 'hevc';
+    if ((hostCodecs & SCM_MASK_AV1) !== 0 && !av1FailedHere(ua, s, now)) return 'av1';
+    return 'h264';
 }
