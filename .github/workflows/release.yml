@@ -375,8 +375,8 @@ jobs:
           output-artifact-directory: signed-payload
 
       # MoonlightWeb.exe is the only first-party binary cmake stages
-      # (backend/CMakeLists.txt:359) — Qt's and OpenSSL's DLLs arrive with their
-      # own signatures. It has to be signed before ISCC swallows it: the service
+      # (backend/CMakeLists.txt:359) — Qt's DLLs arrive with their own
+      # signatures; the OpenSSL DLLs staged above are not signed. It has to be signed before ISCC swallows it: the service
       # registers it to run at boot, so an unsigned copy inside a signed
       # installer would still get flagged on first launch.
       - name: Swap in the signed payload
