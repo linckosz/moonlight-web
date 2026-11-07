@@ -158,6 +158,12 @@ public:
     bool hostHeldByAnother(const QString& hostUuid, const QString& sessionToken,
                            const QString& clientUniqueId, int ownerSlots) const;
 
+    // The live slots that stream for one session, the one @p isThatSession
+    // recognises from a slot's token. A slot with no token (localhost, an
+    // invited player) is no session's, and never in the list.
+    QVector<int>
+    slotsOfSession(const std::function<bool(const QString& sessionToken)>& isThatSession) const;
+
 private:
     bool inUse(int index) const;
     // Appends one slot and announces it. Returns its index, or -1 at maxSlots.

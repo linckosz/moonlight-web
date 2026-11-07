@@ -219,4 +219,35 @@ void run_session_pool_tests()
         two.at(1).worker = nullptr;
         CHECK(!two.hostHeldByAnother(QStringLiteral("host-B"), x, QStringLiteral("UID-X"), 2));
     }
+
+    SECTION("SessionPool: the streams of one session, and no one else's");
+    {
+        // Two owner slots of two devices, an invited player, and an app slot
+        // of the first device (the virtual display beside Display 1).
+        SessionPool pool(48001, 48024, 2, 6);
+        QObject w0, w1, wPlayer, wApp;
+        pool.at(0).worker = &w0;
+        pool.at(0).sessionToken = QStringLiteral("device-x");
+        pool.at(1).worker = &w1;
+        pool.at(1).sessionToken = QStringLiteral("device-y");
+        const int player = pool.acquire();
+        pool.at(player).worker = &wPlayer; // a player has no session token
+        const int app = pool.acquire();
+        pool.at(app).worker = &wApp;
+        pool.at(app).sessionToken = QStringLiteral("device-x");
+        const auto is = [](const char* token) {
+            return [token](const QString& t) { return t == QLatin1String(token); };
+        };
+
+        CHECK(pool.slotsOfSession(is("device-x")) == (QVector<int>{0, app}));
+        CHECK(pool.slotsOfSession(is("device-y")) == QVector<int>{1});
+        CHECK(pool.slotsOfSession(is("device-z")).isEmpty());
+        // A slot without a token is nobody's, even for a test that takes all.
+        CHECK(pool.slotsOfSession([](const QString&) { return true; }) ==
+              (QVector<int>{0, 1, app}));
+        CHECK(pool.slotsOfSession({}).isEmpty());
+        // A slot whose worker is gone streams nothing.
+        pool.at(app).worker = nullptr;
+        CHECK(pool.slotsOfSession(is("device-x")) == QVector<int>{0});
+    }
 }

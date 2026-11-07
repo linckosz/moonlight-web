@@ -170,3 +170,16 @@ bool SessionPool::hostHeldByAnother(const QString& hostUuid, const QString& sess
     }
     return false;
 }
+
+QVector<int> SessionPool::slotsOfSession(
+    const std::function<bool(const QString& sessionToken)>& isThatSession) const
+{
+    QVector<int> found;
+    if (!isThatSession) return found;
+    for (int i = 0; i < m_Slots.size(); ++i) {
+        const Slot& s = m_Slots[i];
+        if (!s.worker.isNull() && !s.sessionToken.isEmpty() && isThatSession(s.sessionToken))
+            found.append(i);
+    }
+    return found;
+}

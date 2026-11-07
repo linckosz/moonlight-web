@@ -781,24 +781,46 @@ void run_auth_manager_tests()
     auth.saveSessions();
     auth.loadSessions();
 
-    // Revoking a session that is actively streaming must request stream teardown.
-    int revokedFired = 0;
+    // A session that goes asks for its own streams to end, by its id: the
+    // cookie of each slot is matched to it, and no other session's stream is.
+    QStringList revoked;
     QObject::connect(&auth, &AuthManager::streamingSessionRevoked,
-                     [&revokedFired]() { ++revokedFired; });
+                     [&revoked](const QString& sessionId) { revoked.append(sessionId); });
     auth.setSessionStreaming(token, true); // re-flag: streaming is runtime-only, reset by load
     auth.destroySession(id);
     CHECK(!auth.validateSession(token)); // gone after destroy by id
-    CHECK_EQ(revokedFired, 1);           // streaming session revoked → teardown signal
+    CHECK(revoked == QStringList{id});
+    CHECK(AuthManager::isTokenOf(token, id)); // still matched, the session gone
+    CHECK(!AuthManager::isTokenOf(QStringLiteral("another-cookie"), id));
+    CHECK(!AuthManager::isTokenOf(QString(), id));
+    CHECK(!AuthManager::isTokenOf(token, QString()));
 
+    // Whatever the streaming flag says: it follows one stream only, the latest.
+    const QString tokenA = auth.createSession("198.51.100.23");
+    const QString tokenB = auth.createSession("198.51.100.24");
+    auth.setSessionStreaming(tokenA, true);
+    auth.setSessionStreaming(tokenB, true); // A's flag is cleared, A still streams
+    revoked.clear();
+    auth.destroySession(auth.sessionIdForToken(tokenA));
+    CHECK_EQ(revoked.size(), 1);
+    CHECK(AuthManager::isTokenOf(tokenA, revoked.value(0)));
+    CHECK(!AuthManager::isTokenOf(tokenB, revoked.value(0)));
+    // Logging out is the same going.
+    revoked.clear();
+    CHECK(auth.logoutSession(tokenB));
+    CHECK_EQ(revoked.size(), 1);
+    CHECK(AuthManager::isTokenOf(tokenB, revoked.value(0)));
+
+    // Every session at once: every stream, with an empty id.
     auth.createSession("198.51.100.21");
+    revoked.clear();
     auth.destroyAllSessions();
     CHECK_EQ(auth.activeSessionCount(), 0);
-    CHECK_EQ(revokedFired, 1); // non-streaming sessions → no teardown signal
-
-    QString token3 = auth.createSession("198.51.100.22");
-    auth.setSessionStreaming(token3, true);
+    CHECK(revoked == QStringList{QString()});
+    // Nothing left to revoke, nothing asked.
+    revoked.clear();
     auth.destroyAllSessions();
-    CHECK_EQ(revokedFired, 2);   // destroy-all with a streaming session → teardown signal
+    CHECK(revoked.isEmpty());
     auth.purgeExpiredSessions(); // no-op, just exercised
 
     // ── Session listing order and identity ─────────────────────────────────

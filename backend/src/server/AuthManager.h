@@ -304,6 +304,11 @@ public:
      *  point at the row that is the caller's own device. */
     QString sessionIdForToken(const QString& token) const;
 
+    /** Whether raw cookie @p token is the one behind session id @p sessionId,
+     *  the session still there or not (a revoked one, for its streams).
+     *  Never for an empty side. */
+    static bool isTokenOf(const QString& token, const QString& sessionId);
+
     /** Record that the session behind raw cookie @p token was let in by the
      *  session whose opaque id is @p approverId (SessionInfo::approvedBy).
      *  Returns false when the token matches none. */
@@ -483,10 +488,13 @@ signals:
     void pinChanged(const QString& newPin);
     void sessionCreated(const QString& ip, const QString& machineName);
     void sessionDestroyed(const QString& token);
-    /** Emitted when a destroyed session was actively streaming. The stream
-     *  lifecycle owner (main.cpp) must tear the live relay down so a revoked
-     *  device stops receiving the stream immediately. */
-    void streamingSessionRevoked();
+    /** Emitted when a session goes (revoked, logged out, replaced): the
+     *  stream lifecycle owner (main.cpp) ends that session's streams at once,
+     *  and no one else's. @p sessionId is its id (isTokenOf matches a cookie
+     *  to it); empty when every session went at once (destroyAllSessions),
+     *  and then every stream ends. Emitted whether or not the session is
+     *  flagged as streaming: the flag follows one stream only. */
+    void streamingSessionRevoked(const QString& sessionId);
     /** Emitted when session list changes (created or destroyed) */
     void sessionsChanged();
 

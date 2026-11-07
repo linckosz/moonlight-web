@@ -1005,10 +1005,11 @@ void AuthManager::destroySession(const QString& token)
         Logger::info(QString("[Auth] Session destroyed for %1 (machine='%2', remaining: %3)")
                          .arg(info.ip, info.machineName)
                          .arg(m_sessions.size()));
-        if (info.streaming) {
+        if (info.streaming)
             Logger::info("[Auth] Revoked session was streaming — requesting stream teardown");
-            emit streamingSessionRevoked();
-        }
+        // Whatever the flag says: it follows one stream only, and this
+        // session's other streams end too.
+        emit streamingSessionRevoked(token);
 
         // The sessions this one let in go with it (a device it approved by the
         // QR code it showed, PhonePairing.h), and theirs in turn. Each is out of
@@ -1043,22 +1044,13 @@ bool AuthManager::renameSession(const QString& token, const QString& machineName
 void AuthManager::destroyAllSessions()
 {
     int count = m_sessions.size();
-    bool anyStreaming = false;
-    for (const SessionInfo& s : m_sessions) {
-        if (s.streaming) {
-            anyStreaming = true;
-            break;
-        }
-    }
     m_sessions.clear();
     saveSessions();
     if (count > 0) {
         emit sessionsChanged();
         Logger::info(QString("[Auth] All %1 sessions destroyed").arg(count));
-    }
-    if (anyStreaming) {
-        Logger::info("[Auth] A destroyed session was streaming — requesting stream teardown");
-        emit streamingSessionRevoked();
+        // Every stream ends, whichever one the streaming flag follows.
+        emit streamingSessionRevoked(QString());
     }
 }
 
@@ -1109,6 +1101,11 @@ QString AuthManager::sessionIdForToken(const QString& token) const
     if (token.isEmpty()) return {};
     const QString id = hashToken(token);
     return m_sessions.contains(id) ? id : QString();
+}
+
+bool AuthManager::isTokenOf(const QString& token, const QString& sessionId)
+{
+    return !token.isEmpty() && !sessionId.isEmpty() && hashToken(token) == sessionId;
 }
 
 bool AuthManager::setSessionApprover(const QString& token, const QString& approverId)
