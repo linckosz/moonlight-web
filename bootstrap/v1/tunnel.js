@@ -204,6 +204,50 @@ export function encodeFrame(kind, id, payload) {
     return out;
 }
 
+/**
+ * Compression of the interface's files (v0.4.2).
+ *
+ * A request carries `z: 'deflate'` in its head when this browser can inflate;
+ * the host then may send the body deflated (zlib, RFC 1950) and marks its own
+ * head the same way. The first visit downloads the whole application over the
+ * tunnel, and its scripts shrink about four times. Both marks live in the
+ * frames' heads, not in HTTP headers, so the Response built here is the file
+ * as served, and every check on it (the hashes, the official list) sees the
+ * same bytes as before. An older host ignores the field; a browser without
+ * DecompressionStream never sends it. The format is pinned in
+ * backend/src/server/TunnelFrame.h.
+ */
+export const DEFLATE = 'deflate';
+
+export function canInflate() {
+    return typeof DecompressionStream === 'function';
+}
+
+export async function inflate(bytes) {
+    const input = new ReadableStream({
+        start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+        },
+    });
+    const reader = input.pipeThrough(new DecompressionStream(DEFLATE)).getReader();
+    const parts = [];
+    let total = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+        total += value.length;
+    }
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const p of parts) {
+        out.set(p, offset);
+        offset += p.length;
+    }
+    return out;
+}
+
 export function encodeHead(head, body) {
     const json = new TextEncoder().encode(JSON.stringify(head));
     const rest = body ?? new Uint8Array(0);
@@ -818,15 +862,24 @@ export class Tunnel {
         }
     }
 
-    _buildResponse(waiter) {
+    async _buildResponse(waiter) {
         const head = waiter.head || { s: 502, h: {} };
         let total = 0;
         for (const c of waiter.chunks) total += c.length;
-        const body = new Uint8Array(total);
+        let body = new Uint8Array(total);
         let offset = 0;
         for (const c of waiter.chunks) {
             body.set(c, offset);
             offset += c.length;
+        }
+        if (head.z !== undefined) {
+            // Only ever sent when this page asked, and only the one encoding.
+            if (head.z !== DEFLATE) throw new Error(`your machine sent a body in ${head.z}`);
+            try {
+                body = await inflate(body);
+            } catch (e) {
+                throw new Error(`a file from your machine did not inflate (${e && e.message})`);
+            }
         }
 
         const headers = new Headers();
@@ -879,14 +932,14 @@ export class Tunnel {
             body = new TextEncoder().encode(String(body));
 
         const id = this._nextId++;
-        const payload = encodeHead(
-            {
-                m: (init.method || 'GET').toUpperCase(),
-                p: url.pathname + url.search,
-                h: headers,
-            },
-            body,
-        );
+        const head = {
+            m: (init.method || 'GET').toUpperCase(),
+            p: url.pathname + url.search,
+            h: headers,
+        };
+        // The host decides which answers to deflate (its interface files only).
+        if (canInflate()) head.z = DEFLATE;
+        const payload = encodeHead(head, body);
 
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {

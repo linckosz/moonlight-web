@@ -243,10 +243,18 @@ Reste, en amont et hors du patch :
      | TCP, file + `boot.js` | 5,6 s | 16,1 s |
      | UDP avant | 19,4 s | 27,9 s |
      | UDP, `boot.js` | 2,8 s | 10,7 s |
-   - v0.4.2 : compresser l'interface dans le tunnel (le JS se réduit d'environ 4 fois). L'hôte
-     compresse chaque réponse, `boot.js` la décompresse (`DecompressionStream`). Il faut un
-     drapeau dans le manifeste, pour qu'un `boot.js` récent sache traiter un hôte ancien et
-     l'inverse.
+   - v0.4.2 : compresser l'interface dans le tunnel (le JS se réduit d'environ 4 fois). La
+     négociation se fait par requête plutôt que par un drapeau dans le manifeste. `tunnel.js`
+     met `"z":"deflate"` dans la tête d'une requête quand le navigateur a `DecompressionStream`.
+     L'hôte compresse alors la réponse en zlib (`qCompress`) et marque sa propre tête de la même
+     façon ; `tunnel.js` la décompresse avant de construire la `Response`. Les empreintes et la
+     liste officielle voient donc les mêmes octets qu'avant. Un hôte ancien ignore le champ, et
+     un navigateur sans `DecompressionStream` ne le demande pas : chaque mélange d'anciens et de
+     nouveaux reçoit le corps tel quel. Ne sont compressés que les fichiers de l'interface
+     (GET hors `/api/`, statut 200, type texte, 1 Ko ou plus, manifeste web exclu). Une réponse
+     de l'API porte des sessions et des clés à côté de texte choisi par l'appelant, et sa
+     longueur compressée en dirait trop (la forme de BREACH). Les vecteurs zlib sont partagés
+     entre `backend/tests/test_tunnel_frame.cpp` et `frontend/test/tunnelFrame.test.js`.
 6. ✅ **Depuis un vrai réseau** (26/10, 09:41-09:43) : Bruno, au bureau, sur un Mac d'entreprise
    sans droits d'administration. Le réseau laisse sortir l'UDP : la `--dev` de 59 portait la clé de
    banc `debug_ice_drop_udp` (§3.6). Le tunnel passe en TCP sur 46064 et le flux en

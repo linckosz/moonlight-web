@@ -20,6 +20,7 @@
 #include <QByteArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QString>
 
 /**
  * The bytes that cross the rendezvous control channel.
@@ -49,6 +50,15 @@
  * Responses arrive as one RESPONSE, any number of BODY frames and one END.
  * Chunking is not an optimisation: SCTP has a negotiated message ceiling, and
  * the application's own script bundles sail past it.
+ *
+ * Compression (v0.4.2). A REQUEST head may carry "z":"deflate": this page can
+ * inflate. The host may then send the body deflated (zlib, RFC 1950) and says so
+ * with "z":"deflate" in the RESPONSE head; the BODY frames carry the deflated
+ * bytes. Both marks are fields of the frame's head, never HTTP headers, so the
+ * Response the page builds is the file as served. A host that does not know the
+ * field ignores it, a page that does not send it is never sent a deflated body:
+ * every pairing of old and new ends falls back to the body as it is. Only the
+ * interface's own files are deflated, never an /api/ answer (see mayDeflate).
  */
 namespace TunnelFrame {
 
@@ -139,6 +149,59 @@ inline bool decodeHead(const QByteArray& payload, QJsonObject* outHead, QByteArr
     *outHead = doc.object();
     if (outBody) *outBody = payload.mid(4 + static_cast<int>(headLen));
     return true;
+}
+
+// ── Compression ─────────────────────────────────────────────────────────────
+
+/// The head field that asks for, then marks, a deflated body.
+inline constexpr char kEncodingField[] = "z";
+/// Its one value: zlib (RFC 1950), what DecompressionStream calls "deflate".
+inline constexpr char kDeflate[] = "deflate";
+
+/// Below this a body goes as it is: the saving would be a few bytes, and a
+/// short answer is already one frame.
+inline constexpr int kDeflateMinBytes = 1024;
+
+/// Whether the request may be answered deflated at all: a GET for one of the
+/// interface's own files. Never an /api/ answer. Those carry sessions, PINs and
+/// keys next to text a caller can choose, and a deflated length then says
+/// something about the secret beside it (the BREACH shape). The files are the
+/// same bytes for everyone, and they are what the first visit waits for.
+inline bool mayDeflate(const QString& method, const QString& path)
+{
+    return method == QLatin1String("GET") && !path.startsWith(QLatin1String("/api/"));
+}
+
+/// Whether a response body is worth deflating: a whole file (200), in a text
+/// type, past the floor. Images and fonts are already compressed. The web
+/// manifest is left alone, because the copy a shortcut is made from carries the
+/// machine's key (HomeScreenShell).
+inline bool worthDeflating(int status, const QString& contentType, qsizetype size)
+{
+    if (status != 200 || size < kDeflateMinBytes) return false;
+    if (contentType.startsWith(QLatin1String("application/manifest+json"))) return false;
+    return contentType.startsWith(QLatin1String("text/")) ||
+           contentType.startsWith(QLatin1String("application/javascript")) ||
+           contentType.startsWith(QLatin1String("application/json")) ||
+           contentType.startsWith(QLatin1String("image/svg+xml"));
+}
+
+/// @p body as a zlib stream. qCompress writes the same stream behind a 4-byte
+/// length of its own, which is dropped here.
+inline QByteArray deflate(const QByteArray& body)
+{
+    const QByteArray z = qCompress(body, 6);
+    return z.size() > 4 ? z.mid(4) : QByteArray();
+}
+
+/// The inverse, for the tests: qUncompress wants the 4-byte length back in
+/// front. An empty result is a stream that did not inflate.
+inline QByteArray inflate(const QByteArray& zlib, qsizetype expectedSize)
+{
+    QByteArray framed;
+    appendU32(framed, static_cast<quint32>(expectedSize));
+    framed.append(zlib);
+    return qUncompress(framed);
 }
 
 } // namespace TunnelFrame

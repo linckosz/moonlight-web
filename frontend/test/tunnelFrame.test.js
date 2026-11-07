@@ -14,7 +14,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { encodeFrame, encodeHead } from '../../bootstrap/v1/tunnel.js';
+import {
+    encodeFrame,
+    encodeHead,
+    inflate,
+    canInflate,
+    DEFLATE,
+} from '../../bootstrap/v1/tunnel.js';
 
 const FRAME_REQUEST = 0x01;
 const FRAME_END = 0x04;
@@ -65,5 +71,32 @@ describe('tunnel frame encoding', () => {
         const declared = new DataView(encoded.buffer).getUint32(0, false);
         expect(declared).toBe(encoded.length - 4);
         expect(declared).toBeGreaterThan(JSON.stringify({ p: '/apps/é' }).length);
+    });
+});
+
+/* Compression (v0.4.2). The vector is the one backend/tests/test_tunnel_frame.cpp
+   inflates too, made by Python's zlib at level 6: what the host's qCompress
+   writes once its own 4-byte length is dropped, and what
+   DecompressionStream('deflate') reads (RFC 1950). */
+describe('tunnel body compression', () => {
+    const PLAIN =
+        '636f6e736f6c652e6c6f6728224d6f6f6e6c6967687457656222293b20636f6e736f6c652e6c6f6728' +
+        '224d6f6f6e6c6967687457656222293b20636f6e736f6c652e6c6f6728224d6f6f6e6c69676874576562' +
+        '22293b0a';
+    const VECTOR =
+        '789c4bcecf2bcecf49d5cbc94fd750f2cdcfcfcbc94ccf28094f4d52d2b456482657920b005b0e1e51';
+    const fromHex = (h) => new Uint8Array(h.match(/../g).map((b) => parseInt(b, 16)));
+
+    it('inflates the stream the host deflates', async () => {
+        expect(hex(await inflate(fromHex(VECTOR)))).toBe(PLAIN);
+    });
+
+    it('is offered wherever the browser can inflate', () => {
+        expect(DEFLATE).toBe('deflate');
+        expect(canInflate()).toBe(typeof DecompressionStream === 'function');
+    });
+
+    it('refuses a stream that is not zlib', async () => {
+        await expect(inflate(fromHex('00010203040506070809'))).rejects.toThrow();
     });
 });

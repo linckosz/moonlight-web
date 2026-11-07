@@ -231,8 +231,10 @@ private:
     void closeWs(Peer& p, quint32 id, const QString& reason);
 
     void sendFrame(Peer& p, const QByteArray& frame);
+    /// @p mayDeflate: the page asked for a deflated body and the request is one
+    /// that may have it (TunnelFrame::mayDeflate).
     void sendResponse(const QString& sessionId, quint32 id, const HttpResponse& response,
-                      const QString& hostHeader);
+                      const QString& hostHeader, bool mayDeflate = false);
     void drain(Peer& p);
 
     // ── The router holes this tunnel connects through ───────────────────────

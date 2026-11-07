@@ -107,4 +107,59 @@ void run_tunnel_frame_tests()
     // uploads. Without one, a browser could make the host hold an arbitrary
     // amount of memory before a single check has run.
     CHECK_EQ(TunnelFrame::kMaxRequestBytes, 256 * 1024);
+
+    SECTION("TunnelFrame — the deflated body is a zlib stream the browser inflates");
+
+    // The same vector as frontend/test/tunnelFrame.test.js, made by Python's
+    // zlib at level 6. DecompressionStream('deflate') takes exactly this
+    // (RFC 1950); qCompress puts a 4-byte length of its own in front, which
+    // deflate() drops. The exact bytes of our own output are not pinned, since
+    // they may change with zlib's version; that they inflate back is.
+    const QByteArray plain = QByteArray::fromHex(
+        "636f6e736f6c652e6c6f6728224d6f6f6e6c6967687457656222293b20636f6e736f6c652e6c6f6728"
+        "224d6f6f6e6c6967687457656222293b20636f6e736f6c652e6c6f6728224d6f6f6e6c69676874576562"
+        "22293b0a");
+    const QByteArray vector = QByteArray::fromHex(
+        "789c4bcecf2bcecf49d5cbc94fd750f2cdcfcfcbc94ccf28094f4d52d2b456482657920b005b0e1e51");
+    CHECK_EQ(TunnelFrame::inflate(vector, plain.size()), plain);
+
+    const QByteArray ours = TunnelFrame::deflate(plain);
+    // A zlib header: CM 8 (deflate), and the two bytes a multiple of 31.
+    CHECK(ours.size() > 2);
+    CHECK_EQ(static_cast<quint8>(ours[0]) & 0x0F, 8);
+    CHECK_EQ(((static_cast<quint8>(ours[0]) << 8) | static_cast<quint8>(ours[1])) % 31, 0);
+    CHECK_EQ(TunnelFrame::inflate(ours, plain.size()), plain);
+
+    // A file the size of the application's large scripts, several chunks deflated.
+    QByteArray script;
+    for (int i = 0; i < 6000; ++i)
+        script.append("export function f" + QByteArray::number(i) + "() { return " +
+                      QByteArray::number(i * 7) + "; }\n");
+    const QByteArray scriptZ = TunnelFrame::deflate(script);
+    CHECK(scriptZ.size() < script.size() / 3);
+    CHECK_EQ(TunnelFrame::inflate(scriptZ, script.size()), script);
+
+    SECTION("TunnelFrame — only the interface's files are deflated, never an /api/ answer");
+
+    CHECK(TunnelFrame::mayDeflate(QStringLiteral("GET"), QStringLiteral("/js/app.js")));
+    CHECK(TunnelFrame::mayDeflate(QStringLiteral("GET"), QStringLiteral("/index.html")));
+    // The API carries sessions, PINs and keys beside text a caller can choose.
+    CHECK(!TunnelFrame::mayDeflate(QStringLiteral("GET"), QStringLiteral("/api/app/manifest")));
+    CHECK(!TunnelFrame::mayDeflate(QStringLiteral("GET"), QStringLiteral("/api/auth/status")));
+    CHECK(!TunnelFrame::mayDeflate(QStringLiteral("POST"), QStringLiteral("/js/app.js")));
+
+    const QString js = QStringLiteral("application/javascript; charset=utf-8");
+    CHECK(TunnelFrame::worthDeflating(200, js, 4096));
+    CHECK(TunnelFrame::worthDeflating(200, QStringLiteral("text/css; charset=utf-8"), 4096));
+    CHECK(TunnelFrame::worthDeflating(200, QStringLiteral("text/html; charset=utf-8"), 4096));
+    CHECK(TunnelFrame::worthDeflating(200, QStringLiteral("application/json"), 4096));
+    CHECK(TunnelFrame::worthDeflating(200, QStringLiteral("image/svg+xml"), 4096));
+    // Too short to be worth it, not a whole file, or already compressed.
+    CHECK(!TunnelFrame::worthDeflating(200, js, TunnelFrame::kDeflateMinBytes - 1));
+    CHECK(!TunnelFrame::worthDeflating(304, js, 4096));
+    CHECK(!TunnelFrame::worthDeflating(206, js, 4096));
+    CHECK(!TunnelFrame::worthDeflating(200, QStringLiteral("image/png"), 4096));
+    CHECK(!TunnelFrame::worthDeflating(200, QStringLiteral("font/woff2"), 4096));
+    // The shortcut's manifest carries the machine's key.
+    CHECK(!TunnelFrame::worthDeflating(200, QStringLiteral("application/manifest+json"), 4096));
 }

@@ -276,3 +276,91 @@ describe('failures that pass by themselves', () => {
         expect((await failureAfter(relayError('unsupported_version'))).transient).toBeUndefined();
     });
 });
+
+/* Compression of the interface's files (v0.4.2): the page asks, the host may
+   deflate, the page hands back the file as served. Same vector as
+   tunnelFrame.test.js and backend/tests/test_tunnel_frame.cpp. */
+describe('a deflated answer', () => {
+    const PLAIN = 'console.log("MoonlightWeb"); '.repeat(3).trimEnd() + '\n';
+    const VECTOR =
+        '789c4bcecf2bcecf49d5cbc94fd750f2cdcfcfcbc94ccf28094f4d52d2b456482657920b005b0e1e51';
+    const fromHex = (h) => new Uint8Array(h.match(/../g).map((b) => parseInt(b, 16)));
+
+    beforeEach(() => {
+        FakeWebSocket.last = null;
+    });
+
+    /** The head and id of the last request the page sent. */
+    function lastRequest(channel) {
+        const bytes = channel.sent.filter((b) => b[0] === FRAME_REQUEST).at(-1);
+        const id = new DataView(bytes.buffer, bytes.byteOffset).getUint32(1, false);
+        const headLen = new DataView(bytes.buffer, bytes.byteOffset + 5).getUint32(0, false);
+        return { id, head: JSON.parse(new TextDecoder().decode(bytes.subarray(9, 9 + headLen))) };
+    }
+
+    function answer(t, id, head, body) {
+        t._onChannelMessage(
+            tunnelModule.encodeFrame(FRAME_RESPONSE, id, tunnelModule.encodeHead(head)),
+        );
+        // Split across BODY frames, as the host chunks it.
+        for (let i = 0; i < body.length; i += 16)
+            t._onChannelMessage(tunnelModule.encodeFrame(0x03, id, body.subarray(i, i + 16)));
+        t._onChannelMessage(tunnelModule.encodeFrame(0x04, id, null));
+    }
+
+    it('asks for one, and inflates it back into the file', async () => {
+        const { t, channel } = await openTunnel();
+        vi.useRealTimers();
+        const pending = t.fetch('/js/app.js');
+        const { id, head } = lastRequest(channel);
+        expect(head.z).toBe('deflate');
+
+        answer(
+            t,
+            id,
+            { s: 200, h: { 'Content-Type': 'application/javascript' }, z: 'deflate' },
+            fromHex(VECTOR),
+        );
+        const response = await pending;
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-type')).toBe('application/javascript');
+        expect(await response.text()).toBe(PLAIN);
+    });
+
+    it('takes the body as it is from a host that did not deflate it', async () => {
+        const { t, channel } = await openTunnel();
+        vi.useRealTimers();
+        const pending = t.fetch('/js/app.js');
+        const { id } = lastRequest(channel);
+
+        answer(t, id, { s: 200, h: {} }, new TextEncoder().encode(PLAIN));
+        expect(await (await pending).text()).toBe(PLAIN);
+    });
+
+    it('fails the request on a body that does not inflate', async () => {
+        const { t, channel } = await openTunnel();
+        vi.useRealTimers();
+        const pending = t.fetch('/js/app.js');
+        const { id } = lastRequest(channel);
+
+        answer(t, id, { s: 200, h: {}, z: 'deflate' }, new TextEncoder().encode(PLAIN));
+        await expect(pending).rejects.toThrow(/did not inflate/);
+    });
+
+    it('fails the request on an encoding it never asked for', async () => {
+        const { t, channel } = await openTunnel();
+        vi.useRealTimers();
+        const pending = t.fetch('/js/app.js');
+        const { id } = lastRequest(channel);
+
+        answer(t, id, { s: 200, h: {}, z: 'br' }, new TextEncoder().encode(PLAIN));
+        await expect(pending).rejects.toThrow(/br/);
+    });
+
+    it('does not ask where the browser cannot inflate', async () => {
+        const { t, channel } = await openTunnel();
+        vi.stubGlobal('DecompressionStream', undefined);
+        t.fetch('/js/app.js').catch(() => {});
+        expect(lastRequest(channel).head.z).toBeUndefined();
+    });
+});

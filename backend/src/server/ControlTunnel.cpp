@@ -1020,19 +1020,22 @@ void ControlTunnel::handleRequestFrame(Peer& p, quint32 id, const QByteArray& pa
 
     const QString hostHeader = req.headers.value(QStringLiteral("host"));
     const QString sessionId = p.sessionId;
+    const bool mayDeflate = head.value(QLatin1String(TunnelFrame::kEncodingField)).toString() ==
+                                QLatin1String(TunnelFrame::kDeflate) &&
+                            TunnelFrame::mayDeflate(req.method, req.path);
     p.inFlight++;
 
     m_Http->serveRequest(std::move(req), HttpServer::Arrival::Tunnel,
-                         [this, sessionId, id, hostHeader](const HttpResponse& resp) {
+                         [this, sessionId, id, hostHeader, mayDeflate](const HttpResponse& resp) {
                              Peer* pp = peer(sessionId);
                              if (!pp) return;
                              pp->inFlight--;
-                             sendResponse(sessionId, id, resp, hostHeader);
+                             sendResponse(sessionId, id, resp, hostHeader, mayDeflate);
                          });
 }
 
 void ControlTunnel::sendResponse(const QString& sessionId, quint32 id, const HttpResponse& response,
-                                 const QString& hostHeader)
+                                 const QString& hostHeader, bool mayDeflate)
 {
     Peer* p = peer(sessionId);
     if (!p) return;
@@ -1050,14 +1053,29 @@ void ControlTunnel::sendResponse(const QString& sessionId, quint32 id, const Htt
     for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)
         headers.insert(it.key(), it.value());
 
-    const QByteArray head = TunnelFrame::encodeHead(
-        QJsonObject{{QStringLiteral("s"), response.statusCode}, {QStringLiteral("h"), headers}},
-        QByteArray());
+    QJsonObject headObj{{QStringLiteral("s"), response.statusCode}, {QStringLiteral("h"), headers}};
+
+    // The interface's files, deflated for a page that can inflate them: about a
+    // quarter of the bytes for the scripts, which over a long round trip and a
+    // TCP path is what the first visit spends its time on (docs/design/
+    // ice-tcp-passive.md §5.5). Kept only when it is smaller.
+    QByteArray body = response.body;
+    if (mayDeflate &&
+        TunnelFrame::worthDeflating(response.statusCode, response.contentType, body.size())) {
+        QByteArray deflated = TunnelFrame::deflate(body);
+        if (!deflated.isEmpty() && deflated.size() < body.size()) {
+            body = std::move(deflated);
+            headObj.insert(QLatin1String(TunnelFrame::kEncodingField),
+                           QLatin1String(TunnelFrame::kDeflate));
+        }
+    }
+
+    const QByteArray head = TunnelFrame::encodeHead(headObj, QByteArray());
     sendFrame(*p, TunnelFrame::build(TunnelFrame::Response, id, head));
 
-    for (qsizetype offset = 0; offset < response.body.size(); offset += TunnelFrame::kChunkBytes)
+    for (qsizetype offset = 0; offset < body.size(); offset += TunnelFrame::kChunkBytes)
         sendFrame(*p, TunnelFrame::build(TunnelFrame::Body, id,
-                                         response.body.mid(offset, TunnelFrame::kChunkBytes)));
+                                         body.mid(offset, TunnelFrame::kChunkBytes)));
 
     sendFrame(*p, TunnelFrame::build(TunnelFrame::End, id, QByteArray()));
 }
