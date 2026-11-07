@@ -395,8 +395,21 @@
       a compute shader with shared memory, which is faster, so its time here is the port's, not NIS's. SGSR1 is a port
       of <code>sgsr1.h</code> (mode 1, edge threshold 6/255, edge sharpness 1.5), in 32-bit and in half precision.
       MWSR runs with its defaults.</p>
+    <h2>Outside the browser</h2>
+    <p>This page times the browser's texts of the shaders, WGSL and GLSL through WebGPU or WebGL2. The texts in
+      <code>mwsr/</code> for Direct3D 12, Vulkan and Metal draw the same picture, but in a native renderer their time
+      differs: another compiler, no browser in between, and the renderer's own passes around them. First readings in
+      Moonlight-qt's renderers, Junk Shop from 1080p and 720p to 1440p, by GPU timestamps (06/11/2026): on an RTX 5060 Ti
+      in Direct3D 12, MWSR takes 0.06 ms a frame and FSR1 0.23 ms, where this page's WebGPU gives about 0.08 and 0.3 ms;
+      on a Radeon 780M in Moonlight-qt's Vulkan renderer (libplacebo, Linux), frames drawn back to back, MWSR runs as
+      one pass that reads the decoder's planes and writes the output, and the whole frame costs 0.93 ms from 1080p and
+      0.86 ms from 720p, against 1.18 and 1.15 ms with FSR1, and 1.18 and 1.01 ms with the hook in <code>mwsr/</code>,
+      around which libplacebo converts the colours. One picture and one run per GPU: a first reading, not a table.
+      In a real stream on a 14-inch MacBook Pro (M1 Pro, macOS 15.6, steady 60 fps, no frame lost), Moonlight-qt's
+      Vulkan path draws MWSR in a single pass straight from the decoder's planes: about 3.0 ms of GPU time per frame at
+      ×2, against 5.3 to 6.7 ms for FSR1 — half the cost, as on a Radeon 780M — and 3.2 against 4.5 ms at ×3.</p>
     <p class="small">FSR and FidelityFX are trademarks of Advanced Micro Devices, NVIDIA is a trademark of NVIDIA
-      Corporation, and Snapdragon is a trademark of Qualcomm. MoonlightWeb made this comparison with its own ports,
+      Corporation, Snapdragon is a trademark of Qualcomm, and Apple, Metal and MetalFX are trademarks of Apple. MoonlightWeb made this comparison with its own ports,
       and none of these companies made or endorsed it. The ports keep their vendors' notices (MIT for FSR1 and NIS,
       BSD-3-Clause for SGSR1) in <a href="/mwsr/kernels.js">kernels.js</a>. The scores' code keeps its own: FLIP
       (BSD-3-Clause) in <a href="/mwsr/scores.js">scores.js</a>, libvmaf and its model (BSD-2-Clause-Patent) in
