@@ -569,6 +569,15 @@ AcquireStatus WgcCapture::acquire(int timeoutMs, CapturedFrame& frame)
     // size until it is recreated. Report it as Lost: the session's restart path
     // rebuilds capture, converter and encoder together, which is exactly what a
     // resolution change needs.
+    //
+    // Asked of the frame's ContentSize, which is the item's new size: the
+    // texture itself is one of the pool's buffers, still at the old size, so
+    // its desc alone never saw the change. A display turned from 90° to 180°
+    // in a session stayed streamed as a portrait (issue #54, 07/11/2026).
+    ABI::Windows::Graphics::SizeInt32 content = {};
+    if (SUCCEEDED(next->get_ContentSize(&content)) && content.Width > 0 && content.Height > 0 &&
+        (content.Width != m_Width || content.Height != m_Height))
+        return AcquireStatus::Lost;
     D3D11_TEXTURE2D_DESC desc = {};
     texture->GetDesc(&desc);
     if (static_cast<int>(desc.Width) != m_Width || static_cast<int>(desc.Height) != m_Height)
