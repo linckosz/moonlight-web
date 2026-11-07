@@ -52,11 +52,11 @@ export const CEILING_RUNGS = Object.freeze([
 export const HANDHELD_MAX_CEILING = 450000000;
 
 export const AUTO_CEILING_KEY = 'mw_auto_ceiling';
-/** The switch: '0' holds Auto at PIXEL_RATE_BUDGET and measures nothing, '1'
- *  learns, 'log' measures and only says what it would do. */
+/** The switch: '0' holds Auto at PIXEL_RATE_BUDGET and measures nothing, 'log'
+ *  measures and only says what it would do, '1' learns, as it does by default. */
 export const AUTO_LEARN_KEY = 'mw_auto_learn';
-/** What the switch means when it says nothing: on a bench's word, not before. */
-const DEFAULT_LEARN_MODE = 'log';
+/** What the switch means when it says nothing. */
+const DEFAULT_LEARN_MODE = 'on';
 
 /** How long a stream must hold its rung to earn the next one. */
 export const HOLD_BASE_MS = 5 * 60 * 1000;

@@ -81,12 +81,12 @@ describe('deviceMaxCeiling', () => {
 });
 
 describe('autoLearnMode', () => {
-    it('reads the switch, and only measures when it says nothing', () => {
-        expect(autoLearnMode(fakeStorage())).toBe('log');
+    it('reads the switch, and learns when it says nothing', () => {
+        expect(autoLearnMode(fakeStorage())).toBe('on');
         expect(autoLearnMode(fakeStorage({ [AUTO_LEARN_KEY]: '0' }))).toBe('off');
         expect(autoLearnMode(fakeStorage({ [AUTO_LEARN_KEY]: '1' }))).toBe('on');
         expect(autoLearnMode(fakeStorage({ [AUTO_LEARN_KEY]: 'log' }))).toBe('log');
-        expect(autoLearnMode(null)).toBe('log');
+        expect(autoLearnMode(null)).toBe('on');
     });
 });
 
@@ -312,9 +312,10 @@ describe('previewCeiling', () => {
         return storage;
     };
 
-    it('is the base budget until learning is on', () => {
-        expect(previewCeiling({}, learned())).toBe(PIXEL_RATE_BUDGET);
+    it('is the base budget when learning is off, or only measured', () => {
+        expect(previewCeiling({}, learned())).toBe(450e6);
         expect(previewCeiling({}, learned('0'))).toBe(PIXEL_RATE_BUDGET);
+        expect(previewCeiling({}, learned('log'))).toBe(PIXEL_RATE_BUDGET);
     });
 
     it('reads the host launched last, under what this device may reach', () => {
