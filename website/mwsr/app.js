@@ -989,8 +989,9 @@ function renderTable() {
     const t = best(k.id);
     let time = measuring ? '…' : '—';
     if (t) {
-      const w = max ? Math.max(2, Math.round((t.ms / max) * 90)) : 0;
-      time = `<span class="ms">${ms3(t.ms)}</span><span class="bar" style="width:${w}px"></span>`;
+      // a share of the longest bar, whose length fitTables() sets
+      const w = max ? `max(2px, calc(var(--bar) * ${(t.ms / max).toFixed(4)}))` : '0px';
+      time = `<span class="ms">${ms3(t.ms)}</span><span class="bar" style="width:${w}"></span>`;
     }
     // under the name, what its time or its text is
     const reduces = k.id === 'mwsr' && engine.mwsrMode() === 'down';
@@ -1007,6 +1008,34 @@ function renderTable() {
     return `<tr><th scope="row">${k.name}${under}</th>${cells}<td class="num">${o}</td><td class="num">${time}</td></tr>`;
   }).join('');
   placePress();
+  fitTables();
+}
+// A table that scrolls sideways under the names, on a phone, ends with no column half under them: the room the last
+// column needs (--tail) for the end to put a column's start right after the names. The scores' table ends on the
+// overshoot and the time, both whole: its longest bar (--bar) shortens for them to fit, down to 30 px.
+function fitTables() {
+  for (const wrap of document.querySelectorAll('.table-wrap')) {
+    const table = wrap.querySelector('table');
+    const heads = table && table.tHead ? [...table.tHead.rows[0].cells] : [];
+    if (heads.length < 3) continue;
+    const tail = () => parseFloat(wrap.style.getPropertyValue('--tail')) || 0;
+    const stick = heads[0].getBoundingClientRect().width;
+    if (table.id === 'table') {
+      const bar = parseFloat(table.style.getPropertyValue('--bar')) || 90;
+      const lastTwo = heads.slice(-2).reduce((sum, th) => sum + th.getBoundingClientRect().width, 0) - tail();
+      const fit = Math.min(90, Math.max(30, Math.floor(bar + wrap.clientWidth - stick - lastTwo)));
+      if (fit !== bar) table.style.setProperty('--bar', `${fit}px`);
+    }
+    const box = table.getBoundingClientRect();
+    const room = box.width - tail() - wrap.clientWidth;
+    const at = room > 0.5 ? heads.slice(1).map((th) => th.getBoundingClientRect().left - box.left - stick).find((x) => x >= room - 0.5) : null;
+    wrap.style.setProperty('--tail', `${at != null ? Math.max(0, at - room).toFixed(1) : 0}px`);
+  }
+}
+{
+  const resized = new ResizeObserver(() => fitTables());
+  document.querySelectorAll('.table-wrap').forEach((w) => resized.observe(w));
+  document.fonts.ready.then(fitTables);
 }
 // The badge lies over the table's figures, not over its titles: where they are depends on the page's width.
 function placePress() {
