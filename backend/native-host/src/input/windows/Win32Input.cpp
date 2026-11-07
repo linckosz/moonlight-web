@@ -1167,13 +1167,6 @@ void Win32Input::runFollower()
 /// refused", which is the first question every time.
 void Win32Input::injectNow(const InputEvent& event)
 {
-    // First of each KIND, not first overall. A stream where the pointer moves
-    // but nothing clicks, or where the mouse works and the keyboard does not,
-    // is the failure that actually happens, and one line per kind separates
-    // those cases without a per-event log nobody can read.
-    const uint32_t bit = 1u << static_cast<int>(event.type);
-    if ((m_SeenTypes.fetch_or(bit, std::memory_order_relaxed) & bit) == 0)
-        log::info(std::string("[native] input: first ") + describe(event.type) + " injected");
     // The gate — see InputGate in NativeHost.h. Keyboard goes to the focused
     // window; a click or a scroll goes to whatever is under the pointer, which
     // is not always the same window, and is exactly how a viewer shut out of
@@ -1214,6 +1207,15 @@ void Win32Input::injectNow(const InputEvent& event)
     HWND foreground = ::GetForegroundWindow();
     const WindowStanding& focused = cachedStanding(foreground, m_Focused);
     if (focused.level >= 0 || focused.ours) reportGate(focused, foreground);
+    // First of each KIND, not first overall. A stream where the pointer moves
+    // but nothing clicks, or where the mouse works and the keyboard does not,
+    // is the failure that actually happens, and one line per kind separates
+    // those cases without a per-event log nobody can read. Past the gate: a
+    // press it held back was not injected, and its kind's line waits for one
+    // that is.
+    const uint32_t bit = 1u << static_cast<int>(event.type);
+    if ((m_SeenTypes.fetch_or(bit, std::memory_order_relaxed) & bit) == 0)
+        log::info(std::string("[native] input: first ") + describe(event.type) + " injected");
     m_Injected.fetch_add(1, std::memory_order_relaxed);
 
     switch (event.type) {
