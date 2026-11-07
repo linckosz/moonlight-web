@@ -989,9 +989,10 @@ function renderTable() {
     const t = best(k.id);
     let time = measuring ? '…' : '—';
     if (t) {
-      // a share of the longest bar, whose length fitTables() sets
+      // a share of the longest bar, whose length fitTables() sets; during a measure each row's time comes as soon
+      // as it is known, and the bars all come at its end, once the longest is known
       const w = max ? `max(2px, calc(var(--bar) * ${(t.ms / max).toFixed(4)}))` : '0px';
-      time = `<span class="ms">${ms3(t.ms)}</span><span class="bar" style="width:${w}"></span>`;
+      time = `<span class="ms">${ms3(t.ms)}</span>` + (measuring ? '' : `<span class="bar" style="width:${w}"></span>`);
     }
     // under the name, what its time or its text is
     const reduces = k.id === 'mwsr' && engine.mwsrMode() === 'down';
@@ -1116,7 +1117,7 @@ async function clientFacts() {
   const mobile = data ? !!data.mobile : /Mobi|Android|iPhone|iPod/.test(ua) || iPad;
   return { browser, browserMajor, os, osMajor, mobile };
 }
-async function report(vars, fail) {
+async function report(vars, fail, batches) {
   const now = performance.now();
   while (reported.length && now - reported[0] > REPORTS_MS) reported.shift();
   if (reported.length >= REPORTS) return;
@@ -1154,6 +1155,8 @@ async function report(vars, fail) {
       gpuArch: text(engine.architecture, 64),
       f16: engine.hasF16,
       timestamps: engine.hasTs,
+      // the batches each text was timed in: 3 at the first measure after the page loads, 6 after
+      batches,
       // the size of a visitor's own picture stays here
       ...(S.pic === 'file' ? {} : { canvasW: C.outW, canvasH: C.outH, inputW: C.inW, inputH: C.inH }),
       dpr: num(devicePixelRatio),
@@ -1193,6 +1196,10 @@ let runs = 0;
 let lastRun = Promise.resolve(); // two runs would share the timestamps' buffer
 const timed = { dropped: 0 };
 if (SOFT) window.mwsrTimed = timed;
+// The GPU time's plan: one round of 3 batches at the first measure after the page loads, so that a first result
+// comes soon, then two rounds, the second in the other order, from the next measure on. A batch is 100 draws, or
+// about 0.1 s of GPU when that is fewer: a slow upscaler on a phone gives its time from 4 draws as well as from 100.
+let timedOnce = false;
 // How far it is, beside the button: the dots come and go in a place of their own and the percentage has its
 // own width, so nothing moves. A change of text only: no draw of the page, and it holds no batch back.
 let dotsTimer = 0;
@@ -1248,8 +1255,8 @@ function median(a) {
 async function measureCase(run, my) {
   const alive = () => measuring === run && token === my;
   if (!alive()) return;
-  const rounds = 3;
-  const batches = 6;
+  const rounds = timedOnce ? 2 : 1;
+  const batches = 3;
   // How far it is: every step counts one, and what is done never goes back. What the gate refuses leaves the plan.
   let done = 0;
   const scoring = caseNative && !C.hdr;
@@ -1292,9 +1299,9 @@ async function measureCase(run, my) {
   refusal('score');
   const vars = [];
   for (const k of KERNELS) {
-    vars.push({ id: k.id, half: false, t: [], chunk: 10, dropped: 0 });
+    vars.push({ id: k.id, half: false, t: [], chunk: 10, iters: 100, dropped: 0 });
     if (engine.halfOf(k.id) && R[k.id] && R[k.id].f16 === 'ok')
-      vars.push({ id: k.id, half: true, t: [], chunk: 10, dropped: 0 });
+      vars.push({ id: k.id, half: true, t: [], chunk: 10, iters: 100, dropped: 0 });
   }
   const opts = { c444: S.c444 };
   const total = vars.length * rounds * batches;
@@ -1321,48 +1328,71 @@ async function measureCase(run, my) {
       if (!alive()) return null;
     }
   };
+  // the rows wait for their new times, each shown once its upscaler's texts have their round's batches; the times
+  // of the measure before come back to the rows this one did not reach, if it stops
+  const before = KERNELS.map((k) => [k.id, R[k.id] && R[k.id].t32, R[k.id] && R[k.id].t16]);
+  for (const k of KERNELS) if (R[k.id]) delete R[k.id].t32, delete R[k.id].t16;
+  let complete = false;
   try {
     progress();
     // a short warm-up, which also sizes the pieces of a batch (about 100 ms of GPU each: the most the page waits)
+    // and the batch, then about 0.1 s more of each upscaler, thrown away, for a GPU that starts cold
     for (const v of vars) {
       const w = await batch(v, 10);
       if (!w) return;
-      v.chunk = Math.max(1, Math.min(100, Math.floor(100 / Math.max(0.01, w.gpu != null ? w.gpu : w.wall))));
+      const per = Math.max(0.01, w.gpu != null ? w.gpu : w.wall);
+      v.chunk = Math.max(1, Math.min(100, Math.floor(100 / per)));
+      v.iters = Math.max(4, Math.min(100, Math.round(100 / per)));
+      if (!(await batch(v, Math.max(4, Math.round(100 / per))))) return;
       tick();
     }
     at = 'batch';
     for (let r = 0; r < rounds; r++) {
       for (const v of r % 2 ? [...vars].reverse() : vars) {
         for (let b = 0; b < batches; b++) {
-          const t = await batch(v, 100);
+          const t = await batch(v, v.iters);
           if (!t) return;
           v.t.push(t.gpu != null ? t.gpu : t.wall);
           tick();
         }
+        const mine = vars.filter((x) => x.id === v.id);
+        if (mine.every((x) => x.t.length >= (r + 1) * batches)) {
+          R[v.id] = R[v.id] || {};
+          for (const x of mine) R[x.id][x.half ? 't16' : 't32'] = median(x.t);
+          renderTable();
+        }
       }
     }
+    timedOnce = true;
+    complete = true;
   } catch (e) {
     if (!alive()) return;
     status('The timing failed: ' + e.message, 'bad');
     report(
       vars,
       fail || { step: at, shader: current, msg: text(e.message), lost: text(lostWhy, 120), fallback: false },
+      rounds * batches,
     );
     stopMeasure();
-    renderTable();
-    captions();
     return;
-  }
-  for (const v of vars) {
-    R[v.id] = R[v.id] || {};
-    R[v.id][v.half ? 't16' : 't32'] = median(v.t);
+  } finally {
+    // only for this case: a new picture or scale has emptied R for its own
+    if (!complete && token === my) {
+      for (const [id, t32, t16] of before) {
+        if (t32 == null || (R[id] && R[id].t32 != null)) continue;
+        R[id] = { ...R[id], t32, ...(t16 != null ? { t16 } : {}) };
+      }
+      renderTable();
+      captions();
+    }
   }
   measured = !scoresFailed;
   stopMeasure();
-  $('tprogress').textContent = `${total} batches of 100 draws, median per draw` + (engine.hasTs ? '' : ' (wall time)');
+  $('tprogress').textContent =
+    `${total} batches of up to 100 draws, median per draw` + (engine.hasTs ? '' : ' (wall time)');
   renderTable();
   captions();
-  report(vars, fail);
+  report(vars, fail, rounds * batches);
 }
 
 addEventListener('resize', redraw);
