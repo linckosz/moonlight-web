@@ -180,6 +180,8 @@ def judge(s, expect, raw_after, uuid, top_m=RUNGS_M[-1], prepared=None):
       "silent"  it must not learn at all: a TV, Power Saving, the switch off.
       "journal" it measures and writes nothing (mw_auto_learn=log).
       "hold"    an active rung, that the stream must run at and hold.
+      "sick"    an active rung this client cannot hold: the signal at the rung, one
+                rung down in the key, the failure counted, the entry closed.
       "any"     read only: the verdict is whatever the numbers say.
 
     `prepared` is the key as the pass itself left it: still word for word after the
@@ -208,6 +210,8 @@ def judge(s, expect, raw_after, uuid, top_m=RUNGS_M[-1], prepared=None):
     entry = entries(raw_after).get("%s|%s" % (uuid, s["codec"]))
     if entry and entry.get("openAt"):
         bad.append("the stream ended and its entry still says it is open")
+    if expect == "sick":
+        return bad + _judge_sick(s, entry)
     if s["sick"]:
         bad.append("sick: %s, after %s s loaded" % (s["sick"]["reason"], s["sick"]["loaded"]))
     if s["browserRefused"]:
@@ -219,4 +223,30 @@ def judge(s, expect, raw_after, uuid, top_m=RUNGS_M[-1], prepared=None):
     if s["limited"] and s["rung"] < top_m and not s["earned"]:
         bad.append("held back by %s M and did not earn the next rung (%s s loaded)" % (
             s["rung"], (s["over"] or {}).get("loaded", "?")))
+    return bad
+
+
+def _judge_sick(s, entry):
+    """A client that could not hold its rung, as the page must leave it.
+
+    The rung is the one the launch line names: a browser that refused the prepared
+    one has already brought the launch down, and the stream fell ill at that one.
+    """
+    sick = s["sick"]
+    if not sick:
+        return ["it was to fall ill at %s M, and no line says it did" % s["rung"]]
+    if not sick["atRung"]:
+        return ["ill (%s), but not at its rung: nothing of the rung was lost" % sick["reason"]]
+    below = rung_below(s["rung"]) if s["rung"] in RUNGS_M else None
+    if not below:
+        return ["ill at %s M, a rung with none below it" % s["rung"]]
+    bad = []
+    if sick["down"] != below:
+        bad.append("ill at %s M, and the line says down to %s M, not %s M" % (
+            s["rung"], sick["down"], below))
+    learned = round(entry["ceiling"] / 1000000) if entry and entry.get("ceiling") else None
+    if learned != below:
+        bad.append("ill at %s M, and the key holds %s M, not %s M" % (s["rung"], learned, below))
+    if not ((entry or {}).get("fails") or {}).get(str(s["rung"] * 1000000)):
+        bad.append("ill at %s M, and the key counts no failure there" % s["rung"])
     return bad

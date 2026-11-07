@@ -15,10 +15,11 @@ UUID = "00000000-0000-4000-8000-000000000000"
 P = journal.PREFIX
 
 
-def key(ceiling, open_at=0, codec="hevc"):
+def key(ceiling, open_at=0, codec="hevc", failed=()):
+    fails = {str(m * 1000000): {"n": 1, "at": 1} for m in failed}
     return json.dumps({"v": 1, "last": "", "hosts": {
         "%s|%s" % (UUID, codec): {"ceiling": ceiling * 1000000, "trial": False,
-                                  "openAt": open_at, "fails": {}, "at": 1}}})
+                                  "openAt": open_at, "fails": fails, "at": 1}}})
 
 
 class Parse(unittest.TestCase):
@@ -254,6 +255,44 @@ class Judge(unittest.TestCase):
         # One word changed, and it is the page's.
         self.assertEqual(len(journal.judge(quiet, "silent", key(330), UUID, prepared=prepared)), 1)
         self.assertEqual(len(journal.judge(said, "journal", key(330), UUID, prepared=prepared)), 1)
+
+    def ill(self, *more):
+        return journal.parse([P + "1000 M on hevc, asking 995 M",
+                              P + "sick (decode_rate), 40 s loaded, at 1000 M — down to 700 M"] + list(more))
+
+    def test_a_client_too_weak_for_its_rung(self):
+        self.assertEqual(journal.judge(self.ill(), "sick", key(700, failed=[1000]), UUID), [])
+
+    def test_a_weak_client_that_held_is_a_defect(self):
+        s = journal.parse([P + "1000 M on hevc, asking 995 M", P + "1000 M held, 300 s loaded"])
+        bad = journal.judge(s, "sick", key(1000), UUID)
+        self.assertEqual(len(bad), 1)
+        self.assertIn("no line says it did", bad[0])
+
+    def test_ill_away_from_its_rung_loses_nothing(self):
+        s = journal.parse([P + "1000 M on hevc, asking 995 M",
+                           P + "sick (congestion), 12 s loaded, not at its rung"])
+        bad = journal.judge(s, "sick", key(1000), UUID)
+        self.assertEqual(len(bad), 1)
+        self.assertIn("not at its rung", bad[0])
+
+    def test_the_key_must_come_down_one_rung_and_count_it(self):
+        text = " / ".join(journal.judge(self.ill(), "sick", key(1000), UUID))
+        self.assertIn("holds 1000 M, not 700 M", text)
+        self.assertIn("counts no failure", text)
+        self.assertEqual(len(journal.judge(self.ill(), "sick", key(500, failed=[1000]), UUID)), 1)
+
+    def test_a_weak_client_s_entry_left_open(self):
+        bad = journal.judge(self.ill(), "sick", key(700, open_at=99, failed=[1000]), UUID)
+        self.assertEqual(len(bad), 1)
+        self.assertIn("still says it is open", bad[0])
+
+    def test_a_browser_that_said_no_first(self):
+        # The guard brought the launch to 700 M: that is the rung the stream fell ill at.
+        s = journal.parse([P + "the browser refuses 995 M — this launch runs at 700 M",
+                           P + "700 M on hevc, asking 695 M",
+                           P + "sick (drops), 30 s loaded, at 700 M — down to 500 M"])
+        self.assertEqual(journal.judge(s, "sick", key(500, failed=[700]), UUID), [])
 
     def test_learned_m(self):
         self.assertEqual(journal.learned_m(key(700), UUID, "hevc"), 700)

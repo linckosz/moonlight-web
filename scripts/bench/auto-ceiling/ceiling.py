@@ -5,7 +5,9 @@
     python ceiling.py climb --tag climb2 --rung 500 --target vdisplay --screen 3840x2160
     python ceiling.py rung --rung 250 --secs 120 --tag journal --learn log --expect journal
     python ceiling.py rung --rung 700 --secs 300 --tag ill --target vdisplay --screen 3840x2160 \
-        --expect any --load-gpu 0:12345
+        --expect sick --load-gpu 0:12345
+    python ceiling.py rung --rung 1000 --secs 360 --tag weak --target vdisplay --screen 3840x2160 \
+        --expect sick --client-port 9423 --client-url https://10.0.0.2:8443/
     python ceiling.py rung --keep --secs 600 --tag mini-1 --tile "Display 1" --gdi DISPLAY1 \
         --client-port 9423 --client-url https://10.0.0.2:18443/
     python ceiling.py rung --keep --secs 400 --tag tv --expect silent --tile "Display 1" \
@@ -462,8 +464,9 @@ class Bench:
                                        (s["held"] and s["rung"] == journal.RUNGS_M[-1])):
                     stop_on = True
                     break
-                # Nor a pass that has made it ill: the verdict is written.
-                if load and s["sick"]:
+                # Nor a pass that has made it ill, or that is about a client
+                # too weak for its rung: the verdict is written.
+                if (load or expect == "sick") and s["sick"]:
                     stop_on = True
                     break
                 time.sleep(min(2, a.every))
@@ -614,7 +617,7 @@ def main():
     ap.add_argument("--keep", action="store_true", help="the key as the last launch left it")
     ap.add_argument("--secs", type=int, default=0, help="600 for a rung, 420 for a climb's launch")
     ap.add_argument("--every", type=int, default=20, help="seconds between two readings")
-    ap.add_argument("--expect", choices=["hold", "journal", "silent", "any"], default="hold")
+    ap.add_argument("--expect", choices=["hold", "sick", "journal", "silent", "any"], default="hold")
     ap.add_argument("--learn", choices=["1", "log", "0"], default="1", help="mw_auto_learn")
     ap.add_argument("--autostep", choices=["0", "1"], default="", help="mw_autostep, the page's default otherwise")
     ap.add_argument("--target", choices=["display", "vdisplay"], default="display")
@@ -651,8 +654,10 @@ def main():
         ap.error("--tag: what this pass's results are called")
     if not a.secs:
         a.secs = 420 if a.mode == "climb" else 600
-    if a.mode == "rung" and not (a.rung or a.keep) and a.expect == "hold":
+    if a.mode == "rung" and not (a.rung or a.keep) and a.expect in ("hold", "sick"):
         ap.error("rung: --rung, or --keep, or an --expect that needs neither")
+    if a.expect == "sick" and a.learn != "1":
+        ap.error("--expect sick: only a page that learns loses a rung (--learn 1)")
     if a.rung and a.rung not in journal.RUNGS_M:
         ap.error("no rung of %d M: %s" % (a.rung, journal.RUNGS_M))
     if a.target == "display" and not a.tile:

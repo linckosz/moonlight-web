@@ -271,6 +271,30 @@ class OneRung(Rig):
             _, _, result = ceiling.Bench(self.args()).one_launch("t", 500, False, "hold")
         self.assertIn("the same GPU encoded and decoded: ['1']", result["defects"])
 
+    def test_a_weak_client_elsewhere_ends_at_its_signal(self):
+        self.driver = FakeDriver([[P + "1000 M on hevc, asking 995 M",
+                                   P + "sick (decode_rate), 40 s loaded, at 1000 M — down to 700 M",
+                                   P + "stream over, 40 s loaded at 1000 M, sick (decode_rate)"]])
+        self.launch_appears()
+        inner = self.driver.launch
+
+        def launch(card, app):
+            inner(card, app)
+            # What the page writes as it falls ill: one rung down, the failure counted.
+            lowered = journal.prepared_key(UUID, 700, 1)
+            lowered["hosts"][UUID + "|hevc"]["fails"] = {"1000000000": {"n": 1, "at": 1}}
+            self.driver.store[journal.KEY] = json.dumps(lowered)
+
+        self.driver.launch = launch
+        a = self.args(rung=1000, secs=600, expect="sick", client_port=9423,
+                      client_url="https://10.0.0.2:8443/")
+        started = self.clock[0]
+        _, _, result = ceiling.Bench(a).one_launch("weak", 1000, False, "sick")
+        self.assertEqual(result["defects"], [])
+        self.assertEqual(result["journal"]["sick"]["down"], 700)
+        self.assertLess(self.clock[0] - started, 300)
+        self.assertEqual(self.driver.stopped, 1)
+
 
 class TheGuard(Rig):
     LINES = OneRung.CLEAN
