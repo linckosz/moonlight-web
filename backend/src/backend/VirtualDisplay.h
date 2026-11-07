@@ -413,6 +413,12 @@ struct Request
     /// when the viewer asked for HDR. Applied in process, never written to
     /// the request file: Windows' display is SDR, whatever this says.
     bool hdr = false;
+    /// Activate, Windows, bench only: leave the display in HDR (advanced
+    /// colour) instead of SDR, so a stream that asked for HDR gets it. Set by
+    /// the server only when the viewer asked for HDR AND MW_BENCH_VD_HDR=1 is
+    /// in its environment (the Auto-bitrate bench measures HDR streams this
+    /// way); written as `bench_hdr`. Off, the display is SDR as always.
+    bool benchHdr = false;
     /// Activate, Windows: every other display goes off while ours streams
     /// (issue #39), the owner's choice (AppSettings::virtualDisplayExclusive),
     /// for the owner's own streams only: see othersGoOff(). Never saved to

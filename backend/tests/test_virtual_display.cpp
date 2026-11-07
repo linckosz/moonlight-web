@@ -752,6 +752,27 @@ void run_virtual_display_tests()
         CHECK(!toJson(r).contains("exclusive"));
     }
 
+    SECTION("VirtualDisplay — bench_hdr is a boolean of Activate, written only when asked");
+    {
+        auto req = parseRequest("{\"action\":\"activate\",\"bench_hdr\":true}", &err);
+        CHECK(req.has_value() && req->benchHdr);
+        req = parseRequest("{\"action\":\"activate\"}", &err);
+        CHECK(req.has_value() && !req->benchHdr);
+        CHECK(!parseRequest("{\"action\":\"activate\",\"bench_hdr\":1}", &err).has_value());
+        // Another verb never carries it into the helper.
+        req = parseRequest("{\"action\":\"deactivate\",\"bench_hdr\":true}", &err);
+        CHECK(req.has_value() && !req->benchHdr);
+        Request r;
+        r.benchHdr = true;
+        req = parseRequest(toJson(r), &err);
+        CHECK(req.has_value() && req->benchHdr);
+        r.benchHdr = false;
+        CHECK(!toJson(r).contains("bench_hdr"));
+        // The macOS flag alone is never written: Windows stays SDR without the bench.
+        r.hdr = true;
+        CHECK(!toJson(r).contains("hdr"));
+    }
+
     SECTION("VirtualDisplay — the GPU the owner chose travels as a name, and only as text");
     {
         // A GPU as Windows names it, into the helper and back.

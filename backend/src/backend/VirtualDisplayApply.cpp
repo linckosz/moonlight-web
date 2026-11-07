@@ -1573,18 +1573,23 @@ int stageMode(Context& ctx)
     }
 
     // SDR: the same call scripts/Set-DisplayHdr.ps1 makes. The target ids may
-    // have moved with the mode change, so look the display up again.
+    // have moved with the mode change, so look the display up again. HDR
+    // only for a bench that asked (Request::benchHdr, MW_BENCH_VD_HDR).
     if (auto again = findOurTarget()) target = again;
+    const bool hdr = ctx.request.benchHdr;
     DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE ac{};
     ac.header.type = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
     ac.header.size = sizeof(ac);
     ac.header.adapterId = target->adapterId;
     ac.header.id = target->targetId;
-    ac.enableAdvancedColor = 0;
+    ac.enableAdvancedColor = hdr ? 1 : 0;
     const LONG hr = DisplayConfigSetDeviceInfo(&ac.header);
     if (hr != ERROR_SUCCESS && hr != ERROR_NOT_SUPPORTED)
-        Logger::warning(
-            QStringLiteral("[vdisplay-apply] SDR refused: %1").arg(lastErrorText(DWORD(hr))));
+        Logger::warning(QStringLiteral("[vdisplay-apply] %1 refused: %2")
+                            .arg(hdr ? QStringLiteral("HDR (bench)") : QStringLiteral("SDR"),
+                                 lastErrorText(DWORD(hr))));
+    else if (hdr)
+        Logger::info(QStringLiteral("[vdisplay-apply] HDR left on for a bench (MW_BENCH_VD_HDR)"));
 
     if (!makePrimary(target->devicePath, savesLayout(LayoutStep::Primary, off), &error))
         Logger::warning(QStringLiteral("[vdisplay-apply] not made primary: %1").arg(error));

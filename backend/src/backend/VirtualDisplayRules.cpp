@@ -137,6 +137,12 @@ std::optional<Request> parseRequest(const QByteArray& json, QString* error)
         }
         if (req.action == Request::Action::Activate) req.gpu = gpu.toString();
     }
+    const QJsonValue benchHdr = obj.value(QLatin1String("bench_hdr"));
+    if (!benchHdr.isUndefined() && !benchHdr.isBool()) {
+        if (error) *error = QStringLiteral("bench_hdr must be a boolean");
+        return std::nullopt;
+    }
+    req.benchHdr = req.action == Request::Action::Activate && benchHdr.toBool(false);
     return req;
 }
 
@@ -237,6 +243,7 @@ QByteArray toJson(const Request& req)
     if (req.refreshMilliHz > 0) obj["refresh_mhz"] = req.refreshMilliHz;
     if (req.exclusive) obj["exclusive"] = true;
     if (!req.gpu.isEmpty()) obj["gpu"] = req.gpu;
+    if (req.benchHdr) obj["bench_hdr"] = true;
     return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 
