@@ -295,6 +295,18 @@ class OneRung(Rig):
         self.assertLess(self.clock[0] - started, 300)
         self.assertEqual(self.driver.stopped, 1)
 
+    def test_a_client_elsewhere_is_never_sent_to_its_own_loopback(self):
+        self.driver = FakeDriver([])
+        # The fleet knows the desk the bench runs on by its loopback.
+        sys.modules["fleet"].lan_url = lambda m, p: "https://127.0.0.1:8443/"
+        for url in ("", "https://localhost:8443/", "https://127.0.0.1:8443/"):
+            with self.assertRaises(SystemExit) as said:
+                ceiling.Bench(self.args(client_port=9423, client_url=url))
+            self.assertIn("--client-url", str(said.exception))
+        # The host's LAN address is what it takes; a browser on this desk keeps the loopback.
+        ceiling.Bench(self.args(client_port=9423, client_url="https://10.0.0.2:8443/"))
+        ceiling.Bench(self.args())
+
 
 class TheGuard(Rig):
     LINES = OneRung.CLEAN

@@ -43,8 +43,9 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE =os.path.dirname(os.path.abspath(__file__))
 BENCH = os.path.dirname(HERE)
 REPO = os.path.dirname(os.path.dirname(BENCH))
 OUT = os.path.join(REPO, "bench-out", "auto-ceiling")
@@ -272,6 +273,11 @@ class LoadCycles:
         return {"gpu": self.a.load_gpu, "runs": self.runs, "stoppedBy": self.refused}
 
 
+def is_loopback(url):
+    host = (urllib.parse.urlsplit(url or "").hostname or "").lower()
+    return host == "localhost" or host == "::1" or host.startswith("127.")
+
+
 class Bench:
     def __init__(self, a):
         self.a = a
@@ -292,6 +298,12 @@ class Bench:
                 raise SystemExit("--rendezvous: this instance holds no line to the staging server")
             self.access["lan"] = url
             self.identifier = journal.identifier_of(url)
+        if self.remote and is_loopback(self.access["lan"]):
+            # The fleet knows this desk by its loopback: a Chrome on another
+            # machine sent there opens itself, and the pass waits for a host
+            # card that never comes (07/11/2026).
+            raise SystemExit("--client-port: %s is the client's own loopback; give the host's "
+                             "LAN address with --client-url" % self.access["lan"])
         self.key = journal.key_of(self.identifier)
         self.memories = (self.key,) + MEMORIES[1:]
         if self.identifier:
@@ -633,7 +645,7 @@ def main():
     ap.add_argument("--load-at", type=int, default=30, help="when the load starts, in seconds")
     ap.add_argument("--lang", default="", help="the page's language: fr, zh (English otherwise)")
     ap.add_argument("--client-port", type=int, default=0, help="a Chrome on another machine")
-    ap.add_argument("--client-url", default="", help="the address it reaches this host at")
+    ap.add_argument("--client-url", default="", help="the address it reaches this host at, never a loopback")
     ap.add_argument("--rendezvous", action="store_true",
                     help="open the page through the staging rendezvous, at this host's identifier")
     ap.add_argument("--refuse-above", type=int, default=0,
