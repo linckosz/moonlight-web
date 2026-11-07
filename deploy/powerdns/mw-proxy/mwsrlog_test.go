@@ -137,7 +137,8 @@ func TestMwsrUmamiAgentHasTheShapeUmamiCounts(t *testing.T) {
 		t.Errorf("%q does not read like the census agents Umami counts", mwsrUmamiUA)
 	}
 	lower := strings.ToLower(mwsrUmamiUA)
-	for _, bot := range []string{"bot", "crawl", "spider", "http", "headless", "fetch", "scan", "monitor", "check"} {
+	// "measure" is not a guess: Umami 3.2.0 dropped "MoonlightWeb/1 (mwsr; measure)".
+	for _, bot := range []string{"bot", "crawl", "spider", "http", "headless", "fetch", "scan", "monitor", "check", "measure"} {
 		if strings.Contains(lower, bot) {
 			t.Errorf("%q contains %q, which a bot filter matches", mwsrUmamiUA, bot)
 		}
@@ -168,6 +169,31 @@ func TestMwsrOutOfRangeValueIsDroppedNotClamped(t *testing.T) {
 	x := rec.Results[0]
 	if rec.CanvasW != 0 || x.SSIM != nil || x.GpuMs != nil || x.PSNR == nil {
 		t.Errorf("%+v / %+v", rec, x)
+	}
+}
+
+// The page times each text in 3 batches at the first measure after a load, 6 after: a spread
+// reads only next to its count, so the count is kept, and a count out of range is dropped.
+func TestMwsrKeepsTheBatchCount(t *testing.T) {
+	for _, c := range []struct {
+		body string
+		want int
+	}{
+		{`{"v":1,"batches":3,"results":[{"k":"mwsr","gpuMs":1.5,"gpuSpread":0.1}]}`, 3},
+		{`{"v":1,"batches":6,"results":[{"k":"mwsr","gpuMs":1.5,"gpuSpread":0.1}]}`, 6},
+		{`{"v":1,"batches":99999,"results":[{"k":"mwsr","gpuMs":1.5}]}`, 0},
+		{`{"v":1,"batches":-3,"results":[{"k":"mwsr","gpuMs":1.5}]}`, 0},
+	} {
+		s, got := testMwsrSink(t, nil)
+		postMwsr(t, s, c.body)
+		<-got
+		var rec mwsrRecord
+		if err := json.Unmarshal([]byte(readMwsrLog(t, s)), &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Batches != c.want {
+			t.Errorf("%s: kept %d batches, want %d", c.body, rec.Batches, c.want)
+		}
 	}
 }
 

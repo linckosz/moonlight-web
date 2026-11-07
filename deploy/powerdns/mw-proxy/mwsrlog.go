@@ -64,11 +64,12 @@ const (
 	// this container's, which is just as fixed but less obviously on purpose.
 	//
 	// The User-Agent has the shape of the update census's, "Name/version (a; b)",
-	// which Umami counts. With a single word, "MoonlightWeb-MWSR-page/1", the
-	// measures were kept on disk and never counted: most likely Umami's bot
-	// filter, which drops a record without an error.
+	// which Umami counts, and no word its bot filter knows: that filter answers
+	// 200 and drops the record, so a wrong agent fails without a trace. Umami
+	// 3.2.0 dropped both "MoonlightWeb-MWSR-page/1" and "MoonlightWeb/1 (mwsr;
+	// measure)" (it answered {"beep":"boop"}), and took this one.
 	mwsrUmamiAddr = "127.0.0.1"
-	mwsrUmamiUA   = "MoonlightWeb/1 (mwsr; measure)"
+	mwsrUmamiUA   = "MoonlightWeb/1 (mwsr; page)"
 )
 
 type mwsrConfig struct {
@@ -122,6 +123,7 @@ type mwsrRecord struct {
 	GpuArch      string       `json:"gpuArch,omitempty"`
 	F16          bool         `json:"f16,omitempty"`
 	Timestamps   bool         `json:"timestamps,omitempty"`
+	Batches      int          `json:"batches,omitempty"` // per text timed: 3 at the first measure after a load, 6 after
 	CanvasW      int          `json:"canvasW,omitempty"`
 	CanvasH      int          `json:"canvasH,omitempty"`
 	InputW       int          `json:"inputW,omitempty"`
@@ -233,6 +235,7 @@ func (r mwsrRecord) clean(now time.Time) mwsrRecord {
 		GpuArch:      mwsrGpu(r.GpuArch),
 		F16:          r.F16,
 		Timestamps:   r.Timestamps,
+		Batches:      mwsrInt(r.Batches, 1000),
 		CanvasW:      mwsrInt(r.CanvasW, 32768),
 		CanvasH:      mwsrInt(r.CanvasH, 32768),
 		InputW:       mwsrInt(r.InputW, 32768),
