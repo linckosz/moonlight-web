@@ -213,6 +213,37 @@ func TestMwsrRefusals(t *testing.T) {
 	}
 }
 
+// Safari on iOS posts from the page itself with "Origin: null": taken only when
+// the browser also says the request is same-origin.
+func TestMwsrNullOriginOnlyFromThePage(t *testing.T) {
+	s, got := testMwsrSink(t, nil)
+	for _, c := range []struct {
+		site string
+		want int
+	}{
+		{"same-origin", http.StatusNoContent},
+		{"cross-site", http.StatusForbidden},
+		{"same-site", http.StatusForbidden},
+		{"", http.StatusForbidden},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/mwsr", strings.NewReader(mwsrGoodBody))
+		req.Header.Set("Origin", "null")
+		req.Header.Set("Content-Type", "application/json")
+		if c.site != "" {
+			req.Header.Set("Sec-Fetch-Site", c.site)
+		}
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		if w.Code != c.want {
+			t.Errorf("Origin: null, Sec-Fetch-Site %q: %d, want %d", c.site, w.Code, c.want)
+		}
+	}
+	<-got
+	if n := strings.Count(readMwsrLog(t, s), "\n"); n != 1 {
+		t.Errorf("kept %d lines, only the same-origin post may be", n)
+	}
+}
+
 func TestMwsrCapsDropWithoutSayingSo(t *testing.T) {
 	s, got := testMwsrSink(t, func(c *mwsrConfig) { c.maxPerDay = 2 })
 	for i := 0; i < 3; i++ {

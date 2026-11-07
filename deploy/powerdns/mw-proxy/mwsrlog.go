@@ -374,16 +374,14 @@ func (s *mwsrSink) store(rec mwsrRecord, now time.Time) bool {
 
 // ServeHTTP answers POST /v1/mwsr. A dropped report and a kept one look the same
 // from outside: the page has nothing to do about either, and a client probing the
-// caps learns nothing. The request's address and headers other than Origin are
-// never read, and the handler logs nothing a request sent.
+// caps learns nothing. The request's address and headers other than Origin and
+// Sec-Fetch-Site are never read, and the handler logs nothing a request sent.
 func (s *mwsrSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "only POST is allowed")
 		return
 	}
-	// Not a secret, as the page is public: this keeps other sites' pages out, and
-	// a JSON content type makes a browser ask first, which is never answered.
-	if r.Header.Get("Origin") != s.cfg.origin {
+	if !s.fromThePage(r) {
 		writeErr(w, http.StatusForbidden, "wrong origin")
 		return
 	}
@@ -412,6 +410,26 @@ func (s *mwsrSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// fromThePage says whether a post comes from the site's own page. Not a secret,
+// as the page is public: this keeps other sites' pages out, and a JSON content
+// type makes a browser ask first, which is never answered.
+//
+// Safari on iOS sends "Origin: null" from the page itself (seen with its web
+// inspector, iOS 26.5): that alone would refuse every iPhone. A null origin is
+// then taken only with Sec-Fetch-Site: same-origin, which the browser sets and a
+// page cannot. Another site's page, or a sandboxed frame, says cross-site and
+// stays out. A client outside a browser could always send any header it likes:
+// this was never a guard against it.
+func (s *mwsrSink) fromThePage(r *http.Request) bool {
+	switch r.Header.Get("Origin") {
+	case s.cfg.origin:
+		return true
+	case "null":
+		return r.Header.Get("Sec-Fetch-Site") == "same-origin"
+	}
+	return false
 }
 
 func (s *mwsrSink) describe() string {
