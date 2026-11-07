@@ -121,9 +121,14 @@ small{color:var(--muted); font-size:.78em}
 
 /* scores */
 .results h2, .about h2, .notes h2{margin-top:1.8em}
-.table-wrap{overflow-x:auto}
+/* a table that scrolls sideways, on a phone, stops only where a column starts right after the names, which stay (below):
+   no figure loses its first digits under them, 4.1 % read as 1 %. app.js measures the names' width (--stick) and the
+   room the last column needs for the scroll to end on such a place too (--tail). */
+.table-wrap{overflow-x:auto; scroll-snap-type:x mandatory; scroll-padding-left:var(--stick, 0px)}
 .table-wrap table{border-collapse:collapse; width:100%; min-width:560px; font-size:.92rem}
 .table-wrap th, .table-wrap td{padding:.5rem .7rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:baseline}
+.table-wrap thead th:not(:first-child){scroll-snap-align:start}
+.table-wrap tr > :last-child{padding-right:calc(.7rem + var(--tail, 0px))}
 .table-wrap th{font-weight:700; color:var(--txt)}
 #table th small{display:block; font-weight:400}
 /* over the table's figures until the button has built it, not over its titles (app.js places it), wherever the

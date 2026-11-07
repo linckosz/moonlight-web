@@ -1007,6 +1007,27 @@ function renderTable() {
     return `<tr><th scope="row">${k.name}${under}</th>${cells}<td class="num">${o}</td><td class="num">${time}</td></tr>`;
   }).join('');
   placePress();
+  snapTables();
+}
+// A table that scrolls sideways stops where a column starts right after the names (mwsr.css): their width, and the
+// room the last column needs for the scroll to end on such a place, the first column that can come there at the end.
+function snapTables() {
+  for (const wrap of document.querySelectorAll('.table-wrap')) {
+    const table = wrap.querySelector('table');
+    const heads = table && table.tHead ? [...table.tHead.rows[0].cells] : [];
+    if (heads.length < 2) continue;
+    const box = table.getBoundingClientRect();
+    const stick = heads[0].getBoundingClientRect().width;
+    const room = box.width - (parseFloat(wrap.style.getPropertyValue('--tail')) || 0) - wrap.clientWidth;
+    const at = room > 0.5 ? heads.slice(1).map((th) => th.getBoundingClientRect().left - box.left - stick).find((x) => x >= room - 0.5) : null;
+    wrap.style.setProperty('--stick', `${stick.toFixed(1)}px`);
+    wrap.style.setProperty('--tail', `${at != null ? Math.max(0, at - room).toFixed(1) : 0}px`);
+  }
+}
+{
+  const resized = new ResizeObserver(() => snapTables());
+  document.querySelectorAll('.table-wrap').forEach((w) => resized.observe(w));
+  document.fonts.ready.then(snapTables);
 }
 // The badge lies over the table's figures, not over its titles: where they are depends on the page's width.
 function placePress() {
