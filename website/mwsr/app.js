@@ -507,6 +507,7 @@ async function load() {
     p.kind === 'file' ? { kind: 'file', file: S.file } : { ...p, url: p.url && new URL(p.url, location.href).href };
   status((p.mb ? `Loading the picture (${p.mb} MB the first time)` : 'Preparing the picture') + '…');
   for (const k of Object.keys(R)) delete R[k];
+  timedTexts.clear();
   caseNative = null;
   // no figure of the last case next to the next one
   if (C) {
@@ -973,6 +974,8 @@ function renderTable() {
   const shows = KERNELS.some((k) => best(k.id) || ['overshoot', ...SCORE_COLUMNS].some((key) => known(k.id, key)));
   $('press').classList.toggle('off', !waiting || shows);
   $('unfinished').hidden = !waiting || !shows;
+  // a table begun goes on, a finished one starts again
+  if (!measuring) $('measure').textContent = measured ? 'Measure again' : waiting && shows ? 'Continue' : 'Measure';
   // one line under every name where any row may need it: rows of one height, and nothing moves when a measure ends
   const lines = engine.hasF16 || engine.mwsrMode() === 'down';
   $('table').tBodies[0].innerHTML = KERNELS.map((k) => {
@@ -1155,7 +1158,7 @@ async function report(vars, fail, batches) {
       gpuArch: text(engine.architecture, 64),
       f16: engine.hasF16,
       timestamps: engine.hasTs,
-      // the batches each text was timed in: 3 at the first measure after the page loads, 6 after
+      // the batches each text was timed in
       batches,
       // the size of a visitor's own picture stays here
       ...(S.pic === 'file' ? {} : { canvasW: C.outW, canvasH: C.outH, inputW: C.inW, inputH: C.inH }),
@@ -1188,18 +1191,19 @@ async function report(vars, fail, batches) {
 }
 
 // ── the measure ──
-// The whole table, on the button: the scores it lacks, then the GPU time. A batch the page's draws touched is
-// dropped and taken again, warm.
+// The whole table, on the button: what it lacks, its scores then its rows' GPU time. A batch the page's draws
+// touched is dropped and taken again, warm.
 let measuring = 0; // the run under way
 let measured = false; // the table of this case is built
+// the texts of the rows a stopped measure timed, with their batches: its Continue times only the others
+const timedTexts = new Map();
 let runs = 0;
 let lastRun = Promise.resolve(); // two runs would share the timestamps' buffer
 const timed = { dropped: 0 };
 if (SOFT) window.mwsrTimed = timed;
-// The GPU time's plan: one round of 3 batches at the first measure after the page loads, so that a first result
-// comes soon, then two rounds, the second in the other order, from the next measure on. A batch is 100 draws, or
-// about 0.1 s of GPU when that is fewer: a slow upscaler on a phone gives its time from 4 draws as well as from 100.
-let timedOnce = false;
+// The GPU time's plan, the same at every measure: 3 batches of each text, so that the result comes soon. A batch
+// is 100 draws, or about 0.1 s of GPU when that is fewer: a slow upscaler on a phone gives its time from 4 draws as
+// well as from 100.
 // How far it is, beside the button: the dots come and go in a place of their own and the percentage has its
 // own width, so nothing moves. A change of text only: no draw of the page, and it holds no batch back.
 let dotsTimer = 0;
@@ -1222,16 +1226,23 @@ function showPercent(p) {
   const t = p + ' %';
   if (el && el.textContent !== t) el.textContent = t;
 }
+// what the button says once the run is over, renderTable() writes
 function stopMeasure() {
   measuring = 0;
   endScorer();
   clearInterval(dotsTimer);
-  $('measure').textContent = measured ? 'Measure again' : 'Measure';
   $('tprogress').textContent = '';
 }
 function startMeasure() {
   const run = (measuring = ++runs);
   const my = token;
+  // a finished table starts again from nothing: the overshoot, the 16-bit gate, the scores and the GPU time all
+  // again. A table begun goes on (Continue) with what it lacks.
+  if (measured) {
+    for (const k of Object.keys(R)) delete R[k];
+    timedTexts.clear();
+  }
+  measured = false;
   $('measure').textContent = 'Stop measuring';
   showMeasuring();
   renderTable();
@@ -1255,7 +1266,7 @@ function median(a) {
 async function measureCase(run, my) {
   const alive = () => measuring === run && token === my;
   if (!alive()) return;
-  const rounds = timedOnce ? 2 : 1;
+  const rounds = 1;
   const batches = 3;
   // How far it is: every step counts one, and what is done never goes back. What the gate refuses leaves the plan.
   let done = 0;
@@ -1266,7 +1277,8 @@ async function measureCase(run, my) {
     if (!known(k.id, 'overshoot')) steps++;
     if (half && !known(k.id, 'f16')) steps++;
     if (scoring) steps += SCORES.filter(([m]) => !known(k.id, m) && !(m === 'lpips' && lpipsOff)).length;
-    steps += (1 + rounds * batches) * (half && (!known(k.id, 'f16') || R[k.id].f16 === 'ok') ? 2 : 1);
+    if (!known(k.id, 't32'))
+      steps += (1 + rounds * batches) * (half && (!known(k.id, 'f16') || R[k.id].f16 === 'ok') ? 2 : 1);
   }
   const progress = () => showPercent(Math.floor((100 * done) / steps));
   const tick = () => {
@@ -1297,16 +1309,18 @@ async function measureCase(run, my) {
     fail ||= { step: 'score', msg: text(e.message), lost: text(lostWhy, 120), fallback: false };
   }
   refusal('score');
+  // the rows a stopped measure timed keep their batches: only the others are timed
+  const take = (id, half) => timedTexts.get(`${id}/${half}`) || { id, half, t: [], chunk: 10, iters: 100, dropped: 0 };
   const vars = [];
   for (const k of KERNELS) {
-    vars.push({ id: k.id, half: false, t: [], chunk: 10, iters: 100, dropped: 0 });
-    if (engine.halfOf(k.id) && R[k.id] && R[k.id].f16 === 'ok')
-      vars.push({ id: k.id, half: true, t: [], chunk: 10, iters: 100, dropped: 0 });
+    vars.push(take(k.id, false));
+    if (engine.halfOf(k.id) && R[k.id] && R[k.id].f16 === 'ok') vars.push(take(k.id, true));
   }
+  const todo = vars.filter((v) => !timedTexts.has(`${v.id}/${v.half}`));
   const opts = { c444: S.c444 };
   const total = vars.length * rounds * batches;
   // the warm-ups count, one each; a batch dropped was not yet counted
-  steps = done + vars.length + total;
+  steps = done + todo.length * (1 + rounds * batches);
   let at = 'warmup';
   let current = null;
   // one batch, on a GPU this page is not using; null when the run is over
@@ -1328,16 +1342,11 @@ async function measureCase(run, my) {
       if (!alive()) return null;
     }
   };
-  // the rows wait for their new times, each shown once its upscaler's texts have their round's batches; the times
-  // of the measure before come back to the rows this one did not reach, if it stops
-  const before = KERNELS.map((k) => [k.id, R[k.id] && R[k.id].t32, R[k.id] && R[k.id].t16]);
-  for (const k of KERNELS) if (R[k.id]) delete R[k.id].t32, delete R[k.id].t16;
-  let complete = false;
   try {
     progress();
     // a short warm-up, which also sizes the pieces of a batch (about 100 ms of GPU each: the most the page waits)
     // and the batch, then about 0.1 s more of each upscaler, thrown away, for a GPU that starts cold
-    for (const v of vars) {
+    for (const v of todo) {
       const w = await batch(v, 10);
       if (!w) return;
       const per = Math.max(0.01, w.gpu != null ? w.gpu : w.wall);
@@ -1348,23 +1357,25 @@ async function measureCase(run, my) {
     }
     at = 'batch';
     for (let r = 0; r < rounds; r++) {
-      for (const v of r % 2 ? [...vars].reverse() : vars) {
+      for (const v of r % 2 ? [...todo].reverse() : todo) {
         for (let b = 0; b < batches; b++) {
           const t = await batch(v, v.iters);
           if (!t) return;
           v.t.push(t.gpu != null ? t.gpu : t.wall);
           tick();
         }
-        const mine = vars.filter((x) => x.id === v.id);
+        // a row's time as soon as its upscaler's texts have their batches
+        const mine = todo.filter((x) => x.id === v.id);
         if (mine.every((x) => x.t.length >= (r + 1) * batches)) {
           R[v.id] = R[v.id] || {};
-          for (const x of mine) R[x.id][x.half ? 't16' : 't32'] = median(x.t);
+          for (const x of mine) {
+            R[x.id][x.half ? 't16' : 't32'] = median(x.t);
+            timedTexts.set(`${x.id}/${x.half}`, x);
+          }
           renderTable();
         }
       }
     }
-    timedOnce = true;
-    complete = true;
   } catch (e) {
     if (!alive()) return;
     status('The timing failed: ' + e.message, 'bad');
@@ -1374,17 +1385,9 @@ async function measureCase(run, my) {
       rounds * batches,
     );
     stopMeasure();
+    renderTable();
+    captions();
     return;
-  } finally {
-    // only for this case: a new picture or scale has emptied R for its own
-    if (!complete && token === my) {
-      for (const [id, t32, t16] of before) {
-        if (t32 == null || (R[id] && R[id].t32 != null)) continue;
-        R[id] = { ...R[id], t32, ...(t16 != null ? { t16 } : {}) };
-      }
-      renderTable();
-      captions();
-    }
   }
   measured = !scoresFailed;
   stopMeasure();
