@@ -255,6 +255,22 @@ Reste, en amont et hors du patch :
      de l'API porte des sessions et des clés à côté de texte choisi par l'appelant, et sa
      longueur compressée en dirait trop (la forme de BREACH). Les vecteurs zlib sont partagés
      entre `backend/tests/test_tunnel_frame.cpp` et `frontend/test/tunnelFrame.test.js`.
+   - Mesuré le 07/11 (21:1x-21:3x) au même banc : une `--dev` par stream.dev, UPnP coupé, un
+     Chrome du WSL sur profil neuf, +115 ms. `boot.js` et `tunnel.js` du dépôt sont substitués
+     par CDP. Le témoin est une copie de `tunnel.js` qui ne demande jamais la compression. Pour
+     le TCP, l'UDP sortant du WSL est coupé par nft, sauf vers son résolveur DNS ; la seule
+     connexion de l'hôte était alors sur l'écoute TCP passive. On mesure du début du
+     téléchargement au 194ᵉ fichier :
+
+     | Chemin | Sans compression | Avec compression |
+     |---|---|---|
+     | TCP | 14,2 s, 25,0 s | 3,9 s, 3,9 s |
+     | UDP | 3,5 s, 3,8 s | 3,6 s, 3,1 s |
+
+     - 174 des 194 fichiers arrivent compressés : 4,73 Mo deviennent 1,37 Mo sur le fil.
+     - La vérification des empreintes passe à chaque fois.
+     - En UDP, le gain se perd dans le bruit : le temps vient des allers-retours.
+     - Le TCP n'est plus le parent pauvre de l'UDP.
 6. ✅ **Depuis un vrai réseau** (26/10, 09:41-09:43) : Bruno, au bureau, sur un Mac d'entreprise
    sans droits d'administration. Le réseau laisse sortir l'UDP : la `--dev` de 59 portait la clé de
    banc `debug_ice_drop_udp` (§3.6). Le tunnel passe en TCP sur 46064 et le flux en
