@@ -408,7 +408,23 @@ QJsonObject ComputerManager::nativeDisplayJson()
     // show a picture and take none of the viewer's input — said on the card
     // and when the stream starts, since macOS itself says nothing.
     obj["input_permission"] = caps.inputPermission;
-    obj["virtual_display"] = VirtualDisplay::toJson(VirtualDisplay::probe());
+    const VirtualDisplay::Status vd = VirtualDisplay::probe();
+    obj["virtual_display"] = VirtualDisplay::toJson(vd);
+    // The other displays off while a stream runs on ours (issue #39, Windows):
+    // whether the admin allows it (Settings then offers each viewer the
+    // choice), and what a browser that never chose gets.
+    {
+        AppSettings settings;
+#ifdef Q_OS_WIN
+        const bool offered = vd.installed;
+#else
+        const bool offered = false;
+#endif
+        obj["others_off"] = QJsonObject{
+            {QStringLiteral("allowed"), offered && settings.virtualDisplayExclusive()},
+            {QStringLiteral("inherited"), settings.virtualDisplayExclusiveInherited()},
+        };
+    }
     // The HID passthrough's verdict for Settings' « As itself » switch, before
     // any stream: "ok", or why not in a word the page explains (the stream's
     // hidcaps stays the authority once it runs).

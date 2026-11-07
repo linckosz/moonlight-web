@@ -39,6 +39,15 @@ export class App {
     }
 
     /**
+     * Is this a display a stream turned off (issue #39: the other screens off
+     * while the virtual display streams)? The native host keeps its card, drawn
+     * dark; it opens nothing until the screens come back.
+     */
+    get isOff() {
+        return this.device?.off === true;
+    }
+
+    /**
      * Is this card "MoonlightWeb Virtual Display" — a screen made for the
      * stream rather than one that was already there? The resolution choice
      * means something else on it: the display is created at the size asked

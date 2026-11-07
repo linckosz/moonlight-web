@@ -155,6 +155,20 @@ bool othersGoOff(Asker asker, bool optionOn, bool guestOn, bool othersOff)
     return asker == Asker::Owner && optionOn && (!guestOn || othersOff);
 }
 
+bool ownerWantsOthersOff(bool allowed, bool hasChoice, bool choice, bool inherited)
+{
+    return allowed && (hasChoice ? choice : inherited);
+}
+
+QList<int> darkDisplays(const QList<int>& lit, const QList<int>& listed, bool othersOff)
+{
+    QList<int> dark;
+    if (!othersOff) return dark;
+    for (int id : lit)
+        if (!listed.contains(id) && !dark.contains(id)) dark.append(id);
+    return dark;
+}
+
 bool othersComeBack(bool ownerOn, bool othersOff)
 {
     return othersOff && !ownerOn;

@@ -83,11 +83,13 @@ public:
     /// show it (EDR) only then — an SDR stream off a display declared in
     /// BT.2020 would come out washed. Windows ignores it: its display is SDR.
     ///
-    /// The owner's: with the option on, the other displays go off when this
-    /// runs an operation and no guest is on the display (othersGoOff). On
-    /// already in that mode, it does not run one and they stay as they are.
-    void activate(int width, int height, int refreshMilliHz, bool hdr, Callback cb);
-    void activate(Callback cb) { activate(0, 0, 0, false, std::move(cb)); }
+    /// The owner's. @p othersOff: this stream wants the other displays off
+    /// (VirtualDisplay::ownerWantsOthersOff: the admin allows it and the
+    /// viewer chose it). They go off when this runs an operation and no guest
+    /// is on the display (othersGoOff). On already in that mode, it does not
+    /// run one and they stay as they are.
+    void activate(int width, int height, int refreshMilliHz, bool hdr, bool othersOff, Callback cb);
+    void activate(Callback cb) { activate(0, 0, 0, false, false, std::move(cb)); }
 
     /// For an invited guest, who arrives with no owner stream on it: turn the
     /// display on, in that mode, when it is off. On already — whatever its
@@ -156,7 +158,7 @@ private:
     };
 
     void activateAs(VirtualDisplay::Asker asker, int width, int height, int refreshMilliHz,
-                    bool hdr, Callback cb);
+                    bool hdr, bool othersOff, Callback cb);
     /// The other displays are off and the owner's stream that wanted them so
     /// is gone (VirtualDisplay::othersComeBack).
     bool othersDueBack() const;

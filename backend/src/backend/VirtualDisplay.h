@@ -464,6 +464,21 @@ enum class Asker
 /// the owner's change of mode.
 bool othersGoOff(Asker asker, bool optionOn, bool guestOn, bool othersOff);
 
+/// The option an owner's stream brings to othersGoOff(): two keys, both
+/// needed. The admin allows it (@p allowed, AppSettings::virtualDisplayExclusive)
+/// and the viewer turned it on in this browser's streaming settings (@p choice,
+/// sent with the stream). A browser that never chose (@p hasChoice false) takes
+/// what the PC did before the choice moved to the viewer (@p inherited): on
+/// where the admin's box was already ticked, so an update changes nothing.
+bool ownerWantsOthersOff(bool allowed, bool hasChoice, bool choice, bool inherited);
+
+/// The display cards drawn dark on the native host's card: with the other
+/// displays off (@p othersOff), the ones last seen lit (@p lit, in their
+/// order) that the PC no longer lists (@p listed). Windows detaches them, so
+/// without this their cards would vanish for the length of the stream. None
+/// with the displays on.
+QList<int> darkDisplays(const QList<int>& lit, const QList<int>& listed, bool othersOff);
+
 /// With a stream still on the display: whether the other displays come back on
 /// now. They were the owner's to turn off, so they go with the owner's stream
 /// (@p ownerOn), whatever the guests still watching.

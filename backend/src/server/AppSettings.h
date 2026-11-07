@@ -529,12 +529,21 @@ public:
     void clearVirtualDisplay();
 
     // Stored as JSON bool "virtual_display_exclusive", DEFAULT false, set from
-    // the admin page (Windows, the virtual display installed): every other
-    // display goes off while a stream runs on ours, and comes back on at its
-    // end (issue #39, VirtualDisplay::Request::exclusive). Read as each
-    // activation starts.
+    // the admin page (Windows, the virtual display installed): the admin
+    // ALLOWS streams to turn every other display off while they run on ours;
+    // each viewer then chooses it in the browser's streaming settings (issue
+    // #39, VirtualDisplay::ownerWantsOthersOff). Read as each activation
+    // starts.
     bool virtualDisplayExclusive() const;
+    // Also writes "virtual_display_exclusive_inherited" false: once the admin
+    // has changed the box, a browser that never chose starts unticked.
     void setVirtualDisplayExclusive(bool enabled);
+
+    // What a browser that never chose gets. Stored as JSON bool
+    // "virtual_display_exclusive_inherited"; absent, it is the admin's box
+    // itself: a PC updated with the box ticked (when the box alone decided)
+    // keeps its other displays going off until each viewer chooses.
+    bool virtualDisplayExclusiveInherited() const;
 
     // Stored as JSON string "virtual_display_gpu", DEFAULT "" (the driver's
     // own choice), set from the virtual display's card on a PC with several

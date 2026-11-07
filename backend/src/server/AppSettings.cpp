@@ -1077,7 +1077,16 @@ void AppSettings::setVirtualDisplayExclusive(bool enabled)
 {
     QJsonObject obj = readAll();
     obj["virtual_display_exclusive"] = enabled;
+    obj["virtual_display_exclusive_inherited"] = false;
     writeAll(obj);
+}
+
+bool AppSettings::virtualDisplayExclusiveInherited() const
+{
+    QJsonObject obj = readAll();
+    const QJsonValue inherited = obj.value("virtual_display_exclusive_inherited");
+    return inherited.isBool() ? inherited.toBool()
+                              : obj.value("virtual_display_exclusive").toBool(false);
 }
 
 QString AppSettings::virtualDisplayGpu() const

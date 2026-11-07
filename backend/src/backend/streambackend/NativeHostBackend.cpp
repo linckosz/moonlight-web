@@ -35,6 +35,8 @@ extern "C" {
 #include <QHash>
 #include <QJsonArray>
 #include <QHostInfo>
+#include <QMutex>
+#include <QMutexLocker>
 
 #include <algorithm>
 #include <vector>
@@ -606,6 +608,44 @@ void NativeHostBackend::releaseSeat(const QString& seatId)
     Q_UNUSED(seatId);
 }
 
+namespace {
+
+// The displays' cards as last listed with every display on (issue #39).
+QMutex s_LitMutex;
+QVector<NvApp> s_LitDisplays;
+
+void appendDarkDisplays(const QVector<NvApp>& physical, QVector<NvApp>& apps)
+{
+#ifdef Q_OS_WIN
+    // While a stream has the other displays off, Windows has detached them:
+    // they leave the list. Their cards stay, from the last listing that had
+    // them on, marked "off" so the grid draws them dark and opens nothing.
+    const bool othersOff = QFile::exists(VirtualDisplay::othersOffPath());
+    QMutexLocker lock(&s_LitMutex);
+    if (!othersOff) {
+        s_LitDisplays = physical;
+        return;
+    }
+    QList<int> lit, listed;
+    for (const NvApp& app : std::as_const(s_LitDisplays))
+        lit.append(app.id());
+    for (const NvApp& app : std::as_const(apps))
+        listed.append(app.id());
+    for (int id : VirtualDisplay::darkDisplays(lit, listed, othersOff)) {
+        NvApp app = s_LitDisplays.at(lit.indexOf(id));
+        QJsonObject device = app.device();
+        device[QStringLiteral("off")] = true;
+        app.setDevice(device);
+        apps.append(app);
+    }
+#else
+    Q_UNUSED(physical);
+    Q_UNUSED(apps);
+#endif
+}
+
+} // namespace
+
 void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback cb)
 {
     Q_UNUSED(seatId);
@@ -660,6 +700,7 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
     const QList<int> ids = displayAppIds(caps);
     QVector<NvApp> apps;
     apps.reserve(caps.displays.size() + 1);
+    QVector<NvApp> physical; // the displays' own cards, not ours nor an app's
     bool virtualListed = false;
     for (const mw::native::DisplayInfo* entry : ordered) {
         const mw::native::DisplayInfo& display = *entry;
@@ -699,7 +740,9 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
         addGpu(device, NativeCapabilitiesJson::displayGpu(caps, display.gpuId));
         app.setDevice(device);
         apps.append(app);
+        physical.append(app);
     }
+    appendDarkDisplays(physical, apps);
     // The owner's apps (AppSettings::hostApps), in the settings' order.
     appendHostApps(caps, apps);
     if (virtualInstalled && !virtualListed) apps.append(virtualDisplayApp(caps));

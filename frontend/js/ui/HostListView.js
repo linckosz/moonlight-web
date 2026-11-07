@@ -446,6 +446,8 @@ export class HostListView {
 
             // ── App card launch ───────────────────────────────────────────
             const appCard = e.target.closest('.app-card');
+            // A display a stream turned off opens nothing until it is back.
+            if (appCard && appCard.classList.contains('app-card--off')) return;
             if (appCard) {
                 // A launch already in flight blocks ALL app cards (not just the
                 // launching one): a second click would start a concurrent
@@ -1634,16 +1636,22 @@ export class HostListView {
         // The app a stopped stream left running (issue #24): the card resumes
         // it, and says so; a small Quit closes it on the host.
         const running = runningId > 0 && app.id === runningId;
-        const aria = running
-            ? t('apps.resumeAria', { name: app.displayName })
-            : t('apps.launchAria', { name: app.displayName });
+        // A display a stream turned off (issue #39): drawn dark, opens nothing.
+        const off = app.isOff;
+        const aria = off
+            ? t('apps.displayOffAria', { name: app.displayName })
+            : running
+              ? t('apps.resumeAria', { name: app.displayName })
+              : t('apps.launchAria', { name: app.displayName });
+        const state = off ? ' app-card--off' : running ? ' app-card--running' : '';
         return `
-            <div class="app-card${running ? ' app-card--running' : ''}" data-app-id="${app.id}"
-                 role="button" tabindex="0"
+            <div class="app-card${state}" data-app-id="${app.id}"
+                 role="button" tabindex="0"${off ? ' aria-disabled="true"' : ''}
                  aria-label="${this.esc(aria)}">
                 <div class="app-card-image${drawsMachine ? ' app-card-image--host' : ''}">
                     ${image}
-                    ${running ? `<span class="app-card-badge">${this.esc(t('apps.running'))}</span>` : ''}
+                    ${running && !off ? `<span class="app-card-badge">${this.esc(t('apps.running'))}</span>` : ''}
+                    ${off ? `<span class="app-card-off-note">${this.esc(t('apps.displayOff'))}</span>` : ''}
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
                 ${drawsMachine ? this._gpuLine(app, devices) : ''}

@@ -863,6 +863,28 @@ void run_virtual_display_tests()
             for (const bool off : {false, true})
                 CHECK(!othersGoOff(Asker::Guest, option, guest, off));
 
+    SECTION("VirtualDisplay — the admin allows, the viewer chooses");
+    // Both keys, when the browser chose.
+    CHECK(ownerWantsOthersOff(true, true, true, false));
+    CHECK(!ownerWantsOthersOff(true, true, false, true));
+    CHECK(!ownerWantsOthersOff(false, true, true, true));
+    // A browser that never chose: what the PC did before (ticked box on update).
+    CHECK(ownerWantsOthersOff(true, false, false, true));
+    CHECK(!ownerWantsOthersOff(true, false, true, false));
+    // Never without the admin's leave, whatever the browser holds.
+    for (const bool has : {false, true})
+        for (const bool choice : {false, true})
+            for (const bool inherited : {false, true})
+                CHECK(!ownerWantsOthersOff(false, has, choice, inherited));
+
+    SECTION("VirtualDisplay — the cards of the displays a stream turned off");
+    CHECK(darkDisplays({1, 2, 3}, {1}, true) == QList<int>({2, 3}));
+    CHECK(darkDisplays({2, 3}, {7}, true) == QList<int>({2, 3}));
+    CHECK(darkDisplays({2, 3}, {2, 3}, true).isEmpty());
+    CHECK(darkDisplays({2, 3}, {7}, false).isEmpty());
+    CHECK(darkDisplays({}, {7}, true).isEmpty());
+    CHECK(darkDisplays({2, 2}, {}, true) == QList<int>({2}));
+
     SECTION("VirtualDisplay — the other displays come back with the owner gone");
     CHECK(othersComeBack(false, true));
     CHECK(!othersComeBack(true, true));

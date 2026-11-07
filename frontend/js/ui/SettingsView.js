@@ -115,6 +115,7 @@ import {
     pyrowaveBlocker,
 } from '../util/PyrowaveCodec.js';
 import { CODEC_AUTO, codecAfterAutoMigration } from '../util/CodecAuto.js';
+import { othersOffChecked, othersOffOffer } from '../util/OthersOff.js';
 import {
     loadMicDevice,
     micRequested,
@@ -208,6 +209,9 @@ export class SettingsView {
         this._micDevice = loadMicDevice();
         this._micQuality = 'voice';
         this._quitAppOnStop = false;
+        // The host's other screens off while this browser streams its virtual
+        // display: true/false once chosen here, null before (util/OthersOff.js).
+        this._othersOff = null;
         // Enter fullscreen at launch (off by default): asked on the launch
         // click, the only moment a browser lets a page go fullscreen.
         this._fullscreenOnStart = false;
@@ -254,6 +258,9 @@ export class SettingsView {
         // Whether a host this page knows codes PyroWave (its card says so:
         // util/PyrowaveCodec.js); null until the host list answers.
         this._pyrowaveHost = null;
+        // What the hosts offer for the other screens ({inherited}), or null:
+        // the box shows only where an admin allows it.
+        this._othersOffOffer = null;
 
         // True when this browser holds a session worth ending — see
         // _checkSession(). False for the host machine's own browser, whichever
@@ -665,6 +672,7 @@ export class SettingsView {
         this._micChosen = data.mic_chosen === true;
         this._micQuality = data.mic_quality === 'clean' ? 'clean' : 'voice';
         this._quitAppOnStop = data.quit_app_on_stop === true;
+        this._othersOff = typeof data.others_off === 'boolean' ? data.others_off : null;
         this._fullscreenOnStart = data.fullscreen_on_start === true;
         this._touchSensitivity =
             typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
@@ -1020,6 +1028,9 @@ export class SettingsView {
             mic_chosen: this._micChosen,
             mic_quality: this._micQuality,
             quit_app_on_stop: this._quitAppOnStop,
+            // This browser's own choice, sent with each launch; absent until
+            // chosen, so the server applies the PC's default.
+            ...(typeof this._othersOff === 'boolean' ? { others_off: this._othersOff } : {}),
             fullscreen_on_start: this._fullscreenOnStart,
             power_save: this._powerSave,
             power_save_backup: this._powerSaveBackup,
@@ -1036,6 +1047,8 @@ export class SettingsView {
             // keeps what it had.
             const shared = { ...settings };
             if (shared.video_codec === CODEC_PYROWAVE) delete shared.video_codec;
+            // Nor is turning the host's screens off: each browser chooses it.
+            delete shared.others_off;
             try {
                 await BackendClient.saveStreamingSettings(shared);
             } catch (err) {
@@ -1116,6 +1129,7 @@ export class SettingsView {
         try {
             const data = await BackendClient.getHosts();
             this._pyrowaveHost = anyHostCodesPyrowave(data?.hosts);
+            this._othersOffOffer = othersOffOffer(data?.hosts);
             this._updateHosts = (data?.hosts || []).map((h) => new Host(h));
         } catch {
             this._pyrowaveHost = null;
@@ -1595,6 +1609,9 @@ export class SettingsView {
         this._micQuality = 'voice';
         this._audioSource = 'all';
         this._quitAppOnStop = false;
+        // The host's other screens off while this browser streams its virtual
+        // display: true/false once chosen here, null before (util/OthersOff.js).
+        this._othersOff = null;
         this._fullscreenOnStart = false;
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
@@ -2201,6 +2218,21 @@ export class SettingsView {
                         </label>
                         <span class="setting-desc">${t('settings.quitAppOnStopDesc')}</span>
                     </div>
+                    ${
+                        this._othersOffOffer
+                            ? `
+                    <div class="settings-field" id="settings-others-off-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-others-off"
+                                ${othersOffChecked(this._othersOff, this._othersOffOffer) ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.othersOff')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.othersOffDesc')}</span>
+                    </div>`
+                            : ''
+                    }
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
@@ -2606,6 +2638,13 @@ export class SettingsView {
         if (quitAppCheck)
             quitAppCheck.addEventListener('change', () => {
                 this._quitAppOnStop = quitAppCheck.checked;
+                this._autoSave();
+            });
+
+        const othersOffCheck = this.container.querySelector('#settings-others-off');
+        if (othersOffCheck)
+            othersOffCheck.addEventListener('change', () => {
+                this._othersOff = othersOffCheck.checked;
                 this._autoSave();
             });
 

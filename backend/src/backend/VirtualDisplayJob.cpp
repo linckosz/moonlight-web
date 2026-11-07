@@ -170,13 +170,15 @@ QJsonObject VirtualDisplayJob::statusJson() const
 
 // ── Entry points ────────────────────────────────────────────────────────────
 
-void VirtualDisplayJob::activate(int width, int height, int refreshMilliHz, bool hdr, Callback cb)
+void VirtualDisplayJob::activate(int width, int height, int refreshMilliHz, bool hdr,
+                                 bool othersOff, Callback cb)
 {
-    activateAs(VirtualDisplay::Asker::Owner, width, height, refreshMilliHz, hdr, std::move(cb));
+    activateAs(VirtualDisplay::Asker::Owner, width, height, refreshMilliHz, hdr, othersOff,
+               std::move(cb));
 }
 
 void VirtualDisplayJob::activateAs(VirtualDisplay::Asker asker, int width, int height,
-                                   int refreshMilliHz, bool hdr, Callback cb)
+                                   int refreshMilliHz, bool hdr, bool othersOff, Callback cb)
 {
     m_Release.stop();
     // Linux: the stream's own portal session makes the display, at the
@@ -214,8 +216,7 @@ void VirtualDisplayJob::activateAs(VirtualDisplay::Asker asker, int width, int h
         }
     }
     enqueue(Action::Activate, width, height, refresh, hdr,
-            VirtualDisplay::othersGoOff(asker, AppSettings().virtualDisplayExclusive(),
-                                        m_GuestOn && m_GuestOn(),
+            VirtualDisplay::othersGoOff(asker, othersOff, m_GuestOn && m_GuestOn(),
                                         QFile::exists(VirtualDisplay::othersOffPath())),
             std::move(cb));
 }
@@ -258,7 +259,8 @@ void VirtualDisplayJob::activateIfOff(int width, int height, int refreshMilliHz,
         if (cb) cb(true, QString());
         return;
     }
-    activateAs(VirtualDisplay::Asker::Guest, width, height, refreshMilliHz, false, std::move(cb));
+    activateAs(VirtualDisplay::Asker::Guest, width, height, refreshMilliHz, false, false,
+               std::move(cb));
 }
 
 void VirtualDisplayJob::deactivate(Callback cb)

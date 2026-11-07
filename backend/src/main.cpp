@@ -4781,6 +4781,16 @@ int main(int argc, char* argv[])
                 VirtualDisplay::sizeForStream(reqWidth, reqHeight, reqMatchDisplay);
             const int vdWidth = vdSize.width;
             const int vdHeight = vdSize.height;
+            // The other displays off while it runs: allowed by the admin, and
+            // chosen in this browser's streaming settings ("others_off"). A
+            // browser that never chose sends nothing and gets the PC's
+            // inherited default (issue #39).
+            const bool vdOthersOff = [&body]() {
+                AppSettings settings;
+                return VirtualDisplay::ownerWantsOthersOff(
+                    settings.virtualDisplayExclusive(), body.contains("others_off"),
+                    body["others_off"].toBool(false), settings.virtualDisplayExclusiveInherited());
+            }();
             // Its refresh rate, on Windows, is 240 Hz whatever the stream's
             // (decision A of plan framerate-hote, 30/09/2026), or a whole
             // multiple of the client's screen under vddmatch (below). A
@@ -4882,9 +4892,9 @@ int main(int argc, char* argv[])
             if (host->backendType == NativeHostBackend::typeName() &&
                 NativeHostBackend::usesVirtualDisplay(appId)) {
                 readyThenStart = [claimThenStart, worker, respond, standby, reqSlot, generation,
-                                  vdWidth, vdHeight, vdRefresh, vdHdr]() {
+                                  vdWidth, vdHeight, vdRefresh, vdHdr, vdOthersOff]() {
                     VirtualDisplayJob::instance().activate(
-                        vdWidth, vdHeight, vdRefresh, vdHdr,
+                        vdWidth, vdHeight, vdRefresh, vdHdr, vdOthersOff,
                         [claimThenStart, worker, respond, standby, reqSlot,
                          generation](bool ok, const QString& error) {
                             if (g_SlotLaunchGeneration.value(reqSlot) != generation) {
