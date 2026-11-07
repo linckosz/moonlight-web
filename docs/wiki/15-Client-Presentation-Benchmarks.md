@@ -104,7 +104,7 @@ Four routes, chosen from the codec and the display (`_hdrMode` in `StreamView.js
 
 Since 0.4.1 the Auto codec, the default, takes the AV1 rows for an HDR stream with the Enhancer; the HEVC rows are reached by picking HEVC.
 
-The HDR checkbox is offered only when the client can honour it: HDR display **and** a WebGPU adapter **and** a 10-bit decoder (`hdrClientCapability()`); otherwise it is greyed with the reason ("HDR is not active on this device" or "browser cannot present HDR"), and the launch does not send `hdr_enabled`. `mw_hdr_request=1` in localStorage bypasses the guard for experiments; `mw_hdr_tonemap=1/0` forces or disables the readback.
+The HDR checkbox is greyed only when the browser lacks a WebGPU adapter or a 10-bit decoder (`hdrClientCapability()`, "HDR is not available in this browser."); on a screen not in HDR it stays, with the note "This screen is not in HDR mode right now: streams stay SDR until it is.", and the launch sends `hdr_enabled:false` until the screen is in HDR. A native host follows the screen live. `mw_hdr_request=1` in localStorage bypasses the launch gate for other hosts, for experiments; `mw_hdr_tonemap=1/0` forces or disables the readback.
 
 Overlay measurements (Sunshine bench-desk 1080p60, M27Q in Windows HDR; render p99 / GPU wait / decode p99, ms):
 

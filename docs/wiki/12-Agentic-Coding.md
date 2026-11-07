@@ -62,7 +62,7 @@ The recommended model is a **single senior "master" agent, selected by default**
 
 ## 12.3 Claude Code configuration
 
-Concrete, repo-committable layout (paths are the Claude Code conventions):
+Concrete, shareable layout (paths are the Claude Code conventions):
 
 ```
 CLAUDE.md                        # ≤ 1 page: pointers to docs/wiki, invariants list, gates
@@ -88,7 +88,7 @@ Key choices:
 - **Sub-agents default to a cheaper model** (cost discipline); the reference-codebase expert is invoked **only with explicit user authorization**.
 - **Hooks**: a pre-commit-style hook running `clang-format` and `npm run check` on stop, so formatting never reaches CI.
 
-This repository's actual development already follows this model (build/test/sunshine-api skills, an opt-in `expert-moonlight-refs` sub-agent, sonnet-by-default sub-agents) — the layout above is the generalized, shareable version.
+The maintainer's own setup follows this model locally (build/test/sunshine-api skills, an opt-in `expert-moonlight-refs` sub-agent, sonnet-by-default sub-agents), but this repository commits none of it: `.claude/` and `CLAUDE.md` are git-ignored. The layout above is the generalized, shareable version.
 
 **For a fork**, one agent-facing file is committed: [`CLAUDE-LAN-DEV-SETUP.md`](../../CLAUDE-LAN-DEV-SETUP.md), an ordered plan that sets up a **LAN-only** development environment (`MW_LAN_ONLY`, no VM, no domain) and ends with the short prompts a contributor reuses before each PR ([§11.1bis](11-Build-CI-Testing.md#111bis-lan-only-development-environment-for-a-fork)). It is a plain Markdown file at the root rather than a `CLAUDE.md` on purpose: it is read once, on request — *"Read CLAUDE-LAN-DEV-SETUP.md and set up my LAN-only dev environment."* — not loaded into every session.
 

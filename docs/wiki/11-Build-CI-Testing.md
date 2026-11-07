@@ -30,7 +30,7 @@ Toolchain: CMake ≥ 3.21, Ninja, **Qt 6.11** (Core, Network, **WebSockets**), C
 
 - builds the native submodules statically via `add_subdirectory` (libdatachannel, miniupnpc, moonlight-common-c, qmdnsengine) — no manual per-dep step,
 - bakes `MW_VERSION` (overridden by the release tag in CI) and the **embedded env defaults** (`MW_DOMAIN`, `MW_PDNS_TOKEN` from CI secrets) as compile definitions,
-- can embed a fallback cert (`MW_CERT_PEM`/`MW_CERT_KEY` read from `.env` at build time),
+- can embed a fallback cert (`MW_CERT_PEM`/`MW_CERT_KEY` from the environment at configure time; the CI sets neither),
 - installs the frontend next to the binary and generates the app icon resource (`app_icon.rc.in`).
 
 ## 11.1bis LAN-only development environment for a fork
@@ -52,7 +52,7 @@ Gated pipeline — quality and tests **block** the packaging stage. Runs on **`v
 
 | Job | Runner | What |
 |---|---|---|
-| `frontend` | ubuntu | Prettier + ESLint (`npm run check`), then Vitest with **70% coverage gate scoped to pure-logic units** |
+| `frontend` | ubuntu | Prettier + ESLint + the i18n catalog check (`npm run check`), then Vitest with a **70% coverage gate (60% for branches) scoped to pure-logic units** |
 | `quality-cpp-format` | ubuntu | `clang-format` **19.1.7** check (house style in `backend/.clang-format`) |
 | `quality-cppcheck` | ubuntu | cppcheck static analysis |
 | `test-backend` | windows | Qt Test suites + OpenCppCoverage, 70% gate |
@@ -75,7 +75,7 @@ Manual dispatch or a `workflow_call` from CI → per-platform packaging. It has 
 - The same job picks the **edition** (feeds `MW_EDITION`): `prod` on a `v*` tag and on `channel=staging`, `dev` on every other run, and exports `app` (`MoonlightWeb` / `MoonlightWebDev`) and `pkg` (`moonlightweb` / `moonlightweb-dev`), from which every file, artifact, bundle and package name is derived. A DEV installer installs beside the release instead of over it — see [Installers §9.4bis](09-Installers-and-Packaging.md#94bis-editions--prod-and-dev-side-by-side). The tag-only publishing jobs below only ever see PROD.
 - Publishing to the GitHub Release only happens on a `refs/tags/` ref; every other run stops at the workflow artifacts.
 - **windows** (x64 + arm64): build → archive **PDB symbols** as an artifact → stage bundle → `windeployqt` + Qt OpenSSL TLS plugin + the vendored OpenSSL DLLs → **smoke test** (the packaged app starts, answers `/api/health` over HTTPS, `--status` makes a TLS connection, still alive 10 s later; ARM64 also checks its prologues with `scripts/check-arm64-chkstk.ps1`) → **SignPath** signs `MoonlightWeb.exe` → **Inno Setup** installer → SignPath signs the installer. Each signed file overwrites the unsigned one in place; the two `unsigned-*` artifacts exist only because SignPath reads its input from the artifact store (1-day retention). See [Installers §9.1](09-Installers-and-Packaging.md).
-- **linux**: build → security TNR (`ctest`) → linuxdeploy **AppDir** (+ Wayland plugins best-effort) → **AppImage** → `make-packages.sh` → **.deb + .rpm** (AppStream metainfo included).
+- **linux**: build → security TNR (`ctest`) → linuxdeploy **AppDir** (xcb + offscreen only, no Wayland plugins) → **AppImage** → `make-packages.sh` → **.deb + .rpm** (AppStream metainfo included).
 - **macos** (arm64, macos-15): build → security TNR (`ctest`) → assemble `.app` → `macdeployqt` + signature (a stable certificate from `MACOS_SIGN_P12`, ad hoc when it is unset) → **interactive `.pkg`** via `build-pkg.sh`.
 
 Artifact naming is what `UpdateChecker` matches per-platform (`MoonlightWeb-installer-<v>-win-<arch>.exe`, `moonlightweb-<v>-linux-x64.{deb,rpm}`, `moonlightweb-<v>-x86_64.AppImage`, `moonlightweb-<v>-macos-arm64.pkg`).
@@ -125,7 +125,7 @@ Triggers, and the reasoning behind each:
 |---|---|
 | `workflow_call` | How a `v*` tag publishes: `ci.yml`'s `docker` job calls this after the quality/test gates, exactly as it calls `release.yml`. There is deliberately **no `push: tags`** trigger — that would build every tag twice and race the two runs to the same manifest. |
 | `workflow_dispatch` | `publish` defaults to **false**: both architectures compile with `outputs: type=cacheonly` and nothing is pushed, which is the "does it still build?" check. Ticking it publishes to the private `-dev` package. There is deliberately no `push: branches` trigger, which also restores this repository's rule that an ordinary push spends no CI minutes. |
-| `pull_request` (paths-filtered) | Build only, `outputs: type=cacheonly`, never pushed, and only when the image's own files change — so a Dockerfile edit is never merged unbuilt. Both architectures build, so an arm64-only break is caught. `backend/**` is deliberately absent from this filter: it would spend two full C++ builds on every backend PR, and the push trigger already covers a backend dependency that breaks the image. |
+| `pull_request` (paths-filtered) | Build only, `outputs: type=cacheonly`, never pushed, and only when the image's own files change — so a Dockerfile edit is never merged unbuilt. Both architectures build, so an arm64-only break is caught. `backend/**` is deliberately absent from this filter: it would spend two full C++ builds on every backend PR, and the tag's run (called from `ci.yml`) catches a backend change that breaks the image. |
 | `workflow_dispatch` | An image from any branch, on demand. |
 
 GHCR authenticates with the run's own `GITHUB_TOKEN` — no PAT, nothing to rotate. As with `package`, every scope this workflow requests (`contents: read`, `packages: write`) has to be granted by the calling job in `ci.yml` or the run dies at startup. `secrets: inherit` matters here too — the `MW_*` service credentials reach the build as **build-stage `ARG`s**, and without them the published image would silently lose the update relay and the censuses. The `MoonlightWeb` environment that holds them is requested conditionally (`${{ github.event_name != 'pull_request' && 'MoonlightWeb' || '' }}`): a fork's PR cannot read environment secrets anyway, and an environment with a required reviewer would leave the PR check pending on a build that is thrown away. `${GITHUB_REPOSITORY@L}` lower-cases the image path, which `ghcr.io` requires and a fork's owner may well not have.
