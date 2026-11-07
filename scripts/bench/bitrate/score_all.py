@@ -33,6 +33,10 @@ def main():
             time.sleep(10)
             continue
         for d in todo:
+            until = sys.argv[sys.argv.index("--until") + 1] if "--until" in sys.argv else None
+            if until and time.strftime("%H:%M") >= until:
+                log.write("%s --until %s: stop before %s\n" % (time.strftime("%H:%M"), until, os.path.basename(d)))
+                return
             t = time.time()
             r = subprocess.run([sys.executable, "-E", "-X", "utf8", os.path.join(HERE, "score.py"), d, "--threads", "8"],
                                capture_output=True, text=True)
@@ -52,6 +56,10 @@ def main():
                                                           time.time() - t))
             log.flush()
             last = time.time()
+            done_runs = globals().get("done_runs", 0) + 1
+            globals()["done_runs"] = done_runs
+            if "--max-runs" in sys.argv and done_runs >= int(sys.argv[sys.argv.index("--max-runs") + 1]):
+                return
 
 
 if __name__ == "__main__":

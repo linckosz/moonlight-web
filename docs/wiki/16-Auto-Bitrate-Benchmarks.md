@@ -212,11 +212,13 @@ The target bitrate (Mbit/s) at which a scene first reaches a VMAF NEG level, rea
 | 1920×1200, 60 fps | 22 | 4.3 | 7.9 | 17.1 | 18.1 |
 | 1080p30 | 10 | 2.2 | 6.4 | 13.7 | 13.0 |
 | 1440p120 | 71 | 11.5 | 12.1 | 23.6 | 25.6 |
+| 2160p60 | 80 | 11.3 | 17.7 | 52.4 | 38.5 |
 
 Reading:
 
 - **The frame rate barely matters.** At 1080p, the search page reaches VMAF 95 at 13.7 Mbit/s at 30 fps, 17.3 at 60 and 16.3 at 120; at 1440p, 28.4 at 60 and 23.6 at 120. The page scrolls at the same speed in pixels per second at every frame rate, so at 120 fps each frame moves half as far and costs less. A fit over the combinations gives, for VMAF 95, *needed bitrate ∝ pixels^0.8 × fps^0.05*. Today's Auto is linear in both: it gives twice the 60 fps value at 120 fps, where nothing is gained, and half of it at 30 fps, where the picture falls short (720p30: VMAF 95 is not reached even at ×1.5 of Auto).
-- **The pixel count matters less than linearly** (exponent about 0.8): 1440p60 needs 1.6 times the bitrate of 1080p60 for the same quality, not 1.78.
+- **The pixel count matters less than linearly** (exponent about 0.8): 1440p60 needs 1.6 times the bitrate of 1080p60 for the same quality, not 1.78. 2160p60 lands on the same line: VMAF 95 at 52 Mbit/s, which is 17.3 × 4^0.8 (four times the pixels of 1080p60, three times the bitrate); today's Auto gives it 80.
+- **Above a point, NVENC stops spending more.** While the search page scrolls, the bitrate actually used levels off at about 7.4 Mbit/s at 1440p60 from a set 18 Mbit/s, and at about 13 Mbit/s at 2160p60 from a set 24 Mbit/s, while VMAF still creeps up by about one point to the highest setting. At these sizes VMAF 95 lies on that flat part, so the set bitrate it needs (28 and 52 Mbit/s) says more about the encoder's rate control than about the picture. 1080p60 does not level off within the range measured (12.9 Mbit/s used at a set 30). Why the encoder stops there (its rate control, or the host's settings) is not known yet.
 - **Still pictures are cheap.** A settled still reaches its plateau at 1–12 Mbit/s depending on the combination, well below any scrolling scene. The first frame after a scene change is the exception: its quality rises with the bitrate all the way up, but it lasts a few frames (three to four at today's Auto in 1080p60).
 - **The web page scene** is laid out for each size and is not comparable across combinations; at 1080p60 it is the hardest content measured (VMAF 90 at 16 Mbit/s).
 - These are NVENC figures. AMF spends the whole target (§16.5), so the same target costs an AMF host about twice the bandwidth for a similar picture.
@@ -439,10 +441,33 @@ VMAF NEG unless stated.
 
 </details>
 
+### 2160p60
+
+![2160p60, NVENC](../screenshots/bitrate/m-3840x2160p60-hevc.png)
+
+<details><summary>Table</summary>
+
+VMAF NEG unless stated.
+
+| Set (Mbit/s) | Used while scrolling (Mbit/s) | Junk Shop: first frame | Junk Shop: settled | Gears: settled | 4K photo: settled | Search page scroll | Scroll/stop | Web page scroll | Search page scroll PSNR-Y |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 6 | 4.37 | 16.0 | 90.4 | 91.9 | 91.0 | 82.1 | 84.6 | 74.1 | 34.29 |
+| 8 | 5.79 | 25.2 | 92.1 | 93.1 | 92.7 | 87.2 | 88.1 | 81.2 | 36.99 |
+| 12 | 8.46 | 38.9 | 93.8 | 94.2 | 93.9 | 90.9 | 91.5 | 88.4 | 40.56 |
+| 16 | 10.39 | 48.6 | 94.1 | 94.6 | 94.3 | 92.7 | 93.3 | 90.9 | 42.77 |
+| 24 | 11.97 | 62.9 | 94.4 | 94.8 | 94.4 | 94.0 | 94.6 | 93.8 | 44.48 |
+| 32 | 12.41 | 68.8 | 94.4 | 94.8 | 94.5 | 94.4 | 94.8 | 94.5 | 44.93 |
+| 40 | 12.70 | 73.9 | 94.4 | 94.8 | 94.5 | 94.8 | 95.1 | 94.5 | 45.32 |
+| 48 | 12.66 | 78.2 | 94.4 | 94.8 | 94.5 | 94.9 | 95.3 | 94.8 | 45.51 |
+| 60 | 12.88 | 81.8 | 94.4 | 94.8 | 94.5 | 95.1 | 95.4 | 95.1 | 45.79 |
+| 80 | 12.99 | 86.8 | 94.4 | 94.8 | 94.5 | 95.5 | 95.7 | 95.4 | 46.13 |
+| 120 | 13.04 | 90.1 | 94.4 | 94.8 | 94.5 | 95.6 | 95.8 | 95.6 | 46.26 |
+
+</details>
+
 
 ### Not measured yet
 
-- **2160p60:** recorded at all 11 bitrates; the scoring was interrupted (the machine ran short of memory) and is to be finished.
 - **H.264** (1080p60, 720p60): only the 1.5 Mbit/s point of 1080p60 was recorded before the bench stopped. Whether H.264 needs a higher Auto than HEVC is still open.
 
 ## 16.7 Hardware decode against the reference decoder

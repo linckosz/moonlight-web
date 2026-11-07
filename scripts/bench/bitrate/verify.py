@@ -36,8 +36,13 @@ def main():
     meta = json.load(open(os.path.join(run, "meta.json"), encoding="utf-8"))
     w, h = spec["W"], spec["H"]
     stream, _ = cm.annexb(run)
-    raw = os.path.join(run, "verify.nv12")
-    n = cm.decode_nv12(stream, w, h, raw)
+    want = {fm["idx"] for fm in meta["frames"]}
+    kept = {}
+    n = 0
+    for i, buf in cm.decode_iter(stream, w, h):
+        n = i + 1
+        if i in want:
+            kept[i] = buf
     out = []
     for fm in meta["frames"]:
         i = fm["idx"]
@@ -46,14 +51,13 @@ def main():
         if i >= n:
             out.append({"idx": i, "error": "ffmpeg has only %d frames" % n})
             continue
-        sw = cm.nv12_frame(raw, w, h, i)
+        sw = kept[i]
         sy = sw[:w * h].reshape(h, w)
         suv = sw[w * h:].reshape(h // 2, w)
         out.append({"idx": i, "hw_bar": cm.read_bar(np.ascontiguousarray(hy)), "sw_bar": cm.read_bar(sy),
                     "y_diff_bytes": int((hy != sy).sum()), "uv_diff_bytes": int((huv != suv).sum()),
                     "y_max_abs": int(np.abs(hy.astype(int) - sy).max()),
                     "format": fm["format"], "colorSpace": fm.get("colorSpace")})
-    os.remove(raw)
     res = {"frames": out, "bit_exact": all(o.get("y_diff_bytes") == 0 and o.get("uv_diff_bytes") == 0 for o in out)}
     json.dump(res, open(os.path.join(run, "verify.json"), "w", encoding="utf-8"), indent=1)
     print(json.dumps(res, indent=1))

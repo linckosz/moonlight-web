@@ -31,6 +31,94 @@ import common as cm  # noqa: E402
 CONTENT = os.path.join(cm.HERE, "content")
 
 
+def score_piped(run, stream, w, h, rows, scenes, srcs, threads):
+    """One pass, nothing on disk but vmaf.json: ffmpeg decodes into this process; each frame
+    with a valid barcode goes, barcode rows cut, on top of its reference (converted by a second
+    ffmpeg exactly as ref_to_yuv does) in one yuv420p picture of 2 x rows; libvmaf crops the two
+    halves apart (even offsets on 4:2:0: plain copies) and scores them as before.
+    Returns (frames from vmaf.json, picked, counts)."""
+    import queue
+    import threading
+    lav = ("[0:v]split[a][b];[a]crop=%d:%d:0:0[d];[b]crop=%d:%d:0:%d[r];"
+           "[d][r]libvmaf=n_threads=%d"
+           ":model='version=vmaf_v0.6.1neg\\:name=neg|version=vmaf_v0.6.1neg\\:name=negnm\\:motion.motion_force_zero=true'"
+           ":feature=name=psnr|name=float_ssim|name=float_ms_ssim:log_fmt=json:log_path=vmaf.json"
+           % (w, rows, w, rows, rows, threads))
+    vj = os.path.join(run, "vmaf.json")
+    if os.path.exists(vj):
+        os.remove(vj)
+    pv = subprocess.Popen([cm.FFMPEG, "-hide_banner", "-nostats", "-loglevel", "error",
+                           "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "%dx%d" % (w, 2 * rows), "-r", "60",
+                           "-i", "pipe:0", "-lavfi", lav, "-f", "null", "-"],
+                          cwd=run, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    pr = subprocess.Popen([cm.FFMPEG, "-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                           "-s", "%dx%d" % (w, rows), "-i", "pipe:0",
+                           "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
+                           "-f", "rawvideo", "pipe:1"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
+    picked = []
+    counts = {"decoded": 0, "unreadable": 0, "grey": 0, "duplicates": 0}
+    q = queue.Queue()  # unbounded, but held back by the reference ffmpeg's pipe: a few frames at most
+    err = []
+
+    def feed():
+        # decode, read the barcode, send the reference to its converter, queue the decoded planes
+        try:
+            seen = set()
+            for i, buf in cm.decode_iter(stream, w, h):
+                counts["decoded"] = i + 1
+                y = np.asarray(buf[:w * h]).reshape(h, w)
+                v = cm.read_bar(y)
+                if v is None:
+                    counts["unreadable"] += 1
+                    continue
+                sid, n = cm.split(v)
+                if sid == 0 or sid not in scenes:
+                    counts["grey"] += 1
+                    continue
+                if (sid, n) in seen:
+                    counts["duplicates"] += 1  # the host captured the same page frame twice: scored once
+                    continue
+                seen.add((sid, n))
+                picked.append((i, sid, n))
+                uv = np.asarray(buf[w * h:]).reshape(h // 2, w // 2, 2)[:rows // 2]
+                q.put(y[:rows].tobytes() + np.ascontiguousarray(uv[:, :, 0]).tobytes()
+                      + np.ascontiguousarray(uv[:, :, 1]).tobytes())
+                pr.stdin.write(np.ascontiguousarray(cm.ref(scenes[sid], srcs[sid], w, h, n)[:rows]).tobytes())
+        except BaseException as e:  # noqa: BLE001  re-raised in the main thread
+            err.append(e)
+        finally:
+            q.put(None)
+            try:
+                pr.stdin.close()
+            except OSError:
+                pass
+
+    t = threading.Thread(target=feed, daemon=True)
+    t.start()
+    ys, cs = w * rows, (w // 2) * (rows // 2)
+    nfr = 0
+    while True:
+        d = q.get()
+        if d is None:
+            break
+        r = cm.read_exact(pr.stdout, ys + 2 * cs)
+        if r is None:
+            raise SystemExit("reference converter ended early")
+        pv.stdin.write(d[:ys] + r[:ys] + d[ys:ys + cs] + r[ys:ys + cs] + d[ys + cs:] + r[ys + cs:])
+        nfr += 1
+    t.join()
+    pv.stdin.close()
+    verr = pv.stderr.read().decode("utf-8", "replace")
+    if err:
+        raise err[0]
+    if pr.wait() != 0 or pv.wait() != 0:
+        raise SystemExit("ffmpeg failed: %s" % verr[-300:])
+    j = json.load(open(vj, encoding="utf-8"))
+    if len(j["frames"]) != nfr or nfr != len(picked):
+        raise SystemExit("vmaf scored %d frames of %d" % (len(j["frames"]), len(picked)))
+    return j["frames"], picked, counts
+
+
 def run_vmaf(run, w, rows, nfr, threads):
     # two NEG models: as published, and with the motion feature forced to 0 (the published
     # one saturates at 100 on a scrolling page, whatever the PSNR)
@@ -80,44 +168,18 @@ def main():
     srcs = {sid: cm.load_rgb(os.path.join(CONTENT, s["src"])) for sid, s in scenes.items()}
 
     stream, codec = cm.annexb(run)
-    raw = os.path.join(run, "dec.nv12")
-    nall = cm.decode_nv12(stream, w, h, raw)
-
-    picked = []  # (decode index, scene id, n)
-    seen = set()
-    unread = grey = dup = 0
-    for i, buf in cm.nv12_frames(raw, w, h):
-        y = np.asarray(buf[:w * h]).reshape(h, w)
-        v = cm.read_bar(y)
-        if v is None:
-            unread += 1
-            continue
-        sid, n = cm.split(v)
-        if sid == 0 or sid not in scenes:
-            grey += 1
-            continue
-        if (sid, n) in seen:
-            dup += 1  # the host captured the same page frame twice: scored once
-            continue
-        seen.add((sid, n))
-        picked.append((i, sid, n))
-
-    # dist.yuv: decoded frames as they are (NV12 -> I420, no arithmetic), barcode rows cut
-    with open(os.path.join(run, "dist.yuv"), "wb") as f:
-        for i, _, _ in picked:
-            b = cm.nv12_frame(raw, w, h, i)
-            yp = np.asarray(b[:w * h]).reshape(h, w)[:rows]
-            uv = np.asarray(b[w * h:]).reshape(h // 2, w // 2, 2)[:rows // 2]
-            f.write(yp.tobytes())
-            f.write(np.ascontiguousarray(uv[:, :, 0]).tobytes())
-            f.write(np.ascontiguousarray(uv[:, :, 1]).tobytes())
-    refs = (cm.ref(scenes[sid], srcs[sid], w, h, n)[:rows] for _, sid, n in picked)
-    ref_to_yuv(refs, w, rows, os.path.join(run, "ref.yuv"))
-    vf = run_vmaf(run, w, rows, len(picked), a.threads)
-
-    lp = {}
     if a.lpips_every > 0:
-        lp = lpips_subset(run, picked, scenes, srcs, w, h, rows, raw, a.lpips_every)
+        raise SystemExit("--lpips-every is not available: frames are no longer kept on disk")
+    for attempt in range(3):
+        try:
+            vf, picked, counts = score_piped(run, stream, w, h, rows, scenes, srcs, a.threads)
+            break
+        except SystemExit as e:
+            sys.stderr.write("piped scoring attempt %d failed: %s\n" % (attempt + 1, e))
+    else:
+        raise SystemExit("piped scoring failed 3 times")
+    nall, unread, grey, dup = counts["decoded"], counts["unreadable"], counts["grey"], counts["duplicates"]
+    lp = {}
 
     out = []
     for j, (i, sid, n) in enumerate(picked):
@@ -160,8 +222,6 @@ def main():
         summ["scenes"][str(sid)] = d
     json.dump(summ, open(os.path.join(run, "summary.json"), "w", encoding="utf-8"), indent=1)
     print(json.dumps(summ, indent=1))
-    for p in ("dist.yuv", "ref.yuv", "dec.nv12"):
-        os.remove(os.path.join(run, p))
 
 
 def lpips_subset(run, picked, scenes, srcs, w, h, rows, raw, every):

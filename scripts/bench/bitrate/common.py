@@ -171,6 +171,40 @@ def decode_nv12(stream, w, h, out_raw):
     return n
 
 
+def decode_iter(stream, w, h):
+    """Same decode as decode_nv12, read through a pipe: yields (index, NV12 bytes as uint8)."""
+    fmt = {"hevc": "hevc", "h264": "h264", "obu": "obu"}[stream.rsplit(".", 1)[1]]
+    p = subprocess.Popen([FFMPEG, "-hide_banner", "-loglevel", "error", "-f", fmt, "-i", stream,
+                          "-vf", "crop=%d:%d:0:0" % (w, h), "-pix_fmt", "nv12", "-f", "rawvideo", "pipe:1"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, bufsize=0)
+    size = w * h * 3 // 2
+    i = 0
+    try:
+        while True:
+            b = read_exact(p.stdout, size)
+            if b is None:
+                break
+            yield i, np.frombuffer(b, dtype=np.uint8)
+            i += 1
+    finally:
+        p.stdout.close()
+        if p.wait() != 0:
+            raise SystemExit("ffmpeg decode failed")
+
+
+def read_exact(f, size):
+    """size bytes from a pipe, or None at the end (a partial last frame is dropped, as before)."""
+    buf = bytearray(size)
+    view = memoryview(buf)
+    got = 0
+    while got < size:
+        k = f.readinto(view[got:])
+        if not k:
+            return None
+        got += k
+    return bytes(buf)
+
+
 def nv12_frames(raw_path, w, h):
     """Plain reads, no memmap: Windows will not delete a file that is still mapped."""
     size = w * h * 3 // 2
