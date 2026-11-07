@@ -121,13 +121,11 @@ small{color:var(--muted); font-size:.78em}
 
 /* scores */
 .results h2, .about h2, .notes h2{margin-top:1.8em}
-/* a table that scrolls sideways, on a phone, stops only where a column starts right after the names, which stay (below):
-   no figure loses its first digits under them, 4.1 % read as 1 %. app.js measures the names' width (--stick) and the
-   room the last column needs for the scroll to end on such a place too (--tail). */
-.table-wrap{overflow-x:auto; scroll-snap-type:x mandatory; scroll-padding-left:var(--stick, 0px)}
+.table-wrap{overflow-x:auto}
 .table-wrap table{border-collapse:collapse; width:100%; min-width:560px; font-size:.92rem}
 .table-wrap th, .table-wrap td{padding:.5rem .7rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:baseline}
-.table-wrap thead th:not(:first-child){scroll-snap-align:start}
+/* a table that scrolls sideways, on a phone, ends with a column's start right after the names, which stay (below):
+   no figure loses its first digits under them there, 4.1 % read as 1 % (app.js, fitTables) */
 .table-wrap tr > :last-child{padding-right:calc(.7rem + var(--tail, 0px))}
 .table-wrap th{font-weight:700; color:var(--txt)}
 #table th small{display:block; font-weight:400}
@@ -149,7 +147,8 @@ small{color:var(--muted); font-size:.78em}
 #table td.num{white-space:nowrap}
 #table td.num::before{content:""; display:block; width:3.4em}
 /* the figure, the gap and the longest bar: every bar starts at one place, and nothing moves when they come */
-#table td.num:last-child::before{width:calc(4.1em + 90px)}
+#table td.num:last-child::before{width:calc(4.1em + var(--bar))}
+#table{--bar:90px}
 #table tr.best td.num.fid{color:#fff; font-weight:700}
 .ms{display:inline-block; min-width:3.6em; font-variant-numeric:tabular-nums}
 .bar{display:inline-block; height:6px; border-radius:3px; background:var(--cyan); opacity:.7; margin-left:.5em; vertical-align:middle}
