@@ -514,13 +514,13 @@ Reading:
 
 - **H.264 needs what HEVC needs** at these sizes: within 12 % either way on the search page, and better on the web page at 1080p60. It spends more of the target to get there (8.1 Mbit/s used at a set 10, against 4.7), but the Auto rule sets the target, not the bitrate used.
 - **4:4:4 costs nothing more.** Its luma reaches each level at the same target or slightly below, and its chroma follows its luma: PSNR-Cb 40.3 dB and CIEDE2000 40.2 at a set 10 Mbit/s (a mean ΔE2000 of about 1.7, under the usual threshold of a visible difference), 44.0 and 43.8 at 30. The full chroma of text and flat colours is cheap to code, and the QP floor stops a 4:4:4 stream well short of the target (6.2 Mbit/s used at a set 30).
+- **And 4:4:4 delivers its colour at that bitrate.** Scored against the same 4:4:4 reference, a 4:2:0 stream's chroma stops at PSNR-Cb 35.5 dB at a set 10 Mbit/s and 36.5 at 30 (CIEDE2000 37.1 and 39.6, a mean ΔE2000 of about 2.5 and 1.9), where 4:4:4 has 40.3 and 40.2 at 10: 4:4:4 at 8 Mbit/s already gives the colour 4:2:0 does not reach at 30. Below 3 Mbit/s the two are alike (4:2:0 slightly ahead at 1.5 and 2).
 - **The HDR desktop costs nothing more either**, but it is not an HDR game. Its curves bend where SDR's do, and the stills settle about 1.3 points of VMAF NEG lower (*Junk Shop* 92.9 against 94.3), flat from 8 to 30 Mbit/s while PSNR-Y is higher than in SDR (48.3 against 46.3 dB): an offset between the reference and what the host composes, not a coding loss, which is also why VMAF NEG 95 is never reached. ΔE ITP falls from 19.2 at 1.5 Mbit/s to 9.2 at 6, 7.8 at 10, 7.2 at 15 and 6.8 at 30, the same bend. What was measured is SDR content shown in HDR mode, which uses only the lower part of the PQ range; a game with real highlights was not measured.
 
 ### Not measured yet
 
 - **An HDR game**, with highlights over the SDR white level.
 - **4:4:4 and HDR on AMF and on Intel**: the figures above are NVENC's.
-- **What 4:2:0 loses** against the same 4:4:4 reference (the 4:2:0 streams scored as 4:4:4).
 
 ## 16.7 Hardware decode against the reference decoder
 
