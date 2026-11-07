@@ -4,6 +4,7 @@
 #
 #   ./deploy-prod.sh v0.3.1          show what would change — writes nothing
 #   ./deploy-prod.sh v0.3.1 --apply  check it out and rebuild what it touched
+#   ... --force                      also deploy a target without the latest release
 #
 # Why this exists instead of `git pull && docker compose up -d --build`:
 #
@@ -71,17 +72,22 @@ main() {
     # `ssh box bash -s < script`, it swallowed the rest of that script after
     # the checkout, and in a terminal it would take the next pasted line.
     exec </dev/null
-    local ref="${1:-}" mode="${2:-}"
+    local ref="${1:-}"
     if [[ -z "$ref" || "$ref" == "-h" || "$ref" == "--help" ]]; then
-        sed -n '2,7p' "$0"
+        sed -n '2,8p' "$0"
         exit 2
     fi
-    if [[ -n "$mode" && "$mode" != "--apply" ]]; then
-        echo "unknown option: $mode (only --apply is accepted)" >&2
-        exit 2
-    fi
-    local apply=0
-    [[ "$mode" == "--apply" ]] && apply=1
+    local apply=0 force=0 opt
+    for opt in "${@:2}"; do
+        case "$opt" in
+            --apply) apply=1 ;;
+            --force) force=1 ;;
+            *)
+                echo "unknown option: $opt (only --apply and --force are accepted)" >&2
+                exit 2
+                ;;
+        esac
+    done
 
     cd "$(dirname "$0")"
     # Run from outside any checkout, it deploys the production one. That is the
@@ -140,6 +146,32 @@ main() {
     fi
     if git merge-base --is-ancestor "$target" "$current"; then
         echo "note    : this is a ROLLBACK — $ref is older than what is running"
+    fi
+
+    # Guard: the target must contain the latest release. A srv- tag cut from a
+    # branch that never had it takes the bootstrap back to before that release,
+    # its list of official interfaces too — and production then refuses every
+    # machine on it. Such a branch is a sibling of what runs, not an ancestor,
+    # so the ROLLBACK note above stays silent. Releases are tagged on main, so
+    # the latest is the nearest v* tag there (fetched with the tags above).
+    local latest
+    latest="$(git describe --tags --abbrev=0 --match 'v*' origin/main 2>/dev/null)" || latest=""
+    if [[ -z "$latest" ]]; then
+        if ((!force)); then
+            echo "refusing: no v* tag found on origin/main, so the latest release is unknown (--force skips this check)" >&2
+            exit 1
+        fi
+        echo "note    : --force — no v* tag found on origin/main, the latest release was not checked"
+    elif ! git merge-base --is-ancestor "$latest" "$target"; then
+        if ((!force)); then
+            echo "refusing: $ref does not contain $latest, the latest release." >&2
+            echo "  Its bootstrap would go back to before $latest, list of official interfaces" >&2
+            echo "  included, and production would refuse every machine on $latest." >&2
+            echo "  Cut the srv- tag from a commit that has $latest; for a deliberate rollback" >&2
+            echo "  past it, add --force." >&2
+            exit 1
+        fi
+        echo "note    : --force — $ref does not contain $latest, the latest release"
     fi
 
     # What changed where it matters. Only these directories reach the
