@@ -43,7 +43,8 @@ public:
     static QList<QByteArray> txtStrings(const QString& hostId, const QString& name);
 
     // Starts announcing; false when this platform or its responder cannot
-    // (nothing to undo).
+    // (nothing to undo). On Linux it waits for Avahi: each D-Bus call is bounded
+    // at 2 s, so a frozen Avahi costs at most 8 s, once, at start.
     // `hostId` goes in a TXT record `id`: the host key's name, what a pairing
     // returns as host_id, so that a client paired already recognises this machine
     // under another address or from its code. A claim, not a proof: it opens nothing.
