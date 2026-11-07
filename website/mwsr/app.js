@@ -1171,7 +1171,7 @@ async function report(vars, fail) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      keepalive: true,
+      // No keepalive: the page is still open when a measure ends.
       credentials: 'omit',
       mode: 'same-origin',
       // Not 'no-referrer': a POST may then say Origin: null (WebKit), which the server refuses. No Referer either way.
