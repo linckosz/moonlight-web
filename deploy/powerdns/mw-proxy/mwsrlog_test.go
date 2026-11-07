@@ -137,7 +137,8 @@ func TestMwsrUmamiAgentHasTheShapeUmamiCounts(t *testing.T) {
 		t.Errorf("%q does not read like the census agents Umami counts", mwsrUmamiUA)
 	}
 	lower := strings.ToLower(mwsrUmamiUA)
-	for _, bot := range []string{"bot", "crawl", "spider", "http", "headless", "fetch", "scan", "monitor", "check"} {
+	// "measure" is not a guess: Umami 3.2.0 dropped "MoonlightWeb/1 (mwsr; measure)".
+	for _, bot := range []string{"bot", "crawl", "spider", "http", "headless", "fetch", "scan", "monitor", "check", "measure"} {
 		if strings.Contains(lower, bot) {
 			t.Errorf("%q contains %q, which a bot filter matches", mwsrUmamiUA, bot)
 		}

@@ -64,11 +64,12 @@ const (
 	// this container's, which is just as fixed but less obviously on purpose.
 	//
 	// The User-Agent has the shape of the update census's, "Name/version (a; b)",
-	// which Umami counts. With a single word, "MoonlightWeb-MWSR-page/1", the
-	// measures were kept on disk and never counted: most likely Umami's bot
-	// filter, which drops a record without an error.
+	// which Umami counts, and no word its bot filter knows: that filter answers
+	// 200 and drops the record, so a wrong agent fails without a trace. Umami
+	// 3.2.0 dropped both "MoonlightWeb-MWSR-page/1" and "MoonlightWeb/1 (mwsr;
+	// measure)" (it answered {"beep":"boop"}), and took this one.
 	mwsrUmamiAddr = "127.0.0.1"
-	mwsrUmamiUA   = "MoonlightWeb/1 (mwsr; measure)"
+	mwsrUmamiUA   = "MoonlightWeb/1 (mwsr; page)"
 )
 
 type mwsrConfig struct {
