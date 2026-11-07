@@ -24,6 +24,7 @@
  */
 import { WebRtcDataChannel } from '../api/WebRtcDataChannel.js';
 import { WebRtcMedia } from '../api/WebRtcMedia.js';
+import { DecoderErrorTrail } from '../stream/DecoderErrorTrail.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { StatsGraph } from './StatsGraph.js';
@@ -1500,6 +1501,8 @@ export class StreamView {
         // Filled here on the main-thread path; the worker path fills its own and
         // posts a snapshot with the counters, kept in _workerDiag.
         this._diag = new PipelineDiag(2000);
+        // What the decoder had just been fed, for the line logged with its error.
+        this._decoderTrail = new DecoderErrorTrail();
         this._workerDiag = null;
         // Enhancer ladder, created with the renderer when it runs an enhancer
         // pass — WebGPU or WebGL2 (the worker path owns its own instance and
@@ -2956,6 +2959,10 @@ export class StreamView {
             error: (err) => {
                 console.error('[StreamView] VideoDecoder error:', err.message, err);
                 if (err.code) console.error('[StreamView] Error code:', err.code);
+                console.warn(
+                    '[StreamView] ' +
+                        this._decoderTrail.line(err, performance.now(), this.videoCodec),
+                );
                 this._handleDecoderError(err);
             },
         });
@@ -4027,6 +4034,8 @@ export class StreamView {
                 const arriveMs = performance.timeOrigin + performance.now() - arrivalAbs;
                 if (arriveMs >= 0 && arriveMs < 5000) this._clientArriveStats.addSample(arriveMs);
             }
+            if (this._decoderTrail)
+                this._decoderTrail.noteDecode(isKeyframe, this.decoder.decodeQueueSize);
             this.decoder.decode(chunk);
             this.stats.received++;
             this._tellDecodeQueue();
@@ -8303,6 +8312,7 @@ export class StreamView {
         // is the last point that is common to every transport and to both the
         // worker and main-thread decode paths, and the only one where the time
         // measured is still purely the link's.
+        if (this._decoderTrail) this._decoderTrail.noteArrival(performance.now());
         const stall = this._stallDetector.note(backendTs, performance.now(), isKeyframe);
         if (stall) this._notePeriodicStall(stall);
 
@@ -8849,6 +8859,8 @@ export class StreamView {
                 key: isKeyframe,
                 hostTs: backendTs > 0 ? backendTs : 0,
             });
+            if (this._decoderTrail)
+                this._decoderTrail.noteDecode(isKeyframe, this.decoder.decodeQueueSize);
             this.decoder.decode(chunk);
             this.stats.received++;
             this._tellDecodeQueue();

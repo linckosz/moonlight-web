@@ -58,6 +58,7 @@ import { createVideoRenderer } from './renderers/createRenderer.js';
 import { SliceQpReader } from '../util/SliceQp.js';
 import { PipelineDiag } from './PipelineDiag.js';
 import { shouldFlushAtKeyframe } from './DecodeQueuePolicy.js';
+import { DecoderErrorTrail } from './DecoderErrorTrail.js';
 import { EnhancerGovernor, ladderRung, rendererAlgo } from './EnhancerGovernor.js';
 import { drawCapFor } from './RenderPacing.js';
 import { FramePacer } from './FramePacer.js';
@@ -125,6 +126,8 @@ const S = {
     // Why those three legs move: arrival cadence, queue depths, draw split and
     // drop causes (posted with the counters — see PipelineDiag).
     diag: new PipelineDiag(2000),
+    // What the decoder had just been fed, for the line logged with its error.
+    trail: new DecoderErrorTrail(),
     // Steps the enhancer down when its GPU cost stops fitting between two
     // frames; created at init with the setting as its ceiling.
     governor: null,
@@ -359,6 +362,7 @@ function setupDecoder() {
         },
         error: (err) => {
             console.error('[VideoWorker] VideoDecoder error:', err.message);
+            console.warn('[VideoWorker] ' + S.trail.line(err, performance.now(), S.videoCodec));
             handleDecoderError(err);
         },
     });
@@ -711,6 +715,7 @@ function flushDecodeQueue() {
     S.diag.noteDrop('backpressure', queued);
     S.diag.noteRecovery('flush');
     S._lastQueueFlushMs = performance.now();
+    S.trail.noteFlush(S._lastQueueFlushMs);
     console.warn('[VideoWorker] Decode queue flushed at the keyframe: ' + queued + ' stale');
     return true;
 }
@@ -789,6 +794,7 @@ function decodeFrame(data, isKeyframe, backendTs, arrivalAbs, zones = null) {
         if (zones && S.renderer && S.renderer.wantsFrameZones)
             S.renderer.noteFrameZones(timestamp, zones);
         trackChunkSubmit(timestamp, backendTs);
+        S.trail.noteDecode(isKeyframe, S.decoder.decodeQueueSize);
         if (arrivalAbs > 0) addStageSample(S._arriveSamples, nowAbs() - arrivalAbs);
         S.decoder.decode(chunk);
         S.stats.received++;
@@ -892,6 +898,7 @@ function decodeAv1Frame(data, isKeyframe, arrivalAbs, zones = null) {
         if (zones && S.renderer && S.renderer.wantsFrameZones)
             S.renderer.noteFrameZones(timestamp, zones);
         trackChunkSubmit(timestamp, 0);
+        S.trail.noteDecode(isKeyframe, S.decoder.decodeQueueSize);
         if (arrivalAbs > 0) addStageSample(S._arriveSamples, nowAbs() - arrivalAbs);
         S.decoder.decode(chunk);
         S.stats.received++;
@@ -1046,6 +1053,7 @@ function processFrame(data, isKeyframe, backendTs, arrivalAbs, zones = null) {
     // host now sends 60fps of heavy frames" from "the browser slowed down" when
     // the legs inflate together.
     S.diag.noteArrival(data.length);
+    S.trail.noteArrival(performance.now());
 
     if (S.videoCodec === CODEC_AV1) {
         handleAv1Frame(data, isKeyframe, arrivalAbs, zones);
