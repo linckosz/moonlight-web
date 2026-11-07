@@ -235,7 +235,7 @@ export class SettingsView {
         this._streamResolution = 'auto';
         this._customWidth = 1920;
         this._customHeight = 1080;
-        // The bitrate follows the estimate (resolution × fps × HDR) until the
+        // The bitrate follows the estimate (resolution × HDR) until the
         // slider is moved off it; then it is the user's, and it stays.
         this._bitrateAuto = true;
         // Which virtual controller the host presents: 'auto' follows the pad we
@@ -699,10 +699,8 @@ export class SettingsView {
         return aspectToNumber(aspect);
     }
 
-    _computeAutoBitrate(height, fps, aspect, chroma444, hdr) {
-        return limitBitrateMbps(
-            computeAutoBitrate(height, fps, aspect, chroma444, hdr, IS_HANDHELD),
-        );
+    _computeAutoBitrate(height, aspect, chroma444, hdr) {
+        return limitBitrateMbps(computeAutoBitrate(height, aspect, chroma444, hdr));
     }
 
     /**
@@ -828,22 +826,17 @@ export class SettingsView {
         const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10);
         const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked === true;
         const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
-        // Auto (0) is estimated at the rate this screen runs at — what the
-        // stream will actually ask for — and at 60 when none was measured.
+        // The rate counts for the pixel budget only (the estimate has no
+        // frame-rate term): Auto (0) is the rate this screen runs at — what
+        // the stream will actually ask for — and 60 when none was measured.
         const chosen = isNaN(fps) ? this._streamFps : fps;
         const rate = chosen > 0 ? chosen : autoFps() || 60;
-        // And at the size and rate the pixel budget leaves of them, since that
-        // is what the stream will carry — an estimate for a 1440p120 the
-        // launch turns into 1080p120 recommends a bitrate for pixels nobody
-        // ever sends.
+        // The estimate is for the size the pixel budget leaves at that rate,
+        // since that is what the stream will carry — an estimate for a
+        // 1440p120 the launch turns into 1080p120 recommends a bitrate for
+        // pixels nobody ever sends.
         const bounded = this._budgetedStream(this._readResolutionChoice(), rate, chosen > 0);
-        return this._computeAutoBitrate(
-            bounded.size.height,
-            bounded.fps,
-            bounded.size.aspect,
-            chroma444,
-            hdr,
-        );
+        return this._computeAutoBitrate(bounded.size.height, bounded.size.aspect, chroma444, hdr);
     }
 
     /**
@@ -1614,8 +1607,8 @@ export class SettingsView {
         this._videoEnhancementAlgo = 'auto';
         this._powerSave = false;
         this._powerSaveBackup = null;
-        // Bitrate follows the 1080p60 SDR 16:9 reference
-        this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, '16:9', false, false);
+        // Bitrate follows the 1080p SDR 16:9 reference
+        this._streamBitrateMbps = this._computeAutoBitrate(1080, '16:9', false, false);
 
         await this._saveToStorage();
 
@@ -1626,11 +1619,11 @@ export class SettingsView {
     }
 
     /**
-     * Bitrate used by Power Saving: the 720p60 SDR auto estimate for the
+     * Bitrate used by Power Saving: the 720p SDR auto estimate for the
      * current aspect, reduced by 30% (rounded down) and floored at 2 Mbps.
      */
     _powerSaveBitrate() {
-        const base = this._computeAutoBitrate(720, 60, this._streamAspect, false, false);
+        const base = this._computeAutoBitrate(720, this._streamAspect, false, false);
         return Math.max(2, Math.floor(base * 0.7));
     }
 
@@ -2686,6 +2679,11 @@ export class SettingsView {
                 // The button just hid itself: the focus goes to the slider.
                 if (bitrateSlider) bitrateSlider.focus();
             });
+        // An automatic bitrate is drawn as today's estimate, not the stored
+        // one: a value saved by an older rule (20 Mbps at 1080p before v0.4.2)
+        // or the first visit's default would read "Auto" over a number the
+        // stream never asks for.
+        this._applyAutoBitrate();
 
         const gamingCheck = this.container.querySelector('#settings-gaming-mode');
         if (gamingCheck) gamingCheck.addEventListener('change', () => this._autoSave());

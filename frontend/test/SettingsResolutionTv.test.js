@@ -70,11 +70,9 @@ describe('SettingsView resolution on a TV', () => {
 
     it('recommends the bitrate of the 720p it streams', () => {
         view.render();
-        expect(view._estimateBitrate()).toBe(
-            computeAutoBitrate(720, 60, '1280:720', false, false, false),
-        );
+        expect(view._estimateBitrate()).toBe(computeAutoBitrate(720, '1280:720', false, false));
         expect(view._estimateBitrate()).toBeLessThan(
-            computeAutoBitrate(1080, 60, '1920:1080', false, false, false),
+            computeAutoBitrate(1080, '1920:1080', false, false),
         );
     });
 });

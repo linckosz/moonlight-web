@@ -84,9 +84,7 @@ describe('SettingsView frame rate under the pixel budget', () => {
     it('names the 60 a 2160p or a 1440p rung is really sent at', async () => {
         await choose('#settings-stream-height', '2160');
         expect(autoLine()).toBe('text:settings.fpsAutoBudget:{"fps":60}');
-        expect(view._estimateBitrate()).toBe(
-            computeAutoBitrate(2160, 60, '3840:2160', false, false, false),
-        );
+        expect(view._estimateBitrate()).toBe(computeAutoBitrate(2160, '3840:2160', false, false));
         // A rung to a rung re-renders nothing: the line follows on its own.
         await choose('#settings-stream-height', '1440');
         expect(autoLine()).toBe('text:settings.fpsAutoBudget:{"fps":60}');
@@ -104,8 +102,6 @@ describe('SettingsView frame rate under the pixel budget', () => {
 
     it('recommends the bitrate of a named rate at the lines Auto leaves it', async () => {
         await choose('#settings-stream-fps', '144');
-        expect(view._estimateBitrate()).toBe(
-            computeAutoBitrate(1080, 144, '1920:1080', false, false, false),
-        );
+        expect(view._estimateBitrate()).toBe(computeAutoBitrate(1080, '1920:1080', false, false));
     });
 });

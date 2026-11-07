@@ -2488,9 +2488,9 @@ export const MoonlightApp = {
         // screen" follow this screen: turned or moved to another monitor, the
         // stream is relaunched at the new size (_onClientScreenChanged).
         //
-        // The frame rate is resolved first, since the automatic bitrate the
-        // size brings counts frames per second — and since the pixel budget
-        // below weighs the two together.
+        // The frame rate is resolved first, since the pixel budget below
+        // weighs the two together (the automatic bitrate the size brings
+        // counts its pixels only).
         const fpsAuto = !(streamingSettings.stream_fps > 0);
         this._applyResolvedFps(streamingSettings);
         // What this browser has earned from this host: read once per launch the
@@ -3439,11 +3439,9 @@ export const MoonlightApp = {
         return limitBitrateKbps(
             computeAutoBitrate(
                 height,
-                settings.stream_fps > 0 ? settings.stream_fps : 60,
                 aspect,
                 settings.chroma_444_enabled === true,
                 settings.hdr_enabled === true,
-                IS_HANDHELD,
             ) * 1000,
         );
     },
@@ -5034,11 +5032,9 @@ export const MoonlightApp = {
             const autoKbps =
                 computeAutoBitrate(
                     next,
-                    curFps,
                     effective.stream_aspect,
                     effective.chroma_444_enabled === true,
                     effective.hdr_enabled === true,
-                    IS_HANDHELD,
                 ) * 1000;
             newBitrate = Math.max(2000, Math.min(newBitrate, autoKbps));
             toastKey = 'stream.degradeResolution';

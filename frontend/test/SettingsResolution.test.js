@@ -91,9 +91,7 @@ describe('SettingsView resolution', () => {
         view.render();
         view.bindEvents();
         await pick('2160');
-        expect(view._estimateBitrate()).toBe(
-            computeAutoBitrate(2160, 60, '16:9', false, false, false),
-        );
+        expect(view._estimateBitrate()).toBe(computeAutoBitrate(2160, '16:9', false, false));
     });
 
     it('hides the ratio from a user, and shows it to a debug build', () => {

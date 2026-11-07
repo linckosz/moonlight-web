@@ -3592,11 +3592,14 @@ int main(int argc, char* argv[])
             reqFpsCeiling = reqFpsCeiling > 0 ? qMin(reqFpsCeiling, limits.fps) : limits.fps;
         }
 
-        // An automatic bitrate was sized for the rate and the pixels asked
-        // (frontend/js/util/AutoBitrate.js, linear in both): what a ceiling
-        // took of them comes off it too, or the frames would get the bits of
-        // a stream twice as fast. A bitrate the viewer set is theirs, under
-        // the administrator's own ceiling like everything else.
+        // A page that did not hold itself to the ceilings sized its automatic
+        // bitrate for the rate and the pixels asked — linear in both before
+        // v0.4.2 — so what a ceiling took of them comes off it too, or the
+        // frames would get the bits of a stream twice as fast. Today's page
+        // applies the ceilings before its estimate (util/StreamLimits.js,
+        // then util/AutoBitrate.js), and nothing is taken here. A bitrate the
+        // viewer set is theirs, under the administrator's own ceiling like
+        // everything else.
         const bool reqBitrateAuto = body.contains("stream_bitrate_auto")
                                         ? body["stream_bitrate_auto"].toBool(true)
                                         : appSettings.streamBitrateAuto();
