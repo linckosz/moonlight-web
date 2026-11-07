@@ -969,6 +969,12 @@ bool AppSettings::debugIceDropUdp() const
     return obj.value("debug_ice_drop_udp").toBool(false);
 }
 
+QString AppSettings::debugTunnelPublicAddress() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("debug_tunnel_public_address").toString();
+}
+
 bool AppSettings::sharedFeedEnabled() const
 {
     QJsonObject obj = readAll();

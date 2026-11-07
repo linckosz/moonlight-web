@@ -465,6 +465,23 @@ void ControlTunnel::buildPeerConnection(Peer& p)
         config.portRangeBegin = p.port;
         config.portRangeEnd = p.port;
     }
+    // The ICE-TCP-on-443 prototype's bench key (AppSettings::
+    // debugTunnelPublicAddress), only where no router hole is held: a port the
+    // router forwards by a rule of its own, offered under the address given.
+    // Held by something else, the bind fails and this one session is refused
+    // (createPeerConnection), which is the answer such a bench wants.
+    QString pinnedIp;
+    quint16 pinnedPort = 0;
+    if (p.port == 0 && TunnelPeerPolicy::parsePublicAddress(m_Settings->debugTunnelPublicAddress(),
+                                                            &pinnedIp, &pinnedPort)) {
+        config.portRangeBegin = pinnedPort;
+        config.portRangeEnd = pinnedPort;
+        Logger::warning(QStringLiteral("[Tunnel] Session %1: DEBUG debug_tunnel_public_address is "
+                                       "ON — port %2 bound, offered as %3:%2")
+                            .arg(sessionId.left(8))
+                            .arg(pinnedPort)
+                            .arg(pinnedIp));
+    }
     // The settings value, which defaults to our own server. This is the host
     // half of the connection bootstrap/v1/tunnel.js makes: that page refuses
     // Google's web fonts so that nobody outside learns who is connecting to
@@ -508,8 +525,8 @@ void ControlTunnel::buildPeerConnection(Peer& p)
             Qt::QueuedConnection);
     });
 
-    const std::string publicIP = m_PublicIP;
-    const uint16_t mappedPort = p.port;
+    const std::string publicIP = pinnedPort != 0 ? pinnedIp.toStdString() : m_PublicIP;
+    const uint16_t mappedPort = pinnedPort != 0 ? pinnedPort : p.port;
     p.pc->onLocalCandidate([this, id, attempt, publicIP, mappedPort,
                             dropUdp](const rtc::Candidate& candidate) {
         const std::string cand = candidate.candidate();
@@ -555,7 +572,7 @@ void ControlTunnel::buildPeerConnection(Peer& p)
 
         QMetaObject::invokeMethod(
             this,
-            [this, id, attempt, cand, mid, publicCand, tcp]() {
+            [this, id, attempt, cand, mid, publicCand, tcp, publicIP, mappedPort]() {
                 Peer* pp = peer(id);
                 if (!pp || pp->attempt != attempt) return;
                 const auto send = [this, &id, &mid](const std::string& line) {
@@ -578,8 +595,8 @@ void ControlTunnel::buildPeerConnection(Peer& p)
                     // is silent at both ends.
                     Logger::info(QStringLiteral("[Tunnel] Session %1 offered %2:%3 as its public "
                                                 "address%4")
-                                     .arg(id.left(8), QString::fromStdString(m_PublicIP))
-                                     .arg(pp->port)
+                                     .arg(id.left(8), QString::fromStdString(publicIP))
+                                     .arg(mappedPort)
                                      .arg(tcp ? QStringLiteral(" (TCP, listening)") : QString()));
                 }
             },

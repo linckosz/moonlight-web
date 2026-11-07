@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QtGlobal>
 
 #include <vector>
@@ -90,6 +91,30 @@ inline QString evictOne(const std::vector<Detached>& detached)
         if (!d.known && (!oldestUnknown || d.order < oldestUnknown->order)) oldestUnknown = &d;
     }
     return oldestUnknown ? oldestUnknown->id : oldest->id;
+}
+
+/// The bench key "debug_tunnel_public_address" (AppSettings): "a.b.c.d:port",
+/// an IPv4 address and a port from 1 to 65535. False for anything else, which
+/// leaves the key off: a mistyped value must never pin a port by accident.
+inline bool parsePublicAddress(const QString& value, QString* outIp, quint16* outPort)
+{
+    const QString v = value.trimmed();
+    const int colon = v.lastIndexOf(QLatin1Char(':'));
+    if (colon <= 0 || colon == v.size() - 1) return false;
+    const QString ip = v.left(colon);
+    const QStringList parts = ip.split(QLatin1Char('.'));
+    if (parts.size() != 4) return false;
+    for (const QString& part : parts) {
+        bool ok = false;
+        const int n = part.toInt(&ok);
+        if (!ok || part.isEmpty() || part.size() > 3 || n < 0 || n > 255) return false;
+    }
+    bool ok = false;
+    const int port = v.mid(colon + 1).toInt(&ok);
+    if (!ok || port < 1 || port > 65535) return false;
+    *outIp = ip;
+    *outPort = static_cast<quint16>(port);
+    return true;
 }
 
 } // namespace TunnelPeerPolicy

@@ -68,4 +68,28 @@ void run_tunnel_peer_policy_tests()
         // never cut short by the host.
         CHECK(kHandshakeDeadlineMs > 25000);
     }
+
+    SECTION("TunnelPeerPolicy — the prototype's bench key takes an IPv4 address and a port");
+    {
+        QString ip;
+        quint16 port = 0;
+        CHECK(parsePublicAddress(QStringLiteral("82.67.150.202:443"), &ip, &port));
+        CHECK(ip == QStringLiteral("82.67.150.202"));
+        CHECK_EQ(static_cast<int>(port), 443);
+        CHECK(parsePublicAddress(QStringLiteral(" 10.0.0.1:65535 "), &ip, &port));
+        CHECK_EQ(static_cast<int>(port), 65535);
+
+        // Anything else leaves the key off, and nothing is written: a mistyped
+        // value must never pin a port by accident.
+        ip = QStringLiteral("kept");
+        port = 7;
+        for (const char* bad :
+             {"", "443", ":443", "82.67.150.202", "82.67.150.202:", "82.67.150.202:0",
+              "82.67.150.202:65536", "82.67.150:443", "82.67.150.256:443", "82.67.150.202.1:443",
+              "a.b.c.d:443", "[::1]:443", "82.67.150.202:44x", "82.67.150.0202:443"}) {
+            CHECK(!parsePublicAddress(QString::fromLatin1(bad), &ip, &port));
+        }
+        CHECK(ip == QStringLiteral("kept"));
+        CHECK_EQ(static_cast<int>(port), 7);
+    }
 }

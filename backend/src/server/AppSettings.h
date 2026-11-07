@@ -126,6 +126,16 @@ public:
     // network that lets UDP out (mw::ice::stripUdpCandidates). Read when each
     // connection is built.
     bool debugIceDropUdp() const;
+    // A DEBUG switch for a bench, never for a user: JSON string
+    // "debug_tunnel_public_address", "a.b.c.d:port", DEFAULT absent, typed into
+    // the file by hand like the one above, and read by no API. With it, the entry
+    // link's tunnel binds that port (UDP and passive TCP) instead of a router
+    // hole or an ephemeral port, and offers it under that address. It is the
+    // ICE-TCP-on-443 prototype (v0.4.2): the router already forwards the port to
+    // this machine by a rule of its own, and nothing else here may hold it. One
+    // browser at a time. Malformed is off (TunnelPeerPolicy::parsePublicAddress).
+    // Read when each connection is built.
+    QString debugTunnelPublicAddress() const;
 
     // ── The guests' shared feed ───────────────────────────────────────────────
     //
