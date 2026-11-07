@@ -94,6 +94,7 @@ import {
     plainPresenterIsWebGpu,
     supportsDisplayHdr,
     supportsGamingMode,
+    lockFreeLookWanted,
 } from '../util/BrowserDetect.js';
 import { noteHevcFailed } from '../util/CodecAuto.js';
 import * as RemoteNav from './RemoteNav.js';
@@ -632,6 +633,7 @@ export class StreamView {
         // tapping where it points, and the trackpad model clicked wherever the
         // host's pointer already was instead (03/10/2026, a Mi TV).
         this._touchScreen = touchScreen === true || IS_TV;
+        this._lockFreeLook = lockFreeLookWanted();
         // A TV's taps come from its browser's cursor: one off the picture is
         // ignored (_tvTapOffPicture), not pinned to the nearest edge.
         this._tvCursor = IS_TV;
@@ -8907,7 +8909,8 @@ export class StreamView {
         console.log(
             `[StreamView] Mouse: ${this._gamingMode ? 'gaming' : 'desktop'} mode,` +
                 ` pointer lock ${typeof this.inputEl?.requestPointerLock === 'function' ? 'offered' : 'absent'}` +
-                ` by this browser${IS_IOS ? ' (iOS/iPadOS' + (navigator.standalone ? ', home-screen app)' : ')') : ''}`,
+                ` by this browser${IS_IOS ? ' (iOS/iPadOS' + (navigator.standalone ? ', home-screen app)' : ')') : ''}` +
+                (this._lockFreeLook ? ', lock-free look on (lab key)' : ''),
         );
 
         // Mode-specific events
@@ -9066,6 +9069,15 @@ export class StreamView {
                 if (this._rawPointerLive()) return;
                 this._sendRelativeMouse(e.movementX, e.movementY);
                 this._noteMouseSent(e);
+            } else if (this._pointerLockRefused && this._lockFreeLook) {
+                // Lab key mw_lookfree: no lock to be had, so the browser's own
+                // motion goes out relative — the game turns as long as the
+                // browser reports movement, edge or not. The host's cursor no
+                // longer follows the local one: a look mode, not for menus.
+                if (e.movementX || e.movementY) {
+                    this._sendRelativeMouse(e.movementX, e.movementY);
+                    this._noteMouseSent(e);
+                }
             } else {
                 this._lastMouseClientX = e.clientX;
                 this._lastMouseClientY = e.clientY;

@@ -627,6 +627,30 @@ export function mwsrGazeWanted() {
 }
 
 /**
+ * Lab key, no UI: localStorage.mw_lookfree = '1' turns gaming mode's mouse
+ * into relative moves (the browser's movementX/Y) once the browser has
+ * refused the pointer lock — Safari on an iPad with a trackpad, where the
+ * absolute position stops turning at the screen edge (A23, 27/10/2026).
+ * An iPad has no console to set it from: ?mw_lookfree=1 (or 0) in the page's
+ * address writes the key. Off by default until a test on Bruno's iPad says
+ * whether Safari keeps reporting motion with the cursor against the edge.
+ * Where storage is refused, the address alone decides, for that page.
+ * @returns {boolean}
+ */
+export function lockFreeLookWanted() {
+    let asked = null;
+    try {
+        asked = new URLSearchParams(location.search).get('mw_lookfree');
+    } catch (e) {}
+    try {
+        if (asked === '1' || asked === '0') localStorage.setItem('mw_lookfree', asked);
+        return localStorage.getItem('mw_lookfree') === '1';
+    } catch (e) {
+        return asked === '1';
+    }
+}
+
+/**
  * Lab key, no UI: localStorage.mw_mwsr_map = '1' asks the native host, at
  * /start, for MWSR's sharpness by zone (docs/design/upscaler-mwsr-b.md §12 c,
  * Bruno's decision of 30/10/2026): every frame then carries its grid

@@ -76,6 +76,28 @@ describe('a refused pointer lock', () => {
         expect(v._pointerLockRefused).toBe(true);
     });
 
+    it('sends the motion relative with the lab key, absolute without', () => {
+        const sent = [];
+        const v = view({ request: () => undefined });
+        Object.assign(v, {
+            _pointerLockRefused: true,
+            _sendRelativeMouse: (dx, dy) => sent.push(['rel', dx, dy]),
+            _sendToHost: (m) => sent.push(['abs', m.x, m.y]),
+            _noteMouseSent() {},
+            _applyLocalCursor() {},
+            _mediaRect: () => ({ left: 0, top: 0, width: 100, height: 100 }),
+        });
+        v._bindGamingEvents();
+        v._lockFreeLook = true;
+        v._onGamingMouseMove({ movementX: 7, movementY: -3, clientX: 50, clientY: 50 });
+        v._lockFreeLook = false;
+        v._onGamingMouseMove({ movementX: 7, movementY: -3, clientX: 50, clientY: 50 });
+        expect(sent).toEqual([
+            ['rel', 7, -3],
+            ['abs', 50, 50],
+        ]);
+    });
+
     it('is forgotten when the lock comes after all', () => {
         vi.useFakeTimers();
         vi.spyOn(Toast, 'info').mockImplementation(() => {});
