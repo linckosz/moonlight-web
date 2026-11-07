@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>mw bitrate bench</title>
+<style>
+  html, body { margin: 0; background: #808080; overflow: hidden; cursor: none; height: 100%; }
+  canvas { position: fixed; left: 0; top: 0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Content for the Auto-bitrate study. One canvas in DEVICE pixels: every frame
+// is a pure copy of a source picture, so its reference is computed offline
+// from the same file (common.py mirrors this file exactly).
+//
+// The driver loads a list of scenes over CDP, then shows them one by one:
+//   await mw.load([{ id: 1, mode: 'still', src: 'junkshop.png' },
+//                  { id: 2, mode: 'scroll', src: 'google.png', step: 9, pause: 0 }, ...])
+//   mw.show(1)   cut to scene 1 (frame counter n restarts at 0)
+//   mw.grey()    back to mid grey (scene 0)
+//   mw.freeze(id, n) / mw.unfreeze()   draw scene id at frame n and hold it
+// still: the picture as is. scroll: the picture moves up by `step` device px
+// per display frame (position = n x step, never the clock), back and forth
+// between top and bottom; with pause > 0, `pause` frames moving then `pause`
+// frames standing.
+//
+// Barcode at the bottom-left: 16 bits = scene id (3 high bits) and n (13 low
+// bits, wraps every 8192 frames), then 8 bits of check; a row of cells and its
+// complement under it, C x C device px each, C = 2 x round(H / 120).
+// The metrics leave out the bottom 2C rows.
+const dpr = window.devicePixelRatio || 1;
+const W = Math.round(window.innerWidth * dpr), H = Math.round(window.innerHeight * dpr);
+const C = 2 * Math.round(H / 120);
+const cv = document.getElementById('c');
+cv.width = W; cv.height = H;
+cv.style.width = W / dpr + 'px'; cv.style.height = H / dpr + 'px';
+const g = cv.getContext('2d', { alpha: false });
+g.imageSmoothingEnabled = false;
+
+const scenes = new Map();
+let cur = 0, n = 0, frozen = null, frames = 0, rate = 0, t0 = -1;
+// Chrome on Windows runs rAF at the PRIMARY screen's rate, not the virtual
+// display's: with mw.rate(fps) set, n follows the clock at the stream's frame
+// rate instead of counting rAF calls (the position stays a pure function of n,
+// which the barcode carries).
+
+function moved(i, pause) {
+  if (!pause) return i;
+  const cyc = 2 * pause;
+  return Math.floor(i / cyc) * pause + Math.min(i % cyc, pause);
+}
+function pos(s, i) {
+  const travel = Math.max(0, s.img.naturalHeight - H);
+  if (s.mode !== 'scroll' || travel <= 0) return 0;
+  const u = (moved(i, s.pause || 0) * s.step) % (2 * travel);
+  return u <= travel ? u : 2 * travel - u;
+}
+function check(v) { return (((v & 255) + ((v >> 8) & 255)) ^ 0xa5) & 255; }
+function bar(v) {
+  v &= 0xffff;
+  const ch = check(v);
+  for (let b = 0; b < 24; b++) {
+    const one = b < 16 ? (v >> b) & 1 : (ch >> (b - 16)) & 1;
+    g.fillStyle = one ? '#fff' : '#000';
+    g.fillRect(b * C, H - 2 * C, C, C);
+    g.fillStyle = one ? '#000' : '#fff';
+    g.fillRect(b * C, H - C, C, C);
+  }
+}
+function draw(id, i) {
+  const s = scenes.get(id);
+  if (!s) { g.fillStyle = '#808080'; g.fillRect(0, 0, W, H); bar(0); return; }
+  g.drawImage(s.img, 0, pos(s, i), W, H, 0, 0, W, H);
+  bar(((id & 7) << 13) | (i & 0x1fff));
+}
+function frame(ts) {
+  frames++;
+  if (frozen) draw(frozen[0], frozen[1]);
+  else if (cur && rate) {
+    if (t0 < 0) t0 = ts;
+    n = Math.floor((ts - t0) * rate / 1000);
+    draw(cur, n);
+  } else { draw(cur, n); if (cur) n++; }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+window.mw = {
+  W, H, dpr, C,
+  async load(list) {
+    scenes.clear();
+    for (const d of list) {
+      const img = new Image();
+      img.src = d.src;
+      await img.decode();
+      if (img.naturalWidth < W || img.naturalHeight < H) throw new Error(d.src + ' smaller than ' + W + 'x' + H);
+      scenes.set(d.id, { ...d, img });
+    }
+    return [...scenes.values()].map((s) => ({ id: s.id, mode: s.mode, w: s.img.naturalWidth, h: s.img.naturalHeight }));
+  },
+  show(id) { frozen = null; cur = id; n = 0; t0 = -1; return { W, H, dpr, C }; },
+  grey() { frozen = null; cur = 0; n = 0; t0 = -1; return 0; },
+  rate(fps) { rate = fps || 0; return rate; },
+  freeze(id, i) { frozen = [id, i]; return pos(scenes.get(id), i); },
+  unfreeze() { frozen = null; return 0; },
+  state() { return { cur, n, frozen, frames, rate, W, H, dpr, C, sw: screen.width, sh: screen.height }; },
+};
+</script>
+</body>
+</html>

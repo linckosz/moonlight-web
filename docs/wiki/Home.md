@@ -29,6 +29,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 | 13 | [Roadmap & Constraints](13-Roadmap-and-Constraints.md) | Known remaining work, current constraints, improvement leads |
 | 14 | [Conclusion](14-Conclusion.md) | Design philosophy summary and pointers |
 | 15 | [Client Presentation Benchmarks](15-Client-Presentation-Benchmarks.md) | The measurements behind the client defaults: Canvas2D vs WebGL2 vs WebGPU vs `<video>`, Enhancer algorithms, HDR routing, 4:4:4 |
+| 16 | [Auto Bitrate Benchmarks](16-Auto-Bitrate-Benchmarks.md) | Picture quality and latency against bitrate: NVENC and AMF, ten resolution and frame rate combinations, the measurements behind the Auto bitrate |
 
 ## Project at a glance
 

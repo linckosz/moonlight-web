@@ -1,4 +1,4 @@
-[← Conclusion](14-Conclusion.md) · **Client Presentation Benchmarks**
+[← Conclusion](14-Conclusion.md) · **Client Presentation Benchmarks** · [Next: Auto Bitrate Benchmarks →](16-Auto-Bitrate-Benchmarks.md)
 
 ---
 
@@ -189,4 +189,4 @@ The client is half of the latency. The native host's encoder was benched the sam
 
 ---
 
-[← Conclusion](14-Conclusion.md) · [Home](Home.md)
+[← Conclusion](14-Conclusion.md) · [Home](Home.md) · [Next: Auto Bitrate Benchmarks →](16-Auto-Bitrate-Benchmarks.md)

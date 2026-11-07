@@ -1,0 +1,10 @@
+# Built scene pictures and page captures (not ours to publish), recordings, outputs
+content/src/
+content/pages/
+content/cp4k.png
+runs/
+plots/
+wiki/
+PAUSE
+.chrome-content/
+__pycache__/
