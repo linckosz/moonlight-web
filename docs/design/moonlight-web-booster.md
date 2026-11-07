@@ -1051,3 +1051,46 @@ DISPLAY5, où tombent les clics. Il intervient seulement pour redémarrer l'UM79
 sous Windows s'il est sous Ubuntu, taper la règle de pare-feu du N95 si elle
 manque, et lire le verdict. Règles du N95 : 8 connexions ssh par série, présence
 lue avant chaque passe.
+
+**Résultats du 07/11/2026** (créneau de 59, 16:18-18:00, Bruno absent). Hôte natif
+sur DualRTX, une seule `--dev` en `MW_LAN_ONLY=1`, aucune ligne `[UPNP]`. Écart au
+protocole : le drapeau était sur l'**écran virtuel** de la carte Virtual Display, et
+non sur un écran physique (règle de 59 : aucun écran physique filmé). Débit fixé à la
+valeur d'Auto, relue au journal de l'hôte : 40 Mbit/s en 1080p120, 36 en 1440p60, 20
+en 1080p60. Passes de 270 clics, ABAB, aucune perte de clic hors 2 sur 540 (C3,
+H.264). Moyennes sur 540 clics par bras :
+
+| Cas | H.264 moy. / méd. / p95 | AV1 moy. / méd. / p95 | AV1 − H.264 (moy.) |
+|---|---|---|---|
+| C1, Firefox UM790Pro, 1080p120 | 55,6 / 57,3 / 67,1 | 49,3 / 49,4 / 58,6 | −6,3 ms |
+| C1, Firefox UM790Pro, 1440p60 | 65,5 / 66,0 / 75,8 | 55,4 / 57,5 / 61,0 | −10,1 ms |
+| C2, Firefox N95, 1080p60 | 83,8 / 84,2 / 99,5 | 80,8 / 82,5 / 93,2 | −3,0 ms |
+| C3, Chrome UM790Pro sans décodage matériel, 1080p120 | 41,0 / 41,4 / 49,7 | 32,6 / 32,6 / 40,6 | −8,4 ms |
+
+- **Porte 1 tenue partout, et dans l'autre sens :** l'AV1 est plus rapide que le
+  H.264 dans les quatre cas, d'environ une image à 120 Hz sur l'UM790Pro. Les
+  moyennes par passe d'un même bras restent à 4 ms près. La cause n'est pas
+  mesurée [H] : un décodeur H.264 logiciel qui garde une image de plus.
+- **Processeur du client** : 0,2 à 0,4 cœur pendant les clics, l'image n'étant que
+  le drapeau. Avec le clip de jeu joué sur l'écran virtuel (45 s, sans clics) :
+  N95 1,20 cœur en H.264 et 1,33 en AV1 ; Chrome UM790Pro logiciel 1,13 et 1,39.
+  Sous 2 cœurs. Pas de passe de charge pour C1 : son Firefox était déjà rangé.
+- **Porte 2** : aucun clic perdu en AV1, aucune dérive qui s'accumule (fin de passe
+  moins début, entre −2,3 et +2,2 ms en AV1 ; jusqu'à ±7 ms en H.264 à 60 Hz, la
+  phase des écrans). Les images perdues ou répétées de la page ne sont pas relevées.
+- **Décodeur réel sous Firefox : non prouvé.** La page demande `prefer-hardware`.
+  Le compteur « Video Decode » du GPU de l'UM790Pro n'a rien vu pendant 20 s d'une
+  passe sur le drapeau, qui ne donne que 2 images/s : ce n'est pas une preuve.
+- **Porte 3, qualité** (cod.webm, 20 s en 1080p60, NVENC de la RTX du bus 01, CBR,
+  P1, ULL, sans image B) : VMAF NEG H.264 98,6 et AV1 99,1 à 20 Mbit/s (+0,5) ;
+  94,8 et 97,8 à 10 Mbit/s (**+2,97**). AV1 a aussi dépensé 11 % de bits en moins
+  à 10 Mbit/s (8,9 contre 10,0). **La porte, à 3 points, n'est pas franchie de
+  0,03 point.** Le clip est facile : les deux codecs sont hauts.
+
+**Lecture.** Les portes 1 et 2 sont tenues. La porte 3 manque de 0,03 point à
+10 Mbit/s, avec 11 % de bits en moins pour l'AV1. **À trancher par Bruno** :
+(A) l'AV1 remplace le H.264 dans Auto quand le HEVC échoue,
+puisqu'il est aussi plus rapide au clic ; (B) on s'en tient à la porte : H.264 ;
+(C) une passe de qualité de plus, sur un clip plus dur, avant de décider.
+Limites : un seul hôte (NVENC), un clip, écran virtuel côté hôte, frontend de
+l'arbre partagé à `fcf0af2b` avec des changements d'autres sessions non commités.
