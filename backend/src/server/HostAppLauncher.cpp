@@ -236,10 +236,12 @@ bool open(const QString& command, QString* error)
     if (!systemdRun.isEmpty()) {
         // A transient unit of the user's: the program leaves the server's
         // cgroup, so a restart of the server does not take it along. The
-        // user manager may not know the desktop's sockets: they are passed.
+        // user manager may not know the desktop's sockets: they are passed,
+        // and so are the data dirs, where xdg-open finds a Flatpak's handler.
         QStringList environment;
-        for (const char* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
-                                 "DBUS_SESSION_BUS_ADDRESS", "XDG_CURRENT_DESKTOP", "XAUTHORITY"}) {
+        for (const char* name :
+             {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
+              "XDG_CURRENT_DESKTOP", "XDG_DATA_DIRS", "XAUTHORITY"}) {
             const QString value = qEnvironmentVariable(name);
             if (!value.isEmpty())
                 environment << QStringLiteral("%1=%2").arg(QLatin1String(name), value);
