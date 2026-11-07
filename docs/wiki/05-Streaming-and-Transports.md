@@ -145,10 +145,10 @@ Browser events (kbd/mouse/touch/gamepad/clipboard)
 
 `stream_worker_enabled` (default **on**) runs every session in a `MoonlightWeb --stream-worker` **child process** (`StreamWorkerHost` parent-side, `worker/StreamWorkerMain.cpp` child-side; JSON lines over stdin/stdout). Since `moonlight-common-c` is process-global, one process = one session — so child processes are what buy **concurrent slots** (plus crash isolation: a relay crash no longer takes the web server down).
 
-| Slot | Signaling / relay ports | Browser path | Role |
-|---|---|---|---|
-| 0 | 48001 / 48002 | `/ws`, `/ws/stream` | The live stream. |
-| 1 | 48011 / 48012 | `/ws1`, `/ws1/stream` | The **standby** leg of seamless quality switching. |
+| Slot | Browser path | Role |
+|---|---|---|
+| 0 | `/ws`, `/ws/stream` | The live stream. |
+| 1 | `/ws1`, `/ws1/stream` | The **standby** leg of seamless quality switching. |
 
 **Seamless switching** (quality step, HDR/codec change, congestion degradation): the frontend launches the *other* slot with `{standby:true, session_slot}` and its own derived `client_uniqueid`, keeps the live stream playing, and swaps the display only on the standby's **first decoded frame** — the user never sees a loader. A standby launch never takes over slot 0; it joins the already-running Sunshine app (`preferResume`).
 

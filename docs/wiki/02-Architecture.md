@@ -51,11 +51,11 @@ The **infrastructure stack is decoupled** and stays out of the data path: it int
 | Channel | Purpose |
 |---|---|
 | **HTTPS REST** (`/api/...`) | Hosts/apps/pairing, settings, admin, auth, internet access. Full reference in [REST API](08-REST-API.md). |
-| **WSS `/ws` (signaling)** | WebRTC SDP/ICE exchange, proxied by the HTTPS server to an internal signaling WebSocket server (default port 48001). The WS URL is always anchored on `window.location.host` (the page origin), never on a backend-computed host — this is what keeps non-default external ports working. |
+| **WSS `/ws` (signaling)** | WebRTC SDP/ICE exchange, proxied by the HTTPS server to an internal signaling WebSocket server. The WS URL is always anchored on `window.location.host` (the page origin), never on a backend-computed host — this is what keeps non-default external ports working. |
 | **WebRTC PeerConnection** | The stream itself: video over a DataChannel or an RTP track (per transport family), audio always an RTP Opus track, input always a DataChannel (see [Streaming & Transports](05-Streaming-and-Transports.md)). |
 | **WSS `/ws/stream`** | Last-resort full-stream relay (video+audio+input over one WebSocket) when WebRTC cannot connect. |
-| **WSS `/ws1`, `/ws1/stream`** | The same two surfaces for the **second stream slot** (internal 48011/48012) — the standby leg of seamless quality switching. |
-| **WSS `/ws2`…`/ws4` (+ `/stream`)** | One pair per **invited player** (internal 48013/48014, 48015/48016, 48017/48018). Slot 0 keeps 48001/48002; every other slot takes two consecutive ports, signaling then relay, from a second base placed clear of the media block and of the streaming servers' ports (48011 by default, 48574 under `--dev`). These are the only WebSocket surfaces that do *not* accept a session cookie: they require the `mw_player` cookie bound to that slot's live share activation (see [Security](06-Security.md)). |
+| **WSS `/ws1`, `/ws1/stream`** | The same two surfaces for the **second stream slot** — the standby leg of seamless quality switching. |
+| **WSS `/ws2`…`/ws4` (+ `/stream`)** | One pair per **invited player**. Each slot has its own pair of internal servers, signaling then relay, behind the same HTTPS port. These are the only WebSocket surfaces that do *not* accept a session cookie: they require the `mw_player` cookie bound to that slot's live share activation (see [Security](06-Security.md)). |
 | **WSS `/ws/control`** | Tiny control channel every open tab keeps: used for single-tab dedup (a second app launch redirects an existing tab to `/admin` instead of opening a duplicate). |
 
 All WebSocket surfaces share the single HTTPS port: the HTTP server detects the `Upgrade` header and proxies the socket to the right internal WS server. One public port (443 by default) carries everything.
