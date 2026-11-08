@@ -11019,6 +11019,19 @@ export class StreamView {
         // Cmd itself keeps its normal press/release: it is the host's Windows
         // key, and Cmd alone must still open the Start menu.
         if (this._appleKeyboard && e.metaKey && !StreamView.MODIFIER_CODES.has(e.code)) {
+            // Cmd+C with the shared clipboard copies on the host, as Cmd+V
+            // pastes there: sent as is it would be Win+C, which copies nothing.
+            if (
+                this._clipboardEnabled &&
+                !e.ctrlKey &&
+                !e.altKey &&
+                !e.shiftKey &&
+                (e.key === 'c' || e.key === 'C')
+            ) {
+                this._sendCopyChord();
+                this._metaTapCodes.add(e.code);
+                return;
+            }
             // No `hold`: a tap has nothing to hold through a stall.
             const tap = {
                 keyCode: vkCode,
@@ -12131,6 +12144,44 @@ export class StreamView {
                 metaKey: false,
             });
         }
+    }
+
+    /**
+     * Cmd+C on an Apple keyboard, as the host's Ctrl+C.
+     *
+     * The Windows key Cmd streams as is let go of first (with its Ctrl tap, so
+     * no Start menu opens), then the whole chord goes out as a tap: macOS never
+     * delivers the C's release while Cmd is down. The host always gets VK_C,
+     * whichever key types "c" on the Mac's layout: Windows copies with VK_C.
+     */
+    _sendCopyChord() {
+        this._releaseHeldMeta();
+        const ctrl = {
+            keyCode: StreamView.codeToWindowsVk('ControlLeft'),
+            code: 'ControlLeft',
+            key: 'Control',
+            shiftKey: false,
+            altKey: false,
+            metaKey: false,
+        };
+        const c = {
+            keyCode: StreamView.codeToWindowsVk('KeyC'),
+            code: 'KeyC',
+            key: 'c',
+            char: null,
+            nonUs: false,
+            dead: false,
+            gaming: !!this._gamingMode,
+            altGraph: false,
+            ctrlKey: true,
+            shiftKey: false,
+            altKey: false,
+            metaKey: false,
+        };
+        this._sendKeyEvent({ ...ctrl, type: 'keydown', ctrlKey: true });
+        this._sendKeyEvent({ ...c, type: 'keydown' });
+        this._sendKeyEvent({ ...c, type: 'keyup' });
+        this._sendKeyEvent({ ...ctrl, type: 'keyup', ctrlKey: false });
     }
 
     /** The swallowed paste chord's 'paste' event brought no text (or never
