@@ -45,6 +45,26 @@ function viewport(innerHeight, height, offsetTop = 0) {
 
 const shown = (v) => v._kbToolbar.classList.contains('visible');
 
+/** Where a fixed element at bottom:0 lands, as the browser lays it out. */
+function fixedBottomAt(px) {
+    const own = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function () {
+        if (this instanceof HTMLElement && 'kbdProbe' in this.dataset) {
+            return /** @type {DOMRect} */ ({
+                top: px,
+                bottom: px,
+                left: 0,
+                right: 0,
+                width: 0,
+                height: 0,
+            });
+        }
+        return own.call(this);
+    });
+}
+
+const inset = () => document.documentElement.style.getPropertyValue('--kbd-inset');
+
 afterEach(() => {
     vi.restoreAllMocks();
     document.documentElement.style.removeProperty('--kbd-inset');
@@ -76,7 +96,87 @@ describe('touch keyboard bar placement', () => {
         expect(shown(v)).toBe(true);
         expect(v._kbToolbar.style.top).toBe(450 - BAR + 'px');
         // Nothing of the layout viewport is hidden: toasts only clear the bar.
-        expect(document.documentElement.style.getPropertyValue('--kbd-inset')).toBe(BAR + 'px');
+        expect(inset()).toBe(BAR + 'px');
+    });
+
+    it('lifts the toasts over a keyboard that hides them though innerHeight shrank (iPhone Chrome, 08/11)', () => {
+        // innerHeight says 450, but a fixed element at bottom:0 still sits
+        // on the bottom of the whole screen: the #44 warning came up behind
+        // the keys.
+        const v = view();
+        viewport(800, 800);
+        v._handleViewportResize();
+        v._kbdVisible = true;
+        fixedBottomAt(800);
+        viewport(450, 450);
+        v._handleViewportResize();
+        expect(v._kbToolbar.style.top).toBe(450 - BAR + 'px');
+        expect(inset()).toBe(350 + BAR + 'px');
+    });
+
+    it('measures again right before the input-method warning', () => {
+        const v = view();
+        viewport(800, 800);
+        v._handleViewportResize();
+        v._kbdVisible = true;
+        // The keyboard's resize event, read before the layout settled.
+        fixedBottomAt(450);
+        viewport(450, 450);
+        v._handleViewportResize();
+        expect(inset()).toBe(BAR + 'px');
+        vi.restoreAllMocks();
+        fixedBottomAt(800);
+        viewport(450, 450);
+        v._noteTextViaIme('à');
+        expect(inset()).toBe(350 + BAR + 'px');
+    });
+
+    it('leaves the toasts down when the warning comes with no keyboard up', () => {
+        const v = view();
+        viewport(800, 800);
+        v._handleViewportResize();
+        v._noteTextViaIme('à');
+        expect(inset()).toBe('');
+    });
+
+    it('drops the lift when the keyboard closes', () => {
+        const v = view();
+        viewport(800, 800);
+        v._handleViewportResize();
+        v._kbdVisible = true;
+        fixedBottomAt(800);
+        viewport(450, 450);
+        v._handleViewportResize();
+        v._kbdVisible = false;
+        viewport(800, 800);
+        v._handleViewportResize();
+        expect(inset()).toBe('');
+    });
+
+    it('keeps lifting for the successor bar of a quality switch, even where nothing is hidden', () => {
+        // The view going away releases the inset; the successor's bar stands.
+        const bar = document.createElement('div');
+        bar.className = 'stream-kbd-toolbar visible';
+        Object.defineProperty(bar, 'offsetHeight', { get: () => BAR });
+        document.body.appendChild(bar);
+        try {
+            const v = view();
+            fixedBottomAt(450);
+            viewport(450, 450);
+            v._releaseKbdInset();
+            expect(inset()).toBe(BAR + 'px');
+            vi.restoreAllMocks();
+            fixedBottomAt(800);
+            viewport(450, 450);
+            v._releaseKbdInset();
+            expect(inset()).toBe(350 + BAR + 'px');
+        } finally {
+            bar.remove();
+        }
+        const v = view();
+        viewport(800, 800);
+        v._releaseKbdInset();
+        expect(inset()).toBe('');
     });
 
     it('rests the picture a few pixels above the bar, and back when the keyboard closes', () => {

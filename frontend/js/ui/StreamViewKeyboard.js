@@ -48,6 +48,41 @@ function publishKbdInset(px) {
     else root.style.removeProperty('--kbd-inset');
 }
 
+/** An empty fixed box at bottom:0, anchored as the toast stack is. */
+let fixedBottomProbe = null;
+
+/**
+ * How much of what a bottom-anchored fixed element sits on is hidden below
+ * the visible area: the soft keyboard, wherever the browser puts that bottom.
+ *
+ * Read from where such an element actually lands, not from innerHeight.
+ * Safari on an iPhone keeps the layout viewport, so the two agree. Chrome on
+ * an iPhone reports an innerHeight already shrunk by the keyboard while the
+ * toasts stay on the bottom of the whole screen: from innerHeight nothing
+ * was hidden, and the #44 warning came up behind the keys (08/11/2026).
+ * Without a layout to ask (no body yet, tests), innerHeight stands in.
+ *
+ * @param {VisualViewport} vv
+ * @returns {number} px hidden, 0 when none
+ */
+function hiddenBelowVisible(vv) {
+    let bottom = 0;
+    if (document.body) {
+        if (!fixedBottomProbe || !fixedBottomProbe.isConnected) {
+            fixedBottomProbe = document.createElement('div');
+            fixedBottomProbe.setAttribute('aria-hidden', 'true');
+            fixedBottomProbe.dataset.kbdProbe = '';
+            fixedBottomProbe.style.cssText =
+                'position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden;pointer-events:none';
+            document.body.appendChild(fixedBottomProbe);
+        }
+        // Client coordinates are the layout viewport's, as vv.offsetTop is.
+        bottom = fixedBottomProbe.getBoundingClientRect().bottom;
+    }
+    if (!(bottom > 0)) bottom = window.innerHeight;
+    return Math.max(0, bottom - vv.height - vv.offsetTop);
+}
+
 /** @typedef {import('./StreamView.js').StreamView} StreamViewInstance */
 
 /**
@@ -91,6 +126,7 @@ export class StreamViewKeyboard {
      * to leave to the input method (`textviaime`), and only those are worth a
      * sentence — named, so the person knows which ones to look for.
      *
+     * @this {StreamViewInstance}
      * @param {string} text the characters left to the host's input method
      */
     _noteTextViaIme(text) {
@@ -100,6 +136,9 @@ export class StreamViewKeyboard {
         const cps = Array.from(text);
         const chars = cps.length > 8 ? cps.slice(0, 8).join('') + '…' : text;
         Toast.warning(t('stream.textInputNeedsIme', { chars }), { durationMs: 10000 });
+        // Said while typing: clear the keys as they stand now (the stack
+        // follows the inset live, so after the toast is as good as before).
+        this._refreshKbdInset?.();
     }
 
     /**
@@ -586,9 +625,6 @@ export class StreamViewKeyboard {
     _handleViewportResize() {
         const vv = window.visualViewport;
         if (!vv || !this.streamEl) return;
-        // What the soft keyboard hides of the bottom of the layout viewport: all
-        // a bottom-anchored fixed element (the toast stack) has to clear.
-        const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
         // Not every browser keeps the layout viewport when the keyboard opens.
         // Chrome on an iPhone (27/10/2026) shrinks it with the visible area:
         // `covered` then stays near 0 and the bar never showed, or, read before
@@ -633,9 +669,7 @@ export class StreamViewKeyboard {
             else this._seatPictureOnKbToolbar();
             kept.atX = this._panX;
             kept.atY = this._panY;
-            // A hidden standby leg measures the same viewport as the live one;
-            // let the visible view own the document-wide inset.
-            if (!this._standby) publishKbdInset(covered + tbHeight);
+            this._refreshKbdInset();
         } else {
             // iOS Safari can hand over a page whose visible area starts inside
             // the layout viewport rather than at its top — seen after an update,
@@ -724,15 +758,32 @@ export class StreamViewKeyboard {
      */
     _releaseKbdInset() {
         const vv = window.visualViewport;
-        const kbHeight = vv ? window.innerHeight - vv.height - vv.offsetTop : 0;
-        if (kbHeight <= KB_OPEN_THRESHOLD) {
-            publishKbdInset(0);
-            return;
-        }
+        const covered = vv ? hiddenBelowVisible(vv) : 0;
         const bar = /** @type {HTMLElement} */ (
             document.querySelector('.stream-kbd-toolbar.visible')
         );
-        publishKbdInset(kbHeight + (bar ? bar.offsetHeight : 0));
+        // A browser that shrinks the page with the keyboard hides nothing of
+        // it: the successor's bar is then what says the keyboard is up.
+        if (!bar && covered <= KB_OPEN_THRESHOLD) {
+            publishKbdInset(0);
+            return;
+        }
+        publishKbdInset(covered + (bar ? bar.offsetHeight : 0));
+    }
+
+    /**
+     * Lift the toast stack over the soft keyboard and the special-keys bar,
+     * measured now. Run when the bar is placed, and again right before a
+     * warning meant for the person typing: a page whose layout settles after
+     * the keyboard's resize event would otherwise keep a stale lift.
+     * A hidden standby leg measures the same viewport as the live one; the
+     * visible view owns the document-wide inset.
+     * @this {StreamViewInstance}
+     */
+    _refreshKbdInset() {
+        const vv = window.visualViewport;
+        if (this._standby || !vv || !this._kbToolbar?.classList.contains('visible')) return;
+        publishKbdInset(hiddenBelowVisible(vv) + this._kbToolbar.offsetHeight);
     }
 
     /**
