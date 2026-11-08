@@ -41,6 +41,8 @@ const VIEW_MESSAGES = new Set([
     'hidffb',
     // A guest's mouse given or taken by the owner (StreamView._setMouseAllowed).
     'inputcaps',
+    // Touch-keyboard characters the host could only take as text (issue #44).
+    'textviaime',
 ]);
 
 /** Whether a host message of this type goes to the stream view. */
