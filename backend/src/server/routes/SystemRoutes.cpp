@@ -439,6 +439,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                 // from hosting itself: possible, and the wizard says which
                 // step is missing rather than sending it to install Sunshine.
                 nat["needs_display"] = caps.reason == mw::native::Unavailability::NoDisplay;
+                // ...unless none is shipped here (Windows ARM64): the wizard
+                // then never sends the user back to the installer for it.
+                if (caps.reason == mw::native::Unavailability::NoDisplay)
+                    nat["virtual_display_supported"] = VirtualDisplay::probe().supported;
                 nat["possible"] = caps.available ||
                                   caps.reason == mw::native::Unavailability::CapturePermission ||
                                   caps.reason == mw::native::Unavailability::NoInteractiveSession ||
