@@ -155,6 +155,7 @@ describe('the on-screen controller in the stream', () => {
             const view = makeView();
             view._mountTouchPad();
             await flush();
+            button(view).click();
             expect(shown(view)).toBe(true);
             setCoarse(false);
             expect(shown(view)).toBe(false);
@@ -216,13 +217,19 @@ describe('the on-screen controller in the stream', () => {
     });
 
     describe('at the start', () => {
-        it('Auto: shown and plugged in with nothing else to play with', async () => {
+        it('Auto: plugged in with nothing else to play with, on screen at the first press', async () => {
             const view = makeView();
             view._mountTouchPad();
             await flush();
-            expect(shown(view)).toBe(true);
+            expect(view._gamepadManager.hasVirtual()).toBe(true);
             expect(sent(send, 'gamepadconnect').length).toBe(1);
+            expect(shown(view)).toBe(false);
+            expect(button(view).classList.contains('is-on')).toBe(false);
+            button(view).click();
+            expect(shown(view)).toBe(true);
             expect(button(view).classList.contains('is-on')).toBe(true);
+            // Shown, not plugged in a second time.
+            expect(sent(send, 'gamepadconnect').length).toBe(1);
         });
 
         it('Auto: stays away from a viewer with a mouse or a trackpad', async () => {
@@ -288,7 +295,7 @@ describe('the on-screen controller in the stream', () => {
             gm.start();
             view._mountTouchPad();
             await flush();
-            expect(shown(view)).toBe(true);
+            expect(gm.hasVirtual()).toBe(true);
         });
 
         it('does not start for a view taken away in the meantime', async () => {
@@ -478,6 +485,8 @@ describe('the on-screen controller in the stream', () => {
             view._mountTouchPad();
             await flush();
             view._toggleTouchPad();
+            expect(shown(view)).toBe(true);
+            view._toggleTouchPad();
             expect(shown(view)).toBe(false);
             expect(view._gamepadManager.hasVirtual()).toBe(true);
         });
@@ -506,6 +515,7 @@ describe('the on-screen controller in the stream', () => {
             const view = makeView();
             view._mountTouchPad();
             await flush();
+            view._toggleTouchPad();
             return view;
         }
 
@@ -590,6 +600,7 @@ describe('the on-screen controller in the stream', () => {
             const old = makeView();
             old._mountTouchPad();
             await flush();
+            old._toggleTouchPad();
             const carry = old._touchPadSnapshot();
             expect(carry).toEqual({ plugged: true, shown: true, yields: true });
             const next = makeView();
@@ -604,7 +615,8 @@ describe('the on-screen controller in the stream', () => {
             const old = makeView();
             old._mountTouchPad();
             await flush();
-            old._toggleTouchPad();
+            // Auto starts it so, until a press.
+            expect(shown(old)).toBe(false);
             const next = makeView();
             next._mountTouchPad();
             next._adoptTouchPad(old._touchPadSnapshot());
@@ -631,7 +643,7 @@ describe('the on-screen controller in the stream', () => {
             const next = makeView();
             next._mountTouchPad();
             await flush();
-            expect(shown(next)).toBe(true);
+            expect(next._gamepadManager.hasVirtual()).toBe(true);
             next._adoptTouchPad({ plugged: false, shown: false, yields: false });
             expect(next._gamepadManager.hasVirtual()).toBe(false);
             next._adoptTouchPad(null);

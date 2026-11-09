@@ -203,7 +203,7 @@ An Xbox pad drawn over the stream (`TouchPadView`), for a viewer with fingers an
 
 **When it is offered.** `touchEnabled()` (`BrowserDetect`): a touch screen the OS has on, read from `maxTouchPoints` and `(any-pointer: coarse)` and followed live, not the type of device. Never on a TV. **Settings → On-screen controller** is there only in that case: Auto, Always or Never, size 80-140 %, opacity 20-100 %, vibration, and what a finger does outside the controls (mouse or nothing). These are per-device fields (`touch_pad_*`, [§7.4](07-Settings-Reference.md#74-browser-side-preferences-localstorage)).
 
-**Auto** shows it at the start with no fine pointer and no pad connected, and unplugs it when a real pad arrives, which then takes controller 0 rather than player 2.
+**Auto** plugs it in at the start with no fine pointer and no pad connected, hidden until the first press, and unplugs it when a real pad arrives, which then takes controller 0 rather than player 2. **Always** plugs it in and shows it.
 
 **Shown and plugged in are two things.** Hiding leaves it plugged in, because a game that loses its controller pauses. The header's button, the round button between View and Menu, or a 4-finger tap (3 fingers remain the keyboard) show or hide it. A press of 600 ms on either button unplugs it. With it hidden in fullscreen, where there is no header, a small handle stays at the top of the picture. It hides during the soft keyboard and any dialog that listens to the pads, and everything held is released at that moment.
 

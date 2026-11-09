@@ -1011,10 +1011,14 @@ body.streaming-active::after {
         color 0.2s,
         border-color 0.2s;
 }
-.btn-stream-fs:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.3);
+/* A finger leaves :hover on the last button it touched, on iOS until the
+   next touch elsewhere: only a mouse gets it. */
+@media (hover: hover) {
+    .btn-stream-fs:hover {
+        background: rgba(255, 255, 255, 0.12);
+        color: #fff;
+        border-color: rgba(255, 255, 255, 0.3);
+    }
 }
 .btn-stream-fs:active {
     transform: translate(-50%, -50%) scale(0.95);
@@ -1171,10 +1175,12 @@ body.streaming-active::after {
 .btn-stream-kbd[hidden] {
     display: none;
 }
-.btn-stream-kbd:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.3);
+@media (hover: hover) {
+    .btn-stream-kbd:hover {
+        background: rgba(255, 255, 255, 0.12);
+        color: #fff;
+        border-color: rgba(255, 255, 255, 0.3);
+    }
 }
 .btn-stream-kbd:active {
     transform: scale(0.95);
@@ -1204,10 +1210,13 @@ body.streaming-active::after {
     cursor: pointer;
     user-select: none;
 }
-.btn-stream-pad:hover {
-    background: var(--kbd-on);
-    color: var(--kbd-on-edge);
-    border-color: var(--kbd-on-edge);
+/* The same look as .is-on: a touch left on it read as a pad never hidden. */
+@media (hover: hover) {
+    .btn-stream-pad:hover {
+        background: var(--kbd-on);
+        color: var(--kbd-on-edge);
+        border-color: var(--kbd-on-edge);
+    }
 }
 .btn-stream-pad:active {
     transform: scale(0.95);

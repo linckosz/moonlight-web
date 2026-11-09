@@ -262,7 +262,10 @@ export class StreamViewTouchPad {
         } else {
             return;
         }
-        this._touchPadShown = true;
+        // Auto plugs it in, connected for the game, and leaves it off the
+        // picture until asked for: a viewer who did not choose it is not
+        // greeted by controls over the stream. Always is that choice.
+        this._touchPadShown = mode === 'always';
         this._syncTouchPad();
     }
 
