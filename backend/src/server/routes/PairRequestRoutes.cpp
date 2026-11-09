@@ -65,8 +65,9 @@ struct Context
 };
 
 /// Whether @p address sits on one of this host's own links: inside the prefix of
-/// one of its interfaces, an IPv6 address inside that interface's /64. A
-/// public IPv6 address counts on a line only, where ICE found it.
+/// one of its interfaces, an IPv6 address inside that interface's /64. An IPv4
+/// address counts only when private or link-local; a public IPv6 address counts
+/// on a line only, where ICE found it.
 bool onThisHostsLink(const Context& c, const QString& address, bool line)
 {
     QHostAddress a(AuthManager::cleanClientAddress(address));
@@ -75,6 +76,7 @@ bool onThisHostsLink(const Context& c, const QString& address, bool line)
     if (mapped) a = QHostAddress(v4);
     if (a.isNull() || a.isLoopback() || !c.deps.localSubnets) return false;
     const bool v6 = a.protocol() == QAbstractSocket::IPv6Protocol;
+    if (!v6 && !AuthManager::isLanAddress(a.toString())) return false;
     if (v6 && !line && !a.isLinkLocal() && !a.isUniqueLocalUnicast()) return false;
     const QList<QPair<QHostAddress, int>> subnets = c.deps.localSubnets();
     for (const auto& net : subnets) {
@@ -124,13 +126,15 @@ Answerer answererOf(Context& c, const HttpRequest& req)
     return {refusal(401, "not_authenticated"), false};
 }
 
-/// A request made from outside this LAN is the administrator's alone: to an
-/// answerer of the house it is answered as any request it may not see.
+/// A request made from outside this LAN, or from off this host's links, is the
+/// administrator's alone: to an answerer of the house it is answered as any
+/// request it may not see.
 bool hiddenFromAnswerer(Context& c, const Answerer& who, const QString& id)
 {
     if (who.admin) return false;
     PhonePairing::Request r;
-    return c.book.find(id, c.deps.now(), &r) == PhonePairing::Lookup::Found && !r.fromLan;
+    if (c.book.find(id, c.deps.now(), &r) != PhonePairing::Lookup::Found) return false;
+    return !r.fromLan || !onThisHostsLink(c, r.address, r.viaTunnel);
 }
 
 /// Whether a session's answer is refused for being temporary: a device let in

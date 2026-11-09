@@ -80,6 +80,7 @@ struct Server
                  // This host's links: the house's /24, its /64, and the link-local one.
                  return QList<QPair<QHostAddress, int>>{
                      {QHostAddress(QStringLiteral("192.168.1.66")), 24},
+                     {QHostAddress(QStringLiteral("198.51.100.66")), 24},
                      {QHostAddress(QStringLiteral("2001:db8:1:2::66")), 64},
                      {QHostAddress(QStringLiteral("fe80::66")), 64}};
              }});
@@ -675,6 +676,10 @@ void testAPairedSessionOnThisLanAnswersToo()
     CHECK_EQ(error(s.send(untrusted)), QStringLiteral("not_allowed"));
     CHECK_EQ(s.guarded.size(), 0);
 
+    // A public IPv4 address, even inside the prefix of one of this host's
+    // interfaces, is not the house.
+    line.clientAddress = QStringLiteral("198.51.100.50");
+    CHECK_EQ(error(s.send(line)), QStringLiteral("not_allowed"));
     // Off this host's links, private or not: no.
     line.clientAddress = QStringLiteral("10.0.0.5");
     CHECK_EQ(error(s.send(line)), QStringLiteral("not_allowed"));
@@ -711,6 +716,10 @@ void testAPairedSessionOnThisLanAnswersToo()
     Device other;
     askAndReveal(s, other);
     HttpRequest no = asMember(fromTv("POST", "/api/auth/pair-request/" + other.id + "/refuse"));
+    CHECK_EQ(error(s.send(no)), QStringLiteral("bad_signature"));
+    const QByteArray otherKeySig = PairingCrypto::sign(
+        PairingCrypto::generatePrivateKeyPem(), PhonePairing::refuseMessage(s.hostId(), other.id));
+    no.body = QJsonDocument(QJsonObject{{"sig", b64(otherKeySig)}}).toJson(QJsonDocument::Compact);
     CHECK_EQ(error(s.send(no)), QStringLiteral("bad_signature"));
     const QByteArray noSig =
         PairingCrypto::sign(pem, PhonePairing::refuseMessage(s.hostId(), other.id));
@@ -785,6 +794,24 @@ void testTheHouseAnswersTheHouseOnly()
     CHECK_EQ(json(admin).value("origin").toString(), QStringLiteral("internet"));
     CHECK_EQ(json(admin).value("address").toString(), QStringLiteral("203.0.113.5"));
     CHECK_EQ(s.send(approval(far, code)).statusCode, 200);
+}
+
+void testARequestOffTheHostsLinksStaysTheAdministrators()
+{
+    SECTION(
+        "pair-request routes: a device asking from off this host's links is the administrator's");
+    Server s;
+    // A private address, but another network than this host's: a VPN, a
+    // neighbour's subnet. It may ask, as from this LAN; the house does not see it.
+    Device off;
+    off.address = QStringLiteral("10.0.0.5");
+    const QString code = askAndReveal(s, off);
+    const Member m(s, "Kitchen phone");
+    CHECK_EQ(error(s.send(m.get(off.id))), QStringLiteral("not_allowed"));
+    CHECK_EQ(error(s.send(m.yes(s, off, code))), QStringLiteral("not_allowed"));
+    // The administrator sees it, and answers.
+    CHECK_EQ(s.send(fromAdmin("GET", "/api/auth/pair-request/" + off.id)).statusCode, 200);
+    CHECK_EQ(s.send(approval(off, code)).statusCode, 200);
 }
 
 void testATemporarySessionLetsNoDeviceIn()
@@ -1119,6 +1146,7 @@ void run_pair_request_routes_tests()
     testOnlyTheAdministratorAnswers();
     testAPairedSessionOnThisLanAnswersToo();
     testTheHouseAnswersTheHouseOnly();
+    testARequestOffTheHostsLinksStaysTheAdministrators();
     testATemporarySessionLetsNoDeviceIn();
     testAChainOfApproversGoesAsOne();
     testADeviceOutlivesAnApproverThatRanOut();
