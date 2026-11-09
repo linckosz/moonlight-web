@@ -143,6 +143,59 @@ void run_input_watchdog_tests()
         CHECK_EQ(wire.buttonsUp.size(), 1);
     }
 
+    // ── Modifiers get the long period: a stall is no tap of theirs ──────────
+    // A Mac on Wi-Fi went silent for 293 ms under a held right Option: let go
+    // of at the short period and pressed again by the heartbeat after it, the
+    // host saw a second press of it the viewer never made (09/11/2026).
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        qint64 now = 0;
+        wd.setClock([&now]() { return now; });
+
+        wd.sync({}, 0, false);
+        wd.noteClientAlive();
+        const QVector<short> mods = {0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2,
+                                     0xA3, 0xA4, 0xA5, 0x5B, 0x5C};
+        for (short vk : mods)
+            wd.noteKey(key(vk), true);
+        wd.noteKey(key('A'), true);
+
+        now = InputWatchdog::kStaleMs;
+        wd.tick();
+        CHECK_EQ(wire.keysUp.size(), 1);
+        CHECK_EQ(wire.keysUp.value(0), short('A'));
+
+        // The link wakes, the viewer still holding them all: nothing to press
+        // again but the letter.
+        wd.noteClientAlive();
+        QVector<InputWatchdog::HeldKey> still;
+        for (short vk : mods)
+            still.append(key(vk));
+        still.append(key('A'));
+        InputWatchdog::SyncDiff diff = wd.sync(still, 0, false);
+        CHECK_EQ(diff.press.size(), 1);
+        CHECK_EQ(diff.press.value(0).keyCode, short('A'));
+        CHECK(diff.release.isEmpty());
+
+        // A dead link still lets go of them, at the long period.
+        wire.clear();
+        now = InputWatchdog::kStaleMs + InputWatchdog::kStaleHoldMs;
+        wd.tick();
+        CHECK_EQ(wire.keysUp.size(), mods.size() + 1);
+        CHECK(!wd.anythingHeld());
+
+        // An explicit release (a policy change, a viewer leaving) takes them
+        // at once, as before.
+        FakeWire wire2;
+        InputWatchdog wd2(wire2.sink());
+        wd2.noteKey(key(0x5B), true);
+        wd2.release(false);
+        CHECK_EQ(wire2.keysUp.size(), 1);
+        CHECK(InputWatchdog::isModifierVk(0xA5));
+        CHECK(!InputWatchdog::isModifierVk('A'));
+    }
+
     // ── Any client message rearms both periods ──────────────────────────────
     {
         FakeWire wire;

@@ -52,6 +52,14 @@ class QTimer;
 /// delay (~500 ms on Windows) so no repeat is ever generated. Gamepads are
 /// gaming input by definition: only the long period neutralizes them.
 ///
+/// Shift, Ctrl, Alt and the Windows key get the long one too: a repeat of
+/// theirs types nothing, while letting go of one the viewer still holds and
+/// pressing it again when the link wakes is a tap of it the viewer never
+/// made — a Windows key alone opens the Start menu, an Alt alone the menu
+/// bar. A Mac on Wi-Fi went silent for 293 ms under a held right Option,
+/// and the host saw the Option let go of, then pressed again (bench of
+/// 09/11/2026).
+///
 /// ── Why it is its own class ─────────────────────────────────────────────────
 ///
 /// A key held through a link stall sticks down just the same whether the host
@@ -156,8 +164,14 @@ public:
     // ── Release ──────────────────────────────────────────────────────────────
 
     /// Let go of everything held, through the sink. `includeHold` also
-    /// releases the inputs flagged `hold`, and the gamepads.
-    void release(bool includeHold);
+    /// releases the inputs flagged `hold`, and the gamepads; without it,
+    /// `keepModifiers` keeps Shift, Ctrl, Alt and the Windows key as well
+    /// (the short grace period's own release).
+    void release(bool includeHold, bool keepModifiers = false);
+
+    /// Shift, Ctrl, Alt or the Windows key, either side, as a Windows
+    /// virtual-key code.
+    static bool isModifierVk(short vk);
 
     bool anythingHeld() const;
 

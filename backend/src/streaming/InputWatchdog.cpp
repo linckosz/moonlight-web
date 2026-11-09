@@ -177,8 +177,8 @@ void InputWatchdog::tick()
         release(true);
     } else if (shortFire) {
         qInfo() << "[InputWatchdog] Input link silent for" << silentMs
-                << "ms — releasing held inputs (hold-flagged ones kept)";
-        release(false);
+                << "ms — releasing held inputs (hold-flagged ones and modifiers kept)";
+        release(false, true);
     }
 }
 
@@ -190,7 +190,26 @@ void InputWatchdog::setClock(std::function<qint64()> nowMs)
 
 // --- Release and resync ------------------------------------------------------
 
-void InputWatchdog::release(bool includeHold)
+bool InputWatchdog::isModifierVk(short vk)
+{
+    switch (vk) {
+    case 0x10: // VK_SHIFT
+    case 0x11: // VK_CONTROL
+    case 0x12: // VK_MENU
+    case 0xA0: // VK_LSHIFT
+    case 0xA1: // VK_RSHIFT
+    case 0xA2: // VK_LCONTROL
+    case 0xA3: // VK_RCONTROL
+    case 0xA4: // VK_LMENU
+    case 0xA5: // VK_RMENU
+    case 0x5B: // VK_LWIN
+    case 0x5C: // VK_RWIN
+        return true;
+    default: return false;
+    }
+}
+
+void InputWatchdog::release(bool includeHold, bool keepModifiers)
 {
     QVector<HeldKey> keys;
     QVector<QPair<QString, CharKeyHints>> chars;
@@ -199,7 +218,7 @@ void InputWatchdog::release(bool includeHold)
     {
         QMutexLocker lock(&m_Mutex);
         for (auto it = m_HeldKeys.begin(); it != m_HeldKeys.end();) {
-            if (it->hold && !includeHold) {
+            if (!includeHold && (it->hold || (keepModifiers && isModifierVk(it.key())))) {
                 ++it;
                 continue;
             }
