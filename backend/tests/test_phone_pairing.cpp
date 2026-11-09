@@ -488,12 +488,16 @@ void testAnApproverTakesWhatItApprovedAlong()
     CHECK(!auth.validateSession(stick));
     CHECK(auth.validateSession(laptop));
 
-    // Logging out is a session ending too.
+    // Logging out is not a revocation: what the session approved stays, now
+    // the administrator's.
     const QString owner = auth.createSession("192.168.1.21", "Owner");
     const QString box = auth.createSession("192.168.1.176", "Box");
     CHECK(auth.setSessionApprover(box, auth.sessionIdForToken(owner)));
     CHECK(auth.logoutSession(owner));
-    CHECK(!auth.validateSession(box));
+    CHECK(!auth.validateSession(owner));
+    CHECK(auth.validateSession(box));
+    CHECK(auth.sessionForToken(box).approvedBy.isEmpty());
+    auth.destroySession(auth.sessionIdForToken(box));
     auth.destroySession(auth.sessionIdForToken(laptop));
 }
 

@@ -80,8 +80,9 @@ struct SessionInfo
 
     // The session that let this one in, by its opaque id: a device approved
     // by the QR code it showed, from that session (server/PhonePairing.h).
-    // Revoking that session revokes this one too (destroySession). Empty for
-    // every other way in, and when the host machine itself approved.
+    // Revoking that session revokes this one too (destroySession); when it
+    // logs out or runs out of time, this one stays, the administrator's. Empty
+    // for every other way in, and when the host machine itself approved.
     QString approvedBy;
 
     QJsonObject toJson() const
@@ -216,8 +217,9 @@ public:
     bool isEphemeralSession(const QString& token) const;
     /** Destroy the session a raw cookie token belongs to — the visitor logging
      *  themselves out. Unlike destroySession() this takes the raw token, so a
-     *  browser can only ever end its own session. Returns false when the token
-     *  matches none. */
+     *  browser can only ever end its own session. The sessions it let in stay,
+     *  the administrator's from now on: leaving is not a revocation. Returns
+     *  false when the token matches none. */
     bool logoutSession(const QString& token);
     /** True when the raw cookie token belongs to a valid *host* session (created
      *  by redeeming the host key — the browser runs on the host machine). */
@@ -296,7 +298,8 @@ public:
     /** Drop sessions inactive beyond SESSION_TTL_SECS. Called periodically. */
     void purgeExpiredSessions();
     /// A session whose approver is gone by expiry, not by revocation, keeps
-    /// going without one, the administrator's to revoke: returns how many.
+    /// going without one, the administrator's to revoke (logoutSession does the
+    /// same for the sessions it let in): returns how many.
     int keepDevicesOfEndedApprovers();
 
     /** Store geolocation data for a session after async lookup completes. */
@@ -480,8 +483,9 @@ public:
      *  @p headers are the request's, with lower-case names. */
     static QString attemptAddress(const QString& peer, const QMap<QString, QString>& headers);
     /** Whether @p req comes from this machine's LAN: the one rule for what is
-     *  given to this LAN alone (routes/PairRequestRoutes.cpp: a device asks to
-     *  pair by its QR code; routes/AuthStatusRoute.cpp: this machine's name).
+     *  given to this LAN alone (routes/PairRequestRoutes.cpp, which narrows it
+     *  to this host's own links: a device asks to pair by its QR code;
+     *  routes/AuthStatusRoute.cpp: this machine's name).
      *
      *  On a line, by the address ICE settled on: a peer elsewhere cannot make a
      *  connectivity check to a private address succeed. On a socket, by the

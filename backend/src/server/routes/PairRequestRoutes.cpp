@@ -20,6 +20,7 @@
 #include "server/AppSettings.h"
 #include "server/AuthManager.h"
 #include "server/PhonePairing.h"
+#include "server/RequestGuard.h"
 #include "server/RestRouter.h"
 #include "server/SessionCookie.h"
 #include "common/Logger.h"
@@ -86,13 +87,29 @@ bool onThisHostsLink(const Context& c, const QString& address, bool line)
     return false;
 }
 
-/// Where a paired session stands to answer without the administrator's right:
-/// this LAN as AuthManager::fromThisLan judges it, on one of this host's links.
+/// The house: this LAN as AuthManager::fromThisLan judges it, on one of this
+/// host's links. On a line, where ICE found the caller. On a socket, under a
+/// local name too (RequestGuard::isLocalHostName, a Host header required): the
+/// public domain is how this host is reached from anywhere, and only a line
+/// says where such a caller stands.
 bool fromThisHousesLink(const Context& c, const HttpRequest& req)
 {
     if (req.viaTunnel) return onThisHostsLink(c, req.clientAddress, true);
+    const QString host = req.headers.value(QStringLiteral("host"));
+    if (host.isEmpty() || !RequestGuard::isLocalHostName(host)) return false;
     return AuthManager::fromThisLan(req) &&
            onThisHostsLink(c, AuthManager::attemptAddress(req.clientAddress, req.headers), false);
+}
+
+/// Where a device asks from the house: one of this host's links
+/// (fromThisHousesLink), or this machine itself under a local name. Anywhere
+/// else, a private address included, is the internet.
+bool askedFromTheHouse(const Context& c, const HttpRequest& req)
+{
+    if (fromThisHousesLink(c, req)) return true;
+    if (req.viaTunnel || !AuthManager::fromThisLan(req)) return false;
+    const QString who = AuthManager::attemptAddress(req.clientAddress, req.headers);
+    return QHostAddress(AuthManager::cleanClientAddress(who)).isLoopback();
 }
 
 /// Who may answer a device's request, and with what reach.
@@ -126,9 +143,9 @@ Answerer answererOf(Context& c, const HttpRequest& req)
     return {refusal(401, "not_authenticated"), false};
 }
 
-/// A request made from outside this LAN, or from off this host's links, is the
-/// administrator's alone: to an answerer of the house it is answered as any
-/// request it may not see.
+/// A request made from outside the house (askedFromTheHouse), or from an
+/// address no longer on this host's links, is the administrator's alone: to an
+/// answerer of the house it is answered as any request it may not see.
 bool hiddenFromAnswerer(Context& c, const Answerer& who, const QString& id)
 {
     if (who.admin) return false;
@@ -137,9 +154,9 @@ bool hiddenFromAnswerer(Context& c, const Answerer& who, const QString& id)
     return !r.fromLan || !onThisHostsLink(c, r.address, r.viaTunnel);
 }
 
-/// Whether a session's answer is refused for being temporary: a device let in
-/// lives as long as the session that let it in, and a session kept without
-/// "remember me" is not one to hang a device on. This machine has no session.
+/// Whether a session's answer is refused for being temporary: a session kept
+/// without "remember me" may say no, not let a device in. This machine has no
+/// session.
 bool temporaryAnswerer(Context& c, const HttpRequest& req)
 {
     const QString token = c.deps.sessionToken(req);
@@ -195,12 +212,12 @@ bool mayAskFromElsewhere(const Context& c, const HttpRequest& req)
     return !req.adminLocked && boxTicked(c);
 }
 
-/// Whether @p req may ask, or claim what it asked: from this LAN always
-/// (AuthManager::fromThisLan), from anywhere while the administrator allows it.
-/// The setting is read only for a caller from elsewhere.
+/// Whether @p req may ask, or claim what it asked: from the house always
+/// (askedFromTheHouse), from anywhere while the administrator allows it. The
+/// setting is read only for a caller from elsewhere.
 bool mayAsk(const Context& c, const HttpRequest& req)
 {
-    return AuthManager::fromThisLan(req) || mayAskFromElsewhere(c, req);
+    return askedFromTheHouse(c, req) || mayAskFromElsewhere(c, req);
 }
 
 /// Requests from elsewhere live only while the box is ticked: unticked, they
@@ -237,9 +254,10 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
 
     // POST /api/auth/pair-request — a device asks to be let in, with no PIN.
     //
-    // From this LAN (AuthManager::fromThisLan), or from anywhere while the
-    // administrator allows it (AppSettings::pairRequestInternet, off by
-    // default); before any session like the PIN, and under the same lockout.
+    // From the house (askedFromTheHouse: this LAN, on this host's links), or
+    // from anywhere while the administrator allows it
+    // (AppSettings::pairRequestInternet, off by default); before any session
+    // like the PIN, and under the same lockout.
     // The body names the device's MW-BIND-v1 key and commits to its nonce. On a
     // line, the line has already proved a key, and the request must be for that
     // one.
@@ -257,7 +275,7 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
         const QString who = AuthManager::attemptAddress(req.clientAddress, req.headers);
         const int locked = c->auth.lockoutSeconds(who);
         if (locked > 0) return lockedOut(locked);
-        const bool fromLan = AuthManager::fromThisLan(req);
+        const bool fromLan = askedFromTheHouse(*c, req);
         if (!fromLan && !mayAskFromElsewhere(*c, req)) return refusal(403, "lan_only");
 
         const QJsonObject body = QJsonDocument::fromJson(req.body).object();

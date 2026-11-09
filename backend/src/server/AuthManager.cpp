@@ -786,6 +786,18 @@ bool AuthManager::logoutSession(const QString& token)
     if (token.isEmpty()) return false;
     const QString id = hashToken(token);
     if (!m_sessions.contains(id)) return false;
+    // Leaving is not a revocation: a device this session let in stays, the
+    // administrator's to revoke from now on, as when its time runs out.
+    int kept = 0;
+    for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
+        if (it->approvedBy != id) continue;
+        it->approvedBy.clear();
+        kept++;
+    }
+    if (kept > 0)
+        Logger::info(
+            QString("[Auth] %1 device(s) kept after the session that let them in logged out")
+                .arg(kept));
     destroySession(id);
     return true;
 }
