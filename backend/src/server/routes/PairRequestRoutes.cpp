@@ -87,27 +87,45 @@ bool onThisHostsLink(const Context& c, const QString& address, bool line)
     return false;
 }
 
+/// Whether a socket request names this host by a local name
+/// (RequestGuard::isLocalHostName): a Host header is required.
+bool underALocalName(const HttpRequest& req)
+{
+    const QString host = req.headers.value(QStringLiteral("host"));
+    return !host.isEmpty() && RequestGuard::isLocalHostName(host);
+}
+
+/// Whether another machine passed this socket request along: a peer that is not
+/// this machine, with a header a proxy adds. Its sender may stand anywhere.
+bool passedAlong(const HttpRequest& req)
+{
+    if (QHostAddress(AuthManager::cleanClientAddress(req.clientAddress)).isLoopback()) return false;
+    for (const char* name : {"x-forwarded-for", "forwarded", "cf-connecting-ip", "via"})
+        if (req.headers.contains(QString::fromLatin1(name))) return true;
+    return false;
+}
+
 /// The house: this LAN as AuthManager::fromThisLan judges it, on one of this
 /// host's links. On a line, where ICE found the caller. On a socket, under a
-/// local name too (RequestGuard::isLocalHostName, a Host header required): the
-/// public domain is how this host is reached from anywhere, and only a line
-/// says where such a caller stands.
+/// local name too (underALocalName): the public domain is how this host is
+/// reached from anywhere, and only a line says where such a caller stands. A
+/// socket request another machine passed along (passedAlong) is not the house.
 bool fromThisHousesLink(const Context& c, const HttpRequest& req)
 {
     if (req.viaTunnel) return onThisHostsLink(c, req.clientAddress, true);
-    const QString host = req.headers.value(QStringLiteral("host"));
-    if (host.isEmpty() || !RequestGuard::isLocalHostName(host)) return false;
+    if (!underALocalName(req) || passedAlong(req)) return false;
     return AuthManager::fromThisLan(req) &&
            onThisHostsLink(c, AuthManager::attemptAddress(req.clientAddress, req.headers), false);
 }
 
 /// Where a device asks from the house: one of this host's links
-/// (fromThisHousesLink), or this machine itself under a local name. Anywhere
-/// else, a private address included, is the internet.
+/// (fromThisHousesLink), or this machine itself under a local name
+/// (underALocalName). Anywhere else, a private address included, is the
+/// internet.
 bool askedFromTheHouse(const Context& c, const HttpRequest& req)
 {
     if (fromThisHousesLink(c, req)) return true;
-    if (req.viaTunnel || !AuthManager::fromThisLan(req)) return false;
+    if (req.viaTunnel || !underALocalName(req) || !AuthManager::fromThisLan(req)) return false;
     const QString who = AuthManager::attemptAddress(req.clientAddress, req.headers);
     return QHostAddress(AuthManager::cleanClientAddress(who)).isLoopback();
 }

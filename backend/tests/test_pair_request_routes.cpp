@@ -269,11 +269,23 @@ void testOnlyFromThisLan()
     forwarded.headers.insert(QStringLiteral("x-forwarded-for"), QStringLiteral("198.51.100.9"));
     CHECK_EQ(error(s.send(forwarded)), QStringLiteral("lan_only"));
 
-    // This machine itself, under its own name.
+    // This machine itself, under its own name; under no name at all, it is not.
     HttpRequest local = d.ask();
     local.clientAddress = QStringLiteral("127.0.0.1");
     local.headers.insert(QStringLiteral("host"), QStringLiteral("localhost:8443"));
     CHECK_EQ(s.send(local).statusCode, 200);
+    HttpRequest unnamed = Device().ask();
+    unnamed.clientAddress = QStringLiteral("127.0.0.1");
+    unnamed.headers.insert(QStringLiteral("host"), QString());
+    CHECK_EQ(error(s.send(unnamed)), QStringLiteral("lan_only"));
+
+    // A LAN peer passing a request along, whatever its header says: its sender
+    // may stand anywhere.
+    for (const char* header : {"x-forwarded-for", "forwarded", "cf-connecting-ip", "via"}) {
+        HttpRequest relayed = Device().ask();
+        relayed.headers.insert(QString::fromLatin1(header), QStringLiteral("192.168.1.80"));
+        CHECK_EQ(error(s.send(relayed)), QStringLiteral("lan_only"));
+    }
 
     // On a line: the address ICE settled on, and the request for the line's key.
     HttpRequest line = d.ask();
@@ -853,6 +865,14 @@ void testOffALineTheHouseAnswersUnderALocalName()
     // Under an mDNS name, or this host's private address: the house.
     seen.headers.insert(QStringLiteral("host"), QStringLiteral("dualrtx.local:8443"));
     CHECK_EQ(s.send(seen).statusCode, 200);
+
+    // Passed along by another machine on this LAN: not the house, whatever
+    // the proxy's header says.
+    for (const char* header : {"x-forwarded-for", "forwarded", "cf-connecting-ip", "via"}) {
+        HttpRequest relayed = m.yes(s, d, code);
+        relayed.headers.insert(QString::fromLatin1(header), QStringLiteral("1.1 relay"));
+        CHECK_EQ(error(s.send(relayed)), QStringLiteral("not_allowed"));
+    }
 
     // On a line, the public domain changes nothing: ICE says where it stands.
     HttpRequest line = m.yes(s, d, code);
