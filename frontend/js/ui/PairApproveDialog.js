@@ -93,6 +93,7 @@ function problemText(err) {
     const error = err?.responseBody?.error || '';
     if (status === 404 || status === 410) return t('devicePairing.gone');
     if (error === 'not_allowed') return t('devicePairing.notAllowed');
+    if (error === 'temporary_session') return t('devicePairing.temporary');
     if (error === 'bad_signature') return t('devicePairing.noKey');
     if (error === 'too_many_tries') return t('devicePairing.tooManyTries');
     if (error === 'admin_locked') return t('devicePairing.locked');
@@ -173,7 +174,7 @@ export function openPairApprove(id, opts = {}) {
             setButtons(false);
             try {
                 if (yes) await BackendClient.approvePairRequest(id, code, request.host_id);
-                else await BackendClient.refusePairRequest(id);
+                else await BackendClient.refusePairRequest(id, request.host_id);
                 outcome = yes ? 'approved' : 'refused';
                 closeWith(
                     yes

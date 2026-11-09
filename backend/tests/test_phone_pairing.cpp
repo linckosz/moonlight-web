@@ -121,6 +121,11 @@ void testTheVectorThePageShares()
                         "0000000b686f73742d6b65792d6964"
                         "000000104162436445664768496a4b6c4d6e4f70"
                         "00000004484a4453"));
+    // The refusal, framed the same way without a code (pairRefusalMessage).
+    CHECK_EQ(PhonePairing::refuseMessage(kHostId, id).toHex(),
+             QByteArray("000000114d572d504149522d76317c726566757365"
+                        "0000000b686f73742d6b65792d6964"
+                        "000000104162436445664768496a4b6c4d6e4f70"));
 }
 
 void testWhatEachSignatureIsFor()

@@ -518,6 +518,29 @@ export async function signPairApproval(identity, hostId, requestId, code) {
 }
 
 /**
+ * The bytes this page signs to turn a device away (PhonePairing::refuseMessage):
+ * the approval's framing, for that request on that host, without a code.
+ */
+export function pairRefusalMessage(hostId, requestId) {
+    return buildSignedMessage(['MW-PAIR-v1|refuse', hostId || '', requestId]);
+}
+
+/**
+ * Sign this page's no to a device that asks in by its QR code, as a yes is
+ * signed (signPairApproval). Returns the base64 signature, or null.
+ */
+export async function signPairRefusal(identity, hostId, requestId) {
+    try {
+        const signed = pairRefusalMessage(identity.hostId || hostId, requestId);
+        const sig = await crypto.subtle.sign(SIGN_PARAMS, identity.privateKey, signed);
+        return bytesToBase64(new Uint8Array(sig));
+    } catch (e) {
+        console.error('[MW-PAIR] Could not sign the refusal:', e.message);
+        return null;
+    }
+}
+
+/**
  * The single sha-256 fingerprint an SDP commits to, uppercase hex with colons,
  * or null.
  *

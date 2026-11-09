@@ -88,6 +88,11 @@ QByteArray PhonePairing::approveMessage(const QString& hostId, const QString& id
         {label("approve"), hostId.toUtf8(), id.toUtf8(), code.toUtf8()});
 }
 
+QByteArray PhonePairing::refuseMessage(const QString& hostId, const QString& id)
+{
+    return PairingCrypto::buildSignedMessage({label("refuse"), hostId.toUtf8(), id.toUtf8()});
+}
+
 QString PhonePairing::normalizeCode(const QString& typed)
 {
     QString out;

@@ -79,6 +79,7 @@ import {
     loadOrCreateIdentity,
     rememberHostIdentity,
     signPairApproval,
+    signPairRefusal,
     signShareOwnerProof,
 } from '../util/pairingCrypto.js';
 import {
@@ -868,9 +869,13 @@ export class BackendClient {
         });
     }
 
-    /** Turn that device away. */
-    static async refusePairRequest(id) {
-        return this.post(`/api/auth/pair-request/${encodeURIComponent(id)}/refuse`);
+    /** Turn that device away, signed as a yes is. */
+    static async refusePairRequest(id, hostId) {
+        const identity = await loadOrCreateIdentity();
+        const sig = identity ? await signPairRefusal(identity, hostId, id) : null;
+        return this.post(`/api/auth/pair-request/${encodeURIComponent(id)}/refuse`, {
+            sig: sig || undefined,
+        });
     }
 
     /** Spend the remote admin password to give this (already authenticated)

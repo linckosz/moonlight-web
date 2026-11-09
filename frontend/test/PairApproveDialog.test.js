@@ -132,7 +132,7 @@ describe('PairApproveDialog', () => {
         expect($('.pair-approve')).not.toBeNull();
         $('[data-refuse]').click();
         await settle();
-        expect(BackendClient.refusePairRequest).toHaveBeenCalledWith(ID);
+        expect(BackendClient.refusePairRequest).toHaveBeenCalledWith(ID, 'host-key-id');
         $('[data-close]').click();
         await expect(closed).resolves.toBe('refused');
     });
@@ -169,6 +169,15 @@ describe('PairApproveDialog', () => {
         $('[data-approve]').click();
         await settle();
         expect($('.pair-approve-body').textContent).toBe('devicePairing.noKey');
+
+        document.body.innerHTML = '';
+        BackendClient.approvePairRequest.mockRejectedValue(refusal(403, 'temporary_session'));
+        openPairApprove(ID, { stepMs: 1 });
+        await settle();
+        type('HJDS');
+        $('[data-approve]').click();
+        await settle();
+        expect($('.pair-approve-body').textContent).toBe('devicePairing.temporary');
     });
 
     it('says where a request from outside the network comes from, nothing more for one from it', async () => {

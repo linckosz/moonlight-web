@@ -681,11 +681,154 @@ void testAPairedSessionOnThisLanAnswersToo()
     CHECK_EQ(s.auth->sessionForToken(cookieOf(paired)).approvedBy,
              s.auth->sessionIdForToken(member));
 
-    // It may say no as well.
+    // It may say no as well, signed as a yes is.
     Device other;
     askAndReveal(s, other);
     HttpRequest no = asMember(fromTv("POST", "/api/auth/pair-request/" + other.id + "/refuse"));
+    CHECK_EQ(error(s.send(no)), QStringLiteral("bad_signature"));
+    const QByteArray noSig =
+        PairingCrypto::sign(pem, PhonePairing::refuseMessage(s.hostId(), other.id));
+    no.body = QJsonDocument(QJsonObject{{"sig", b64(noSig)}}).toJson(QJsonDocument::Compact);
     CHECK_EQ(s.send(no).statusCode, 200);
+
+    // A session with no key of its own, even on a line ICE put on this LAN: no.
+    const QString keyless = s.auth->createSession(kPhone, "Old laptop");
+    HttpRequest bare = fromTv("GET", path);
+    bare.viaTunnel = true;
+    bare.hostTrusted = false;
+    bare.clientAddress = kPhone;
+    bare.headers.insert(QStringLiteral("cookie"), "mw_session=" + keyless);
+    CHECK_EQ(error(s.send(bare)), QStringLiteral("not_allowed"));
+}
+
+/// A member of the house, its key bound, for the sections below.
+struct Member
+{
+    QByteArray pem = PairingCrypto::generatePrivateKeyPem();
+    QString token;
+
+    Member(Server& s, const QString& name, bool ephemeral = false)
+    {
+        token = s.auth->createSession(kPhone, name, false, ephemeral);
+        CHECK(s.auth->bindSessionKey(token, PairingCrypto::publicKeySpkiFromPrivatePem(pem)));
+    }
+
+    HttpRequest get(const QString& id) const
+    {
+        HttpRequest req = fromTv("GET", "/api/auth/pair-request/" + id);
+        req.headers.insert(QStringLiteral("cookie"), "mw_session=" + token);
+        return req;
+    }
+
+    HttpRequest yes(Server& s, const Device& d, const QString& code) const
+    {
+        HttpRequest req = approval(d, code);
+        req.isLocal = false;
+        req.headers.insert(QStringLiteral("cookie"), "mw_session=" + token);
+        const QByteArray sig =
+            PairingCrypto::sign(pem, PhonePairing::approveMessage(s.hostId(), d.id, code));
+        req.body = QJsonDocument(QJsonObject{{"code", code}, {"sig", b64(sig)}})
+                       .toJson(QJsonDocument::Compact);
+        return req;
+    }
+};
+
+void testTheHouseAnswersTheHouseOnly()
+{
+    SECTION("pair-request routes: a request from elsewhere stays the administrator's alone");
+    Server s;
+    CHECK(s.setInternetRequests(true));
+    Device far;
+    far.address = QStringLiteral("203.0.113.5");
+    const QString code = askAndReveal(s, far);
+    const Member m(s, "Kitchen phone");
+
+    // To a member of the house, it is a request it may not see: neither its
+    // name, nor its address, nor where that is.
+    const HttpResponse seen = s.send(m.get(far.id));
+    CHECK_EQ(error(seen), QStringLiteral("not_allowed"));
+    CHECK(!json(seen).contains("address"));
+    CHECK_EQ(error(s.send(m.yes(s, far, code))), QStringLiteral("not_allowed"));
+    HttpRequest no = m.get(far.id);
+    no.method = QStringLiteral("POST");
+    no.path += QStringLiteral("/refuse");
+    CHECK_EQ(error(s.send(no)), QStringLiteral("not_allowed"));
+
+    // The administrator sees where it comes from, and answers.
+    const HttpResponse admin = s.send(fromAdmin("GET", "/api/auth/pair-request/" + far.id));
+    CHECK_EQ(json(admin).value("origin").toString(), QStringLiteral("internet"));
+    CHECK_EQ(json(admin).value("address").toString(), QStringLiteral("203.0.113.5"));
+    CHECK_EQ(s.send(approval(far, code)).statusCode, 200);
+}
+
+void testATemporarySessionLetsNoDeviceIn()
+{
+    SECTION("pair-request routes: a session kept without \"remember me\" lets no device in");
+    Server s;
+    Device d;
+    const QString code = askAndReveal(s, d);
+
+    // A member of the house, signed in for this visit only: it sees, it may
+    // say no, but not yes.
+    const Member visit(s, "Visitor's phone", /*ephemeral=*/true);
+    CHECK_EQ(s.send(visit.get(d.id)).statusCode, 200);
+    CHECK_EQ(error(s.send(visit.yes(s, d, code))), QStringLiteral("temporary_session"));
+
+    // The administrator's own temporary session neither.
+    HttpRequest admin = approval(d, code, visit.token);
+    CHECK_EQ(error(s.send(admin)), QStringLiteral("temporary_session"));
+
+    // The machine itself, with no session at all, still does.
+    CHECK_EQ(s.send(approval(d, code)).statusCode, 200);
+    CHECK_EQ(json(s.send(d.claim(s.hostId()))).value("state").toString(), QStringLiteral("paired"));
+}
+
+void testAChainOfApproversGoesAsOne()
+{
+    SECTION("pair-request routes: a device let in by a device goes with the first one");
+    Server s;
+    const Member m(s, "Kitchen phone");
+
+    // The phone lets the first TV in; that TV, a paired session of the house
+    // with its own key, lets the second one in.
+    Device first;
+    const QString firstCode = askAndReveal(s, first);
+    CHECK_EQ(s.send(m.yes(s, first, firstCode)).statusCode, 200);
+    const QString firstTv = cookieOf(s.send(first.claim(s.hostId())));
+    CHECK(s.auth->validateSession(firstTv));
+
+    Device second;
+    second.address = QStringLiteral("192.168.1.177");
+    const QString secondCode = askAndReveal(s, second);
+    HttpRequest yes = approval(second, secondCode);
+    yes.isLocal = false;
+    yes.clientAddress = kTv;
+    yes.headers.insert(QStringLiteral("cookie"), "mw_session=" + firstTv);
+    const QByteArray sig = PairingCrypto::sign(
+        first.pem, PhonePairing::approveMessage(s.hostId(), second.id, secondCode));
+    yes.body = QJsonDocument(QJsonObject{{"code", secondCode}, {"sig", b64(sig)}})
+                   .toJson(QJsonDocument::Compact);
+    CHECK_EQ(s.send(yes).statusCode, 200);
+    const QString secondTv = cookieOf(s.send(second.claim(s.hostId())));
+    CHECK(s.auth->validateSession(secondTv));
+    CHECK_EQ(s.auth->sessionForToken(secondTv).approvedBy, s.auth->sessionIdForToken(firstTv));
+
+    // The phone revoked: both TVs go with it.
+    s.auth->destroySession(s.auth->sessionIdForToken(m.token));
+    CHECK(!s.auth->validateSession(firstTv));
+    CHECK(!s.auth->validateSession(secondTv));
+}
+
+void testAPlayerCookieIsNoSession()
+{
+    SECTION("pair-request routes: a guest's player cookie answers nothing");
+    Server s;
+    Device d;
+    askAndReveal(s, d);
+    HttpRequest get = fromTv("GET", "/api/auth/pair-request/" + d.id);
+    get.headers.insert(QStringLiteral("cookie"), QStringLiteral("mw_player=guest-cookie"));
+    CHECK_EQ(s.send(get).statusCode, 401);
+    CHECK_EQ(s.guarded.size(), 1);
 }
 
 void testTheCodeIsTypedAndSigned()
@@ -910,6 +1053,10 @@ void run_pair_request_routes_tests()
     testEachLineCallerCountsOnItsOwn();
     testOnlyTheAdministratorAnswers();
     testAPairedSessionOnThisLanAnswersToo();
+    testTheHouseAnswersTheHouseOnly();
+    testATemporarySessionLetsNoDeviceIn();
+    testAChainOfApproversGoesAsOne();
+    testAPlayerCookieIsNoSession();
     testTheCodeIsTypedAndSigned();
     testThisMachineNeedsNoSignature();
     testALostAnswerIsAskedAgain();

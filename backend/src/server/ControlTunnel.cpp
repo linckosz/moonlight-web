@@ -299,8 +299,11 @@ QString ControlTunnel::peerAddress(const Peer& p) const
     // told us — it is where our own stack is sending packets — which makes it
     // the one trustworthy statement about where this peer sits, and it is what
     // lets a browser on the same LAN keep its direct path when it launches a
-    // stream. It never grants privilege: serveRequest() shuts the local
-    // exemption for every tunnel arrival regardless of what this returns.
+    // stream. It grants no admin right: serveRequest() shuts the local
+    // exemption for every tunnel arrival regardless of what this returns. It
+    // does place a caller on this LAN for the rules that ask where one is
+    // (AuthManager::fromThisLan): the remote admin unlock, a device asking by
+    // its QR code, and a paired session answering such a request.
     if (!p.pc) return peerLabel(p.sessionId);
     try {
         rtc::Candidate local;

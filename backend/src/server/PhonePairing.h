@@ -144,6 +144,8 @@ public:
 
     /// What the approving page signs with its session's key: the code it sends.
     static QByteArray approveMessage(const QString& hostId, const QString& id, const QString& code);
+    /// What a session signs to turn a device away: approveMessage's framing, without a code.
+    static QByteArray refuseMessage(const QString& hostId, const QString& id);
 
     /// A code as a person types it: spaces and dashes dropped, upper case, and
     /// the letters Crockford's base32 reads as digits (O as 0, I and L as 1).
