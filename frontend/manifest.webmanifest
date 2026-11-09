@@ -6,6 +6,7 @@
     "scope": "/",
     "display": "fullscreen",
     "display_override": ["fullscreen", "standalone"],
+    "launch_handler": { "client_mode": ["navigate-existing", "auto"] },
     "orientation": "landscape",
     "background_color": "#05080b",
     "theme_color": "#05080b",

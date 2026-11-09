@@ -32,6 +32,7 @@ void run_home_screen_shell_tests()
         "short_name": "MoonlightWeb",
         "start_url": "/",
         "scope": "/",
+        "launch_handler": { "client_mode": ["navigate-existing", "auto"] },
         "icons": [
             { "src": "assets/icon-192.png", "sizes": "192x192" },
             { "src": "assets/icon-512.png", "sizes": "512x512" }
@@ -53,6 +54,10 @@ void run_home_screen_shell_tests()
         CHECK_EQ(m["id"].toString(), "/" + id);
         // The scope stays the origin: the entry page hands over to "/".
         CHECK_EQ(m["scope"].toString(), QString("/"));
+        // An installed application opened from a link (a TV's QR code) takes the
+        // window it already has, where the browser allows it, not a second one.
+        CHECK_EQ(m["launch_handler"].toObject()["client_mode"].toArray().at(0).toString(),
+                 QString("navigate-existing"));
         const QJsonArray icons = m["icons"].toArray();
         CHECK_EQ(icons.at(0).toObject()["src"].toString(),
                  "data:image/png;base64," + QString::fromLatin1(QByteArray("P192").toBase64()));
