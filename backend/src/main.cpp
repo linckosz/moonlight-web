@@ -6868,6 +6868,20 @@ int main(int argc, char* argv[])
              if (city.isEmpty())
                  geoIpService.lookupIp(address, [](const QString&, const QString&) {});
              return city;
+         },
+         []() {
+             // Read on every answer: a cable plugged in or a Wi-Fi joined since
+             // the start counts at once.
+             QList<QPair<QHostAddress, int>> subnets;
+             for (const QNetworkInterface& i : QNetworkInterface::allInterfaces()) {
+                 const auto flags = i.flags();
+                 if (!flags.testFlag(QNetworkInterface::IsUp) ||
+                     flags.testFlag(QNetworkInterface::IsLoopBack))
+                     continue;
+                 for (const QNetworkAddressEntry& e : i.addressEntries())
+                     if (e.prefixLength() > 0) subnets.append({e.ip(), e.prefixLength()});
+             }
+             return subnets;
          }});
 
     // ── The application, carried to a browser that cannot reach us ───────────

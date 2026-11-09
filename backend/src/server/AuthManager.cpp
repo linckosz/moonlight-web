@@ -207,6 +207,24 @@ void AuthManager::loadSessions()
 
     Logger::info(
         QString("[AuthManager] Loaded %1 sessions (%2 expired, dropped)").arg(loaded).arg(skipped));
+    keepDevicesOfEndedApprovers();
+}
+
+int AuthManager::keepDevicesOfEndedApprovers()
+{
+    // A device let in by a session that ran out of time stays: it is the
+    // administrator's to revoke from now on, like a device paired with the PIN.
+    // Only a revocation (destroySession) takes the devices along.
+    int kept = 0;
+    for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
+        if (it->approvedBy.isEmpty() || m_sessions.contains(it->approvedBy)) continue;
+        it->approvedBy.clear();
+        kept++;
+    }
+    if (kept > 0)
+        Logger::info(
+            QString("[Auth] %1 device(s) kept after the session that let them in ended").arg(kept));
+    return kept;
 }
 
 QString AuthManager::generatePin()
@@ -1101,6 +1119,7 @@ void AuthManager::purgeExpiredSessions()
         }
     }
     if (removed > 0) {
+        keepDevicesOfEndedApprovers();
         saveSessions();
         emit sessionsChanged();
         Logger::info(QString("[Auth] Purged %1 expired session(s)").arg(removed));

@@ -421,7 +421,7 @@
         "refused": "Refused. The device was told.",
         "gone": "This request has expired or was already answered. Show a new code on the device.",
         "tooManyTries": "Wrong code too many times: the request was refused. Show a new code on the device, then scan it again.",
-        "notAllowed": "From outside this server's network, only its administrator can let a new device in. Join the same Wi-Fi as the server and scan the code again, or unlock the administration with its password.",
+        "notAllowed": "Scan the QR code from a device on the same network as the server, or from the internet as the administrator.",
         "temporary": "This browser is not kept signed in: it cannot let a device in. Sign in again with “Keep me signed in on this device” ticked, then scan the code again.",
         "noKey": "This browser has lost its pairing key for this server. Sign in again with the PIN, then scan the code again.",
         "locked": "This server lets no new device in.",

@@ -421,7 +421,7 @@
         "refused": "Refusé. L'appareil a été prévenu.",
         "gone": "Cette demande a expiré ou a déjà reçu une réponse. Affichez un nouveau code sur l'appareil.",
         "tooManyTries": "Code erroné trop de fois : la demande a été refusée. Affichez un nouveau code sur l'appareil, puis scannez-le à nouveau.",
-        "notAllowed": "Depuis l'extérieur du réseau de ce serveur, seul son administrateur peut faire entrer un nouvel appareil. Rejoignez le même Wi-Fi que le serveur et scannez à nouveau le code, ou déverrouillez l'administration avec son mot de passe.",
+        "notAllowed": "Scannez le QR code depuis un appareil sur le même réseau que le serveur, ou depuis Internet en tant qu'administrateur.",
         "temporary": "Ce navigateur ne reste pas connecté : il ne peut pas faire entrer un appareil. Reconnectez-vous en cochant « Rester connecté sur cet appareil », puis scannez à nouveau le code.",
         "noKey": "Ce navigateur a perdu sa clé d'appairage pour ce serveur. Reconnectez-vous avec le PIN, puis scannez à nouveau le code.",
         "locked": "Ce serveur ne laisse entrer aucun nouvel appareil.",

@@ -20,7 +20,10 @@
 #include "common/Types.h"
 
 #include <QByteArray>
+#include <QHostAddress>
 #include <QJsonObject>
+#include <QList>
+#include <QPair>
 #include <QString>
 
 #include <functional>
@@ -56,6 +59,10 @@ struct PairRequestDeps
     /// does not know yet; a lookup is started then (GeoIpService). Asked only
     /// while locationAllowed says yes. May be empty.
     std::function<QString(const QString& address)> cityOf;
+    /// This host's own links: each interface address with its prefix length,
+    /// loopback left out (QNetworkInterface). Where a paired session must stand
+    /// to answer a device without the administrator's right. Empty: nowhere.
+    std::function<QList<QPair<QHostAddress, int>>()> localSubnets;
 };
 
 /// Register /api/auth/pair-request…: a device paired from the QR code it shows,

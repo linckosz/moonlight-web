@@ -64,6 +64,35 @@ struct Context
     PhonePairing book;
 };
 
+/// Whether @p address sits on one of this host's own links: inside the prefix of
+/// one of its interfaces, an IPv6 address inside that interface's /64. A
+/// public IPv6 address counts on a line only, where ICE found it.
+bool onThisHostsLink(const Context& c, const QString& address, bool line)
+{
+    QHostAddress a(AuthManager::cleanClientAddress(address));
+    bool mapped = false;
+    const quint32 v4 = a.toIPv4Address(&mapped);
+    if (mapped) a = QHostAddress(v4);
+    if (a.isNull() || a.isLoopback() || !c.deps.localSubnets) return false;
+    const bool v6 = a.protocol() == QAbstractSocket::IPv6Protocol;
+    if (v6 && !line && !a.isLinkLocal() && !a.isUniqueLocalUnicast()) return false;
+    const QList<QPair<QHostAddress, int>> subnets = c.deps.localSubnets();
+    for (const auto& net : subnets) {
+        if (net.first.protocol() != a.protocol()) continue;
+        if (a.isInSubnet(net.first, v6 ? 64 : net.second)) return true;
+    }
+    return false;
+}
+
+/// Where a paired session stands to answer without the administrator's right:
+/// this LAN as AuthManager::fromThisLan judges it, on one of this host's links.
+bool fromThisHousesLink(const Context& c, const HttpRequest& req)
+{
+    if (req.viaTunnel) return onThisHostsLink(c, req.clientAddress, true);
+    return AuthManager::fromThisLan(req) &&
+           onThisHostsLink(c, AuthManager::attemptAddress(req.clientAddress, req.headers), false);
+}
+
 /// Who may answer a device's request, and with what reach.
 struct Answerer
 {
@@ -74,9 +103,10 @@ struct Answerer
 /// Who answers a device. The administrator, with the right that mints a PIN
 /// (HttpRequest::isLocal: this machine, a host-key session, or a session that
 /// unlocked the admin password), from anywhere, for every request. And, from
-/// this LAN as AuthManager::fromThisLan judges it (ICE's address on a line,
-/// never a header), a paired session that signs its answers with its own
-/// pairing key, for the requests made from this LAN only (hiddenFromAnswerer):
+/// one of this host's links (fromThisHousesLink: ICE's address on a line, the
+/// socket's otherwise, never a header), a paired session that signs its answers
+/// with its own pairing key, for the requests made from this LAN only
+/// (hiddenFromAnswerer):
 /// someone in the house lets in a device of the house. A guest holds a player
 /// cookie, not a session, and --noadmin closes these routes before they run.
 /// Anyone else is turned away before the request is looked at: a session with
@@ -86,7 +116,7 @@ Answerer answererOf(Context& c, const HttpRequest& req)
     if (req.isLocal) return {std::nullopt, true};
     const QString token = c.deps.sessionToken(req);
     if (c.auth.validateSession(token)) {
-        if (AuthManager::fromThisLan(req) && !c.auth.sessionPairingKey(token).isEmpty())
+        if (fromThisHousesLink(c, req) && !c.auth.sessionPairingKey(token).isEmpty())
             return {std::nullopt, false};
         return {refusal(403, "not_allowed"), false};
     }

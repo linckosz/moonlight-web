@@ -295,6 +295,9 @@ public:
     void destroyAllSessions();
     /** Drop sessions inactive beyond SESSION_TTL_SECS. Called periodically. */
     void purgeExpiredSessions();
+    /// A session whose approver is gone by expiry, not by revocation, keeps
+    /// going without one, the administrator's to revoke: returns how many.
+    int keepDevicesOfEndedApprovers();
 
     /** Store geolocation data for a session after async lookup completes. */
     void setSessionGeo(const QString& token, const QString& city, const QString& country);

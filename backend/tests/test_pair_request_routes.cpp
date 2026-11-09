@@ -9,10 +9,13 @@
 #include "server/RestRouter.h"
 #include "server/routes/PairRequestRoutes.h"
 
+#include <QFile>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QList>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QTemporaryDir>
 
@@ -72,6 +75,13 @@ struct Server
              [this](const QString& address) {
                  placed.append(address);
                  return cities.value(address);
+             },
+             []() {
+                 // This host's links: the house's /24, its /64, and the link-local one.
+                 return QList<QPair<QHostAddress, int>>{
+                     {QHostAddress(QStringLiteral("192.168.1.66")), 24},
+                     {QHostAddress(QStringLiteral("2001:db8:1:2::66")), 64},
+                     {QHostAddress(QStringLiteral("fe80::66")), 64}};
              }});
     }
 
@@ -665,6 +675,22 @@ void testAPairedSessionOnThisLanAnswersToo()
     CHECK_EQ(error(s.send(untrusted)), QStringLiteral("not_allowed"));
     CHECK_EQ(s.guarded.size(), 0);
 
+    // Off this host's links, private or not: no.
+    line.clientAddress = QStringLiteral("10.0.0.5");
+    CHECK_EQ(error(s.send(line)), QStringLiteral("not_allowed"));
+    line.clientAddress = QStringLiteral("2001:db8:1:3::50");
+    CHECK_EQ(error(s.send(line)), QStringLiteral("not_allowed"));
+    HttpRequest otherLan = asMember(fromTv("GET", path));
+    otherLan.clientAddress = QStringLiteral("10.0.0.5");
+    CHECK_EQ(error(s.send(otherLan)), QStringLiteral("not_allowed"));
+    // A public IPv6 address in this host's /64: on a line, where ICE found it,
+    // yes; on a socket, no.
+    line.clientAddress = QStringLiteral("2001:db8:1:2::50");
+    CHECK_EQ(s.send(line).statusCode, 200);
+    HttpRequest sameV6 = asMember(fromTv("GET", path));
+    sameV6.clientAddress = QStringLiteral("2001:db8:1:2::50");
+    CHECK_EQ(error(s.send(sameV6)), QStringLiteral("not_allowed"));
+
     // On a line that ICE put on this LAN, as the phone that scanned the QR code is.
     line.clientAddress = kPhone;
     const HttpResponse seen = s.send(line);
@@ -817,6 +843,45 @@ void testAChainOfApproversGoesAsOne()
     s.auth->destroySession(s.auth->sessionIdForToken(m.token));
     CHECK(!s.auth->validateSession(firstTv));
     CHECK(!s.auth->validateSession(secondTv));
+}
+
+void testADeviceOutlivesAnApproverThatRanOut()
+{
+    SECTION("pair-request routes: the approver's time runs out, the device stays");
+    Server s;
+    const Member m(s, "Kitchen phone");
+    Device d;
+    const QString code = askAndReveal(s, d);
+    CHECK_EQ(s.send(m.yes(s, d, code)).statusCode, 200);
+    const QString tv = cookieOf(s.send(d.claim(s.hostId())));
+    CHECK(s.auth->validateSession(tv));
+
+    // The phone's session last seen long ago, as the server finds it after a
+    // restart: dropped at load, and the TV kept, now the administrator's.
+    s.auth->saveSessions();
+    const QString path =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/sessions.json";
+    QFile file(path);
+    CHECK(file.open(QIODevice::ReadOnly));
+    QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    QJsonArray sessions = root.value("sessions").toArray();
+    file.close();
+    const QString phoneId = s.auth->sessionIdForToken(m.token);
+    for (qsizetype i = 0; i < sessions.size(); ++i) {
+        QJsonObject o = sessions.at(i).toObject();
+        if (o.value("token").toString() != phoneId) continue;
+        o["created_at"] = 1'000'000'000;
+        o["last_seen"] = 1'000'000'000;
+        sessions[i] = o;
+    }
+    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    root["sessions"] = sessions;
+    file.write(QJsonDocument(root).toJson());
+    file.close();
+    s.auth->loadSessions();
+    CHECK(!s.auth->validateSession(m.token));
+    CHECK(s.auth->validateSession(tv));
+    CHECK(s.auth->sessionForToken(tv).approvedBy.isEmpty());
 }
 
 void testAPlayerCookieIsNoSession()
@@ -1056,6 +1121,7 @@ void run_pair_request_routes_tests()
     testTheHouseAnswersTheHouseOnly();
     testATemporarySessionLetsNoDeviceIn();
     testAChainOfApproversGoesAsOne();
+    testADeviceOutlivesAnApproverThatRanOut();
     testAPlayerCookieIsNoSession();
     testTheCodeIsTypedAndSigned();
     testThisMachineNeedsNoSignature();
