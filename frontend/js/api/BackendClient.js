@@ -211,10 +211,32 @@ export class BackendClient {
         }
     }
 
-    static async get(path) {
-        const resp = await fetch(path);
-        if (!resp.ok) return this._handleError(resp, path);
-        return this._json(resp);
+    static async get(path, { timeoutMs = 0 } = {}) {
+        // Without a timeout a GET carries no init at all, as it always has.
+        if (!(timeoutMs > 0) || typeof AbortController === 'undefined') {
+            const resp = await fetch(path);
+            if (!resp.ok) return this._handleError(resp, path);
+            return this._json(resp);
+        }
+        // A request to a server that went away without closing the socket can
+        // stay pending for good; the caller would wait on it forever.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const resp = await fetch(path, { signal: controller.signal });
+            if (!resp.ok) return this._handleError(resp, path);
+            return await this._json(resp);
+        } catch (err) {
+            if (err && err.name === 'AbortError') {
+                const e = /** @type {BackendError} */ (new Error('server_timeout'));
+                e.statusCode = 0;
+                e.aborted = true;
+                throw e;
+            }
+            throw err;
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     static async post(path, body = {}, { timeoutMs = 0, _retried = false } = {}) {
@@ -942,21 +964,44 @@ export class BackendClient {
 
     /** Progress of the running update: { state, percent, version, error,
      *  requires_host_confirmation }. Stops answering once the installer takes the
-     *  server down — that is the expected end of the polling loop. */
-    static async getUpdateStatus() {
-        return this.get('/api/update/status');
+     *  server down — that is the expected end of the polling loop. `timeoutMs`
+     *  bounds one request, so a server gone without closing the socket ends the
+     *  loop too instead of leaving it waiting on a request that never settles. */
+    static async getUpdateStatus({ timeoutMs = 0 } = {}) {
+        return this.get('/api/update/status', { timeoutMs });
     }
 
     /** Liveness + version probe, used to detect the host coming back up after an
      *  update. Raw fetch on purpose: the shared error path would reload the page
      *  on the 401/connection failures that are normal while the server restarts. */
     static async probeHealth() {
+        return (await this.probeHealthOutcome()).health;
+    }
+
+    /** probeHealth with the reason it got nothing: `{ health }` on an answer,
+     *  `{ health: null, network: true }` when no HTTP answer came back at all
+     *  (server down, or a certificate the browser no longer accepts — the page
+     *  cannot tell those apart), `{ health: null, network: false }` on an HTTP
+     *  error. Bounded by `timeoutMs`; running out counts as a network failure. */
+    static async probeHealthOutcome({ timeoutMs = 5000 } = {}) {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        let resp;
         try {
-            const resp = await fetch('/api/health', { cache: 'no-store' });
-            if (!resp.ok) return null;
-            return await resp.json();
+            resp = await fetch('/api/health', {
+                cache: 'no-store',
+                signal: controller ? controller.signal : undefined,
+            });
         } catch (_) {
-            return null;
+            return { health: null, network: true };
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+        if (!resp.ok) return { health: null, network: false };
+        try {
+            return { health: await resp.json(), network: false };
+        } catch (_) {
+            return { health: null, network: false };
         }
     }
 

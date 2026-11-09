@@ -86,9 +86,29 @@ export function canSelfUpdate(info, hosts) {
  *   { state: 'failed', message }            — until a page clears it
  *   null                                    — nothing under way
  */
-class HostUpdateRun {
+export class HostUpdateRun {
+    /**
+     * Phase 1: one status request may take this long before the host counts as
+     * gone. A server killed without closing the socket leaves the request
+     * pending for good, and the page with it.
+     */
+    static STATUS_TIMEOUT_MS = 5000;
+
+    /**
+     * Phase 2: after this long without any HTTP answer, reload the whole page.
+     * A host that comes back with a certificate the browser has not accepted
+     * fails every background request without a word, exactly like a host still
+     * down — only a navigation shows the warning that lets the user accept it.
+     * Longer than a normal install, so a slow one is not cut short.
+     */
+    static NETWORK_RELOAD_MS = 90 * 1000;
+
     constructor() {
         this.busy = false;
+        // Seams for tests: time, waiting and the reload itself.
+        this._now = () => Date.now();
+        this._sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        this._reload = () => location.reload();
         this._listeners = new Set();
         this._view = null;
         this._label = '';
@@ -151,7 +171,8 @@ class HostUpdateRun {
      * answer /api/health and reloads the app on it.
      */
     async _watch(info) {
-        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const sleep = this._sleep;
+        const now = this._now;
 
         // Phase 1 — the host is still answering. Bounded: on the platforms whose
         // installer needs a prompt on the host desktop, nothing kills this server
@@ -160,15 +181,17 @@ class HostUpdateRun {
         // prompt, 3 without), so that what it reports — "failed", with its
         // reason — is what this page shows, rather than a guess made first.
         // Counted from the end of the download, as the host's is.
-        let startedAt = Date.now();
+        let startedAt = now();
         let budgetMs = 4 * 60 * 1000;
-        const hardStop = Date.now() + 30 * 60 * 1000; // a download that never ends
+        const hardStop = now() + 30 * 60 * 1000; // a download that never ends
         let alive = true;
-        while (Date.now() - startedAt < budgetMs && Date.now() < hardStop && alive) {
+        while (now() - startedAt < budgetMs && now() < hardStop && alive) {
             await sleep(900);
             let status;
             try {
-                status = await BackendClient.getUpdateStatus();
+                status = await BackendClient.getUpdateStatus({
+                    timeoutMs: HostUpdateRun.STATUS_TIMEOUT_MS,
+                });
             } catch (_) {
                 alive = false; // server gone: the installer took it down
                 break;
@@ -184,7 +207,7 @@ class HostUpdateRun {
                 alive = false;
                 break;
             }
-            if (status.state === 'downloading') startedAt = Date.now();
+            if (status.state === 'downloading') startedAt = now();
             if (status.requires_host_confirmation) budgetMs = 16 * 60 * 1000;
             this._progress(status);
         }
@@ -201,9 +224,28 @@ class HostUpdateRun {
         // from wherever phase 1 left it — no jump to a fixed 98 % that would
         // then sit still for the whole restart.
         this._progress({ state: 'finalizing', percent: 0 });
+        // Since when nothing at all has answered (no HTTP status, not even an
+        // error page); null while answers come back.
+        let silentSince = null;
         for (let i = 0; i < 200; i++) {
             await sleep(3000);
-            const health = await BackendClient.probeHealth();
+            const outcome = await BackendClient.probeHealthOutcome();
+            const health = outcome.health;
+            if (outcome.network) {
+                if (silentSince === null) silentSince = now();
+                if (now() - silentSince >= HostUpdateRun.NETWORK_RELOAD_MS) {
+                    // A navigation: either the new build loads, or the browser
+                    // shows the certificate warning the background requests
+                    // could not. Through the rendezvous, the pending note has
+                    // the entry page wait for a host still down; on the LAN a
+                    // host still down shows the browser's own error page.
+                    this._stopAnimation();
+                    this._reload();
+                    return;
+                }
+            } else {
+                silentSince = null;
+            }
             // Wait for a version that is no longer the one we started from. The
             // old server can keep answering for a few seconds (or phase 1 may
             // have broken on a transient error), and reloading onto it would
@@ -214,7 +256,7 @@ class HostUpdateRun {
                 // should be a full bar, not one frozen at 96 %.
                 this._stopAnimation();
                 this._emit({ state: 'progress', label: this._label, percent: 100 });
-                location.reload();
+                this._reload();
                 return;
             }
         }

@@ -638,4 +638,77 @@ describe('BackendClient best-effort probes', () => {
         vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('failed to fetch')));
         await expect(BackendClient.probeHealth()).resolves.toBeNull();
     });
+
+    it('probeHealthOutcome tells no answer at all from an HTTP error', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ version: '0.4.3' })));
+        await expect(BackendClient.probeHealthOutcome()).resolves.toEqual({
+            health: { version: '0.4.3' },
+            network: false,
+        });
+
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue(jsonResponse({}, { ok: false, status: 502 })),
+        );
+        await expect(BackendClient.probeHealthOutcome()).resolves.toEqual({
+            health: null,
+            network: false,
+        });
+
+        // A host down and a certificate the browser no longer accepts look the
+        // same from here: no HTTP answer.
+        vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+        await expect(BackendClient.probeHealthOutcome()).resolves.toEqual({
+            health: null,
+            network: true,
+        });
+    });
+
+    it('probeHealthOutcome gives up on a request that never settles', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal(
+                'fetch',
+                vi.fn(
+                    (_path, init) =>
+                        new Promise((_resolve, reject) => {
+                            init.signal.addEventListener('abort', () =>
+                                reject(new DOMException('aborted', 'AbortError')),
+                            );
+                        }),
+                ),
+            );
+            const pending = BackendClient.probeHealthOutcome({ timeoutMs: 5000 });
+            await vi.advanceTimersByTimeAsync(5000);
+            await expect(pending).resolves.toEqual({ health: null, network: true });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('getUpdateStatus with a timeout turns a hung request into server_timeout', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal(
+                'fetch',
+                vi.fn(
+                    (_path, init) =>
+                        new Promise((_resolve, reject) => {
+                            init.signal.addEventListener('abort', () =>
+                                reject(new DOMException('aborted', 'AbortError')),
+                            );
+                        }),
+                ),
+            );
+            const pending = BackendClient.getUpdateStatus({ timeoutMs: 5000 });
+            const settled = expect(pending).rejects.toMatchObject({
+                message: 'server_timeout',
+                aborted: true,
+            });
+            await vi.advanceTimersByTimeAsync(5000);
+            await settled;
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
