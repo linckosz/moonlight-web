@@ -421,7 +421,7 @@
         "refused": "Refusé. L'appareil a été prévenu.",
         "gone": "Cette demande a expiré ou a déjà reçu une réponse. Affichez un nouveau code sur l'appareil.",
         "tooManyTries": "Code erroné trop de fois : la demande a été refusée. Affichez un nouveau code sur l'appareil, puis scannez-le à nouveau.",
-        "notAllowed": "Seul l'administrateur de ce serveur peut faire entrer un nouvel appareil. Ouvrez cette page sur l'ordinateur du serveur, ou déverrouillez l'administration avec son mot de passe, puis scannez à nouveau le code.",
+        "notAllowed": "Depuis l'extérieur du réseau de ce serveur, seul son administrateur peut faire entrer un nouvel appareil. Rejoignez le même Wi-Fi que le serveur et scannez à nouveau le code, ou déverrouillez l'administration avec son mot de passe.",
         "noKey": "Ce navigateur a perdu sa clé d'appairage pour ce serveur. Reconnectez-vous avec le PIN, puis scannez à nouveau le code.",
         "locked": "Ce serveur ne laisse entrer aucun nouvel appareil.",
         "decided": "Cette demande a déjà reçu une réponse.",

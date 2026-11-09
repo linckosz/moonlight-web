@@ -584,7 +584,7 @@ void testEachLineCallerCountsOnItsOwn()
 
 void testOnlyTheAdministratorAnswers()
 {
-    SECTION("pair-request routes: the administrator alone sees and answers a request");
+    SECTION("pair-request routes: no key of its own, no administrator's right: no answer");
     Server s;
     Device d;
     const QString code = askAndReveal(s, d);
@@ -593,7 +593,8 @@ void testOnlyTheAdministratorAnswers()
     // No session at all: 401, counted.
     CHECK_EQ(s.send(fromTv("GET", path)).statusCode, 401);
     CHECK_EQ(s.guarded.size(), 1);
-    // A session, remembered or not, without the administrator's right: 403.
+    // A session, remembered or not, without the administrator's right nor a key
+    // of its own to sign with: 403, even on this LAN.
     const QString member = s.auth->createSession(kPhone, "Laptop");
     const QString guest = s.auth->createSession(kPhone, "Kiosk", false, /*ephemeral=*/true);
     for (const QString& token : {member, guest}) {
@@ -619,6 +620,72 @@ void testOnlyTheAdministratorAnswers()
     CHECK(!json(seen).contains("code"));
     CHECK_EQ(error(s.send(fromAdmin("GET", "/api/auth/pair-request/short"))),
              QStringLiteral("unknown_request"));
+}
+
+void testAPairedSessionOnThisLanAnswersToo()
+{
+    SECTION("pair-request routes: from this LAN, a paired session with its key answers too");
+    Server s;
+    Device d;
+    const QString code = askAndReveal(s, d);
+    const QString path = "/api/auth/pair-request/" + d.id;
+
+    // A phone of the house, paired by its PIN, its key bound: not the administrator.
+    const QByteArray pem = PairingCrypto::generatePrivateKeyPem();
+    const QString member = s.auth->createSession(kPhone, "Kitchen phone");
+    CHECK(s.auth->bindSessionKey(member, PairingCrypto::publicKeySpkiFromPrivatePem(pem)));
+    const auto asMember = [&](HttpRequest req) {
+        req.isLocal = false;
+        req.headers.insert(QStringLiteral("cookie"), "mw_session=" + member);
+        return req;
+    };
+    const auto signedAnswer = [&](const QString& typed) {
+        HttpRequest req = asMember(approval(d, typed));
+        const QByteArray sig =
+            PairingCrypto::sign(pem, PhonePairing::approveMessage(s.hostId(), d.id, typed));
+        QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        body.insert(QStringLiteral("sig"), b64(sig));
+        req.body = QJsonDocument(body).toJson(QJsonDocument::Compact);
+        return req;
+    };
+
+    // Where it stands decides, as ICE or the socket says it, never a header.
+    HttpRequest line = asMember(fromTv("GET", path));
+    line.viaTunnel = true;
+    line.hostTrusted = false;
+    line.clientAddress = QStringLiteral("203.0.113.7");
+    CHECK_EQ(error(s.send(line)), QStringLiteral("not_allowed"));
+    line.clientAddress = QStringLiteral("peer-4f2a");
+    CHECK_EQ(error(s.send(line)), QStringLiteral("not_allowed"));
+    HttpRequest global = asMember(fromTv("GET", path));
+    global.clientAddress = QStringLiteral("2001:db8::20");
+    CHECK_EQ(error(s.send(global)), QStringLiteral("not_allowed"));
+    HttpRequest untrusted = asMember(fromTv("GET", path));
+    untrusted.hostTrusted = false;
+    CHECK_EQ(error(s.send(untrusted)), QStringLiteral("not_allowed"));
+    CHECK_EQ(s.guarded.size(), 0);
+
+    // On a line that ICE put on this LAN, as the phone that scanned the QR code is.
+    line.clientAddress = kPhone;
+    const HttpResponse seen = s.send(line);
+    CHECK_EQ(seen.statusCode, 200);
+    CHECK(!json(seen).contains("code"));
+
+    // Its answer is signed by its key, with the code typed from the device.
+    CHECK_EQ(error(s.send(asMember(approval(d, code)))), QStringLiteral("bad_signature"));
+    CHECK_EQ(error(s.send(signedAnswer(otherThan(code)))), QStringLiteral("code_mismatch"));
+    CHECK_EQ(s.send(signedAnswer(code)).statusCode, 200);
+    const HttpResponse paired = s.send(d.claim(s.hostId()));
+    CHECK_EQ(json(paired).value("state").toString(), QStringLiteral("paired"));
+    // The device goes with the session that let it in, as with the administrator.
+    CHECK_EQ(s.auth->sessionForToken(cookieOf(paired)).approvedBy,
+             s.auth->sessionIdForToken(member));
+
+    // It may say no as well.
+    Device other;
+    askAndReveal(s, other);
+    HttpRequest no = asMember(fromTv("POST", "/api/auth/pair-request/" + other.id + "/refuse"));
+    CHECK_EQ(s.send(no).statusCode, 200);
 }
 
 void testTheCodeIsTypedAndSigned()
@@ -842,6 +909,7 @@ void run_pair_request_routes_tests()
     testTheCityOnlyWhileLocatingIsAllowed();
     testEachLineCallerCountsOnItsOwn();
     testOnlyTheAdministratorAnswers();
+    testAPairedSessionOnThisLanAnswersToo();
     testTheCodeIsTypedAndSigned();
     testThisMachineNeedsNoSignature();
     testALostAnswerIsAskedAgain();

@@ -27,7 +27,8 @@
  * own pairing key (BackendClient.approvePairRequest); the device then pairs by
  * itself, with the session a PIN would have opened.
  *
- * Only the administrator answers: anyone else is told so, and nothing more.
+ * The administrator answers, and from the server's own network any paired
+ * browser with its key: anyone else is told so, and nothing more.
  *
  * A request from outside this server's network says so under its first line,
  * with the address it comes from and, while the host may look one up

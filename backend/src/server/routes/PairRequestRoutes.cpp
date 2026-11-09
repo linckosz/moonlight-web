@@ -64,14 +64,24 @@ struct Context
     PhonePairing book;
 };
 
-/// The administrator alone answers a device, with the right that mints a PIN
+/// Who answers a device. The administrator, with the right that mints a PIN
 /// (HttpRequest::isLocal: this machine, a host-key session, or a session that
-/// unlocked the admin password). Anyone else is turned away before the request
-/// is looked at: a session with 403, a caller with none with 401, counted.
-std::optional<HttpResponse> refuseAllButAdmin(Context& c, const HttpRequest& req)
+/// unlocked the admin password), from anywhere. And, from this LAN as
+/// AuthManager::fromThisLan judges it (ICE's address on a line, never a
+/// header), any paired session that signs its answer with its own pairing key:
+/// someone in the house with a device already let in. A guest holds a player
+/// cookie, not a session, and --noadmin closes these routes before they run.
+/// Anyone else is turned away before the request is looked at: a session with
+/// 403, a caller with none with 401, counted.
+std::optional<HttpResponse> refuseAllButAnswerers(Context& c, const HttpRequest& req)
 {
     if (req.isLocal) return std::nullopt;
-    if (c.auth.validateSession(c.deps.sessionToken(req))) return refusal(403, "not_allowed");
+    const QString token = c.deps.sessionToken(req);
+    if (c.auth.validateSession(token)) {
+        if (AuthManager::fromThisLan(req) && !c.auth.sessionPairingKey(token).isEmpty())
+            return std::nullopt;
+        return refusal(403, "not_allowed");
+    }
     c.deps.reportAuthFailure(req.clientAddress);
     return refusal(401, "not_authenticated");
 }
@@ -298,7 +308,7 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
     // comes in a later answer once it is known.
     router.get("/api/auth/pair-request/:id", [c](const HttpRequest& req) {
         dropFromElsewhereOnceUnticked(*c);
-        if (auto no = refuseAllButAdmin(*c, req)) return *no;
+        if (auto no = refuseAllButAnswerers(*c, req)) return *no;
         const QString id = req.pathParams.value(QStringLiteral("id"));
         if (!PhonePairing::isRequestId(id)) return refusal(404, "unknown_request");
 
@@ -327,14 +337,15 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
         return HttpResponse::json(obj);
     });
 
-    // POST /api/auth/pair-request/:id/approve — the administrator says yes, with
-    // the code typed from the device's screen. A session signs it with its own
+    // POST /api/auth/pair-request/:id/approve — the administrator, or a paired
+    // session on this LAN (refuseAllButAnswerers), says yes, with the code typed
+    // from the device's screen. A session signs it with its own
     // pairing key, when it has one: the host machine itself has no session to
     // sign with, and needs none. The session that approves is the new one's
     // approver, and takes it along when it is revoked.
     router.post("/api/auth/pair-request/:id/approve", [c](const HttpRequest& req) {
         dropFromElsewhereOnceUnticked(*c);
-        if (auto no = refuseAllButAdmin(*c, req)) return *no;
+        if (auto no = refuseAllButAnswerers(*c, req)) return *no;
         const QString id = req.pathParams.value(QStringLiteral("id"));
         if (!PhonePairing::isRequestId(id)) return refusal(404, "unknown_request");
 
@@ -389,7 +400,7 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
     // does not get to ask again and again.
     router.post("/api/auth/pair-request/:id/refuse", [c](const HttpRequest& req) {
         dropFromElsewhereOnceUnticked(*c);
-        if (auto no = refuseAllButAdmin(*c, req)) return *no;
+        if (auto no = refuseAllButAnswerers(*c, req)) return *no;
         const QString id = req.pathParams.value(QStringLiteral("id"));
         if (!PhonePairing::isRequestId(id)) return refusal(404, "unknown_request");
 

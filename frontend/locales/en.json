@@ -421,7 +421,7 @@
         "refused": "Refused. The device was told.",
         "gone": "This request has expired or was already answered. Show a new code on the device.",
         "tooManyTries": "Wrong code too many times: the request was refused. Show a new code on the device, then scan it again.",
-        "notAllowed": "Only this server's administrator can let a new device in. Open this page on the server's own computer, or unlock the administration with its password, then scan the code again.",
+        "notAllowed": "From outside this server's network, only its administrator can let a new device in. Join the same Wi-Fi as the server and scan the code again, or unlock the administration with its password.",
         "noKey": "This browser has lost its pairing key for this server. Sign in again with the PIN, then scan the code again.",
         "locked": "This server lets no new device in.",
         "decided": "This request was already answered.",
