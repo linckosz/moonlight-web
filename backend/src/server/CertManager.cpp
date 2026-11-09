@@ -147,6 +147,54 @@ static bool generateSelfSignedToFiles(const QString& certPath, const QString& ke
     return ok;
 }
 
+/// Whether the local certificate already on disk can be served again as is: it
+/// was signed for the key beside it, it still names every address in @p sans,
+/// and it has more than @p minDaysLeft days to run.
+///
+/// Keeping it is what lets a browser's "proceed anyway" survive a restart. That
+/// exception is held for one certificate, not for the host, so a new one at
+/// every start sent the page back to the warning after each reboot and update —
+/// and a page already open saw its requests fail without a word.
+static bool localCertReusable(const QString& certPath, const QString& keyPath,
+                              const QStringList& sans, int minDaysLeft)
+{
+    QFile f(certPath);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    const QByteArray pem = f.readAll();
+    f.close();
+
+    X509* x509 = nullptr;
+    if (BIO* bio = BIO_new_mem_buf(pem.constData(), static_cast<int>(pem.size()))) {
+        x509 = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+        BIO_free(bio);
+    }
+    if (!x509) return false;
+    EVP_PKEY* pkey = readPrivateKeyFile(keyPath);
+    const bool keyMatches = pkey && X509_check_private_key(x509, pkey) == 1;
+    if (pkey) EVP_PKEY_free(pkey);
+    X509_free(x509);
+    if (!keyMatches) return false;
+
+    const QList<QSslCertificate> chain = QSslCertificate::fromData(pem, QSsl::Pem);
+    if (chain.isEmpty()) return false;
+    const QSslCertificate& cert = chain.first();
+    if (cert.expiryDate() <= QDateTime::currentDateTimeUtc().addDays(minDaysLeft)) return false;
+
+    const auto names = cert.subjectAlternativeNames();
+    const QStringList dns = names.values(QSsl::DnsEntry);
+    QList<QHostAddress> ips;
+    for (const QString& ip : names.values(QSsl::IpAddressEntry))
+        ips << QHostAddress(ip);
+    for (const QString& san : sans) {
+        if (san.startsWith(QLatin1String("DNS:"))) {
+            if (!dns.contains(san.mid(4), Qt::CaseInsensitive)) return false;
+        } else if (san.startsWith(QLatin1String("IP:"))) {
+            if (!ips.contains(QHostAddress(san.mid(3)))) return false;
+        }
+    }
+    return true;
+}
+
 /// Enumerate all private/local addresses on this machine (excluding loopback).
 /// Covers RFC 1918 IPv4, the 100.64.0.0/10 range a mesh VPN hands out
 /// (Tailscale: a guest link can carry it), and IPv6 link-local (fe80::/10) and
@@ -752,10 +800,12 @@ void CertManager::ensureLocalSslConfig()
 {
     // The local self-signed cert lives in AppData/cert/, separate from any
     // public cert (which lives in the configured cert dir).
-    // This cert is ALWAYS regenerated with SANs for localhost + all current
-    // LAN IPs so that every local access method gets a hostname-matching
-    // certificate (DHCP changes are reflected on restart).
-    // Its KEY is kept across restarts: a client that pins the server's public
+    // This cert names localhost + all current LAN IPs so that every local
+    // access method gets a hostname-matching certificate. It is kept across
+    // restarts while it still names them all and has more than 30 days left
+    // (localCertReusable), and regenerated otherwise — a DHCP change is still
+    // reflected on restart.
+    // Its KEY is kept across restarts in every case: a client that pins the server's public
     // key on first contact (MoonlightWeb TV pins the SPKI) would otherwise see
     // a "server key changed" after every restart. Deleting local-key.pem
     // rotates it.
@@ -770,9 +820,6 @@ void CertManager::ensureLocalSslConfig()
     QString certPath = certDir + "local-cert.pem";
     QString keyPath = certDir + "local-key.pem";
 
-    // Delete the old cert and regenerate it with fresh SANs and current LAN IPs
-    QFile::remove(certPath);
-
     // Build SAN list with current LAN IPs
     QStringList sans;
     sans << "DNS:localhost" << "DNS:*.local"
@@ -785,13 +832,19 @@ void CertManager::ensureLocalSslConfig()
         sans << "IP:" + clean.toString();
     }
 
-    bool keptKey = false;
-    if (!generateSelfSignedToFiles(certPath, keyPath, sans, "MoonlightWeb", true, &keptKey)) {
-        Logger::error("[CERT] Cannot generate local self-signed cert (libcrypto)");
-        return;
+    if (localCertReusable(certPath, keyPath, sans, kLocalCertMinDaysLeft)) {
+        Logger::info("[CERT] Local cert kept: it still covers this machine's addresses");
+    } else {
+        // Replace the old cert with one naming the current addresses.
+        QFile::remove(certPath);
+        bool keptKey = false;
+        if (!generateSelfSignedToFiles(certPath, keyPath, sans, "MoonlightWeb", true, &keptKey)) {
+            Logger::error("[CERT] Cannot generate local self-signed cert (libcrypto)");
+            return;
+        }
+        Logger::info(keptKey ? "[CERT] Local cert renewed with its existing key"
+                             : "[CERT] Local cert generated with a new key");
     }
-    Logger::info(keptKey ? "[CERT] Local cert renewed with its existing key"
-                         : "[CERT] Local cert generated with a new key");
 
     // Restrict the private key to the owner (0600 on Unix, owner-only ACL on Win).
     QFile::setPermissions(keyPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);

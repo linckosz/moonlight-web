@@ -51,9 +51,14 @@ public:
     /// usable HTTPS config is available.
     bool loadCert();
 
-    /// Regenerate the local self-signed cert (localhost + current LAN IP SANs)
-    /// and load it into localConfig(). Called after loadCert() for SNI.
+    /// Load the local self-signed cert (localhost + current LAN IP SANs) into
+    /// localConfig(), regenerating it only when it no longer names every
+    /// current address or has kLocalCertMinDaysLeft days or fewer to run.
+    /// Called after loadCert() for SNI.
     void ensureLocalSslConfig();
+
+    /// Below this many days of validity the local cert is renewed at start.
+    static constexpr int kLocalCertMinDaysLeft = 30;
 
     /// Reload the public cert from its sources/dir (hot reload after the user
     /// replaced it). Populates publicConfig(). Returns true on success. The caller
