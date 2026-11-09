@@ -316,6 +316,21 @@ export class SettingsView {
             this._updateRun = view;
             this._paintUpdateSection();
         });
+        this._refreshUpdateState();
+    }
+
+    /**
+     * The page opened on the host's cached answer; now ask it to look at the
+     * releases afresh — the Update section is what someone opening Settings may
+     * have come to read — and repaint the section with what it finds. Behind the
+     * render, so the page never waits on GitHub. The host bounds how often the
+     * look really happens; any failure keeps what is shown.
+     */
+    async _refreshUpdateState() {
+        const info = await BackendClient.checkForUpdate({ fresh: true });
+        if (this._destroyed || !info) return;
+        this._updateInfo = info;
+        this._paintUpdateSection();
     }
 
     /**

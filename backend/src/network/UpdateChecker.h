@@ -91,6 +91,22 @@ public:
     // Force an immediate refresh, ignoring the cache window.
     void refresh();
 
+    // A client asks for a fresh look at the moment its user reads the answer
+    // (opening Settings or the app, a stream closing). At most one such look
+    // per this many seconds, for all clients together — counted from the end of
+    // the last check, whatever started it.
+    static constexpr int kFreshFloorSeconds = 5 * 60;
+
+    // Start a fresh check unless the last one finished under kFreshFloorSeconds
+    // ago. Returns true when a check is in flight on return — just started, or
+    // already running — so the caller can wait for checkFinished(); false when
+    // the cache stands (recent enough, or nothing to check on this instance).
+    bool requestFresh();
+
+    // The floor alone: whether a check that ended at @p lastCheck (invalid =
+    // never) leaves room for a fresh one at @p now.
+    static bool freshDue(const QDateTime& lastCheck, const QDateTime& now);
+
     // Numeric dotted-version compare ("1.2.10" > "1.2.9"). Tolerant of a leading
     // 'v' and trailing pre-release suffixes; returns false if unparseable so a
     // bad tag never nags the user. Public for the elevated --update-apply

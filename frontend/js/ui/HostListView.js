@@ -530,7 +530,9 @@ export class HostListView {
         this._drawRememberedHosts();
         this._autoScan();
         this.scheduleNextPoll(0); // immediate first refresh
-        this._checkForUpdate(); // discreet "new version available" banner
+        // Discreet "new version available" banner. Fresh: opening the app and
+        // coming back from a stream are when the answer gets read.
+        this._checkForUpdate({ fresh: true });
         this._scheduleUpdateCheck();
     }
 
@@ -574,14 +576,17 @@ export class HostListView {
     // Not a one-shot: the backend's own check is stale-while-revalidate, so the
     // very first answer after its boot is "no update" even when there is one.
     // Asking once per page load meant a long-lived tab could never see a banner.
-    async _checkForUpdate() {
+    //
+    // `fresh` has the host look at the releases now instead of answering from
+    // its cache; the host itself bounds how often that really happens.
+    async _checkForUpdate({ fresh = false } = {}) {
         // Nothing to learn while the banner shows an update in flight, and don't
         // re-ask more often than the backend could plausibly change its answer.
         if (hostUpdate.busy) return;
         const now = Date.now();
         if (now - this._updateCheckedAt < HostListView.UPDATE_CHECK_MIN_MS) return;
         this._updateCheckedAt = now;
-        const info = await BackendClient.checkForUpdate();
+        const info = await BackendClient.checkForUpdate({ fresh });
         if (this._destroyed) return;
         // `checked_at` empty means the host has never completed a check — its
         // fetch is in flight right now and this "no update" is a placeholder.

@@ -201,6 +201,11 @@ export class AdminView {
     }
 
     async start() {
+        // Have the host look at the releases now, unseen: this page shows no
+        // update, but Settings and the Hosts banner, likely the next stop, then
+        // read a fresh answer from the host's cache. Not awaited; the host bounds
+        // how often the look really happens.
+        BackendClient.checkForUpdate({ fresh: true });
         // Host check first: the whole admin page is host-machine-only. A remote
         // (authenticated) session gets a notice instead of the sections — and
         // none of the host-only requests below (they would just 403).

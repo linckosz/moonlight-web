@@ -947,10 +947,17 @@ export class BackendClient {
      *  Returns { current, latest, update_available, download_url, release_url,
      *  asset_name, self_update: { supported, method, requires_host_confirmation } }.
      *  Best-effort — resolves null on any failure so callers can stay silent when
-     *  offline / rate-limited. */
-    static async checkForUpdate() {
+     *  offline / rate-limited.
+     *
+     *  `fresh` asks the host to look at the releases now rather than answer from
+     *  its cache, at the moments a user would read the answer (opening Settings
+     *  or the app, closing a stream). The host bounds it: at most one look per
+     *  few minutes for all clients, none while a stream runs, and an answer
+     *  within a few seconds either way. */
+    static async checkForUpdate({ fresh = false } = {}) {
         try {
-            return await this.get('/api/update/check');
+            if (!fresh) return await this.get('/api/update/check');
+            return await this.get('/api/update/check?fresh=1', { timeoutMs: 15000 });
         } catch (_) {
             return null;
         }

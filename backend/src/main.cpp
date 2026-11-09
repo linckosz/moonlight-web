@@ -2963,11 +2963,43 @@ int main(int argc, char* argv[])
     // the background without blocking this handler. `self_update` describes what
     // this host can do about it, so the web app can offer a one-click update (or
     // explain that the host must be updated by hand) without a second round-trip.
-    server.router()->get("/api/update/check", [&updateChecker, &selfUpdater](const HttpRequest&) {
-        QJsonObject obj = updateChecker.statusJson();
-        obj["self_update"] = selfUpdater.capabilityJson();
-        return HttpResponse::json(obj);
-    });
+    //
+    // `?fresh=1` asks for a look at the releases now, at the moments a user reads
+    // the answer (opening Settings, the app or Admin, a stream closing), so a
+    // release shows up then rather than up to kCacheHours later. Bounded three
+    // ways: at most one look per UpdateChecker::kFreshFloorSeconds for every
+    // client together, none while a stream runs here (the cache answers), and
+    // the answer waits for the look at most kFreshWaitMs, then goes out with
+    // whatever the cache holds.
+    server.router()->getAsync(
+        "/api/update/check", [&updateChecker, &selfUpdater, &g_Pool, &g_ActiveSession](
+                                 const HttpRequest& req, const ResponseCallback& respond) {
+            auto answer = [&updateChecker, &selfUpdater, respond]() {
+                QJsonObject obj = updateChecker.statusJson();
+                obj["self_update"] = selfUpdater.capabilityJson();
+                respond(HttpResponse::json(obj));
+            };
+            const bool fresh = req.queryParams.value(QStringLiteral("fresh")) == QLatin1String("1");
+            const bool streaming = !g_ActiveSession.isNull() || g_Pool.liveCount() > 0;
+            if (!fresh || streaming || !updateChecker.requestFresh()) {
+                answer();
+                return;
+            }
+            constexpr int kFreshWaitMs = 5000;
+            // Answer once: on the check's end or on the wait running out,
+            // whichever comes first. The context object carries both
+            // connections and goes with the first.
+            auto* ctx = new QObject(&updateChecker);
+            auto answered = std::make_shared<bool>(false);
+            auto finish = [ctx, answered, answer]() {
+                if (*answered) return;
+                *answered = true;
+                answer();
+                ctx->deleteLater();
+            };
+            QObject::connect(&updateChecker, &UpdateChecker::checkFinished, ctx, finish);
+            QTimer::singleShot(kFreshWaitMs, ctx, finish);
+        });
 
     // POST /api/update/start — download and apply the update on the host, then
     // relaunch. Session-authenticated but deliberately NOT localhost-gated: the

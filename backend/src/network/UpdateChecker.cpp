@@ -176,6 +176,25 @@ void UpdateChecker::refresh()
     if (!m_inFlight) doFetch();
 }
 
+bool UpdateChecker::freshDue(const QDateTime& lastCheck, const QDateTime& now)
+{
+    // A clock set back makes the gap negative: due, rather than never again.
+    if (!lastCheck.isValid()) return true;
+    const qint64 gap = lastCheck.secsTo(now);
+    return gap < 0 || gap >= kFreshFloorSeconds;
+}
+
+bool UpdateChecker::requestFresh()
+{
+    if (m_inFlight) return true;
+    if (mw::edition::isDevBuild()) return false;
+    if (!freshDue(m_lastCheck, QDateTime::currentDateTimeUtc())) return false;
+    // doFetch() declines on its own where nothing may be asked (opted out,
+    // LAN-only); m_inFlight then says so.
+    doFetch();
+    return m_inFlight;
+}
+
 void UpdateChecker::doFetch()
 {
     // MW_NO_TELEMETRY means what it says. It used to only steer the check away

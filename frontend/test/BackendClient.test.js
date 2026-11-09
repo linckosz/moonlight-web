@@ -686,6 +686,17 @@ describe('BackendClient best-effort probes', () => {
         }
     });
 
+    it('checkForUpdate asks for a fresh look only when told to', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ update_available: false }));
+        vi.stubGlobal('fetch', fetchMock);
+        await BackendClient.checkForUpdate();
+        expect(fetchMock.mock.calls[0][0]).toBe('/api/update/check');
+        await BackendClient.checkForUpdate({ fresh: true });
+        expect(fetchMock.mock.calls[1][0]).toBe('/api/update/check?fresh=1');
+        // Bounded: the host waits a few seconds at most, this a little longer.
+        expect(fetchMock.mock.calls[1][1].signal).toBeDefined();
+    });
+
     it('getUpdateStatus with a timeout turns a hung request into server_timeout', async () => {
         vi.useFakeTimers();
         try {

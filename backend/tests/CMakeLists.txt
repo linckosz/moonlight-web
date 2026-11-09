@@ -124,6 +124,7 @@ add_executable(run_tests
     test_control_channel.cpp
     test_feed_ipc.cpp
     test_cert_manager.cpp
+    test_update_checker.cpp
     test_mic_uplink.cpp
     test_phone_pairing.cpp
     test_pair_request_routes.cpp
@@ -183,6 +184,8 @@ add_executable(run_tests
     # Which of the server's addresses the line opens on: the race behind it,
     # with legs the test answers by hand.
     ${_src}/src/network/AddressRace.cpp
+    # The update check: how often a client may have it look afresh.
+    ${_src}/src/network/UpdateChecker.cpp
     # The session location lookup: the request it sends, built and never sent.
     ${_src}/src/network/GeoIpService.cpp
     # Host persistence: the restart path for a paired host (issue #9).
