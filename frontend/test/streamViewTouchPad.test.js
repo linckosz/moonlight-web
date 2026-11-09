@@ -384,6 +384,59 @@ describe('the on-screen controller in the stream', () => {
             expect(view._gamepadManager.hasVirtual()).toBe(true);
         });
 
+        /** The frame loop, run by hand: a real pad is seen at the next frame. */
+        function frames() {
+            const loop = { next: () => {} };
+            vi.stubGlobal('requestAnimationFrame', (cb) => {
+                loop.next = cb;
+                return 1;
+            });
+            return loop;
+        }
+        const realPad = { index: 0, id: 'Xbox', mapping: 'standard', buttons: [], axes: [] };
+
+        it('plugged in by a press with no real pad, gives its place to one arriving', async () => {
+            const loop = frames();
+            const view = await plain();
+            button(view).click();
+            expect(view._gamepadManager.hasVirtual()).toBe(true);
+            pads = [realPad];
+            loop.next();
+            expect(view._gamepadManager.hasVirtual()).toBe(false);
+            expect(shown(view)).toBe(false);
+            expect(button(view).classList.contains('is-on')).toBe(false);
+            // The real pad is controller 0, not player 2.
+            expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0, 0]);
+        });
+
+        it('pressed for beside a real pad, is a second controller that stays', async () => {
+            const loop = frames();
+            pads = [realPad];
+            const view = await plain();
+            loop.next();
+            expect(view._gamepadManager.hasPhysicalPad()).toBe(true);
+            button(view).click();
+            loop.next();
+            expect(view._gamepadManager.hasVirtual()).toBe(true);
+            expect(shown(view)).toBe(true);
+            expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0, 1]);
+        });
+
+        it('comes back as the second controller once a real pad took its place', async () => {
+            const loop = frames();
+            const view = makeView();
+            view._mountTouchPad();
+            await flush();
+            pads = [realPad];
+            loop.next();
+            expect(view._gamepadManager.hasVirtual()).toBe(false);
+            button(view).click();
+            loop.next();
+            expect(view._gamepadManager.hasVirtual()).toBe(true);
+            expect(shown(view)).toBe(true);
+            expect(sent(send, 'gamepadconnect').map((m) => m.index)).toEqual([0, 0, 1]);
+        });
+
         it('leaves the trackpad out of a click on them', async () => {
             const view = await plain();
             const below = vi.fn();

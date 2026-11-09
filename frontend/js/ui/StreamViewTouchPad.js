@@ -279,12 +279,16 @@ export class StreamViewTouchPad {
         const gm = this._gamepadManager;
         if (!gm || !this._touchPadAvailable()) return;
         this._touchPadStarted = true;
+        // Asked for with no real pad in play, it stands in for one, and gives
+        // way when one arrives; asked for beside one, it is a second controller
+        // on purpose. A guest has the one place, and keeps it (single mode).
+        const yields = !this._playerMode && !gm.hasPhysicalPad();
         if (this._kbdVisible) {
             this._toggleVirtualKeyboard();
-            this._plugTouchPad();
+            this._plugTouchPad({ yields });
             this._touchPadShown = true;
         } else if (!gm.hasVirtual()) {
-            this._plugTouchPad();
+            this._plugTouchPad({ yields });
             this._touchPadShown = true;
         } else if (!this._touchPadShown) {
             this._touchPadShown = true;
