@@ -231,7 +231,8 @@ static void holder_stop(holder_t *h) {
 typedef struct end {
 	juice_agent_t *agent;
 	struct end *peer; // its candidates go there, if set
-	atomic(int) received;
+	mutex_t lock;     // over what the connections thread writes below
+	int received;
 	char data[64];
 } end_t;
 
@@ -246,9 +247,24 @@ static void on_recv(juice_agent_t *agent, const char *data, size_t size, void *u
 	(void)agent;
 	end_t *end = user_ptr;
 	size_t n = size < sizeof(end->data) - 1 ? size : sizeof(end->data) - 1;
+	mutex_lock(&end->lock);
 	memcpy(end->data, data, n);
 	end->data[n] = '\0';
-	atomic_store(&end->received, atomic_load(&end->received) + 1);
+	++end->received;
+	mutex_unlock(&end->lock);
+}
+
+// Whether `count` datagrams came, the last one `text` (NULL: whatever it was), within `ms`
+static bool got(end_t *end, int count, const char *text, int ms) {
+	for (int t = 0;; t += 20) {
+		mutex_lock(&end->lock);
+		const bool yes = end->received == count && (!text || strcmp(end->data, text) == 0);
+		const bool late = end->received > count;
+		mutex_unlock(&end->lock);
+		if (yes || late || t >= ms)
+			return yes;
+		sleep_ms(20);
+	}
 }
 
 static juice_agent_t *make_agent(end_t *end, const char *bind) {
@@ -259,8 +275,14 @@ static juice_agent_t *make_agent(end_t *end, const char *bind) {
 	config.cb_candidate = on_candidate;
 	config.cb_recv = on_recv;
 	config.user_ptr = end;
+	mutex_init(&end->lock, 0);
 	end->agent = juice_create(&config);
 	return end->agent;
+}
+
+static void destroy_agent(end_t *end) {
+	juice_destroy(end->agent);
+	mutex_destroy(&end->lock);
 }
 
 static juice_shared_sockets_t shared_of(const holder_t *h, int host) {
@@ -319,11 +341,8 @@ static int selected_local_port(juice_agent_t *agent) {
 static void exchange(end_t *host, end_t *peer, const char *to_host, const char *to_peer) {
 	CHECK(juice_send(peer->agent, to_host, strlen(to_host)) == 0);
 	CHECK(juice_send(host->agent, to_peer, strlen(to_peer)) == 0);
-	for (int t = 0; t < 2000 && (!atomic_load(&host->received) || !atomic_load(&peer->received));
-	     t += 20)
-		sleep_ms(20);
-	CHECK(atomic_load(&host->received) == 1 && strcmp(host->data, to_host) == 0);
-	CHECK(atomic_load(&peer->received) == 1 && strcmp(peer->data, to_peer) == 0);
+	CHECK(got(host, 1, to_host, 2000));
+	CHECK(got(peer, 1, to_peer, 2000));
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -446,7 +465,7 @@ static void test_refused_sockets(void) {
 	shared.feed = (uintptr_t)stream;
 	CHECK(juice_set_shared_sockets(e.agent, &shared) == JUICE_ERR_SUCCESS);
 	CHECK(juice_gather_candidates(e.agent) != 0);
-	juice_destroy(e.agent);
+	destroy_agent(&e);
 
 	// A socket bound to nothing to send on
 	socket_t unbound = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -455,7 +474,7 @@ static void test_refused_sockets(void) {
 	shared.send[1] = (uintptr_t)unbound;
 	CHECK(juice_set_shared_sockets(e.agent, &shared) == JUICE_ERR_SUCCESS);
 	CHECK(juice_gather_candidates(e.agent) != 0);
-	juice_destroy(e.agent);
+	destroy_agent(&e);
 
 	// Too late once it gathers
 	make_agent(&e, NULL);
@@ -463,7 +482,7 @@ static void test_refused_sockets(void) {
 	CHECK(juice_set_shared_sockets(e.agent, &shared) == JUICE_ERR_SUCCESS);
 	CHECK(juice_gather_candidates(e.agent) == 0);
 	CHECK(juice_set_shared_sockets(e.agent, &shared) == JUICE_ERR_FAILED);
-	juice_destroy(e.agent);
+	destroy_agent(&e);
 
 	closesocket(stream);
 	closesocket(unbound);
@@ -501,6 +520,19 @@ static void test_both_ports(bool announced) {
 	CHECK(atomic_load(&timestamps) > 0 && !atomic_load(&timestamp_zero));
 	juice_set_feed_timestamp_handler(NULL);
 
+#ifndef _WIN32
+	// A class asked for a datagram is set on the socket the session runs on, and on that one
+	// only (Windows takes it with another patch, which a test tree may not have)
+	CHECK(juice_send_diffserv(host.agent, "ef", 2, 0xB8) == 0);
+	int tos[PORTS];
+	for (int via = 0; via < PORTS; ++via) {
+		socklen_t tos_len = sizeof(tos[via]);
+		tos[via] = -1;
+		getsockopt(h.port_sock[via], IPPROTO_IP, IP_TOS, (char *)&tos[via], &tos_len);
+	}
+	CHECK(tos[0] == 0xB8 && tos[1] == 0);
+#endif
+
 	// The agent never reads the shared sockets: every datagram that comes in on a port is the
 	// holder's to read, here 100 on each from a stranger
 	socket_t stranger = udp_loopback(NULL, NULL);
@@ -524,8 +556,8 @@ static void test_both_ports(bool announced) {
 	CHECK(juice_get_state(host.agent) == JUICE_STATE_COMPLETED);
 	closesocket(stranger);
 
-	juice_destroy(host.agent);
-	juice_destroy(peer.agent);
+	destroy_agent(&host);
+	destroy_agent(&peer);
 
 	// Borrowed: the agent is gone, the sockets are not
 	struct sockaddr_in to;
@@ -559,8 +591,8 @@ static void test_one_port_blocked(int blocked, bool announced) {
 	CHECK(atomic_load(&h.seen[blocked]) > 0); // the peer did try it
 	exchange(&host, &peer, "from the browser", "from the host");
 
-	juice_destroy(host.agent);
-	juice_destroy(peer.agent);
+	destroy_agent(&host);
+	destroy_agent(&peer);
 	holder_stop(&h);
 }
 
@@ -583,12 +615,10 @@ static void test_first_port_late(void) {
 	CHECK(wait_state(peer.agent, JUICE_STATE_COMPLETED, 5000));
 	CHECK(selected_local_port(host.agent) == h.port[0]);
 	CHECK(juice_send(peer.agent, "on the first port", 17) == 0);
-	for (int t = 0; t < 2000 && atomic_load(&host.received) < 2; t += 20)
-		sleep_ms(20);
-	CHECK(atomic_load(&host.received) == 2 && strcmp(host.data, "on the first port") == 0);
+	CHECK(got(&host, 2, "on the first port", 2000));
 
-	juice_destroy(host.agent);
-	juice_destroy(peer.agent);
+	destroy_agent(&host);
+	destroy_agent(&peer);
 	holder_stop(&h);
 }
 
@@ -611,18 +641,16 @@ static void test_two_hosts(void) {
 	exchange(&host_a, &peer_a, "to the first host", "from the first host");
 	exchange(&host_b, &peer_b, "to the second host", "from the second host");
 	sleep_ms(200);
-	CHECK(atomic_load(&host_a.received) == 1 && atomic_load(&host_b.received) == 1);
+	CHECK(got(&host_a, 1, NULL, 0) && got(&host_b, 1, NULL, 0));
 
 	// One ends; the other goes on
-	juice_destroy(host_a.agent);
-	juice_destroy(peer_a.agent);
+	destroy_agent(&host_a);
+	destroy_agent(&peer_a);
 	CHECK(juice_send(peer_b.agent, "again", 5) == 0);
-	for (int t = 0; t < 2000 && atomic_load(&host_b.received) < 2; t += 20)
-		sleep_ms(20);
-	CHECK(atomic_load(&host_b.received) == 2 && strcmp(host_b.data, "again") == 0);
+	CHECK(got(&host_b, 2, "again", 2000));
 
-	juice_destroy(host_b.agent);
-	juice_destroy(peer_b.agent);
+	destroy_agent(&host_b);
+	destroy_agent(&peer_b);
 	holder_stop(&h);
 }
 
