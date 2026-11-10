@@ -305,22 +305,37 @@ elseif(UNIX AND NOT APPLE)
     target_link_libraries(run_tests PRIVATE pthread dl)
 endif()
 
-# ── Passive ICE-TCP: our patch on libjuice ─────────────────────────────────
-# A runner of its own, in C against libjuice itself: the patch lives in the
-# library, below anything run_tests links. The backend's configure applies the
-# patch to the submodule; a test tree configured alone applies it the same way
-# (once, left alone when it already is). docs/design/ice-tcp-passive.md
+# ── Passive ICE-TCP and shared sockets: our patches on libjuice ────────────
+# A runner of its own, in C against libjuice itself: the patches live in the
+# library, below anything run_tests links. The backend's configure applies them
+# to the submodule; a test tree configured alone applies them the same way
+# (once, left alone when they already are). The shared sockets rewrite lines
+# of the passive TCP: when that patch reverses, the passive one is in as well.
+# docs/design/ice-tcp-passive.md
 find_package(Git REQUIRED)
 set(_juice ${_src}/third_party/libdatachannel/deps/libjuice)
-foreach(_juice_name IN ITEMS libjuice-ice-tcp-passive.patch libjuice-udp-long-datagram.patch)
-    set(_juice_patch ${_src}/third_party/patches/${_juice_name})
-    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply --reverse --check "${_juice_patch}"
-                    RESULT_VARIABLE _juice_patched OUTPUT_QUIET ERROR_QUIET)
-    if(NOT _juice_patched EQUAL 0)
-        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply "${_juice_patch}"
+set(_juice_patches ${_src}/third_party/patches)
+foreach(_juice_patch libjuice-ice-tcp-passive.patch libjuice-udp-long-datagram.patch
+                     libjuice-ice-mux.patch)
+    set(_juice_proofs ${_juice_patch})
+    if(_juice_patch STREQUAL "libjuice-ice-tcp-passive.patch")
+        list(APPEND _juice_proofs libjuice-ice-mux.patch)
+    endif()
+    set(_juice_in FALSE)
+    foreach(_juice_proof IN LISTS _juice_proofs)
+        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply --reverse --check
+                                "${_juice_patches}/${_juice_proof}"
+                        RESULT_VARIABLE _juice_patched OUTPUT_QUIET ERROR_QUIET)
+        if(_juice_patched EQUAL 0)
+            set(_juice_in TRUE)
+        endif()
+    endforeach()
+    if(NOT _juice_in)
+        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply
+                                "${_juice_patches}/${_juice_patch}"
                         RESULT_VARIABLE _juice_failed ERROR_VARIABLE _juice_why)
         if(NOT _juice_failed EQUAL 0)
-            message(FATAL_ERROR "${_juice_name} does not apply: ${_juice_why}")
+            message(FATAL_ERROR "${_juice_patch} does not apply: ${_juice_why}")
         endif()
     endif()
 endforeach()
@@ -328,7 +343,7 @@ set(NO_SERVER ON CACHE BOOL "" FORCE)
 set(NO_TESTS ON CACHE BOOL "" FORCE)
 add_subdirectory(${_juice} ${CMAKE_BINARY_DIR}/libjuice EXCLUDE_FROM_ALL)
 
-add_executable(run_juice_tests test_ice_tcp_passive.c)
+add_executable(run_juice_tests test_ice_tcp_passive.c test_ice_mux.c)
 # Its private headers: the test writes STUN messages with the library's own code.
 target_include_directories(run_juice_tests PRIVATE ${_juice}/src ${_juice}/include/juice)
 target_link_libraries(run_juice_tests PRIVATE juice-static)

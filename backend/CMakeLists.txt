@@ -239,12 +239,20 @@ endif()
 # authenticated Binding request. A connection asks for it through
 # rtc::Configuration::enableIceTcpPassive, the second patch; the server does
 # when the owner sets ice_tcp_passive. docs/design/ice-tcp-passive.md
-mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-ice-tcp-passive.patch)
+mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-ice-tcp-passive.patch
+               REQUIRED_BY libjuice-ice-mux.patch)
 mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
                libdatachannel-ice-tcp-passive.patch)
 # A datagram longer than libjuice's read buffer: Windows reports it as an error,
 # other systems cut it short. With this one libjuice drops it there too.
 mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-udp-long-datagram.patch)
+# Every stream on the same UDP ports, each in its own worker process: an agent
+# can send on sockets another process holds and reads, and take its datagrams
+# from a feed socket, each behind a header naming where it came from and which
+# socket it came in on (juice_set_shared_sockets). One pair per peer address and
+# socket, the first socket preferred. Nothing changes for an agent that is given
+# no such sockets. It rewrites lines of the patch above, hence REQUIRED_BY there.
+mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-ice-mux.patch)
 
 # libdatachannel (WebRTC DataChannel + media). Match the previous .bat flags.
 set(NO_WEBSOCKET ON  CACHE BOOL "" FORCE)
