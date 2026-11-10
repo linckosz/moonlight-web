@@ -155,8 +155,8 @@ public:
 
     /// Whether a tunnel hole on `port` is one this kind of instance may hold:
     /// the preferred list and the pool for the installed host, the --dev block
-    /// for a --dev (RouterPortPools.h). Any port in [mediaBasePort, mediaBasePort + kMediaPortCount)
-    /// is disallowed.
+    /// for a --dev (RouterPortPools.h). Any port in [mediaBasePort, mediaBasePort +
+    /// kMediaPortCount) is disallowed.
     static bool tunnelPortAllowed(bool devInstance, uint16_t port,
                                   uint16_t mediaBasePort = mw::routerports::kMediaBasePort);
 

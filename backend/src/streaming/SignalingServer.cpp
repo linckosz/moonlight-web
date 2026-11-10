@@ -659,7 +659,8 @@ void SignalingServer::onRelayIceTimedOut()
     const QString firewall = hostFirewallName();
     if (!firewall.isEmpty())
         qWarning().noquote() << "[SignalingServer]" << firewall
-                             << "is active on this host: it must let" << mediaBlockString(m_MediaBasePort)
+                             << "is active on this host: it must let"
+                             << mediaBlockString(m_MediaBasePort)
                              << "through (the packages open it), or no stream reaches this "
                                 "machine over UDP";
 
@@ -1202,7 +1203,8 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, bool mapped,
     } else {
         // The whole block is held: an ephemeral port still works wherever the
         // firewall is program-scoped or off.
-        qWarning().noquote() << "[SignalingServer] UDP media ports" << mediaBlockString(m_MediaBasePort)
+        qWarning().noquote() << "[SignalingServer] UDP media ports"
+                             << mediaBlockString(m_MediaBasePort)
                              << "are all taken — using an ephemeral port, which a "
                                 "port-based firewall will block";
     }

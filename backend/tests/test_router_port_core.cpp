@@ -695,12 +695,16 @@ void run_router_port_core_tests()
         CHECK(RouterPortCore::tunnelPortAllowed(false, 3478, 3480));
         CHECK(RouterPortCore::tunnelPortAllowed(false, 3479, 3480));
         CHECK(RouterPortCore::tunnelPortAllowed(false, 5349, 3480));
-        CHECK(!RouterPortCore::tunnelPortAllowed(false, uint16_t(3480 + kMediaPortCount - 1), 3480));
+        CHECK(
+            !RouterPortCore::tunnelPortAllowed(false, uint16_t(3480 + kMediaPortCount - 1), 3480));
         // 3480 + kMediaPortCount (3504) is outside the tunnel pool entirely, so also not allowed.
         CHECK(!RouterPortCore::tunnelPortAllowed(false, uint16_t(3480 + kMediaPortCount), 3480));
-        // When mediaBasePort lands in the tunnel pool, ports immediately past the media block remain allowed.
-        CHECK(!RouterPortCore::tunnelPortAllowed(false, uint16_t(kTunnelPoolBegin + kMediaPortCount - 1), kTunnelPoolBegin));
-        CHECK(RouterPortCore::tunnelPortAllowed(false, uint16_t(kTunnelPoolBegin + kMediaPortCount), kTunnelPoolBegin));
+        // When mediaBasePort lands in the tunnel pool, ports immediately past the media block
+        // remain allowed.
+        CHECK(!RouterPortCore::tunnelPortAllowed(
+            false, uint16_t(kTunnelPoolBegin + kMediaPortCount - 1), kTunnelPoolBegin));
+        CHECK(RouterPortCore::tunnelPortAllowed(false, uint16_t(kTunnelPoolBegin + kMediaPortCount),
+                                                kTunnelPoolBegin));
 
         // tunnelRequest filters media ports out of remembered and preferred.
         const auto req = RouterPortCore::tunnelRequest(false, {3480, 3479}, 3480);

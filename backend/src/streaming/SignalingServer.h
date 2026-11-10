@@ -91,7 +91,10 @@ public:
     /// base for the single-stream path.
     void setMediaPort(quint16 port) { m_MediaPort = port; }
     /// Base UDP port for WebRTC media streams (default: mw::routerports::kMediaBasePort).
-    void setMediaBasePort(quint16 port = mw::routerports::kMediaBasePort) { m_MediaBasePort = port; }
+    void setMediaBasePort(quint16 port = mw::routerports::kMediaBasePort)
+    {
+        m_MediaBasePort = port;
+    }
 
     /// Enable/disable ICE-TCP candidates.
     /// When true, ICE-TCP is enabled (UDP + TCP candidates).

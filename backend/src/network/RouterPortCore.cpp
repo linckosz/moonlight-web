@@ -76,8 +76,7 @@ RouterPortCore::Request RouterPortCore::tunnelRequest(bool devInstance,
         return request;
     }
     for (const uint16_t p : kTunnelPreferred)
-        if (tunnelPortAllowed(false, p, mediaBasePort))
-            request.preferred.append(p);
+        if (tunnelPortAllowed(false, p, mediaBasePort)) request.preferred.append(p);
     request.poolBegin = kTunnelPoolBegin;
     request.poolEnd = kTunnelPoolEnd;
     return request;
