@@ -169,6 +169,7 @@ import { ShareMenu } from './ShareMenu.js';
 import { GuestPresence } from './SharePresence.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
+import { fitStreamBrand } from './streamBrandFit.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewTouchPad } from './StreamViewTouchPad.js';
@@ -6972,6 +6973,10 @@ export class StreamView {
             mic.classList.toggle('is-docked', fsVisible);
             if (!fsVisible) mic.style.left = '';
         }
+        const brand = /** @type {HTMLElement | null} */ (
+            this._rootEl?.querySelector('.stream-header .stream-brand') ?? null
+        );
+        if (!fsVisible) fitStreamBrand(brand, null);
 
         if (fsVisible) {
             const gap = 12;
@@ -7004,6 +7009,8 @@ export class StreamView {
                 const hr = vol.parentElement.getBoundingClientRect();
                 vol.style.left = Math.round(rb.left - gap - micSpan - hr.left) + 'px';
             }
+            // The mark on the left stops a gap short of the whole group.
+            fitStreamBrand(brand, rb.left - left - gap);
             if (dock) {
                 el.style.left = Math.round(rb.right + gap) + 'px';
                 el.style.top = Math.round(rb.top + rb.height / 2) + 'px';
