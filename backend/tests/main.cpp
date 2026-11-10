@@ -80,6 +80,7 @@ void run_session_metrics_tests();
 void run_error_reports_tests();
 void run_us_scancode_tests();
 void run_input_watchdog_tests();
+void run_clipboard_sensitivity_tests();
 void run_hid_collections_json_tests();
 void run_hid_parked_json_tests();
 void run_keyboard_layout_tests();
@@ -214,6 +215,7 @@ int main(int argc, char** argv)
     run_error_reports_tests();
     run_us_scancode_tests();
     run_input_watchdog_tests();
+    run_clipboard_sensitivity_tests();
     run_hid_collections_json_tests();
     run_hid_parked_json_tests();
     run_keyboard_layout_tests();

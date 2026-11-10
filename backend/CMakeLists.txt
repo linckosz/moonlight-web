@@ -435,6 +435,7 @@ add_executable(mw-server
     src/streaming/SharedFeed.cpp
     src/streaming/NativeBench.cpp
     src/streaming/ClipboardBridge.cpp
+    src/streaming/ClipboardSensitivity.cpp
     src/streaming/HostAudioSink.cpp
     # The viewer's microphone, played into this machine's virtual one; its OS
     # backend (MicOutput*.cpp) is chosen below.

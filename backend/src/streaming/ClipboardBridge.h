@@ -35,7 +35,8 @@ class IMediaEngine;
 ///
 /// Host → local: QClipboard::dataChanged is monitored on the main thread and
 /// re-emitted as hostTextChanged(); relays forward it to the browser, which
-/// mirrors it via navigator.clipboard.writeText().
+/// mirrors it via navigator.clipboard.writeText(). A copy marked private by
+/// the program that made it (ClipboardSensitivity) stays on the host.
 ///
 /// All QClipboard access happens on the Qt main thread (QClipboard is
 /// main-thread-only); relays call in from their dedicated threads through
@@ -81,6 +82,11 @@ signals:
 private:
     explicit ClipboardBridge(QObject* parent);
     void onClipboardChanged();
+
+    /// The host clipboard holds a copy its owner asked to keep private (a
+    /// password manager's marks, see ClipboardSensitivity): it is not
+    /// relayed. Main thread only.
+    bool hostCopyIsPrivate();
 
     /// Last text written or observed — suppresses the dataChanged echo of our
     /// own setText() and redundant re-pushes of an unchanged clipboard.

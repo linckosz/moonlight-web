@@ -119,6 +119,7 @@ add_executable(run_tests
     test_error_reports.cpp
     test_us_scancode.cpp
     test_input_watchdog.cpp
+    test_clipboard_sensitivity.cpp
     test_keyboard_layout.cpp
     test_native_capabilities_json.cpp
     test_edition.cpp
@@ -188,6 +189,8 @@ add_executable(run_tests
     ${_src}/src/streaming/InputEncoder.cpp
     # The input dead-man switch, exercised against a fake wire.
     ${_src}/src/streaming/InputWatchdog.cpp
+    # The marks that keep a host copy off the browser (password managers).
+    ${_src}/src/streaming/ClipboardSensitivity.cpp
     # The adapter a stream leaves by and its counter: read-only system calls.
     ${_src}/src/streaming/HostUplinkReader.cpp
     # The bench's cap on the host's other uploads: its scripts, built and read.

@@ -16,6 +16,7 @@
  */
 
 #include "ClipboardBridge.h"
+#include "ClipboardSensitivity.h"
 #include "IMediaEngine.h"
 
 #include <QClipboard>
@@ -24,6 +25,7 @@
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QMetaMethod>
+#include <QMimeData>
 #include <QNetworkInterface>
 #include <QPointer>
 #include <QtDebug>
@@ -103,6 +105,7 @@ void ClipboardBridge::requestAnnounce()
     QMetaObject::invokeMethod(
         this,
         [this]() {
+            if (hostCopyIsPrivate()) return;
             const QString text = QGuiApplication::clipboard()->text().left(kMaxTextChars);
             if (text.isEmpty()) return;
             m_LastText = text;
@@ -117,6 +120,7 @@ void ClipboardBridge::onClipboardChanged()
     static const QMetaMethod changedSignal =
         QMetaMethod::fromSignal(&ClipboardBridge::hostTextChanged);
     if (!isSignalConnected(changedSignal)) return;
+    if (hostCopyIsPrivate()) return;
 
     const QString text = QGuiApplication::clipboard()->text().left(kMaxTextChars);
     // Empty = cleared or non-text content (image/files) — text-only bridge.
@@ -125,4 +129,15 @@ void ClipboardBridge::onClipboardChanged()
 
     m_LastText = text;
     emit hostTextChanged(text);
+}
+
+bool ClipboardBridge::hostCopyIsPrivate()
+{
+    const QMimeData* data = QGuiApplication::clipboard()->mimeData();
+    if (!data || !ClipboardSensitivity::markedPrivate(*data)) return false;
+    // Forgotten as well: the next ordinary copy goes out even if its text
+    // matches what was relayed before this one.
+    m_LastText.clear();
+    qInfo() << "[ClipboardBridge] Host copy kept on the host: its owner marked it private";
+    return true;
 }
