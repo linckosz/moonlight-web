@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,10 @@ struct WaylandOutput
     int y = 0;
     int width = 0;
     int height = 0;
+    /// wl_output's transform, 0 to 7: how the compositor turns the desktop
+    /// onto this output's panel (capture/Orientation.h). Not 0 on a display
+    /// turned against its panel, whose scanout is then turned (issue #54).
+    uint32_t transform = 0;
 };
 
 inline bool waylandDesktopUnion(const std::vector<WaylandOutput>& outputs, int& left, int& top,

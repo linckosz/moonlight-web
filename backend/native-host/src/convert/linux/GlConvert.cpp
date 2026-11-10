@@ -87,6 +87,23 @@ uniform float CursorEnabled;
 // for a screen of an X11 desktop over several, which reads its window of the
 // root window's buffer (KmsFrame::sourceX).
 uniform vec4 SourceRect;
+// How the texture holds the picture (KmsFrame::orientation): x the quarter
+// turns counter-clockwise, y 1 when mirrored first. (0,0) but for a display
+// turned against its panel (issue #54), and for the resampled picture, which
+// the horizontal pass has stood upright already.
+uniform ivec2 Orient;
+
+// Where the texture holds point p of the upright picture, in the picture's
+// window: Orientation.h's orientedTexel, in uv. Everything else — the
+// pointer's rectangle above all — is in the upright picture. A branch on a
+// uniform: every pixel of a draw takes the same one.
+vec2 PictureUv(vec2 p) {
+    if (Orient.y == 1) p.x = 1.0 - p.x;
+    if (Orient.x == 1) return vec2(p.y, 1.0 - p.x);
+    if (Orient.x == 2) return 1.0 - p;
+    if (Orient.x == 3) return vec2(1.0 - p.y, p.x);
+    return p;
+}
 
 // The desktop with the mouse pointer drawn on it. See ColorConvert.cpp: the
 // scanout buffer does not contain the pointer (it is on its own hardware
@@ -96,7 +113,7 @@ vec3 Scene(vec2 p) {
     // never takes a pixel of the screen beside it; for a whole texture that
     // is the edge clamp the sampler already does.
     vec2 texel = 1.0 / vec2(textureSize(Source, 0));
-    vec2 q = clamp(SourceRect.xy + p * SourceRect.zw, SourceRect.xy + 0.5 * texel,
+    vec2 q = clamp(SourceRect.xy + PictureUv(p) * SourceRect.zw, SourceRect.xy + 0.5 * texel,
                    SourceRect.xy + SourceRect.zw - 0.5 * texel);
     vec3 rgb = texture(Source, q).rgb;
     if (CursorEnabled < 0.5) return rgb;
@@ -139,7 +156,9 @@ void main() {
 // imported target the way D3D11's _SRGB view gives one — the vertical pass
 // re-encodes its result itself, once per output pixel, into a plain RGBA8 the
 // conversion then reads as it read the scanout. The sizes are #defines
-// prepended per geometry, so the tap loop is a constant.
+// prepended per geometry, so the tap loop is a constant. The horizontal pass
+// also stands a picture held turned upright (Orient, see Texel), so that
+// everything after it — the vertical pass, the conversion — reads it upright.
 constexpr char kScaleBody[] = R"GLSL(
 precision highp float;
 in vec2 uv;
@@ -147,7 +166,25 @@ uniform sampler2D Source;
 // Where the picture starts in the input: a screen's window of an X11 root
 // (KmsFrame::sourceX) for the horizontal pass, 0,0 for the vertical one.
 uniform ivec2 Offset;
+// How the input holds the picture (KmsFrame::orientation), as the
+// conversion's Orient: the horizontal pass only, (0,0) for the vertical one.
+uniform ivec2 Orient;
 out vec4 o;
+
+// The texel under pixel (x, y) of the upright picture, MW_LEN × MW_FIXED in
+// the horizontal pass: Orientation.h's orientedTexel. The vertical pass reads
+// the intermediate, upright already.
+ivec2 Texel(int x, int y) {
+#if MW_HORIZONTAL
+    int w = int(MW_LEN);
+    int h = int(MW_FIXED);
+    if (Orient.y == 1) x = w - 1 - x;
+    if (Orient.x == 1) return ivec2(y, w - 1 - x);
+    if (Orient.x == 2) return ivec2(w - 1 - x, h - 1 - y);
+    if (Orient.x == 3) return ivec2(h - 1 - y, x);
+#endif
+    return ivec2(x, y);
+}
 
 vec3 srgbToLinear(vec3 c) {
     return mix(c / 12.92, pow(max(c + 0.055, 0.0) / 1.055, vec3(2.4)), step(0.04045, c));
@@ -165,7 +202,7 @@ float lanczos2(float x) {
     return 2.0 * sin(px) * sin(px * 0.5) / (px * px);
 }
 vec3 fetch(int x, int y) {
-    vec3 c = texelFetch(Source, ivec2(x, y) + Offset, 0).rgb;
+    vec3 c = texelFetch(Source, Texel(x, y) + Offset, 0).rgb;
 #if MW_DECODE
     c = srgbToLinear(c);
 #endif
@@ -903,9 +940,13 @@ bool GlConvert::convert(const capture::KmsFrame& frame, const capture::CursorSta
         glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint);
         glBeginQuery(GL_TIME_ELAPSED_EXT, d->resampleQuery);
     }
+    // How the scanout holds the picture: upright but on a display turned
+    // against its panel (issue #54), stood upright by the first read below.
+    const int turns = frame.orientation.turns & 3;
+    const int mirrored = frame.orientation.mirrored ? 1 : 0;
     if (resampled) {
         const auto scale = [&](GLuint program, GLuint fbo, GLuint input, int x, int y, int w, int h,
-                               int offsetX, int offsetY) {
+                               int offsetX, int offsetY, int orientTurns, int orientMirrored) {
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
             glViewport(x, y, w, h);
             glUseProgram(program);
@@ -913,12 +954,14 @@ bool GlConvert::convert(const capture::KmsFrame& frame, const capture::CursorSta
             glBindTexture(GL_TEXTURE_2D, input);
             glUniform1i(glGetUniformLocation(program, "Source"), 0);
             glUniform2i(glGetUniformLocation(program, "Offset"), offsetX, offsetY);
+            glUniform2i(glGetUniformLocation(program, "Orient"), orientTurns, orientMirrored);
             glDrawArrays(GL_TRIANGLES, 0, 3);
         };
-        // The horizontal pass reads the picture where it sits in the scanout;
-        // the vertical one reads the intermediate, which is the picture alone.
+        // The horizontal pass reads the picture where and as it sits in the
+        // scanout; the vertical one reads the intermediate, which is the
+        // picture alone, upright.
         scale(d->scaleHProgram, d->scaledMidFbo, d->sourceTexture, 0, 0, m_PictureWidth,
-              m_SourceHeight, frame.sourceX, frame.sourceY);
+              m_SourceHeight, frame.sourceX, frame.sourceY, turns, mirrored);
         if (m_Letterboxed) {
             glBindFramebuffer(GL_FRAMEBUFFER, d->scaledFbo);
             glViewport(0, 0, m_OutputWidth, m_OutputHeight);
@@ -926,7 +969,7 @@ bool GlConvert::convert(const capture::KmsFrame& frame, const capture::CursorSta
             glClear(GL_COLOR_BUFFER_BIT);
         }
         scale(d->scaleVProgram, d->scaledFbo, d->scaledMidTexture, m_PictureX, m_PictureY,
-              m_PictureWidth, m_PictureHeight, 0, 0);
+              m_PictureWidth, m_PictureHeight, 0, 0, 0, 0);
     }
     if (timed) glEndQuery(GL_TIME_ELAPSED_EXT);
     const GLuint scene = resampled ? d->scaledTexture : d->sourceTexture;
@@ -956,15 +999,17 @@ bool GlConvert::convert(const capture::KmsFrame& frame, const capture::CursorSta
     }
     // The picture inside what the conversion samples: the scaled picture is all
     // picture; the scanout is too, but for a screen's window of an X11 root.
+    // The window is the picture as the scanout holds it, turned or not.
     float sourceRect[4] = {0.0f, 0.0f, 1.0f, 1.0f};
-    if (!resampled && (frame.sourceX || frame.sourceY || frame.importWidth() != frame.width ||
-                       frame.importHeight() != frame.height)) {
+    if (!resampled &&
+        (frame.sourceX || frame.sourceY || frame.importWidth() != frame.windowWidth() ||
+         frame.importHeight() != frame.windowHeight())) {
         const float bw = static_cast<float>(frame.importWidth());
         const float bh = static_cast<float>(frame.importHeight());
         sourceRect[0] = static_cast<float>(frame.sourceX) / bw;
         sourceRect[1] = static_cast<float>(frame.sourceY) / bh;
-        sourceRect[2] = static_cast<float>(frame.width) / bw;
-        sourceRect[3] = static_cast<float>(frame.height) / bh;
+        sourceRect[2] = static_cast<float>(frame.windowWidth()) / bw;
+        sourceRect[3] = static_cast<float>(frame.windowHeight()) / bh;
     }
 
     const auto pass = [&](GLuint program, GLuint fbo, int w, int h) {
@@ -983,6 +1028,9 @@ bool GlConvert::convert(const capture::KmsFrame& frame, const capture::CursorSta
         glUniform4fv(glGetUniformLocation(program, "CursorRect"), 1, rect);
         glUniform1f(glGetUniformLocation(program, "CursorEnabled"), drawCursor ? 1.0f : 0.0f);
         glUniform4fv(glGetUniformLocation(program, "SourceRect"), 1, sourceRect);
+        // The scaled picture was stood upright by its horizontal pass.
+        glUniform2i(glGetUniformLocation(program, "Orient"), resampled ? 0 : turns,
+                    resampled ? 0 : mirrored);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     };
     pass(d->lumaProgram, d->lumaFbo, m_OutputWidth, m_OutputHeight);

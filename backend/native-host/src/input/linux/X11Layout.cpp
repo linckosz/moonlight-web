@@ -293,6 +293,7 @@ bool X11Layout::read(std::vector<X11Output>& outputs, int& rootWidth, int& rootH
                     out.y = crtc->y;
                     out.width = static_cast<int>(crtc->width);
                     out.height = static_cast<int>(crtc->height);
+                    out.rotation = crtc->rotation;
                     int format = 0;
                     std::vector<unsigned char> bytes;
                     std::vector<long> items;

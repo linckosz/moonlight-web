@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "../../capture/linux/CompositorTransform.h"
 #include "../../capture/linux/KmsCapture.h"
 #if defined(MW_NATIVE_LINUX_PORTAL)
 #include "../../capture/linux/GamescopeSession.h"
@@ -317,6 +318,10 @@ Unavailability enumerate(Capabilities& caps)
     int nextGpuId = 0;
     int nextDisplayId = 0;
     bool anyPrimary = false;
+    // How the compositor turns each display onto its panel (issue #54): KMS
+    // gives the panel's mode, and the desktop's size is the one offered. The
+    // layouts are read at most once, for every display of every card.
+    capture::CompositorLayouts layouts;
     for (const std::string& card : cards) {
         GpuInfo gpu;
         gpu.id = nextGpuId;
@@ -364,6 +369,23 @@ Unavailability enumerate(Capabilities& caps)
             display.gpuId = gpu.id;
             display.width = out.width;
             display.height = out.height;
+            input::KmsIdentity identity;
+            identity.edid = out.edid;
+            identity.connectorId = out.connectorId;
+            identity.x = out.x;
+            identity.y = out.y;
+            identity.width = out.width;
+            identity.height = out.height;
+            const capture::CompositorTransform turn = layouts.transformFor(identity, out.name);
+            if (turn.known && turn.orientation.swapsAxes()) {
+                std::swap(display.width, display.height);
+                // A debug line: the probe runs again every few seconds that a
+                // client asks, and the session's capture says it at its start.
+                log::debug("[native] " + out.name + " is turned " +
+                           std::to_string(turn.orientation.degrees()) + "° against its panel (" +
+                           turn.source + ") — its desktop is " + std::to_string(display.width) +
+                           "x" + std::to_string(display.height));
+            }
             display.refreshMilliHz = out.refreshMilliHz;
             // No HDR on this path yet: the capture reads 8-bit XRGB and the
             // converter has no PQ shader here. Said here so the Selector never
@@ -374,8 +396,8 @@ Unavailability enumerate(Capabilities& caps)
             display.primary = !anyPrimary && out.x == 0 && out.y == 0;
             if (display.primary) anyPrimary = true;
             display.label = "Display " + std::to_string(display.id + 1);
-            display.detail = out.name + " \xE2\x80\x94 " + std::to_string(out.width) + "\xC3\x97" +
-                             std::to_string(out.height) + " \xC2\xB7 " +
+            display.detail = out.name + " \xE2\x80\x94 " + std::to_string(display.width) +
+                             "\xC3\x97" + std::to_string(display.height) + " \xC2\xB7 " +
                              std::to_string((out.refreshMilliHz + 500) / 1000) + " Hz";
             display.kind = classifyConnectorName(out.name);
             display.key = cardStableId(card) + "/" + out.name;

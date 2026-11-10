@@ -108,8 +108,11 @@ struct ScalePush
     float fixedLen;
     float dilate;
     int32_t taps;
+    /// How the input holds the picture (KmsFrame::orientation): quarter
+    /// turns, then 1 when mirrored. The horizontal pass only.
+    int32_t orient[2];
 };
-static_assert(sizeof(ScalePush) == 48, "vk_scale.comp's push constants");
+static_assert(sizeof(ScalePush) == 56, "vk_scale.comp's push constants");
 
 struct Nv12Push
 {
@@ -120,8 +123,11 @@ struct Nv12Push
     int32_t size[2];
     float cursorEnabled;
     float pad;
+    /// How the sampled image holds the picture: as ScalePush's, (0,0) for the
+    /// resampled picture, upright already.
+    int32_t orient[2];
 };
-static_assert(sizeof(Nv12Push) == 48, "vk_nv12.comp's push constants");
+static_assert(sizeof(Nv12Push) == 56, "vk_nv12.comp's push constants");
 
 VkImageMemoryBarrier2 imageBarrier(VkImage image, VkImageLayout from, VkImageLayout to,
                                    VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
@@ -1064,14 +1070,18 @@ bool VulkanConvert::convert(const capture::KmsFrame& frame, const capture::Curso
         // it (amdgpu takes anonymous memory only, and PipeWire's is a memfd)
         // gets the CPU's copy into a buffer of ours, still a fraction of what
         // the CPU pair costs: the conversion and the encode stay on the GPU.
-        const size_t bytes = static_cast<size_t>(frame.pitches[0]) * frame.height;
+        // As the compositor holds it: a picture turned against its panel stays
+        // turned in our copy, and is stood upright where it is sampled.
+        const int heldWidth = frame.importWidth();
+        const int heldHeight = frame.importHeight();
+        const size_t bytes = static_cast<size_t>(frame.pitches[0]) * heldHeight;
         if (frame.pitches[0] % 4 != 0 || frame.mappedSize < bytes)
             return fail("the shared memory's rows do not hold the picture");
-        if (!d->hostPicture.image || d->hostPicture.width != frame.width ||
-            d->hostPicture.height != frame.height || d->hostPictureFormat != format) {
+        if (!d->hostPicture.image || d->hostPicture.width != heldWidth ||
+            d->hostPicture.height != heldHeight || d->hostPictureFormat != format) {
             destroyImage(*d->device, d->hostPicture);
             const VkResult r = createImage(
-                *d->device, format, frame.width, frame.height,
+                *d->device, format, heldWidth, heldHeight,
                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, d->hostPicture);
             if (r != VK_SUCCESS) return fail("the shared memory's picture: " + resultText(r));
             d->hostPictureFormat = format;
@@ -1206,19 +1216,26 @@ bool VulkanConvert::convert(const capture::KmsFrame& frame, const capture::Curso
     }
     push.sourceRect[0] = push.sourceRect[1] = 0.0f;
     push.sourceRect[2] = push.sourceRect[3] = 1.0f;
+    // The window is the picture as the input holds it, turned or not.
     if (!resampled && !fromHost &&
-        (frame.sourceX || frame.sourceY || frame.importWidth() != frame.width ||
-         frame.importHeight() != frame.height)) {
+        (frame.sourceX || frame.sourceY || frame.importWidth() != frame.windowWidth() ||
+         frame.importHeight() != frame.windowHeight())) {
         const float bw = static_cast<float>(frame.importWidth());
         const float bh = static_cast<float>(frame.importHeight());
         push.sourceRect[0] = static_cast<float>(frame.sourceX) / bw;
         push.sourceRect[1] = static_cast<float>(frame.sourceY) / bh;
-        push.sourceRect[2] = static_cast<float>(frame.width) / bw;
-        push.sourceRect[3] = static_cast<float>(frame.height) / bh;
+        push.sourceRect[2] = static_cast<float>(frame.windowWidth()) / bw;
+        push.sourceRect[3] = static_cast<float>(frame.windowHeight()) / bh;
     }
     push.size[0] = m_OutputWidth;
     push.size[1] = m_OutputHeight;
     push.cursorEnabled = drawCursor ? 1.0f : 0.0f;
+    // A display turned against its panel (issue #54): stood upright as it is
+    // read — by the horizontal pass when there is one, else here.
+    const int32_t turns = frame.orientation.turns & 3;
+    const int32_t mirrored = frame.orientation.mirrored ? 1 : 0;
+    push.orient[0] = resampled ? 0 : turns;
+    push.orient[1] = resampled ? 0 : mirrored;
 
     // ── Record ──
     VkCommandBuffer cmd = d->cmd;
@@ -1306,8 +1323,8 @@ bool VulkanConvert::convert(const capture::KmsFrame& frame, const capture::Curso
         copy.bufferOffset = hostOffset;
         copy.bufferRowLength = frame.pitches[0] / 4;
         copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        copy.imageExtent = {static_cast<uint32_t>(frame.width), static_cast<uint32_t>(frame.height),
-                            1};
+        copy.imageExtent = {static_cast<uint32_t>(frame.importWidth()),
+                            static_cast<uint32_t>(frame.importHeight()), 1};
         fn.vkCmdCopyBufferToImage(cmd, hostSource, d->hostPicture.image,
                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
         barriers(
@@ -1358,6 +1375,8 @@ bool VulkanConvert::convert(const capture::KmsFrame& frame, const capture::Curso
         // "1.0": the float nearest the ratio, which this cast is too.
         h.dilate = static_cast<float>(dilateH);
         h.taps = static_cast<int32_t>(std::ceil(4.0 * dilateH)) + 1;
+        h.orient[0] = turns;
+        h.orient[1] = mirrored;
         fn.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, d->scaleH);
         fn.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, d->scalePipelineLayout, 0,
                                    1, &d->scaleHSet, 0, nullptr);

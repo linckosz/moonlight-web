@@ -202,6 +202,8 @@ struct PlaneProps
     uint32_t srcY = 0;
     uint32_t srcW = 0;
     uint32_t srcH = 0;
+    /// How it turns that window onto the screen (Orientation.h).
+    uint32_t rotation = 0;
     uint64_t typeValue = 0;
 };
 
@@ -234,6 +236,8 @@ bool readPlaneProps(int card, uint32_t planeId, PlaneProps& out)
             out.srcW = p->prop_id;
         } else if (std::strcmp(p->name, "SRC_H") == 0) {
             out.srcH = p->prop_id;
+        } else if (std::strcmp(p->name, "rotation") == 0) {
+            out.rotation = p->prop_id;
         }
         drmModeFreeProperty(p);
     }
@@ -453,8 +457,11 @@ bool KmsCapture::resolveTopology(std::string& error)
         if (crtc) drmModeFreeCrtc(crtc);
         return false;
     }
-    m_Width = static_cast<int>(crtc->width);
-    m_Height = static_cast<int>(crtc->height);
+    // The panel's size; start() stands it the way the desktop is.
+    m_ModeWidth = static_cast<int>(crtc->width);
+    m_ModeHeight = static_cast<int>(crtc->height);
+    m_Width = m_ModeWidth;
+    m_Height = m_ModeHeight;
     m_Rect.left = crtc->x;
     m_Rect.top = crtc->y;
     m_Rect.right = crtc->x + m_Width;
@@ -491,6 +498,7 @@ bool KmsCapture::resolveTopology(std::string& error)
     // FB_ID 0 and reports the pointer hidden until it appears.
     m_PrimaryPlane = m_CursorPlane = 0;
     m_PropSrcX = m_PropSrcY = m_PropSrcW = m_PropSrcH = 0;
+    m_PropRotation = m_PropCursorRotation = 0;
     const uint32_t crtcBit = 1u << static_cast<unsigned>(m_CrtcIndex);
     bool cursorAttached = false;
     drmModePlaneRes* planes = drmModeGetPlaneResources(m_Card);
@@ -509,6 +517,7 @@ bool KmsCapture::resolveTopology(std::string& error)
                         m_PropSrcY = props.srcY;
                         m_PropSrcW = props.srcW;
                         m_PropSrcH = props.srcH;
+                        m_PropRotation = props.rotation;
                     }
                 } else if (props.typeValue == DRM_PLANE_TYPE_CURSOR) {
                     // One attached to us beats one that merely could be: a
@@ -521,6 +530,7 @@ bool KmsCapture::resolveTopology(std::string& error)
                         m_PropFbId = props.fbId;
                         m_PropHotspotX = props.hotspotX;
                         m_PropHotspotY = props.hotspotY;
+                        m_PropCursorRotation = props.rotation;
                         cursorAttached = attached;
                     }
                 }
@@ -612,6 +622,23 @@ bool KmsCapture::start(std::string& error)
     }
     drmModeFreePlane(p);
 
+    // A display turned against its panel (see the header): the buffer holds
+    // the desktop as P⁻¹∘T says, and everything this capture reports — its
+    // size, its rectangle, the pointer — is the desktop's, upright. Unread, T
+    // is P: a compositor that turns the panel in hardware, or nothing turned.
+    m_RotationValue = 0;
+    m_PlaneOrientation = Orientation{};
+    if (m_PropRotation && planeProperty(m_Card, m_PrimaryPlane, m_PropRotation, m_RotationValue))
+        m_PlaneOrientation = orientationFromDrmRotation(m_RotationValue);
+    m_PanelTransform = m_DesktopKnown ? m_DesktopTransform : m_PlaneOrientation;
+    m_Orientation = compose(inverse(m_PlaneOrientation), m_PanelTransform);
+    orientedSize(m_ModeWidth, m_ModeHeight, m_PanelTransform, m_Width, m_Height);
+    m_Rect.right = m_Rect.left + m_Width;
+    m_Rect.bottom = m_Rect.top + m_Height;
+    m_PointerTurns = !m_PanelTransform.upright();
+    m_HeldPointer = HeldPointer{};
+    m_PointerCut = UprightPointerCut{};
+
     m_LastFbId = 0;
     m_WindowSaid = false;
     m_InPlaceSaid = false;
@@ -620,13 +647,20 @@ bool KmsCapture::start(std::string& error)
     m_Cursor = CursorState{};
     m_SteadyOriginUs = steadyNowUs();
 
+    std::string turned;
+    if (!m_PanelTransform.upright())
+        turned = ", the display turned " + std::to_string(m_PanelTransform.degrees()) + "°" +
+                 (m_PanelTransform.mirrored ? " and mirrored" : "") + " against its panel (" +
+                 (m_DesktopKnown ? m_DesktopSource : std::string("the plane's own rotation")) +
+                 (m_Orientation.upright() ? "), turned by the plane itself: its buffer is upright"
+                                          : "): its pictures are turned upright in the conversion");
     log::info("[native] KMS capture started: " + std::to_string(m_Width) + "x" +
               std::to_string(m_Height) + " @ " + std::to_string(m_RefreshMilliHz / 1000) +
               " Hz on " + m_CardPath + " connector " + std::to_string(m_ConnectorId) + ", crtc " +
               std::to_string(m_CrtcId) + ", primary plane " + std::to_string(m_PrimaryPlane) +
               (m_CursorPlane ? ", cursor plane " + std::to_string(m_CursorPlane)
                              : ", no cursor plane (pointer is in the picture)") +
-              ", render node " + m_RenderNode);
+              ", render node " + m_RenderNode + turned);
     return true;
 }
 
@@ -665,8 +699,9 @@ bool KmsCapture::exportFramebuffer(uint32_t fbId, KmsFrame& frame, std::string& 
 ScanoutWindow KmsCapture::primaryWindow(int bufferWidth, int bufferHeight)
 {
     uint64_t srcX = 0, srcY = 0, srcW = 0, srcH = 0;
-    if (m_PropSrcW && m_PropSrcH) {
-        // One read for the four: a buffer changes at every flip, and a name
+    uint64_t rotation = m_RotationValue;
+    if ((m_PropSrcW && m_PropSrcH) || m_PropRotation) {
+        // One read for them all: a buffer changes at every flip, and a name
         // lookup per property would be a dozen ioctls each time.
         drmModeObjectProperties* props =
             drmModeObjectGetProperties(m_Card, m_PrimaryPlane, DRM_MODE_OBJECT_PLANE);
@@ -681,11 +716,28 @@ ScanoutWindow KmsCapture::primaryWindow(int bufferWidth, int bufferHeight)
                 srcW = value;
             else if (id == m_PropSrcH)
                 srcH = value;
+            else if (id == m_PropRotation)
+                rotation = value;
         }
         if (props) drmModeFreeObjectProperties(props);
     }
-    // 16.16 fixed point; an X server places its screens on whole pixels.
-    return scanoutWindow(bufferWidth, bufferHeight, m_Width, m_Height,
+    // The plane turned another way than at start: the compositor configured
+    // the display anew (Mutter stops turning in hardware what it turns in its
+    // own drawing, or the other way round). A new configuration: the caller
+    // starts over, as it does for a mode change.
+    if (rotation != m_RotationValue) {
+        log::info("[native] KMS: the primary plane's rotation changed (" +
+                  std::to_string(m_RotationValue) + " -> " + std::to_string(rotation) +
+                  ") — starting the capture over");
+        return ScanoutWindow{};
+    }
+    // The window the plane reads is the panel's size, turned as the plane
+    // turns it: a buffer held upright on a panel the plane turns a quarter is
+    // the panel's height wide. 16.16 fixed point; an X server places its
+    // screens on whole pixels.
+    int windowWidth = 0, windowHeight = 0;
+    orientedSize(m_ModeWidth, m_ModeHeight, m_PlaneOrientation, windowWidth, windowHeight);
+    return scanoutWindow(bufferWidth, bufferHeight, windowWidth, windowHeight,
                          static_cast<int64_t>(srcX >> 16), static_cast<int64_t>(srcY >> 16),
                          static_cast<int64_t>(srcW >> 16), static_cast<int64_t>(srcH >> 16));
 }
@@ -705,6 +757,8 @@ bool KmsCapture::updateCursor()
     if (m_PropHotspotY) planeProperty(m_Card, m_CursorPlane, m_PropHotspotY, hotY);
 
     bool changed = false;
+    // A new image was read for a turned display's pointer (m_PointerTurns).
+    bool shapeRead = false;
     const bool visible = fbId != 0;
     // CRTC_X/Y are signed in the kernel (a cursor can be half off the left
     // edge) but the property carries them as unsigned 64-bit.
@@ -728,28 +782,42 @@ bool KmsCapture::updateCursor()
             if (map != MAP_FAILED) {
                 const int w = static_cast<int>(buffer.width);
                 const int h = static_cast<int>(buffer.height);
-                m_Cursor.width = w;
-                m_Cursor.height = h;
-                m_Cursor.pixels.assign(static_cast<size_t>(w) * h * 4, 0);
-                m_Cursor.invert.assign(static_cast<size_t>(w) * h, 0);
-                int inkW = 0, inkH = 0;
                 const auto* base = static_cast<const uint8_t*>(map) + buffer.offsets[0];
-                for (int row = 0; row < h; ++row) {
-                    const uint8_t* src = base + static_cast<size_t>(row) * buffer.pitches[0];
-                    uint8_t* dst = &m_Cursor.pixels[static_cast<size_t>(row) * w * 4];
-                    // ARGB8888 little-endian is B,G,R,A in memory: BGRA, as
-                    // CursorState wants it. Straight copy.
-                    std::memcpy(dst, src, static_cast<size_t>(w) * 4);
-                    for (int col = 0; col < w; ++col) {
-                        if (dst[col * 4 + 3] != 0) {
-                            if (col + 1 > inkW) inkW = col + 1;
-                            if (row + 1 > inkH) inkH = row + 1;
+                if (m_PointerTurns) {
+                    // A display turned against its panel: the image is kept as
+                    // the plane holds it, and stood upright below with the
+                    // hotspot (OrientedPointer.h).
+                    m_HeldPointer.width = w;
+                    m_HeldPointer.height = h;
+                    m_HeldPointer.pixels.assign(static_cast<size_t>(w) * h * 4, 0);
+                    for (int row = 0; row < h; ++row)
+                        std::memcpy(&m_HeldPointer.pixels[static_cast<size_t>(row) * w * 4],
+                                    base + static_cast<size_t>(row) * buffer.pitches[0],
+                                    static_cast<size_t>(w) * 4);
+                    shapeRead = true;
+                } else {
+                    m_Cursor.width = w;
+                    m_Cursor.height = h;
+                    m_Cursor.pixels.assign(static_cast<size_t>(w) * h * 4, 0);
+                    m_Cursor.invert.assign(static_cast<size_t>(w) * h, 0);
+                    int inkW = 0, inkH = 0;
+                    for (int row = 0; row < h; ++row) {
+                        const uint8_t* src = base + static_cast<size_t>(row) * buffer.pitches[0];
+                        uint8_t* dst = &m_Cursor.pixels[static_cast<size_t>(row) * w * 4];
+                        // ARGB8888 little-endian is B,G,R,A in memory: BGRA, as
+                        // CursorState wants it. Straight copy.
+                        std::memcpy(dst, src, static_cast<size_t>(w) * 4);
+                        for (int col = 0; col < w; ++col) {
+                            if (dst[col * 4 + 3] != 0) {
+                                if (col + 1 > inkW) inkW = col + 1;
+                                if (row + 1 > inkH) inkH = row + 1;
+                            }
                         }
                     }
+                    m_Cursor.inkWidth = inkW;
+                    m_Cursor.inkHeight = inkH;
+                    ++m_Cursor.shapeVersion;
                 }
-                m_Cursor.inkWidth = inkW;
-                m_Cursor.inkHeight = inkH;
-                ++m_Cursor.shapeVersion;
                 changed = true;
                 ::munmap(map, size);
             }
@@ -758,6 +826,34 @@ bool KmsCapture::updateCursor()
         m_CursorFbId = static_cast<uint32_t>(fbId);
     } else if (!visible) {
         m_CursorFbId = 0;
+    }
+
+    if (m_PointerTurns) {
+        // The image stood upright when it or its hotspot changed, from how the
+        // plane holds it: turned for the panel by the compositor, and by the
+        // plane itself where it has a rotation of its own.
+        if (shapeRead || m_HeldPointer.hotspotX != hx || m_HeldPointer.hotspotY != hy) {
+            Orientation plane;
+            uint64_t rotation = 0;
+            if (m_PropCursorRotation &&
+                planeProperty(m_Card, m_CursorPlane, m_PropCursorRotation, rotation))
+                plane = orientationFromDrmRotation(rotation);
+            m_HeldPointer.hotspotKnown = m_PropHotspotX != 0 && m_PropHotspotY != 0;
+            m_HeldPointer.hotspotX = hx;
+            m_HeldPointer.hotspotY = hy;
+            standPointerUpright(m_HeldPointer, compose(inverse(plane), m_PanelTransform), m_Cursor,
+                                m_PointerCut);
+            ++m_Cursor.shapeVersion;
+            changed = true;
+        }
+        // The plane's place on the panel, as a place on the upright desktop.
+        int ux = 0, uy = 0;
+        placeUprightPointer(px, py, m_PointerCut, m_PanelTransform, m_Width, m_Height, ux, uy);
+        if (m_Cursor.visible != visible || m_Cursor.x != ux || m_Cursor.y != uy) changed = true;
+        m_Cursor.visible = visible;
+        m_Cursor.x = ux;
+        m_Cursor.y = uy;
+        return changed;
     }
 
     if (m_Cursor.visible != visible || m_Cursor.x != px || m_Cursor.y != py) changed = true;
@@ -892,6 +988,16 @@ AcquireStatus KmsCapture::acquire(int timeoutMs, KmsFrame& frame)
                               "window");
                 }
             }
+            // A display turned against its panel: the buffer holds the desktop
+            // turned, in the panel's shape. The frame is the desktop's size,
+            // and says how the buffer holds it.
+            frame.orientation = m_Orientation;
+            if (!m_Orientation.upright() && !window.windowed) {
+                frame.bufferWidth = frame.width;
+                frame.bufferHeight = frame.height;
+                frame.width = m_Width;
+                frame.height = m_Height;
+            }
             m_LastFbId = fbId;
             // The vblank timestamp is CLOCK_MONOTONIC, which is what
             // steady_clock is on Linux: same domain, no conversion.
@@ -964,9 +1070,12 @@ uint64_t KmsCapture::fingerprintHeld()
     ::ioctl(m_LastFrame.fds[0], DMA_BUF_IOCTL_SYNC, &sync);
     const auto* words = reinterpret_cast<const uint64_t*>(static_cast<const uint8_t*>(m_HeldMap) +
                                                           m_LastFrame.offsets[0]);
-    const size_t count =
-        (static_cast<size_t>(m_LastFrame.pitches[0]) * static_cast<size_t>(m_LastFrame.height)) /
-        sizeof(uint64_t);
+    // A turned display's picture is the buffer's width tall — more rows than
+    // the mapping holds — so its buffer is read by the buffer's own rows.
+    const int rows =
+        m_LastFrame.orientation.upright() ? m_LastFrame.height : m_LastFrame.importHeight();
+    const size_t count = (static_cast<size_t>(m_LastFrame.pitches[0]) * static_cast<size_t>(rows)) /
+                         sizeof(uint64_t);
     uint64_t acc = 0x9E3779B97F4A7C15ULL;
     for (size_t i = 0; i < count; ++i)
         acc = (acc ^ words[i]) * 0x100000001B3ULL;

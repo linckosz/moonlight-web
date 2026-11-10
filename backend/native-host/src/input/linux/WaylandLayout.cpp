@@ -26,6 +26,7 @@
 #include <dlfcn.h>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mw::native::input {
@@ -216,6 +217,7 @@ struct OutputState
     int modeW = 0;
     int modeH = 0;
     int scale = 1;
+    int32_t transform = 0;
     bool haveLogical = false;
     int logicalX = 0;
     int logicalY = 0;
@@ -234,11 +236,12 @@ struct Session
 // ── Event handlers ──────────────────────────────────────────────────────────
 
 void onOutputGeometry(void* data, WlProxy*, int32_t x, int32_t y, int32_t, int32_t, int32_t,
-                      const char*, const char*, int32_t)
+                      const char*, const char*, int32_t transform)
 {
     auto* out = static_cast<OutputState*>(data);
     out->geomX = x;
     out->geomY = y;
+    out->transform = transform;
 }
 
 void onOutputMode(void* data, WlProxy*, uint32_t flags, int32_t width, int32_t height, int32_t)
@@ -440,6 +443,9 @@ bool WaylandLayout::read(std::vector<WaylandOutput>& outputs, std::string& socke
         for (auto& out : session.outputs) {
             WaylandOutput o;
             o.name = out->name;
+            o.transform = out->transform >= 0 && out->transform <= 7
+                              ? static_cast<uint32_t>(out->transform)
+                              : 0;
             if (out->haveLogical) {
                 o.x = out->logicalX;
                 o.y = out->logicalY;
@@ -450,11 +456,14 @@ bool WaylandLayout::read(std::vector<WaylandOutput>& outputs, std::string& socke
                 // the compositor's space, and the size follows from the mode
                 // and the integer scale. A fractional scale has no expression
                 // here, and comes out as the next integer's — off by the
-                // difference, which is what xdg-output exists to fix.
+                // difference, which is what xdg-output exists to fix. The mode
+                // is the panel's: a quarter turn stands it the desktop's way
+                // (odd transforms, 90 and 270, flipped or not).
                 o.x = out->geomX;
                 o.y = out->geomY;
                 o.width = out->modeW / (out->scale > 0 ? out->scale : 1);
                 o.height = out->modeH / (out->scale > 0 ? out->scale : 1);
+                if (o.transform % 2 == 1) std::swap(o.width, o.height);
             }
             outputs.push_back(std::move(o));
         }

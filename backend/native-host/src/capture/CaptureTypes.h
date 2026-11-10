@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "Orientation.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -51,16 +53,28 @@ struct KmsFrame
     /// buffer from (0,0), the other from (1920,0) — the primary plane's SRC_X/Y.
     /// Measured on the UM790Pro on 30/09/2026 (fb 458, 4480×1440, SRC 0,0
     /// 1920x1080). An importer takes the buffer at this size and samples the
-    /// picture's window inside it (see KmsCapture::acquire).
+    /// picture's window inside it (see KmsCapture::acquire). Set as well when
+    /// the buffer holds the picture turned (orientation, below).
     int bufferWidth = 0;
     int bufferHeight = 0;
     /// Where the picture starts in the buffer; 0,0 when it is the whole of it.
     int sourceX = 0;
     int sourceY = 0;
 
+    /// How the buffer holds the picture (Orientation.h). Upright everywhere
+    /// but on a display turned against its panel, whose compositor turns the
+    /// desktop into a buffer of the panel's shape (issue #54). width and
+    /// height stay the upright picture's: what a converter makes. The window
+    /// it reads in the buffer is height × width for a quarter turn.
+    Orientation orientation;
+
+    /// The picture's window of the buffer, at the size it is held there.
+    int windowWidth() const { return orientation.swapsAxes() ? height : width; }
+    int windowHeight() const { return orientation.swapsAxes() ? width : height; }
+
     /// The size to import the buffer at.
-    int importWidth() const { return bufferWidth > 0 ? bufferWidth : width; }
-    int importHeight() const { return bufferHeight > 0 ? bufferHeight : height; }
+    int importWidth() const { return bufferWidth > 0 ? bufferWidth : windowWidth(); }
+    int importHeight() const { return bufferHeight > 0 ? bufferHeight : windowHeight(); }
 
     /// DRM fourcc of the buffer, e.g. DRM_FORMAT_XRGB8888.
     uint32_t fourcc = 0;

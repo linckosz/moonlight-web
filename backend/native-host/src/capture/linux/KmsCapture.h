@@ -18,6 +18,8 @@
 #pragma once
 
 #include "../CaptureTypes.h"
+#include "../Orientation.h"
+#include "../OrientedPointer.h"
 #include "../ScanoutWindow.h"
 #include "IScreenCapture.h"
 #include "KmsHelperClient.h"
@@ -26,6 +28,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Screen capture on Linux, from the kernel's own scanout buffer.
@@ -69,6 +72,20 @@
 // so it cannot be handed to VA-API directly (radeonsi refuses the modifier on
 // import, measured 04/09/2026). It goes through EGL, which accepts it: see
 // GlConvert.
+//
+// ── A display turned against its panel ──────────────────────────────────────
+//
+// The scanout is the PANEL's picture. When the desktop is turned on it (a
+// monitor stood on its side; issue #54 on Windows), the compositor turns it
+// into the buffer itself — Mutter for a quarter turn, wlroots and an X server
+// always — or has the primary plane turn it (its "rotation" property; Mutter
+// does a half turn that way where the plane can). Either way the buffer holds
+// the desktop as P⁻¹∘T says (Orientation.h): T the compositor's transform,
+// which only the compositor knows and the session reads from it
+// (setDesktopTransform), P the plane's rotation, read here. The capture then
+// reports the desktop's own size, upright, hands its frames out with that
+// orientation for the converters to undo as they read, and turns the pointer
+// back itself (OrientedPointer.h): its plane is placed in the panel's pixels.
 
 namespace mw::native::capture {
 
@@ -124,6 +141,24 @@ public:
 
     KmsCapture(const KmsCapture&) = delete;
     KmsCapture& operator=(const KmsCapture&) = delete;
+
+    /// How the compositor shows the desktop on this display's panel — its
+    /// output transform, which the session reads from the Wayland or X layout
+    /// (CompositorTransform.h) — for the next start(). @p source names where
+    /// it was read, for the log. Never set, the primary plane's own rotation
+    /// stands for it: a compositor that turns the panel in hardware, or
+    /// nothing turned at all.
+    void setDesktopTransform(Orientation transform, std::string source)
+    {
+        m_DesktopKnown = true;
+        m_DesktopTransform = transform;
+        m_DesktopSource = std::move(source);
+    }
+    /// The compositor's transform start() went by — what a later read of the
+    /// layout is compared with, to follow a display turned during a session.
+    Orientation panelTransform() const { return m_PanelTransform; }
+    /// How the frames hold the picture (KmsFrame::orientation).
+    Orientation orientation() const { return m_Orientation; }
 
     bool start(std::string& error) override;
 
@@ -211,6 +246,32 @@ private:
     uint32_t m_PropSrcY = 0;
     uint32_t m_PropSrcW = 0;
     uint32_t m_PropSrcH = 0;
+    /// The primary and cursor planes' "rotation"; zero where the driver has
+    /// none, which is a plane that never turns.
+    uint32_t m_PropRotation = 0;
+    uint32_t m_PropCursorRotation = 0;
+    /// The primary plane's rotation value at start(): a change is a new
+    /// configuration, and the capture starts over (acquire).
+    uint64_t m_RotationValue = 0;
+
+    // ── A display turned against its panel (see the file comment) ──
+    bool m_DesktopKnown = false;
+    Orientation m_DesktopTransform;
+    std::string m_DesktopSource;
+    /// P: how the primary plane turns its buffer onto the panel.
+    Orientation m_PlaneOrientation;
+    /// T: how the panel shows the upright desktop — what the session said, or
+    /// P when it said nothing.
+    Orientation m_PanelTransform;
+    /// P⁻¹∘T: how the buffer holds the upright desktop.
+    Orientation m_Orientation;
+    /// The CRTC's mode: the panel's size, as it scans out.
+    int m_ModeWidth = 0;
+    int m_ModeHeight = 0;
+    /// The pointer turned back (OrientedPointer.h): set when T is not upright.
+    bool m_PointerTurns = false;
+    HeldPointer m_HeldPointer;
+    UprightPointerCut m_PointerCut;
     /// The windowed buffer said once per start, not at every flip.
     bool m_WindowSaid = false;
     /// See setInPlaceChanges().

@@ -31,7 +31,26 @@ layout(push_constant) uniform Push
     float fixedLen; // MW_FIXED: the other dimension of the input
     float dilate;   // MW_DILATE: max(1, len / output)
     int taps;       // MW_TAPS: ceil(4 * dilate) + 1
+    ivec2 orient;   // how the input holds the picture (KmsFrame::orientation):
+                    // x quarter turns counter-clockwise, y 1 when mirrored
+                    // first; horizontally only, (0,0) after (GlConvert's Orient)
 } pc;
+
+// The texel under pixel (x, y) of the upright picture, len × fixedLen in the
+// horizontal pass: Orientation.h's orientedTexel, GlConvert's Texel. The
+// vertical pass reads the intermediate, upright already.
+ivec2 texel(int x, int y)
+{
+#if MW_HORIZONTAL
+    int w = int(pc.len);
+    int h = int(pc.fixedLen);
+    if (pc.orient.y == 1) x = w - 1 - x;
+    if (pc.orient.x == 1) return ivec2(y, w - 1 - x);
+    if (pc.orient.x == 2) return ivec2(w - 1 - x, h - 1 - y);
+    if (pc.orient.x == 3) return ivec2(h - 1 - y, x);
+#endif
+    return ivec2(x, y);
+}
 
 vec3 srgbToLinear(vec3 c)
 {
@@ -53,7 +72,7 @@ float lanczos2(float x)
 }
 vec3 fetch(int x, int y)
 {
-    vec3 c = texelFetch(Source, ivec2(x, y) + pc.offset, 0).rgb;
+    vec3 c = texelFetch(Source, texel(x, y) + pc.offset, 0).rgb;
 #if MW_HORIZONTAL
     c = srgbToLinear(c);
 #endif

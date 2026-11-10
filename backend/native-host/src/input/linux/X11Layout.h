@@ -34,6 +34,10 @@ struct X11Output
     int height = 0;
     std::vector<uint8_t> edid; ///< the monitor's EDID as the driver read it; empty: none
     uint32_t connectorId = 0;  ///< the KMS connector the driver says it drives; 0: not said
+    /// RandR's rotation of its CRTC: RR_Rotate_0 (1) unless the screen is
+    /// turned against its panel (capture/Orientation.h). The rectangle above
+    /// is already the turned one.
+    unsigned rotation = 1;
 };
 
 /// The captured display as KMS knows it — what an X output is recognised by.

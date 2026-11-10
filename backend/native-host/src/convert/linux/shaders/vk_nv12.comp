@@ -29,7 +29,23 @@ layout(push_constant) uniform Push
     vec4 SourceRect;
     ivec2 size; // the luma plane
     float CursorEnabled;
+    // How Source holds the picture (KmsFrame::orientation): x quarter turns
+    // counter-clockwise, y 1 when mirrored first. (0,0) but for a display
+    // turned against its panel, and for the resampled picture, which the
+    // horizontal pass has stood upright already (GlConvert's Orient).
+    ivec2 orient;
 } pc;
+
+// Where Source holds point p of the upright picture, in the picture's window:
+// Orientation.h's orientedTexel in uv, GlConvert's PictureUv.
+vec2 PictureUv(vec2 p)
+{
+    if (pc.orient.y == 1) p.x = 1.0 - p.x;
+    if (pc.orient.x == 1) return vec2(p.y, 1.0 - p.x);
+    if (pc.orient.x == 2) return 1.0 - p;
+    if (pc.orient.x == 3) return vec2(1.0 - p.y, p.x);
+    return p;
+}
 
 // The desktop with the mouse pointer drawn on it: the scanout does not contain
 // the pointer (it is on its own hardware plane), so it is put back here,
@@ -40,8 +56,8 @@ vec3 Scene(vec2 p)
     // never takes a pixel of the screen beside it; for a whole image that is
     // the edge clamp the sampler already does.
     vec2 texel = 1.0 / vec2(textureSize(Source, 0));
-    vec2 q = clamp(pc.SourceRect.xy + p * pc.SourceRect.zw, pc.SourceRect.xy + 0.5 * texel,
-                   pc.SourceRect.xy + pc.SourceRect.zw - 0.5 * texel);
+    vec2 q = clamp(pc.SourceRect.xy + PictureUv(p) * pc.SourceRect.zw,
+                   pc.SourceRect.xy + 0.5 * texel, pc.SourceRect.xy + pc.SourceRect.zw - 0.5 * texel);
     vec3 rgb = texture(Source, q).rgb;
     if (pc.CursorEnabled < 0.5) return rgb;
     vec2 c = (p - pc.CursorRect.xy) / pc.CursorRect.zw;

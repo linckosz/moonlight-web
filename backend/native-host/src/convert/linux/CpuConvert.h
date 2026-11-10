@@ -109,6 +109,10 @@ private:
     };
     TenBit m_TenBit = TenBit::No;
     std::vector<uint8_t> m_Unpacked;
+    /// The picture stood upright, for a display turned against its panel
+    /// (issue #54): read across the buffer once, then converted as an upright
+    /// scanout is. Empty while every frame comes upright.
+    std::vector<uint8_t> m_Upright;
     int m_SourceWidth = 0;
     int m_SourceHeight = 0;
     int m_OutputWidth = 0;

@@ -79,6 +79,17 @@ constexpr int cursorMetaSize(int w, int h)
     return static_cast<int>(sizeof(spa_meta_cursor) + sizeof(spa_meta_bitmap)) + w * h * 4;
 }
 
+/// SPA_META_VideoTransform and its struct, spa_meta_videotransform, by their
+/// ABI: the PipeWire of Ubuntu 22.04 (0.3.48), which builds the packages, may
+/// predate the names, and a compositor that sends none simply leaves the
+/// buffer without one. One value, numbered as wl_output's transform:
+/// how the compositor holds the picture in the buffer (Orientation.h).
+constexpr uint32_t kMetaVideoTransform = 8;
+struct VideoTransformMeta
+{
+    uint32_t transform;
+};
+
 const char* formatName(uint32_t spaFormat)
 {
     switch (spaFormat) {
@@ -144,6 +155,13 @@ struct PortalCapture::Impl
 
     CursorState cursor;
     bool cursorFresh = false;
+    /// How the compositor holds the picture in its buffers, by their video
+    /// transform: upright but where it hands over a display turned against its
+    /// panel as the panel scans it out (xdg-desktop-portal-wlr, Hyprland's).
+    /// The last buffer's, which the size follows (width, height).
+    Orientation orientation;
+    /// The orientation last said in the log.
+    Orientation saidOrientation;
     /// An earlier grant to replay, so start() raises no dialog.
     std::string restore;
 
@@ -240,7 +258,7 @@ struct PortalCapture::Impl
         uint8_t storage[1024];
         spa_pod_builder builder{};
         spa_pod_builder_init(&builder, storage, sizeof(storage));
-        const spa_pod* params[3];
+        const spa_pod* params[4];
         uint32_t count = 0;
         params[count++] = static_cast<const spa_pod*>(spa_pod_builder_add_object(
             &builder, SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta, SPA_PARAM_META_type,
@@ -251,6 +269,15 @@ struct PortalCapture::Impl
             SPA_POD_Id(SPA_META_Cursor), SPA_PARAM_META_size,
             SPA_POD_CHOICE_RANGE_Int(cursorMetaSize(384, 384), cursorMetaSize(1, 1),
                                      cursorMetaSize(512, 512))));
+        // And how the buffer holds the picture. A portal that hands over a
+        // display turned against its panel as the panel scans it out —
+        // xdg-desktop-portal-wlr, Hyprland's — says so here, and only to a
+        // consumer that asks (issue #54); OBS and Chrome ask the same way.
+        // GNOME and KDE turn the picture themselves and leave it out.
+        params[count++] = static_cast<const spa_pod*>(spa_pod_builder_add_object(
+            &builder, SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta, SPA_PARAM_META_type,
+            SPA_POD_Id(kMetaVideoTransform), SPA_PARAM_META_size,
+            SPA_POD_Int(static_cast<int>(sizeof(VideoTransformMeta)))));
         // DMA-BUF asked for by name once a modifier is agreed. Shared memory
         // keeps what it always had — no buffer parameter, the compositor's
         // own — except on a stream that moves between the two
@@ -399,10 +426,39 @@ struct PortalCapture::Impl
         f.presentRawUs = header && header->pts > 0 ? header->pts / 1000 : 0;
         f.sequence = header ? static_cast<int64_t>(header->seq) : -1;
 
+        // How the buffer holds the picture, where the compositor says (asked
+        // for in onParamChanged): a display turned against its panel, handed
+        // over as the panel scans it out. The frame is then the picture's
+        // size, upright, and the converters stand it up as they read it. The
+        // pointer's metadata is left as it comes: no portal known to send a
+        // turned picture sends its pointer beside it.
+        const auto* transform = static_cast<const VideoTransformMeta*>(
+            spa_buffer_find_meta_data(buf, kMetaVideoTransform, sizeof(VideoTransformMeta)));
+        self->orientation =
+            transform ? orientationFromWayland(transform->transform) : Orientation{};
+        if (!self->orientation.upright()) {
+            f.orientation = self->orientation;
+            f.bufferWidth = f.width;
+            f.bufferHeight = f.height;
+            orientedSize(f.bufferWidth, f.bufferHeight, f.orientation, f.width, f.height);
+        }
+        const bool sayOrientation = self->orientation != self->saidOrientation;
+        self->saidOrientation = self->orientation;
+        const Orientation said = self->orientation;
+
         self->held = b;
         self->frameFresh = true;
         lock.unlock();
         self->ready.notify_all();
+        if (sayOrientation)
+            log::info(said.upright()
+                          ? std::string("[native] portal stream: the compositor's buffers hold the "
+                                        "picture upright again")
+                          : "[native] portal stream: the compositor's buffers hold the picture "
+                            "turned " +
+                                std::to_string(said.degrees()) + "°" +
+                                (said.mirrored ? " and mirrored" : "") +
+                                " (its video transform) — turned upright in the conversion");
     }
 
     /// What we accept, into @p params. DMA-BUF first when @p dmabuf, one
@@ -817,14 +873,18 @@ void PortalCapture::stop()
     d->formatsBeforePicture = 0;
 }
 
+// The picture's size: the buffers', stood upright where the compositor holds
+// the picture turned (its video transform, onProcess).
 int PortalCapture::width() const
 {
-    return static_cast<int>(d->format.size.width);
+    return static_cast<int>(d->orientation.swapsAxes() ? d->format.size.height
+                                                       : d->format.size.width);
 }
 
 int PortalCapture::height() const
 {
-    return static_cast<int>(d->format.size.height);
+    return static_cast<int>(d->orientation.swapsAxes() ? d->format.size.width
+                                                       : d->format.size.height);
 }
 
 int PortalCapture::refreshMilliHz() const

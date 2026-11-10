@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "../../capture/linux/CompositorTransform.h"
 #include "../../capture/linux/KmsCapture.h"
 #include "../../capture/linux/X11Damage.h"
 #if defined(MW_NATIVE_LINUX_PORTAL)
@@ -688,6 +689,19 @@ public:
                           ", its shape");
         }
 #endif
+        // A scanout turned a quarter against its panel, which the Selector may
+        // have shaped on the panel (a probe that could not ask the compositor):
+        // the frame takes the desktop's shape. Nothing moves when it had it.
+        if (m_Scanout && m_Scanout->panelTransform().swapsAxes()) {
+            const FrameSize shaped = frameForDisplay({m_Capture->width(), m_Capture->height()},
+                                                     frame, policyOf(m_Config));
+            if (shaped.width != frame.width || shaped.height != frame.height)
+                log::info("[native] the display stands " + std::to_string(m_Capture->width()) +
+                          "x" + std::to_string(m_Capture->height()) + " — streaming " +
+                          std::to_string(shaped.width) + "x" + std::to_string(shaped.height) +
+                          ", its shape");
+            frame = shaped;
+        }
         if (!buildPipeline(frame.width, frame.height, error)) return false;
 
         // Input: keyboard and mouse through uinput, the gamepad beside them.
@@ -1045,6 +1059,7 @@ private:
 
     bool openCapture(std::string& error)
     {
+        m_Scanout = nullptr;
 #if defined(MW_NATIVE_LINUX_PORTAL)
         if (m_Target.gamescopeSteam || m_Target.gamescopeApp) return openGamescope(error);
         if (m_Target.capture == CaptureApi::PipeWire) {
@@ -1202,9 +1217,69 @@ private:
 #if defined(MW_NATIVE_LINUX_PORTAL)
         m_PortalCapture = nullptr;
 #endif
+        // How the compositor turns the desktop onto this panel (issue #54):
+        // the scanout is turned with it, and only the compositor says so. The
+        // connector is identified once a capture: listing connectors probes
+        // them — the monitor's EDID read over the wire — and the loop asks
+        // the compositor again every few seconds (displayTurned).
+        m_ScanoutIdentity = scanoutIdentity();
+        m_PanelTransform = readPanelTransform();
+        if (m_PanelTransform.known)
+            scanout.setDesktopTransform(m_PanelTransform.orientation, m_PanelTransform.source);
         m_Capture = std::move(kms);
         if (!m_Capture->start(error)) return false;
+        m_Scanout = &scanout;
         watchInPlaceDrawing(scanout);
+        return true;
+    }
+
+    /// The captured connector as KMS knows it, for X's layout to recognise
+    /// (X11Layout.h's findX11Output). Empty when the card no longer lists it.
+    input::KmsIdentity scanoutIdentity() const
+    {
+        input::KmsIdentity identity;
+        std::string listError;
+        for (const capture::KmsOutput& out :
+             capture::KmsCapture::listOutputs(m_CardPath, listError)) {
+            if (m_ConnectorId == 0 || out.connectorId != m_ConnectorId) continue;
+            identity.edid = out.edid;
+            identity.connectorId = out.connectorId;
+            identity.x = out.x;
+            identity.y = out.y;
+            identity.width = out.width;
+            identity.height = out.height;
+        }
+        return identity;
+    }
+
+    /// The compositor's transform of the scanout's display, read now
+    /// (CompositorTransform.h). Said once a session when X also reflects it,
+    /// which is not undone.
+    capture::CompositorTransform readPanelTransform()
+    {
+        const capture::CompositorTransform t =
+            capture::readCompositorTransform(m_ScanoutIdentity, m_ConnectorName);
+        if (t.reflectionIgnored && !m_SaidReflection) {
+            m_SaidReflection = true;
+            log::warning("[native] " + m_ConnectorName + " is reflected by X (" + t.source +
+                         ") — its turn is undone, the reflection is not");
+        }
+        return t;
+    }
+
+    /// Whether the scanout's display was turned since its capture started: a
+    /// fresh read of the compositor's transform against the one the capture
+    /// stood its pictures upright by. Said in the log when it was.
+    bool displayTurned()
+    {
+        if (!m_Scanout) return false;
+        const capture::CompositorTransform now = readPanelTransform();
+        if (!now.known) return false;
+        const capture::Orientation was = m_Scanout->panelTransform();
+        if (now.orientation == was) return false;
+        log::info("[native] " + m_ConnectorName + " was turned: " + std::to_string(was.degrees()) +
+                  "° -> " + std::to_string(now.orientation.degrees()) + "° against its panel (" +
+                  now.source + ") — the capture starts over");
         return true;
     }
 
@@ -1470,6 +1545,7 @@ private:
     void releaseCapture(bool locked)
     {
         m_Pipeline.reset();
+        m_Scanout = nullptr;
 #if defined(MW_NATIVE_LINUX_PORTAL)
         m_PortalCapture = nullptr;
         const std::string made = m_OnMutter && m_MadeMonitor ? m_VirtualConnector : std::string();
@@ -1515,7 +1591,13 @@ private:
     /// compositor and a headless host flip, and have none of this to ask.
     void watchInPlaceDrawing(capture::KmsCapture& scanout)
     {
-        const capture::DesktopRect r = scanout.desktopRect();
+        // Over the display's own rectangle of the root. A turned screen's CRTC
+        // scans out X's turned copy of that rectangle, from the copy's origin,
+        // so its place is X's to say (CompositorTransform.h).
+        const capture::DesktopRect r =
+            m_PanelTransform.haveRect && !m_PanelTransform.orientation.upright()
+                ? m_PanelTransform.rect
+                : scanout.desktopRect();
         if (!m_Damage) m_Damage = std::make_shared<capture::X11Damage>();
         std::string why;
         if (!m_Damage->watch(r.left, r.top, r.right, r.bottom, why)) {
@@ -2304,6 +2386,15 @@ private:
         std::string portalModesSeen;
         int portalFramesSince = 0;
         bool reopenPortal = false;
+        // The compositor's transform of the scanout's display, asked at most
+        // this often: a display turned during the session keeps its mode and
+        // its buffer's shape, and only the compositor says it turned (issue
+        // #54). Asked when the desktop is still — an acquire that timed out —
+        // because the answer is a round trip to the compositor, and a frame
+        // waiting behind it would be late by as much.
+        constexpr int64_t kTurnCheckUs = 2000 * 1000;
+        int64_t nextTurnCheckUs = steadyNowUs() + kTurnCheckUs;
+        bool turnPending = false;
         // The shared monitor's record, read this often by a guest's stream;
         // GNOME's word on its monitors, asked this often, and the pointer
         // mapped again this long after it.
@@ -2616,16 +2707,22 @@ private:
                 reopenPortal = false;
                 portalModeChanged = true;
             }
+            // The scanout's display was turned against its panel, or back (the
+            // check is made on a still moment, below): a new configuration,
+            // taken up as a mode change is — the capture starts over and
+            // stands the new turn upright, the rest is rebuilt for its size.
+            const bool turned = turnPending;
+            turnPending = false;
 
 #if defined(MW_NATIVE_LINUX_PORTAL)
             followPointerForDmabuf();
 #endif
             capture::KmsFrame fresh;
             const int64_t acquireStartUs = steadyNowUs();
-            const capture::AcquireStatus status = portalModeChanged
-                                                      ? capture::AcquireStatus::Lost
-                                                      : m_Capture->acquire(timeoutMs, fresh);
-            if (m_Config.tuning.clickTrace && !portalModeChanged)
+            const bool lostByCheck = portalModeChanged || turned;
+            const capture::AcquireStatus status =
+                lostByCheck ? capture::AcquireStatus::Lost : m_Capture->acquire(timeoutMs, fresh);
+            if (m_Config.tuning.clickTrace && !lostByCheck)
                 traceCapture(status, fresh, acquireStartUs, steadyNowUs());
 
             if (status != capture::AcquireStatus::Timeout && boosted) {
@@ -2648,6 +2745,17 @@ private:
                     if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
                     lastSentUs = steadyNowUs();
                     continue;
+                }
+                // A still moment with nothing to send: the one to ask the
+                // compositor whether the scanout's display was turned (see
+                // kTurnCheckUs). Not where it never answered at the start:
+                // nothing there to ask.
+                if (m_Scanout && m_PanelTransform.known && steadyNowUs() >= nextTurnCheckUs) {
+                    nextTurnCheckUs = steadyNowUs() + kTurnCheckUs;
+                    if (displayTurned()) {
+                        turnPending = true;
+                        continue;
+                    }
                 }
                 if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : idleIntervalUs))
                     continue;
@@ -3137,6 +3245,16 @@ private:
     /// An X server's damage on the captured display, for the scanout reader
     /// (X11Damage): shared with the capture, which asks it at each vblank.
     std::shared_ptr<capture::X11Damage> m_Damage;
+    /// m_Capture when it is the scanout reader, and how the compositor turned
+    /// the desktop onto its panel when it opened (CompositorTransform.h): what
+    /// the capture stood its pictures upright by. The loop compares a fresh
+    /// read with the capture's own (displayTurned).
+    capture::KmsCapture* m_Scanout = nullptr;
+    capture::CompositorTransform m_PanelTransform;
+    /// The scanout's connector as KMS knew it when its capture opened.
+    input::KmsIdentity m_ScanoutIdentity;
+    /// X reflects the display too, which is said once (readPanelTransform).
+    bool m_SaidReflection = false;
 
     /// The bench's click trace (EncoderTuning::clickTrace). Capture thread,
     /// and the input's. Ahead of the sinks, which write to it.

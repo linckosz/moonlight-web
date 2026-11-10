@@ -17,6 +17,7 @@
 
 #include "CpuConvert.h"
 
+#include "../../capture/Orientation.h"
 #include "../../core/Log.h"
 #include "../BgraToI420.h"
 
@@ -172,13 +173,29 @@ bool CpuConvert::convert(const capture::KmsFrame& frame, const capture::CursorSt
         p.src += static_cast<size_t>(frame.sourceY) * frame.pitches[0] +
                  static_cast<size_t>(frame.sourceX) * 4;
     p.srcPitch = frame.pitches[0];
+    // The window as the buffer holds it: the picture's own size, but turned
+    // for a display turned against its panel (issue #54).
+    const int heldWidth = frame.windowWidth();
+    const int heldHeight = frame.windowHeight();
     if (m_TenBit != TenBit::No) {
         // One pass over the buffer while it is mapped: the bands below then
         // read the 8-bit copy, exactly as they read an 8-bit scanout.
-        unpack2101010Rows(p.src, p.srcPitch, m_SourceWidth, m_TenBit == TenBit::Bgr,
-                          m_Unpacked.data(), 0, m_SourceHeight);
+        unpack2101010Rows(p.src, p.srcPitch, heldWidth, m_TenBit == TenBit::Bgr, m_Unpacked.data(),
+                          0, heldHeight);
         p.src = m_Unpacked.data();
-        p.srcPitch = static_cast<size_t>(m_SourceWidth) * 4;
+        p.srcPitch = static_cast<size_t>(heldWidth) * 4;
+    }
+    if (!frame.orientation.upright()) {
+        // Stood upright into a copy of our own, once across the buffer; the
+        // bands below then read it as they read an upright scanout. One more
+        // pass over the picture, on the route that has no GPU to do it in a
+        // texture fetch.
+        const size_t uprightPitch = static_cast<size_t>(m_SourceWidth) * 4;
+        m_Upright.resize(uprightPitch * static_cast<size_t>(m_SourceHeight));
+        capture::uprightCopy32(p.src, p.srcPitch, m_SourceWidth, m_SourceHeight, frame.orientation,
+                               m_Upright.data(), uprightPitch, 0, m_SourceHeight);
+        p.src = m_Upright.data();
+        p.srcPitch = uprightPitch;
     }
     p.srcWidth = m_SourceWidth;
     p.srcHeight = m_SourceHeight;
