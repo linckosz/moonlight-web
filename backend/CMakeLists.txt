@@ -311,6 +311,7 @@ add_executable(mw-server
     src/server/SessionPool.cpp
     src/server/routes/AuthRoutes.cpp
     src/server/routes/AuthStatusRoute.cpp
+    src/server/routes/HostKeyRoute.cpp
     src/server/routes/PinProofRoutes.cpp
     src/server/routes/HostRoutes.cpp
     src/server/routes/HostAppRoutes.cpp

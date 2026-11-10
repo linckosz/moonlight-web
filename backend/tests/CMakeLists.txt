@@ -129,6 +129,7 @@ add_executable(run_tests
     test_phone_pairing.cpp
     test_pair_request_routes.cpp
     test_auth_status_route.cpp
+    test_host_key_route.cpp
     # In-scope production units (+ their real deps)
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.
@@ -166,6 +167,9 @@ add_executable(run_tests
     # What a browser may do here, asked before and after a PIN: the route, driven
     # the same way.
     ${_src}/src/server/routes/AuthStatusRoute.cpp
+    # The browser on the host machine spending the key of its owner's link: the
+    # route, driven the same way.
+    ${_src}/src/server/routes/HostKeyRoute.cpp
     # The local self-signed cert: its key outlives a restart (clients pin it).
     ${_src}/src/server/CertManager.cpp
     ${_src}/src/server/ConnectionGuard.cpp

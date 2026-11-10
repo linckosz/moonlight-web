@@ -16,6 +16,7 @@
  */
 
 #include "server/routes/SystemRoutes.h"
+#include "server/routes/HostKeyRoute.h"
 #include "server/routes/PairRequestRoutes.h"
 
 #include "server/HttpServer.h"
@@ -46,6 +47,7 @@
 #include "common/DesktopSession.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
+#include "common/PairingCrypto.h"
 #include "common/RunFlags.h"
 
 #include <QCoreApplication>
@@ -293,78 +295,27 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         }
     });
 
-    // POST /api/auth/host-key — prove the browser runs on the host machine.
-    // The host's own entry points embed a persistent random key; the frontend
-    // redeems it here to obtain a localhost-equivalent session (admin access),
-    // since anywhere but loopback the peer address is not the machine's own.
-    // Redemption is refused for peers that cannot plausibly be the host machine
-    // itself.
-    //
-    // Two ways in, and the difference is recorded on the session because it
-    // decides what that session is worth afterwards:
-    //
-    //   socket  the key rides in ?mwk= on a local URL. The query reaches only
-    //           this machine, so it is safe there and nowhere else.
-    //   tunnel  the key rides in the FRAGMENT of a rendezvous link (#k=...),
-    //           which is the one part of a URL a browser never sends to the
-    //           server it fetched from — so the introduction server never sees
-    //           it, and it reaches this handler inside the tunnel's own
-    //           encryption. This is what gives the owner an admin page under a
-    //           certificate the browser already trusts.
-    //
-    // The plausibility gate below is what makes the tunnel case safe, and it is
-    // stronger there than it looks: for a tunnel peer clientAddress is the
-    // address ICE actually settled on — where our own stack is sending packets,
-    // not anything the browser said. A forwarded link redeemed from elsewhere on
-    // the internet arrives from an address that is neither private nor ours.
+    // POST /api/auth/host-key — the browser on the host machine spends the key
+    // of its owner's link (HostKeyRoute). The key is single-use: once spent,
+    // another is drawn and the entry points that carry it are rewritten.
     // onHostKeyRotated captured by value: the parameter dies when this
     // registration function returns, but the route lambda lives on.
-    server.router()->post("/api/auth/host-key", [&, onHostKeyRotated](const HttpRequest& req) {
-        const QString key = QJsonDocument::fromJson(req.body).object().value("key").toString();
-        const QString addr = AuthManager::cleanClientAddress(req.clientAddress);
-        const bool plausiblyHost =
-            HttpServer::isLocalRequest(addr) ||
-            AuthManager::isPrivateIP(addr) == QLatin1String("Local") ||
-            (!internetAccess.publicIp().isEmpty() && addr == internetAccess.publicIp());
-        // Compare hashes: constant-time, no length leak.
-        const QByteArray given = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256);
-        const QByteArray expected =
-            QCryptographicHash::hash(appSettings.localKey().toUtf8(), QCryptographicHash::Sha256);
-        if (!plausiblyHost || key.isEmpty() || given != expected) {
-            // Say which gate closed: the address is the one ICE settled on for
-            // a tunnel peer, and whether it passed is the whole question when
-            // the owner's own link lands on the PIN page.
-            Logger::warning(
-                QStringLiteral("[Auth] Host key redemption refused for %1 (%2; %3)")
-                    .arg(addr,
-                         req.viaTunnel ? QStringLiteral("via tunnel") : QStringLiteral("direct"),
-                         !plausiblyHost  ? QStringLiteral("address not plausibly this machine")
-                         : key.isEmpty() ? QStringLiteral("no key given")
-                                         : QStringLiteral("key does not match")));
-            return HttpResponse::error(403, "Invalid host key");
-        }
-
-        QString token =
-            authManager.createSession(req.clientAddress,
-                                      req.viaTunnel ? QStringLiteral("Host machine (remote link)")
-                                                    : QStringLiteral("Host machine"),
-                                      true, false, req.viaTunnel);
-        Logger::info(QStringLiteral("[Auth] Host session created for %1 (via host key)").arg(addr));
-
-        // Single-use: burn the redeemed key and rewrite the entry points that
-        // embed it, so a leaked/history URL cannot be replayed.
-        appSettings.rotateLocalKey();
-        if (onHostKeyRotated) onHostKeyRotated();
-
-        QJsonObject obj;
-        obj["status"] = "ok";
-        obj["is_localhost"] = true;
-        HttpResponse resp = HttpResponse::json(obj);
-        resp.headers["Set-Cookie"] =
-            QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
-                .arg(token);
-        return resp;
-    });
+    registerHostKeyRoute(
+        *server.router(), authManager,
+        {[&appSettings]() { return appSettings.localKey(); },
+         [&appSettings, onHostKeyRotated]() {
+             appSettings.rotateLocalKey();
+             if (onHostKeyRotated) onHostKeyRotated();
+         },
+         [](const QString& address) { return HttpServer::isLocalRequest(address); },
+         [&internetAccess]() { return internetAccess.publicIp(); },
+         [&appSettings]() {
+             const QByteArray spki = appSettings.hostSigningPublicKey();
+             QJsonObject identity;
+             identity["host_public_key"] = QString::fromLatin1(spki.toBase64());
+             identity["host_id"] = PairingCrypto::keyId(spki);
+             return identity;
+         }});
 
     // ── First-run setup wizard (localhost only) ──────────────────────────────
     // macOS/Linux ship without a native installer, so the app hosts the wizard
