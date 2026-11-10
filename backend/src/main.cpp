@@ -79,6 +79,7 @@
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
 #include "server/NetClassify.h"
+#include "server/RequestGuard.h"
 #include "server/ShareManager.h"
 #include "server/SessionPool.h"
 #include "server/SingleSessionHosts.h"
@@ -1428,10 +1429,7 @@ static NetClassify::Kind streamClientKind(const HttpRequest& req)
     const NetClassify::Kind kind = NetClassify::classify(req.clientAddress);
     if (kind != NetClassify::Kind::Loopback && kind != NetClassify::Kind::Private) return kind;
     const bool localProxy = kind == NetClassify::Kind::Loopback && !req.hostTrusted;
-    const bool forwarded = req.headers.contains(QStringLiteral("x-forwarded-for")) ||
-                           req.headers.contains(QStringLiteral("forwarded")) ||
-                           req.headers.contains(QStringLiteral("cf-connecting-ip")) ||
-                           req.headers.contains(QStringLiteral("tailscale-funnel-request"));
+    const bool forwarded = RequestGuard::forwardedByProxy(req.headers);
     if (!localProxy && !forwarded) return kind;
     qInfo() << "[Session] Browser behind a reverse proxy (peer" << req.clientAddress << ", Host"
             << req.headers.value(QStringLiteral("host")) << ") — planning ICE for the internet";

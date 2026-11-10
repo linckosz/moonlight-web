@@ -141,6 +141,72 @@ void run_request_guard_tests()
     CHECK(!isLocalHostName("evil.example"));
     CHECK(!isLocalHostName("203.0.113.7"));
 
+    SECTION("RequestGuard — a request a proxy forwarded");
+
+    // Each header a reverse proxy, a CDN or a tunnel writes on the way.
+    for (const char* name :
+         {"x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-server",
+          "forwarded", "x-real-ip", "via", "cf-connecting-ip", "cf-ray", "cf-visitor",
+          "true-client-ip", "x-client-ip", "x-cluster-client-ip", "fastly-client-ip",
+          "tailscale-funnel-request", "x-original-url", "x-arr-ssl"}) {
+        CHECK(forwardedByProxy(hdr({{"host", "127.0.0.1:8080"}, {name, "203.0.113.7"}})));
+    }
+    // What a browser or a script on this machine sends carries none of them.
+    CHECK(!forwardedByProxy(hdr({})));
+    CHECK(!forwardedByProxy(hdr({{"host", "localhost"},
+                                 {"sec-fetch-site", "same-origin"},
+                                 {"origin", "https://localhost"},
+                                 {"referer", "https://localhost/admin"},
+                                 {"cookie", "mw_session=abc"},
+                                 {"user-agent", "curl/8.5"}})));
+
+    // A local peer under a local name is this machine — unless a proxy stands
+    // between: the peer is then the proxy, and the caller is whoever reached it.
+    {
+        const auto local = [&](std::initializer_list<std::pair<const char*, const char*>> more) {
+            Request r;
+            r.method = "GET";
+            r.path = "/api/admin/settings";
+            r.headers = hdr({{"host", "127.0.0.1:8080"}});
+            for (const auto& kv : more)
+                r.headers[QString::fromLatin1(kv.first)] = QString::fromLatin1(kv.second);
+            Context c;
+            c.peerLocal = true;
+            return evaluate(r, c);
+        };
+        // The witness: nothing in between.
+        const Decision direct = local({});
+        CHECK(direct.outcome == Outcome::Allow);
+        CHECK(direct.localPrivilege);
+        CHECK(direct.hostMachine);
+        CHECK(direct.adminPrivilege);
+
+        for (const char* name : {"x-forwarded-for", "x-real-ip", "forwarded", "via",
+                                 "cf-connecting-ip", "x-forwarded-proto"}) {
+            const Decision proxied = local({{name, "203.0.113.7"}});
+            CHECK(proxied.outcome == Outcome::Allow); // served, as any visitor is
+            CHECK(!proxied.localPrivilege);
+            CHECK(!proxied.hostMachine);
+            CHECK(!proxied.adminPrivilege);
+        }
+
+        // The host's own browser behind such a proxy keeps what its session is
+        // worth: the header takes the address away, not the session.
+        {
+            Request r;
+            r.method = "GET";
+            r.path = "/api/admin/settings";
+            r.headers = hdr({{"host", "127.0.0.1:8080"}, {"x-forwarded-for", "192.168.1.9"}});
+            Context c;
+            c.peerLocal = true;
+            c.hostSession = true;
+            const Decision d = evaluate(r, c);
+            CHECK(!d.localPrivilege);
+            CHECK(d.hostMachine);
+            CHECK(d.adminPrivilege);
+        }
+    }
+
     SECTION("RequestGuard — body content type");
 
     CHECK(isBodyContentTypeAllowed("application/json", 12));

@@ -1571,7 +1571,8 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // session and never will, so the mw_player cookie bound to that slot's
     // activation is what opens it — and nothing else, not even a local peer.
     const bool localPrivilege = HttpServer::isLocalRequest(peerAddr) &&
-                                RequestGuard::isLocalHostName(up.headers.value("host"));
+                                RequestGuard::isLocalHostName(up.headers.value("host")) &&
+                                !RequestGuard::forwardedByProxy(up.headers);
     if (playerSlot) {
         if (!m_PlayerSlotAuth || !m_PlayerSlotAuth(up, wsSlot)) {
             m_ConnGuard.reportAuthFailure(peerAddr);

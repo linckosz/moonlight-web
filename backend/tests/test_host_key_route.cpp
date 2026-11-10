@@ -153,6 +153,13 @@ void testWhoMaySpendTheKey()
         CHECK_EQ(s.send(direct("127.0.0.1"), {}).statusCode, 403);
         CHECK_EQ(s.send(direct("198.51.100.20"), {{"key", kLinkKey}}).statusCode, 403);
         CHECK_EQ(s.send(onLine("198.51.100.20", newKey()), {{"key", kLinkKey}}).statusCode, 403);
+        // The right key through a proxy on this machine: the peer is the proxy,
+        // and the browser is wherever the proxy was reached from.
+        for (const char* header : {"x-forwarded-for", "x-real-ip", "forwarded", "via"}) {
+            HttpRequest proxied = direct("127.0.0.1");
+            proxied.headers.insert(QString::fromLatin1(header), QStringLiteral("203.0.113.9"));
+            CHECK_EQ(s.send(proxied, {{"key", kLinkKey}}).statusCode, 403);
+        }
         CHECK_EQ(s.auth->activeSessionCount(), 0);
         CHECK_EQ(s.spent, 0);
         // An install with no key to redeem refuses an empty one too.

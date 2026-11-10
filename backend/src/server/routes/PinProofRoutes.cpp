@@ -18,6 +18,7 @@
 #include "server/routes/PinProofRoutes.h"
 
 #include "server/AuthManager.h"
+#include "server/RequestGuard.h"
 #include "server/RestRouter.h"
 #include "server/SessionCookie.h"
 #include "network/GeoIpService.h"
@@ -63,9 +64,7 @@ bool servedKeyIsSeen(const HttpRequest& req)
 {
     if (req.viaTunnel || req.tlsSpki.isEmpty()) return false;
     if (QHostAddress(AuthManager::cleanClientAddress(req.clientAddress)).isLoopback()) return false;
-    for (const char* name : {"cf-connecting-ip", "x-forwarded-for", "forwarded", "x-real-ip"})
-        if (req.headers.contains(QString::fromLatin1(name))) return false;
-    return true;
+    return !RequestGuard::forwardedByProxy(req.headers);
 }
 
 /// The SHA-256 of a TLS key's SubjectPublicKeyInfo.

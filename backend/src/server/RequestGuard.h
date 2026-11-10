@@ -81,6 +81,13 @@ bool isTrustedHost(const QString& hostHeader, const QString& publicDomain);
 /// redirect.
 bool isLocalHostName(const QString& hostHeader);
 
+/// Whether a request carries a header that only a proxy on the way writes
+/// (keys lowercase): the forwarding headers of reverse proxies, CDNs and
+/// tunnels. The peer of such a request is the proxy, not the browser, so
+/// nothing may be granted on the peer's address. It only ever takes away: a
+/// caller that forges one loses what its address was worth.
+bool forwardedByProxy(const QMap<QString, QString>& headers);
+
 /// Whether a request body may be accepted. Requires application/json for any
 /// non-empty body, which also forces a CORS preflight on cross-origin writes.
 bool isBodyContentTypeAllowed(const QString& contentType, qsizetype bodySize);

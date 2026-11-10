@@ -197,6 +197,34 @@ bool isTrustedHost(const QString& hostHeader, const QString& publicDomain)
     return !domain.isEmpty() && host == domain;
 }
 
+bool forwardedByProxy(const QMap<QString, QString>& headers)
+{
+    // One list for every caller: the ICE plan, the PIN proof and the access
+    // decision must agree on what a proxied request looks like.
+    static const char* const kProxyHeaders[] = {
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-forwarded-server",
+        "forwarded",
+        "x-real-ip",
+        "via",
+        "cf-connecting-ip",
+        "cf-ray",
+        "cf-visitor",
+        "true-client-ip",
+        "x-client-ip",
+        "x-cluster-client-ip",
+        "fastly-client-ip",
+        "tailscale-funnel-request",
+        "x-original-url",
+        "x-arr-ssl",
+    };
+    for (const char* name : kProxyHeaders)
+        if (headers.contains(QLatin1String(name))) return true;
+    return false;
+}
+
 bool isBodyContentTypeAllowed(const QString& contentType, qsizetype bodySize)
 {
     if (bodySize <= 0) return true; // nothing to parse
@@ -275,7 +303,10 @@ Decision evaluate(const Request& req, const Context& ctx)
     // domain it could: a TLS-terminating tunnel runs here and forwards every
     // visitor from loopback, so the pair (local peer, our domain) describes the
     // whole internet just as well as it describes the host.
-    d.localPrivilege = ctx.peerLocal && isLocalHostName(hostHeader);
+    // Nor when a proxy forwarded the request: the local peer is then the proxy,
+    // and the caller is whoever reached it.
+    d.localPrivilege =
+        ctx.peerLocal && isLocalHostName(hostHeader) && !forwardedByProxy(req.headers);
 
     // Two ways to be the host machine: reach us from the machine itself, or
     // prove it with the host key over the public domain.

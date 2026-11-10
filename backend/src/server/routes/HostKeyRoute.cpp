@@ -20,6 +20,7 @@
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
 #include "server/AuthManager.h"
+#include "server/RequestGuard.h"
 #include "server/RestRouter.h"
 
 #include <QCryptographicHash>
@@ -67,9 +68,13 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
         const QString key = body.value("key").toString();
         const QString addr = AuthManager::cleanClientAddress(req.clientAddress);
         const QString publicIp = deps.publicIp ? deps.publicIp() : QString();
-        const bool plausiblyHost = (deps.thisMachine && deps.thisMachine(addr)) ||
-                                   AuthManager::isPrivateIP(addr) == QLatin1String("Local") ||
-                                   (!publicIp.isEmpty() && addr == publicIp);
+        // On a socket, a request a proxy forwarded comes from wherever the proxy
+        // was reached: its peer address says nothing about the browser.
+        const bool forwarded = !req.viaTunnel && RequestGuard::forwardedByProxy(req.headers);
+        const bool plausiblyHost =
+            !forwarded && ((deps.thisMachine && deps.thisMachine(addr)) ||
+                           AuthManager::isPrivateIP(addr) == QLatin1String("Local") ||
+                           (!publicIp.isEmpty() && addr == publicIp));
         // Compare hashes: constant-time, no length leak.
         const QByteArray given = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256);
         const QByteArray expected = QCryptographicHash::hash(
