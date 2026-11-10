@@ -159,6 +159,14 @@ import { escapeHtml } from '../util/escapeHtml.js';
 import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { Icons } from './icons.js';
 import { ShareMenu } from './ShareMenu.js';
+import { openSessionInputPanel } from './SessionInputPanel.js';
+import {
+    normalizeInput,
+    inputStorageKey,
+    loadInput,
+    saveInput,
+    SessionKeyMapper,
+} from '../util/SessionInput.js';
 import { GuestPresence } from './SharePresence.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
@@ -545,6 +553,9 @@ export function mwsrSplitLabel(view) {
 }
 
 export class StreamView {
+    static get KEY_CODES() {
+        return Object.keys(StreamView.WINDOWS_VK_BY_CODE);
+    }
     constructor(
         container,
         signalingUrl,
@@ -1712,10 +1723,22 @@ export class StreamView {
         // once instead of only ever hearing what is.
         this._lastBeatHadState = false;
 
+        // Physical key mappings are stored per host in this browser.
+        this._inputStorageKey = inputStorageKey(host, this._playerMode);
+        this._inputPreferences = loadInput(
+            this._inputStorageKey,
+            (code) => !!StreamView.codeToWindowsVk(code),
+        );
+        this._keyMapper = new SessionKeyMapper(
+            this._inputPreferences.mappings,
+            StreamView.codeToWindowsVk,
+            (code) => this._holdsThroughStall(code),
+        );
         // ── Clipboard bridge state ─────────────────────────────────────────
         // Enabled by a backend 'clipboardcaps' message, sent only when the
         // streamed host is the backend machine (shared clipboard).
         this._clipboardEnabled = false;
+        this._clipboardPasteModifier = 'control';
         // Swallowed Ctrl/Cmd+V keydown waiting for its native 'paste' event
         // ({ code, keydownMsg, injectCtrl, timer }).
         this._pendingPasteKey = null;
@@ -2288,6 +2311,7 @@ export class StreamView {
                                    )}</button>`
                         : ''
                 }
+                <button class="btn btn-secondary" id="btn-session-input">${t('sessionInput.title')}</button>
                 <button class="btn stream-quit-btn" id="btn-stream-quit">${
                     this._playerMode
                         ? t('player.leave')
@@ -2333,6 +2357,9 @@ export class StreamView {
         // Whole-surface input element: touch events are captured on the full
         // overlay (trackpad model), not just the canvas/video rectangle.
         this.streamEl = el;
+        el.querySelector('#btn-session-input').addEventListener('click', () =>
+            openSessionInputPanel(this),
+        );
 
         this.canvasArea = /** @type {HTMLElement} */ (el.querySelector('.stream-canvas-area'));
         this.canvas = /** @type {HTMLCanvasElement} */ (el.querySelector('#stream-canvas'));
@@ -4719,6 +4746,7 @@ export class StreamView {
      */
     captureViewState() {
         return {
+            inputPreferences: structuredClone(this._inputPreferences),
             zoom: this._zoom,
             panX: this._panX,
             panY: this._panY,
@@ -4735,6 +4763,7 @@ export class StreamView {
      */
     restoreViewState(state) {
         if (!state) return;
+        if (state.inputPreferences) this._setInputPreferences(state.inputPreferences);
         // A dismissal is a decision about the session, not about one leg: the
         // successor must not bring back a card the user already closed. Applied
         // ahead of the deferral below — the overlays tick on their own timer,
@@ -8060,6 +8089,7 @@ export class StreamView {
             // machine). Until this arrives, Ctrl+V is forwarded as a plain
             // keystroke like before.
             this._clipboardEnabled = !!msg.available;
+            this._clipboardPasteModifier = msg.pasteModifier === 'meta' ? 'meta' : 'control';
             console.log(
                 '[StreamView] Host clipboard sync ' +
                     (this._clipboardEnabled ? 'enabled' : 'disabled'),
@@ -10287,153 +10317,156 @@ export class StreamView {
         if (!el || typeof el.closest !== 'function') return false;
         return !!el.closest(
             'input, textarea, select, [contenteditable="true"], ' +
-                '.share-popin-overlay, .share-board-overlay, .gamepad-remap-overlay',
+                '.share-popin-overlay, .share-board-overlay, .gamepad-remap-overlay, .session-input-panel',
         );
     }
 
     // IMPORTANT: The VK codes here do NOT include the 0x8000 modifier bit
     // (VK_RAW). MoonlightShim::sendKeyEvent() adds 0x8000 internally.
+    static WINDOWS_VK_BY_CODE = {
+        // Letters (A-Z) — VK_A=0x41 through VK_Z=0x5A
+        KeyA: 0x41,
+        KeyB: 0x42,
+        KeyC: 0x43,
+        KeyD: 0x44,
+        KeyE: 0x45,
+        KeyF: 0x46,
+        KeyG: 0x47,
+        KeyH: 0x48,
+        KeyI: 0x49,
+        KeyJ: 0x4a,
+        KeyK: 0x4b,
+        KeyL: 0x4c,
+        KeyM: 0x4d,
+        KeyN: 0x4e,
+        KeyO: 0x4f,
+        KeyP: 0x50,
+        KeyQ: 0x51,
+        KeyR: 0x52,
+        KeyS: 0x53,
+        KeyT: 0x54,
+        KeyU: 0x55,
+        KeyV: 0x56,
+        KeyW: 0x57,
+        KeyX: 0x58,
+        KeyY: 0x59,
+        KeyZ: 0x5a,
+        // Digits — VK_0=0x30 through VK_9=0x39
+        Digit1: 0x31,
+        Digit2: 0x32,
+        Digit3: 0x33,
+        Digit4: 0x34,
+        Digit5: 0x35,
+        Digit6: 0x36,
+        Digit7: 0x37,
+        Digit8: 0x38,
+        Digit9: 0x39,
+        Digit0: 0x30,
+        // Special keys
+        Enter: 0x0d,
+        Escape: 0x1b,
+        Backspace: 0x08,
+        Tab: 0x09,
+        Space: 0x20,
+        Minus: 0xbd,
+        Equal: 0xbb,
+        BracketLeft: 0xdb,
+        BracketRight: 0xdd,
+        Backslash: 0xdc,
+        IntlBackslash: 0xe2, // VK_OEM_102 — ISO key; backend applies SS_KBE_FLAG_NON_NORMALIZED
+        Semicolon: 0xba,
+        Quote: 0xde,
+        Backquote: 0xc0,
+        Comma: 0xbc,
+        Period: 0xbe,
+        Slash: 0xbf,
+        CapsLock: 0x14,
+        // Function keys — VK_F1=0x70 through VK_F24=0x87
+        F1: 0x70,
+        F2: 0x71,
+        F3: 0x72,
+        F4: 0x73,
+        F5: 0x74,
+        F6: 0x75,
+        F7: 0x76,
+        F8: 0x77,
+        F9: 0x78,
+        F10: 0x79,
+        F11: 0x7a,
+        F12: 0x7b,
+        F13: 0x7c,
+        F14: 0x7d,
+        F15: 0x7e,
+        F16: 0x7f,
+        F17: 0x80,
+        F18: 0x81,
+        F19: 0x82,
+        F20: 0x83,
+        F21: 0x84,
+        F22: 0x85,
+        F23: 0x86,
+        F24: 0x87,
+        // Navigation cluster
+        PrintScreen: 0x2c,
+        ScrollLock: 0x91,
+        Pause: 0x13,
+        Insert: 0x2d,
+        Home: 0x24,
+        PageUp: 0x21,
+        Delete: 0x2e,
+        End: 0x23,
+        PageDown: 0x22,
+        // Arrow keys
+        ArrowRight: 0x27,
+        ArrowLeft: 0x25,
+        ArrowDown: 0x28,
+        ArrowUp: 0x26,
+        // Numpad
+        NumLock: 0x90,
+        NumpadDivide: 0x6f,
+        NumpadMultiply: 0x6a,
+        NumpadSubtract: 0x6d,
+        NumpadAdd: 0x6b,
+        NumpadEnter: 0x0d,
+        Numpad1: 0x61,
+        Numpad2: 0x62,
+        Numpad3: 0x63,
+        Numpad4: 0x64,
+        Numpad5: 0x65,
+        Numpad6: 0x66,
+        Numpad7: 0x67,
+        Numpad8: 0x68,
+        Numpad9: 0x69,
+        Numpad0: 0x60,
+        NumpadDecimal: 0x6e,
+        // Modifiers (physical position — logical state sent via ctrlKey etc.)
+        ControlLeft: 0x11,
+        ShiftLeft: 0x10,
+        AltLeft: 0x12,
+        MetaLeft: 0x5b,
+        ControlRight: 0x11,
+        ShiftRight: 0x10,
+        // VK_RMENU, not VK_MENU: on a European layout the right Alt is
+        // AltGr. As 0x12 it reached Wolf and Sunshine as the LEFT Alt, and
+        // AltGr+E on a French host typed no € (issue #44, 29/10/2026).
+        AltRight: 0xa5,
+        MetaRight: 0x5c,
+        // Context menu
+        ContextMenu: 0x5d,
+        // International
+        IntlRo: 0x73, // JIS \ key — backend applies SS_KBE_FLAG_NON_NORMALIZED
+        IntlYen: 0xff, // VK_OEM_AUTO (yen sign)
+        Lang1: 0xf2, // VK_HANGUL
+        Lang2: 0xf1, // VK_HANJA
+        Lang3: 0xf4, // VK_KATAKANA
+        Lang4: 0xf3, // VK_HIRAGANA
+        Lang5: 0xf5, // VK_ZENKAKU
+    };
+
     static codeToWindowsVk(code) {
-        const map = {
-            // Letters (A-Z) — VK_A=0x41 through VK_Z=0x5A
-            KeyA: 0x41,
-            KeyB: 0x42,
-            KeyC: 0x43,
-            KeyD: 0x44,
-            KeyE: 0x45,
-            KeyF: 0x46,
-            KeyG: 0x47,
-            KeyH: 0x48,
-            KeyI: 0x49,
-            KeyJ: 0x4a,
-            KeyK: 0x4b,
-            KeyL: 0x4c,
-            KeyM: 0x4d,
-            KeyN: 0x4e,
-            KeyO: 0x4f,
-            KeyP: 0x50,
-            KeyQ: 0x51,
-            KeyR: 0x52,
-            KeyS: 0x53,
-            KeyT: 0x54,
-            KeyU: 0x55,
-            KeyV: 0x56,
-            KeyW: 0x57,
-            KeyX: 0x58,
-            KeyY: 0x59,
-            KeyZ: 0x5a,
-            // Digits — VK_0=0x30 through VK_9=0x39
-            Digit1: 0x31,
-            Digit2: 0x32,
-            Digit3: 0x33,
-            Digit4: 0x34,
-            Digit5: 0x35,
-            Digit6: 0x36,
-            Digit7: 0x37,
-            Digit8: 0x38,
-            Digit9: 0x39,
-            Digit0: 0x30,
-            // Special keys
-            Enter: 0x0d,
-            Escape: 0x1b,
-            Backspace: 0x08,
-            Tab: 0x09,
-            Space: 0x20,
-            Minus: 0xbd,
-            Equal: 0xbb,
-            BracketLeft: 0xdb,
-            BracketRight: 0xdd,
-            Backslash: 0xdc,
-            IntlBackslash: 0xe2, // VK_OEM_102 — ISO key; backend applies SS_KBE_FLAG_NON_NORMALIZED
-            Semicolon: 0xba,
-            Quote: 0xde,
-            Backquote: 0xc0,
-            Comma: 0xbc,
-            Period: 0xbe,
-            Slash: 0xbf,
-            CapsLock: 0x14,
-            // Function keys — VK_F1=0x70 through VK_F24=0x87
-            F1: 0x70,
-            F2: 0x71,
-            F3: 0x72,
-            F4: 0x73,
-            F5: 0x74,
-            F6: 0x75,
-            F7: 0x76,
-            F8: 0x77,
-            F9: 0x78,
-            F10: 0x79,
-            F11: 0x7a,
-            F12: 0x7b,
-            F13: 0x7c,
-            F14: 0x7d,
-            F15: 0x7e,
-            F16: 0x7f,
-            F17: 0x80,
-            F18: 0x81,
-            F19: 0x82,
-            F20: 0x83,
-            F21: 0x84,
-            F22: 0x85,
-            F23: 0x86,
-            F24: 0x87,
-            // Navigation cluster
-            PrintScreen: 0x2c,
-            ScrollLock: 0x91,
-            Pause: 0x13,
-            Insert: 0x2d,
-            Home: 0x24,
-            PageUp: 0x21,
-            Delete: 0x2e,
-            End: 0x23,
-            PageDown: 0x22,
-            // Arrow keys
-            ArrowRight: 0x27,
-            ArrowLeft: 0x25,
-            ArrowDown: 0x28,
-            ArrowUp: 0x26,
-            // Numpad
-            NumLock: 0x90,
-            NumpadDivide: 0x6f,
-            NumpadMultiply: 0x6a,
-            NumpadSubtract: 0x6d,
-            NumpadAdd: 0x6b,
-            NumpadEnter: 0x0d,
-            Numpad1: 0x61,
-            Numpad2: 0x62,
-            Numpad3: 0x63,
-            Numpad4: 0x64,
-            Numpad5: 0x65,
-            Numpad6: 0x66,
-            Numpad7: 0x67,
-            Numpad8: 0x68,
-            Numpad9: 0x69,
-            Numpad0: 0x60,
-            NumpadDecimal: 0x6e,
-            // Modifiers (physical position — logical state sent via ctrlKey etc.)
-            ControlLeft: 0x11,
-            ShiftLeft: 0x10,
-            AltLeft: 0x12,
-            MetaLeft: 0x5b,
-            ControlRight: 0x11,
-            ShiftRight: 0x10,
-            // VK_RMENU, not VK_MENU: on a European layout the right Alt is
-            // AltGr. As 0x12 it reached Wolf and Sunshine as the LEFT Alt, and
-            // AltGr+E on a French host typed no € (issue #44, 29/10/2026).
-            AltRight: 0xa5,
-            MetaRight: 0x5c,
-            // Context menu
-            ContextMenu: 0x5d,
-            // International
-            IntlRo: 0x73, // JIS \ key — backend applies SS_KBE_FLAG_NON_NORMALIZED
-            IntlYen: 0xff, // VK_OEM_AUTO (yen sign)
-            Lang1: 0xf2, // VK_HANGUL
-            Lang2: 0xf1, // VK_HANJA
-            Lang3: 0xf4, // VK_KATAKANA
-            Lang4: 0xf3, // VK_HIRAGANA
-            Lang5: 0xf5, // VK_ZENKAKU
-        };
-        return map[code] !== undefined ? map[code] : 0;
+        return typeof code === 'string' && Object.hasOwn(StreamView.WINDOWS_VK_BY_CODE, code)
+            ? StreamView.WINDOWS_VK_BY_CODE[code]
+            : 0;
     }
 
     // What the US layout prints on each printable key: e.code → [plain, shifted].
@@ -10753,6 +10786,7 @@ export class StreamView {
         // the key-up of is still down on the host, and this event says so.
         // Above the auto-repeat branch on purpose — a held movement key then
         // clears the drift on its own, without the player doing anything.
+        this._keyMapper?.observeModifiers(e, true);
         this._reconcileModifiers(e);
         this._markAltGrCtrl(e);
 
@@ -10807,31 +10841,58 @@ export class StreamView {
             return;
         }
 
-        // ── Ctrl/Cmd+V: local→host clipboard paste ─────────────────────────
-        // When the backend shares the host clipboard, neither forward nor
-        // preventDefault the paste chord: letting the browser run its default
-        // action fires the native 'paste' event — the only permission-free
-        // way to read the local clipboard. handlePaste() then ships the text
-        // and the backend replays the chord AFTER committing the clipboard.
-        // If no paste event follows (empty/non-text local clipboard), a short
-        // timer forwards the swallowed keydown so host-side Ctrl+V still
-        // pastes the HOST's own clipboard.
-        //
-        // Only the chord the LOCAL system pastes with can ever produce that
-        // native event: Cmd+V on Apple, Ctrl+V everywhere else. macOS fires
-        // nothing for Ctrl+V, so routing it through here bought a 150ms wait
-        // and a swallowed key-up for a paste event that was never coming —
-        // and the swallowed release left V held on the host, where typematic
-        // turned one paste into an endless one. Ctrl+V on a Mac is a plain
-        // keystroke again: the host pastes its own clipboard, immediately.
-        const pasteChord = this._appleKeyboard ? e.metaKey && !e.ctrlKey : e.ctrlKey;
+        // ── Local → host clipboard paste ──────────────────────────────────
+        // Native paste shortcuts use the browser's permission-free paste event.
+        // Remapped host shortcuts may need an explicit async clipboard read.
+        // If no text arrives, paste the host's existing clipboard instead.
+        const localPasteChord = this._appleKeyboard ? e.metaKey && !e.ctrlKey : e.ctrlKey;
+        const wire = this._keyMapper
+            ? this._keyMapper.preview({
+                  code: e.code,
+                  key: e.key,
+                  ctrlKey: e.ctrlKey,
+                  metaKey: e.metaKey,
+                  altKey: e.altKey,
+                  shiftKey: e.shiftKey,
+              })
+            : e;
+        // Unchanged chords keep the browser's layout character. Only a mapped
+        // key or modifier makes the clipboard shortcut a physical host chord.
+        const mappedChord = ['code', 'ctrlKey', 'metaKey', 'altKey', 'shiftKey'].some(
+            (field) => wire[field] !== e[field],
+        );
+        const localPasteKey = e.key === 'v' || e.key === 'V';
+        const hostPasteChord =
+            this._clipboardPasteModifier === 'meta'
+                ? wire.metaKey && !wire.ctrlKey
+                : wire.ctrlKey && !wire.metaKey;
+        // Keep upstream's Cmd+V on a Windows host when mapping still leaves
+        // Cmd as Meta. A mapped modifier uses its target chord instead.
+        const appleWindowsPaste =
+            this._appleKeyboard &&
+            this._clipboardPasteModifier !== 'meta' &&
+            localPasteChord &&
+            wire.metaKey &&
+            !wire.ctrlKey;
+        const pasteChord = StreamView.usesMappedClipboard(this)
+            ? hostPasteChord || appleWindowsPaste
+            : localPasteChord;
         if (
             this._clipboardEnabled &&
             pasteChord &&
-            !e.altKey &&
-            !e.shiftKey &&
-            (e.key === 'v' || e.key === 'V')
+            !wire.ignored &&
+            !wire.altKey &&
+            !wire.shiftKey &&
+            (mappedChord ? wire.code === 'KeyV' : localPasteKey)
         ) {
+            if (
+                StreamView.usesMappedClipboard(this) &&
+                !(localPasteChord && localPasteKey && !e.altKey && !e.shiftKey)
+            ) {
+                e.preventDefault();
+                this._readClipboardForHost(e.code);
+                return;
+            }
             if (this._pendingPasteKey) clearTimeout(this._pendingPasteKey.timer);
             this._pendingPasteKey = {
                 code: e.code,
@@ -10845,8 +10906,8 @@ export class StreamView {
                     altKey: e.altKey,
                     metaKey: e.metaKey,
                 },
-                // Cmd-based paste (Mac): the host sees Cmd as the Win key, so
-                // the backend must wrap the injected V with its own Ctrl.
+                // Non-Mac hosts need Ctrl around a Mac client's Cmd-based paste.
+                // Mac hosts always generate their own complete Cmd+V chord.
                 injectCtrl: e.metaKey && !e.ctrlKey,
                 timer: setTimeout(() => this._sendPendingPasteKey(), 150),
             };
@@ -11045,6 +11106,8 @@ export class StreamView {
             // pastes there: sent as is it would be Win+C, which copies nothing.
             if (
                 this._clipboardEnabled &&
+                this._clipboardPasteModifier !== 'meta' &&
+                !mappedChord &&
                 !e.ctrlKey &&
                 !e.altKey &&
                 !e.shiftKey &&
@@ -11277,6 +11340,7 @@ export class StreamView {
             return;
         }
         // Above every branch below, all of which return early.
+        this._keyMapper?.observeModifiers(e, false);
         this._reconcileModifiers(e);
         // A key the meta-tap branch already released: its press is long gone
         // from the host, so this late release must not land unmatched.
@@ -11356,7 +11420,14 @@ export class StreamView {
     // key → Start menu, Alt+Tab), which would otherwise leave a modifier stuck
     // on the host. Mouse buttons have the same hole in gaming mode, where a
     // mouseup arriving after focus loss is dropped by the _mouseFocused gate.
-    _releaseAllPhysKeys() {
+    _releaseAllPhysKeys(preserveModifiers = false) {
+        // Clipboard injection releases the held host Win key without opening
+        // Start, using the upstream Ctrl tap before the general release.
+        if (preserveModifiers && this._clipboardPasteModifier !== 'meta') this._releaseHeldMeta();
+        if (!preserveModifiers) this._keyMapper?.physicalModifiers.clear();
+        if (this._pendingPasteKey) clearTimeout(this._pendingPasteKey.timer);
+        this._pendingPasteKey = null;
+        this._clipboardReadRequest = null;
         // A press still held back would go out after the releases below, with
         // no keyup ever coming for it: it is dropped instead.
         if (this._composedKey) {
@@ -11369,7 +11440,7 @@ export class StreamView {
         if (this._swallowKeyUpCodes) this._swallowKeyUpCodes.clear();
         if (this._heldPhysKeys && this._heldPhysKeys.size > 0) {
             for (const payload of this._heldPhysKeys.values()) {
-                this.webrtc.send({
+                this._sendKeyEvent({
                     ...payload,
                     ctrlKey: false,
                     shiftKey: false,
@@ -11555,6 +11626,9 @@ export class StreamView {
      */
     _markAltGrCtrl(e) {
         if (e.repeat) return;
+        // A remapped Ctrl or right Alt no longer forms the host's AltGr pair.
+        const mappings = this._inputPreferences?.mappings;
+        if (mappings && ('ControlLeft' in mappings || 'AltRight' in mappings)) return;
         if (e.code === 'ControlLeft') {
             this._ctrlLeftAt = e.timeStamp;
             return;
@@ -11770,7 +11844,8 @@ export class StreamView {
         } else {
             this._heldPhysKeys.delete(id);
         }
-        this.webrtc.send(msg);
+        const mapped = this._keyMapper ? this._keyMapper.send(msg) : msg;
+        if (mapped) this.webrtc.send(mapped);
     }
 
     /**
@@ -11785,7 +11860,10 @@ export class StreamView {
      * a physical release, the key stops being held, whatever we send.
      */
     _forgetHeldKey(code) {
-        if (code) this._heldPhysKeys.delete(code);
+        if (code) {
+            this._heldPhysKeys.delete(code);
+            this._keyMapper?.pressed.delete(code);
+        }
     }
 
     /**
@@ -11924,11 +12002,13 @@ export class StreamView {
         this._lastBeatHadState = hasState;
 
         // Modifier flags are a property of the whole state, not of each key.
+        const physical = this._keyMapper?.physicalModifiers || new Set();
+        const has = (code) => held.has(code) || physical.has(code);
         const mods = {
-            ctrlKey: held.has('ControlLeft') || held.has('ControlRight'),
-            shiftKey: held.has('ShiftLeft') || held.has('ShiftRight'),
-            altKey: held.has('AltLeft') || held.has('AltRight'),
-            metaKey: held.has('MetaLeft') || held.has('MetaRight'),
+            ctrlKey: has('ControlLeft') || has('ControlRight'),
+            shiftKey: has('ShiftLeft') || has('ShiftRight'),
+            altKey: has('AltLeft') || has('AltRight'),
+            metaKey: has('MetaLeft') || has('MetaRight'),
         };
         const keys = [];
         for (const payload of held.values()) {
@@ -11953,7 +12033,7 @@ export class StreamView {
 
         this._sendToHost({
             type: 'inputstate',
-            keys,
+            keys: this._keyMapper ? this._keyMapper.held(keys) : keys,
             buttons,
             // A held mouse button in gaming mode is aim/fire, not a drag: give
             // it the long grace period like the movement keys.
@@ -12113,9 +12193,18 @@ export class StreamView {
         }
         clearTimeout(pending.timer);
         this._pendingPasteKey = null;
-        // Cmd is still down, and the host knows it as the Windows key: the
-        // chord the backend is about to inject would land as Win+Ctrl+V, which
-        // pastes nothing on Windows. Let go of it first.
+        // Release mapped modifiers before the backend injects its host chord.
+        // Keep observed physical modifiers for the next key while still held.
+        if (StreamView.usesMappedClipboard(this)) {
+            this._releaseAllPhysKeys(true);
+            this._suppressPasteKeyUpCode = pending.code;
+            this.webrtc.send({
+                type: 'clipboardpaste',
+                text: typeof text === 'string' ? text.slice(0, StreamView.kMaxClipboardChars) : '',
+                injectCtrl: true,
+            });
+            return;
+        }
         if (pending.injectCtrl) this._releaseHeldMeta();
         // The backend injects the complete V down+up — swallow the real keyup.
         this._suppressPasteKeyUpCode = pending.code;
@@ -12145,12 +12234,18 @@ export class StreamView {
      * through here, and still opens the menu.
      */
     _releaseHeldMeta() {
-        for (const code of ['MetaLeft', 'MetaRight']) {
+        const codes = this._keyMapper
+            ? [...this._heldPhysKeys.keys()].filter((code) => {
+                  const target = this._keyMapper.pressed.get(code)?.code ?? code;
+                  return target === 'MetaLeft' || target === 'MetaRight';
+              })
+            : ['MetaLeft', 'MetaRight'];
+        for (const code of codes) {
             const held = this._heldPhysKeys.get(code);
             if (!held) continue;
             const ctrl = {
                 keyCode: StreamView.codeToWindowsVk('ControlLeft'),
-                code: 'ControlLeft',
+                code: this._keyMapper ? '' : 'ControlLeft',
                 key: 'Control',
                 shiftKey: false,
                 altKey: false,
@@ -12180,7 +12275,7 @@ export class StreamView {
         this._releaseHeldMeta();
         const ctrl = {
             keyCode: StreamView.codeToWindowsVk('ControlLeft'),
-            code: 'ControlLeft',
+            code: this._keyMapper ? '' : 'ControlLeft',
             key: 'Control',
             shiftKey: false,
             altKey: false,
@@ -12188,7 +12283,7 @@ export class StreamView {
         };
         const c = {
             keyCode: StreamView.codeToWindowsVk('KeyC'),
-            code: 'KeyC',
+            code: this._keyMapper ? '' : 'KeyC',
             key: 'c',
             char: null,
             nonUs: false,
@@ -12206,18 +12301,19 @@ export class StreamView {
         this._sendKeyEvent({ ...ctrl, type: 'keyup', ctrlKey: false });
     }
 
-    /** The swallowed paste chord's 'paste' event brought no text (or never
-     *  fired): make the host paste its OWN clipboard instead.
-     *  Ctrl+V is forwarded as the plain keydown it was — Ctrl is genuinely
-     *  held, so the host reads a real chord. Cmd+V cannot be: it would reach
-     *  the host as Win+V. That one asks the backend for the same injected
-     *  Ctrl+V it does for a real paste, with no text — an empty payload leaves
-     *  the host clipboard untouched and only replays the chord. */
+    /** No local text arrived: paste the host's existing clipboard. Mapped/Mac
+     *  paths inject a complete chord; plain Ctrl+V keeps its physical keydown. */
     _sendPendingPasteKey() {
         const pending = this._pendingPasteKey;
         if (!pending) return;
         clearTimeout(pending.timer);
         this._pendingPasteKey = null;
+        if (StreamView.usesMappedClipboard(this)) {
+            this._releaseAllPhysKeys(true);
+            this._suppressPasteKeyUpCode = pending.code;
+            this.webrtc.send({ type: 'clipboardpaste', text: '', injectCtrl: true });
+            return;
+        }
         if (pending.injectCtrl) {
             this._releaseHeldMeta();
             this._suppressPasteKeyUpCode = pending.code;
@@ -12253,6 +12349,60 @@ export class StreamView {
                 /* denied (no activation / unfocused doc) — retry on next gesture */
             },
         );
+    }
+
+    // A mapped host paste shortcut may not trigger the browser's paste event.
+    // A denied read leaves the host clipboard intact and replays its paste chord.
+    _readClipboardForHost(code) {
+        this._releaseAllPhysKeys(true);
+        this._suppressPasteKeyUpCode = code;
+        const request = {};
+        this._clipboardReadRequest = request;
+        const apply = (text) => {
+            if (this._clipboardReadRequest !== request || this._quitting || !this._clipboardEnabled)
+                return;
+            this._clipboardReadRequest = null;
+            this.webrtc.send({
+                type: 'clipboardpaste',
+                text: text.slice(0, StreamView.kMaxClipboardChars),
+                injectCtrl: true,
+            });
+        };
+        if (!navigator.clipboard?.readText) {
+            Toast.warning(t('sessionInput.readDenied'));
+            apply('');
+            return;
+        }
+        navigator.clipboard.readText().then(apply, () => {
+            if (this._clipboardReadRequest !== request) return;
+            Toast.warning(t('sessionInput.readDenied'));
+            apply('');
+        });
+    }
+
+    static usesMappedClipboard(view) {
+        return (
+            view._clipboardPasteModifier === 'meta' ||
+            Object.keys(view._inputPreferences?.mappings || {}).length > 0
+        );
+    }
+
+    _setInputPreferences(value) {
+        this._releaseAllPhysKeys();
+        this._inputPreferences = normalizeInput(
+            value,
+            (code) => !!StreamView.codeToWindowsVk(code),
+        );
+        this._keyMapper = new SessionKeyMapper(
+            this._inputPreferences.mappings,
+            StreamView.codeToWindowsVk,
+            (code) => this._holdsThroughStall(code),
+        );
+        try {
+            saveInput(this._inputStorageKey, this._inputPreferences);
+        } catch {
+            Toast.warning(t('sessionInput.storageFailed'));
+        }
     }
 
     /**

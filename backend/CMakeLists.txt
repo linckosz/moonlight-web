@@ -455,6 +455,7 @@ if(APPLE)
     target_sources(mw-server PRIVATE src/server/HostAppImageMac.mm)
     # A card's new windows onto the virtual display (HostAppLauncher).
     target_sources(mw-server PRIVATE src/server/HostAppLauncherMac.mm)
+    target_sources(mw-server PRIVATE src/streaming/ClipboardMac.mm)
     target_link_libraries(mw-server PRIVATE "-framework AppKit" "-framework ApplicationServices")
 endif()
 

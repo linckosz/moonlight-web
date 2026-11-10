@@ -157,6 +157,7 @@ CI bakes `MW_DOMAIN` and `MW_PDNS_TOKEN` (from repo secrets, via CMake defines) 
 | `mw-mic-hint-seen` | Set once the viewer has been told, at the first stream offering a microphone, that it starts cut. |
 | `mw-gamepad-mappings` | The user's own controller layouts (`util/gamepadMappingsStore.js`), `{ [padKey]: {name, bindings, updatedAt} }` — `padKey` is `usb:vid:pid`, or `name:<name>` where the browser gives no ids (Android, iOS). Written by the remap dialog (Settings → **Controllers**, the stream toasts, a share guest's join page and header button); kept apart from `mw-streaming-settings` so it is never pushed to the server as a default. See [design §7](../design/gamepad-virtual.md#7-détection). |
 | `mw_player_prefs` | A share guest's join choices: `gaming`, `touchScreen`, and `padKey` — the controller picked when several are plugged in (one controller per invitation). |
+| `mw-session-input:owner\|guest:<uuid>` | Physical key mappings saved per host in this browser. Owner and guest mappings are separate. |
 | `mw-lang` | UI language (en/fr/zh). |
 | `mw_client_uniqueid` | Per-browser Sunshine identity (session isolation); the standby stream slot derives its own id from it. |
 | `mw_jitter_auto` | Adaptive jitterBufferTarget toggle (webrtc-media). |
@@ -219,6 +220,32 @@ Authentication is unchanged: remote devices still need the admin PIN or the cert
 - Everything on this page is about the **certificate** and **the machine's own name**. The certificate is not needed for remote access as such: the entry link is served under the introduction server's certificate and the tunnel is bound to the machine's own key, so an instance with no domain and no PEM file is already reachable from anywhere ([Security §6.5](06-Security.md#65-tls)).
 - `unique_id` and `rendezvous_id` are untouched: the entry link keeps working alongside your own name, and restoring `"domain": "MW_DOMAIN"` simply leaves the instance with no public DNS name again.
 - The `stream` label is only reserved on the project's shared domain, never on yours.
+
+## 7.6 Key mappings
+
+Open **Key mappings** in the streaming header. Source and target use physical
+browser codes such as `AltLeft`, `MetaLeft` and `KeyA`. An empty target ignores
+the key. Duplicate sources, unknown codes and identical pairs are rejected.
+For a Windows client controlling a Mac, `AltLeft → MetaLeft` and
+`MetaLeft → AltLeft` swap the left Alt and Windows keys.
+
+**Apply** saves mappings for this host in this browser. Closing the dialog
+discards edits. To undo a mapping, delete its row and apply the change.
+
+Changes release held input first. **Advanced → Release all keys** provides
+manual recovery when a browser swallows a release. Mappings cover physical key
+messages and held-input heartbeats. On-screen shortcut buttons retain the host
+keys they name. Browsers reserve some shortcuts for the local operating system.
+
+Clipboard synchronization is available for unrestricted native-host or
+same-machine Sunshine sessions. On macOS, the host polls the clipboard change
+counter every 250 ms and reads text only when it changes. After receiving text,
+the backend injects Command+V on macOS or Control+V elsewhere; this generated
+chord does not pass through the client's key mappings. A Mac client's Cmd+C/V
+convenience on Windows still applies when a mapping leaves that chord intact.
+Mapped paste shortcuts may request browser clipboard permission. If access is
+denied, the host's current clipboard is pasted. Text is limited to 262,144
+UTF-16 units.
 
 ---
 

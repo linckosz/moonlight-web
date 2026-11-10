@@ -612,8 +612,7 @@ void StreamRelay::onNewWsConnection()
     if (m_ClipboardEnabled) {
         // Advertise clipboard sync, then push the current host clipboard
         // once so copy-before-connect pastes locally.
-        m_WsClient->sendTextMessage(
-            QStringLiteral("{\"type\":\"clipboardcaps\",\"available\":true}"));
+        m_WsClient->sendTextMessage(QString::fromLatin1(ClipboardBridge::capabilitiesMessage()));
         ClipboardBridge::instance()->requestAnnounce();
     }
 
