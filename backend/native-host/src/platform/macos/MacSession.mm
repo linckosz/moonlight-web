@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "DisplayTurn.h"
 #include "FrameFit.h"
 #include "MacDisplays.h"
 
@@ -51,6 +52,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // The macOS capture → encode → deliver pipeline.
@@ -572,6 +574,20 @@ public:
         const bool currentHiDpi =
             CGDisplayModeGetPixelWidth(current) > CGDisplayModeGetWidth(current);
         const double wantAspect = static_cast<double>(wantW) / wantH;
+        // A display turned against its panel lists its modes the panel's way
+        // or the desktop's: the current one against the desktop's rectangle
+        // says which (DisplayTurn.h), and every mode is read the same way —
+        // the client's size is the desktop's.
+        const CGRect bounds = CGDisplayBounds(id);
+        const bool modesPanelWay = platform::modeReadsPanelWay(
+            static_cast<int>(CGDisplayModeGetPixelWidth(current)),
+            static_cast<int>(CGDisplayModeGetPixelHeight(current)), bounds.size.width,
+            bounds.size.height, CGDisplayRotation(id));
+        const auto pixelsOf = [modesPanelWay](CGDisplayModeRef mode, int& w, int& h) {
+            w = static_cast<int>(CGDisplayModeGetPixelWidth(mode));
+            h = static_cast<int>(CGDisplayModeGetPixelHeight(mode));
+            if (modesPanelWay) std::swap(w, h);
+        };
 
         NSDictionary* options =
             @{(__bridge NSString*)kCGDisplayShowDuplicateLowResolutionModes : @YES};
@@ -593,8 +609,8 @@ public:
         for (CFIndex i = 0; i < count; ++i) {
             auto mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(modes, i);
             if (!CGDisplayModeIsUsableForDesktopGUI(mode)) continue;
-            const int w = static_cast<int>(CGDisplayModeGetPixelWidth(mode));
-            const int h = static_cast<int>(CGDisplayModeGetPixelHeight(mode));
+            int w = 0, h = 0;
+            pixelsOf(mode, w, h);
             if (w <= 0 || h <= 0) continue;
             if (w == wantW && h == wantH) {
                 if (!exact || better(mode, best)) best = mode;
@@ -620,8 +636,8 @@ public:
             return false;
         }
 
-        const int newW = static_cast<int>(CGDisplayModeGetPixelWidth(best));
-        const int newH = static_cast<int>(CGDisplayModeGetPixelHeight(best));
+        int newW = 0, newH = 0;
+        pixelsOf(best, newW, newH);
         const double newHz = CGDisplayModeGetRefreshRate(best);
         CGDisplayConfigRef config = nullptr;
         CGError err = CGBeginDisplayConfiguration(&config);
@@ -987,9 +1003,15 @@ private:
     {
         CGDisplayModeRef mode = CGDisplayCopyDisplayMode(m_Display.displayId);
         if (!mode) return false; // away: the capture reports that itself
-        const int width = static_cast<int>(CGDisplayModeGetPixelWidth(mode));
-        const int height = static_cast<int>(CGDisplayModeGetPixelHeight(mode));
+        int width = static_cast<int>(CGDisplayModeGetPixelWidth(mode));
+        int height = static_cast<int>(CGDisplayModeGetPixelHeight(mode));
         CGDisplayModeRelease(mode);
+        // Stood the desktop's way, as the probe stands m_Display's
+        // (DisplayTurn.h): a display turned during the session keeps its mode
+        // and turns its desktop, which this sees as a size of the other shape.
+        const CGRect bounds = CGDisplayBounds(m_Display.displayId);
+        platform::uprightModeSize(width, height, bounds.size.width, bounds.size.height,
+                                  CGDisplayRotation(m_Display.displayId));
         return width > 0 && height > 0 &&
                (width != m_ModePixelWidth || height != m_ModePixelHeight);
     }

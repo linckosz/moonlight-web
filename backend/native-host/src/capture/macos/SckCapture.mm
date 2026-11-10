@@ -19,6 +19,7 @@
 
 #include "../../audio/AudioInterleave.h"
 #include "../../core/Log.h"
+#include "../../platform/macos/DisplayTurn.h"
 
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
@@ -332,6 +333,10 @@ bool SckCapture::start(std::string& error)
         m_Width = static_cast<int>(CGDisplayModeGetPixelWidth(mode));
         m_Height = static_cast<int>(CGDisplayModeGetPixelHeight(mode));
         CGDisplayModeRelease(mode);
+        // A display turned against its panel: the desktop's way, or the
+        // picture would be letterboxed into the panel's (DisplayTurn.h).
+        platform::uprightModeSize(m_Width, m_Height, bounds.size.width, bounds.size.height,
+                                  CGDisplayRotation(m_DisplayId));
     }
     m_Width &= ~1;
     m_Height &= ~1;

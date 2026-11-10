@@ -22,6 +22,7 @@
 #include "capture/OrientedPointer.h"
 #include "capture/linux/CompositorTransform.h"
 #include "capture/windows/DisplayRotation.h"
+#include "platform/macos/DisplayTurn.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -32,8 +33,9 @@ using namespace mw::native;
 using namespace mw::native::capture;
 
 // A picture held turned (Orientation.h), the pointer of a turned scanout
-// (OrientedPointer.h) and the compositor's word on a display
-// (CompositorTransform.h) — issue #54 on Linux. Pure: every platform runs it.
+// (OrientedPointer.h), the compositor's word on a display (CompositorTransform.h)
+// and a Mac mode stood the desktop's way (DisplayTurn.h) — issue #54 on Linux
+// and macOS. Pure: every platform runs it.
 
 namespace {
 
@@ -331,5 +333,28 @@ void run_orientation_tests()
         identity.edid = {9};
         identity.width = 640;
         CHECK(!x11Transform(x11, identity).known);
+    }
+
+    // ── A Mac mode stood the desktop's way ──
+    {
+        using mw::native::platform::modeReadsPanelWay;
+        using mw::native::platform::uprightModeSize;
+        // Turned a quarter, mode read the panel's way, portrait desktop: swap.
+        CHECK(modeReadsPanelWay(1920, 1080, 1080, 1920, 90));
+        CHECK(modeReadsPanelWay(1920, 1080, 1080, 1920, 270));
+        CHECK(modeReadsPanelWay(1920, 1080, 1080, 1920, -90));
+        // Already the desktop's way: nothing.
+        CHECK(!modeReadsPanelWay(1080, 1920, 1080, 1920, 90));
+        // No quarter turn: nothing, whatever the shapes say.
+        CHECK(!modeReadsPanelWay(1920, 1080, 1080, 1920, 0));
+        CHECK(!modeReadsPanelWay(1920, 1080, 1080, 1920, 180));
+        // A square mode has no way to read; square bounds leave the turn alone.
+        CHECK(!modeReadsPanelWay(1440, 1440, 1440, 1440, 90));
+        CHECK(modeReadsPanelWay(1920, 1080, 0, 0, 90));
+        int w = 2560, h = 1440;
+        uprightModeSize(w, h, 720, 1280, 90); // points, a Retina scale of two
+        CHECK(w == 1440 && h == 2560);
+        uprightModeSize(w, h, 720, 1280, 90);
+        CHECK(w == 1440 && h == 2560);
     }
 }

@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "DisplayTurn.h"
 #include "MacDisplays.h"
 
 #include "../../core/Log.h"
@@ -134,6 +135,10 @@ std::vector<MacDisplay> listDisplays()
                 refresh = CGDisplayModeGetRefreshRate(mode);
                 CGDisplayModeRelease(mode);
             }
+            // A display turned against its panel: its pixels stood the way its
+            // desktop is (DisplayTurn.h).
+            uprightModeSize(d.pixelWidth, d.pixelHeight, bounds.size.width, bounds.size.height,
+                            CGDisplayRotation(ids[i]));
             for (NSScreen* screen in screens) {
                 NSNumber* number = screen.deviceDescription[@"NSScreenNumber"];
                 if (!number || number.unsignedIntValue != ids[i]) continue;
