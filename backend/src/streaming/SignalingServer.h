@@ -282,9 +282,10 @@ private:
     /// Internet mode. A router mapping pins the socket to the media port the
     /// router forwards to, and the relay rewrites host candidates to the
     /// public address.
-    static rtc::Configuration buildIceConfig(bool isInternet, bool mapped, uint16_t mediaPort,
-                                             const QString& stunServerUrl, bool forceIceTcp = false,
-                                             bool iceTcpPassive = false);
+    static rtc::Configuration
+    buildIceConfig(bool isInternet, bool mapped, uint16_t mediaPort, const QString& stunServerUrl,
+                   bool forceIceTcp = false, bool iceTcpPassive = false,
+                   uint16_t mediaBasePort = mw::routerports::kMediaBasePort);
 
     // ── MW-BIND-v1 state ───────────────────────────────────────────────────
     /// Sign the pending SDP offer and hand it to the browser. Called once the

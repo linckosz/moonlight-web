@@ -401,7 +401,7 @@ void SignalingServer::onNewWsConnection()
                    << "is taken — this stream does not use the router's hole";
     rtc::Configuration config =
         buildIceConfig(isInternet, mapped, m_MediaPort, lanOnly ? QString() : m_StunServerUrl,
-                       m_ForceIceTcp, m_IceTcpPassive);
+                       m_ForceIceTcp, m_IceTcpPassive, m_MediaBasePort);
     if (m_DebugIceDropUdp)
         qWarning() << "[SignalingServer] DEBUG debug_ice_drop_udp is ON: every UDP candidate is"
                    << "dropped, ours and the browser's — only passive ICE-TCP can connect";
@@ -1158,7 +1158,7 @@ void SignalingServer::onDataChannelsOpen()
 
 rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, bool mapped, uint16_t mediaPort,
                                                    const QString& stunServerUrl, bool forceIceTcp,
-                                                   bool iceTcpPassive)
+                                                   bool iceTcpPassive, uint16_t mediaBasePort)
 {
     // What the log lines below name: the port the socket binds, which is the
     // one the router forwards to when there is a mapping.
@@ -1186,7 +1186,7 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, bool mapped,
     if (mapped) {
         config.portRangeBegin = mediaPort;
         config.portRangeEnd = mediaPort;
-    } else if (const uint16_t pinned = freeMediaPort(mediaPort, m_MediaBasePort)) {
+    } else if (const uint16_t pinned = freeMediaPort(mediaPort, mediaBasePort)) {
         // Without a router hole too, pin a port of the media block. An
         // ephemeral port cannot be allowed through a port-based firewall: ufw
         // and firewalld on Linux — which the packages open the block in — and
@@ -1204,7 +1204,7 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, bool mapped,
         // The whole block is held: an ephemeral port still works wherever the
         // firewall is program-scoped or off.
         qWarning().noquote() << "[SignalingServer] UDP media ports"
-                             << mediaBlockString(m_MediaBasePort)
+                             << mediaBlockString(mediaBasePort)
                              << "are all taken — using an ephemeral port, which a "
                                 "port-based firewall will block";
     }
