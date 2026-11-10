@@ -19,6 +19,8 @@
 
 #include "capture/windows/DisplayRotation.h"
 
+#include <vector>
+
 using namespace mw::native::capture;
 
 // A display whose desktop is turned against its panel (DisplayRotation.h). The
@@ -118,5 +120,116 @@ void run_display_rotation_tests()
         const Size s = oriented(0, 0, kRotate90, 2160, 1080);
         CHECK_EQ(s.width, 0);
         CHECK_EQ(s.height, 0);
+    }
+
+    SECTION("Display rotation — Desktop Duplication's picture, stood upright");
+
+    CHECK_EQ(quarterTurns(kUnspecified), 0);
+    CHECK_EQ(quarterTurns(kIdentity), 0);
+    CHECK_EQ(quarterTurns(kRotate90), 1);
+    CHECK_EQ(quarterTurns(kRotate180), 2);
+    CHECK_EQ(quarterTurns(kRotate270), 3);
+    CHECK_EQ(quarterTurns(99), 0);
+
+    // The duplication's mode, stood the way the desktop rectangle is. The
+    // first report's was already (2160x1080 over a 1080x2160 panel), and
+    // stays; one in the panel's orientation is turned. Its rectangle at 150 %
+    // (DPI-virtualized) says the same: only its shape is read.
+    {
+        int w = 2160, h = 1080;
+        duplicationUprightSize(w, h, kRotate270, 2160, 1080);
+        CHECK_EQ(w, 2160);
+        CHECK_EQ(h, 1080);
+    }
+    {
+        int w = 1080, h = 2160;
+        duplicationUprightSize(w, h, kRotate270, 1440, 720);
+        CHECK_EQ(w, 2160);
+        CHECK_EQ(h, 1080);
+    }
+    {
+        int w = 1920, h = 1080;
+        duplicationUprightSize(w, h, kRotate90, 1080, 1920);
+        CHECK_EQ(w, 1080);
+        CHECK_EQ(h, 1920);
+    }
+    // A half turn, an upright display, a square, no rectangle: as it came.
+    {
+        int w = 1920, h = 1080;
+        duplicationUprightSize(w, h, kRotate180, 1080, 1920);
+        CHECK_EQ(w, 1920);
+        CHECK_EQ(h, 1080);
+        duplicationUprightSize(w, h, kIdentity, 1080, 1920);
+        CHECK_EQ(w, 1920);
+        duplicationUprightSize(w, h, kRotate90, 1000, 1000);
+        CHECK_EQ(w, 1920);
+        duplicationUprightSize(w, h, kRotate90, 0, 0);
+        CHECK_EQ(w, 1920);
+        CHECK_EQ(h, 1080);
+    }
+
+    // Where the upright picture's pixels lie in the panel's texture: a
+    // quarter turn puts the texture's top row down the picture's right side
+    // (Microsoft's DesktopDuplication sample). A 4x2 picture, so the texture
+    // is 2x4 for an odd turn.
+    {
+        const int w = 4, h = 2;
+        int tx = -1, ty = -1;
+        panelTexel(0, 0, w, h, 0, tx, ty);
+        CHECK(tx == 0 && ty == 0);
+        panelTexel(3, 0, w, h, 1, tx, ty); // top-right: the texture's top-left
+        CHECK(tx == 0 && ty == 0);
+        panelTexel(3, 1, w, h, 1, tx, ty); // bottom-right: the texture's top-right
+        CHECK(tx == 1 && ty == 0);
+        panelTexel(0, 0, w, h, 1, tx, ty); // top-left: the texture's bottom-left
+        CHECK(tx == 0 && ty == 3);
+        panelTexel(0, 0, w, h, 2, tx, ty); // upside down
+        CHECK(tx == 3 && ty == 1);
+        panelTexel(0, 0, w, h, 3, tx, ty); // top-left: the texture's top-right
+        CHECK(tx == 1 && ty == 0);
+        panelTexel(3, 1, w, h, 3, tx, ty); // bottom-right: the texture's bottom-left
+        CHECK(tx == 0 && ty == 3);
+    }
+
+    // Every turn of a 6x4 picture: each pixel lands inside the texture, and
+    // on a texel of its own; three quarters undo one quarter.
+    for (int turns = 0; turns < 4; ++turns) {
+        const int w = 6, h = 4;
+        const int tw = (turns & 1) ? h : w;
+        const int th = (turns & 1) ? w : h;
+        bool inside = true;
+        bool once = true;
+        std::vector<int> seen(static_cast<size_t>(tw * th), 0);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int tx = -1, ty = -1;
+                panelTexel(x, y, w, h, turns, tx, ty);
+                if (tx < 0 || ty < 0 || tx >= tw || ty >= th) {
+                    inside = false;
+                    continue;
+                }
+                once = once && ++seen[static_cast<size_t>(ty * tw + tx)] == 1;
+            }
+        }
+        CHECK(inside);
+        CHECK(once);
+    }
+    {
+        // The texture of a quarter turn, h × w, read as a picture of its own
+        // and turned three quarters, gives the picture back.
+        const int w = 6, h = 4;
+        bool back = true;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int tx = 0, ty = 0;
+                panelTexel(x, y, w, h, 1, tx, ty);
+                // (tx, ty) in the h × w texture; a quarter turn of the
+                // picture is three quarters of the texture's own frame.
+                int bx = 0, by = 0;
+                panelTexel(tx, ty, h, w, 3, bx, by);
+                back = back && bx == x && by == y;
+            }
+        }
+        CHECK(back);
     }
 }

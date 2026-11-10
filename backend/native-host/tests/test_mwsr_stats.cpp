@@ -23,6 +23,7 @@
 #include "native_test_framework.h"
 
 #if defined(_WIN32)
+#include "capture/windows/DisplayRotation.h"
 #include "convert/windows/ColorConvert.h"
 #include "convert/windows/MwsrStats.h"
 
@@ -208,6 +209,33 @@ void run_mwsr_stats_tests()
             // says none was.
             for (int k = 0; k < mz::kStats; ++k)
                 CHECK(worst[k] < 1e-6);
+
+            // The same picture as a display turned against its panel hands it
+            // over (issue #54): the cells are the picture's, to the bit — the
+            // same texels read, in the same order.
+            for (int turn = 1; turn < 4; ++turn) {
+                const bool odd = (turn & 1) != 0;
+                const int tw = odd ? h : w;
+                std::vector<uint8_t> panel(px.size());
+                for (int y = 0; y < h; ++y) {
+                    for (int x = 0; x < w; ++x) {
+                        int tx = 0, ty = 0;
+                        capture::panelTexel(x, y, w, h, turn, tx, ty);
+                        std::copy_n(&px[(static_cast<size_t>(y) * w + x) * 4], 4,
+                                    &panel[(static_cast<size_t>(ty) * tw + tx) * 4]);
+                    }
+                }
+                ComPtr<ID3D11ShaderResourceView> turnedView;
+                CHECK(upload(panel, tw, odd ? w : h, turnedView));
+                MwsrStats turned;
+                CHECK(turned.init(device.Get(), w, h, light, error, turn));
+                std::vector<float> got(MwsrStats::kFloats);
+                CHECK(turned.read(turned.dispatch(turnedView.Get()), got.data(), true));
+                const bool same = got == cells;
+                CHECK(same);
+                std::fprintf(stderr, "  %s pass, turned %d°: %s\n", light ? "light" : "full",
+                             turn * 90, same ? "the upright picture's cells" : "OTHER CELLS");
+            }
         }
     }
 

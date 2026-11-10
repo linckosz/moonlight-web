@@ -5,6 +5,7 @@
 #include "native_test_framework.h"
 
 #if defined(_WIN32)
+#include "capture/windows/DisplayRotation.h"
 #include "convert/windows/ColorConvert.h"
 #include "convert/windows/d3d12/ColorConvert12.h"
 #include "platform/windows/IndirectDisplay.h"
@@ -68,6 +69,46 @@ std::vector<uint8_t> picture(int w, int h, bool fp16, bool black)
         }
     }
     return out;
+}
+
+/// @p upright as Desktop Duplication hands it over for a display turned
+/// @p turn quarter turns against its panel (DisplayRotation.h's panelTexel):
+/// h × w for an odd turn.
+std::vector<uint8_t> panelPicture(const std::vector<uint8_t>& upright, int w, int h, int bpp,
+                                  int turn)
+{
+    const int tw = (turn & 1) ? h : w;
+    std::vector<uint8_t> out(upright.size(), 0);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            int tx = 0, ty = 0;
+            capture::panelTexel(x, y, w, h, turn, tx, ty);
+            std::memcpy(&out[(static_cast<size_t>(ty) * tw + tx) * bpp],
+                        &upright[(static_cast<size_t>(y) * w + x) * bpp], static_cast<size_t>(bpp));
+        }
+    }
+    return out;
+}
+
+/// The largest difference between two conversions' samples, in codes (P010's
+/// in its ten bits), and in @p differ how many samples differ at all.
+int worstCodes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b, int bytesPerSample,
+               size_t& differ)
+{
+    differ = 0;
+    if (a.size() != b.size()) return 1 << 16;
+    int worst = 0;
+    for (size_t i = 0; i + bytesPerSample <= a.size(); i += bytesPerSample) {
+        int va = a[i], vb = b[i];
+        if (bytesPerSample == 2) {
+            va = (a[i] | (a[i + 1] << 8)) >> 6;
+            vb = (b[i] | (b[i + 1] << 8)) >> 6;
+        }
+        const int d = va > vb ? va - vb : vb - va;
+        if (d) ++differ;
+        if (d > worst) worst = d;
+    }
+    return worst;
 }
 
 /// A 16×16 pointer: a coloured, half-transparent disc, and an inverting bar.
@@ -335,6 +376,10 @@ struct Case
     bool cursor;
     float magnify;
     bool black;
+    /// The capture's turn (IWindowsCapture::turn): the source handed over as
+    /// a turned display's panel scans it out, sourceW × sourceH being the
+    /// upright picture.
+    int turn = 0;
 };
 
 } // namespace
@@ -391,6 +436,18 @@ void run_color_convert12_tests()
         {"P010, BT.2020 PQ", true, 64, 64, 64, 64, true, SF::Bilinear, 1.0f, true, 1.0f, false},
         {"black, 8-bit", false, 64, 64, 64, 64, false, SF::Bilinear, 1.0f, false, 1.0f, true},
         {"black, P010", true, 64, 64, 64, 64, true, SF::Bilinear, 1.0f, false, 1.0f, true},
+        // Issue #54: a display turned against its panel, of another width
+        // than height so that a swapped axis cannot pass.
+        {"turned a quarter, 1:1, pointer", false, 64, 48, 64, 48, false, SF::Bilinear, 1.0f, true,
+         1.0f, false, 1},
+        {"turned a half, halved bilinear", false, 64, 48, 32, 24, false, SF::Bilinear, 1.0f, false,
+         1.0f, false, 2},
+        {"turned three quarters, Lanczos-2, pointer", false, 256, 144, 192, 108, false,
+         SF::Lanczos2, 1.0f, true, 1.0f, false, 3},
+        {"turned a quarter, tone map through the resample", true, 128, 72, 96, 54, false,
+         SF::Lanczos2, 2.5f, false, 1.0f, false, 1},
+        {"turned three quarters, P010 1:1, pointer", true, 64, 48, 64, 48, true, SF::Bilinear, 1.0f,
+         true, 1.0f, false, 3},
     };
 
     for (const Case& c : cases) {
@@ -398,6 +455,13 @@ void run_color_convert12_tests()
             c.fp16 ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
         const int bytesPerSample = c.hdr ? 2 : 1;
         const std::vector<uint8_t> pixels = picture(c.sourceW, c.sourceH, c.fp16, c.black);
+        // What the capture hands over: the picture, or a turned display's as
+        // its panel scans it out.
+        const bool odd = (c.turn & 1) != 0;
+        const int texW = odd ? c.sourceH : c.sourceW;
+        const int texH = odd ? c.sourceW : c.sourceH;
+        const std::vector<uint8_t> panel =
+            c.turn ? panelPicture(pixels, c.sourceW, c.sourceH, c.fp16 ? 8 : 4, c.turn) : pixels;
         const capture::CursorState cursor = c.cursor ? pointer(20, 9) : capture::CursorState{};
         convert::CursorDraw draw;
         draw.magnify = c.magnify;
@@ -406,11 +470,10 @@ void run_color_convert12_tests()
 
         convert::ColorConvert direct;
         std::string why;
-        ComPtr<ID3D11Texture2D> source11 =
-            texture11(device11.Get(), c.sourceW, c.sourceH, format, pixels);
+        ComPtr<ID3D11Texture2D> source11 = texture11(device11.Get(), texW, texH, format, panel);
         if (!source11 ||
             !direct.init(device11.Get(), format, c.sourceW, c.sourceH, c.outputW, c.outputH,
-                         convert::ColorConvert::Chroma::C420, c.hdr, c.filter, why)) {
+                         convert::ColorConvert::Chroma::C420, c.hdr, c.filter, why, c.turn)) {
             std::fprintf(stderr, "  %s: D3D11 on WARP refuses it (%s) — skipped\n", c.name,
                          why.c_str());
             continue;
@@ -421,9 +484,36 @@ void run_color_convert12_tests()
             planes11(device11.Get(), context.Get(), direct.output(), direct.outputWidth(),
                      direct.outputHeight(), bytesPerSample);
 
+        // Turned, the picture is the upright one's: the same conversion of
+        // the upright texture, within a code — the bilinear fetch averages
+        // the same texels with the axes the other way round.
+        if (c.turn) {
+            convert::ColorConvert upright;
+            ComPtr<ID3D11Texture2D> straight =
+                texture11(device11.Get(), c.sourceW, c.sourceH, format, pixels);
+            const bool built =
+                straight &&
+                upright.init(device11.Get(), format, c.sourceW, c.sourceH, c.outputW, c.outputH,
+                             convert::ColorConvert::Chroma::C420, c.hdr, c.filter, why);
+            CHECK(built);
+            if (built) {
+                upright.setSdrWhite(c.sdrWhite);
+                CHECK(upright.convert(straight.Get(), cursor, draw, why));
+                const std::vector<uint8_t> want =
+                    planes11(device11.Get(), context.Get(), upright.output(), upright.outputWidth(),
+                             upright.outputHeight(), bytesPerSample);
+                size_t off = 0;
+                const int worst = worstCodes(want, expected, bytesPerSample, off);
+                const bool close = !want.empty() && worst <= 1;
+                CHECK(close);
+                std::fprintf(stderr, "  %s: %s the upright picture's (%zu samples off, by %d)\n",
+                             c.name, close ? "as" : "NOT", off, worst);
+            }
+        }
+
         convert::ColorConvert12 converter;
         if (!converter.init(rig.device->device(), rig.queue.queue.Get(), format, c.sourceW,
-                            c.sourceH, c.outputW, c.outputH, 0, 0, c.hdr, c.filter, why)) {
+                            c.sourceH, c.outputW, c.outputH, 0, 0, c.hdr, c.filter, why, c.turn)) {
             std::fprintf(stderr, "  %s: D3D12 on WARP refuses it (%s)\n", c.name, why.c_str());
             CHECK(false);
             continue;
@@ -434,7 +524,7 @@ void run_color_convert12_tests()
         CHECK(converter.outputWidth() == direct.outputWidth());
         CHECK(converter.outputHeight() == direct.outputHeight());
 
-        ComPtr<ID3D12Resource> source12 = rig.texture(c.sourceW, c.sourceH, format, pixels, error);
+        ComPtr<ID3D12Resource> source12 = rig.texture(texW, texH, format, panel, error);
         CHECK(source12 != nullptr);
         if (!source12) continue;
         ID3D12GraphicsCommandList* list = rig.begin();

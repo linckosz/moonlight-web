@@ -133,8 +133,19 @@ public:
     /// making a second context that would need its own synchronisation.
     virtual ID3D11DeviceContext* context() const = 0;
 
+    /// The picture as the desktop stands, upright: what the session is sized
+    /// by, the pointer placed in and the mouse aimed at.
     virtual int width() const = 0;
     virtual int height() const = 0;
+
+    /// How the frames' textures stand against that picture, in quarter turns
+    /// (DisplayRotation.h's quarterTurns): 0 for a picture that arrives
+    /// upright — every capture's, but Desktop Duplication's of a display
+    /// turned against its panel, which hands it over as the panel scans it
+    /// out (issue #54). The converter turns it upright as it reads it. For an
+    /// odd turn the textures are height() × width(): whatever copies one goes
+    /// by the texture's own size, never by width() and height().
+    virtual int turn() const { return 0; }
 
     /// The texture format frames arrive in: B8G8R8A8_UNORM for SDR,
     /// R16G16B16A16_FLOAT when the output is scanning out HDR. The colour

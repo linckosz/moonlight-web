@@ -257,6 +257,8 @@ private:
     DXGI_FORMAT m_SourceFormat = DXGI_FORMAT_UNKNOWN;
     int m_SourceWidth = 0;
     int m_SourceHeight = 0;
+    /// IWindowsCapture::turn, for every converter made on this build.
+    int m_SourceTurn = 0;
     std::unique_ptr<convert::ColorConvert12> m_Converter;
     /// The held desktop between a teardown that keeps it and the next build.
     Microsoft::WRL::ComPtr<ID3D12Resource> m_KeptHeld;

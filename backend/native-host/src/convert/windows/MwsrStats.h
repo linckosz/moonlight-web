@@ -74,8 +74,11 @@ public:
     /// Prepare the pass for @p width × @p height captures on @p device: the
     /// full one, or with @p light the light one. False, with the reason, below
     /// feature level 11_0 (no compute shaders) or for a capture smaller than
-    /// the grid (a cell without a pixel).
-    bool init(ID3D11Device* device, int width, int height, bool light, std::string& error);
+    /// the grid (a cell without a pixel). @p turn: the quarter turns the
+    /// capture's textures stand at against that upright picture
+    /// (IWindowsCapture::turn) — the cells are the picture's either way.
+    bool init(ID3D11Device* device, int width, int height, bool light, std::string& error,
+              int turn = 0);
 
     /// Queue the pass over @p source, a view of the 8-bit capture through its
     /// UNORM format (the encoded values, not light), and the copy of its cells.

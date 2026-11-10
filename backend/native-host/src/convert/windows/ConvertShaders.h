@@ -44,15 +44,19 @@ bool compileConvertShader(const char* entryPoint, const char* target, bool scRgb
 /// One direction of the resample pass (kScaleShaderSource). @p length is the
 /// source extent along the filtered axis, @p output the picture's extent along
 /// it, @p fixed the extent of the other axis (rows for horizontal, columns for
-/// vertical).
+/// vertical) — all of the upright picture. @p turn, the quarter turns the
+/// capture stands at against it (IWindowsCapture::turn), is the horizontal
+/// pass's alone: it reads the capture, the vertical one reads its output.
 bool compileScaleShader(bool horizontal, bool decode, int length, int output, int fixed,
-                        Microsoft::WRL::ComPtr<ID3DBlob>& blob, std::string& error);
+                        Microsoft::WRL::ComPtr<ID3DBlob>& blob, std::string& error, int turn = 0);
 
 /// MWSR's statistics pass (kMwsrStatsSource) for a @p width × @p height
-/// capture, as a cs_5_0 compute shader: on every pixel, or with @p light on
+/// picture, upright, read from a capture that stands @p turn quarter turns
+/// against it, as a cs_5_0 compute shader: on every pixel, or with @p light on
 /// one pixel in 16 (MW_LIGHT).
 bool compileMwsrStatsShader(int width, int height, bool light,
-                            Microsoft::WRL::ComPtr<ID3DBlob>& blob, std::string& error);
+                            Microsoft::WRL::ComPtr<ID3DBlob>& blob, std::string& error,
+                            int turn = 0);
 
 /// What a converter makes of the sizes it is given.
 struct ConvertGeometry
@@ -75,7 +79,8 @@ struct ConvertGeometry
     float pictureHeight = 0.0f;
 };
 
-/// The geometry for a @p sourceWidth × @p sourceHeight capture converted to
+/// The geometry for a @p sourceWidth × @p sourceHeight capture (the upright
+/// picture, whatever the capture's turn) converted to
 /// @p outputWidth × @p outputHeight (0 = the source's) with @p filter. False,
 /// with the reason, for a degenerate output.
 bool convertGeometry(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
@@ -83,7 +88,8 @@ bool convertGeometry(int sourceWidth, int sourceHeight, int outputWidth, int out
 
 /// The Overlay constant buffer of kShaderSource (b0), eight floats: the
 /// pointer's rectangle in the uv of whatever the conversion samples, whether
-/// to draw it, and where SDR white sits.
+/// to draw it, where SDR white sits, and how the source stands against the
+/// picture.
 struct OverlayConstants
 {
     float values[8] = {};
@@ -91,9 +97,12 @@ struct OverlayConstants
 
 /// @p cursorTexture: whether the pointer's textures exist to be sampled.
 /// @p resampled: whether the conversion reads the scaled picture rather than
-/// the capture.
+/// the capture. @p turn: the quarter turns the capture stands at against the
+/// picture (IWindowsCapture::turn) — the conversion's to undo only when it
+/// reads the capture; the scaled picture is upright.
 OverlayConstants overlayConstants(const capture::CursorState& cursor, const CursorDraw& draw,
                                   bool cursorTexture, int sourceWidth, int sourceHeight,
-                                  bool resampled, const ConvertGeometry& geometry, float sdrWhite);
+                                  bool resampled, const ConvertGeometry& geometry, float sdrWhite,
+                                  int turn = 0);
 
 } // namespace mw::native::convert

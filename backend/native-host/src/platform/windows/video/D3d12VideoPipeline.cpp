@@ -293,6 +293,7 @@ bool D3d12VideoPipeline::buildConverter(const capture::IWindowsCapture& capture,
     m_SourceFormat = capture.format();
     m_SourceWidth = capture.width();
     m_SourceHeight = capture.height();
+    m_SourceTurn = capture.turn();
     // Two pictures in flight where the encoder takes pictures from any
     // texture: D3D12 Video Encode's — asked by the bench's key, or by default
     // on an Intel GPU with memory of its own (§9-26). Said once, at the first
@@ -339,7 +340,7 @@ bool D3d12VideoPipeline::makeConverter(int codedWidth, int codedHeight, std::str
     if (!converter->init(m_Device->device(), m_Queue.queue.Get(), m_SourceFormat, m_SourceWidth,
                          m_SourceHeight, m_ConverterBuild.outputWidth,
                          m_ConverterBuild.outputHeight, codedWidth, codedHeight,
-                         m_ConverterBuild.hdr, m_ConverterBuild.filter, error))
+                         m_ConverterBuild.hdr, m_ConverterBuild.filter, error, m_SourceTurn))
         return false;
     if (m_Pipelined && !converter->addOutput(error)) {
         error = "the second output of the pipelined chain: " + error;

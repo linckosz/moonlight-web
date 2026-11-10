@@ -76,6 +76,10 @@ public:
     ID3D11DeviceContext* context() const override { return m_Context.Get(); }
     int width() const override { return m_Width; }
     int height() const override { return m_Height; }
+    /// From the duplication's Rotation, read at each start(): the mode's size
+    /// is stood the way the desktop is, the pictures come as the panel scans
+    /// them out (DisplayRotation.h).
+    int turn() const override { return m_Turn; }
     DXGI_FORMAT format() const override { return m_Format; }
     DesktopRect desktopRect() const override { return m_DesktopRect; }
     const CursorState& cursor() const override { return m_Cursor; }
@@ -89,8 +93,7 @@ public:
     /// Whether the last start() was refused for a reason that can pass, so
     /// that a later one may succeed: the secure desktop below SYSTEM
     /// (E_ACCESSDENIED), another program's duplication in the way, a display
-    /// between two modes, a display turned against its panel (issue #54,
-    /// DisplayRotation.h). False after a success, and for the refusals that
+    /// between two modes. False after a success, and for the refusals that
     /// stay — DXGI_ERROR_UNSUPPORTED above all, a display another GPU drives,
     /// the hybrid laptop Windows.Graphics.Capture exists for.
     bool refusalMayPass() const { return m_RefusalMayPass; }
@@ -155,6 +158,10 @@ private:
 
     int m_Width = 0;
     int m_Height = 0;
+    /// See turn(). And whether the first picture of a turned duplication has
+    /// had its size looked at yet — the one look acquire() takes, for the log.
+    int m_Turn = 0;
+    bool m_TurnChecked = true;
     int64_t m_RefreshPeriodNs = 0;
     DXGI_FORMAT m_Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     DesktopRect m_DesktopRect;

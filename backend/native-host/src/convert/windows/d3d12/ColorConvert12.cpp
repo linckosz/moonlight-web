@@ -160,6 +160,7 @@ void ColorConvert12::release()
     m_Hdr = m_ToneMap = false;
     m_SourceFormat = DXGI_FORMAT_UNKNOWN;
     m_SourceWidth = m_SourceHeight = 0;
+    m_SourceTurn = 0;
     m_CodedWidth = m_CodedHeight = 0;
     m_Device.Reset();
 }
@@ -167,7 +168,7 @@ void ColorConvert12::release()
 bool ColorConvert12::init(ID3D12Device* device, ID3D12CommandQueue* queue, DXGI_FORMAT sourceFormat,
                           int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
                           int codedWidth, int codedHeight, bool hdr, ScaleFilter filter,
-                          std::string& error)
+                          std::string& error, int sourceTurn)
 {
     release();
     if (!device) {
@@ -205,6 +206,7 @@ bool ColorConvert12::init(ID3D12Device* device, ID3D12CommandQueue* queue, DXGI_
     m_SourceFormat = sourceFormat;
     m_SourceWidth = sourceWidth;
     m_SourceHeight = sourceHeight;
+    m_SourceTurn = sourceTurn & 3;
 
     if (!createPipeline(error) || !createOutput(0, error)) return false;
     if (m_Geometry.filter != ScaleFilter::Bilinear && !createScaler(error)) return false;
@@ -234,6 +236,11 @@ bool ColorConvert12::init(ID3D12Device* device, ID3D12CommandQueue* queue, DXGI_
              : "") +
         (m_CodedWidth != m_Geometry.outputWidth || m_CodedHeight != m_Geometry.outputHeight
              ? ", coded " + std::to_string(m_CodedWidth) + "x" + std::to_string(m_CodedHeight)
+             : "") +
+        (m_SourceTurn != 0
+             ? ", stood upright from " + std::to_string(m_SourceTurn * 90) + "° (the " +
+                   (m_Geometry.filter != ScaleFilter::Bilinear ? "resample" : "conversion") +
+                   " reads it turned)"
              : ""));
     return true;
 }
@@ -410,7 +417,9 @@ bool ColorConvert12::createScaler(std::string& error)
     const bool decode = !m_Hdr && !m_ToneMap;
 
     ComPtr<ID3DBlob> h, v;
-    if (!compileScaleShader(true, decode, m_SourceWidth, pictureWidth, m_SourceHeight, h, error) ||
+    // The horizontal pass reads the capture, and stands it upright as it does.
+    if (!compileScaleShader(true, decode, m_SourceWidth, pictureWidth, m_SourceHeight, h, error,
+                            m_SourceTurn) ||
         !compileScaleShader(false, false, m_SourceHeight, pictureHeight, pictureWidth, v, error))
         return false;
     if (!createPso(m_VertexShader.Get(), h.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, m_ScaleHPso,
@@ -669,7 +678,7 @@ bool ColorConvert12::recordConvert(ID3D12GraphicsCommandList* list, ID3D12Resour
     // Where the pointer goes: the same constants ColorConvert writes.
     const OverlayConstants overlay =
         overlayConstants(cursor, draw, m_CursorPixels != nullptr, m_SourceWidth, m_SourceHeight,
-                         resampled, m_Geometry, m_SdrWhite);
+                         resampled, m_Geometry, m_SdrWhite, m_SourceTurn);
     list->SetGraphicsRoot32BitConstants(0, 8, overlay.values, 0);
     const bool decodeScaled = !m_Hdr && !m_ToneMap;
     list->SetGraphicsRootDescriptorTable(

@@ -127,9 +127,17 @@ public:
     /// and P010 chroma are half-resolution in both axes, so an odd size has no
     /// representation. 4:4:4 has no such constraint but is rounded the same way
     /// to keep one code path and to stay friendly to every encoder.
+    ///
+    /// @p sourceTurn is how the frames' textures stand against the picture,
+    /// in quarter turns (IWindowsCapture::turn): a duplication of a display
+    /// turned against its panel (issue #54). The picture is stood upright as
+    /// it is read, by the resample pass when there is one, by the conversion
+    /// otherwise; sourceWidth × sourceHeight is the UPRIGHT picture, so the
+    /// textures are sourceHeight × sourceWidth for an odd turn. The pointer
+    /// is placed in the upright picture, as the capture reports it.
     bool init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sourceWidth, int sourceHeight,
               int outputWidth, int outputHeight, Chroma chroma, bool hdr, ScaleFilter filter,
-              std::string& error);
+              std::string& error, int sourceTurn = 0);
 
     Chroma chroma() const { return m_Chroma; }
 
@@ -327,6 +335,8 @@ private:
     DXGI_FORMAT m_SourceFormat = DXGI_FORMAT_UNKNOWN;
     int m_SourceWidth = 0;
     int m_SourceHeight = 0;
+    /// See init(): 0 to 3.
+    int m_SourceTurn = 0;
     int m_OutputWidth = 0;
     int m_OutputHeight = 0;
 };

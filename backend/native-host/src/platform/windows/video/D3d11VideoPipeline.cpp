@@ -86,7 +86,7 @@ bool D3d11VideoPipeline::buildConverter(const capture::IWindowsCapture& capture,
                            capture.height(), build.outputWidth, build.outputHeight,
                            build.yuv444 ? convert::ColorConvert::Chroma::C444
                                         : convert::ColorConvert::Chroma::C420,
-                           build.hdr, build.filter, error))
+                           build.hdr, build.filter, error, capture.turn()))
         return false;
 
     // MWSR's statistics, when the client reads the zones: never a reason to
@@ -226,8 +226,11 @@ bool D3d11VideoPipeline::prepareBlank(const capture::IWindowsCapture* capture, s
 {
     m_Blank.Reset();
     ID3D11Device* device = pipelineDevice(capture);
-    const int width = capture ? capture->width() : 0;
-    const int height = capture ? capture->height() : 0;
+    // The size of the capture's textures, which the converter reads it as: a
+    // quarter turn swaps them (IWindowsCapture::turn).
+    const bool swap = capture && (capture->turn() & 1) != 0;
+    const int width = capture ? (swap ? capture->height() : capture->width()) : 0;
+    const int height = capture ? (swap ? capture->width() : capture->height()) : 0;
     if (!device || width <= 0 || height <= 0) {
         error = "the capture has no device to make it on";
         return false;

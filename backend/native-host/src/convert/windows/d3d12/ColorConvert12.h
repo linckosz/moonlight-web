@@ -63,12 +63,14 @@ public:
     ColorConvert12(const ColorConvert12&) = delete;
     ColorConvert12& operator=(const ColorConvert12&) = delete;
 
-    /// ColorConvert::init's contract on @p device, plus the coded size (0 =
-    /// the output size; never smaller, and even) and the @p queue the lists
-    /// run on, whose timestamps time the resample pass.
+    /// ColorConvert::init's contract on @p device — @p sourceTurn included:
+    /// the picture stood upright as it is read — plus the coded size (0 = the
+    /// output size; never smaller, and even) and the @p queue the lists run
+    /// on, whose timestamps time the resample pass.
     bool init(ID3D12Device* device, ID3D12CommandQueue* queue, DXGI_FORMAT sourceFormat,
               int sourceWidth, int sourceHeight, int outputWidth, int outputHeight, int codedWidth,
-              int codedHeight, bool hdr, ScaleFilter filter, std::string& error);
+              int codedHeight, bool hdr, ScaleFilter filter, std::string& error,
+              int sourceTurn = 0);
 
     /// Records the conversion of @p source — the duplication's surface opened
     /// in D3D12, or held() — into @p list, @p cursor drawn on the way through.
@@ -218,6 +220,8 @@ private:
     DXGI_FORMAT m_SourceFormat = DXGI_FORMAT_UNKNOWN;
     int m_SourceWidth = 0;
     int m_SourceHeight = 0;
+    /// See ColorConvert::init: 0 to 3.
+    int m_SourceTurn = 0;
     int m_CodedWidth = 0;
     int m_CodedHeight = 0;
 };

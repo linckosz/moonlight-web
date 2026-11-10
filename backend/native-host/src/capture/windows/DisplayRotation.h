@@ -33,10 +33,18 @@
 //    and leaves turning it to the caller (DXGI_OUTDUPL_DESC::Rotation), so
 //    what arrived was on its side.
 //
-// Windows.Graphics.Capture has neither problem: it captures the desktop as
-// composed, upright. So a turned display is sized from the desktop's own
-// orientation here, and Desktop Duplication refuses it — the session takes
-// WGC, and comes back to the duplication when the display is turned upright.
+// So a turned display is sized from the desktop's own orientation here, and
+// the conversion turns the duplication's picture upright as it reads it — the
+// mapping of panelTexel() below, which the shaders of ConvertHlsl.h make in
+// texels and in uv — as Sunshine and OBS do. Everything else goes by the
+// desktop, upright: the session's size, the pointer, the mouse.
+//
+// The first fix had Desktop Duplication refuse a turned display and left it
+// to Windows.Graphics.Capture, which captures the desktop as composed,
+// upright. It held on the bench and left the installed host with no picture
+// at all: its worker runs as SYSTEM, for the secure desktop, and WGC does not
+// exist for SYSTEM (0x80070424, backend/src/streaming/CaptureKey.h) — the
+// report came back on 10/11/2026.
 //
 // DXGI_MODE_ROTATION and DISPLAYCONFIG_ROTATION number the turns the same way
 // (1 none, 2 a quarter, 3 a half, 4 three quarters; DXGI adds 0, unspecified),
@@ -59,11 +67,66 @@ inline int rotationDegrees(int windowsRotation)
     }
 }
 
+/// The same turn in quarter turns, 0 to 3: what the converters take
+/// (IWindowsCapture::turn).
+inline int quarterTurns(int windowsRotation)
+{
+    return rotationDegrees(windowsRotation) / 90;
+}
+
 /// Whether the turn swaps width and height.
 inline bool rotationSwapsAxes(int windowsRotation)
 {
     const int degrees = rotationDegrees(windowsRotation);
     return degrees == 90 || degrees == 270;
+}
+
+/// Where pixel (@p x, @p y) of the upright picture lies in the texture Desktop
+/// Duplication hands over for a display turned @p turns quarter turns, the
+/// upright picture being @p width × @p height — so the texture is height ×
+/// width for an odd turn. The mapping of Microsoft's DesktopDuplication
+/// sample (SetDirtyVert, SetMoveRect), by which OBS's monitor capture draws
+/// too: a quarter turn puts the texture's top row down the picture's right
+/// side.
+inline void panelTexel(int x, int y, int width, int height, int turns, int& tx, int& ty)
+{
+    switch (turns & 3) {
+    case 1:
+        tx = y;
+        ty = width - 1 - x;
+        break;
+    case 2:
+        tx = width - 1 - x;
+        ty = height - 1 - y;
+        break;
+    case 3:
+        tx = height - 1 - y;
+        ty = x;
+        break;
+    default:
+        tx = x;
+        ty = y;
+        break;
+    }
+}
+
+/// Desktop Duplication's mode size (DXGI_OUTDUPL_DESC::ModeDesc), stood the
+/// way the desktop is. The first report's mode was the desktop's already
+/// (2160x1080 over a 1080x2160 panel), and the docs promise nothing either
+/// way, so the desktop's rectangle (DXGI_OUTPUT_DESC::DesktopCoordinates)
+/// decides: its shape survives the DPI virtualization its size does not.
+/// Only a quarter turn can disagree; a square, or no rectangle, says nothing.
+inline void duplicationUprightSize(int& width, int& height, int windowsRotation, int desktopWidth,
+                                   int desktopHeight)
+{
+    if (!rotationSwapsAxes(windowsRotation)) return;
+    if (width <= 0 || height <= 0 || width == height) return;
+    if (desktopWidth <= 0 || desktopHeight <= 0 || desktopWidth == desktopHeight) return;
+    if ((width > height) != (desktopWidth > desktopHeight)) {
+        const int w = width;
+        width = height;
+        height = w;
+    }
 }
 
 /// The size of a display's desktop, from QueryDisplayConfig's source mode and

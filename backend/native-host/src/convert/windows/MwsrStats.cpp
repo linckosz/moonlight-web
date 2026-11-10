@@ -26,7 +26,8 @@ namespace mw::native::convert {
 
 namespace mz = mwsrzones;
 
-bool MwsrStats::init(ID3D11Device* device, int width, int height, bool light, std::string& error)
+bool MwsrStats::init(ID3D11Device* device, int width, int height, bool light, std::string& error,
+                     int turn)
 {
     // A new size, or a new device: nothing of the old pass is kept, and no
     // ticket of it reads (m_Last goes on counting).
@@ -58,7 +59,7 @@ bool MwsrStats::init(ID3D11Device* device, int width, int height, bool light, st
     }
 
     ComPtr<ID3DBlob> blob;
-    if (!compileMwsrStatsShader(width, height, light, blob, error)) return false;
+    if (!compileMwsrStatsShader(width, height, light, blob, error, turn)) return false;
     if (FAILED(device->CreateComputeShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr,
                                            m_Shader.GetAddressOf()))) {
         error = "could not create MWSR's statistics pass";

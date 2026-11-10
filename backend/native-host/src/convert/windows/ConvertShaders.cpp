@@ -59,7 +59,7 @@ bool compileConvertShader(const char* entryPoint, const char* target, bool scRgb
 }
 
 bool compileScaleShader(bool horizontal, bool decode, int length, int output, int fixed,
-                        ComPtr<ID3DBlob>& blob, std::string& error)
+                        ComPtr<ID3DBlob>& blob, std::string& error, int turn)
 {
     const double dilate = std::max(1.0, static_cast<double>(length) / output);
     const int taps = static_cast<int>(std::ceil(4.0 * dilate)) + 1;
@@ -76,12 +76,15 @@ bool compileScaleShader(bool horizontal, bool decode, int length, int output, in
     const std::string tapsText = std::to_string(taps);
     const std::string lengthText = std::to_string(length) + ".0";
     const std::string fixedText = std::to_string(fixed) + ".0";
+    // The capture's turn, undone by the pass that reads the capture.
+    const std::string turnText = std::to_string(horizontal ? (turn & 3) : 0);
     const D3D_SHADER_MACRO defines[] = {{"MW_HORIZONTAL", horizontal ? "1" : "0"},
                                         {"MW_DECODE", decode ? "1" : "0"},
                                         {"MW_DILATE", dilateText},
                                         {"MW_TAPS", tapsText.c_str()},
                                         {"MW_LEN", lengthText.c_str()},
                                         {"MW_FIXED", fixedText.c_str()},
+                                        {"MW_TURN", turnText.c_str()},
                                         {nullptr, nullptr}};
     ComPtr<ID3DBlob> errors;
     const HRESULT hr =
@@ -100,16 +103,20 @@ bool compileScaleShader(bool horizontal, bool decode, int length, int output, in
 }
 
 bool compileMwsrStatsShader(int width, int height, bool light, ComPtr<ID3DBlob>& blob,
-                            std::string& error)
+                            std::string& error, int turn)
 {
     const std::string widthText = std::to_string(width);
     const std::string heightText = std::to_string(height);
     const std::string cellsX = std::to_string(mwsrzones::kCellsX);
     const std::string cellsY = std::to_string(mwsrzones::kCellsY);
-    const D3D_SHADER_MACRO defines[] = {
-        {"MW_WIDTH", widthText.c_str()}, {"MW_HEIGHT", heightText.c_str()},
-        {"MW_CELLS_X", cellsX.c_str()},  {"MW_CELLS_Y", cellsY.c_str()},
-        {"MW_LIGHT", light ? "1" : "0"}, {nullptr, nullptr}};
+    const std::string turnText = std::to_string(turn & 3);
+    const D3D_SHADER_MACRO defines[] = {{"MW_WIDTH", widthText.c_str()},
+                                        {"MW_HEIGHT", heightText.c_str()},
+                                        {"MW_CELLS_X", cellsX.c_str()},
+                                        {"MW_CELLS_Y", cellsY.c_str()},
+                                        {"MW_LIGHT", light ? "1" : "0"},
+                                        {"MW_TURN", turnText.c_str()},
+                                        {nullptr, nullptr}};
     ComPtr<ID3DBlob> errors;
     const HRESULT hr =
         ::D3DCompile(kMwsrStatsSource, sizeof(kMwsrStatsSource) - 1, "MwsrStats.hlsl", defines,
@@ -169,7 +176,8 @@ bool convertGeometry(int sourceWidth, int sourceHeight, int outputWidth, int out
 
 OverlayConstants overlayConstants(const capture::CursorState& cursor, const CursorDraw& draw,
                                   bool cursorTexture, int sourceWidth, int sourceHeight,
-                                  bool resampled, const ConvertGeometry& geometry, float sdrWhite)
+                                  bool resampled, const ConvertGeometry& geometry, float sdrWhite,
+                                  int turn)
 {
     // The cursor rectangle, expressed in the uv of whatever the conversion
     // samples: the capture, or the scaled picture — the same square when the
@@ -207,7 +215,10 @@ OverlayConstants overlayConstants(const capture::CursorState& cursor, const Curs
     }
     p[4] = drawCursor ? 1.0f : 0.0f;
     p[5] = sdrWhite;
-    p[6] = p[7] = 0.0f;
+    // The turn the conversion undoes as it reads (SourceUv): none over the
+    // scaled picture, which the horizontal pass stood upright.
+    p[6] = resampled ? 0.0f : static_cast<float>(turn & 3);
+    p[7] = 0.0f;
     return out;
 }
 

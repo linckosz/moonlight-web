@@ -36,7 +36,7 @@ ColorConvert::~ColorConvert() = default;
 
 bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sourceWidth,
                         int sourceHeight, int outputWidth, int outputHeight, Chroma chroma,
-                        bool hdr, ScaleFilter filter, std::string& error)
+                        bool hdr, ScaleFilter filter, std::string& error, int sourceTurn)
 {
     if (!device) {
         error = "no D3D11 device";
@@ -78,6 +78,7 @@ bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sour
     m_SourceFormat = sourceFormat;
     m_SourceWidth = sourceWidth;
     m_SourceHeight = sourceHeight;
+    m_SourceTurn = sourceTurn & 3;
 
     // Even sizes, the filter in effect, the bars: ConvertShaders.cpp, shared
     // with the D3D12 converter so both make the same picture.
@@ -116,6 +117,11 @@ bool ColorConvert::init(ID3D11Device* device, DXGI_FORMAT sourceFormat, int sour
               (m_Letterboxed
                    ? ", letterboxed to " + std::to_string(static_cast<int>(m_PictureWidth)) + "x" +
                          std::to_string(static_cast<int>(m_PictureHeight))
+                   : "") +
+              (m_SourceTurn != 0
+                   ? ", stood upright from " + std::to_string(m_SourceTurn * 90) + "° (the " +
+                         (m_Filter != ScaleFilter::Bilinear ? "resample" : "conversion") +
+                         " reads it turned)"
                    : ""));
     return true;
 }
@@ -166,7 +172,8 @@ bool ColorConvert::enableMwsrStats(std::string& why, bool light)
         return false;
     }
     auto stats = std::make_unique<MwsrStats>();
-    if (!stats->init(m_Device.Get(), m_SourceWidth, m_SourceHeight, light, why)) return false;
+    if (!stats->init(m_Device.Get(), m_SourceWidth, m_SourceHeight, light, why, m_SourceTurn))
+        return false;
     m_MwsrStats = std::move(stats);
     return true;
 }
@@ -190,7 +197,9 @@ bool ColorConvert::createScaler(std::string& error)
     const bool decode = !m_Hdr && !m_ToneMap;
 
     ComPtr<ID3DBlob> h, v;
-    if (!compileScaleShader(true, decode, m_SourceWidth, pictureWidth, m_SourceHeight, h, error))
+    // The horizontal pass reads the capture, and stands it upright as it does.
+    if (!compileScaleShader(true, decode, m_SourceWidth, pictureWidth, m_SourceHeight, h, error,
+                            m_SourceTurn))
         return false;
     if (!compileScaleShader(false, false, m_SourceHeight, pictureHeight, pictureWidth, v, error))
         return false;
@@ -539,7 +548,7 @@ bool ColorConvert::convert(ID3D11Texture2D* source, const capture::CursorState& 
         geometry.pictureHeight = m_PictureHeight;
         const OverlayConstants overlay =
             overlayConstants(cursor, draw, m_CursorPixelsView != nullptr, m_SourceWidth,
-                             m_SourceHeight, resampled, geometry, m_SdrWhite);
+                             m_SourceHeight, resampled, geometry, m_SdrWhite, m_SourceTurn);
         D3D11_MAPPED_SUBRESOURCE mapped = {};
         if (FAILED(m_Context->Map(m_OverlayBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
             error = "could not update the cursor position";

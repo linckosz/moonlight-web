@@ -46,13 +46,32 @@ SamplerState      Nearest      : register(s1);
 // SdrWhite is where the desktop's SDR white sits in scRGB — 1.0 for the 80-nit
 // default, more when the "SDR content brightness" slider is up. Only the FP16
 // paths read it; an 8-bit source has no such thing.
+// Turn is how the source texture stands against the picture, in quarter turns
+// (0 to 3): a duplication of a display turned against its panel, see
+// SourceUv. 0 for every other source, and for the resampled picture, which
+// the horizontal pass has stood upright already.
 cbuffer Overlay : register(b0)
 {
     float4 CursorRect;
     float  CursorEnabled;
     float  SdrWhite;
-    float2 OverlayPad;
+    float  Turn;
+    float  OverlayPad;
 };
+
+// Where the source is read for a point of the picture. Desktop Duplication
+// hands a display turned against its panel over as the panel scans it out
+// (issue #54), and the picture is stood upright here, as it is read: the
+// mapping of DisplayRotation.h's panelTexel, in uv. Everything else — the
+// pointer's rectangle above all — is in the picture's uv, upright. A branch on
+// a constant: every pixel of a draw takes the same one.
+float2 SourceUv(float2 uv)
+{
+    if (Turn < 0.5) return uv;
+    if (Turn < 1.5) return float2(uv.y, 1.0 - uv.x);
+    if (Turn < 2.5) return 1.0 - uv;
+    return float2(1.0 - uv.y, uv.x);
+}
 
 struct VsOut
 {
@@ -163,7 +182,7 @@ float3 SrgbToLinear(float3 c)
 
 float3 SceneHdr(float2 uv)
 {
-    float3 rgb = Source.Sample(Linear, uv).rgb;
+    float3 rgb = Source.Sample(Linear, SourceUv(uv)).rgb;
     if (CursorEnabled < 0.5) return rgb;
 
     float2 c = (uv - CursorRect.xy) / CursorRect.zw;
@@ -236,7 +255,7 @@ float3 Scene(float2 uv)
 #else
 float3 Scene(float2 uv)
 {
-    float3 rgb = Source.Sample(Linear, uv).rgb;
+    float3 rgb = Source.Sample(Linear, SourceUv(uv)).rgb;
     if (CursorEnabled < 0.5) return rgb;
 
     float2 c = (uv - CursorRect.xy) / CursorRect.zw;
@@ -339,7 +358,9 @@ float4 PsFill(VsOut i) : SV_TARGET
 // one geometry), so the tap loop unrolls and there is no constant buffer. One
 // entry point, compiled twice: MW_HORIZONTAL 1 reads the capture along X into
 // an output-wide, source-high intermediate; 0 reads that intermediate along Y
-// into the output-sized picture.
+// into the output-sized picture. The horizontal pass also stands a capture
+// turned against its panel upright (MW_TURN, see Texel), so that everything
+// after it — the vertical pass, the conversion — reads an upright picture.
 inline constexpr char kScaleShaderSource[] = R"HLSL(
 Texture2D<float4> Source : register(t0);
 
@@ -364,9 +385,26 @@ float Lanczos2(float x)
     return 2.0 * sin(px) * sin(px * 0.5) / (px * px);
 }
 
+// The texel under pixel (x, y) of the upright picture, MW_LEN × MW_FIXED in
+// the horizontal pass, for a capture that stands MW_TURN quarter turns against
+// it — DisplayRotation.h's panelTexel. The vertical pass reads the
+// intermediate, upright already: MW_TURN is 0 there.
+int3 Texel(int x, int y)
+{
+#if MW_TURN == 1
+    return int3(y, int(MW_LEN) - 1 - x, 0);
+#elif MW_TURN == 2
+    return int3(int(MW_LEN) - 1 - x, int(MW_FIXED) - 1 - y, 0);
+#elif MW_TURN == 3
+    return int3(int(MW_FIXED) - 1 - y, x, 0);
+#else
+    return int3(x, y, 0);
+#endif
+}
+
 float3 Fetch(int x, int y)
 {
-    float3 c = Source.Load(int3(x, y, 0)).rgb;
+    float3 c = Source.Load(Texel(x, y)).rgb;
 #if MW_DECODE
     c = SrgbToLinear(c);
 #endif
@@ -433,9 +471,25 @@ RWStructuredBuffer<float4> Cells  : register(u0);
 static const int kW = MW_WIDTH;
 static const int kH = MW_HEIGHT;
 
+// The texel under pixel (x, y) of the upright kW × kH picture, for a capture
+// that stands MW_TURN quarter turns against it (DisplayRotation.h's
+// panelTexel): the statistics are the picture's, as the client sees it.
+int3 Texel(int x, int y)
+{
+#if MW_TURN == 1
+    return int3(y, kW - 1 - x, 0);
+#elif MW_TURN == 2
+    return int3(kW - 1 - x, kH - 1 - y, 0);
+#elif MW_TURN == 3
+    return int3(kH - 1 - y, x, 0);
+#else
+    return int3(x, y, 0);
+#endif
+}
+
 float Luma(int x, int y)
 {
-    precise float3 c = Source.Load(int3(x, y, 0)).rgb;
+    precise float3 c = Source.Load(Texel(x, y)).rgb;
     precise float  l = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
     return l;
 }
@@ -444,7 +498,7 @@ float Luma(int x, int y)
 // gradient < 0.01, |laplacian|, saturation, luma < 0.15.
 void PixelStats(int x, int y, out float4 head, out float4 tail)
 {
-    precise float3 rgb = Source.Load(int3(x, y, 0)).rgb;
+    precise float3 rgb = Source.Load(Texel(x, y)).rgb;
     precise float  c   = rgb.r * 0.2126 + rgb.g * 0.7152 + rgb.b * 0.0722;
     precise float  lx  = Luma(min(x + 1, kW - 1), y);
     precise float  lw  = Luma(max(x - 1, 0), y);
