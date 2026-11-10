@@ -21,6 +21,7 @@
 #include <QString>
 
 class IMediaEngine;
+class QTimer;
 
 /// Bidirectional text clipboard bridge between the browser client and the
 /// host machine, active only when the streamed Sunshine host IS this machine
@@ -35,8 +36,9 @@ class IMediaEngine;
 ///
 /// Host → local: QClipboard::dataChanged is monitored on the main thread and
 /// re-emitted as hostTextChanged(); relays forward it to the browser, which
-/// mirrors it via navigator.clipboard.writeText(). A copy marked private by
-/// the program that made it (ClipboardSensitivity) stays on the host.
+/// mirrors it via navigator.clipboard.writeText(). A copy is read once the
+/// clipboard has been still for kSettleMs, and one marked private by the
+/// program that made it (ClipboardSensitivity) stays on the host.
 ///
 /// All QClipboard access happens on the Qt main thread (QClipboard is
 /// main-thread-only); relays call in from their dedicated threads through
@@ -50,6 +52,12 @@ public:
     /// payloads are truncated: clipboard sync is for text, not file transfer,
     /// and input-channel messages must stay well under SCTP message limits.
     static constexpr int kMaxTextChars = 256 * 1024;
+
+    /// How long the host clipboard must stay unchanged before a copy is read:
+    /// a program may write its text and add its marks in two steps.
+    static constexpr int kSettleMs = 200;
+    /// Reads retried when the clipboard changed while being read.
+    static constexpr int kMaxRereads = 3;
 
     /// Lazily created singleton. The FIRST call must come from the Qt main
     /// thread so the bridge gets main-thread affinity — guaranteed today:
@@ -70,7 +78,8 @@ public:
     void pasteFromClient(IMediaEngine* engine, const QString& text, bool wrapCtrl);
 
     /// Thread-safe. Re-emit the current host clipboard text (initial sync
-    /// when a client connects), even if unchanged since the last emission.
+    /// when a client connects), even if unchanged since the last emission,
+    /// after the same settle and checks as a change.
     void requestAnnounce();
 
 signals:
@@ -82,11 +91,17 @@ signals:
 private:
     explicit ClipboardBridge(QObject* parent);
     void onClipboardChanged();
+    /// Read the settled host copy and relay it, unless it is marked private
+    /// or changed while being read. Main thread only.
+    void relaySettledCopy();
+    bool hasListener() const;
 
-    /// The host clipboard holds a copy its owner asked to keep private (a
-    /// password manager's marks, see ClipboardSensitivity): it is not
-    /// relayed. Main thread only.
-    bool hostCopyIsPrivate();
+    /// Restarted by each change and by requestAnnounce().
+    QTimer* m_Settle = nullptr;
+    /// A client asked for the current text: send it even if unchanged.
+    bool m_AnnounceDue = false;
+    /// Reads retried since the last settled one (bounded by kMaxRereads).
+    int m_Rereads = 0;
 
     /// Last text written or observed — suppresses the dataChanged echo of our
     /// own setText() and redundant re-pushes of an unchanged clipboard.

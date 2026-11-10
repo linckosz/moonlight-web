@@ -22,6 +22,7 @@
 #include "streaming/ClipboardSensitivity.h"
 
 #include <QByteArray>
+#include <QList>
 #include <QMimeData>
 
 namespace {
@@ -49,6 +50,93 @@ bool privateWith(const QString& format, const QByteArray& value)
     data.setText(QStringLiteral("some copied text"));
     if (!format.isEmpty()) data.setData(format, value);
     return ClipboardSensitivity::markedPrivate(data);
+}
+
+/// A clipboard a test scripts look by look: each call to mimeData() takes the
+/// next entry (the last one repeats), and the counter moves when told to.
+struct ScriptedClipboard
+{
+    QList<QMimeData*> looks;
+    int mimeCalls = 0;
+    int textCalls = 0;
+    quint32 seq = 7;
+    /// Bumps the counter while the text is being read (another write lands).
+    bool moveDuringText = false;
+
+    ClipboardSensitivity::HostCopySource source()
+    {
+        return {
+            [this]() { return seq; },
+            [this]() -> const QMimeData* {
+                if (looks.isEmpty()) return nullptr;
+                const int i = qMin(mimeCalls++, int(looks.size()) - 1);
+                return looks[i];
+            },
+            [this]() {
+                ++textCalls;
+                if (moveDuringText) ++seq;
+                return QStringLiteral("some copied text");
+            },
+        };
+    }
+};
+
+void run_host_copy_read_tests()
+{
+    using ClipboardSensitivity::HostCopy;
+    using ClipboardSensitivity::readHostCopy;
+
+    QMimeData plain;
+    plain.setText(QStringLiteral("some copied text"));
+    QMimeData marked;
+    marked.setText(QStringLiteral("some copied text"));
+    marked.setData(windowsFormat("CanIncludeInClipboardHistory"), dword(0));
+
+    SECTION("ClipboardSensitivity: a settled ordinary copy is read");
+    {
+        ScriptedClipboard cb;
+        cb.looks = {&plain};
+        const auto read = readHostCopy(cb.source());
+        CHECK(read.kind == HostCopy::Text);
+        CHECK_EQ(read.text, QStringLiteral("some copied text"));
+        CHECK_EQ(cb.mimeCalls, 2);
+    }
+
+    SECTION("ClipboardSensitivity: marked at the first look, the text is never read");
+    {
+        ScriptedClipboard cb;
+        cb.looks = {&marked};
+        const auto read = readHostCopy(cb.source());
+        CHECK(read.kind == HostCopy::Private);
+        CHECK(read.text.isEmpty());
+        CHECK_EQ(cb.textCalls, 0);
+    }
+
+    SECTION("ClipboardSensitivity: text first, mark a moment later (two writes)");
+    {
+        ScriptedClipboard cb;
+        cb.looks = {&plain, &marked};
+        const auto read = readHostCopy(cb.source());
+        CHECK(read.kind == HostCopy::Private);
+        CHECK(read.text.isEmpty());
+    }
+
+    SECTION("ClipboardSensitivity: a write while reading sends nothing");
+    {
+        ScriptedClipboard cb;
+        cb.looks = {&plain};
+        cb.moveDuringText = true;
+        const auto read = readHostCopy(cb.source());
+        CHECK(read.kind == HostCopy::Changed);
+        CHECK(read.text.isEmpty());
+    }
+
+    SECTION("ClipboardSensitivity: an empty clipboard reads as no mark");
+    {
+        ScriptedClipboard cb;
+        const auto read = readHostCopy(cb.source());
+        CHECK(read.kind == HostCopy::Text);
+    }
 }
 
 } // namespace
@@ -89,6 +177,18 @@ void run_clipboard_sensitivity_tests()
     CHECK(privateWith(windowsFormat("CanIncludeInClipboardHistory"), QByteArray(2, '\0')));
     CHECK(privateWith(windowsFormat("CanUploadToCloudClipboard"), QByteArray()));
 
+    SECTION("ClipboardSensitivity: a format named with an index");
+    {
+        const QString indexed = QStringLiteral(
+            "application/x-qt-windows-mime;value=\"CanIncludeInClipboardHistory\";index=0");
+        CHECK(privateWith(indexed, dword(0)));
+        CHECK(!privateWith(indexed, dword(1)));
+        CHECK(
+            privateWith(QStringLiteral("application/x-qt-windows-mime;value="
+                                       "\"ExcludeClipboardContentFromMonitorProcessing\";index=2"),
+                        QByteArray()));
+    }
+
     SECTION("ClipboardSensitivity: allowed to history but excluded from the cloud");
     {
         QMimeData data;
@@ -101,4 +201,6 @@ void run_clipboard_sensitivity_tests()
     SECTION("ClipboardSensitivity: KDE's password manager hint");
     CHECK(privateWith(QStringLiteral("x-kde-passwordManagerHint"), QByteArray("secret")));
     CHECK(!privateWith(QStringLiteral("x-kde-passwordManagerHint"), QByteArray("other")));
+
+    run_host_copy_read_tests();
 }

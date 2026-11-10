@@ -28,7 +28,18 @@
 #include <QMimeData>
 #include <QNetworkInterface>
 #include <QPointer>
+#include <QTimer>
 #include <QtDebug>
+
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 // Windows virtual-key codes for the injected paste chord (the Moonlight
@@ -37,6 +48,17 @@ constexpr short kVkControl = 0x11;
 constexpr short kVkV = 0x56;
 // Modifier bitmask matching the relays' keydown encoding (Ctrl = 0x02).
 constexpr char kModCtrl = 0x02;
+
+/// The clipboard's change counter. Without one (macOS, Linux), the second
+/// look at the marks makes the check on its own.
+quint32 clipboardSequence()
+{
+#ifdef Q_OS_WIN
+    return static_cast<quint32>(GetClipboardSequenceNumber());
+#else
+    return 0;
+#endif
+}
 } // namespace
 
 ClipboardBridge* ClipboardBridge::instance()
@@ -50,7 +72,11 @@ ClipboardBridge* ClipboardBridge::instance()
 
 ClipboardBridge::ClipboardBridge(QObject* parent)
     : QObject(parent)
+    , m_Settle(new QTimer(this))
 {
+    m_Settle->setSingleShot(true);
+    m_Settle->setInterval(kSettleMs);
+    connect(m_Settle, &QTimer::timeout, this, &ClipboardBridge::relaySettledCopy);
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
             &ClipboardBridge::onClipboardChanged);
     qInfo() << "[ClipboardBridge] Created (host clipboard monitor active)";
@@ -105,39 +131,75 @@ void ClipboardBridge::requestAnnounce()
     QMetaObject::invokeMethod(
         this,
         [this]() {
-            if (hostCopyIsPrivate()) return;
-            const QString text = QGuiApplication::clipboard()->text().left(kMaxTextChars);
-            if (text.isEmpty()) return;
-            m_LastText = text;
-            emit hostTextChanged(text);
+            // Through the same settle and checks as a change, so a copy
+            // still being written is not sent at connect time either.
+            m_AnnounceDue = true;
+            m_Settle->start();
         },
         Qt::QueuedConnection);
+}
+
+bool ClipboardBridge::hasListener() const
+{
+    static const QMetaMethod changedSignal =
+        QMetaMethod::fromSignal(&ClipboardBridge::hostTextChanged);
+    return isSignalConnected(changedSignal);
 }
 
 void ClipboardBridge::onClipboardChanged()
 {
     // Don't even read the clipboard while no session is listening.
-    static const QMetaMethod changedSignal =
-        QMetaMethod::fromSignal(&ClipboardBridge::hostTextChanged);
-    if (!isSignalConnected(changedSignal)) return;
-    if (hostCopyIsPrivate()) return;
+    if (!hasListener()) return;
+    // Restarted by every change: the copy is read once it has stopped moving.
+    m_Rereads = 0;
+    m_Settle->start();
+}
 
-    const QString text = QGuiApplication::clipboard()->text().left(kMaxTextChars);
+void ClipboardBridge::relaySettledCopy()
+{
+    if (!hasListener()) {
+        m_AnnounceDue = false;
+        return;
+    }
+
+    QClipboard* clipboard = QGuiApplication::clipboard();
+    const ClipboardSensitivity::HostCopyRead read = ClipboardSensitivity::readHostCopy({
+        &clipboardSequence,
+        [clipboard]() { return clipboard->mimeData(); },
+        [clipboard]() { return clipboard->text(); },
+    });
+
+    switch (read.kind) {
+    case ClipboardSensitivity::HostCopy::Changed:
+        // A new write raises its own notification, which reads again (an
+        // announce still due stays due). Read again here too, a bounded
+        // number of times: a program that renders its text only when asked
+        // may move the counter during our own read, with no notification.
+        if (m_Rereads < kMaxRereads) {
+            ++m_Rereads;
+            m_Settle->start();
+        }
+        return;
+    case ClipboardSensitivity::HostCopy::Private:
+        // Forgotten as well: the next ordinary copy goes out even if its
+        // text matches what was relayed before this one.
+        m_LastText.clear();
+        m_AnnounceDue = false;
+        m_Rereads = 0;
+        qInfo() << "[ClipboardBridge] Host copy kept on the host: its owner marked it private";
+        return;
+    case ClipboardSensitivity::HostCopy::Text: break;
+    }
+
+    const bool announce = m_AnnounceDue;
+    m_AnnounceDue = false;
+    m_Rereads = 0;
+    const QString text = read.text.left(kMaxTextChars);
     // Empty = cleared or non-text content (image/files) — text-only bridge.
-    // Identical text = echo of our own setText() or a no-op copy.
-    if (text.isEmpty() || text == m_LastText) return;
+    // Identical text = echo of our own setText() or a no-op copy, unless a
+    // newly connected client asked for the current text.
+    if (text.isEmpty() || (!announce && text == m_LastText)) return;
 
     m_LastText = text;
     emit hostTextChanged(text);
-}
-
-bool ClipboardBridge::hostCopyIsPrivate()
-{
-    const QMimeData* data = QGuiApplication::clipboard()->mimeData();
-    if (!data || !ClipboardSensitivity::markedPrivate(*data)) return false;
-    // Forgotten as well: the next ordinary copy goes out even if its text
-    // matches what was relayed before this one.
-    m_LastText.clear();
-    qInfo() << "[ClipboardBridge] Host copy kept on the host: its owner marked it private";
-    return true;
 }

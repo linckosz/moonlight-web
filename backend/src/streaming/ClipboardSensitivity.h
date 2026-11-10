@@ -18,6 +18,9 @@
 #pragma once
 
 #include <QString>
+#include <QtGlobal>
+
+#include <functional>
 
 class QMimeData;
 
@@ -44,5 +47,37 @@ QString nativeFormatName(const QString& mimeType);
 ///   read counts as 0: when unsure, the text stays on the host.
 /// - KDE / KeePassXC on Linux: `x-kde-passwordManagerHint` set to `secret`.
 bool markedPrivate(const QMimeData& data);
+
+/// Where a host copy is read from. Each call is a separate look at the
+/// clipboard, so what one returns may already be older than the next.
+struct HostCopySource
+{
+    /// The system's clipboard change counter (GetClipboardSequenceNumber on
+    /// Windows); a constant where the system has none.
+    std::function<quint32()> sequence;
+    std::function<const QMimeData*()> mimeData;
+    std::function<QString()> text;
+};
+
+enum class HostCopy
+{
+    Text,    ///< An ordinary copy: `text` may go out.
+    Private, ///< Marked private, at the first look or the second.
+    Changed, ///< The clipboard changed while being read: nothing is sure.
+};
+
+struct HostCopyRead
+{
+    HostCopy kind = HostCopy::Changed;
+    QString text;
+};
+
+/// One read of a host copy: the marks, then the text, then the marks once
+/// more, all under one sequence number. A program can write its text first
+/// and add the marks a moment later (Electron's writeText then writeBuffer),
+/// and each look opens the clipboard anew; the second look and the counter
+/// catch what changed in between. The text is not read at all when the first
+/// look already finds a mark.
+HostCopyRead readHostCopy(const HostCopySource& source);
 
 } // namespace ClipboardSensitivity

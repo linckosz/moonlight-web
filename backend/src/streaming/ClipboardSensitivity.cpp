@@ -21,6 +21,8 @@
 #include <QMimeData>
 #include <QStringList>
 
+#include <utility>
+
 namespace {
 
 // Qt's prefix for a Windows clipboard format it has no converter for
@@ -80,6 +82,21 @@ bool markedPrivate(const QMimeData& data)
             return true;
     }
     return false;
+}
+
+HostCopyRead readHostCopy(const HostCopySource& source)
+{
+    const auto marked = [&source]() {
+        const QMimeData* data = source.mimeData();
+        return data && markedPrivate(*data);
+    };
+
+    const quint32 before = source.sequence();
+    if (marked()) return {HostCopy::Private, {}};
+    QString text = source.text();
+    if (marked()) return {HostCopy::Private, {}};
+    if (source.sequence() != before) return {HostCopy::Changed, {}};
+    return {HostCopy::Text, std::move(text)};
 }
 
 } // namespace ClipboardSensitivity
