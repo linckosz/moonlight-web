@@ -1253,6 +1253,17 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
                             .arg(req.headers.value("host"), req.path));
     }
 
+    // A host session made through a line by an earlier version, without a
+    // browser key: it takes the key of this line, once, on its first request
+    // from an address that can be this machine. Here and not sooner: the cookie
+    // is one no other key holds (tunnelKeyRefused) and the request is admitted.
+    if (tunnelHost) {
+        m_AuthManager->adoptLineKey(sessionToken, req.tunnelKey, [this, &req]() {
+            return m_HostAddressPlausible &&
+                   m_HostAddressPlausible(AuthManager::cleanClientAddress(req.clientAddress));
+        });
+    }
+
     if (m_AdminLocked && RequestGuard::lockedByNoAdmin(req.method, req.path, m_BoothShare)) {
         QJsonObject obj;
         obj["error"] = "admin_locked";

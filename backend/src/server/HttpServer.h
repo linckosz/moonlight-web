@@ -200,6 +200,14 @@ public:
 
     /// Set the AuthManager for PIN-based authentication of remote requests.
     void setAuthManager(AuthManager* am) { m_AuthManager = am; }
+
+    /// Whether an address can be the host machine itself, as /api/auth/host-key
+    /// judges it (plausiblyHostAddress). Asked for a host session that has yet
+    /// to take the key of its rendezvous line: see AuthManager::adoptLineKey.
+    void setHostAddressCheck(std::function<bool(const QString& address)> fn)
+    {
+        m_HostAddressPlausible = std::move(fn);
+    }
     /// --noadmin: no request is granted admin rights, and the ones that change
     /// what the booth offers are refused (RequestGuard::lockedByNoAdmin).
     void setAdminLocked(bool locked) { m_AdminLocked = locked; }
@@ -300,6 +308,7 @@ private:
     RestRouter* m_Router;
     StaticFileHandler* m_StaticFiles;
     std::function<HomeScreenIdentity(const HttpRequest&)> m_HomeScreenIdentity;
+    std::function<bool(const QString& address)> m_HostAddressPlausible;
     quint16 m_HttpPort;
     quint16 m_HttpsPort;
     quint16 m_ActiveHttpsPort = 0;

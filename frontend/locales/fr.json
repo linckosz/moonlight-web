@@ -1021,6 +1021,7 @@
         "identityRefused": "Cet hôte n'a pas pu prouver son identité, le stream n'a donc pas été lancé. Si MoonlightWeb y a été réinstallé, appairez à nouveau ce navigateur avec un PIN.",
         "keyRefused": "Cet hôte a refusé ce navigateur, le stream n'a donc pas été lancé. Appairez-le à nouveau avec un PIN.",
         "hostKeyMissing": "Ce navigateur n'a plus la clé de cet hôte : il n'a pas pu le vérifier, le stream n'a donc pas été lancé. Appairez-le à nouveau avec un PIN.",
+        "hostKeyMissingOnHost": "Le stream n'a pas été lancé : cette page n'a pas pu vérifier l'hôte. Rouvrez MoonlightWeb depuis son icône sur ce PC, puis relancez le stream.",
         "enterPin": "Saisir un PIN",
         "launchFailed": "L'hôte n'a pas démarré le stream — réessayez dans un instant",
         "launchFailedNext": "L'hôte n'a pas démarré le stream en {{from}} — tentative avec {{to}}…"

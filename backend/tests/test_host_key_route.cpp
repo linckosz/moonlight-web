@@ -22,6 +22,7 @@
 #include "server/RestRouter.h"
 #include "server/routes/HostKeyRoute.h"
 
+#include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -260,6 +261,136 @@ void testSocketSessionTakesTheKeyItIsGiven()
     }
 }
 
+void testAddressThatCanBeThisMachine()
+{
+    SECTION("host key: the addresses that can be this machine");
+    const auto own = [](const QString& address) { return address == kThisMachine; };
+    CHECK(plausiblyHostAddress(kThisMachine, own, kPublicIp));
+    CHECK(plausiblyHostAddress(QStringLiteral("192.168.1.50"), own, kPublicIp));
+    CHECK(plausiblyHostAddress(kPublicIp, own, kPublicIp));
+    CHECK(!plausiblyHostAddress(QStringLiteral("198.51.100.4"), own, kPublicIp));
+    CHECK(!plausiblyHostAddress(QStringLiteral("198.51.100.4"), own, QString()));
+    CHECK(!plausiblyHostAddress(QString(), nullptr, QString()));
+}
+
+/// A host session as a version before this one left it when the owner's link
+/// was opened through a rendezvous line: made, and bound to no browser key.
+QString olderLineSession(Server& s)
+{
+    return s.auth->createSession(kThisMachine, QStringLiteral("Host machine (remote link)"), true,
+                                 false, true);
+}
+
+void testOlderLineSessionTakesTheKeyOfItsLine()
+{
+    using Adoption = AuthManager::LineKeyAdoption;
+    const auto yes = []() { return true; };
+    const auto no = []() { return false; };
+    const qint64 later = QDateTime::currentSecsSinceEpoch() + 3600;
+
+    SECTION("older host session: it takes the key of its line, once");
+    {
+        Server s;
+        s.auth->setHostSessionRepairBefore(later);
+        const QString token = olderLineSession(s);
+        const QByteArray lineKey = newKey();
+        CHECK(s.auth->sessionPairingKey(token).isEmpty());
+        CHECK(s.auth->adoptLineKey(token, lineKey, yes) == Adoption::Bound);
+        CHECK(s.auth->sessionPairingKey(token) == lineKey);
+        // A session like any other from here: nothing more to take, and the
+        // cookie on another browser's line keeps the key it has.
+        CHECK(s.auth->adoptLineKey(token, lineKey, yes) == Adoption::NotConcerned);
+        CHECK(s.auth->adoptLineKey(token, newKey(), yes) == Adoption::NotConcerned);
+        CHECK(s.auth->sessionPairingKey(token) == lineKey);
+        // Written with the session: it is still bound after a restart.
+        s.auth->loadSessions();
+        CHECK(s.auth->sessionPairingKey(token) == lineKey);
+        CHECK(s.auth->isTunnelHostSession(token));
+    }
+
+    SECTION("older host session: not from an address that cannot be this machine");
+    {
+        Server s;
+        s.auth->setHostSessionRepairBefore(later);
+        const QString token = olderLineSession(s);
+        const QByteArray lineKey = newKey();
+        CHECK(s.auth->adoptLineKey(token, lineKey, no) == Adoption::Deferred);
+        CHECK(s.auth->adoptLineKey(token, lineKey, nullptr) == Adoption::Deferred);
+        CHECK(s.auth->sessionPairingKey(token).isEmpty());
+        // Nothing is held against it: the same session, from home again.
+        CHECK(s.auth->adoptLineKey(token, lineKey, yes) == Adoption::Bound);
+        CHECK(s.auth->sessionPairingKey(token) == lineKey);
+    }
+
+    SECTION("older host session: a line without a browser key gives none");
+    {
+        Server s;
+        s.auth->setHostSessionRepairBefore(later);
+        const QString token = olderLineSession(s);
+        int asked = 0;
+        const auto counted = [&asked]() {
+            asked++;
+            return true;
+        };
+        CHECK(s.auth->adoptLineKey(token, QByteArray(), counted) == Adoption::NotConcerned);
+        CHECK(s.auth->adoptLineKey(token, QByteArray("not a key"), counted) ==
+              Adoption::NotConcerned);
+        CHECK(s.auth->sessionPairingKey(token).isEmpty());
+        CHECK_EQ(asked, 0); // the address is asked only for a session that can take a key
+    }
+
+    SECTION("older host session: only that kind of session, and only an older one");
+    {
+        Server s;
+        const QByteArray lineKey = newKey();
+        // No date read from the settings: nothing is older than it.
+        const QString undated = olderLineSession(s);
+        CHECK(s.auth->adoptLineKey(undated, lineKey, yes) == Adoption::NotConcerned);
+        // A date before the session was made: the session is of this version.
+        s.auth->setHostSessionRepairBefore(QDateTime::currentSecsSinceEpoch() - 3600);
+        CHECK(s.auth->adoptLineKey(undated, lineKey, yes) == Adoption::NotConcerned);
+        CHECK(s.auth->sessionPairingKey(undated).isEmpty());
+
+        s.auth->setHostSessionRepairBefore(later);
+        int asked = 0;
+        const auto counted = [&asked]() {
+            asked++;
+            return true;
+        };
+        // A host session made on a socket, a session a PIN opened, on a socket
+        // and on a line, no session at all, and a session that was ended.
+        const QString onSocket =
+            s.auth->createSession("127.0.0.1", QStringLiteral("Host machine"), true, false, false);
+        const QString byPin = s.auth->createSession("198.51.100.4", QStringLiteral("Phone"));
+        const QString lineGuest =
+            s.auth->createSession("198.51.100.4", QStringLiteral("Phone"), false, false, true);
+        CHECK(s.auth->adoptLineKey(onSocket, lineKey, counted) == Adoption::NotConcerned);
+        CHECK(s.auth->adoptLineKey(byPin, lineKey, counted) == Adoption::NotConcerned);
+        CHECK(s.auth->adoptLineKey(lineGuest, lineKey, counted) == Adoption::NotConcerned);
+        CHECK(s.auth->adoptLineKey(QString(), lineKey, counted) == Adoption::NotConcerned);
+        CHECK(s.auth->adoptLineKey(QStringLiteral("bogus-token"), lineKey, counted) ==
+              Adoption::NotConcerned);
+        const QString ended = olderLineSession(s);
+        CHECK(s.auth->logoutSession(ended));
+        CHECK(s.auth->adoptLineKey(ended, lineKey, counted) == Adoption::NotConcerned);
+        CHECK(s.auth->sessionPairingKey(onSocket).isEmpty());
+        CHECK(s.auth->sessionPairingKey(byPin).isEmpty());
+        CHECK(s.auth->sessionPairingKey(lineGuest).isEmpty());
+        CHECK_EQ(asked, 0);
+    }
+
+    SECTION("older host session: one that already holds a key keeps it");
+    {
+        Server s;
+        s.auth->setHostSessionRepairBefore(later);
+        const QString token = olderLineSession(s);
+        const QByteArray own = newKey();
+        CHECK(s.auth->bindSessionKey(token, own));
+        CHECK(s.auth->adoptLineKey(token, newKey(), yes) == Adoption::NotConcerned);
+        CHECK(s.auth->sessionPairingKey(token) == own);
+    }
+}
+
 } // namespace
 
 void run_host_key_route_tests()
@@ -267,4 +398,6 @@ void run_host_key_route_tests()
     testWhoMaySpendTheKey();
     testLineSessionIsBoundToItsLine();
     testSocketSessionTakesTheKeyItIsGiven();
+    testAddressThatCanBeThisMachine();
+    testOlderLineSessionTakesTheKeyOfItsLine();
 }

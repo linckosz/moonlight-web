@@ -1021,6 +1021,7 @@
         "identityRefused": "该主机无法证明其身份，因此未启动串流。如果该主机上重新安装了 MoonlightWeb，请使用 PIN 重新配对此浏览器。",
         "keyRefused": "此主机拒绝了此浏览器，因此未启动串流。请使用 PIN 码重新配对。",
         "hostKeyMissing": "此浏览器已不再保存该主机的密钥，无法验证该主机，因此未启动串流。请使用 PIN 码重新配对。",
+        "hostKeyMissingOnHost": "串流未启动：此页面无法验证主机。请从这台电脑上的 MoonlightWeb 图标重新打开它，然后再次启动串流。",
         "enterPin": "输入 PIN 码",
         "launchFailed": "主机未启动串流——请稍后重试",
         "launchFailedNext": "主机未通过 {{from}} 启动串流——正在尝试 {{to}}…"

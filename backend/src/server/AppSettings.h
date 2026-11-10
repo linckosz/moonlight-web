@@ -1064,6 +1064,12 @@ public:
     /// Returns the new key.
     QString rotateLocalKey();
 
+    /// When this installation first ran a version that binds a host session
+    /// to its browser's key as the session is made (unix seconds). Written
+    /// once, on the first call that reads the settings whole; 0 until then.
+    /// AuthManager::adoptLineKey reads which sessions are older than it.
+    qint64 hostSessionRepairBefore();
+
     // ── MW-BIND-v1 host identity key ────────────────────────────────────────
     //
     // ECDSA P-256 key pair proving to a paired browser that the DTLS

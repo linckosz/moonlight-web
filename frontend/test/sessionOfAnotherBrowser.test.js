@@ -470,6 +470,22 @@ describe('a key the host refuses, at launch', () => {
             expect(toast.mock.calls[0][1].action).toBeUndefined();
         });
 
+        it('tells the host machine to come back by the icon, with no PIN to offer', () => {
+            MoonlightApp._isRealHostMachine = true;
+            const toast = refusedToast();
+            MoonlightApp._onTransportFailed(HOST_KEY_MISSING);
+            expect(toast.mock.calls[0][0]).toBe(t('transport.hostKeyMissingOnHost'));
+            expect(toast.mock.calls[0][1].action).toBeUndefined();
+        });
+
+        it('keeps the PIN words on a page that only guesses it is the host machine', () => {
+            // localhost in the address bar is not the host's word.
+            vi.spyOn(MoonlightApp, '_isHostMachine').mockReturnValue(true);
+            const toast = refusedToast();
+            MoonlightApp._onTransportFailed(HOST_KEY_MISSING);
+            expect(toast.mock.calls[0][0]).toBe(t('transport.hostKeyMissing'));
+        });
+
         it('offers the PIN on a LAN machine that merely has admin access', () => {
             MoonlightApp._hasAdminAccess = true;
             const toast = refusedToast();
@@ -510,11 +526,19 @@ describe('the words', () => {
         expect(locale(lang).transport.enterPin).toMatch(/PIN/);
     });
 
+    it.each(['en', 'fr', 'zh'])('%s sends the host machine to the icon, not to a PIN', (lang) => {
+        expect(locale(lang).transport.hostKeyMissingOnHost).toMatch(/MoonlightWeb/);
+        expect(locale(lang).transport.hostKeyMissingOnHost).not.toMatch(/PIN/);
+    });
+
     it('are the French ones Bruno accepted', () => {
         expect(locale('fr').login.sessionOtherBrowser).toBe(
             "Cette session a été appairée avec un autre navigateur. Saisissez un PIN pour appairer celui-ci ; l'autre reste connecté.",
         );
         expect(locale('fr').transport.enterPin).toBe('Saisir un PIN');
+        expect(locale('fr').transport.hostKeyMissingOnHost).toBe(
+            "Le stream n'a pas été lancé : cette page n'a pas pu vérifier l'hôte. Rouvrez MoonlightWeb depuis son icône sur ce PC, puis relancez le stream.",
+        );
         expect(locale('fr').transport.keyRefused).toBe(
             "Cet hôte a refusé ce navigateur, le stream n'a donc pas été lancé. Appairez-le à nouveau avec un PIN.",
         );

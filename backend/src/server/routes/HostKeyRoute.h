@@ -45,6 +45,13 @@ struct HostKeyDeps
     std::function<QJsonObject()> hostIdentity;
 };
 
+/// Whether @p address (AuthManager::cleanClientAddress) can be the host machine
+/// itself: one of its own, one of a private network, or its public address.
+/// The address check of the redemption, and of AuthManager::adoptLineKey.
+bool plausiblyHostAddress(const QString& address,
+                          const std::function<bool(const QString& address)>& thisMachine,
+                          const QString& publicIp);
+
 /// Register POST /api/auth/host-key: the browser on the host machine spends the
 /// key of the link its owner was handed, and leaves with a host session.
 /// Registered by registerSystemRoutes.

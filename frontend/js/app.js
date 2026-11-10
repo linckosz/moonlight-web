@@ -1799,6 +1799,18 @@ export const MoonlightApp = {
     },
 
     /**
+     * What to say when no key of the host's is held here. The host machine has no
+     * PIN to pair with: its page is told how to come back with the key, by the
+     * icon. Only on the host's own word (is_host_machine), never on this page's
+     * address: a page at localhost may be a tunnel's far end.
+     */
+    _hostKeyMissingWords() {
+        return this._isRealHostMachine
+            ? 'transport.hostKeyMissingOnHost'
+            : 'transport.hostKeyMissing';
+    },
+
+    /**
      * The rung a guest tries after this failure, or null when there is none. A
      * refused binding ends it whatever is left, same rule as the owner's: the wss
      * rung has nothing to bind.
@@ -4268,7 +4280,7 @@ export const MoonlightApp = {
                     ' — ending the launch, no fallback transport',
             );
             if (hostRefusedUs) this._showKeyRefused();
-            else if (noHostKey) this._showKeyRefused('transport.hostKeyMissing');
+            else if (noHostKey) this._showKeyRefused(this._hostKeyMissingWords());
             else Toast.error(t('transport.identityRefused'));
             this._endAfterFailedLaunch();
             return;

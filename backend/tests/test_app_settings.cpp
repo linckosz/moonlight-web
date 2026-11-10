@@ -914,6 +914,12 @@ void run_app_settings_tests()
         bool complete = false;
         CHECK_EQ(h.readAll(&complete).value("http_port").toInt(), 81);
         CHECK(complete);
+        // The date host sessions are older than: written once, then read back.
+        const qint64 before = h.hostSessionRepairBefore();
+        CHECK(before > 0);
+        CHECK(before <= QDateTime::currentSecsSinceEpoch());
+        CHECK_EQ(h.readAll(&complete).value("host_session_repair_before").toInteger(), before);
+        CHECK_EQ(h.hostSessionRepairBefore(), before);
 
         bool held = false;
         {
@@ -924,6 +930,7 @@ void run_app_settings_tests()
                 CHECK(h.localKey().isEmpty()); // none made in its place
                 CHECK(h.hostSigningKeyPem().isEmpty());
                 CHECK(h.rotateLocalKey().isEmpty());
+                CHECK_EQ(h.hostSessionRepairBefore(), qint64(0)); // none made in its place
                 h.readAll(&complete);
                 CHECK(!complete);
             } else {
@@ -942,6 +949,7 @@ void run_app_settings_tests()
         CHECK_EQ(h.httpsPort(1), quint16(1));
         CHECK_EQ(h.localKey(), key);
         CHECK(h.hostSigningKeyPem() == signing);
+        CHECK_EQ(h.hostSessionRepairBefore(), before);
         h.setHttpsPort(9443); // and written again once it reads
         CHECK_EQ(h.httpsPort(1), quint16(9443));
         CHECK_EQ(h.httpPort(1), quint16(81));

@@ -1021,6 +1021,7 @@
         "identityRefused": "This host could not prove its identity, so the stream was not started. If MoonlightWeb was reinstalled on it, pair this browser again with a PIN.",
         "keyRefused": "This host refused this browser, so the stream was not started. Pair it again with a PIN.",
         "hostKeyMissing": "This browser no longer holds this host's key, so it could not check the host and the stream was not started. Pair it again with a PIN.",
+        "hostKeyMissingOnHost": "The stream was not started: this page could not check the host. Open MoonlightWeb again from its icon on this PC, then launch the stream.",
         "enterPin": "Enter a PIN",
         "launchFailed": "The host did not start the stream — try again in a moment",
         "launchFailedNext": "The host did not start the stream on {{from}} — trying {{to}}…"

@@ -28,6 +28,15 @@
 
 #include <utility>
 
+bool plausiblyHostAddress(const QString& address,
+                          const std::function<bool(const QString& address)>& thisMachine,
+                          const QString& publicIp)
+{
+    return (thisMachine && thisMachine(address)) ||
+           AuthManager::isPrivateIP(address) == QLatin1String("Local") ||
+           (!publicIp.isEmpty() && address == publicIp);
+}
+
 void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyDeps deps)
 {
     // POST /api/auth/host-key — prove the browser runs on the host machine.
@@ -72,9 +81,7 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
         // was reached: its peer address says nothing about the browser.
         const bool forwarded = !req.viaTunnel && RequestGuard::forwardedByProxy(req.headers);
         const bool plausiblyHost =
-            !forwarded && ((deps.thisMachine && deps.thisMachine(addr)) ||
-                           AuthManager::isPrivateIP(addr) == QLatin1String("Local") ||
-                           (!publicIp.isEmpty() && addr == publicIp));
+            !forwarded && plausiblyHostAddress(addr, deps.thisMachine, publicIp);
         // Compare hashes: constant-time, no length leak.
         const QByteArray given = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256);
         const QByteArray expected = QCryptographicHash::hash(

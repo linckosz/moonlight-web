@@ -2307,6 +2307,7 @@ int main(int argc, char* argv[])
 
     // ── AuthManager (PIN-based + certificate authentication) ────────────────
     AuthManager authManager(&appSettings);
+    authManager.setHostSessionRepairBefore(appSettings.hostSessionRepairBefore());
 
     // Generate certificate token on first startup (persisted forever)
     if (authManager.certificateToken().isEmpty()) {

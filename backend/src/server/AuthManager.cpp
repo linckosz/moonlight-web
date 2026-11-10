@@ -839,6 +839,11 @@ void AuthManager::touchSession(const QString& token)
 
 bool AuthManager::bindSessionKey(const QString& token, const QByteArray& spkiDer)
 {
+    return bindKey(token, spkiDer, QString());
+}
+
+bool AuthManager::bindKey(const QString& token, const QByteArray& spkiDer, const QString& note)
+{
     if (token.isEmpty()) return false;
     if (!PairingCrypto::isValidP256Spki(spkiDer)) {
         Logger::warning(QStringLiteral("[AuthManager] Rejected an unparseable pairing key"));
@@ -865,9 +870,37 @@ bool AuthManager::bindSessionKey(const QString& token, const QByteArray& spkiDer
 
     it->pairingKey = spkiDer;
     if (!it->ephemeral) saveSessions();
-    Logger::info(QStringLiteral("[AuthManager] Bound pairing key %1 to session %2")
-                     .arg(PairingCrypto::keyId(spkiDer).left(12), it->token.left(8)));
+    Logger::info(QStringLiteral("[AuthManager] Bound pairing key %1 to session %2%3")
+                     .arg(PairingCrypto::keyId(spkiDer).left(12), it->token.left(8), note));
     return true;
+}
+
+AuthManager::LineKeyAdoption
+AuthManager::adoptLineKey(const QString& token, const QByteArray& lineKey,
+                          const std::function<bool()>& plausibleAddress)
+{
+    if (m_hostSessionRepairBefore <= 0 || !validateSession(token))
+        return LineKeyAdoption::NotConcerned;
+    const auto it = m_sessions.constFind(hashToken(token));
+    if (it == m_sessions.constEnd() || !it->isHost || !it->viaTunnel || !it->pairingKey.isEmpty() ||
+        it->createdAt >= m_hostSessionRepairBefore)
+        return LineKeyAdoption::NotConcerned;
+    if (!PairingCrypto::isValidP256Spki(lineKey)) return LineKeyAdoption::NotConcerned;
+
+    if (!plausibleAddress || !plausibleAddress()) {
+        // Once per session and per run: every request of that page comes here.
+        if (!m_lineKeyDeferredSaid.contains(it->token)) {
+            m_lineKeyDeferredSaid.insert(it->token);
+            Logger::info(QStringLiteral("[AuthManager] Session %1 of before the update keeps no "
+                                        "pairing key: its request does not come from an address "
+                                        "that can be this machine")
+                             .arg(it->token.left(8)));
+        }
+        return LineKeyAdoption::Deferred;
+    }
+    return bindKey(token, lineKey, QStringLiteral(" (session of before the update)"))
+               ? LineKeyAdoption::Bound
+               : LineKeyAdoption::NotConcerned;
 }
 
 QByteArray AuthManager::sessionPairingKey(const QString& token) const

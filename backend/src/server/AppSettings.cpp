@@ -2186,6 +2186,22 @@ QString AppSettings::rotateLocalKey()
     return key;
 }
 
+qint64 AppSettings::hostSessionRepairBefore()
+{
+    bool complete = false;
+    QJsonObject obj = readAll(&complete);
+    const qint64 stored = obj.value("host_session_repair_before").toInteger();
+    if (stored > 0) return stored;
+    // As for the local key: a file that could not be read may well hold the
+    // date already, and a later one would take in sessions it must not.
+    if (!complete) return 0;
+
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    obj["host_session_repair_before"] = now;
+    writeAll(obj);
+    return now;
+}
+
 // ── MW-BIND-v1 host identity key ────────────────────────────────────────────────
 
 QByteArray AppSettings::hostSigningKeyPem()

@@ -317,6 +317,14 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
              return identity;
          }});
 
+    // The same address check, for a host session that takes the key of its
+    // line after the fact (AuthManager::adoptLineKey).
+    server.setHostAddressCheck([&internetAccess](const QString& address) {
+        return plausiblyHostAddress(
+            address, [](const QString& a) { return HttpServer::isLocalRequest(a); },
+            internetAccess.publicIp());
+    });
+
     // ── First-run setup wizard (localhost only) ──────────────────────────────
     // macOS/Linux ship without a native installer, so the app hosts the wizard
     // the Windows Inno Setup installer provides: authorize Internet Access,

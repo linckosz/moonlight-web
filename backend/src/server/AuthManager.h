@@ -20,6 +20,7 @@
 #include <QObject>
 #include <QHash>
 #include <QMap>
+#include <QSet>
 #include <functional>
 #include <optional>
 #include <QDateTime>
@@ -259,6 +260,31 @@ public:
     /** The SPKI public key bound to the session a raw cookie @p token belongs
      *  to, or empty when there is none (or no such session). */
     QByteArray sessionPairingKey(const QString& token) const;
+
+    // ── Host sessions made before a session took its key at creation ───────
+    // A host session made through a rendezvous line by an earlier version
+    // holds no browser key. It takes the key of the line it next comes by,
+    // once: after that it is a session like any other, on that key only.
+
+    /** Sessions created before @p secs are the ones adoptLineKey looks at
+     *  (AppSettings::hostSessionRepairBefore). 0, the default, is none. */
+    void setHostSessionRepairBefore(qint64 secs) { m_hostSessionRepairBefore = secs; }
+
+    enum class LineKeyAdoption
+    {
+        NotConcerned, ///< not such a session, or no key on the line: nothing done
+        Deferred,     ///< such a session, from an address that cannot be this machine
+        Bound,        ///< the session now holds the line's key
+    };
+
+    /** Bind @p lineKey, the browser key a rendezvous line presented and
+     *  proved, to the session of the raw cookie @p token, when that session is
+     *  a valid host session made through a line, holds no key, and is older
+     *  than setHostSessionRepairBefore. @p plausibleAddress says whether the
+     *  request comes from an address that can be this machine (the check of
+     *  /api/auth/host-key); it is only asked for such a session. */
+    LineKeyAdoption adoptLineKey(const QString& token, const QByteArray& lineKey,
+                                 const std::function<bool()>& plausibleAddress);
     /** Revoke a session by its opaque id (the value exposed in sessions()/toJson,
      *  i.e. the token hash), NOT the raw cookie token. Every session it let in
      *  (SessionInfo::approvedBy) goes with it, and theirs in turn. */
@@ -517,6 +543,11 @@ private:
     QByteArray m_hmacKey;
     QHash<QString, RateLimitEntry> m_rateLimits; // rate-limit key -> entry
     QHash<QString, SessionInfo> m_sessions;      // token hash (id) -> SessionInfo
+    qint64 m_hostSessionRepairBefore = 0;        // see setHostSessionRepairBefore
+    QSet<QString> m_lineKeyDeferredSaid;         // session ids already logged as Deferred
+
+    /// bindSessionKey, with @p note appended to the line it logs.
+    bool bindKey(const QString& token, const QByteArray& spkiDer, const QString& note);
 
     struct HomeScreenKey
     {
