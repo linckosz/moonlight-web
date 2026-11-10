@@ -330,9 +330,10 @@ QJsonObject InternetAccessManager::statusJson() const
     // What a router without UPnP should forward by hand: the stream block,
     // UDP, each port to itself. The tunnel has no fixed port to give there —
     // without a hole of its own it takes an ephemeral one.
-    obj[QStringLiteral("media_port_first")] = mw::routerports::kMediaBasePort;
+    const uint16_t mediaBase = m_Settings->mediaBasePort();
+    obj[QStringLiteral("media_port_first")] = mediaBase;
     obj[QStringLiteral("media_port_last")] =
-        mw::routerports::kMediaBasePort + mw::routerports::kMediaPortCount - 1;
+        mediaBase + mw::routerports::kMediaPortCount - 1;
     // Whether the host can reach its own public endpoint (router NAT hairpin).
     // Drives the host-machine redirect from https://localhost to the domain.
     obj[QStringLiteral("hairpin_reachable")] = m_HairpinReachable;

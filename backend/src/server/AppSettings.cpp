@@ -20,6 +20,7 @@
 #include "common/Edition.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
+#include "network/RouterPortPools.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -476,6 +477,10 @@ void AppSettings::seedDocumentedDefaults()
     }
     if (!obj.contains("stream_worker_enabled")) {
         obj["stream_worker_enabled"] = true;
+        changed = true;
+    }
+    if (!obj.contains("media_base_port")) {
+        obj["media_base_port"] = static_cast<int>(mw::routerports::kMediaBasePort);
         changed = true;
     }
     if (!obj.contains("native_host_enabled")) {
@@ -1313,6 +1318,17 @@ void AppSettings::setUpnpEnabled(bool enabled)
     QJsonObject obj = readAll();
     obj["upnp_enabled"] = enabled;
     writeAll(obj);
+}
+
+uint16_t AppSettings::mediaBasePort() const
+{
+    const int kDefault = static_cast<int>(mw::routerports::kMediaBasePort);
+    const int port = readAll().value("media_base_port").toInt(kDefault);
+    const int maxBase = 65535 - mw::routerports::kMediaPortCount + 1;
+    if (port < 1024 || port > maxBase) {
+        return mw::routerports::kMediaBasePort;
+    }
+    return static_cast<uint16_t>(port);
 }
 
 // ── Internet Access ───────────────────────────────────────────────────────────

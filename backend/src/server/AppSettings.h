@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -691,6 +692,10 @@ public:
     /// Default: true (recommended — enables direct P2P connections from outside LAN).
     bool upnpEnabled() const;
     void setUpnpEnabled(bool enabled);
+
+    /// Base UDP port for WebRTC media streams (default: 48550).
+    /// Each stream slot binds mediaBasePort + slot.
+    uint16_t mediaBasePort() const;
 
     // ── Router ports (sticky UPnP allocation) ──────────────────────────────────
     //

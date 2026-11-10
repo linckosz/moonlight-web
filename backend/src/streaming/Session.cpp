@@ -921,6 +921,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setClientSameNetwork(m_ClientSameNetwork);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
+        signaling->setMediaBasePort(m_MediaBasePort);
         signaling->setPresetMapping(m_UpnpPublicIp, m_UpnpExternalPort);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
@@ -1031,6 +1032,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setClientSameNetwork(m_ClientSameNetwork);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
+        signaling->setMediaBasePort(m_MediaBasePort);
         signaling->setPresetMapping(m_UpnpPublicIp, m_UpnpExternalPort);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.

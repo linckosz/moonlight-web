@@ -348,6 +348,9 @@ public:
     /// the media port. Defaults to the base for the single-stream path.
     void setMediaPort(quint16 port) { m_MediaPort = port; }
 
+    /// Base UDP port for WebRTC media streams (default: 48550).
+    void setMediaBasePort(quint16 port) { m_MediaBasePort = port; }
+
     /// The router hole the parent claimed for this slot (RouterPortAllocator):
     /// the browser is told publicIp:externalPort, the socket binds the media
     /// port. Absent or 0 = no mapping, STUN only.
@@ -563,6 +566,8 @@ private:
     quint16 m_StreamRelayPort = 48002;
     /// WebRTC media UDP port for this slot; 48550 (slot 0 base) by default.
     quint16 m_MediaPort = 48550;
+    /// Base UDP port for WebRTC media streams; 48550 by default.
+    quint16 m_MediaBasePort = 48550;
     /// The router hole for this slot (see setUpnpMapping); none by default.
     QString m_UpnpPublicIp;
     quint16 m_UpnpExternalPort = 0;

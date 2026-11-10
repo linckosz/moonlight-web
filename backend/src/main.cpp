@@ -2409,12 +2409,13 @@ int main(int argc, char* argv[])
     // them — so a household that streams twice reserves two routes, not the
     // whole plan. What a single host may actually use is a separate, smaller
     // question, answered per backend by concurrentSessionCap().
-    const SlotPortPlan kSlotPlan = planSlotPorts(signalingPort, kMediaBasePort, kSlotHardCeiling);
+    const quint16 mediaBasePort = appSettings.mediaBasePort();
+    const SlotPortPlan kSlotPlan = planSlotPorts(signalingPort, mediaBasePort, kSlotHardCeiling);
     const int kMaxSlots = qMax(kTotalSlots, kSlotPlan.maxSlots);
     SessionPool g_Pool(signalingPort, kSlotPlan.extraBase, kTotalSlots, kMaxSlots);
     qInfo() << "[Session] Stream slots: reserved" << kTotalSlots << "max" << kMaxSlots
             << "— slot 0 signaling" << signalingPort << ", slots 1.. from" << kSlotPlan.extraBase
-            << ", media from" << kMediaBasePort;
+            << ", media from" << mediaBasePort;
 
     // Thin names kept over the pool: they read better at the call sites and
     // leave the slot arithmetic in one place.
@@ -4074,6 +4075,8 @@ int main(int argc, char* argv[])
             // nothing to a browser that reached us through the rendezvous.
             s->setTunnelArrival(req.viaTunnel);
             s->setStreamRelayPort(signalingPort + 1);
+            s->setMediaPort(appSettings.mediaBasePort());
+            s->setMediaBasePort(appSettings.mediaBasePort());
             s->setTransportMode(transportMode); // Full mode for response
             s->setEnableIceTcp(iceTcp);
             s->setIceTcpPassive(AppSettings().iceTcpPassive());
@@ -4358,7 +4361,8 @@ int main(int argc, char* argv[])
             cfg["signalingPort"] = static_cast<int>(slotSignalingPort(reqSlot));
             cfg["loopbackKey"] = QString::fromLatin1(mw::loopback::key());
             cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(reqSlot) + 1);
-            cfg["mediaPort"] = static_cast<int>(kMediaBasePort + reqSlot);
+            cfg["mediaPort"] = static_cast<int>(appSettings.mediaBasePort() + reqSlot);
+            cfg["mediaBasePort"] = static_cast<int>(appSettings.mediaBasePort());
             cfg["wsPath"] = slotWsPath(reqSlot);
             QJsonArray chainArr;
             for (const QString& m : transportChain)
@@ -4764,11 +4768,12 @@ int main(int argc, char* argv[])
             // asked — a quality switch, a reload. It never saw this worker in
             // the pool, so it could not tear it down; this one stands down
             // instead, before spawning anything.
+            const quint16 mediaBase = appSettings.mediaBasePort();
             const quint64 generation = ++g_SlotLaunchGeneration[reqSlot];
             auto claimThenStart = [&routerPorts, startWorker, cfg, reqSlot, generation, worker,
-                                   respond, standby]() {
+                                   respond, standby, mediaBase]() {
                 routerPorts.claimMediaPort(
-                    reqSlot, static_cast<uint16_t>(kMediaBasePort + reqSlot), qApp,
+                    reqSlot, static_cast<uint16_t>(mediaBase + reqSlot), qApp,
                     [&routerPorts, startWorker, cfg, reqSlot, generation, worker, respond,
                      standby](const RouterPortAllocator::Claim& claim, const QString& why) {
                         if (g_SlotLaunchGeneration.value(reqSlot) != generation) {
@@ -5020,11 +5025,12 @@ int main(int argc, char* argv[])
             // path, generation guard included. The session is looked up through
             // a QPointer: a take-over can have destroyed it while the router
             // was being asked.
+            const quint16 mediaBase = appSettings.mediaBasePort();
             const QPointer<StreamSession> guarded(session);
             const quint64 generation = ++g_SlotLaunchGeneration[0];
-            auto claimThenStart = [&routerPorts, guarded, generation]() {
+            auto claimThenStart = [&routerPorts, guarded, generation, mediaBase]() {
                 routerPorts.claimMediaPort(
-                    0, kMediaBasePort, qApp,
+                    0, mediaBase, qApp,
                     [&routerPorts, guarded, generation](const RouterPortAllocator::Claim& claim,
                                                         const QString& why) {
                         if (!guarded) return;
@@ -6050,7 +6056,8 @@ int main(int argc, char* argv[])
         cfg["signalingPort"] = static_cast<int>(slotSignalingPort(slot));
         cfg["loopbackKey"] = QString::fromLatin1(mw::loopback::key());
         cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(slot) + 1);
-        cfg["mediaPort"] = static_cast<int>(kMediaBasePort + slot);
+        cfg["mediaPort"] = static_cast<int>(appSettings.mediaBasePort() + slot);
+        cfg["mediaBasePort"] = static_cast<int>(appSettings.mediaBasePort());
         cfg["wsPath"] = slotWsPath(slot);
         // What this player may send. Enforced in the worker, where a forged
         // datachannel message cannot get around it.
@@ -6293,13 +6300,14 @@ int main(int argc, char* argv[])
         // told which external port the browser will aim at — the owner path's
         // sequence, generation guard included: a newer join on the slot while
         // the router is being asked stands this one down.
+        const quint16 mediaBase = appSettings.mediaBasePort();
         const quint64 generation = ++g_SlotLaunchGeneration[slot];
         auto claimThenStart = [&routerPorts, &keepGuestHole, joinFeed, startWorker, cfg, slot,
-                               generation, worker, respond]() {
+                               generation, worker, respond, mediaBase]() {
             joinFeed();
             keepGuestHole(slot);
             routerPorts.claimMediaPort(
-                slot, static_cast<uint16_t>(kMediaBasePort + slot), qApp,
+                slot, static_cast<uint16_t>(mediaBase + slot), qApp,
                 [&routerPorts, startWorker, cfg, slot, generation, worker,
                  respond](const RouterPortAllocator::Claim& claim, const QString& why) {
                     if (g_SlotLaunchGeneration.value(slot) != generation) {

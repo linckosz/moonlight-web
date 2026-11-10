@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "RouterPortPools.h"
+
 #include <QList>
 #include <QString>
 
@@ -121,6 +123,8 @@ public:
         /// Then this range, ascending. Empty when begin > end.
         uint16_t poolBegin = 0;
         uint16_t poolEnd = 0;
+        bool devInstance = false;
+        uint16_t mediaBasePort = mw::routerports::kMediaBasePort;
         /// What the router's admin page shows for the entry.
         QString description;
     };
@@ -151,12 +155,15 @@ public:
 
     /// Whether a tunnel hole on `port` is one this kind of instance may hold:
     /// the preferred list and the pool for the installed host, the --dev block
-    /// for a --dev (RouterPortPools.h).
-    static bool tunnelPortAllowed(bool devInstance, uint16_t port);
+    /// for a --dev (RouterPortPools.h). Any port in [mediaBasePort, mediaBasePort + kMediaPortCount)
+    /// is disallowed.
+    static bool tunnelPortAllowed(bool devInstance, uint16_t port,
+                                  uint16_t mediaBasePort = mw::routerports::kMediaBasePort);
 
     /// The tunnel's request. A remembered port the instance may not hold is
     /// left out — a --dev remembering 3479 from before it had a block.
-    static Request tunnelRequest(bool devInstance, const QList<uint16_t>& remembered);
+    static Request tunnelRequest(bool devInstance, const QList<uint16_t>& remembered,
+                                 uint16_t mediaBasePort = mw::routerports::kMediaBasePort);
 
     /// The address this host had when its remembered ports were obtained.
     /// An entry the router still points there is ours to overwrite.

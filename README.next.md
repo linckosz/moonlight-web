@@ -376,7 +376,7 @@ The browser loads a few kilobytes of entry page, opens WebRTC straight to your m
 
 </div>
 
-**Possible limitations:** UPnP disabled (forward the media ports 48550‑48573 manually), CGNAT/double‑NAT (detected and reported — port forwarding won't work), or a port already mapped by another device.
+**Possible limitations:** UPnP disabled (forward the media ports 48550‑48573 manually, or the range following `media_base_port`), CGNAT/double‑NAT (detected and reported — port forwarding won't work), or a port already mapped by another device.
 
 ---
 
@@ -432,7 +432,7 @@ Most settings live in the UI and are stored **server‑side** in `settings.json`
 | **macOS** | `~/Library/Application Support/MoonlightWeb/MoonlightWeb/settings.json` |
 | **Linux** | `~/.local/share/MoonlightWeb/MoonlightWeb/settings.json` |
 
-Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `latency_flag_enabled`, `keyboard_layout_fidelity`, `keyboard_debug`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`, `session_metrics_enabled`, `session_location_enabled`, `metrics_consent`, `native_host_enabled`, `share_guests_admin_windows`, `share_in_booth_mode`, and the administrator's ceilings `max_allowed_frame_rate`, `max_allowed_bitrate` (Mbps) and `max_allowed_stream_resolution` (`"1920x1080"`), which no viewer's Settings can go above (`0` = none; also `moonlightweb --max-allowed-frame-rate 60` and its siblings).\
+Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `latency_flag_enabled`, `keyboard_layout_fidelity`, `keyboard_debug`, `media_base_port`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`, `session_metrics_enabled`, `session_location_enabled`, `metrics_consent`, `native_host_enabled`, `share_guests_admin_windows`, `share_in_booth_mode`, and the administrator's ceilings `max_allowed_frame_rate`, `max_allowed_bitrate` (Mbps) and `max_allowed_stream_resolution` (`"1920x1080"`), which no viewer's Settings can go above (`0` = none; also `moonlightweb --max-allowed-frame-rate 60` and its siblings).\
 Restart the server after a manual edit. Every key is described in the [settings reference](docs/wiki/07-Settings-Reference.md).
 
 `keyboard_layout_fidelity` (default `"auto"`) decides when the host types the character **your** layout produced rather than the key's position. `"auto"` types your characters in the desktop mouse mode (`azerty` on an AZERTY board shows `azerty` on a QWERTY host) and plays gaming mode by key positions, so movement keys and weapon slots stay put; `"always"` keeps your characters in games too; `"never"` sends positions everywhere, as Moonlight does. Every key stays a real key press. The **MoonlightWeb host** corrects every key, AltGr and a Mac's Option layer included; a **Sunshine Windows host** corrects letters; Sunshine macOS, Linux and Wolf hosts stay positional. A shortcut keeps its letter (Ctrl+A is the host's A) and sends any other key by position (Ctrl+1 stays Ctrl+1), as the numeric keypad always does. A `true` or `false` from 0.4.0 becomes `"always"` or `"auto"`.
@@ -440,6 +440,8 @@ Restart the server after a manual edit. Every key is described in the [settings 
 `keyboard_debug` (default `false`, add it by hand) logs how each printable key was resolved, with two verdicts: **Notepad** (the character typed) and **Game** (the physical key). The log then holds what you type, so nothing is written while the lock screen or a UAC prompt has the keyboard. Remove it once the diagnosis is done.
 
 `native_host_enabled` (default `true`) shows this machine as a host. Set it to `false` to use MoonlightWeb only as a front end for Sunshine, Wolf or your own rig; the engine stays installed.
+
+`media_base_port` (default `48550`) moves the stream media ports (one per slot, `media_base_port` + slot) — e.g. `3480` for a network that only lets 3478-3481 through; the router hole (UPnP) uses the same port; restart after editing; open/forward the same UDP+TCP range yourself if not using UPnP.
 
 #### Update check & version counts
 
