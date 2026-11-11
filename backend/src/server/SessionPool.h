@@ -119,6 +119,13 @@ public:
     // or that app keeps running with nobody attached.
     bool anyOtherLiveOnHost(int index, const QString& hostUuid) const;
 
+    // The slots among the first @p firstSlots that stream @p hostUuid: what
+    // ending that host's session takes down, and nothing streaming another
+    // host. Both legs of a dual stream are on the same host, so they go
+    // together. A live slot with no host recorded yet is still setting up and
+    // counts as this host's, as in anyOtherLiveOnHost.
+    QVector<int> slotsOnHost(const QString& hostUuid, int firstSlots) const;
+
     // Lowest free index at or above reservedSlots, reusing released ones.
     // Returns -1 when every slot up to maxSlots is taken.
     int acquire();

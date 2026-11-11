@@ -75,6 +75,17 @@ bool SessionPool::anyOtherLiveOnHost(int index, const QString& hostUuid) const
     return false;
 }
 
+QVector<int> SessionPool::slotsOnHost(const QString& hostUuid, int firstSlots) const
+{
+    QVector<int> found;
+    const int n = qMin(firstSlots, int(m_Slots.size()));
+    for (int i = 0; i < n; ++i) {
+        const Slot& s = m_Slots[i];
+        if (s.hostUuid == hostUuid || (s.hostUuid.isEmpty() && !s.worker.isNull())) found.append(i);
+    }
+    return found;
+}
+
 // A slot counts as taken while it has a live worker OR still carries the
 // identity of a session being set up — the worker is attached slightly after
 // the slot is claimed, and handing the same index out twice in that window

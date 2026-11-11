@@ -106,6 +106,24 @@ void run_session_pool_tests()
     CHECK_EQ(pool.anyOtherLiveOnHost(0, QStringLiteral("host-A")), true);
     pool.at(3).worker = nullptr;
 
+    // What stop-session takes down for one host: that host's slots, both legs
+    // of its dual stream included, and never a stream of another host (a
+    // native stream that outlives the Sunshine session closed on its PC).
+    pool.at(1).worker = &worker0;
+    pool.at(1).hostUuid = QStringLiteral("host-A");
+    CHECK(pool.slotsOnHost(QStringLiteral("host-A"), 5) == (QVector<int>{0, 1}));
+    CHECK(pool.slotsOnHost(QStringLiteral("host-B"), 5) == (QVector<int>{2}));
+    CHECK(pool.slotsOnHost(QStringLiteral("host-C"), 5).isEmpty());
+    // Only among the slots asked about: the owner's, not the players' above.
+    CHECK(pool.slotsOnHost(QStringLiteral("host-B"), 2).isEmpty());
+    // A live slot still setting up is taken as this host's, an idle one is not.
+    pool.at(3).worker = &worker0;
+    CHECK(pool.slotsOnHost(QStringLiteral("host-B"), 5) == (QVector<int>{2, 3}));
+    pool.at(3).worker = nullptr;
+    CHECK(pool.slotsOnHost(QStringLiteral("host-B"), 5) == (QVector<int>{2}));
+    pool.at(1).worker = nullptr;
+    pool.at(1).hostUuid.clear();
+
     pool.at(2).worker = nullptr;
     pool.at(0).hostUuid.clear();
     pool.at(2).hostUuid.clear();

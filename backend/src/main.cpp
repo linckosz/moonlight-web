@@ -5430,8 +5430,10 @@ int main(int argc, char* argv[])
     // that knows its slot and uniqueid. When the owner cannot get back to their
     // stream — tab killed, machine rebooted, players holding the session open —
     // nothing in the UI can end the app any more, and Sunshine keeps it running.
-    // This one is deliberately unscoped: it drops every slot and cancels every
-    // Sunshine session we know to be live, whoever started it.
+    // This one is deliberately unscoped as to who: it drops every slot on this
+    // host and cancels every Sunshine session we know to be live there,
+    // whoever started it. Never another host's stream: a native stream left
+    // running while a Sunshine session on the same PC is closed must survive.
     server.router()->postAsync(
         "/api/hosts/:id/stop-session",
         [&computerManager, &g_Pool, &g_LiveSunshineUids, &detachWorkerSlot, &endPlayerSessions,
@@ -5484,7 +5486,7 @@ int main(int argc, char* argv[])
             qInfo() << "[stop-session] Forcing the host session down";
             // This host's guests: the cancels below end their app too.
             endPlayerSessions(host->uuid, ShareManager::EndReason::OwnerStop);
-            for (int i = 0; i < kOwnerSlots; ++i)
+            for (int i : g_Pool.slotsOnHost(host->uuid, kOwnerSlots))
                 detachWorkerSlot(i, false);
 
             // Sunshine's /cancel is keyed by the uniqueid that launched the
