@@ -235,7 +235,7 @@ const problems = [];
 
 const chromeEn = {};
 for (const page of PAGES) {
-  let html = fs.readFileSync(path.join(SITE, page.src), 'utf8');
+  let html = fs.readFileSync(path.join(SITE, page.src), 'utf8').replace(/\r\n/g, '\n');
   html = fillById(html, 'header', 'site-header', header('en', chromeEn, page));
   html = fillById(html, 'footer', 'site-footer', footer('en', chromeEn));
   html = stampAlternates(html, page);
