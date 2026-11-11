@@ -451,6 +451,14 @@ export class Tunnel {
         this.onstatus = null;
         /** Called when the channel goes away for good. */
         this.onclosed = null;
+        /**
+         * True once connect() has given up at its deadline. Nothing stops the
+         * attempt then: on a slow network the channel can still open a few
+         * seconds later, and `onlate` is called if it does. Whoever gave up on
+         * it either takes it at that moment or closes it.
+         */
+        this.overdue = false;
+        this.onlate = null;
     }
 
     get connected() {
@@ -477,10 +485,14 @@ export class Tunnel {
 
         this._status('calling');
         await new Promise((resolve, reject) => {
-            const deadline = setTimeout(() => reject(this._deadlineError()), CONNECT_TIMEOUT_MS);
+            const deadline = setTimeout(() => {
+                this.overdue = true;
+                reject(this._deadlineError());
+            }, CONNECT_TIMEOUT_MS);
             const settle = (err) => {
                 clearTimeout(deadline);
                 if (err) reject(err);
+                else if (this.overdue) this.onlate?.();
                 else resolve();
             };
 
@@ -778,6 +790,7 @@ export class Tunnel {
      */
     close() {
         this.onclosed = null;
+        this.onlate = null;
         this._teardown('closed');
         for (const part of [this._dc, this._pc, this._ws]) {
             try {
