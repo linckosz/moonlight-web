@@ -30,6 +30,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 | 14 | [Conclusion](14-Conclusion.md) | Design philosophy summary and pointers |
 | 15 | [Client Presentation Benchmarks](15-Client-Presentation-Benchmarks.md) | The measurements behind the client defaults: Canvas2D vs WebGL2 vs WebGPU vs `<video>`, Enhancer algorithms, HDR routing, 4:4:4 |
 | 16 | [Auto Bitrate Benchmarks](16-Auto-Bitrate-Benchmarks.md) | Picture quality and latency against bitrate: NVENC and AMF, ten resolution and frame rate combinations, the measurements behind the Auto bitrate |
+| 17 | [Learned Auto Ceiling](17-Learned-Auto-Ceiling.md) | How many pixels a second Auto asks of each machine: the rungs, climbing and falling, the browser's guard, the memory and its switch, and the benches behind them |
 
 ## Project at a glance
 
