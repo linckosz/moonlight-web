@@ -367,11 +367,25 @@
     font-style: italic;
 }
 
-/* "· auto" after the bitrate value while it follows the estimate */
+/* "· auto (local network)" after the bitrate value while it follows the
+   estimate: the description's grey, which small text can be read in */
 .settings-bitrate-auto {
-    color: var(--text-3);
+    color: var(--text-2);
     font-weight: normal;
     font-size: var(--fs-xs);
+}
+
+/* The house or the globe before the bitrate: where the host sees this
+   browser. A touch above the text's middle, where Rajdhani's figures sit. */
+.settings-bitrate-net {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    vertical-align: middle;
+    position: relative;
+    top: -2px;
+    color: var(--neon-cyan);
 }
 
 /* Custom resolution — two numbers side by side, styled like the select */

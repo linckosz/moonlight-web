@@ -637,6 +637,12 @@ export class SettingsView {
             this._audioSourceSupported = data.audio_source_focused_supported === true;
             // The administrator's ceilings: what the controls below may offer.
             setStreamLimits(data);
+            // Where the host sees this browser, as a launch reads it: the
+            // automatic bitrate takes the LAN rule there (util/AutoBitrate.js),
+            // and the bitrate's line says which. A server that does not say:
+            // neither, the Internet rule.
+            this._viewerPath =
+                data.viewer_lan === true ? 'lan' : data.viewer_lan === false ? 'internet' : null;
 
             if (!stored) {
                 this._applySettings(data);
@@ -726,8 +732,8 @@ export class SettingsView {
         return aspectToNumber(aspect);
     }
 
-    _computeAutoBitrate(height, aspect, chroma444, hdr) {
-        return limitBitrateMbps(computeAutoBitrate(height, aspect, chroma444, hdr));
+    _computeAutoBitrate(height, aspect, chroma444, hdr, lan = false) {
+        return limitBitrateMbps(computeAutoBitrate(height, aspect, chroma444, hdr, lan));
     }
 
     /**
@@ -863,7 +869,15 @@ export class SettingsView {
         // 1440p120 the launch turns into 1080p120 recommends a bitrate for
         // pixels nobody ever sends.
         const bounded = this._budgetedStream(this._readResolutionChoice(), rate, chosen > 0);
-        return this._computeAutoBitrate(bounded.size.height, bounded.size.aspect, chroma444, hdr);
+        // The LAN rule where the host sees this browser on its own network:
+        // what a launch from here will ask for (app.js _autoBitrateFor).
+        return this._computeAutoBitrate(
+            bounded.size.height,
+            bounded.size.aspect,
+            chroma444,
+            hdr,
+            this._viewerPath === 'lan',
+        );
     }
 
     /**
@@ -892,10 +906,39 @@ export class SettingsView {
         if (option) option.textContent = this._autoFpsLabel();
     }
 
+    /** "· auto", and where the host sees this browser when the server said. */
+    _bitrateAutoMark() {
+        if (!this._bitrateAuto) return '';
+        if (this._viewerPath === 'lan') return t('settings.bitrateAutoLan');
+        if (this._viewerPath === 'internet') return t('settings.bitrateAutoInternet');
+        return t('settings.bitrateAuto');
+    }
+
+    /**
+     * The house (the host's own network) or the globe (the Internet) before
+     * the bitrate, whether it is the estimate's or the user's: where this
+     * browser stands decides what Auto gives. Nothing when the server did
+     * not say.
+     */
+    _bitrateNetIcon() {
+        if (this._viewerPath !== 'lan' && this._viewerPath !== 'internet') return '';
+        const lan = this._viewerPath === 'lan';
+        const label = this.esc(t(lan ? 'settings.bitrateNetLan' : 'settings.bitrateNetInternet'));
+        const shape = lan
+            ? '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>'
+            : '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
+              '<path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9z"/>';
+        return (
+            `<svg class="settings-bitrate-net" id="settings-bitrate-net" role="img" aria-label="${label}" ` +
+            'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+            `stroke-linecap="round" stroke-linejoin="round"><title>${label}</title>${shape}</svg>`
+        );
+    }
+
     /** Show whether the bitrate is the estimate's or the user's own. */
     _syncBitrateMark() {
         const mark = this.container.querySelector('#settings-bitrate-auto');
-        if (mark) mark.textContent = this._bitrateAuto ? t('settings.bitrateAuto') : '';
+        if (mark) mark.textContent = this._bitrateAutoMark();
         // The way back to the estimate, offered only once it has been left:
         // a stray click on the track (a TV's cursor) was otherwise kept for
         // good, with nothing to undo it but a reset of every setting.
@@ -2137,8 +2180,8 @@ export class SettingsView {
 
                     <div class="settings-field">
                         <label class="settings-label" for="settings-stream-bitrate">
-                            ${t('settings.bitrate')} <strong id="settings-bitrate-value">${this._streamBitrateMbps}</strong> ${t('settings.bitrateUnit')}
-                            <span id="settings-bitrate-auto" class="settings-bitrate-auto">${this._bitrateAuto ? this.esc(t('settings.bitrateAuto')) : ''}</span>
+                            ${t('settings.bitrate')} ${this._bitrateNetIcon()}<strong id="settings-bitrate-value">${this._streamBitrateMbps}</strong> ${t('settings.bitrateUnit')}
+                            <span id="settings-bitrate-auto" class="settings-bitrate-auto">${this.esc(this._bitrateAutoMark())}</span>
                         </label>
                         <span class="setting-desc">${t('settings.bitrateDesc')}</span>
                         <input type="range" id="settings-stream-bitrate"
