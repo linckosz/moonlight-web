@@ -296,6 +296,58 @@ describe('a call that passed its deadline', () => {
     });
 });
 
+describe('one call at a time, whatever the failure says', () => {
+    /** The attempts of this page that are neither closed nor failed for good. */
+    const open = () => made.filter((t) => !t.closed);
+    const busy = () => new Error('That machine already has as many connections as it accepts.');
+
+    it('puts an overdue call down before the try that follows a passing failure', async () => {
+        // Out of time, and reported as a failure that passes within the minute.
+        outcome = (n, tunnel) => {
+            if (n === 0) tunnel.overdue = true;
+            return offline();
+        };
+        await startPage();
+        expect(made[0].closed).toBe(false);
+        await advance(3);
+        expect(calls).toHaveLength(2);
+        expect(made[0].closed).toBe(true);
+        expect(open()).toEqual([]);
+    });
+
+    it('puts an overdue call down under a failure that is final', async () => {
+        outcome = (n, tunnel) => {
+            tunnel.overdue = true;
+            return busy();
+        };
+        await startPage();
+        expect(text('note')).not.toContain(WATCH_NOTE);
+        expect(made).toHaveLength(1);
+        expect(open()).toEqual([]);
+    });
+
+    it('puts it down when a later try ends on a failure that is final', async () => {
+        outcome = (n, tunnel) => {
+            tunnel.overdue = true;
+            return n === 0 ? outOfTime(tunnel) : busy();
+        };
+        await startPage();
+        await advance(31);
+        expect(calls).toHaveLength(2);
+        expect(text('note')).not.toContain(WATCH_NOTE);
+        expect(open()).toEqual([]);
+    });
+
+    it('leaves one call open, the one the start carries on with', async () => {
+        outcome = (n, tunnel) => (n === 0 ? outOfTime(tunnel) : null);
+        await startPage();
+        await advance(31);
+        expect(calls).toHaveLength(2);
+        expect(open()).toEqual([made[1]]);
+        expect(fetched).toEqual(['/api/app/manifest']);
+    });
+});
+
 describe('any other failed call', () => {
     it('is put down at once', async () => {
         await startPage();

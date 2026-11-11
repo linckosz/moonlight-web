@@ -1093,6 +1093,8 @@ async function connectThroughRestart(hostId, first) {
             const pause = PASSING_PAUSES_MS[Math.min(i, PASSING_PAUSES_MS.length - 1)];
             if (Date.now() + pause > giveUpAt) break;
             await sleep(pause);
+            // One call at a time, whatever the last one left behind.
+            dropOverdue();
             if (forgotten) return null;
             const tunnel = new Tunnel(hostId);
             try {
@@ -1121,6 +1123,7 @@ async function connectWhenReachable(hostId, first, startedAt) {
     let last = first;
     if (last.answered) answered = true;
     if (!mayPass(last)) {
+        dropOverdue();
         fail(last.message, failureHint(last));
         return null;
     }
@@ -1180,6 +1183,7 @@ async function connectWhenReachable(hostId, first, startedAt) {
             last = e;
             noteAnswered(e);
             if (!mayPass(e)) {
+                dropOverdue();
                 fail(e.message, failureHint(e));
                 return null;
             }
@@ -1276,6 +1280,8 @@ async function main() {
         // "your machine is off" — a connection that was refused by the network
         // rather than never answered has nothing to do with the machine.
         if (!mayPass(e)) {
+            // Final: nothing is left running under it.
+            dropOverdue();
             if (e.answered) answered = true;
             fail(e.message, failureHint(e));
             return;
