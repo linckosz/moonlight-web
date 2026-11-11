@@ -202,7 +202,10 @@ A **UM790 Pro** (Radeon 780M) as the client, Chrome on a 1440p screen at 120 Hz,
 
 The stepper took each launch to 240 fps, and the 780M kept up.
 
+### A TV as the client
+
+An Android TV with 1 GB of memory, in its own browser, bench-desk as the host: a 150 s stream at 1280×720 and 30 fps. Nothing was stored and the journal stayed silent: a TV stays on the base budget, as §17.1 says.
+
 ### Not measured yet
 
-- a **TV**, which must stay on the base budget and store nothing: the TV's browser refused the bench host's self-signed certificate, so only the unit tests cover it;
 - the UM790 Pro above 450 M, and the Enhancer above 450 M (where the stream fills a 1440p screen, there is nothing left to upscale).
