@@ -46,4 +46,26 @@ void run_relaunch_script_tests()
                                   "/bin/launchctl kickstart 'gui/501/com.moonlightweb.agent' "
                                   ">/dev/null 2>&1"));
     CHECK(!agent.contains(QStringLiteral("--autostart")));
+
+    // With its plist at hand, the job is loaded anew after the swap instead:
+    // launchd's record of the old binary would get the new one killed at
+    // launch. A failed load still brings the server back, directly.
+    const QString reload =
+        build(QStringLiteral("rsync a b"), 42, QStringLiteral("/A.app/x"), {},
+              QStringLiteral("gui/501/com.moonlightweb.agent"),
+              QStringLiteral("/Users/l o/Library/LaunchAgents/com.moonlightweb.agent.plist"));
+    CHECK(reload ==
+          QStringLiteral("rsync a b; kill 42 2>/dev/null; sleep 3; "
+                         "/bin/launchctl bootout 'gui/501/com.moonlightweb.agent' >/dev/null 2>&1; "
+                         "/bin/launchctl bootstrap 'gui/501' "
+                         "'/Users/l o/Library/LaunchAgents/com.moonlightweb.agent.plist' "
+                         ">/dev/null 2>&1 || { '/A.app/x' --autostart >/dev/null 2>&1 & }"));
+    CHECK(!reload.contains(QStringLiteral("kickstart")));
+
+    // The DEV edition's agent is a domain like any other.
+    const QString dev =
+        build(QStringLiteral("true"), 1, QStringLiteral("/D.app/x"), {},
+              QStringLiteral("gui/502/com.moonlightweb.agent.dev"), QStringLiteral("/p.plist"));
+    CHECK(dev.contains(QStringLiteral("bootout 'gui/502/com.moonlightweb.agent.dev'")));
+    CHECK(dev.contains(QStringLiteral("bootstrap 'gui/502' '/p.plist'")));
 }
