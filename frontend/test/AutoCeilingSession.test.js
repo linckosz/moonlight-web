@@ -5,7 +5,8 @@
  * One launch's dealings with the learned ceiling. The promises: a journal-only
  * session writes nothing and spends nothing more; only what was asked within a
  * rung says anything of it; what is earned serves the next launch and never this
- * one; a stream that never came back costs a rung, a page closed does not.
+ * one; a stream that never came back costs a rung, a page closed does not; the
+ * host's first crash at a rung costs nothing, its second there does.
  */
 import { describe, it, expect } from 'vitest';
 import { AUTO_CEILING_KEY, autoCeilingMemory } from '../js/util/AutoCeiling.js';
@@ -165,7 +166,7 @@ describe('AutoCeilingSession: learning', () => {
         memory.raise(HOST, CODEC);
         const s = session();
         s.weigh(uhdAuto);
-        s.meter(0).noteSick('worker_crash', true);
+        s.meter(0).noteSick('decoder_silent', true);
         expect(session().budget).toBe(330e6);
     });
 
@@ -194,6 +195,80 @@ describe('AutoCeilingSession: learning', () => {
         s.weigh(uhdAuto);
         s.meter(0).noteSick('codec_fallback', true);
         expect(s.meter(0)).toBeNull();
+    });
+});
+
+describe('AutoCeilingSession: a host that crashed', () => {
+    /** A rig whose host and codec stand at 450 M. */
+    function at450() {
+        const r = rig('on');
+        r.memory.raise(HOST, CODEC);
+        r.memory.raise(HOST, CODEC);
+        return r;
+    }
+
+    /** One stream whose host's worker crashes. */
+    function crashed(r) {
+        const s = r.session();
+        s.weigh(uhdAuto);
+        s.meter(0).noteSick('worker_crash', true);
+        s.end();
+        return s;
+    }
+
+    it('costs nothing the first time at a rung, and says so', () => {
+        const r = at450();
+        const s = crashed(r);
+        expect(s.sick).toBe('worker_crash');
+        expect(r.session().budget).toBe(450e6);
+        expect(r.log.join('\n')).toContain(
+            "sick (worker_crash), 0 s loaded, at 450 M — the host's first crash at it, not counted",
+        );
+    });
+
+    it('costs the rung on a second crash at it, in another stream', () => {
+        const r = at450();
+        crashed(r);
+        crashed(r);
+        expect(r.session().budget).toBe(330e6);
+        expect(r.log.join('\n')).toContain(
+            "at 450 M — down to 330 M, the host's second crash at it",
+        );
+    });
+
+    it('takes two views of one stream for one crash', () => {
+        const r = at450();
+        const s = r.session();
+        s.weigh(uhdAuto);
+        const a = s.meter(0);
+        const b = s.meter(0);
+        a.noteSick('worker_crash', true);
+        b.noteSick('worker_crash', true);
+        expect(r.session().budget).toBe(450e6);
+    });
+
+    it('starts the count over once a crash has cost the rung', () => {
+        const r = at450();
+        crashed(r);
+        crashed(r);
+        r.memory.raise(HOST, CODEC);
+        crashed(r);
+        expect(r.session().budget).toBe(450e6);
+    });
+
+    it('says nothing of a first crash at the base budget, where nothing is lost', () => {
+        const r = rig('on');
+        crashed(r);
+        expect(r.session().budget).toBe(PIXEL_RATE_BUDGET);
+        expect(r.log.join('\n')).not.toContain('first crash');
+    });
+
+    it('still costs a rung to what the client itself reports', () => {
+        const r = at450();
+        const s = r.session();
+        s.weigh(uhdAuto);
+        s.meter(0).noteSick('renderer_failed', true);
+        expect(r.session().budget).toBe(330e6);
     });
 });
 

@@ -199,6 +199,37 @@ describe('autoCeilingMemory', () => {
         expect(mem.entry(HOST, CODEC).holdMs).toBe(2 * HOLD_BASE_MS);
     });
 
+    it('lets the host crash once at a rung, and counts the second there', () => {
+        const { mem } = memory();
+        expect(mem.hostCrash(HOST, CODEC, 450e6)).toBe(false);
+        expect(mem.hostCrash(HOST, CODEC, 330e6)).toBe(false);
+        expect(mem.hostCrash(HOST, CODEC, 450e6)).toBe(true);
+        // The count starts over at that rung; the other one still waits.
+        expect(mem.hostCrash(HOST, CODEC, 450e6)).toBe(false);
+        expect(mem.hostCrash(HOST, CODEC, 330e6)).toBe(true);
+        // Remembering costs nothing by itself.
+        expect(mem.entry(HOST, CODEC).holdMs).toBe(HOLD_BASE_MS);
+    });
+
+    it('forgets a host crash after a week, and keeps none at the base budget', () => {
+        const { mem, clock, storage } = memory();
+        mem.hostCrash(HOST, CODEC, 450e6);
+        clock.now += FAIL_TTL_MS;
+        expect(mem.hostCrash(HOST, CODEC, 450e6)).toBe(false);
+        expect(mem.hostCrash(HOST, CODEC, PIXEL_RATE_BUDGET)).toBe(false);
+        expect(mem.hostCrash(HOST, CODEC, PIXEL_RATE_BUDGET)).toBe(false);
+        expect(storage.raw().hosts[HOST + '|' + CODEC].crashes).toEqual({
+            [450e6]: clock.now,
+        });
+    });
+
+    it('stores no list of crashes once none is left', () => {
+        const { mem, storage } = memory();
+        mem.hostCrash(HOST, CODEC, 450e6);
+        mem.hostCrash(HOST, CODEC, 450e6);
+        expect(storage.raw().hosts[HOST + '|' + CODEC]).not.toHaveProperty('crashes');
+    });
+
     it('climbs once on one proof, even from two views of the same session', () => {
         const { mem } = memory();
         expect(mem.raise(HOST, CODEC, undefined, PIXEL_RATE_BUDGET)).toBe(330e6);

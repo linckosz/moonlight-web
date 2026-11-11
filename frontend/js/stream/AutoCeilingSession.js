@@ -44,6 +44,10 @@ const RUNG_MARGIN = 1.02;
 /** Pixels a second, as the journal says them. */
 const millions = (pixels) => Math.round(pixels / 1e6) + ' M';
 
+/** What the view reports when the host's stream worker crashed (app.js): only a
+ *  second crash at one rung counts against it (autoCeilingMemory.hostCrash). */
+const HOST_CRASH = 'worker_crash';
+
 export class AutoCeilingSession {
     /**
      * @param {object} deps
@@ -257,9 +261,15 @@ export class AutoCeilingSession {
                         only,
                 );
         } else {
+            // One stream is sick once: two views of it say one thing.
+            if (this.sick) return;
             this.sick = e.reason || 'unknown';
+            const hostCrash = this.sick === HOST_CRASH && rungBelow(this.rung) > 0;
+            const blamed = this.active && e.atRung;
+            const forgiven =
+                blamed && hostCrash && !this._memory.hostCrash(this._host, this._codec, this.rung);
             const fell =
-                this.active && e.atRung ? this._memory.fail(this._host, this._codec, this.rung) : 0;
+                blamed && !forgiven ? this._memory.fail(this._host, this._codec, this.rung) : 0;
             if (this.active) this._markClosed();
             this._log(
                 '[MW] Auto ceiling: sick (' +
@@ -269,6 +279,8 @@ export class AutoCeilingSession {
                     ', ' +
                     (e.atRung ? 'at ' + millions(this.rung) : 'not at its rung') +
                     (fell ? ' — down to ' + millions(fell) : '') +
+                    (fell && hostCrash ? ", the host's second crash at it" : '') +
+                    (forgiven ? " — the host's first crash at it, not counted" : '') +
                     only,
             );
         }

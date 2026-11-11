@@ -33,6 +33,10 @@
  * A memory that keeps a bad session stays stuck (the enhancer's ladder did), so:
  * a rung lost is regained by holding the one below for twice as long, up to
  * HOLD_MAX_MS, and every failure is forgotten after FAIL_TTL_MS.
+ *
+ * A host that crashes says little of this machine: short of memory, it crashes
+ * at any rung. So its first crash at a rung costs nothing, and a second at the
+ * same rung, in another stream within FAIL_TTL_MS, costs the rung (hostCrash).
  */
 
 import { PIXEL_RATE_BUDGET } from './StreamResolution.js';
@@ -201,13 +205,27 @@ export function autoCeilingMemory(storage, clock, instance) {
         return kept;
     };
 
+    /** When the host crashed at each rung, the expired ones gone. */
+    const freshCrashes = (entry, now) => {
+        const kept = {};
+        const crashes =
+            entry && typeof entry.crashes === 'object' && entry.crashes ? entry.crashes : {};
+        for (const rung of Object.keys(crashes)) {
+            const at = crashes[rung];
+            if (at > 0 && now - at < FAIL_TTL_MS) kept[rung] = at;
+        }
+        return kept;
+    };
+
     /** Change one entry and store the lot, oldest used out first. */
     const update = (key, change) => {
         const now = nowMs();
         const all = read();
         const entry = all.hosts[key] || { ceiling: CEILING_RUNGS[0], trial: false, openAt: 0 };
         entry.fails = freshFails(entry, now);
+        entry.crashes = freshCrashes(entry, now);
         change(entry);
+        if (!Object.keys(entry.crashes).length) delete entry.crashes;
         entry.at = now;
         all.hosts[key] = entry;
         const keys = Object.keys(all.hosts).sort(
@@ -349,6 +367,28 @@ export function autoCeilingMemory(storage, clock, instance) {
                 e.trial = false;
             });
             return ceiling;
+        },
+
+        /**
+         * The host crashed while a stream ran at this rung. The first crash is
+         * only remembered; a second at the same rung, while the first still is,
+         * counts against it, and the count starts over.
+         * @param {string} host
+         * @param {string} codec
+         * @param {number} rung the rung the stream ran at
+         * @returns {boolean} whether this crash costs the rung (then call fail)
+         */
+        hostCrash(host, codec, rung) {
+            const was = snapToRung(rung);
+            if (!rungBelow(was)) return false;
+            const now = nowMs();
+            let counts = false;
+            update(keyOf(host, codec), (e) => {
+                counts = e.crashes[was] > 0;
+                if (counts) delete e.crashes[was];
+                else e.crashes[was] = now;
+            });
+            return counts;
         },
     };
 }
