@@ -47,8 +47,7 @@ function rig(mode, overrides = {}) {
 
 /** A 4K 120 Hz screen in Auto/Auto: 1080p at the base budget, more above. */
 const heights = { 250: 1080, 330: 1240, 450: 1440, 500: 1528, 700: 1808, 1000: 2160 };
-const uhdAuto = (budget) =>
-    streamFootprint({ height: heights[budget / 1e6], aspect: '16:9' }, 120);
+const uhdAuto = (budget) => streamFootprint({ height: heights[budget / 1e6], aspect: '16:9' }, 120);
 
 /** Run a meter loaded for @p ms, ticking every 500 ms. */
 function runLoaded(meter, ms) {
