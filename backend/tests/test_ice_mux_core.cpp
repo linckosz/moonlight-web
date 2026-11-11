@@ -258,7 +258,7 @@ void flood()
         p.address[2] = static_cast<uint8_t>(i >> 8);
         (void)to(r, p, request("hostAAAA1234:x"), 100 + i);
     }
-    CHECK(r.provisionalCount() == Router::kProvisionalMax);
+    CHECK(r.provisionalCount() == Router::kProvisionalPerFeedMax);
     CHECK(r.confirmedCount() == 1);
     CHECK(to(r, real, kDtls, 5000) == std::vector<uint32_t>{1});
 
@@ -268,6 +268,108 @@ void flood()
     CHECK(r.confirmedCount() == Router::kConfirmedPerFeedMax);
     r.confirm(7, peer(1, 1)); // no such agent
     CHECK(r.confirmedCount() == Router::kConfirmedPerFeedMax);
+}
+
+/// The `i`th of as many distinct senders as a test wants.
+Peer nth(uint32_t i)
+{
+    Peer p = peer(static_cast<uint8_t>(i), static_cast<uint16_t>(10000 + i));
+    p.address[2] = static_cast<uint8_t>(i >> 8);
+    return p;
+}
+
+void shares()
+{
+    SECTION("IceMuxCore: each agent has its share of the provisional peers");
+    Router r;
+    CHECK(r.addAgent(1, "hostAAAA1234", 0));
+    CHECK(r.addAgent(2, "hostBBBB5678", 0));
+    const Peer a = peer(200, 5000);
+    CHECK(to(r, a, request("hostAAAA1234:x"), 10) == std::vector<uint32_t>{1});
+
+    // One agent hears from more senders than the whole level holds: it makes
+    // room among its own, the oldest first, and the other's peer stays
+    const uint32_t many = 3 * static_cast<uint32_t>(Router::kProvisionalMax);
+    for (uint32_t i = 0; i < many; ++i)
+        (void)to(r, nth(i), request("hostBBBB5678:y"), 20 + i);
+    CHECK(r.provisionalCount(2) == Router::kProvisionalPerFeedMax);
+    CHECK(r.provisionalCount(1) == 1);
+    CHECK(r.provisionalCount() == Router::kProvisionalPerFeedMax + 1);
+    CHECK(to(r, a, kDtls, 2000) == std::vector<uint32_t>{1});
+    CHECK(to(r, nth(many - 1), kDtls, 2000) == std::vector<uint32_t>{2});
+    CHECK(to(r, nth(0), kDtls, 2000).empty());
+
+    // Agents enough to fill the level between them: it stays full, the one
+    // that holds the most gives way, and the one that holds one keeps it
+    const char* const names[] = {"hostCCCC0003", "hostCCCC0004", "hostCCCC0005", "hostCCCC0006",
+                                 "hostCCCC0007", "hostCCCC0008", "hostCCCC0009"};
+    uint32_t feed = 3, sender = many;
+    for (const char* name : names) {
+        CHECK(r.addAgent(feed, name, 0));
+        const Bytes forIt = request(std::string(name) + ":z");
+        for (size_t i = 0; i < Router::kProvisionalPerFeedMax; ++i, ++sender)
+            (void)to(r, nth(sender), forIt, 3000 + sender);
+        CHECK(r.provisionalCount(feed) == Router::kProvisionalPerFeedMax);
+        ++feed;
+    }
+    CHECK(r.provisionalCount() == Router::kProvisionalMax);
+    CHECK(r.provisionalCount(1) == 1);
+    CHECK(to(r, a, kDtls, 9000) == std::vector<uint32_t>{1});
+    // The counts follow what leaves: confirmed, lapsed, or gone with its agent
+    r.confirm(1, a);
+    CHECK(r.provisionalCount(1) == 0);
+    r.removeAgent(9);
+    CHECK(r.provisionalCount() <= Router::kProvisionalMax - Router::kProvisionalPerFeedMax);
+    CHECK(to(r, nth(5000), request("hostBBBB5678:y"), 100'000) == std::vector<uint32_t>{2});
+    CHECK(to(r, nth(5001), kDtls, 100'000).empty());
+    const size_t held = r.provisionalCount(2);
+    CHECK(to(r, nth(many - 1), kDtls, 100'000).empty()); // lapsed long ago
+    CHECK(r.provisionalCount(2) == held - 1);
+    for (uint32_t i = 0; i < Router::kProvisionalMax; ++i)
+        (void)to(r, nth(6000 + i), request("hostCCCC0003:z"), 100'001);
+    CHECK(r.provisionalCount(3) == Router::kProvisionalPerFeedMax);
+    CHECK(r.provisionalCount(2) == held - 1);
+}
+
+void sharedResponses()
+{
+    SECTION("IceMuxCore: a response reaches the agent whose check it answers");
+    Router r;
+    CHECK(r.addAgent(1, "hostAAAA1234", 0));
+    CHECK(r.addAgent(2, "hostBBBB5678", 0));
+    const Peer a = peer(1, 5000), b = peer(2, 6000), c = peer(3, 7000);
+    const Bytes response = stun(0x0101);
+    const uint32_t budget = Router::kSharedResponsesPerSecond;
+
+    // The address follows one agent so far, and the other checks with it too
+    CHECK(to(r, a, request("hostBBBB5678:y"), 100) == std::vector<uint32_t>{2});
+    std::vector<uint32_t> got = to(r, a, response, 200);
+    CHECK(got.size() == 2 && got.front() == 2 && got.back() == 1);
+    // A response only: the rest goes to the one it follows
+    CHECK(to(r, a, kDtls, 300) == std::vector<uint32_t>{2});
+    CHECK(to(r, a, stun(0x0011), 300).empty());
+
+    // So many a second for one address; another address has its own count
+    uint32_t shared = 0;
+    for (uint32_t i = 0; i < 2 * budget; ++i)
+        shared += to(r, a, response, 1000 + i % 500).size() == 2 ? 1 : 0;
+    CHECK(shared == budget);
+    CHECK(to(r, a, response, 1600) == std::vector<uint32_t>{2});
+    CHECK(to(r, b, request("hostBBBB5678:y"), 1600) == std::vector<uint32_t>{2});
+    CHECK(to(r, b, response, 1601).size() == 2);
+    CHECK(to(r, a, response, 2001).size() == 2);
+
+    // The agent's own word ends it: a confirmed peer's responses are its own
+    r.confirm(1, a);
+    CHECK(to(r, a, response, 2100) == std::vector<uint32_t>{1});
+    CHECK(to(r, a, kDtls, 2100) == std::vector<uint32_t>{1});
+
+    // Agents past their negotiation are no longer asked
+    CHECK(to(r, c, request("hostBBBB5678:y"), 70'000) == std::vector<uint32_t>{2});
+    CHECK(to(r, c, response, 70'001) == std::vector<uint32_t>{2});
+    CHECK(r.addAgent(3, "hostCCCC9012", 70'000));
+    got = to(r, c, response, 70'002);
+    CHECK(got.size() == 2 && got.front() == 2 && got.back() == 3);
 }
 
 void unclaimed()
@@ -304,5 +406,7 @@ void run_ice_mux_core_tests()
     routing();
     following();
     flood();
+    shares();
+    sharedResponses();
     unclaimed();
 }

@@ -60,15 +60,17 @@ what comes in makes the extra hop through the server process.
    whatever is known of the sender. Unknown fragment: dropped.
 2. **Anything else** goes to the agent the sender is a peer of. A sender
    becomes a *provisional* peer of an agent by sending it a Binding request
-   (few of them, 30 seconds unless renewed, the oldest gives way), and a
+   (few of them for each agent, 30 seconds unless renewed, the agent's own
+   oldest gives way), and a
    *confirmed* peer when the agent itself reports that it passed the ICE
    integrity check (`"op":"confirmed"`). Nothing unverified displaces a
    confirmed peer, and a provisional peer follows one agent at a time: a
    request that names another agent is delivered to it, but moves nothing
    else that address sends, until the entry has lapsed or its agent is gone.
-3. **A STUN response from nobody's peer** is the answer to a check an agent
-   sent first: every agent registered for less than a minute gets it, within a
-   budget per second; an agent ignores a transaction that is not its own.
+3. **A STUN response that is not a confirmed peer's** is the answer to a check
+   an agent sent: besides the agent its sender follows, if any, every agent
+   registered for less than a minute gets it, within a budget per second; an
+   agent ignores a transaction that is not its own.
 4. The rest is dropped.
 
 The user fragment gives no right: the agent verifies the message integrity of

@@ -54,11 +54,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         now += who;
         const Route route = router->route(from, data + pos, len, now);
         if (route.feeds.size() > 2) std::abort();
+        if (route.feeds.size() == 2 && route.feeds[0] == route.feeds[1]) std::abort();
         for (uint32_t feed : route.feeds) {
             if (feed != 1 && feed != 2) std::abort();
             if (who & 0x80) router->confirm(feed, from);
         }
-        if (router->provisionalCount() > Router::kProvisionalMax ||
+        if (router->provisionalCount(1) > Router::kProvisionalPerFeedMax ||
+            router->provisionalCount(2) > Router::kProvisionalPerFeedMax ||
+            router->provisionalCount(1) + router->provisionalCount(2) !=
+                router->provisionalCount() ||
             router->confirmedCount() > 2 * Router::kConfirmedPerFeedMax)
             std::abort();
         pos += len;

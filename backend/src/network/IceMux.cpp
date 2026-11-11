@@ -52,6 +52,9 @@ namespace {
 constexpr size_t kDatagramMax = 4096;
 /// Datagrams taken off one socket before the next is looked at
 constexpr int kBurst = 64;
+/// The most agents one datagram is copied to (a STUN response several of them
+/// may be waiting for)
+constexpr size_t kCopiesMax = 32;
 /// Reads that fail in a row on one socket, for no datagram's fault, before
 /// the socket is left alone for a while
 constexpr int kFaultsBeforeRest = 8;
@@ -438,7 +441,7 @@ void IceMux::run()
 void IceMux::handle(int via, const void* sender, uint8_t* packet, size_t size)
 {
     const Peer from = peerOf(*static_cast<const sockaddr_in6*>(sender), via);
-    uint16_t ports[8];
+    uint16_t ports[kCopiesMax];
     size_t count = 0;
     {
         const std::lock_guard<std::mutex> lock(m_Lock);

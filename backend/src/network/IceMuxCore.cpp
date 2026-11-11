@@ -147,6 +147,56 @@ void Router::removeAgent(uint32_t feed)
         it = it->second.feed == feed ? m_Provisional.erase(it) : std::next(it);
 }
 
+size_t Router::provisionalCount(uint32_t feed) const noexcept
+{
+    const auto agent = m_Agents.find(feed);
+    return agent == m_Agents.end() ? 0 : agent->second.provisional;
+}
+
+Router::ProvisionalMap::iterator Router::dropProvisional(ProvisionalMap::iterator entry)
+{
+    const auto agent = m_Agents.find(entry->second.feed);
+    if (agent != m_Agents.end() && agent->second.provisional > 0) --agent->second.provisional;
+    return m_Provisional.erase(entry);
+}
+
+void Router::dropOldestOf(uint32_t feed)
+{
+    auto oldest = m_Provisional.end();
+    for (auto it = m_Provisional.begin(); it != m_Provisional.end(); ++it)
+        if (it->second.feed == feed &&
+            (oldest == m_Provisional.end() || it->second.seenMs < oldest->second.seenMs))
+            oldest = it;
+    if (oldest != m_Provisional.end()) dropProvisional(oldest);
+}
+
+void Router::addProvisional(const Peer& peer, uint32_t feed, uint64_t nowMs)
+{
+    const auto agent = m_Agents.find(feed);
+    if (agent == m_Agents.end()) return;
+    // Each agent has its share of this level, and makes room in it at its own
+    // expense. The whole table full all the same (many agents): the agent
+    // that holds the most gives one up.
+    if (agent->second.provisional >= kProvisionalPerFeedMax) dropOldestOf(feed);
+    if (m_Provisional.size() >= kProvisionalMax) expire(nowMs);
+    if (m_Provisional.size() >= kProvisionalMax) {
+        const auto most =
+            std::max_element(m_Agents.begin(), m_Agents.end(), [](const auto& a, const auto& b) {
+                return a.second.provisional < b.second.provisional;
+            });
+        dropOldestOf(most->first);
+    }
+    if (m_Provisional.size() >= kProvisionalMax) return;
+    if (m_Provisional.emplace(peer, Provisional{feed, nowMs, 0, 0}).second)
+        ++agent->second.provisional;
+}
+
+void Router::addNegotiating(Route& out, uint64_t nowMs, uint32_t except) const
+{
+    for (const auto& [feed, agent] : m_Agents)
+        if (feed != except && nowMs - agent.sinceMs <= kNegotiationMs) out.feeds.push_back(feed);
+}
+
 void Router::confirm(uint32_t feed, const Peer& peer)
 {
     const auto agent = m_Agents.find(feed);
@@ -163,14 +213,14 @@ void Router::confirm(uint32_t feed, const Peer& peer)
     if (agent->second.confirmed >= kConfirmedPerFeedMax) return;
     ++agent->second.confirmed;
     m_Confirmed.emplace(peer, feed);
-    m_Provisional.erase(peer);
+    if (const auto known = m_Provisional.find(peer); known != m_Provisional.end())
+        dropProvisional(known);
 }
 
 void Router::expire(uint64_t nowMs)
 {
     for (auto it = m_Provisional.begin(); it != m_Provisional.end();)
-        it = nowMs - it->second.seenMs > kProvisionalLifeMs ? m_Provisional.erase(it)
-                                                            : std::next(it);
+        it = nowMs - it->second.seenMs > kProvisionalLifeMs ? dropProvisional(it) : std::next(it);
 }
 
 Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t nowMs)
@@ -204,22 +254,15 @@ Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t
                 // port never serves two live agents, so nothing true needs
                 // more, and a request alone moves nobody's traffic.
                 if (confirmed == m_Confirmed.end()) {
-                    if (known->second.feed == feed)
+                    if (known->second.feed == feed) {
                         known->second.seenMs = nowMs;
-                    else if (nowMs - known->second.seenMs > kProvisionalLifeMs)
-                        known->second = {feed, nowMs};
+                    } else if (nowMs - known->second.seenMs > kProvisionalLifeMs) {
+                        dropProvisional(known);
+                        addProvisional(from, feed, nowMs);
+                    }
                 }
             } else if (confirmed == m_Confirmed.end()) {
-                if (m_Provisional.size() >= kProvisionalMax) expire(nowMs);
-                if (m_Provisional.size() >= kProvisionalMax) {
-                    const auto oldest =
-                        std::min_element(m_Provisional.begin(), m_Provisional.end(),
-                                         [](const auto& a, const auto& b) {
-                                             return a.second.seenMs < b.second.seenMs;
-                                         });
-                    m_Provisional.erase(oldest);
-                }
-                m_Provisional.emplace(from, Provisional{feed, nowMs});
+                addProvisional(from, feed, nowMs);
             }
         }
         out.feeds.push_back(feed);
@@ -231,11 +274,26 @@ Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t
         return out;
     }
     if (const auto known = m_Provisional.find(from); known != m_Provisional.end()) {
-        if (nowMs - known->second.seenMs <= kProvisionalLifeMs) {
-            out.feeds.push_back(known->second.feed);
+        Provisional& entry = known->second;
+        if (nowMs - entry.seenMs <= kProvisionalLifeMs) {
+            out.feeds.push_back(entry.feed);
+            // A response answers a check, and the check may be that of an
+            // agent other than the one this address follows so far: the
+            // agents still negotiating get it too, so many a second for each
+            // address. An agent ignores a transaction that is not its own.
+            if (stun.kind == Kind::StunResponse) {
+                if (nowMs - entry.sharedWindowMs >= 1000) {
+                    entry.sharedWindowMs = nowMs;
+                    entry.sharedInWindow = 0;
+                }
+                if (entry.sharedInWindow < kSharedResponsesPerSecond) {
+                    ++entry.sharedInWindow;
+                    addNegotiating(out, nowMs, entry.feed);
+                }
+            }
             return out;
         }
-        m_Provisional.erase(known);
+        dropProvisional(known);
     }
     if (stun.kind != Kind::StunResponse) return out;
 
@@ -247,8 +305,7 @@ Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t
     }
     if (m_UnclaimedInWindow >= kUnclaimedPerSecond) return out;
     ++m_UnclaimedInWindow;
-    for (const auto& [feed, agent] : m_Agents)
-        if (nowMs - agent.sinceMs <= kNegotiationMs) out.feeds.push_back(feed);
+    addNegotiating(out, nowMs, 0);
     return out;
 }
 
