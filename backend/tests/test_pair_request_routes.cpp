@@ -281,10 +281,21 @@ void testOnlyFromThisLan()
 
     // A LAN peer passing a request along, whatever its header says: its sender
     // may stand anywhere.
-    for (const char* header : {"x-forwarded-for", "forwarded", "cf-connecting-ip", "via"}) {
+    for (const char* header :
+         {"x-forwarded-for", "forwarded", "cf-connecting-ip", "via", "x-real-ip"}) {
         HttpRequest relayed = Device().ask();
         relayed.headers.insert(QString::fromLatin1(header), QStringLiteral("192.168.1.80"));
         CHECK_EQ(error(s.send(relayed)), QStringLiteral("lan_only"));
+    }
+
+    // A proxy on this machine, under a local name: its sender may stand
+    // anywhere too, whatever address the proxy names, or none.
+    for (const char* header : {"via", "x-real-ip", "x-forwarded-host", "x-forwarded-for"}) {
+        HttpRequest viaProxy = Device().ask();
+        viaProxy.clientAddress = QStringLiteral("127.0.0.1");
+        viaProxy.headers.insert(QStringLiteral("host"), QStringLiteral("localhost:8443"));
+        viaProxy.headers.insert(QString::fromLatin1(header), QStringLiteral("192.168.1.80"));
+        CHECK_EQ(error(s.send(viaProxy)), QStringLiteral("lan_only"));
     }
 
     // On a line: the address ICE settled on, and the request for the line's key.
@@ -868,7 +879,8 @@ void testOffALineTheHouseAnswersUnderALocalName()
 
     // Passed along by another machine on this LAN: not the house, whatever
     // the proxy's header says.
-    for (const char* header : {"x-forwarded-for", "forwarded", "cf-connecting-ip", "via"}) {
+    for (const char* header :
+         {"x-forwarded-for", "forwarded", "cf-connecting-ip", "via", "x-real-ip"}) {
         HttpRequest relayed = m.yes(s, d, code);
         relayed.headers.insert(QString::fromLatin1(header), QStringLiteral("1.1 relay"));
         CHECK_EQ(error(s.send(relayed)), QStringLiteral("not_allowed"));

@@ -95,21 +95,19 @@ bool underALocalName(const HttpRequest& req)
     return !host.isEmpty() && RequestGuard::isLocalHostName(host);
 }
 
-/// Whether another machine passed this socket request along: a peer that is not
-/// this machine, with a header a proxy adds. Its sender may stand anywhere.
+/// Whether a proxy passed this socket request along, on this machine or another
+/// (RequestGuard::forwardedByProxy, the list every caller shares). Its sender
+/// may stand anywhere.
 bool passedAlong(const HttpRequest& req)
 {
-    if (QHostAddress(AuthManager::cleanClientAddress(req.clientAddress)).isLoopback()) return false;
-    for (const char* name : {"x-forwarded-for", "forwarded", "cf-connecting-ip", "via"})
-        if (req.headers.contains(QString::fromLatin1(name))) return true;
-    return false;
+    return RequestGuard::forwardedByProxy(req.headers);
 }
 
 /// The house: this LAN as AuthManager::fromThisLan judges it, on one of this
 /// host's links. On a line, where ICE found the caller. On a socket, under a
 /// local name too (underALocalName): the public domain is how this host is
 /// reached from anywhere, and only a line says where such a caller stands. A
-/// socket request another machine passed along (passedAlong) is not the house.
+/// socket request a proxy passed along (passedAlong) is not the house.
 bool fromThisHousesLink(const Context& c, const HttpRequest& req)
 {
     if (req.viaTunnel) return onThisHostsLink(c, req.clientAddress, true);
@@ -120,12 +118,14 @@ bool fromThisHousesLink(const Context& c, const HttpRequest& req)
 
 /// Where a device asks from the house: one of this host's links
 /// (fromThisHousesLink), or this machine itself under a local name
-/// (underALocalName). Anywhere else, a private address included, is the
-/// internet.
+/// (underALocalName), with no proxy on the way (passedAlong). Anywhere else, a
+/// private address included, is the internet.
 bool askedFromTheHouse(const Context& c, const HttpRequest& req)
 {
     if (fromThisHousesLink(c, req)) return true;
-    if (req.viaTunnel || !underALocalName(req) || !AuthManager::fromThisLan(req)) return false;
+    if (req.viaTunnel || !underALocalName(req) || passedAlong(req) ||
+        !AuthManager::fromThisLan(req))
+        return false;
     const QString who = AuthManager::attemptAddress(req.clientAddress, req.headers);
     return QHostAddress(AuthManager::cleanClientAddress(who)).isLoopback();
 }
