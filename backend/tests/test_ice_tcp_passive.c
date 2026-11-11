@@ -14,6 +14,7 @@
 #include "socket.h"
 #include "stun.h"
 #include "thread.h"
+#include "udp.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -739,6 +740,38 @@ static void test_active_only_does_not_listen(void) {
 	juice_destroy(s.agent);
 }
 
+// Not of the passive TCP, but of the same runner: libjuice-udp-long-datagram.patch
+static void test_long_datagram_is_dropped(void) {
+	printf("A datagram longer than the buffer is dropped, the next one is read\n");
+	socket_t rx = socket(AF_INET, SOCK_DGRAM, 0);
+	socket_t tx = socket(AF_INET, SOCK_DGRAM, 0);
+	struct sockaddr_in sin;
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	socklen_t sin_len = sizeof(sin);
+	CHECK(bind(rx, (struct sockaddr *)&sin, sizeof(sin)) == 0);
+	CHECK(getsockname(rx, (struct sockaddr *)&sin, &sin_len) == 0);
+	set_timeout(rx, 2000);
+
+	static char big[5000], next[1200];
+	memset(big, 'b', sizeof(big));
+	memset(next, 's', sizeof(next));
+	CHECK(sendto(tx, big, sizeof(big), 0, (struct sockaddr *)&sin, sizeof(sin)) ==
+	      (int)sizeof(big));
+	CHECK(sendto(tx, next, sizeof(next), 0, (struct sockaddr *)&sin, sizeof(sin)) ==
+	      (int)sizeof(next));
+
+	char buffer[4096];
+	addr_record_t src;
+	int len = udp_recvfrom(rx, buffer, sizeof(buffer), &src);
+	if (len == (int)sizeof(buffer) && buffer[0] == 'b') // cut short, where the system does that
+		len = udp_recvfrom(rx, buffer, sizeof(buffer), &src);
+	CHECK(len == (int)sizeof(next) && buffer[0] == 's');
+	closesocket(rx);
+	closesocket(tx);
+}
+
 int main(void) {
 #ifdef _WIN32
 	WSADATA wsa;
@@ -753,6 +786,7 @@ int main(void) {
 	test_announced_active_takes_no_place();
 	test_taken_tcp_port_means_no_candidate();
 	test_active_only_does_not_listen();
+	test_long_datagram_is_dropped();
 	printf(failures ? "\n%d FAILURE(S)\n" : "\nall passed\n", failures);
 	return failures ? 1 : 0;
 }

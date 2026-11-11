@@ -242,6 +242,9 @@ endif()
 mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-ice-tcp-passive.patch)
 mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
                libdatachannel-ice-tcp-passive.patch)
+# A datagram longer than libjuice's read buffer: Windows reports it as an error,
+# other systems cut it short. With this one libjuice drops it there too.
+mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-udp-long-datagram.patch)
 
 # libdatachannel (WebRTC DataChannel + media). Match the previous .bat flags.
 set(NO_WEBSOCKET ON  CACHE BOOL "" FORCE)

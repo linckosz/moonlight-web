@@ -284,16 +284,18 @@ endif()
 # (once, left alone when it already is). docs/design/ice-tcp-passive.md
 find_package(Git REQUIRED)
 set(_juice ${_src}/third_party/libdatachannel/deps/libjuice)
-set(_juice_patch ${_src}/third_party/patches/libjuice-ice-tcp-passive.patch)
-execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply --reverse --check "${_juice_patch}"
-                RESULT_VARIABLE _juice_patched OUTPUT_QUIET ERROR_QUIET)
-if(NOT _juice_patched EQUAL 0)
-    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply "${_juice_patch}"
-                    RESULT_VARIABLE _juice_failed ERROR_VARIABLE _juice_why)
-    if(NOT _juice_failed EQUAL 0)
-        message(FATAL_ERROR "libjuice-ice-tcp-passive.patch does not apply: ${_juice_why}")
+foreach(_juice_name IN ITEMS libjuice-ice-tcp-passive.patch libjuice-udp-long-datagram.patch)
+    set(_juice_patch ${_src}/third_party/patches/${_juice_name})
+    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply --reverse --check "${_juice_patch}"
+                    RESULT_VARIABLE _juice_patched OUTPUT_QUIET ERROR_QUIET)
+    if(NOT _juice_patched EQUAL 0)
+        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply "${_juice_patch}"
+                        RESULT_VARIABLE _juice_failed ERROR_VARIABLE _juice_why)
+        if(NOT _juice_failed EQUAL 0)
+            message(FATAL_ERROR "${_juice_name} does not apply: ${_juice_why}")
+        endif()
     endif()
-endif()
+endforeach()
 set(NO_SERVER ON CACHE BOOL "" FORCE)
 set(NO_TESTS ON CACHE BOOL "" FORCE)
 add_subdirectory(${_juice} ${CMAKE_BINARY_DIR}/libjuice EXCLUDE_FROM_ALL)

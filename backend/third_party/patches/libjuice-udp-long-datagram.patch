@@ -1,0 +1,16 @@
+diff --git a/src/udp.c b/src/udp.c
+index fddd773..a656349 100644
+--- a/src/udp.c
++++ b/src/udp.c
+@@ -196,6 +196,11 @@ int udp_recvfrom(socket_t sock, char *buffer, size_t size, addr_record_t *src) {
+ 			               ? "ECONNRESET"
+ 			               : (sockerrno == SENETRESET ? "ENETRESET" : "ECONNREFUSED"));
+ 			continue;
++		} else if (sockerrno == SEMSGSIZE) {
++			// Windows reports a datagram longer than the buffer as an error, where other systems
++			// cut it short. Nothing this library reads is that long: it is dropped.
++			JLOG_DEBUG("Ignoring EMSGSIZE returned by recvfrom");
++			continue;
+ 		}
+ 		return len;
+ 	}
