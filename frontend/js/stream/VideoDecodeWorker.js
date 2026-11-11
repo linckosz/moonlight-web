@@ -58,6 +58,7 @@ import { createVideoRenderer } from './renderers/createRenderer.js';
 import { SliceQpReader } from '../util/SliceQp.js';
 import { PipelineDiag } from './PipelineDiag.js';
 import { shouldFlushAtKeyframe } from './DecodeQueuePolicy.js';
+import { queueBrake } from './DecodeBrake.js';
 import { DecoderErrorTrail } from './DecoderErrorTrail.js';
 import { EnhancerGovernor, ladderRung, rendererAlgo } from './EnhancerGovernor.js';
 import { drawCapFor } from './RenderPacing.js';
@@ -855,6 +856,8 @@ function configureAv1Decoder(seqHeaderObu) {
                 if (result.supported) {
                     try {
                         S.decoder.configure(cfg);
+                        // Applied again after a queue flush (flushDecodeQueue).
+                        S._activeDecoderCfg = cfg;
                         S.decoderConfigured = true;
                         S.decoderConfiguring = false;
                         while (S.pendingFrames.length > 0 && !S.pendingFrames[0].isKeyframe) {
@@ -885,11 +888,55 @@ function decodeAv1Frame(data, isKeyframe, arrivalAbs, zones = null) {
     }
     if (!S.decoder) return;
 
+    // The brakes of decodeFrame above, which AV1 had none of (DecodeBrake.js).
+    if (!isKeyframe && !S._referenceValid) {
+        S.stats.dropped++;
+        S.diag.noteDrop('backpressure');
+        requestIdr('reference invalid');
+        return;
+    }
+
+    S.diag.noteDecodeQueue(S.decoder.decodeQueueSize);
+
+    const brake = queueBrake({
+        isKeyframe,
+        queued: S.decoder.decodeQueueSize,
+        queueMax: S.DECODE_QUEUE_MAX,
+        stallStart: S._queueStallStart,
+        now: performance.now(),
+        stallMs: S.QUEUE_STALL_MS,
+        resetMs: S.QUEUE_RESET_MS,
+    });
+    S._queueStallStart = brake.stallStart;
+    if (brake.verdict === 'reset') {
+        handleDecoderError(new Error('Decode queue stalled'));
+        return;
+    }
+    if (brake.verdict === 'drop') {
+        S.stats.dropped++;
+        S.diag.noteDrop('backpressure');
+        S._referenceValid = false;
+        requestIdr('decode queue overflow');
+        return;
+    }
+
     const timestamp = S.frameCount * 16667;
     S.frameCount++;
     const type = isKeyframe ? 'key' : 'delta';
     const obuData = stripNonEssentialObus(data);
-    S.diag.noteDecodeQueue(S.decoder.decodeQueueSize);
+
+    // A keyframe behind a saturated queue: flush the stale pictures first.
+    if (
+        isKeyframe &&
+        shouldFlushAtKeyframe({
+            queued: S.decoder.decodeQueueSize,
+            arrivalMs: S.diag.arrivalAvgMs,
+            sinceLastFlushMs: performance.now() - S._lastQueueFlushMs,
+        })
+    ) {
+        flushDecodeQueue();
+    }
+
     try {
         // AV1 has no backendTs here (synthetic chunk timestamps), so the pacer
         // sees 0 and leaves this path on the present-on-decode behavior.
@@ -902,6 +949,11 @@ function decodeAv1Frame(data, isKeyframe, arrivalAbs, zones = null) {
         if (arrivalAbs > 0) addStageSample(S._arriveSamples, nowAbs() - arrivalAbs);
         S.decoder.decode(chunk);
         S.stats.received++;
+        if (isKeyframe) {
+            S._referenceValid = true;
+            S._idrRequested = false;
+            S._queueStallStart = 0;
+        }
     } catch (err) {
         S.stats.dropped++;
     }

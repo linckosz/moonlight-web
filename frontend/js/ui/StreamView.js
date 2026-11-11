@@ -124,6 +124,7 @@ import {
     formatMainThread,
 } from '../stream/PipelineDiag.js';
 import { shouldFlushAtKeyframe } from '../stream/DecodeQueuePolicy.js';
+import { queueBrake } from '../stream/DecodeBrake.js';
 import { DecodeDelay, DecodeQueueSignal } from '../stream/DecodeQueueSignal.js';
 import { DecodeRateGovernor } from '../stream/DecodeRateGovernor.js';
 import { SilentDecoderWatch } from '../stream/SilentDecoderWatch.js';
@@ -8863,6 +8864,8 @@ export class StreamView {
                     if (result.supported) {
                         try {
                             this.decoder.configure(cfg);
+                            // Applied again after a queue flush (_flushDecodeQueue).
+                            this._activeDecoderCfg = cfg;
                             this.decoderConfigured = true;
                             this.decoderConfiguring = false;
                             console.log(
@@ -8930,6 +8933,53 @@ export class StreamView {
             return;
         }
 
+        // The brakes H.264 and HEVC have in decodeFrame, which AV1 had none
+        // of: a decoder too slow for the stream was fed every picture, and a
+        // thousand were waiting after 50 s (stream/DecodeBrake.js). Deltas
+        // wait for a keyframe while the reference is lost, as there.
+        if (!isKeyframe && !this._referenceValid) {
+            this.stats.dropped++;
+            this._diag.noteDrop('backpressure');
+            // Retry while waiting — the original request may have been lost.
+            this._requestIdr('reference invalid');
+            return;
+        }
+
+        // The decoder's queue, as the other codecs and the worker report it:
+        // without it the overlay read an empty queue under an AV1 that had a
+        // thousand pictures waiting, and nothing that watches the queue (the
+        // enhancer's ladder, the decode-rate governor, Av1Watch) saw it.
+        this._diag.noteDecodeQueue(this.decoder.decodeQueueSize);
+
+        const brake = queueBrake({
+            isKeyframe,
+            queued: this.decoder.decodeQueueSize,
+            queueMax: this.DECODE_QUEUE_MAX,
+            stallStart: this._queueStallStart,
+            now: performance.now(),
+            stallMs: this.QUEUE_STALL_MS,
+            resetMs: this.QUEUE_RESET_MS,
+        });
+        this._queueStallStart = brake.stallStart;
+        if (brake.verdict === 'reset') {
+            console.warn(
+                '[StreamView] AV1 decode queue stalled >' +
+                    this.QUEUE_RESET_MS +
+                    'ms (queueSize=' +
+                    this.decoder.decodeQueueSize +
+                    ') — resetting decoder',
+            );
+            this._handleDecoderError(new Error('Decode queue stalled'));
+            return;
+        }
+        if (brake.verdict === 'drop') {
+            this.stats.dropped++;
+            this._diag.noteDrop('backpressure');
+            this._referenceValid = false;
+            this._requestIdr('decode queue overflow');
+            return;
+        }
+
         const timestamp = this.frameCount * 16667;
         this.frameCount++;
 
@@ -8939,11 +8989,21 @@ export class StreamView {
         // Delimiter and Padding OBUs must be stripped: the WebCodecs sample
         // format forbids them and Safari/VideoToolbox rejects the frame.
         const obuData = stripNonEssentialObus(data);
-        // The decoder's queue, as the other codecs and the worker report it:
-        // without it the overlay read an empty queue under an AV1 that had a
-        // thousand pictures waiting, and nothing that watches the queue (the
-        // enhancer's ladder, the decode-rate governor, Av1Watch) saw it.
-        this._diag.noteDecodeQueue(this.decoder.decodeQueueSize);
+
+        // A keyframe behind a saturated queue recovers nothing: flush the
+        // stale pictures in front of it, when they are worth it (see
+        // decodeFrame and DecodeQueuePolicy).
+        if (
+            isKeyframe &&
+            shouldFlushAtKeyframe({
+                queued: this.decoder.decodeQueueSize,
+                arrivalMs: this._diag.arrivalAvgMs,
+                sinceLastFlushMs: performance.now() - this._lastQueueFlushMs,
+            })
+        ) {
+            this._flushDecodeQueue();
+        }
+
         try {
             const chunk = new EncodedVideoChunk({
                 type: type,
@@ -8970,6 +9030,13 @@ export class StreamView {
             this.decoder.decode(chunk);
             this.stats.received++;
             this._tellDecodeQueue();
+            // Keyframe submitted: the reference is valid again, and the
+            // saturation clock starts over (as in decodeFrame).
+            if (isKeyframe) {
+                this._referenceValid = true;
+                this._idrRequested = false;
+                this._queueStallStart = 0;
+            }
         } catch (err) {
             console.error('[StreamView] decodeAv1Frame() error:', err.message, err);
             this.stats.dropped++;
