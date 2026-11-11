@@ -4,7 +4,12 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-import { PadNumberNotice, padBehindAnother, sessionHere } from '../js/stream/HostPadNumber.js';
+import {
+    CONFIRM_GAP_MS,
+    PadNumberNotice,
+    padBehindAnother,
+    sessionHere,
+} from '../js/stream/HostPadNumber.js';
 import { GamepadManager } from '../js/stream/GamepadManager.js';
 import { TouchPadState } from '../js/stream/TouchPadState.js';
 
@@ -60,14 +65,27 @@ describe('the session that may hold player 1', () => {
 
 describe('the notice', () => {
     function deps(hosts = [sunshineHere]) {
-        return {
+        const d = {
+            clock: 1000,
             hosts: vi.fn(() => Promise.resolve({ hosts })),
             stopSession: vi.fn(() => Promise.resolve({})),
             replug: vi.fn(),
             warn: vi.fn(),
             error: vi.fn(),
             t: (key, vars) => (vars ? `${key}:${vars.number}` : key),
+            now: () => d.clock,
         };
+        return d;
+    }
+
+    /** The button of the latest toast. */
+    const lastAction = (d) => d.warn.mock.calls[d.warn.mock.calls.length - 1][1].action;
+
+    /** Both presses, the second one well after the question. */
+    async function pressTwice(d) {
+        await lastAction(d).onClick();
+        d.clock += CONFIRM_GAP_MS + 100;
+        await lastAction(d).onClick();
     }
 
     it('offers to close the Sunshine session here, then plugs the pads in again', async () => {
@@ -78,9 +96,49 @@ describe('the notice', () => {
         expect(text).toBe('stream.padNumberTaken:2');
         expect(options.sticky).toBe(true);
         expect(options.action.label).toBe('stream.padNumberClose');
-        await options.action.onClick();
+        await pressTwice(d);
         expect(d.stopSession).toHaveBeenCalledWith('sun-1');
         expect(d.replug).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes nothing at the first press, and asks instead', async () => {
+        const d = deps();
+        await new PadNumberNotice(d).note({ index: 0, number: 1 });
+        await lastAction(d).onClick();
+        expect(d.stopSession).not.toHaveBeenCalled();
+        expect(d.warn).toHaveBeenCalledTimes(2);
+        const [text, options] = d.warn.mock.calls[1];
+        expect(text).toBe('stream.padNumberConfirm');
+        expect(options.sticky).toBe(true);
+        expect(options.action.label).toBe('stream.padNumberConfirmClose');
+    });
+
+    it('takes a second press too soon for a tap meant for the game, and asks again', async () => {
+        const d = deps();
+        await new PadNumberNotice(d).note({ index: 0, number: 1 });
+        await lastAction(d).onClick();
+        d.clock += CONFIRM_GAP_MS - 100;
+        await lastAction(d).onClick();
+        expect(d.stopSession).not.toHaveBeenCalled();
+        expect(d.warn).toHaveBeenCalledTimes(3);
+        expect(d.warn.mock.calls[2][0]).toBe('stream.padNumberConfirm');
+        // The question asked again starts its own wait.
+        d.clock += CONFIRM_GAP_MS - 100;
+        await lastAction(d).onClick();
+        expect(d.stopSession).not.toHaveBeenCalled();
+        d.clock += CONFIRM_GAP_MS + 100;
+        await lastAction(d).onClick();
+        expect(d.stopSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the session alone when the question is dismissed', async () => {
+        const d = deps();
+        await new PadNumberNotice(d).note({ index: 0, number: 1 });
+        await lastAction(d).onClick();
+        // A toast dismissed by a tap on its text runs no action.
+        d.clock += 60000;
+        expect(d.stopSession).not.toHaveBeenCalled();
+        expect(d.replug).not.toHaveBeenCalled();
     });
 
     it('says what it can without a button when no session here holds it', async () => {
@@ -108,7 +166,7 @@ describe('the notice', () => {
         const d = deps();
         d.stopSession = vi.fn(() => Promise.reject(new Error('host gone')));
         await new PadNumberNotice(d).note({ index: 0, number: 1 });
-        await d.warn.mock.calls[0][1].action.onClick();
+        await pressTwice(d);
         expect(d.error).toHaveBeenCalledWith('stream.padNumberCloseFailed');
         expect(d.replug).not.toHaveBeenCalled();
     });

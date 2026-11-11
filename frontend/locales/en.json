@@ -853,6 +853,8 @@
         "padNumberTaken": "The game sees this controller as number {{number}}: a Sunshine session holds number 1.",
         "padNumberOther": "The game sees this controller as number {{number}}: another controller on the host holds number 1.",
         "padNumberClose": "Close the Sunshine session",
+        "padNumberConfirm": "Close the Sunshine session? Press again to close it.",
+        "padNumberConfirmClose": "Yes, close it",
         "padNumberCloseFailed": "The Sunshine session could not be closed.",
         "textInputNeedsIme": "Touch keyboard: this host has no key for “{{chars}}”, so it was sent as text. That needs an input method (IBus) running in the host's session; without one, nothing appears, or digits do.",
         "webrtcError": "WebRTC connection error",

@@ -853,6 +853,8 @@
         "padNumberTaken": "Le jeu voit cette manette comme la n° {{number}} : une session Sunshine garde la n° 1.",
         "padNumberOther": "Le jeu voit cette manette comme la n° {{number}} : une autre manette de l’hôte garde la n° 1.",
         "padNumberClose": "Fermer la session Sunshine",
+        "padNumberConfirm": "Fermer la session Sunshine ? Appuyez encore pour la fermer.",
+        "padNumberConfirmClose": "Oui, la fermer",
         "padNumberCloseFailed": "La session Sunshine n’a pas pu être fermée.",
         "textInputNeedsIme": "Clavier tactile : cet hôte n'a pas de touche pour « {{chars}} », envoyé donc en texte. Il faut alors une méthode de saisie (IBus) active dans la session de l'hôte ; sans elle, rien ne s'affiche, ou des chiffres.",
         "webrtcError": "Erreur de connexion WebRTC",

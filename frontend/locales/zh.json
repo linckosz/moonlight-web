@@ -853,6 +853,8 @@
         "padNumberTaken": "游戏将此手柄识别为 {{number}} 号：一个 Sunshine 会话占用了 1 号。",
         "padNumberOther": "游戏将此手柄识别为 {{number}} 号：主机上的另一个手柄占用了 1 号。",
         "padNumberClose": "关闭 Sunshine 会话",
+        "padNumberConfirm": "关闭 Sunshine 会话？再按一次即可关闭。",
+        "padNumberConfirmClose": "是，关闭",
         "padNumberCloseFailed": "无法关闭 Sunshine 会话。",
         "textInputNeedsIme": "触摸键盘：此主机没有可输入“{{chars}}”的按键，因此以文本发送。这需要主机会话中运行输入法（IBus）；否则不会显示任何内容，或显示为数字。",
         "webrtcError": "WebRTC 连接错误",

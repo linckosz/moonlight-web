@@ -31,6 +31,13 @@ import { Host } from '../models/Host.js';
 const PLAYERS = 4;
 
 /**
+ * How soon after the question a press is too soon to be its answer. The toast
+ * can sit over the on-screen controller's buttons: a double tap on A, meant for
+ * the game, would otherwise ask and answer at once.
+ */
+export const CONFIRM_GAP_MS = 600;
+
+/**
  * Whether the host put our pad behind one of something else's: a player
  * number past the controller's own.
  * @param {{index?: unknown, number?: unknown}} msg
@@ -74,7 +81,9 @@ export function sessionHere(hostsData) {
 /**
  * Says so, once per stream, when the host put a pad behind another, and offers
  * to close the session that holds player 1 where it is one this page can
- * close. Everything it touches comes in `deps`, so it is tested on its own.
+ * close. The offer asks twice before it closes anything: a tap meant for the
+ * game can land on it. Everything it touches comes in `deps`, so it is tested
+ * on its own.
  */
 export class PadNumberNotice {
     /**
@@ -85,12 +94,15 @@ export class PadNumberNotice {
      *   warn: (text: string, options?: object) => void,
      *   error: (text: string) => void,
      *   t: (key: string, vars?: object) => string,
+     *   now?: () => number,
      * }} deps
      */
     constructor(deps) {
         this._deps = deps;
+        this._now = deps.now || (() => Date.now());
         this._said = false;
         this._closing = false;
+        this._askedAt = 0;
     }
 
     /**
@@ -119,12 +131,37 @@ export class PadNumberNotice {
             sticky: true,
             action: {
                 label: t('stream.padNumberClose'),
-                onClick: () => this._close(uuid),
+                onClick: () => this._ask(uuid),
             },
         });
     }
 
-    /** The button: the session closed, then every pad plugged in again. */
+    /**
+     * The first press: the question, in a toast of its own (a toast goes when
+     * its button is pressed). It stays until answered or dismissed.
+     */
+    _ask(uuid) {
+        const { t } = this._deps;
+        this._askedAt = this._now();
+        this._deps.warn(t('stream.padNumberConfirm'), {
+            sticky: true,
+            action: {
+                label: t('stream.padNumberConfirmClose'),
+                onClick: () => this._answer(uuid),
+            },
+        });
+    }
+
+    /** The second press: a yes, unless it came too soon to be one. */
+    async _answer(uuid) {
+        if (this._now() - this._askedAt < CONFIRM_GAP_MS) {
+            this._ask(uuid);
+            return;
+        }
+        await this._close(uuid);
+    }
+
+    /** The answer: the session closed, then every pad plugged in again. */
     async _close(uuid) {
         if (this._closing) return;
         this._closing = true;
