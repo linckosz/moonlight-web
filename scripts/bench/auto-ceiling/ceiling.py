@@ -64,6 +64,8 @@ MEMORIES = (journal.KEY, "mw_enhancer_rung", "mw_autostep_failed", "mw_autostep"
 # viewer who never opened Settings has them.
 SETTINGS = {"stream_resolution": "auto", "stream_fps": 0, "stream_bitrate_auto": True,
             "mute_host_audio": True, "show_performance_stats": True}
+# --enhance: the Enhancer on, its algorithm left to Auto, as a viewer who turned it on.
+ENHANCE = {"video_enhancement": "on", "video_enhancement_algo": "auto"}
 
 CAPTURE = r"""(() => {
     if (window.__mwCeilingLog) return window.__mwCeilingLog.length;
@@ -169,6 +171,30 @@ def stats_line(rows):
         if label.startswith(("Auto", "自动")):
             return "%s %s" % (label, value)
     return None
+
+
+def settings_for(a):
+    """What the page is set to: Auto and Auto, and the Enhancer when the pass is about it."""
+    return dict(SETTINGS, **ENHANCE) if getattr(a, "enhance", False) else dict(SETTINGS)
+
+
+def enhancer_of(rows):
+    """The Enhancer's row on the card, whatever the page's language."""
+    for label, value in (rows or {}).items():
+        if label.startswith(("Enhancer", "Amélioration", "增强器")):
+            return value
+    return None
+
+
+def enhancer_defects(samples):
+    """An Enhancer pass shows MWSR at work, or idle where the stream fills the screen
+    (1:1, nothing to enlarge): never missing, never another algorithm."""
+    seen = [s.get("enhancer") for s in samples if s.get("enhancer")]
+    if not seen:
+        return ["the Enhancer was asked for and the card never showed it"]
+    if not any("MWSR" in v or "1:1" in v for v in seen):
+        return ["the Enhancer was asked for and never ran MWSR: %s" % ", ".join(sorted(set(seen)))]
+    return []
 
 
 def pick_tile(d, a):
@@ -346,7 +372,7 @@ class Bench:
         d.navigate(self.access["lan"])
         self.library()
         d.eval("localStorage.removeItem('mw-streaming-settings')")
-        d.apply_settings(SETTINGS)
+        d.apply_settings(settings_for(self.a))
         if self.a.lang:
             d.eval("localStorage.setItem('mw-lang', %s)" % json.dumps(self.a.lang))
             d.call("Page.reload")
@@ -461,13 +487,15 @@ class Bench:
                     rows = stats.get("rows") or {}
                     sample = {"s": round(now - started), "fps": rows.get("Framerate:"),
                               "size": rows.get("Resolution:"), "auto": stats_line(rows),
+                              "enhancer": enhancer_of(rows),
                               "visibility": stats.get("visibility")}
                     result["samples"].append(sample)
                     gpus = nvidia_load() if not self.remote else []
                     if gpus:
                         result["gpu"].append(gpus)
-                    say("  %4d s  %-14s %-22s %s" % (sample["s"], sample["size"], sample["fps"],
-                                                     sample["auto"] or ""))
+                    say("  %4d s  %-14s %-22s %s%s" % (
+                        sample["s"], sample["size"], sample["fps"], sample["auto"] or "",
+                        "  [%s]" % sample["enhancer"] if a.enhance and sample["enhancer"] else ""))
                     # What the pass has so far survives a browser lost at minute nine.
                     save(tag, result)
                 s = journal.parse(lines)
@@ -521,6 +549,8 @@ class Bench:
         if not any(x["auto"] for x in result["samples"]) and s["rung"] and s["rung"] > journal.BASE_M \
                 and a.learn == "1":
             bad.append("above the base budget and the stats card never showed its line")
+        if a.enhance:
+            bad += enhancer_defects(result["samples"])
         if a.target == "vdisplay":
             self.wait_screens(baseline, result)
         result["defects"] = bad
@@ -604,10 +634,11 @@ def plan(a):
         how = ("the key kept as it is" if a.keep else
                "the key prepared at %s M" % a.rung if a.rung else "no key")
         say("one launch of %d s with %s, expected: %s" % (a.secs, how, a.expect))
-    say("mw_auto_learn=%s%s, target %s%s%s, content %s" % (
+    say("mw_auto_learn=%s%s, target %s%s%s%s, content %s" % (
         a.learn, ", mw_autostep=" + a.autostep if a.autostep else "", a.target,
         ", tile " + a.tile if a.tile else "",
-        ", the page told it has a %s screen" % a.screen if a.screen else "", a.page))
+        ", the page told it has a %s screen" % a.screen if a.screen else "",
+        ", the Enhancer on (algorithm Auto)" if a.enhance else "", a.page))
     say("client: %s" % ("port %d, %s" % (a.client_port, a.client_url) if a.client_port
                         else "a kiosk on this machine, MW_BENCH_CLIENT_POS=%s MW_BENCH_CLIENT_LUID=%s" % (
                             os.environ.get("MW_BENCH_CLIENT_POS", ""),
@@ -636,6 +667,8 @@ def main():
     ap.add_argument("--tile", default="", help="the display tile, by its name")
     ap.add_argument("--gdi", default="", help="that tile's screen (DISPLAY1), for the page's place")
     ap.add_argument("--screen", default="", help="what the page is told its screen is: 3840x2160")
+    ap.add_argument("--enhance", action="store_true",
+                    help="the Enhancer on, algorithm Auto: a rung held with MWSR running")
     # band=1: the text has an end and the page is blank a fifth of the time; the
     # band still changes every frame, so a loaded stream stays loaded.
     ap.add_argument("--page", default="scroll.html?px=600&band=1",

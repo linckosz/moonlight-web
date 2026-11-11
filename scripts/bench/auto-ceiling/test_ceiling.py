@@ -146,7 +146,8 @@ class Rig(unittest.TestCase):
 
     def args(self, **over):
         base = dict(mode="rung", tag="t", rung=500, keep=False, secs=30, every=2, expect="hold",
-                    learn="1", target="vdisplay", tile="", gdi="", screen="", page="p.html",
+                    learn="1", target="vdisplay", tile="", gdi="", screen="", enhance=False,
+                    page="p.html",
                     lang="", client_port=0, client_url="", max_launches=7, plan=False,
                     load_gpu="", load_at=30, until_earned=False, autostep="",
                     rendezvous=False, refuse_above=0)
@@ -413,6 +414,58 @@ class APreparedKey(Rig):
     def test_the_journal_is_not_blamed_for_the_pass_s_own_key(self):
         line = P + "250 M on hevc, asking 248 M, held back by it (journal only)"
         self.assertEqual(self.launch_at_the_base([line], "log", "journal")["defects"], [])
+
+
+class TheEnhancer(Rig):
+    HELD = [P + "330 M on hevc, on trial, asking 328 M, held back by it",
+            P + "330 M held, 300 s loaded",
+            P + "450 M earned for the next launch, 300 s loaded",
+            P + "stream over, 400 s loaded at 330 M"]
+
+    def launch_showing(self, enhancer, enhance=True):
+        """A 330 M rung held, the card's Enhancer row saying `enhancer`."""
+        self.driver = FakeDriver([self.HELD])
+        inner = self.driver.stats
+
+        def stats():
+            out = inner()
+            if out.get("canvas") and enhancer:
+                out["rows"]["Enhancer:"] = enhancer
+            return out
+
+        self.driver.stats = stats
+        self.launch_appears()
+        b = ceiling.Bench(self.args(rung=330, enhance=enhance))
+        result = b.one_launch("t", 330, False, "hold")[2]
+        b.close()
+        return result
+
+    def test_turns_it_on_and_sees_mwsr_at_work(self):
+        result = self.launch_showing("WebGL MWSR")
+        self.assertEqual(self.driver.settings["video_enhancement"], "on")
+        self.assertEqual(self.driver.settings["video_enhancement_algo"], "auto")
+        self.assertEqual(result["samples"][0]["enhancer"], "WebGL MWSR")
+        self.assertEqual(result["defects"], [])
+
+    def test_takes_a_stream_that_fills_the_screen_for_mwsr_idle(self):
+        self.assertEqual(self.launch_showing("Off (1:1)")["defects"], [])
+
+    def test_says_when_mwsr_never_ran(self):
+        self.assertIn("the Enhancer was asked for and never ran MWSR: WebGL SGSR",
+                      self.launch_showing("WebGL SGSR")["defects"])
+
+    def test_says_when_the_card_never_showed_it(self):
+        self.assertIn("the Enhancer was asked for and the card never showed it",
+                      self.launch_showing(None)["defects"])
+
+    def test_leaves_it_alone_otherwise(self):
+        result = self.launch_showing(None, enhance=False)
+        self.assertNotIn("video_enhancement", self.driver.settings)
+        self.assertEqual(result["defects"], [])
+
+    def test_reads_its_row_in_every_language(self):
+        for label in ("Enhancer:", "Amélioration :", "增强器："):
+            self.assertEqual(ceiling.enhancer_of({"Resolution:": "1", label: "MWSR 2"}), "MWSR 2")
 
 
 class Silence(unittest.TestCase):

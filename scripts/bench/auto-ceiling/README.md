@@ -58,6 +58,7 @@ source, so a sentence changed there fails here.
 | `--expect sick` | A client that cannot hold its rung: the signal at the rung, one rung down in the key, the failure counted, the entry closed. The pass ends at the signal. |
 | `--load-gpu` | A client made ill on this machine, with `--expect sick`. |
 | `--client-port` + `--expect sick` | A weak machine at a rung it asks for and cannot hold: no load tool, the machine is its own. The rung must be one its screen can ask for: 2160p60 is 498 M, so 500 on a 60 Hz screen, 1000 on a 120 Hz one (with `--screen 3840x2160`). `--client-url` is the host's LAN address: the fleet knows this desk by its loopback, and a pass that would send the other machine there stops at once. |
+| `--enhance` | The Enhancer on, algorithm Auto: the rung holds with MWSR running. Every reading keeps the card's Enhancer row; MWSR never seen (nor idle at 1:1, where the stream fills the screen) is a defect. MWSR only works when the stream is smaller than the screen: on a 1440p120 desk, 330 M (2204×1240) is the rung that makes it work. |
 | `--autostep 0` | The same stream without the cadence's steps. By default a step kept to the end counts for the rung, and nothing that happens on it counts against. |
 | any active rung | What the browser was asked (`decodingInfo`) is in the results: the guard says nothing of a "yes", and a browser never asked is a defect. |
 | `--refuse-above M` | The browser says no above M: the launch comes down a rung, nothing is written. The answer is the bench's own, the path is the real one. |
