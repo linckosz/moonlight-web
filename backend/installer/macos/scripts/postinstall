@@ -197,31 +197,54 @@ fi
 #    running program. Nothing here can grant it on their behalf.
 #
 #    An update lands on a running app: the bundle on disk is new, the process
-#    is not, and `open -a` only brings the old one forward. So this edition's
-#    own LaunchAgent, when it is running, is restarted in place
-#    (`kickstart -k`: launchd stops it and starts the new binary, --autostart,
-#    no browser). Otherwise any instance of this edition's binary, started by
-#    hand, is asked to quit before the launch. The other edition's app and
+#    is not, and `open -a` only brings the old one forward. So when this
+#    edition's own LaunchAgent is running, it is registered anew: bootout
+#    stops the old app and drops the job, then bootstrap loads the plist
+#    again, and its RunAtLoad starts the new binary (--autostart, no browser).
+#    Restarting the job as it was loaded (`kickstart -k`) is not enough:
+#    launchd keeps what it learned of the binary at load time, and macOS kills
+#    the replaced one at its first launch ("Launch Constraint Violation"), or
+#    refuses it outright after a downgrade, since our builds carry no Team ID
+#    to fall back on. Otherwise any instance of this edition's binary, started
+#    by hand, is asked to quit before the launch. The other edition's app and
 #    agent have their own names and are never touched.
 if [ "$CONSOLE_UID" != "0" ]; then
-    if /bin/launchctl print "gui/$CONSOLE_UID/$AGENT_LABEL" 2>/dev/null \
-            | /usr/bin/grep -q 'state = running'; then
-        /bin/launchctl kickstart -k "gui/$CONSOLE_UID/$AGENT_LABEL" \
-            && echo "restarted the running $AGENT_LABEL" \
-            || echo "WARN: could not restart $AGENT_LABEL"
-    else
-        # Whole command line anchored on the exact path: MoonlightWeb and
-        # MoonlightWebDev never match each other.
-        PATTERN="^$EXE( |\$)"
-        if /usr/bin/pgrep -u "$CONSOLE_UID" -f "$PATTERN" >/dev/null; then
-            /usr/bin/pkill -TERM -u "$CONSOLE_UID" -f "$PATTERN"
-            for _ in 1 2 3 4 5 6 7 8 9 10; do
-                /usr/bin/pgrep -u "$CONSOLE_UID" -f "$PATTERN" >/dev/null || break
-                /bin/sleep 0.5
-            done
-            /usr/bin/pkill -KILL -u "$CONSOLE_UID" -f "$PATTERN" 2>/dev/null
-            echo "stopped the running $APP_NAME"
+    SERVICE="gui/$CONSOLE_UID/$AGENT_LABEL"
+    PLIST="$AGENTS/$AGENT_LABEL.plist"
+    # Whole command line anchored on the exact path: MoonlightWeb and
+    # MoonlightWebDev never match each other.
+    PATTERN="^$EXE( |\$)"
+    stop_running_copy() {
+        /usr/bin/pgrep -u "$CONSOLE_UID" -f "$PATTERN" >/dev/null || return 0
+        /usr/bin/pkill -TERM -u "$CONSOLE_UID" -f "$PATTERN"
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            /usr/bin/pgrep -u "$CONSOLE_UID" -f "$PATTERN" >/dev/null || break
+            /bin/sleep 0.5
+        done
+        /usr/bin/pkill -KILL -u "$CONSOLE_UID" -f "$PATTERN" 2>/dev/null
+        echo "stopped the running $APP_NAME"
+    }
+    AGENT_RUNNING=false
+    if /bin/launchctl print "$SERVICE" 2>/dev/null | /usr/bin/grep -q 'state = running'; then
+        AGENT_RUNNING=true
+    fi
+    if /bin/launchctl print "$SERVICE" >/dev/null 2>&1; then
+        # Loaded, running or not: its record of the old binary goes either way.
+        /bin/launchctl bootout "$SERVICE" \
+            && echo "unloaded $AGENT_LABEL" || echo "WARN: could not unload $AGENT_LABEL"
+        # bootout waits for the job; a straggler must still not hold the launch.
+        stop_running_copy
+    fi
+    if [ "$AGENT_RUNNING" = "true" ] && [ -f "$PLIST" ]; then
+        if /bin/launchctl bootstrap "gui/$CONSOLE_UID" "$PLIST"; then
+            echo "reloaded $AGENT_LABEL on the new binary"
+        else
+            echo "WARN: could not reload $AGENT_LABEL, launching the app instead"
+            /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" \
+                /usr/bin/open -a "$APP" || echo "WARN: could not launch the app"
         fi
+    else
+        stop_running_copy
         /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" \
             /usr/bin/open -a "$APP" || echo "WARN: could not launch the app"
     fi

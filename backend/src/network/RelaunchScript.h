@@ -35,20 +35,12 @@ inline QString shQuote(const QString& s)
 /// `exe` is what starts the app (the binary, its launcher, or the AppImage);
 /// `configOverride` the --config it runs on, empty for the default one.
 /// `launchdService` is the LaunchAgent we run under (`gui/<uid>/<label>`),
-/// empty when launchd did not start us.
+/// empty when launchd did not start us, and `launchdPlist` the file that
+/// defines it.
 inline QString build(const QString& install, qint64 pid, const QString& exe,
-                     const QString& configOverride, const QString& launchdService = {})
+                     const QString& configOverride, const QString& launchdService = {},
+                     const QString& launchdPlist = {})
 {
-    // Under launchd the job is what comes back: a crash-only KeepAlive already
-    // restarts it once our kill lands, and the kickstart (no -k, so it never
-    // stops a running one) covers a clean exit. Started by hand instead, the
-    // new server would live outside its agent: launchd would report it stopped,
-    // never restart it after a crash, and the next .pkg would not find it.
-    if (!launchdService.isEmpty())
-        return QStringLiteral("%1; kill %2 2>/dev/null; sleep 3; "
-                              "/bin/launchctl kickstart %3 >/dev/null 2>&1")
-            .arg(install, QString::number(pid), shQuote(launchdService));
-
     // --autostart: nobody clicked anything, so the app comes back as from the
     // login item, without opening its admin page in a browser on the host's
     // desktop. (On a .deb the maintainer scripts skip their own start while the
@@ -56,6 +48,33 @@ inline QString build(const QString& install, qint64 pid, const QString& exe,
     QString relaunch = shQuote(exe) + QStringLiteral(" --autostart");
     if (!configOverride.isEmpty())
         relaunch += QStringLiteral(" --config ") + shQuote(configOverride);
+
+    // Under launchd the job is what comes back. Started by hand instead, the
+    // new server would live outside its agent: launchd would report it stopped,
+    // never restart it after a crash, and the next .pkg would not find it.
+    //
+    // The job is registered anew rather than kickstarted: launchd keeps what
+    // it learned of the binary when the job was loaded, and macOS kills a
+    // replaced binary launched under that old record ("Launch Constraint
+    // Violation") — our builds carry no Team ID for it to fall back on. A
+    // restart from scratch (bootout, then bootstrap of the same plist, whose
+    // RunAtLoad starts it) records the new one. Should the bootstrap fail, a
+    // direct start still beats a host left down.
+    if (!launchdService.isEmpty() && !launchdPlist.isEmpty()) {
+        const QString domain = launchdService.section(QLatin1Char('/'), 0, 1);
+        return QStringLiteral("%1; kill %2 2>/dev/null; sleep 3; "
+                              "/bin/launchctl bootout %3 >/dev/null 2>&1; "
+                              "/bin/launchctl bootstrap %4 %5 >/dev/null 2>&1 || "
+                              "{ %6 >/dev/null 2>&1 & }")
+            .arg(install, QString::number(pid), shQuote(launchdService), shQuote(domain),
+                 shQuote(launchdPlist), relaunch);
+    }
+    // No plist to load it from: the kickstart (no -k, so it never stops a
+    // running one) is all launchd can do with the job as it is.
+    if (!launchdService.isEmpty())
+        return QStringLiteral("%1; kill %2 2>/dev/null; sleep 3; "
+                              "/bin/launchctl kickstart %3 >/dev/null 2>&1")
+            .arg(install, QString::number(pid), shQuote(launchdService));
 
     // One multi-arg call, not chained .arg(): a path containing "%1" in an
     // earlier argument would otherwise swallow a later substitution.
