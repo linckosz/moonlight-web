@@ -4,6 +4,7 @@
 #include "test_framework.h"
 #include "platform/SignInScreen.h"
 #include "streaming/RemoteDesktopReturnPolicy.h"
+#include "streaming/WorkerService.h"
 
 using namespace RemoteDesktopReturnPolicy;
 
@@ -54,6 +55,63 @@ Tracker leftFor(int ticks)
     for (int i = 0; i < ticks; ++i)
         t.observe(seen(Disconnected));
     return t;
+}
+
+/// The access mask the control pipe's DACL gives the interactive user, read
+/// from its SDDL; 0 when there is no such entry.
+quint32 interactiveUserMask(const QString& sddl)
+{
+    const int end = sddl.indexOf(QStringLiteral(";;;IU)"));
+    if (end < 0) return 0;
+    const int start = sddl.lastIndexOf(QStringLiteral("(A;;"), end);
+    if (start < 0) return 0;
+    bool ok = false;
+    const quint32 mask = sddl.mid(start + 4, end - start - 4).toUInt(&ok, 16);
+    return ok ? mask : 0;
+}
+
+/// The launcher's control pipe: the user may talk to it and nothing more, and
+/// a caller speaks only to the pipe the service itself serves.
+void run_control_pipe_tests()
+{
+    SECTION("WorkerService — what the interactive user may do on the control pipe");
+    {
+        const QString sddl = QString::fromLatin1(WorkerService::kControlPipeSddl);
+        // Protected: nothing inherited widens it.
+        CHECK(sddl.startsWith(QStringLiteral("D:P")));
+        CHECK(sddl.contains(QStringLiteral("(A;;GA;;;SY)")));
+        CHECK(sddl.contains(QStringLiteral("(A;;GA;;;BA)")));
+        // Nobody else has an entry: no Everyone, no Authenticated Users.
+        CHECK_EQ(sddl.count(QLatin1Char('(')), 3);
+
+        const quint32 mask = interactiveUserMask(sddl);
+        CHECK_EQ(mask, 0x0012019Bu);
+        // FILE_CREATE_PIPE_INSTANCE (FILE_APPEND_DATA): only the service makes
+        // instances of its pipe.
+        CHECK((mask & 0x00000004u) == 0);
+        // FILE_GENERIC_READ (what GENERIC_READ maps to) and FILE_WRITE_DATA:
+        // a request written, its answer read.
+        CHECK((mask & 0x00120089u) == 0x00120089u);
+        CHECK((mask & 0x00000002u) != 0);
+        // Nothing that changes the pipe's owner or its descriptor.
+        CHECK((mask & 0x000C0000u) == 0); // WRITE_DAC, WRITE_OWNER
+        CHECK((mask & 0x00010000u) == 0); // DELETE
+
+        // What a caller asks for when it opens the pipe: read, and write the
+        // data. Never GENERIC_WRITE, which asks for the instance right too.
+        CHECK_EQ(WorkerService::kControlPipeClientAccess, 0x80000002u);
+        CHECK((WorkerService::kControlPipeClientAccess & 0x40000000u) == 0);
+        CHECK((WorkerService::kControlPipeClientAccess & 0x00000004u) == 0);
+    }
+
+    SECTION("WorkerService — a caller speaks only to the service's own pipe");
+    CHECK(WorkerService::controlPipeServerIsService(4242, 4242));
+    // Served by another process: the service stopped, and something else made
+    // a pipe of that name.
+    CHECK(!WorkerService::controlPipeServerIsService(4242, 1717));
+    // The service is not running, or could not be asked.
+    CHECK(!WorkerService::controlPipeServerIsService(4242, 0));
+    CHECK(!WorkerService::controlPipeServerIsService(0, 0));
 }
 
 /// The console's sign-in screen, streamed by a SYSTEM worker on a console
@@ -419,4 +477,5 @@ void run_remote_desktop_return_tests()
     }
 
     run_sign_in_screen_tests();
+    run_control_pipe_tests();
 }

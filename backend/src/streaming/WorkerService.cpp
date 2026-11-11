@@ -744,9 +744,11 @@ void controlLoop()
     // request and read the answer, and nothing else. The default DACL of a
     // named pipe would let every logon session on the machine in, including a
     // service account and a second, remote, desktop.
+    // The user may not make an instance of the pipe (kControlPipeSddl).
     PSECURITY_DESCRIPTOR sd = nullptr;
-    if (!::ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12019f;;;IU)", SDDL_REVISION_1, &sd, nullptr)) {
+    const std::wstring sddl = QString::fromLatin1(WorkerService::kControlPipeSddl).toStdWString();
+    if (!::ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd,
+                                                                nullptr)) {
         Logger::error(QStringLiteral("[WorkerService] cannot build the control pipe's DACL "
                                      "(error %1)")
                           .arg(::GetLastError()));
@@ -864,8 +866,38 @@ bool available()
 
 namespace {
 
+static_assert(WorkerService::kControlPipeClientAccess == (GENERIC_READ | FILE_WRITE_DATA),
+              "the control pipe is opened for reading and for writing its data alone");
+
+/// The process the service manager runs this service as, 0 when it is not
+/// running or cannot be asked. SERVICE_QUERY_STATUS is the interactive
+/// user's on a service's default security.
+DWORD runningServicePid()
+{
+    SC_HANDLE scm = ::OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return 0;
+    const std::wstring name = WorkerService::serviceName().toStdWString();
+    SC_HANDLE service = ::OpenServiceW(scm, name.c_str(), SERVICE_QUERY_STATUS);
+    DWORD pid = 0;
+    if (service) {
+        SERVICE_STATUS_PROCESS status = {};
+        DWORD needed = 0;
+        if (::QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO,
+                                   reinterpret_cast<LPBYTE>(&status), sizeof(status), &needed) &&
+            status.dwCurrentState == SERVICE_RUNNING)
+            pid = status.dwProcessId;
+        ::CloseServiceHandle(service);
+    }
+    ::CloseServiceHandle(scm);
+    return pid;
+}
+
 /// One request on the control pipe, and its one-line answer: true on "ok …",
 /// false with the reason on "err …" or when the service cannot be reached.
+///
+/// Identification only: the service may read who asks, never act as them.
+/// And the pipe is spoken to only once its server is known to be the
+/// service itself (controlPipeServerIsService).
 bool askService(const QByteArray& request, QString* error)
 {
     auto fail = [&](const QString& why) {
@@ -873,14 +905,14 @@ bool askService(const QByteArray& request, QString* error)
         return false;
     };
     const std::wstring path = controlPipePath();
-    HANDLE pipe =
-        ::CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
-                      SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
+    const DWORD access = WorkerService::kControlPipeClientAccess;
+    HANDLE pipe = ::CreateFileW(path.c_str(), access, 0, nullptr, OPEN_EXISTING,
+                                SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
     if (pipe == INVALID_HANDLE_VALUE && ::GetLastError() == ERROR_PIPE_BUSY) {
         // Another session is being started at this very moment: the service
         // serves one request at a time and each is a CreateProcess long.
         ::WaitNamedPipeW(path.c_str(), kRequestTimeoutMs);
-        pipe = ::CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+        pipe = ::CreateFileW(path.c_str(), access, 0, nullptr, OPEN_EXISTING,
                              SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
     }
     if (pipe == INVALID_HANDLE_VALUE) {
@@ -888,6 +920,16 @@ bool askService(const QByteArray& request, QString* error)
         return fail(err == ERROR_FILE_NOT_FOUND
                         ? QStringLiteral("the worker service is not running")
                         : QStringLiteral("cannot reach the worker service (error %1)").arg(err));
+    }
+    ULONG serverPid = 0;
+    const DWORD servicePid = runningServicePid();
+    if (!::GetNamedPipeServerProcessId(pipe, &serverPid) ||
+        !WorkerService::controlPipeServerIsService(serverPid, servicePid)) {
+        ::CloseHandle(pipe);
+        return fail(QStringLiteral("the worker service's pipe is served by process %1, not by "
+                                   "the service (%2)")
+                        .arg(serverPid)
+                        .arg(servicePid));
     }
 
     const QByteArray line = request + '\n';

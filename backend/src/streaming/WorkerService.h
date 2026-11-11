@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QString>
+#include <QtGlobal>
 
 /**
  * The launcher service: a stream worker that runs as SYSTEM on the console
@@ -88,6 +89,28 @@ QString serviceName();
 /// The control pipe's base name (no `\\.\pipe\` prefix), per edition too, so a
 /// DEV install and a production one never answer for each other.
 QString controlPipeName();
+
+/// The control pipe's security descriptor, in SDDL. SYSTEM and the
+/// administrators have it all. The interactive user gets 0x12019b: connect
+/// (SYNCHRONIZE), read and write the data, the attributes and the extended
+/// attributes, and read the descriptor. Not FILE_CREATE_PIPE_INSTANCE (0x4):
+/// only this service makes instances of its own pipe.
+inline constexpr char kControlPipeSddl[] = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12019b;;;IU)";
+
+/// What a caller opens the control pipe with: GENERIC_READ and FILE_WRITE_DATA.
+/// GENERIC_WRITE would also ask for FILE_APPEND_DATA, which on a pipe is
+/// FILE_CREATE_PIPE_INSTANCE, and kControlPipeSddl gives the user no such
+/// right.
+constexpr quint32 kControlPipeClientAccess = 0x80000000u | 0x00000002u;
+
+/// Whether the pipe a caller reached is this service's: the process at its
+/// server end (GetNamedPipeServerProcessId) is the one the service manager
+/// runs the service as (@p servicePid, 0 when it is not running). A pipe of
+/// that name served by anything else is never spoken to.
+inline bool controlPipeServerIsService(quint32 pipeServerPid, quint32 servicePid)
+{
+    return servicePid != 0 && pipeServerPid == servicePid;
+}
 
 /// Whether a native worker started from this desktop process should go through
 /// the service: Windows, on the desktop, the service registered with THIS
