@@ -495,7 +495,7 @@ location / {
 }
 ```
 
-With **Apache**, keep `ProxyPreserveHost On` (it adds `X-Forwarded-For` by itself) and add `upgrade=websocket` to the `ProxyPass` line.
+With **Apache**, keep `ProxyPreserveHost On` (it adds `X-Forwarded-For` by itself) and add `upgrade=websocket` to the `ProxyPass` line. **Caddy**'s `reverse_proxy` keeps the `Host` and adds `X-Forwarded-For` by itself, so it needs no extra line.
 
 ---
 
