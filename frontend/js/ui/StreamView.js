@@ -2968,17 +2968,39 @@ export class StreamView {
                 if (this.videoCodec === CODEC_AV1) frame = cropToAnnounced(frame, this._frameSize);
                 this.onDecodedFrame(frame);
             },
-            error: (err) => {
-                console.error('[StreamView] VideoDecoder error:', err.message, err);
-                if (err.code) console.error('[StreamView] Error code:', err.code);
-                console.warn(
-                    '[StreamView] ' +
-                        this._decoderTrail.line(err, performance.now(), this.videoCodec),
-                );
-                this._handleDecoderError(err);
-            },
+            error: (err) => this._onDecoderError(err),
         });
         console.log('[StreamView] VideoDecoder created, state=' + this.decoder.state);
+    }
+
+    /**
+     * The decoder threw. On a hidden page that is iOS taking the hardware
+     * decoder back as the app goes to the background (Chrome and Safari on
+     * an iPhone, "Decoder failure" a few hundred ms after "visibility hidden",
+     * every one of the 13 in the prod log of 07-11/11): the stream did nothing
+     * wrong. It is logged as what it is, and the decoder is rebuilt without
+     * spending one of the recovery attempts meant for a broken stream — once
+     * per spell in the background: a desktop tab keeps decoding while hidden,
+     * and a decoder that keeps failing there is a broken stream again.
+     */
+    _onDecoderError(err) {
+        const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+        const forgiven = hidden && !this._hiddenLossForgiven;
+        if (forgiven) this._hiddenLossForgiven = true;
+        if (hidden) {
+            console.warn(
+                '[StreamView] VideoDecoder lost while the page is hidden: ' +
+                    (err && err.message) +
+                    ' — rebuilt, a keyframe asked for when the page is back',
+            );
+        } else {
+            console.error('[StreamView] VideoDecoder error:', err && err.message, err);
+            if (err && err.code) console.error('[StreamView] Error code:', err.code);
+        }
+        console.warn(
+            '[StreamView] ' + this._decoderTrail.line(err, performance.now(), this.videoCodec),
+        );
+        this._handleDecoderError(err, { hidden: forgiven });
     }
 
     /**
@@ -2997,8 +3019,12 @@ export class StreamView {
      *
      * After recovery, the next keyframe triggers configureDecoder() which
      * reconfigures the new decoder and resumes normal playback.
+     *
+     * `opts.hidden`: the error came while the page was hidden (see
+     * _onDecoderError) — the decoder is rebuilt the same way, but the
+     * attempt is not counted.
      */
-    _handleDecoderError(err) {
+    _handleDecoderError(err, opts = {}) {
         // Guard: prevent recovery during quit (or the manual-quit animation)
         if (this._quitting || this._manualQuitting) return;
         // Guard: prevent re-entrant recovery (error callback may fire during
@@ -3006,8 +3032,9 @@ export class StreamView {
         if (this._decoderRecovering) return;
         this._diag.noteRecovery('reset');
         // Guard: limit total recovery attempts to avoid infinite loops on
-        // a fundamentally broken connection
-        this._recoveryAttempts++;
+        // a fundamentally broken connection. A decoder the system took back
+        // from a hidden page says nothing about the stream.
+        if (!opts.hidden) this._recoveryAttempts++;
 
         // Decode capability failure: the config passed isConfigSupported() but the
         // browser cannot actually decode it (e.g. Android Chrome with HEVC Main10
@@ -6210,8 +6237,9 @@ export class StreamView {
      * pacer would pin its reserve — so they are re-primed here, and the
      * transport is told the silence was ours. Frames the host evicted while
      * we were away arrive as a frameId gap and take the ordinary path: named
-     * to the host, healed with a delta. Nothing is requested here — except
-     * that the next link report carries `resumed`, so the host's governor
+     * to the host, healed with a delta. Nothing is requested here — but a
+     * keyframe when the decoder lost its reference meanwhile (below), and
+     * the next link report carries `resumed`, so the host's governor
      * does not read those gaps as the link's and undoes the cut it made when
      * our reports stopped (a frozen page cost five quiet reports to climb
      * back, measured 04/09/2026).
@@ -6237,6 +6265,16 @@ export class StreamView {
             this.webrtc.noteResumed();
         }
         if (this._gamepadManager) this._gamepadManager.resendAll();
+        // The one thing that cannot wait for a gap: a decoder rebuilt while
+        // the page was hidden (iOS takes it back, see _onDecoderError) needs a
+        // keyframe, and the request it made then went out from a page about to
+        // freeze. Without this one the picture came back on the transport's
+        // own starvation requests: 5.7 s after the page, 11 s in all, on an
+        // iPhone (11/11). Main-thread decode only: the worker keeps its own.
+        if (!this._videoWorker && !this._referenceValid)
+            this._requestIdr('back from the background');
+        // The next spell in the background forgives its own lost decoder.
+        this._hiddenLossForgiven = false;
         // What the detection measured before is of another page: start over.
         if (this._stepper) this._stepper.linkChanged('back from the background', performance.now());
     }
