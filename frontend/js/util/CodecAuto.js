@@ -325,53 +325,66 @@ export function autoLaunchCodec(hostCodecs = 0, ua, s, now, av1 = {}) {
  *  stream stops feeding it at 8 (StreamView, DECODE_QUEUE_MAX), and a decoder
  *  that keeps up holds 0 or 1. */
 export const AV1_WATCH_QUEUE = 4;
-/** That much time spent so, within the first minute, is a failure. */
+/** Pictures a second from which a stream is moving. A desktop that stands
+ *  still sends two, and decoding those says nothing of the decoder. */
+export const AV1_WATCH_MOVING_FPS = 24;
+/** That much time spent not keeping up, within the first minute of moving
+ *  pictures, is a failure. */
 export const AV1_WATCH_FAIL_MS = 5000;
 export const AV1_WATCH_FIRST_MS = 60 * 1000;
-/** A stream this long without it ran smoothly. */
+/** That long in moving pictures without it ran smoothly. */
 export const AV1_WATCH_PROVEN_MS = 120 * 1000;
 
 /**
- * Whether an AV1 stream keeps up, from the decoder's queue read now and then
- * (PipelineDiag, decodeQueueAvg). An AV1 decoded in software on a client too
- * weak for it raises no error: its queue fills, pictures are dropped, and the
- * stream stutters for as long as it lasts.
+ * Whether an AV1 stream keeps up, read now and then from the decoder's queue
+ * (PipelineDiag, decodeQueueAvg), the pictures arriving, and the decode-rate
+ * governor. An AV1 decoded in software on a client too weak for it raises no
+ * error: its queue fills and the stream falls behind for as long as it lasts
+ * (a N95 on 1440p60: 39 pictures decoded of the 60 a second, a thousand
+ * waiting after 50 s — 11/11/2026). Where a native host was asked for fewer
+ * pictures the queue empties again: that is no decoder keeping up either.
  *
- * One verdict per stream: 'failed' once the queue was full for
- * AV1_WATCH_FAIL_MS of the first minute, or 'proven' after
- * AV1_WATCH_PROVEN_MS that never added up to that.
+ * Time counts only while pictures move (AV1_WATCH_MOVING_FPS): two minutes of
+ * a still desktop are not two minutes of decoding. One verdict per stream:
+ * 'failed' once the decoder did not keep up for AV1_WATCH_FAIL_MS within the
+ * first minute of moving pictures, or 'proven' after AV1_WATCH_PROVEN_MS of
+ * them that never added up to that.
  */
 export class Av1Watch {
     constructor() {
-        this._startedAt = null;
         this._last = null;
-        this._fullMs = 0;
+        this._movingMs = 0;
+        this._behindMs = 0;
         this._over = false;
     }
 
     /**
-     * @param {number} queueAvg the decoder queue, averaged since the last reading
+     * @param {{queue?: number, fps?: number, capped?: boolean}} reading since
+     *   the last one: the decoder queue's average, the pictures arriving a
+     *   second, and whether the host is being asked for fewer of them
      * @param {number} now ms, any monotonic clock
      * @returns {'failed'|'proven'|null} the verdict, the one time it is reached
      */
-    sample(queueAvg, now) {
+    sample(reading, now) {
         if (this._over) return null;
-        if (this._startedAt === null) {
-            this._startedAt = now;
+        if (this._last === null) {
             this._last = now;
             return null;
         }
         // A page put away reads late: no more than two seconds a reading.
         const step = Math.min(Math.max(now - this._last, 0), 2000);
         this._last = now;
-        if (queueAvg >= AV1_WATCH_QUEUE) this._fullMs += step;
-        const elapsed = now - this._startedAt;
-        if (this._fullMs >= AV1_WATCH_FAIL_MS) {
+        const r = reading || {};
+        const behind = r.capped === true || (r.queue || 0) >= AV1_WATCH_QUEUE;
+        if (behind) this._behindMs += step;
+        // A decoder behind is at work, however few pictures arrive.
+        if (behind || (r.fps || 0) >= AV1_WATCH_MOVING_FPS) this._movingMs += step;
+        if (this._behindMs >= AV1_WATCH_FAIL_MS) {
             // Past the first minute it is no failure, and no proof either.
             this._over = true;
-            return elapsed <= AV1_WATCH_FIRST_MS ? 'failed' : null;
+            return this._movingMs <= AV1_WATCH_FIRST_MS ? 'failed' : null;
         }
-        if (elapsed >= AV1_WATCH_PROVEN_MS) {
+        if (this._movingMs >= AV1_WATCH_PROVEN_MS) {
             this._over = true;
             return 'proven';
         }

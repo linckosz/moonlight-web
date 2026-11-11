@@ -15,6 +15,15 @@
  * each browser is asked. And the watch on a running AV1 stream: a decoder
  * queue that stays full in the first minute is a failure under Auto, two
  * minutes without it are remembered as smooth.
+ *
+ * The first real streams showed two holes in that watch (11/11/2026, evening).
+ * A desktop that stood still sent two pictures a second, and two minutes of it
+ * were remembered as smooth. And the AV1 path never told the diagnostic of its
+ * decoder's queue: on a N95 decoding 1440p60 in software, 39 pictures came out
+ * of the 60 a second, a thousand were waiting after 50 s, the overlay read an
+ * empty queue — and that stream was remembered as smooth. Pinned down: the
+ * two minutes count in moving pictures only, a host asked for fewer pictures
+ * is a decoder that does not keep up, and the AV1 path reports its queue.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StreamView } from '../js/ui/StreamView.js';
@@ -170,24 +179,28 @@ describe('asking the browser about its AV1 decoder', () => {
 });
 
 describe('the watch on an AV1 stream', () => {
-    /** One reading every half second for @p seconds, the queue as @p queueAt says. */
-    function run(watch, seconds, queueAt, from = 0) {
+    /** One reading every half second for @p seconds, as @p readingAt says. */
+    function run(watch, seconds, readingAt, from = 0) {
         const verdicts = [];
         for (let t = from; t <= from + seconds * 1000; t += 500) {
-            const v = watch.sample(queueAt(t), t);
+            const v = watch.sample(readingAt(t), t);
             if (v) verdicts.push([v, t]);
         }
         return verdicts;
     }
+    /** A stream that moves, 60 pictures a second, its decoder queue at @p queue. */
+    const moving = (queue) => ({ queue, fps: 60 });
 
     it('says failed once the queue was full for five seconds of the first minute', () => {
-        const verdicts = run(new Av1Watch(), 200, () => 8);
+        const verdicts = run(new Av1Watch(), 200, () => moving(8));
         expect(verdicts).toEqual([['failed', 5000]]);
     });
 
     it('adds up the time in pieces', () => {
         // Full one second in five: five seconds of it after 25.
-        const verdicts = run(new Av1Watch(), 200, (t) => (t % 5000 < 1000 ? AV1_WATCH_QUEUE : 0));
+        const verdicts = run(new Av1Watch(), 200, (t) =>
+            moving(t % 5000 < 1000 ? AV1_WATCH_QUEUE : 0),
+        );
         expect(verdicts).toHaveLength(1);
         expect(verdicts[0][0]).toBe('failed');
         expect(verdicts[0][1]).toBeGreaterThan(20000);
@@ -195,27 +208,67 @@ describe('the watch on an AV1 stream', () => {
     });
 
     it('says proven after two minutes that never added up to that', () => {
-        expect(run(new Av1Watch(), 200, () => 0.4)).toEqual([['proven', 120000]]);
+        expect(run(new Av1Watch(), 200, () => moving(0.4))).toEqual([['proven', 120000]]);
         // A burst now and then is not a decoder that does not keep up.
-        expect(run(new Av1Watch(), 200, (t) => (t % 60000 < 1500 ? 8 : 1))).toEqual([
+        expect(run(new Av1Watch(), 200, (t) => moving(t % 60000 < 1500 ? 8 : 1))).toEqual([
             ['proven', 120000],
         ]);
     });
 
     it('says nothing of a stream that got slow after its first minute', () => {
-        expect(run(new Av1Watch(), 300, (t) => (t > 70000 ? 8 : 0))).toEqual([]);
+        expect(run(new Av1Watch(), 300, (t) => moving(t > 70000 ? 8 : 0))).toEqual([]);
     });
 
     it('says nothing of a stream that ended early', () => {
-        expect(run(new Av1Watch(), 100, () => 0)).toEqual([]);
+        expect(run(new Av1Watch(), 100, () => moving(0))).toEqual([]);
     });
 
     it('does not count the time a page was put away', () => {
         const watch = new Av1Watch();
-        watch.sample(8, 0);
+        watch.sample(moving(8), 0);
         // One reading after half a minute away: two seconds of it at most.
-        expect(watch.sample(8, 30000)).toBeNull();
-        expect(watch.sample(8, 30500)).toBeNull();
+        expect(watch.sample(moving(8), 30000)).toBeNull();
+        expect(watch.sample(moving(8), 30500)).toBeNull();
+    });
+
+    it('says nothing of a desktop that stands still: two pictures a second prove no decoder', () => {
+        expect(run(new Av1Watch(), 900, () => ({ queue: 0, fps: 2 }))).toEqual([]);
+        expect(run(new Av1Watch(), 900, () => ({ queue: 0 }))).toEqual([]);
+    });
+
+    it('counts the two minutes in moving pictures only', () => {
+        // Still for a hundred seconds, then a film at 24 pictures a second.
+        const verdicts = run(new Av1Watch(), 400, (t) => ({ queue: 0, fps: t < 100000 ? 2 : 24 }));
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0][0]).toBe('proven');
+        expect(verdicts[0][1]).toBeGreaterThan(219000);
+        expect(verdicts[0][1]).toBeLessThan(221000);
+    });
+
+    it('counts the first minute in moving pictures too: a game started late still fails', () => {
+        // Five minutes of a still desktop, then the game: the queue fills.
+        const verdicts = run(new Av1Watch(), 400, (t) =>
+            t < 300000 ? { queue: 0, fps: 2 } : moving(9),
+        );
+        expect(verdicts).toHaveLength(1);
+        expect(verdicts[0][0]).toBe('failed');
+        expect(verdicts[0][1]).toBeLessThan(306000);
+    });
+
+    it('takes a host asked for fewer pictures for a decoder that does not keep up', () => {
+        // The governor emptied the queue by slowing the host down: 40 a second.
+        const capped = { queue: 0, fps: 40, capped: true };
+        expect(run(new Av1Watch(), 200, () => capped)).toEqual([['failed', 5000]]);
+        // Ten seconds for the governor to act, the queue full all the while.
+        expect(run(new Av1Watch(), 200, (t) => (t < 10000 ? moving(30) : capped))).toEqual([
+            ['failed', 5000],
+        ]);
+    });
+
+    it('fails a decoder behind however few pictures arrive', () => {
+        expect(run(new Av1Watch(), 200, () => ({ queue: 12, fps: 10 }))).toEqual([
+            ['failed', 5000],
+        ]);
     });
 });
 
@@ -237,13 +290,20 @@ describe('the stream view and its AV1', () => {
         vi.unstubAllGlobals();
     });
 
-    /** A view of that stream, ticked every half second for @p seconds. */
-    function stream(view, seconds, queueAvg) {
+    /** A view of that stream, ticked every half second for @p seconds: the
+     *  decoder queue at @p queueAvg, @p fps pictures arriving a second. */
+    function stream(view, seconds, queueAvg, fps = 60) {
+        const diag = { decodeQueueAvg: queueAvg, arrivalAvgMs: 1000 / fps };
         for (let t = 0; t <= seconds * 1000; t += 500)
-            StreamView.prototype._tickAv1Watch.call(view, { decodeQueueAvg: queueAvg }, t);
+            StreamView.prototype._tickAv1Watch.call(view, diag, t);
         return view;
     }
-    const av1 = (more = {}) => ({ videoCodec: 'av1', _codecAuto: true, ...more });
+    const av1 = (more = {}) => ({
+        videoCodec: 'av1',
+        _codecAuto: true,
+        _decodeRateCap: 0,
+        ...more,
+    });
 
     it('notes an AV1 that does not keep up under Auto: H.264 at the next launch', () => {
         noteHevcFailed();
@@ -264,8 +324,53 @@ describe('the stream view and its AV1', () => {
         expect(av1ProvenHere()).toBe(true);
     });
 
+    it('remembers nothing of a desktop that stood still', () => {
+        // What a native host sends of a screen nothing moves on.
+        stream(av1({ _codecAuto: false }), 600, 0, 2);
+        expect(av1ProvenHere()).toBe(false);
+        expect(av1FailedHere()).toBe(false);
+    });
+
+    it('notes an AV1 the host had to slow down for: no proof, a failure under Auto', () => {
+        noteHevcFailed();
+        stream(av1({ _codecAuto: false, _decodeRateCap: 40 }), 130, 0, 40);
+        expect(av1ProvenHere()).toBe(false);
+        expect(av1FailedHere()).toBe(false);
+        stream(av1({ _decodeRateCap: 40 }), 130, 0, 40);
+        expect(av1FailedHere()).toBe(true);
+    });
+
+    it('has the AV1 path report its decoder queue, like the other codecs', () => {
+        vi.stubGlobal(
+            'EncodedVideoChunk',
+            class {
+                constructor(init) {
+                    Object.assign(this, init);
+                }
+            },
+        );
+        const view = {
+            decoderConfigured: true,
+            decoder: { decodeQueueSize: 7, decode: vi.fn() },
+            frameCount: 0,
+            _diag: { noteDecodeQueue: vi.fn() },
+            _renderer: null,
+            _decoderTrail: null,
+            _trackChunkSubmit: vi.fn(),
+            _tellDecodeQueue: vi.fn(),
+            stats: { received: 0, dropped: 0 },
+        };
+        // One frame OBU with its size field: nothing to strip.
+        const picture = new Uint8Array([0x32, 0x01, 0x00]);
+        StreamView.prototype.decodeAv1Frame.call(view, picture, true);
+        view.decoder.decodeQueueSize = 9;
+        StreamView.prototype.decodeAv1Frame.call(view, picture, false);
+        expect(view._diag.noteDecodeQueue.mock.calls).toEqual([[7], [9]]);
+        expect(view.decoder.decode).toHaveBeenCalledTimes(2);
+    });
+
     it('leaves the other streams alone: another codec, HDR, 4:4:4', () => {
-        stream({ videoCodec: 'hevc', _codecAuto: true }, 130, 8);
+        stream({ videoCodec: 'hevc', _codecAuto: true, _decodeRateCap: 0 }, 130, 8);
         stream(av1({ _hdrEnabled: true }), 130, 8);
         stream(av1({ _yuv444: true }), 130, 0);
         expect(av1FailedHere()).toBe(false);

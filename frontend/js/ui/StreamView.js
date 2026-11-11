@@ -7719,10 +7719,11 @@ export class StreamView {
 
     /**
      * An 8-bit AV1 that does not keep up raises no error (util/CodecAuto.js,
-     * Av1Watch): the decoder's queue says so. Under Auto it is a failure, and
-     * the next launch asks H.264; a stream that ran smoothly is remembered,
-     * whoever chose AV1. Not an HDR or a 4:4:4 AV1, which are other decoders.
-     * @param {{decodeQueueAvg?: number}|null} diag
+     * Av1Watch): the decoder's queue says so, or the host asked for fewer
+     * pictures. Under Auto it is a failure, and the next launch asks H.264; a
+     * stream whose moving pictures ran smoothly is remembered, whoever chose
+     * AV1. Not an HDR or a 4:4:4 AV1, which are other decoders.
+     * @param {{decodeQueueAvg?: number, arrivalAvgMs?: number}|null} diag
      * @param {number} now
      */
     _tickAv1Watch(diag, now) {
@@ -7736,7 +7737,14 @@ export class StreamView {
             if (!plainAv1) return;
         }
         if (!diag) return;
-        const verdict = this._av1Watch.sample(diag.decodeQueueAvg || 0, now);
+        const verdict = this._av1Watch.sample(
+            {
+                queue: diag.decodeQueueAvg || 0,
+                fps: diag.arrivalAvgMs > 0 ? 1000 / diag.arrivalAvgMs : 0,
+                capped: this._decodeRateCap > 0,
+            },
+            now,
+        );
         if (!verdict) return;
         this._av1Watch = null;
         if (verdict === 'proven') {
@@ -8923,6 +8931,11 @@ export class StreamView {
         // Delimiter and Padding OBUs must be stripped: the WebCodecs sample
         // format forbids them and Safari/VideoToolbox rejects the frame.
         const obuData = stripNonEssentialObus(data);
+        // The decoder's queue, as the other codecs and the worker report it:
+        // without it the overlay read an empty queue under an AV1 that had a
+        // thousand pictures waiting, and nothing that watches the queue (the
+        // enhancer's ladder, the decode-rate governor, Av1Watch) saw it.
+        this._diag.noteDecodeQueue(this.decoder.decodeQueueSize);
         try {
             const chunk = new EncodedVideoChunk({
                 type: type,
