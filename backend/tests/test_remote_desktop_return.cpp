@@ -39,41 +39,41 @@ void run_remote_desktop_return_tests()
 {
     SECTION("RemoteDesktopReturn — the launcher's checks");
 
-    CHECK(consoleReturnRefusal(evo()).isEmpty());
+    CHECK(consoleReturnChecks(evo()).isEmpty());
 
     ConsoleReturnFacts f = evo();
     f.callerIsThisExecutable = false;
-    CHECK(!consoleReturnRefusal(f).isEmpty());
+    CHECK(!consoleReturnChecks(f).isEmpty());
 
     f = evo();
     f.callerSession = kNoSession;
-    CHECK(!consoleReturnRefusal(f).isEmpty());
+    CHECK(!consoleReturnChecks(f).isEmpty());
 
     f = evo();
     f.callerSession = 0;
-    CHECK(!consoleReturnRefusal(f).isEmpty());
+    CHECK(!consoleReturnChecks(f).isEmpty());
 
     f = evo();
     f.consoleSession = kNoSession;
-    CHECK(!consoleReturnRefusal(f).isEmpty());
+    CHECK(!consoleReturnChecks(f).isEmpty());
 
     // Already there: nothing to move.
     f = evo();
     f.consoleSession = 1;
-    CHECK(!consoleReturnRefusal(f).isEmpty());
+    CHECK(!consoleReturnChecks(f).isEmpty());
 
     // Remote Desktop still connected, or any state but Disconnected.
     for (int state : {int(Active), int(Connected), int(ConnectQuery), int(Shadow), int(Idle),
                       int(Listen), int(Reset), int(Down), int(Init), -1}) {
         f = evo();
         f.callerState = state;
-        CHECK(!consoleReturnRefusal(f).isEmpty());
+        CHECK(!consoleReturnChecks(f).isEmpty());
     }
 
     // A second account signed in on the PC keeps its screen.
     f = evo();
     f.consoleUserPresent = true;
-    CHECK(!consoleReturnRefusal(f).isEmpty());
+    CHECK(!consoleReturnChecks(f).isEmpty());
 
     SECTION("RemoteDesktopReturn — the way back (hide!)");
 
@@ -125,6 +125,10 @@ void run_remote_desktop_return_tests()
         CHECK(!returnOffered(false, true));
         CHECK(!returnOffered(true, false));
         CHECK(!requestRefusal(t, false).isEmpty());
+        // The launcher refuses too, on its own side: evo's case passes every
+        // check of the caller and the console, and still moves nothing.
+        CHECK(consoleReturnChecks(evo()).isEmpty());
+        CHECK(!consoleReturnRefusal(evo()).isEmpty());
     }
 
     SECTION("RemoteDesktopReturn — the server's tracker");

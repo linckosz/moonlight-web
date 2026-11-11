@@ -21,6 +21,14 @@ namespace RemoteDesktopReturnPolicy {
 
 QString consoleReturnRefusal(const ConsoleReturnFacts& facts)
 {
+    // The gate on the privileged side too: a version that does not offer the
+    // return never connects a session to the console, whoever asks.
+    if (!kReturnOffered) return QStringLiteral("this version does not offer it");
+    return consoleReturnChecks(facts);
+}
+
+QString consoleReturnChecks(const ConsoleReturnFacts& facts)
+{
     if (!facts.callerIsThisExecutable) return QStringLiteral("the caller is not this executable");
     if (facts.callerSession == kNoSession)
         return QStringLiteral("the caller's session could not be read");

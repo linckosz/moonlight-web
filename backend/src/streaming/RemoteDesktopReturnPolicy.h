@@ -79,8 +79,13 @@ struct ConsoleReturnFacts
 /// English for its log; empty when it may. The only session it ever moves is
 /// the caller's own, only when Windows has left it Disconnected, and never
 /// over somebody who is signed in on the PC: a second account at the console
-/// keeps its screen.
+/// keeps its screen. A version that does not offer the return
+/// (kReturnOffered) refuses first, whoever asks.
 QString consoleReturnRefusal(const ConsoleReturnFacts& facts);
+
+/// consoleReturnRefusal's checks on the caller and the console, without the
+/// version's gate, which it tests first.
+QString consoleReturnChecks(const ConsoleReturnFacts& facts);
 
 /// Why the launcher must NOT disconnect the caller's session again ("hide!",
 /// the way back when a return could not lock the session); empty when it may.
