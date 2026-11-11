@@ -560,6 +560,20 @@ DataChannelRelay::DataChannelRelay(IMediaEngine* engine, QObject* parent)
         } catch (const std::exception&) {}
     });
 
+    // The player number the native host's OS gave a pad: the page says so when
+    // a pad left plugged in there took player 1 first. Same road as rumble.
+    connect(m_Shim, &IMediaEngine::padPlayer, this, [this](int controller, int number) {
+        if (m_Stopping.load() || !m_InputDc) return;
+        QJsonObject m;
+        m["type"] = "padnumber";
+        m["index"] = controller;
+        m["number"] = number;
+        QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+        try {
+            m_InputDc->send(std::string(j.constData(), j.size()));
+        } catch (const std::exception&) {}
+    });
+
     // What the host's OS asked of a recreated HID device, for the page to
     // pass to the real one (output reports, features). Same thread as rumble.
     connect(m_Shim, &IMediaEngine::hidRequest, this,

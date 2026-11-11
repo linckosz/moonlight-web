@@ -440,6 +440,17 @@ export class GamepadManager {
         return false;
     }
 
+    /**
+     * Take every forwarded pad off the host and let the next read plug it in
+     * again, so the host numbers it anew: the lowest player free, once whatever
+     * held player 1 there is gone (stream/HostPadNumber.js). The on-screen
+     * controller is read at once; a browser's pad at its next frame.
+     */
+    replugAll() {
+        for (const index of Array.from(this._pads.keys())) this._release(index);
+        this.pokeVirtual();
+    }
+
     /** The pad behind `index`: the on-screen controller, or the browser's. */
     _padAt(index) {
         if (this._virtual && this._virtual.index === index) return this._virtual;

@@ -20,6 +20,8 @@ const VIEW_MESSAGES = new Set([
     'stats',
     'pong',
     'rumble',
+    // Native Windows host: the player number its OS gave a pad.
+    'padnumber',
     'clipboard',
     'clipboardcaps',
     // The pointer, when the client draws it: its shape, and its position.

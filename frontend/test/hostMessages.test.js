@@ -26,6 +26,7 @@ describe('hostMessages — what reaches the stream view', () => {
             'stats',
             'pong',
             'rumble',
+            'padnumber',
             'clipboard',
             'clipboardcaps',
             'cursor',

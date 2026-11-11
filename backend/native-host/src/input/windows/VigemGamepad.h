@@ -20,6 +20,7 @@
 #include "mw/native/InputEvent.h"
 
 #include <array>
+#include <chrono>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -94,6 +95,14 @@ public:
     /// must not block — it exists to be forwarded to the browser.
     using RumbleSink = std::function<void(const RumbleEvent&)>;
 
+    /// Called with the player number Windows gave a pad (XInput's user index,
+    /// 0 for player 1), once known and each time it changes. Not the client's
+    /// controller number: a pad another program left plugged in (a Sunshine
+    /// session kept open, a pad of the host's own) takes player 1 first, and
+    /// a game listening to player 1 then never hears this one. Runs on a ViGEm
+    /// thread or the input thread, so it must not block.
+    using NumberSink = std::function<void(uint8_t controllerNumber, int hostNumber)>;
+
     /// Whether the bus is there, asked of the driver and of nothing else.
     ///
     /// The driver's own answer is the only one worth having: a registry key and
@@ -106,7 +115,7 @@ public:
     /// act on.
     static bool busPresent(std::string& error);
 
-    explicit VigemGamepad(RumbleSink onRumble);
+    explicit VigemGamepad(RumbleSink onRumble, NumberSink onNumber = {});
     ~VigemGamepad();
 
     VigemGamepad(const VigemGamepad&) = delete;
@@ -139,6 +148,9 @@ private:
     {
         _VIGEM_TARGET_T* target = nullptr;
         Profile profile = Profile::X360;
+        /// For the number read back (see update()).
+        std::chrono::steady_clock::time_point pluggedAt{};
+        bool numberAsked = false;
     };
 
     /// Plug in slot @p slot if it is not already, and answer whether it is
@@ -155,6 +167,7 @@ private:
     void unplug(int slot);
 
     RumbleSink m_OnRumble;
+    NumberSink m_OnNumber;
     _VIGEM_CLIENT_T* m_Client = nullptr;
 
     /// Guards the pad table against the session thread plugging while a ViGEm

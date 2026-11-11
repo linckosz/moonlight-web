@@ -82,6 +82,19 @@ MediaTrackRelay::MediaTrackRelay(IMediaEngine* engine, QObject* parent)
         } catch (const std::exception&) {}
     });
 
+    // The player number the native host's OS gave a pad — see DataChannelRelay.
+    connect(m_Shim, &IMediaEngine::padPlayer, this, [this](int controller, int number) {
+        if (m_Stopping.load() || !m_InputDc) return;
+        QJsonObject m;
+        m["type"] = "padnumber";
+        m["index"] = controller;
+        m["number"] = number;
+        QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+        try {
+            m_InputDc->send(std::string(j.constData(), j.size()));
+        } catch (const std::exception&) {}
+    });
+
     // What the host's OS asked of a recreated HID device — see DataChannelRelay.
     connect(m_Shim, &IMediaEngine::hidRequest, this,
             [this](int slot, int kind, int reportId, QByteArray data) {

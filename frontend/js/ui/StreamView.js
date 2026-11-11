@@ -41,6 +41,7 @@ import {
 import { devicePixelSize } from '../util/StreamResolution.js';
 import { PeriodicStallDetector } from '../stream/PeriodicStallDetector.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
+import { PadNumberNotice } from '../stream/HostPadNumber.js';
 import { HidPassthrough } from '../hid/HidPassthrough.js';
 import { GamepadRemapDialog } from './GamepadRemapDialog.js';
 import { padKey, padName } from '../stream/gamepadMapping.js';
@@ -1238,6 +1239,8 @@ export class StreamView {
         // `mousemove` delivers. Decided in _bindPointerRaw; while it is on, the
         // mousemove handlers keep their cursor bookkeeping and stop sending.
         this._nativeHost = opts.nativeHost === true;
+        /** @type {PadNumberNotice | null} the native host's word on pad numbers */
+        this._padNumber = null;
         // The virtual display and the apps opened before the stream on two
         // GPUs (util/vdGpuApartNotice.js): watched only when the host says so.
         this._vdGpuApart = opts.vdGpuApart || null;
@@ -7991,6 +7994,21 @@ export class StreamView {
         }
     }
 
+    /** The pad-number notice, made the first time the host speaks of it. */
+    _padNumberNotice() {
+        if (!this._padNumber) {
+            this._padNumber = new PadNumberNotice({
+                hosts: () => BackendClient.getHosts(),
+                stopSession: (uuid) => BackendClient.stopHostSession(uuid),
+                replug: () => this._gamepadManager && this._gamepadManager.replugAll(),
+                warn: (text, options) => Toast.warning(text, options),
+                error: (text) => Toast.error(text),
+                t,
+            });
+        }
+        return this._padNumber;
+    }
+
     // ── Stats message handler (ping/pong + periodic backend stats) ─────────
 
     _handleStatsMessage(msg) {
@@ -8006,6 +8024,13 @@ export class StreamView {
         }
         if (msg.type === 'rumble') {
             if (this._gamepadManager) this._gamepadManager.rumble(msg.index, msg.low, msg.high);
+            return;
+        }
+        if (msg.type === 'padnumber') {
+            // Native Windows host: a pad another session left plugged in took
+            // player 1 (stream/HostPadNumber.js). The owner's to settle: a
+            // guest cannot close the host's sessions.
+            if (this._nativeHost && !this._playerMode) this._padNumberNotice().note(msg);
             return;
         }
         if (msg.type === 'inputgate') {

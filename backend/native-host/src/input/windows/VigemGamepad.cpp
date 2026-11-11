@@ -42,6 +42,9 @@ struct RumbleRoute
 {
     VigemGamepad::RumbleSink sink;
     uint8_t controllerNumber;
+    VigemGamepad::NumberSink numberSink;
+    /// The player number last told, -1 before the first.
+    int toldNumber = -1;
 };
 
 std::mutex g_RouteMutex;
@@ -70,14 +73,36 @@ void routeRumble(PVIGEM_TARGET target, UCHAR largeMotor, UCHAR smallMotor)
     route.sink(event);
 }
 
+/// Tell whoever owns @p target the player number Windows gave it, once per
+/// change. Out of range is "not known yet": the bus holds -1 until XInput has
+/// lit the pad's ring, which arrives here as 0xFF.
+void tellNumber(PVIGEM_TARGET target, int number)
+{
+    if (number < 0 || number >= VigemGamepad::kMaxPads) return;
+    VigemGamepad::NumberSink sink;
+    uint8_t controllerNumber = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_RouteMutex);
+        const auto it = g_Routes.find(target);
+        if (it == g_Routes.end() || it->second.toldNumber == number) return;
+        it->second.toldNumber = number;
+        sink = it->second.numberSink;
+        controllerNumber = it->second.controllerNumber;
+    }
+    if (sink) sink(controllerNumber, number);
+}
+
 // Signatures fixed by EVT_VIGEM_X360_NOTIFICATION / EVT_VIGEM_DS4_NOTIFICATION:
 // default calling convention, no user context — hence the routing table above.
 // They differ only in their last argument, which is an LED number on one and a
-// lightbar colour on the other; neither travels back to a browser, which has no
-// light to set.
+// lightbar colour on the other. The colour never travels back to a browser,
+// which has no light to set. The LED number is the player XInput made this pad
+// (the ring lit on a real one), the same value vigem_target_x360_get_user_index
+// reads: it says whether a game listening to player 1 hears this pad.
 VOID onX360Notification(PVIGEM_CLIENT, PVIGEM_TARGET target, UCHAR largeMotor, UCHAR smallMotor,
-                        UCHAR)
+                        UCHAR ledNumber)
 {
+    tellNumber(target, ledNumber);
     routeRumble(target, largeMotor, smallMotor);
 }
 
@@ -126,8 +151,9 @@ bool VigemGamepad::busPresent(std::string& error)
     return true;
 }
 
-VigemGamepad::VigemGamepad(RumbleSink onRumble)
+VigemGamepad::VigemGamepad(RumbleSink onRumble, NumberSink onNumber)
     : m_OnRumble(std::move(onRumble))
+    , m_OnNumber(std::move(onNumber))
 {}
 
 VigemGamepad::~VigemGamepad()
@@ -217,6 +243,7 @@ void VigemGamepad::unplug(int slot)
     vigem_target_free(pad.target);
     pad.target = nullptr;
     pad.profile = Profile::X360;
+    pad.numberAsked = false;
 }
 
 VigemGamepad::Pad* VigemGamepad::ensurePad(int slot, Profile profile)
@@ -237,11 +264,12 @@ VigemGamepad::Pad* VigemGamepad::ensurePad(int slot, Profile profile)
     }
 
     // Register the route before the notification, so a vibration that arrives
-    // immediately has somewhere to go.
-    if (m_OnRumble) {
+    // immediately has somewhere to go, and so does the player number XInput
+    // gives the pad as it lights its ring.
+    if (m_OnRumble || m_OnNumber) {
         {
             std::lock_guard<std::mutex> routes(g_RouteMutex);
-            g_Routes[target] = RumbleRoute{m_OnRumble, static_cast<uint8_t>(slot)};
+            g_Routes[target] = RumbleRoute{m_OnRumble, static_cast<uint8_t>(slot), m_OnNumber};
         }
         if (profile == Profile::DualShock4)
             vigem_target_ds4_register_notification(m_Client, target, &onDs4Notification);
@@ -251,6 +279,8 @@ VigemGamepad::Pad* VigemGamepad::ensurePad(int slot, Profile profile)
 
     m_Pads[slot].target = target;
     m_Pads[slot].profile = profile;
+    m_Pads[slot].pluggedAt = std::chrono::steady_clock::now();
+    m_Pads[slot].numberAsked = false;
     log::info("[native] gamepad " + std::to_string(slot) + " plugged in (virtual " +
               (profile == Profile::DualShock4 ? "DualShock 4" : "Xbox 360") + " pad)");
     return &m_Pads[slot];
@@ -330,6 +360,18 @@ void VigemGamepad::update(const InputEvent& event)
         report.bTriggerR = mapped.triggerR;
         vigem_target_ds4_update(m_Client, pad->target, report);
         return;
+    }
+
+    // The player number, read back once, in case the notification that carries
+    // it went by before ours was registered. Not at once: until XInput has lit
+    // the pad's ring the bus answers 0 as if it were player 1. Half a second
+    // after the plug, at the first state that comes, it has.
+    if (!pad->numberAsked && m_OnNumber &&
+        std::chrono::steady_clock::now() - pad->pluggedAt >= std::chrono::milliseconds(500)) {
+        pad->numberAsked = true;
+        ULONG userIndex = 0;
+        if (VIGEM_SUCCESS(vigem_target_x360_get_user_index(m_Client, pad->target, &userIndex)))
+            tellNumber(pad->target, static_cast<int>(userIndex));
     }
 
     XUSB_REPORT report = {};

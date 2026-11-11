@@ -72,8 +72,11 @@ public:
     ///                     is not the desktop's.
     /// @param onRumble     where a game's vibration request goes. Optional: with
     ///                     no sink the pad still works, it just does not shake.
+    /// @param onPadNumber  the player number Windows gave each pad
+    ///                     (VigemGamepad::NumberSink). Optional.
     explicit Win32Input(const capture::DesktopRect& displayRect,
-                        VigemGamepad::RumbleSink onRumble = {});
+                        VigemGamepad::RumbleSink onRumble = {},
+                        VigemGamepad::NumberSink onPadNumber = {});
     ~Win32Input() override;
 
     bool start(std::string& error) override;
@@ -388,6 +391,7 @@ private:
     /// failure. Keyboard and mouse are unaffected.
     std::unique_ptr<VigemGamepad> m_Gamepad;
     VigemGamepad::RumbleSink m_OnRumble;
+    VigemGamepad::NumberSink m_OnPadNumber;
 
     /// What we have pressed and not yet released, so a session that ends
     /// mid-keypress does not leave the host holding a key down forever. Guarded

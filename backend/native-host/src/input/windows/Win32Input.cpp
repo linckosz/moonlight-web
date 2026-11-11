@@ -830,9 +830,11 @@ bool consoleIsOurs()
 
 } // namespace
 
-Win32Input::Win32Input(const capture::DesktopRect& displayRect, VigemGamepad::RumbleSink onRumble)
+Win32Input::Win32Input(const capture::DesktopRect& displayRect, VigemGamepad::RumbleSink onRumble,
+                       VigemGamepad::NumberSink onPadNumber)
     : m_DisplayRect(displayRect)
     , m_OnRumble(std::move(onRumble))
+    , m_OnPadNumber(std::move(onPadNumber))
 {}
 
 Win32Input::~Win32Input()
@@ -876,7 +878,7 @@ bool Win32Input::start(std::string& error)
     // stream does not need a controller, and refusing the session over it would
     // be wildly out of proportion.
     {
-        auto pads = std::make_unique<VigemGamepad>(m_OnRumble);
+        auto pads = std::make_unique<VigemGamepad>(m_OnRumble, m_OnPadNumber);
         std::string gamepadError;
         if (pads->start(gamepadError))
             m_Gamepad = std::move(pads);

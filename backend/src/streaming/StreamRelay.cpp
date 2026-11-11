@@ -66,6 +66,17 @@ StreamRelay::StreamRelay(IMediaEngine* engine, quint16 wsPort, const QSslConfigu
             QString::fromUtf8(QJsonDocument(m).toJson(QJsonDocument::Compact)));
     });
 
+    // The player number the native host's OS gave a pad — see DataChannelRelay.
+    connect(m_Shim, &IMediaEngine::padPlayer, this, [this](int controller, int number) {
+        if (!m_WsClient || m_WsClient->state() != QAbstractSocket::ConnectedState) return;
+        QJsonObject m;
+        m["type"] = "padnumber";
+        m["index"] = controller;
+        m["number"] = number;
+        m_WsClient->sendTextMessage(
+            QString::fromUtf8(QJsonDocument(m).toJson(QJsonDocument::Compact)));
+    });
+
     // The input gate (native host) — see DataChannelRelay for the message.
     connect(m_Shim, &IMediaEngine::inputGateChanged, this,
             [this](bool blocked, QString reason, QString window) {

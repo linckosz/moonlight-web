@@ -550,10 +550,16 @@ public:
         // Rumble travels the opposite way from every other input: the game
         // asks the pad to shake, and that has to reach the browser. Handed
         // straight to the session callback — it arrives on a ViGEm thread,
-        // and the consumer is the one that knows how to marshal it.
-        auto sink = std::make_unique<input::Win32Input>(rect, [this](const RumbleEvent& event) {
-            if (m_Callbacks.onRumble) m_Callbacks.onRumble(event);
-        });
+        // and the consumer is the one that knows how to marshal it. The
+        // player number Windows gives each pad goes back the same way.
+        auto sink = std::make_unique<input::Win32Input>(
+            rect,
+            [this](const RumbleEvent& event) {
+                if (m_Callbacks.onRumble) m_Callbacks.onRumble(event);
+            },
+            [this](uint8_t controllerNumber, int hostNumber) {
+                if (m_Config.onPadNumber) m_Config.onPadNumber(controllerNumber, hostNumber);
+            });
         sink->setAllowElevated(m_Config.allowElevatedInput);
         if (m_Config.tuning.clickTrace) sink->setClickTrace(&m_ClickTrace);
         // On a host with no pointing device, a mouse of its own: the pointer,

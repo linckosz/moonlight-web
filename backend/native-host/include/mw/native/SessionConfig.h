@@ -237,6 +237,14 @@ struct SessionConfig
     /// Called on the capture's own thread. May be empty.
     std::function<void(const std::string&)> onAudioAppChanged;
 
+    /// The player number Windows gave the virtual pad for a client's
+    /// controller (XInput's user index, 0 for player 1), once known and each
+    /// time it changes. A pad left plugged in by another program (a Sunshine
+    /// session kept open) takes player 1 first, and a game listening to
+    /// player 1 then never hears the client's. Windows only; called on a ViGEm
+    /// thread or the input thread. May be empty.
+    std::function<void(uint8_t controllerNumber, int hostNumber)> onPadNumber;
+
     /// A consent the user gave the ScreenCast portal on an earlier session, to
     /// be replayed so it is not asked for again.
     ///

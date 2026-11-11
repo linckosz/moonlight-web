@@ -471,6 +471,11 @@ signals:
     /// The host asked to rumble a controller (forwarded to the browser).
     void rumble(int controllerNumber, int lowFreqMotor, int highFreqMotor);
 
+    /// The player number the host's OS gave a controller (0 for player 1), when
+    /// known and each time it changes. Native Windows host only: a pad left
+    /// plugged in there (a Sunshine session kept open) takes player 1 first.
+    void padPlayer(int controllerNumber, int hostNumber);
+
     /// The host's OS asked something of a recreated HID device (an output
     /// report, a feature): forwarded to the page, on the engine's thread.
     /// kind: 0 output, 1 get feature, 2 set feature.

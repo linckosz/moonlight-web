@@ -270,6 +270,15 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     config.muteHostAudio = params.muteHostAudio;
     config.audioSource = mw::native::parseAudioSource(params.audioSource);
     config.onAudioAppChanged = params.onAudioAppChanged;
+    // Arrives on a ViGEm thread, as rumble does: queued to the engine's own.
+    config.onPadNumber = [this](uint8_t controllerNumber, int hostNumber) {
+        QMetaObject::invokeMethod(
+            this,
+            [this, controllerNumber, hostNumber]() {
+                emit padPlayer(controllerNumber, hostNumber);
+            },
+            Qt::QueuedConnection);
+    };
     // The consent this machine was already given, replayed. Empty on the very
     // first session of an install that captures through the portal, which is
     // the one time the user sees a dialog.
