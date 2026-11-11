@@ -181,7 +181,28 @@ An earlier attempt at 500 M fell for another reason: the bench machine ran out o
 - **Journal only** and **off:** nothing stored, Auto on the base budget, the journal written or silent as expected.
 - **Through the rendezvous:** a first launch at 1920×1080 earned 330 M after 301 s; the next one ran at 2204×1240 on trial. The memory was written under the machine's own key, and the key of the direct address stayed empty.
 
+### With the Enhancer on
+
+bench-desk again, the client's screen at 2560×1440 and 120 Hz, the Enhancer on (algorithm Auto, WebGL):
+
+| Rung | Stream | Result |
+|---|---|---|
+| 330 M | 2204×1240, upscaled by MWSR to the screen | held for 300 s of loaded time, earned 450 M; MWSR never stepped down |
+| 450 M | 2560×1440, the screen's own size | held for 301 s, learned |
+
+### A mini PC as the client
+
+A **UM790 Pro** (Radeon 780M) as the client, Chrome on a 1440p screen at 120 Hz, the page told of a 3840×2160 screen, bench-desk as the host, HEVC. `decodingInfo` answered *supported, smooth* at each active rung.
+
+| Rung | Stream | Result |
+|---|---|---|
+| 250 M | 1920×1080 at 120 fps | held for 300 s, earned 330 M |
+| 330 M | 2204×1240 | held for 300 s, earned 450 M |
+| 450 M | 2560×1440 | held for 301 s, earned 500 M |
+
+The stepper took each launch to 240 fps, and the 780M kept up.
+
 ### Not measured yet
 
-- a rung held with the **Enhancer** on;
-- a **TV**, which must stay on the base budget and store nothing, and the **UM790 Pro** as a client.
+- a **TV**, which must stay on the base budget and store nothing: the TV's browser refused the bench host's self-signed certificate, so only the unit tests cover it;
+- the UM790 Pro above 450 M, and the Enhancer above 450 M (where the stream fills a 1440p screen, there is nothing left to upscale).
