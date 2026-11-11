@@ -1188,7 +1188,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         }
 
         // ── A session left by Remote Desktop ─────────────────────────────
-        // Read the next time a session is left (RemoteDesktopReturn).
+        // Read each time the card is listed or opened (RemoteDesktopReturn).
         if (body.contains("remote_desktop_return")) {
             const bool enabled = body["remote_desktop_return"].toBool();
             appSettings.setRemoteDesktopReturn(enabled);

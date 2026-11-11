@@ -417,6 +417,10 @@ QJsonObject ComputerManager::nativeDisplayJson()
                    : caps.reason == mw::native::Unavailability::CapturePermission
                        ? QStringLiteral("no_capture_permission")
                        : QStringLiteral("unavailable");
+    // Left by Remote Desktop, and its card brings it back when opened ("This
+    // PC's screen"): the card shows that one app rather than the text alone.
+    obj["remote_desktop_return"] =
+        leftByRemoteDesktop && RemoteDesktopReturn::instance().offersReturn();
     // macOS alone can withhold it (Accessibility): false means a stream would
     // show a picture and take none of the viewer's input — said on the card
     // and when the stream starts, since macOS itself says nothing.

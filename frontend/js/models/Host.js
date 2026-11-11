@@ -138,12 +138,18 @@ export class Host {
     // The native host on Windows, whose session Remote Desktop left without a
     // screen (mstsc closed): no cable or virtual display brings one back, only
     // the session returning to the PC's screen. The card says so instead of an
-    // app grid. With the admin's setting on, the server does that itself
-    // within seconds, and the card goes back to its grid.
+    // app grid — unless returnsFromRemoteDesktop.
     get leftByRemoteDesktop() {
         return (
             this.backendType === 'native' && this.nativeDisplay?.state === 'session_disconnected'
         );
+    }
+
+    // leftByRemoteDesktop, with the admin's setting on: the card's one app is
+    // "This PC's screen", and opening it brings the session back to the PC's
+    // screen, locked, then streams it.
+    get returnsFromRemoteDesktop() {
+        return this.leftByRemoteDesktop && this.nativeDisplay?.remote_desktop_return === true;
     }
 
     // A Mac whose Screen Recording grant is gone: the card stays, and says

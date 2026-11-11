@@ -110,111 +110,98 @@ void run_remote_desktop_return_tests()
 
     SECTION("RemoteDesktopReturn — the server's tracker");
 
-    // Moved but not locked, then sent away again: not asked again while it
-    // stays away — a return that cannot lock would show the desktop every
-    // kRetryTicks. Used again (Active), it starts over.
-    {
-        Tracker t;
-        t.observe(seen(Active, true), true);
-        t.observe(seen(Disconnected), true);
-        CHECK(t.observe(seen(Disconnected), true).askReturn);
-        t.giveUp();
-        int asked = 0;
-        for (int i = 0; i < 4 * Tracker::kRetryTicks; ++i) {
-            const Decision d = t.observe(seen(Disconnected), true);
-            CHECK(d.leftByRemoteDesktop);
-            asked += d.askReturn ? 1 : 0;
-        }
-        CHECK_EQ(asked, 0);
-        t.observe(seen(Active, true), true);
-        t.observe(seen(Disconnected), true);
-        CHECK(t.observe(seen(Disconnected), true).askReturn);
-    }
+    // The card's app id sits between the virtual display's and the owner's
+    // apps': the server never mistakes it for a display.
+    CHECK(kReturnAppId > 1000 && kReturnAppId < 1100);
 
     // evo's case: active through Remote Desktop, then mstsc closed. The card
-    // changes on the first tick; the return is asked on the second.
+    // changes on the first tick; a return may be asked from the second — and
+    // only asked: nothing in the tracker starts one (decision of 11/11/2026).
     {
         Tracker t;
-        Decision d = t.observe(seen(Active, true), true);
-        CHECK(!d.leftByRemoteDesktop && !d.askReturn);
-        d = t.observe(seen(Disconnected), true);
-        CHECK(d.leftByRemoteDesktop);
-        CHECK(!d.askReturn);
-        d = t.observe(seen(Disconnected), true);
-        CHECK(d.leftByRemoteDesktop && d.askReturn);
-        // Asked once; not again on the next tick...
-        d = t.observe(seen(Disconnected), true);
-        CHECK(d.leftByRemoteDesktop && !d.askReturn);
+        CHECK(!t.observe(seen(Active, true)));
+        CHECK(!t.returnRefusal(true).isEmpty()); // still on Remote Desktop
+        CHECK(t.observe(seen(Disconnected)));
+        CHECK(!t.returnRefusal(true).isEmpty()); // just left: not settled yet
+        CHECK(t.observe(seen(Disconnected)));
+        CHECK(t.returnRefusal(true).isEmpty());
+        // It stays possible while the session stays away...
+        for (int i = 0; i < 40; ++i)
+            CHECK(t.observe(seen(Disconnected)));
+        CHECK(t.returnRefusal(true).isEmpty());
         // ...and back on the console it is a session like any other.
-        d = t.observe(seen(Active, false), true);
-        CHECK(!d.leftByRemoteDesktop && !d.askReturn);
+        CHECK(!t.observe(seen(Active, false)));
+        CHECK(!t.returnRefusal(true).isEmpty());
+    }
+
+    // Moved but not locked, then sent away again: no return while it stays
+    // away — each try would show the desktop again. Used again (Active), it
+    // starts over.
+    {
+        Tracker t;
+        t.observe(seen(Active, true));
+        t.observe(seen(Disconnected));
+        t.observe(seen(Disconnected));
+        CHECK(t.returnRefusal(true).isEmpty());
+        t.giveUp();
+        for (int i = 0; i < 40; ++i) {
+            CHECK(t.observe(seen(Disconnected)));
+            CHECK(!t.returnRefusal(true).isEmpty());
+        }
+        t.observe(seen(Active, true));
+        t.observe(seen(Disconnected));
+        t.observe(seen(Disconnected));
+        CHECK(t.returnRefusal(true).isEmpty());
     }
 
     // Switch user on the PC: Disconnected too, but last seen on the console.
     // Pulling it back would throw the other person off the sign-in screen.
     {
         Tracker t;
-        t.observe(seen(Active, false), true);
+        t.observe(seen(Active, false));
         for (int i = 0; i < 40; ++i) {
-            const Decision d = t.observe(seen(Disconnected), true);
-            CHECK(!d.leftByRemoteDesktop && !d.askReturn);
+            CHECK(!t.observe(seen(Disconnected)));
+            CHECK(!t.returnRefusal(true).isEmpty());
         }
     }
 
     // The server started in a session already disconnected: nothing known of
-    // how it got there, so nothing done.
+    // how it got there, so nothing offered.
     {
         Tracker t;
         for (int i = 0; i < 5; ++i) {
-            const Decision d = t.observe(seen(Disconnected), true);
-            CHECK(!d.leftByRemoteDesktop && !d.askReturn);
+            CHECK(!t.observe(seen(Disconnected)));
+            CHECK(!t.returnRefusal(true).isEmpty());
         }
     }
 
     // The setting off (or no launcher, or the native host disabled): the card
-    // still says what happened, and nothing is asked.
+    // still says what happened, and no return is asked. Turned on while the
+    // session is away: possible at once.
     {
         Tracker t;
-        t.observe(seen(Active, true), false);
+        t.observe(seen(Active, true));
         for (int i = 0; i < 40; ++i) {
-            const Decision d = t.observe(seen(Disconnected), false);
-            CHECK(d.leftByRemoteDesktop && !d.askReturn);
+            CHECK(t.observe(seen(Disconnected)));
+            CHECK(!t.returnRefusal(false).isEmpty());
         }
+        CHECK(t.returnRefusal(true).isEmpty());
     }
 
     // Remote Desktop moving the session to another client passes through
-    // Disconnected for an instant: one tick is not enough to act.
+    // Disconnected for an instant: one tick is not enough to act, and a
+    // client on its way in (Connected) resets the count.
     {
         Tracker t;
-        t.observe(seen(Active, true), true);
-        CHECK(!t.observe(seen(Disconnected), true).askReturn);
-        CHECK(!t.observe(seen(Connected), true).askReturn);
-        CHECK(!t.observe(seen(Active, true), true).askReturn);
-        CHECK(!t.observe(seen(Disconnected), true).askReturn);
-        CHECK(t.observe(seen(Disconnected), true).askReturn);
-    }
-
-    // Refused (somebody signed in on the PC): asked again only after
-    // kRetryTicks, in case they sign out.
-    {
-        Tracker t;
-        t.observe(seen(Active, true), true);
-        t.observe(seen(Disconnected), true);
-        CHECK(t.observe(seen(Disconnected), true).askReturn);
-        t.returnFailed();
-        int asked = 0;
-        for (int i = 0; i < Tracker::kRetryTicks - 1; ++i)
-            asked += t.observe(seen(Disconnected), true).askReturn ? 1 : 0;
-        CHECK_EQ(asked, 0);
-        CHECK(t.observe(seen(Disconnected), true).askReturn);
-    }
-
-    // The setting turned on while the session is away: acted on at once.
-    {
-        Tracker t;
-        t.observe(seen(Active, true), true);
-        t.observe(seen(Disconnected), false);
-        t.observe(seen(Disconnected), false);
-        CHECK(t.observe(seen(Disconnected), true).askReturn);
+        t.observe(seen(Active, true));
+        t.observe(seen(Disconnected));
+        CHECK(!t.returnRefusal(true).isEmpty());
+        CHECK(!t.observe(seen(Connected)));
+        CHECK(!t.returnRefusal(true).isEmpty());
+        t.observe(seen(Active, true));
+        t.observe(seen(Disconnected));
+        CHECK(!t.returnRefusal(true).isEmpty());
+        t.observe(seen(Disconnected));
+        CHECK(t.returnRefusal(true).isEmpty());
     }
 }

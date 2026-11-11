@@ -56,34 +56,40 @@ QString hideRefusal(const ConsoleReturnFacts& facts)
     return {};
 }
 
-Decision Tracker::observe(const Observation& now, bool allowed)
+bool Tracker::observe(const Observation& now)
 {
-    Decision decision;
     if (now.state == Active) {
         // Back on a screen, or on another Remote Desktop client: a fresh start.
         m_LastActiveRemote = now.remote;
         m_DisconnectedTicks = 0;
-        m_SinceAsk = -1;
         m_GaveUp = false;
-        return decision;
+        m_Left = false;
+        return m_Left;
     }
     if (now.state != Disconnected) {
         // Connected, ConnectQuery and the like: a client is on its way in.
         // Nothing to say, nothing to do, and the count starts over.
         m_DisconnectedTicks = 0;
-        return decision;
+        m_Left = false;
+        return m_Left;
     }
-
     ++m_DisconnectedTicks;
-    if (m_SinceAsk >= 0) ++m_SinceAsk;
-    decision.leftByRemoteDesktop = m_LastActiveRemote;
-    if (!m_LastActiveRemote || !allowed || m_GaveUp) return decision;
-    if (m_DisconnectedTicks < kSettleTicks) return decision;
-    if (m_SinceAsk >= 0 && m_SinceAsk < kRetryTicks) return decision;
+    m_Left = m_LastActiveRemote;
+    return m_Left;
+}
 
-    decision.askReturn = true;
-    m_SinceAsk = 0;
-    return decision;
+QString Tracker::returnRefusal(bool allowed) const
+{
+    if (!m_Left) return QStringLiteral("this session was not left by Remote Desktop");
+    if (!allowed)
+        return QStringLiteral("bringing it back is turned off in the admin settings, or the "
+                              "launcher service is not installed");
+    if (m_GaveUp)
+        return QStringLiteral("the last return could not lock it, so it was sent away again: "
+                              "sign in on the PC");
+    if (m_DisconnectedTicks < kSettleTicks)
+        return QStringLiteral("Remote Desktop has only just left it: try again in a few seconds");
+    return {};
 }
 
 } // namespace RemoteDesktopReturnPolicy

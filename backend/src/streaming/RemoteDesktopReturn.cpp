@@ -25,6 +25,7 @@
 #include <QElapsedTimer>
 
 #include <thread>
+#include <utility>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -33,8 +34,8 @@
 
 namespace {
 
-/// How often the session's state is read: one WTS call. The card changes and
-/// the return starts within a few of these after mstsc is closed.
+/// How often the session's state is read: one WTS call. The card changes
+/// within a few of these after mstsc is closed.
 constexpr int kTickMs = 2000;
 
 /// How long the session may take to show up on the console once the launcher
@@ -144,11 +145,50 @@ void RemoteDesktopReturn::start()
     // A server in session 0 (the old NSSM service) has no session of a user to
     // watch: what it streams is the console's, whoever is on it.
     if (ConsoleSession::launchesElsewhere()) return;
+    m_Watching = true;
     m_Timer.setInterval(kTickMs);
     connect(&m_Timer, &QTimer::timeout, this, &RemoteDesktopReturn::onTick);
     m_Timer.start();
     onTick();
 #endif
+}
+
+bool RemoteDesktopReturn::allowed() const
+{
+#ifdef Q_OS_WIN
+    if (!m_Watching) return false;
+    AppSettings settings;
+    return settings.remoteDesktopReturn() && settings.nativeHostEnabled() &&
+           WorkerService::available();
+#else
+    return false;
+#endif
+}
+
+bool RemoteDesktopReturn::offersReturn() const
+{
+    // The settings file is read only when there is something to offer.
+    return m_LeftByRemoteDesktop && allowed();
+}
+
+void RemoteDesktopReturn::bringBack(std::function<void(bool ok, const QString& error)> done)
+{
+    if (!done) return;
+    // A second stream asked while the first one's return is under way: both
+    // get its result, and the session moves once.
+    if (m_Asking.load()) {
+        m_Waiting.append(std::move(done));
+        return;
+    }
+    const QString refusal = m_Tracker.returnRefusal(allowed());
+    if (!refusal.isEmpty()) {
+        Logger::info("[rdp] a stream asked for this PC's screen, not brought back: " + refusal);
+        done(false,
+             QStringLiteral("This PC's session cannot be brought back to its screen: ") + refusal);
+        return;
+    }
+    m_Waiting.append(std::move(done));
+    askReturn();
 }
 
 void RemoteDesktopReturn::onTick()
@@ -159,17 +199,10 @@ void RemoteDesktopReturn::onTick()
     // the tracker hears the result instead (returnFinished).
     if (m_Asking.load()) return;
     const RemoteDesktopReturnPolicy::Observation now = observe();
-    // The settings file is read only when there may be something to do.
-    bool allowed = false;
-    if (now.state == RemoteDesktopReturnPolicy::Disconnected) {
-        AppSettings settings;
-        allowed = settings.remoteDesktopReturn() && settings.nativeHostEnabled() &&
-                  WorkerService::available();
-    }
-    const RemoteDesktopReturnPolicy::Decision decision = m_Tracker.observe(now, allowed);
+    const bool left = m_Tracker.observe(now);
 
     const bool stateMoved = now.state != m_LastState;
-    const bool leftMoved = decision.leftByRemoteDesktop != m_LeftByRemoteDesktop;
+    const bool leftMoved = left != m_LeftByRemoteDesktop;
     if (stateMoved && m_LastState != -1)
         Logger::info(QStringLiteral("[rdp] this session (%1) is now %2%3")
                          .arg(ownSession())
@@ -182,19 +215,16 @@ void RemoteDesktopReturn::onTick()
                                   ? QStringLiteral(", through Remote Desktop")
                                   : QString()));
     m_LastState = now.state;
-    m_LeftByRemoteDesktop = decision.leftByRemoteDesktop;
+    m_LeftByRemoteDesktop = left;
     if (leftMoved) {
-        Logger::info(decision.leftByRemoteDesktop
-                         ? QStringLiteral("[rdp] Remote Desktop left this session without a "
-                                          "screen")
-                         : QStringLiteral("[rdp] this session is no longer left by Remote "
-                                          "Desktop"));
+        Logger::info(left ? QStringLiteral("[rdp] Remote Desktop left this session without a "
+                                           "screen")
+                          : QStringLiteral("[rdp] this session is no longer left by Remote "
+                                           "Desktop"));
     }
     // Back on a screen, or away from it: the displays the engine sees changed
     // with it, and the card follows.
     if (leftMoved || (stateMoved && now.state == RemoteDesktopReturnPolicy::Active)) emit changed();
-
-    if (decision.askReturn) askReturn();
 #endif
 }
 
@@ -291,21 +321,33 @@ void RemoteDesktopReturn::askReturn()
 void RemoteDesktopReturn::returnFinished(Outcome outcome, const QString& detail)
 {
     m_Asking.store(false);
+    QString error;
     switch (outcome) {
     case Outcome::Back: Logger::info("[rdp] back on this PC's screen, locked: " + detail); break;
     case Outcome::Refused:
         Logger::warning("[rdp] the session stays away from the screen: " + detail);
-        m_Tracker.returnFailed();
+        error =
+            QStringLiteral("This PC's session could not be brought back to its screen: ") + detail;
         break;
     case Outcome::Hidden:
         Logger::warning("[rdp] the session went back to the screen but was sent away again, not "
-                        "asked again until it is used: " +
+                        "brought back again until it is used: " +
                         detail);
+        error = QStringLiteral("This PC's session could not be locked on its screen, so it was "
+                               "sent away again: sign in on the PC");
         m_Tracker.giveUp();
         break;
     case Outcome::Exposed:
         Logger::error("[rdp] the session may be UNLOCKED on this PC's screen: " + detail);
+        error = QStringLiteral("This PC's session could not be locked, and may be UNLOCKED on "
+                               "its screen");
         m_Tracker.giveUp();
         break;
     }
+    // What the session is now, before anyone waiting reads it: back on the
+    // screen, the card has its displays again and a stream can open one.
+    onTick();
+    const QList<std::function<void(bool, const QString&)>> waiting = std::exchange(m_Waiting, {});
+    for (const auto& done : waiting)
+        done(outcome == Outcome::Back, error);
 }

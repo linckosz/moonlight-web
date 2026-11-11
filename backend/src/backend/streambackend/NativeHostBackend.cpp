@@ -105,6 +105,9 @@ QList<int> displayAppIds(const mw::native::Capabilities& caps)
 /// ids, 1100 + their rank; every app since is numbered from
 /// AppSettings::kHostAppIdFirst. Below 1100: displays and the virtual display.
 constexpr int kHostAppIdFloor = 1100;
+static_assert(RemoteDesktopReturnPolicy::kReturnAppId > kVirtualDisplayAppId &&
+                  RemoteDesktopReturnPolicy::kReturnAppId < kHostAppIdFloor,
+              "\"This PC's screen\" sits between the virtual display and the owner's apps");
 
 /// The engine's entry for the owner's apps in gamescope, or nullptr.
 const mw::native::DisplayInfo* gamescopeAppsDisplay(const mw::native::Capabilities& caps)
@@ -306,6 +309,25 @@ NvApp virtualDisplayApp(const mw::native::Capabilities& caps,
     return app;
 }
 
+/// "This PC's screen": the card of a session Remote Desktop left without a
+/// screen. It draws the PC with its monitor, the screen it brings the session
+/// back to; the browser names it in its own language.
+NvApp remoteDesktopReturnApp(const mw::native::Capabilities& caps)
+{
+    NvApp app(RemoteDesktopReturnPolicy::kReturnAppId, QStringLiteral("This PC's screen (locked)"),
+              /*hdr=*/false);
+    app.setHasBoxArt(false);
+    app.setDevice(QJsonObject{
+        {QStringLiteral("os"), HostOsProbe::toString(HostOsProbe::thisMachine())},
+        {QStringLiteral("display"),
+         caps.hasBattery ? QStringLiteral("builtin") : QStringLiteral("external")},
+        {QStringLiteral("model"), QString()},
+        {QStringLiteral("key"), QStringLiteral("remote-desktop-return")},
+        {QStringLiteral("battery"), caps.hasBattery},
+    });
+    return app;
+}
+
 /// One card per app of the owner's (AppSettings::hostApps), in the settings'
 /// order, after @p apps' displays. The card says where its program opens
 /// (device.screen) and, when the owner gave it one, its image's hash
@@ -349,6 +371,34 @@ void appendHostApps(const mw::native::Capabilities& caps, QVector<NvApp>& apps)
 int NativeHostBackend::virtualDisplayAppId()
 {
     return kVirtualDisplayAppId;
+}
+
+int NativeHostBackend::remoteDesktopReturnAppId()
+{
+    return RemoteDesktopReturnPolicy::kReturnAppId;
+}
+
+int NativeHostBackend::primaryDisplayAppId(QString* error)
+{
+    const mw::native::Capabilities caps = probeEngine();
+    if (!caps.available) {
+        if (error)
+            *error = caps.diagnostic.empty() ? QString::fromUtf8(mw::native::toString(caps.reason))
+                                             : QString::fromStdString(caps.diagnostic);
+        return -1;
+    }
+    const mw::native::DisplayInfo* primary = primaryDisplay(caps);
+    if (!primary) {
+        if (error) *error = QStringLiteral("This PC has no screen to stream");
+        return -1;
+    }
+    const QList<int> ids = displayAppIds(caps);
+    const int appId = ids.value(static_cast<int>(primary - caps.displays.data()));
+    if (appId <= 0) {
+        if (error) *error = QStringLiteral("This PC's screen has no card");
+        return -1;
+    }
+    return appId;
 }
 
 bool NativeHostBackend::virtualDisplayGpuChoosable(const QString& gpu)
@@ -657,6 +707,14 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
     // off alike: opening it is what turns it on.
     const bool virtualInstalled = VirtualDisplay::probe().installed;
     if (!caps.available) {
+        // Remote Desktop left this session with no screen, and may bring it
+        // back: "This PC's screen" is the one card, and opening it is what
+        // brings the session back (RemoteDesktopReturn).
+        if (caps.reason == mw::native::Unavailability::NoDisplay &&
+            RemoteDesktopReturn::instance().offersReturn()) {
+            cb(true, BackendError{}, {remoteDesktopReturnApp(caps)});
+            return;
+        }
         // A machine with nothing attached and our display to offer has one
         // card; any other reason to be unavailable has none.
         // Not when Remote Desktop left this session: no display reaches a

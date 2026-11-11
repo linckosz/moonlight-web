@@ -118,6 +118,7 @@
 #include "streaming/StreamRelay.h"
 #include "streaming/TransportPriorities.h"
 #include "streaming/ConsoleSession.h"
+#include "streaming/RemoteDesktopReturn.h"
 #include "streaming/SharedFeed.h"
 #include "streaming/StreamEnds.h"
 #include "streaming/StreamWorkerHost.h"
@@ -3176,23 +3177,16 @@ int main(int argc, char* argv[])
     });
 
     // Phase 5: Start streaming — launch app + RTSP handshake
-    server.router()->postAsync("/api/hosts/:id/start", [&computerManager, signalingPort,
-                                                        &g_ActiveRelay, &g_ActiveStreamRelay,
-                                                        &g_ActiveMediaTrackRelay, &g_ActiveSession,
-                                                        &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                                                        &g_ActiveSessionToken, &g_ActiveHostUuid,
-                                                        &g_HostAspect, &g_Pool, &g_DualSupport,
-                                                        &g_SingleSessionHosts,
-                                                        &g_LastStandbyStartMs, &g_LiveSunshineUids,
-                                                        &g_PendingHostCancels, &g_StreamEnds,
-                                                        &dropPendingHostCancel, &detachWorkerSlot,
-                                                        &quitsPerDevice, &quitDeviceApp,
-                                                        &releaseSeatIfIdle, &slotSignalingPort,
-                                                        &slotWsPath, &anyOtherSlotLive,
-                                                        &reapCoopSession, &server, &appSettings,
-                                                        &authManager, &sessionMetrics, &routerPorts,
-                                                        stunServer](const HttpRequest& req,
-                                                                    ResponseCallback respond) {
+    const auto startHost = [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay,
+                            &g_ActiveMediaTrackRelay, &g_ActiveSession, &g_ActiveRelayRoot,
+                            &g_ActiveClientUniqueId, &g_ActiveSessionToken, &g_ActiveHostUuid,
+                            &g_HostAspect, &g_Pool, &g_DualSupport, &g_SingleSessionHosts,
+                            &g_LastStandbyStartMs, &g_LiveSunshineUids, &g_PendingHostCancels,
+                            &g_StreamEnds, &dropPendingHostCancel, &detachWorkerSlot,
+                            &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &slotSignalingPort,
+                            &slotWsPath, &anyOtherSlotLive, &reapCoopSession, &server, &appSettings,
+                            &authManager, &sessionMetrics, &routerPorts,
+                            stunServer](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -5057,6 +5051,65 @@ int main(int argc, char* argv[])
                 claimThenStart();
             }
         }
+    };
+    // "This PC's screen", the card of a session Remote Desktop left without a
+    // screen (Windows): opening it brings the session back to the PC's screen,
+    // locked, and the stream then starts on its primary display — the lock
+    // screen, unlocked from the stream. Nothing else ever brings it back
+    // (RemoteDesktopReturn). A launch that finds the session back already (a
+    // quality switch, a second tab) streams that display straight away.
+    server.router()->postAsync("/api/hosts/:id/start", [&computerManager,
+                                                        startHost](const HttpRequest& req,
+                                                                   ResponseCallback respond) {
+        NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
+        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        if (!host || host->backendType != NativeHostBackend::typeName() ||
+            body["appId"].toInt(0) != NativeHostBackend::remoteDesktopReturnAppId()) {
+            startHost(req, std::move(respond));
+            return;
+        }
+        // The displays come with the session, a moment after it reaches the
+        // console: asked again every 100 ms, for up to 3 s.
+        const auto streamPrimary = [startHost, req, body, respond]() {
+            auto attempt = std::make_shared<std::function<void(int)>>();
+            const std::weak_ptr<std::function<void(int)>> weak = attempt;
+            *attempt = [startHost, req, body, respond, weak](int triesLeft) {
+                QString why;
+                const int appId = NativeHostBackend::primaryDisplayAppId(&why);
+                if (appId > 0) {
+                    QJsonObject onScreen = body;
+                    onScreen["appId"] = appId;
+                    HttpRequest again = req;
+                    again.body = QJsonDocument(onScreen).toJson(QJsonDocument::Compact);
+                    qInfo().noquote()
+                        << "[rdp] streaming this PC's screen (display card" << appId << ")";
+                    startHost(again, respond);
+                    return;
+                }
+                const auto self = weak.lock();
+                if (triesLeft <= 0 || !self) {
+                    respond(HttpResponse::error(
+                        503, QStringLiteral("This PC's session is back on its screen, locked, but "
+                                            "no display showed up: ") +
+                                 why));
+                    return;
+                }
+                QTimer::singleShot(100, qApp, [self, triesLeft]() { (*self)(triesLeft - 1); });
+            };
+            (*attempt)(30);
+        };
+        if (!RemoteDesktopReturn::instance().leftByRemoteDesktop()) {
+            streamPrimary();
+            return;
+        }
+        RemoteDesktopReturn::instance().bringBack(
+            [streamPrimary, respond](bool ok, const QString& error) {
+                if (!ok) {
+                    respond(HttpResponse::error(409, error));
+                    return;
+                }
+                streamPrimary();
+            });
     });
 
     // Phase 5: Quit running app

@@ -89,6 +89,11 @@ QString consoleReturnRefusal(const ConsoleReturnFacts& facts);
 /// at: the user signed in there is the caller.
 QString hideRefusal(const ConsoleReturnFacts& facts);
 
+/// The card a session left by Remote Desktop offers, and opening it is what
+/// brings the session back. A fixed id beside the virtual display's (1000),
+/// out of the displays' range and below the owner's apps' (1100).
+constexpr int kReturnAppId = 1001;
+
 /// What the server sees of its own session, every few seconds.
 struct Observation
 {
@@ -97,16 +102,6 @@ struct Observation
     /// The session is a Remote Desktop one at this moment (WTSClientProtocolType
     /// is RDP). Read while Active; a disconnected session's answer is not used.
     bool remote = false;
-};
-
-/// What to do after an observation.
-struct Decision
-{
-    /// The session was left by Remote Desktop and is still away from the
-    /// screen: the card says so rather than "No screen".
-    bool leftByRemoteDesktop = false;
-    /// Ask the launcher to put the session back on the console now.
-    bool askReturn = false;
 };
 
 /**
@@ -118,37 +113,41 @@ struct Decision
  * and pulling it back would throw the other person off the sign-in screen:
  * that one was last seen active on the console, and is left alone.
  *
- * The return is asked once the session has been seen Disconnected on
- * kSettleTicks ticks in a row — Remote Desktop moving a session from one
- * client to another passes through Disconnected for an instant — and asked
- * again only every kRetryTicks while it stays away (a console user who signs
- * out later frees the screen for it).
+ * Nothing is ever asked from here: the return starts when somebody opens the
+ * native host's card to stream it (decision of 11/11/2026), never because
+ * mstsc was closed. The PC's screen shows the session only when a stream is
+ * about to use it. The tracker says whether that request may go out now
+ * (returnRefusal).
  */
 class Tracker
 {
 public:
+    /// Remote Desktop moving a session from one client to another passes
+    /// through Disconnected for an instant: a return is only asked once the
+    /// session has been seen Disconnected on this many ticks in a row.
     static constexpr int kSettleTicks = 2;
-    static constexpr int kRetryTicks = 15;
 
+    /// Whether the session was left by Remote Desktop and is still away from
+    /// the screen: the card says so rather than "No screen", and offers the
+    /// way back.
+    bool observe(const Observation& now);
+
+    /// Why a return must NOT be asked now, in English; empty when it may.
     /// @p allowed: the setting is on, the native host is enabled, and the
     /// launcher is there to ask.
-    Decision observe(const Observation& now, bool allowed);
-
-    /// A request was answered with a refusal or an error: wait kRetryTicks.
-    /// (A success needs nothing: the next observation sees the session Active.)
-    void returnFailed() { m_SinceAsk = 0; }
+    QString returnRefusal(bool allowed) const;
 
     /// The session reached the screen but could not be locked, and was sent
-    /// away again: never asked again until the session is seen Active (used
-    /// through Remote Desktop again, or signed in on the PC). A return that
-    /// cannot lock would otherwise show the desktop every kRetryTicks.
+    /// away again: no return until the session is seen Active (used through
+    /// Remote Desktop again, or signed in on the PC). Each try of a return
+    /// that cannot lock would show the desktop again for a few seconds.
     void giveUp() { m_GaveUp = true; }
 
 private:
     bool m_GaveUp = false;
     bool m_LastActiveRemote = false;
+    bool m_Left = false;
     int m_DisconnectedTicks = 0;
-    int m_SinceAsk = -1; ///< ticks since the last request; -1 = none this time
 };
 
 } // namespace RemoteDesktopReturnPolicy

@@ -15,6 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { t } from '../i18n/i18n.js';
+
 /**
  * MoonlightWeb — Remote application data model
  */
@@ -35,7 +37,18 @@ export class App {
     }
 
     get displayName() {
+        // The server names it in English; the browser, in its own language.
+        if (this.isRemoteDesktopReturn) return t('apps.remoteDesktopReturn');
         return this.name;
+    }
+
+    /**
+     * Is this card "This PC's screen" — the one card of a Windows native host
+     * whose session Remote Desktop left without a screen? Opening it brings
+     * the session back to the PC's screen, locked, and streams it.
+     */
+    get isRemoteDesktopReturn() {
+        return this.device?.key === 'remote-desktop-return';
     }
 
     /**
