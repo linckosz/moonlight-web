@@ -81,6 +81,7 @@ add_executable(run_tests
     test_wolf_seat_pairing.cpp
     test_nv_pairing_signature.cpp
     test_backend_probe.cpp
+    test_close_when_done_nam.cpp
     test_host_os_probe.cpp
     test_send_backlog.cpp
     test_relay_frame_log.cpp

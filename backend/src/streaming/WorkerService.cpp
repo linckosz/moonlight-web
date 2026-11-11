@@ -759,64 +759,16 @@ void controlLoop()
     sa.lpSecurityDescriptor = sd;
 
     const std::wstring path = controlPipePath();
-    // While the service runs, an instance of its pipe always waits for the
-    // next caller: the next one is made before the one just served is closed,
-    // so the name is never free for anything else to take. The first one,
-    // and any made after the name was let go, asks to be the first instance
-    // of that name: when something else holds it already, the service says
-    // so loudly (callers refuse to talk to it anyway, askService).
-    const auto makeInstance = [&](bool first) {
-        return ::CreateNamedPipeW(
-            path.c_str(),
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0),
+    while (::WaitForSingleObject(g_StopEvent, 0) != WAIT_OBJECT_0) {
+        HANDLE pipe = ::CreateNamedPipeW(
+            path.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES, kMaxRequestBytes, kMaxRequestBytes, 0, &sa);
-    };
-    // A refusal is said when it starts, again only if its reason changes,
-    // and once when it ends with how many tries it took: a name held for days
-    // must not write a line a second.
-    int refusedTries = 0;
-    bool refusedHeld = false;
-    DWORD refusedError = 0;
-    const auto reportRefused = [&](bool first, DWORD err) {
-        // ERROR_ACCESS_DENIED is what FILE_FLAG_FIRST_PIPE_INSTANCE answers
-        // when the name exists already.
-        const bool held = first && err == ERROR_ACCESS_DENIED;
-        const bool news = refusedTries == 0 || held != refusedHeld;
-        ++refusedTries;
-        refusedHeld = held;
-        refusedError = err;
-        if (!news) return;
-        if (held)
-            Logger::error(QStringLiteral("[WorkerService] ANOTHER PROGRAM HOLDS this service's "
-                                         "control pipe name: no worker can be asked for until "
-                                         "it lets go (tried again every second, said once)"));
-        else
-            Logger::error(QStringLiteral("[WorkerService] CreateNamedPipe failed (error %1), "
-                                         "tried again every second, said once")
-                              .arg(err));
-    };
-    HANDLE pipe = INVALID_HANDLE_VALUE;
-    bool first = true;
-    while (::WaitForSingleObject(g_StopEvent, 0) != WAIT_OBJECT_0) {
         if (pipe == INVALID_HANDLE_VALUE) {
-            pipe = makeInstance(first);
-            if (pipe == INVALID_HANDLE_VALUE) {
-                reportRefused(first, ::GetLastError());
-                ::WaitForSingleObject(g_StopEvent, 1000);
-                continue;
-            }
-            first = false;
-            if (refusedTries > 0) {
-                Logger::warning(
-                    QStringLiteral("[WorkerService] the control pipe is this "
-                                   "service's again, after %1 refused tr%2 (last "
-                                   "error %3)")
-                        .arg(refusedTries)
-                        .arg(refusedTries == 1 ? QStringLiteral("y") : QStringLiteral("ies"))
-                        .arg(refusedError));
-                refusedTries = 0;
-            }
+            Logger::error(QStringLiteral("[WorkerService] CreateNamedPipe failed (error %1)")
+                              .arg(::GetLastError()));
+            ::WaitForSingleObject(g_StopEvent, 1000);
+            continue;
         }
 
         OVERLAPPED ov = {};
@@ -839,22 +791,9 @@ void controlLoop()
         }
         if (connected) serveOne(pipe);
         ::CloseHandle(ov.hEvent);
-        // The next instance first, then this one goes. Stopping: nothing next.
-        HANDLE next = INVALID_HANDLE_VALUE;
-        if (::WaitForSingleObject(g_StopEvent, 0) != WAIT_OBJECT_0) {
-            next = makeInstance(false);
-            if (next == INVALID_HANDLE_VALUE) {
-                reportRefused(false, ::GetLastError());
-                // The name goes with this instance: the next one has to be the
-                // first again.
-                first = true;
-            }
-        }
         ::DisconnectNamedPipe(pipe);
         ::CloseHandle(pipe);
-        pipe = next;
     }
-    if (pipe != INVALID_HANDLE_VALUE) ::CloseHandle(pipe);
     ::LocalFree(sd);
 }
 

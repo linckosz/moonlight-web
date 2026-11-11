@@ -16,6 +16,7 @@
  */
 
 #include "ComputerManager.h"
+#include "backend/CloseWhenDoneNam.h"
 #include "backend/ManualHostMerge.h"
 
 #include "streambackend/BackendProbe.h"
@@ -185,7 +186,9 @@ private:
 
 ComputerManager::ComputerManager(QObject* parent)
     : QObject(parent)
-    , m_Nam(new QNetworkAccessManager(this))
+    // The poll's, the scan's, the probes' and every backend's on these hosts: no
+    // connection of theirs is kept once its request ends (see CloseWhenDoneNam).
+    , m_Nam(new CloseWhenDoneNam(this))
     , m_Http(new NvHTTP(m_Nam, this))
 {
     m_Nam->setProxy(QNetworkProxy::NoProxy);

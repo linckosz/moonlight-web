@@ -160,6 +160,9 @@ bool TrayManager::init()
 
     m_TrayIcon->setContextMenu(m_Menu);
     m_TrayIcon->show();
+#ifdef Q_OS_WIN
+    noticeIcon(); // rendered now, at startup, rather than at the first stream's start
+#endif
 
 #ifdef Q_OS_MACOS
     // Dock right-click menu — reuse the tray actions; macOS appends its own
@@ -226,6 +229,38 @@ QString TrayManager::viewerName(const StreamViewer& v)
     return v.name.isEmpty() ? tr("Someone") : v.name;
 }
 
+void TrayManager::notify(const QString& text)
+{
+#ifdef Q_OS_WIN
+    m_TrayIcon->showMessage(mw::edition::displayName(), text, noticeIcon(), 5000);
+#else
+    // Elsewhere the type itself is read: the icon name and the urgency of a
+    // freedesktop notification come from it.
+    m_TrayIcon->showMessage(mw::edition::displayName(), text, QSystemTrayIcon::Information, 5000);
+#endif
+}
+
+// The information icon of a notification, rendered once per device pixel ratio.
+//
+// Handed the style's icon, Qt for Windows renders it anew for every notice, at
+// up to 256 px. That work runs on two threads of Qt's GUI pool, which end 30 s
+// later, each with a hidden window. A window created or destroyed anywhere in
+// the session holds the next SendInput press for up to one DWM frame (D29,
+// 07/11/2026). The arrival notice comes at a stream's start, so its two threads
+// ended half a minute into the stream. Kept, the same pixmap shows the same
+// notice and is never drawn again.
+QIcon TrayManager::noticeIcon()
+{
+    const qreal dpr = qApp->devicePixelRatio();
+    if (m_NoticeIcon.isNull() || m_NoticeIconDpr != dpr) {
+        const QIcon style = QApplication::style()->standardIcon(QStyle::SP_MessageBoxInformation);
+        // The size Qt for Windows asks of the icon a notice is given.
+        m_NoticeIcon = QIcon(style.pixmap(style.actualSize(QSize(256, 256))));
+        m_NoticeIconDpr = dpr;
+    }
+    return m_NoticeIcon;
+}
+
 // One poll, three consequences: the tooltip, the menu entry, and a notification
 // for each viewer who arrived or left since the last one.
 //
@@ -253,18 +288,14 @@ void TrayManager::pollActivity()
         for (const StreamViewer& v : activity.viewers) {
             if (m_Viewers.contains(v.id)) continue;
             qInfo() << "[TrayManager] Notifying: arrival of" << viewerName(v);
-            m_TrayIcon->showMessage(mw::edition::displayName(),
-                                    tr("%1 started streaming this screen").arg(viewerName(v)),
-                                    QSystemTrayIcon::Information, 5000);
+            notify(tr("%1 started streaming this screen").arg(viewerName(v)));
         }
         // Departures are named from the previous snapshot, which is the only
         // place a viewer who is gone still has a name.
         for (const StreamViewer& v : m_LastViewers) {
             if (ids.contains(v.id)) continue;
             qInfo() << "[TrayManager] Notifying: departure of" << viewerName(v);
-            m_TrayIcon->showMessage(mw::edition::displayName(),
-                                    tr("%1 stopped streaming this screen").arg(viewerName(v)),
-                                    QSystemTrayIcon::Information, 5000);
+            notify(tr("%1 stopped streaming this screen").arg(viewerName(v)));
         }
     }
 

@@ -142,6 +142,10 @@ private:
     void refreshTooltip(int count);
     /// What to call a viewer in a notification.
     static QString viewerName(const StreamViewer& v);
+    /// A notification under the product's name, with the information icon.
+    void notify(const QString& text);
+    /// That icon, rendered once per device pixel ratio (Windows, see the .cpp).
+    QIcon noticeIcon();
     /// localhost URL for `path`, preferring HTTPS, falling back to HTTP; empty if
     /// no listener is up.
     QUrl localUrl(const QString& path) const;
@@ -162,6 +166,8 @@ private:
     QMenu* m_DockMenu;                    // macOS Dock right-click menu (null elsewhere)
     QAction* m_AutostartAction = nullptr; // "Start at login" — only where it can be done
     QElapsedTimer m_StartedAt;            // filters out the app-launch activation (macOS)
+    QIcon m_NoticeIcon;                   // a notification's icon, rendered once...
+    qreal m_NoticeIconDpr = 0;            // ...at this device pixel ratio
 
     // ── Streaming activity ─────────────────────────────────────────────────
     std::function<StreamActivity()> m_Activity;
