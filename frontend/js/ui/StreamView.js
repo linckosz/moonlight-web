@@ -12520,14 +12520,12 @@ export class StreamView {
 
     /**
      * Whether the host opens a menu on a Windows key pressed and let go of
-     * alone: Windows does, its Start menu. On a Mac host Cmd alone does
-     * nothing, and a Linux desktop keeps its own Super key behaviour. A host
-     * of unknown OS is taken for Windows, the common case; the Ctrl tap does
-     * nothing anywhere else.
+     * alone: Windows does, its Start menu, and so do the Linux desktops, their
+     * launcher or overview on Super alone. On a Mac host Cmd alone does
+     * nothing. A host of unknown OS is taken for Windows, the common case.
      */
     static metaAloneOpensStart(host) {
-        const os = String(host?.hostOs || '').toLowerCase();
-        return os !== 'macos' && os !== 'linux';
+        return String(host?.hostOs || '').toLowerCase() !== 'macos';
     }
 
     /**

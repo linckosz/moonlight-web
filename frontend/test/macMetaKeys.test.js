@@ -461,16 +461,21 @@ describe('Cmd pressed and let go of alone', () => {
         expect(wire(v)).toEqual(['keydown MetaLeft', 'keyup MetaLeft']);
     });
 
-    it('leaves a Linux host its own Super key', () => {
+    it("keeps a Linux host's launcher shut too: Super alone opens it there", () => {
         const v = keySink({ host: { hostOs: 'linux' } });
         v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
         v.handleKeyUp(ev('MetaLeft', 'Meta'));
 
-        expect(wire(v)).toEqual(['keydown MetaLeft', 'keyup MetaLeft']);
+        expect(wire(v)).toEqual([
+            'keydown MetaLeft',
+            'keydown ControlLeft',
+            'keyup ControlLeft',
+            'keyup MetaLeft',
+        ]);
     });
 
-    it('treats a Windows host, and one of unknown OS, the same', () => {
-        for (const hostOs of ['windows', 'unknown', undefined]) {
+    it('treats a Windows host, a Linux one and one of unknown OS the same', () => {
+        for (const hostOs of ['windows', 'linux', 'unknown', undefined]) {
             const v = keySink({ host: { hostOs } });
             v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
             v.handleKeyUp(ev('MetaLeft', 'Meta'));
