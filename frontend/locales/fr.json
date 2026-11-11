@@ -478,7 +478,7 @@
         "muteHostDesc": "Coupe les haut-parleurs du PC hôte pendant le stream. Le son reste envoyé à cet appareil.",
         "audioSource": "Son du stream",
         "audioSourceDesc": "Automatique ne diffuse que l'application que vous utilisez sur l'écran diffusé, et vous suit quand vous en changez : les sons des autres applications restent sur l'hôte. Vous pouvez aussi choisir une des applications qui ont du son. S'applique au prochain stream.",
-        "audioSourceUnsupported": "Diffuser une seule application demande un hôte Windows 11. Toutes les applications sont diffusées.",
+        "nativeHostDesc": "Ces réglages ne s'appliquent qu'aux streams d'un hôte MoonlightWeb, pas de Sunshine, Apollo ni Wolf.",
         "audioSourceAll": "Toutes les applications (comportement classique)",
         "audioSourceFocused": "Automatique (application qui a le focus)",
         "micDevice": "Micro",

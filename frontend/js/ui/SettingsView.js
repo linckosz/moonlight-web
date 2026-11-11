@@ -192,7 +192,7 @@ export class SettingsView {
         // Which sound the stream carries (audioSourceOptions.js): 'all' (default,
         // as an OS behaves), 'focused' (Automatic: the app in focus, a game) or
         // 'app:<exe>'. The host says whether it can (Windows 11 native host);
-        // elsewhere the choice is shown locked.
+        // elsewhere the choice is not shown (the MoonlightWeb Host section).
         this._audioSource = 'all';
         this._audioSourceSupported = false;
         // The apps with sound on the host, to pick one from.
@@ -1293,6 +1293,57 @@ export class SettingsView {
         }
     }
 
+    // --- MoonlightWeb Host ---
+
+    /**
+     * This browser's choices that only a MoonlightWeb host acts on: the admin
+     * page's section of the same name, on the viewer's side. Sunshine, Apollo
+     * and Wolf ignore both, and among the Advanced settings they read as if
+     * they did not. Same rule as the admin's section: each one is shown only
+     * where a host can honour it, and the section only when it has one of them
+     * to offer — so a Sunshine user no longer meets a greyed-out choice that
+     * can never be theirs.
+     */
+    _renderNativeHostSection() {
+        const audioSource = this._audioSourceSupported;
+        const othersOff = !!this._othersOffOffer;
+        if (!audioSource && !othersOff) return '';
+        return `
+                <div class="settings-section" id="settings-section-native-host">
+                    <h3 class="settings-section-title">${t('admin.nativeHost')}</h3>
+                    <p class="settings-section-desc">${t('settings.nativeHostDesc')}</p>
+                    ${
+                        audioSource
+                            ? `
+                    <div class="settings-field">
+                        <label class="settings-label" for="settings-audio-source">
+                            ${t('settings.audioSource')}
+                        </label>
+                        <span class="setting-desc">${t('settings.audioSourceDesc')}</span>
+                        <select id="settings-audio-source" class="settings-select">
+                            ${this._audioSourceOptionsHtml()}
+                        </select>
+                    </div>`
+                            : ''
+                    }
+                    ${
+                        othersOff
+                            ? `
+                    <div class="settings-field" id="settings-others-off-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-others-off"
+                                ${othersOffChecked(this._othersOff, this._othersOffOffer) ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.othersOff')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.othersOffDesc')}</span>
+                    </div>`
+                            : ''
+                    }
+                </div>`;
+    }
+
     // --- Stream audio from ---
 
     /** The select's options as HTML, the choice selected. */
@@ -2240,21 +2291,6 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.muteHostDesc')}</span>
                     </div>
 
-                    <div class="settings-field${this._audioSourceSupported ? '' : ' settings-field-locked'}">
-                        <label class="settings-label" for="settings-audio-source">
-                            ${t('settings.audioSource')}
-                        </label>
-                        <span class="setting-desc">${t(
-                            this._audioSourceSupported
-                                ? 'settings.audioSourceDesc'
-                                : 'settings.audioSourceUnsupported',
-                        )}</span>
-                        <select id="settings-audio-source" class="settings-select"
-                                ${this._audioSourceSupported ? '' : 'disabled'}>
-                            ${this._audioSourceOptionsHtml()}
-                        </select>
-                    </div>
-
                     <div class="settings-field${micSupported() ? '' : ' settings-field-locked'}">
                         <label class="settings-label" for="settings-mic-device">
                             ${t('settings.micDevice')}
@@ -2288,21 +2324,6 @@ export class SettingsView {
                         </label>
                         <span class="setting-desc">${t('settings.quitAppOnStopDesc')}</span>
                     </div>
-                    ${
-                        this._othersOffOffer
-                            ? `
-                    <div class="settings-field" id="settings-others-off-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-others-off"
-                                ${othersOffChecked(this._othersOff, this._othersOffOffer) ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">
-                                <strong>${t('settings.othersOff')}</strong>
-                            </span>
-                        </label>
-                        <span class="setting-desc">${t('settings.othersOffDesc')}</span>
-                    </div>`
-                            : ''
-                    }
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
@@ -2433,6 +2454,9 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.showPerfStatsDesc')}</span>
                     </div>
                 </div>
+
+                <!-- ── MoonlightWeb Host ───────────────────────────────────── -->
+                ${this._renderNativeHostSection()}
 
                 <!-- ── Language ────────────────────────────────────────────── -->
                 <div class="settings-section">

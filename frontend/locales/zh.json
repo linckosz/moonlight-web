@@ -478,7 +478,7 @@
         "muteHostDesc": "串流时静音主机电脑扬声器。音频仍会发送到本设备。",
         "audioSource": "串流音频来源",
         "audioSourceDesc": "“自动”只串流你在被串流屏幕上正在使用的应用，并在你切换时跟随，其他应用的声音只在主机上播放。也可以选择一个有声音的应用。下次串流时生效。",
-        "audioSourceUnsupported": "只串流单个应用需要 Windows 11 主机。当前串流所有应用。",
+        "nativeHostDesc": "这些设置只适用于来自 MoonlightWeb 主机的串流，与 Sunshine、Apollo 或 Wolf 无关。",
         "audioSourceAll": "所有应用（经典模式）",
         "audioSourceFocused": "自动（焦点应用）",
         "micDevice": "麦克风",
