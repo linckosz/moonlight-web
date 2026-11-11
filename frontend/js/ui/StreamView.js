@@ -25,6 +25,7 @@
 import { WebRtcDataChannel } from '../api/WebRtcDataChannel.js';
 import { WebRtcMedia } from '../api/WebRtcMedia.js';
 import { DecoderErrorTrail } from '../stream/DecoderErrorTrail.js';
+import { StallTest, parseStallTest } from '../stream/StallTest.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { StatsGraph } from './StatsGraph.js';
@@ -1324,6 +1325,26 @@ export class StreamView {
         this._dropTestEvery = 0;
         try {
             this._dropTestEvery = Number(localStorage.getItem('mw_drop_test') || 0) | 0;
+        } catch (e) {
+            /* storage unavailable */
+        }
+        // Debug: a stall of the link played by the page (localStorage
+        // mw_stall_test = "everyMs,holdMs"), to meet the burst after a stall
+        // on a link that never stalls. See StallTest.
+        this._stallTest = null;
+        this._stallReleasing = false;
+        try {
+            const cfg = parseStallTest(localStorage.getItem('mw_stall_test'));
+            if (cfg) {
+                this._stallTest = new StallTest(cfg);
+                console.warn(
+                    '[StreamView] stall test: holding the frames ' +
+                        cfg.holdMs +
+                        ' ms every ' +
+                        cfg.everyMs +
+                        ' ms',
+                );
+            }
         } catch (e) {
             /* storage unavailable */
         }
@@ -8373,6 +8394,41 @@ export class StreamView {
     }
 
     handleVideoFrame(data, isKeyframe, backendTs, frameId = 0, zones = null) {
+        // Debug stall test: the frames wait here, as the link would have held
+        // them, then come in again one after the other, each stamped at its
+        // release as a frame held by the link is. A release always carries
+        // the frame that started the stall plus the one that ended it.
+        if (this._stallTest && !this._stallReleasing && !this._quitting) {
+            const out = this._stallTest.admit(
+                { data, isKeyframe, backendTs, frameId, zones },
+                performance.now(),
+            );
+            if (out.length === 0) return;
+            if (out.length > 1) {
+                const burst = this._stallTest.lastBurst;
+                console.warn(
+                    '[StreamView] stall test: releasing ' +
+                        burst.frames +
+                        ' frames held ' +
+                        Math.round(burst.heldMs) +
+                        ' ms',
+                );
+                this._stallReleasing = true;
+                try {
+                    for (const f of out)
+                        this.handleVideoFrame(
+                            f.data,
+                            f.isKeyframe,
+                            f.backendTs,
+                            f.frameId,
+                            f.zones,
+                        );
+                } finally {
+                    this._stallReleasing = false;
+                }
+                return;
+            }
+        }
         // The frame is whole: this is where the network's time ends and the
         // browser's begins. Stamped on the absolute clock so the decode worker,
         // which has its own time origin, can measure the hop to decode().
