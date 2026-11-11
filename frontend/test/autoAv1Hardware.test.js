@@ -24,6 +24,10 @@
  * empty queue — and that stream was remembered as smooth. Pinned down: the
  * two minutes count in moving pictures only, a host asked for fewer pictures
  * is a decoder that does not keep up, and the AV1 path reports its queue.
+ *
+ * And Auto's AV1 that does not keep up comes back in H.264 at once, the way
+ * an HEVC that fails does (Bruno, 11/11/2026): left to run, that stream only
+ * fell further behind, and H.264 came at the next launch.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StreamView } from '../js/ui/StreamView.js';
@@ -302,6 +306,7 @@ describe('the stream view and its AV1', () => {
         videoCodec: 'av1',
         _codecAuto: true,
         _decodeRateCap: 0,
+        _requestCodecFallback: vi.fn(),
         ...more,
     });
 
@@ -314,9 +319,48 @@ describe('the stream view and its AV1', () => {
         );
     });
 
-    it('notes nothing against an AV1 chosen by hand', () => {
-        stream(av1({ _codecAuto: false }), 20, 8);
+    it('brings that stream back in H.264 at once, as an HEVC that fails is', () => {
+        const P = StreamView.prototype;
+        const view = av1({
+            _hdrEnabled: false,
+            _yuv444: false,
+            _quitting: false,
+            _manualQuitting: false,
+            _codecFallbackRequested: false,
+            _codecFallback: null,
+            webrtc: null,
+            quit: vi.fn(),
+            _computeCodecFallbackTarget: P._computeCodecFallbackTarget,
+            _requestCodecFallback: P._requestCodecFallback,
+        });
+        stream(view, 4, 8);
+        expect(view.quit).not.toHaveBeenCalled();
+        stream(view, 20, 8);
+        // What the app relaunches from (MoonlightApp._onStreamingQuit).
+        expect(view._codecFallbackRequested).toBe(true);
+        expect(view._codecFallback).toEqual({ codec: 'h264', hdr: false });
+        expect(view.quit).toHaveBeenCalledOnce();
+    });
+
+    it('leaves a guest where it is: the verdict, no relaunch of the feed', () => {
+        const guest = av1({ _playerMode: true });
+        stream(guest, 20, 8);
+        expect(av1FailedHere()).toBe(true);
+        expect(guest._requestCodecFallback).not.toHaveBeenCalled();
+    });
+
+    it('notes nothing against an AV1 chosen by hand, and leaves it running', () => {
+        const byHand = av1({ _codecAuto: false });
+        stream(byHand, 20, 8);
         expect(av1FailedHere()).toBe(false);
+        expect(byHand._requestCodecFallback).not.toHaveBeenCalled();
+    });
+
+    it('relaunches nothing that ran smoothly', () => {
+        const smooth = av1();
+        stream(smooth, 130, 0.5);
+        expect(av1ProvenHere()).toBe(true);
+        expect(smooth._requestCodecFallback).not.toHaveBeenCalled();
     });
 
     it('remembers an AV1 that ran smoothly, chosen by hand or by Auto', () => {

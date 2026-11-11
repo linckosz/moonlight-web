@@ -7720,9 +7720,10 @@ export class StreamView {
     /**
      * An 8-bit AV1 that does not keep up raises no error (util/CodecAuto.js,
      * Av1Watch): the decoder's queue says so, or the host asked for fewer
-     * pictures. Under Auto it is a failure, and the next launch asks H.264; a
-     * stream whose moving pictures ran smoothly is remembered, whoever chose
-     * AV1. Not an HDR or a 4:4:4 AV1, which are other decoders.
+     * pictures. Under Auto it is a failure: the stream comes back in H.264 at
+     * once, the way an HEVC that fails does, and the next launches ask H.264.
+     * A stream whose moving pictures ran smoothly is remembered, whoever
+     * chose AV1. Not an HDR or a 4:4:4 AV1, which are other decoders.
      * @param {{decodeQueueAvg?: number, arrivalAvgMs?: number}|null} diag
      * @param {number} now
      */
@@ -7751,10 +7752,17 @@ export class StreamView {
             noteAv1Proven();
             console.log('[MW] AV1 ran smoothly here for two minutes — remembered');
         } else if (this._codecAuto) {
+            // Kept whatever follows: H.264 from the next launch on.
             noteAv1Failed();
+            // And this stream back in H.264 now (Bruno, 11/11/2026): left to
+            // run, it only falls further behind. A guest stays where it is:
+            // the feed is the owner's.
+            const relaunch = !this._playerMode;
             console.warn(
-                '[MW] Auto: AV1 does not keep up in this browser — H.264 from the next launch on',
+                '[MW] Auto: AV1 does not keep up in this browser — ' +
+                    (relaunch ? 'back in H.264' : 'H.264 from the next launch on'),
             );
+            if (relaunch) this._requestCodecFallback();
         }
     }
 
