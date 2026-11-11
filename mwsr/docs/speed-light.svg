@@ -6,37 +6,37 @@
 <text x="0" y="84" font-size="13" font-weight="600" fill="#0b0b0b">GeForce RTX 5060 Ti</text>
 <line x1="78.0" y1="96" x2="78.0" y2="250" stroke="#8a8984" stroke-width="1"/>
 <text x="0" y="115" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
-<path d="M78.0 106.0 h0.2 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-0.2 z" fill="#c9c8c3"/>
-<text x="88.2" y="115.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.034 ms</text>
+<path d="M78.0 106.0 h5.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-5.0 z" fill="#c9c8c3"/>
+<text x="93.0" y="115.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.034 ms</text>
 <text x="0" y="145" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
-<path d="M78.0 136.0 h6.7 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-6.7 z" fill="#2a78d6"/>
-<text x="94.7" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.085 ms</text>
+<path d="M78.0 136.0 h18.7 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-18.7 z" fill="#2a78d6"/>
+<text x="106.7" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.085 ms</text>
 <text x="0" y="175" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
-<path d="M78.0 166.0 h14.3 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-14.3 z" fill="#9b9a95"/>
-<text x="102.3" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.146 ms</text>
+<path d="M78.0 166.0 h34.9 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-34.9 z" fill="#9b9a95"/>
+<text x="122.9" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.146 ms</text>
 <text x="0" y="205" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
-<path d="M78.0 196.0 h36.7 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-36.7 z" fill="#9b9a95"/>
-<text x="124.7" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.326 ms</text>
+<path d="M78.0 196.0 h82.6 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-82.6 z" fill="#9b9a95"/>
+<text x="170.6" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.326 ms</text>
 <text x="0" y="235" font-size="13" fill="#52514e" dominant-baseline="middle">NIS *</text>
 <path d="M78.0 226.0 h148.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-148.0 z" fill="#9b9a95"/>
-<text x="236.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">1.22 ms</text>
+<text x="236.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.572 ms</text>
 <text x="328" y="84" font-size="13" font-weight="600" fill="#0b0b0b">Radeon iGPU (Ryzen 9 9900X)</text>
 <line x1="406.0" y1="96" x2="406.0" y2="250" stroke="#8a8984" stroke-width="1"/>
 <text x="328" y="115" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
 <path d="M406.0 106.0 h1.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-1.0 z" fill="#c9c8c3"/>
 <text x="417.0" y="115.0" font-size="12" fill="#52514e" dominant-baseline="middle">0.453 ms</text>
 <text x="328" y="145" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
-<path d="M406.0 136.0 h22.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-22.0 z" fill="#2a78d6"/>
-<text x="438.0" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">2.35 ms</text>
+<path d="M406.0 136.0 h21.9 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-21.9 z" fill="#2a78d6"/>
+<text x="437.9" y="145.0" font-size="12" fill="#52514e" dominant-baseline="middle">2.35 ms</text>
 <text x="328" y="175" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
-<path d="M406.0 166.0 h29.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-29.0 z" fill="#9b9a95"/>
-<text x="445.0" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">2.97 ms</text>
+<path d="M406.0 166.0 h28.9 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-28.9 z" fill="#9b9a95"/>
+<text x="444.9" y="175.0" font-size="12" fill="#52514e" dominant-baseline="middle">2.97 ms</text>
 <text x="328" y="205" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
-<path d="M406.0 196.0 h66.3 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-66.3 z" fill="#9b9a95"/>
-<text x="482.3" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">6.34 ms</text>
+<path d="M406.0 196.0 h66.1 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-66.1 z" fill="#9b9a95"/>
+<text x="482.1" y="205.0" font-size="12" fill="#52514e" dominant-baseline="middle">6.34 ms</text>
 <text x="328" y="235" font-size="13" fill="#52514e" dominant-baseline="middle">NIS *</text>
 <path d="M406.0 226.0 h148.0 a4 4 0 0 1 4 4 v10.0 a4 4 0 0 1 -4 4 h-148.0 z" fill="#9b9a95"/>
-<text x="564.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">13.69 ms</text>
+<text x="564.0" y="235.0" font-size="12" fill="#52514e" dominant-baseline="middle">13.74 ms</text>
 <text x="656" y="84" font-size="13" font-weight="600" fill="#0b0b0b">Radeon 780M (938 MHz)</text>
 <line x1="734.0" y1="96" x2="734.0" y2="250" stroke="#8a8984" stroke-width="1"/>
 <text x="656" y="115" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
