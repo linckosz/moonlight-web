@@ -354,6 +354,7 @@
         "displayOff": "屏幕已关闭",
         "displayOffAria": "{{name}}，串流期间已关闭",
         "remoteDesktopReturn": "本机屏幕（锁定）",
+        "signInScreen": "本机登录屏幕",
         "quitConfirm": "在主机上退出 {{name}}？未保存的进度将丢失，正在串流的人都会断开连接。",
         "quitting": "正在退出…",
         "quitFailed": "无法在主机上退出 {{name}}。",

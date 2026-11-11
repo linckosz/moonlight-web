@@ -104,6 +104,15 @@ bool available();
 /// the worker connecting back is then awaited on the pipes themselves.
 bool requestWorker(const QString& base, QString* error);
 
+/// Ask the service for a worker on the console's sign-in screen, attached to
+/// the three pipes named after `base`: Remote Desktop left this process's
+/// session Disconnected, with no display, and the console shows the sign-in
+/// screen of a session nobody is signed in on (RemoteDesktopReturnPolicy.h).
+/// The worker streams that screen and nothing else (--signin-screen, which
+/// the service writes). True once the service reports the process created;
+/// a refusal comes back as the reason, in English.
+bool requestSignInWorker(const QString& base, QString* error);
+
 /// Ask the service to press Ctrl+Alt+Suppr on the console session. Windows
 /// takes SendSAS from a service in session 0 and ignores it from the worker,
 /// which runs in the console session, SYSTEM or not (design §31.7). The same

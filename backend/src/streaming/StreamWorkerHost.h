@@ -65,6 +65,11 @@ public:
         /// From the desktop, through the LocalSystem launcher service: SYSTEM
         /// on the console desktop, so the secure desktop does too (level 2).
         ServiceAsSystem,
+        /// From the desktop Remote Desktop left, through the launcher service:
+        /// SYSTEM on the console's sign-in screen, in sign-in screen mode
+        /// (WorkerService::requestSignInWorker). Only for a config that asks
+        /// for it (signInScreen), and nothing below it is ever tried.
+        SignInScreen,
     };
 
     /// Spawn the worker and hand it the session config. Returns false when the

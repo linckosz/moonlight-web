@@ -2,6 +2,7 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
  */
 #include "test_framework.h"
+#include "platform/SignInScreen.h"
 #include "streaming/RemoteDesktopReturnPolicy.h"
 
 using namespace RemoteDesktopReturnPolicy;
@@ -27,6 +28,195 @@ Observation seen(int state, bool remote = false)
     o.state = state;
     o.remote = remote;
     return o;
+}
+
+/// What the launcher sees when the server of a session Remote Desktop left
+/// asks for the sign-in screen: its session 1 is Disconnected, the console is
+/// an empty session 10 at the sign-in screen, and no sign-in worker runs.
+SignInFacts signInAsked()
+{
+    SignInFacts f;
+    f.callerIsThisExecutable = true;
+    f.callerSession = 1;
+    f.callerState = Disconnected;
+    f.consoleSession = 10;
+    f.consoleUserPresent = false;
+    f.signInWorkerAlive = false;
+    return f;
+}
+
+/// A session last seen active through Remote Desktop, then Disconnected on
+/// @p ticks ticks.
+Tracker leftFor(int ticks)
+{
+    Tracker t;
+    t.observe(seen(Active, true));
+    for (int i = 0; i < ticks; ++i)
+        t.observe(seen(Disconnected));
+    return t;
+}
+
+/// The console's sign-in screen, streamed by a SYSTEM worker on a console
+/// nobody is signed in on: the launcher's narrow exception, who may ask for
+/// it, and the worker's per-picture and per-input rule.
+void run_sign_in_screen_tests()
+{
+    SECTION("Sign-in screen — not offered in this version, by anyone");
+    if (!kSignInOffered) {
+        CHECK_EQ(signInLaunchRefusal(signInAsked()),
+                 QStringLiteral("this version does not offer it"));
+        CHECK(!signInOffered(true, true));
+        const Tracker t = leftFor(5);
+        CHECK_EQ(signInRequestRefusal(t, true, false),
+                 QStringLiteral("this version does not offer it"));
+    } else {
+        CHECK(signInLaunchRefusal(signInAsked()).isEmpty());
+        CHECK(signInOffered(true, true));
+    }
+    CHECK(!signInOffered(false, true));
+    CHECK(!signInOffered(true, false));
+    CHECK(kSignInAppId != kReturnAppId);
+
+    SECTION("Sign-in screen — the launcher's checks");
+    CHECK(signInLaunchChecks(signInAsked()).isEmpty());
+    {
+        SignInFacts f = signInAsked();
+        f.callerIsThisExecutable = false;
+        CHECK(!signInLaunchChecks(f).isEmpty());
+
+        f = signInAsked();
+        f.callerSession = kNoSession;
+        CHECK(!signInLaunchChecks(f).isEmpty());
+
+        f = signInAsked();
+        f.callerSession = 0;
+        CHECK(!signInLaunchChecks(f).isEmpty());
+
+        // The caller's own session is in use (on a screen or through Remote
+        // Desktop), or on its way back: no exception for it.
+        for (int state :
+             {static_cast<int>(Active), static_cast<int>(Connected), static_cast<int>(ConnectQuery),
+              static_cast<int>(Shadow), static_cast<int>(Idle), static_cast<int>(Listen),
+              static_cast<int>(Reset), static_cast<int>(Down), static_cast<int>(Init), -1}) {
+            f = signInAsked();
+            f.callerState = state;
+            CHECK(!signInLaunchChecks(f).isEmpty());
+        }
+
+        f = signInAsked();
+        f.consoleSession = kNoSession;
+        CHECK(!signInLaunchChecks(f).isEmpty());
+
+        f = signInAsked();
+        f.consoleSession = 0;
+        CHECK(!signInLaunchChecks(f).isEmpty());
+
+        f = signInAsked();
+        f.consoleSession = f.callerSession;
+        CHECK(!signInLaunchChecks(f).isEmpty());
+
+        // Somebody signed in on the PC, or Windows would not say: the
+        // console is theirs, and never streamed from here.
+        f = signInAsked();
+        f.consoleUserPresent = true;
+        CHECK(!signInLaunchChecks(f).isEmpty());
+
+        // One sign-in screen worker at a time.
+        f = signInAsked();
+        f.signInWorkerAlive = true;
+        CHECK(!signInLaunchChecks(f).isEmpty());
+
+        // Every unknown reads as a refusal.
+        CHECK(!signInLaunchChecks(SignInFacts{}).isEmpty());
+    }
+
+    SECTION("Sign-in screen — who may ask the server for it");
+    {
+        // Left by Remote Desktop and settled, the native host and the
+        // launcher there: yes, from any paired browser but a kiosk.
+        const Tracker left = leftFor(Tracker::kSettleTicks);
+        CHECK(signInRequestChecks(left, true, false).isEmpty());
+        CHECK_EQ(signInRequestChecks(left, true, true), QStringLiteral("not from a kiosk"));
+        CHECK(!signInRequestChecks(left, false, false).isEmpty());
+        // Only just left: Remote Desktop may be moving it to another client.
+        CHECK(!signInRequestChecks(leftFor(1), true, false).isEmpty());
+        // Switched away from on the PC (Switch user), or never seen in use:
+        // not left by Remote Desktop, nothing offered.
+        Tracker local;
+        local.observe(seen(Active, false));
+        for (int i = 0; i < 5; ++i)
+            local.observe(seen(Disconnected));
+        CHECK(!signInRequestChecks(local, true, false).isEmpty());
+        CHECK(!signInRequestChecks(Tracker{}, true, false).isEmpty());
+        // A return given up on does not hold the sign-in screen back:
+        // nothing is moved there.
+        Tracker gaveUp = leftFor(Tracker::kSettleTicks);
+        gaveUp.giveUp();
+        CHECK(signInRequestChecks(gaveUp, true, false).isEmpty());
+        // Back on a screen: nothing to offer.
+        Tracker back = leftFor(Tracker::kSettleTicks);
+        back.observe(seen(Active, false));
+        CHECK(!signInRequestChecks(back, true, false).isEmpty());
+    }
+
+    SECTION("Sign-in screen — never a guest's");
+    CHECK(!guestMayStream(true, kSignInAppId));
+    CHECK(guestMayStream(true, 1));
+    CHECK(guestMayStream(true, kReturnAppId + 100));
+    // Another host's app of the same number is that host's business.
+    CHECK(guestMayStream(false, kSignInAppId));
+
+    SECTION("Sign-in screen — what the worker sends and injects");
+    {
+        using mw::native::platform::isSignInDesktop;
+        using mw::native::platform::SignInLook;
+        using mw::native::platform::signInRefusal;
+        CHECK(isSignInDesktop("Winlogon"));
+        CHECK(isSignInDesktop("winlogon"));
+        CHECK(isSignInDesktop("WINLOGON"));
+        CHECK(!isSignInDesktop("Default"));
+        CHECK(!isSignInDesktop(""));
+        CHECK(!isSignInDesktop("Winlogon2"));
+        CHECK(!isSignInDesktop("Screen-saver"));
+
+        SignInLook look;
+        look.inputDesktop = "Winlogon";
+        look.threadDesktop = "Winlogon";
+        look.sessionHasUser = false;
+        CHECK(signInRefusal(look, true).empty());
+        CHECK(signInRefusal(look, false).empty());
+
+        // Somebody signed in on the session: nothing more, picture or input.
+        SignInLook signedIn = look;
+        signedIn.sessionHasUser = true;
+        CHECK(!signInRefusal(signedIn, true).empty());
+        CHECK(!signInRefusal(signedIn, false).empty());
+
+        // Their desktop has the screen: nothing more either.
+        SignInLook theirDesktop = look;
+        theirDesktop.inputDesktop = "Default";
+        CHECK(!signInRefusal(theirDesktop, true).empty());
+        CHECK(!signInRefusal(theirDesktop, false).empty());
+
+        // The screen could not be read: a doubt stops it.
+        SignInLook unread = look;
+        unread.inputDesktop.clear();
+        CHECK(!signInRefusal(unread, true).empty());
+        CHECK(!signInRefusal(unread, false).empty());
+
+        // A picture is copied from the capturing thread's own desktop: that
+        // one has to be the sign-in screen too. An input does not look at it.
+        SignInLook thread = look;
+        thread.threadDesktop = "Default";
+        CHECK(!signInRefusal(thread, true).empty());
+        CHECK(signInRefusal(thread, false).empty());
+        thread.threadDesktop.clear();
+        CHECK(!signInRefusal(thread, true).empty());
+
+        // A look that read nothing at all is no sign-in screen.
+        CHECK(!signInRefusal(SignInLook{}, true).empty());
+        CHECK(!signInRefusal(SignInLook{}, false).empty());
+    }
 }
 
 } // namespace
@@ -227,4 +417,6 @@ void run_remote_desktop_return_tests()
         t.observe(seen(Disconnected));
         CHECK(t.returnRefusal(true).isEmpty());
     }
+
+    run_sign_in_screen_tests();
 }

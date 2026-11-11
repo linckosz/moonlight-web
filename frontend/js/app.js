@@ -4135,7 +4135,11 @@ export const MoonlightApp = {
         this._crashRelaunches = recordCrashRelaunch(this._crashRelaunches, now);
         // Named to the host until a launch succeeds (_doRelaunchTransport).
         this._reconnectOf = sv.streamId;
-        console.warn('[MW] The stream worker on the host crashed — starting the stream again');
+        if (state === 'signed_in') {
+            console.info("[MW] Signed in through the PC's sign-in screen — streaming its screen");
+        } else {
+            console.warn('[MW] The stream worker on the host crashed — starting the stream again');
+        }
         this._relaunchTransport(this._transportIndex || 0);
     },
 
@@ -4150,8 +4154,12 @@ export const MoonlightApp = {
         const host = this._lastStreamHost;
         if (!sv.streamId || !host) return;
         const state = await BackendClient.streamState(host.uuid, sv.streamId);
-        if (state !== 'crashed' || sv !== this.streamView) return;
-        console.warn('[MW] The link went quiet: the host says its stream worker crashed');
+        if ((state !== 'crashed' && state !== 'signed_in') || sv !== this.streamView) return;
+        console.warn(
+            state === 'signed_in'
+                ? "[MW] The link went quiet: the PC's sign-in screen was signed in through"
+                : '[MW] The link went quiet: the host says its stream worker crashed',
+        );
         sv._handOffLinkLoss();
     },
 

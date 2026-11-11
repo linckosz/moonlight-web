@@ -1088,11 +1088,22 @@ export class HostListView {
             if (
                 host.isAvailable &&
                 !host.needsVirtualDisplay &&
-                (!host.leftByRemoteDesktop || host.returnsFromRemoteDesktop) &&
+                (!host.leftByRemoteDesktop || this._remoteDesktopHasApp(host)) &&
                 !host.needsCapturePermission
             )
                 this._ensureAppsLoaded(host);
         }
+    }
+
+    /**
+     * A host whose session Remote Desktop left: whether its card shows its one
+     * app ("This PC's screen", or "This PC's sign-in screen" outside a kiosk)
+     * rather than the text alone.
+     */
+    _remoteDesktopHasApp(host) {
+        return (
+            host.returnsFromRemoteDesktop || (host.opensSignInScreen && !BackendClient.adminLocked)
+        );
     }
 
     renderCard(host) {
@@ -1221,7 +1232,7 @@ export class HostListView {
                         <p class="host-empty-display-text">${text}</p>
                     </div>`;
         }
-        if (host.leftByRemoteDesktop && !host.returnsFromRemoteDesktop) {
+        if (host.leftByRemoteDesktop && !this._remoteDesktopHasApp(host)) {
             // Windows: closing Remote Desktop left the session with no screen
             // at all, virtual ones included. Only its return to the PC's
             // screen brings one back: with the admin's setting on, the grid

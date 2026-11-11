@@ -66,6 +66,8 @@ public:
         QString sessionToken;
         /// When the state last changed, in ms.
         qint64 atMs = 0;
+        /// A stream of the console's sign-in screen (RemoteDesktopReturnPolicy).
+        bool signInScreen = false;
     };
 
     static constexpr int kCapacity = 32;
@@ -103,9 +105,25 @@ public:
         return QStringLiteral("unknown");
     }
 
+    /// What the page is told of @p e. A stream of the sign-in screen whose
+    /// worker went while its session is back on the PC's screen (@p
+    /// sessionBackOnScreen, read when asked) was signed in through:
+    /// "signed_in", and the page starts the same card again, which now
+    /// streams the PC's screen. Read when asked rather than when the worker
+    /// went: the session reaches the screen a moment after the sign-in
+    /// screen's session ends, the worker with it.
+    static QString nameFor(const Entry& e, bool sessionBackOnScreen)
+    {
+        if (e.signInScreen && sessionBackOnScreen &&
+            (e.state == State::Ended || e.state == State::Crashed))
+            return QStringLiteral("signed_in");
+        return name(e.state);
+    }
+
     /// The stream @p id started streaming, on @p slot of @p hostUuid.
+    /// @p signInScreen: of the console's sign-in screen (nameFor).
     void begin(const QString& id, const QString& hostUuid, int slot, const QString& clientUniqueId,
-               const QString& sessionToken, qint64 nowMs)
+               const QString& sessionToken, qint64 nowMs, bool signInScreen = false)
     {
         if (id.isEmpty()) return;
         Entry entry;
@@ -115,6 +133,7 @@ public:
         entry.clientUniqueId = clientUniqueId;
         entry.sessionToken = sessionToken;
         entry.atMs = nowMs;
+        entry.signInScreen = signInScreen;
         m_Entries.insert(id, entry);
         prune(nowMs);
     }

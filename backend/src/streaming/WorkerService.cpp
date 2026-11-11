@@ -265,6 +265,25 @@ bool callerAllowed(HANDLE pipe, QString* why, std::wstring* callerSid)
     return true;
 }
 
+/// How launchWorker() starts one worker (its defaults: the ordinary one).
+struct LaunchSpec
+{
+    /// The session the worker starts in. 0xFFFFFFFF: the console's, read now.
+    /// The sign-in screen's is the one its checks were made on, never read a
+    /// second time.
+    DWORD session = 0xFFFFFFFF;
+    /// `--signin-screen`: the worker streams the sign-in screen and nothing
+    /// else (platform/SignInScreen.h). Set here, on the command line this
+    /// service writes; nothing a caller sends can set or clear it.
+    bool signInScreen = false;
+    /// Whose AppData gets the worker's log when the worker's own session has
+    /// nobody signed in: the caller's session. 0xFFFFFFFF: none.
+    DWORD logSession = 0xFFFFFFFF;
+    /// Where to keep the worker's process handle (SYNCHRONIZE at least)
+    /// instead of closing it.
+    HANDLE* process = nullptr;
+};
+
 /// Start the worker: this executable, as SYSTEM, on the console session's
 /// desktop, attached to the pipes named after `base`.
 ///
@@ -284,13 +303,14 @@ bool callerAllowed(HANDLE pipe, QString* why, std::wstring* callerSid)
 /// (PROCESS_QUERY_LIMITED_INFORMATION), a wait on it (SYNCHRONIZE) and
 /// stopping it (PROCESS_TERMINATE). Nothing that reads or writes its memory,
 /// its threads or its token.
-bool launchWorker(const QString& base, const std::wstring& callerSid, DWORD* pid, QString* error)
+bool launchWorker(const QString& base, const std::wstring& callerSid, DWORD* pid, QString* error,
+                  const LaunchSpec& spec = {})
 {
     auto fail = [&](const QString& why) {
         *error = why;
         return false;
     };
-    DWORD console = ::WTSGetActiveConsoleSessionId();
+    DWORD console = spec.session != 0xFFFFFFFF ? spec.session : ::WTSGetActiveConsoleSessionId();
     if (console == 0xFFFFFFFF) return fail(QStringLiteral("there is no console session"));
 
     HANDLE self = nullptr;
@@ -317,11 +337,16 @@ bool launchWorker(const QString& base, const std::wstring& callerSid, DWORD* pid
     if (::WTSQueryUserToken(console, &userToken)) {
         dataDir = userAppData(userToken);
         ::CloseHandle(userToken);
+    } else if (spec.logSession != 0xFFFFFFFF && ::WTSQueryUserToken(spec.logSession, &userToken)) {
+        // The sign-in screen's worker: beside the server that asked for it.
+        dataDir = userAppData(userToken);
+        ::CloseHandle(userToken);
     }
 
     QString commandLine = QLatin1Char('"') + ownExecutable() +
                           QStringLiteral("\" --stream-worker --worker-pipe ") + base;
     if (mw::edition::devFlag()) commandLine += QStringLiteral(" --dev");
+    if (spec.signInScreen) commandLine += QStringLiteral(" --signin-screen");
     if (!dataDir.isEmpty())
         commandLine += QStringLiteral(" --worker-data-dir \"") + QDir::toNativeSeparators(dataDir) +
                        QLatin1Char('"');
@@ -364,7 +389,10 @@ bool launchWorker(const QString& base, const std::wstring& callerSid, DWORD* pid
 
     *pid = pi.dwProcessId;
     ::CloseHandle(pi.hThread);
-    ::CloseHandle(pi.hProcess);
+    if (spec.process)
+        *spec.process = pi.hProcess;
+    else
+        ::CloseHandle(pi.hProcess);
     return true;
 }
 
@@ -547,16 +575,106 @@ void serveHide(HANDLE pipe)
     answerCaller(pipe, QStringLiteral("ok"));
 }
 
+/// The request for a worker on the console's sign-in screen, followed by the
+/// pipe base name: "signin!<base>". Outside validBase too ('!').
+constexpr char kSignInRequestPrefix[] = "signin!";
+
+/// The sign-in screen's worker while it runs: one at a time. Its process
+/// handle (this service created it) and its id. The control loop's thread
+/// alone touches them, one request at a time.
+HANDLE g_SignInWorker = nullptr;
+DWORD g_SignInWorkerPid = 0;
+
+/// Whether the sign-in screen's worker still runs; forgets it once it has
+/// ended.
+bool signInWorkerAlive()
+{
+    if (!g_SignInWorker) return false;
+    if (::WaitForSingleObject(g_SignInWorker, 0) == WAIT_TIMEOUT) return true;
+    ::CloseHandle(g_SignInWorker);
+    g_SignInWorker = nullptr;
+    g_SignInWorkerPid = 0;
+    return false;
+}
+
+/// Remote Desktop left the caller's session Disconnected, with no display at
+/// all, and the console shows the sign-in screen of a session nobody is
+/// signed in on: start a worker there, in sign-in screen mode, so that the
+/// user signs in through the stream with their own credentials and Windows
+/// itself brings their session back. The exception to callerAllowed()'s "the
+/// caller is on the console", and only under RemoteDesktopReturnPolicy's
+/// rule: the version offers it, the caller is this executable in its own
+/// Disconnected session, the console is another session nobody is signed in
+/// on, and no other sign-in screen worker runs. The worker goes into exactly
+/// the console session those checks were made on, and its mode is on the
+/// command line this service writes.
+void serveSignIn(HANDLE pipe, const QString& base)
+{
+    QString why;
+    DWORD session = 0xFFFFFFFF;
+    std::wstring callerSid;
+    RemoteDesktopReturnPolicy::SignInFacts facts;
+    if (!validBase(base)) {
+        why = QStringLiteral("the pipe name is not one this service accepts");
+    } else if (identifyCaller(pipe, &why, &session, &callerSid)) {
+        facts.callerIsThisExecutable = true;
+        facts.callerSession = session;
+        facts.callerState = sessionState(session);
+    }
+    facts.consoleSession = ::WTSGetActiveConsoleSessionId();
+    facts.consoleUserPresent =
+        facts.consoleSession == 0xFFFFFFFF || userSignedIn(facts.consoleSession);
+    facts.signInWorkerAlive = signInWorkerAlive();
+    if (why.isEmpty()) why = RemoteDesktopReturnPolicy::signInLaunchRefusal(facts);
+    if (!why.isEmpty()) {
+        Logger::warning("[WorkerService] refused a worker on the sign-in screen: " + why);
+        answerCaller(pipe, QStringLiteral("err ") + why);
+        return;
+    }
+
+    LaunchSpec spec;
+    spec.session = facts.consoleSession;
+    spec.signInScreen = true;
+    spec.logSession = session;
+    HANDLE process = nullptr;
+    spec.process = &process;
+    DWORD pid = 0;
+    if (!launchWorker(base, callerSid, &pid, &why, spec)) {
+        Logger::warning("[WorkerService] could not start the sign-in screen's worker: " + why);
+        answerCaller(pipe, QStringLiteral("err ") + why);
+        return;
+    }
+    g_SignInWorker = process;
+    g_SignInWorkerPid = pid;
+    Logger::info(QStringLiteral("[WorkerService] sign-in screen worker started on console session "
+                                "%1, for session %2 that Remote Desktop left, pid=%3")
+                     .arg(facts.consoleSession)
+                     .arg(session)
+                     .arg(pid));
+    answerCaller(pipe, QStringLiteral("ok %1").arg(pid));
+}
+
 /// A worker asks for Ctrl+Alt+Suppr: the same two questions about who asks as
-/// for a worker, then the key press.
+/// for a worker, then the key press. On a console nobody is signed in on, the
+/// only worker there is the sign-in screen's: it alone may ask, and only while
+/// it runs.
 void serveSecureAttention(HANDLE pipe)
 {
     QString answer;
     QString why;
     std::wstring callerSid;
+    ULONG callerPid = 0;
+    const DWORD console = ::WTSGetActiveConsoleSessionId();
+    const bool emptyConsole = console != 0xFFFFFFFF && !userSignedIn(console);
     if (!callerAllowed(pipe, &why, &callerSid)) {
         answer = QStringLiteral("err refused");
         Logger::warning("[WorkerService] refused Ctrl+Alt+Suppr: " + why);
+    } else if (emptyConsole &&
+               (!signInWorkerAlive() || !::GetNamedPipeClientProcessId(pipe, &callerPid) ||
+                callerPid != g_SignInWorkerPid)) {
+        answer = QStringLiteral("err refused");
+        Logger::warning("[WorkerService] refused Ctrl+Alt+Suppr: nobody is signed in on the "
+                        "console, and the caller is not its sign-in screen's worker");
     } else if (!pressSecureAttention(&why)) {
         answer = QStringLiteral("err ") + why;
         Logger::warning("[WorkerService] Ctrl+Alt+Suppr not pressed: " + why);
@@ -589,6 +707,10 @@ void serveOne(HANDLE pipe)
         serveHide(pipe);
         return;
     }
+    if (base.startsWith(QLatin1String(kSignInRequestPrefix))) {
+        serveSignIn(pipe, base.mid(static_cast<int>(sizeof(kSignInRequestPrefix) - 1)));
+        return;
+    }
 
     QString answer;
     QString why;
@@ -600,6 +722,12 @@ void serveOne(HANDLE pipe)
     } else if (!callerAllowed(pipe, &why, &callerSid)) {
         answer = QStringLiteral("err refused");
         Logger::warning("[WorkerService] refused a request: " + why);
+    } else if (!userSignedIn(::WTSGetActiveConsoleSessionId())) {
+        // A caller on a console nobody is signed in on is the sign-in
+        // screen's own worker: a worker without its mode is never its to get.
+        answer = QStringLiteral("err refused");
+        Logger::warning("[WorkerService] refused a request: nobody is signed in on the console "
+                        "(only a sign-in screen worker runs there)");
     } else if (!launchWorker(base, callerSid, &pid, &why)) {
         answer = QStringLiteral("err ") + why;
         Logger::warning("[WorkerService] could not start the worker: " + why);
@@ -799,6 +927,18 @@ bool requestWorker(const QString& base, QString* error)
     return true;
 }
 
+bool requestSignInWorker(const QString& base, QString* error)
+{
+    // No g_ServiceBroken: a refusal is mostly somebody at the PC, or a
+    // version that does not offer it, which says nothing about the next
+    // ordinary worker.
+    if (!validBase(base)) {
+        if (error) *error = QStringLiteral("the pipe name is not a valid one");
+        return false;
+    }
+    return askService(QByteArray(kSignInRequestPrefix) + base.toLatin1(), error);
+}
+
 bool requestSecureAttention(QString* error)
 {
     // No g_ServiceBroken here: a refused key press says nothing about whether
@@ -932,6 +1072,12 @@ bool available()
 bool requestWorker(const QString&, QString* error)
 {
     if (error) *error = QStringLiteral("the worker service exists on Windows only");
+    return false;
+}
+
+bool requestSignInWorker(const QString&, QString* error)
+{
+    if (error) *error = QStringLiteral("Remote Desktop sessions are a Windows notion");
     return false;
 }
 

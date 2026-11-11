@@ -632,6 +632,17 @@ public:
     /// False on the other platforms.
     static bool secureDesktopHasInput();
 
+    /// Sign-in screen mode, for the rest of the process (Windows): the
+    /// sessions it creates send a picture and inject an input only while the
+    /// sign-in screen shows and nobody is signed in on the session, and end
+    /// for good the first time that is not so. No audio either. One way:
+    /// nothing leaves it. The host application calls it from its worker's
+    /// command line, which only its launcher service writes, before any
+    /// session exists. Returns false where the mode does not exist (every
+    /// other platform), and the caller then must not stream at all.
+    static bool enterSignInScreenOnly();
+    static bool signInScreenOnly();
+
     /// Version of this module, independent of MoonlightWeb's — it may one day
     /// ship on its own.
     static const char* version();

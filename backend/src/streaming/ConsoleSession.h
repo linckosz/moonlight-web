@@ -208,6 +208,11 @@ public:
     /// is identical, and so is what kill() does.
     bool startThroughService(QString* error);
 
+    /// The same, for a worker on the console's sign-in screen
+    /// (WorkerService::requestSignInWorker): the service starts it in sign-in
+    /// screen mode, on the console session it checked.
+    bool startThroughSignInService(QString* error);
+
     /// Write to the child's stdin. Dropped when the child is gone.
     void write(const QByteArray& data);
 

@@ -24,6 +24,9 @@
  *
  *   crashed   the worker died under a healthy stream: start it again, with the
  *             transport that worked, behind the "Reconnecting…" veil
+ *   signed_in the stream of a Windows PC's sign-in screen ended because its
+ *             user signed in through it: the same, and the same card then
+ *             streams the PC's screen, which the session is back on
  *   anything  live (a network cut, seen from here first), ended (the app closed,
  *   else      the link died host-side), stopped (Stop, another device took the
  *             stream over), unknown (no answer in time): the stream ends as
@@ -73,7 +76,7 @@ export async function settledStreamState(ask, waitMs = LIVE_RECHECK_MS) {
  * @returns {boolean}
  */
 export function shouldRelaunchAfterCrash(state, history, now) {
-    if (state !== 'crashed') return false;
+    if (state !== 'crashed' && state !== 'signed_in') return false;
     return recentRelaunches(history, now).length < CRASH_RELAUNCH_MAX;
 }
 

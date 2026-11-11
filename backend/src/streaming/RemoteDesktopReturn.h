@@ -66,6 +66,31 @@ public:
     /// the setting is on, the native host enabled, the launcher installed.
     bool offersReturn() const;
 
+    /// leftByRemoteDesktop(), and the card offers "This PC's sign-in screen"
+    /// instead: this version offers it, the native host is enabled and the
+    /// launcher installed (RemoteDesktopReturnPolicy::signInOffered).
+    bool offersSignIn() const;
+
+    /// Why a stream of the sign-in screen must NOT start now, in English;
+    /// empty when it may. @p booth: the request comes from a kiosk, which
+    /// never gets it (RemoteDesktopReturnPolicy::signInRequestRefusal).
+    QString signInRefusal(bool booth) const;
+
+    /// Read the session's state now rather than at the next tick: a /start of
+    /// the sign-in screen's card right after the user signed in through it
+    /// streams the PC's screen, not the sign-in screen again. Main thread.
+    void refreshNow() { onTick(); }
+
+    /// This session is on the PC's screen at this moment (Active, and the
+    /// console's): read now, not from the last tick. False on other platforms.
+    static bool backOnScreenNow();
+
+    /// How a stream of the sign-in screen ended, read from what Windows says
+    /// now, in English for the audit line: "signed in" when this session is
+    /// back on the screen; "stopped" when another account is signed in on
+    /// the console; "closed" when the sign-in screen is still up.
+    static QString signInOutcomeNow();
+
     /// Put the session back on this PC's screen, locked, then call @p done on
     /// this thread: true once the lock is confirmed, else false with the
     /// reason in English. A request made while one is under way waits for
@@ -91,6 +116,9 @@ private:
 
     /// The setting is on, the native host enabled, the launcher installed.
     bool allowed() const;
+    /// The native host enabled and the launcher installed: what the sign-in
+    /// screen needs. The return's setting is not looked at: it moves nothing.
+    bool signInAllowed() const;
 
     void onTick();
     void askReturn();

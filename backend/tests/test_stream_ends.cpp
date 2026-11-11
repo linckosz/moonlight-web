@@ -123,4 +123,35 @@ void run_stream_ends_tests()
         CHECK(ends.find("e1", 100).state == State::Ended);
         CHECK(ends.find("running", 100).state == State::Live);
     }
+
+    // A Windows PC's sign-in screen, streamed while Remote Desktop has left
+    // the session (RemoteDesktopReturnPolicy): its worker goes with the
+    // sign-in screen's session when the user signs in through it. Whether
+    // that is what happened is read when the page asks: the session back on
+    // the PC's screen says "signed_in", and the page starts the same card
+    // again, which then streams that screen.
+    SECTION("StreamEnds — the sign-in screen, signed in through");
+    {
+        StreamEnds ends;
+        ends.begin("signin", "native", 0, "dev", "tok", 0, /*signInScreen=*/true);
+        ends.begin("plain", "native", 1, "dev", "tok", 0);
+        CHECK_EQ(StreamEnds::nameFor(ends.find("signin", 1), true), QStringLiteral("live"));
+        ends.end("signin", State::Crashed, 10);
+        ends.end("plain", State::Crashed, 10);
+        CHECK_EQ(StreamEnds::nameFor(ends.find("signin", 20), true), QStringLiteral("signed_in"));
+        // Not back on the screen: closed, or another account signed in.
+        CHECK_EQ(StreamEnds::nameFor(ends.find("signin", 20), false), QStringLiteral("crashed"));
+        // Any other stream is what it was, whatever the session does.
+        CHECK_EQ(StreamEnds::nameFor(ends.find("plain", 20), true), QStringLiteral("crashed"));
+        // The worker that ended its session itself, as it does when the
+        // sign-in screen's session gets a user: the same answer.
+        ends.begin("self", "native", 0, "dev", "tok", 30, true);
+        ends.end("self", State::Ended, 40);
+        CHECK_EQ(StreamEnds::nameFor(ends.find("self", 50), true), QStringLiteral("signed_in"));
+        // Stop pressed, or a take-over: never read as a sign-in.
+        ends.begin("stop", "native", 0, "dev", "tok", 60, true);
+        ends.end("stop", State::Stopped, 70);
+        CHECK_EQ(StreamEnds::nameFor(ends.find("stop", 80), true), QStringLiteral("stopped"));
+        CHECK_EQ(StreamEnds::nameFor(StreamEnds::Entry{}, true), QStringLiteral("unknown"));
+    }
 }

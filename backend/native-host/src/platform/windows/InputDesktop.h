@@ -87,4 +87,26 @@ bool sendSecureAttention(std::string& error);
 /// NativeHost::setSecureAttentionSender.
 void setSecureAttentionSender(std::function<bool(std::string& error)> sender);
 
+struct SignInLook;
+
+/// Enter sign-in screen mode (platform/SignInScreen.h) for the rest of the
+/// process. One way: nothing leaves it. The worker calls it from its command
+/// line, before anything else runs (NativeHost::enterSignInScreenOnly).
+///
+/// From then on attachThread() moves a thread to `Winlogon` only, and never
+/// to another desktop: a thread that cannot follow stays where it is, and the
+/// checks below end the stream.
+void enterSignInScreenOnly();
+
+/// Whether this process is in sign-in screen mode.
+bool signInScreenOnly();
+
+/// In sign-in screen mode: whether a picture (@p forPicture, captured from the
+/// CALLING thread's desktop) or an input may go through now. Latching: once a
+/// check has failed, every later one fails with the first reason, so the
+/// stream cannot carry on past it. @p why gets the reason when it returns
+/// false; @p look, when not null, what was seen (the bench's log). True, and
+/// nothing read, outside the mode.
+bool signInScreenStillShown(bool forPicture, std::string* why, SignInLook* look = nullptr);
+
 } // namespace mw::native::platform

@@ -1891,6 +1891,14 @@ int main(int argc, char* argv[])
         "worker-data-dir", "Internal: the stream worker's log and crash directory", "dir");
     workerDataDirOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(workerDataDirOption);
+    // Internal: the worker streams the console's sign-in screen and nothing
+    // else (mw::native::NativeHost::enterSignInScreenOnly). Written by the
+    // launcher service alone, on the command line of the worker it starts on
+    // a console nobody is signed in on (WorkerService::requestSignInWorker).
+    QCommandLineOption signInScreenOption(
+        "signin-screen", "Internal: the stream worker streams the sign-in screen only");
+    signInScreenOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(signInScreenOption);
 
     // Internal: the LocalSystem launcher service — the process Windows starts,
     // and the two verbs the installer runs elevated to register and remove it
@@ -2134,6 +2142,11 @@ int main(int argc, char* argv[])
     // interleave. stdout carries the worker's JSON event protocol — Logger
     // writes to file/stderr only.
     if (parser.isSet(streamWorkerOption)) {
+        // Before anything else runs, and for good: nothing later leaves it.
+        if (parser.isSet(signInScreenOption) && !mw::native::NativeHost::enterSignInScreenOnly()) {
+            Logger::error("[StreamWorker] the sign-in screen mode does not exist on this platform");
+            return 1;
+        }
         if (parser.isSet(workerPipeOption)) {
             QString pipeError;
             if (!ConsoleSession::attachWorkerPipes(parser.value(workerPipeOption), &pipeError)) {
@@ -3172,8 +3185,12 @@ int main(int argc, char* argv[])
         const bool asker = e.hostUuid == req.pathParams.value("id") &&
                            !ShareManager::isPlayerSlot(e.slot) &&
                            e.sessionToken == HttpServer::sessionTokenFromRequest(req);
-        return HttpResponse::json(
-            QJsonObject{{"state", StreamEnds::name(asker ? e.state : StreamEnds::State::Unknown)}});
+        // The sign-in screen's: whether its user signed in through it is read
+        // now (StreamEnds::nameFor).
+        return HttpResponse::json(QJsonObject{
+            {"state", asker ? StreamEnds::nameFor(e, e.signInScreen &&
+                                                         RemoteDesktopReturn::backOnScreenNow())
+                            : StreamEnds::name(StreamEnds::State::Unknown)}});
     });
 
     // Phase 5: Start streaming — launch app + RTSP handshake
@@ -3201,6 +3218,36 @@ int main(int argc, char* argv[])
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
+
+        // The console's sign-in screen (RemoteDesktopReturnPolicy), asked here
+        // again since this is where its stream starts: offered by this
+        // version, never from a kiosk, and only while Remote Desktop has left
+        // this session. One stream of it: never a standby leg beside it (the
+        // launcher runs one sign-in screen worker at a time).
+        const bool signInStream = host->backendType == NativeHostBackend::typeName() &&
+                                  body["appId"].toInt(0) == NativeHostBackend::signInScreenAppId();
+        if (signInStream) {
+            // Only a worker the launcher starts in sign-in screen mode streams
+            // it: never a session in this process.
+            QString refusal = RemoteDesktopReturn::instance().signInRefusal(req.adminLocked);
+            if (refusal.isEmpty() && !appSettings.streamWorkerEnabled())
+                refusal = QStringLiteral("streams run in this process (stream_worker_enabled)");
+            if (!refusal.isEmpty()) {
+                qInfo().noquote() << "[signin] a stream of this PC's sign-in screen refused:"
+                                  << refusal;
+                respond(HttpResponse::error(
+                    req.adminLocked ? 403 : 409,
+                    QStringLiteral("This PC's sign-in screen cannot be streamed: ") + refusal));
+                return;
+            }
+            if (body["standby"].toBool(false)) {
+                respond(HttpResponse::json(
+                    QJsonObject{{"status", QStringLiteral("dual_unavailable")},
+                                {"reason", QStringLiteral("the sign-in screen streams once")}},
+                    200));
+                return;
+            }
+        }
 
         // ── Worker mode + slot selection ───────────────────────────────────────
         // stream_worker_enabled (default): sessions run in --stream-worker child
@@ -4333,6 +4380,14 @@ int main(int argc, char* argv[])
             if (host->backendType == NativeHostBackend::typeName() &&
                 NativeHostBackend::isHostAppCard(appId))
                 cfg["hostAppKnown"] = !NativeHostBackend::hostAppFor(appId).isEmpty();
+            // The console's sign-in screen: through the launcher's sign-in
+            // screen request alone (StreamWorkerHost::Launch::SignInScreen),
+            // and its worker finds its display by itself.
+            if (signInStream) {
+                cfg["signInScreen"] = true;
+                cfg["displayKey"] =
+                    QString::fromLatin1(RemoteDesktopReturnPolicy::kSignInDisplayKey);
+            }
             // The admin's picture chain for a native Windows session.
             cfg["nativeVideoPipeline"] = appSettings.nativeVideoPipeline();
             // The bench's knobs, read here: a SYSTEM worker's own AppData is
@@ -4457,13 +4512,46 @@ int main(int argc, char* argv[])
             // What the page knows this stream by, to ask how it ended.
             const QString streamId = StreamEnds::newId();
             worker->setStreamId(streamId);
+            // The sign-in screen's audit line (RemoteDesktopReturnPolicy): who
+            // opened it, and how it ended — signed in, stopped by another
+            // account signing in on the PC, or closed. Never what was typed.
+            if (signInStream) {
+                // The device name and the id are the browser's own words: no
+                // control, format or line character of theirs reaches the log,
+                // where it could pass for a line of its own.
+                const auto logSafe = [](QString text, int maxChars) {
+                    text.removeIf([](QChar c) {
+                        const QChar::Category cat = c.category();
+                        return cat == QChar::Other_Control || cat == QChar::Other_Format ||
+                               cat == QChar::Separator_Line || cat == QChar::Separator_Paragraph;
+                    });
+                    return text.left(maxChars);
+                };
+                const QString device = logSafe(authManager.sessionMachineName(sessionToken), 64);
+                const QString who =
+                    QStringLiteral("\"%1\" (%2, device %3)")
+                        .arg(device.isEmpty() ? QStringLiteral("a paired browser") : device,
+                             logSafe(req.clientAddress, 64), logSafe(uid, 8));
+                qInfo().noquote() << "[signin]" << who << "opened this PC's sign-in screen";
+                const qint64 openedAt = QDateTime::currentMSecsSinceEpoch();
+                QObject::connect(worker, &StreamWorkerHost::exited, qApp, [who, openedAt]() {
+                    // The session reaches the screen a moment after the
+                    // sign-in screen's session ends, the worker with it.
+                    QTimer::singleShot(3000, qApp, [who, openedAt]() {
+                        qInfo().noquote()
+                            << "[signin] the sign-in screen opened by" << who << "ended after"
+                            << (QDateTime::currentMSecsSinceEpoch() - openedAt - 3000) / 1000
+                            << "s:" << RemoteDesktopReturn::signInOutcomeNow();
+                    });
+                });
+            }
             QObject::connect(
                 worker, &StreamWorkerHost::responseReady, qApp,
                 [respond, worker, &g_Pool, &g_DualSupport, &g_SingleSessionHosts,
                  &g_LiveSunshineUids, &g_StreamEnds, &authManager, &sessionMetrics, sessionFacts,
                  sessionStartedAt, reqSlot, standby, hostUuidCopy, uid, sessionToken, streamId,
-                 hostAppCommand, hostAppOnVirtual, hostAppCloseCommand,
-                 hostAppStillOpen](int code, QJsonObject bodyObj) {
+                 hostAppCommand, hostAppOnVirtual, hostAppCloseCommand, hostAppStillOpen,
+                 signInStream](int code, QJsonObject bodyObj) {
                     const bool ok =
                         code == 200 && bodyObj["status"].toString() == QLatin1String("streaming");
                     // Count a session once it actually carries a picture, and
@@ -4486,7 +4574,7 @@ int main(int argc, char* argv[])
                                                     !g_SingleSessionHosts.contains(hostUuidCopy);
                         bodyObj["stream_id"] = streamId;
                         g_StreamEnds.begin(streamId, hostUuidCopy, reqSlot, uid, sessionToken,
-                                           QDateTime::currentMSecsSinceEpoch());
+                                           QDateTime::currentMSecsSinceEpoch(), signInStream);
                         authManager.setSessionStreaming(sessionToken, true);
                         g_LiveSunshineUids.insert(uid);
                         // A successful standby launch IS the capability probe.
@@ -5058,14 +5146,30 @@ int main(int argc, char* argv[])
     // screen, unlocked from the stream. Nothing else ever brings it back
     // (RemoteDesktopReturn). A launch that finds the session back already (a
     // quality switch, a second tab) streams that display straight away.
+    // "This PC's sign-in screen", the card offered in its place, streams the
+    // console's sign-in screen instead; once the user has signed in through
+    // it, the same card streams the PC's screen the same way.
     server.router()->postAsync("/api/hosts/:id/start", [&computerManager,
                                                         startHost](const HttpRequest& req,
                                                                    ResponseCallback respond) {
         NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
         const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-        if (!host || host->backendType != NativeHostBackend::typeName() ||
-            body["appId"].toInt(0) != NativeHostBackend::remoteDesktopReturnAppId()) {
+        const bool native = host && host->backendType == NativeHostBackend::typeName();
+        const int appId = body["appId"].toInt(0);
+        const bool signInCard = native && appId == NativeHostBackend::signInScreenAppId();
+        if (!native || (appId != NativeHostBackend::remoteDesktopReturnAppId() && !signInCard)) {
             startHost(req, std::move(respond));
+            return;
+        }
+        // "This PC's sign-in screen" (RemoteDesktopReturnPolicy): never in a
+        // version that does not offer it, never from a kiosk. startHost asks
+        // the rest again where the stream starts.
+        if (signInCard && (!RemoteDesktopReturnPolicy::kSignInOffered || req.adminLocked)) {
+            respond(HttpResponse::error(
+                req.adminLocked ? 403 : 409,
+                QStringLiteral("This PC's sign-in screen cannot be streamed: ") +
+                    (req.adminLocked ? QStringLiteral("not from a kiosk")
+                                     : QStringLiteral("this version does not offer it"))));
             return;
         }
         // The displays come with the session, a moment after it reaches the
@@ -5098,6 +5202,18 @@ int main(int argc, char* argv[])
             };
             (*attempt)(30);
         };
+        if (signInCard) {
+            // The session as it is now, not as the last tick saw it: a launch
+            // right after the user signed in through the sign-in screen (the
+            // page starts the card again, StreamEnds::nameFor) streams the
+            // PC's screen, which the session is back on.
+            RemoteDesktopReturn::instance().refreshNow();
+            if (RemoteDesktopReturn::instance().leftByRemoteDesktop())
+                startHost(req, respond);
+            else
+                streamPrimary();
+            return;
+        }
         if (!RemoteDesktopReturn::instance().leftByRemoteDesktop()) {
             streamPrimary();
             return;
@@ -5924,6 +6040,14 @@ int main(int argc, char* argv[])
         NvComputer* host = computerManager.getHost(hostUuid);
         if (!host) {
             // The host this invitation was bound to is gone from the list.
+            respond(HttpResponse::json(QJsonObject{{"error", "session_ended"}}, 409));
+            return;
+        }
+        // The console's sign-in screen is the owner's alone, never a guest's,
+        // cold or beside the owner (RemoteDesktopReturnPolicy).
+        if (!RemoteDesktopReturnPolicy::guestMayStream(
+                host->backendType == NativeHostBackend::typeName(), appId)) {
+            qInfo() << "[signin] a guest refused: the sign-in screen is never shared";
             respond(HttpResponse::json(QJsonObject{{"error", "session_ended"}}, 409));
             return;
         }

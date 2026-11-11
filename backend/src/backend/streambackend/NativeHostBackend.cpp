@@ -30,6 +30,7 @@ extern "C" {
 #include "NativeProbeService.h"
 
 #include "NativeCapabilitiesJson.h"
+#include "mw/native/NativeHost.h"
 
 #include <QCollator>
 #include <QFile>
@@ -328,6 +329,26 @@ NvApp remoteDesktopReturnApp(const mw::native::Capabilities& caps)
     return app;
 }
 
+/// "This PC's sign-in screen": the one card of a session Remote Desktop left,
+/// when this version offers it (RemoteDesktopReturnPolicy::kSignInOffered).
+/// Opening it streams the console's sign-in screen, where the user signs in
+/// with their own account and Windows brings their session back.
+NvApp signInScreenApp(const mw::native::Capabilities& caps)
+{
+    NvApp app(RemoteDesktopReturnPolicy::kSignInAppId, QStringLiteral("This PC's sign-in screen"),
+              /*hdr=*/false);
+    app.setHasBoxArt(false);
+    app.setDevice(QJsonObject{
+        {QStringLiteral("os"), HostOsProbe::toString(HostOsProbe::thisMachine())},
+        {QStringLiteral("display"),
+         caps.hasBattery ? QStringLiteral("builtin") : QStringLiteral("external")},
+        {QStringLiteral("model"), QString()},
+        {QStringLiteral("key"), QStringLiteral("console-sign-in")},
+        {QStringLiteral("battery"), caps.hasBattery},
+    });
+    return app;
+}
+
 /// One card per app of the owner's (AppSettings::hostApps), in the settings'
 /// order, after @p apps' displays. The card says where its program opens
 /// (device.screen) and, when the owner gave it one, its image's hash
@@ -376,6 +397,11 @@ int NativeHostBackend::virtualDisplayAppId()
 int NativeHostBackend::remoteDesktopReturnAppId()
 {
     return RemoteDesktopReturnPolicy::kReturnAppId;
+}
+
+int NativeHostBackend::signInScreenAppId()
+{
+    return RemoteDesktopReturnPolicy::kSignInAppId;
 }
 
 int NativeHostBackend::primaryDisplayAppId(QString* error)
@@ -715,6 +741,13 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
             cb(true, BackendError{}, {remoteDesktopReturnApp(caps)});
             return;
         }
+        // Or its sign-in screen is streamed instead, and the user signs in
+        // through it: "This PC's sign-in screen" is then the one card.
+        if (caps.reason == mw::native::Unavailability::NoDisplay &&
+            RemoteDesktopReturn::instance().offersSignIn()) {
+            cb(true, BackendError{}, {signInScreenApp(caps)});
+            return;
+        }
         // A machine with nothing attached and our display to offer has one
         // card; any other reason to be unavailable has none.
         // Not when Remote Desktop left this session: no display reaches a
@@ -834,8 +867,19 @@ void NativeHostBackend::launch(const QString& seatId, const LaunchRequest& req,
     // A worker's display card comes resolved by the server, and an app card
     // known or not by it: this process may not read the settings the cards
     // are numbered in (LaunchRequest).
-    const int displayId = req.displayKey ? displayWithKey(caps, *req.displayKey, &why)
-                                         : displayOf(caps, req.appId, &why, req.hostAppKnown);
+    //
+    // The sign-in screen's worker streams the primary display of the session
+    // it runs in, whatever the request names: the server, in the session
+    // Remote Desktop left, sees no display at all to name.
+    int displayId = -1;
+    if (mw::native::NativeHost::signInScreenOnly()) {
+        const mw::native::DisplayInfo* primary = primaryDisplay(caps);
+        displayId = primary ? primary->id : -1;
+        if (!primary) why = QStringLiteral("The sign-in screen has no display to stream");
+    } else {
+        displayId = req.displayKey ? displayWithKey(caps, *req.displayKey, &why)
+                                   : displayOf(caps, req.appId, &why, req.hostAppKnown);
+    }
     if (displayId < 0) {
         cb(false, BackendError::make(BackendError::NotFound, why), MediaDescriptor{});
         return;

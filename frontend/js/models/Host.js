@@ -152,6 +152,14 @@ export class Host {
         return this.leftByRemoteDesktop && this.nativeDisplay?.remote_desktop_return === true;
     }
 
+    // leftByRemoteDesktop, and the card's one app is "This PC's sign-in
+    // screen" instead: it streams the PC's sign-in screen, where the user
+    // signs in with their own account, and Windows brings the session back.
+    // A kiosk never shows it (HostListView), and the host refuses it there.
+    get opensSignInScreen() {
+        return this.leftByRemoteDesktop && this.nativeDisplay?.sign_in_screen === true;
+    }
+
     // A Mac whose Screen Recording grant is gone: the card stays, and says
     // which switch to flip instead of painting a grid that cannot stream.
     get needsCapturePermission() {

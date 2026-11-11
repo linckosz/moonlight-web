@@ -462,7 +462,8 @@ export class BackendClient {
     /**
      * How the stream this page knows as @p streamId ended, asked once its
      * link went (stream/CrashRelaunch.js): "crashed", "live", "ended",
-     * "stopped" — and "unknown" for anything else, a late answer included,
+     * "stopped", "signed_in" (a Windows PC's sign-in screen, signed in
+     * through) — and "unknown" for anything else, a late answer included,
      * which ends the stream as it always has.
      * @returns {Promise<string>}
      */

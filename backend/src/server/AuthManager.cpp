@@ -823,6 +823,13 @@ bool AuthManager::isAdminSession(const QString& token) const
     return it != m_sessions.end() && it->isAdmin;
 }
 
+QString AuthManager::sessionMachineName(const QString& token) const
+{
+    if (!validateSession(token)) return QString();
+    auto it = m_sessions.find(hashToken(token));
+    return it != m_sessions.end() ? it->machineName : QString();
+}
+
 bool AuthManager::promoteSessionToAdmin(const QString& token)
 {
     if (!validateSession(token)) return false;

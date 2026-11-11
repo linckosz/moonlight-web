@@ -18,9 +18,12 @@
 #include "InputDesktop.h"
 
 #include "../../core/Log.h"
+#include "../SignInScreen.h"
 
 #include <windows.h>
+#include <wtsapi32.h>
 
+#include <atomic>
 #include <mutex>
 #include <string>
 
@@ -36,6 +39,13 @@ thread_local HDESK t_Owned = nullptr;
 std::mutex g_SenderLock;
 std::function<bool(std::string&)> g_Sender;
 
+/// enterSignInScreenOnly's: set once, never cleared.
+std::atomic<bool> g_SignInOnly{false};
+/// The first failed sign-in check, latched (signInScreenStillShown).
+std::mutex g_SignInLock;
+bool g_SignInLost = false;
+std::string g_SignInLostWhy;
+
 std::string desktopName(HDESK desktop)
 {
     if (!desktop) return {};
@@ -47,6 +57,22 @@ std::string desktopName(HDESK desktop)
     std::string name(static_cast<size_t>(wide - 1), '\0');
     ::WideCharToMultiByte(CP_UTF8, 0, buffer, -1, name.data(), wide, nullptr, nullptr);
     return name;
+}
+
+/// Somebody is signed in on the session this process runs in. A session at
+/// the sign-in screen has no user name. "Yes" whenever Windows will not say:
+/// the sign-in screen mode reads a doubt as a reason to stop.
+bool sessionHasUser()
+{
+    LPWSTR name = nullptr;
+    DWORD bytes = 0;
+    if (!::WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSUserName,
+                                       &name, &bytes) ||
+        !name)
+        return true;
+    const bool someone = name[0] != 0;
+    ::WTSFreeMemory(name);
+    return someone;
 }
 
 } // namespace
@@ -106,6 +132,14 @@ bool attachThread(std::string* name)
     }
     const std::string opened = desktopName(desktop);
     if (name) *name = opened;
+
+    // Sign-in screen mode: Winlogon and nothing else. A thread is never moved
+    // to the desktop of somebody who signed in on this session; it stays
+    // where it was, and the per-picture and per-input checks end the stream.
+    if (g_SignInOnly.load() && !isSignInDesktop(opened)) {
+        ::CloseDesktop(desktop);
+        return false;
+    }
 
     // Already there: do not touch the thread. SetThreadDesktop on the desktop a
     // thread is already on succeeds, but the handle dance below would then be
@@ -177,6 +211,47 @@ bool sendSecureAttention(std::string& error)
     // started by the launcher service is not.
     sendSas(FALSE);
     return true;
+}
+
+void enterSignInScreenOnly()
+{
+    if (!g_SignInOnly.exchange(true))
+        log::info("[native] sign-in screen mode: pictures and input only while the sign-in "
+                  "screen shows, and nobody is signed in on this session");
+}
+
+bool signInScreenOnly()
+{
+    return g_SignInOnly.load();
+}
+
+bool signInScreenStillShown(bool forPicture, std::string* why, SignInLook* look)
+{
+    if (!g_SignInOnly.load()) return true;
+    {
+        std::lock_guard<std::mutex> lock(g_SignInLock);
+        if (g_SignInLost) {
+            if (why) *why = g_SignInLostWhy;
+            return false;
+        }
+    }
+    SignInLook seen;
+    seen.inputDesktop = inputDesktopName();
+    if (forPicture) seen.threadDesktop = desktopName(::GetThreadDesktop(::GetCurrentThreadId()));
+    seen.sessionHasUser = sessionHasUser();
+    const std::string refusal = signInRefusal(seen, forPicture);
+    if (look) *look = seen;
+    if (refusal.empty()) return true;
+
+    std::lock_guard<std::mutex> lock(g_SignInLock);
+    if (!g_SignInLost) {
+        g_SignInLost = true;
+        g_SignInLostWhy = refusal;
+        log::warning("[native] sign-in screen mode: " + refusal + " — the stream ends here (" +
+                     (forPicture ? "a picture" : "an input") + " held back)");
+    }
+    if (why) *why = g_SignInLostWhy;
+    return false;
 }
 
 } // namespace mw::native::platform

@@ -111,4 +111,71 @@ QString requestRefusal(const Tracker& tracker, bool allowed)
     return tracker.returnRefusal(allowed);
 }
 
+QString Tracker::signInRefusal(bool allowed) const
+{
+    if (!m_Left) return QStringLiteral("this session was not left by Remote Desktop");
+    if (!allowed)
+        return QStringLiteral("the native host is disabled, or the launcher service is not "
+                              "installed");
+    if (m_DisconnectedTicks < kSettleTicks)
+        return QStringLiteral("Remote Desktop has only just left it: try again in a few seconds");
+    return {};
+}
+
+QString signInLaunchRefusal(const SignInFacts& facts)
+{
+    // The gate on the privileged side too: a version that does not offer the
+    // sign-in screen never starts a worker on a console nobody is signed in
+    // on, whoever asks.
+    if (!kSignInOffered) return QStringLiteral("this version does not offer it");
+    return signInLaunchChecks(facts);
+}
+
+QString signInLaunchChecks(const SignInFacts& facts)
+{
+    if (!facts.callerIsThisExecutable) return QStringLiteral("the caller is not this executable");
+    if (facts.callerSession == kNoSession)
+        return QStringLiteral("the caller's session could not be read");
+    // Session 0 is the services' own: no user's session left by anybody.
+    if (facts.callerSession == 0) return QStringLiteral("the caller runs in session 0");
+    if (facts.callerState != Disconnected)
+        return QStringLiteral("the caller's session %1 is not disconnected (state %2)")
+            .arg(facts.callerSession)
+            .arg(facts.callerState);
+    if (facts.consoleSession == kNoSession || facts.consoleSession == 0)
+        return QStringLiteral("there is no console session to stream");
+    if (facts.consoleSession == facts.callerSession)
+        return QStringLiteral("the caller is on the console");
+    if (facts.consoleUserPresent)
+        return QStringLiteral("somebody is signed in on the console (session %1)")
+            .arg(facts.consoleSession);
+    if (facts.signInWorkerAlive)
+        return QStringLiteral("the sign-in screen is already being streamed");
+    return {};
+}
+
+bool signInOffered(bool leftByRemoteDesktop, bool allowed)
+{
+    return kSignInOffered && leftByRemoteDesktop && allowed;
+}
+
+QString signInRequestRefusal(const Tracker& tracker, bool allowed, bool booth)
+{
+    if (!kSignInOffered) return QStringLiteral("this version does not offer it");
+    return signInRequestChecks(tracker, allowed, booth);
+}
+
+QString signInRequestChecks(const Tracker& tracker, bool allowed, bool booth)
+{
+    // The sign-in screen has the PC's power button and its other accounts'
+    // tiles: what a person at the PC has, never a kiosk's.
+    if (booth) return QStringLiteral("not from a kiosk");
+    return tracker.signInRefusal(allowed);
+}
+
+bool guestMayStream(bool nativeHost, int appId)
+{
+    return !(nativeHost && appId == kSignInAppId);
+}
+
 } // namespace RemoteDesktopReturnPolicy

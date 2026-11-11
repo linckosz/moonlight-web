@@ -45,6 +45,7 @@
 #include "../../input/windows/Win32Input.h"
 #include "DisplayModeHold.h"
 #include "DisplayOutputs.h"
+#include "../SignInScreen.h"
 #include "InputDesktop.h"
 #include "StreamPriority.h"
 #include "Win32PointerSystem.h"
@@ -297,7 +298,14 @@ public:
         }
 
         // The guests' shared feed carries the pictures: input and audio only.
-        if (m_Config.videoSource == VideoSource::External) return startExternal(*display, error);
+        if (m_Config.videoSource == VideoSource::External) {
+            // The guests' shared feed is somebody's desktop by definition.
+            if (platform::signInScreenOnly()) {
+                error = "the sign-in screen mode streams its own capture only";
+                return false;
+            }
+            return startExternal(*display, error);
+        }
 
         // Out of EcoQoS and ahead of the game on the GPU before anything is
         // built: a D3D12 queue takes the priority of the class it is made
@@ -584,6 +592,12 @@ public:
     /// all still streams its screen.
     void startAudio()
     {
+        // The sign-in screen has nothing to say, and the mode carries
+        // pictures and keyboard and mouse only.
+        if (platform::signInScreenOnly()) {
+            log::info("[native] audio: off on the sign-in screen");
+            return;
+        }
         if (m_Callbacks.onAudio) {
             // Before the loopback opens: the mute may move the default output
             // to a device without speakers, and the capture must open on THAT
@@ -1242,9 +1256,16 @@ private:
         bool started = false;
         std::thread helper([&] {
             std::string desktop;
-            platform::attachThread(&desktop);
+            const bool on = platform::attachThread(&desktop);
             log::info("[native] the capture opens from a thread on the \"" + desktop +
                       "\" desktop");
+            // Sign-in screen mode: a thread that did not reach Winlogon stands
+            // on the process's own desktop, which is somebody's once they sign
+            // in on this session. Nothing is opened from there.
+            if (platform::signInScreenOnly() && !(on && platform::isSignInDesktop(desktop))) {
+                error = "the sign-in screen is not up (the screen shows \"" + desktop + "\")";
+                return;
+            }
             started = capture.start(error);
         });
         helper.join();
@@ -1283,6 +1304,12 @@ private:
             const DWORD n = ::GetEnvironmentVariableA("MW_CAPTURE", value, sizeof(value));
             forceWgc = n > 0 && n < sizeof(value) && ::_stricmp(value, "wgc") == 0;
         }
+        // Sign-in screen mode: Desktop Duplication alone, which copies the
+        // desktop this thread stands on — Winlogon, and never another one
+        // (platform::attachThread). Windows.Graphics.Capture copies whatever
+        // the screen shows, whoever's desktop it is.
+        const bool signInOnly = platform::signInScreenOnly();
+        if (signInOnly) forceWgc = false;
 
         // The bench's key (capture=, EncoderTuning::Capture; plan « Gels du
         // lien », route B). wgc asks for Windows.Graphics.Capture first and
@@ -1291,7 +1318,8 @@ private:
         // above fails the session instead. A duplication found to paint the
         // pointer in stays on WGC, as without the key.
         const EncoderTuning::Capture asked = m_Config.tuning.capture;
-        if (asked == EncoderTuning::Capture::Wgc && !forceWgc && !m_DuplicationPaintsPointer) {
+        if (asked == EncoderTuning::Capture::Wgc && !forceWgc && !m_DuplicationPaintsPointer &&
+            !signInOnly) {
             std::string wgcError;
             if (!capture::WgcCapture::available(&wgcError))
                 wgcError = "Windows.Graphics.Capture is unavailable here: " + wgcError;
@@ -1329,6 +1357,13 @@ private:
             // does on such a machine.
             log::info("[native] capture=dda: Desktop Duplication refused this display (" +
                       ddaError + "), and no fallback is taken");
+            error = ddaError;
+            return false;
+        }
+
+        if (signInOnly) {
+            log::info("[native] sign-in screen: Desktop Duplication refused this display (" +
+                      ddaError + "), and no other capture is taken there");
             error = ddaError;
             return false;
         }
@@ -3005,6 +3040,13 @@ private:
             countPresents(status == capture::AcquireStatus::Ok && !frame.retaken);
             if (m_RetakePending) noteRetake(status, frame);
 
+            // Sign-in screen mode: on every wake-up, before the picture or
+            // the pointer is looked at, the screen is still the sign-in
+            // screen, this thread still stands on it, and nobody is signed in
+            // on the session. The first time not, the stream ends here, the
+            // picture in hand unsent (platform/SignInScreen.h).
+            if (!signInStillShown()) return;
+
             // Anything but a timeout means the screen is alive again, and the
             // frame about to be encoded is a moving one. Restore the ordinary
             // budget BEFORE it is encoded, never after: that ordering is the
@@ -3348,7 +3390,7 @@ private:
                 noteFirstKeyframe(encoded);
                 d.bytes = encoded.size;
                 d.qp = encoded.avgQp;
-                if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo) {
+                if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo && signInMaySend()) {
                     d.frame = encodedFrame(encoded, frameNumber++, stamps, encoderKbps);
                     m_Callbacks.onVideo(d.frame);
                     d.frame.data = nullptr;
@@ -3521,7 +3563,7 @@ private:
         m_LastEmitQp = encoded.avgQp;
         m_Link.sent(steadyNowUs(), encoded.size, m_LinkKbps);
 
-        if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo) {
+        if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo && signInMaySend()) {
             EncodedFrame out = encodedFrame(encoded, frameNumber++, stamps, m_EncoderKbps);
             attachMwsrZones(out);
             // Before the send, which is not the picture's own cost.
@@ -4575,6 +4617,50 @@ private:
         if (m_Pipeline) m_Pipeline->logEndOfSession();
     }
 
+    /// Sign-in screen mode, on the capture thread (platform/SignInScreen.h):
+    /// true while a picture captured from this thread's desktop may go out.
+    /// False ends the session, once and for good. Outside the mode, true and
+    /// nothing read. For the bench, one line a second: the pictures sent and
+    /// the desktops seen, and one at once when a desktop name changes.
+    bool signInStillShown()
+    {
+        if (!platform::signInScreenOnly()) return true;
+        std::string why;
+        platform::SignInLook look;
+        if (!platform::signInScreenStillShown(true, &why, &look)) {
+            log::info("[native] sign-in screen: " + std::to_string(m_SignInSent.load()) +
+                      " picture(s) sent in all, every one from the sign-in screen");
+            finish("sign-in screen mode: " + why);
+            return false;
+        }
+        const int64_t nowUs = steadyNowUs();
+        const std::string seen = look.threadDesktop + "/" + look.inputDesktop;
+        if (seen != m_SignInLastDesktop || nowUs - m_SignInLogUs >= 1000000) {
+            const uint64_t sent = m_SignInSent.load();
+            log::info("[native] sign-in screen: " + std::to_string(sent - m_SignInSentLogged) +
+                      " picture(s) sent since the last line; capture on \"" + look.threadDesktop +
+                      "\", input on \"" + look.inputDesktop + "\", nobody signed in");
+            m_SignInSentLogged = sent;
+            m_SignInLogUs = nowUs;
+            m_SignInLastDesktop = seen;
+        }
+        return true;
+    }
+
+    /// Sign-in screen mode, where an encoded picture is handed out (the
+    /// capture thread, or the pipeline's): the screen is still the sign-in
+    /// screen and nobody is signed in. False holds the picture back; the
+    /// failure is latched, and the capture loop ends the session at its next
+    /// look (signInStillShown).
+    bool signInMaySend()
+    {
+        if (!platform::signInScreenOnly()) return true;
+        std::string why;
+        if (!platform::signInScreenStillShown(false, &why)) return false;
+        m_SignInSent.fetch_add(1);
+        return true;
+    }
+
     void finish(const std::string& reason) noexcept
     {
         m_Running.store(false);
@@ -4585,6 +4671,12 @@ private:
             // Nothing left to report it to.
         }
     }
+
+    /// Sign-in screen mode's figures (signInStillShown, signInMaySend).
+    std::atomic<uint64_t> m_SignInSent{0};
+    uint64_t m_SignInSentLogged = 0;
+    int64_t m_SignInLogUs = 0;
+    std::string m_SignInLastDesktop;
 
     SessionConfig m_Config;
     /// The Selector's decision. Read, never re-derived.

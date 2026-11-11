@@ -877,7 +877,10 @@ bool Win32Input::start(std::string& error)
     // kernel driver. Its absence is reported once and then forgotten: a desktop
     // stream does not need a controller, and refusing the session over it would
     // be wildly out of proportion.
-    {
+    // Not on the sign-in screen: keyboard and mouse only there.
+    if (platform::signInScreenOnly()) {
+        log::info("[native] no virtual gamepad on the sign-in screen");
+    } else {
         auto pads = std::make_unique<VigemGamepad>(m_OnRumble, m_OnPadNumber);
         std::string gamepadError;
         if (pads->start(gamepadError))
@@ -1169,6 +1172,23 @@ void Win32Input::runFollower()
 /// refused", which is the first question every time.
 void Win32Input::injectNow(const InputEvent& event)
 {
+    // Sign-in screen mode (platform/SignInScreen.h), before anything else:
+    // keyboard and mouse only, each event only while the sign-in screen shows
+    // and nobody is signed in on this session. The first time not, nothing is
+    // injected again, and the capture loop ends the session at its next look.
+    if (platform::signInScreenOnly()) {
+        if (event.type == InputEvent::Type::ControllerArrival ||
+            event.type == InputEvent::Type::ControllerState ||
+            event.type == InputEvent::Type::ControllerRemoval) {
+            m_Gated.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        std::string why;
+        if (!platform::signInScreenStillShown(false, &why)) {
+            m_Gated.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
     // The gate — see InputGate in NativeHost.h. Keyboard goes to the focused
     // window; a click or a scroll goes to whatever is under the pointer, which
     // is not always the same window, and is exactly how a viewer shut out of
@@ -1792,6 +1812,9 @@ bool minimiseEverything()
 
 bool Win32Input::releaseBlock()
 {
+    // It asks the shell for something; the sign-in screen mode asks Windows for
+    // nothing but pictures and keys.
+    if (platform::signInScreenOnly()) return false;
     HWND blocker = nullptr;
     {
         std::lock_guard<std::mutex> lock(m_GateMutex);

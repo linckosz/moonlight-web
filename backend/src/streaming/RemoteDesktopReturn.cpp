@@ -172,6 +172,65 @@ bool RemoteDesktopReturn::offersReturn() const
     return RemoteDesktopReturnPolicy::returnOffered(true, allowed());
 }
 
+bool RemoteDesktopReturn::signInAllowed() const
+{
+#ifdef Q_OS_WIN
+    if (!m_Watching) return false;
+    return AppSettings().nativeHostEnabled() && WorkerService::available();
+#else
+    return false;
+#endif
+}
+
+bool RemoteDesktopReturn::offersSignIn() const
+{
+    // The settings file is read only when there is something to offer.
+    if (!m_LeftByRemoteDesktop || !RemoteDesktopReturnPolicy::kSignInOffered) return false;
+    return RemoteDesktopReturnPolicy::signInOffered(true, signInAllowed());
+}
+
+QString RemoteDesktopReturn::signInRefusal(bool booth) const
+{
+    return RemoteDesktopReturnPolicy::signInRequestRefusal(m_Tracker, signInAllowed(), booth);
+}
+
+bool RemoteDesktopReturn::backOnScreenNow()
+{
+#ifdef Q_OS_WIN
+    return observe().state == RemoteDesktopReturnPolicy::Active &&
+           ::WTSGetActiveConsoleSessionId() == ownSession();
+#else
+    return false;
+#endif
+}
+
+QString RemoteDesktopReturn::signInOutcomeNow()
+{
+#ifdef Q_OS_WIN
+    if (backOnScreenNow()) return QStringLiteral("signed in: this session is back on the screen");
+    const DWORD console = ::WTSGetActiveConsoleSessionId();
+    if (console != 0xFFFFFFFF && console != ownSession()) {
+        LPWSTR name = nullptr;
+        DWORD bytes = 0;
+        bool someone = false;
+        if (::WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, console, WTSUserName, &name,
+                                          &bytes) &&
+            name) {
+            someone = name[0] != 0;
+            ::WTSFreeMemory(name);
+        }
+        // The account is not named: who signed in on the PC is not this
+        // log's business, only that the stream stopped for it.
+        if (someone)
+            return QStringLiteral("stopped: another account is signed in on the PC (session %1)")
+                .arg(console);
+    }
+    return QStringLiteral("closed: the PC still shows its sign-in screen");
+#else
+    return QStringLiteral("closed");
+#endif
+}
+
 void RemoteDesktopReturn::bringBack(std::function<void(bool ok, const QString& error)> done)
 {
     if (!done) return;

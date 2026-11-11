@@ -232,6 +232,10 @@ public:
      *  access with the remote admin password. Orthogonal to isHostSession:
      *  same privileges, different proof. */
     bool isAdminSession(const QString& token) const;
+    /// The device name a valid session was paired under ("Bruno's iPhone"),
+    /// empty when there is none or the session is not valid. For an audit
+    /// line; never a credential.
+    QString sessionMachineName(const QString& token) const;
     /** Grant admin access to an existing session (after the password checked
      *  out). Takes the raw cookie token. Returns false for unknown sessions. */
     bool promoteSessionToAdmin(const QString& token);

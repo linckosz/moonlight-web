@@ -532,13 +532,32 @@ int runStreamWorker(QCoreApplication& app)
         PacketMarking::setHandover(std::move(marking));
     }
 
+    // Sign-in screen mode (--signin-screen, which only the launcher service
+    // writes): one stream of the console's sign-in screen, its pictures and
+    // the viewer's keyboard and mouse, nothing else. The engine holds the
+    // rest (platform/SignInScreen.h); what the config asks beyond that is
+    // refused here or never looked at below.
+    const bool signInOnly = mw::native::NativeHost::signInScreenOnly();
+    if (signInOnly && (cfg[QStringLiteral("role")].toString() == QLatin1String("feed") ||
+                       !cfg[QStringLiteral("feedPipe")].toString().isEmpty() ||
+                       cfg[QStringLiteral("backendType")].toString() != QLatin1String("native"))) {
+        qWarning() << "[StreamWorker] sign-in screen: refused a config that is not one native "
+                      "stream of its own";
+        emitEvent({{QStringLiteral("event"), QStringLiteral("response")},
+                   {QStringLiteral("code"), 403},
+                   {QStringLiteral("body"),
+                    QJsonObject{{QStringLiteral("error"),
+                                 QStringLiteral("the sign-in screen streams on its own")}}}});
+        return 1;
+    }
+
     // The guests' shared feed: an engine and a pipe, nothing a browser meets.
     if (cfg[QStringLiteral("role")].toString() == QLatin1String("feed")) return runFeedWorker(cfg);
 
     // The wheels the server kept from the last stream, first of all: until
     // this process answers for them, the game's force feedback requests wait.
     // The server learns at once, and lets go of its copies.
-    if (cfg.contains(QStringLiteral("hidParked"))) {
+    if (cfg.contains(QStringLiteral("hidParked")) && !signInOnly) {
         const int taken = HidParkingTransfer::adoptFromServer(
             cfg[QStringLiteral("hidParked")].toObject(), ConsoleSession::workerServerPid());
         emitEvent({{QStringLiteral("event"), QStringLiteral("hidAdopted")},
@@ -747,6 +766,21 @@ int runStreamWorker(QCoreApplication& app)
             qInfo() << "[StreamWorker] administrator windows open to this invited player"
                        " (share_guests_admin_windows)";
     }
+    // The sign-in screen: keyboard and mouse at most, whatever the config
+    // says — no pad, no HID device, and with them no clipboard and no
+    // microphone (both are an unrestricted session's alone, Session.cpp).
+    if (signInOnly) {
+        InputMsg::Policy policy;
+        policy.gamepad = false;
+        policy.hid = false;
+        policy.keyboardMouse =
+            !cfg.contains(QStringLiteral("inputPolicy")) ||
+            cfg["inputPolicy"].toObject()[QStringLiteral("keyboardMouse")].toBool(false);
+        session->setInputPolicy(policy);
+        session->setMicRequested(false);
+        qInfo() << "[StreamWorker] sign-in screen: keyboardMouse=" << policy.keyboardMouse
+                << ", no gamepad, no HID, no clipboard, no microphone, no audio";
+    }
     // What the media path revealed about the host's OS. Only the parent keeps a
     // host list, so this is the only way the observation outlives the stream —
     // and outliving it is the point: without it every session would spend its
@@ -840,6 +874,11 @@ int runStreamWorker(QCoreApplication& app)
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(2); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("sessionEnded")) {
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(3); }, Qt::QueuedConnection);
+            } else if (cmd == QLatin1String("setPolicy") &&
+                       mw::native::NativeHost::signInScreenOnly()) {
+                // The sign-in screen's policy is fixed at the start, and can
+                // only be what it is.
+                qWarning() << "[StreamWorker] sign-in screen: a policy change refused";
             } else if (cmd == QLatin1String("setPolicy")) {
                 // The owner moved this player's inputs while they were playing.
                 // Not a teardown: the stream carries on under the new rules.

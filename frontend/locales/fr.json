@@ -354,6 +354,7 @@
         "displayOff": "Écran éteint",
         "displayOffAria": "{{name}}, éteint pendant le stream",
         "remoteDesktopReturn": "Écran de ce PC (verrouillé)",
+        "signInScreen": "Écran de connexion de ce PC",
         "quitConfirm": "Quitter {{name}} sur l'hôte ? La progression non sauvegardée sera perdue, et toute personne qui le streame sera déconnectée.",
         "quitting": "Fermeture…",
         "quitFailed": "Impossible de quitter {{name}} sur l'hôte.",

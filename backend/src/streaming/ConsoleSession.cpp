@@ -824,6 +824,21 @@ bool ConsoleProcess::startThroughService(QString* error)
 #endif
 }
 
+bool ConsoleProcess::startThroughSignInService(QString* error)
+{
+#ifndef Q_OS_WIN
+    if (error) *error = QStringLiteral("the worker service exists on Windows only");
+    return false;
+#else
+    return startWithNamedPipes(
+        /*systemWorker=*/true,
+        [](const QString& base, QString* why) {
+            return WorkerService::requestSignInWorker(base, why);
+        },
+        error);
+#endif
+}
+
 bool ConsoleProcess::startWithNamedPipes(
     bool systemWorker, const std::function<bool(const QString&, QString*)>& launch, QString* error)
 {

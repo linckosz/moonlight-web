@@ -39,6 +39,9 @@ const LOCALES = join(dirname(fileURLToPath(import.meta.url)), '..', 'locales');
 describe('CrashRelaunch: whether a lost stream starts again', () => {
     it('starts again only after a crash', () => {
         expect(shouldRelaunchAfterCrash('crashed', [], 0)).toBe(true);
+        // Or after a sign-in through a Windows PC's sign-in screen: the same
+        // card then streams the PC's screen.
+        expect(shouldRelaunchAfterCrash('signed_in', [], 0)).toBe(true);
         for (const state of ['live', 'ended', 'stopped', 'unknown', '', undefined])
             expect(shouldRelaunchAfterCrash(state, [], 0), String(state)).toBe(false);
     });

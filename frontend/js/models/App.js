@@ -39,7 +39,18 @@ export class App {
     get displayName() {
         // The server names it in English; the browser, in its own language.
         if (this.isRemoteDesktopReturn) return t('apps.remoteDesktopReturn');
+        if (this.isSignInScreen) return t('apps.signInScreen');
         return this.name;
+    }
+
+    /**
+     * Is this card "This PC's sign-in screen" — the one card of a Windows
+     * native host whose session Remote Desktop left without a screen, when
+     * the host offers it? Opening it streams the PC's sign-in screen; once
+     * the user has signed in there, the same card streams the PC's screen.
+     */
+    get isSignInScreen() {
+        return this.device?.key === 'console-sign-in';
     }
 
     /**

@@ -153,6 +153,12 @@ public:
     /// that cannot lock would show the desktop again for a few seconds.
     void giveUp() { m_GaveUp = true; }
 
+    /// Why a stream of the sign-in screen must NOT start now, in English;
+    /// empty when it may. The same "left by Remote Desktop, settled" as a
+    /// return; giveUp() is a return's alone, since nothing is moved here.
+    /// @p allowed: the native host is enabled and the launcher is there.
+    QString signInRefusal(bool allowed) const;
+
 private:
     bool m_GaveUp = false;
     bool m_LastActiveRemote = false;
@@ -168,5 +174,84 @@ bool returnOffered(bool leftByRemoteDesktop, bool allowed);
 /// Why a request from the card must NOT go out, in English; empty when it
 /// may. kReturnOffered first, then the tracker's own reasons.
 QString requestRefusal(const Tracker& tracker, bool allowed);
+
+// ── This PC's sign-in screen ────────────────────────────────────────────────
+//
+// What the card offers in place of the move. The console shows the sign-in
+// screen of an empty session, and a SYSTEM worker started on that session
+// streams it. The user signs in through the stream with their own
+// credentials, exactly as at the PC, and Windows itself brings their session
+// back to the screen. Nothing is moved from here, and no desktop is ever shown
+// before the user's own sign-in.
+//
+// The worker only ever sends what the sign-in screen shows: a picture or an
+// input goes through only while the input desktop is Winlogon and nobody is
+// signed in on its session, and the first time either is not so, the stream
+// ends for good (platform/SignInScreen.h). Somebody signing in with another
+// account ends it before anything of their desktop is sent.
+
+/// The sign-in screen's card. Beside "This PC's screen" (kReturnAppId), which
+/// keeps its id and stays held back.
+constexpr int kSignInAppId = 1002;
+
+/// Streaming the sign-in screen is not offered in this version: no card, and
+/// a request is refused by the server and by the launcher alike. A gate of its
+/// own, beside kReturnOffered.
+constexpr bool kSignInOffered = false;
+
+/// The display key the server hands the sign-in screen's worker: "the
+/// primary display of the session I run in", resolved by the worker itself.
+/// The server's own probe sees no display at all from the session Remote
+/// Desktop left.
+inline constexpr char kSignInDisplayKey[] = "signin-primary";
+
+/// What the launcher knows when a caller asks for a worker on the sign-in
+/// screen. Every unknown reads as a refusal.
+struct SignInFacts
+{
+    /// The caller is this same executable (its image was checked).
+    bool callerIsThisExecutable = false;
+    /// The session the caller's token belongs to.
+    quint32 callerSession = kNoSession;
+    /// That session's state (SessionState).
+    int callerState = -1;
+    /// The console session now (WTSGetActiveConsoleSessionId).
+    quint32 consoleSession = kNoSession;
+    /// Somebody is signed in on the console session — locked or not.
+    bool consoleUserPresent = true;
+    /// A sign-in screen worker this launcher started is still running.
+    bool signInWorkerAlive = true;
+};
+
+/// Why the launcher must NOT start a worker on the sign-in screen, in English
+/// for its log; empty when it may. The version's gate (kSignInOffered) first,
+/// whoever asks, then signInLaunchChecks().
+QString signInLaunchRefusal(const SignInFacts& facts);
+
+/// signInLaunchRefusal's checks without the gate: the caller is this
+/// executable, in a session of its own that Windows left Disconnected; the
+/// console is another session, and nobody is signed in on it; and no other
+/// sign-in screen worker runs (one at a time).
+QString signInLaunchChecks(const SignInFacts& facts);
+
+/// Whether the card offers "This PC's sign-in screen": the session was left by
+/// Remote Desktop, the native host and the launcher are there (@p allowed),
+/// and this version offers it (kSignInOffered). A kiosk never gets it: the
+/// server refuses its request (signInRequestRefusal), and its page shows the
+/// card's text only.
+bool signInOffered(bool leftByRemoteDesktop, bool allowed);
+
+/// Why a /start of kSignInAppId must NOT go out, in English; empty when it
+/// may. The gate first, then signInRequestChecks().
+QString signInRequestRefusal(const Tracker& tracker, bool allowed, bool booth);
+
+/// signInRequestRefusal's checks without the gate: never a kiosk (@p booth),
+/// then the tracker's reasons.
+QString signInRequestChecks(const Tracker& tracker, bool allowed, bool booth);
+
+/// Whether an invited guest's stream may be of @p appId on a host (@p
+/// nativeHost: this PC's own). Never the sign-in screen: it is its owner's
+/// alone, cold or beside them.
+bool guestMayStream(bool nativeHost, int appId);
 
 } // namespace RemoteDesktopReturnPolicy

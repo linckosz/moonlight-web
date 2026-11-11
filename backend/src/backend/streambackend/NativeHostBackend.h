@@ -121,6 +121,10 @@ public:
     /// session back to the PC's screen, locked, and then streams the display
     /// primaryDisplayAppId() names.
     static int remoteDesktopReturnAppId();
+    /// "This PC's sign-in screen", the card of a session Remote Desktop left
+    /// when this version offers it (RemoteDesktopReturnPolicy::kSignInAppId):
+    /// a /start on it streams the console's sign-in screen.
+    static int signInScreenAppId();
 
     /// The card id of the display a session brought back to the PC's screen is
     /// streamed on: the primary one, else the first real one. -1 with @p error

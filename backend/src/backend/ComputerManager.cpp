@@ -39,6 +39,10 @@
 #include "server/AppSettings.h"
 #include "server/HostAppImage.h"
 
+extern "C" {
+#include "Limelight.h" // SCM_H264
+}
+
 #include <qmdnsengine/server.h>
 #include <qmdnsengine/browser.h>
 #include <qmdnsengine/service.h>
@@ -382,7 +386,17 @@ void ComputerManager::refreshNativeHost()
     // What this machine can really encode, in the same terms every other host
     // reports. Without it the codec auto-selection and the transport filter —
     // which read this field for every host — conclude that it supports nothing.
-    host->serverCodecModeSupport = NativeHostBackend::codecModeSupport();
+    //
+    // A session Remote Desktop left sees no display, and its probe then names
+    // no encoder at all. The sign-in screen's stream is captured and encoded
+    // by a worker on the console, by the same GPU: it keeps what this machine
+    // could encode last, H.264 at the very least.
+    const int codecs = NativeHostBackend::codecModeSupport();
+    if (codecs == 0 && RemoteDesktopReturn::instance().leftByRemoteDesktop())
+        host->serverCodecModeSupport =
+            host->serverCodecModeSupport != 0 ? host->serverCodecModeSupport : SCM_H264;
+    else
+        host->serverCodecModeSupport = codecs;
 
     if (noDisplay)
         Logger::info(QString("Native host has no display: %1 — card kept for the virtual display")
@@ -421,6 +435,10 @@ QJsonObject ComputerManager::nativeDisplayJson()
     // PC's screen"): the card shows that one app rather than the text alone.
     obj["remote_desktop_return"] =
         leftByRemoteDesktop && RemoteDesktopReturn::instance().offersReturn();
+    // Or "This PC's sign-in screen" in its place: the console's sign-in
+    // screen, streamed, and signed in through. A kiosk's page shows the
+    // card's text only, and the server refuses it the stream.
+    obj["sign_in_screen"] = leftByRemoteDesktop && RemoteDesktopReturn::instance().offersSignIn();
     // macOS alone can withhold it (Accessibility): false means a stream would
     // show a picture and take none of the viewer's input — said on the card
     // and when the stream starts, since macOS itself says nothing.

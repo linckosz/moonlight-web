@@ -317,6 +317,25 @@ bool NativeHost::secureDesktopHasInput()
 #endif
 }
 
+bool NativeHost::enterSignInScreenOnly()
+{
+#ifdef _WIN32
+    platform::enterSignInScreenOnly();
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool NativeHost::signInScreenOnly()
+{
+#ifdef _WIN32
+    return platform::signInScreenOnly();
+#else
+    return false;
+#endif
+}
+
 const char* NativeHost::version()
 {
     return MW_NATIVE_VERSION;
