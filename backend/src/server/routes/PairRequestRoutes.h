@@ -63,6 +63,10 @@ struct PairRequestDeps
     /// loopback left out (QNetworkInterface). Where a paired session must stand
     /// to answer a device without the administrator's right. Empty: nowhere.
     std::function<QList<QPair<QHostAddress, int>>()> localSubnets;
+    /// Whether an address is one of this machine's own (HttpServer::isLocalRequest):
+    /// such a peer is never the house, to ask or to answer; its administrator
+    /// answers as such. Empty: the loopback only.
+    std::function<bool(const QString& address)> thisMachine;
 };
 
 /// Register /api/auth/pair-request…: a device paired from the QR code it shows,

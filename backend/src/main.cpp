@@ -6882,7 +6882,8 @@ int main(int argc, char* argv[])
                      if (e.prefixLength() > 0) subnets.append({e.ip(), e.prefixLength()});
              }
              return subnets;
-         }});
+         },
+         &HttpServer::isLocalRequest});
 
     // ── The application, carried to a browser that cannot reach us ───────────
     //

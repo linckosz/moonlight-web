@@ -103,31 +103,30 @@ bool passedAlong(const HttpRequest& req)
     return RequestGuard::forwardedByProxy(req.headers);
 }
 
-/// The house: this LAN as AuthManager::fromThisLan judges it, on one of this
-/// host's links. On a line, where ICE found the caller. On a socket, under a
-/// local name too (underALocalName): the public domain is how this host is
-/// reached from anywhere, and only a line says where such a caller stands. A
-/// socket request a proxy passed along (passedAlong) is not the house.
+/// Whether @p address is this machine's own: the loopback, or what
+/// PairRequestDeps::thisMachine says.
+bool isThisMachine(const Context& c, const QString& address)
+{
+    const QString clean = AuthManager::cleanClientAddress(address);
+    if (QHostAddress(clean).isLoopback()) return true;
+    return c.deps.thisMachine && c.deps.thisMachine(clean);
+}
+
+/// The house, where a device asks from and a paired session answers from: this
+/// LAN as AuthManager::fromThisLan judges it, on one of this host's links. On a
+/// line, where ICE found the caller. On a socket, under a local name too
+/// (underALocalName): the public domain is how this host is reached from
+/// anywhere, and only a line says where such a caller stands. A socket request
+/// a proxy passed along (passedAlong) is not the house, and neither is a peer
+/// that is this machine (isThisMachine), on a socket or on a line. Anywhere
+/// else, a private address included, is the internet.
 bool fromThisHousesLink(const Context& c, const HttpRequest& req)
 {
+    if (isThisMachine(c, req.clientAddress)) return false;
     if (req.viaTunnel) return onThisHostsLink(c, req.clientAddress, true);
     if (!underALocalName(req) || passedAlong(req)) return false;
     return AuthManager::fromThisLan(req) &&
            onThisHostsLink(c, AuthManager::attemptAddress(req.clientAddress, req.headers), false);
-}
-
-/// Where a device asks from the house: one of this host's links
-/// (fromThisHousesLink), or this machine itself under a local name
-/// (underALocalName), with no proxy on the way (passedAlong). Anywhere else, a
-/// private address included, is the internet.
-bool askedFromTheHouse(const Context& c, const HttpRequest& req)
-{
-    if (fromThisHousesLink(c, req)) return true;
-    if (req.viaTunnel || !underALocalName(req) || passedAlong(req) ||
-        !AuthManager::fromThisLan(req))
-        return false;
-    const QString who = AuthManager::attemptAddress(req.clientAddress, req.headers);
-    return QHostAddress(AuthManager::cleanClientAddress(who)).isLoopback();
 }
 
 /// Who may answer a device's request, and with what reach.
@@ -161,7 +160,7 @@ Answerer answererOf(Context& c, const HttpRequest& req)
     return {refusal(401, "not_authenticated"), false};
 }
 
-/// A request made from outside the house (askedFromTheHouse), or from an
+/// A request made from outside the house (fromThisHousesLink), or from an
 /// address no longer on this host's links, is the administrator's alone: to an
 /// answerer of the house it is answered as any request it may not see.
 bool hiddenFromAnswerer(Context& c, const Answerer& who, const QString& id)
@@ -231,11 +230,11 @@ bool mayAskFromElsewhere(const Context& c, const HttpRequest& req)
 }
 
 /// Whether @p req may ask, or claim what it asked: from the house always
-/// (askedFromTheHouse), from anywhere while the administrator allows it. The
+/// (fromThisHousesLink), from anywhere while the administrator allows it. The
 /// setting is read only for a caller from elsewhere.
 bool mayAsk(const Context& c, const HttpRequest& req)
 {
-    return askedFromTheHouse(c, req) || mayAskFromElsewhere(c, req);
+    return fromThisHousesLink(c, req) || mayAskFromElsewhere(c, req);
 }
 
 /// Requests from elsewhere live only while the box is ticked: unticked, they
@@ -272,7 +271,7 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
 
     // POST /api/auth/pair-request — a device asks to be let in, with no PIN.
     //
-    // From the house (askedFromTheHouse: this LAN, on this host's links), or
+    // From the house (fromThisHousesLink: this LAN, on this host's links), or
     // from anywhere while the administrator allows it
     // (AppSettings::pairRequestInternet, off by default); before any session
     // like the PIN, and under the same lockout.
@@ -293,7 +292,7 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
         const QString who = AuthManager::attemptAddress(req.clientAddress, req.headers);
         const int locked = c->auth.lockoutSeconds(who);
         if (locked > 0) return lockedOut(locked);
-        const bool fromLan = askedFromTheHouse(*c, req);
+        const bool fromLan = fromThisHousesLink(*c, req);
         if (!fromLan && !mayAskFromElsewhere(*c, req)) return refusal(403, "lan_only");
 
         const QJsonObject body = QJsonDocument::fromJson(req.body).object();

@@ -83,6 +83,12 @@ struct Server
                      {QHostAddress(QStringLiteral("198.51.100.66")), 24},
                      {QHostAddress(QStringLiteral("2001:db8:1:2::66")), 64},
                      {QHostAddress(QStringLiteral("fe80::66")), 64}};
+             },
+             [](const QString& address) {
+                 // This machine: its own addresses on those links.
+                 return address == QLatin1String("192.168.1.66") ||
+                        address == QLatin1String("2001:db8:1:2::66") ||
+                        address == QLatin1String("fe80::66");
              }});
     }
 
@@ -269,11 +275,15 @@ void testOnlyFromThisLan()
     forwarded.headers.insert(QStringLiteral("x-forwarded-for"), QStringLiteral("198.51.100.9"));
     CHECK_EQ(error(s.send(forwarded)), QStringLiteral("lan_only"));
 
-    // This machine itself, under its own name; under no name at all, it is not.
+    // This machine itself is not the house, under its own name or by its own
+    // address on this LAN: its administrator lets a device in as such.
     HttpRequest local = d.ask();
     local.clientAddress = QStringLiteral("127.0.0.1");
     local.headers.insert(QStringLiteral("host"), QStringLiteral("localhost:8443"));
-    CHECK_EQ(s.send(local).statusCode, 200);
+    CHECK_EQ(error(s.send(local)), QStringLiteral("lan_only"));
+    Device own;
+    own.address = QStringLiteral("192.168.1.66");
+    CHECK_EQ(error(s.send(own.ask())), QStringLiteral("lan_only"));
     HttpRequest unnamed = Device().ask();
     unnamed.clientAddress = QStringLiteral("127.0.0.1");
     unnamed.headers.insert(QStringLiteral("host"), QString());
@@ -886,6 +896,17 @@ void testOffALineTheHouseAnswersUnderALocalName()
         CHECK_EQ(error(s.send(relayed)), QStringLiteral("not_allowed"));
     }
 
+    // From this machine itself, by its own address on this LAN or the
+    // loopback, on a socket or on a line: never the house.
+    for (const char* own : {"192.168.1.66", "127.0.0.1"}) {
+        HttpRequest mine = m.yes(s, d, code);
+        mine.clientAddress = QString::fromLatin1(own);
+        mine.headers.insert(QStringLiteral("host"), QStringLiteral("dualrtx.local:8443"));
+        CHECK_EQ(error(s.send(mine)), QStringLiteral("not_allowed"));
+        mine.viaTunnel = true;
+        CHECK_EQ(error(s.send(mine)), QStringLiteral("not_allowed"));
+    }
+
     // On a line, the public domain changes nothing: ICE says where it stands.
     HttpRequest line = m.yes(s, d, code);
     line.viaTunnel = true;
@@ -1178,7 +1199,7 @@ void testWhatEachFailureCosts()
     // A claim the device's key did not sign: counted against who sent it.
     Device stranger = d;
     stranger.pem = PairingCrypto::generatePrivateKeyPem();
-    stranger.address = QStringLiteral("192.168.1.66");
+    stranger.address = QStringLiteral("192.168.1.65");
     CHECK_EQ(error(s.send(stranger.claim(s.hostId()))), QStringLiteral("bad_proof"));
     CHECK_EQ(s.auth->failedAttemptCount(stranger.address), 1);
     CHECK_EQ(s.guarded, QStringList{stranger.address});
