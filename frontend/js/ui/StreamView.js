@@ -97,7 +97,7 @@ import {
     supportsGamingMode,
     lockFreeLookWanted,
 } from '../util/BrowserDetect.js';
-import { noteAv1Failed, noteHevcFailed } from '../util/CodecAuto.js';
+import { Av1Watch, noteAv1Failed, noteAv1Proven, noteHevcFailed } from '../util/CodecAuto.js';
 import * as RemoteNav from './RemoteNav.js';
 import { StreamRemoteMenu } from './StreamRemoteMenu.js';
 import { RemotePointer } from '../stream/RemotePointer.js';
@@ -7711,6 +7711,40 @@ export class StreamView {
         }
         this._applyDecodeRateGovernor(diag, fps, now);
         this._tickAutoCeiling(diag, now);
+        this._tickAv1Watch(diag, now);
+    }
+
+    /**
+     * An 8-bit AV1 that does not keep up raises no error (util/CodecAuto.js,
+     * Av1Watch): the decoder's queue says so. Under Auto it is a failure, and
+     * the next launch asks H.264; a stream that ran smoothly is remembered,
+     * whoever chose AV1. Not an HDR or a 4:4:4 AV1, which are other decoders.
+     * @param {{decodeQueueAvg?: number}|null} diag
+     * @param {number} now
+     */
+    _tickAv1Watch(diag, now) {
+        if (this._av1Watch === null) return;
+        if (this._av1Watch === undefined) {
+            const plainAv1 =
+                String(this.videoCodec).toLowerCase() === 'av1' &&
+                !this._hdrEnabled &&
+                !this._yuv444;
+            this._av1Watch = plainAv1 ? new Av1Watch() : null;
+            if (!plainAv1) return;
+        }
+        if (!diag) return;
+        const verdict = this._av1Watch.sample(diag.decodeQueueAvg || 0, now);
+        if (!verdict) return;
+        this._av1Watch = null;
+        if (verdict === 'proven') {
+            noteAv1Proven();
+            console.log('[MW] AV1 ran smoothly here for two minutes — remembered');
+        } else if (this._codecAuto) {
+            noteAv1Failed();
+            console.warn(
+                '[MW] Auto: AV1 does not keep up in this browser — H.264 from the next launch on',
+            );
+        }
     }
 
     /**

@@ -27,6 +27,7 @@ function view(over = {}) {
         _applyEnhancerGovernor: vi.fn(),
         _applyDecodeRateGovernor: vi.fn(),
         _tickAutoCeiling: vi.fn(),
+        _tickAv1Watch: vi.fn(),
         _decodedFps: P._decodedFps,
         _runPipelineGovernors: P._runPipelineGovernors,
         ...over,

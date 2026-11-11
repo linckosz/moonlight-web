@@ -88,8 +88,15 @@ import {
     SCM_AV1_MAIN10,
     chroma444ClientCapability,
     chroma444Codec,
+    IS_GECKO,
 } from './util/BrowserDetect.js';
-import { CODEC_AUTO, autoLaunchCodec, migrateStoredCodecToAuto } from './util/CodecAuto.js';
+import {
+    CODEC_AUTO,
+    autoLaunchCodec,
+    av1HardwareHere,
+    hevcFailedHere,
+    migrateStoredCodecToAuto,
+} from './util/CodecAuto.js';
 import {
     startRefreshRateMonitor,
     currentRefreshMilliHz,
@@ -2324,18 +2331,30 @@ export const MoonlightApp = {
         // « Auto » (util/CodecAuto.js): HEVC, the codec the host is asked for,
         // unless HDR below finds that HEVC cannot do the job (hdrLaunchCodec),
         // or, in a browser whose HEVC already failed (hevcFailedHere), AV1 of
-        // a host that encodes it, H.264 where AV1 failed too or the host has
-        // none. No codec stored at all is still the server's default, as
-        // before. A fallback relaunch keeps the word of the launch it follows:
-        // the overlay still says Auto.
+        // a host that encodes it where the hardware decodes it (or, in Firefox,
+        // where it already ran smoothly), H.264 otherwise, where AV1 failed
+        // too or the host has none. No codec stored at all is still the
+        // server's default, as before. A fallback relaunch keeps the word of
+        // the launch it follows: the overlay still says Auto.
         if (!codecOverride) {
             this._codecAuto = streamingSettings.video_codec === CODEC_AUTO;
             if (this._codecAuto) {
-                streamingSettings.video_codec = autoLaunchCodec(host.serverCodecModeSupport || 0);
+                // The browser is asked about its AV1 only where the answer counts.
+                const av1 = hevcFailedHere()
+                    ? { hardware: await av1HardwareHere({ gecko: IS_GECKO }), gecko: IS_GECKO }
+                    : {};
+                streamingSettings.video_codec = autoLaunchCodec(
+                    host.serverCodecModeSupport || 0,
+                    undefined,
+                    undefined,
+                    undefined,
+                    av1,
+                );
                 if (streamingSettings.video_codec !== 'hevc')
                     console.log(
                         '[MW] Auto: HEVC failed in this browser before — asking ' +
-                            (streamingSettings.video_codec === 'av1' ? 'AV1' : 'H.264'),
+                            (streamingSettings.video_codec === 'av1' ? 'AV1' : 'H.264') +
+                            ` (AV1 by the hardware here: ${av1.hardware ? 'yes' : 'no'})`,
                     );
             }
         }

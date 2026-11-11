@@ -22,8 +22,13 @@ import {
  * at every launch, each time with an « HDR unavailable » toast although no HDR
  * had been asked. Now the browser keeps the verdict and Auto asks AV1 there
  * from the next launch on (Bruno, 07/11/2026), H.264 where AV1 failed too or
- * the host has none; and HDR is said lost only where it was asked.
+ * the host has none; and HDR is said lost only where it was asked. AV1 only
+ * where the hardware decodes it (autoAv1Hardware.test.js): these are run with
+ * a browser that says it does.
  */
+
+/** What the browser answered about its AV1 decoder. */
+const HW = { hardware: true };
 
 /** Sunshine on an RTX: H.264, HEVC Main/Main10, AV1 Main8/Main10. */
 const HOST_AV1 = 0x1 | 0x100 | 0x200 | 0x10000 | 0x20000;
@@ -49,19 +54,19 @@ describe('CodecAuto: the verdict on a browser whose HEVC failed', () => {
         expect(autoLaunchCodec(HOST_AV1, FX, s, now)).toBe('hevc');
         noteHevcFailed(FX, s, now);
         expect(hevcFailedHere(FX, s, now + DAY)).toBe(true);
-        expect(autoLaunchCodec(HOST_AV1, FX, s, now + DAY)).toBe('av1');
+        expect(autoLaunchCodec(HOST_AV1, FX, s, now + DAY, HW)).toBe('av1');
     });
 
     it('asks H.264 of a host without AV1, or once AV1 failed here too', () => {
         const s = memoryStore();
         const now = 1000 * DAY;
         noteHevcFailed(FX, s, now);
-        expect(autoLaunchCodec(HOST_NO_AV1, FX, s, now)).toBe('h264');
-        expect(autoLaunchCodec(undefined, FX, s, now)).toBe('h264');
-        expect(autoLaunchCodec(0x20000, FX, s, now)).toBe('av1');
+        expect(autoLaunchCodec(HOST_NO_AV1, FX, s, now, HW)).toBe('h264');
+        expect(autoLaunchCodec(undefined, FX, s, now, HW)).toBe('h264');
+        expect(autoLaunchCodec(0x20000, FX, s, now, HW)).toBe('av1');
         noteAv1Failed(FX, s, now);
         expect(av1FailedHere(FX, s, now)).toBe(true);
-        expect(autoLaunchCodec(HOST_AV1, FX, s, now)).toBe('h264');
+        expect(autoLaunchCodec(HOST_AV1, FX, s, now, HW)).toBe('h264');
         // The AV1 verdict alone changes nothing: HEVC first, as long as it works.
         const t = memoryStore();
         noteAv1Failed(FX, t, now);
