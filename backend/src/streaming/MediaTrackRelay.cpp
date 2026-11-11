@@ -504,7 +504,7 @@ void MediaTrackRelay::createTracksAndChannels()
                 if (m_ClipboardEnabled) {
                     // Advertise clipboard sync, then push the current host
                     // clipboard once so copy-before-connect pastes locally.
-                    static const char kCaps[] = "{\"type\":\"clipboardcaps\",\"available\":true}";
+                    const char* kCaps = ClipboardBridge::capabilitiesMessage();
                     try {
                         m_InputDc->send(std::string(kCaps));
                     } catch (const std::exception&) {}

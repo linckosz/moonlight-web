@@ -1262,5 +1262,27 @@
         "action": "Offrir un café",
         "hideToggle": "Masquer Buy me a coffee dans l'application",
         "tooltip": "Soutenir MoonlightWeb"
+    },
+    "sessionInput": {
+        "title": "Remappage des touches",
+        "mapping": "Remappage des touches",
+        "mappingHint": "Le remappage utilise les touches physiques. Les raccourcis de sortie locaux restent inchangés. Le navigateur ne capture pas tous les raccourcis système.",
+        "from": "Touche source",
+        "to": "Touche cible",
+        "remove": "Supprimer",
+        "add": "Ajouter",
+        "release": "Relâcher toutes les touches",
+        "close": "Fermer",
+        "duplicate": "Sources en double : une seule cible par touche source.",
+        "storageFailed": "Impossible de mémoriser ; les réglages restent actifs pour cette session.",
+        "advanced": "Avancé",
+        "mappingExample": "Par exemple : pour un client Windows et un hôte macOS, AltLeft → MetaLeft et MetaLeft → AltLeft sont recommandés.",
+        "keyCode": "Code de touche",
+        "ignoreHint": "Code cible (vide = ignorer)",
+        "invalidCode": "Saisissez un code physique valide, comme AltLeft ou KeyA.",
+        "readDenied": "L’accès au presse-papiers du navigateur a été refusé. Le contenu du presse-papiers de l’hôte est collé à la place.",
+        "releaseHint": "Les touches sont normalement relâchées automatiquement. Si une entrée reste bloquée, relâchez manuellement les touches et boutons de souris distants.",
+        "confirm": "Appliquer",
+        "sameCode": "La source et la destination sont identiques ; aucun mappage n’est nécessaire."
     }
 }

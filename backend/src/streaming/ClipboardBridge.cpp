@@ -16,6 +16,9 @@
  */
 
 #include "ClipboardBridge.h"
+#ifdef Q_OS_MACOS
+#include "ClipboardMac.h"
+#endif
 #include "IMediaEngine.h"
 
 #include <QClipboard>
@@ -27,14 +30,26 @@
 #include <QNetworkInterface>
 #include <QPointer>
 #include <QtDebug>
+#include <QTimer>
 
 namespace {
-// Windows virtual-key codes for the injected paste chord (the Moonlight
-// protocol speaks VK regardless of the host OS — Sunshine translates).
-constexpr short kVkControl = 0x11;
-constexpr short kVkV = 0x56;
-// Modifier bitmask matching the relays' keydown encoding (Ctrl = 0x02).
-constexpr char kModCtrl = 0x02;
+constexpr bool kMacHost =
+#ifdef Q_OS_MACOS
+    true;
+#else
+    false;
+#endif
+
+QString clipboardText()
+{
+#ifdef Q_OS_MACOS
+    // Qt detects external macOS clipboard changes on application activation;
+    // the stream worker stays in the background while another app owns focus.
+    return macClipboardText();
+#else
+    return QGuiApplication::clipboard()->text();
+#endif
+}
 } // namespace
 
 ClipboardBridge* ClipboardBridge::instance()
@@ -51,7 +66,22 @@ ClipboardBridge::ClipboardBridge(QObject* parent)
 {
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
             &ClipboardBridge::onClipboardChanged);
+#ifdef Q_OS_MACOS
+    // Poll changeCount while backgrounded; read text only when it changes.
+    auto* pollTimer = new QTimer(this);
+    connect(pollTimer, &QTimer::timeout, this, &ClipboardBridge::onClipboardChanged);
+    pollTimer->start(250);
+#endif
     qInfo() << "[ClipboardBridge] Created (host clipboard monitor active)";
+}
+
+const char* ClipboardBridge::capabilitiesMessage()
+{
+    if (kMacHost)
+        return "{\"type\":\"clipboardcaps\",\"available\":true,"
+               "\"pasteModifier\":\"meta\"}";
+    return "{\"type\":\"clipboardcaps\",\"available\":true,"
+           "\"pasteModifier\":\"control\"}";
 }
 
 bool ClipboardBridge::isSelfAddress(const QString& address)
@@ -80,20 +110,28 @@ void ClipboardBridge::pasteFromClient(IMediaEngine* engine, const QString& text,
     QMetaObject::invokeMethod(
         this,
         [this, shimGuard, text, wrapCtrl]() {
+            if (!shimGuard) return;
             const QString t = text.left(kMaxTextChars);
-            if (!t.isEmpty() && t != m_LastText) {
+            if (!t.isEmpty()) {
+                const bool needsWrite = t != clipboardText();
+                // Suppress an echo even when the host already has this text.
                 m_LastText = t;
-                QGuiApplication::clipboard()->setText(t);
+                if (needsWrite) QGuiApplication::clipboard()->setText(t);
             }
             // Inject the chord only AFTER the clipboard is committed — same
             // main-thread hop, so ordering is structural. Li input calls are
             // thread-safe (guarded by the shim's connected atomic).
             IMediaEngine* s = shimGuard.data();
             if (!s) return;
-            if (wrapCtrl) s->sendKeyEvent(kVkControl, true, kModCtrl, 0);
-            s->sendKeyEvent(kVkV, true, kModCtrl, 0);
-            s->sendKeyEvent(kVkV, false, kModCtrl, 0);
-            if (wrapCtrl) s->sendKeyEvent(kVkControl, false, 0, 0);
+            // This host-generated chord bypasses browser key mappings.
+            // VK_LWIN is Command on macOS; other hosts paste with Control.
+            const short modifier = kMacHost ? 0x5B : 0x11;
+            const char flags = kMacHost ? 0x08 : 0x02;
+            const bool wrap = kMacHost || wrapCtrl;
+            if (wrap) s->sendKeyEvent(modifier, true, flags, 0);
+            s->sendKeyEvent(0x56, true, flags, 0);
+            s->sendKeyEvent(0x56, false, flags, 0);
+            if (wrap) s->sendKeyEvent(modifier, false, 0, 0);
         },
         Qt::QueuedConnection);
 }
@@ -103,7 +141,7 @@ void ClipboardBridge::requestAnnounce()
     QMetaObject::invokeMethod(
         this,
         [this]() {
-            const QString text = QGuiApplication::clipboard()->text().left(kMaxTextChars);
+            const QString text = clipboardText().left(kMaxTextChars);
             if (text.isEmpty()) return;
             m_LastText = text;
             emit hostTextChanged(text);
@@ -117,8 +155,13 @@ void ClipboardBridge::onClipboardChanged()
     static const QMetaMethod changedSignal =
         QMetaMethod::fromSignal(&ClipboardBridge::hostTextChanged);
     if (!isSignalConnected(changedSignal)) return;
+#ifdef Q_OS_MACOS
+    const qint64 changeCount = macClipboardChangeCount();
+    if (changeCount == m_ChangeCount) return;
+    m_ChangeCount = changeCount;
+#endif
 
-    const QString text = QGuiApplication::clipboard()->text().left(kMaxTextChars);
+    const QString text = clipboardText().left(kMaxTextChars);
     // Empty = cleared or non-text content (image/files) — text-only bridge.
     // Identical text = echo of our own setText() or a no-op copy.
     if (text.isEmpty() || text == m_LastText) return;

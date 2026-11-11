@@ -2189,6 +2189,49 @@ body.streaming-active::after {
     }
 }
 
+.session-input-panel {
+    box-sizing: border-box;
+    margin: auto;
+    touch-action: auto;
+    -webkit-user-select: text;
+    user-select: text;
+    color: var(--text-primary, #eee);
+    background: var(--bg-primary, #17191f);
+    border: 1px solid var(--border-color, #555);
+    border-radius: 12px;
+    width: min(560px, calc(100vw - 32px));
+    max-height: calc(100dvh - 48px);
+    overflow: auto;
+    padding: 20px;
+    z-index: 10000;
+}
+.session-input-panel::backdrop { background: #0009; }
+.session-input-panel .btn { margin: 4px; }
+.session-input-panel details { margin: 12px 0; }
+.session-input-panel summary { cursor: pointer; padding: 6px 0; }
+.session-input-panel table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+.session-input-panel th { text-align: left; }
+.session-input-panel td, .session-input-panel th { padding: 8px 4px; border-bottom: 1px solid #8884; }
+.session-input-panel td input { width: 100%; min-width: 0; padding: 8px; box-sizing: border-box; }
+
+#btn-session-input { margin-right: 8px; padding: 7px 12px; font-size: 12.5px; }
+
+.session-input-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    color: var(--text-2);
+    background: transparent;
+    font: 12px/1 sans-serif;
+    cursor: help;
+    vertical-align: middle;
+}
+
 /* ── The stream's own menu: a TV remote's long press of OK ─────────────────
    One column, so Up and Down are all a remote needs; buttons a finger's
    width tall, read from three metres away. */

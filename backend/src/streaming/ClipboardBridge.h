@@ -23,19 +23,14 @@
 class IMediaEngine;
 
 /// Bidirectional text clipboard bridge between the browser client and the
-/// host machine, active only when the streamed Sunshine host IS this machine
-/// (the standard installer deployment) — the backend process then shares the
-/// host's clipboard and QClipboard is authoritative.
+/// host machine, for unrestricted native-host or local Sunshine sessions.
+/// Eligibility is decided by Session; the backend shares the host clipboard.
 ///
-/// Local → host: the browser intercepts Ctrl/Cmd+V via its native 'paste'
-/// event (the only permission-free clipboard read) and sends a
-/// 'clipboardpaste' message; pasteFromClient() commits the text to the host
-/// clipboard and injects the paste chord in the same main-thread hop, so the
-/// keystrokes can never overtake the clipboard write.
+/// Local → host: native 'paste' events or an async read for mapped shortcuts
+/// supply text. pasteFromClient() writes it before injecting the host chord.
 ///
-/// Host → local: QClipboard::dataChanged is monitored on the main thread and
-/// re-emitted as hostTextChanged(); relays forward it to the browser, which
-/// mirrors it via navigator.clipboard.writeText().
+/// Host → local: QClipboard notifications, plus macOS changeCount polling,
+/// emit hostTextChanged(); relays forward the text for browser clipboard writes.
 ///
 /// All QClipboard access happens on the Qt main thread (QClipboard is
 /// main-thread-only); relays call in from their dedicated threads through
@@ -62,10 +57,13 @@ public:
     /// Unresolvable hostnames are treated as remote (no blocking DNS lookup).
     static bool isSelfAddress(const QString& address);
 
+    /// Shared relay announcement: clipboard availability and host paste modifier.
+    static const char* capabilitiesMessage();
+
     /// Thread-safe. Queue onto the main thread: commit 'text' to the host
     /// clipboard, then inject the paste chord (V down/up) through the shim.
-    /// wrapCtrl adds Ctrl down/up around the V for clients whose paste
-    /// modifier doesn't map to Ctrl on the host (macOS Cmd arrives as Win).
+    /// wrapCtrl adds Ctrl down/up on non-Mac hosts when the client released it
+    /// or used another modifier. Mac hosts always inject a complete Cmd+V.
     void pasteFromClient(IMediaEngine* engine, const QString& text, bool wrapCtrl);
 
     /// Thread-safe. Re-emit the current host clipboard text (initial sync
@@ -85,4 +83,5 @@ private:
     /// Last text written or observed — suppresses the dataChanged echo of our
     /// own setText() and redundant re-pushes of an unchanged clipboard.
     QString m_LastText;
+    qint64 m_ChangeCount = -1;
 };

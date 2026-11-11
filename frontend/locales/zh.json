@@ -1262,5 +1262,27 @@
         "action": "请我喝杯咖啡",
         "hideToggle": "在应用中隐藏 Buy me a coffee",
         "tooltip": "支持 MoonlightWeb"
+    },
+    "sessionInput": {
+        "title": "键位映射",
+        "mapping": "按键映射",
+        "mappingHint": "按物理键位映射。本地退出快捷键保持不变；浏览器无法捕获所有系统快捷键。",
+        "from": "原按键",
+        "to": "目标按键",
+        "remove": "删除",
+        "add": "添加映射",
+        "release": "释放所有按键",
+        "close": "关闭",
+        "duplicate": "原按键重复：每个原按键只能配置一个目标。",
+        "storageFailed": "无法保存设置；设置仍对当前会话生效。",
+        "advanced": "高级",
+        "mappingExample": "例如：Windows 客户端连接 macOS 主机时，推荐 AltLeft → MetaLeft、MetaLeft → AltLeft。",
+        "keyCode": "键码",
+        "ignoreHint": "目标键码（留空表示忽略）",
+        "invalidCode": "请输入有效的物理键码，例如 AltLeft 或 KeyA。",
+        "readDenied": "浏览器拒绝了剪贴板访问，已改为粘贴主机当前的剪贴板内容。",
+        "releaseHint": "按键通常会自动释放。遇到按键卡住时，可手动释放远端按键和鼠标按钮。",
+        "confirm": "应用",
+        "sameCode": "原按键与目标按键相同，无需添加映射。"
     }
 }

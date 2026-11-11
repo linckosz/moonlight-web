@@ -1262,5 +1262,27 @@
         "action": "Buy me a coffee",
         "hideToggle": "Hide Buy me a coffee in the app",
         "tooltip": "Support MoonlightWeb"
+    },
+    "sessionInput": {
+        "title": "Key mappings",
+        "mapping": "Key mappings",
+        "mappingHint": "Mappings use physical keys. Local exit shortcuts are unchanged. Browsers cannot capture all system shortcuts.",
+        "from": "Source key",
+        "to": "Target key",
+        "remove": "Remove",
+        "add": "Add mapping",
+        "release": "Release all keys",
+        "close": "Close",
+        "duplicate": "Duplicate source keys: keep one mapping per source.",
+        "storageFailed": "Could not save preferences; they still apply to this session.",
+        "advanced": "Advanced",
+        "mappingExample": "For example: for a Windows client controlling a macOS host, AltLeft → MetaLeft and MetaLeft → AltLeft are recommended.",
+        "keyCode": "Key code",
+        "ignoreHint": "Target code (empty = ignore)",
+        "invalidCode": "Enter a valid physical key code, such as AltLeft or KeyA.",
+        "readDenied": "Browser clipboard access was denied. The host clipboard is pasted instead.",
+        "releaseHint": "Keys are normally released automatically. If an input gets stuck, release remote keys and mouse buttons manually.",
+        "confirm": "Apply",
+        "sameCode": "Source and target are the same; no mapping is needed."
     }
 }
