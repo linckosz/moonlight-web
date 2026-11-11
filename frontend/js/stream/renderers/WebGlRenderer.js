@@ -390,16 +390,17 @@ void main() {
 // of NIS_Scaler.h. Naming follows the SDK so the two can be read side by side.
 //
 // Coordinates: for the output pixel (dstX, dstY), srcX = (dstX + 0.5) * kScaleX
-// - 0.5; the 6×6 luma support P(i, j) is the source pixel (floor(srcX) - 2 + j,
-// floor(srcY) - 2 + i) — i indexes rows, j columns, as in the SDK's p[i][j].
+// - 0.5; the 6×6 luma support pRC is the source pixel (floor(srcX) - 2 + C,
+// floor(srcY) - 2 + R) — R the row, C the column, as in the SDK's p[R][C].
 // The edge map the SDK stages per source pixel is GetEdgeMap of that pixel's
 // 3×3 neighbourhood; the four entries an output pixel interpolates sit at
-// P(2..3, 2..3), i.e. GetEdgeMap(P, 1 + i, 1 + j) for i, j in {0, 1}.
+// p22..p33, i.e. the 3×3 blocks whose top left is p11, p12, p21 and p22.
 //
 // The filter banks (coef_scale, coef_usm: 64 phases × 6 taps) live in a 4×64
 // RGBA32F texture: columns 0–1 hold the scaler taps, columns 2–3 the USM taps,
-// four per texel. GLSL ES 3.00 has no arrays of arrays, so the support is a
-// flat float[36] behind the P() macro.
+// four per texel. Written out, with no array or loop, as NIS_WGSL is: WebKit
+// keeps an array indexed in a loop in memory, which made the WebGPU twin 5.6
+// times slower on an iPhone. The arithmetic and its order are as before.
 const NIS_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uTex;   // linear, clamp
@@ -413,27 +414,18 @@ in vec2 vUv;
 out vec4 oColor;
 
 #define kPhaseCount 64
-#define P(i, j) p[(i) * 6 + (j)]
 
 float getY(vec3 c) { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
-float coefScaler(int phase, int i) {
-    vec4 v = texelFetch(uCoef, ivec2(i >> 2, phase), 0);
-    return v[i & 3];
-}
-float coefUSM(int phase, int i) {
-    vec4 v = texelFetch(uCoef, ivec2(2 + (i >> 2), phase), 0);
-    return v[i & 3];
-}
-float lumaAt(ivec2 c) {
-    ivec2 mx = textureSize(uTex, 0) - 1;
+float lumaAt(ivec2 c, ivec2 mx) {
     return getY(texelFetch(uTex, clamp(c, ivec2(0), mx), 0).rgb);
 }
 
-vec4 GetEdgeMap(float p[36], int i, int j) {
-    float g_0 = abs(P(0 + i, 0 + j) + P(0 + i, 1 + j) + P(0 + i, 2 + j) - P(2 + i, 0 + j) - P(2 + i, 1 + j) - P(2 + i, 2 + j));
-    float g_45 = abs(P(1 + i, 0 + j) + P(0 + i, 0 + j) + P(0 + i, 1 + j) - P(2 + i, 1 + j) - P(2 + i, 2 + j) - P(1 + i, 2 + j));
-    float g_90 = abs(P(0 + i, 0 + j) + P(1 + i, 0 + j) + P(2 + i, 0 + j) - P(0 + i, 2 + j) - P(1 + i, 2 + j) - P(2 + i, 2 + j));
-    float g_135 = abs(P(1 + i, 0 + j) + P(2 + i, 0 + j) + P(2 + i, 1 + j) - P(0 + i, 1 + j) - P(0 + i, 2 + j) - P(1 + i, 2 + j));
+// The edge map of the 3x3 block e00..e22, its rows then its columns.
+vec4 GetEdgeMap(float e00, float e01, float e02, float e10, float e11, float e12, float e20, float e21, float e22) {
+    float g_0 = abs(e00 + e01 + e02 - e20 - e21 - e22);
+    float g_45 = abs(e10 + e00 + e01 - e21 - e22 - e12);
+    float g_90 = abs(e00 + e10 + e20 - e02 - e12 - e22);
+    float g_135 = abs(e10 + e20 + e21 - e01 - e02 - e12);
     float g_0_90_max = max(g_0, g_90);
     float g_0_90_min = min(g_0, g_90);
     float g_45_135_max = max(g_45, g_135);
@@ -468,94 +460,34 @@ float CalcLTI(float p0, float p1, float p2, float p3, float p4, float p5, int ph
     return (1.0 - clamp((cont_ratio - uDetect.z) * uDetect.w, 0.0, 1.0)) * uSharpA.x;
 }
 
-float EvalPoly6(float pxl[6], int phase_int) {
+// The six taps across one direction: the scaler's bank (texels 0 and 1 of the
+// phase's row) and the USM's (texels 2 and 3), each read once.
+float EvalPoly6(float t0, float t1, float t2, float t3, float t4, float t5, int phase_int) {
+    vec4 a = texelFetch(uCoef, ivec2(0, phase_int), 0);
+    vec4 b = texelFetch(uCoef, ivec2(1, phase_int), 0);
+    vec4 ua = texelFetch(uCoef, ivec2(2, phase_int), 0);
+    vec4 ub = texelFetch(uCoef, ivec2(3, phase_int), 0);
     float y = 0.0;
-    for (int i = 0; i < 6; ++i) y += coefScaler(phase_int, i) * pxl[i];
+    y += a.x * t0;
+    y += a.y * t1;
+    y += a.z * t2;
+    y += a.w * t3;
+    y += b.x * t4;
+    y += b.y * t5;
     float y_usm = 0.0;
-    for (int i = 0; i < 6; ++i) y_usm += coefUSM(phase_int, i) * pxl[i];
+    y_usm += ua.x * t0;
+    y_usm += ua.y * t1;
+    y_usm += ua.z * t2;
+    y_usm += ua.w * t3;
+    y_usm += ub.x * t4;
+    y_usm += ub.y * t5;
     float y_scale = 1.0 - clamp((y - uSharpA.z) * uSharpA.w, 0.0, 1.0);
     float y_sharpness = y_scale * uSharpB.y + uSharpB.x;
     y_usm *= y_sharpness;
     float y_sharpness_limit = (y_scale * uSharpB.w + uSharpB.z) * y;
     y_usm = min(y_sharpness_limit, max(-y_sharpness_limit, y_usm));
-    y_usm *= CalcLTI(pxl[0], pxl[1], pxl[2], pxl[3], pxl[4], pxl[5], phase_int);
+    y_usm *= CalcLTI(t0, t1, t2, t3, t4, t5, phase_int);
     return y + y_usm;
-}
-
-float FilterNormal(float p[36], int phase_x_frac_int, int phase_y_frac_int) {
-    float h_acc = 0.0;
-    for (int j = 0; j < 6; ++j) {
-        float v_acc = 0.0;
-        for (int i = 0; i < 6; ++i) v_acc += P(i, j) * coefScaler(phase_y_frac_int, i);
-        h_acc += v_acc * coefScaler(phase_x_frac_int, j);
-    }
-    return h_acc;
-}
-
-float AddDirFilters(float p[36], float phase_x_frac, float phase_y_frac, int phase_x_frac_int,
-                    int phase_y_frac_int, vec4 w) {
-    float f = 0.0;
-    if (w.x > 0.0) {
-        float interp0Deg[6];
-        for (int i = 0; i < 6; ++i) interp0Deg[i] = mix(P(i, 2), P(i, 3), phase_x_frac);
-        f += EvalPoly6(interp0Deg, phase_y_frac_int) * w.x;
-    }
-    if (w.y > 0.0) {
-        float interp90Deg[6];
-        for (int i = 0; i < 6; ++i) interp90Deg[i] = mix(P(2, i), P(3, i), phase_y_frac);
-        f += EvalPoly6(interp90Deg, phase_x_frac_int) * w.y;
-    }
-    if (w.z > 0.0) {
-        float pphase_b45 = 0.5 + 0.5 * (phase_x_frac - phase_y_frac);
-        float temp_interp45Deg[7];
-        temp_interp45Deg[1] = mix(P(2, 1), P(1, 2), pphase_b45);
-        temp_interp45Deg[3] = mix(P(3, 2), P(2, 3), pphase_b45);
-        temp_interp45Deg[5] = mix(P(4, 3), P(3, 4), pphase_b45);
-        pphase_b45 = pphase_b45 - 0.5;
-        float a = (pphase_b45 >= 0.0) ? P(0, 2) : P(2, 0);
-        float b = (pphase_b45 >= 0.0) ? P(1, 3) : P(3, 1);
-        float c = (pphase_b45 >= 0.0) ? P(2, 4) : P(4, 2);
-        float d = (pphase_b45 >= 0.0) ? P(3, 5) : P(5, 3);
-        temp_interp45Deg[0] = mix(P(1, 1), a, abs(pphase_b45));
-        temp_interp45Deg[2] = mix(P(2, 2), b, abs(pphase_b45));
-        temp_interp45Deg[4] = mix(P(3, 3), c, abs(pphase_b45));
-        temp_interp45Deg[6] = mix(P(4, 4), d, abs(pphase_b45));
-        float interp45Deg[6];
-        float pphase_p45 = phase_x_frac + phase_y_frac;
-        if (pphase_p45 >= 1.0) {
-            for (int i = 0; i < 6; i++) interp45Deg[i] = temp_interp45Deg[i + 1];
-            pphase_p45 = pphase_p45 - 1.0;
-        } else {
-            for (int i = 0; i < 6; i++) interp45Deg[i] = temp_interp45Deg[i];
-        }
-        f += EvalPoly6(interp45Deg, min(int(pphase_p45 * 64.0), 63)) * w.z;
-    }
-    if (w.w > 0.0) {
-        float pphase_b135 = 0.5 * (phase_x_frac + phase_y_frac);
-        float temp_interp135Deg[7];
-        temp_interp135Deg[1] = mix(P(3, 1), P(4, 2), pphase_b135);
-        temp_interp135Deg[3] = mix(P(2, 2), P(3, 3), pphase_b135);
-        temp_interp135Deg[5] = mix(P(1, 3), P(2, 4), pphase_b135);
-        pphase_b135 = pphase_b135 - 0.5;
-        float a = (pphase_b135 >= 0.0) ? P(5, 2) : P(3, 0);
-        float b = (pphase_b135 >= 0.0) ? P(4, 3) : P(2, 1);
-        float c = (pphase_b135 >= 0.0) ? P(3, 4) : P(1, 2);
-        float d = (pphase_b135 >= 0.0) ? P(2, 5) : P(0, 3);
-        temp_interp135Deg[0] = mix(P(4, 1), a, abs(pphase_b135));
-        temp_interp135Deg[2] = mix(P(3, 2), b, abs(pphase_b135));
-        temp_interp135Deg[4] = mix(P(2, 3), c, abs(pphase_b135));
-        temp_interp135Deg[6] = mix(P(1, 4), d, abs(pphase_b135));
-        float interp135Deg[6];
-        float pphase_p135 = 1.0 + (phase_x_frac - phase_y_frac);
-        if (pphase_p135 >= 1.0) {
-            for (int i = 0; i < 6; ++i) interp135Deg[i] = temp_interp135Deg[i + 1];
-            pphase_p135 = pphase_p135 - 1.0;
-        } else {
-            for (int i = 0; i < 6; ++i) interp135Deg[i] = temp_interp135Deg[i];
-        }
-        f += EvalPoly6(interp135Deg, min(int(pphase_p135 * 64.0), 63)) * w.w;
-    }
-    return f;
 }
 
 void main() {
@@ -565,22 +497,163 @@ void main() {
     vec2 fr = src - fsrc;
     ivec2 fi = min(ivec2(fr * float(kPhaseCount)), ivec2(kPhaseCount - 1));
     ivec2 s = ivec2(fsrc);
+    ivec2 mx = textureSize(uTex, 0) - 1;
 
-    float p[36];
-    for (int i = 0; i < 6; ++i)
-        for (int j = 0; j < 6; ++j) P(i, j) = lumaAt(s + ivec2(j - 2, i - 2));
+    // The 6x6 window of luma: pRC at row R and column C, from -2 to +3 around
+    // the source texel.
+    float p00 = lumaAt(s + ivec2(-2, -2), mx);
+    float p01 = lumaAt(s + ivec2(-1, -2), mx);
+    float p02 = lumaAt(s + ivec2(0, -2), mx);
+    float p03 = lumaAt(s + ivec2(1, -2), mx);
+    float p04 = lumaAt(s + ivec2(2, -2), mx);
+    float p05 = lumaAt(s + ivec2(3, -2), mx);
+    float p10 = lumaAt(s + ivec2(-2, -1), mx);
+    float p11 = lumaAt(s + ivec2(-1, -1), mx);
+    float p12 = lumaAt(s + ivec2(0, -1), mx);
+    float p13 = lumaAt(s + ivec2(1, -1), mx);
+    float p14 = lumaAt(s + ivec2(2, -1), mx);
+    float p15 = lumaAt(s + ivec2(3, -1), mx);
+    float p20 = lumaAt(s + ivec2(-2, 0), mx);
+    float p21 = lumaAt(s + ivec2(-1, 0), mx);
+    float p22 = lumaAt(s + ivec2(0, 0), mx);
+    float p23 = lumaAt(s + ivec2(1, 0), mx);
+    float p24 = lumaAt(s + ivec2(2, 0), mx);
+    float p25 = lumaAt(s + ivec2(3, 0), mx);
+    float p30 = lumaAt(s + ivec2(-2, 1), mx);
+    float p31 = lumaAt(s + ivec2(-1, 1), mx);
+    float p32 = lumaAt(s + ivec2(0, 1), mx);
+    float p33 = lumaAt(s + ivec2(1, 1), mx);
+    float p34 = lumaAt(s + ivec2(2, 1), mx);
+    float p35 = lumaAt(s + ivec2(3, 1), mx);
+    float p40 = lumaAt(s + ivec2(-2, 2), mx);
+    float p41 = lumaAt(s + ivec2(-1, 2), mx);
+    float p42 = lumaAt(s + ivec2(0, 2), mx);
+    float p43 = lumaAt(s + ivec2(1, 2), mx);
+    float p44 = lumaAt(s + ivec2(2, 2), mx);
+    float p45 = lumaAt(s + ivec2(3, 2), mx);
+    float p50 = lumaAt(s + ivec2(-2, 3), mx);
+    float p51 = lumaAt(s + ivec2(-1, 3), mx);
+    float p52 = lumaAt(s + ivec2(0, 3), mx);
+    float p53 = lumaAt(s + ivec2(1, 3), mx);
+    float p54 = lumaAt(s + ivec2(2, 3), mx);
+    float p55 = lumaAt(s + ivec2(3, 3), mx);
 
-    vec4 e00 = GetEdgeMap(p, 1, 1);
-    vec4 e01 = GetEdgeMap(p, 1, 2);
-    vec4 e10 = GetEdgeMap(p, 2, 1);
-    vec4 e11 = GetEdgeMap(p, 2, 2);
+    vec4 e00 = GetEdgeMap(p11, p12, p13, p21, p22, p23, p31, p32, p33);
+    vec4 e01 = GetEdgeMap(p12, p13, p14, p22, p23, p24, p32, p33, p34);
+    vec4 e10 = GetEdgeMap(p21, p22, p23, p31, p32, p33, p41, p42, p43);
+    vec4 e11 = GetEdgeMap(p22, p23, p24, p32, p33, p34, p42, p43, p44);
     vec4 h0 = mix(e00, e01, fr.x);
     vec4 h1 = mix(e10, e11, fr.x);
     vec4 w = mix(h0, h1, fr.y);
 
     float baseWeight = 1.0 - w.x - w.y - w.z - w.w;
-    float opY = FilterNormal(p, fi.x, fi.y) * baseWeight;
-    opY += AddDirFilters(p, fr.x, fr.y, fi.x, fi.y, w);
+
+    // FilterNormal: each column down, then across.
+    vec4 ya = texelFetch(uCoef, ivec2(0, fi.y), 0);
+    vec4 yb = texelFetch(uCoef, ivec2(1, fi.y), 0);
+    vec4 xa = texelFetch(uCoef, ivec2(0, fi.x), 0);
+    vec4 xb = texelFetch(uCoef, ivec2(1, fi.x), 0);
+    float h_acc = 0.0;
+    float v_acc;
+    v_acc = 0.0;
+    v_acc += p00 * ya.x;
+    v_acc += p10 * ya.y;
+    v_acc += p20 * ya.z;
+    v_acc += p30 * ya.w;
+    v_acc += p40 * yb.x;
+    v_acc += p50 * yb.y;
+    h_acc += v_acc * xa.x;
+    v_acc = 0.0;
+    v_acc += p01 * ya.x;
+    v_acc += p11 * ya.y;
+    v_acc += p21 * ya.z;
+    v_acc += p31 * ya.w;
+    v_acc += p41 * yb.x;
+    v_acc += p51 * yb.y;
+    h_acc += v_acc * xa.y;
+    v_acc = 0.0;
+    v_acc += p02 * ya.x;
+    v_acc += p12 * ya.y;
+    v_acc += p22 * ya.z;
+    v_acc += p32 * ya.w;
+    v_acc += p42 * yb.x;
+    v_acc += p52 * yb.y;
+    h_acc += v_acc * xa.z;
+    v_acc = 0.0;
+    v_acc += p03 * ya.x;
+    v_acc += p13 * ya.y;
+    v_acc += p23 * ya.z;
+    v_acc += p33 * ya.w;
+    v_acc += p43 * yb.x;
+    v_acc += p53 * yb.y;
+    h_acc += v_acc * xa.w;
+    v_acc = 0.0;
+    v_acc += p04 * ya.x;
+    v_acc += p14 * ya.y;
+    v_acc += p24 * ya.z;
+    v_acc += p34 * ya.w;
+    v_acc += p44 * yb.x;
+    v_acc += p54 * yb.y;
+    h_acc += v_acc * xb.x;
+    v_acc = 0.0;
+    v_acc += p05 * ya.x;
+    v_acc += p15 * ya.y;
+    v_acc += p25 * ya.z;
+    v_acc += p35 * ya.w;
+    v_acc += p45 * yb.x;
+    v_acc += p55 * yb.y;
+    h_acc += v_acc * xb.y;
+    float opY = h_acc * baseWeight;
+
+    // AddDirFilters: the four directions the edge map weighs.
+    float f = 0.0;
+    if (w.x > 0.0) {
+        f += EvalPoly6(mix(p02, p03, fr.x), mix(p12, p13, fr.x), mix(p22, p23, fr.x), mix(p32, p33, fr.x), mix(p42, p43, fr.x), mix(p52, p53, fr.x), fi.y) * w.x;
+    }
+    if (w.y > 0.0) {
+        f += EvalPoly6(mix(p20, p30, fr.y), mix(p21, p31, fr.y), mix(p22, p32, fr.y), mix(p23, p33, fr.y), mix(p24, p34, fr.y), mix(p25, p35, fr.y), fi.x) * w.y;
+    }
+    if (w.z > 0.0) {
+        float pphase_b45 = 0.5 + 0.5 * (fr.x - fr.y);
+        float q1 = mix(p21, p12, pphase_b45);
+        float q3 = mix(p32, p23, pphase_b45);
+        float q5 = mix(p43, p34, pphase_b45);
+        pphase_b45 = pphase_b45 - 0.5;
+        bool pos = pphase_b45 >= 0.0;
+        float a = pos ? p02 : p20;
+        float b = pos ? p13 : p31;
+        float c = pos ? p24 : p42;
+        float d = pos ? p35 : p53;
+        float q0 = mix(p11, a, abs(pphase_b45));
+        float q2 = mix(p22, b, abs(pphase_b45));
+        float q4 = mix(p33, c, abs(pphase_b45));
+        float q6 = mix(p44, d, abs(pphase_b45));
+        float pphase_p45 = fr.x + fr.y;
+        bool up = pphase_p45 >= 1.0;
+        if (up) pphase_p45 = pphase_p45 - 1.0;
+        f += EvalPoly6(up ? q1 : q0, up ? q2 : q1, up ? q3 : q2, up ? q4 : q3, up ? q5 : q4, up ? q6 : q5, min(int(pphase_p45 * 64.0), 63)) * w.z;
+    }
+    if (w.w > 0.0) {
+        float pphase_b135 = 0.5 * (fr.x + fr.y);
+        float q1 = mix(p31, p42, pphase_b135);
+        float q3 = mix(p22, p33, pphase_b135);
+        float q5 = mix(p13, p24, pphase_b135);
+        pphase_b135 = pphase_b135 - 0.5;
+        bool pos = pphase_b135 >= 0.0;
+        float a = pos ? p52 : p30;
+        float b = pos ? p43 : p21;
+        float c = pos ? p34 : p12;
+        float d = pos ? p25 : p03;
+        float q0 = mix(p41, a, abs(pphase_b135));
+        float q2 = mix(p32, b, abs(pphase_b135));
+        float q4 = mix(p23, c, abs(pphase_b135));
+        float q6 = mix(p14, d, abs(pphase_b135));
+        float pphase_p135 = 1.0 + (fr.x - fr.y);
+        bool up = pphase_p135 >= 1.0;
+        if (up) pphase_p135 = pphase_p135 - 1.0;
+        f += EvalPoly6(up ? q1 : q0, up ? q2 : q1, up ? q3 : q2, up ? q4 : q3, up ? q5 : q4, up ? q6 : q5, min(int(pphase_p135 * 64.0), 63)) * w.w;
+    }
+    opY += f;
 
     vec2 coord = (src + 0.5) * uScale.zw;
     vec4 op = texture(uTex, coord);
