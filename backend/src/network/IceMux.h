@@ -49,6 +49,10 @@ public:
     static IceMux* shared() { return s_Shared; }
     static void setShared(IceMux* mux) { s_Shared = mux; }
 
+    /// For a bench: the reading thread above the others of the process. Set
+    /// before start().
+    void setRaisedPriority(bool raised) { m_RaisedPriority = raised; }
+
     /// Binds every port, in this order of preference (IPv4 and IPv6 at once,
     /// to this process alone), and starts reading. All of them or none.
     bool start(const std::vector<uint16_t>& ports, std::string* why);
@@ -106,6 +110,7 @@ private:
     uint16_t m_HopPort = 0;
     std::thread m_Thread;
     std::atomic<bool> m_Stop{false};
+    bool m_RaisedPriority = false;
 
     mutable std::mutex m_Lock; // the router, the feed ports, the next number
     mw::icemux::Router m_Router;

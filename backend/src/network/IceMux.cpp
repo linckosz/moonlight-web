@@ -327,6 +327,9 @@ IceMux::Counters IceMux::counters() const
 
 void IceMux::run()
 {
+#ifdef _WIN32
+    if (m_RaisedPriority) SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+#endif
     // The header's room first, so that a datagram is read where it leaves from
     std::vector<uint8_t> buffer(kFeedHeaderSize + kDatagramMax + 1);
     uint8_t* const datagram = buffer.data() + kFeedHeaderSize;

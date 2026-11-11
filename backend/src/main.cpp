@@ -2550,11 +2550,45 @@ int main(int argc, char* argv[])
         g_IceMux.setReporter([](const std::string& what) {
             qWarning().noquote() << "[IceMux]" << QString::fromStdString(what);
         });
+        // Two switches of the latency bench, in the environment, never for a
+        // user: MW_ICEMUX_PRIORITY=high raises the reading thread, and
+        // MW_ICEMUX_STATS=1 logs what it did and what the process cost, every
+        // ten seconds (the workers, which inherit it, log the hop's delay).
+        const bool raised = qEnvironmentVariable("MW_ICEMUX_PRIORITY") == QLatin1String("high");
+        g_IceMux.setRaisedPriority(raised);
         for (int back = 0; back < 12 && !g_IceMux.running(); ++back)
             g_IceMux.start({static_cast<uint16_t>(kMediaBasePort + 23 - back)}, &why);
         if (g_IceMux.running()) {
             IceMux::setShared(&g_IceMux);
             qInfo() << "[IceMux] every stream shares UDP port" << g_IceMux.ports().front();
+            if (raised)
+                qWarning() << "[IceMux] BENCH MW_ICEMUX_PRIORITY=high: reading thread raised";
+            if (qEnvironmentVariableIntValue("MW_ICEMUX_STATS") > 0) {
+                auto* every = new QTimer(&app);
+                QObject::connect(every, &QTimer::timeout, &app, [&g_IceMux] {
+                    const IceMux::Counters c = g_IceMux.counters();
+                    qint64 cpuMs = -1;
+#ifdef Q_OS_WIN
+                    FILETIME made, ended, kernel, user;
+                    if (GetProcessTimes(GetCurrentProcess(), &made, &ended, &kernel, &user)) {
+                        const auto ticks = [](const FILETIME& t) {
+                            return (static_cast<quint64>(t.dwHighDateTime) << 32) | t.dwLowDateTime;
+                        };
+                        cpuMs = static_cast<qint64>((ticks(kernel) + ticks(user)) / 10000);
+                    }
+#endif
+                    qInfo().noquote()
+                        << QStringLiteral("[IceMux] stats read=%1 passed=%2 dropped=%3 lost=%4 "
+                                          "faults=%5 cpu=%6ms")
+                               .arg(c.read)
+                               .arg(c.passed)
+                               .arg(c.dropped)
+                               .arg(c.lost)
+                               .arg(c.faults)
+                               .arg(cpuMs);
+                });
+                every->start(10'000);
+            }
         } else {
             qWarning() << "[IceMux] no shared UDP port:" << QString::fromStdString(why)
                        << "— each stream binds its own";

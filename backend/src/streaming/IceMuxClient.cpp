@@ -22,6 +22,7 @@
 #include <QJsonArray>
 #include <QRandomGenerator>
 
+#include <chrono>
 #include <mutex>
 #include <vector>
 
@@ -60,6 +61,74 @@ std::string randomIceString(int count)
     for (int i = 0; i < count; ++i)
         out.push_back(alphabet[QRandomGenerator::system()->bounded(64)]);
     return out;
+}
+
+// ── Bench only (MW_ICEMUX_STATS=1): what the hop through the server costs ───
+// The server stamps each datagram when it reads it off the shared port, and
+// libjuice hands the stamp over when the agent reads the datagram off its
+// feed. Both clocks are std::chrono::steady_clock, one clock for the machine.
+// Everything below runs on libjuice's polling thread and nowhere else.
+
+/// Sixteen buckets for each power of two of nanoseconds: 6 % wide at most.
+constexpr size_t kHopBuckets = 976;
+uint64_t g_HopCounts[kHopBuckets];
+uint64_t g_HopTotal = 0, g_HopMaxNs = 0, g_HopWindowCount = 0, g_HopWindowMaxNs = 0;
+uint64_t g_HopNextPrintNs = 0;
+
+size_t hopBucket(uint64_t ns)
+{
+    if (ns < 16) return static_cast<size_t>(ns);
+    int top = 63;
+    while (!(ns >> top))
+        --top;
+    return static_cast<size_t>(top - 3) * 16 + static_cast<size_t>((ns >> (top - 4)) & 15);
+}
+
+uint64_t hopBucketFloorNs(size_t bucket)
+{
+    if (bucket < 16) return bucket;
+    return static_cast<uint64_t>(16 + bucket % 16) << (bucket / 16 - 1);
+}
+
+/// The delay below which `share` of the datagrams came, in microseconds.
+double hopQuantileUs(double share)
+{
+    const auto rank = static_cast<uint64_t>(share * static_cast<double>(g_HopTotal));
+    uint64_t seen = 0;
+    for (size_t i = 0; i < kHopBuckets; ++i) {
+        seen += g_HopCounts[i];
+        if (seen > rank) return static_cast<double>(hopBucketFloorNs(i)) / 1000.0;
+    }
+    return static_cast<double>(g_HopMaxNs) / 1000.0;
+}
+
+void onFeedTimestamp(uint64_t stamp)
+{
+    using namespace std::chrono;
+    const auto now = static_cast<uint64_t>(
+        duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count());
+    if (stamp == 0 || now < stamp) return;
+    const uint64_t hop = now - stamp;
+    ++g_HopCounts[hopBucket(hop)];
+    ++g_HopTotal;
+    ++g_HopWindowCount;
+    if (hop > g_HopMaxNs) g_HopMaxNs = hop;
+    if (hop > g_HopWindowMaxNs) g_HopWindowMaxNs = hop;
+    if (now < g_HopNextPrintNs) return;
+    if (g_HopNextPrintNs != 0) {
+        qInfo().noquote() << QStringLiteral("[IceMux] hop n=%1 p50=%2us p99=%3us p99.9=%4us "
+                                            "max=%5us (last 10 s: n=%6 max=%7us)")
+                                 .arg(g_HopTotal)
+                                 .arg(hopQuantileUs(0.50), 0, 'f', 1)
+                                 .arg(hopQuantileUs(0.99), 0, 'f', 1)
+                                 .arg(hopQuantileUs(0.999), 0, 'f', 1)
+                                 .arg(static_cast<double>(g_HopMaxNs) / 1000.0, 0, 'f', 1)
+                                 .arg(g_HopWindowCount)
+                                 .arg(static_cast<double>(g_HopWindowMaxNs) / 1000.0, 0, 'f', 1);
+    }
+    g_HopNextPrintNs = now + 10'000'000'000ull;
+    g_HopWindowCount = 0;
+    g_HopWindowMaxNs = 0;
 }
 
 #ifdef _WIN32
@@ -176,6 +245,7 @@ std::optional<rtc::IceSharedSockets> openAgent()
     out.send = s.shared;
     out.ufrag = randomIceString(12);
     out.pwd = randomIceString(24);
+    if (qEnvironmentVariableIntValue("MW_ICEMUX_STATS") > 0) out.feedTimestamp = &onFeedTimestamp;
     s.agentOpen = true;
     s.tell({{QStringLiteral("event"), QStringLiteral("iceMux")},
             {QStringLiteral("op"), QStringLiteral("agent")},

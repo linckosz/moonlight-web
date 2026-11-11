@@ -101,5 +101,9 @@ mux:
   public candidates: under the mux no public address is announced today.
 - TCP on the shared ports, and TCP 443.
 - Per-packet DSCP: the class is kept per shared socket.
-- The latency of the extra hop, measured (`juice_set_feed_timestamp_handler`
-  gives the worker the time the server read each datagram).
+- The latency of the extra hop, measured. Two switches in the environment
+  serve that bench and nothing else: `MW_ICEMUX_STATS=1` (every ten seconds
+  the server logs its counters and its CPU time, and each worker the delay
+  between the server's read of a datagram and its agent's: median, p99,
+  p99.9, maximum) and `MW_ICEMUX_PRIORITY=high` (the reading thread above
+  the others of the process).

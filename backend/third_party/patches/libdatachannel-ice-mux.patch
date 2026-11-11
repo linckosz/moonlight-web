@@ -1,8 +1,8 @@
 diff --git a/include/rtc/configuration.hpp b/include/rtc/configuration.hpp
-index dc003fb8..123aa271 100644
+index dc003fb8..c76062be 100644
 --- a/include/rtc/configuration.hpp
 +++ b/include/rtc/configuration.hpp
-@@ -63,6 +63,17 @@ enum class CertificateType {
+@@ -63,6 +63,20 @@ enum class CertificateType {
  
  enum class TransportPolicy { All = RTC_TRANSPORT_POLICY_ALL, Relay = RTC_TRANSPORT_POLICY_RELAY };
  
@@ -15,12 +15,15 @@ index dc003fb8..123aa271 100644
 +	// The agent's own credentials, when the caller chooses them (both or neither)
 +	string ufrag;
 +	string pwd;
++	// For a bench: called with the timestamp the feed gives each datagram
++	// (juice_set_feed_timestamp_handler, one handler for the whole process)
++	void (*feedTimestamp)(uint64_t timestamp) = nullptr;
 +};
 +
  struct RTC_CPP_EXPORT Configuration {
  	// ICE settings
  	std::vector<IceServer> iceServers;
-@@ -76,6 +87,8 @@ struct RTC_CPP_EXPORT Configuration {
+@@ -76,6 +90,8 @@ struct RTC_CPP_EXPORT Configuration {
  	// MoonlightWeb patch, libjuice only: with enableIceTcp, also listen on the TCP port of the ICE
  	// socket while the checks run, for a peer that only dials (a browser on a network without UDP)
  	bool enableIceTcpPassive = false;
@@ -30,10 +33,10 @@ index dc003fb8..123aa271 100644
  	bool disableAutoNegotiation = false;
  	bool disableAutoGathering = false;
 diff --git a/src/impl/icetransport.cpp b/src/impl/icetransport.cpp
-index e5e8c117..3a36415d 100644
+index e5e8c117..91d150de 100644
 --- a/src/impl/icetransport.cpp
 +++ b/src/impl/icetransport.cpp
-@@ -130,6 +130,23 @@ IceTransport::IceTransport(const Configuration &config, candidate_callback candi
+@@ -130,6 +130,25 @@ IceTransport::IceTransport(const Configuration &config, candidate_callback candi
  	if (!mAgent)
  		throw std::runtime_error("Failed to create the ICE agent");
  
@@ -52,6 +55,8 @@ index e5e8c117..3a36415d 100644
 +		if (!given.ufrag.empty() &&
 +		    juice_set_local_ice_attributes(mAgent.get(), given.ufrag.c_str(), given.pwd.c_str()) < 0)
 +			throw std::invalid_argument("Invalid ICE attributes");
++		if (given.feedTimestamp)
++			juice_set_feed_timestamp_handler(given.feedTimestamp);
 +	}
 +
  	// ICE-TCP
