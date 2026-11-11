@@ -3,7 +3,7 @@
  * GPLv3 — see repository LICENSE.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { StreamView } from '../js/ui/StreamView.js';
+import { StreamView, IOS_ERROR_BEFORE_HIDDEN_MS } from '../js/ui/StreamView.js';
 import { DecoderErrorTrail } from '../js/stream/DecoderErrorTrail.js';
 
 /**
@@ -142,5 +142,83 @@ describe('StreamView — back from the background', () => {
     it('leaves a worker-decoded stream to the worker', () => {
         const v = back({ _referenceValid: false, _videoWorker: { postMessage: vi.fn() } });
         expect(v._requestIdr).not.toHaveBeenCalled();
+    });
+});
+
+describe('StreamView — the error iOS throws just before the page goes hidden', () => {
+    let now = 0;
+    function at(ms) {
+        now = ms;
+    }
+    function v2(over = {}) {
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        return view({ _noteHiddenAfterError: P._noteHiddenAfterError, ...over });
+    }
+
+    afterEach(() => {
+        setVisibility('visible');
+        vi.restoreAllMocks();
+    });
+
+    it('gives the attempt back when hidden comes 107 ms after the error', () => {
+        setVisibility('visible');
+        const v = v2({ _recoveryAttempts: 2 });
+        at(1000);
+        v._onDecoderError(failure);
+        expect(v._recoveryAttempts).toBe(3);
+        setVisibility('hidden');
+        at(1107);
+        expect(v._noteHiddenAfterError(now)).toBe(true);
+        expect(v._recoveryAttempts).toBe(2);
+        expect(
+            console.warn.mock.calls.some((c) => /107 ms before the page went hidden/.test(c[0])),
+        ).toBe(true);
+    });
+
+    it('takes the pardon of the spell: a second error while hidden counts', () => {
+        setVisibility('visible');
+        const v = v2();
+        at(1000);
+        v._onDecoderError(failure);
+        setVisibility('hidden');
+        at(1044);
+        v._noteHiddenAfterError(now);
+        expect(v._recoveryAttempts).toBe(0);
+        at(2000);
+        v._onDecoderError(failure);
+        expect(v._recoveryAttempts).toBe(1);
+    });
+
+    it('keeps the count when hidden comes too long after the error', () => {
+        setVisibility('visible');
+        const v = v2();
+        at(1000);
+        v._onDecoderError(failure);
+        at(1000 + IOS_ERROR_BEFORE_HIDDEN_MS + 1);
+        expect(v._noteHiddenAfterError(now)).toBe(false);
+        expect(v._recoveryAttempts).toBe(1);
+    });
+
+    it('gives back an attempt only once, and never below zero', () => {
+        setVisibility('visible');
+        const v = v2();
+        at(1000);
+        v._onDecoderError(failure);
+        // A frame decoded before the event already reset the count.
+        v._recoveryAttempts = 0;
+        at(1050);
+        expect(v._noteHiddenAfterError(now)).toBe(true);
+        expect(v._recoveryAttempts).toBe(0);
+        at(1060);
+        expect(v._noteHiddenAfterError(now)).toBe(false);
+    });
+
+    it('does nothing when no error came before', () => {
+        const v = v2({ _recoveryAttempts: 4 });
+        at(500);
+        expect(v._noteHiddenAfterError(now)).toBe(false);
+        expect(v._recoveryAttempts).toBe(4);
     });
 });

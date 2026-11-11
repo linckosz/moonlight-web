@@ -546,6 +546,13 @@ export function mwsrSplitLabel(view) {
     return `Split ${n}/${MWSR_SPLIT_VIEWS.length} · ${what[view]}`;
 }
 
+/**
+ * How long before "visibilitychange hidden" a decoder error is still iOS
+ * taking the decoder back: on an iPhone it often comes first, 44 to 107 ms
+ * ahead of the event (Safari 26.5, 11/11, two spells of three).
+ */
+export const IOS_ERROR_BEFORE_HIDDEN_MS = 300;
+
 export class StreamView {
     constructor(
         container,
@@ -1896,6 +1903,7 @@ export class StreamView {
             if (document.visibilityState === 'hidden') {
                 this._releaseAllPhysKeys();
                 this._touchPadLetGo();
+                this._noteHiddenAfterError(performance.now());
             }
             if (document.visibilityState === 'visible' && !this._quitting) {
                 this._resyncAfterHidden();
@@ -3000,7 +3008,33 @@ export class StreamView {
         console.warn(
             '[StreamView] ' + this._decoderTrail.line(err, performance.now(), this.videoCodec),
         );
+        const before = this._recoveryAttempts;
         this._handleDecoderError(err, { hidden: forgiven });
+        // Counted while the page still looked visible: the "hidden" that may
+        // follow within IOS_ERROR_BEFORE_HIDDEN_MS gives it back.
+        this._countedErrorAt = this._recoveryAttempts > before ? performance.now() : -1;
+    }
+
+    /**
+     * The page went hidden at @p nowMs. A decoder error counted just before
+     * it was iOS taking the decoder back (see IOS_ERROR_BEFORE_HIDDEN_MS):
+     * its attempt is given back, and it takes this spell's one pardon, as
+     * an error after the event would have. Returns whether it did.
+     */
+    _noteHiddenAfterError(nowMs) {
+        const at = this._countedErrorAt;
+        if (typeof at !== 'number' || at < 0) return false;
+        this._countedErrorAt = -1;
+        if (nowMs - at > IOS_ERROR_BEFORE_HIDDEN_MS || this._hiddenLossForgiven) return false;
+        this._hiddenLossForgiven = true;
+        // A frame decoded since has already reset the count.
+        if (this._recoveryAttempts > 0) this._recoveryAttempts--;
+        console.warn(
+            '[StreamView] The decoder error ' +
+                Math.round(nowMs - at) +
+                ' ms before the page went hidden was iOS taking the decoder back — attempt given back',
+        );
+        return true;
     }
 
     /**
