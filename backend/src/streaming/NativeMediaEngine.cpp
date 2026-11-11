@@ -1576,7 +1576,7 @@ void NativeMediaEngine::syncLockKeys(bool numLock, bool capsLock, bool scrollLoc
 }
 
 void NativeMediaEngine::syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
-                                       bool buttonsHold)
+                                       bool buttonsHold, qint64 clientMs)
 {
     if (!m_Session) return;
 
@@ -1586,7 +1586,7 @@ void NativeMediaEngine::syncHeldInputs(const QVector<HeldKey>& keys, quint32 but
     // A resync press is still marked as such, so the input backend can tell
     // it apart from the user acting: re-applying a press that never went away
     // is an extra character on the keyboard and a second click on the mouse.
-    const InputWatchdog::SyncDiff diff = m_Watchdog->sync(keys, buttonMask, buttonsHold);
+    const InputWatchdog::SyncDiff diff = m_Watchdog->sync(keys, buttonMask, buttonsHold, clientMs);
 
     for (const HeldKey& key : diff.release) {
         mw::native::InputEvent event;

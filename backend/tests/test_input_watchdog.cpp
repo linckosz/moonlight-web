@@ -167,13 +167,15 @@ void run_input_watchdog_tests()
         CHECK_EQ(wire.keysUp.value(0), short('A'));
 
         // The link wakes, the viewer still holding them all: nothing to press
-        // again but the letter.
+        // again but the letter, at the second heartbeat.
         wd.noteClientAlive();
         QVector<InputWatchdog::HeldKey> still;
         for (short vk : mods)
             still.append(key(vk));
         still.append(key('A'));
         InputWatchdog::SyncDiff diff = wd.sync(still, 0, false);
+        CHECK(diff.press.isEmpty());
+        diff = wd.sync(still, 0, false);
         CHECK_EQ(diff.press.size(), 1);
         CHECK_EQ(diff.press.value(0).keyCode, short('A'));
         CHECK(diff.release.isEmpty());
@@ -256,9 +258,13 @@ void run_input_watchdog_tests()
         CHECK_EQ(wire.keysUp.size(), 2);
         CHECK_EQ(wire.buttonsUp.size(), 1);
 
-        // The client still holds A and button 1; B was let go for real.
+        // The client still holds A and button 1; B was let go for real. The
+        // first heartbeat only names them, the second presses them again.
         wd.noteClientAlive();
         InputWatchdog::SyncDiff diff = wd.sync({key('A')}, 1u << 0, false);
+        CHECK(diff.press.isEmpty());
+        CHECK(diff.buttonsDown.isEmpty());
+        diff = wd.sync({key('A')}, 1u << 0, false);
         CHECK_EQ(diff.press.size(), 1);
         CHECK_EQ(diff.press.value(0).keyCode, short('A'));
         CHECK(diff.release.isEmpty());
@@ -288,11 +294,151 @@ void run_input_watchdog_tests()
     {
         FakeWire wire;
         InputWatchdog wd(wire.sink());
-        wd.sync({key(0x5B)}, 0, false); // the Windows key, held
+        wd.noteKey(key(0x5B), true); // the Windows key, held
+        wd.sync({key(0x5B)}, 0, false);
         InputWatchdog::SyncDiff diff = wd.sync({}, 0, false);
         CHECK_EQ(diff.release.size(), 1);
         CHECK_EQ(diff.release.value(0).keyCode, short(0x5B));
         CHECK(!wd.anythingHeld());
+    }
+
+    // ── A heartbeat the stall held back presses nothing ─────────────────────
+    //
+    // The channel delivers in order: a key let go of during a 3.5 s stall
+    // reaches the host behind the heartbeats written before, which still list
+    // it. On their word the key went down again for the 2-5 ms before its
+    // release caught up (bench of 09/11/2026). The client's time on each
+    // heartbeat says it waited.
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        qint64 now = 0;
+        wd.setClock([&now]() { return now; });
+
+        // Steady link: client time 1000 arrives at host time 5 000.
+        qint64 t = 1000;
+        now = 5000;
+        wd.sync({}, 0, false, t);
+        wd.noteClientAlive();
+        wd.noteKey(key('E'), true);
+        for (int i = 0; i < 3; ++i) {
+            t += 100;
+            now += 100;
+            wd.sync({key('E')}, 0, false, t);
+            wd.noteClientAlive();
+        }
+        // Silence: client time t+100 .. t+1700 is written while held, the key
+        // goes up at t+1750, three heartbeats without it follow; nothing
+        // arrives before host time now + 3500.
+        const qint64 stallStart = now;
+        now = stallStart + InputWatchdog::kStaleHoldMs;
+        wd.tick();
+        CHECK_EQ(wire.keysUp.size(), 1); // the long period let go of it
+        now = stallStart + 3500;
+        wd.noteClientAlive();
+        InputWatchdog::SyncDiff diff;
+        int pressed = 0;
+        for (qint64 c = t + 100; c <= t + 1700; c += 100) {
+            diff = wd.sync({key('E')}, 0, false, c);
+            pressed += diff.press.size();
+            now += 1; // the queue drains back to back
+        }
+        wd.noteKey(key('E'), false); // its release, at last
+        for (qint64 c = t + 1800; c <= t + 2000; c += 100) {
+            diff = wd.sync({}, 0, false, c);
+            pressed += diff.press.size();
+            now += 1;
+        }
+        CHECK_EQ(pressed, 0);
+        CHECK(!wd.anythingHeld());
+    }
+
+    // ── A release just before the link wakes: the last heartbeat looks fresh ─
+    //
+    // Written a few tens of ms before the wake, it waited less than
+    // kQueuedHeartbeatMs. One fresh heartbeat is not enough: the one before it
+    // was queued a heartbeat period longer, and the release comes between.
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        qint64 now = 0;
+        wd.setClock([&now]() { return now; });
+
+        qint64 t = 0;
+        now = 10000;
+        wd.sync({}, 0, false, t);
+        wd.noteClientAlive();
+        wd.noteKey(key('A'), true);
+        const qint64 stallStart = now;
+        now = stallStart + InputWatchdog::kStaleMs;
+        wd.tick();
+        CHECK_EQ(wire.keysUp.size(), 1);
+        // Woken at stallStart + 400: the beats written at t+300 and t+380
+        // list A, the release was made at t+390.
+        now = stallStart + 400;
+        wd.noteClientAlive();
+        int pressed = 0;
+        pressed += wd.sync({key('A')}, 0, false, t + 300).press.size();
+        pressed += wd.sync({key('A')}, 0, false, t + 380).press.size();
+        wd.noteKey(key('A'), false);
+        now += 100;
+        pressed += wd.sync({}, 0, false, t + 480).press.size();
+        CHECK_EQ(pressed, 0);
+    }
+
+    // ── A key really held through the stall comes back, a heartbeat later ───
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        qint64 now = 0;
+        wd.setClock([&now]() { return now; });
+
+        qint64 t = 0;
+        now = 10000;
+        wd.sync({}, 0, false, t);
+        wd.noteClientAlive();
+        wd.noteKey(key('A'), true);
+        wd.noteButton(1, true, false);
+        now += InputWatchdog::kStaleMs;
+        wd.tick();
+        CHECK_EQ(wire.keysUp.size(), 1);
+        CHECK_EQ(wire.buttonsUp.size(), 1);
+        // The queued beats (written 100 and 200 ms in) press nothing, nor do
+        // they click.
+        now += 300;
+        wd.noteClientAlive();
+        InputWatchdog::SyncDiff diff = wd.sync({key('A')}, 1u << 0, false, t + 100);
+        CHECK(diff.press.isEmpty());
+        CHECK(diff.buttonsDown.isEmpty());
+        diff = wd.sync({key('A')}, 1u << 0, false, t + 200);
+        CHECK(diff.press.isEmpty());
+        CHECK(diff.buttonsDown.isEmpty());
+        // Fresh ones: the first names them, the second presses them.
+        diff = wd.sync({key('A')}, 1u << 0, false, now - 10000);
+        CHECK(diff.press.isEmpty());
+        now += 100;
+        diff = wd.sync({key('A')}, 1u << 0, false, now - 10000);
+        CHECK_EQ(diff.press.size(), 1);
+        CHECK_EQ(diff.buttonsDown.size(), 1);
+        CHECK(wd.anythingHeld());
+    }
+
+    // ── A new page brings its own clock: the reference starts over ──────────
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        qint64 now = 0;
+        wd.setClock([&now]() { return now; });
+
+        now = 1000;
+        wd.sync({}, 0, false, 900000); // an old page, open for 15 min
+        now = 2000;
+        // The new page's clock starts near zero: an offset far above the old
+        // reference, which must not read as a heartbeat held back.
+        wd.sync({key('A')}, 0, false, 500);
+        now = 2100;
+        const InputWatchdog::SyncDiff diff = wd.sync({key('A')}, 0, false, 600);
+        CHECK_EQ(diff.press.size(), 1);
     }
 
     // ── An explicit release does not need the timer ─────────────────────────

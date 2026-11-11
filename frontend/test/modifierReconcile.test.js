@@ -266,6 +266,42 @@ describe('the closing beat of the held-input heartbeat', () => {
         v._sendInputState();
         expect(v.sent.length).toBe(1);
     });
+
+    // A stall holds the beats back in the channel's queue, ahead of a release
+    // made meanwhile: the host tells them from a fresh one by when they were
+    // written, and presses nothing again on their word.
+    it('says when it was written, on the page clock in whole ms', () => {
+        const v = beatSink();
+        v._heldPhysKeys.set('KeyE', { keyCode: 0x45, code: 'KeyE', key: 'e' });
+        const before = globalThis.performance.now();
+        v._sendInputState();
+        const after = globalThis.performance.now();
+        const t = v.sent[0].t;
+        expect(Number.isInteger(t)).toBe(true);
+        expect(t).toBeGreaterThanOrEqual(Math.floor(before));
+        expect(t).toBeLessThanOrEqual(Math.ceil(after));
+    });
+});
+
+describe('the grace period a held key gets', () => {
+    const holds = (gamingMode, code) =>
+        StreamView.prototype._holdsThroughStall.call({ _gamingMode: gamingMode }, code);
+
+    // A game reads what is down: a key let go of then pressed again when the
+    // link wakes is an "interact" or a reload fired twice (09/11/2026).
+    it('is the long one for every key in gaming mode, not only the movement keys', () => {
+        for (const code of ['KeyW', 'KeyE', 'KeyR', 'Space', 'Digit1', 'Tab', 'ArrowUp']) {
+            expect(holds(true, code)).toBe(true);
+        }
+    });
+
+    // At the desktop the host's typematic would type a held letter again and
+    // again for the length of the stall.
+    it('stays the short one at the desktop', () => {
+        for (const code of ['KeyW', 'KeyE', 'Space']) {
+            expect(holds(false, code)).toBe(false);
+        }
+    });
 });
 
 describe('a Windows AltGr', () => {

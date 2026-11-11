@@ -689,7 +689,7 @@ void StreamRelay::onWsTextMessage(const QString& message)
         // policy, or a viewer could press keys with it.
         const InputMsg::HeldState held = InputMsg::readHeldState(
             msg, m_Shim->keyboardMode(), m_Shim->layoutFidelity(), m_InputPolicy);
-        m_Shim->syncHeldInputs(held.keys, held.buttons, held.buttonsHold);
+        m_Shim->syncHeldInputs(held.keys, held.buttons, held.buttonsHold, held.clientMs);
     } else if (type == "mousemove") {
         // Absolute mouse position (non-gaming mode) — same handling as
         // DataChannelRelay, otherwise the host cursor never moves in WSS.

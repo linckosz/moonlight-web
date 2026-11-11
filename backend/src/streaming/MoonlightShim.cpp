@@ -988,11 +988,11 @@ void MoonlightShim::releaseHeldInputs(bool includeHold)
 }
 
 void MoonlightShim::syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
-                                   bool buttonsHold)
+                                   bool buttonsHold, qint64 clientMs)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
 
-    const InputWatchdog::SyncDiff diff = m_Watchdog->sync(keys, buttonMask, buttonsHold);
+    const InputWatchdog::SyncDiff diff = m_Watchdog->sync(keys, buttonMask, buttonsHold, clientMs);
 
     for (const HeldKey& k : diff.release)
         LiSendKeyboardEvent2(k.keyCode | 0x8000, KEY_ACTION_UP, 0, k.flags);

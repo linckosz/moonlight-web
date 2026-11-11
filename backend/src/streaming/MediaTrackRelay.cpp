@@ -865,7 +865,7 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         // filtered by the guest's policy, or a viewer could press keys with it.
         const InputMsg::HeldState held = InputMsg::readHeldState(
             msg, m_Shim->keyboardMode(), m_Shim->layoutFidelity(), m_InputPolicy);
-        m_Shim->syncHeldInputs(held.keys, held.buttons, held.buttonsHold);
+        m_Shim->syncHeldInputs(held.keys, held.buttons, held.buttonsHold, held.clientMs);
     } else if (type == "mousemove") {
         // Absolute mouse position (non-gaming mode)
         if (msg.contains("x") && msg.contains("y") && msg.contains("referenceWidth") &&

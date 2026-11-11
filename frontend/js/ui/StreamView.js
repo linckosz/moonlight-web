@@ -11734,28 +11734,22 @@ export class StreamView {
     // =========================================================================
 
     /**
-     * Inputs the host must keep pressed through a brief stall instead of
-     * releasing at the short grace period.
+     * Whether the host keeps a key pressed through a brief stall instead of
+     * releasing it at the short grace period.
      *
-     * These are the FPS movement keys — and ZQSD (AZERTY) and WASD (QWERTY) are
-     * the very same physical keys: games bind by scancode, and e.code names the
-     * position, so one set covers both layouts. Gaming mode only: at the
-     * desktop these are ordinary letters, where a stall-induced repeat is
-     * exactly the bug we are fixing.
+     * Every key held in gaming mode: a game reads what is down, and a key let
+     * go of then pressed again when the link wakes is a second press the
+     * player never made — an "interact" or a reload fired twice. It used to be
+     * the movement keys alone (WASD, the same positions as ZQSD, and the
+     * arrows), until a Mac on Wi-Fi went silent for 300 ms every few seconds
+     * under a held letter (bench of 09/11/2026). At the desktop a key keeps
+     * the short period: there the host's typematic would type a held letter
+     * again and again for the length of the stall.
+     *
+     * @param {string} _code the key's e.code (every key is treated alike)
      */
-    static HOLD_THROUGH_STALL_CODES = new Set([
-        'KeyW',
-        'KeyA',
-        'KeyS',
-        'KeyD',
-        'ArrowUp',
-        'ArrowDown',
-        'ArrowLeft',
-        'ArrowRight',
-    ]);
-
-    _holdsThroughStall(code) {
-        return !!this._gamingMode && StreamView.HOLD_THROUGH_STALL_CODES.has(code);
+    _holdsThroughStall(_code) {
+        return !!this._gamingMode;
     }
 
     /**
@@ -12297,8 +12291,13 @@ export class StreamView {
             keys,
             buttons,
             // A held mouse button in gaming mode is aim/fire, not a drag: give
-            // it the long grace period like the movement keys.
+            // it the long grace period like the keys.
             buttonsHold: !!this._gamingMode,
+            // When it was written. A stall holds the heartbeats back in the
+            // channel's queue, ahead of a release made meanwhile; the host
+            // tells them from a fresh one by this, and does not press again a
+            // key on their word (InputWatchdog::sync).
+            t: Math.round(performance.now()),
         });
     }
 

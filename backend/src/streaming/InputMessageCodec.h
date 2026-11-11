@@ -442,6 +442,9 @@ struct HeldState
     QVector<IMediaEngine::HeldKey> keys;
     quint32 buttons = 0;
     bool buttonsHold = false;
+    /// When the client wrote it, on its own clock (ms); -1 from a client that
+    /// does not say. The watchdog tells a heartbeat a stall held back by it.
+    qint64 clientMs = -1;
 };
 
 /// Read a heartbeat and strip from it what @p p forbids — the one way every
@@ -457,6 +460,8 @@ inline HeldState readHeldState(const QJsonObject& msg, KeyboardMode mode, Layout
     s.keys = parseHeldKeys(msg, mode, fidelity);
     s.buttons = static_cast<quint32>(msg["buttons"].toInt(0));
     s.buttonsHold = msg["buttonsHold"].toBool(false);
+    const double t = msg["t"].toDouble(-1);
+    s.clientMs = t >= 0 && t < 9.0e15 ? static_cast<qint64>(t) : -1;
     filterHeldState(p, s.keys, s.buttons);
     return s;
 }

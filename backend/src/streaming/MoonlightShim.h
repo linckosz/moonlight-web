@@ -171,8 +171,8 @@ public:
     // constructor). These three are the relays' entry points into it.
     qint64 noteClientAlive() override;
     void releaseHeldInputs(bool includeHold) override;
-    void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
-                        bool buttonsHold) override;
+    void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask, bool buttonsHold,
+                        qint64 clientMs) override;
 
     // Request an IDR frame from the host (Sunshine).
     // Called when the browser needs a keyframe to configure its decoder.

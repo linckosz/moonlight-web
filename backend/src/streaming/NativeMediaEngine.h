@@ -306,8 +306,8 @@ public:
     /// vibration back under a number its page does not have.
     void setControllerOffset(int) override {}
     void syncLockKeys(bool numLock, bool capsLock, bool scrollLock) override;
-    void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
-                        bool buttonsHold) override;
+    void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask, bool buttonsHold,
+                        qint64 clientMs) override;
     void releaseHeldInputs(bool includeHold) override;
     qint64 noteClientAlive() override;
 

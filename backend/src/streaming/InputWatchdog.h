@@ -42,12 +42,13 @@ class QTimer;
 /// would ride the same blocked queue. So the host side watches for silence:
 /// every message from the client refreshes a liveness timestamp, and when it
 /// goes stale we release whatever is still held. The client heartbeats its
-/// full held-input state (only while something IS held), so the next message
-/// after the stall both refreshes liveness and re-presses anything the user
-/// is genuinely still holding — see sync().
+/// full held-input state (only while something IS held), so the messages
+/// after the stall both refresh liveness and re-press anything the user is
+/// genuinely still holding — see sync().
 ///
-/// Two grace periods: `hold` inputs (movement keys/buttons in gaming mode)
-/// get the long one, so a network hiccup does not stop a player mid-stride;
+/// Two grace periods: `hold` inputs (every key and button held in gaming
+/// mode) get the long one, so a network hiccup does not stop a player
+/// mid-stride or press a key of theirs a second time;
 /// everything else gets the short one, chosen to fire BEFORE the typematic
 /// delay (~500 ms on Windows) so no repeat is ever generated. Gamepads are
 /// gaming input by definition: only the long period neutralizes them.
@@ -100,6 +101,11 @@ public:
     static constexpr int kTickMs = 100;
     static constexpr int kStaleMs = 250;
     static constexpr int kStaleHoldMs = 3000;
+    /// How much later than the quickest one a heartbeat may arrive and still
+    /// be taken as fresh, rather than as one a stall held back in the queue.
+    /// Below the heartbeat's 100 ms period on purpose: of two heartbeats in
+    /// a row, the older one was always queued longer than that (sync()).
+    static constexpr int kQueuedHeartbeatMs = 80;
 
     explicit InputWatchdog(Sink sink, QObject* parent = nullptr);
 
@@ -159,7 +165,21 @@ public:
     /// also the handshake that arms the timer: an older cached frontend that
     /// never heartbeats goes silent while a key is legitimately held, and must
     /// not have it released out from under it. `buttonMask` is 1 << (button - 1).
-    SyncDiff sync(const QVector<HeldKey>& keys, quint32 buttonMask, bool buttonsHold);
+    ///
+    /// A key or button the host does not hold is pressed again only once two
+    /// fresh heartbeats in a row list it. The input channel delivers in order,
+    /// so a stall holds back the heartbeats written before a release together
+    /// with that release, and they arrive first: on their word alone the key
+    /// went down again for the few milliseconds before its release caught up
+    /// (bench of 09/11/2026, a key let go of in a 3.5 s stall). `clientMs` is
+    /// when the client wrote the heartbeat, on its own clock (-1 from an older
+    /// client): one that arrives more than kQueuedHeartbeatMs later than the
+    /// quickest one waited in the queue, and presses nothing. A release in
+    /// between, or a heartbeat that leaves the key out, starts the count over.
+    /// The cost is one heartbeat period, 100 ms, before a key really still
+    /// held after a stall is down again.
+    SyncDiff sync(const QVector<HeldKey>& keys, quint32 buttonMask, bool buttonsHold,
+                  qint64 clientMs = -1);
 
     // ── Release ──────────────────────────────────────────────────────────────
 
@@ -186,6 +206,9 @@ private:
     /// Run the timer only while something is actually held and the client has
     /// proved it heartbeats.
     void arm();
+    /// Whether a heartbeat written at `clientMs` (client clock) is fresh, the
+    /// offset that judges it updated on the way. Mutex held.
+    bool heartbeatFreshLocked(qint64 clientMs);
 
     Sink m_Sink;
     QTimer* m_Timer = nullptr;
@@ -203,6 +226,15 @@ private:
     bool m_ShortFired = false;     // don't re-log/re-release each tick
     bool m_LongFired = false;
     bool m_HeartbeatSeen = false;
+    // Released here, listed by the last fresh heartbeat: the next fresh one
+    // that lists them too presses them again (sync()).
+    QSet<short> m_RepressKeys;
+    quint32 m_RepressButtons = 0;
+    // The quickest arrival seen, as host time minus client time, and the
+    // client time of the last heartbeat (a smaller one is a new page's clock).
+    qint64 m_BestOffsetMs = 0;
+    qint64 m_LastClientMs = -1;
+    static constexpr qint64 kOffsetCreepMs = 1; // per heartbeat: a drifting clock
 
     bool anythingHeldLocked() const
     {

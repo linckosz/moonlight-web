@@ -259,9 +259,10 @@ public:
 
     /// Reconcile the host with the client's authoritative held-input state (its
     /// heartbeat): press what the watchdog released but the user still holds,
-    /// release what drifted. `buttonMask` is 1 << (button - 1).
-    virtual void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
-                                bool buttonsHold) = 0;
+    /// release what drifted. `buttonMask` is 1 << (button - 1); `clientMs` is
+    /// when the client wrote it, on its own clock, or -1 (InputWatchdog::sync).
+    virtual void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask, bool buttonsHold,
+                                qint64 clientMs) = 0;
 
     /// Release every held key/button (and neutralize every non-idle gamepad).
     /// `includeHold` also releases the inputs flagged `hold`.

@@ -51,6 +51,8 @@ bool InputWatchdog::noteKey(const HeldKey& key, bool down)
         } else {
             m_HeldKeys.remove(key.keyCode);
         }
+        // Pressed or let go of for real: no heartbeat speaks for it any more.
+        m_RepressKeys.remove(key.keyCode);
     }
     arm();
     return repeat;
@@ -86,6 +88,7 @@ void InputWatchdog::noteButton(int button, bool down, bool hold)
             m_HeldButtons &= ~bit;
             if (m_HeldButtons == 0) m_HeldButtonsHold = false;
         }
+        m_RepressButtons &= ~bit;
     }
     arm();
 }
@@ -270,26 +273,48 @@ void InputWatchdog::release(bool includeHold, bool keepModifiers)
     arm();
 }
 
+bool InputWatchdog::heartbeatFreshLocked(qint64 clientMs)
+{
+    if (clientMs < 0) return true; // an older client: no clock to judge by
+    const qint64 offset = m_Now() - clientMs;
+    // The quickest arrival is the reference. It creeps up a little at each
+    // heartbeat, so a clock drifting the other way is followed, and starts
+    // over with a new page, whose clock starts over too.
+    if (m_LastClientMs < 0 || clientMs < m_LastClientMs)
+        m_BestOffsetMs = offset;
+    else
+        m_BestOffsetMs = qMin(m_BestOffsetMs + kOffsetCreepMs, offset);
+    m_LastClientMs = clientMs;
+    return offset - m_BestOffsetMs <= kQueuedHeartbeatMs;
+}
+
 InputWatchdog::SyncDiff InputWatchdog::sync(const QVector<HeldKey>& keys, quint32 buttonMask,
-                                            bool buttonsHold)
+                                            bool buttonsHold, qint64 clientMs)
 {
     SyncDiff diff;
     {
         QMutexLocker lock(&m_Mutex);
         m_HeartbeatSeen = true;
+        const bool fresh = heartbeatFreshLocked(clientMs);
 
         QSet<short> clientKeys;
         clientKeys.reserve(keys.size());
+        QSet<short> repress;
         for (const HeldKey& k : keys) {
             clientKeys.insert(k.keyCode);
             auto it = m_HeldKeys.find(k.keyCode);
-            if (it == m_HeldKeys.end()) {
+            if (it != m_HeldKeys.end()) {
+                it->hold = k.hold; // mouse mode may have flipped mid-hold
+            } else if (fresh && m_RepressKeys.contains(k.keyCode)) {
                 m_HeldKeys.insert(k.keyCode, k);
                 diff.press.append(k);
-            } else {
-                it->hold = k.hold; // mouse mode may have flipped mid-hold
+            } else if (fresh) {
+                repress.insert(k.keyCode); // the next fresh heartbeat decides
             }
         }
+        // A queued heartbeat breaks the run: only two fresh ones in a row,
+        // with nothing let go of between them, press again.
+        m_RepressKeys = repress;
         for (auto it = m_HeldKeys.begin(); it != m_HeldKeys.end();) {
             if (clientKeys.contains(it.key())) {
                 ++it;
@@ -299,15 +324,26 @@ InputWatchdog::SyncDiff InputWatchdog::sync(const QVector<HeldKey>& keys, quint3
             it = m_HeldKeys.erase(it);
         }
 
+        // A mouse button the same way: pressed again on a queued heartbeat's
+        // word, it is a click the viewer never made.
+        quint32 pressed = 0;
+        quint32 repressButtons = 0;
         for (int b = 1; b <= 32; ++b) {
             const quint32 bit = 1u << (b - 1);
-            if ((buttonMask & bit) && !(m_HeldButtons & bit))
-                diff.buttonsDown.append(b);
-            else if (!(buttonMask & bit) && (m_HeldButtons & bit))
+            if ((buttonMask & bit) && !(m_HeldButtons & bit)) {
+                if (fresh && (m_RepressButtons & bit)) {
+                    diff.buttonsDown.append(b);
+                    pressed |= bit;
+                } else if (fresh) {
+                    repressButtons |= bit;
+                }
+            } else if (!(buttonMask & bit) && (m_HeldButtons & bit)) {
                 diff.buttonsUp.append(b);
+            }
         }
-        m_HeldButtons = buttonMask;
-        m_HeldButtonsHold = buttonMask != 0 && buttonsHold;
+        m_HeldButtons = (m_HeldButtons & buttonMask) | pressed;
+        m_RepressButtons = repressButtons;
+        m_HeldButtonsHold = m_HeldButtons != 0 && buttonsHold;
     }
 
     arm();
