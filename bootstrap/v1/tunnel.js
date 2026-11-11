@@ -145,6 +145,100 @@ export const PROTO = 1;
 /** How many of the host's candidates to hold before its offer arrives. */
 const MAX_EARLY_CANDIDATES = 64;
 
+/** How long the failure report waits for the browser's own ICE counters. */
+const DIAG_STATS_WAIT_MS = 500;
+
+/** Where a count in the failure report stops: past it, the number says nothing more. */
+const DIAG_COUNT_CAP = 999;
+
+const DIAG_TYPES = new Set(['host', 'srflx', 'prflx', 'relay']);
+const DIAG_PROTOCOLS = new Set(['udp', 'tcp']);
+
+/**
+ * The kind of a candidate this page sent, as the failure report counts it:
+ * `type/protocol/family`, for example `host/udp/v4`. Null when the browser does
+ * not say enough to tell, and then it is not counted.
+ *
+ * The address is read here only to tell its family: an mDNS name (`….local`),
+ * IPv6, or IPv4. It goes no further — the report carries this key and a count,
+ * never an address or a port.
+ */
+export function candidateKind(candidate) {
+    if (!candidate) return null;
+    const type = String(candidate.type || '').toLowerCase();
+    const protocol = String(candidate.protocol || '').toLowerCase();
+    if (!DIAG_TYPES.has(type) || !DIAG_PROTOCOLS.has(protocol)) return null;
+    // Older browsers leave `address` out; it is the fifth field of the line.
+    const address = candidate.address || String(candidate.candidate || '').split(' ')[4] || '';
+    if (!address) return null;
+    const family = address.endsWith('.local') ? 'mdns' : address.includes(':') ? 'v6' : 'v4';
+    return `${type}/${protocol}/${family}`;
+}
+
+/**
+ * The browser's ICE counters, added up over every candidate pair: checks it
+ * sent, answers it had to them, checks it received. Only these numbers are
+ * read — never a pair's addresses, ports or URLs. Null when the browser does not
+ * answer within DIAG_STATS_WAIT_MS: the report goes without them rather than
+ * after the line has closed.
+ */
+export async function checkCounts(pc) {
+    let timer;
+    const stats = await Promise.race([
+        Promise.resolve()
+            .then(() => pc.getStats())
+            .catch(() => null),
+        new Promise((resolve) => {
+            timer = setTimeout(() => resolve(null), DIAG_STATS_WAIT_MS);
+        }),
+    ]);
+    clearTimeout(timer);
+    if (!stats) return null;
+    const sum = { sent: 0, answered: 0, received: 0 };
+    const add = (key, value) => {
+        if (Number.isFinite(value) && value > 0)
+            sum[key] = Math.min(sum[key] + value, DIAG_COUNT_CAP);
+    };
+    stats.forEach((report) => {
+        if (report.type !== 'candidate-pair') return;
+        add('sent', report.requestsSent);
+        add('answered', report.responsesReceived);
+        add('received', report.requestsReceived);
+    });
+    return sum;
+}
+
+/**
+ * The report a page sends its machine when the direct connection could not be
+ * opened (issue #48: a car whose browser reached the introduction server and
+ * then nothing at all reached its machine, with nothing on either side to say
+ * where it stopped).
+ *
+ * It goes over the signalling line, to the machine and nowhere else: the
+ * introduction server relays it as it relays the candidates, without reading or
+ * keeping it. The machine writes one line in its own log. What it carries is
+ * states and numbers — the ICE, connection and gathering states, how long since
+ * the answer went out, how many candidates of each kind this page sent, how
+ * many it had from the machine, and the ICE check counters. No address, no
+ * port, no browser name.
+ */
+export function diagMessage({ why, ice, connection, gathering, ms, sent, received, checks }) {
+    const cand = {};
+    for (const [kind, n] of sent) cand[kind] = Math.min(n, DIAG_COUNT_CAP);
+    const message = {
+        type: 'diag',
+        why,
+        ice,
+        connection,
+        gathering,
+        ms: Math.max(0, Math.round(ms)),
+        cand,
+        recv: Math.min(received, DIAG_COUNT_CAP),
+    };
+    if (checks) message.checks = checks;
+    return message;
+}
+
 /**
  * The failure where the machine answered and the network did not carry it.
  *
@@ -439,6 +533,16 @@ export class Tunnel {
         // network blocks everything" and "it found its public address and the
         // checks still went nowhere".
         this._localTypes = new Set();
+        // For the report a failed connection sends its machine (diagMessage):
+        // candidates by kind, counted only once actually sent, so the report
+        // never claims more than the machine was given; the machine's own
+        // candidates, counted as they come; and whether this page's signed
+        // answer went out — before it has, the machine would not listen, and
+        // nothing is sent.
+        this._sentKinds = new Map();
+        this._remoteCount = 0;
+        this._answeredAt = null;
+        this._diagSent = false;
 
         this._nextId = 1;
         this._pending = new Map(); // request id → { resolve, reject, head, chunks }
@@ -488,6 +592,10 @@ export class Tunnel {
             const deadline = setTimeout(() => {
                 this.overdue = true;
                 reject(this._deadlineError());
+                // After the verdict, not before it: a page that gives up here
+                // keeps the attempt going (see `overdue`), so the line is still
+                // there to carry the report.
+                this._reportNoRoute('deadline');
             }, CONNECT_TIMEOUT_MS);
             const settle = (err) => {
                 clearTimeout(deadline);
@@ -586,9 +694,39 @@ export class Tunnel {
         return this._pc ? noRouteError() : silentError();
     }
 
+    /** Returns whether the payload went out on the line. */
     _sendSignal(payload) {
-        if (this._ws?.readyState === WebSocket.OPEN)
-            this._ws.send(JSON.stringify({ t: 'msg', d: payload }));
+        if (this._ws?.readyState !== WebSocket.OPEN) return false;
+        this._ws.send(JSON.stringify({ t: 'msg', d: payload }));
+        return true;
+    }
+
+    /**
+     * Tell the machine where the direct connection stopped (diagMessage), once
+     * per connection, and only when this page's signed answer has gone out:
+     * before that, the offer may not have been verified and the machine would
+     * not listen. `why` is 'failed' (the browser gave up on ICE) or 'deadline'
+     * (connect()'s 25 s ran out first).
+     */
+    async _reportNoRoute(why) {
+        if (this._diagSent || this._answeredAt === null || !this._pc) return;
+        this._diagSent = true;
+        const pc = this._pc;
+        const checks = await checkCounts(pc);
+        // Opened while the counters were read: there is nothing to report.
+        if (this.connected) return;
+        this._sendSignal(
+            diagMessage({
+                why,
+                ice: pc.iceConnectionState,
+                connection: pc.connectionState,
+                gathering: pc.iceGatheringState,
+                ms: performance.now() - this._answeredAt,
+                sent: this._sentKinds,
+                received: this._remoteCount,
+                checks,
+            }),
+        );
     }
 
     async _onRelayFrame(raw, settle) {
@@ -660,27 +798,34 @@ export class Tunnel {
                 // browser managed to find is most of the diagnosis, and it is
                 // otherwise only visible in chrome://webrtc-internals.
                 if (ev.candidate.type) this._localTypes.add(ev.candidate.type);
-                this._sendSignal({
+                const sent = this._sendSignal({
                     type: 'ice',
                     candidate: ev.candidate.candidate,
                     mid: ev.candidate.sdpMid,
                 });
+                const kind = sent ? candidateKind(ev.candidate) : null;
+                if (kind) this._sentKinds.set(kind, (this._sentKinds.get(kind) || 0) + 1);
             }
         };
         this._pc.ondatachannel = (ev) => this._adoptChannel(ev.channel);
-        this._pc.onconnectionstatechange = () => {
-            const state = this._pc.connectionState;
+        const pc = this._pc;
+        pc.onconnectionstatechange = async () => {
+            const state = pc.connectionState;
             if (state !== 'failed' && state !== 'closed') return;
             // A verdict, not a symptom: before the channel has ever opened this
             // IS the outcome of the attempt, and sitting on it until the
             // deadline only spends another twenty seconds to end up saying
             // something less true.
-            if (!this.connected && this._onChannelOpen) {
+            const waiting = !this.connected ? this._onChannelOpen : null;
+            if (waiting) {
                 console.warn(
-                    `[MW] No route to the host: ice=${this._pc.iceConnectionState} ` +
+                    `[MW] No route to the host: ice=${pc.iceConnectionState} ` +
                         `local candidates=${[...this._localTypes].join(',') || 'none'}`,
                 );
-                this._onChannelOpen(noRouteError());
+                // Sent before the verdict: the page that hears it may close the
+                // signalling line at once.
+                if (state === 'failed') await this._reportNoRoute('failed');
+                waiting(noRouteError());
             }
             this._teardown('the connection ended');
         };
@@ -700,7 +845,8 @@ export class Tunnel {
             return;
         }
         await this._pc.setLocalDescription(answer);
-        this._sendSignal({ type: 'sdp', sdp: answer.sdp, sig });
+        if (this._sendSignal({ type: 'sdp', sdp: answer.sdp, sig }))
+            this._answeredAt = performance.now();
         this._status('connecting');
     }
 
@@ -728,6 +874,7 @@ export class Tunnel {
      * anything that costs memory.
      */
     async _onRemoteCandidate(msg) {
+        if (this._remoteCount < DIAG_COUNT_CAP) this._remoteCount++;
         if (!this._pc?.remoteDescription) {
             if (this._earlyCandidates.length < MAX_EARLY_CANDIDATES)
                 this._earlyCandidates.push(msg);

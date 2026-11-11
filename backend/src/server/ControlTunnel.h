@@ -18,6 +18,7 @@
 #pragma once
 
 #include "common/Types.h"
+#include "server/TunnelDiag.h"
 
 #include <QByteArray>
 #include <QHash>
@@ -170,6 +171,8 @@ private:
         // ── MW-BIND-v1, per connection ──────────────────────────────────────
         bool helloSeen = false;
         bool answerVerified = false;
+        /// This browser has sent its one failure report (handleDiag).
+        bool diagSeen = false;
         QByteArray browserSpki; ///< as presented in the hello, never assumed paired
         QString browserKeyId;
         QByteArray nonceBrowser;
@@ -218,6 +221,9 @@ private:
     void handleHello(Peer& p, const QJsonObject& msg);
     void handleAnswer(Peer& p, const QJsonObject& msg);
     void handleIce(Peer& p, const QJsonObject& msg);
+    void handleDiag(Peer& p, const QJsonObject& msg);
+    /// Say how many failure reports the past hour ignored, once that hour is over.
+    void closeDiagWindow();
     void sendSignedOffer(Peer& p);
 
     /// Refuse this connection and take it down. The peer is DESTROYED — every
@@ -307,4 +313,8 @@ private:
 
     std::function<bool(const HttpRequest&)> m_KnownCaller;
     quint64 m_DetachSeq = 0;
+
+    /// Failure reports written per hour, all sessions together (TunnelDiag).
+    TunnelDiag::Limiter m_DiagLimiter;
+    bool m_DiagWindowTimer = false;
 };

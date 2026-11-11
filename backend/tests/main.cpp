@@ -65,6 +65,7 @@ void run_stream_ends_tests();
 void run_host_lag_tracker_tests();
 void run_tunnel_frame_tests();
 void run_tunnel_peer_policy_tests();
+void run_tunnel_diag_tests();
 void run_app_manifest_tests();
 void run_wolf_coop_tests();
 void run_start_choice_tests();
@@ -153,6 +154,7 @@ int main(int argc, char** argv)
     run_host_lag_tracker_tests();
     run_tunnel_frame_tests();
     run_tunnel_peer_policy_tests();
+    run_tunnel_diag_tests();
     run_app_manifest_tests();
     run_wolf_coop_tests();
     run_start_choice_tests();

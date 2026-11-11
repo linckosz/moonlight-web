@@ -34,6 +34,7 @@
 #include "streaming/SdpFingerprint.h"
 
 #include <QCryptographicHash>
+#include <QElapsedTimer>
 #include <QHostAddress>
 #include <QJsonDocument>
 #include <QMetaObject>
@@ -805,6 +806,8 @@ void ControlTunnel::onSignal(const QString& sessionId, const QJsonObject& payloa
         handleAnswer(*p, payload);
     else if (type == QLatin1String("ice"))
         handleIce(*p, payload);
+    else if (type == QLatin1String("diag"))
+        handleDiag(*p, payload);
 }
 
 void ControlTunnel::handleHello(Peer& p, const QJsonObject& msg)
@@ -941,6 +944,56 @@ void ControlTunnel::handleIce(Peer& p, const QJsonObject& msg)
     } catch (const std::exception&) {
         // A candidate we cannot parse is one path out of several, not a failure.
     }
+}
+
+namespace {
+
+/// A clock for the failure reports' hourly limit, which wall-clock changes
+/// must not move.
+qint64 diagClockMs()
+{
+    static QElapsedTimer clock = [] {
+        QElapsedTimer t;
+        t.start();
+        return t;
+    }();
+    return clock.elapsed();
+}
+
+} // namespace
+
+void ControlTunnel::handleDiag(Peer& p, const QJsonObject& msg)
+{
+    // Only from a browser whose signed answer verified, once per connection,
+    // and only while its channel is not open: a report from anyone else is
+    // dropped without a word, so it cannot be used to write in this log.
+    if (!p.answerVerified || p.diagSeen || channelOpen(p)) return;
+    p.diagSeen = true;
+
+    const qint64 now = diagClockMs();
+    closeDiagWindow();
+    if (!m_DiagLimiter.admit(now)) {
+        // Counted, and said once when the hour is over.
+        if (!m_DiagWindowTimer) {
+            m_DiagWindowTimer = true;
+            QTimer::singleShot(m_DiagLimiter.msLeft(now) + 1, this, [this]() {
+                m_DiagWindowTimer = false;
+                closeDiagWindow();
+            });
+        }
+        return;
+    }
+    Logger::info(QStringLiteral("[Tunnel] Session %1: %2")
+                     .arg(p.sessionId.left(8), TunnelDiag::describe(msg)));
+}
+
+void ControlTunnel::closeDiagWindow()
+{
+    if (const int ignored = m_DiagLimiter.closeWindow(diagClockMs()))
+        Logger::info(QStringLiteral("[Tunnel] %1 more browser failure reports in the past hour, "
+                                    "past the %2 an hour that are written")
+                         .arg(ignored)
+                         .arg(TunnelDiag::kMaxLinesPerWindow));
 }
 
 // ── The channel ─────────────────────────────────────────────────────────────
