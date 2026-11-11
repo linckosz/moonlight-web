@@ -19,6 +19,7 @@
 
 #include "../../core/Log.h"
 #include "../RateControl.h"
+#include "MfStartLadder.h"
 
 #include <codecapi.h>
 #include <d3d11_4.h>
@@ -199,7 +200,8 @@ bool MfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, i
     m_Device->GetImmediateContext(&m_Context);
     m_Width = width;
     m_Height = height;
-    m_Fps = fps > 0 ? fps : 60;
+    m_StreamFps = fps > 0 ? fps : 60;
+    m_Fps = m_StreamFps;
     m_FrameDuration = 10000000LL / m_Fps;
     m_SkipHardware = tuning.fallback == EncoderTuning::Fallback::MediaFoundationSoftware;
 
@@ -209,7 +211,45 @@ bool MfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, i
     // memory alike, one METransformNeedInput and then silence (07/09/2026) —
     // must cost this machine a slower encoder, not a dead stream. So it is
     // found out here, at init, and the next tier down is tried in its place.
-    if (!bringUp(codec, width, height, bitrateKbps, tuning, error)) {
+    //
+    // A hardware transform that refuses its types or its start is first asked
+    // again, more gently (MfStartLadder.h): declared at 60 fps, then with a
+    // wider VBV. Qualcomm's on a Snapdragon 845 refused 120 fps that way, and
+    // the software transform behind it ran at 30 to 52 (A121).
+    const std::vector<MfStartAttempt> ladder = mfStartLadder(m_StreamFps, tuning.vbvFrames);
+    bool up = false;
+    std::string refusal;
+    for (size_t i = 0; i < ladder.size() && !up; ++i) {
+        m_Fps = ladder[i].declaredFps;
+        m_FrameDuration = 10000000LL / m_Fps;
+        // In bits, at the stream's rate and bitrate: the same time of the wire
+        // whatever rate the transform is declared at (MfStartLadder.h).
+        m_VbvBits =
+            vbvBits(static_cast<uint32_t>(bitrateKbps) * 1000, m_StreamFps, ladder[i].vbvFrames);
+        up = bringUp(codec, width, height, mfDeclaredKbps(bitrateKbps, m_Fps, m_StreamFps), tuning,
+                     error);
+        if (up) {
+            if (i > 0)
+                log::info("[native] " + m_Name + " started " + ladder[i].change + " (it refused " +
+                          refusal + ") — " + std::to_string(m_StreamFps) +
+                          " fps still go through it, its bitrate scaled to the wire's");
+            break;
+        }
+        if (i == 0) refusal = error;
+        const bool retry =
+            !m_SkipHardware && m_Hardware && m_RefusedBeforePicture && i + 1 < ladder.size();
+        if (!retry) break;
+        log::info("[native] " + m_Name + " refused (" + error + ") — asking it again, " +
+                  ladder[i + 1].change);
+        teardownTransform();
+    }
+    if (!up) {
+        // What the session asked for again, for whatever is tried next.
+        m_Fps = m_StreamFps;
+        m_FrameDuration = 10000000LL / m_Fps;
+        m_VbvBits =
+            vbvBits(static_cast<uint32_t>(bitrateKbps) * 1000, m_StreamFps, tuning.vbvFrames);
+        if (!refusal.empty()) error = refusal;
         if (m_SkipHardware || !m_Hardware) {
             stop();
             return false;
@@ -244,22 +284,24 @@ bool MfEncoder::init(ID3D11Device* device, Codec codec, int width, int height, i
     }
 
     const std::string overrides = tuning.describe();
-    log::info(
-        "[native] Media Foundation ready: " + std::to_string(width) + "x" + std::to_string(height) +
-        "@" + std::to_string(m_Fps) + " " + toString(codec) + " CBR " +
-        std::to_string(bitrateKbps) + " kbps, VBV " +
-        std::to_string(vbvBits(static_cast<uint32_t>(bitrateKbps) * 1000, m_Fps, tuning.vbvFrames) /
-                       8 / 1024) +
-        " KB, keyframes on request — " + m_Name + (m_Hardware ? " (hardware" : " (software") +
-        (m_Async ? ", asynchronous" : ", synchronous") +
-        (m_D3dAware ? ", frames stay on the GPU)" : ", frames copied to system memory)") +
-        (overrides.empty() ? "" : " [bench: " + overrides + "]"));
+    const uint32_t vbv = m_VbvBits;
+    log::info("[native] Media Foundation ready: " + std::to_string(width) + "x" +
+              std::to_string(height) + "@" + std::to_string(m_StreamFps) +
+              (m_Fps != m_StreamFps ? " (declared " + std::to_string(m_Fps) + " to the transform)"
+                                    : std::string()) +
+              " " + toString(codec) + " CBR " + std::to_string(bitrateKbps) + " kbps, VBV " +
+              std::to_string(vbv / 8 / 1024) + " KB, keyframes on request — " + m_Name +
+              (m_Hardware ? " (hardware" : " (software") +
+              (m_Async ? ", asynchronous" : ", synchronous") +
+              (m_D3dAware ? ", frames stay on the GPU)" : ", frames copied to system memory)") +
+              (overrides.empty() ? "" : " [bench: " + overrides + "]"));
     return true;
 }
 
 bool MfEncoder::bringUp(Codec codec, int width, int height, int bitrateKbps,
                         const EncoderTuning& tuning, std::string& error)
 {
+    m_RefusedBeforePicture = false;
     if (!openTransform(codec, error)) return false;
 
     if (tuning.fallback == EncoderTuning::Fallback::MediaFoundationCpuInput && m_D3dAware) {
@@ -277,9 +319,12 @@ bool MfEncoder::bringUp(Codec codec, int width, int height, int bitrateKbps,
         m_D3dAware = false;
     }
 
+    // A refusal from here to the start is one a gentler ask may get past
+    // (MfStartLadder.h); one later, at the first picture, is not.
+    m_RefusedBeforePicture = true;
     if (!configureTypes(codec, width, height, m_Fps, bitrateKbps, error)) return false;
 
-    applyCodecOptions(bitrateKbps, m_Fps, m_Hardware, tuning);
+    applyCodecOptions(bitrateKbps, m_Hardware);
 
     MFT_OUTPUT_STREAM_INFO info = {};
     if (SUCCEEDED(m_Transform->GetOutputStreamInfo(m_OutputId, &info))) {
@@ -296,6 +341,7 @@ bool MfEncoder::bringUp(Codec codec, int width, int height, int bitrateKbps,
         error = "the transform refused to start streaming: " + hr(s);
         return false;
     }
+    m_RefusedBeforePicture = false;
 
     if (m_Async) {
         // Asynchronous transforms have to be listened to from the start: the
@@ -603,8 +649,7 @@ bool MfEncoder::configureTypes(Codec codec, int width, int height, int fps, int 
     return true;
 }
 
-void MfEncoder::applyCodecOptions(int bitrateKbps, int fps, bool hardware,
-                                  const EncoderTuning& tuning)
+void MfEncoder::applyCodecOptions(int bitrateKbps, bool hardware)
 {
     if (FAILED(m_Transform.As(&m_CodecApi)) || !m_CodecApi) {
         log::warning("[native] " + m_Name +
@@ -629,10 +674,10 @@ void MfEncoder::applyCodecOptions(int bitrateKbps, int fps, bool hardware,
     note(setU32(m_CodecApi.Get(), CODECAPI_AVEncCommonMeanBitRate,
                 static_cast<UINT32>(bitrateKbps) * 1000),
          "bitrate");
-    // The one-frame VBV, same rule as the vendor paths (RateControl.h).
-    note(setU32(m_CodecApi.Get(), CODECAPI_AVEncCommonBufferSize,
-                vbvBits(static_cast<uint32_t>(bitrateKbps) * 1000, fps, tuning.vbvFrames)),
-         "VBV");
+    // The one-frame VBV, same rule as the vendor paths (RateControl.h), sized
+    // by init() at the stream's rate — the rate the transform is declared at
+    // may be slower (MfStartLadder.h).
+    note(setU32(m_CodecApi.Get(), CODECAPI_AVEncCommonBufferSize, m_VbvBits), "VBV");
     // One in, one out: the transform may not hold a picture back.
     note(setBool(m_CodecApi.Get(), CODECAPI_AVLowLatencyMode, true), "low-latency mode");
     // No B-frames: one would make the encoder hold a frame back to reference a
@@ -950,8 +995,10 @@ bool MfEncoder::setBitrate(int bitrateKbps, std::string& error)
         error = m_Name + " exposes no ICodecAPI";
         return false;
     }
+    // Scaled as at init when the transform was declared at a slower rate than
+    // the stream's (MfStartLadder.h): the wire carries what was asked.
     if (!setU32(m_CodecApi.Get(), CODECAPI_AVEncCommonMeanBitRate,
-                static_cast<UINT32>(bitrateKbps) * 1000)) {
+                static_cast<UINT32>(mfDeclaredKbps(bitrateKbps, m_Fps, m_StreamFps)) * 1000)) {
         error = m_Name + " refused the bitrate change";
         return false;
     }

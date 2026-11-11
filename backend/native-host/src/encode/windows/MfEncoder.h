@@ -122,7 +122,7 @@ private:
     bool openTransform(Codec codec, std::string& error);
     bool configureTypes(Codec codec, int width, int height, int fps, int bitrateKbps,
                         std::string& error);
-    void applyCodecOptions(int bitrateKbps, int fps, bool hardware, const EncoderTuning& tuning);
+    void applyCodecOptions(int bitrateKbps, bool hardware);
     bool attachDevice(ID3D11Device* device);
     bool makeInputSample(ID3D11Texture2D* surface, uint32_t frameNumber,
                          Microsoft::WRL::ComPtr<IMFSample>& sample, std::string& error);
@@ -171,7 +171,17 @@ private:
 
     int m_Width = 0;
     int m_Height = 0;
+    /// The rate the transform is told — its types, time stamps and VBV — and
+    /// the stream's own. They differ when a hardware transform refused the
+    /// stream's and started at a slower one (MfStartLadder.h); its bitrate is
+    /// then scaled so that the wire carries what the session asked.
     int m_Fps = 60;
+    int m_StreamFps = 60;
+    /// The VBV the transform is given, in bits, sized at the stream's rate
+    /// (MfStartLadder.h).
+    uint32_t m_VbvBits = 0;
+    /// bringUp() failed on the transform's types or start, before any picture.
+    bool m_RefusedBeforePicture = false;
     LONGLONG m_FrameDuration = 0;
     bool m_HeldFrameLogged = false;
     /// The trial pictures of init() consumed the transform's first keyframe;

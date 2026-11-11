@@ -636,6 +636,7 @@ if(MW_BUILD_TESTS)
         tests/test_painted_pointer.cpp
         tests/test_output_match.cpp
         tests/test_display_rotation.cpp
+        tests/test_mf_start_ladder.cpp
         tests/test_display_mode_hold.cpp
         tests/test_cursor_position_gate.cpp
         tests/test_pointer_presence.cpp
