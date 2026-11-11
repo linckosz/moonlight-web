@@ -494,7 +494,8 @@ this, you are running the binary without the entrypoint. Delete
 **`HTTPS server started on port 8443`** (not 443). Something else on the host
 already holds 443 — on host networking that is a real conflict with a reverse
 proxy or another web server. Either free the port or set `MW_HTTPS_PORT` and
-put your proxy in front.
+put your proxy in front. The main README has the proxy settings to use
+([Behind a reverse proxy](../README.md#behind-a-reverse-proxy)).
 
 **The web UI loads but the stream never starts.** The signalling worked and the
 media path did not — the usual bridge-network symptom. Check

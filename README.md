@@ -475,6 +475,23 @@ On the LAN the server uses a **self‑signed** certificate. For a real name and 
 The cert's **CN must match** `domain`. It is **not** auto‑renewed.\
 Point your DNS (`A`/`CNAME`) to your IP and **forward TCP 443** to this machine yourself.
 
+### Behind a reverse proxy
+
+If another web server answers for your name (the `domain` above) and hands the requests to MoonlightWeb, have it keep the original `Host`, pass the visitor's address on, and let WebSocket connections through. With **nginx**:
+
+```nginx
+location / {
+    proxy_pass https://127.0.0.1:8443;          # the port MoonlightWeb listens on
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+With **Apache**, keep `ProxyPreserveHost On` (it adds `X-Forwarded-For` by itself) and add `upgrade=websocket` to the `ProxyPass` line.
+
 ---
 
 ## Fork & build
