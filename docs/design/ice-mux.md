@@ -59,18 +59,19 @@ what comes in makes the extra hop through the server process.
 1. **A STUN Binding request** goes to the agent its USERNAME names, always,
    whatever is known of the sender. Unknown fragment: dropped.
 2. **Anything else** goes to the agent the sender is a peer of. A sender
-   becomes a *provisional* peer of an agent by sending it a Binding request
-   (few of them for each agent, 30 seconds unless renewed, the agent's own
-   oldest gives way), and a
-   *confirmed* peer when the agent itself reports that it passed the ICE
-   integrity check (`"op":"confirmed"`). Nothing unverified displaces a
-   confirmed peer, and a provisional peer follows one agent at a time: a
-   request that names another agent is delivered to it, but moves nothing
-   else that address sends, until the entry has lapsed or its agent is gone.
+   becomes a *provisional* peer of an agent by sending it a Binding request,
+   for 30 seconds unless renewed. An agent has few of them and makes room
+   among its own, the oldest first: nothing an agent hears touches what
+   another holds. An address that names several agents is the provisional
+   peer of each, and what it sends goes to all of them. It becomes a
+   *confirmed* peer when an agent itself reports that it passed the ICE
+   integrity check (`"op":"confirmed"`): it is that agent's alone from then
+   on, and nothing unverified displaces it.
 3. **A STUN response that is not a confirmed peer's** is the answer to a check
-   an agent sent: besides the agent its sender follows, if any, every agent
-   registered for less than a minute gets it, within a budget per second; an
-   agent ignores a transaction that is not its own.
+   an agent sent, perhaps before the address named it: besides the agents the
+   sender is a provisional peer of, every agent registered for less than a
+   minute gets it, within a budget per second; an agent ignores a transaction
+   that is not its own.
 4. The rest is dropped.
 
 The user fragment gives no right: the agent verifies the message integrity of

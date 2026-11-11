@@ -83,9 +83,10 @@ struct PeerHash
 inline constexpr size_t kFeedHeaderSize = 36;
 void writeFeedHeader(uint8_t* out, const Peer& from, uint64_t timestamp) noexcept;
 
-/// Where a datagram goes. `feeds` is empty for a drop; it holds several only
-/// for a STUN response that is not a confirmed peer's, which the agents still
-/// negotiating get (an agent ignores a transaction that is not its own).
+/// Where a datagram goes. `feeds` is empty for a drop. It holds several for
+/// what a provisional peer of several agents sends, and for a STUN response
+/// that is not a confirmed peer's, which agents still negotiating get too (an
+/// agent ignores a transaction that is not its own).
 struct Route
 {
     std::vector<uint32_t> feeds;
@@ -94,30 +95,34 @@ struct Route
 /// The routing table. Not thread-safe: IceMux holds one lock around it.
 ///
 /// Two levels. A Binding request for a known user fragment makes its sender a
-/// *provisional* peer of that agent: few of them for each agent, short-lived,
-/// the agent's own oldest gives way, and a request naming another agent does
-/// not move one that has not lapsed. The agent itself, once it has checked the
-/// peer's credentials,
-/// *confirms* it: such a peer is never displaced by anything unverified.
+/// *provisional* peer of that agent, for as long as such requests keep
+/// coming. An agent has few of them and makes room among its own, the oldest
+/// first: nothing an agent hears touches what another holds. An address can
+/// be the provisional peer of several agents, each of which it named, and
+/// what it sends then goes to all of them. The agent itself, once it has
+/// checked the peer's credentials, *confirms* it: the peer is that agent's
+/// alone from then on, and nothing unverified displaces it.
 class Router
 {
 public:
-    static constexpr size_t kProvisionalMax = 256;
-    /// An agent's share of them: what it fills, it fills at its own expense
+    /// Agents at once: one for each stream, and more than a server runs streams
+    static constexpr size_t kAgentsMax = 32;
+    /// An agent's provisional peers, and its confirmed ones
     static constexpr size_t kProvisionalPerFeedMax = 32;
     static constexpr size_t kConfirmedPerFeedMax = 32;
+    /// How long after its last request a provisional peer stays one
     static constexpr uint64_t kProvisionalLifeMs = 30'000;
-    /// How long after it registers an agent still gets unclaimed STUN responses
+    /// How long after it registers an agent still gets STUN responses it is
+    /// not known to wait for
     static constexpr uint64_t kNegotiationMs = 60'000;
-    /// Unclaimed STUN responses passed on per second, all sources together
+    /// Such responses passed on per second: from nobody's peer, all sources
+    /// together; from one provisional peer, to the agents it has not named
     static constexpr uint32_t kUnclaimedPerSecond = 200;
-    /// STUN responses of one provisional peer that the other agents still
-    /// negotiating get as well, per second
     static constexpr uint32_t kSharedResponsesPerSecond = 50;
 
     /// An agent, known by its ICE user fragment. False when the fragment is
     /// already another agent's, is not kUfragMin to kUfragMax long, or holds a
-    /// character ICE does not allow in one.
+    /// character ICE does not allow in one, and when kAgentsMax are known.
     bool addAgent(uint32_t feed, std::string_view ufrag, uint64_t nowMs);
     void removeAgent(uint32_t feed);
     bool hasAgents() const noexcept { return !m_Agents.empty(); }
@@ -127,8 +132,9 @@ public:
 
     Route route(const Peer& from, const uint8_t* data, size_t size, uint64_t nowMs);
 
+    /// The addresses that are somebody's provisional peer
     size_t provisionalCount() const noexcept { return m_Provisional.size(); }
-    /// How many of them follow this agent
+    /// The provisional peers of this agent
     size_t provisionalCount(uint32_t feed) const noexcept;
     size_t confirmedCount() const noexcept { return m_Confirmed.size(); }
 
@@ -140,20 +146,24 @@ private:
         size_t confirmed = 0;
         size_t provisional = 0;
     };
-    struct Provisional
+    /// An agent the address named, and when it last did
+    struct Follower
     {
         uint32_t feed = 0;
         uint64_t seenMs = 0;
-        uint64_t sharedWindowMs = 0; // its responses shared in the current second
+    };
+    struct Provisional
+    {
+        std::vector<Follower> followers; // never empty, an agent once at most
+        uint64_t sharedWindowMs = 0;     // its responses shared in the current second
         uint32_t sharedInWindow = 0;
     };
     using ProvisionalMap = std::unordered_map<Peer, Provisional, PeerHash>;
 
-    void expire(uint64_t nowMs);
-    ProvisionalMap::iterator dropProvisional(ProvisionalMap::iterator entry);
-    void dropOldestOf(uint32_t feed);
-    void addProvisional(const Peer& peer, uint32_t feed, uint64_t nowMs);
-    void addNegotiating(Route& out, uint64_t nowMs, uint32_t except) const;
+    void follow(const Peer& peer, uint32_t feed, uint64_t nowMs);
+    bool leave(ProvisionalMap::iterator entry, size_t index);
+    void leaveOldest(uint32_t feed);
+    void addNegotiating(Route& out, uint64_t nowMs) const;
 
     std::unordered_map<uint32_t, Agent> m_Agents;
     std::unordered_map<std::string, uint32_t> m_ByUfrag;

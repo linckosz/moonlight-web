@@ -122,6 +122,7 @@ size_t PeerHash::operator()(const Peer& p) const noexcept
 bool Router::addAgent(uint32_t feed, std::string_view ufrag, uint64_t nowMs)
 {
     if (ufrag.size() < kUfragMin || ufrag.size() > kUfragMax || m_Agents.count(feed)) return false;
+    if (m_Agents.size() >= kAgentsMax) return false;
     // The characters ICE allows in a fragment (RFC 8839 ice-char), no other
     const auto iceChar = [](char c) {
         return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
@@ -131,7 +132,7 @@ bool Router::addAgent(uint32_t feed, std::string_view ufrag, uint64_t nowMs)
     std::string key(ufrag);
     if (m_ByUfrag.count(key)) return false;
     m_ByUfrag.emplace(key, feed);
-    m_Agents.emplace(feed, Agent{std::move(key), nowMs, 0});
+    m_Agents.emplace(feed, Agent{std::move(key), nowMs, 0, 0});
     return true;
 }
 
@@ -143,8 +144,13 @@ void Router::removeAgent(uint32_t feed)
     m_Agents.erase(agent);
     for (auto it = m_Confirmed.begin(); it != m_Confirmed.end();)
         it = it->second == feed ? m_Confirmed.erase(it) : std::next(it);
-    for (auto it = m_Provisional.begin(); it != m_Provisional.end();)
-        it = it->second.feed == feed ? m_Provisional.erase(it) : std::next(it);
+    for (auto it = m_Provisional.begin(); it != m_Provisional.end();) {
+        std::vector<Follower>& followers = it->second.followers;
+        followers.erase(std::remove_if(followers.begin(), followers.end(),
+                                       [feed](const Follower& f) { return f.feed == feed; }),
+                        followers.end());
+        it = followers.empty() ? m_Provisional.erase(it) : std::next(it);
+    }
 }
 
 size_t Router::provisionalCount(uint32_t feed) const noexcept
@@ -153,48 +159,72 @@ size_t Router::provisionalCount(uint32_t feed) const noexcept
     return agent == m_Agents.end() ? 0 : agent->second.provisional;
 }
 
-Router::ProvisionalMap::iterator Router::dropProvisional(ProvisionalMap::iterator entry)
+/// The follower at `index` leaves the entry, which goes with its last one:
+/// true when it did, and `entry` is then no more.
+bool Router::leave(ProvisionalMap::iterator entry, size_t index)
 {
-    const auto agent = m_Agents.find(entry->second.feed);
+    std::vector<Follower>& followers = entry->second.followers;
+    const auto agent = m_Agents.find(followers[index].feed);
     if (agent != m_Agents.end() && agent->second.provisional > 0) --agent->second.provisional;
-    return m_Provisional.erase(entry);
+    followers.erase(followers.begin() + static_cast<std::ptrdiff_t>(index));
+    if (!followers.empty()) return false;
+    m_Provisional.erase(entry);
+    return true;
 }
 
-void Router::dropOldestOf(uint32_t feed)
+void Router::leaveOldest(uint32_t feed)
 {
     auto oldest = m_Provisional.end();
-    for (auto it = m_Provisional.begin(); it != m_Provisional.end(); ++it)
-        if (it->second.feed == feed &&
-            (oldest == m_Provisional.end() || it->second.seenMs < oldest->second.seenMs))
-            oldest = it;
-    if (oldest != m_Provisional.end()) dropProvisional(oldest);
+    size_t index = 0;
+    uint64_t seenMs = 0;
+    for (auto it = m_Provisional.begin(); it != m_Provisional.end(); ++it) {
+        const std::vector<Follower>& followers = it->second.followers;
+        for (size_t i = 0; i < followers.size(); ++i) {
+            if (followers[i].feed != feed) continue;
+            if (oldest == m_Provisional.end() || followers[i].seenMs < seenMs) {
+                oldest = it;
+                index = i;
+                seenMs = followers[i].seenMs;
+            }
+            break;
+        }
+    }
+    if (oldest != m_Provisional.end()) leave(oldest, index);
 }
 
-void Router::addProvisional(const Peer& peer, uint32_t feed, uint64_t nowMs)
+/// `peer` named the agent `feed` in a Binding request: it is one of that
+/// agent's provisional peers from now, or stays one.
+void Router::follow(const Peer& peer, uint32_t feed, uint64_t nowMs)
 {
     const auto agent = m_Agents.find(feed);
     if (agent == m_Agents.end()) return;
-    // Each agent has its share of this level, and makes room in it at its own
-    // expense. The whole table full all the same (many agents): the agent
-    // that holds the most gives one up.
-    if (agent->second.provisional >= kProvisionalPerFeedMax) dropOldestOf(feed);
-    if (m_Provisional.size() >= kProvisionalMax) expire(nowMs);
-    if (m_Provisional.size() >= kProvisionalMax) {
-        const auto most =
-            std::max_element(m_Agents.begin(), m_Agents.end(), [](const auto& a, const auto& b) {
-                return a.second.provisional < b.second.provisional;
-            });
-        dropOldestOf(most->first);
+    auto entry = m_Provisional.find(peer);
+    if (entry != m_Provisional.end()) {
+        for (Follower& f : entry->second.followers) {
+            if (f.feed != feed) continue;
+            f.seenMs = nowMs;
+            return;
+        }
     }
-    if (m_Provisional.size() >= kProvisionalMax) return;
-    if (m_Provisional.emplace(peer, Provisional{feed, nowMs, 0, 0}).second)
-        ++agent->second.provisional;
+    // Room is made in the agent's own share and nowhere else. (The peer left
+    // is another one: this one is not the agent's yet.)
+    if (agent->second.provisional >= kProvisionalPerFeedMax) leaveOldest(feed);
+    if (entry == m_Provisional.end()) entry = m_Provisional.emplace(peer, Provisional{}).first;
+    entry->second.followers.push_back(Follower{feed, nowMs});
+    ++agent->second.provisional;
 }
 
-void Router::addNegotiating(Route& out, uint64_t nowMs, uint32_t except) const
+/// The agents still negotiating that `out` does not name yet.
+void Router::addNegotiating(Route& out, uint64_t nowMs) const
 {
-    for (const auto& [feed, agent] : m_Agents)
-        if (feed != except && nowMs - agent.sinceMs <= kNegotiationMs) out.feeds.push_back(feed);
+    const size_t named = out.feeds.size();
+    for (const auto& [feed, agent] : m_Agents) {
+        if (nowMs - agent.sinceMs > kNegotiationMs) continue;
+        bool known = false;
+        for (size_t i = 0; i < named && !known; ++i)
+            known = out.feeds[i] == feed;
+        if (!known) out.feeds.push_back(feed);
+    }
 }
 
 void Router::confirm(uint32_t feed, const Peer& peer)
@@ -213,14 +243,15 @@ void Router::confirm(uint32_t feed, const Peer& peer)
     if (agent->second.confirmed >= kConfirmedPerFeedMax) return;
     ++agent->second.confirmed;
     m_Confirmed.emplace(peer, feed);
-    if (const auto known = m_Provisional.find(peer); known != m_Provisional.end())
-        dropProvisional(known);
-}
-
-void Router::expire(uint64_t nowMs)
-{
-    for (auto it = m_Provisional.begin(); it != m_Provisional.end();)
-        it = nowMs - it->second.seenMs > kProvisionalLifeMs ? dropProvisional(it) : std::next(it);
+    // It is this agent's alone now, whoever else it had named
+    if (const auto known = m_Provisional.find(peer); known != m_Provisional.end()) {
+        for (const Follower& f : known->second.followers) {
+            const auto follower = m_Agents.find(f.feed);
+            if (follower != m_Agents.end() && follower->second.provisional > 0)
+                --follower->second.provisional;
+        }
+        m_Provisional.erase(known);
+    }
 }
 
 Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t nowMs)
@@ -234,37 +265,16 @@ Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t
 
     if (stun.kind == Kind::BindingRequest) {
         // Always by the user fragment, whatever the table says of the sender:
-        // an address two agents are checking with is a fact of life behind a
-        // NAT, and the fragment is what tells them apart.
+        // the fragment is what tells two agents apart.
         // No longer than kUfragMax: the key below stays inside the string
         // itself, nothing is allocated for a datagram from anybody.
         if (stun.localUfrag.size() > kUfragMax) return out;
         const auto agent = m_ByUfrag.find(std::string(stun.localUfrag));
         if (agent == m_ByUfrag.end()) return out;
         const uint32_t feed = agent->second;
-        const auto confirmed = m_Confirmed.find(from);
-        if (confirmed == m_Confirmed.end() || confirmed->second != feed) {
-            const auto known = m_Provisional.find(from);
-            if (known != m_Provisional.end()) {
-                // A confirmed peer of another agent keeps its other traffic
-                // there; the request alone goes by the fragment.
-                // And a provisional peer follows one agent at a time: the one
-                // it follows renews it, another takes it only once it lapsed
-                // (an agent gone has taken its peers with it). One address and
-                // port never serves two live agents, so nothing true needs
-                // more, and a request alone moves nobody's traffic.
-                if (confirmed == m_Confirmed.end()) {
-                    if (known->second.feed == feed) {
-                        known->second.seenMs = nowMs;
-                    } else if (nowMs - known->second.seenMs > kProvisionalLifeMs) {
-                        dropProvisional(known);
-                        addProvisional(from, feed, nowMs);
-                    }
-                }
-            } else if (confirmed == m_Confirmed.end()) {
-                addProvisional(from, feed, nowMs);
-            }
-        }
+        // A confirmed peer keeps the rest of what it sends with the agent
+        // that confirmed it; its request alone goes by the fragment.
+        if (m_Confirmed.find(from) == m_Confirmed.end()) follow(from, feed, nowMs);
         out.feeds.push_back(feed);
         return out;
     }
@@ -274,13 +284,19 @@ Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t
         return out;
     }
     if (const auto known = m_Provisional.find(from); known != m_Provisional.end()) {
-        Provisional& entry = known->second;
-        if (nowMs - entry.seenMs <= kProvisionalLifeMs) {
-            out.feeds.push_back(entry.feed);
-            // A response answers a check, and the check may be that of an
-            // agent other than the one this address follows so far: the
-            // agents still negotiating get it too, so many a second for each
-            // address. An agent ignores a transaction that is not its own.
+        // The agents whose requests from this address have stopped leave it
+        bool gone = false;
+        for (size_t i = known->second.followers.size(); !gone && i-- > 0;)
+            if (nowMs - known->second.followers[i].seenMs > kProvisionalLifeMs)
+                gone = leave(known, i);
+        if (!gone) {
+            Provisional& entry = known->second;
+            for (const Follower& f : entry.followers)
+                out.feeds.push_back(f.feed);
+            // A response answers a check, and an agent may check an address
+            // before that address has named it: the other agents still
+            // negotiating get it too, so many a second for each address. An
+            // agent ignores a transaction that is not its own.
             if (stun.kind == Kind::StunResponse) {
                 if (nowMs - entry.sharedWindowMs >= 1000) {
                     entry.sharedWindowMs = nowMs;
@@ -288,12 +304,11 @@ Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t
                 }
                 if (entry.sharedInWindow < kSharedResponsesPerSecond) {
                     ++entry.sharedInWindow;
-                    addNegotiating(out, nowMs, entry.feed);
+                    addNegotiating(out, nowMs);
                 }
             }
             return out;
         }
-        dropProvisional(known);
     }
     if (stun.kind != Kind::StunResponse) return out;
 
@@ -305,7 +320,7 @@ Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t
     }
     if (m_UnclaimedInWindow >= kUnclaimedPerSecond) return out;
     ++m_UnclaimedInWindow;
-    addNegotiating(out, nowMs, 0);
+    addNegotiating(out, nowMs);
     return out;
 }
 

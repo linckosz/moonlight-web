@@ -61,8 +61,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
         }
         if (router->provisionalCount(1) > Router::kProvisionalPerFeedMax ||
             router->provisionalCount(2) > Router::kProvisionalPerFeedMax ||
-            router->provisionalCount(1) + router->provisionalCount(2) !=
+            router->provisionalCount(1) + router->provisionalCount(2) <
                 router->provisionalCount() ||
+            router->provisionalCount() < router->provisionalCount(1) ||
+            router->provisionalCount() < router->provisionalCount(2) ||
             router->confirmedCount() > 2 * Router::kConfirmedPerFeedMax)
             std::abort();
         pos += len;

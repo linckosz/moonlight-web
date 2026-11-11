@@ -52,9 +52,8 @@ namespace {
 constexpr size_t kDatagramMax = 4096;
 /// Datagrams taken off one socket before the next is looked at
 constexpr int kBurst = 64;
-/// The most agents one datagram is copied to (a STUN response several of them
-/// may be waiting for)
-constexpr size_t kCopiesMax = 32;
+/// The most agents one datagram is copied to: all of them
+constexpr size_t kCopiesMax = Router::kAgentsMax;
 /// Reads that fail in a row on one socket, for no datagram's fault, before
 /// the socket is left alone for a while
 constexpr int kFaultsBeforeRest = 8;
