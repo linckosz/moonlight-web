@@ -19,6 +19,7 @@
 
 #include "../Session.h"
 #include "../../common/LoopbackKey.h"
+#include "../IceMuxClient.h"
 #include "../InputMessageCodec.h"
 #include "../../server/AppSettings.h"
 #include "mw/native/FeedArbiter.h"
@@ -652,6 +653,9 @@ int runStreamWorker(QCoreApplication& app)
     session->setTransportMode(cfg["transportMode"].toString());
     session->setEnableIceTcp(cfg["iceTcp"].toBool());
     session->setIceTcpPassive(cfg["iceTcpPassive"].toBool(true));
+    // The UDP ports the server shares between its streams, when it does.
+    if (cfg.contains(QStringLiteral("iceMux")))
+        mw::icemuxclient::configure(cfg["iceMux"].toObject(), emitEvent);
     session->setDebugIceDropUdp(cfg["debugIceDropUdp"].toBool(false));
     session->setLowAudio(cfg["lowAudio"].toBool());
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));

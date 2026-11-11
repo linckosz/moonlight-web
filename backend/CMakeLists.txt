@@ -242,7 +242,8 @@ endif()
 mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-ice-tcp-passive.patch
                REQUIRED_BY libjuice-ice-mux.patch)
 mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
-               libdatachannel-ice-tcp-passive.patch)
+               libdatachannel-ice-tcp-passive.patch
+               REQUIRED_BY libdatachannel-ice-mux.patch)
 # A datagram longer than libjuice's read buffer: Windows reports it as an error,
 # other systems cut it short. With this one libjuice drops it there too.
 mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-udp-long-datagram.patch)
@@ -253,6 +254,10 @@ mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-udp-long-datagram.patch)
 # socket, the first socket preferred. Nothing changes for an agent that is given
 # no such sockets. It rewrites lines of the patch above, hence REQUIRED_BY there.
 mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-ice-mux.patch)
+# And the way to it through libdatachannel: rtc::Configuration::iceSharedSockets
+# gives a PeerConnection's agent such sockets, with ICE credentials of its own.
+mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
+               libdatachannel-ice-mux.patch)
 
 # libdatachannel (WebRTC DataChannel + media). Match the previous .bat flags.
 set(NO_WEBSOCKET ON  CACHE BOOL "" FORCE)
@@ -356,6 +361,8 @@ add_executable(mw-server
     src/network/UPNPClient.cpp
     src/network/LinkAddresses.cpp
     src/network/RouterPortCore.cpp
+    src/network/IceMuxCore.cpp
+    src/network/IceMux.cpp
     src/network/RouterPortAllocator.cpp
     src/network/StunClient.cpp
     src/network/InternetAccessManager.cpp
@@ -415,6 +422,7 @@ add_executable(mw-server
     # Its wheels kept between two streams, from one worker to the next.
     src/streaming/HidParkedJson.cpp
     src/streaming/HidParkingTransfer.cpp
+    src/streaming/IceMuxClient.cpp
     src/streaming/FeedInfo.cpp
     src/streaming/FeedPublisher.cpp
     src/streaming/FeedSubscriber.cpp

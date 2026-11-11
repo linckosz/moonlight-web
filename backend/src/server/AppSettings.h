@@ -118,6 +118,13 @@ public:
     // default once a test from an office network streamed over it (26/10/2026);
     // false keeps every TCP port closed. Read when each connection is built.
     bool iceTcpPassive() const;
+    // ── One UDP port for every stream ────────────────────────────────────────
+    // JSON bool "ice_udp_mux", file-only, DEFAULT false and not seeded while
+    // the mux is a prototype (docs/design/ice-mux.md). With it the server binds
+    // the streams' UDP port itself, once, and every stream worker's ICE agent
+    // shares it; without it each stream binds a port of its own, as before.
+    // Read once, when the server starts.
+    bool iceUdpMux() const;
     // A DEBUG switch for a bench, never for a user: JSON bool "debug_ice_drop_udp",
     // DEFAULT false, typed into the file by hand. Nothing writes it, not even its
     // default, and no API reads or sets it. With it, no UDP candidate crosses in

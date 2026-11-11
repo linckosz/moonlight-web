@@ -1,0 +1,59 @@
+diff --git a/include/rtc/configuration.hpp b/include/rtc/configuration.hpp
+index dc003fb8..123aa271 100644
+--- a/include/rtc/configuration.hpp
++++ b/include/rtc/configuration.hpp
+@@ -63,6 +63,17 @@ enum class CertificateType {
+ 
+ enum class TransportPolicy { All = RTC_TRANSPORT_POLICY_ALL, Relay = RTC_TRANSPORT_POLICY_RELAY };
+ 
++// MoonlightWeb patch, libjuice only: the ICE agent runs on UDP sockets another process holds and
++// reads (juice_set_shared_sockets). All handles are borrowed: the caller closes them, after the
++// connection is gone.
++struct IceSharedSockets {
++	uintptr_t feed = 0;          // datagram socket the agent reads its datagrams from
++	std::vector<uintptr_t> send; // bound UDP sockets it sends on, the preferred one first
++	// The agent's own credentials, when the caller chooses them (both or neither)
++	string ufrag;
++	string pwd;
++};
++
+ struct RTC_CPP_EXPORT Configuration {
+ 	// ICE settings
+ 	std::vector<IceServer> iceServers;
+@@ -76,6 +87,8 @@ struct RTC_CPP_EXPORT Configuration {
+ 	// MoonlightWeb patch, libjuice only: with enableIceTcp, also listen on the TCP port of the ICE
+ 	// socket while the checks run, for a peer that only dials (a browser on a network without UDP)
+ 	bool enableIceTcpPassive = false;
++	// MoonlightWeb patch, libjuice only: see IceSharedSockets. The port range is then unused.
++	optional<IceSharedSockets> iceSharedSockets;
+ 	bool enableIceUdpMux = false; // libjuice only
+ 	bool disableAutoNegotiation = false;
+ 	bool disableAutoGathering = false;
+diff --git a/src/impl/icetransport.cpp b/src/impl/icetransport.cpp
+index e5e8c117..3a36415d 100644
+--- a/src/impl/icetransport.cpp
++++ b/src/impl/icetransport.cpp
+@@ -130,6 +130,23 @@ IceTransport::IceTransport(const Configuration &config, candidate_callback candi
+ 	if (!mAgent)
+ 		throw std::runtime_error("Failed to create the ICE agent");
+ 
++	// Sockets another process holds, and the credentials that go with them
++	if (config.iceSharedSockets) {
++		const auto &given = *config.iceSharedSockets;
++		juice_shared_sockets_t shared = {};
++		if (given.send.empty() || given.send.size() > JUICE_SHARED_SOCKETS_MAX)
++			throw std::invalid_argument("Invalid count of shared ICE sockets");
++		shared.feed = given.feed;
++		shared.send_count = int(given.send.size());
++		for (size_t i = 0; i < given.send.size(); ++i)
++			shared.send[i] = given.send[i];
++		if (juice_set_shared_sockets(mAgent.get(), &shared) < 0)
++			throw std::runtime_error("Failed to give the ICE agent its shared sockets");
++		if (!given.ufrag.empty() &&
++		    juice_set_local_ice_attributes(mAgent.get(), given.ufrag.c_str(), given.pwd.c_str()) < 0)
++			throw std::invalid_argument("Invalid ICE attributes");
++	}
++
+ 	// ICE-TCP
+ 	juice_set_ice_tcp_mode(mAgent.get(), !config.enableIceTcp      ? JUICE_ICE_TCP_MODE_NONE
+ 	                                     : config.enableIceTcpPassive ? JUICE_ICE_TCP_MODE_ACTIVE_PASSIVE

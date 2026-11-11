@@ -988,6 +988,12 @@ bool AppSettings::iceTcpPassive() const
     return obj.value("ice_tcp_passive").toBool(true);
 }
 
+bool AppSettings::iceUdpMux() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("ice_udp_mux").toBool(false);
+}
+
 bool AppSettings::debugIceDropUdp() const
 {
     QJsonObject obj = readAll();

@@ -135,6 +135,7 @@
 #include "server/HostAppLauncher.h"
 #include "server/LauncherDetect.h"
 #include "network/AddressRace.h"
+#include "network/IceMux.h"
 #include "network/InternetAccessManager.h"
 #include "network/MdnsAdvertiser.h"
 #include "network/RendezvousClient.h"
@@ -2537,6 +2538,28 @@ int main(int argc, char* argv[])
     const SlotPortPlan kSlotPlan = planSlotPorts(signalingPort, kMediaBasePort, kSlotHardCeiling);
     const int kMaxSlots = qMax(kTotalSlots, kSlotPlan.maxSlots);
     SessionPool g_Pool(signalingPort, kSlotPlan.extraBase, kTotalSlots, kMaxSlots);
+
+    // One UDP port for every stream (settings.json ice_udp_mux; a prototype,
+    // off unless asked for): bound here, once, and kept until the process
+    // ends. The last port of the media block, or the nearest free one below
+    // it, which the streams' own ports (one per slot, from the first) reach
+    // last. Not bound: every stream binds its own port, as without the mux.
+    IceMux g_IceMux;
+    if (AppSettings().iceUdpMux()) {
+        std::string why;
+        g_IceMux.setReporter([](const std::string& what) {
+            qWarning().noquote() << "[IceMux]" << QString::fromStdString(what);
+        });
+        for (int back = 0; back < 12 && !g_IceMux.running(); ++back)
+            g_IceMux.start({static_cast<uint16_t>(kMediaBasePort + 23 - back)}, &why);
+        if (g_IceMux.running()) {
+            IceMux::setShared(&g_IceMux);
+            qInfo() << "[IceMux] every stream shares UDP port" << g_IceMux.ports().front();
+        } else {
+            qWarning() << "[IceMux] no shared UDP port:" << QString::fromStdString(why)
+                       << "— each stream binds its own";
+        }
+    }
     qInfo() << "[Session] Stream slots: reserved" << kTotalSlots << "max" << kMaxSlots
             << "— slot 0 signaling" << signalingPort << ", slots 1.. from" << kSlotPlan.extraBase
             << ", media from" << kMediaBasePort;

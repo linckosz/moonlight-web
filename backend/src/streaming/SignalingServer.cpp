@@ -25,6 +25,7 @@ extern "C" {
 #include "Limelight.h"
 }
 #include "IMediaEngine.h"
+#include "IceMuxClient.h"
 #include "IceUdpDrop.h"
 #include "InputMessageCodec.h"
 #include "SdpFingerprint.h"
@@ -214,6 +215,8 @@ void SignalingServer::stop()
     qInfo() << "[SignalingServer::stop] ENTER, signalingComplete=" << m_SignalingComplete
             << "dataChannelsOpen=" << m_DataChannelsOpen;
     m_Running = false;
+    // On the server's shared UDP ports, this connection's agent is over.
+    mw::icemuxclient::closeAgent();
 
     if (m_WsClient) {
         qInfo() << "[SignalingServer] Closing WS client"
@@ -400,6 +403,18 @@ void SignalingServer::onNewWsConnection()
     rtc::Configuration config =
         buildIceConfig(isInternet, mapped, m_MediaPort, lanOnly ? QString() : m_StunServerUrl,
                        m_ForceIceTcp, m_IceTcpPassive);
+    // The server's shared UDP ports instead of a socket of our own, when it
+    // gave this worker some. UDP only for now: a rung that also needs TCP keeps
+    // its own socket, which is what its listener sits on.
+    bool muxed = false;
+    if (!m_ForceIceTcp && mw::icemuxclient::available()) {
+        if (auto shared = mw::icemuxclient::openAgent()) {
+            config.iceSharedSockets = std::move(*shared);
+            muxed = true;
+            qInfo() << "[SignalingServer] ICE on the server's shared UDP port(s): the media port"
+                    << "named above is not bound";
+        }
+    }
     if (m_DebugIceDropUdp)
         qWarning() << "[SignalingServer] DEBUG debug_ice_drop_udp is ON: every UDP candidate is"
                    << "dropped, ours and the browser's — only passive ICE-TCP can connect";
@@ -408,7 +423,9 @@ void SignalingServer::onNewWsConnection()
     // public IP and EXTERNAL port so the browser sees a "host" candidate at
     // PUBLIC_IP:<external> instead of 192.168.x.x:48010. The two ports differ
     // when a neighbour on the LAN holds this slot's own number.
-    if (mapped) {
+    // (Not on the shared ports: the hole is this slot's own port, which the
+    // agent does not bind there.)
+    if (mapped && !muxed) {
         m_Relay->setPublicAddress(m_UpnpPublicIP.toStdString(), m_UpnpExternalPort);
         m_Relay->setForceHostCandidatePublic(true);
         // Withhold non-global IPv6 candidates (ULA / mesh VPN / link-local) —

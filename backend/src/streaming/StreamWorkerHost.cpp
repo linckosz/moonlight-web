@@ -26,9 +26,11 @@
 #include "common/LinuxCapabilities.h"
 #include "common/RunFlags.h"
 #include "mw/native/MouseKeys.h"
+#include "network/IceMux.h"
 #include "server/AppSettings.h"
 
 #include <QCoreApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QStandardPaths>
 #include <QTimer>
@@ -40,6 +42,7 @@ StreamWorkerHost::StreamWorkerHost(QObject* parent)
 
 StreamWorkerHost::~StreamWorkerHost()
 {
+    dropMuxAgent();
     if (m_Proc && m_Proc->state() != QProcess::NotRunning) {
         // Destructor teardown: no time for the graceful dance — kill. Normal
         // paths call requestQuit()/notify*() well before destruction.
@@ -218,7 +221,33 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
         return false;
     }
 
-    m_Proc->write(configLine);
+    // The UDP ports every stream shares, as this child alone can open them:
+    // made for its pid, which exists only now. A child that gets none binds a
+    // port of its own, as without the mux.
+    QByteArray line = configLine;
+#ifdef Q_OS_WIN
+    if (IceMux* mux = IceMux::shared(); mux && mux->running() && mux->healthy()) {
+        std::string why;
+        const auto infos = mux->shareWith(static_cast<unsigned long>(m_Proc->processId()), &why);
+        if (infos.empty()) {
+            qWarning() << "[IceMux] the shared sockets cannot go to the worker:"
+                       << QString::fromStdString(why) << "— it takes a socket of its own";
+        } else {
+            QJsonArray sockets;
+            for (const auto& info : infos)
+                sockets.append(
+                    QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(info.data()),
+                                                   static_cast<qsizetype>(info.size()))
+                                            .toBase64()));
+            QJsonObject config = QJsonDocument::fromJson(configLine).object();
+            config[QStringLiteral("iceMux")] =
+                QJsonObject{{QStringLiteral("hop"), static_cast<int>(mux->hopPort())},
+                            {QStringLiteral("sockets"), sockets}};
+            line = QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
+        }
+    }
+#endif
+    m_Proc->write(line);
     m_Launch = Launch::Plain;
     qInfo() << "[StreamWorkerHost] Worker spawned, pid=" << m_Proc->processId();
     return true;
@@ -497,6 +526,8 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
         } else if (type == QLatin1String("audioFocus")) {
             audioFocusSlot() = event["app"].toString().left(260);
             m_ReportedAudioFocus = true;
+        } else if (type == QLatin1String("iceMux")) {
+            onMuxEvent(event);
         } else if (type == QLatin1String("mouseKeys")) {
             m_MouseKeysHeld = event["on"].toBool();
             m_MouseKeysSaved = m_MouseKeysHeld ? event["saved"].toObject() : QJsonObject();
@@ -506,9 +537,48 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
     }
 }
 
+void StreamWorkerHost::dropMuxAgent()
+{
+    if (!m_MuxFeed) return;
+    if (IceMux* mux = IceMux::shared()) mux->removeAgent(m_MuxFeed);
+    m_MuxFeed = 0;
+}
+
+void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
+{
+    IceMux* mux = IceMux::shared();
+    if (!mux || !mux->running()) return;
+    const QString op = event["op"].toString();
+    if (op == QLatin1String("agent")) {
+        // One agent at a time per worker: a new one replaces the last.
+        dropMuxAgent();
+        const int feedPort = event["feedPort"].toInt();
+        if (feedPort <= 0 || feedPort > 65535) return;
+        m_MuxFeed = mux->addAgent(event["ufrag"].toString().toStdString());
+        if (!m_MuxFeed) {
+            qWarning() << "[IceMux] the worker's ICE agent is refused: no datagram will reach it";
+            return;
+        }
+        mux->setFeedPort(m_MuxFeed, static_cast<uint16_t>(feedPort));
+        qInfo() << "[IceMux] agent" << m_MuxFeed << "registered for the worker";
+    } else if (op == QLatin1String("confirmed")) {
+        if (!m_MuxFeed) return;
+        const int port = event["port"].toInt();
+        if (port <= 0 || port > 65535) return;
+        // The agent does not say which shared socket its pair runs on: the
+        // peer is confirmed on each, which gives it nothing it had not.
+        const std::string address = event["address"].toString().toStdString();
+        for (size_t via = 0; via < mux->ports().size(); ++via)
+            mux->confirm(m_MuxFeed, address, static_cast<uint16_t>(port), static_cast<int>(via));
+    } else if (op == QLatin1String("gone")) {
+        dropMuxAgent();
+    }
+}
+
 void StreamWorkerHost::onFinished(int exitCode, QProcess::ExitStatus status)
 {
     qInfo() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode << "status=" << status;
+    dropMuxAgent();
     if (m_ReportedAudioFocus) {
         audioFocusSlot().clear();
         m_ReportedAudioFocus = false;

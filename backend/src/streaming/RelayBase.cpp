@@ -18,6 +18,7 @@
 #include "RelayBase.h"
 
 #include "IMediaEngine.h"
+#include "IceMuxClient.h"
 #include "IcePriority.h"
 #include "MicRtp.h"
 #include "MicUplink.h"
@@ -99,6 +100,8 @@ void RelayBase::logSelectedCandidatePair(rtc::PeerConnection& pc, const char* lo
     }
     qInfo() << logTag << "Selected candidate pair: local" << describeCandidate(local) << "-> remote"
             << describeCandidate(remote);
+    // On the server's shared ports, the peer it may now trust for this agent
+    mw::icemuxclient::confirmed(remote);
 }
 
 void RelayBase::wireMicUplink(rtc::Track& audioTrack, const char* logTag)

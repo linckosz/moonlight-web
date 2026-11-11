@@ -186,6 +186,11 @@ private:
     /// The kept wheels handed to this worker (HidParkingTransfer), until it
     /// says it took them; 0 when none are out.
     uint64_t m_HidBatch = 0;
+    /// The worker's ICE agent on the shared UDP ports (network/IceMux), by its
+    /// feed number there; 0 when it has none.
+    uint32_t m_MuxFeed = 0;
+    void onMuxEvent(const QJsonObject& event);
+    void dropMuxAgent();
     /// Mouse Keys the worker turned on and has not let go of yet, with what to
     /// put back if it dies holding them (a `mouseKeys` event; Windows only).
     bool m_MouseKeysHeld = false;
