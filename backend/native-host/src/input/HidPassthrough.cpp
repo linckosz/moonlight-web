@@ -45,6 +45,24 @@ std::string idsOf(uint16_t vendorId, uint16_t productId)
     return ids;
 }
 
+/// A refused device, named, with the descriptor built for it: the device's
+/// report layout and nothing else (no serial number), so a refusal reported
+/// from a log can be replayed without the device.
+void logRefusal(int slot, const HidDeviceInfo& device, const std::vector<uint8_t>& descriptor,
+                const std::string& why)
+{
+    std::string hex;
+    hex.reserve(descriptor.size() * 2);
+    for (const uint8_t b : descriptor) {
+        char two[3];
+        std::snprintf(two, sizeof two, "%02x", b);
+        hex += two;
+    }
+    log::warning("[hid] slot " + std::to_string(slot) + ": " + device.name + " " +
+                 idsOf(device.vendorId, device.productId) + " refused (" + why + "), descriptor " +
+                 std::to_string(descriptor.size()) + " bytes: " + hex);
+}
+
 } // namespace
 
 /// Where a device's requests and force feedback go, and what of them it must
@@ -514,6 +532,7 @@ std::string HidPassthrough::attach(int slot, const HidDeviceInfo& device)
 
     std::vector<input::hid::Collection> collections = device.collections;
     input::hid::repairBounds(collections);
+    input::hid::repairUsages(collections);
     std::unique_ptr<input::IVirtualHid> dev =
         m_factory ? m_factory() : input::makeVirtualHid(device.forceFeedback);
     if (!dev) {
@@ -531,7 +550,10 @@ std::string HidPassthrough::attach(int slot, const HidDeviceInfo& device)
     input::hid::stripPid(collections);
     const std::vector<uint8_t> descriptor =
         pidId ? input::hid::encodeWithPid(collections, pidId) : input::hid::encode(collections);
-    if (std::string why = input::hid::validate(descriptor); !why.empty()) return why;
+    if (std::string why = input::hid::validate(descriptor); !why.empty()) {
+        logRefusal(slot, device, descriptor, why);
+        return why;
+    }
 
     // The same device, kept from the last stream: the game still has it.
     std::unique_ptr<Slot> s;
@@ -563,7 +585,10 @@ std::string HidPassthrough::attach(int slot, const HidDeviceInfo& device)
         s->route->traceLeft = kTraceRequests;
         wire(*dev, s->route);
         std::string error;
-        if (!dev->create(s->identity, error)) return error;
+        if (!dev->create(s->identity, error)) {
+            logRefusal(slot, device, descriptor, error);
+            return error;
+        }
         s->device = std::move(dev);
     }
 

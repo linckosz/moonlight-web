@@ -30,6 +30,7 @@ set(MW_HID_POC_SOURCES
     # The page's collections, read as the relay reads them.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../src/streaming/HidCollectionsJson.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/input/HidDescriptor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/input/HidPid.cpp
 )
 set(MW_WINUHID ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/winuhid)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

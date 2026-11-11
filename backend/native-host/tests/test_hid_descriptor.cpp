@@ -15,6 +15,7 @@
  */
 #include "native_test_framework.h"
 
+#include "hid_chrome_shapes.h"
 #include "input/HidDescriptor.h"
 
 #include <cstdint>
@@ -55,6 +56,65 @@ const std::vector<uint8_t> kEdgeTxClassic = {
     0x81, 0x02,       //     Input (Data, Var, Abs)
     0xC0,             //   End Collection
     0xC0,             // End Collection
+};
+
+// A joystick as many declare it: X and Y in a Physical collection, then the
+// buttons and a throttle at the application's own level. Report 1, 5 bytes.
+const std::vector<uint8_t> kJoystickPointerFirst = {
+    0x05, 0x01,       // Usage Page (Generic Desktop)
+    0x09, 0x04,       // Usage (Joystick)
+    0xA1, 0x01,       // Collection (Application)
+    0x85, 0x01,       //   Report ID (1)
+    0x09, 0x01,       //   Usage (Pointer)
+    0xA1, 0x00,       //   Collection (Physical)
+    0x09, 0x30,       //     Usage (X)
+    0x09, 0x31,       //     Usage (Y)
+    0x15, 0x00,       //     Logical Minimum (0)
+    0x26, 0xFF, 0x03, //     Logical Maximum (1023)
+    0x75, 0x0A,       //     Report Size (10)
+    0x95, 0x02,       //     Report Count (2)
+    0x81, 0x02,       //     Input (Data, Var, Abs)
+    0xC0,             //   End Collection
+    0x05, 0x09,       //   Usage Page (Button)
+    0x19, 0x01,       //   Usage Minimum (1)
+    0x29, 0x0C,       //   Usage Maximum (12)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x0C,       //   Report Count (12)
+    0x81, 0x02,       //   Input (Data, Var, Abs)
+    0x05, 0x02,       //   Usage Page (Simulation Controls)
+    0x09, 0xBB,       //   Usage (Throttle)
+    0x26, 0xFF, 0x00, //   Logical Maximum (255)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x01,       //   Report Count (1)
+    0x81, 0x02,       //   Input (Data, Var, Abs)
+    0xC0,             // End Collection
+};
+
+// A game pad with a button declared as a range of one usage, then seven data
+// bits with no usage at all. No report id, 3 bytes.
+const std::vector<uint8_t> kOneUsageRange = {
+    0x05, 0x01, // Usage Page (Generic Desktop)
+    0x09, 0x05, // Usage (Game Pad)
+    0xA1, 0x01, // Collection (Application)
+    0x09, 0x30, //   Usage (X)
+    0x09, 0x31, //   Usage (Y)
+    0x15, 0x81, //   Logical Minimum (-127)
+    0x25, 0x7F, //   Logical Maximum (127)
+    0x75, 0x08, //   Report Size (8)
+    0x95, 0x02, //   Report Count (2)
+    0x81, 0x02, //   Input (Data, Var, Abs)
+    0x05, 0x09, //   Usage Page (Button)
+    0x19, 0x01, //   Usage Minimum (1)
+    0x29, 0x01, //   Usage Maximum (1)
+    0x15, 0x00, //   Logical Minimum (0)
+    0x25, 0x01, //   Logical Maximum (1)
+    0x75, 0x01, //   Report Size (1)
+    0x95, 0x01, //   Report Count (1)
+    0x81, 0x02, //   Input (Data, Var, Abs)
+    0x75, 0x07, //   Report Size (7)
+    0x81, 0x02, //   Input (Data, Var, Abs), no usage
+    0xC0,       // End Collection
 };
 
 ReportItem buttons(uint32_t first, uint32_t last)
@@ -241,6 +301,51 @@ void run_hid_descriptor_tests()
         CHECK(rebuilt.size() <= kEdgeTxClassic.size() + 8);
         // Axes reconstructed one item each give the same layout.
         CHECK(sameLayout(encode(tx12AsChromeShowsIt(true)), kEdgeTxClassic));
+    }
+
+    SECTION("HID descriptor — Chrome on a Mac lists each field in every parent: written once");
+    {
+        for (const std::vector<uint8_t>* real : {&kEdgeTxClassic, &kJoystickPointerFirst}) {
+            for (bool mac : {true, false}) {
+                std::vector<Collection> c =
+                    mac ? hid_chrome::onMac(*real) : hid_chrome::onWindows(*real);
+                CHECK_EQ(childRuns(c[0]).has_value(), mac);
+                repairBounds(c);
+                repairUsages(c);
+                const std::vector<uint8_t> rebuilt = encode(c);
+                CHECK(sameLayout(rebuilt, *real));
+                CHECK(validate(rebuilt).empty());
+                CHECK(hid_chrome::windowsAccepts(parse(rebuilt)));
+            }
+        }
+        // X and Y sat in a Physical collection before the application's own
+        // buttons: the report keeps that order, in its 5 bytes and its id.
+        std::vector<Collection> c = hid_chrome::onMac(kJoystickPointerFirst);
+        CHECK_EQ(reportBytes(parse(encode(c)), Kind::Input, 1), static_cast<size_t>(6));
+        // A tree written by hand lists each collection's own items: its
+        // children are written as before.
+        CHECK(!childRuns(tx12AsChromeShowsIt(false)[0]).has_value());
+    }
+
+    SECTION("HID descriptor — a one-usage range keeps its usage, a data item without one is "
+            "padding");
+    {
+        std::vector<Collection> c = hid_chrome::onMac(kOneUsageRange);
+        // What Chrome hands the page: the button as no range, with no usage.
+        const ReportItem& button = c[0].inputReports[0].items[1];
+        CHECK(!button.isRange && button.usages.empty());
+        CHECK_EQ(button.usageMinimum, 0x90001u);
+        CHECK(!hid_chrome::windowsAccepts(parse(encode(c))));
+        repairBounds(c);
+        repairUsages(c);
+        const Parsed p = parse(encode(c));
+        CHECK(hid_chrome::windowsAccepts(p));
+        CHECK_EQ(reportBytes(p, Kind::Input, 0), static_cast<size_t>(3));
+        bool buttonOne = false;
+        for (const Field& f : normalise(p.fields))
+            buttonOne =
+                buttonOne || (f.bitOffset == 16 && f.usages == std::vector<uint32_t>{0x90001});
+        CHECK(buttonOne);
     }
 
     SECTION("HID descriptor — a wheel round-trips: ids, signed axis, unit, null hat, padding, "

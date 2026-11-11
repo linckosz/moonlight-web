@@ -26,18 +26,18 @@
  *  - one command at a time, keyed as for HID++ (hidppFfb.js): newer
  *    parameters for an effect replace the older ones still waiting.
  *
- * Bit layout. WebHID hands collections, not the descriptor, and a collection
- * lists its own items before its children: where a child collection sat among
- * its parent's items is lost. PID reports do nest (Set Effect holds Effect
- * Type, Axes Enable and Direction collections between its own fields), so
- * inside a PID collection each child is put back before the first of the
- * parent's items whose PID usage comes after the child's. PID usages follow
- * the order of the USB PID spec's reports, which every PID firmware copies;
- * the parent's own items never move. Outside PID collections, Chrome's order.
- * A guess all the same: a wheel laid out otherwise gets wrong bytes, and its
- * effects go wrong rather than anything worse (a PID report only sets effect
- * parameters). To check on the first real PID wheel.
+ * Bit layout. WebHID hands collections, not the descriptor. Chrome's own
+ * descriptor parser (macOS, Linux) lists each item in its collection and in
+ * every ancestor, in descriptor order: a top-level collection holds each
+ * report whole, and the layout is read there; a PID collection (Set Effect,
+ * Block Load…) names its report. Chrome on Windows rebuilds one flat
+ * collection from Windows' preparsed data: no PID collection names a report,
+ * and the usages of an array (Effect Type) come in an order it does not keep.
+ * So a wheel on a Windows client gets no force feedback from here
+ * (hasNativePid() is false there). To check on the first real PID wheel.
  */
+
+import { sameItem } from './hidWire.js';
 
 const PAGE_PID = 0x0f;
 const PAGE_DESKTOP = 0x01;
@@ -115,44 +115,60 @@ const CONTROLS = {
 const KINDS = ['inputReports', 'outputReports', 'featureReports'];
 const READ_TIMEOUT_MS = 500;
 
-const firstPidUsage = (item) => {
-    if (item.isRange) return item.usageMinimum >>> 16 === PAGE_PID ? item.usageMinimum & 0xffff : 0;
-    const u = (item.usages || []).find((x) => x >>> 16 === PAGE_PID);
-    return u === undefined ? 0 : u & 0xffff;
-};
+// Where `run` sits in `list` from `from` on, or -1.
+function findRun(list, run, from) {
+    for (let i = from; i + run.length <= list.length; i++)
+        if (run.every((item, k) => sameItem(list[i + k], item))) return i;
+    return -1;
+}
 
-// Items of a collection subtree in report order: [{ kind, id, item }].
-function flatten(c, ids) {
-    const inPid = c.usagePage === PAGE_PID;
+// True when `c` lists its children's items too, each child's as one run, in
+// order: Chrome's own descriptor parser. False with no children (Chrome on
+// Windows), or when a tree lists each collection's own items only.
+function listsChildren(c) {
+    const kids = c.children || [];
+    if (!kids.length) return false;
+    for (const kind of KINDS) {
+        const mine = c[kind] || [];
+        const next = new Map();
+        for (const ch of kids)
+            for (const r of ch[kind] || []) {
+                const items = r.items || [];
+                if (!items.length) continue;
+                const m = mine.find((x) => x.reportId === r.reportId);
+                const at = m ? findRun(m.items || [], items, next.get(r.reportId) || 0) : -1;
+                if (at < 0) return false;
+                next.set(r.reportId, at + items.length);
+            }
+    }
+    return true;
+}
+
+// Every item of a collection's reports, whole and in order: [{ kind, id, item }].
+function wholeReports(c) {
     const own = [];
-    let rank = 0;
     for (const kind of KINDS)
         for (const r of c[kind] || [])
-            for (const item of r.items || []) {
-                // Padding keeps the rank before it; a field of another page
-                // leading the report (Create New Effect's Byte Count) goes
-                // after the children, as the spec lays it out.
-                rank = firstPidUsage(item) || rank || (item.isConstant ? 0 : Infinity);
-                own.push({ kind, id: r.reportId, item, rank });
-            }
-    const kids = (c.children || []).map((ch) => ({
-        rank: ch.usagePage === PAGE_PID ? ch.usage : 0,
-        entries: flatten(ch, ids),
-    }));
-    if (inPid) {
-        const first = own[0] || kids.find((k) => k.entries.length)?.entries[0];
-        if (first && !ids.has(c.usage)) ids.set(c.usage, { kind: first.kind, id: first.id });
+            for (const item of r.items || []) own.push({ kind, id: r.reportId, item });
+    if (listsChildren(c)) return own;
+    return [...own, ...(c.children || []).flatMap(wholeReports)];
+}
+
+// The report each PID collection names, by its usage: the first it holds.
+function pidReports(c, ids) {
+    if (c.usagePage === PAGE_PID && !ids.has(c.usage)) {
+        const first = wholeReports(c)[0];
+        if (first) ids.set(c.usage, { kind: first.kind, id: first.id });
     }
-    if (!inPid) return [...own, ...kids.flatMap((k) => k.entries)];
-    const out = [];
-    let k = 0;
-    for (const e of own) {
-        while (k < kids.length && kids[k].rank && kids[k].rank < e.rank)
-            out.push(...kids[k++].entries);
-        out.push(e);
-    }
-    while (k < kids.length) out.push(...kids[k++].entries);
-    return out;
+    for (const ch of c.children || []) pidReports(ch, ids);
+}
+
+// Chrome's own parser makes no range of a one-usage range (Usage Minimum and
+// Maximum alike), and gives it no usage: its minimum is the usage.
+function usagesOf(item) {
+    const usages = item.usages || [];
+    if (usages.length || item.isRange || !item.usageMinimum) return usages;
+    return item.usageMinimum === item.usageMaximum ? [item.usageMinimum] : usages;
 }
 
 /**
@@ -163,13 +179,14 @@ function flatten(c, ids) {
 export function reportLayout(collections) {
     const ids = new Map();
     const reports = new Map();
-    for (const c of collections || [])
-        for (const { kind, id, item } of flatten(c, ids)) {
+    for (const c of collections || []) {
+        pidReports(c, ids);
+        for (const { kind, id, item } of wholeReports(c)) {
             const key = `${kind}:${id}`;
             let r = reports.get(key);
             if (!r) reports.set(key, (r = { id, bits: 0, fields: [] }));
             r.fields.push({
-                usages: item.usages || [],
+                usages: usagesOf(item),
                 isRange: !!item.isRange,
                 usageMinimum: item.usageMinimum,
                 usageMaximum: item.usageMaximum,
@@ -185,6 +202,7 @@ export function reportLayout(collections) {
             });
             r.bits += item.reportSize * item.reportCount;
         }
+    }
     return { reports, ids };
 }
 

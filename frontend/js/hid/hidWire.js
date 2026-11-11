@@ -69,6 +69,16 @@ const ITEM_FIELDS = [
     'physicalMaximum',
 ];
 
+/** True when two report items say the same, field by field. */
+export function sameItem(a, b) {
+    return ITEM_FIELDS.every((k) => {
+        const x = a[k];
+        const y = b[k];
+        if (!Array.isArray(x) || !Array.isArray(y)) return x === y;
+        return x.length === y.length && x.every((v, i) => v === y[i]);
+    });
+}
+
 // WebHID's objects keep their fields on the prototype: JSON.stringify sees none.
 function plainItem(item) {
     const o = {};

@@ -23,6 +23,7 @@
 //   mw-hid-poc --selftest dump.json              encode a hid-probe reading, no device
 //   mw-hid-poc --create dump.json [--hold 120]   create its devices without a page
 //   --hwid none|usb|ours|<id>                    the hardware ids a Windows device gets
+//   --ffb                                        the host's PID block, as for force feedback
 //
 // Protocol, one WebSocket per page:
 //   page → tool, text  {"type":"attach","slot":n,"vendorId","productId","productName",
@@ -35,6 +36,7 @@
 #include "VirtualHid.h"
 #include "streaming/HidCollectionsJson.h"
 #include "input/HidDescriptor.h"
+#include "input/HidPid.h"
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -54,6 +56,9 @@
 namespace hid = mw::native::input::hid;
 
 namespace {
+
+/// --ffb: build as the host does for a page that plays force feedback.
+bool g_ffb = false;
 
 QString hexOf(const std::vector<uint8_t>& bytes)
 {
@@ -124,7 +129,12 @@ Built build(const QJsonArray& collections)
         return b;
     }
     hid::repairBounds(c);
-    b.descriptor = hid::encode(c);
+    hid::repairUsages(c);
+    // As the host's attach() does: the device's own PID block out, the
+    // host's in with --ffb.
+    const uint8_t pidId = g_ffb ? hid::pidFirstId(c) : 0;
+    hid::stripPid(c);
+    b.descriptor = pidId ? hid::encodeWithPid(c, pidId) : hid::encode(c);
     b.parsed = hid::parse(b.descriptor);
     b.why = QString::fromStdString(hid::validate(b.descriptor));
     return b;
@@ -453,7 +463,9 @@ int main(int argc, char** argv)
     cli.addOption({QStringLiteral("hwid"),
                    QStringLiteral("Windows hardware ids: none, usb, ours or an id"),
                    QStringLiteral("form"), QStringLiteral("none")});
+    cli.addOption({QStringLiteral("ffb"), QStringLiteral("give each device the host's PID block")});
     cli.process(app);
+    g_ffb = cli.isSet(QStringLiteral("ffb"));
     if (cli.isSet(QStringLiteral("selftest")))
         return selftest(cli.value(QStringLiteral("selftest")));
     const QString hwid = cli.value(QStringLiteral("hwid"));

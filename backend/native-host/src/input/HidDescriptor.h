@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -110,7 +111,36 @@ struct Parsed
     std::vector<uint8_t> reportIds;
 };
 
-/// The descriptor for these collections, as a device would declare them.
+/// Where one child collection's items sit in its parent's own lists.
+struct ChildRun
+{
+    Kind kind = Kind::Input;
+    size_t report = 0;      // in the parent's list of that kind
+    size_t child = 0;       // in parent.children
+    size_t childReport = 0; // in the child's list of that kind
+    size_t at = 0;          // the run's first item in the parent's report
+};
+
+/// The two shapes WebHID's collections come in (Chromium's source, 04/11):
+///  - Chrome's own descriptor parser (macOS, Linux, ChromeOS) adds each item
+///    to its collection and to every ancestor. A collection's lists then hold
+///    its children's items too, each child's as one run, in descriptor order,
+///    and a top-level collection holds every report whole;
+///  - Chrome on Windows rebuilds one flat collection per top-level collection
+///    from Windows' preparsed data: every report whole, no children.
+/// A tree written by hand (the tests) lists each collection's own items only.
+///
+/// Where `c`'s children sit in its lists when c lists their items as well;
+/// nothing when c has no children, or when a child's items are not in c's
+/// lists.
+std::optional<std::vector<ChildRun>> childRuns(const Collection& c);
+
+/// The descriptor for these collections, as a device would declare them. A
+/// collection that lists its children's items (childRuns()) is written from
+/// its own lists alone: its reports are whole there, in order, and writing
+/// the children too would declare each of their fields twice (the 552 refusal
+/// of a Moza wheel from a Mac, 04/11). Its nested collections are not kept;
+/// Chrome on Windows never had them, and games read fields, not nesting.
 std::vector<uint8_t> encode(const std::vector<Collection>& collections);
 
 /// Puts back the logical bounds Chrome loses on Windows, where it rebuilds
@@ -121,6 +151,14 @@ std::vector<uint8_t> encode(const std::vector<Collection>& collections);
 /// range of its size, which is what such devices declare. Constant items and
 /// sane bounds are left alone. Called on what a page sends, before encode().
 void repairBounds(std::vector<Collection>& collections);
+
+/// Puts back the usages Chrome's own descriptor parser (macOS, Linux) loses: a
+/// one-usage range (Usage Minimum and Maximum both 1) comes with no usage, as
+/// Chrome sets isRange only when the two differ, and its usageMinimum is the
+/// usage. A data item left with no usage at all becomes padding: Linux reads
+/// it as padding anyway, and Windows refuses a descriptor that has one
+/// (HIDP_GETCOLDESC_MAIN_ITEM_NO_USAGE). Called with repairBounds().
+void repairUsages(std::vector<Collection>& collections);
 
 /// Short items only (a long item is refused, as no game device uses one).
 Parsed parse(const uint8_t* data, size_t size);

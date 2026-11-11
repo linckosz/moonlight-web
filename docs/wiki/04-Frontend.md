@@ -225,7 +225,7 @@ An Xbox pad drawn over the stream (`TouchPadView`), for a viewer with fingers an
 
 **« As itself »** (Settings → Controllers, on a wheel's, radio's or stick's row) sends the real device instead of an Xbox pad: the page reads it through WebHID and **MoonlightWeb's own host** recreates it, under its own name and USB ids, every axis and button (the G923's clutch, the TX12's eight channels). Design and benches: [`hid-passthrough-study.md`](../design/hid-passthrough-study.md).
 
-**The client** needs Chrome or Edge on a computer, nothing installed. The first switch-on opens the browser's chooser, narrowed to that model; afterwards it is a plain switch. Logitech G HUB may stay open on the client: the page and G HUB share the wheel.
+**The client** needs Chrome or Edge on a computer, nothing installed. The first switch-on opens the browser's chooser, narrowed to that model; afterwards it is a plain switch. Logitech G HUB may stay open on the client: the page and G HUB share the wheel. A wheel that speaks USB PID (Moza, Simucube, Fanatec…) gets its force feedback from a Mac or Linux client only: Chrome on Windows describes its reports without the PID collections that name them, so from a Windows client it reaches the game without force feedback.
 
 **The host** decides:
 

@@ -67,9 +67,13 @@ uint8_t pidFirstId(const std::vector<Collection>& collections);
 ///
 /// Every item inside a PID collection, or with a PID usage, becomes padding
 /// of the same size, so a report the device shares with its own fields keeps
-/// its layout; reports left with padding alone, and collections left empty,
-/// are dropped. Call pidFirstId() before, on the device's collections as they
-/// came: the block's ids must stay clear of the reports the device still sends.
+/// its layout. An output or feature report with a PID field is padded whole:
+/// it is one of the PID spec's reports, and Chrome on Windows, which sends no
+/// nesting, gives no other way to know its X, Y and ordinals are PID's. Both
+/// of Chrome's shapes are understood (childRuns()). Reports left with padding
+/// alone, and collections left empty, are dropped. Call pidFirstId() before,
+/// on the device's collections as they came: the block's ids must stay clear
+/// of the reports the device still sends.
 void stripPid(std::vector<Collection>& collections);
 
 /// The PID block alone: logical collections for each PID report, to sit inside

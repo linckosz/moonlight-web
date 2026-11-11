@@ -105,6 +105,16 @@ annonce en août 2026, sortie visée pour Chrome 157.
   - les unités (`unitSystem`, exposants) ;
   - les bornes logiques et physiques ;
   - `strings`.
+- ⚠️ **Deux formes d'arbre (source de Chromium, vu le 04/11 avec un volant Moza
+  depuis un Mac).** Le parseur de Chrome (macOS, Linux) range chaque champ dans sa
+  collection **et dans tous ses ancêtres** : une collection de tête porte chaque
+  rapport en entier, dans l'ordre, et ses enfants en répètent des morceaux. Sous
+  Windows, Chrome donne une collection plate par collection de tête, sans enfants.
+  L'hôte écrit donc une collection de tête depuis ses seules listes quand elles
+  contiennent celles de ses enfants (`childRuns()`) ; écrire aussi les enfants
+  doublait des champs, et Windows refusait le descripteur (erreur 552). Autre
+  perte du parseur de Chrome : une plage d'un seul usage arrive sans usage
+  (`repairUsages()`).
 - ⚠️ **Le descripteur de rapport brut n'est pas exposé.** Chromium l'a sous Linux
   et macOS (`HidDeviceInfo.report_descriptor`), mais ne le passe pas au web. Sous
   Windows, Chrome ne l'a même pas : il reconstruit l'arbre à partir des données

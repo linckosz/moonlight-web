@@ -17,6 +17,7 @@
 
 #include "native_test_framework.h"
 
+#include "hid_chrome_shapes.h"
 #include "input/HidDescriptor.h"
 #include "input/HidFfbJournal.h"
 #include "input/HidPid.h"
@@ -131,6 +132,51 @@ std::vector<Collection> pidWheel()
     blockLoad.featureReports = {load};
     c[0].children = {effect, blockLoad};
     return c;
+}
+
+/// A wheel that carries its own PID block, as Moza's and Simucube's do: the
+/// steering axis in a Physical collection, 16 buttons at the joystick's own
+/// level (report 1), then the block in reports 2 to 15, the host's own layout
+/// standing in for the USB PID spec's. Without the block when `withBlock` is
+/// false: the same wheel's report 1 alone.
+std::vector<uint8_t> nativePidWheel(bool withBlock)
+{
+    std::vector<uint8_t> d = {
+        0x05, 0x01,                   // Usage Page (Generic Desktop)
+        0x09, 0x04,                   // Usage (Joystick)
+        0xA1, 0x01,                   // Collection (Application)
+        0x85, 0x01,                   //   Report ID (1)
+        0x09, 0x01,                   //   Usage (Pointer)
+        0xA1, 0x00,                   //   Collection (Physical)
+        0x09, 0x30,                   //     Usage (X)
+        0x15, 0x00,                   //     Logical Minimum (0)
+        0x27, 0xFF, 0xFF, 0x00, 0x00, //     Logical Maximum (65535)
+        0x75, 0x10,                   //     Report Size (16)
+        0x95, 0x01,                   //     Report Count (1)
+        0x81, 0x02,                   //     Input (Data, Var, Abs)
+        0xC0,                         //   End Collection
+        0x05, 0x09,                   //   Usage Page (Button)
+        0x19, 0x01,                   //   Usage Minimum (1)
+        0x29, 0x10,                   //   Usage Maximum (16)
+        0x25, 0x01,                   //   Logical Maximum (1)
+        0x75, 0x01,                   //   Report Size (1)
+        0x95, 0x10,                   //   Report Count (16)
+        0x81, 0x02,                   //   Input (Data, Var, Abs)
+    };
+    if (withBlock) {
+        const std::vector<uint8_t> block = pidBlock(2);
+        d.insert(d.end(), block.begin(), block.end());
+    }
+    d.push_back(0xC0);
+    return d;
+}
+
+std::vector<Field> inputReport(const Parsed& p, uint8_t id)
+{
+    std::vector<Field> out;
+    for (const Field& f : normalise(p.fields))
+        if (f.kind == Kind::Input && f.reportId == id) out.push_back(f);
+    return out;
 }
 
 bool anyPid(const Parsed& p)
@@ -526,6 +572,49 @@ void run_hid_pid_tests()
                 CHECK(!load.empty());
                 CHECK(requests.empty());
             }
+        }
+    }
+
+    SECTION("HID PID — a native PID wheel from a Mac or from Windows: each field once, its block "
+            "out, the host's in");
+    {
+        const std::vector<uint8_t> real = nativePidWheel(true);
+        const std::vector<Field> report1 = inputReport(parse(nativePidWheel(false)), 1);
+        for (bool mac : {true, false}) {
+            std::vector<Collection> c = mac ? hid_chrome::onMac(real) : hid_chrome::onWindows(real);
+            repairBounds(c);
+            repairUsages(c);
+            const uint8_t first = pidFirstId(c);
+            CHECK_EQ(static_cast<int>(first), 16);
+            stripPid(c);
+            const std::vector<uint8_t> d = encodeWithPid(c, first);
+            CHECK(validate(d).empty());
+            const Parsed p = parse(d);
+            CHECK(hid_chrome::windowsAccepts(p));
+            // The wheel's own report 1, field for field.
+            CHECK(inputReport(p, 1) == report1);
+            // None of the wheel's own PID reports, the host's from 16.
+            bool own = false;
+            for (const Field& f : p.fields)
+                own = own || (f.reportId >= 2 && f.reportId <= 15);
+            CHECK(!own);
+            CHECK(reportBytes(p, Kind::Feature, 16 + 11) > 0);
+
+            // Through HidPassthrough, as the page sends it.
+            FeatureFake* dev = nullptr;
+            std::vector<HidRequest> requests;
+            HidPassthrough hp([&](const HidRequest& r) { requests.push_back(r); },
+                              [&] { return std::make_unique<FeatureFake>(&dev); });
+            HidDeviceInfo info;
+            info.name = "PID wheel";
+            info.collections = mac ? hid_chrome::onMac(real) : hid_chrome::onWindows(real);
+            info.forceFeedback = true;
+            CHECK(hp.attach(0, info).empty());
+            CHECK(dev != nullptr);
+            if (!dev) continue;
+            CHECK(dev->descriptor == d);
+            CHECK(!dev->getFeature(16 + 11).empty()); // the host's Block Load answers
+            CHECK(requests.empty());
         }
     }
 

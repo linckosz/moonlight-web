@@ -31,91 +31,104 @@ const array = (usages) => item(usages, 8, 1, 1, usages.length, { isArray: true }
 const pad = (bits) => item([], bits, 1, 0, 0, { isConstant: true });
 const ms = { unitExponent: -3, unitFactorTimeExponent: 1 };
 
-const col = (usage, kind, id, items, children = [], usagePage = 0x0f) => ({
-    usagePage,
-    usage,
-    type: 2,
-    children,
-    inputReports: kind === 'in' ? [{ reportId: id, items }] : [],
-    outputReports: kind === 'out' ? [{ reportId: id, items }] : [],
-    featureReports: kind === 'feat' ? [{ reportId: id, items }] : [],
-});
-
 const TYPES = [0x26, 0x27, 0x30, 0x31, 0x32, 0x33, 0x34, 0x40, 0x41, 0x42, 0x43].map(P);
 const INDEX = item([P(0x22)], 8, 1, 1, 40);
 
+// A collection as its descriptor declares it: items of one report and nested
+// collections, in order.
+const node = (usage, entries, usagePage = 0x0f, type = 2) => ({ usage, usagePage, type, entries });
+const at = (kind, id, ...items) => items.map((it) => ({ kind, id, item: it }));
+const LISTS = { in: 'inputReports', out: 'outputReports', feat: 'featureReports' };
+const subtree = (n) => n.entries.flat().flatMap((e) => (e.entries ? subtree(e) : [e]));
+
 /**
- * A PID wheel laid out as the USB PID spec's example descriptor, the way
- * Chrome shows it: each collection's own items first, its children after.
- * Set Effect (id 1) nests Effect Type, Axes Enable and Direction between its
- * own fields; forces are -255..255 and times in 1/10 ms on purpose.
+ * What Chrome on macOS hands a page (Chromium's own descriptor parser): each
+ * item in its collection and in every ancestor, in descriptor order.
  */
-function pidCollections() {
-    const setEffect = col(
-        0x21,
-        'out',
-        1,
-        [
-            INDEX,
+function onMac(n) {
+    const c = {
+        usagePage: n.usagePage,
+        usage: n.usage,
+        type: n.type,
+        children: n.entries
+            .flat()
+            .filter((e) => e.entries)
+            .map(onMac),
+        inputReports: [],
+        outputReports: [],
+        featureReports: [],
+    };
+    for (const { kind, id, item: it } of subtree(n)) {
+        const list = c[LISTS[kind]];
+        let r = list.find((x) => x.reportId === id);
+        if (!r) list.push((r = { reportId: id, items: [] }));
+        r.items.push(it);
+    }
+    return c;
+}
+
+/** What Chrome on Windows hands a page: one flat collection, every report whole. */
+const onWindows = (n) => ({ ...onMac(n), children: [] });
+
+/**
+ * A PID wheel laid out as the USB PID spec's example descriptor. Set Effect
+ * (id 1) nests Effect Type, Axes Enable and Direction between its own fields;
+ * forces are -255..255 and times in 1/10 ms on purpose.
+ */
+function pidWheel() {
+    const setEffect = node(0x21, [
+        at('out', 1, INDEX),
+        node(0x25, [at('out', 1, array(TYPES))]),
+        at(
+            'out',
+            1,
             item([P(0x50), P(0x54), P(0x51)], 16, 3, 0, 0x7fff, {
                 unitExponent: -4,
                 unitFactorTimeExponent: 1,
             }),
             item([P(0x52)], 8, 1, 0, 255),
             item([P(0x53)], 8, 1, 1, 8),
-            item([P(0x56)], 1, 1, 0, 1),
-            pad(5),
-            item([P(0xa7)], 16, 1, 0, 0x7fff, ms),
-        ],
-        [
-            col(0x25, 'out', 1, [array(TYPES)]),
-            col(0x55, 'out', 1, [item([D(0x30), D(0x31)], 1, 2, 0, 1)]),
-            col(0x57, 'out', 1, [item([O(1), O(2)], 8, 2, 0, 255)]),
-        ],
-    );
-    const setConstant = col(0x73, 'out', 5, [INDEX, item([P(0x70)], 16, 1, -255, 255)]);
-    const setCondition = col(0x5f, 'out', 3, [
-        INDEX,
-        item([P(0x23)], 4, 1, 0, 1),
-        pad(4),
-        item([P(0x60), P(0x61), P(0x62)], 8, 3, -128, 127),
-        item([P(0x63), P(0x64), P(0x65)], 8, 3, 0, 255),
+        ),
+        node(0x55, [at('out', 1, item([D(0x30), D(0x31)], 1, 2, 0, 1))]),
+        at('out', 1, item([P(0x56)], 1, 1, 0, 1), pad(5)),
+        node(0x57, [at('out', 1, item([O(1), O(2)], 8, 2, 0, 255))]),
+        at('out', 1, item([P(0xa7)], 16, 1, 0, 0x7fff, ms)),
     ]);
-    const operation = col(
-        0x77,
-        'out',
-        10,
-        [INDEX, item([P(0x7c)], 8, 1, 0, 255)],
-        [col(0x78, 'out', 10, [array([P(0x79), P(0x7a), P(0x7b)])])],
-    );
-    const blockFree = col(0x90, 'out', 11, [INDEX]);
-    const control = col(
-        0x95,
-        'out',
-        12,
-        [],
-        [col(0x96, 'out', 12, [array([0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c].map(P))])],
-    );
-    const gain = col(0x7d, 'out', 13, [item([P(0x7e)], 8, 1, 0, 255)]);
-    const create = col(
-        0xab,
-        'feat',
-        17,
-        [item([D(0x3b)], 16, 1, 0, 511)],
-        [col(0x25, 'feat', 17, [array(TYPES)])],
-    );
-    const load = col(
-        0x89,
-        'feat',
-        18,
-        [INDEX, item([P(0xac)], 16, 1, 0, 0xffff)],
-        [col(0x8b, 'feat', 18, [array([P(0x8c), P(0x8d), P(0x8e)])])],
-    );
-    const joystick = {
-        usagePage: 1,
-        usage: 4,
-        type: 1,
-        children: [
+    const setConstant = node(0x73, [at('out', 5, INDEX, item([P(0x70)], 16, 1, -255, 255))]);
+    const setCondition = node(0x5f, [
+        at(
+            'out',
+            3,
+            INDEX,
+            item([P(0x23)], 4, 1, 0, 1),
+            pad(4),
+            item([P(0x60), P(0x61), P(0x62)], 8, 3, -128, 127),
+            item([P(0x63), P(0x64), P(0x65)], 8, 3, 0, 255),
+        ),
+    ]);
+    const operation = node(0x77, [
+        at('out', 10, INDEX),
+        node(0x78, [at('out', 10, array([P(0x79), P(0x7a), P(0x7b)]))]),
+        at('out', 10, item([P(0x7c)], 8, 1, 0, 255)),
+    ]);
+    const blockFree = node(0x90, [at('out', 11, INDEX)]);
+    const control = node(0x95, [
+        node(0x96, [at('out', 12, array([0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c].map(P)))]),
+    ]);
+    const gain = node(0x7d, [at('out', 13, item([P(0x7e)], 8, 1, 0, 255))]);
+    const create = node(0xab, [
+        node(0x25, [at('feat', 17, array(TYPES))]),
+        at('feat', 17, item([D(0x3b)], 16, 1, 0, 511)),
+    ]);
+    const load = node(0x89, [
+        at('feat', 18, INDEX),
+        node(0x8b, [at('feat', 18, array([P(0x8c), P(0x8d), P(0x8e)]))]),
+        at('feat', 18, item([P(0xac)], 16, 1, 0, 0xffff)),
+    ]);
+    return node(
+        4,
+        [
+            at('in', 2, item([D(0x30)], 16, 1, 0, 65535)),
             setEffect,
             setConstant,
             setCondition,
@@ -126,11 +139,9 @@ function pidCollections() {
             create,
             load,
         ],
-        inputReports: [{ reportId: 2, items: [item([D(0x30)], 16, 1, 0, 65535)] }],
-        outputReports: [],
-        featureReports: [],
-    };
-    return [joystick];
+        1,
+        1,
+    );
 }
 
 function fakePidWheel({ block = 5, status = 1 } = {}) {
@@ -141,7 +152,7 @@ function fakePidWheel({ block = 5, status = 1 } = {}) {
         productId: 0x0006,
         productName: 'PID Wheel',
         opened: false,
-        collections: pidCollections(),
+        collections: [onMac(pidWheel())],
         out,
         features,
         async open() {
@@ -166,31 +177,43 @@ function fakePidWheel({ block = 5, status = 1 } = {}) {
 const settle = () => new Promise((r) => globalThis.setTimeout(r, 0));
 
 describe('pidFfb reportLayout', () => {
-    it('puts nested PID collections back between their parent fields', () => {
-        const { reports, ids } = reportLayout(pidCollections());
+    it('reads each report whole from the top-level collection, each field once', () => {
+        const { reports, ids } = reportLayout([onMac(pidWheel())]);
         const set = reports.get('outputReports:1');
         expect(set.bits).toBe(120);
-        const at = (usage) =>
-            set.fields.find(
-                (f) => f.usages.includes(usage) || (f.isArray && f.usages.includes(usage)),
-            ).offset;
-        expect(at(P(0x22))).toBe(0);
-        expect(at(P(0x26))).toBe(8); // Effect Type, a child
-        expect(at(P(0x50))).toBe(16);
-        expect(at(P(0x52))).toBe(64);
-        expect(at(P(0x53))).toBe(72);
-        expect(at(D(0x30))).toBe(80); // Axes Enable, a child
-        expect(at(P(0x56))).toBe(82);
-        expect(at(O(1))).toBe(88); // Direction, a child after the padding
-        expect(at(P(0xa7))).toBe(104);
+        const offset = (usage) => set.fields.find((f) => f.usages.includes(usage)).offset;
+        expect(offset(P(0x22))).toBe(0);
+        expect(offset(P(0x26))).toBe(8); // Effect Type, a child
+        expect(offset(P(0x50))).toBe(16);
+        expect(offset(P(0x52))).toBe(64);
+        expect(offset(P(0x53))).toBe(72);
+        expect(offset(D(0x30))).toBe(80); // Axes Enable, a child
+        expect(offset(P(0x56))).toBe(82);
+        expect(offset(O(1))).toBe(88); // Direction, a child after the padding
+        expect(offset(P(0xa7))).toBe(104);
         expect(ids.get(0x21)).toEqual({ kind: 'outputReports', id: 1 });
         expect(ids.get(0x89)).toEqual({ kind: 'featureReports', id: 18 });
+        expect(reports.get('featureReports:18').bits).toBe(32);
         expect(reports.get('inputReports:2').bits).toBe(16);
     });
 
-    it('tells a PID wheel from a wheel without PID', () => {
-        expect(hasNativePid({ collections: pidCollections() })).toBe(true);
-        expect(hasNativePid({ collections: [pidCollections()[0].children[0]] })).toBe(false);
+    it('lays a tree that lists only its own items out child after parent', () => {
+        const child = onWindows(node(0x01, [at('in', 0, item([D(0x30)], 8, 1, 0, 255))], 1, 0));
+        const top = { ...onWindows(node(5, [], 1, 1)), children: [child] };
+        expect(reportLayout([top]).reports.get('inputReports:0').bits).toBe(8);
+    });
+
+    it('takes a one-usage range for its usage', () => {
+        const one = item([], 1, 1, 0, 1, { usageMinimum: 0x90001, usageMaximum: 0x90001 });
+        const pad7 = pad(7);
+        const { reports } = reportLayout([onMac(node(5, [at('in', 0, one, pad7)], 1, 1))]);
+        expect(reports.get('inputReports:0').fields[0].usages).toEqual([0x90001]);
+    });
+
+    it('tells a PID wheel from a wheel without PID, and finds none from Windows', () => {
+        expect(hasNativePid({ collections: [onMac(pidWheel())] })).toBe(true);
+        expect(hasNativePid({ collections: [onWindows(pidWheel())] })).toBe(false);
+        expect(hasNativePid({ collections: [onMac(pidWheel()).children[0]] })).toBe(false);
         expect(hasNativePid({ collections: [] })).toBe(false);
     });
 });

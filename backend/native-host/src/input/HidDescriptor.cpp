@@ -18,7 +18,9 @@
 #include "input/HidDescriptor.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -106,6 +108,29 @@ private:
     std::vector<uint8_t>& m_out;
 };
 
+bool sameItem(const ReportItem& a, const ReportItem& b)
+{
+    return a.isAbsolute == b.isAbsolute && a.isArray == b.isArray &&
+           a.isBufferedBytes == b.isBufferedBytes && a.isConstant == b.isConstant &&
+           a.isLinear == b.isLinear && a.isRange == b.isRange && a.isVolatile == b.isVolatile &&
+           a.hasNull == b.hasNull && a.hasPreferredState == b.hasPreferredState &&
+           a.wrap == b.wrap && a.usages == b.usages && a.usageMinimum == b.usageMinimum &&
+           a.usageMaximum == b.usageMaximum && a.reportSize == b.reportSize &&
+           a.reportCount == b.reportCount && a.unitExponent == b.unitExponent &&
+           a.unitSystem == b.unitSystem &&
+           std::equal(std::begin(a.unitFactors), std::end(a.unitFactors),
+                      std::begin(b.unitFactors)) &&
+           a.logicalMinimum == b.logicalMinimum && a.logicalMaximum == b.logicalMaximum &&
+           a.physicalMinimum == b.physicalMinimum && a.physicalMaximum == b.physicalMaximum;
+}
+
+const std::vector<Report>& listOf(const Collection& c, Kind kind)
+{
+    return kind == Kind::Input    ? c.inputReports
+           : kind == Kind::Output ? c.outputReports
+                                  : c.featureReports;
+}
+
 uint32_t unitOf(const ReportItem& it)
 {
     uint32_t unit = static_cast<uint32_t>(it.unitSystem) & 0xF;
@@ -149,8 +174,10 @@ public:
         reports(c.inputReports, Kind::Input);
         reports(c.outputReports, Kind::Output);
         reports(c.featureReports, Kind::Feature);
-        for (const Collection& child : c.children)
-            collection(child);
+        // Lists that hold the children's items already hold every field.
+        if (!childRuns(c))
+            for (const Collection& child : c.children)
+                collection(child);
         m_w.raw(kMain, kEndCollection, 0, 0);
     }
 
@@ -283,6 +310,42 @@ bool Field::operator==(const Field& o) const
            unit == o.unit && unitExponent == o.unitExponent;
 }
 
+std::optional<std::vector<ChildRun>> childRuns(const Collection& c)
+{
+    if (c.children.empty()) return std::nullopt;
+    std::vector<ChildRun> runs;
+    for (const Kind kind : {Kind::Input, Kind::Output, Kind::Feature}) {
+        const std::vector<Report>& mine = listOf(c, kind);
+        // Children come in descriptor order, so their runs do too.
+        std::vector<size_t> next(mine.size(), 0);
+        for (size_t ch = 0; ch < c.children.size(); ++ch) {
+            const std::vector<Report>& theirs = listOf(c.children[ch], kind);
+            for (size_t cr = 0; cr < theirs.size(); ++cr) {
+                const Report& r = theirs[cr];
+                if (r.items.empty()) continue;
+                const auto same = std::find_if(mine.begin(), mine.end(), [&](const Report& m) {
+                    return m.reportId == r.reportId;
+                });
+                if (same == mine.end()) return std::nullopt;
+                const size_t pr = static_cast<size_t>(same - mine.begin());
+                const std::vector<ReportItem>& in = same->items;
+                const auto at = std::search(in.begin() + static_cast<std::ptrdiff_t>(next[pr]),
+                                            in.end(), r.items.begin(), r.items.end(), sameItem);
+                if (at == in.end()) return std::nullopt;
+                ChildRun run;
+                run.kind = kind;
+                run.report = pr;
+                run.child = ch;
+                run.childReport = cr;
+                run.at = static_cast<size_t>(at - in.begin());
+                runs.push_back(run);
+                next[pr] = run.at + r.items.size();
+            }
+        }
+    }
+    return runs;
+}
+
 std::vector<uint8_t> encode(const std::vector<Collection>& collections)
 {
     std::vector<uint8_t> out;
@@ -310,6 +373,22 @@ void repairBounds(std::vector<Collection>& collections)
         repairReports(c.outputReports);
         repairReports(c.featureReports);
         repairBounds(c.children);
+    }
+}
+
+void repairUsages(std::vector<Collection>& collections)
+{
+    for (Collection& c : collections) {
+        for (auto* list : {&c.inputReports, &c.outputReports, &c.featureReports})
+            for (Report& r : *list)
+                for (ReportItem& it : r.items) {
+                    if (it.isConstant || it.isRange || !it.usages.empty()) continue;
+                    if (it.usageMinimum != 0 && it.usageMinimum == it.usageMaximum)
+                        it.usages = {it.usageMinimum};
+                    else
+                        it.isConstant = true;
+                }
+        repairUsages(c.children);
     }
 }
 

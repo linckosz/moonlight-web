@@ -18,6 +18,9 @@
 #include "input/HidPid.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <optional>
+#include <utility>
 
 namespace mw::native::input::hid {
 
@@ -319,26 +322,80 @@ bool isPidItem(const ReportItem& it)
     return std::any_of(it.usages.begin(), it.usages.end(), onPidPage);
 }
 
+std::vector<Report>& listOf(Collection& c, Kind kind)
+{
+    return kind == Kind::Input    ? c.inputReports
+           : kind == Kind::Output ? c.outputReports
+                                  : c.featureReports;
+}
+
+ReportItem paddingFor(const ReportItem& it)
+{
+    ReportItem pad;
+    pad.isConstant = true;
+    pad.reportSize = it.reportSize;
+    pad.reportCount = it.reportCount;
+    return pad;
+}
+
 void padPid(Collection& c, bool inPid)
 {
     inPid = inPid || c.usagePage == kPagePid;
+    // Where the children's items sit in c's lists, read before anything changes.
+    const std::optional<std::vector<ChildRun>> runs = childRuns(c);
     for (auto* list : {&c.inputReports, &c.outputReports, &c.featureReports})
         for (Report& r : *list)
-            for (ReportItem& it : r.items) {
-                if (it.isConstant || !(inPid || isPidItem(it))) continue;
-                ReportItem pad;
-                pad.isConstant = true;
-                pad.reportSize = it.reportSize;
-                pad.reportCount = it.reportCount;
-                it = pad;
-            }
+            for (ReportItem& it : r.items)
+                if (!it.isConstant && (inPid || isPidItem(it))) it = paddingFor(it);
     for (Collection& ch : c.children)
         padPid(ch, inPid);
+    // c's copy of a child's items takes the child's padding: inside a PID
+    // collection, a field without a PID usage (Axes Enable's X and Y,
+    // Direction's ordinals) is padding too.
+    if (runs)
+        for (const ChildRun& run : *runs) {
+            const std::vector<ReportItem>& from =
+                listOf(c.children[run.child], run.kind)[run.childReport].items;
+            std::vector<ReportItem>& to = listOf(c, run.kind)[run.report].items;
+            std::copy(from.begin(), from.end(), to.begin() + static_cast<std::ptrdiff_t>(run.at));
+        }
 }
 
-// (kind, id) of every report that still carries a field of the device's own.
+// (kind, id) of a report: kind 0 input, 1 output, 2 feature.
 using ReportKey = std::pair<int, uint8_t>;
 
+// Output and feature reports with a PID field are the PID spec's own reports,
+// whole: Chrome on Windows sends no nesting, so their X, Y and ordinals are
+// known for PID this way only.
+void pidReports(const Collection& c, bool inPid, std::vector<ReportKey>& keys)
+{
+    inPid = inPid || c.usagePage == kPagePid;
+    int kind = 1;
+    for (const auto* list : {&c.outputReports, &c.featureReports}) {
+        for (const Report& r : *list)
+            if (inPid || std::any_of(r.items.begin(), r.items.end(), isPidItem))
+                keys.emplace_back(kind, r.reportId);
+        ++kind;
+    }
+    for (const Collection& ch : c.children)
+        pidReports(ch, inPid, keys);
+}
+
+void padReports(Collection& c, const std::vector<ReportKey>& keys)
+{
+    int kind = 1;
+    for (auto* list : {&c.outputReports, &c.featureReports}) {
+        for (Report& r : *list)
+            if (std::find(keys.begin(), keys.end(), ReportKey(kind, r.reportId)) != keys.end())
+                for (ReportItem& it : r.items)
+                    if (!it.isConstant) it = paddingFor(it);
+        ++kind;
+    }
+    for (Collection& ch : c.children)
+        padReports(ch, keys);
+}
+
+// Every report that still carries a field of the device's own.
 void usedReports(const Collection& c, std::vector<ReportKey>& used)
 {
     int kind = 0;
@@ -379,8 +436,13 @@ bool prune(Collection& c, const std::vector<ReportKey>& used)
 
 void stripPid(std::vector<Collection>& collections)
 {
-    for (Collection& c : collections)
+    std::vector<ReportKey> whole;
+    for (const Collection& c : collections)
+        pidReports(c, false, whole);
+    for (Collection& c : collections) {
         padPid(c, false);
+        padReports(c, whole);
+    }
     std::vector<ReportKey> used;
     for (const Collection& c : collections)
         usedReports(c, used);
