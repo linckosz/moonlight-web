@@ -12,14 +12,16 @@ import { StreamView } from '../js/ui/StreamView.js';
  * the guest typematic turns one Cmd+C into "ccccccccc…".
  *
  * The fix sends the chord as a tap (down immediately followed by up) instead
- * of waiting for a release that will not come. The Cmd→Windows-key mapping is
- * deliberately left alone: Cmd alone still opens the Start menu. With the
- * shared clipboard, Cmd+V and Cmd+C alone become the host's Ctrl+V and Ctrl+C.
+ * of waiting for a release that will not come. Cmd itself stays the host's
+ * Windows key, but pressed and let go of alone it no longer opens the Start
+ * menu. With the shared clipboard, Cmd+V and Cmd+C alone become the host's
+ * Ctrl+V and Ctrl+C.
  */
 
 const VK_C = 0x43;
 const VK_V = 0x56;
 const VK_LWIN = 0x5b;
+const VK_CONTROL = 0x11;
 
 /** Minimal stand-in exposing just what the keyboard path touches. */
 function keySink(overrides = {}) {
@@ -50,6 +52,11 @@ function keySink(overrides = {}) {
         _holdsThroughStall: StreamView.prototype._holdsThroughStall,
         _releaseKeysHeldUnderMeta: StreamView.prototype._releaseKeysHeldUnderMeta,
         _releaseHeldMeta: StreamView.prototype._releaseHeldMeta,
+        _tapCtrlUnderMeta: StreamView.prototype._tapCtrlUnderMeta,
+        _releaseAllPhysKeys: StreamView.prototype._releaseAllPhysKeys,
+        _metaAloneCode: null,
+        _swallowKeyUpCodes: new Set(),
+        _heldMouseButtons: new Set(),
         _sendPendingPasteKey: StreamView.prototype._sendPendingPasteKey,
         _sendCopyChord: StreamView.prototype._sendCopyChord,
         ...overrides,
@@ -108,7 +115,7 @@ describe('Cmd+key on an Apple keyboard', () => {
         expect(v._metaTapCodes.size).toBe(0);
     });
 
-    it('leaves Cmd itself held, so Cmd alone still opens the Start menu', () => {
+    it("leaves Cmd itself held, as the host's Windows key", () => {
         const v = keySink();
         v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
 
@@ -125,10 +132,14 @@ describe('Cmd+key on an Apple keyboard', () => {
         expect(v._heldPhysKeys.has('KeyC')).toBe(true);
         v.sent.length = 0;
 
-        // Cmd comes back up: C's own keyup was eaten, sweep it out.
+        // Cmd comes back up: C's own keyup was eaten, sweep it out. Nothing
+        // was pressed after Cmd, so the host saw its Windows key alone: the
+        // Ctrl tap keeps the Start menu shut.
         v.handleKeyUp(ev('MetaLeft', 'Meta'));
         expect(v.sent.map((m) => [m.type, m.keyCode])).toEqual([
             ['keyup', VK_C],
+            ['keydown', VK_CONTROL],
+            ['keyup', VK_CONTROL],
             ['keyup', VK_LWIN],
         ]);
         expect(v._heldPhysKeys.size).toBe(0);
@@ -168,12 +179,17 @@ describe('Cmd+V reaching the host as a paste', () => {
         expect(v._heldPhysKeys.has('ControlLeft')).toBe(false);
     });
 
-    it('leaves a Cmd pressed alone a plain Windows key', () => {
+    it('leaves a Cmd pressed alone a Windows key, with no Start menu', () => {
         const v = keySink({ _clipboardEnabled: true });
         v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
         v.handleKeyUp(ev('MetaLeft', 'Meta'));
 
-        expect(v.sent.map((m) => m.code)).toEqual(['MetaLeft', 'MetaLeft']);
+        expect(v.sent.map((m) => m.code)).toEqual([
+            'MetaLeft',
+            'ControlLeft',
+            'ControlLeft',
+            'MetaLeft',
+        ]);
     });
 
     // No text to ship (empty or non-text local clipboard): the host pastes its
@@ -364,5 +380,126 @@ describe('everything else keeps the plain press/release path', () => {
         v.handleKeyUp(ev('MetaLeft', 'Meta'));
         expect(v.sent.map((m) => m.type)).toEqual(['keydown', 'keyup']);
         expect(v._heldPhysKeys.has('KeyC')).toBe(true);
+    });
+});
+
+/** The Windows key the host holds, as the list of what went out. */
+const wire = (v) => v.sent.map((m) => `${m.type} ${m.code}`);
+
+describe('Cmd pressed and let go of alone', () => {
+    // Windows opens the Start menu on its key released with nothing pressed
+    // since; a Mac's hand leaves Cmd alone all the time (after a screenshot,
+    // say), and the menu then takes the next keystrokes.
+    it('taps Ctrl under the Windows key before letting go of it', () => {
+        const v = keySink();
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+
+        expect(wire(v)).toEqual([
+            'keydown MetaLeft',
+            'keydown ControlLeft',
+            'keyup ControlLeft',
+            'keyup MetaLeft',
+        ]);
+        expect(v._heldPhysKeys.size).toBe(0);
+    });
+
+    it('does the same for the right Cmd', () => {
+        const v = keySink();
+        v.handleKeyDown(ev('MetaRight', 'Meta', { metaKey: true }));
+        v.handleKeyUp(ev('MetaRight', 'Meta'));
+
+        expect(wire(v)).toEqual([
+            'keydown MetaRight',
+            'keydown ControlLeft',
+            'keyup ControlLeft',
+            'keyup MetaRight',
+        ]);
+    });
+
+    it('adds nothing to a chord: Cmd+E stays Win+E', () => {
+        const v = keySink();
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyDown(ev('KeyE', 'e', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+
+        expect(wire(v)).toEqual([
+            'keydown MetaLeft',
+            'keydown KeyE',
+            'keyup KeyE',
+            'keyup MetaLeft',
+        ]);
+    });
+
+    it('counts a modifier pressed after Cmd as a chord too', () => {
+        const v = keySink();
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyDown(ev('ShiftLeft', 'Shift', { metaKey: true, shiftKey: true }));
+        v.handleKeyUp(ev('ShiftLeft', 'Shift', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+
+        expect(wire(v)).not.toContain('keydown ControlLeft');
+    });
+
+    it('starts over at the next press of Cmd', () => {
+        const v = keySink();
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyDown(ev('KeyE', 'e', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+        v.sent.length = 0;
+
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+        expect(wire(v)).toContain('keydown ControlLeft');
+    });
+
+    it('leaves a Mac host alone: Cmd alone does nothing there', () => {
+        const v = keySink({ host: { hostOs: 'macos' } });
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+
+        expect(wire(v)).toEqual(['keydown MetaLeft', 'keyup MetaLeft']);
+    });
+
+    it('leaves a Linux host its own Super key', () => {
+        const v = keySink({ host: { hostOs: 'linux' } });
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+
+        expect(wire(v)).toEqual(['keydown MetaLeft', 'keyup MetaLeft']);
+    });
+
+    it('treats a Windows host, and one of unknown OS, the same', () => {
+        for (const hostOs of ['windows', 'unknown', undefined]) {
+            const v = keySink({ host: { hostOs } });
+            v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+            v.handleKeyUp(ev('MetaLeft', 'Meta'));
+            expect(wire(v)).toContain('keydown ControlLeft');
+        }
+    });
+
+    it("leaves a PC keyboard's Windows key as it is", () => {
+        const v = keySink({ _appleKeyboard: false });
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v.handleKeyUp(ev('MetaLeft', 'Meta'));
+
+        expect(wire(v)).toEqual(['keydown MetaLeft', 'keyup MetaLeft']);
+    });
+
+    // Cmd+Tab: macOS keeps the Tab and the page loses the focus with Cmd
+    // still down, so the host saw the Windows key alone.
+    it('taps Ctrl too when the page lets go of a Cmd it lost the focus with', () => {
+        const v = keySink();
+        v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+        v._releaseAllPhysKeys();
+
+        expect(wire(v)).toEqual([
+            'keydown MetaLeft',
+            'keydown ControlLeft',
+            'keyup ControlLeft',
+            'keyup MetaLeft',
+        ]);
+        expect(v._heldPhysKeys.size).toBe(0);
+        expect(v._metaAloneCode).toBe(null);
     });
 });
