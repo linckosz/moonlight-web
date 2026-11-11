@@ -41,7 +41,9 @@
  * the stream's start) has the launcher put the session back on the console,
  * and this process locks it at once: the PC ends as if its user had signed in
  * there and pressed Win+L, which streams, and is unlocked from the stream with
- * the user's own PIN. Nothing moves on its own when mstsc is closed.
+ * the user's own PIN. Nothing moves on its own when mstsc is closed. Not
+ * offered in this version (RemoteDesktopReturnPolicy::kReturnOffered): the
+ * card says what happened, and that is all.
  *
  * Only where the server runs on the desktop itself (the logon task, a dev
  * instance). Inert everywhere else, other platforms included.

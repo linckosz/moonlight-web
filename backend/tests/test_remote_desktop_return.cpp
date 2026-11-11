@@ -108,6 +108,25 @@ void run_remote_desktop_return_tests()
         }
     }
 
+    SECTION("RemoteDesktopReturn — not offered in this version");
+
+    // The card keeps its text and every request is refused, whatever the
+    // tracker and the setting say: a session left by Remote Desktop, settled,
+    // with the setting on, still gets no "This PC's screen" and no return.
+    {
+        CHECK(!kReturnOffered);
+        Tracker t;
+        t.observe(seen(Active, true));
+        t.observe(seen(Disconnected));
+        CHECK(t.observe(seen(Disconnected)));
+        CHECK(t.returnRefusal(true).isEmpty()); // the tracker alone would allow it
+        CHECK(!returnOffered(true, true));
+        CHECK(!requestRefusal(t, true).isEmpty());
+        CHECK(!returnOffered(false, true));
+        CHECK(!returnOffered(true, false));
+        CHECK(!requestRefusal(t, false).isEmpty());
+    }
+
     SECTION("RemoteDesktopReturn — the server's tracker");
 
     // The card's app id sits between the virtual display's and the owner's

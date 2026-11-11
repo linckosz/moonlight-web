@@ -168,7 +168,8 @@ bool RemoteDesktopReturn::allowed() const
 bool RemoteDesktopReturn::offersReturn() const
 {
     // The settings file is read only when there is something to offer.
-    return m_LeftByRemoteDesktop && allowed();
+    if (!m_LeftByRemoteDesktop || !RemoteDesktopReturnPolicy::kReturnOffered) return false;
+    return RemoteDesktopReturnPolicy::returnOffered(true, allowed());
 }
 
 void RemoteDesktopReturn::bringBack(std::function<void(bool ok, const QString& error)> done)
@@ -180,7 +181,7 @@ void RemoteDesktopReturn::bringBack(std::function<void(bool ok, const QString& e
         m_Waiting.append(std::move(done));
         return;
     }
-    const QString refusal = m_Tracker.returnRefusal(allowed());
+    const QString refusal = RemoteDesktopReturnPolicy::requestRefusal(m_Tracker, allowed());
     if (!refusal.isEmpty()) {
         Logger::info("[rdp] a stream asked for this PC's screen, not brought back: " + refusal);
         done(false,

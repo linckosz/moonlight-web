@@ -230,10 +230,7 @@ Sunshine is no longer installed (since September 2026); an existing Sunshine is 
 
 #### Remote Desktop
 
-Closing a Remote Desktop window leaves your Windows session running **with no screen at all**, not even a virtual one, so the PC's card has nothing to stream. Two ways back:
-
-- **From MoonlightWeb:** open **This PC's screen (locked)** on the card. The session goes back to the PC's own screen, is locked at once, and the stream starts on the lock screen: unlock it with your PIN. Never while someone else is signed in on the PC. The switch is in the admin page (on by default).
-- **When you leave Remote Desktop:** instead of closing the window, run `tscon %SESSIONNAME% /dest:console` from an administrator Command Prompt inside the session. The session returns to the PC's screen **unlocked**: lock it right away from the stream (Windows key + L).
+Closing a Remote Desktop window leaves your Windows session running **with no screen at all**, not even a virtual one, so the PC's card has nothing to stream until you sign in on the PC again. To keep the screen, leave Remote Desktop another way: instead of closing the window, run `tscon %SESSIONNAME% /dest:console` from an administrator Command Prompt inside the session. The session returns to the PC's screen **unlocked**: lock it right away from the stream (Windows key + L).
 
 ### macOS (Apple Silicon)
 

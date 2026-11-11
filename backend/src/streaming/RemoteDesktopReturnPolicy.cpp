@@ -92,4 +92,15 @@ QString Tracker::returnRefusal(bool allowed) const
     return {};
 }
 
+bool returnOffered(bool leftByRemoteDesktop, bool allowed)
+{
+    return kReturnOffered && leftByRemoteDesktop && allowed;
+}
+
+QString requestRefusal(const Tracker& tracker, bool allowed)
+{
+    if (!kReturnOffered) return QStringLiteral("this version does not offer it");
+    return tracker.returnRefusal(allowed);
+}
+
 } // namespace RemoteDesktopReturnPolicy

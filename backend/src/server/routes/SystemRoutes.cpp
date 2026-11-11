@@ -37,6 +37,7 @@
 #include "backend/streambackend/NativeProbeService.h"
 #include "streaming/ConsoleSession.h"
 #include "server/AudioApps.h"
+#include "streaming/RemoteDesktopReturnPolicy.h"
 #include "streaming/StreamWorkerHost.h"
 #include "streaming/WorkerService.h"
 #include "mw/native/Capabilities.h"
@@ -1071,10 +1072,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 #endif
         obj["virtual_display_exclusive"] = appSettings.virtualDisplayExclusive();
         // A session left by Remote Desktop goes back to this PC's screen,
-        // locked: offered where the launcher service can do it.
+        // locked: offered where the launcher service can do it, in a version
+        // that offers it (RemoteDesktopReturnPolicy::kReturnOffered).
 #ifdef Q_OS_WIN
-        obj["remote_desktop_return_supported"] =
-            !ConsoleSession::launchesElsewhere() && WorkerService::available();
+        obj["remote_desktop_return_supported"] = RemoteDesktopReturnPolicy::kReturnOffered &&
+                                                 !ConsoleSession::launchesElsewhere() &&
+                                                 WorkerService::available();
 #else
         obj["remote_desktop_return_supported"] = false;
 #endif

@@ -94,6 +94,11 @@ QString hideRefusal(const ConsoleReturnFacts& facts);
 /// out of the displays' range and below the owner's apps' (1100).
 constexpr int kReturnAppId = 1001;
 
+/// Bringing the session back from the card is not offered in this version:
+/// the card keeps its text (see the README), the admin page has no switch for
+/// it, and a request is refused before anything is asked of the launcher.
+constexpr bool kReturnOffered = false;
+
 /// What the server sees of its own session, every few seconds.
 struct Observation
 {
@@ -149,5 +154,14 @@ private:
     bool m_Left = false;
     int m_DisconnectedTicks = 0;
 };
+
+/// Whether the card offers "This PC's screen": the session was left by Remote
+/// Desktop, the setting allows it (@p allowed), and this version offers it
+/// (kReturnOffered).
+bool returnOffered(bool leftByRemoteDesktop, bool allowed);
+
+/// Why a request from the card must NOT go out, in English; empty when it
+/// may. kReturnOffered first, then the tracker's own reasons.
+QString requestRefusal(const Tracker& tracker, bool allowed);
 
 } // namespace RemoteDesktopReturnPolicy
