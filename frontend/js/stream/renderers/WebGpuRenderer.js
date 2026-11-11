@@ -508,8 +508,11 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 
 // NIS — NVIDIA Image Scaling (NVScaler, SDK 1.0.3, MIT). WGSL transcription of
 // the GLSL port in WebGlRenderer.js, itself the per-fragment form of the SDK's
-// compute shader. Arrays travel by pointer (function address space) so the 36
-// luma samples are gathered once per fragment and read in place.
+// compute shader. Written out, with no array, pointer or loop: WebKit keeps an
+// array indexed in a loop in memory, and the form with the 36 luma samples in
+// one ran 5.6 times slower on an iPhone (37 ms a draw against 6.6, 1080p to
+// 1440p). The arithmetic is the SDK's, in the same order, and the picture the
+// same to the bit.
 const NIS_WGSL =
     FULLSCREEN_VS +
     /* wgsl */ `
@@ -526,29 +529,17 @@ struct NisUniforms {
 @group(0) @binding(3) var<uniform> u : NisUniforms;
 
 const kPhaseCount : i32 = 64;
-alias Luma36 = array<f32, 36>;
-alias Taps6 = array<f32, 6>;
 
 fn getY(c : vec3f) -> f32 { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
-fn coefScaler(phase : i32, i : i32) -> f32 {
-    let v = textureLoad(coefTex, vec2<i32>(i >> 2u, phase), 0);
-    return v[i & 3];
-}
-fn coefUSM(phase : i32, i : i32) -> f32 {
-    let v = textureLoad(coefTex, vec2<i32>(2 + (i >> 2u), phase), 0);
-    return v[i & 3];
-}
-fn lumaAt(c : vec2<i32>) -> f32 {
-    let mx = vec2<i32>(textureDimensions(inputTex)) - vec2<i32>(1);
+fn lumaAt(c : vec2<i32>, mx : vec2<i32>) -> f32 {
     return getY(textureLoad(inputTex, clamp(c, vec2<i32>(0), mx), 0).rgb);
 }
-fn P(p : ptr<function, Luma36>, i : i32, j : i32) -> f32 { return (*p)[i * 6 + j]; }
-
-fn getEdgeMap(p : ptr<function, Luma36>, i : i32, j : i32) -> vec4f {
-    let g_0 = abs(P(p, 0 + i, 0 + j) + P(p, 0 + i, 1 + j) + P(p, 0 + i, 2 + j) - P(p, 2 + i, 0 + j) - P(p, 2 + i, 1 + j) - P(p, 2 + i, 2 + j));
-    let g_45 = abs(P(p, 1 + i, 0 + j) + P(p, 0 + i, 0 + j) + P(p, 0 + i, 1 + j) - P(p, 2 + i, 1 + j) - P(p, 2 + i, 2 + j) - P(p, 1 + i, 2 + j));
-    let g_90 = abs(P(p, 0 + i, 0 + j) + P(p, 1 + i, 0 + j) + P(p, 2 + i, 0 + j) - P(p, 0 + i, 2 + j) - P(p, 1 + i, 2 + j) - P(p, 2 + i, 2 + j));
-    let g_135 = abs(P(p, 1 + i, 0 + j) + P(p, 2 + i, 0 + j) + P(p, 2 + i, 1 + j) - P(p, 0 + i, 1 + j) - P(p, 0 + i, 2 + j) - P(p, 1 + i, 2 + j));
+// The edge map of the 3x3 block e00..e22, its rows then its columns.
+fn getEdgeMap(e00 : f32, e01 : f32, e02 : f32, e10 : f32, e11 : f32, e12 : f32, e20 : f32, e21 : f32, e22 : f32) -> vec4f {
+    let g_0 = abs(e00 + e01 + e02 - e20 - e21 - e22);
+    let g_45 = abs(e10 + e00 + e01 - e21 - e22 - e12);
+    let g_90 = abs(e00 + e10 + e20 - e02 - e12 - e22);
+    let g_135 = abs(e10 + e20 + e21 - e01 - e02 - e12);
     let g_0_90_max = max(g_0, g_90);
     let g_0_90_min = min(g_0, g_90);
     let g_45_135_max = max(g_45, g_135);
@@ -584,96 +575,34 @@ fn calcLTI(p0 : f32, p1 : f32, p2 : f32, p3 : f32, p4 : f32, p5 : f32, phase_ind
     return (1.0 - saturate((cont_ratio - u.detect.z) * u.detect.w)) * u.sharpA.x;
 }
 
-fn evalPoly6(pxl : ptr<function, Taps6>, phase_int : i32) -> f32 {
+// The six taps across one direction: the scaler's bank (texels 0 and 1 of the
+// phase's row) and the USM's (texels 2 and 3), each read once.
+fn evalPoly6(t0 : f32, t1 : f32, t2 : f32, t3 : f32, t4 : f32, t5 : f32, phase_int : i32) -> f32 {
+    let a = textureLoad(coefTex, vec2<i32>(0, phase_int), 0);
+    let b = textureLoad(coefTex, vec2<i32>(1, phase_int), 0);
+    let ua = textureLoad(coefTex, vec2<i32>(2, phase_int), 0);
+    let ub = textureLoad(coefTex, vec2<i32>(3, phase_int), 0);
     var y = 0.0;
-    for (var i = 0; i < 6; i++) { y += coefScaler(phase_int, i) * (*pxl)[i]; }
+    y += a.x * t0;
+    y += a.y * t1;
+    y += a.z * t2;
+    y += a.w * t3;
+    y += b.x * t4;
+    y += b.y * t5;
     var y_usm = 0.0;
-    for (var i = 0; i < 6; i++) { y_usm += coefUSM(phase_int, i) * (*pxl)[i]; }
+    y_usm += ua.x * t0;
+    y_usm += ua.y * t1;
+    y_usm += ua.z * t2;
+    y_usm += ua.w * t3;
+    y_usm += ub.x * t4;
+    y_usm += ub.y * t5;
     let y_scale = 1.0 - saturate((y - u.sharpA.z) * u.sharpA.w);
     let y_sharpness = y_scale * u.sharpB.y + u.sharpB.x;
     y_usm *= y_sharpness;
     let y_sharpness_limit = (y_scale * u.sharpB.w + u.sharpB.z) * y;
     y_usm = min(y_sharpness_limit, max(-y_sharpness_limit, y_usm));
-    y_usm *= calcLTI((*pxl)[0], (*pxl)[1], (*pxl)[2], (*pxl)[3], (*pxl)[4], (*pxl)[5], phase_int);
+    y_usm *= calcLTI(t0, t1, t2, t3, t4, t5, phase_int);
     return y + y_usm;
-}
-
-fn filterNormal(p : ptr<function, Luma36>, phase_x_frac_int : i32, phase_y_frac_int : i32) -> f32 {
-    var h_acc = 0.0;
-    for (var j = 0; j < 6; j++) {
-        var v_acc = 0.0;
-        for (var i = 0; i < 6; i++) { v_acc += P(p, i, j) * coefScaler(phase_y_frac_int, i); }
-        h_acc += v_acc * coefScaler(phase_x_frac_int, j);
-    }
-    return h_acc;
-}
-
-fn addDirFilters(p : ptr<function, Luma36>, phase_x_frac : f32, phase_y_frac : f32,
-                 phase_x_frac_int : i32, phase_y_frac_int : i32, w : vec4f) -> f32 {
-    var f = 0.0;
-    if (w.x > 0.0) {
-        var interp0Deg : Taps6;
-        for (var i = 0; i < 6; i++) { interp0Deg[i] = mix(P(p, i, 2), P(p, i, 3), phase_x_frac); }
-        f += evalPoly6(&interp0Deg, phase_y_frac_int) * w.x;
-    }
-    if (w.y > 0.0) {
-        var interp90Deg : Taps6;
-        for (var i = 0; i < 6; i++) { interp90Deg[i] = mix(P(p, 2, i), P(p, 3, i), phase_y_frac); }
-        f += evalPoly6(&interp90Deg, phase_x_frac_int) * w.y;
-    }
-    if (w.z > 0.0) {
-        var pphase_b45 = 0.5 + 0.5 * (phase_x_frac - phase_y_frac);
-        var temp : array<f32, 7>;
-        temp[1] = mix(P(p, 2, 1), P(p, 1, 2), pphase_b45);
-        temp[3] = mix(P(p, 3, 2), P(p, 2, 3), pphase_b45);
-        temp[5] = mix(P(p, 4, 3), P(p, 3, 4), pphase_b45);
-        pphase_b45 = pphase_b45 - 0.5;
-        let pos = pphase_b45 >= 0.0;
-        let a = select(P(p, 2, 0), P(p, 0, 2), pos);
-        let b = select(P(p, 3, 1), P(p, 1, 3), pos);
-        let c = select(P(p, 4, 2), P(p, 2, 4), pos);
-        let d = select(P(p, 5, 3), P(p, 3, 5), pos);
-        temp[0] = mix(P(p, 1, 1), a, abs(pphase_b45));
-        temp[2] = mix(P(p, 2, 2), b, abs(pphase_b45));
-        temp[4] = mix(P(p, 3, 3), c, abs(pphase_b45));
-        temp[6] = mix(P(p, 4, 4), d, abs(pphase_b45));
-        var interp45Deg : Taps6;
-        var pphase_p45 = phase_x_frac + phase_y_frac;
-        if (pphase_p45 >= 1.0) {
-            for (var i = 0; i < 6; i++) { interp45Deg[i] = temp[i + 1]; }
-            pphase_p45 = pphase_p45 - 1.0;
-        } else {
-            for (var i = 0; i < 6; i++) { interp45Deg[i] = temp[i]; }
-        }
-        f += evalPoly6(&interp45Deg, min(i32(pphase_p45 * 64.0), 63)) * w.z;
-    }
-    if (w.w > 0.0) {
-        var pphase_b135 = 0.5 * (phase_x_frac + phase_y_frac);
-        var temp : array<f32, 7>;
-        temp[1] = mix(P(p, 3, 1), P(p, 4, 2), pphase_b135);
-        temp[3] = mix(P(p, 2, 2), P(p, 3, 3), pphase_b135);
-        temp[5] = mix(P(p, 1, 3), P(p, 2, 4), pphase_b135);
-        pphase_b135 = pphase_b135 - 0.5;
-        let pos = pphase_b135 >= 0.0;
-        let a = select(P(p, 3, 0), P(p, 5, 2), pos);
-        let b = select(P(p, 2, 1), P(p, 4, 3), pos);
-        let c = select(P(p, 1, 2), P(p, 3, 4), pos);
-        let d = select(P(p, 0, 3), P(p, 2, 5), pos);
-        temp[0] = mix(P(p, 4, 1), a, abs(pphase_b135));
-        temp[2] = mix(P(p, 3, 2), b, abs(pphase_b135));
-        temp[4] = mix(P(p, 2, 3), c, abs(pphase_b135));
-        temp[6] = mix(P(p, 1, 4), d, abs(pphase_b135));
-        var interp135Deg : Taps6;
-        var pphase_p135 = 1.0 + (phase_x_frac - phase_y_frac);
-        if (pphase_p135 >= 1.0) {
-            for (var i = 0; i < 6; i++) { interp135Deg[i] = temp[i + 1]; }
-            pphase_p135 = pphase_p135 - 1.0;
-        } else {
-            for (var i = 0; i < 6; i++) { interp135Deg[i] = temp[i]; }
-        }
-        f += evalPoly6(&interp135Deg, min(i32(pphase_p135 * 64.0), 63)) * w.w;
-    }
-    return f;
 }
 
 @fragment
@@ -684,21 +613,161 @@ fn fs(in : VSOut) -> @location(0) vec4f {
     let fr = src - fsrc;
     let fi = min(vec2<i32>(fr * f32(kPhaseCount)), vec2<i32>(kPhaseCount - 1));
     let s = vec2<i32>(fsrc);
+    let mx = vec2<i32>(textureDimensions(inputTex)) - vec2<i32>(1);
 
-    var p : Luma36;
-    for (var i = 0; i < 6; i++) {
-        for (var j = 0; j < 6; j++) { p[i * 6 + j] = lumaAt(s + vec2<i32>(j - 2, i - 2)); }
-    }
+    // The 6x6 window of luma: pRC at row R and column C, from -2 to +3 around
+    // the source texel.
+    let p00 = lumaAt(s + vec2<i32>(-2, -2), mx);
+    let p01 = lumaAt(s + vec2<i32>(-1, -2), mx);
+    let p02 = lumaAt(s + vec2<i32>(0, -2), mx);
+    let p03 = lumaAt(s + vec2<i32>(1, -2), mx);
+    let p04 = lumaAt(s + vec2<i32>(2, -2), mx);
+    let p05 = lumaAt(s + vec2<i32>(3, -2), mx);
+    let p10 = lumaAt(s + vec2<i32>(-2, -1), mx);
+    let p11 = lumaAt(s + vec2<i32>(-1, -1), mx);
+    let p12 = lumaAt(s + vec2<i32>(0, -1), mx);
+    let p13 = lumaAt(s + vec2<i32>(1, -1), mx);
+    let p14 = lumaAt(s + vec2<i32>(2, -1), mx);
+    let p15 = lumaAt(s + vec2<i32>(3, -1), mx);
+    let p20 = lumaAt(s + vec2<i32>(-2, 0), mx);
+    let p21 = lumaAt(s + vec2<i32>(-1, 0), mx);
+    let p22 = lumaAt(s + vec2<i32>(0, 0), mx);
+    let p23 = lumaAt(s + vec2<i32>(1, 0), mx);
+    let p24 = lumaAt(s + vec2<i32>(2, 0), mx);
+    let p25 = lumaAt(s + vec2<i32>(3, 0), mx);
+    let p30 = lumaAt(s + vec2<i32>(-2, 1), mx);
+    let p31 = lumaAt(s + vec2<i32>(-1, 1), mx);
+    let p32 = lumaAt(s + vec2<i32>(0, 1), mx);
+    let p33 = lumaAt(s + vec2<i32>(1, 1), mx);
+    let p34 = lumaAt(s + vec2<i32>(2, 1), mx);
+    let p35 = lumaAt(s + vec2<i32>(3, 1), mx);
+    let p40 = lumaAt(s + vec2<i32>(-2, 2), mx);
+    let p41 = lumaAt(s + vec2<i32>(-1, 2), mx);
+    let p42 = lumaAt(s + vec2<i32>(0, 2), mx);
+    let p43 = lumaAt(s + vec2<i32>(1, 2), mx);
+    let p44 = lumaAt(s + vec2<i32>(2, 2), mx);
+    let p45 = lumaAt(s + vec2<i32>(3, 2), mx);
+    let p50 = lumaAt(s + vec2<i32>(-2, 3), mx);
+    let p51 = lumaAt(s + vec2<i32>(-1, 3), mx);
+    let p52 = lumaAt(s + vec2<i32>(0, 3), mx);
+    let p53 = lumaAt(s + vec2<i32>(1, 3), mx);
+    let p54 = lumaAt(s + vec2<i32>(2, 3), mx);
+    let p55 = lumaAt(s + vec2<i32>(3, 3), mx);
 
-    let e00 = getEdgeMap(&p, 1, 1);
-    let e01 = getEdgeMap(&p, 1, 2);
-    let e10 = getEdgeMap(&p, 2, 1);
-    let e11 = getEdgeMap(&p, 2, 2);
+    let e00 = getEdgeMap(p11, p12, p13, p21, p22, p23, p31, p32, p33);
+    let e01 = getEdgeMap(p12, p13, p14, p22, p23, p24, p32, p33, p34);
+    let e10 = getEdgeMap(p21, p22, p23, p31, p32, p33, p41, p42, p43);
+    let e11 = getEdgeMap(p22, p23, p24, p32, p33, p34, p42, p43, p44);
     let w = mix(mix(e00, e01, fr.x), mix(e10, e11, fr.x), fr.y);
 
     let baseWeight = 1.0 - w.x - w.y - w.z - w.w;
-    var opY = filterNormal(&p, fi.x, fi.y) * baseWeight;
-    opY += addDirFilters(&p, fr.x, fr.y, fi.x, fi.y, w);
+
+    // filterNormal: each column down, then across.
+    let ya = textureLoad(coefTex, vec2<i32>(0, fi.y), 0);
+    let yb = textureLoad(coefTex, vec2<i32>(1, fi.y), 0);
+    let xa = textureLoad(coefTex, vec2<i32>(0, fi.x), 0);
+    let xb = textureLoad(coefTex, vec2<i32>(1, fi.x), 0);
+    var h_acc = 0.0;
+    var v_acc = 0.0;
+    v_acc = 0.0;
+    v_acc += p00 * ya.x;
+    v_acc += p10 * ya.y;
+    v_acc += p20 * ya.z;
+    v_acc += p30 * ya.w;
+    v_acc += p40 * yb.x;
+    v_acc += p50 * yb.y;
+    h_acc += v_acc * xa.x;
+    v_acc = 0.0;
+    v_acc += p01 * ya.x;
+    v_acc += p11 * ya.y;
+    v_acc += p21 * ya.z;
+    v_acc += p31 * ya.w;
+    v_acc += p41 * yb.x;
+    v_acc += p51 * yb.y;
+    h_acc += v_acc * xa.y;
+    v_acc = 0.0;
+    v_acc += p02 * ya.x;
+    v_acc += p12 * ya.y;
+    v_acc += p22 * ya.z;
+    v_acc += p32 * ya.w;
+    v_acc += p42 * yb.x;
+    v_acc += p52 * yb.y;
+    h_acc += v_acc * xa.z;
+    v_acc = 0.0;
+    v_acc += p03 * ya.x;
+    v_acc += p13 * ya.y;
+    v_acc += p23 * ya.z;
+    v_acc += p33 * ya.w;
+    v_acc += p43 * yb.x;
+    v_acc += p53 * yb.y;
+    h_acc += v_acc * xa.w;
+    v_acc = 0.0;
+    v_acc += p04 * ya.x;
+    v_acc += p14 * ya.y;
+    v_acc += p24 * ya.z;
+    v_acc += p34 * ya.w;
+    v_acc += p44 * yb.x;
+    v_acc += p54 * yb.y;
+    h_acc += v_acc * xb.x;
+    v_acc = 0.0;
+    v_acc += p05 * ya.x;
+    v_acc += p15 * ya.y;
+    v_acc += p25 * ya.z;
+    v_acc += p35 * ya.w;
+    v_acc += p45 * yb.x;
+    v_acc += p55 * yb.y;
+    h_acc += v_acc * xb.y;
+    var opY = h_acc * baseWeight;
+
+    // addDirFilters: the four directions the edge map weighs.
+    var f = 0.0;
+    if (w.x > 0.0) {
+        f += evalPoly6(mix(p02, p03, fr.x), mix(p12, p13, fr.x), mix(p22, p23, fr.x), mix(p32, p33, fr.x), mix(p42, p43, fr.x), mix(p52, p53, fr.x), fi.y) * w.x;
+    }
+    if (w.y > 0.0) {
+        f += evalPoly6(mix(p20, p30, fr.y), mix(p21, p31, fr.y), mix(p22, p32, fr.y), mix(p23, p33, fr.y), mix(p24, p34, fr.y), mix(p25, p35, fr.y), fi.x) * w.y;
+    }
+    if (w.z > 0.0) {
+        var pphase_b45 = 0.5 + 0.5 * (fr.x - fr.y);
+        let q1 = mix(p21, p12, pphase_b45);
+        let q3 = mix(p32, p23, pphase_b45);
+        let q5 = mix(p43, p34, pphase_b45);
+        pphase_b45 = pphase_b45 - 0.5;
+        let pos = pphase_b45 >= 0.0;
+        let a = select(p20, p02, pos);
+        let b = select(p31, p13, pos);
+        let c = select(p42, p24, pos);
+        let d = select(p53, p35, pos);
+        let q0 = mix(p11, a, abs(pphase_b45));
+        let q2 = mix(p22, b, abs(pphase_b45));
+        let q4 = mix(p33, c, abs(pphase_b45));
+        let q6 = mix(p44, d, abs(pphase_b45));
+        var pphase_p45 = fr.x + fr.y;
+        let up = pphase_p45 >= 1.0;
+        if (up) { pphase_p45 = pphase_p45 - 1.0; }
+        f += evalPoly6(select(q0, q1, up), select(q1, q2, up), select(q2, q3, up), select(q3, q4, up), select(q4, q5, up), select(q5, q6, up), min(i32(pphase_p45 * 64.0), 63)) * w.z;
+    }
+    if (w.w > 0.0) {
+        var pphase_b135 = 0.5 * (fr.x + fr.y);
+        let q1 = mix(p31, p42, pphase_b135);
+        let q3 = mix(p22, p33, pphase_b135);
+        let q5 = mix(p13, p24, pphase_b135);
+        pphase_b135 = pphase_b135 - 0.5;
+        let pos = pphase_b135 >= 0.0;
+        let a = select(p30, p52, pos);
+        let b = select(p21, p43, pos);
+        let c = select(p12, p34, pos);
+        let d = select(p03, p25, pos);
+        let q0 = mix(p41, a, abs(pphase_b135));
+        let q2 = mix(p32, b, abs(pphase_b135));
+        let q4 = mix(p23, c, abs(pphase_b135));
+        let q6 = mix(p14, d, abs(pphase_b135));
+        var pphase_p135 = 1.0 + (fr.x - fr.y);
+        let up = pphase_p135 >= 1.0;
+        if (up) { pphase_p135 = pphase_p135 - 1.0; }
+        f += evalPoly6(select(q0, q1, up), select(q1, q2, up), select(q2, q3, up), select(q3, q4, up), select(q4, q5, up), select(q5, q6, up), min(i32(pphase_p135 * 64.0), 63)) * w.w;
+    }
+    opY += f;
 
     let coord = (src + 0.5) * u.scale.zw;
     let op = textureSampleLevel(inputTex, samp, coord, 0.0);
