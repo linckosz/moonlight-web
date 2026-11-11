@@ -113,6 +113,7 @@ public:
     // of the transport so it can be exercised directly.
     void resolveCoopSessionId(const QByteArray& launchKey, BackendStringCallback cb) override;
     void endCoopSession(const QString& sessionId, BackendVoidCallback cb) override;
+    void stopCoopSession(const QString& sessionId, BackendVoidCallback cb) override;
 
 private:
     /// Resolve the PIN into Wolf once stage 1 is parked on it. Polls

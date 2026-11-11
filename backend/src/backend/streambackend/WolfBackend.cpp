@@ -34,6 +34,8 @@
 #include <QSet>
 #include <QTimer>
 
+#include <memory>
+
 namespace {
 
 // Wolf registers the pairing request when it *receives* phase 1, so our first
@@ -541,6 +543,52 @@ void WolfBackend::endCoopSession(const QString& sessionId, BackendVoidCallback c
     }
     m_Api->stopSession(sessionId, [cb](bool ok, const WolfApiError& err) {
         cb(ok, ok ? BackendError{} : toBackendError(err));
+    });
+}
+
+void WolfBackend::stopCoopSession(const QString& sessionId, BackendVoidCallback cb)
+{
+    if (sessionId.isEmpty()) {
+        cb(true, BackendError{});
+        return;
+    }
+    // The lobbies are read on both sides of the stop: before, to know which
+    // ones the session was in (it leaves them as it ends); after, to see that
+    // nobody else is in them. The caller keeps this backend alive until cb.
+    m_Api->lobbies([this, sessionId, cb](bool listed, const WolfApiError&,
+                                         const QVector<WolfLobby>& before) {
+        m_Api->stopSession(sessionId, [this, sessionId, cb, listed,
+                                       before](bool ok, const WolfApiError& err) {
+            // Without the first list, the session still ends: only its lobby
+            // stays, as before.
+            if (!ok || !listed) {
+                cb(ok, ok ? BackendError{} : toBackendError(err));
+                return;
+            }
+            m_Api->lobbies([this, sessionId, cb, before](bool listedAfter, const WolfApiError&,
+                                                         const QVector<WolfLobby>& after) {
+                const QStringList empty = listedAfter
+                                              ? WolfCoop::lobbiesLeftEmpty(before, after, sessionId)
+                                              : QStringList();
+                if (empty.isEmpty()) {
+                    cb(true, BackendError{});
+                    return;
+                }
+                auto pending = std::make_shared<int>(static_cast<int>(empty.size()));
+                for (const QString& id : empty) {
+                    m_Api->stopLobby(
+                        id, {}, [id, pending, cb](bool stopped, const WolfApiError& e) {
+                            if (stopped)
+                                qInfo() << "[Wolf] Lobby" << id << "stopped: nobody is left in it";
+                            else
+                                qWarning() << "[Wolf] Could not stop the empty lobby" << id << ":"
+                                           << e.message;
+                            // The session itself did end: that is what the caller asked.
+                            if (--*pending == 0) cb(true, BackendError{});
+                        });
+                }
+            });
+        });
     });
 }
 

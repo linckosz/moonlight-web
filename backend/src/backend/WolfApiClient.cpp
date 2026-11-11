@@ -253,6 +253,8 @@ QVector<WolfLobby> WolfApiClient::parseLobbies(const QJsonDocument& doc)
         lobby.name = obj.value(QStringLiteral("name")).toString();
         lobby.multiUser = obj.value(QStringLiteral("multi_user")).toBool();
         lobby.pinRequired = obj.value(QStringLiteral("pin_required")).toBool();
+        lobby.stopWhenEveryoneLeaves =
+            obj.value(QStringLiteral("stop_when_everyone_leaves")).toBool();
         lobby.startedByProfileId = obj.value(QStringLiteral("started_by_profile_id")).toString();
         for (const QJsonValue& s : obj.value(QStringLiteral("connected_sessions")).toArray()) {
             lobby.connectedSessions.append(s.toString());

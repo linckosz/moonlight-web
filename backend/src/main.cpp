@@ -2573,18 +2573,27 @@ int main(int argc, char* argv[])
     // restarted. Asking the backend to end the session by name is the only
     // reliable route — and it is the supervisor's job rather than the worker's,
     // because the worker dying without a teardown is exactly the case that leaks.
-    auto reapCoopSession = [&computerManager](const QString& hostUuid, const QString& sessionId) {
+    //
+    // `ownerStop`: the owner pressed Stop, so what the session leaves running
+    // for nobody goes too (on Wolf, its lobby). A stream that ended any other
+    // way keeps it for the next launch.
+    auto reapCoopSession = [&computerManager](const QString& hostUuid, const QString& sessionId,
+                                              bool ownerStop = false) {
         if (hostUuid.isEmpty() || sessionId.isEmpty()) return;
         std::shared_ptr<IStreamBackend> backend(computerManager.backendForHost(hostUuid).release());
         if (!backend || !backend->capabilities().lobbies) return;
         // The lambda keeps `backend` alive until the answer comes back.
-        backend->endCoopSession(sessionId, [backend, sessionId](bool ok, const BackendError& err) {
+        auto done = [backend, sessionId](bool ok, const BackendError& err) {
             if (ok)
                 qInfo() << "[main] Co-op session" << sessionId << "closed on the host";
             else
                 qWarning() << "[main] Could not close co-op session" << sessionId << ":"
                            << err.message;
-        });
+        };
+        if (ownerStop)
+            backend->stopCoopSession(sessionId, done);
+        else
+            backend->endCoopSession(sessionId, done);
     };
 
     // Detach a worker slot from session-level bookkeeping and tear the child
@@ -5057,8 +5066,8 @@ int main(int argc, char* argv[])
          &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveSessionToken, &g_ActiveHostUuid,
          &g_Pool, &g_LiveSunshineUids, &g_DualSupport, &g_SingleSessionHosts,
          &dropPendingHostCancel, &detachWorkerSlot, &appOutlivesStream, &anyOtherSlotLive,
-         &endPlayerSessions, &quitsPerDevice, &quitDeviceApp,
-         &releaseSeatIfIdle](const HttpRequest& req, const ResponseCallback& respond) {
+         &endPlayerSessions, &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle,
+         &reapCoopSession](const HttpRequest& req, const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
             qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                     << "relay valid=" << (!g_ActiveRelay.isNull());
@@ -5153,6 +5162,17 @@ int main(int argc, char* argv[])
             if (guestsEnd) endPlayerSessions(host->uuid, ShareManager::EndReason::OwnerStop);
 
             bool workerStopped = false;
+            // The co-op sessions (Wolf) of the slots this Stop ends, read before
+            // the detach clears them. Not on a retire: the surviving leg is on
+            // the same session.
+            QVector<QPair<QString, QString>> stoppedCoop;
+            auto takeCoopSession = [&stoppedCoop, keepHostSession](SessionPool::Slot& sl) {
+                const QString id = sl.coopSessionId;
+                sl.coopSessionId.clear();
+                const QPair<QString, QString> entry{sl.hostUuid, id};
+                if (!keepHostSession && !id.isEmpty() && !stoppedCoop.contains(entry))
+                    stoppedCoop.append(entry);
+            };
             for (int i = 0; i < kOwnerSlots; ++i) {
                 SessionPool::Slot& sl = g_Pool.at(i);
                 if (!sl.worker) continue;
@@ -5188,7 +5208,9 @@ int main(int argc, char* argv[])
                 }
                 // Suppressed ended-cleanup: this handler owns the Sunshine
                 // /cancel decision (keyed by quitUniqueId below; none at all
-                // when retiring).
+                // when retiring) — and the co-op session the ended handler
+                // would have closed, gathered here.
+                takeCoopSession(sl);
                 detachWorkerSlot(i, false);
                 workerStopped = true;
             }
@@ -5199,7 +5221,7 @@ int main(int argc, char* argv[])
             const int rawSlot =
                 qbody.contains("session_slot") ? qbody["session_slot"].toInt(-1) : -1;
             for (int i = kOwnerSlots; i < g_Pool.size() && !quitUniqueId.isEmpty(); ++i) {
-                const SessionPool::Slot& sl = g_Pool.at(i);
+                SessionPool::Slot& sl = g_Pool.at(i);
                 if (!sl.worker || sl.hostUuid != host->uuid || sl.clientUniqueId != quitUniqueId)
                     continue;
                 if (rawSlot >= 0 && rawSlot != i) continue;
@@ -5207,8 +5229,27 @@ int main(int argc, char* argv[])
                     quitSessionToken != sl.sessionToken)
                     continue;
                 qInfo() << "[quit] Stopping stream worker slot" << i << "(app slot of this device)";
+                takeCoopSession(sl);
                 detachWorkerSlot(i, false);
                 workerStopped = true;
+            }
+            // The Stop's own end of the co-op sessions those slots held (Wolf),
+            // with the lobby each leaves running for nobody. The GameStream
+            // /cancel below cannot do it: the session was launched under the
+            // seat's certificate, not ours, and Wolf kept it and its lobby
+            // after every Stop (UM790Pro, 07-08/11/2026). Not a session a slot
+            // still streams — two legs of one seat share it.
+            for (const auto& [coopHost, coopId] : stoppedCoop) {
+                bool stillStreamed = false;
+                for (int i = 0; i < g_Pool.size(); ++i) {
+                    const SessionPool::Slot& s = g_Pool.at(i);
+                    if (s.worker && s.hostUuid == coopHost && s.coopSessionId == coopId)
+                        stillStreamed = true;
+                }
+                if (stillStreamed)
+                    qInfo() << "[quit] Co-op session" << coopId << "still streamed — kept";
+                else
+                    reapCoopSession(coopHost, coopId, /*ownerStop*/ true);
             }
 
             // Ownership guard: a client that was taken over by another device may

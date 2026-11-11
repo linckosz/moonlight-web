@@ -352,4 +352,14 @@ public:
         cb(false, BackendError::make(BackendError::Unsupported,
                                      QStringLiteral("This backend has no co-op sessions")));
     }
+
+    /// The owner pressed Stop: end the session, and what it leaves running on
+    /// the host for nobody (on Wolf, the lobby it was in). Only for that Stop —
+    /// a stream that ended on its own (a transport rung, a worker that died)
+    /// goes through endCoopSession and keeps the lobby, which the next launch
+    /// may come back to.
+    virtual void stopCoopSession(const QString& sessionId, BackendVoidCallback cb)
+    {
+        endCoopSession(sessionId, std::move(cb));
+    }
 };

@@ -51,4 +51,40 @@ inline QString matchSessionByLaunchKey(const QVector<WolfStreamSession>& session
     return {};
 }
 
+/// The lobbies the owner's Stop leaves running for nobody, to stop after it.
+///
+/// Ending a session takes it out of its lobby, but the lobby — and the app or
+/// desktop it runs — stays until someone stops it: Wolf UI starts them with no
+/// stop when everyone leaves, so a "Desktop (xfce)" lobby outlived every Stop
+/// (UM790Pro, 07-08/11/2026).
+///
+/// `before` is the list read before the session was stopped, `after` the one
+/// read once it was. Only a lobby the session was in, and that nobody else is
+/// in any more. Not one Wolf stops itself once empty, nor one behind a PIN,
+/// which we do not hold. Our own id may still show in `after`: the session
+/// leaves its lobby asynchronously.
+inline QStringList lobbiesLeftEmpty(const QVector<WolfLobby>& before,
+                                    const QVector<WolfLobby>& after, const QString& sessionId)
+{
+    QStringList ids;
+    if (sessionId.isEmpty()) return ids;
+    for (const WolfLobby& was : before) {
+        if (!was.connectedSessions.contains(sessionId)) continue;
+        for (const WolfLobby& now : after) {
+            if (now.id != was.id) continue;
+            if (now.pinRequired || now.stopWhenEveryoneLeaves) break;
+            bool someoneElse = false;
+            for (const QString& s : now.connectedSessions) {
+                if (s != sessionId) {
+                    someoneElse = true;
+                    break;
+                }
+            }
+            if (!someoneElse) ids.append(now.id);
+            break;
+        }
+    }
+    return ids;
+}
+
 } // namespace WolfCoop

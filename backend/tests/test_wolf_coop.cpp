@@ -166,4 +166,53 @@ void run_wolf_coop_tests()
     CHECK(WolfApiClient::parseLobbies(doc(R"({"lobbies":[{"name":"x","multi_user":true}]})"))
               .isEmpty());
     CHECK(WolfApiClient::parseSessions(doc(R"({"sessions":[{"client_ip":"1.2.3.4"}]})")).isEmpty());
+
+    SECTION("Wolf co-op — the owner's Stop stops the lobby it leaves running for nobody");
+
+    // What Wolf UI starts: no stop when everyone leaves, so ending the session
+    // left "Desktop (xfce)" running with nobody in it (UM790Pro, 07-08/11).
+    CHECK(lobbies[0].stopWhenEveryoneLeaves);
+    const char* const kBefore = R"({"lobbies":[
+      {"id":"desk","multi_user":false,"pin_required":false,"stop_when_everyone_leaves":false,
+       "connected_sessions":["22222222222222222222"]},
+      {"id":"shared","multi_user":true,"pin_required":false,"stop_when_everyone_leaves":false,
+       "connected_sessions":["22222222222222222222","44444444444444444444"]},
+      {"id":"locked","multi_user":false,"pin_required":true,"stop_when_everyone_leaves":false,
+       "connected_sessions":["22222222222222222222"]},
+      {"id":"self-stopping","multi_user":false,"pin_required":false,
+       "stop_when_everyone_leaves":true,"connected_sessions":["22222222222222222222"]},
+      {"id":"elsewhere","multi_user":false,"pin_required":false,"stop_when_everyone_leaves":false,
+       "connected_sessions":[]}]})";
+    const QVector<WolfLobby> before = WolfApiClient::parseLobbies(doc(kBefore));
+    CHECK_EQ(before.size(), 5);
+    CHECK(!before[0].stopWhenEveryoneLeaves);
+    const QString ours = QStringLiteral("22222222222222222222");
+
+    // Read again once the session is stopped. Ours may still show: Wolf takes
+    // the session out of its lobby asynchronously.
+    const char* const kAfter = R"({"lobbies":[
+      {"id":"desk","pin_required":false,"stop_when_everyone_leaves":false,
+       "connected_sessions":["22222222222222222222"]},
+      {"id":"shared","pin_required":false,"stop_when_everyone_leaves":false,
+       "connected_sessions":["44444444444444444444"]},
+      {"id":"locked","pin_required":true,"stop_when_everyone_leaves":false,
+       "connected_sessions":[]},
+      {"id":"self-stopping","pin_required":false,"stop_when_everyone_leaves":true,
+       "connected_sessions":[]},
+      {"id":"elsewhere","pin_required":false,"stop_when_everyone_leaves":false,
+       "connected_sessions":[]}]})";
+    const QVector<WolfLobby> after = WolfApiClient::parseLobbies(doc(kAfter));
+    // Only ours, empty now. Not the one a friend still plays in, not one behind
+    // a PIN we do not hold, not one Wolf stops by itself, and never a lobby
+    // that was empty before and that our session was never in.
+    CHECK_EQ(WolfCoop::lobbiesLeftEmpty(before, after, ours), QStringList{QStringLiteral("desk")});
+
+    // Gone already (Wolf stopped it): nothing to do.
+    CHECK(WolfCoop::lobbiesLeftEmpty(before, {}, ours).isEmpty());
+    // Someone joined between the two reads: it stays.
+    QVector<WolfLobby> joined = after;
+    joined[0].connectedSessions = {QStringLiteral("55555555555555555555")};
+    CHECK(WolfCoop::lobbiesLeftEmpty(before, joined, ours).isEmpty());
+    // No session id: no lobby, ever.
+    CHECK(WolfCoop::lobbiesLeftEmpty(before, after, QString()).isEmpty());
 }

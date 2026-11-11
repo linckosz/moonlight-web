@@ -72,6 +72,7 @@ struct WolfLobby
     QString name;
     bool multiUser = false;
     bool pinRequired = false;
+    bool stopWhenEveryoneLeaves = false; ///< Wolf stops it itself once empty
     QString startedByProfileId;
     QStringList connectedSessions;
 };
