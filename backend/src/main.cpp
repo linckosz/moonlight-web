@@ -6787,6 +6787,18 @@ int main(int argc, char* argv[])
             if (const QString err = rendezvous.lastError(); !err.isEmpty())
                 rdv[QStringLiteral("error")] = err;
             return rdv;
+        },
+        [&routerPorts](const HttpRequest& req) {
+            // The browser's way here, as a stream would plan it: on this
+            // machine or its network (streamClientKind), or a public address
+            // that is this network's own (streamClientSameNetwork, without its
+            // log line: the page asks at every launch). A mesh VPN is not.
+            const NetClassify::Kind kind = streamClientKind(req);
+            if (kind == NetClassify::Kind::Loopback || kind == NetClassify::Kind::Private)
+                return true;
+            return kind == NetClassify::Kind::Public &&
+                   NetClassify::sharesHostNetwork(req.clientAddress, {routerPorts.publicIp()},
+                                                  QNetworkInterface::allAddresses());
         });
 
     // A device asking in by the QR code it shows, approved by the administrator

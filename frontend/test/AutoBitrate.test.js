@@ -3,7 +3,8 @@
  * GPLv3 — see repository LICENSE.
  *
  * The recommended bitrate: 9.5 Mbps at 1080p, growing with the pixels to the
- * power 0.75 (docs/wiki/16-Auto-Bitrate-Benchmarks.md), rounded up to the
+ * power 0.75 (docs/wiki/16-Auto-Bitrate-Benchmarks.md) — 20 Mbps and the power
+ * 0.8 on the host's own network — rounded up to the
  * slider's whole Mbps, ×1.5 for HDR — and nothing else: neither the frame
  * rate, the device nor 4:4:4 moves it.
  */
@@ -45,8 +46,20 @@ describe('computeAutoBitrate', () => {
         expect(computeAutoBitrate(2160, '16:9', true, false)).toBe(27);
     });
 
+    it('takes 20 × P^0.8 on the LAN, HDR adding its half there too', () => {
+        expect(computeAutoBitrate(1080, '16:9', false, false, true)).toBe(20);
+        expect(computeAutoBitrate(720, '16:9', false, false, true)).toBe(11); // 10.45
+        expect(computeAutoBitrate(1440, '16:9', false, false, true)).toBe(35); // 31.7
+        expect(computeAutoBitrate(2160, '16:9', false, false, true)).toBe(65); // 60.6
+        expect(computeAutoBitrate(1080, '16:9', false, true, true)).toBe(30);
+        expect(computeAutoBitrate(1080, '16:9', true, false, true)).toBe(20);
+        expect(computeAutoBitrate(1080, '16:9', false, false, false)).toBe(10);
+    });
+
     it('never leaves [1, 150] Mbps', () => {
         expect(computeAutoBitrate(144, '16:9', false, false)).toBe(1);
         expect(computeAutoBitrate(4320, '32:9', true, true)).toBe(150);
+        expect(computeAutoBitrate(2160, '16:9', false, true, true)).toBe(95); // 90.9
+        expect(computeAutoBitrate(4320, '16:9', false, true, true)).toBe(150);
     });
 });

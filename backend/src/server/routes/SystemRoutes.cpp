@@ -125,7 +125,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
                           std::function<void()> onHostKeyRotated,
                           std::function<void(bool)> onInternetAccessToggled,
-                          std::function<QJsonObject()> rendezvousStatus)
+                          std::function<QJsonObject()> rendezvousStatus,
+                          std::function<bool(const HttpRequest&)> viewerOnLan)
 {
     // API route: get Internet Access status
     // rendezvousStatus captured BY VALUE, like the callbacks below: the
@@ -1280,8 +1281,13 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
     // — Streaming settings —
 
-    server.router()->get("/api/settings/streaming", [&appSettings](const HttpRequest&) {
+    // viewerOnLan captured BY VALUE, like rendezvousStatus above.
+    const auto streamingSettings = [&appSettings, viewerOnLan](const HttpRequest& req) {
         QJsonObject obj;
+        // Whether this browser reaches the host over its own network: the
+        // page's automatic bitrate then takes the LAN rule. Read again at each
+        // launch; false when nothing says (an internet target never overruns).
+        obj["viewer_lan"] = viewerOnLan ? viewerOnLan(req) : false;
 
         // Normalise "auto" → "hevc" (the old "auto" default is replaced by explicit HEVC).
         // Existing settings.json entries with "video_codec":"auto" are migrated on read.
@@ -1361,7 +1367,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // options on any build.
         obj["debug_mode"] = mw::run::debug();
         return HttpResponse::json(obj);
-    });
+    };
+    server.router()->get("/api/settings/streaming", streamingSettings);
 
     // — The apps "Stream audio from" can name —
     //

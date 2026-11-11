@@ -542,17 +542,19 @@ Two different hardware decoders disagree with ffmpeg on NVENC streams only, in s
 
 - H.264 and 4:4:4 need no more than HEVC 4:2:0; the HDR desktop needs no more either, but an HDR game was not measured.
 
-**The rule since v0.4.2** (`computeAutoBitrate()`): 9.5 Mbit/s × P^0.75, P being the stream's pixels over 1920×1080's — VMAF NEG 93 on the scrolling search page, +10 % — ×1.5 for HDR, rounded up to a whole Mbit/s (the slider's step), to 5 above 30, within 1–150. No frame-rate term, no device factor, nothing for 4:4:4 or H.264. The ×1.5 for HDR stays until an HDR game is measured. The target is the Internet one, used everywhere: the page cannot tell at launch whether the stream will cross the LAN or the Internet, and on a cable the bitrate made no measurable difference to the latency.
+**The rule since v0.4.2** (`computeAutoBitrate()`): 9.5 Mbit/s × P^0.75, P being the stream's pixels over 1920×1080's — VMAF NEG 93 on the scrolling search page, +10 % — ×1.5 for HDR, rounded up to a whole Mbit/s (the slider's step), to 5 above 30, within 1–150. No frame-rate term, no device factor, nothing for 4:4:4 or H.264. The ×1.5 for HDR stays until an HDR game is measured. In v0.4.2 that Internet target was used everywhere: the page could not tell at launch whether the stream would cross the LAN or the Internet.
 
-| Stream | Before v0.4.2 | Since v0.4.2 | HDR, since v0.4.2 |
-|---|---:|---:|---:|
-| 720p60 | 9 | 6 | 8 |
-| 1080p60 | 20 | 10 | 15 |
-| 1080p120 | 40 | 10 | 15 |
-| 1440p60 | 36 | 15 | 22 |
-| 2160p60 | 80 | 27 | 45 |
-| 1080p60 4:4:4 | 30 | 10 | 15 |
-| 1080p60 on a phone | 10 | 10 | 15 |
+**On the host's own network, since v0.4.4**: 20 Mbit/s × P^0.8 — VMAF NEG 95 on the same page, +16 % at 1080p — with the same ×1.5 for HDR and the same rounding. The server tells the page whether it sees the browser on its own network (`viewer_lan` in `GET /api/settings/streaming`, read at every launch): a private address, or a public one that is the host network's own, as the server plans a stream's connection; a mesh VPN counts as the Internet. The value is chosen at launch, so a GameStream host, which takes its bitrate at launch and nowhere else, gets it too. On a cable the bitrate made no measurable difference to the latency (§16.4): the LAN's room goes to the picture.
+
+| Stream | Before v0.4.2 | Internet, since v0.4.2 | Internet HDR | LAN, since v0.4.4 | LAN HDR |
+|---|---:|---:|---:|---:|---:|
+| 720p60 | 9 | 6 | 8 | 11 | 16 |
+| 1080p60 | 20 | 10 | 15 | 20 | 30 |
+| 1080p120 | 40 | 10 | 15 | 20 | 30 |
+| 1440p60 | 36 | 15 | 22 | 35 | 50 |
+| 2160p60 | 80 | 27 | 45 | 65 | 95 |
+| 1080p60 4:4:4 | 30 | 10 | 15 | 20 | 30 |
+| 1080p60 on a phone | 10 | 10 | 15 | 20 | 30 |
 
 
 

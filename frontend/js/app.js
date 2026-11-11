@@ -3469,7 +3469,8 @@ export const MoonlightApp = {
         return true;
     },
 
-    /** The estimate's bitrate, in kbps, for a frame of that size — under the
+    /** The estimate's bitrate, in kbps, for a frame of that size — the LAN
+     *  rule when the host sees this browser on its own network — under the
      *  administrator's ceiling. */
     _autoBitrateFor(settings, height, aspect) {
         return limitBitrateKbps(
@@ -3478,6 +3479,7 @@ export const MoonlightApp = {
                 aspect,
                 settings.chroma_444_enabled === true,
                 settings.hdr_enabled === true,
+                this._viewerOnLan === true,
             ) * 1000,
         );
     },
@@ -3486,12 +3488,19 @@ export const MoonlightApp = {
      * Read the administrator's ceilings from the server: awaited the first
      * time (a launch that knew none would ask, then show, more than it gets),
      * in the background after that. Never more than a second and a half.
+     * The same answer says whether the host sees this browser on its own
+     * network (`viewer_lan`), which the automatic bitrate follows; unread or
+     * from a server that does not say, the Internet rule.
      */
     async _readStreamLimits() {
         const read = BackendClient.getStreamingSettings()
             .then((data) => {
                 setStreamLimits(data);
                 this._streamLimitsRead = true;
+                const lan = data && data.viewer_lan === true;
+                if (lan !== (this._viewerOnLan === true))
+                    console.log('[MW] Auto bitrate: ' + (lan ? 'LAN' : 'Internet') + ' rule');
+                this._viewerOnLan = lan;
             })
             .catch((e) => console.info('[MW] Stream limits not read:', e && e.message));
         if (this._streamLimitsRead) return;
@@ -5073,6 +5082,7 @@ export const MoonlightApp = {
                     effective.stream_aspect,
                     effective.chroma_444_enabled === true,
                     effective.hdr_enabled === true,
+                    this._viewerOnLan === true,
                 ) * 1000;
             newBitrate = Math.max(2000, Math.min(newBitrate, autoKbps));
             toastKey = 'stream.degradeResolution';
