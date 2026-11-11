@@ -111,6 +111,19 @@ bool requestWorker(const QString& base, QString* error);
 /// pressed it, false with the reason (the machine's policy, most often).
 bool requestSecureAttention(QString* error);
 
+/// Ask the service to put this process's own session back on the console:
+/// Remote Desktop left it Disconnected, with no display at all, and nobody is
+/// signed in on the PC (RemoteDesktopReturnPolicy.h). True once the service
+/// says it is done; the caller then locks the session (RemoteDesktopReturn).
+/// A refusal comes back as the reason, in English.
+bool requestConsoleReturn(QString* error);
+
+/// The way back when a return could not lock the session: ask the service to
+/// disconnect this process's own session again, as Remote Desktop had left it.
+/// Only while that session is Active on the console. Used when the server's
+/// own WTSDisconnectSession is refused.
+bool requestHide(QString* error);
+
 /// `--worker-service`: the service's own entry point. Runs the control loop
 /// until the SCM stops it, and returns the process exit code.
 int runService();

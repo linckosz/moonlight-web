@@ -1085,7 +1085,12 @@ export class HostListView {
 
         // Fill in app grids for available hosts (cache hit = instant).
         for (const host of this.hosts) {
-            if (host.isAvailable && !host.needsVirtualDisplay && !host.needsCapturePermission)
+            if (
+                host.isAvailable &&
+                !host.needsVirtualDisplay &&
+                !host.leftByRemoteDesktop &&
+                !host.needsCapturePermission
+            )
                 this._ensureAppsLoaded(host);
         }
     }
@@ -1214,6 +1219,14 @@ export class HostListView {
                 : t('vdisplay.emptyBodyNoDriver');
             return `<div class="host-body-center host-empty-display">
                         <p class="host-empty-display-text">${text}</p>
+                    </div>`;
+        }
+        if (host.leftByRemoteDesktop) {
+            // Windows: closing Remote Desktop left the session with no screen
+            // at all, virtual ones included. Only its return to the PC's
+            // screen brings one back.
+            return `<div class="host-body-center host-empty-display">
+                        <p class="host-empty-display-text">${t('hosts.sessionLeftByRemoteDesktop')}</p>
                     </div>`;
         }
         if (host.needsCapturePermission) {

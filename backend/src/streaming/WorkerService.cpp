@@ -18,6 +18,7 @@
 #include "WorkerService.h"
 
 #include "ConsoleSession.h"
+#include "RemoteDesktopReturnPolicy.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
 
@@ -197,12 +198,9 @@ bool pipeIo(HANDLE pipe, bool write, void* data, DWORD size, DWORD* done, DWORD 
     return ok != 0;
 }
 
-/// Who asked, and whether they may. Two questions, both about the caller and
-/// neither about what they sent: are they this same executable, and are they on
-/// the console session this service would put a SYSTEM process into? The
-/// caller's user SID comes back in @p callerSid: the worker is made theirs to
-/// look at (launchWorker).
-bool callerAllowed(HANDLE pipe, QString* why, std::wstring* callerSid)
+/// Who asked: this same executable or not, and from which session as which
+/// user. Read from the pipe itself, never from what the caller wrote.
+bool identifyCaller(HANDLE pipe, QString* why, DWORD* session, std::wstring* callerSid)
 {
     ULONG pid = 0;
     if (!::GetNamedPipeClientProcessId(pipe, &pid)) {
@@ -222,12 +220,12 @@ bool callerAllowed(HANDLE pipe, QString* why, std::wstring* callerSid)
         return false;
     }
     HANDLE token = nullptr;
-    DWORD session = 0xFFFFFFFF;
+    *session = 0xFFFFFFFF;
     callerSid->clear();
     if (::OpenThreadToken(::GetCurrentThread(), TOKEN_QUERY, TRUE, &token)) {
         DWORD size = 0;
-        if (!::GetTokenInformation(token, TokenSessionId, &session, sizeof(session), &size))
-            session = 0xFFFFFFFF;
+        if (!::GetTokenInformation(token, TokenSessionId, session, sizeof(*session), &size))
+            *session = 0xFFFFFFFF;
         size = 0;
         ::GetTokenInformation(token, TokenUser, nullptr, 0, &size);
         std::vector<unsigned char> user(size);
@@ -241,11 +239,23 @@ bool callerAllowed(HANDLE pipe, QString* why, std::wstring* callerSid)
     }
     ::RevertToSelf();
 
-    const DWORD console = ::WTSGetActiveConsoleSessionId();
-    if (session == 0xFFFFFFFF || callerSid->empty()) {
+    if (*session == 0xFFFFFFFF || callerSid->empty()) {
         *why = QStringLiteral("the caller's session or user could not be read");
         return false;
     }
+    return true;
+}
+
+/// Who asked, and whether they may. Two questions, both about the caller and
+/// neither about what they sent: are they this same executable, and are they on
+/// the console session this service would put a SYSTEM process into? The
+/// caller's user SID comes back in @p callerSid: the worker is made theirs to
+/// look at (launchWorker).
+bool callerAllowed(HANDLE pipe, QString* why, std::wstring* callerSid)
+{
+    DWORD session = 0xFFFFFFFF;
+    if (!identifyCaller(pipe, why, &session, callerSid)) return false;
+    const DWORD console = ::WTSGetActiveConsoleSessionId();
     if (session != console) {
         *why = QStringLiteral("the caller is on session %1, the console is %2")
                    .arg(session)
@@ -414,6 +424,129 @@ void answerCaller(HANDLE pipe, const QString& answer)
     ::FlushFileBuffers(pipe);
 }
 
+/// The request that asks for the caller's own session to be put back on the
+/// console. Outside validBase too ('!'), like kSecureAttentionRequest.
+constexpr char kConsoleReturnRequest[] = "console!";
+
+/// The state of session @p id (RemoteDesktopReturnPolicy::SessionState), -1
+/// when Windows will not say.
+int sessionState(DWORD id)
+{
+    LPWSTR buffer = nullptr;
+    DWORD bytes = 0;
+    if (!::WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, id, WTSConnectState, &buffer,
+                                       &bytes) ||
+        !buffer)
+        return -1;
+    const int value = bytes >= sizeof(WTS_CONNECTSTATE_CLASS)
+                          ? static_cast<int>(*reinterpret_cast<WTS_CONNECTSTATE_CLASS*>(buffer))
+                          : -1;
+    ::WTSFreeMemory(buffer);
+    return value;
+}
+
+/// Somebody is signed in on session @p id. A session at the sign-in screen has
+/// no user token and no user name. "Yes" is also the answer whenever Windows
+/// will not tell: a session is never moved over a console that might be
+/// somebody's.
+bool userSignedIn(DWORD id)
+{
+    HANDLE token = nullptr;
+    if (::WTSQueryUserToken(id, &token)) {
+        ::CloseHandle(token);
+        return true;
+    }
+    if (::GetLastError() != ERROR_NO_TOKEN) return true;
+    LPWSTR name = nullptr;
+    DWORD bytes = 0;
+    if (!::WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, id, WTSUserName, &name, &bytes))
+        return true;
+    const bool someone = name && name[0] != 0;
+    ::WTSFreeMemory(name);
+    return someone;
+}
+
+/// The caller's session was left by Remote Desktop: put it back on the console,
+/// as `tscon <id> /dest:console` does — SYSTEM may, without the user's
+/// password. Only the caller's own session, only while Disconnected, and never
+/// over a console somebody is signed in on (RemoteDesktopReturnPolicy). The
+/// caller locks the session as soon as it is there; this side cannot, since
+/// LockWorkStation works from the session's own desktop only.
+void serveConsoleReturn(HANDLE pipe)
+{
+    QString why;
+    DWORD session = 0xFFFFFFFF;
+    std::wstring callerSid;
+    RemoteDesktopReturnPolicy::ConsoleReturnFacts facts;
+    if (identifyCaller(pipe, &why, &session, &callerSid)) {
+        facts.callerIsThisExecutable = true;
+        facts.callerSession = session;
+        facts.callerState = sessionState(session);
+    }
+    facts.consoleSession = ::WTSGetActiveConsoleSessionId();
+    facts.consoleUserPresent =
+        facts.consoleSession == 0xFFFFFFFF || userSignedIn(facts.consoleSession);
+    if (why.isEmpty()) why = RemoteDesktopReturnPolicy::consoleReturnRefusal(facts);
+    if (!why.isEmpty()) {
+        Logger::warning("[WorkerService] refused to return a session to the console: " + why);
+        answerCaller(pipe, QStringLiteral("err ") + why);
+        return;
+    }
+    wchar_t noPassword[] = L"";
+    if (!::WTSConnectSessionW(session, facts.consoleSession, noPassword, FALSE)) {
+        const DWORD err = ::GetLastError();
+        why = QStringLiteral("WTSConnectSession(%1 -> %2) failed (error %3)")
+                  .arg(session)
+                  .arg(facts.consoleSession)
+                  .arg(err);
+        Logger::warning("[WorkerService] " + why);
+        answerCaller(pipe, QStringLiteral("err ") + why);
+        return;
+    }
+    Logger::info(QStringLiteral("[WorkerService] session %1, left by Remote Desktop, is back on "
+                                "the console (in place of session %2)")
+                     .arg(session)
+                     .arg(facts.consoleSession));
+    answerCaller(pipe, QStringLiteral("ok"));
+}
+
+/// The request that sends the caller's own session away from the screen
+/// again. Outside validBase too ('!').
+constexpr char kHideRequest[] = "hide!";
+
+/// A return that could not lock the session: rather than leave the desktop
+/// unlocked on the PC's screen, it goes back to where Remote Desktop had left
+/// it. The server tries that itself first (a user may disconnect their own
+/// session); this is for when Windows refuses it there. Only the caller's own
+/// session, only while it is Active on the console (RemoteDesktopReturnPolicy).
+void serveHide(HANDLE pipe)
+{
+    QString why;
+    DWORD session = 0xFFFFFFFF;
+    std::wstring callerSid;
+    RemoteDesktopReturnPolicy::ConsoleReturnFacts facts;
+    if (identifyCaller(pipe, &why, &session, &callerSid)) {
+        facts.callerIsThisExecutable = true;
+        facts.callerSession = session;
+        facts.callerState = sessionState(session);
+    }
+    facts.consoleSession = ::WTSGetActiveConsoleSessionId();
+    if (why.isEmpty()) why = RemoteDesktopReturnPolicy::hideRefusal(facts);
+    if (why.isEmpty() && !::WTSDisconnectSession(WTS_CURRENT_SERVER_HANDLE, session, FALSE))
+        why = QStringLiteral("WTSDisconnectSession(%1) failed (error %2)")
+                  .arg(session)
+                  .arg(::GetLastError());
+    if (!why.isEmpty()) {
+        Logger::warning("[WorkerService] did not send a session away from the console: " + why);
+        answerCaller(pipe, QStringLiteral("err ") + why);
+        return;
+    }
+    Logger::warning(QStringLiteral("[WorkerService] session %1 could not be locked on the console "
+                                   "and was disconnected again")
+                        .arg(session));
+    answerCaller(pipe, QStringLiteral("ok"));
+}
+
 /// A worker asks for Ctrl+Alt+Suppr: the same two questions about who asks as
 /// for a worker, then the key press.
 void serveSecureAttention(HANDLE pipe)
@@ -446,6 +579,14 @@ void serveOne(HANDLE pipe)
     QString base = QString::fromLatin1(buffer, static_cast<int>(got)).trimmed();
     if (base == QLatin1String(kSecureAttentionRequest)) {
         serveSecureAttention(pipe);
+        return;
+    }
+    if (base == QLatin1String(kConsoleReturnRequest)) {
+        serveConsoleReturn(pipe);
+        return;
+    }
+    if (base == QLatin1String(kHideRequest)) {
+        serveHide(pipe);
         return;
     }
 
@@ -665,6 +806,18 @@ bool requestSecureAttention(QString* error)
     return askService(QByteArray(kSecureAttentionRequest), error);
 }
 
+bool requestConsoleReturn(QString* error)
+{
+    // No g_ServiceBroken either: a refusal here is mostly somebody signed in on
+    // the PC, which says nothing about the next worker.
+    return askService(QByteArray(kConsoleReturnRequest), error);
+}
+
+bool requestHide(QString* error)
+{
+    return askService(QByteArray(kHideRequest), error);
+}
+
 int runService()
 {
     const std::wstring name = WorkerService::serviceName().toStdWString();
@@ -785,6 +938,18 @@ bool requestWorker(const QString&, QString* error)
 bool requestSecureAttention(QString* error)
 {
     if (error) *error = QStringLiteral("Ctrl+Alt+Suppr is a Windows notion");
+    return false;
+}
+
+bool requestConsoleReturn(QString* error)
+{
+    if (error) *error = QStringLiteral("Remote Desktop sessions are a Windows notion");
+    return false;
+}
+
+bool requestHide(QString* error)
+{
+    if (error) *error = QStringLiteral("Remote Desktop sessions are a Windows notion");
     return false;
 }
 

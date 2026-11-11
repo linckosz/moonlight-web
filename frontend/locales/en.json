@@ -99,6 +99,7 @@
     },
     "hosts": {
         "nativeCapturePermission": "This Mac has lost its Screen Recording permission, so it cannot stream its screen. On the Mac: System Settings → Privacy & Security → Screen Recording, turn MoonlightWeb on, then quit and reopen MoonlightWeb.",
+        "sessionLeftByRemoteDesktop": "This PC's session was left by Remote Desktop and has no screen. Sign in on the PC, or see the wiki for how to leave Remote Desktop without losing the screen.",
         "nativeInputPermission": "This Mac has lost its Accessibility permission: a stream will show the picture, but your keyboard and mouse will not reach it. On the Mac: System Settings → Privacy & Security → Accessibility, turn MoonlightWeb on.",
         "nativeInputPermissionStream": "This Mac has lost its Accessibility permission — your keyboard and mouse will not reach it. Turn MoonlightWeb on in System Settings → Privacy & Security → Accessibility on the Mac.",
         "nativePermOpened": "Opened the setting on the Mac.",
@@ -625,6 +626,10 @@
         "vdExclusiveDesc": "Native host, virtual display only. Each browser then chooses it in its streaming settings. While its stream runs, this PC's other screens go dark; they come back when it leaves. Never for guests. If a guest is already streaming when a stream starts, the screens stay on until the next one. If they stay dark: Windows+P, Extend.",
         "vdExclusiveOn": "Allowed from the next stream",
         "vdExclusiveOff": "Not allowed from the next stream",
+        "rdpReturn": "Bring a session left by Remote Desktop back to this PC's screen, locked",
+        "rdpReturnDesc": "Windows. Closing Remote Desktop leaves your session with no screen, so this PC cannot stream it. With this on, MoonlightWeb puts the session back on this PC's screen and locks it at once: unlock it from the stream with your PIN or password. Never while someone else is signed in on the PC.",
+        "rdpReturnOn": "A session left by Remote Desktop comes back to this PC's screen",
+        "rdpReturnOff": "A session left by Remote Desktop stays without a screen",
         "hostLayout": "Use this PC's keyboard layout (detected: {{layout}})",
         "hostLayoutDesc": "Phones and tablets send text, not keys. Linux hosts (Sunshine, Wolf) can only type that text by pressing keys, and they press the keys of the host's keyboard layout. When this is on, MoonlightWeb chooses those keys from the layout detected on this PC, so letters like é, à or € come out right. Turn it on only if the streaming host runs on this PC with the same layout. Wolf uses the layout of its own container (XKB_DEFAULT_LAYOUT), US when it is not set.",
         "hostLayoutOn": "On from the next stream",

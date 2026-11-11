@@ -438,6 +438,18 @@ public:
     bool streamNotifications() const;
     void setStreamNotifications(bool enabled);
 
+    // ── A session left by Remote Desktop (Windows) ──────────────────────────
+    //
+    // Stored as JSON bool "remote_desktop_return", default true, set from the
+    // admin page (Windows, the launcher service installed). Closing a Remote
+    // Desktop window leaves the user's session with no screen at all, and the
+    // native host with nothing to stream: on, the launcher puts the session
+    // back on this PC's screen and it is locked at once (RemoteDesktopReturn).
+    // Off, Windows' own behaviour stays: the session waits, screenless, until
+    // the user signs in on the PC. Read each time it would act.
+    bool remoteDesktopReturn() const;
+    void setRemoteDesktopReturn(bool enabled);
+
     // ── Diagnostic modes (admin page → Advanced) ────────────────────────────
     //
     // "debug_mode" and "verbose_logs", JSON bools, default false. What they do

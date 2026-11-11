@@ -66,7 +66,7 @@ export class Host {
         // which is the default and what every Sunshine card stays. The token is
         // never sent to the browser — backendConfigured only says one is stored.
         this.backendType = data.backendType || '';
-        // The native host only: {state: 'ok'|'no_display'|
+        // The native host only: {state: 'ok'|'no_display'|'session_disconnected'|
         // 'no_capture_permission'|'unavailable', input_permission,
         // virtual_display: {supported, installed, enabled, active, name},
         // hid: 'ok'|'driver_missing'|'setup'|'unsupported' (hidHelpFor)}.
@@ -135,6 +135,17 @@ export class Host {
         return this.nativeDisplay?.virtual_display?.supported !== false;
     }
 
+    // The native host on Windows, whose session Remote Desktop left without a
+    // screen (mstsc closed): no cable or virtual display brings one back, only
+    // the session returning to the PC's screen. The card says so instead of an
+    // app grid. With the admin's setting on, the server does that itself
+    // within seconds, and the card goes back to its grid.
+    get leftByRemoteDesktop() {
+        return (
+            this.backendType === 'native' && this.nativeDisplay?.state === 'session_disconnected'
+        );
+    }
+
     // A Mac whose Screen Recording grant is gone: the card stays, and says
     // which switch to flip instead of painting a grid that cannot stream.
     get needsCapturePermission() {
@@ -189,7 +200,7 @@ export class Host {
     }
 
     get statusLabel() {
-        if (this.needsVirtualDisplay) return t('hosts.statusNoDisplay');
+        if (this.needsVirtualDisplay || this.leftByRemoteDesktop) return t('hosts.statusNoDisplay');
         if (this.isUnavailable) return t('hosts.statusUnavailable');
         if (!this.isOnline) return t('hosts.statusOffline');
         if (this.certificateChanged) return t('hosts.statusCertificateChanged');
@@ -198,7 +209,7 @@ export class Host {
     }
 
     get statusClass() {
-        if (this.needsVirtualDisplay) return 'nodisplay';
+        if (this.needsVirtualDisplay || this.leftByRemoteDesktop) return 'nodisplay';
         if (this.isUnavailable) return 'unavailable';
         if (!this.isOnline) return 'offline';
         if (this.certificateChanged) return 'locked';
@@ -207,7 +218,7 @@ export class Host {
     }
 
     get statusIcon() {
-        if (this.needsVirtualDisplay) return Icons.unavailable; // no screen to stream
+        if (this.needsVirtualDisplay || this.leftByRemoteDesktop) return Icons.unavailable; // no screen to stream
         if (this.isUnavailable) return Icons.unavailable; // reachable, service down
         if (!this.isOnline) return Icons.power; // power off
         if (this.certificateChanged) return Icons.lock; // nothing goes to it

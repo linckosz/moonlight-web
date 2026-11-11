@@ -38,6 +38,7 @@
 #include "streaming/ConsoleSession.h"
 #include "server/AudioApps.h"
 #include "streaming/StreamWorkerHost.h"
+#include "streaming/WorkerService.h"
 #include "mw/native/Capabilities.h"
 #include "mw/native/HostKeyboardLayout.h"
 #include "mw/native/VideoPipeline.h"
@@ -1069,6 +1070,15 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["virtual_display_exclusive_supported"] = false;
 #endif
         obj["virtual_display_exclusive"] = appSettings.virtualDisplayExclusive();
+        // A session left by Remote Desktop goes back to this PC's screen,
+        // locked: offered where the launcher service can do it.
+#ifdef Q_OS_WIN
+        obj["remote_desktop_return_supported"] =
+            !ConsoleSession::launchesElsewhere() && WorkerService::available();
+#else
+        obj["remote_desktop_return_supported"] = false;
+#endif
+        obj["remote_desktop_return"] = appSettings.remoteDesktopReturn();
         // This PC's keyboard layout for the touch keyboard's text: offered when
         // this machine names a layout (Linux only, see HostKeyboardLayout) and a
         // host runs here other than the native one, which types text itself.
@@ -1174,6 +1184,15 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             const bool enabled = body["virtual_display_exclusive"].toBool();
             appSettings.setVirtualDisplayExclusive(enabled);
             obj["virtual_display_exclusive"] = enabled;
+            hadChange = true;
+        }
+
+        // ── A session left by Remote Desktop ─────────────────────────────
+        // Read the next time a session is left (RemoteDesktopReturn).
+        if (body.contains("remote_desktop_return")) {
+            const bool enabled = body["remote_desktop_return"].toBool();
+            appSettings.setRemoteDesktopReturn(enabled);
+            obj["remote_desktop_return"] = enabled;
             hadChange = true;
         }
 

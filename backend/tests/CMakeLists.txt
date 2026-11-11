@@ -118,6 +118,7 @@ add_executable(run_tests
     test_keyboard_layout.cpp
     test_native_capabilities_json.cpp
     test_edition.cpp
+    test_remote_desktop_return.cpp
     test_mdns_advertiser.cpp
     test_router_port_core.cpp
     test_logger_rotation.cpp
@@ -137,6 +138,8 @@ add_executable(run_tests
     # Which MoonlightWeb this is: the names, ports and version a DEV build
     # must answer to so it can sit beside a production install.
     ${_src}/src/common/Edition.cpp
+    # The rules of "a session left by Remote Desktop goes back to the screen".
+    ${_src}/src/streaming/RemoteDesktopReturnPolicy.cpp
     ${_src}/src/network/MdnsAdvertiser.cpp
     # The probe result as it crosses from the console session to the service.
     # Capabilities.cpp is the engine's plain-C++ enum/lookup file: no Windows

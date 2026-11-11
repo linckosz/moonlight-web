@@ -882,6 +882,19 @@ void AppSettings::setStreamNotifications(bool enabled)
     writeAll(obj);
 }
 
+bool AppSettings::remoteDesktopReturn() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("remote_desktop_return").toBool(true);
+}
+
+void AppSettings::setRemoteDesktopReturn(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["remote_desktop_return"] = enabled;
+    writeAll(obj);
+}
+
 bool AppSettings::debugMode() const
 {
     return readAll().value("debug_mode").toBool(false);

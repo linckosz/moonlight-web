@@ -28,6 +28,7 @@
 #include "WolfApiClient.h"
 #include "streambackend/NativeHostBackend.h"
 #include "streambackend/NativeProbeService.h"
+#include "streaming/RemoteDesktopReturn.h"
 #include "VirtualDisplay.h"
 #include "mw/native/Capabilities.h"
 #include "mw/native/HidPassthrough.h"
@@ -287,6 +288,11 @@ void ComputerManager::init()
     // when the answer arrives — and takes it down when the user logs off.
     connect(&NativeProbeService::instance(), &NativeProbeService::changed, this,
             &ComputerManager::refreshNativeHost);
+    // A Windows session left by Remote Desktop has no screen at all, and gets
+    // one back when it returns to the console: the card follows both.
+    connect(&RemoteDesktopReturn::instance(), &RemoteDesktopReturn::changed, this,
+            &ComputerManager::refreshNativeHost);
+    RemoteDesktopReturn::instance().start();
     startPolling();
 
     // Single-shot timer that closes each mDNS discovery window and frees 5353.
@@ -398,7 +404,14 @@ QJsonObject ComputerManager::nativeDisplayJson()
     // Display" is installed here (then it is a card of its own, on or off).
     QJsonObject obj;
     const mw::native::Capabilities caps = NativeProbeService::instance().snapshot();
-    obj["state"] = caps.available ? QStringLiteral("ok")
+    // Nothing attached because Remote Desktop left this session without a
+    // screen is not a cable to plug in, nor a virtual display to open: the
+    // card says what happened (Windows, RemoteDesktopReturn).
+    const bool leftByRemoteDesktop = !caps.available &&
+                                     caps.reason == mw::native::Unavailability::NoDisplay &&
+                                     RemoteDesktopReturn::instance().leftByRemoteDesktop();
+    obj["state"] = caps.available        ? QStringLiteral("ok")
+                   : leftByRemoteDesktop ? QStringLiteral("session_disconnected")
                    : caps.reason == mw::native::Unavailability::NoDisplay
                        ? QStringLiteral("no_display")
                    : caps.reason == mw::native::Unavailability::CapturePermission

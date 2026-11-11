@@ -20,6 +20,7 @@
 #include "../../backend/VirtualDisplay.h"
 #include "../../common/Logger.h"
 #include "../../server/AppSettings.h"
+#include "../../streaming/RemoteDesktopReturn.h"
 
 extern "C" {
 #include "Limelight.h"
@@ -658,7 +659,10 @@ void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback
     if (!caps.available) {
         // A machine with nothing attached and our display to offer has one
         // card; any other reason to be unavailable has none.
-        if (virtualInstalled && caps.reason == mw::native::Unavailability::NoDisplay) {
+        // Not when Remote Desktop left this session: no display reaches a
+        // disconnected session, ours included (bench of 09/11/2026).
+        if (virtualInstalled && caps.reason == mw::native::Unavailability::NoDisplay &&
+            !RemoteDesktopReturn::instance().leftByRemoteDesktop()) {
             // The owner's apps open on that same display.
             QVector<NvApp> apps;
             appendHostApps(caps, apps);

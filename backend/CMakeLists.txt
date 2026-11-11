@@ -425,6 +425,8 @@ add_executable(mw-server
     src/streaming/StreamWorkerHost.cpp
     src/streaming/ConsoleSession.cpp
     src/streaming/WorkerService.cpp
+    src/streaming/RemoteDesktopReturn.cpp
+    src/streaming/RemoteDesktopReturnPolicy.cpp
     src/streaming/worker/StreamWorkerMain.cpp
     src/streaming/worker/CoopSessionResolver.cpp
 )

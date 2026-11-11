@@ -142,6 +142,8 @@ export class AdminView {
         // (issue #39). Offered on Windows once the display is installed.
         this._vdExclusiveSupported = false;
         this._vdExclusive = false;
+        this._rdpReturnSupported = false;
+        this._rdpReturn = true;
         // This PC's keyboard layout for the touch keyboard's text (issue #44).
         // Offered when the server reads a layout here and a host runs here.
         this._hostLayoutOffered = false;
@@ -268,6 +270,8 @@ export class AdminView {
             this._packetMarking = admin.packet_marking !== false;
             this._vdExclusiveSupported = admin.virtual_display_exclusive_supported === true;
             this._vdExclusive = admin.virtual_display_exclusive === true;
+            this._rdpReturnSupported = admin.remote_desktop_return_supported === true;
+            this._rdpReturn = admin.remote_desktop_return !== false;
             this._hostLayoutOffered = admin.keyboard_host_layout_offered === true;
             this._hostLayoutDetected = admin.keyboard_host_layout_detected || '';
             this._hostLayout = admin.keyboard_host_layout === true;
@@ -1849,6 +1853,24 @@ export class AdminView {
             });
         }
 
+        // ── A session left by Remote Desktop ───────────────────────────────
+        // Saved on the spot; read the next time Remote Desktop leaves one.
+        const rdpReturnChk = this.container.querySelector('#chk-rdp-return');
+        if (rdpReturnChk) {
+            rdpReturnChk.addEventListener('change', async () => {
+                const enabled = rdpReturnChk.checked;
+                try {
+                    await BackendClient.saveAdminSettings({ remote_desktop_return: enabled });
+                    this._rdpReturn = enabled;
+                    Toast.success(enabled ? t('admin.rdpReturnOn') : t('admin.rdpReturnOff'));
+                } catch (err) {
+                    console.error('[Admin] Failed to save the Remote Desktop option:', err);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
+                    rdpReturnChk.checked = !enabled; // revert
+                }
+            });
+        }
+
         // ── This PC's keyboard layout for the touch keyboard ───────────────
         // Saved on the spot; the next stream reads it as it opens.
         const hostLayoutChk = this.container.querySelector('#chk-host-layout');
@@ -2471,6 +2493,7 @@ export class AdminView {
         const notifications = this._isLocalhost();
         if (
             !this._vdExclusiveSupported &&
+            !this._rdpReturnSupported &&
             !notifications &&
             !this._videoPipelineSupported &&
             !this._hostAppsSupported
@@ -2492,6 +2515,19 @@ export class AdminView {
                             <span class="settings-checkbox-text">${t('admin.vdExclusive')}</span>
                         </label>
                         <p class="setting-desc">${t('admin.vdExclusiveDesc')}</p>
+                    </div>`
+                            : ''
+                    }
+                    ${
+                        this._rdpReturnSupported
+                            ? `
+                    <div class="settings-field" id="admin-rdp-return">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-rdp-return"
+                                   ${this._rdpReturn ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.rdpReturn')}</span>
+                        </label>
+                        <p class="setting-desc">${t('admin.rdpReturnDesc')}</p>
                     </div>`
                             : ''
                     }
