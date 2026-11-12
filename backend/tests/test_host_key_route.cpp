@@ -158,9 +158,8 @@ void testWhoMaySpendTheKey()
         CHECK_EQ(s.auth->activeSessionCount(), 1);
         CHECK_EQ(s.spent, 1);
     }
-    // This machine under its LAN address, another machine of the house, and
-    // one behind the same public address.
-    for (const QString& address : {kThisMachine, QStringLiteral("192.168.1.50"), kPublicIp}) {
+    // This machine under its LAN address, and under its public address.
+    for (const QString& address : {kThisMachine, kPublicIp}) {
         Server s;
         const HttpResponse reply = s.send(direct(address), withBrowserKey(kLinkKey));
         CHECK_EQ(reply.statusCode, 200);
@@ -170,12 +169,20 @@ void testWhoMaySpendTheKey()
     SECTION("host key: refused, and nothing is spent");
     {
         Server s;
-        // A wrong key, no key, and the right key from an address that is neither
-        // private nor this machine's.
+        // A wrong key, no key, and the right key from an address that is not
+        // this machine's.
         CHECK_EQ(s.send(direct("127.0.0.1"), withBrowserKey("not-the-key")).statusCode, 403);
         CHECK_EQ(s.send(direct("127.0.0.1"), {}).statusCode, 403);
         CHECK_EQ(s.send(direct("198.51.100.20"), withBrowserKey(kLinkKey)).statusCode, 403);
         CHECK_EQ(s.send(onLine("198.51.100.20", newKey()), {{"key", kLinkKey}}).statusCode, 403);
+        // Another machine of the house is not this machine either, whatever
+        // private network it is on, on a socket or on a line.
+        for (const char* other : {"192.168.1.50", "10.0.0.7", "172.16.4.2"}) {
+            const HttpResponse r =
+                s.send(direct(QString::fromLatin1(other)), withBrowserKey(kLinkKey));
+            CHECK_EQ(r.statusCode, 403);
+        }
+        CHECK_EQ(s.send(onLine("192.168.1.50", newKey()), {{"key", kLinkKey}}).statusCode, 403);
         // The right key through a proxy on this machine: the peer is the proxy,
         // and the browser is wherever the proxy was reached from.
         for (const char* header : {"x-forwarded-for", "x-real-ip", "forwarded", "via"}) {
@@ -186,9 +193,12 @@ void testWhoMaySpendTheKey()
         CHECK_EQ(s.auth->activeSessionCount(), 0);
         CHECK_EQ(s.spent, 0);
         // Each of them was counted against the address it came from, as given.
-        CHECK_EQ(static_cast<int>(s.refusedFrom.size()), 8);
+        CHECK_EQ(static_cast<int>(s.refusedFrom.size()), 12);
         CHECK_EQ(static_cast<int>(s.refusedFrom.count(QStringLiteral("127.0.0.1"))), 6);
         CHECK_EQ(static_cast<int>(s.refusedFrom.count(QStringLiteral("198.51.100.20"))), 2);
+        CHECK_EQ(static_cast<int>(s.refusedFrom.count(QStringLiteral("192.168.1.50"))), 2);
+        CHECK_EQ(static_cast<int>(s.refusedFrom.count(QStringLiteral("10.0.0.7"))), 1);
+        CHECK_EQ(static_cast<int>(s.refusedFrom.count(QStringLiteral("172.16.4.2"))), 1);
         // And the link is still good for the browser it was made for.
         CHECK_EQ(s.send(direct("127.0.0.1"), withBrowserKey(kLinkKey)).statusCode, 200);
         CHECK_EQ(s.spent, 1);
@@ -297,13 +307,36 @@ void testSocketSessionTakesTheKeyItIsGiven()
 void testAddressThatCanBeThisMachine()
 {
     SECTION("host key: the addresses that can be this machine");
-    const auto own = [](const QString& address) { return address == kThisMachine; };
+    // What the server says of its own addresses, loopback included.
+    const auto own = [](const QString& address) {
+        return address == kThisMachine || address == QLatin1String("127.0.0.1") ||
+               address == QLatin1String("::1");
+    };
     CHECK(plausiblyHostAddress(kThisMachine, own, kPublicIp));
-    CHECK(plausiblyHostAddress(QStringLiteral("192.168.1.50"), own, kPublicIp));
+    CHECK(plausiblyHostAddress(QStringLiteral("127.0.0.1"), own, kPublicIp));
+    CHECK(plausiblyHostAddress(QStringLiteral("::1"), own, kPublicIp));
     CHECK(plausiblyHostAddress(kPublicIp, own, kPublicIp));
     CHECK(!plausiblyHostAddress(QStringLiteral("198.51.100.4"), own, kPublicIp));
     CHECK(!plausiblyHostAddress(QStringLiteral("198.51.100.4"), own, QString()));
     CHECK(!plausiblyHostAddress(QString(), nullptr, QString()));
+    // Another machine of a private network, of each of the three ranges and of
+    // the two IPv6 ones, and one of a shared range (a VPN's): not this machine.
+    for (const char* other : {"192.168.1.50", "10.0.0.7", "172.16.4.2", "169.254.7.7", "fd00::7",
+                              "fe80::7", "100.64.0.9"}) {
+        CHECK(!plausiblyHostAddress(QString::fromLatin1(other), own, kPublicIp));
+    }
+    // The public address counts only when it is known, and only itself.
+    CHECK(!plausiblyHostAddress(kPublicIp, own, QString()));
+    CHECK(!plausiblyHostAddress(kPublicIp, nullptr, QString()));
+
+    SECTION("host key: which of this machine's addresses it was");
+    CHECK(hostAddressOf(kThisMachine, own, kPublicIp) == HostAddress::ThisMachine);
+    CHECK(hostAddressOf(QStringLiteral("127.0.0.1"), own, kPublicIp) == HostAddress::ThisMachine);
+    CHECK(hostAddressOf(kPublicIp, own, kPublicIp) == HostAddress::PublicAddress);
+    CHECK(hostAddressOf(QStringLiteral("192.168.1.50"), own, kPublicIp) == HostAddress::NotOurs);
+    CHECK(hostAddressOf(QStringLiteral("198.51.100.4"), own, kPublicIp) == HostAddress::NotOurs);
+    // A machine that holds its public address on an interface: its own first.
+    CHECK(hostAddressOf(kThisMachine, own, kThisMachine) == HostAddress::ThisMachine);
 }
 
 /// A host session as a version before this one left it when the owner's link

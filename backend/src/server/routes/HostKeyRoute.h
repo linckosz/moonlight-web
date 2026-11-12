@@ -47,8 +47,24 @@ struct HostKeyDeps
     std::function<QJsonObject()> hostIdentity;
 };
 
+/// Whose address a peer's is, as far as the host machine is concerned.
+enum class HostAddress
+{
+    NotOurs,       ///< another machine's, of the same private network or not
+    ThisMachine,   ///< one of this machine's own, loopback included
+    PublicAddress, ///< the public address this machine is reached at
+};
+
+/// Which of them @p address (AuthManager::cleanClientAddress) is. @p thisMachine
+/// says whether an address is one of this machine's own
+/// (HttpServer::isLocalRequest); @p publicIp is empty when it is not known.
+HostAddress hostAddressOf(const QString& address,
+                          const std::function<bool(const QString& address)>& thisMachine,
+                          const QString& publicIp);
+
 /// Whether @p address (AuthManager::cleanClientAddress) can be the host machine
-/// itself: one of its own, one of a private network, or its public address.
+/// itself: one of its own, or its public address. Another machine of the same
+/// private network is not the host machine.
 /// The address check of the redemption, and of AuthManager::adoptLineKey.
 bool plausiblyHostAddress(const QString& address,
                           const std::function<bool(const QString& address)>& thisMachine,

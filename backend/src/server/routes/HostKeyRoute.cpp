@@ -27,13 +27,20 @@
 
 #include <utility>
 
+HostAddress hostAddressOf(const QString& address,
+                          const std::function<bool(const QString& address)>& thisMachine,
+                          const QString& publicIp)
+{
+    if (thisMachine && thisMachine(address)) return HostAddress::ThisMachine;
+    if (!publicIp.isEmpty() && address == publicIp) return HostAddress::PublicAddress;
+    return HostAddress::NotOurs;
+}
+
 bool plausiblyHostAddress(const QString& address,
                           const std::function<bool(const QString& address)>& thisMachine,
                           const QString& publicIp)
 {
-    return (thisMachine && thisMachine(address)) ||
-           AuthManager::isPrivateIP(address) == QLatin1String("Local") ||
-           (!publicIp.isEmpty() && address == publicIp);
+    return hostAddressOf(address, thisMachine, publicIp) != HostAddress::NotOurs;
 }
 
 void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyDeps deps)
@@ -58,8 +65,8 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
     // The plausibility gate below is what makes the tunnel case safe, and it is
     // stronger there than it looks: for a tunnel peer clientAddress is the
     // address ICE actually settled on — where our own stack is sending packets,
-    // not anything the browser said. A forwarded link redeemed from elsewhere on
-    // the internet arrives from an address that is neither private nor ours.
+    // not anything the browser said. A forwarded link redeemed from elsewhere
+    // arrives from an address that is not ours.
     //
     // The session is bound to the browser's MW-BIND-v1 key, as a PIN login binds
     // its own: the offer of a stream is then signed for that key, and the
@@ -78,8 +85,8 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
         // On a socket, a request a proxy forwarded comes from wherever the proxy
         // was reached: its peer address says nothing about the browser.
         const bool forwarded = !req.viaTunnel && RequestGuard::forwardedByProxy(req.headers);
-        const bool plausiblyHost =
-            !forwarded && plausiblyHostAddress(addr, deps.thisMachine, publicIp);
+        const HostAddress whose = hostAddressOf(addr, deps.thisMachine, publicIp);
+        const bool plausiblyHost = !forwarded && whose != HostAddress::NotOurs;
         // Say which gate closed: the address is the one ICE settled on for a
         // tunnel peer, and whether it passed is the whole question when the
         // owner's own link lands on the PIN page. Never the key, nor anything
@@ -132,7 +139,15 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
                                       req.viaTunnel ? QStringLiteral("Host machine (remote link)")
                                                     : QStringLiteral("Host machine"),
                                       true, false, req.viaTunnel);
-        Logger::info(QStringLiteral("[Auth] Host session created for %1 (via host key)").arg(addr));
+        // Which of the two the address was: when the owner's own link lands on
+        // the PIN page on another network, this line of a visit that worked is
+        // what the refusal is read against.
+        Logger::info(
+            QStringLiteral("[Auth] Host session created for %1 (via host key; %2; %3)")
+                .arg(addr, req.viaTunnel ? QStringLiteral("via tunnel") : QStringLiteral("direct"),
+                     whose == HostAddress::ThisMachine
+                         ? QStringLiteral("one of this machine's addresses")
+                         : QStringLiteral("this machine's public address")));
 
         QJsonObject obj;
         obj["status"] = "ok";
