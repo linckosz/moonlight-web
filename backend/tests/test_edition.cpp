@@ -116,6 +116,10 @@ void run_edition_tests()
         CHECK(payload({"--max-allowed-bitrate=20"}));
         CHECK(payload({"--max-allowed-frame-rate=60"}));
         CHECK(payload({"--dev", "--max-allowed-stream-resolution", "1080"}));
+        // A script's request to the running server: the answer alone.
+        CHECK(payload({"--local-request", "GET /api/settings/streaming"}));
+        CHECK(payload({"--dev", "--local-request=GET /api/server/status"}));
+        CHECK(!payload({"--local-requests"}));
         // The worker's protocol, a helper's answer, the parser's own texts.
         for (const char* mode : {"--stream-worker", "--native-probe", "--vdisplay-apply", "--help",
                                  "--version", "-h", "-v"})

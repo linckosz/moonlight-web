@@ -99,6 +99,7 @@ void run_host_key_route_tests();
 void run_local_channel_tests();
 void run_host_key_vault_tests();
 void run_owner_link_wait_tests();
+void run_local_request_tests();
 
 int main(int argc, char** argv)
 {
@@ -193,6 +194,7 @@ int main(int argc, char** argv)
     run_local_channel_tests();
     run_host_key_vault_tests();
     run_owner_link_wait_tests();
+    run_local_request_tests();
     // Last: it repoints the Logger singleton at its own temp files.
     run_logger_rotation_tests();
 

@@ -78,6 +78,7 @@
 #include "server/ControlChannel.h"
 #include "server/ControlTunnel.h"
 #include "server/LocalChannel.h"
+#include "server/LocalRequest.h"
 #include "server/OwnerLinkWait.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
@@ -1260,6 +1261,60 @@ static int runWaitLinkCommand()
     }
 }
 
+// `moonlightweb --local-request "<METHOD> <path>"`: one request to the running
+// server over its local channel, for a script of this machine: a bench, a
+// health check (server/LocalRequest.h). The answer's body goes to standard
+// output, alone, and only for a yes; its status to standard error. A body to
+// send is read from standard input, never from the command line.
+static int runLocalRequestCommand(const QString& value)
+{
+    QTextStream err(stderr);
+    const std::optional<LocalRequest::Asked> asked = LocalRequest::parse(value);
+    // Decided here, before the channel is opened.
+    if (!asked || !LocalRequest::allowed(*asked)) {
+        err << "Not a request this command asks: one method and one exact path, of the few "
+               "it knows.\n";
+        return 1;
+    }
+
+    // A null body asks with GET (localRequest): a POST always has one, empty
+    // when nothing is piped in.
+    QByteArray body;
+    if (asked->method == QLatin1String("POST")) {
+        QFile in;
+        if (in.open(stdin, QIODevice::ReadOnly)) body = in.read(LocalRequest::maxBodyBytes() + 1);
+        if (body.size() > LocalRequest::maxBodyBytes()) {
+            err << "The body is larger than one request carries.\n";
+            return 1;
+        }
+        if (body.trimmed().isEmpty()) body = QByteArrayLiteral("{}");
+    }
+
+    mw::localchannel::Request request;
+    request.method = asked->method;
+    request.path = asked->path;
+    request.body = body;
+    QString why;
+    const mw::localchannel::Reply reply =
+        mw::localchannel::request(localChannelEndpoint(), request, 30000, &why);
+    if (reply.status == 0) {
+        err << "No answer: " << why << "\n";
+        return 1;
+    }
+    err << "HTTP " << reply.status << "\n";
+    err.flush();
+    const int code = LocalRequest::exitCodeFor(reply.status);
+    // A refusal's body is not shown: the status says it.
+    if (code == 0) {
+        QFile out;
+        if (out.open(stdout, QIODevice::WriteOnly)) {
+            out.write(LocalRequest::printable(*asked, reply.body));
+            out.write("\n");
+        }
+    }
+    return code;
+}
+
 // Loopback URL for the tray entries. "localhost", not 127.0.0.1: the loopback
 // certificate carries localhost as a SAN, so the browser only has to accept a
 // self-signed certificate, not a name mismatch on top of it. It carries no key:
@@ -1977,6 +2032,13 @@ int main(int argc, char* argv[])
                      "then exit");
     waitLinkOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(waitLinkOption);
+    // A script's own: one request to the running server through the channel
+    // the commands above use (server/LocalRequest.h).
+    QCommandLineOption localRequestOption(
+        "local-request", "Ask the running server one request of its local channel, then exit",
+        "method path");
+    localRequestOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(localRequestOption);
 
     // The administrator's ceilings, written into the running instance's
     // settings.json (AppSettings::streamLimits). Any of the three, together.
@@ -2252,6 +2314,8 @@ int main(int argc, char* argv[])
         return runOwnerLinkCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
                                    parser.isSet(printLinkOption));
     if (parser.isSet(waitLinkOption)) return runWaitLinkCommand();
+    if (parser.isSet(localRequestOption))
+        return runLocalRequestCommand(parser.value(localRequestOption));
     if (parser.isSet(maxFrameRateOption) || parser.isSet(maxBitrateOption) ||
         parser.isSet(maxResolutionOption)) {
         // Not given: nothing to change; given empty: a bad value.

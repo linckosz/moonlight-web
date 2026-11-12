@@ -683,6 +683,12 @@ void run_request_guard_tests()
     // What may be asked over the channel: the routes of the tray icon, the
     // command line and a second launch, each with its verb.
     CHECK(localChannelRoute("GET", "/api/health"));
+    // What this machine can capture and encode, for a script's request: the
+    // read alone, never the routes that change its displays.
+    CHECK(localChannelRoute("GET", "/api/native/status"));
+    CHECK(!localChannelRoute("POST", "/api/native/status"));
+    CHECK(!localChannelRoute("POST", "/api/native/virtual-display"));
+    CHECK(!localChannelRoute("GET", "/api/native/virtual-display"));
     CHECK(localChannelRoute("GET", "/api/server/status"));
     CHECK(localChannelRoute("GET", "/api/server/remote-link"));
     CHECK(localChannelRoute("GET", "/api/server/stream-activity"));
