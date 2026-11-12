@@ -83,6 +83,7 @@ void run_hid_parked_json_tests();
 void run_keyboard_layout_tests();
 void run_native_capabilities_json_tests();
 void run_edition_tests();
+void run_autostart_entry_tests();
 void run_remote_desktop_return_tests();
 void run_mdns_advertiser_tests();
 void run_router_port_core_tests();
@@ -179,6 +180,7 @@ int main(int argc, char** argv)
     run_keyboard_layout_tests();
     run_native_capabilities_json_tests();
     run_edition_tests();
+    run_autostart_entry_tests();
     run_remote_desktop_return_tests();
     run_mdns_advertiser_tests();
     run_router_port_core_tests();

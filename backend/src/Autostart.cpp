@@ -17,6 +17,7 @@
 
 #include "Autostart.h"
 
+#include "AutostartEntry.h"
 #include "common/DesktopSession.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
@@ -238,8 +239,11 @@ QString loginExecutable()
     return QCoreApplication::applicationFilePath();
 }
 
-// The whole entry, the way installLoginItem() writes it.
-QString entryText()
+// The whole entry, the way installLoginItem() writes it, with @p envPrefix —
+// the `env NAME=value …` a user put in front of the program — kept in front of
+// it (AutostartEntry.h). One arg() call: what it substitutes is never read
+// again, so a % in the prefix or the path stays what it is.
+QString entryText(const QString& envPrefix)
 {
     QStringList args;
     for (const QString& arg : launchArguments())
@@ -250,22 +254,36 @@ QString entryText()
                           "Type=Application\n"
                           "Name=%2\n"
                           "Comment=Stream your gaming PC to any browser\n"
-                          "Exec=\"%1\" %4\n"
+                          "Exec=%5\"%1\" %4\n"
                           "Icon=%3\n"
                           "Terminal=false\n"
                           "X-GNOME-Autostart-enabled=true\n")
         .arg(loginExecutable(), mw::edition::displayName(),
              mw::edition::isDevBuild() ? QStringLiteral("moonlightweb-dev")
                                        : QStringLiteral("moonlightweb"),
-             args.join(QLatin1Char(' ')));
+             args.join(QLatin1Char(' ')), envPrefix);
+}
+
+// The entry as it is on disk; empty when there is none.
+QByteArray installedEntry(const QString& path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    return f.readAll();
+}
+
+// What the installed entry starts the program with, to be kept.
+QString keptEnvPrefix(const QByteArray& installed)
+{
+    return Autostart::entry::envPrefix(Autostart::entry::execValue(QString::fromUtf8(installed)));
 }
 
 } // namespace
 
 bool installLoginItem()
 {
-    const QString entry = entryText();
     const QString path = entryPath();
+    const QString entry = entryText(keptEnvPrefix(installedEntry(path)));
     QDir().mkpath(QFileInfo(path).absolutePath());
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -281,15 +299,17 @@ bool installLoginItem()
 // An entry written by an earlier version started the bare binary; a package
 // update replaces the program, never the user's file. Rewritten only when it
 // says something else than this version would write, so a launch that finds it
-// right logs nothing.
+// right logs nothing. What this version would write includes the user's own
+// `env NAME=value …` in front of the program: a host started with MW_LAN_ONLY=1
+// that way stays so at every login, not only at the first one.
 void refreshLoginItem()
 {
-    const QString path = entryPath();
-    QFile f(path);
+    QFile f(entryPath());
     if (!f.open(QIODevice::ReadOnly)) return;
-    const bool same = f.readAll() == entryText().toUtf8();
+    const QByteArray installed = f.readAll();
     f.close();
-    if (!same) installLoginItem();
+    if (installed == entryText(keptEnvPrefix(installed)).toUtf8()) return;
+    installLoginItem();
 }
 
 bool removeLoginItem()

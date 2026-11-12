@@ -64,7 +64,10 @@ bool isLoginItemInstalled();
 /// Rewrite an installed login item that no longer says what this version
 /// would write (Linux: the launcher that carries the capture capabilities, not
 /// the bare binary an earlier version named). Nothing when none is installed,
-/// and nothing on Windows and macOS, whose installers own the item.
+/// and nothing on Windows and macOS, whose installers own the item. On Linux,
+/// an `env NAME=value …` the user put in front of the program on the Exec=
+/// line is part of what this version would write, so it stays; so it does when
+/// installLoginItem() rewrites an entry already there (AutostartEntry.h).
 void refreshLoginItem();
 
 } // namespace Autostart
