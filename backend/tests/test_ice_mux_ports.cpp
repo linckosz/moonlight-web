@@ -362,5 +362,27 @@ void run_ice_mux_ports_tests()
         CHECK(r.router.releases == 2 && r.router.hole[kBlock] == 0);
         CHECK(r.mux.port(kBlock) == b1 && !r.mux.holds(b2));
     }
+    {
+        // Internet Access itself went off meanwhile: the host wants no
+        // conferencing port any more, and the number bound for the claim is
+        // let go rather than served
+        Rig r(standard, block);
+        r.router.state = Gateway::Ready;
+        CHECK(r.ports.start(&why));
+        CHECK(r.router.claims == 2);
+        r.router.on = false;
+        r.wantsStandard = false;
+        r.router.answer();
+        CHECK(r.router.releases == 1 && r.router.hole[kStandard] == 0);
+        CHECK(r.mux.port(kStandard) == 0 && !r.mux.holds(s1));
+        // The block port is wanted whatever the switches say
+        r.router.answer();
+        CHECK(r.router.releases == 2 && r.mux.port(kBlock) == b1);
+        CHECK(r.mux.serving().size() == 1);
+        // And nothing more is asked or bound
+        r.ports.switchedOff();
+        r.ports.routerChanged();
+        CHECK(r.router.claims == 2 && r.mux.port(kStandard) == 0 && !r.mux.holds(s1));
+    }
     qInstallMessageHandler(before);
 }

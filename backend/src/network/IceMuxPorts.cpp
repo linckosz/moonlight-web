@@ -121,12 +121,13 @@ void IceMuxPorts::claimed(int which, uint16_t port, const QString& why)
     }
 
     const uint16_t before = m_Mux.port(which);
-    if (!m_Router.enabled()) {
+    if (!m_Router.enabled() || !wanted(which)) {
         // Switched off while the router was answering: the hole goes back.
-        // The port serves if the role had none, and is let go otherwise (a
-        // port that has served is kept, whatever is asked here).
+        // The port serves if the role had none and still wants one (UPnP off
+        // alone leaves a host open to the Internet), and is let go otherwise
+        // (a port that has served is kept, whatever is asked here).
         m_Router.release(which);
-        if (before == 0)
+        if (before == 0 && wanted(which))
             m_Mux.serve(which, port);
         else
             m_Mux.drop(port);

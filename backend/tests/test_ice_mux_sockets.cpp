@@ -418,17 +418,27 @@ void run_ice_mux_socket_tests()
         std::fprintf(stderr, "  (only %zu free ports in the stream block: skipped)\n", many.size());
     } else {
         IceMux full;
+        std::atomic<int> said{0};
+        full.setReporter([&said](const std::string&) { ++said; });
         CHECK(full.start(&why));
         for (size_t i = 0; i < IceMux::kSocketsMax; ++i)
             CHECK(full.hold(many[i]) == Held::NewlyBound);
+        CHECK(said == 0);
         CHECK(full.hold(many[IceMux::kSocketsMax], &why) == Held::Failed);
         CHECK(!full.holds(many[IceMux::kSocketsMax]));
+        // Said, and said once however often it is asked
+        CHECK(said == 1);
+        CHECK(full.hold(many[IceMux::kSocketsMax]) == Held::Failed);
+        CHECK(said == 1);
+        // A port it has is not one too many
+        CHECK(full.hold(many[0]) == Held::AlreadyHeld);
         // The port was not even bound: it is free for anybody
         CHECK(other.hold(many[IceMux::kSocketsMax]) == Held::NewlyBound);
         other.drop(many[IceMux::kSocketsMax]);
         // One let go makes room for one
         full.drop(many[0]);
         CHECK(full.hold(many[IceMux::kSocketsMax]) == Held::NewlyBound);
+        CHECK(said == 1);
         full.stop();
     }
     other.stop();

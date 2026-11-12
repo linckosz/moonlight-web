@@ -268,6 +268,7 @@ void IceMux::stop()
     closesocket(static_cast<SOCKET>(m_Hop));
     m_HopPort = 0;
     m_Ailing = 0;
+    m_FullSaid = false;
     const std::lock_guard<std::mutex> lock(m_Lock);
     m_Router = Router();
     m_Feeds.clear();
@@ -291,6 +292,11 @@ IceMux::Held IceMux::hold(uint16_t port, std::string* why)
     }
     if (!room) {
         if (why) *why = "the mux holds every socket it may";
+        // Said once: from here on a port whose hole goes to another machine
+        // is not replaced, and nothing else would tell.
+        if (!m_FullSaid.exchange(true) && m_Report)
+            m_Report("the mux holds every socket it may (" + std::to_string(kSocketsMax) +
+                     "): no other port is held until the server starts again");
         return Held::Failed;
     }
     const SOCKET s = openShared(port, why);

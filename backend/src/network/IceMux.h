@@ -110,7 +110,9 @@ public:
     /// stream that starts meanwhile is better off on a socket of its own.
     bool healthy() const;
     /// Where what is said of such a port goes: that it keeps failing, then
-    /// that it reads again. Called from the reading thread; set before start().
+    /// that it reads again; and, once, that the mux holds every socket it may.
+    /// Called from the reading thread, and from the thread that asked for one
+    /// port too many; set before start().
     void setReporter(std::function<void(const std::string&)> report)
     {
         m_Report = std::move(report);
@@ -197,6 +199,8 @@ private:
     std::atomic<uint32_t> m_PortsVersion{0};
     /// One bit per socket whose reads keep failing
     std::atomic<uint32_t> m_Ailing{0};
+    /// That no socket is left to hold a port with has been said
+    std::atomic<bool> m_FullSaid{false};
 
     uintptr_t m_Hop = ~uintptr_t(0);
     uint16_t m_HopPort = 0;
