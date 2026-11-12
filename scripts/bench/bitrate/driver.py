@@ -168,9 +168,12 @@ class Foreign(Exception):
 ALLOWED = set()
 NVIDIA_OVERLAY = ("CEF-OSC-WIDGET", "NVIDIA Overlay.exe")
 ALLOW_INK = []  # [True] with --allow-handwriting-canvas
+ALLOW_COVERED = []  # [True] with --allow-covered: the desk's windows under the TOPMOST page (07/11)
 
 
 def accepted(w):
+    if ALLOW_COVERED and not w["topmost"] and not w["above_page"]:
+        return True
     if (w["class"], w["exe"]) in ALLOWED and not w["topmost"] and not w["above_page"]:
         return True
     # Windows' pen canvas: topmost, but click-through and see-through; draws only pen ink
@@ -307,6 +310,12 @@ class Content:
 
 
 TAP = open(os.path.join(HERE, "tap.js"), encoding="utf-8").read()  # loaded disarmed
+HDR_SHIM = """(() => { const mm = window.matchMedia.bind(window);
+  window.matchMedia = (q) => /dynamic-range:\\s*high/.test(q)
+    ? { matches: true, media: q, onchange: null, addEventListener() {}, removeEventListener() {},
+        addListener() {}, removeListener() {}, dispatchEvent() { return false; } }
+    : mm(q); })();"""
+HDR_SHIM_ADDED = []
 GRAB = [100 + 200 * k for k in range(15)]
 
 
@@ -368,16 +377,42 @@ def wipe_run(run, why):
 def check_bars(run):
     """Offline: every grabbed decoder frame must carry the barcode."""
     sys.path.insert(0, HERE)
-    import numpy as np
     import common as cm
+    return [(idx, cm.read_bar(y)) for idx, y in grabbed_lumas(run)]
+
+
+def check_white(run):
+    """Offline, SDR only: why the run is refused if the screen was dimmed (the lowest barcode
+    white of the grabbed frames below common.DIM_WHITE), else None. A prompt's dimmed backdrop is
+    seen neither by the watch nor by the barcode reader (12/11, runs/HS)."""
+    sys.path.insert(0, HERE)
+    import common as cm
+    low = cm.dimmed([cm.bar_white(y) for _, y in grabbed_lumas(run)])
+    if low is None:
+        return None
+    return "screen dimmed: barcode white at %.0f, below %d (a prompt's backdrop?)" % (low, cm.DIM_WHITE)
+
+
+def grabbed_lumas(run):
+    """(idx, luma plane as HxW uint8) of each decoder frame tap.js grabbed."""
+    sys.path.insert(0, HERE)
+    import numpy as np
     meta = json.load(open(os.path.join(run, "meta.json"), encoding="utf-8"))
     out = []
     for fr in meta["frames"]:
         b = np.fromfile(os.path.join(run, "frame-%06d.raw" % fr["idx"]), dtype=np.uint8)
         w, h = fr["vis"]["w"], fr["vis"]["h"]
         off, stride = fr["layout"][0]["offset"], fr["layout"][0]["stride"]
-        y = b[off:off + stride * h].reshape(h, stride)[:, :w]
-        out.append((fr["idx"], cm.read_bar(y)))
+        y = b[off:off + stride * h].reshape(h, stride)
+        fm = fr.get("format") or ""
+        if fm in ("RGBA", "RGBX", "BGRA", "BGRX"):  # a 4:4:4 stream, as Chrome hands it over
+            y = y[:, :4 * w].reshape(h, w, 4)[:, :, 1].copy()
+        elif "P010" in fm or "P10" in fm or "P12" in fm:  # two bytes a sample, little-endian
+            y16 = y[:, :2 * w].copy().view("<u2")
+            y = (y16 >> (8 if fm == "P010" else 2)).astype(np.uint8)
+        else:
+            y = y[:, :w]
+        out.append((fr["idx"], y))
     return out
 
 
@@ -417,7 +452,12 @@ def pull(cl, run, tag):
 
 
 # ── scene plans ──────────────────────────────────────────────────────────────
-def plan(name, geo, fps, h):
+# hdrcal.py's bands, in light (1.0 = SDR white): below, at and above the SDR white, up to where a
+# virtual display's headroom may stop.
+CAL_BANDS = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
+
+
+def plan(name, geo, fps, h, peak=3.0, gain=1.0):
     step = max(1, round(h / 120 * 60 / fps))  # same speed in px/s at any frame rate
     src = lambda f: "src/%s/%s.png" % (geo, f)  # noqa: E731
     still = 3.0
@@ -436,28 +476,96 @@ def plan(name, geo, fps, h):
         if h >= 2160:
             scenes.append({"id": 6, "mode": "still", "src": src("cp4k")})
             seq.append((6, still))
+    elif name == "hdrpeak":
+        # HDR with highlights over the SDR white (bench.html's WebGPU canvas, "hdr" key): the
+        # renders' bright parts raised to `peak` x SDR white. Scene 7 first: bands of known
+        # light, for hdrcal.py to check nothing is clipped. Needs --fmt hdr.
+        # gain: Chrome's extended canvas puts its 1.0 below the desktop's SDR white (86 nits for
+        # 240 on the 11/11 slot); everything drawn is multiplied by it (--hdr-gain), so that 1.0
+        # lands on the desktop's white, as in a game. hdrcal.py checks it run by run.
+        hp = {"k": peak, "t": 0.6, "g": gain}
+        scenes = [{"id": 7, "mode": "calib", "src": src("junkshop"), "bands": CAL_BANDS, "g": gain},
+                  {"id": 1, "mode": "still", "src": src("junkshop"), "hdr": hp},
+                  {"id": 4, "mode": "still", "src": src("gears"), "hdr": hp},
+                  {"id": 2, "mode": "scroll", "src": src("jsgears"), "step": step, "pause": 0, "hdr": hp},
+                  {"id": 3, "mode": "scroll", "src": src("jsgears"), "step": step, "pause": fps // 2,
+                   "hdr": hp}]
+        seq = [(7, 2.0), (1, still), (4, still), (2, 5.0), (3, 6.0)]
+    elif name == "rendersdr":
+        # hdrpeak's twin in SDR (same renders, same ids, drawn by the 2D canvas): the baseline that
+        # the HDR factor is measured against, content for content.
+        scenes = [{"id": 1, "mode": "still", "src": src("junkshop")},
+                  {"id": 4, "mode": "still", "src": src("gears")},
+                  {"id": 2, "mode": "scroll", "src": src("jsgears"), "step": step, "pause": 0},
+                  {"id": 3, "mode": "scroll", "src": src("jsgears"), "step": step, "pause": fps // 2}]
+        seq = [(1, still), (4, still), (2, 5.0), (3, 6.0)]
     else:
         raise SystemExit("unknown plan " + name)
     return scenes, seq
 
 
 # ── one run ──────────────────────────────────────────────────────────────────
-def settings_for(w, h, fps, kbps, codec):
+def settings_for(w, h, fps, kbps, codec, fmt="420"):
     return {"stream_resolution": "custom", "stream_custom_width": w, "stream_custom_height": h,
             "stream_height": h, "stream_fps": fps, "stream_bitrate": kbps, "stream_bitrate_auto": False,
-            "video_codec": codec, "video_enhancement": "off", "hdr_enabled": False,
-            "chroma_444_enabled": False, "video_worker": "off", "transport_mode": "webrtc-dc-udp"}
+            "video_codec": codec, "video_enhancement": "off", "hdr_enabled": fmt == "hdr",
+            "chroma_444_enabled": fmt == "444", "video_worker": "off", "transport_mode": "webrtc-dc-udp"}
+
+
+DEV_LOG = os.path.join(HERE, "dev.log")
+
+
+def host_log_since(mark):
+    """The --dev's log lines written after byte offset `mark`."""
+    try:
+        with open(DEV_LOG, "rb") as f:
+            f.seek(mark)
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def host_format(log, fmt):
+    """What the host says it streams: (ok, sdr_nits, why). A 4:4:4 or HDR run that the host
+    turned back into SDR 4:2:0 is refused here, before anything is recorded."""
+    import re
+    if "NVENC ready" not in log:
+        return False, None, "no NVENC ready line in the host log"
+    if fmt == "444":
+        if "4:4:4 requested but" in log or "4:4:4 and HDR cannot" in log:
+            return False, None, "the host did not grant 4:4:4"
+        return True, None, ""
+    if fmt == "hdr":
+        if "HDR was negotiated but the display handed over 8-bit frames" in log:
+            return False, None, "the display is SDR: the host streams SDR"
+        if "Main10 (BT.2020 PQ)" not in log:
+            return False, None, "NVENC is not on Main10 PQ"
+        m = re.findall(r"the desktop's SDR white is (\d+) nits", log)
+        if not m:
+            return False, None, "no SDR white in the host log"
+        return True, float(m[-1]), ""
+    return True, None, ""
 
 
 def one(cl, content, a, w, h, kbps, out):
-    tag = "%dx%dp%d-%s-%05d" % (w, h, a.fps, a.codec, kbps)
+    tag = "%dx%dp%d-%s%s-%05d" % (w, h, a.fps, a.codec, "" if a.fmt == "420" else "-" + a.fmt, kbps)
     run = os.path.join(out, tag)
     if os.path.exists(os.path.join(run, "run.json")):
         print(tag, "done already")
         return
-    scenes, seq = plan(a.scenes, "%dx%d" % (w, h), a.fps, h)
+    if a.scenes == "hdrpeak" and a.fmt != "hdr":
+        raise SystemExit("--scenes hdrpeak needs --fmt hdr")
+    scenes, seq = plan(a.scenes, "%dx%d" % (w, h), a.fps, h, a.hdr_peak, a.hdr_gain)
+    if a.fmt == "hdr" and not HDR_SHIM_ADDED:
+        # The lab client is headless: no screen, so no HDR screen, and the page asks the native
+        # host for HDR only when its screen can show it. Bench only, this Chrome only: it is
+        # told its screen is HDR. Decoding stays the real decoder's.
+        cl.call("Page.enable")
+        cl.call("Page.addScriptToEvaluateOnNewDocument", source=HDR_SHIM)
+        HDR_SHIM_ADDED.append(True)
     cl.navigate(a.host_url)
-    cl.apply_settings(settings_for(w, h, a.fps, kbps, a.codec))
+    cl.apply_settings(settings_for(w, h, a.fps, kbps, a.codec, a.fmt))
+    log_mark = os.path.getsize(DEV_LOG) if os.path.exists(DEV_LOG) else 0
     ensure_tap(cl)
     if not cl.wait_library(tries=15):
         raise drive.PassFailed("no host card on the client page (PIN page?)")
@@ -467,6 +575,13 @@ def one(cl, content, a, w, h, kbps, out):
     cl.launch(card, app)
     cl.wait_picture(timeout=45)
     mon = wait_new_monitor(before, w, h)
+    sdr_nits = None
+    if a.fmt != "420":
+        time.sleep(2.0)
+        ok, sdr_nits, why = host_format(host_log_since(log_mark), a.fmt)
+        if not ok:
+            cl.stop()
+            raise drive.PassFailed("%s: %s" % (a.fmt, why))
     watch = Watch(mon)
     tapst = None
 
@@ -529,10 +644,16 @@ def one(cl, content, a, w, h, kbps, out):
     if not bars or any(v is None for _, v in bars):
         wipe_run(run, "offline barcode check failed: %s" % bars)
         raise BadPicture("offline barcode check failed: %s" % bars)
+    if a.fmt != "hdr":  # HDR: hdrcal.py's bands say what light was carried
+        why = check_white(run)
+        if why:
+            wipe_run(run, why)
+            raise BadPicture(why)
     spec = {"W": w, "H": h, "fps": a.fps, "kbps": kbps, "codec": a.codec, "scenes": scenes, "seq": seq,
             "monitor": mon, "content_state": end_state, "tap": tapst, "flush": str(fl)[:300],
             "overlay": stats, "launched": t_launch, "timeline": timeline, "arm": a.arm,
-            "first_bar": first_bar, "bars": bars, "watch_notes": watch.notes, "protections": 3}
+            "first_bar": first_bar, "bars": bars, "watch_notes": watch.notes, "protections": 3,
+            "fmt": a.fmt, "sdr_nits": sdr_nits}
     if not os.path.exists(os.path.join(run, "bitstream.bin")):
         raise drive.PassFailed("collector got no bitstream for %s (flush said %s)" % (tag, str(fl)[:200]))
     json.dump(spec, open(os.path.join(run, "run.json"), "w", encoding="utf-8"), indent=1)
@@ -587,12 +708,19 @@ def main():
     ap.add_argument("--kbps", required=True)
     ap.add_argument("--host-url", required=True)
     ap.add_argument("--client-cdp", type=int, default=9424)
-    ap.add_argument("--content-luid", default="0,89259")  # the GPU that encodes (see README)
+    ap.add_argument("--content-luid", default=os.environ.get("MW_BENCH_CONTENT_LUID", ""))  # the encoding GPU (see README)
     ap.add_argument("--scenes", default="phase1")
     ap.add_argument("--arm", default="A")
+    ap.add_argument("--fmt", default="420", choices=["420", "444", "hdr"])
+    ap.add_argument("--hdr-peak", type=float, default=3.0,
+                    help="hdrpeak plan: the highlights' light, x SDR white (hdrcal.py says what fits)")
+    ap.add_argument("--hdr-gain", type=float, default=1.0,
+                    help="hdrpeak plan: gain on all the canvas draws (desktop SDR white / Chrome's white)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--allow-nvidia-overlay", action="store_true")
     ap.add_argument("--allow-handwriting-canvas", action="store_true")
+    ap.add_argument("--allow-covered", action="store_true",
+                    help="accept any non-TOPMOST window below the page (the virtual screen is primary)")
     ap.add_argument("--pair-dev", action="store_true", help="pair with the local --dev first (PIN in memory)")
     ap.add_argument("--deadline", default="", help="HH:MM (morning): no new point starts after it")
     ap.add_argument("--skip-vscode-point", action="store_true",
@@ -602,6 +730,8 @@ def main():
         ALLOWED.add(NVIDIA_OVERLAY)
     if a.allow_handwriting_canvas:
         ALLOW_INK.append(True)
+    if a.allow_covered:
+        ALLOW_COVERED.append(True)
     w, h = map(int, a.geo.split("x"))
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)
@@ -628,7 +758,8 @@ def main():
                 break
             except (Foreign, BadPicture) as e:
                 # the point is wiped at once; it is redone after a minute, 3 times at most
-                run = os.path.join(out, "%dx%dp%d-%s-%05d" % (w, h, a.fps, a.codec, kbps))
+                run = os.path.join(out, "%dx%dp%d-%s%s-%05d" % (w, h, a.fps, a.codec,
+                                                               "" if a.fmt == "420" else "-" + a.fmt, kbps))
                 wipe_run(run, str(e))
                 content.stop()
                 cl.stop()

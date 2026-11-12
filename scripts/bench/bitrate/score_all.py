@@ -38,7 +38,8 @@ def main():
                 log.write("%s --until %s: stop before %s\n" % (time.strftime("%H:%M"), until, os.path.basename(d)))
                 return
             t = time.time()
-            r = subprocess.run([sys.executable, "-E", "-X", "utf8", os.path.join(HERE, "score.py"), d, "--threads", "8"],
+            extra = ["--cut-cols", sys.argv[sys.argv.index("--cut-cols") + 1]] if "--cut-cols" in sys.argv else []
+            r = subprocess.run([sys.executable, "-E", "-X", "utf8", os.path.join(HERE, "score.py"), d, "--threads", "8"] + extra,
                                capture_output=True, text=True)
             v = subprocess.run([sys.executable, "-E", "-X", "utf8", os.path.join(HERE, "verify.py"), d],
                                capture_output=True, text=True)

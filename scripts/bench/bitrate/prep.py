@@ -53,6 +53,12 @@ def main():
             cover(Image.open(p).convert("RGB"), w, h).save(os.path.join(d, name + ".png"), optimize=False)
         width(Image.open(os.path.join(PAGES, "google-1440.png")).convert("RGB"), w).save(os.path.join(d, "google.png"))
         width(Image.open(text_page(h)).convert("RGB"), w).save(os.path.join(d, "web.png"))
+        # The HDR highlights' scroll ("hdrpeak" plan): the two renders, one above the other,
+        # W x 2H, so a pan crosses both pictures and their highlights.
+        tall = Image.new("RGB", (w, 2 * h))
+        tall.paste(Image.open(os.path.join(d, "junkshop.png")), (0, 0))
+        tall.paste(Image.open(os.path.join(d, "gears.png")), (0, h))
+        tall.save(os.path.join(d, "jsgears.png"), optimize=False)
         for f in sorted(os.listdir(d)):
             im = Image.open(os.path.join(d, f))
             print(geo, f, im.size)

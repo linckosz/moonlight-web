@@ -22,12 +22,24 @@
   };
   // The page's barcode (content/bench.html), read from an NV12/I420 luma plane:
   // same cells and check bits as common.read_bar. null when unreadable.
-  function readBar(b, layout, w, h) {
+  // 10-bit frames carry two bytes a sample, little-endian: P010 in the high bits, I420P10 /
+  // I444P10 in the low ones; both are brought to the 8-bit scale.
+  function readBar(b, layout, w, h, format) {
     const off = layout[0].offset, stride = layout[0].stride;
     const c = 2 * Math.round(h / 120), q = Math.max(1, Math.floor(c / 4));
+    const wide = /P010|P10|P12/.test(format || ''), shift = format === 'P010' ? 8 : 2;
+    // RGB frames (a 4:4:4 stream comes out of Chrome's decoder as BGRA): the barcode is black
+    // and white, so the green byte reads it.
+    const rgb = /^(RGBA|RGBX|BGRA|BGRX)$/.test(format || '');
+    const at = (y, x) => {
+      if (rgb) return b[off + y * stride + 4 * x + 1];
+      if (!wide) return b[off + y * stride + x];
+      const i = off + y * stride + 2 * x;
+      return (b[i] | (b[i + 1] << 8)) >> shift;
+    };
     const mean = (y0, x0) => {
       let s = 0, n = 0;
-      for (let y = y0 - q; y < y0 + q; y++) for (let x = x0 - q; x < x0 + q; x++) { s += b[off + y * stride + x]; n++; }
+      for (let y = y0 - q; y < y0 + q; y++) for (let x = x0 - q; x < x0 + q; x++) { s += at(y, x); n++; }
       return s / n;
     };
     const bits = [];
@@ -131,16 +143,21 @@
   function grab(frame, idx) {
     const f = frame.clone();
     T.pending++;
-    const b = new Uint8Array(f.allocationSize());
-    f.copyTo(b)
+    // An HDR frame from the GPU decoder cannot be copied as it is (allocationSize refuses it):
+    // it is copied converted to RGBA then, which keeps the black-and-white barcode.
+    let opts, b;
+    try { b = new Uint8Array(f.allocationSize()); } catch (e) { opts = { format: 'RGBA' }; }
+    try { if (opts) b = new Uint8Array(f.allocationSize(opts)); } catch (e) { T.errors.push('grab ' + idx + ': ' + e); T.pending--; f.close(); return; }
+    const fmt = opts ? 'RGBA' : f.format;
+    f.copyTo(b, opts)
       .then((layout) => {
         const v = f.visibleRect;
         let bar = null;
-        try { bar = readBar(b, layout, v.width, v.height); } catch (e) { T.errors.push('bar ' + idx + ': ' + e); }
+        try { bar = readBar(b, layout, v.width, v.height, fmt); } catch (e) { T.errors.push('bar ' + idx + ': ' + e); }
         T.bars.push([idx, bar]);
-        if (bar === null) { T.wipe('no barcode on output frame ' + idx); return; }
+        if (bar === null) { T.wipe('no barcode on output frame ' + idx + ' (' + f.format + ', ' + layout.length + ' planes, stride ' + layout[0].stride + ', ' + v.width + 'x' + v.height + ')'); return; }
         if (!T.armed) return;
-        T.frames.push({ idx, ts: f.timestamp, format: f.format, codedW: f.codedWidth, codedH: f.codedHeight,
+        T.frames.push({ idx, ts: f.timestamp, format: fmt, source_format: f.format, codedW: f.codedWidth, codedH: f.codedHeight,
                         vis: v ? { x: v.x, y: v.y, w: v.width, h: v.height } : null,
                         layout, colorSpace: f.colorSpace ? f.colorSpace.toJSON() : null, b });
       })

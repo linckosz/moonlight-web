@@ -6,10 +6,12 @@
 <style>
   html, body { margin: 0; background: #808080; overflow: hidden; cursor: none; height: 100%; }
   canvas { position: fixed; left: 0; top: 0; }
+  #h { visibility: hidden; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<canvas id="h"></canvas>
 <script>
 // Content for the Auto-bitrate study. One canvas in DEVICE pixels: every frame
 // is a pure copy of a source picture, so its reference is computed offline
@@ -30,6 +32,15 @@
 // bits, wraps every 8192 frames), then 8 bits of check; a row of cells and its
 // complement under it, C x C device px each, C = 2 x round(H / 120).
 // The metrics leave out the bottom 2C rows.
+//
+// HDR highlights (the "hdrpeak" plan, an HDR stream): a scene with `hdr: {k, t}`
+// is drawn by a second canvas, WebGPU, rgba16float with extended tone mapping,
+// so its light can go past the SDR white. The source is read as sRGB (decoded
+// on the GPU, piecewise curve), and every pixel whose BT.709 luminance Y is
+// above t is multiplied by 1 + (k - 1) u^2, u = (Y - t) / (1 - t) — SDR white
+// becomes k x SDR white (fmtref.py boost_light mirrors it). A scene with
+// `mode: 'calib', bands: [..]` shows horizontal bands of those lights (1.0 =
+// SDR white) for hdrcal.py. Both draw the same barcode, at 1.0 and 0.0.
 const dpr = window.devicePixelRatio || 1;
 const W = Math.round(window.innerWidth * dpr), H = Math.round(window.innerHeight * dpr);
 const C = 2 * Math.round(H / 120);
@@ -38,6 +49,152 @@ cv.width = W; cv.height = H;
 cv.style.width = W / dpr + 'px'; cv.style.height = H / dpr + 'px';
 const g = cv.getContext('2d', { alpha: false });
 g.imageSmoothingEnabled = false;
+
+// ── HDR canvas (WebGPU) ─────────────────────────────────────────────────────
+const ch = document.getElementById('h');
+ch.width = W; ch.height = H;
+ch.style.width = W / dpr + 'px'; ch.style.height = H / dpr + 'px';
+let gpu = null, hdrShown = false;
+const WGSL = `
+struct U {
+  top: f32, h: f32, c: f32, mode: f32,   // mode 0: the picture; 1: the bands
+  k: f32, t: f32, nb: f32, bar: f32,     // bar: the 24 barcode bits, exact in an f32
+  bands: array<vec4f, 3>,
+  g: f32, p1: f32, p2: f32, p3: f32,     // g: a gain on everything drawn (Chrome's own white)
+};
+@group(0) @binding(0) var<uniform> u: U;
+@group(0) @binding(1) var tex: texture_2d<f32>;   // the source's sRGB bytes, rgba8unorm
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  var p = array(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+  return vec4f(p[i], 0.0, 1.0);
+}
+fn dec(v: f32) -> f32 {   // sRGB -> light, piecewise (fmtref.py srgb_light)
+  if (v <= 0.04045) { return v / 12.92; }
+  return pow((v + 0.055) / 1.055, 2.4);
+}
+fn enc(x: f32) -> f32 {   // light -> sRGB, extended past 1.0 for the extended canvas
+  if (x <= 0.0031308) { return 12.92 * max(x, 0.0); }
+  return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+}
+@fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {
+  let x = i32(p.x);
+  let y = i32(p.y);
+  let cells = i32(u.c);
+  let barTop = i32(u.h) - 2 * cells;
+  if (y >= barTop && x < 24 * cells) {
+    var one = (u32(u.bar) >> u32(x / cells)) & 1u;
+    if (y >= barTop + cells) { one = 1u - one; }
+    let s = enc(f32(one) * u.g);
+    return vec4f(s, s, s, 1.0);
+  }
+  var lin: vec3f;
+  if (u.mode > 0.5) {
+    let nb = i32(u.nb);
+    let i = clamp(y * nb / max(barTop, 1), 0, nb - 1);
+    lin = vec3f(u.bands[i / 4][i % 4]);
+  } else {
+    let c = textureLoad(tex, vec2i(x, y + i32(u.top)), 0).rgb;
+    lin = vec3f(dec(c.r), dec(c.g), dec(c.b));
+    let w = clamp((dot(lin, vec3f(0.2126, 0.7152, 0.0722)) - u.t) / (1.0 - u.t), 0.0, 1.0);
+    lin = lin * (1.0 + (u.k - 1.0) * w * w);
+  }
+  lin = lin * u.g;
+  return vec4f(enc(lin.r), enc(lin.g), enc(lin.b), 1.0);
+}`;
+
+async function gpuInit() {
+  if (gpu) return gpu;
+  if (!navigator.gpu) throw new Error('HDR scene: no WebGPU in this browser');
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error('HDR scene: no WebGPU adapter');
+  const device = await adapter.requestDevice();
+  const ctx = ch.getContext('webgpu');
+  ctx.configure({ device, format: 'rgba16float', colorSpace: 'srgb', alphaMode: 'opaque',
+                  toneMapping: { mode: 'extended' } });
+  // A Chrome without the key keeps everything at the SDR white: no highlight, a wrong run.
+  const conf = ctx.getConfiguration ? ctx.getConfiguration() : null;
+  const tm = conf && conf.toneMapping ? conf.toneMapping.mode : 'unknown';
+  if (tm !== 'extended') throw new Error('HDR scene: extended tone mapping not taken (' + tm + ')');
+  const module = device.createShaderModule({ code: WGSL });
+  const bad = (await module.getCompilationInfo()).messages.filter((m) => m.type === 'error');
+  if (bad.length) throw new Error('HDR scene: ' + bad.map((m) => m.lineNum + ': ' + m.message).join('; '));
+  const pipe = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vs' },
+    fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
+    primitive: { topology: 'triangle-list' },
+  });
+  const ubuf = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  gpu = { device, ctx, pipe, ubuf, toneMapping: tm };
+  return gpu;
+}
+
+// The scene's source as its exact sRGB bytes (no colour conversion: the PNGs carry no
+// profile), decoded in the shader like the reference; a 1 x 1 texture for the bands.
+async function gpuScene(s) {
+  const { device, pipe, ubuf } = gpu;
+  let w = 1, h = 1, bytes = new Uint8Array(4);
+  if (s.mode !== 'calib') {
+    w = s.img.naturalWidth; h = s.img.naturalHeight;
+    const oc = new OffscreenCanvas(w, h);
+    const og = oc.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
+    og.drawImage(s.img, 0, 0);
+    bytes = og.getImageData(0, 0, w, h, { colorSpace: 'srgb' }).data;
+  }
+  const tex = device.createTexture({ size: [w, h], format: 'rgba8unorm',
+                                     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+  device.queue.writeTexture({ texture: tex }, bytes, { bytesPerRow: 4 * w }, [w, h]);
+  s.bind = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: ubuf } }, { binding: 1, resource: tex.createView() }] });
+}
+
+function gpuPass(s, i, view) {
+  const { device, pipe, ubuf } = gpu;
+  const v = ((s.id & 7) << 13) | (i & 0x1fff);
+  const bands = s.bands || [];
+  const f = new Float32Array(24);
+  f[20] = (s.hdr && s.hdr.g) || s.g || 1;  // 1.0 = Chrome's white; g makes it the desktop's
+  f.set([s.mode === 'calib' ? 0 : pos(s, i), H, C, s.mode === 'calib' ? 1 : 0,
+         s.hdr ? s.hdr.k : 1, s.hdr ? s.hdr.t : 0.6, Math.min(12, bands.length), v | (check(v) << 16)]);
+  for (let j = 0; j < Math.min(12, bands.length); j++) f[8 + j] = bands[j];
+  device.queue.writeBuffer(ubuf, 0, f);
+  const en = device.createCommandEncoder();
+  const pass = en.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store',
+                                                         clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
+  pass.setPipeline(pipe);
+  pass.setBindGroup(0, s.bind);
+  pass.draw(3);
+  pass.end();
+  return en;
+}
+function gpuDraw(s, i) {
+  gpu.device.queue.submit([gpuPass(s, i, gpu.ctx.getCurrentTexture().createView()).finish()]);
+}
+function half(h) {   // IEEE half -> number
+  const e = (h >> 10) & 31, m = h & 1023, sg = h & 32768 ? -1 : 1;
+  if (e === 0) return sg * m * Math.pow(2, -24);
+  if (e === 31) return m ? NaN : sg * Infinity;
+  return sg * (1 + m / 1024) * Math.pow(2, e - 15);
+}
+// What the HDR canvas holds at pixels `pts` ([x, y]) for scene id at frame i: the
+// sRGB-encoded values (extended), as the compositor receives them. For checks only.
+async function gpuProbe(s, i, pts) {
+  const { device } = gpu;
+  const tex = device.createTexture({ size: [W, H], format: 'rgba16float',
+                                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+  const en = gpuPass(s, i, tex.createView());
+  const row = Math.ceil((W * 8) / 256) * 256;
+  const buf = device.createBuffer({ size: row * H, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  en.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: row }, [W, H]);
+  device.queue.submit([en.finish()]);
+  await buf.mapAsync(GPUMapMode.READ);
+  const u16 = new Uint16Array(buf.getMappedRange());
+  const out = pts.map(([x, y]) => [0, 1, 2].map((c) => half(u16[(y * row) / 2 + x * 4 + c])));
+  buf.unmap();
+  buf.destroy();
+  tex.destroy();
+  return out;
+}
 
 const scenes = new Map();
 let cur = 0, n = 0, frozen = null, frames = 0, rate = 0, t0 = -1;
@@ -71,6 +228,9 @@ function bar(v) {
 }
 function draw(id, i) {
   const s = scenes.get(id);
+  const hdr = !!(s && s.bind);
+  if (hdr !== hdrShown) { ch.style.visibility = hdr ? 'visible' : 'hidden'; hdrShown = hdr; }
+  if (hdr) { gpuDraw(s, i); return; }
   if (!s) { g.fillStyle = '#808080'; g.fillRect(0, 0, W, H); bar(0); return; }
   g.drawImage(s.img, 0, pos(s, i), W, H, 0, 0, W, H);
   bar(((id & 7) << 13) | (i & 0x1fff));
@@ -98,14 +258,23 @@ window.mw = {
       if (img.naturalWidth < W || img.naturalHeight < H) throw new Error(d.src + ' smaller than ' + W + 'x' + H);
       scenes.set(d.id, { ...d, img });
     }
-    return [...scenes.values()].map((s) => ({ id: s.id, mode: s.mode, w: s.img.naturalWidth, h: s.img.naturalHeight }));
+    for (const s of scenes.values()) {
+      if (!s.hdr && s.mode !== 'calib') continue;
+      await gpuInit();
+      await gpuScene(s);
+    }
+    return [...scenes.values()].map((s) => ({ id: s.id, mode: s.mode, w: s.img.naturalWidth, h: s.img.naturalHeight,
+                                              hdr: !!s.bind, toneMapping: gpu ? gpu.toneMapping : null }));
   },
   show(id) { frozen = null; cur = id; n = 0; t0 = -1; return { W, H, dpr, C }; },
   grey() { frozen = null; cur = 0; n = 0; t0 = -1; return 0; },
   rate(fps) { rate = fps || 0; return rate; },
   freeze(id, i) { frozen = [id, i]; return pos(scenes.get(id), i); },
+  async probe(id, i, pts) { const s = scenes.get(id); return s && s.bind ? gpuProbe(s, i, pts) : null; },
   unfreeze() { frozen = null; return 0; },
-  state() { return { cur, n, frozen, frames, rate, W, H, dpr, C, sw: screen.width, sh: screen.height }; },
+  state() { return { cur, n, frozen, frames, rate, W, H, dpr, C, sw: screen.width, sh: screen.height,
+                     hdr: hdrShown, toneMapping: gpu ? gpu.toneMapping : null,
+                     hdrScreen: matchMedia('(dynamic-range: high)').matches }; },
 };
 </script>
 </body>

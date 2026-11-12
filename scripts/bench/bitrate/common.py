@@ -69,6 +69,41 @@ def read_bar(y):
     return v if ch == check(v) else None
 
 
+DIM_WHITE = 225  # SDR barcode white below this: the screen was dimmed (driver.py refuses the point)
+
+
+def bar_white(y):
+    """Mean luma of the barcode's white cells (their centres, as read_bar samples them), or None
+    if the barcode is unreadable. The cells are drawn #fff outside the page's picture: an SDR
+    frame carries them at Y 235 (limited) or 255 (the G of a full-range RGB frame). 12/11: a
+    Windows Security prompt on the primary virtual screen dimmed the whole screen behind it, x0.54
+    on the encoded values (white at 137), and every SDR point of that run was lost."""
+    v = read_bar(y)
+    if v is None:
+        return None
+    h = y.shape[0]
+    c = cell(h)
+    q = max(1, c // 4)
+    ch = check(v & 0xFFFF)
+    vals = []
+    for b in range(24):
+        one = (v >> b) & 1 if b < 16 else (ch >> (b - 16)) & 1
+        cy = h - 2 * c + c // 2 if one else h - c + c // 2  # white on top for a 1, below for a 0
+        cx = b * c + c // 2
+        vals.append(float(y[cy - q:cy + q, cx - q:cx + q].mean()))
+    return float(np.mean(vals))
+
+
+def dimmed(whites):
+    """The lowest barcode white of a run if it is below DIM_WHITE (the run must be refused), else
+    None. `whites`: bar_white() of each checked frame (None ones skipped)."""
+    ws = [w for w in whites if w is not None]
+    if not ws:
+        return None
+    low = min(ws)
+    return low if low < DIM_WHITE else None
+
+
 def crop_rows(h):
     """Rows scored: everything above the barcode band."""
     return h - 2 * cell(h)
