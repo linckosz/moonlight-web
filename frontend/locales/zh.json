@@ -839,6 +839,7 @@
         "enterFullscreen": "进入全屏",
         "clickToCapture": "点击以捕获鼠标和键盘",
         "pointerLockRefused": "此浏览器无法锁定鼠标：点击可以传到游戏，但视角转动会在屏幕边缘停止。",
+        "pointerLockRefusedLookFree": "此浏览器无法锁定鼠标：游戏将改为接收鼠标的移动。在菜单中，两个指针可能不会对齐。",
         "showKeyboard": "显示屏幕键盘",
         "live": "直播中",
         "disconnected": "已断开连接",

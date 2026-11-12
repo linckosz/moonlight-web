@@ -839,6 +839,7 @@
         "enterFullscreen": "Passer en plein écran",
         "clickToCapture": "Cliquez pour capturer souris & clavier",
         "pointerLockRefused": "Ce navigateur ne verrouille pas la souris : les clics arrivent au jeu, mais la rotation s'arrête au bord de l'écran.",
+        "pointerLockRefusedLookFree": "Ce navigateur ne verrouille pas la souris : le jeu reçoit ses mouvements à la place. Dans les menus, les deux pointeurs peuvent être décalés.",
         "showKeyboard": "Afficher le clavier à l'écran",
         "live": "En direct",
         "disconnected": "Déconnecté",

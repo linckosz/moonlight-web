@@ -693,25 +693,27 @@ export function mwsrGazeWanted() {
 }
 
 /**
- * Lab key, no UI: localStorage.mw_lookfree = '1' turns gaming mode's mouse
- * into relative moves (the browser's movementX/Y) once the browser has
- * refused the pointer lock — Safari on an iPad with a trackpad, where the
- * absolute position stops turning at the screen edge (A23, 27/10/2026).
- * An iPad has no console to set it from: ?mw_lookfree=1 (or 0) in the page's
- * address writes the key. Off by default until a test on Bruno's iPad says
- * whether Safari keeps reporting motion with the cursor against the edge.
- * Where storage is refused, the address alone decides, for that page.
- * The address is read once, when this module loads: app.js rewrites it to
- * '/' at start-up, long before a stream builds its StreamView (12/11/2026,
- * the key given that way was lost).
+ * Lock-free look: once the browser has refused the pointer lock, gaming
+ * mode's mouse goes out as relative moves (the browser's movementX/Y) —
+ * Safari on an iPad with a trackpad, where the absolute position stops
+ * turning at the screen edge (A23, 27/10/2026). On by default on iOS/iPadOS
+ * (Bruno, 12/11/2026), off elsewhere; the lab key mw_lookfree = '1' or '0'
+ * overrides either way. An iPad has no console to set it from: ?mw_lookfree=1
+ * (or 0) in the page's address writes the key. Where storage is refused, the
+ * address alone decides, for that page. The address is read once, when this
+ * module loads: app.js rewrites it to '/' at start-up, long before a stream
+ * builds its StreamView (12/11/2026, the key given that way was lost).
+ * @param {boolean} [byDefault] what to do without the key
  * @returns {boolean}
  */
-export function lockFreeLookWanted() {
+export function lockFreeLookWanted(byDefault = false) {
+    let key = lockFreeLookAsked;
     try {
-        return localStorage.getItem('mw_lookfree') === '1';
-    } catch (e) {
-        return lockFreeLookAsked === '1';
-    }
+        key = localStorage.getItem('mw_lookfree');
+    } catch (e) {}
+    if (key === '1') return true;
+    if (key === '0') return false;
+    return byDefault;
 }
 
 /** ?mw_lookfree= as the page was opened ('1', '0' or null). */

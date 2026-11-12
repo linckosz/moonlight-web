@@ -39,4 +39,11 @@ describe('the lock-free look key given in the address', () => {
         const { lockFreeLookWanted } = await openAt('/');
         expect(lockFreeLookWanted()).toBe(false);
     });
+
+    it('leaves the default (on for iOS) to the caller, and the key beats it', async () => {
+        const { lockFreeLookWanted } = await openAt('/');
+        expect(lockFreeLookWanted(true)).toBe(true);
+        localStorage.setItem('mw_lookfree', '0');
+        expect(lockFreeLookWanted(true)).toBe(false);
+    });
 });

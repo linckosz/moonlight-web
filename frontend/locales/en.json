@@ -839,6 +839,7 @@
         "enterFullscreen": "Enter fullscreen",
         "clickToCapture": "Click to capture mouse & keyboard",
         "pointerLockRefused": "This browser won't lock the mouse: clicks reach the game, but turning stops at the screen edge.",
+        "pointerLockRefusedLookFree": "This browser won't lock the mouse: the game gets mouse movement instead. In menus, the two pointers may not line up.",
         "showKeyboard": "Show on-screen keyboard",
         "live": "Live",
         "disconnected": "Disconnected",

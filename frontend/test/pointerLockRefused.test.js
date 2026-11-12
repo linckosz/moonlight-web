@@ -5,6 +5,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { StreamView } from '../js/ui/StreamView.js';
 import { Toast } from '../js/ui/Toast.js';
+import { t } from '../js/i18n/i18n.js';
 
 /**
  * Gaming mode on a browser that never grants the pointer lock (Safari on an
@@ -96,6 +97,49 @@ describe('a refused pointer lock', () => {
             ['rel', 7, -3],
             ['abs', 50, 50],
         ]);
+    });
+
+    it('is asked again at the next click off iOS (a refusal may be a moment)', () => {
+        vi.useFakeTimers();
+        vi.spyOn(Toast, 'info').mockImplementation(() => {});
+        const request = vi.fn(() => undefined);
+        const v = view({ request });
+        Object.assign(v, {
+            _mediaRect: () => ({ left: 0, top: 0, width: 100, height: 100 }),
+            _sendToHost() {},
+        });
+        v._bindGamingEvents();
+        v._onGamingClick({ preventDefault() {}, clientX: 1, clientY: 1 });
+        vi.advanceTimersByTime(StreamView.LOCK_WATCH_MS);
+        expect(v._pointerLockRefused).toBe(true);
+        v._onGamingClick({ preventDefault() {}, clientX: 1, clientY: 1 });
+        expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it('is final on iOS: the next click is only a click', () => {
+        vi.useFakeTimers();
+        vi.spyOn(Toast, 'info').mockImplementation(() => {});
+        const request = vi.fn(() => undefined);
+        const v = view({ request });
+        Object.assign(v, {
+            _mediaRect: () => ({ left: 0, top: 0, width: 100, height: 100 }),
+            _sendToHost() {},
+        });
+        v._lockRefusalFinal = true;
+        v._bindGamingEvents();
+        v._onGamingClick({ preventDefault() {}, clientX: 1, clientY: 1 });
+        vi.advanceTimersByTime(StreamView.LOCK_WATCH_MS);
+        v._onGamingClick({ preventDefault() {}, clientX: 1, clientY: 1 });
+        expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('says the game gets movement when lock-free look is on', () => {
+        const toast = vi.spyOn(Toast, 'info').mockImplementation(() => {});
+        const v = view({ request: () => undefined });
+        v._lockFreeLook = true;
+        v._pointerLockRefusedForGood('test');
+        expect(toast.mock.calls[0][0]).toBe(t('stream.pointerLockRefusedLookFree'));
+        expect(t('stream.pointerLockRefusedLookFree')).not.toBe(t('stream.pointerLockRefused'));
     });
 
     it('is forgotten when the lock comes after all', () => {

@@ -644,7 +644,11 @@ export class StreamView {
         // tapping where it points, and the trackpad model clicked wherever the
         // host's pointer already was instead (03/10/2026, a Mi TV).
         this._touchScreen = touchScreen === true || IS_TV;
-        this._lockFreeLook = lockFreeLookWanted();
+        // iOS/iPadOS never grants the pointer lock: there a refusal is final,
+        // and the mouse turns to relative look (A23). Elsewhere a refusal is
+        // a moment (Chrome right after Escape), and the next click asks again.
+        this._lockFreeLook = lockFreeLookWanted(IS_IOS);
+        this._lockRefusalFinal = IS_IOS;
         // A TV's taps come from its browser's cursor: one off the picture is
         // ignored (_tvTapOffPicture), not pinned to the nearest edge.
         this._tvCursor = IS_TV;
@@ -9167,7 +9171,7 @@ export class StreamView {
             `[StreamView] Mouse: ${this._gamingMode ? 'gaming' : 'desktop'} mode,` +
                 ` pointer lock ${typeof this.inputEl?.requestPointerLock === 'function' ? 'offered' : 'absent'}` +
                 ` by this browser${IS_IOS ? ' (iOS/iPadOS' + (navigator.standalone ? ', home-screen app)' : ')') : ''}` +
-                (this._lockFreeLook ? ', lock-free look on (lab key)' : ''),
+                (this._lockFreeLook ? ', lock-free look on once the lock is refused' : ''),
         );
 
         // Mode-specific events
@@ -9327,7 +9331,7 @@ export class StreamView {
                 this._sendRelativeMouse(e.movementX, e.movementY);
                 this._noteMouseSent(e);
             } else if (this._pointerLockRefused && this._lockFreeLook) {
-                // Lab key mw_lookfree: no lock to be had, so the browser's own
+                // Lock-free look (iOS, or key mw_lookfree): no lock to be had, so the browser's own
                 // motion goes out relative — the game turns as long as the
                 // browser reports movement, edge or not. The host's cursor no
                 // longer follows the local one: a look mode, not for menus.
@@ -9369,9 +9373,13 @@ export class StreamView {
         // Click to capture focus: set host cursor at clicked position, then grab pointer.
         this._onGamingClick = (e) => {
             if (this._mouseFocused) return; // Already focused — click handled by mousedown/mouseup
-            // Refused already: the click went out as a click (mousedown/up),
-            // and asking again would only be refused again.
-            if (this._pointerLockRefused) return;
+            // Refused already: the click went out as a click (mousedown/up).
+            // On iOS asking again would only be refused again; elsewhere the
+            // refusal may have been a moment's, so this click asks once more.
+            if (this._pointerLockRefused) {
+                if (!this._lockRefusalFinal) this._lockPointerOnClick();
+                return;
+            }
             e.preventDefault();
 
             // Send absolute position so the host cursor teleports to the clicked point
@@ -10429,7 +10437,10 @@ export class StreamView {
         if (this.hintEl) this.hintEl.style.display = 'none';
         if (!StreamView._lockRefusedToastShown) {
             StreamView._lockRefusedToastShown = true;
-            Toast.info(t('stream.pointerLockRefused'), { durationMs: 8000 });
+            const text = this._lockFreeLook
+                ? 'stream.pointerLockRefusedLookFree'
+                : 'stream.pointerLockRefused';
+            Toast.info(t(text), { durationMs: 8000 });
         }
     }
 
