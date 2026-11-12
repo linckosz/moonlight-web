@@ -276,6 +276,46 @@ void run_sign_in_screen_tests()
                  QStringLiteral("not from a kiosk"));
     }
 
+    SECTION("Sign-in screen — a second request while the first one starts");
+    {
+        const QString host = QStringLiteral("host-1");
+        const qint64 t0 = 1'000'000;
+        // None: nothing held.
+        const SignInReservation none;
+        CHECK(!signInReservationHolds(none, host, t0));
+        CHECK(signInReservedRefusal(none, host, t0, QStringLiteral("tokB")).isEmpty());
+
+        // Let through for tokA at t0, its worker not in its slot yet.
+        const SignInReservation r{host, QStringLiteral("tokA"), t0, 7};
+        CHECK(signInReservationHolds(r, host, t0));
+        CHECK(signInReservationHolds(r, host, t0 + 2000));
+        // Another device in that time: refused as if it streamed already.
+        CHECK_EQ(signInReservedRefusal(r, host, t0 + 1500, QStringLiteral("tokB")),
+                 QStringLiteral("the sign-in screen is already being streamed"));
+        // The same device (a reload while it starts): it may.
+        CHECK(signInReservedRefusal(r, host, t0 + 1500, QStringLiteral("tokA")).isEmpty());
+        // No session: never the same device.
+        CHECK(!signInReservedRefusal(r, host, t0 + 1500, QString()).isEmpty());
+        // Another host: not this one's business.
+        CHECK(!signInReservationHolds(r, QStringLiteral("host-2"), t0));
+        CHECK(signInReservedRefusal(r, QStringLiteral("host-2"), t0, QStringLiteral("tokB"))
+                  .isEmpty());
+        // Left behind by a request that never reached its worker: it lapses.
+        CHECK(signInReservationHolds(r, host, t0 + kSignInReservationMs - 1));
+        CHECK(!signInReservationHolds(r, host, t0 + kSignInReservationMs));
+        CHECK(signInReservedRefusal(r, host, t0 + kSignInReservationMs, QStringLiteral("tokB"))
+                  .isEmpty());
+        // A clock gone back a little: still held, never lapsed early; gone
+        // back further: lapsed, so it never sticks.
+        CHECK(signInReservationHolds(r, host, t0 - 5000));
+        CHECK(!signInReservationHolds(r, host, t0 - kSignInReservationMs));
+        // Let through for a caller with no session (localhost): held for
+        // nobody, so refused to everyone, an empty token included.
+        const SignInReservation local{host, QString(), t0, 8};
+        CHECK(!signInReservedRefusal(local, host, t0, QString()).isEmpty());
+        CHECK(!signInReservedRefusal(local, host, t0, QStringLiteral("tokA")).isEmpty());
+    }
+
     SECTION("Sign-in screen — never a guest's");
     CHECK(!guestMayStream(true, kSignInAppId));
     CHECK(guestMayStream(true, 1));

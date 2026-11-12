@@ -200,6 +200,23 @@ QString signInTakeOverRefusal(bool live, const QString& liveOwner, const QString
     return QStringLiteral("the sign-in screen is already being streamed");
 }
 
+bool signInReservationHolds(const SignInReservation& reservation, const QString& hostUuid,
+                            qint64 nowMs)
+{
+    if (reservation.sinceMs < 0 || reservation.hostUuid != hostUuid) return false;
+    // A clock that went back a little reads as still held, never as lapsed
+    // early; one that went back further lapses it too, so it never sticks.
+    const qint64 age = nowMs - reservation.sinceMs;
+    return age < kSignInReservationMs && age > -kSignInReservationMs;
+}
+
+QString signInReservedRefusal(const SignInReservation& reservation, const QString& hostUuid,
+                              qint64 nowMs, const QString& requester)
+{
+    return signInTakeOverRefusal(signInReservationHolds(reservation, hostUuid, nowMs),
+                                 reservation.owner, requester);
+}
+
 bool guestMayStream(bool nativeHost, int appId)
 {
     return !(nativeHost && appId == kSignInAppId);

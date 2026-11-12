@@ -162,6 +162,11 @@
 // captures through would re-wrap a 600-line capture list for nothing.
 static QString g_LastOwnerHostUuid;
 static int g_LastOwnerAppId = 0;
+// The sign-in screen stream let through and not in its slot yet
+// (RemoteDesktopReturnPolicy::SignInReservation). File scope for the same
+// reason as above: the /start handler sets it, its startWorker clears it.
+static RemoteDesktopReturnPolicy::SignInReservation g_SignInReservation;
+static quint64 g_SignInReservationSeq = 0;
 
 // The latest launch asked of each stream slot. A launch now waits for the
 // router to hand its slot a hole before the worker is spawned, and a second
@@ -3395,6 +3400,7 @@ int main(int argc, char* argv[])
         // launcher runs one sign-in screen worker at a time).
         const bool signInStream = host->backendType == NativeHostBackend::typeName() &&
                                   body["appId"].toInt(0) == NativeHostBackend::signInScreenAppId();
+        quint64 signInReservationId = 0; // set once the gate below lets it through
         if (signInStream) {
             // Only a worker the launcher starts in sign-in screen mode streams
             // it: never a session in this process.
@@ -3406,8 +3412,8 @@ int main(int argc, char* argv[])
             // the live one is touched. The device is the authenticated
             // session the server holds, never the page's word.
             bool signInTakeOver = false;
+            const QString requester = HttpServer::sessionTokenFromRequest(req);
             if (refusal.isEmpty()) {
-                const QString requester = HttpServer::sessionTokenFromRequest(req);
                 for (int i = 0; i < g_Pool.size() && refusal.isEmpty(); ++i) {
                     const SessionPool::Slot& sl = g_Pool.at(i);
                     if (!g_Pool.live(i) || sl.hostUuid != host->uuid ||
@@ -3418,6 +3424,12 @@ int main(int argc, char* argv[])
                     signInTakeOver = refusal.isEmpty();
                 }
             }
+            // One let through a moment ago whose worker is not in its slot
+            // yet holds it the same way: the live check above cannot see it.
+            if (refusal.isEmpty())
+                refusal = RemoteDesktopReturnPolicy::signInReservedRefusal(
+                    g_SignInReservation, host->uuid, QDateTime::currentMSecsSinceEpoch(),
+                    requester);
             if (!refusal.isEmpty()) {
                 qInfo().noquote() << "[signin] a stream of this PC's sign-in screen refused:"
                                   << refusal;
@@ -3448,6 +3460,11 @@ int main(int argc, char* argv[])
                     200));
                 return;
             }
+            // Held for this device from here until its worker is in its slot
+            // or failed to start (startWorker below), or it lapses.
+            g_SignInReservation = {host->uuid, requester, QDateTime::currentMSecsSinceEpoch(),
+                                   ++g_SignInReservationSeq};
+            signInReservationId = g_SignInReservation.id;
         }
 
         // ── Worker mode + slot selection ───────────────────────────────────────
@@ -5011,12 +5028,19 @@ int main(int argc, char* argv[])
                                        NativeHostBackend::usesVirtualDisplay(appId);
             auto startWorker = [worker, respond, standby, reqSlot, appId, &g_Pool,
                                 &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken,
-                                virtualStream](QJsonObject cfg) {
+                                virtualStream, signInReservationId](QJsonObject cfg) {
                 // On our virtual display: the display it took the primary role
                 // from, which turning it on (below) has just recorded in this
                 // settings file — a SYSTEM worker does not read it.
                 if (virtualStream) cfg["previousPrimary"] = NativeHostBackend::previousPrimary();
-                if (!worker->start(cfg)) {
+                const bool started = worker->start(cfg);
+                // The sign-in screen's reservation ends here: its worker is in
+                // its slot just below, where the live check sees it, or it
+                // failed to start. Only this request's own (a later one keeps
+                // what it set).
+                if (signInReservationId != 0 && g_SignInReservation.id == signInReservationId)
+                    g_SignInReservation = {};
+                if (!started) {
                     worker->deleteLater();
                     // Spawn failure. For a standby attempt just report
                     // dual_unavailable; a primary launch has already torn the

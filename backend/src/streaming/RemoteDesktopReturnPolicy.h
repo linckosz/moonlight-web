@@ -293,6 +293,30 @@ QString signInRequestChecks(const Tracker& tracker, bool allowed, bool booth, Co
 /// password is being typed.
 QString signInTakeOverRefusal(bool live, const QString& liveOwner, const QString& requester);
 
+/// A stream of the sign-in screen the server has let through and whose worker
+/// is not in its slot yet: from the gate until the worker starts, or fails to.
+/// The device it was let through for (@p owner, its session's token) holds it
+/// as a live stream would, so a second device asking in that time is refused
+/// as it would be a moment later. It lapses on its own after
+/// kSignInReservationMs, should nothing clear it.
+struct SignInReservation
+{
+    QString hostUuid;
+    QString owner;
+    qint64 sinceMs = -1; ///< -1: none
+    quint64 id = 0;      ///< which request set it, so only that one clears it
+};
+inline constexpr qint64 kSignInReservationMs = 30000;
+
+/// Whether @p reservation still holds @p hostUuid at @p nowMs.
+bool signInReservationHolds(const SignInReservation& reservation, const QString& hostUuid,
+                            qint64 nowMs);
+
+/// signInTakeOverRefusal against a reservation: empty when none holds
+/// @p hostUuid, or when @p requester is the device it was let through for.
+QString signInReservedRefusal(const SignInReservation& reservation, const QString& hostUuid,
+                              qint64 nowMs, const QString& requester);
+
 /// Whether an invited guest's stream may be of @p appId on a host (@p
 /// nativeHost: this PC's own). Never the sign-in screen: it is its owner's
 /// alone, cold or beside them.
