@@ -27,12 +27,10 @@
 #include <QNetworkRequest>
 #include <QSysInfo>
 
-namespace {
-
 // Same compile-time tokens the version census uses, for the same reason:
 // QSysInfo::productType() returns the distro name on Linux and would turn one
 // bucket into a dozen.
-QString platformToken()
+QString SessionMetrics::platformToken()
 {
 #if defined(Q_OS_WIN)
     return QStringLiteral("windows");
@@ -43,12 +41,14 @@ QString platformToken()
 #endif
 }
 
-QString archToken()
+QString SessionMetrics::archToken()
 {
     const QString a = QSysInfo::currentCpuArchitecture();
     return a.contains(QLatin1String("arm"), Qt::CaseInsensitive) ? QStringLiteral("arm64")
                                                                  : QStringLiteral("x64");
 }
+
+namespace {
 
 // The census endpoint for this build, or empty to stay silent. Empty means the
 // machine has opted out, or the build has no MW_PDNS_TOKEN/MW_DOMAIN — the case
@@ -121,11 +121,13 @@ void SessionMetrics::reportStart(const Facts& facts)
 void SessionMetrics::reportEnd(const Facts& facts, int seconds)
 {
     post("end", facts, QStringLiteral("seconds"), seconds);
+    emit sessionEnded(facts, seconds);
 }
 
 void SessionMetrics::reportFailure(const Facts& facts, int httpCode)
 {
     post("failed", facts, QStringLiteral("code"), httpCode);
+    emit sessionFailed(facts, httpCode);
 }
 
 void SessionMetrics::post(const char* event, const Facts& facts, const QString& extraKey,

@@ -112,6 +112,19 @@ public:
     /// | tv. The header itself never leaves this process — only this token does.
     static QString clientClass(const QString& userAgent);
 
+    /// The build's OS and architecture as the censuses name them (windows |
+    /// macos | linux, x64 | arm64): compile-time tokens, never QSysInfo's names.
+    /// The error reports (server/ErrorReports.h) send the same ones.
+    static QString platformToken();
+    static QString archToken();
+
+signals:
+    /// Emitted by reportEnd / reportFailure whether or not the census reports:
+    /// the error reports (server/ErrorReports.h) send at the same two moments,
+    /// under their own switch.
+    void sessionEnded(const SessionMetrics::Facts& facts, int seconds);
+    void sessionFailed(const SessionMetrics::Facts& facts, int httpCode);
+
 private:
     void post(const char* event, const Facts& facts, const QString& extraKey, int extraValue);
 

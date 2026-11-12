@@ -99,6 +99,8 @@ void Logger::log(Level level, const QString& message)
 
     QMutexLocker lock(&m_Mutex);
 
+    if (m_Tap) m_Tap(level, message);
+
     // Print to console (the client log excepted). In --stream-worker mode stdout
     // carries the JSON event protocol, so every level is routed to stderr instead.
     if (m_ConsoleEcho) {
@@ -125,6 +127,12 @@ void Logger::log(Level level, const QString& message)
             }
         }
     }
+}
+
+void Logger::setTap(Tap tap)
+{
+    QMutexLocker lock(&m_Mutex);
+    m_Tap = std::move(tap);
 }
 
 void Logger::setBudgetForTests(qint64 maxFileBytes, qint64 maxTotalBytes, qint64 retentionSeconds)

@@ -24,6 +24,7 @@
 #include <QTextStream>
 
 #include <atomic>
+#include <functional>
 
 class Logger : public QObject
 {
@@ -110,6 +111,13 @@ public:
     Level minLevel() const { return Level(m_MinLevel.load()); }
     /// Whether log() also prints to the console. On, except for client().
     void setConsoleEcho(bool enable) { m_ConsoleEcho = enable; }
+    /// Handed every line this logger keeps (past the level check), with its
+    /// level and text, as it is written: how the error reports (ErrorReports.h)
+    /// read the server's own log. Runs under this logger's lock, on whichever
+    /// thread logged: it must be quick and must never log. Empty to remove.
+    using Tap = std::function<void(Level, const QString&)>;
+    void setTap(Tap tap);
+
     /// Whether setLogFile() has opened a file.
     bool hasLogFile() const;
     /// The file set by setLogFile(), empty when none was.
@@ -154,6 +162,7 @@ private:
     std::atomic<int> m_MinLevel{Info};
     std::atomic<bool> m_ConsoleEcho{true};
     bool m_Rotating = false;
+    Tap m_Tap;
     qint64 m_MaxFileBytes = kMaxFileBytes;
     qint64 m_MaxTotalBytes = kMaxTotalBytes;
     qint64 m_RetentionSecs = qint64(kRetentionDays) * 24 * 60 * 60;

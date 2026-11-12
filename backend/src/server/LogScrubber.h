@@ -72,6 +72,21 @@ public:
         QList<Machine> hosts; ///< the streaming hosts
         QString instance;     ///< the instance name the owner chose (instance-name)
         QString user;         ///< the OS account the server runs as (user)
+        /// The titles of the hosts' apps, each replaced by "app": what someone
+        /// plays is theirs. Empty for the "Download logs" archive, which keeps
+        /// them; filled for the error reports (ErrorReports.h), which leave this
+        /// PC without anyone reading them first.
+        QStringList apps;
+        /// The names of the paired devices (AuthManager sessions), each
+        /// replaced by "device", and of the guests the owner named on the
+        /// share board, by "guest": both often carry a first name. Like apps,
+        /// for the error reports only.
+        QStringList devices;
+        QStringList guests;
+        /// The cities the paired devices were seen from (AuthManager), each
+        /// replaced by "city": one comes from where a person is. Error reports
+        /// only, like the three above.
+        QStringList cities;
     };
 
     LogScrubber();

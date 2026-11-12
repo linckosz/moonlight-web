@@ -639,8 +639,21 @@ public:
     // and never a browser; no address is stored; and nothing whatever is
     // written to a viewer's device. What is owed for that is the disclosure and
     // a way to say no, both of which live on the Settings page — not a consent.
-    // Adding a field that changes this means putting this back in the path, and
-    // bumping kMetricsConsentVersion so an old answer does not cover it.
+    //
+    // The error reports (ErrorReports.h, 0.4.4) are the exception, and are
+    // sent without a consent all the same, by the owner's decision: their lines
+    // are free text. What stands in its place: only error lines, never a whole
+    // log; each through the "Download logs" scrubber (addresses, machine and
+    // user names, keys, links and app titles taken out) and through a second
+    // filter on the receiving end; no address kept there either; the same
+    // switch as the statistics, whose wording says so; and a guest's own page
+    // sends only with the box on that page left ticked. The scrubber is a best
+    // effort over free text, not a guarantee — which is why the wording says
+    // "removed first", never "never sent".
+    //
+    // Adding another field that identifies anyone means putting this back in
+    // the path, and bumping kMetricsConsentVersion so an old answer does not
+    // cover it.
     //
     // Stored as JSON object "metrics_consent", mirroring "internet_consent":
     // the exact wording that was displayed, when it was answered, through which
@@ -673,6 +686,8 @@ public:
     /// putting a consent back in the path later is an edit to two functions.
     bool updateRelayAllowed() const;
     bool sessionMetricsAllowed() const;
+    /// The error reports go with the statistics: one switch, one disclosure.
+    bool errorReportsAllowed() const;
 
     /// Turn both censuses on or off from the UI, together — the disclosure the
     /// user reads covers them as one thing. Writes the same two file-only keys

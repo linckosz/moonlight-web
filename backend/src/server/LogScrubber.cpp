@@ -164,6 +164,14 @@ LogScrubber::LogScrubber(const Names& names)
         addMachine(h, m_Machines++);
     addName(names.instance, -1, QStringLiteral("instance-name"));
     addName(names.user, -1, QStringLiteral("user"));
+    for (const QString& app : names.apps)
+        addName(app, -1, QStringLiteral("app"));
+    for (const QString& device : names.devices)
+        addName(device, -1, QStringLiteral("device"));
+    for (const QString& guest : names.guests)
+        addName(guest, -1, QStringLiteral("guest"));
+    for (const QString& city : names.cities)
+        addName(city, -1, QStringLiteral("city"));
     std::sort(m_Names.begin(), m_Names.end(),
               [](const NameRule& a, const NameRule& b) { return a.name.size() > b.name.size(); });
 }

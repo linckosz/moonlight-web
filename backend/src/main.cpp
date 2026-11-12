@@ -68,7 +68,9 @@
 #include "server/AppSettings.h"
 #include "common/DetachedProcess.h"
 #include "server/ClientUniqueId.h"
+#include "server/ErrorReports.h"
 #include "server/LogArchive.h"
+#include "server/routes/ErrorRoutes.h"
 #include "server/routes/LogRoutes.h"
 #include "common/RunFlags.h"
 #include "server/CertManager.h"
@@ -2998,6 +3000,67 @@ int main(int argc, char* argv[])
     SessionMetrics sessionMetrics(QCoreApplication::applicationVersion(),
                                   appSettings.sessionMetricsAllowed());
 
+    // The names every scrubbed log replaces (LogScrubber): the hosts, this PC,
+    // the instance and the account the server runs as. Shared by the "Download
+    // logs" archive and the error reports, which add the hosts' app titles.
+    auto scrubNames = [&computerManager, &appSettings]() {
+        LogScrubber::Names names;
+        // This PC: its names, and every interface's address, so its own LAN,
+        // Tailscale and virtual adapters read as {A}.
+        names.thisMachine.names << AppSettings::machineName() << QSysInfo::machineHostName();
+        for (const QHostAddress& a : QNetworkInterface::allAddresses())
+            names.thisMachine.addresses << a.toString();
+        for (const QJsonValue& h : computerManager.getHostsJson()) {
+            const NvComputer* c =
+                computerManager.getHost(h.toObject().value(QStringLiteral("uuid")).toString());
+            if (!c) continue;
+            LogScrubber::Machine m;
+            m.names << c->name << c->customName;
+            for (const NvAddress* a :
+                 {&c->activeAddress, &c->localAddress, &c->remoteAddress, &c->manualAddress})
+                if (!a->isNull()) m.addresses << a->address();
+            // The host that is this PC is {A} too.
+            if (c->isLocalMachine()) {
+                names.thisMachine.names << m.names;
+                names.thisMachine.addresses << m.addresses;
+            } else {
+                names.hosts << m;
+            }
+        }
+        names.instance = appSettings.instanceName();
+        names.user = qEnvironmentVariable("USERNAME", qEnvironmentVariable("USER"));
+        return names;
+    };
+    // Error reports (0.4.4): the error lines of a stream that went wrong, sent
+    // once it has ended, scrubbed as the archive is. Same switch and same rule
+    // as the census above — see ErrorReports.h for what leaves and when.
+    // The archive's names, plus what leaves without anyone reading it first:
+    // the hosts' app titles, the paired devices' names and the guests' names.
+    auto reportNames = [scrubNames, &computerManager, &authManager, &shareManager]() {
+        LogScrubber::Names names = scrubNames();
+        for (const QJsonValue& h : computerManager.getHostsJson()) {
+            const NvComputer* c =
+                computerManager.getHost(h.toObject().value(QStringLiteral("uuid")).toString());
+            if (!c) continue;
+            for (const NvApp& app : c->appList)
+                names.apps << app.name();
+        }
+        for (const SessionInfo& s : authManager.sessions()) {
+            names.devices << s.machineName;
+            names.cities << s.city;
+        }
+        for (const ShareManager::SlotStatus& st : shareManager.status())
+            names.guests << st.name;
+        return names;
+    };
+    ErrorReports errorReports(QCoreApplication::applicationVersion(),
+                              appSettings.errorReportsAllowed(), reportNames);
+    errorReports.attach(Logger::instance());
+    QObject::connect(&sessionMetrics, &SessionMetrics::sessionEnded, &errorReports,
+                     &ErrorReports::streamEnded);
+    QObject::connect(&sessionMetrics, &SessionMetrics::sessionFailed, &errorReports,
+                     &ErrorReports::streamFailed);
+
     // Keep the release cache warm on our own clock instead of on client traffic.
     // statusJson() is stale-while-revalidate: the caller that finds the cache
     // stale gets update_available=false and only *then* kicks the fetch. A host
@@ -3164,8 +3227,8 @@ int main(int argc, char* argv[])
         return HttpResponse::json(obj);
     });
 
-    server.router()->post("/api/metrics/reporting", [&appSettings, &updateChecker,
-                                                     &sessionMetrics](const HttpRequest& req) {
+    server.router()->post("/api/metrics/reporting", [&appSettings, &updateChecker, &sessionMetrics,
+                                                     &errorReports](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Host-local decision");
 
         const QJsonObject body = QJsonDocument::fromJson(req.body).object();
@@ -3177,6 +3240,7 @@ int main(int argc, char* argv[])
         // counted, and must not have to restart to be sure of it.
         updateChecker.setRelayEnabled(appSettings.updateRelayAllowed());
         sessionMetrics.setEnabled(appSettings.sessionMetricsAllowed());
+        errorReports.setEnabled(appSettings.errorReportsAllowed());
         qInfo() << "[metrics] statistics reporting" << (enabled ? "on" : "off");
 
         QJsonObject obj;
@@ -3206,8 +3270,8 @@ int main(int argc, char* argv[])
         return HttpResponse::json(obj);
     });
 
-    server.router()->post("/api/metrics/consent", [&appSettings, &updateChecker,
-                                                   &sessionMetrics](const HttpRequest& req) {
+    server.router()->post("/api/metrics/consent", [&appSettings, &updateChecker, &sessionMetrics,
+                                                   &errorReports](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Host-local decision");
 
         const QJsonObject body = QJsonDocument::fromJson(req.body).object();
@@ -3232,6 +3296,7 @@ int main(int argc, char* argv[])
         // counted, and someone who said yes should not have to restart to be.
         updateChecker.setRelayEnabled(appSettings.updateRelayAllowed());
         sessionMetrics.setEnabled(appSettings.sessionMetricsAllowed());
+        errorReports.setEnabled(appSettings.errorReportsAllowed());
         qInfo() << "[metrics] statistics consent" << (granted ? "granted" : "denied") << "via"
                 << source;
 
@@ -6702,34 +6767,12 @@ int main(int argc, char* argv[])
     // before the Logger it reads the path of goes away.
     static LogArchive logArchive;
     // The names the archive replaces (LogScrubber): the hosts, this PC, the
-    // instance and the account the server runs as.
-    registerLogRoutes(server, logArchive, [&computerManager, &appSettings]() {
-        LogScrubber::Names names;
-        // This PC: its names, and every interface's address, so its own LAN,
-        // Tailscale and virtual adapters read as {A}.
-        names.thisMachine.names << AppSettings::machineName() << QSysInfo::machineHostName();
-        for (const QHostAddress& a : QNetworkInterface::allAddresses())
-            names.thisMachine.addresses << a.toString();
-        for (const QJsonValue& h : computerManager.getHostsJson()) {
-            const NvComputer* c =
-                computerManager.getHost(h.toObject().value(QStringLiteral("uuid")).toString());
-            if (!c) continue;
-            LogScrubber::Machine m;
-            m.names << c->name << c->customName;
-            for (const NvAddress* a :
-                 {&c->activeAddress, &c->localAddress, &c->remoteAddress, &c->manualAddress})
-                if (!a->isNull()) m.addresses << a->address();
-            // The host that is this PC is {A} too.
-            if (c->isLocalMachine()) {
-                names.thisMachine.names << m.names;
-                names.thisMachine.addresses << m.addresses;
-            } else {
-                names.hosts << m;
-            }
-        }
-        names.instance = appSettings.instanceName();
-        names.user = qEnvironmentVariable("USERNAME", qEnvironmentVariable("USER"));
-        return names;
+    // instance and the account the server runs as (scrubNames, above).
+    registerLogRoutes(server, logArchive, scrubNames);
+    // A page's error lines at a stream's end; a guest's by its slot's cookie.
+    registerErrorRoutes(server, errorReports, [&shareManager](const HttpRequest& req) {
+        return shareManager.slotForCookie(
+            HttpServer::cookieFromRequest(req, ShareManager::kPlayerCookie));
     });
 
     // /ws2../ws4 carry a player's video and input. Only the mw_player cookie

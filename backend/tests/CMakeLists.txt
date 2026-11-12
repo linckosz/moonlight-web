@@ -116,6 +116,7 @@ add_executable(run_tests
     test_client_unique_id.cpp
     test_multiseat.cpp
     test_session_metrics.cpp
+    test_error_reports.cpp
     test_us_scancode.cpp
     test_input_watchdog.cpp
     test_keyboard_layout.cpp
@@ -253,6 +254,9 @@ add_executable(run_tests
     ${_src}/src/common/ZipWriter.cpp
     ${_src}/src/server/LogArchive.cpp
     ${_src}/src/server/LogScrubber.cpp
+    # The error reports: what is kept, when it leaves, what it carries.
+    ${_src}/src/server/ErrorReports.cpp
+    ${_src}/src/server/routes/ErrorRoutes.cpp
     # The native host's apps: the launchers found on a PC, and their cards' images.
     ${_src}/src/server/LauncherDetect.cpp
     ${_src}/src/server/HostAppImage.cpp

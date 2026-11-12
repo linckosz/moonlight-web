@@ -424,6 +424,11 @@ bool AppSettings::sessionMetricsAllowed() const
     return sessionMetricsEnabled();
 }
 
+bool AppSettings::errorReportsAllowed() const
+{
+    return sessionMetricsAllowed();
+}
+
 void AppSettings::setMetricsReporting(bool enabled)
 {
     // One answer, both censuses. The disclosure the user reads describes them
