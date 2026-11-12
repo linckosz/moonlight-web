@@ -45,6 +45,9 @@
 ///
 /// Handed or taken, the socket is this process's and no other's: nothing this
 /// process starts gets it by being started.
+///
+/// Outside Windows a worker is always the server's own child, and the server
+/// leaves the sockets open across that one child's start: inherited().
 namespace mw::icemuxhandles {
 
 /// One socket to take: the server's own handle of it, as a number, and the
@@ -72,6 +75,37 @@ inline constexpr uintptr_t kNoSocket = ~uintptr_t(0);
 /// for the instant between its making and its being kept from that. A path
 /// of the worker that starts a process must not run alongside this call.
 uintptr_t open(const std::vector<uint8_t>& description, uint16_t port, QString* why);
+
+/// The sockets a worker was started with, outside Windows: `told` names each
+/// by its descriptor number (Wanted::handle) and its port. In that order,
+/// all of them or none.
+///
+/// Before anything else each number told is kept from whatever this process
+/// starts (close-on-exec): this is called as the config line is read, before
+/// the worker starts a thread or a process. Then each must be a UDP socket
+/// bound to the port said. Empty, with the reason in `why`, when a number is
+/// none a server hands (0 to 2, the same twice, out of range) or one is not
+/// that socket. Of such a lot, those that were that socket are closed; a
+/// number that was not is left as it is, since it is then some other
+/// descriptor of this process and not one it was handed.
+///
+/// A shared socket is the server's and every worker's at once: it is sent
+/// through, and closed. Its mode, its buffers and its options are set by
+/// the server alone, and it is never shut down. Empty on Windows.
+std::vector<uintptr_t> inherited(const std::vector<Wanted>& told, QString* why);
+
+/// The server's side of inherited(), outside Windows: called in the process
+/// a worker is being started in, between its fork and its exec, with the
+/// descriptors of that worker's share. They alone then cross the exec; in
+/// every other process the server starts, the system closes them. It only
+/// changes a flag of each descriptor, in that process's own table: safe
+/// where nothing else is. Nothing on Windows.
+void leaveOpenAcrossExec(const int* descriptors, size_t count) noexcept;
+
+/// A feed: a loopback UDP socket on a port of its own (`*port`), which hears
+/// the server's hop socket (`hopPort`) and nothing else, and which nothing
+/// this process starts gets. kNoSocket when it cannot be made.
+uintptr_t openFeed(uint16_t hopPort, uint16_t* port);
 
 /// Copies, in this process, of the sockets the process `serverPid` holds
 /// under the handles in `wanted`, in that order. All of them or none: empty,

@@ -95,6 +95,8 @@ void run_ice_mux_ports_tests();
 void run_ice_mux_handles_tests();
 int run_ice_mux_adopt_child(int argc, char** argv);
 int run_ice_mux_inherit_child(int argc, char** argv);
+int run_ice_mux_started_child(int argc, char** argv);
+int run_ice_mux_holds_child(int argc, char** argv);
 void run_owner_account_tests();
 void run_mdns_advertiser_tests();
 void run_router_port_core_tests();
@@ -126,6 +128,12 @@ int main(int argc, char** argv)
     // Another: started with what can be inherited, it says whether it got a socket.
     if (argc > 1 && std::strcmp(argv[1], "--inherited-socket") == 0)
         return run_ice_mux_inherit_child(argc, argv);
+    // Outside Windows: a worker as its server starts it, and a process that
+    // says whether it holds a socket.
+    if (argc > 1 && std::strcmp(argv[1], "--started-with-sockets") == 0)
+        return run_ice_mux_started_child(argc, argv);
+    if (argc > 1 && std::strcmp(argv[1], "--holds-socket") == 0)
+        return run_ice_mux_holds_child(argc, argv);
 
     QCoreApplication app(argc, argv);
     // Keep app data hermetic-ish for any path the units resolve internally.

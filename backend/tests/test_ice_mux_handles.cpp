@@ -15,6 +15,14 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 #include "test_framework.h"
@@ -55,6 +63,100 @@ void whoGetsTheSockets()
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::Plain, true) == Handover::Handed);
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::TaskElevated, true) == Handover::Taken);
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::ServiceAsSystem, true) == Handover::Taken);
+}
+
+#ifdef _WIN32
+using NativeSocket = SOCKET;
+using NativeLength = int;
+#else
+using NativeSocket = int;
+using NativeLength = socklen_t;
+#endif
+
+void closeNative(NativeSocket s)
+{
+#ifdef _WIN32
+    closesocket(s);
+#else
+    close(s);
+#endif
+}
+
+/// A UDP socket bound to a loopback port of its own, made the plain way.
+NativeSocket plainUdp(uint16_t* port)
+{
+    const NativeSocket s = socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    NativeLength length = sizeof(a);
+    bind(s, reinterpret_cast<const sockaddr*>(&a), sizeof(a));
+    getsockname(s, reinterpret_cast<sockaddr*>(&a), &length);
+    *port = ntohs(a.sin_port);
+    return s;
+}
+
+bool sendThree(NativeSocket from, uint16_t toPort, const char* what)
+{
+    sockaddr_in to{};
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    to.sin_port = htons(toPort);
+    return sendto(from, what, 3, 0, reinterpret_cast<const sockaddr*>(&to), sizeof(to)) == 3;
+}
+
+/// The first byte of what `s` receives within `ms`, -1 when nothing comes.
+int firstByteWithin(NativeSocket s, int ms, uint16_t* fromPort = nullptr)
+{
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(s, &readable);
+    timeval wait{ms / 1000, (ms % 1000) * 1000};
+    if (select(static_cast<int>(s) + 1, &readable, nullptr, nullptr, &wait) <= 0) return -1;
+    char got[16];
+    sockaddr_in from{};
+    NativeLength length = sizeof(from);
+    if (recvfrom(s, got, sizeof(got), 0, reinterpret_cast<sockaddr*>(&from), &length) <= 0)
+        return -1;
+    if (fromPort) *fromPort = ntohs(from.sin_port);
+    return got[0];
+}
+
+/// A worker's feed: its own port, its server's hop socket and nobody else,
+/// and nothing the worker starts.
+void theFeed()
+{
+    SECTION("IceMuxHandles: a feed hears its server's hop socket and nothing else");
+    using mw::icemuxhandles::kNoSocket;
+    using mw::icemuxhandles::openFeed;
+    uint16_t hopPort = 0, strangerPort = 0, feedPort = 0, otherPort = 0;
+    const NativeSocket hop = plainUdp(&hopPort);
+    const NativeSocket stranger = plainUdp(&strangerPort);
+    const uintptr_t feed = openFeed(hopPort, &feedPort);
+    CHECK(feed != kNoSocket);
+    if (feed != kNoSocket) {
+        const auto mine = static_cast<NativeSocket>(feed);
+        CHECK(feedPort != 0 && feedPort != hopPort);
+        // Another sender to that port is not heard; the hop is
+        CHECK(sendThree(stranger, feedPort, "no!"));
+        CHECK(firstByteWithin(mine, 300) == -1);
+        CHECK(sendThree(hop, feedPort, "yes"));
+        CHECK(firstByteWithin(mine, 2000) == 'y');
+#ifdef _WIN32
+        DWORD flags = HANDLE_FLAG_INHERIT;
+        CHECK(GetHandleInformation(reinterpret_cast<HANDLE>(feed), &flags) != 0);
+        CHECK((flags & HANDLE_FLAG_INHERIT) == 0);
+#else
+        CHECK((fcntl(mine, F_GETFD) & FD_CLOEXEC) != 0);
+#endif
+        // Each agent of a worker has a feed of its own
+        const uintptr_t second = openFeed(hopPort, &otherPort);
+        CHECK(second != kNoSocket && otherPort != 0 && otherPort != feedPort);
+        if (second != kNoSocket) closeNative(static_cast<NativeSocket>(second));
+        closeNative(mine);
+    }
+    closeNative(hop);
+    closeNative(stranger);
 }
 
 } // namespace
@@ -195,14 +297,28 @@ int run_ice_mux_inherit_child(int argc, char** argv)
     return boundPort == port ? 7 : 0;
 }
 
+int run_ice_mux_started_child(int, char**)
+{
+    return 2;
+}
+
+int run_ice_mux_holds_child(int, char**)
+{
+    return 2;
+}
+
 void run_ice_mux_handles_tests()
 {
     whoGetsTheSockets();
-    SECTION("IceMuxHandles: a socket copied out of the server is checked before it is used");
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
+    theFeed();
     const uint32_t self = GetCurrentProcessId();
     QString why;
+    // Descriptors left open across a start are another system's way
+    CHECK(mw::icemuxhandles::inherited({{3, 48550}}, &why).empty());
+    CHECK(!why.isEmpty());
+    SECTION("IceMuxHandles: a socket copied out of the server is checked before it is used");
 
     uint16_t sharedPort = 0, otherPort = 0, sinkPort = 0, tcpPort = 0;
     const SOCKET shared = boundSocket(SOCK_DGRAM, &sharedPort);
@@ -442,17 +558,322 @@ int run_ice_mux_inherit_child(int, char**)
     return 2;
 }
 
+namespace {
+
+bool isOpen(int fd)
+{
+    return fcntl(fd, F_GETFD) != -1;
+}
+
+/// Whether nothing this process starts gets `fd`.
+bool keptHere(int fd)
+{
+    const int flags = fcntl(fd, F_GETFD);
+    return flags != -1 && (flags & FD_CLOEXEC) != 0;
+}
+
+/// Whether `fd` is, in this process, a UDP socket bound to `port`.
+bool holdsUdpOn(int fd, uint16_t port)
+{
+    int type = 0;
+    socklen_t typeLength = sizeof(type);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &typeLength) != 0 || type != SOCK_DGRAM)
+        return false;
+    sockaddr_storage bound{};
+    socklen_t length = sizeof(bound);
+    if (getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &length) != 0) return false;
+    if (bound.ss_family == AF_INET6)
+        return ntohs(reinterpret_cast<const sockaddr_in6*>(&bound)->sin6_port) == port;
+    if (bound.ss_family == AF_INET)
+        return ntohs(reinterpret_cast<const sockaddr_in*>(&bound)->sin_port) == port;
+    return false;
+}
+
+#ifdef __linux__
+/// This test, started again as `arguments`, the way a server starts a worker:
+/// the descriptors in `handed` are left open across the start, and no other.
+/// Its exit code, 99 when it did not run.
+int startedAgain(const std::vector<std::string>& arguments, const std::vector<int>& handed)
+{
+    char self[4096];
+    const ssize_t length = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (length <= 0) return 99;
+    self[length] = '\0';
+    std::vector<char*> argv;
+    argv.push_back(self);
+    for (const std::string& argument : arguments)
+        argv.push_back(const_cast<char*>(argument.c_str()));
+    argv.push_back(nullptr);
+    const pid_t child = fork();
+    if (child < 0) return 99;
+    if (child == 0) {
+        mw::icemuxhandles::leaveOpenAcrossExec(handed.data(), handed.size());
+        execv(self, argv.data());
+        _exit(98);
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status)) return 99;
+    return WEXITSTATUS(status);
+}
+#endif
+
+} // namespace
+
+/// A second process: `run_tests --holds-socket <descriptor> <port>`. 7 when
+/// that number is, in it, a UDP socket bound to that port; 0 when it is not.
+int run_ice_mux_holds_child(int argc, char** argv)
+{
+    if (argc != 4) return 2;
+    const int fd = static_cast<int>(std::strtol(argv[2], nullptr, 10));
+    const auto port = static_cast<uint16_t>(std::strtoul(argv[3], nullptr, 10));
+    return holdsUdpOn(fd, port) ? 7 : 0;
+}
+
+/// Another: `run_tests --started-with-sockets <dest> <descriptor> <port> …`,
+/// a worker as its server starts it. It takes the sockets it was started
+/// with, sends one datagram through the first, and starts a process of its
+/// own, which must hold none of them. 0 when all of that is so.
+int run_ice_mux_started_child(int argc, char** argv)
+{
+    if (argc < 5 || (argc - 3) % 2 != 0) return 2;
+    const auto dest = static_cast<uint16_t>(std::strtoul(argv[2], nullptr, 10));
+    std::vector<mw::icemuxhandles::Wanted> told;
+    for (int i = 3; i + 1 < argc; i += 2)
+        told.push_back({std::strtoull(argv[i], nullptr, 10),
+                        static_cast<uint16_t>(std::strtoul(argv[i + 1], nullptr, 10))});
+    QString why;
+    const std::vector<uintptr_t> got = mw::icemuxhandles::inherited(told, &why);
+    if (got.size() != told.size()) {
+        std::fprintf(stderr, "  (child: %s)\n", why.toUtf8().constData());
+        return 4;
+    }
+    if (!sendThree(static_cast<int>(got[0]), dest, "tak")) return 5;
+#ifdef __linux__
+    // What this process starts gets none of them
+    for (const mw::icemuxhandles::Wanted& w : told)
+        if (startedAgain({"--holds-socket", std::to_string(w.handle), std::to_string(w.port)},
+                         {}) != 0)
+            return 6;
+#endif
+    return 0;
+}
+
 void run_ice_mux_handles_tests()
 {
+    using mw::icemuxhandles::inherited;
+    using mw::icemuxhandles::Wanted;
     whoGetsTheSockets();
-    SECTION("IceMuxHandles: Windows only");
+    theFeed();
+    SECTION("IceMuxHandles: nothing is taken out of a server, or opened from a description");
     QString why;
-    // Elsewhere nothing is taken, and it says so
     CHECK(mw::icemuxhandles::adopt(1, {{1, 1}}, [](const QString&) { return true; }, &why).empty());
     CHECK(!why.isEmpty());
     why.clear();
     CHECK(mw::icemuxhandles::open({1, 2, 3}, 1, &why) == mw::icemuxhandles::kNoSocket);
     CHECK(!why.isEmpty());
+
+    SECTION("IceMuxHandles: the sockets a worker was started with");
+    const auto number = [](int fd) { return static_cast<uint64_t>(fd); };
+    uint16_t sinkPort = 0;
+    const int sink = plainUdp(&sinkPort);
+    {
+        // Left open across the start: as the worker finds them, they would
+        // go on to whatever it starts
+        uint16_t firstPort = 0, secondPort = 0;
+        const int first = plainUdp(&firstPort);
+        const int second = plainUdp(&secondPort);
+        CHECK(!keptHere(first) && !keptHere(second));
+        why.clear();
+        const std::vector<uintptr_t> got =
+            inherited({{number(first), firstPort}, {number(second), secondPort}}, &why);
+        // In the order told, the very descriptors, and kept from what it starts
+        CHECK(got == (std::vector<uintptr_t>{static_cast<uintptr_t>(first),
+                                             static_cast<uintptr_t>(second)}));
+        CHECK(why.isEmpty());
+        CHECK(keptHere(first) && keptHere(second));
+        // What is sent through one leaves from the shared port
+        uint16_t from = 0;
+        CHECK(sendThree(first, sinkPort, "one"));
+        CHECK(firstByteWithin(sink, 2000, &from) == 'o');
+        CHECK(from == firstPort);
+        close(first);
+        close(second);
+    }
+
+    SECTION("IceMuxHandles: anything else is refused, and only what was handed is closed");
+    {
+        // The second is not the socket of the port said: nothing is kept. The
+        // first was what the server said, handed for this, and is closed; the
+        // second is left, kept from what this process starts.
+        uint16_t firstPort = 0, secondPort = 0;
+        const int first = plainUdp(&firstPort);
+        const int second = plainUdp(&secondPort);
+        why.clear();
+        CHECK(inherited({{number(first), firstPort}, {number(second), firstPort}}, &why).empty());
+        CHECK(!why.isEmpty());
+        CHECK(!isOpen(first));
+        CHECK(isOpen(second) && keptHere(second));
+        close(second);
+    }
+    {
+        // The first is not: the second is looked at all the same, and closed
+        uint16_t firstPort = 0, secondPort = 0;
+        const int first = plainUdp(&firstPort);
+        const int second = plainUdp(&secondPort);
+        CHECK(inherited({{number(first), secondPort}, {number(second), secondPort}}, &why).empty());
+        CHECK(isOpen(first) && keptHere(first));
+        CHECK(!isOpen(second));
+        close(first);
+    }
+    {
+        // The second of three is not: the first and the third were handed,
+        // and neither stays open here to keep its port from the server
+        uint16_t ports[3] = {0, 0, 0};
+        const int a = plainUdp(&ports[0]);
+        const int b = plainUdp(&ports[1]);
+        const int c = plainUdp(&ports[2]);
+        why.clear();
+        CHECK(inherited({{number(a), ports[0]}, {number(b), ports[0]}, {number(c), ports[2]}}, &why)
+                  .empty());
+        CHECK(!why.isEmpty());
+        CHECK(!isOpen(a) && !isOpen(c));
+        CHECK(isOpen(b) && keptHere(b));
+        close(b);
+    }
+    {
+        // None of them is: nothing is closed
+        uint16_t firstPort = 0, secondPort = 0;
+        const int first = plainUdp(&firstPort);
+        const int second = plainUdp(&secondPort);
+        CHECK(inherited({{number(first), secondPort}, {number(second), firstPort}}, &why).empty());
+        CHECK(isOpen(first) && isOpen(second));
+        CHECK(keptHere(first) && keptHere(second));
+        close(first);
+        close(second);
+    }
+    {
+        // A socket of another kind, on the very port said
+        const int tcp = socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        socklen_t length = sizeof(a);
+        CHECK(bind(tcp, reinterpret_cast<const sockaddr*>(&a), sizeof(a)) == 0);
+        CHECK(getsockname(tcp, reinterpret_cast<sockaddr*>(&a), &length) == 0);
+        CHECK(inherited({{number(tcp), ntohs(a.sin_port)}}, &why).empty());
+        CHECK(isOpen(tcp) && keptHere(tcp));
+        close(tcp);
+    }
+    {
+        // A descriptor that is no socket: some other one of this process. It
+        // is not closed, and still works.
+        int ends[2] = {-1, -1};
+        CHECK(pipe(ends) == 0);
+        CHECK(inherited({{number(ends[1]), 48550}}, &why).empty());
+        CHECK(isOpen(ends[1]));
+        CHECK(write(ends[1], "x", 1) == 1);
+        close(ends[0]);
+        close(ends[1]);
+    }
+    {
+        // The standard three are never a handed socket, and are not touched
+        int before[3];
+        for (int fd = 0; fd < 3; ++fd)
+            before[fd] = fcntl(fd, F_GETFD);
+        for (int fd = 0; fd < 3; ++fd)
+            CHECK(inherited({{number(fd), 48550}}, &why).empty());
+        for (int fd = 0; fd < 3; ++fd)
+            CHECK(fcntl(fd, F_GETFD) == before[fd]);
+    }
+    {
+        // One number for two sockets, a number out of range, no port, none,
+        // too many, a number that is no descriptor at all
+        uint16_t port = 0;
+        const int one = plainUdp(&port);
+        CHECK(inherited({{number(one), port}, {number(one), port}}, &why).empty());
+        CHECK(isOpen(one) && keptHere(one));
+        CHECK(inherited({{uint64_t(1) << 40, port}}, &why).empty());
+        CHECK(inherited({{number(one), 0}}, &why).empty());
+        CHECK(inherited({}, &why).empty());
+        std::vector<Wanted> many;
+        std::vector<int> made;
+        for (size_t i = 0; i <= mw::icemuxhandles::kMax; ++i) {
+            uint16_t p = 0;
+            made.push_back(plainUdp(&p));
+            many.push_back({number(made.back()), p});
+        }
+        CHECK(inherited(many, &why).empty());
+        for (const int fd : made) {
+            CHECK(isOpen(fd) && keptHere(fd));
+            close(fd);
+        }
+        CHECK(isOpen(one));
+        close(one);
+        CHECK(inherited({{number(one), port}}, &why).empty());
+    }
+
+#ifdef __linux__
+    SECTION("IceMuxHandles: the mux's sockets cross one start, the worker's, and no other");
+    {
+        using namespace mw::routerports;
+        IceMux mux;
+        std::string reason;
+        CHECK(mux.start(&reason));
+        // Two ports of the stream block nobody has, from its far end
+        std::vector<uint16_t> held;
+        for (int p = kMediaBasePort + kMediaPortCount - 1; p >= kMediaBasePort && held.size() < 2;
+             --p)
+            if (mux.hold(static_cast<uint16_t>(p)) == IceMux::Held::NewlyBound)
+                held.push_back(static_cast<uint16_t>(p));
+        CHECK(held.size() == 2);
+        if (held.size() == 2) {
+            CHECK(mux.serve(IceMux::kStandard, held[0]));
+            CHECK(mux.serve(IceMux::kBlock, held[1]));
+            // What a worker is given: this process's own descriptors, by number
+            const IceMux::Share share = mux.shareByHandle();
+            CHECK(share.handles.size() == 2 && share.ports == held);
+            std::vector<int> fds;
+            for (const uint64_t handle : share.handles)
+                fds.push_back(static_cast<int>(handle));
+            const auto text = [](uint64_t n) { return std::to_string(n); };
+            for (const int fd : fds)
+                CHECK(keptHere(fd));
+
+            // A process started without the hand-over holds neither
+            for (size_t i = 0; i < fds.size(); ++i)
+                CHECK(startedAgain({"--holds-socket", text(share.handles[i]), text(held[i])}, {}) ==
+                      0);
+            // Started with it, it does: that is what the answer above is worth
+            CHECK(startedAgain({"--holds-socket", text(share.handles[0]), text(held[0])}, fds) ==
+                  7);
+            // …and only what it was handed
+            CHECK(startedAgain({"--holds-socket", text(share.handles[1]), text(held[1])},
+                               {fds[0]}) == 0);
+
+            // A worker: it takes both, sends from the first shared port, and
+            // what it starts in turn holds none
+            CHECK(startedAgain({"--started-with-sockets", text(sinkPort), text(share.handles[0]),
+                                text(held[0]), text(share.handles[1]), text(held[1])},
+                               fds) == 0);
+            uint16_t from = 0;
+            CHECK(firstByteWithin(sink, 5000, &from) == 't');
+            CHECK(from == held[0]);
+            // Told the ports the other way round, it takes none
+            CHECK(startedAgain({"--started-with-sockets", text(sinkPort), text(share.handles[0]),
+                                text(held[1]), text(share.handles[1]), text(held[0])},
+                               fds) == 4);
+
+            // The server's own are as they were: kept from every other start,
+            // and the mux reads on
+            for (const int fd : fds)
+                CHECK(keptHere(fd));
+            CHECK(mux.healthy() && mux.holds(held[0]) && mux.holds(held[1]));
+            mux.release(share.lease);
+        }
+        mux.stop();
+    }
+#endif
+    close(sink);
 }
 
 #endif

@@ -47,6 +47,10 @@ using Emit = std::function<void(const QJsonObject&)>;
 /// copies them out of the server itself (IceMuxHandles): `serverPid` is the
 /// server this worker's pipes lead to, 0 for a worker that has no such pipes
 /// and so takes none, and `isServer` its check of that process's image.
+/// Outside Windows, where a worker is always the server's own child, it gets
+/// {"hop", "ports", "fds": […]}: the descriptors the server left open across
+/// its start, which it keeps from what it starts and checks before anything
+/// else (IceMuxHandles::inherited()).
 ///
 /// False (and nothing kept) when it is absent or a socket cannot be opened:
 /// the stream then takes a socket of its own, as without the mux.

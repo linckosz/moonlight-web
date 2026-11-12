@@ -34,6 +34,8 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace mw::icemuxclient {
@@ -138,33 +140,24 @@ void onFeedTimestamp(uint64_t stamp)
     g_HopWindowMaxNs = 0;
 }
 
-#ifdef _WIN32
-/// A feed: a loopback socket nobody else can bind, which hears the server's
-/// hop socket and nothing else. Nothing this process starts gets it by being
-/// started: what comes in for the stream is read here alone.
-SOCKET openFeed(quint16 hopPort, quint16* port)
+void closeShared(uintptr_t socket)
 {
-    const SOCKET s = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0,
-                                WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
-    if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    const int on = 1;
-    const int room = 1024 * 1024;
-    setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&on), sizeof(on));
-    setsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&room), sizeof(room));
-    sockaddr_in local{};
-    local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    int len = sizeof(local);
-    sockaddr_in hop = local;
-    hop.sin_port = htons(hopPort);
-    if (bind(s, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) != 0 ||
-        getsockname(s, reinterpret_cast<sockaddr*>(&local), &len) != 0 ||
-        connect(s, reinterpret_cast<const sockaddr*>(&hop), sizeof(hop)) != 0) {
-        closesocket(s);
-        return INVALID_SOCKET;
-    }
-    *port = ntohs(local.sin_port);
-    return s;
+#ifdef _WIN32
+    closesocket(static_cast<SOCKET>(socket));
+#else
+    ::close(static_cast<int>(socket));
+#endif
+}
+
+#ifndef _WIN32
+/// A whole number of the config line, 0 for anything that is not one.
+quint64 wholeNumber(const QJsonValue& value)
+{
+    if (!value.isDouble()) return 0;
+    const double d = value.toDouble();
+    if (!(d >= 1 && d <= 2147483647.0)) return 0;
+    const auto n = static_cast<quint64>(d);
+    return static_cast<double>(n) == d ? n : 0;
 }
 #endif
 
@@ -173,30 +166,65 @@ SOCKET openFeed(quint16 hopPort, quint16* port)
 bool configure(const QJsonObject& mux, quint32 serverPid,
                const std::function<bool(const QString& image)>& isServer, Emit tell)
 {
-#ifdef _WIN32
     State& s = state();
     const std::lock_guard<std::mutex> lock(s.lock);
     const int hop = mux.value(QStringLiteral("hop")).toInt();
     const QJsonArray sockets = mux.value(QStringLiteral("sockets")).toArray();
     const QJsonArray handles = mux.value(QStringLiteral("handles")).toArray();
+    const QJsonArray fds = mux.value(QStringLiteral("fds")).toArray();
     const QJsonArray ports = mux.value(QStringLiteral("ports")).toArray();
-    // Handed, or to take: one way, and a port for each.
-    const bool handed = !sockets.isEmpty();
-    const qsizetype count = handed ? sockets.size() : handles.size();
-    if (hop <= 0 || hop > 65535 || !tell || count < 1 ||
-        count > static_cast<qsizetype>(mw::icemuxhandles::kMax) || ports.size() != count ||
-        (handed && !handles.isEmpty()))
+
+    std::vector<uintptr_t> opened;
+#ifndef _WIN32
+    // Outside Windows the server left the sockets open across this process's
+    // start, and names their descriptors. They are kept from whatever this
+    // process starts, and checked, before anything else of the config is
+    // looked at (IceMuxHandles::inherited()).
+    if (!fds.isEmpty()) {
+        std::vector<mw::icemuxhandles::Wanted> told;
+        for (qsizetype i = 0; i < fds.size(); ++i) {
+            const quint64 port = wholeNumber(ports.at(i));
+            told.push_back(
+                {wholeNumber(fds.at(i)), static_cast<uint16_t>(port <= 65535 ? port : 0)});
+        }
+        QString whyNot;
+        opened = mw::icemuxhandles::inherited(told, &whyNot);
+        if (opened.empty()) {
+            qWarning().noquote() << "[IceMux] the shared sockets cannot be used:" << whyNot
+                                 << "— this stream takes a socket of its own";
+            return false;
+        }
+    }
+    Q_UNUSED(serverPid);
+    Q_UNUSED(isServer);
+#endif
+    const auto refuse = [&opened]() {
+        for (const uintptr_t o : opened)
+            closeShared(o);
         return false;
+    };
+
+    // Handed, to take, or left open: one way, and a port for each.
+    const int ways =
+        (sockets.isEmpty() ? 0 : 1) + (handles.isEmpty() ? 0 : 1) + (fds.isEmpty() ? 0 : 1);
+    const qsizetype count = sockets.size() + handles.size() + fds.size();
+    if (hop <= 0 || hop > 65535 || !tell || ways != 1 ||
+        count > static_cast<qsizetype>(mw::icemuxhandles::kMax) || ports.size() != count)
+        return refuse();
     QList<quint16> named;
     for (const QJsonValue& v : ports) {
         const int port = v.toInt();
-        if (port <= 0 || port > 65535) return false;
+        if (port <= 0 || port > 65535) return refuse();
         named.append(static_cast<quint16>(port));
     }
+
+#ifdef _WIN32
+    // Descriptors left open are another system's way
+    if (!fds.isEmpty()) return false;
+    const bool handed = !sockets.isEmpty();
     // The first sockets of this process: nothing has started Winsock yet.
     WSADATA winsock;
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return false;
-    std::vector<uintptr_t> opened;
     if (handed) {
         for (qsizetype i = 0; i < count; ++i) {
             // From the description the server made for this process alone,
@@ -208,9 +236,7 @@ bool configure(const QJsonObject& mux, quint32 serverPid,
             if (one == mw::icemuxhandles::kNoSocket) {
                 qWarning().noquote()
                     << "[IceMux]" << whyNot << "— this stream takes a socket of its own";
-                for (uintptr_t o : opened)
-                    closesocket(static_cast<SOCKET>(o));
-                return false;
+                return refuse();
             }
             opened.push_back(one);
         }
@@ -232,6 +258,12 @@ bool configure(const QJsonObject& mux, quint32 serverPid,
             return false;
         }
     }
+    const char* how = handed ? "(handed by the server)" : "(taken from the server)";
+#else
+    // Descriptions and handles are Windows' way
+    if (fds.isEmpty()) return refuse();
+    const char* how = "(left open by the server)";
+#endif
     s.shared = std::move(opened);
     s.ports.assign(named.cbegin(), named.cend());
     s.hopPort = static_cast<quint16>(hop);
@@ -240,15 +272,8 @@ bool configure(const QJsonObject& mux, quint32 serverPid,
     for (const quint16 port : named)
         list << QString::number(port);
     qInfo().noquote() << "[IceMux] worker on shared UDP port" << list.join(QStringLiteral(", "))
-                      << (handed ? "(handed by the server)" : "(taken from the server)");
+                      << how;
     return true;
-#else
-    Q_UNUSED(mux);
-    Q_UNUSED(serverPid);
-    Q_UNUSED(isServer);
-    Q_UNUSED(tell);
-    return false;
-#endif
 }
 
 bool available()
@@ -293,21 +318,19 @@ Public publicPorts()
 
 std::optional<rtc::IceSharedSockets> openAgent()
 {
-#ifdef _WIN32
     State& s = state();
     const std::lock_guard<std::mutex> lock(s.lock);
     if (s.shared.empty()) return std::nullopt;
-    quint16 feedPort = 0;
+    uint16_t feedPort = 0;
     // Never closed: a socket the agent's thread may still be polling must not
     // become another one under it, and a worker makes very few agents.
-    const SOCKET feed = openFeed(s.hopPort, &feedPort);
-    if (feed == INVALID_SOCKET) {
-        qWarning() << "[IceMux] no feed socket, error" << WSAGetLastError()
-                   << "— this connection takes a socket of its own";
+    const uintptr_t feed = mw::icemuxhandles::openFeed(s.hopPort, &feedPort);
+    if (feed == mw::icemuxhandles::kNoSocket) {
+        qWarning() << "[IceMux] no feed socket — this connection takes a socket of its own";
         return std::nullopt;
     }
     rtc::IceSharedSockets out;
-    out.feed = static_cast<uintptr_t>(feed);
+    out.feed = feed;
     out.send = s.shared;
     out.ufrag = randomIceString(12);
     out.pwd = randomIceString(24);
@@ -318,9 +341,6 @@ std::optional<rtc::IceSharedSockets> openAgent()
             {QStringLiteral("ufrag"), QString::fromStdString(out.ufrag)},
             {QStringLiteral("feedPort"), static_cast<int>(feedPort)}});
     return out;
-#else
-    return std::nullopt;
-#endif
 }
 
 void confirmed(const rtc::Candidate& candidate)
