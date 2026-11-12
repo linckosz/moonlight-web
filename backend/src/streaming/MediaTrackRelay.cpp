@@ -894,6 +894,9 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     } else if (type == "mousehwheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseHScroll(delta);
+    } else if (type == "pen") {
+        // As DataChannelRelay: to a host that takes a pen, under the mouse's rights.
+        InputMsg::sendPen(*m_Shim, msg);
     } else if (type == "secureattention") {
         // Ctrl+Alt+Suppr: the one combination a browser can never deliver — the
         // OS running the viewer eats it first — so it arrives as a message of
@@ -1181,7 +1184,7 @@ void MediaTrackRelay::sendMicOff(const QString& why)
 void MediaTrackRelay::sendInputCaps()
 {
     if (!m_InputDc || !m_InputDc->isOpen() || m_Stopping.load()) return;
-    const QByteArray j = inputCapsMessage(m_InputPolicy);
+    const QByteArray j = inputCapsMessage(m_InputPolicy, m_Shim);
     try {
         m_InputDc->send(std::string(j.constData(), j.size()));
     } catch (const std::exception&) {}

@@ -232,8 +232,9 @@ protected:
     static QJsonObject hidCapsMessage(const InputMsg::Policy& policy, IMediaEngine& engine);
 
     /// The inputcaps message both relays send: whether this player's keyboard
-    /// and mouse reach the host (`keyboardMouse`).
-    static QByteArray inputCapsMessage(const InputMsg::Policy& policy);
+    /// and mouse reach the host (`keyboardMouse`), and whether their pen does,
+    /// as a pen (`pen`: the mouse's rights, on a host that takes one).
+    static QByteArray inputCapsMessage(const InputMsg::Policy& policy, const IMediaEngine* engine);
 
     /// Sends micOffMessage on the input channel. On the relay's thread.
     virtual void sendMicOff(const QString& why) { Q_UNUSED(why); }

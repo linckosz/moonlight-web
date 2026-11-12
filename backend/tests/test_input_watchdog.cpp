@@ -20,6 +20,7 @@ struct FakeWire
     QVector<short> padsZeroed;
     QVector<QString> charsUp;
     QVector<CharKeyHints> charHints;
+    int pensLifted = 0;
 
     InputWatchdog::Sink sink()
     {
@@ -31,6 +32,7 @@ struct FakeWire
             charsUp.append(ch);
             charHints.append(hints);
         };
+        s.liftPen = [this]() { ++pensLifted; };
         return s;
     }
 
@@ -41,6 +43,7 @@ struct FakeWire
         padsZeroed.clear();
         charsUp.clear();
         charHints.clear();
+        pensLifted = 0;
     }
 };
 
@@ -594,5 +597,55 @@ void run_input_watchdog_tests()
         CHECK(wd.anythingHeld());
         wd.notePad(0, 1, true);
         CHECK(!wd.anythingHeld());
+    }
+
+    // ── A pen down: kept through a hiccup, lifted once on a dead link ───────
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        qint64 now = 0;
+        wd.setClock([&now]() { return now; });
+
+        wd.sync({}, 0, false); // the handshake
+        wd.noteClientAlive();
+        wd.notePen(true);
+        CHECK(wd.anythingHeld());
+
+        // The short period would cut a line in two: the pen stays down.
+        now = InputWatchdog::kStaleMs;
+        wd.tick();
+        CHECK_EQ(wire.pensLifted, 0);
+        CHECK(wd.anythingHeld());
+
+        now = InputWatchdog::kStaleHoldMs;
+        wd.tick();
+        CHECK_EQ(wire.pensLifted, 1);
+        CHECK(!wd.anythingHeld());
+
+        now += InputWatchdog::kStaleHoldMs;
+        wd.tick();
+        CHECK_EQ(wire.pensLifted, 1);
+    }
+
+    // ── A release of everything lifts it; the short one does not ────────────
+    {
+        FakeWire wire;
+        InputWatchdog wd(wire.sink());
+        wd.notePen(true);
+        wd.release(false, true);
+        CHECK_EQ(wire.pensLifted, 0);
+        CHECK(wd.anythingHeld());
+        wd.release(true);
+        CHECK_EQ(wire.pensLifted, 1);
+        CHECK(!wd.anythingHeld());
+
+        // Asked again at every release of everything, even of a pen the
+        // watchdog saw go up: the engine knows whether its host still holds
+        // one (PenHostState::lift() is empty when it does not).
+        wd.notePen(true);
+        wd.notePen(false);
+        CHECK(!wd.anythingHeld());
+        wd.release(true);
+        CHECK_EQ(wire.pensLifted, 2);
     }
 }

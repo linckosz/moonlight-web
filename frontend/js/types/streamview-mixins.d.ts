@@ -1,7 +1,9 @@
 import { StreamViewKeyboard } from '../ui/StreamViewKeyboard.js';
 import { StreamViewTouch } from '../ui/StreamViewTouch.js';
 import { StreamViewTouchPad } from '../ui/StreamViewTouchPad.js';
+import { StreamViewPen } from '../ui/StreamViewPen.js';
 import { StreamViewFullscreen } from '../ui/StreamViewFullscreen.js';
+import { PenStroke } from '../stream/PenInput.js';
 
 /**
  * `StreamView` is assembled at runtime: the bottom of StreamView.js copies the
@@ -16,7 +18,12 @@ import { StreamViewFullscreen } from '../ui/StreamViewFullscreen.js';
  */
 declare module '../ui/StreamView.js' {
     interface StreamView
-        extends StreamViewKeyboard, StreamViewTouch, StreamViewTouchPad, StreamViewFullscreen {
+        extends
+            StreamViewKeyboard,
+            StreamViewTouch,
+            StreamViewTouchPad,
+            StreamViewPen,
+            StreamViewFullscreen {
         /**
          * Latched toolbar modifiers on the mobile soft keyboard. The index
          * signature is load-bearing: `_setMod`/`_resetMods` address entries
@@ -50,5 +57,14 @@ declare module '../ui/StreamView.js' {
         _stopTouchWatch: (() => void) | null;
         /** Suppress the one-shot gesture-hint slide on the next activation. */
         _suppressShortcutsSlide: boolean;
+        /** The pen (StreamViewPen.js): the relay's word, the stroke, its touches. */
+        _penSupported: boolean;
+        _penStroke: PenStroke | null;
+        _penTouchIds: Set<number> | null;
+        _penPoint: { x: number; y: number; t: number } | null;
+        _penRawMs: number;
+        _lastPointerType: string;
+        _onPenPointer: ((e: PointerEvent) => void) | null;
+        _onPenRaw: ((e: PointerEvent) => void) | null;
     }
 }

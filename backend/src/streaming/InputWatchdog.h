@@ -61,6 +61,11 @@ class QTimer;
 /// and the host saw the Option let go of, then pressed again (bench of
 /// 09/11/2026).
 ///
+/// A pen held down gets the long one as well (issue #50): lifted on a short
+/// hiccup, a line being drawn would break in two, and a pen held still sends
+/// nothing but the heartbeat. Through a dead link, three seconds is all it
+/// stays down.
+///
 /// ── Why it is its own class ─────────────────────────────────────────────────
 ///
 /// A key held through a link stall sticks down just the same whether the host
@@ -96,6 +101,9 @@ public:
         /// The release of a character noteChar() saw go down, with the hints
         /// of its press: the native host lets go of the key that typed it.
         std::function<void(const QString& ch, const CharKeyHints& hints)> releaseChar;
+        /// Lift the pen where it last was, if the host holds it down. Called
+        /// at every release of everything, so it must be a no-op otherwise.
+        std::function<void()> liftPen;
     };
 
     static constexpr int kTickMs = 100;
@@ -121,6 +129,9 @@ public:
     /// A pad state was sent. `atRest` (see padAtRest) drops the pad out of the
     /// set — a removal reads as at-rest and does the same.
     void notePad(short controller, short mask, bool atRest);
+    /// Whether the host now holds the pen down (IMediaEngine::sendPen). Only
+    /// the long grace period, and a release of everything, lift it.
+    void notePen(bool down);
     /// A character the native host holds down on a key of its own layout
     /// (IMediaEngine::sendKeyChar). Released like a key, on a silent link and
     /// by release() — a guest whose keyboard is taken away can no longer send
@@ -235,10 +246,11 @@ private:
     qint64 m_BestOffsetMs = 0;
     qint64 m_LastClientMs = -1;
     static constexpr qint64 kOffsetCreepMs = 1; // per heartbeat: a drifting clock
+    bool m_PenDown = false;
 
     bool anythingHeldLocked() const
     {
         return !m_HeldKeys.isEmpty() || m_HeldButtons != 0 || !m_ActivePads.isEmpty() ||
-               !m_HeldChars.isEmpty();
+               !m_HeldChars.isEmpty() || m_PenDown;
     }
 };

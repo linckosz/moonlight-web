@@ -34,7 +34,9 @@
 #include <QString>
 #include <QVector>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 
 extern "C" {
 #include "Limelight.h"
@@ -706,6 +708,70 @@ inline void sendKey(IMediaEngine& engine, const QJsonObject& msg, bool down, boo
     engine.sendKeyEvent(plan.keyCode, down, positionModifiers(msg, mode), plan.flags,
                         withHold && msg["hold"].toBool(false));
     engine.setKeyFromGamingMode(false);
+}
+
+/// The page's 'pen' message (frontend stream/PenInput.js), read and held to
+/// the pen packet's ranges: a position and a pressure in 0..1, a tilt in
+/// 0..90 and a rotation in 0..359 degrees — both unknown unless the page
+/// measured them —, the three barrel buttons. False for a message that is no
+/// pen event at all, which is dropped.
+inline bool readPen(const QJsonObject& msg, PenEvent& out)
+{
+    const QString event = msg.value(QLatin1String("event")).toString();
+    if (event == QLatin1String("hover"))
+        out.eventType = Pen::kHover;
+    else if (event == QLatin1String("down"))
+        out.eventType = Pen::kDown;
+    else if (event == QLatin1String("move"))
+        out.eventType = Pen::kMove;
+    else if (event == QLatin1String("up"))
+        out.eventType = Pen::kUp;
+    else if (event == QLatin1String("leave"))
+        out.eventType = Pen::kHoverLeave;
+    else
+        return false;
+
+    const QString tool = msg.value(QLatin1String("tool")).toString();
+    out.toolType = tool == QLatin1String("pen")      ? Pen::kToolPen
+                   : tool == QLatin1String("eraser") ? Pen::kToolEraser
+                                                     : Pen::kToolUnknown;
+    out.buttons =
+        static_cast<uint8_t>(msg.value(QLatin1String("buttons")).toInt(0) & Pen::kButtonsMask);
+
+    const auto unit = [&msg](const char* key) {
+        const double v = msg.value(QLatin1String(key)).toDouble(0.0);
+        return static_cast<float>(std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0);
+    };
+    out.x = unit("x");
+    out.y = unit("y");
+    out.pressureOrDistance = unit("pressure");
+
+    out.tilt = Pen::kTiltUnknown;
+    out.rotation = Pen::kRotationUnknown;
+    const QJsonValue tilt = msg.value(QLatin1String("tilt"));
+    const QJsonValue rotation = msg.value(QLatin1String("rotation"));
+    if (tilt.isDouble() && rotation.isDouble()) {
+        const double t = tilt.toDouble();
+        const double r = rotation.toDouble();
+        if (std::isfinite(t) && std::isfinite(r)) {
+            out.tilt = static_cast<uint8_t>(std::lround(std::clamp(t, 0.0, 90.0)));
+            out.rotation =
+                static_cast<uint16_t>(((std::lround(std::fmod(r, 360.0)) % 360) + 360) % 360);
+        }
+    }
+    return true;
+}
+
+/// One pen message, to a host that takes a pen (IMediaEngine::supportsPen):
+/// the page sends one only once inputcaps has said so, and anything else — an
+/// older host, a page that did not wait, a message that is no pen event — is
+/// dropped, never turned into something the host did not ask for.
+inline void sendPen(IMediaEngine& engine, const QJsonObject& msg)
+{
+    if (!engine.supportsPen()) return;
+    PenEvent event;
+    if (!readPen(msg, event)) return;
+    engine.sendPen(event);
 }
 
 /// The key a US keyboard types @p c with, and whether it takes Shift. False for

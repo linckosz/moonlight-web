@@ -324,10 +324,12 @@ QByteArray RelayBase::micOffMessage(const QString& why)
         .toJson(QJsonDocument::Compact);
 }
 
-QByteArray RelayBase::inputCapsMessage(const InputMsg::Policy& policy)
+QByteArray RelayBase::inputCapsMessage(const InputMsg::Policy& policy, const IMediaEngine* engine)
 {
+    const bool pen = policy.keyboardMouse && engine && engine->supportsPen();
     return QJsonDocument(QJsonObject{{QStringLiteral("type"), QStringLiteral("inputcaps")},
-                                     {QStringLiteral("keyboardMouse"), policy.keyboardMouse}})
+                                     {QStringLiteral("keyboardMouse"), policy.keyboardMouse},
+                                     {QStringLiteral("pen"), pen}})
         .toJson(QJsonDocument::Compact);
 }
 

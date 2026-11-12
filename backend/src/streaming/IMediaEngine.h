@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "PenInput.h"
 #include "mw/native/HostKeyboardLayout.h"
 
 class FrameSentSink;
@@ -231,6 +232,16 @@ public:
     virtual void sendMouseButton(bool down, int button, bool hold = false) = 0;
     virtual void sendMouseScroll(short scrollAmount) = 0;
     virtual void sendMouseHScroll(short scrollAmount) = 0;
+
+    /// Whether this host takes a pen as a pen — its pressure, tilt, eraser and
+    /// barrel buttons (issue #50): a GameStream host with Sunshine's pen
+    /// extension (LI_FF_PEN_TOUCH_EVENTS), which Wolf speaks too. Told to the
+    /// page in inputcaps as `pen`; until then the page sends none, and its pen
+    /// stays the mouse. The native host has no pen of its own yet.
+    virtual bool supportsPen() const { return false; }
+    /// One pen event, already bounded (InputMsg::readPen). Ignored by an
+    /// engine that does not support a pen.
+    virtual void sendPen(const PenEvent& event) { Q_UNUSED(event); }
 
     virtual void sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask,
                                        uint8_t type, bool hasRumble) = 0;

@@ -176,6 +176,7 @@ import { placeGamepadButton, placeKeyboardButton } from './streamBarButtons.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewTouchPad } from './StreamViewTouchPad.js';
+import { StreamViewPen } from './StreamViewPen.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 import { flushClientLog, refreshClientLog, serverDiag } from '../util/ClientLog.js';
 import { scheduleErrorTrail } from '../util/ErrorTrail.js';
@@ -1818,7 +1819,10 @@ export class StreamView {
         this._composedKey = null;
         this._onPaste = (e) => this.handlePaste(e);
         this._onPointerDownFlush = () => this._flushPendingClipboard();
-        this._onWindowBlur = () => this._releaseAllPhysKeys();
+        this._onWindowBlur = () => {
+            this._releaseAllPhysKeys();
+            this._penLift();
+        };
         // Regaining window focus (Alt-Tab back from another app) may leave the
         // pointer over the streamed picture without a mousemove — re-apply the
         // cursor hide so the local arrow doesn't double the host cursor.
@@ -1833,9 +1837,20 @@ export class StreamView {
         this._onContextMenu = (e) => e.preventDefault();
 
         // ── Touch event handlers (mobile) ─────────────────────────────────
-        this._onTouchStart = (e) => this.handleTouchStart(this._touchesBesidePad(e));
-        this._onTouchMove = (e) => this.handleTouchMove(this._touchesBesidePad(e));
-        this._onTouchEnd = (e) => this.handleTouchEnd(this._touchesBesidePad(e));
+        // Without the pen's touches either, when the pen goes to the host as a
+        // pen: an event that was the pen's alone never reaches them.
+        this._onTouchStart = (e) => {
+            const t = this._touchesBesidePen(e);
+            if (t) this.handleTouchStart(this._touchesBesidePad(t));
+        };
+        this._onTouchMove = (e) => {
+            const t = this._touchesBesidePen(e);
+            if (t) this.handleTouchMove(this._touchesBesidePad(t));
+        };
+        this._onTouchEnd = (e) => {
+            const t = this._touchesBesidePen(e);
+            if (t) this.handleTouchEnd(this._touchesBesidePad(t));
+        };
 
         // Touch state — laptop-trackpad model: relative cursor deltas,
         // tap = left click, two-finger tap = right click, two-finger drag =
@@ -1991,6 +2006,7 @@ export class StreamView {
             // modifier stays stuck on the host.
             if (document.visibilityState === 'hidden') {
                 this._releaseAllPhysKeys();
+                this._penLift();
                 this._touchPadLetGo();
                 this._noteHiddenAfterError(performance.now());
             }
@@ -8317,6 +8333,9 @@ export class StreamView {
         }
         if (msg.type === 'inputcaps') {
             this._setMouseAllowed(msg.keyboardMouse === true);
+            // Whether the host takes a pen as a pen (issue #50). Absent from
+            // an older relay's: the pen stays the mouse, or a finger.
+            this._setPenSupported(msg.pen === true);
             return;
         }
         if (msg.type === 'micoff') {
@@ -9401,6 +9420,8 @@ export class StreamView {
                 this.inputEl.addEventListener(type, this._onGesture, { passive: false });
         }
         this._bindPointerRaw();
+        // After the raw path: the pen takes its raw reports by the same switch.
+        this._bindPen();
         this.streamEl.addEventListener('contextmenu', this._onContextMenu);
         // Touch events (mobile): bound to the WHOLE overlay so the entire
         // screen acts as a laptop trackpad, not just the canvas rectangle.
@@ -10420,6 +10441,9 @@ export class StreamView {
             // where it is — the client cursor is off the stream surface.
             if (!inside) return;
 
+            // Made up from a pen that speaks for itself (StreamViewPen.js).
+            if (this._penOwnsMouseEvent()) return;
+
             // Raw mode: the position already went out from _onPointerRaw, at
             // the device's own rate. Only the cursor bookkeeping above is ours.
             // Only while raw reports actually arrive — see _rawPointerLive.
@@ -10445,6 +10469,8 @@ export class StreamView {
             // The mouse events a browser makes up after a tap: the touch path
             // has already clicked there, a second press would double it.
             if (firedByTouch(e)) return;
+            // Same for the ones made up from a pen that speaks for itself.
+            if (this._penOwnsMouseEvent()) return;
             const msg = this._absoluteMouseMessage(e.clientX, e.clientY);
             if (!msg) return;
             this._sendToHost(msg);
@@ -10452,7 +10478,7 @@ export class StreamView {
         };
 
         this._onNormalMouseUp = (e) => {
-            if (firedByTouch(e)) return;
+            if (firedByTouch(e) || this._penOwnsMouseEvent()) return;
             this.handleMouseUp(e);
         };
 
@@ -10559,6 +10585,8 @@ export class StreamView {
                     this.inputEl.removeEventListener(type, this._onGesture);
                 this._gestureBound = false;
             }
+            // A stroke still open is lifted on the host before the pen goes.
+            this._unbindPen();
             if (this._onPointerRaw) {
                 this.inputEl.removeEventListener('pointerrawupdate', this._onPointerRaw);
                 this._onPointerRaw = null;
@@ -12468,7 +12496,10 @@ export class StreamView {
         const held = this._heldPhysKeys;
         const buttonsHeld = this._heldMouseButtons;
         const padActive = !!(this._gamepadManager && this._gamepadManager.hasActiveState());
-        const hasState = held.size > 0 || buttonsHeld.size > 0 || padActive;
+        // A pen held still on the glass sends nothing either: the beat keeps
+        // the host from lifting it (StreamViewPen.js).
+        const penDown = !!(this._penStroke && this._penStroke.contact);
+        const hasState = held.size > 0 || buttonsHeld.size > 0 || padActive || penDown;
         if (!force && !hasState && !this._lastBeatHadState) return;
         this._lastBeatHadState = hasState;
 
@@ -13129,6 +13160,8 @@ export class StreamView {
      * Re-binds mouse event handlers for the new mode.
      */
     toggleMouseMode() {
+        // The pen is desktop mode's alone: a stroke still open ends here.
+        this._penLift();
         // ── Remove current mouse event listeners ─────────────────────────
         if (this._gamingMode) {
             if (this._onGamingMouseMove)
@@ -14733,6 +14766,7 @@ for (const Mixin of [
     StreamViewKeyboard,
     StreamViewTouch,
     StreamViewTouchPad,
+    StreamViewPen,
     StreamViewFullscreen,
 ]) {
     for (const name of Object.getOwnPropertyNames(Mixin.prototype)) {

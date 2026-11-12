@@ -121,6 +121,7 @@ add_executable(run_tests
     test_us_scancode.cpp
     test_input_watchdog.cpp
     test_clipboard_sensitivity.cpp
+    test_input_pen.cpp
     test_keyboard_layout.cpp
     test_native_capabilities_json.cpp
     test_edition.cpp

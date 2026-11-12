@@ -42,6 +42,32 @@ extern "C" {
 
 std::atomic<MoonlightShim*> MoonlightShim::s_Instance{nullptr};
 
+// PenInput.h repeats the pen packet's values so the tests need no
+// moonlight-common-c; they must stay the protocol's.
+static_assert(Pen::kHover == LI_TOUCH_EVENT_HOVER && Pen::kDown == LI_TOUCH_EVENT_DOWN &&
+                  Pen::kUp == LI_TOUCH_EVENT_UP && Pen::kMove == LI_TOUCH_EVENT_MOVE &&
+                  Pen::kHoverLeave == LI_TOUCH_EVENT_HOVER_LEAVE,
+              "pen events drifted from Limelight.h");
+static_assert(Pen::kToolUnknown == LI_TOOL_TYPE_UNKNOWN && Pen::kToolPen == LI_TOOL_TYPE_PEN &&
+                  Pen::kToolEraser == LI_TOOL_TYPE_ERASER,
+              "pen tools drifted from Limelight.h");
+static_assert(Pen::kButtonsMask ==
+                  (LI_PEN_BUTTON_PRIMARY | LI_PEN_BUTTON_SECONDARY | LI_PEN_BUTTON_TERTIARY),
+              "pen buttons drifted from Limelight.h");
+static_assert(Pen::kRotationUnknown == LI_ROT_UNKNOWN && Pen::kTiltUnknown == LI_TILT_UNKNOWN,
+              "pen unknowns drifted from Limelight.h");
+
+namespace {
+
+/// One pen packet. A pen has no contact area the browser can tell.
+void sendPenPacket(const PenEvent& e)
+{
+    LiSendPenEvent(e.eventType, e.toolType, e.buttons, e.x, e.y, e.pressureOrDistance, 0.0f, 0.0f,
+                   e.rotation, e.tilt);
+}
+
+} // namespace
+
 MoonlightShim::MoonlightShim(QObject* parent)
     : IMediaEngine(parent)
 {
@@ -60,6 +86,12 @@ MoonlightShim::MoonlightShim(QObject* parent)
     sink.neutralizePad = [this](short controller, short mask) {
         if (!m_Connected.load(std::memory_order_acquire)) return;
         LiSendMultiControllerEvent(controller, mask, 0, 0, 0, 0, 0, 0, 0);
+    };
+    sink.liftPen = [this]() {
+        if (!m_Connected.load(std::memory_order_acquire)) return;
+        QMutexLocker lock(&m_PenMutex);
+        for (const PenEvent& e : m_Pen.lift())
+            sendPenPacket(e);
     };
     m_Watchdog = new InputWatchdog(std::move(sink), this);
 }
@@ -883,6 +915,25 @@ void MoonlightShim::sendMouseHScroll(short scrollAmount)
     // Sunshine-only extension: returns LI_ERR_UNSUPPORTED on other hosts, which
     // is fine — vertical scrolling keeps working either way.
     LiSendHighResHScrollEvent(scrollAmount);
+}
+
+bool MoonlightShim::supportsPen() const
+{
+    // The feature flags come from the host's RTSP answer, which is in before
+    // connectionStarted and so before the page's input channel opens.
+    return m_Connected.load(std::memory_order_acquire) &&
+           (LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS) != 0;
+}
+
+void MoonlightShim::sendPen(const PenEvent& event)
+{
+    if (!m_Connected.load(std::memory_order_acquire)) return;
+    // The watchdog hears of it under the same lock as the packets: its lift
+    // takes this lock too, so a release can never fall between the two.
+    QMutexLocker lock(&m_PenMutex);
+    for (const PenEvent& e : m_Pen.apply(event))
+        sendPenPacket(e);
+    m_Watchdog->notePen(m_Pen.down());
 }
 
 // Standard gamepad button set exposed by the browser Gamepad API

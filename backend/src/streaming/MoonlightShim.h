@@ -126,6 +126,12 @@ public:
     void sendMouseScroll(short scrollAmount) override;
     // Horizontal wheel — Sunshine protocol extension (no-op on GeForce Experience hosts).
     void sendMouseHScroll(short scrollAmount) override;
+    // The pen packet — Sunshine protocol extension too, which Wolf speaks. Only
+    // once the host has said so in its RTSP answer (LI_FF_PEN_TOUCH_EVENTS).
+    bool supportsPen() const override;
+    // Through m_Pen, so a pen the watchdog lifted in a stall goes down again
+    // with the next move, and the watchdog knows when one is down.
+    void sendPen(const PenEvent& event) override;
     // Quantize scroll to whole notches, for a host that throws sub-notch
     // amounts away (Linux — see HostOsProbe.h). On by default because that is
     // the safe way to be wrong: a host that keeps the leftovers only scrolls
@@ -363,6 +369,10 @@ private:
     /// wrappers with the SHIFTED controller numbers, so its sink can put them
     /// on the wire as they are.
     InputWatchdog* m_Watchdog = nullptr;
+    /// The pen as the host was told about it. The mutex also keeps the
+    /// watchdog's lift from slipping between the packets of one event.
+    QMutex m_PenMutex;
+    PenHostState m_Pen;
     QTimer* m_EncoderWakeTimer = nullptr;
     /// Offset applied to every controller number this session sends, so
     /// concurrent sessions do not collapse onto the host's controller 0.

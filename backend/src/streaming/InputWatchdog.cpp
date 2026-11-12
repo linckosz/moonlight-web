@@ -105,6 +105,15 @@ void InputWatchdog::notePad(short controller, short mask, bool atRest)
     arm();
 }
 
+void InputWatchdog::notePen(bool down)
+{
+    {
+        QMutexLocker lock(&m_Mutex);
+        m_PenDown = down;
+    }
+    arm();
+}
+
 bool InputWatchdog::padAtRest(int buttonFlags, unsigned char leftTrigger,
                               unsigned char rightTrigger, short leftStickX, short leftStickY,
                               short rightStickX, short rightStickY)
@@ -218,6 +227,7 @@ void InputWatchdog::release(bool includeHold, bool keepModifiers)
     QVector<QPair<QString, CharKeyHints>> chars;
     quint32 buttons = 0;
     QHash<short, short> pads;
+    bool pen = false;
     {
         QMutexLocker lock(&m_Mutex);
         for (auto it = m_HeldKeys.begin(); it != m_HeldKeys.end();) {
@@ -248,6 +258,14 @@ void InputWatchdog::release(bool includeHold, bool keepModifiers)
             pads = m_ActivePads;
             m_ActivePads.clear();
         }
+        // A pen down too: a line cut in two by a hiccup is worse than one
+        // held through it. Asked of the engine at every release of
+        // everything, whatever notePen() last said: the engine knows whether
+        // its host holds one, and a press noted a moment late must not escape.
+        if (includeHold) {
+            pen = true;
+            m_PenDown = false;
+        }
     }
 
     // Modifiers cleared on release, like the client's own focus-loss path: the
@@ -269,6 +287,7 @@ void InputWatchdog::release(bool includeHold, bool keepModifiers)
         for (auto it = pads.constBegin(); it != pads.constEnd(); ++it)
             m_Sink.neutralizePad(it.key(), it.value());
     }
+    if (pen && m_Sink.liftPen) m_Sink.liftPen();
 
     arm();
 }
