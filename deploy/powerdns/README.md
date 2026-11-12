@@ -787,6 +787,7 @@ deploy/powerdns/
 ├── deploy-prod.sh           # PRODUCTION: move to a tag, rebuild only what it changed
 ├── deploy-packages.sh       # PRODUCTION: put a release's APT/DNF tree in /root/mw-packages
 ├── backup-prod.sh           # PRODUCTION: dated cold-backup ZIP, three kept, before every deploy
+├── errors.sh                # from your machine: fetch the error reports, delete them once read
 ├── renew-certs.sh           # re-issue TLS certs once DNS delegation has propagated
 ├── docker-compose.yml       # PRODUCTION: dnsdist + pdns + mw-proxy + mw-rendezvous
 │                            #   + coturn + caddy + umami (+ umami-db)
@@ -795,6 +796,7 @@ deploy/powerdns/
 │   ├── main.go              # least-privilege filtering gateway (stdlib only)
 │   ├── update.go            # release relay + installed-version census (0.3.0+)
 │   ├── session.go           # session census: the shape of a stream (0.3.0+)
+│   ├── errorlog.go          # error reports: scrubbed lines kept a day per file (0.4.4+)
 │   ├── umami.go             # the one place that posts to Umami
 │   ├── main_test.go         # filter + ownership unit tests
 │   ├── update_test.go       # relay cache, fallback and event-sanitising tests

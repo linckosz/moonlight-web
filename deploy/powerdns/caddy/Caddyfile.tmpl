@@ -178,6 +178,24 @@ metrics.@MW_DOMAIN@ {
 			window 1m
 		}
 	}
+	# Error reports (mw-proxy, see errorlog.go): an instance sends at most one
+	# every 15 minutes, and only after a stream that saw an error; 10 an hour
+	# per subscriber leaves room for a few machines behind one router. Counted
+	# in memory only. No `log` directive in this block on purpose: an access log
+	# would keep the addresses the Privacy section says are not.
+	handle /v1/errors {
+		rate_limit {
+			zone mw_errors {
+				key {mw_subscriber}
+				events 10
+				window 1h
+			}
+		}
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy mw-proxy:8080
+	}
 	reverse_proxy mw-proxy:8080
 }
 
