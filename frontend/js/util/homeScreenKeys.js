@@ -40,7 +40,8 @@
  * Every launch of the shortcut starts from that same address, so every launch
  * carries every key again, spent or not. A spent key sent back is a refusal at
  * the far end, and a refusal counts against the abuse guard like a wrong PIN.
- * The keys that have had their answer are remembered here, and never sent twice.
+ * The keys that have had their answer are remembered here, by their
+ * fingerprint, and never sent twice.
  */
 
 /** The identifier's shape (bootstrap/v1/tunnel.js ID_SHAPE). */
@@ -96,10 +97,28 @@ export function isHomeScreenHandoff({ own, others }) {
 }
 
 // ── Keys that have had their answer ──────────────────────────────────────────
+//
+// What is remembered of a key is its fingerprint, never the key: enough to
+// know it again at the next launch, and nothing anyone could send.
 
 const SPENT_STORE = 'mw-hs-spent';
 /** Far more than one shortcut ever carries; the oldest fall off. */
 const SPENT_MAX = 64;
+/** A fingerprint: the SHA-256 of the key's text, in hex. */
+const PRINT_SHAPE = /^[0-9a-f]{64}$/;
+
+/** The fingerprint of @p key, or null in a browser that cannot make one. */
+async function fingerprint(key) {
+    try {
+        const digest = await globalThis.crypto.subtle.digest(
+            'SHA-256',
+            new TextEncoder().encode(key),
+        );
+        return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch {
+        return null;
+    }
+}
 
 function readSpent(storage) {
     try {
@@ -110,20 +129,49 @@ function readSpent(storage) {
     }
 }
 
-/** True once @p key has been answered — accepted or refused — by its machine. */
-export function isHandoffKeySpent(key, storage = globalThis.localStorage) {
-    if (!storage) return false;
-    return readSpent(storage).includes(key);
-}
-
-/** Record that @p key has had its answer, so no launch sends it again. */
-export function markHandoffKeySpent(key, storage = globalThis.localStorage) {
-    if (!storage || !key) return;
-    const list = readSpent(storage).filter((k) => k !== key);
-    list.push(key);
+function writeSpent(storage, list) {
     try {
         storage.setItem(SPENT_STORE, JSON.stringify(list.slice(-SPENT_MAX)));
     } catch {
         /* no storage: the key is refused once more next launch, nothing worse */
     }
+}
+
+/**
+ * The fingerprints on record. A version before this one kept the keys
+ * themselves: each is turned into its fingerprint here, and the record written
+ * back at once, so that none stays in clear past the first launch.
+ */
+async function spentPrints(storage) {
+    const list = readSpent(storage);
+    if (list.every((entry) => PRINT_SHAPE.test(entry))) return list;
+    const prints = [];
+    for (const entry of list) {
+        const print = PRINT_SHAPE.test(entry) ? entry : await fingerprint(entry);
+        // Without a fingerprint the key is dropped rather than kept as it is.
+        if (print) prints.push(print);
+    }
+    writeSpent(storage, prints);
+    return prints;
+}
+
+/** True once @p key has been answered — accepted or refused — by its machine. */
+export async function isHandoffKeySpent(key, storage = globalThis.localStorage) {
+    if (!storage || !key) return false;
+    const prints = await spentPrints(storage);
+    const print = await fingerprint(key);
+    return !!print && prints.includes(print);
+}
+
+/**
+ * Record that @p key has had its answer, so no launch sends it again. In a
+ * browser that cannot make a fingerprint nothing is recorded: the key is
+ * refused once more at the next launch, nothing worse.
+ */
+export async function markHandoffKeySpent(key, storage = globalThis.localStorage) {
+    if (!storage || !key) return;
+    const prints = await spentPrints(storage);
+    const print = await fingerprint(key);
+    if (!print) return;
+    writeSpent(storage, [...prints.filter((p) => p !== print), print]);
 }

@@ -1473,7 +1473,7 @@ export const MoonlightApp = {
      * host serves itself (see hostAnswered).
      */
     async _redeemHomeScreenKeys({ own, others }, direct) {
-        let answered = !own || isHandoffKeySpent(own);
+        let answered = !own || (await isHandoffKeySpent(own));
         if (!answered) {
             try {
                 const resp = await BackendClient.redeemHomeScreenKey(
@@ -1487,7 +1487,7 @@ export const MoonlightApp = {
                 answered = hostAnswered(err, direct);
                 console.warn('[MW] Home-screen key redemption failed:', err);
             }
-            if (answered) markHandoffKeySpent(own);
+            if (answered) await markHandoffKeySpent(own);
         }
         // The other machines' keys a shortcut of before v0.4.1 carries are left
         // unspent: this page no longer opens a line to another machine with

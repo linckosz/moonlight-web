@@ -127,7 +127,7 @@ describe("spending a home-screen shortcut's key", () => {
         await MoonlightApp._redeemHostKey();
         expect(redeem).toHaveBeenCalledTimes(1);
         expect(redeem.mock.calls[0][0]).toBe(OWN);
-        expect(isHandoffKeySpent(OWN)).toBe(true);
+        expect(await isHandoffKeySpent(OWN)).toBe(true);
         expect(forgetLinkKey).toHaveBeenCalledTimes(1);
     });
 
@@ -137,7 +137,7 @@ describe("spending a home-screen shortcut's key", () => {
             takeLinkKey.mockReturnValue({ key: OWN, direct: false });
             vi.spyOn(BackendClient, 'redeemHomeScreenKey').mockRejectedValue(refusal(status));
             await MoonlightApp._redeemHostKey();
-            expect(isHandoffKeySpent(OWN)).toBe(false);
+            expect(await isHandoffKeySpent(OWN)).toBe(false);
             expect(forgetLinkKey).not.toHaveBeenCalled();
         },
     );

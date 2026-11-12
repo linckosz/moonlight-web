@@ -7,7 +7,8 @@
  * spent is a refusal that counts against the abuse guard.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
     packHandoffKeys,
     unpackHandoffKeys,
@@ -70,27 +71,61 @@ describe('packHandoffKeys / unpackHandoffKeys', () => {
 });
 
 describe('spent keys', () => {
+    const STORE = 'mw-hs-spent';
+    const sha = (text) => createHash('sha256').update(text).digest('hex');
+
     beforeEach(() => localStorage.clear());
+    afterEach(() => vi.unstubAllGlobals());
 
-    it('remembers a key once it has had its answer', () => {
-        expect(isHandoffKeySpent(A)).toBe(false);
-        markHandoffKeySpent(A);
-        expect(isHandoffKeySpent(A)).toBe(true);
-        expect(isHandoffKeySpent(B)).toBe(false);
+    it('remembers a key once it has had its answer', async () => {
+        expect(await isHandoffKeySpent(A)).toBe(false);
+        await markHandoffKeySpent(A);
+        expect(await isHandoffKeySpent(A)).toBe(true);
+        expect(await isHandoffKeySpent(B)).toBe(false);
     });
 
-    it('survives a broken record and an absent storage', () => {
-        localStorage.setItem('mw-hs-spent', '{not json');
-        expect(isHandoffKeySpent(A)).toBe(false);
-        markHandoffKeySpent(A);
-        expect(isHandoffKeySpent(A)).toBe(true);
-        expect(isHandoffKeySpent(A, null)).toBe(false);
-        expect(() => markHandoffKeySpent(A, null)).not.toThrow();
+    it('keeps a fingerprint of the key, never the key', async () => {
+        await markHandoffKeySpent(A);
+        await markHandoffKeySpent(B);
+        const kept = localStorage.getItem(STORE);
+        expect(kept).not.toContain(A.slice(3));
+        expect(kept).not.toContain(B.slice(3));
+        // The key's SHA-256: the same key gives the same entry at every launch.
+        expect(JSON.parse(kept)).toEqual([sha(A), sha(B)]);
     });
 
-    it('keeps the newest keys only', () => {
-        for (let i = 0; i < 80; i++) markHandoffKeySpent(`hs-${String(i).padStart(20, '0')}`);
-        expect(isHandoffKeySpent('hs-00000000000000000000')).toBe(false);
-        expect(isHandoffKeySpent('hs-00000000000000000079')).toBe(true);
+    it('turns the keys an earlier version kept in clear into fingerprints, and still knows them', async () => {
+        localStorage.setItem(STORE, JSON.stringify([A, B]));
+        expect(await isHandoffKeySpent(A)).toBe(true);
+        expect(JSON.parse(localStorage.getItem(STORE))).toEqual([sha(A), sha(B)]);
+        expect(await isHandoffKeySpent(B)).toBe(true);
+        expect(await isHandoffKeySpent(C)).toBe(false);
+    });
+
+    it('survives a broken record and an absent storage', async () => {
+        localStorage.setItem(STORE, '{not json');
+        expect(await isHandoffKeySpent(A)).toBe(false);
+        await markHandoffKeySpent(A);
+        expect(await isHandoffKeySpent(A)).toBe(true);
+        expect(await isHandoffKeySpent(A, null)).toBe(false);
+        await expect(markHandoffKeySpent(A, null)).resolves.toBeUndefined();
+    });
+
+    it('keeps the newest keys only', async () => {
+        for (let i = 0; i < 80; i++) await markHandoffKeySpent(`hs-${String(i).padStart(20, '0')}`);
+        expect(await isHandoffKeySpent('hs-00000000000000000000')).toBe(false);
+        expect(await isHandoffKeySpent('hs-00000000000000000079')).toBe(true);
+        expect(JSON.parse(localStorage.getItem(STORE))).toHaveLength(64);
+    });
+
+    it('keeps nothing in clear in a browser that cannot make a fingerprint', async () => {
+        localStorage.setItem(STORE, JSON.stringify([A]));
+        vi.stubGlobal('crypto', {});
+        await markHandoffKeySpent(B);
+        // Not remembered: the key is refused once more at the next launch, nothing worse.
+        expect(await isHandoffKeySpent(B)).toBe(false);
+        const kept = localStorage.getItem(STORE);
+        expect(kept).not.toContain(A.slice(3));
+        expect(kept).not.toContain(B.slice(3));
     });
 });
