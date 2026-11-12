@@ -356,6 +356,7 @@ add_executable(mw-server
     src/network/UpdateApplyRules.cpp
     src/network/MdnsAdvertiser.cpp
     src/TrayManager.cpp
+    src/ViewerNotices.cpp
     src/Autostart.cpp
     src/DisplaySleep.cpp
     src/LatencyFlag.cpp

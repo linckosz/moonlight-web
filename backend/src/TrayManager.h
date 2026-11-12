@@ -29,6 +29,7 @@
 #include <QIcon>
 #include <QElapsedTimer>
 
+#include "ViewerNotices.h"
 #include "server/StreamActivity.h"
 
 class HttpServer;
@@ -135,17 +136,21 @@ private:
     /// says what is true right now (the admin page or the user's own hands may
     /// have changed it since the last look).
     void refreshAutostart();
-    /// Ask the provider, then say what changed: tooltip, menu entry, and one
-    /// notification per viewer who arrived or left.
+    /// Ask the provider, then say what changed: tooltip, menu entries, the red
+    /// dot, and one notification per viewer who arrived or left.
     void pollActivity();
+    /// The next waiting notice out, if it is due and Windows would show it now.
+    void releaseNotice();
     /// "MoonlightWeb", plus "Streaming (n)" on a second line while anyone is.
     void refreshTooltip(int count);
-    /// What to call a viewer in a notification.
-    static QString viewerName(const StreamViewer& v);
+    /// The "Recent viewers" submenu, rebuilt as the menu opens.
+    void refreshRecentMenu();
     /// A notification under the product's name, with the information icon.
     void notify(const QString& text);
     /// That icon, rendered once per device pixel ratio (Windows, see the .cpp).
     QIcon noticeIcon();
+    /// @p base with a red dot in its corner, at the sizes a tray asks for.
+    static QIcon withDot(const QIcon& base);
     /// localhost URL for `path`, preferring HTTPS, falling back to HTTP; empty if
     /// no listener is up.
     QUrl localUrl(const QString& path) const;
@@ -174,11 +179,13 @@ private:
     int m_ActivityIntervalMs = 2000;
     QTimer m_ActivityTimer;
     QAction* m_StreamingAction = nullptr;    // hidden while nobody is streaming
-    QAction* m_StreamingSeparator = nullptr; // hidden with it
-    QSet<QString> m_Viewers;                 // ids seen at the previous poll
-    QList<StreamViewer> m_LastViewers;       // ...and their names, to say who left
-    // The first answer describes a world that already existed — a tray client
-    // started after the streams it finds. Adopt it silently; announce only
-    // what changes afterwards.
-    bool m_ViewersKnown = false;
+    QMenu* m_RecentMenu = nullptr;           // "Recent viewers", hidden while empty
+    QAction* m_StreamingSeparator = nullptr; // hidden with them
+    // Who arrived and left, the notices waiting for Windows, and the recent
+    // viewers: in this process's memory only (see ViewerNotices).
+    ViewerNotices m_Notices;
+    QElapsedTimer m_Clock; // the gap between two notices
+    QIcon m_Icon;          // the icon, and the same with the red dot,
+    QIcon m_IconWatched;   // both rendered at init, never during a stream
+    bool m_ShowsDot = false;
 };

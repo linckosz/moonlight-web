@@ -2674,9 +2674,11 @@ int main(int argc, char* argv[])
     //    is watching them would be false.
     //  - to people, not sessions. The owner's standby leg (slot 1) is the same
     //    viewer continuing their own stream through a quality change, so it
-    //    shares their browser's uniqueid and collapses into one row here —
-    //    otherwise a single person switching quality would read as two, and
-    //    would announce themselves twice.
+    //    shares their session and collapses into one row here — otherwise a
+    //    single person switching quality would read as two, and would announce
+    //    themselves twice. Who is who is the server's to say
+    //    (StreamActivity::viewerId), never the browser's uniqueid: a second
+    //    viewer reusing one already watching would never have been listed.
     //
     // The legacy in-process path (stream_worker_enabled off) is deliberately
     // not consulted: its globals are not cleared on every exit, and a stuck
@@ -2684,22 +2686,19 @@ int main(int argc, char* argv[])
     auto streamActivity = [&g_Pool, &authManager, &shareManager, &appSettings]() {
         StreamActivity activity;
         activity.notify = appSettings.streamNotifications();
-        QSet<QString> seen;
+        QList<StreamSlotFacts> live;
         for (int i = 0; i < g_Pool.size(); ++i) {
             const SessionPool::Slot& sl = g_Pool.at(i);
             if (sl.worker.isNull()) continue;
             if (sl.hostUuid != NativeHostBackend::hostUuid()) continue;
-            const QString id =
-                sl.clientUniqueId.isEmpty() ? QStringLiteral("slot-%1").arg(i) : sl.clientUniqueId;
-            if (seen.contains(id)) continue;
-            seen.insert(id);
             // An authenticated device is named by whatever the admin sessions
             // list calls it; an invited guest by the row they were let in on.
             const SessionInfo session = authManager.sessionForToken(sl.sessionToken);
             QString name = session.machineName;
             if (name.isEmpty() && ShareManager::isPlayerSlot(i)) name = shareManager.name(i);
-            activity.viewers.append({id, name, session.isHost});
+            live.append({i, sl.sessionToken, name, session.isHost});
         }
+        activity.viewers = StreamActivity::viewersOf(live, kOwnerSlots);
         return activity;
     };
 

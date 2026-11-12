@@ -17,9 +17,11 @@
 
 #pragma once
 
+#include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
+#include <QSet>
 #include <QString>
 
 /**
@@ -37,8 +39,10 @@
 struct StreamViewer
 {
     /// Stable while the stream lasts, and different for each viewer: what tells
-    /// "someone else joined" from "the same person is still here". The browser's
-    /// own uniqueid, which is exactly that.
+    /// "someone else joined" from "the same person is still here". Decided by
+    /// the server (StreamActivity::viewerId), never by the browser: an id a
+    /// client picks could be one already watching, and its owner would then
+    /// never be listed.
     QString id;
     /// What to call them in a notification — the device name from the admin
     /// sessions list, or the player's row name for an invited guest. May be
@@ -52,8 +56,50 @@ struct StreamViewer
     bool self = false;
 };
 
+/// One live slot of the native host, as far as "who is watching" needs it.
+struct StreamSlotFacts
+{
+    int index = 0;        ///< its place in the pool, the owner's slots first
+    QString sessionToken; ///< the signed-in device behind it; empty for none
+    QString name;         ///< what to call it (sessions table, or a guest's row)
+    bool self = false;    ///< a browser on this very machine
+};
+
 struct StreamActivity
 {
+    /// Who a slot's viewer is. A signed-in device is its session: both legs of
+    /// the owner's stream (slot 0 and its standby) carry the same token, so a
+    /// quality change is the same person continuing. The token itself never
+    /// leaves the server — this snapshot goes to the tray client over loopback —
+    /// only a hash of it, salted for this one use. A guest has a slot of its
+    /// own; the owner's slots without a session (a stream from localhost) are
+    /// the owner, once.
+    static QString viewerId(const QString& sessionToken, int index, int ownerSlots)
+    {
+        if (!sessionToken.isEmpty()) {
+            const QByteArray h = QCryptographicHash::hash(
+                QByteArrayLiteral("viewer|") + sessionToken.toUtf8(), QCryptographicHash::Sha256);
+            return QString::fromLatin1(h.toHex().left(16));
+        }
+        if (index < ownerSlots) return QStringLiteral("owner-local");
+        return QStringLiteral("slot-%1").arg(index);
+    }
+
+    /// The people behind the live slots: one viewer per id, named after the
+    /// first of their slots.
+    static QList<StreamViewer> viewersOf(const QList<StreamSlotFacts>& live, int ownerSlots)
+    {
+        QList<StreamViewer> out;
+        QSet<QString> seen;
+        for (const StreamSlotFacts& s : live) {
+            const QString id = viewerId(s.sessionToken, s.index, ownerSlots);
+            if (seen.contains(id)) continue;
+            seen.insert(id);
+            out.append({id, s.name, s.self});
+        }
+        return out;
+    }
+
     QList<StreamViewer> viewers;
     /// The owner's answer to "tell me when this happens" (AppSettings
     /// stream_notifications). Travels with the snapshot so the tray client,

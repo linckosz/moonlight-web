@@ -82,6 +82,7 @@ add_executable(run_tests
     test_nv_pairing_signature.cpp
     test_backend_probe.cpp
     test_close_when_done_nam.cpp
+    test_viewer_notices.cpp
     test_host_os_probe.cpp
     test_send_backlog.cpp
     test_relay_frame_log.cpp
@@ -143,6 +144,9 @@ add_executable(run_tests
     # Which MoonlightWeb this is: the names, ports and version a DEV build
     # must answer to so it can sit beside a production install.
     ${_src}/src/common/Edition.cpp
+    # What the tray says about who watches this screen (A137): held notices,
+    # the red dot, the recent viewers. QtCore only, without the tray itself.
+    ${_src}/src/ViewerNotices.cpp
     # The rules of "a session left by Remote Desktop goes back to the screen".
     ${_src}/src/streaming/RemoteDesktopReturnPolicy.cpp
     ${_src}/src/network/MdnsAdvertiser.cpp

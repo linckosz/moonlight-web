@@ -42,6 +42,7 @@ void run_pairing_chain_tests();
 void run_nv_pairing_signature_tests();
 void run_backend_probe_tests();
 void run_close_when_done_nam_tests();
+void run_viewer_notices_tests();
 void run_host_os_probe_tests();
 void run_send_backlog_tests();
 void run_relay_frame_log_tests();
@@ -135,6 +136,7 @@ int main(int argc, char** argv)
     run_nv_pairing_signature_tests();
     run_backend_probe_tests();
     run_close_when_done_nam_tests();
+    run_viewer_notices_tests();
     run_host_os_probe_tests();
     run_send_backlog_tests();
     run_relay_frame_log_tests();
