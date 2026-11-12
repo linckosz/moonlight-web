@@ -41,6 +41,7 @@ export default defineConfig({
                 'js/util/VersionGuard.js',
                 'js/util/audioAutoplay.js',
                 'js/util/homeScreenKeys.js',
+                'js/util/mainScroll.js',
                 'js/stream/JitterController.js',
                 'js/stream/PeriodicStallDetector.js',
                 'js/stream/PipelineDiag.js',

@@ -71,6 +71,7 @@ import { Toast } from './ui/Toast.js';
 import { DiscordLink } from './ui/DiscordLink.js';
 import * as RemoteNav from './ui/RemoteNav.js';
 import * as ViewHeaderScroll from './ui/ViewHeaderScroll.js';
+import { mainScroller, restoreScroll } from './util/mainScroll.js';
 import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
 import { BMC_LOGO, BMC_FULL_LOGO } from './ui/bmcLogo.js';
 import {
@@ -309,6 +310,11 @@ export const MoonlightApp = {
         mainState: {},
         /** null | 'admin' | 'settings' | 'streaming' — current overlay */
         overlay: null,
+        /**
+         * Where the main view was scrolled when Settings or Admin covered it,
+         * put back when it returns; null when no overlay covered it.
+         */
+        mainScrollTop: null,
     },
 
     async init() {
@@ -901,6 +907,12 @@ export const MoonlightApp = {
 
         this._renderHosts(main);
 
+        // Back from Settings or Admin: where the hosts view was, not where the
+        // overlay was left — both scroll the same element.
+        const top = this._nav.mainScrollTop;
+        this._nav.mainScrollTop = null;
+        if (top !== null) restoreScroll(mainScroller(main), top);
+
         // Fix URL if an overlay left it at /admin or /settings.
         if (window.location.pathname === '/admin' || window.location.pathname === '/settings') {
             history.replaceState({ view: 'hosts' }, '', '/');
@@ -1254,7 +1266,11 @@ export const MoonlightApp = {
             // Switching overlays: destroy the old one, replace guard state
             this._destroyOverlayViews();
         } else {
-            // Opening on top of a main view: save main view state for restoration
+            // Opening on top of a main view: save main view state for restoration.
+            // Its scroll first, while its content is still there to hold it:
+            // the overlay renders into the same scroller (util/mainScroll.js).
+            const scroller = mainScroller(document.getElementById('main-content'));
+            this._nav.mainScrollTop = scroller ? scroller.scrollTop : null;
             if (this.hostListView && typeof this.hostListView.stop === 'function') {
                 this.hostListView.stop();
             }
@@ -1266,6 +1282,8 @@ export const MoonlightApp = {
         const main = document.getElementById('main-content');
         if (!main) return;
         main.innerHTML = '';
+        // An overlay starts at its top, whatever was scrolled before it.
+        restoreScroll(mainScroller(main), 0);
 
         const guardState = {
             view: this._GUARD_PREFIX + type,
