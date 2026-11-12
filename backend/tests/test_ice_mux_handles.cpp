@@ -64,6 +64,7 @@ void whoGetsTheSockets()
 namespace {
 
 using mw::icemuxhandles::adopt;
+using mw::icemuxhandles::kNoSocket;
 using mw::icemuxhandles::Wanted;
 
 sockaddr_in loopback(uint16_t port)
@@ -117,6 +118,35 @@ bool handleOpen(HANDLE h)
     return GetHandleInformation(h, &flags) != 0;
 }
 
+/// Whether a process this one starts gets the socket by being started.
+bool inherited(uintptr_t socket)
+{
+    DWORD flags = 0;
+    if (!GetHandleInformation(reinterpret_cast<HANDLE>(socket), &flags)) return true;
+    return (flags & HANDLE_FLAG_INHERIT) != 0;
+}
+
+/// This test started again as `arguments`, with or without every handle of
+/// this process that can be inherited: its exit code, 99 when it did not run.
+DWORD secondProcess(const std::wstring& arguments, bool withHandles)
+{
+    const std::wstring command = L"\"" + ownImage().toStdWString() + L"\" " + arguments;
+    std::vector<wchar_t> line(command.begin(), command.end());
+    line.push_back(L'\0');
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION child{};
+    if (!CreateProcessW(nullptr, line.data(), nullptr, nullptr, withHandles ? TRUE : FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child))
+        return 99;
+    DWORD code = 99;
+    if (WaitForSingleObject(child.hProcess, 20000) == WAIT_OBJECT_0)
+        GetExitCodeProcess(child.hProcess, &code);
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+    return code;
+}
+
 } // namespace
 
 /// The second process of the test below: `run_tests --adopt-socket <pid>
@@ -144,6 +174,27 @@ int run_ice_mux_adopt_child(int argc, char** argv)
     return sent == 5 ? 0 : 5;
 }
 
+/// Another second process: `run_tests --inherited-socket <handle> <port>`,
+/// started with whatever of the first can be inherited. 7 when the handle is,
+/// in this process, a UDP socket bound to that port; 0 when it is not.
+int run_ice_mux_inherit_child(int argc, char** argv)
+{
+    if (argc != 4) return 2;
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 3;
+    const auto s = static_cast<SOCKET>(std::strtoull(argv[2], nullptr, 10));
+    const auto port = static_cast<uint16_t>(std::strtoul(argv[3], nullptr, 10));
+    sockaddr_storage bound{};
+    int boundLen = sizeof(bound);
+    if (getsockname(s, reinterpret_cast<sockaddr*>(&bound), &boundLen) != 0) return 0;
+    uint16_t boundPort = 0;
+    if (bound.ss_family == AF_INET6)
+        boundPort = ntohs(reinterpret_cast<const sockaddr_in6*>(&bound)->sin6_port);
+    else if (bound.ss_family == AF_INET)
+        boundPort = ntohs(reinterpret_cast<const sockaddr_in*>(&bound)->sin_port);
+    return boundPort == port ? 7 : 0;
+}
+
 void run_ice_mux_handles_tests()
 {
     whoGetsTheSockets();
@@ -169,6 +220,8 @@ void run_ice_mux_handles_tests()
     if (copies.size() == 2) {
         CHECK(copies[0] != static_cast<uintptr_t>(shared));
         CHECK(copies[0] != copies[1]);
+        // A copy is this process's alone: nothing it starts gets it
+        CHECK(!inherited(copies[0]) && !inherited(copies[1]));
         // What is sent through a copy leaves from the shared port
         const sockaddr_in to = loopback(sinkPort);
         CHECK(sendto(static_cast<SOCKET>(copies[0]), "hello", 5, 0,
@@ -287,6 +340,42 @@ void run_ice_mux_handles_tests()
             const IceMux::Share described = mux.shareWith(self, &reason);
             CHECK(described.sockets == share.sockets && described.ports == held);
             CHECK(described.descriptions.size() == 2 && described.handles.empty());
+            // The process it was described for opens each, checked like a
+            // copy and its own alone like one
+            for (size_t i = 0; i < described.descriptions.size(); ++i) {
+                const uintptr_t opened =
+                    mw::icemuxhandles::open(described.descriptions[i], held[i], &why);
+                CHECK(opened != kNoSocket);
+                if (opened == kNoSocket) continue;
+                CHECK(!inherited(opened));
+                closesocket(static_cast<SOCKET>(opened));
+            }
+            // Not the port that was said, or no description at all
+            why.clear();
+            CHECK(mw::icemuxhandles::open(described.descriptions[0], held[1], &why) == kNoSocket);
+            CHECK(!why.isEmpty());
+            CHECK(mw::icemuxhandles::open(described.descriptions[0], 0, &why) == kNoSocket);
+            std::vector<uint8_t> cut = described.descriptions[0];
+            cut.pop_back();
+            CHECK(mw::icemuxhandles::open(cut, held[0], &why) == kNoSocket);
+            CHECK(mw::icemuxhandles::open({}, held[0], &why) == kNoSocket);
+            mux.release(described.lease);
+
+            // The mux's own sockets go to no process for being started by
+            // this one. A socket made the plain way does: that is what the
+            // second process can see, and what it does not see of the mux's.
+            for (const uint64_t handle : share.handles)
+                CHECK(!inherited(static_cast<uintptr_t>(handle)));
+            CHECK(inherited(static_cast<uintptr_t>(shared)));
+            const auto seenBy = [](uint64_t handle, uint16_t port) {
+                return secondProcess(L"--inherited-socket " + std::to_wstring(handle) + L" " +
+                                         std::to_wstring(port),
+                                     true);
+            };
+            CHECK(seenBy(number(shared), sharedPort) == 7);
+            CHECK(seenBy(share.handles[0], share.ports[0]) == 0);
+            CHECK(seenBy(share.handles[1], share.ports[1]) == 0);
+            mux.release(share.lease);
             // The mux reads on: taking a copy and closing it took nothing from it
             CHECK(mux.healthy() && mux.holds(held[0]) && mux.holds(held[1]));
         }
@@ -348,6 +437,11 @@ int run_ice_mux_adopt_child(int, char**)
     return 2;
 }
 
+int run_ice_mux_inherit_child(int, char**)
+{
+    return 2;
+}
+
 void run_ice_mux_handles_tests()
 {
     whoGetsTheSockets();
@@ -355,6 +449,9 @@ void run_ice_mux_handles_tests()
     QString why;
     // Elsewhere nothing is taken, and it says so
     CHECK(mw::icemuxhandles::adopt(1, {{1, 1}}, [](const QString&) { return true; }, &why).empty());
+    CHECK(!why.isEmpty());
+    why.clear();
+    CHECK(mw::icemuxhandles::open({1, 2, 3}, 1, &why) == mw::icemuxhandles::kNoSocket);
     CHECK(!why.isEmpty());
 }
 

@@ -114,12 +114,30 @@ void setExclusive(SOCKET s)
 #endif
 }
 
+/// A UDP socket no process gets by being started by this one. What crosses
+/// to a worker is handed to it, by name (shareWith(), shareByHandle()), so
+/// that the share a worker holds is all it has of the mux, and a port is
+/// free the moment the mux lets go of it.
+SOCKET openUdp(int family)
+{
+#ifdef _WIN32
+    return WSASocketW(family, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0,
+                      WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+#elif defined(SOCK_CLOEXEC)
+    return socket(family, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);
+#else
+    const SOCKET s = socket(family, SOCK_DGRAM, IPPROTO_UDP);
+    if (s != INVALID_SOCKET) fcntl(s, F_SETFD, FD_CLOEXEC);
+    return s;
+#endif
+}
+
 /// A shared port: the options libjuice gives its own UDP socket (udp.c), so
 /// that an agent sending through it finds what it expects. The one way the
 /// mux binds a port.
 SOCKET openShared(uint16_t port, std::string* why)
 {
-    const SOCKET s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    const SOCKET s = openUdp(AF_INET6);
     if (s == INVALID_SOCKET) {
         if (why) *why = "socket() failed, error " + std::to_string(lastError());
         return INVALID_SOCKET;
@@ -167,7 +185,7 @@ SOCKET openShared(uint16_t port, std::string* why)
 /// The socket the datagrams leave from towards the agents, on the loopback.
 SOCKET openHop(uint16_t* port, std::string* why)
 {
-    const SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    const SOCKET s = openUdp(AF_INET);
     if (s == INVALID_SOCKET) {
         if (why) *why = "socket() failed, error " + std::to_string(lastError());
         return INVALID_SOCKET;

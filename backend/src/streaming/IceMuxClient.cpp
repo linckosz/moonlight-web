@@ -139,42 +139,13 @@ void onFeedTimestamp(uint64_t stamp)
 }
 
 #ifdef _WIN32
-/// One of the server's sockets, from the description it made for this process
-/// alone. Checked for what it must be before anything is sent through it: a
-/// UDP socket, bound to the port the server said.
-SOCKET openShared(const QByteArray& info, quint16 port)
-{
-    if (info.size() != static_cast<qsizetype>(sizeof(WSAPROTOCOL_INFOW))) return INVALID_SOCKET;
-    WSAPROTOCOL_INFOW description;
-    memcpy(&description, info.constData(), sizeof(description));
-    const SOCKET s = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
-                                &description, 0, WSA_FLAG_OVERLAPPED);
-    if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    int type = 0;
-    int typeLen = sizeof(type);
-    sockaddr_storage bound{};
-    int boundLen = sizeof(bound);
-    quint16 boundPort = 0;
-    if (getsockname(s, reinterpret_cast<sockaddr*>(&bound), &boundLen) == 0) {
-        if (bound.ss_family == AF_INET6)
-            boundPort = ntohs(reinterpret_cast<const sockaddr_in6*>(&bound)->sin6_port);
-        else if (bound.ss_family == AF_INET)
-            boundPort = ntohs(reinterpret_cast<const sockaddr_in*>(&bound)->sin_port);
-    }
-    if (getsockopt(s, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &typeLen) != 0 ||
-        type != SOCK_DGRAM || boundPort != port) {
-        closesocket(s);
-        WSASetLastError(WSAENOTSOCK);
-        return INVALID_SOCKET;
-    }
-    return s;
-}
-
 /// A feed: a loopback socket nobody else can bind, which hears the server's
-/// hop socket and nothing else.
+/// hop socket and nothing else. Nothing this process starts gets it by being
+/// started: what comes in for the stream is read here alone.
 SOCKET openFeed(quint16 hopPort, quint16* port)
 {
-    const SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    const SOCKET s = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0,
+                                WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
     const int on = 1;
     const int room = 1024 * 1024;
@@ -228,17 +199,20 @@ bool configure(const QJsonObject& mux, quint32 serverPid,
     std::vector<uintptr_t> opened;
     if (handed) {
         for (qsizetype i = 0; i < count; ++i) {
-            const SOCKET one = openShared(
-                QByteArray::fromBase64(sockets.at(i).toString().toLatin1()), named.at(i));
-            if (one == INVALID_SOCKET) {
-                qWarning() << "[IceMux] the shared socket of port" << named.at(i)
-                           << "cannot be opened, error" << WSAGetLastError()
-                           << "— this stream takes a socket of its own";
+            // From the description the server made for this process alone,
+            // and kept only when it is the UDP socket of the port it said
+            const QByteArray info = QByteArray::fromBase64(sockets.at(i).toString().toLatin1());
+            QString whyNot;
+            const uintptr_t one = mw::icemuxhandles::open(
+                std::vector<uint8_t>(info.cbegin(), info.cend()), named.at(i), &whyNot);
+            if (one == mw::icemuxhandles::kNoSocket) {
+                qWarning().noquote()
+                    << "[IceMux]" << whyNot << "— this stream takes a socket of its own";
                 for (uintptr_t o : opened)
                     closesocket(static_cast<SOCKET>(o));
                 return false;
             }
-            opened.push_back(static_cast<uintptr_t>(one));
+            opened.push_back(one);
         }
     } else {
         // This worker runs above the server, which could not hand it

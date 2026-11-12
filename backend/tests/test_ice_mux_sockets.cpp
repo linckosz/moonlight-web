@@ -25,6 +25,7 @@
 using socklen_type = int;
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -43,6 +44,9 @@ struct IceMuxTestAccess
             if (slot.state != IceMux::State::Free && slot.port == port) return slot.socket;
         return ~uintptr_t(0);
     }
+
+    /// The loopback socket its datagrams leave from towards the agents.
+    static uintptr_t hop(const IceMux& mux) { return mux.m_Hop; }
 };
 
 namespace {
@@ -137,6 +141,19 @@ void settle()
 
 /// Whether the mux lets go of `port` in good time: the reading thread does
 /// it, at its next look at its sockets.
+/// Whether a process this one starts gets the socket by being started.
+bool inherited(uintptr_t socket)
+{
+#ifdef _WIN32
+    DWORD flags = 0;
+    if (!GetHandleInformation(reinterpret_cast<HANDLE>(socket), &flags)) return true;
+    return (flags & HANDLE_FLAG_INHERIT) != 0;
+#else
+    const int flags = fcntl(static_cast<int>(socket), F_GETFD);
+    return flags == -1 || (flags & FD_CLOEXEC) == 0;
+#endif
+}
+
 bool letsGo(const IceMux& mux, uint16_t port)
 {
     for (int waited = 0; waited < 3000 && mux.holds(port); waited += 20)
@@ -173,6 +190,11 @@ void run_ice_mux_socket_tests()
     CHECK(mux.serve(IceMux::kStandard, first));
     CHECK(mux.serve(IceMux::kBlock, second));
     CHECK(mux.port(IceMux::kStandard) == first && mux.port(IceMux::kBlock) == second);
+    // What crosses to a worker is handed to it: no socket of the mux goes to
+    // a process for being started by this one
+    CHECK(!inherited(IceMuxTestAccess::socket(mux, first)));
+    CHECK(!inherited(IceMuxTestAccess::socket(mux, second)));
+    CHECK(!inherited(IceMuxTestAccess::hop(mux)));
     // Held: nobody else binds them
     IceMux other;
     CHECK(other.start(&why));

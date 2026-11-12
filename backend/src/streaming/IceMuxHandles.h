@@ -42,6 +42,9 @@
 /// The server is the less privileged side: what it names can be any handle of
 /// its own. Nothing is sent through a copy before it is known to be what it
 /// must be, a UDP socket bound to the port the server said.
+///
+/// Handed or taken, the socket is this process's and no other's: nothing this
+/// process starts gets it by being started.
 namespace mw::icemuxhandles {
 
 /// One socket to take: the server's own handle of it, as a number, and the
@@ -54,6 +57,17 @@ struct Wanted
 
 /// The most sockets taken at once (IceMux::kAgentSocketsMax).
 inline constexpr size_t kMax = 4;
+
+/// The value no socket has.
+inline constexpr uintptr_t kNoSocket = ~uintptr_t(0);
+
+/// One of the server's sockets, opened in this process from the description
+/// the server made of it for this process alone (IceMux::shareWith()): how a
+/// worker the server hands the sockets to gets each. Checked as a copy is:
+/// kept only when it is a UDP socket bound to `port`. kNoSocket otherwise,
+/// with the reason in `why` and nothing left open. Winsock must be started.
+/// The caller closes it (closesocket). Windows only.
+uintptr_t open(const std::vector<uint8_t>& description, uint16_t port, QString* why);
 
 /// Copies, in this process, of the sockets the process `serverPid` holds
 /// under the handles in `wanted`, in that order. All of them or none: empty,

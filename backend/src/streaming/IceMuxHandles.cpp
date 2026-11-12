@@ -17,6 +17,7 @@
 
 #include "IceMuxHandles.h"
 
+#include <cstring>
 #include <iterator>
 
 #ifdef _WIN32
@@ -59,6 +60,24 @@ QString imageOf(HANDLE process)
     return QString::fromWCharArray(path, static_cast<qsizetype>(size));
 }
 
+/// Whether `s` is a UDP socket bound to `port`.
+bool udpOn(SOCKET s, uint16_t port)
+{
+    int type = 0;
+    int typeLen = sizeof(type);
+    if (::getsockopt(s, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &typeLen) != 0 ||
+        type != SOCK_DGRAM)
+        return false;
+    sockaddr_storage bound{};
+    int boundLen = sizeof(bound);
+    if (::getsockname(s, reinterpret_cast<sockaddr*>(&bound), &boundLen) != 0) return false;
+    if (bound.ss_family == AF_INET6)
+        return ntohs(reinterpret_cast<const sockaddr_in6*>(&bound)->sin6_port) == port;
+    if (bound.ss_family == AF_INET)
+        return ntohs(reinterpret_cast<const sockaddr_in*>(&bound)->sin_port) == port;
+    return false;
+}
+
 /// The copy of one handle of `server`, when it is a UDP socket bound to
 /// `port`. INVALID_SOCKET otherwise, the copy closed.
 SOCKET copyOf(HANDLE server, const Wanted& wanted, QString* reason)
@@ -82,16 +101,7 @@ SOCKET copyOf(HANDLE server, const Wanted& wanted, QString* reason)
         *reason = QStringLiteral("what was copied for port %1 is not a socket").arg(wanted.port);
         return INVALID_SOCKET;
     }
-    sockaddr_storage bound{};
-    int boundLen = sizeof(bound);
-    uint16_t boundPort = 0;
-    if (::getsockname(s, reinterpret_cast<sockaddr*>(&bound), &boundLen) == 0) {
-        if (bound.ss_family == AF_INET6)
-            boundPort = ntohs(reinterpret_cast<const sockaddr_in6*>(&bound)->sin6_port);
-        else if (bound.ss_family == AF_INET)
-            boundPort = ntohs(reinterpret_cast<const sockaddr_in*>(&bound)->sin_port);
-    }
-    if (type != SOCK_DGRAM || boundPort != wanted.port) {
+    if (!udpOn(s, wanted.port)) {
         ::closesocket(s);
         *reason =
             QStringLiteral("what was copied is not the UDP socket of port %1").arg(wanted.port);
@@ -154,6 +164,48 @@ std::vector<uintptr_t> adopt(uint32_t serverPid, const std::vector<Wanted>& want
     Q_UNUSED(serverPid);
     Q_UNUSED(wanted);
     Q_UNUSED(isServer);
+    return fail(QStringLiteral("not on this system"));
+#endif
+}
+
+uintptr_t open(const std::vector<uint8_t>& description, uint16_t port, QString* why)
+{
+    const auto fail = [why](const QString& reason) {
+        if (why) *why = reason;
+        return kNoSocket;
+    };
+#ifdef _WIN32
+    if (description.size() != sizeof(WSAPROTOCOL_INFOW) || port == 0)
+        return fail(
+            QStringLiteral("what was handed for port %1 is no socket's description").arg(port));
+    WSAPROTOCOL_INFOW info;
+    std::memcpy(&info, description.data(), sizeof(info));
+    const SOCKET s = ::WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, &info,
+                                  0, WSA_FLAG_OVERLAPPED);
+    if (s == INVALID_SOCKET)
+        return fail(QStringLiteral("the socket of port %1 cannot be opened, error %2")
+                        .arg(port)
+                        .arg(::WSAGetLastError()));
+    // Not inheritable, as a copy is not: no process this one starts gets it.
+    // A socket made from a description comes out inheritable whatever is
+    // asked of WSASocket, so it is said of the handle, and a socket it
+    // cannot be said of is not kept.
+    if (!::SetHandleInformation(reinterpret_cast<HANDLE>(s), HANDLE_FLAG_INHERIT, 0)) {
+        const DWORD error = ::GetLastError();
+        ::closesocket(s);
+        return fail(QStringLiteral("the socket of port %1 cannot be kept from the processes "
+                                   "this one starts, error %2")
+                        .arg(port)
+                        .arg(error));
+    }
+    if (!udpOn(s, port)) {
+        ::closesocket(s);
+        return fail(QStringLiteral("what was handed is not the UDP socket of port %1").arg(port));
+    }
+    return static_cast<uintptr_t>(s);
+#else
+    Q_UNUSED(description);
+    Q_UNUSED(port);
     return fail(QStringLiteral("not on this system"));
 #endif
 }
