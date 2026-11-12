@@ -24,7 +24,7 @@ vi.mock('../js/ui/AdminView.js', () => ({
 }));
 
 import { MoonlightApp } from '../js/app.js';
-import { mainScroller, restoreScroll } from '../js/util/mainScroll.js';
+import { mainScroller, restoreScroll, SCROLL_HOLD_MS } from '../js/util/mainScroll.js';
 
 describe('mainScroller', () => {
     afterEach(() => document.documentElement.classList.remove('remote-nav'));
@@ -59,6 +59,49 @@ describe('restoreScroll', () => {
         restoreScroll(el, 0);
         expect(el.scrollTop).toBe(0);
         expect(frames).toHaveLength(0);
+        expect(el.style.getPropertyValue('overflow-anchor')).toBe('');
+    });
+
+    // A host card above gets its app row a few milliseconds after the restore;
+    // anchoring would move the view by that row's height (142 px on DualRTX,
+    // 12/11/2026), away from where the user had left it.
+    it("keeps the browser's scroll anchoring off until the user scrolls", () => {
+        vi.stubGlobal('requestAnimationFrame', () => {});
+        const el = document.createElement('div');
+        restoreScroll(el, 240);
+        expect(el.style.getPropertyValue('overflow-anchor')).toBe('none');
+        document.dispatchEvent(new Event('mousemove')); // not a scroll
+        expect(el.style.getPropertyValue('overflow-anchor')).toBe('none');
+        document.dispatchEvent(new Event('wheel'));
+        expect(el.style.getPropertyValue('overflow-anchor')).toBe('');
+    });
+
+    it('gives it back after 2 s at most, as the page had set it', () => {
+        vi.useFakeTimers();
+        try {
+            vi.stubGlobal('requestAnimationFrame', () => {});
+            const el = document.createElement('div');
+            el.style.setProperty('overflow-anchor', 'auto');
+            restoreScroll(el, 240);
+            expect(el.style.getPropertyValue('overflow-anchor')).toBe('none');
+            vi.advanceTimersByTime(SCROLL_HOLD_MS - 1);
+            expect(el.style.getPropertyValue('overflow-anchor')).toBe('none');
+            vi.advanceTimersByTime(1);
+            expect(el.style.getPropertyValue('overflow-anchor')).toBe('auto');
+            document.dispatchEvent(new Event('keydown')); // released already: no effect
+            expect(el.style.getPropertyValue('overflow-anchor')).toBe('auto');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('ends the hold when the scroller goes back to the top', () => {
+        vi.stubGlobal('requestAnimationFrame', () => {});
+        const el = document.createElement('div');
+        restoreScroll(el, 240);
+        restoreScroll(el, 300); // a second restore holds once, from the page's own value
+        restoreScroll(el, 0);
+        expect(el.style.getPropertyValue('overflow-anchor')).toBe('');
     });
 
     it('does nothing without a scroller', () => {
