@@ -337,6 +337,10 @@ void VirtualDisplayJob::startNext()
     // Windows display in HDR. See Request::benchHdr.
     m_Request.benchHdr = next.action == Action::Activate && next.hdr &&
                          qEnvironmentVariableIntValue("MW_BENCH_VD_HDR") == 1;
+    // Bench only (MW_BENCH_VD_SECONDARY=1): the primary display keeps its
+    // role. See Request::benchSecondary.
+    m_Request.benchSecondary = next.action == Action::Activate &&
+                               qEnvironmentVariableIntValue("MW_BENCH_VD_SECONDARY") == 1;
     m_Request.exclusive = next.exclusive;
     // The GPU the owner chose on the display's card, read as each activation
     // starts: the next stream follows a change.

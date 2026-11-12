@@ -773,6 +773,25 @@ void run_virtual_display_tests()
         CHECK(!toJson(r).contains("hdr"));
     }
 
+    SECTION("VirtualDisplay — bench_secondary is a boolean of Activate, written only when asked");
+    {
+        auto req = parseRequest("{\"action\":\"activate\",\"bench_secondary\":true}", &err);
+        CHECK(req.has_value() && req->benchSecondary);
+        req = parseRequest("{\"action\":\"activate\"}", &err);
+        CHECK(req.has_value() && !req->benchSecondary);
+        CHECK(!parseRequest("{\"action\":\"activate\",\"bench_secondary\":\"yes\"}", &err)
+                   .has_value());
+        // Another verb never carries it into the helper.
+        req = parseRequest("{\"action\":\"deactivate\",\"bench_secondary\":true}", &err);
+        CHECK(req.has_value() && !req->benchSecondary);
+        Request r;
+        r.benchSecondary = true;
+        req = parseRequest(toJson(r), &err);
+        CHECK(req.has_value() && req->benchSecondary && !req->benchHdr);
+        r.benchSecondary = false;
+        CHECK(!toJson(r).contains("bench_secondary"));
+    }
+
     SECTION("VirtualDisplay — the GPU the owner chose travels as a name, and only as text");
     {
         // A GPU as Windows names it, into the helper and back.

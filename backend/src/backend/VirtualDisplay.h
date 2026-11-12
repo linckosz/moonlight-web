@@ -419,6 +419,17 @@ struct Request
     /// in its environment (the Auto-bitrate bench measures HDR streams this
     /// way); written as `bench_hdr`. Off, the display is SDR as always.
     bool benchHdr = false;
+    /// Activate, Windows, bench only: the primary display stays the primary.
+    /// Ours stays where the activation put it (on the right of the others
+    /// when the layout from before is imposed) and is not made the primary
+    /// (LayoutStep::Primary is skipped).
+    /// The stream still captures ours: the Virtual Display card names it,
+    /// not the primary. Set by the server only when MW_BENCH_VD_SECONDARY=1
+    /// is in its environment (a bench on a desk whose primary must not move);
+    /// written as `bench_secondary`. An exclusive stream turns the others off
+    /// all the same, which leaves ours the only display. Off, ours is the
+    /// primary while it streams, as always.
+    bool benchSecondary = false;
     /// Activate, Windows: every other display goes off while ours streams
     /// (issue #39), the owner's choice (AppSettings::virtualDisplayExclusive),
     /// for the owner's own streams only: see othersGoOff(). Never saved to

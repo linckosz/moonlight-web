@@ -1591,7 +1591,10 @@ int stageMode(Context& ctx)
     else if (hdr)
         Logger::info(QStringLiteral("[vdisplay-apply] HDR left on for a bench (MW_BENCH_VD_HDR)"));
 
-    if (!makePrimary(target->devicePath, savesLayout(LayoutStep::Primary, off), &error))
+    if (ctx.request.benchSecondary)
+        Logger::info(QStringLiteral("[vdisplay-apply] the primary display keeps its role, "
+                                    "for a bench (MW_BENCH_VD_SECONDARY)"));
+    else if (!makePrimary(target->devicePath, savesLayout(LayoutStep::Primary, off), &error))
         Logger::warning(QStringLiteral("[vdisplay-apply] not made primary: %1").arg(error));
 
     // Last, and never saved: every change above has been, with the other
