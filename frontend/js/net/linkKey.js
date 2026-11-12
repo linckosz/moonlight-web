@@ -16,26 +16,40 @@
  */
 
 /**
- * The key a link of this machine carries, on a page the host serves itself.
+ * The key a link of this machine carries.
  *
- * The tray icon, a launch and the installer's last page open the browser on
- * `https://localhost:<port>/<page>#k=<key>`. The key says "this browser was
- * opened by this machine's owner, here"; the page spends it once, at
- * POST /api/auth/host-key, for a session of the host machine.
+ * The tray icon, a launch and the installer's last page open the browser on a
+ * link that ends in `#k=<key>`: this machine's own address
+ * (`https://localhost:<port>/<page>#k=<key>`), or its rendezvous link, which
+ * the bootstrap hands over to this page with the key still in the fragment.
+ * The key says "this browser was opened by this machine's owner, here"; the
+ * page spends it once, at POST /api/auth/host-key, for a session of the host
+ * machine.
  *
  * It is taken off the address as this module loads, and this module is the
  * first the application imports: before any request leaves, before a socket
  * opens, before any other module runs and could read the address into a log.
- * It then lives in a variable here until it is asked for, once.
+ * It then lives in a variable here, and nowhere that outlives the page: no
+ * storage, no cookie.
  *
- * A page that came through the rendezvous is not this module's: there the
- * bootstrap's own transport reads the fragment (net/tunnelBridge.js), and the
- * address keeps what names the machine.
+ * Through the rendezvous a page may have to start over before the host has
+ * answered — the line dropped, the cached interface is not the host's — and
+ * starting over is a navigation through the bootstrap, which reads the address
+ * it is given. So until the host has answered, the key goes along: into the
+ * address the page leaves for (carriedLinkKey), or back into this page's own
+ * just before a reload it does itself (putLinkKeyBack). Once the host has
+ * answered (forgetLinkKey), it is gone. A page the host serves itself has no
+ * bootstrap to go back through, and keeps nothing to carry.
  *
  * No import, on purpose: nothing may run before it.
  */
 
+/** The key, until it is asked for. */
 let taken = null;
+/** Through the rendezvous: the same key, until the host has answered. */
+let carried = null;
+/** Whether the page came through the rendezvous. */
+let throughRendezvous = false;
 
 /**
  * Splits a fragment into the key it carries and the fragment without it.
@@ -66,25 +80,30 @@ export function splitLinkKey(hash) {
     return { key: key || null, hash: kept.length ? '#' + kept.join('&') : '' };
 }
 
+/** This page's address with `hash` for a fragment. */
+function addressWith(hash) {
+    return window.location.pathname + window.location.search + hash;
+}
+
 /** Takes the key off this page's address. Runs once, as the module loads. */
 function takeFromAddress() {
     try {
-        // Through the rendezvous: not ours (see above).
-        if (navigator.serviceWorker && navigator.serviceWorker.controller) return;
         const current = window.location.hash;
         if (!current || current.indexOf('k=') < 0) return;
         const { key, hash } = splitLinkKey(current);
         if (hash === current) return; // no key in there after all
+        // A controlling service worker is the bootstrap's, the only one there
+        // is: the page came through the rendezvous.
+        const viaWorker = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
         // Off the address first, kept second: if the address cannot be
         // rewritten, the key is not used at all rather than left in the bar.
-        history.replaceState(
-            history.state,
-            '',
-            window.location.pathname + window.location.search + hash,
-        );
+        history.replaceState(history.state, '', addressWith(hash));
         taken = key;
+        throughRendezvous = viaWorker;
+        carried = viaWorker ? key : null;
     } catch {
         taken = null;
+        carried = null;
     }
 }
 
@@ -92,12 +111,48 @@ takeFromAddress();
 
 /**
  * The key this page was opened with, once: whoever asks first gets it, and a
- * second caller gets null rather than a chance to send it again.
+ * second caller gets null rather than a chance to send it again. `direct` says
+ * the page is one the host serves itself, not one that came through the
+ * rendezvous.
+ *
+ * @returns {{ key: string, direct: boolean }|null}
+ */
+export function takeLinkKey() {
+    const key = taken;
+    taken = null;
+    return key ? { key, direct: !throughRendezvous } : null;
+}
+
+/**
+ * Through the rendezvous: the key a page that starts over takes along, for the
+ * address it leaves for. Null once the host has answered, and on a page the
+ * host serves itself.
  *
  * @returns {string|null}
  */
-export function takeDirectLinkKey() {
-    const key = taken;
+export function carriedLinkKey() {
+    return carried;
+}
+
+/**
+ * Just before a reload this page does itself: the key goes back into the
+ * address, for the page that follows to find. Does nothing once the host has
+ * answered, and on a page the host serves itself.
+ */
+export function putLinkKeyBack() {
+    if (!carried) return;
+    try {
+        // At the end: the identifier, when the fragment names it, stays first.
+        const rest = splitLinkKey(window.location.hash).hash.replace(/^#/, '');
+        const hash = '#' + (rest ? rest + '&' : '') + 'k=' + encodeURIComponent(carried);
+        history.replaceState(history.state, '', addressWith(hash));
+    } catch {
+        // The address stays as it is: the page that follows asks for the PIN.
+    }
+}
+
+/** The host has answered, yes or no: the key has had its use. */
+export function forgetLinkKey() {
     taken = null;
-    return key;
+    carried = null;
 }

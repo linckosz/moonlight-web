@@ -45,12 +45,12 @@
  * When that connection drops, lineKeeper.js dials it again under the page.
  */
 import { LineKeeper } from './lineKeeper.js';
+import { carriedLinkKey } from './linkKey.js';
 import { showLineNotice } from '../ui/LineNotice.js';
 
 /** The connection, and the next one when it drops; null without a tunnel. */
 let keeper = null;
 let hostId = null;
-let hostKey = null;
 let shareToken = null;
 
 /** The identifier this tab is bound to, or null when there is no tunnel. */
@@ -59,25 +59,11 @@ export function tunnelHostId() {
 }
 
 /**
- * The host key this link arrived with, read once and forgotten.
- *
- * It is what the machine's own tray puts in the fragment so its owner reaches an
- * admin page under a certificate the browser already trusts. Single-use at the
- * far end, so it is single-use here too: whoever asks first gets it, and a
- * second caller gets null rather than a chance to replay it.
- */
-export function takeTunnelHostKey() {
-    const key = hostKey;
-    hostKey = null;
-    return key;
-}
-
-/**
  * The invitation token this link arrived with, or null.
  *
- * Read as often as needed, unlike the host key next door. That key is single-use
- * at both ends; an invitation is the guest's whole page and has to survive every
- * reload of it.
+ * Read as often as needed, unlike the host key a link may carry (linkKey.js).
+ * That key is single-use at both ends and left the address as the page loaded;
+ * an invitation is the guest's whole page and has to survive every reload of it.
  *
  * It is here rather than in the path because the path is the one part of the
  * address the introduction server reads. Through the tunnel the guest's page is
@@ -123,22 +109,30 @@ export function pageCameThroughTunnel() {
  * the second page had no key to redeem.
  *
  * So the fragment travels along, minus the identifier (the path carries it).
- * The page asked for is written back as `p=` when this page is on one and the
- * fragment does not already say so — the router had moved it from the
- * fragment to the path at startup, and the bootstrap only reads the fragment.
- * The shape check mirrors the bootstrap's own: one plain segment.
+ * The host key is not in it: it left the address as this page loaded and is
+ * kept apart until the host has answered (linkKey.js), so it is written into
+ * the address here, at the moment of leaving, and only while it is still
+ * worth carrying. The page asked for is written back as `p=` when this page
+ * is on one and the fragment does not already say so — the router had moved
+ * it from the fragment to the path at startup, and the bootstrap only reads
+ * the fragment. The shape check mirrors the bootstrap's own: one plain
+ * segment.
  */
 export function bootstrapAddress() {
-    return bootstrapAddressFor(hostId, location);
+    return bootstrapAddressFor(hostId, location, carriedLinkKey());
 }
 
-/** The pure part of bootstrapAddress(): the identifier and a location-shaped
- *  object in, the address out. Exported so it can be pinned by a test. */
-export function bootstrapAddressFor(id, { hash, pathname }) {
+/** The pure part of bootstrapAddress(): the identifier, a location-shaped
+ *  object and the host key still to carry (or null) in, the address out.
+ *  Exported so it can be pinned by a test. */
+export function bootstrapAddressFor(id, { hash, pathname }, key = null) {
     const parts = (hash || '')
         .replace(/^#/, '')
         .split('&')
         .filter((part) => part && part !== id);
+    if (key && !parts.some((part) => part.startsWith('k='))) {
+        parts.unshift('k=' + encodeURIComponent(key));
+    }
     const path = pathname || '';
     if (/^\/[A-Za-z0-9_-]{1,32}$/.test(path) && !parts.some((part) => part.startsWith('p='))) {
         parts.push('p=' + encodeURIComponent(path));
@@ -224,7 +218,6 @@ export async function startTunnel(onStage) {
         return false;
     }
     hostId = mod.hostIdFromLocation();
-    hostKey = mod.hostKeyFromLocation();
     shareToken = mod.shareTokenFromLocation();
     if (!hostId) {
         // We are on the rendezvous — the transport loaded — but nothing names a

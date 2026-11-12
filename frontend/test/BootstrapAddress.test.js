@@ -43,4 +43,36 @@ describe('bootstrapAddressFor — the bounce keeps the fragment', () => {
     it('survives a location without a hash or a path', () => {
         expect(bootstrapAddressFor(ID, {})).toBe(`/${ID}`);
     });
+
+    // The host key left the address as the page loaded (js/net/linkKey.js): the
+    // page that leaves hands over the one it still holds.
+    it('writes in the host key the page still holds, ahead of the rest', () => {
+        expect(bootstrapAddressFor(ID, { hash: `#${ID}`, pathname: '/admin' }, 'SEKRIT')).toBe(
+            `/${ID}#k=SEKRIT&p=%2Fadmin`,
+        );
+        expect(bootstrapAddressFor(ID, { hash: '', pathname: '/' }, 'SEKRIT')).toBe(
+            `/${ID}#k=SEKRIT`,
+        );
+        expect(bootstrapAddressFor(ID, { hash: `#${ID}&t=TOKEN`, pathname: '/p' }, 'SEKRIT')).toBe(
+            `/${ID}#k=SEKRIT&t=TOKEN&p=%2Fp`,
+        );
+    });
+
+    it('writes the host key the way the bootstrap reads it', () => {
+        expect(bootstrapAddressFor(ID, { hash: `#${ID}`, pathname: '/' }, 'a+b/c=d&e')).toBe(
+            `/${ID}#k=a%2Bb%2Fc%3Dd%26e`,
+        );
+    });
+
+    it('writes no host key when the page holds none any more', () => {
+        expect(bootstrapAddressFor(ID, { hash: `#${ID}`, pathname: '/admin' }, null)).toBe(
+            `/${ID}#p=%2Fadmin`,
+        );
+    });
+
+    it('leaves a host key the address still carries as it is', () => {
+        expect(bootstrapAddressFor(ID, { hash: `#${ID}&k=THERE`, pathname: '/' }, 'HELD')).toBe(
+            `/${ID}#k=THERE`,
+        );
+    });
 });

@@ -48,7 +48,7 @@
 // First of all, before any other module runs: the key this page's link may
 // carry leaves the address (net/linkKey.js). Nothing that follows — a request,
 // a socket, a module that writes the address into a log — ever sees it there.
-import { takeDirectLinkKey } from './net/linkKey.js';
+import { takeLinkKey, forgetLinkKey, putLinkKeyBack } from './net/linkKey.js';
 // Then, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
 import { refreshClientLog } from './util/ClientLog.js';
@@ -154,7 +154,6 @@ import {
 import {
     startTunnel,
     tunnelHostId,
-    takeTunnelHostKey,
     tunnelShareToken,
     pageCameThroughTunnel,
     bootstrapAddress,
@@ -175,6 +174,14 @@ import { bootMark } from './util/bootTiming.js';
 // Every module above arrived and ran: the boot watchdog (bootWatch.js) stands down.
 window.mwBooted = true;
 
+/** Reload this page. The key of its link goes back into the address first, when
+ *  the host has not answered it yet (net/linkKey.js): the page that follows is
+ *  the one to spend it. */
+function reloadPage() {
+    putLinkKeyBack();
+    window.location.reload();
+}
+
 // ── Global error handler ──────────────────────────────────────────────────────
 window.addEventListener('error', (evt) => {
     console.error('[MW] Uncaught error:', evt.error || evt.message, evt);
@@ -190,7 +197,7 @@ window.addEventListener('error', (evt) => {
                 </div>
             </div>
         `;
-        main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
+        main.querySelector('.btn-reload').addEventListener('click', reloadPage);
     }
 });
 
@@ -208,7 +215,7 @@ window.addEventListener('unhandledrejection', (evt) => {
                 </div>
             </div>
         `;
-        main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
+        main.querySelector('.btn-reload').addEventListener('click', reloadPage);
     }
 });
 
@@ -254,6 +261,17 @@ function selfStreamWarnMuted() {
         return false;
     }
 }
+
+/** What the rendezvous' service worker answers by itself for a request the host
+ *  never answered (bootstrap/sw.js): the line failed, no page holds it, no
+ *  answer came in time. */
+const LINE_FAILURES = [502, 503, 504];
+/**
+ * Whether a failed request carries the host's own answer. A status is one —
+ * except, through the rendezvous, a failure the service worker reports itself.
+ */
+const hostAnswered = (err, direct) =>
+    !!err?.statusCode && (!!direct || !LINE_FAILURES.includes(err.statusCode));
 
 // The server's word for a host that did not show the certificate of its pairing.
 const CERTIFICATE_CHANGED = 'certificate_changed';
@@ -1389,30 +1407,31 @@ export const MoonlightApp = {
      * server it fetched the page from, on two kinds of link:
      *
      *   this machine's own address (the tray, a launch, the installer's last
-     *           page). The key left the address as the page loaded, before
-     *           anything else ran (net/linkKey.js), and is spent here.
+     *           page).
      *   a rendezvous link. The introduction server sees which machine is
      *           wanted and not the key to it. This is how the owner gets an
      *           admin page under a certificate the browser already trusts,
      *           instead of accepting a warning on loopback.
      *
-     * Single-use at the far end: the host spends the key as it recognises it.
+     * Either way the key left the address as the page loaded, before anything
+     * else ran (net/linkKey.js), and is spent here. Single-use at the far end:
+     * the host spends the key as it recognises it.
      *
-     * On a rendezvous link it comes out of the address bar once the host has
-     * ANSWERED, not before. It used to leave the address first, so that nothing
-     * below could leave it behind; but a page that goes back through the
-     * bootstrap while the request is in flight — the connection dropped, a
-     * busy machine — starts over from the address, and an address without the
-     * key is a PIN screen. The key stays until the host has said yes or no; a
-     * request that never got an answer leaves it in place for the next attempt
-     * to spend. A page the host serves itself has no bootstrap to go back
+     * On a rendezvous link it is kept until the host has ANSWERED, not
+     * forgotten as it is sent: a page that goes back through the bootstrap
+     * while the request is in flight — the connection dropped, a busy machine
+     * — starts over from the address it leaves for, and an address without
+     * the key is a PIN screen. So until the host has said yes or no, a page
+     * that leaves takes the key along (bootstrapAddress, reloadPage); a
+     * request that never got an answer leaves it for the next attempt to
+     * spend. A page the host serves itself has no bootstrap to go back
      * through: a request that never got an answer there costs a click on the
      * icon again.
      */
     async _redeemHostKey() {
-        const direct = takeDirectLinkKey();
-        const raw = direct || takeTunnelHostKey();
-        if (!raw) return;
+        const link = takeLinkKey();
+        if (!link) return;
+        const { key: raw, direct } = link;
 
         let answered = false;
         const handoff = unpackHandoffKeys(raw);
@@ -1420,31 +1439,21 @@ export const MoonlightApp = {
             // Not the host key: the keys a home-screen shortcut was made with
             // (see _offerHomeScreenHandoff). Same fragment, same single use,
             // an ordinary session at the end of each.
-            answered = await this._redeemHomeScreenKeys(handoff);
+            answered = await this._redeemHomeScreenKeys(handoff, direct);
         } else {
             try {
-                await BackendClient.redeemHostKey(raw, { direct: !!direct });
+                await BackendClient.redeemHostKey(raw, { direct });
                 answered = true;
                 console.log('[MW] Host key redeemed — host-machine session granted');
             } catch (err) {
-                // A status is the host's answer; anything else is the request
+                // The host's own answer ends it; anything else is the request
                 // not arriving, and the key is still worth carrying.
-                answered = !!err.statusCode;
+                answered = hostAnswered(err, direct);
                 console.warn('[MW] Host key redemption failed:', err);
             }
         }
-        // Already off the address on a page the host serves itself.
-        if (!answered || direct) return;
-
-        // The fragment is rebuilt from the identifier alone, dropping the key
-        // with it; the tunnel keeps the identifier in this tab either way.
-        const id = tunnelHostId();
-        const hash = id ? `#${id}` : window.location.hash;
-        history.replaceState(
-            history.state,
-            '',
-            window.location.pathname + window.location.search + hash,
-        );
+        // The host has said yes or no: nothing takes the key along any more.
+        if (answered) forgetLinkKey();
     },
 
     /**
@@ -1459,10 +1468,11 @@ export const MoonlightApp = {
      * screen waits for them, and one that is off keeps its key for a later
      * launch, within the key's life.
      *
-     * Resolves true once this machine has answered (or had already), which is
-     * what lets the key leave the address bar.
+     * Resolves true once this machine has answered (or had already): from
+     * then on nothing takes the key along. `direct` says the page is one the
+     * host serves itself (see hostAnswered).
      */
-    async _redeemHomeScreenKeys({ own, others }) {
+    async _redeemHomeScreenKeys({ own, others }, direct) {
         let answered = !own || isHandoffKeySpent(own);
         if (!answered) {
             try {
@@ -1474,7 +1484,7 @@ export const MoonlightApp = {
                 importInstances(resp?.instances);
                 console.log('[MW] Home-screen key redeemed — signed in without a PIN');
             } catch (err) {
-                answered = !!err.statusCode;
+                answered = hostAnswered(err, direct);
                 console.warn('[MW] Home-screen key redemption failed:', err);
             }
             if (answered) markHandoffKeySpent(own);
@@ -1734,7 +1744,7 @@ export const MoonlightApp = {
                     </div>
                 </div>
             `;
-            main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
+            main.querySelector('.btn-reload').addEventListener('click', reloadPage);
             return false;
         }
     },
@@ -1766,7 +1776,7 @@ export const MoonlightApp = {
     },
 
     _reloadPage() {
-        window.location.reload();
+        reloadPage();
     },
 
     /**
