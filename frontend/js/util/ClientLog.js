@@ -42,6 +42,10 @@
  * the host). A page reached directly that gets no answer stops as before.
  */
 
+// First: the error trail's console.error sits under this mirror's, and stays
+// when the mirror is taken off (ErrorTrail.js).
+import './ErrorTrail.js';
+
 const LEVELS = /** @type {const} */ (['log', 'info', 'warn', 'error', 'debug']);
 /** Bounds of what waits to be sent: the oldest lines go first. */
 const MAX_LINES = 3000;

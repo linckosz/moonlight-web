@@ -170,6 +170,7 @@ import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewTouchPad } from './StreamViewTouchPad.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 import { flushClientLog, refreshClientLog, serverDiag } from '../util/ClientLog.js';
+import { scheduleErrorTrail } from '../util/ErrorTrail.js';
 import { UltraPlayer, presentMode, ultraPlayerSupported } from '../stream/ultra/UltraPlayer.js';
 
 // Set once the viewer has been told the microphone starts cut.
@@ -13929,6 +13930,9 @@ export class StreamView {
         // In debug mode, what the stream printed goes to the client log now,
         // not at the next tick: the page may be closed next.
         void flushClientLog();
+        // The stream's errors, if any, go to the host for its error report,
+        // once the page is idle again (ErrorTrail.js).
+        scheduleErrorTrail();
 
         // Notify MoonlightApp that streaming ended (restores apps/hosts view).
         if (this.onQuit) {

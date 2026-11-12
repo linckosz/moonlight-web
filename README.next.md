@@ -457,13 +457,17 @@ At the start and end of a stream, official builds send its **shape** to `https:/
 
 Never sent: host name, account, pairing identity, **the application launched**, or any address (only a daily‑rotating hash is kept). Every value is a number or a fixed word.
 
+#### Error reports
+
+When a stream ends or fails after an error, official builds send one short report to the same address: the error lines of the host and of the browser pages that took part (never a whole log), with the build, the stream's shape and how it ended. Each line first goes through the **Download logs** scrubber: addresses, machine and user names, keys, links and the titles of your apps are taken out. At most one report every 15 minutes, kept 90 days at most. A guest's page sends its own errors only while the box at the bottom of their page is ticked.
+
 #### No question is put to you, and you can switch it off
 
-Neither count identifies anyone, and nothing is written to the viewer's device, so there is no consent banner.
+Neither count identifies anyone, the error reports are scrubbed first, and nothing is written to the viewer's device, so there is no consent banner.
 
 **Settings → Privacy** lists what is sent and switches it off instantly; nothing else changes. Every signed‑in user sees it, and guests see it from the **Cookies** button of their join page. Only a local session can change it.
 
-Under the hood the switch writes `"session_metrics_enabled"` and `"update_relay_enabled"`; `MW_NO_TELEMETRY=1` overrides both. A leftover `metrics_consent` is ignored.
+Under the hood the switch writes `"session_metrics_enabled"` (which the error reports follow) and `"update_relay_enabled"`; `MW_NO_TELEMETRY=1` overrides both. A leftover `metrics_consent` is ignored.
 
 #### Where a session came from
 

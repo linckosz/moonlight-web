@@ -1230,6 +1230,36 @@ body.player-mode {
     color: var(--text-1);
 }
 
+/* The guest's error-report box: bottom left, as quiet as the privacy button
+   opposite it, and clear of it on a narrow screen. */
+.player-errors {
+    position: fixed;
+    left: 16px;
+    bottom: 12px;
+    z-index: 1200;
+    max-width: min(420px, calc(100vw - 160px));
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--text-3, var(--text-2));
+    opacity: 0.75;
+}
+
+.player-errors:hover,
+.player-errors:focus-within {
+    opacity: 1;
+}
+
+.player-errors-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.player-errors-desc {
+    margin: 2px 0 0 22px;
+}
+
 .player-privacy-panel {
     position: fixed;
     right: 16px;

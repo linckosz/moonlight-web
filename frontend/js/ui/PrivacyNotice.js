@@ -29,7 +29,7 @@ import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 
 /** Bullet keys, in display order. */
-export const SENT_KEYS = ['statsSent1', 'statsSent2', 'statsSent3', 'statsSent4'];
+export const SENT_KEYS = ['statsSent1', 'statsSent2', 'statsSent3', 'statsSent4', 'statsSent5'];
 export const NEVER_KEYS = ['statsNever1', 'statsNever2', 'statsNever3'];
 
 /**

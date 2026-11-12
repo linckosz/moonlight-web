@@ -29,6 +29,7 @@ import { escapeHtml } from '../util/escapeHtml.js';
 import { IS_MOBILE_OR_TABLET, IS_TOUCH_DEVICE, hevcClientDecodes } from '../util/BrowserDetect.js';
 import { PlayerArt } from './PlayerArt.js';
 import { noticeHtml } from './PrivacyNotice.js';
+import { setErrorTrailAllowed } from '../util/ErrorTrail.js';
 import {
     GamepadRemapDialog,
     connectedPads,
@@ -61,9 +62,17 @@ function loadPrefs() {
             padKey: typeof raw.padKey === 'string' ? raw.padKey : null,
             // 'always' once they picked the on-screen controller in their dialog.
             touchPadMode: raw.touchPadMode === 'always' ? 'always' : 'auto',
+            // The box at the bottom of the page: ticked unless they untick it.
+            errorReports: raw.errorReports !== false,
         };
     } catch (_) {
-        return { gaming: false, touchScreen: false, padKey: null, touchPadMode: 'auto' };
+        return {
+            gaming: false,
+            touchScreen: false,
+            padKey: null,
+            touchPadMode: 'auto',
+            errorReports: true,
+        };
     }
 }
 
@@ -74,6 +83,11 @@ function savePrefs(prefs) {
         // Private mode with storage disabled: the choice just won't be remembered.
     }
 }
+
+// A guest's page hands its errors to the host only while that box is ticked,
+// asked at each send (ErrorTrail.js); the host drops them if its owner turned
+// the statistics off, which is also when the box is not shown.
+setErrorTrailAllowed(() => loadPrefs().errorReports);
 
 /** What a guest last chose between the on-screen controller and a real pad. */
 export function guestTouchPadMode() {
@@ -143,10 +157,37 @@ export class PlayerJoinView {
                 <div class="player-card">${inner}</div>
                 <button class="player-privacy-btn" type="button" id="player-privacy-btn"
                         aria-expanded="false">${escapeHtml(t('stats.cookiesButton'))}</button>
+                ${this._errorBoxHtml()}
             </div>
         `;
         const btn = this.container.querySelector('#player-privacy-btn');
         if (btn) btn.addEventListener('click', () => this._togglePrivacy(btn));
+        const box = this.container.querySelector('#player-errors-box');
+        if (box) {
+            box.addEventListener('change', () => {
+                this._prefs.errorReports = box.checked;
+                savePrefs({ ...loadPrefs(), errorReports: box.checked });
+            });
+        }
+    }
+
+    /**
+     * The guest's own say on their page's error reports: a small box at the
+     * bottom of the page, ticked by default. Shown only when the machine
+     * reports at all (its owner's statistics switch): otherwise nothing would
+     * leave either way, and a box that changes nothing is a lie.
+     */
+    _errorBoxHtml() {
+        if (!(this.info && this.info.stats_reporting)) return '';
+        return `
+                <div class="player-errors">
+                    <label class="player-errors-label">
+                        <input type="checkbox" id="player-errors-box"
+                               ${loadPrefs().errorReports ? 'checked' : ''} />
+                        <span>${escapeHtml(t('stats.playerErrors'))}</span>
+                    </label>
+                    <p class="player-errors-desc">${escapeHtml(t('stats.playerErrorsDesc'))}</p>
+                </div>`;
     }
 
     /**
