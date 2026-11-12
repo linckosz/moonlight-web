@@ -123,6 +123,8 @@ func TestErrorsSecondNet(t *testing.T) {
 		"driver 32.0.15.6094 loaded":                      "driver 32.0.15.6094 loaded",
 		"ice 2a01:e0a:1f2:3b40::12 host":                  "ice (address) host",
 		"ice 2a01:e0a:1f2:3b40:1:2:3:4 host":              "ice (address) host",
+		"prefix 2a01:e0a:: routed":                        "prefix (address) routed",
+		"link fe80::1%eth0 up":                            "link (address)%eth0 up",
 		"lo ::1 stays":                                    "lo ::1 stays",
 		"stand-in fd::{d1} and 2xxx::{1} stay":            "stand-in fd::{d1} and 2xxx::{1} stay",
 		"at 12:34:56 fine":                                "at 12:34:56 fine",
@@ -242,6 +244,16 @@ func writeDay(t *testing.T, dir, day string, size int) {
 	}
 }
 
+func wantDays(t *testing.T, dir string, want map[string]bool) {
+	t.Helper()
+	for day, present := range want {
+		_, err := os.Stat(filepath.Join(dir, day+".jsonl"))
+		if got := err == nil; got != present {
+			t.Errorf("%s present = %v, want %v", day, got, present)
+		}
+	}
+}
+
 func TestErrorsRotationAndAge(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "reports")
 	// 4 days of 2 MiB each in an 8 MiB directory (90 % = 7.2 MiB), one past 90 days,
@@ -259,22 +271,22 @@ func TestErrorsRotationAndAge(t *testing.T) {
 	s.mu.Lock()
 	s.sweepLocked(errTestNow)
 	s.mu.Unlock()
-	if _, err := os.Stat(filepath.Join(dir, "2026-08-01.jsonl")); !os.IsNotExist(err) {
-		t.Fatalf("a day past 90 days must be deleted")
+	// The day past 90 days goes; then, 8 MiB being over 90 %, the oldest days
+	// until 6 MiB (75 %).
+	wantDays(t, dir, map[string]bool{
+		"2026-08-01": false, "2026-11-08": false, "2026-11-09": true, "2026-11-10": true, "2026-11-11": true,
+	})
+	if s.bytes != 6<<20 {
+		t.Fatalf("counted %d bytes, want the three days left", s.bytes)
 	}
-	if s.bytes != 8<<20 {
-		t.Fatalf("counted %d bytes, want the four days", s.bytes)
-	}
-	// 8 MiB is over 90 %: the oldest days go until 6 MiB (75 %).
+	// A report that would take the directory past 90 % sweeps first: under a
+	// 6.5 MiB cap (90 % = 5.85 MiB, 75 % = 4.875 MiB) 2026-11-09 goes, and
+	// today's file is written.
+	s.cfg.maxBytes = 13 << 19
 	postErr(t, s, "key", errSampleBody)
-	for day, want := range map[string]bool{
-		"2026-11-08": false, "2026-11-09": true, "2026-11-10": true, "2026-11-11": true, "2026-11-12": true,
-	} {
-		_, err := os.Stat(filepath.Join(dir, day+".jsonl"))
-		if got := err == nil; got != want {
-			t.Errorf("%s present = %v, want %v", day, got, want)
-		}
-	}
+	wantDays(t, dir, map[string]bool{
+		"2026-11-09": false, "2026-11-10": true, "2026-11-11": true, "2026-11-12": true,
+	})
 	if _, err := os.Stat(filepath.Join(dir, "notes.txt")); err != nil {
 		t.Fatalf("a file that is not a day must stay")
 	}

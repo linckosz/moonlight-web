@@ -165,10 +165,14 @@ var (
 
 	// The second net. The instance's scrubber writes its stand-ins with braces
 	// and x's (192.168.x.{a1}, 256.x.x.{1}, fd::{d1}), which none of these match.
-	errURLRe   = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://\S*`)
-	errMailRe  = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
-	errIPv4Re  = regexp.MustCompile(`\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b`)
-	errIPv6Re  = regexp.MustCompile(`\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){3,7}\b|\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*\b`)
+	errURLRe  = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://\S*`)
+	errMailRe = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
+	errIPv4Re = regexp.MustCompile(`\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b`)
+	// The forms with "::" come first: Go keeps the first alternative that
+	// matches, and the full form stops right before a "::", leaving the rest.
+	errIPv6Re = regexp.MustCompile(`\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*\b` +
+		`|\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){1,6}::` +
+		`|\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){3,7}\b`)
 	errTokenRe = regexp.MustCompile(`[A-Za-z0-9_+=-]{32,}`)
 )
 
