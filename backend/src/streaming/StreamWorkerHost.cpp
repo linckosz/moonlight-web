@@ -224,38 +224,74 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
     // The UDP ports every stream shares, as this child alone can open them:
     // made for its pid, which exists only now. A child that gets none binds a
     // port of its own, as without the mux.
-    QByteArray line = configLine;
-#ifdef Q_OS_WIN
-    if (IceMux* mux = IceMux::shared(); mux && mux->running() && mux->healthy()) {
-        std::string why;
-        const IceMux::Share share =
-            mux->shareWith(static_cast<unsigned long>(m_Proc->processId()), &why);
-        if (share.descriptions.empty()) {
-            qWarning() << "[IceMux] the shared sockets cannot go to the worker:"
-                       << QString::fromStdString(why) << "— it takes a socket of its own";
-        } else {
-            QJsonArray sockets;
-            for (const auto& description : share.descriptions)
-                sockets.append(QString::fromLatin1(
-                    QByteArray(reinterpret_cast<const char*>(description.data()),
-                               static_cast<qsizetype>(description.size()))
-                        .toBase64()));
-            QJsonObject config = QJsonDocument::fromJson(configLine).object();
-            config[QStringLiteral("iceMux")] =
-                QJsonObject{{QStringLiteral("hop"), static_cast<int>(mux->hopPort())},
-                            {QStringLiteral("sockets"), sockets}};
-            line = QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
-            // Which of the mux's sockets those are: what its agents register with
-            m_MuxSockets.clear();
-            for (const uint8_t id : share.sockets)
-                m_MuxSockets.append(id);
-        }
-    }
-#endif
-    m_Proc->write(line);
+    m_Proc->write(withSharedSockets(configLine, Launch::Plain, m_Proc->processId()));
     m_Launch = Launch::Plain;
     qInfo() << "[StreamWorkerHost] Worker spawned, pid=" << m_Proc->processId();
     return true;
+}
+
+// Whose process a worker is decides what it may be given: see muxHandoverFor().
+// A socket in a process of another account is that account's to use.
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::ConsoleAsUser) ==
+                  StreamWorkerHost::MuxHandover::None,
+              "a worker running as the console user must not get the shared sockets");
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::Plain) ==
+                  StreamWorkerHost::MuxHandover::Handed,
+              "a plain child is handed the shared sockets");
+
+QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Launch how, qint64 pid)
+{
+    m_MuxSockets.clear();
+#ifdef Q_OS_WIN
+    const MuxHandover handover = muxHandoverFor(how);
+    if (handover == MuxHandover::None) return configLine;
+    const bool workerTakes = handover == MuxHandover::Taken;
+    IceMux* mux = IceMux::shared();
+    if (!mux || !mux->running() || !mux->healthy()) return configLine;
+    QJsonObject config = QJsonDocument::fromJson(configLine).object();
+    // The guests' shared feed is an engine and a pipe: no browser reaches it.
+    if (config[QStringLiteral("role")].toString() == QLatin1String("feed")) return configLine;
+
+    std::string why;
+    const IceMux::Share share =
+        workerTakes ? mux->shareByHandle() : mux->shareWith(static_cast<unsigned long>(pid), &why);
+    if (share.sockets.empty() ||
+        (workerTakes ? share.handles.empty() : share.descriptions.empty())) {
+        qWarning() << "[IceMux] the shared sockets cannot go to the worker:"
+                   << QString::fromStdString(why) << "— it takes a socket of its own";
+        return configLine;
+    }
+    QJsonArray ports;
+    for (const uint16_t port : share.ports)
+        ports.append(static_cast<int>(port));
+    QJsonObject shared{{QStringLiteral("hop"), static_cast<int>(mux->hopPort())},
+                       {QStringLiteral("ports"), ports}};
+    if (workerTakes) {
+        // The numbers of this process's own handles: the worker copies them
+        // out itself, and checks what it got (streaming/IceMuxHandles).
+        QJsonArray handles;
+        for (const uint64_t handle : share.handles)
+            handles.append(QString::number(handle));
+        shared[QStringLiteral("handles")] = handles;
+    } else {
+        QJsonArray sockets;
+        for (const auto& description : share.descriptions)
+            sockets.append(
+                QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(description.data()),
+                                               static_cast<qsizetype>(description.size()))
+                                        .toBase64()));
+        shared[QStringLiteral("sockets")] = sockets;
+    }
+    config[QStringLiteral("iceMux")] = shared;
+    // Which of the mux's sockets those are: what its agents register with
+    for (const uint8_t id : share.sockets)
+        m_MuxSockets.append(id);
+    return QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
+#else
+    Q_UNUSED(how);
+    Q_UNUSED(pid);
+    return configLine;
+#endif
 }
 
 bool StreamWorkerHost::startInConsoleSession(const QStringList& args, const QByteArray& configLine,
@@ -326,6 +362,11 @@ bool StreamWorkerHost::startInConsoleSession(const QStringList& args, const QByt
             }
         }
     }
+    // The UDP ports every stream shares: a worker started by the service or
+    // the task runs above this process, which may not open it, and is told
+    // which to take. One in the console session as the user gets none
+    // (muxHandoverFor).
+    line = withSharedSockets(line, how, m_Console->processId());
     m_Console->write(line);
     m_Launch = how;
     qInfo() << "[StreamWorkerHost] Worker spawned"

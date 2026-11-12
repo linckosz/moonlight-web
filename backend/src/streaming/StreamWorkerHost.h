@@ -73,6 +73,38 @@ public:
         SignInScreen,
     };
 
+    /// How a worker gets the UDP ports every stream shares (network/IceMux),
+    /// if it gets them at all.
+    enum class MuxHandover
+    {
+        /// It gets none, and binds a port of its own.
+        None,
+        /// This process hands them over, described for that process alone.
+        Handed,
+        /// The worker copies them out of this process (streaming/IceMuxHandles).
+        Taken,
+    };
+
+    /// By the way the worker is started, which says whose process it is.
+    ///
+    /// A plain child is this process's own account, at its own level: handed.
+    /// A worker of the launcher service or of the elevated task is SYSTEM or
+    /// this account elevated, above this process, which may not open it:
+    /// taken. A worker put in the console session as the user sitting there
+    /// gets none: that user may be another account than the one this server
+    /// runs for, and a socket in a process of theirs is theirs to read and to
+    /// send from, whatever the worker itself does with it.
+    static constexpr MuxHandover muxHandoverFor(Launch how)
+    {
+        switch (how) {
+        case Launch::Plain: return MuxHandover::Handed;
+        case Launch::TaskElevated:
+        case Launch::ServiceAsSystem: return MuxHandover::Taken;
+        case Launch::ConsoleAsUser: break;
+        }
+        return MuxHandover::None;
+    }
+
     /// Spawn the worker and hand it the session config. Returns false when the
     /// process could not be started (caller falls back to in-process mode).
     bool start(const QJsonObject& config);
@@ -160,6 +192,14 @@ private:
     bool startInProcess(const QStringList& args, const QByteArray& configLine, bool native);
     /// Through ConsoleProcess, in one of the three ways above.
     bool startInConsoleSession(const QStringList& args, const QByteArray& configLine, Launch how);
+    /// The configuration line with the UDP ports every stream shares added
+    /// ("iceMux"), for a worker that streams to a browser while the server
+    /// shares ports (network/IceMux), the way muxHandoverFor() says for the
+    /// worker started as `how`: described for its process `pid` alone, or
+    /// named for it to copy out of this process itself. The line as it was
+    /// when the worker gets none, or nothing can be shared: it binds a port
+    /// of its own.
+    QByteArray withSharedSockets(const QByteArray& configLine, Launch how, qint64 pid);
     void onStdoutData(const QByteArray& data);
     void onStderrData(const QByteArray& data);
     void onStdout();

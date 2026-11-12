@@ -9,6 +9,7 @@
 
 #include <QCoreApplication>
 #include <cstdlib>
+#include <cstring>
 
 TestStats g_stats;
 
@@ -91,6 +92,8 @@ void run_remote_desktop_return_tests();
 void run_ice_mux_core_tests();
 void run_ice_mux_socket_tests();
 void run_ice_mux_ports_tests();
+void run_ice_mux_handles_tests();
+int run_ice_mux_adopt_child(int argc, char** argv);
 void run_mdns_advertiser_tests();
 void run_router_port_core_tests();
 void run_logger_rotation_tests();
@@ -110,6 +113,12 @@ void run_local_request_tests();
 
 int main(int argc, char** argv)
 {
+    // The second process of the IceMuxHandles test, started by the test
+    // itself: it takes one socket out of the first and ends. Not a run of the
+    // suite.
+    if (argc > 1 && std::strcmp(argv[1], "--adopt-socket") == 0)
+        return run_ice_mux_adopt_child(argc, argv);
+
     QCoreApplication app(argc, argv);
     // Keep app data hermetic-ish for any path the units resolve internally.
     QCoreApplication::setApplicationName("mw-server-tests");
@@ -194,6 +203,7 @@ int main(int argc, char** argv)
     run_ice_mux_core_tests();
     run_ice_mux_socket_tests();
     run_ice_mux_ports_tests();
+    run_ice_mux_handles_tests();
     run_mdns_advertiser_tests();
     run_router_port_core_tests();
     run_control_channel_tests();

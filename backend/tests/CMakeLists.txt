@@ -131,6 +131,7 @@ add_executable(run_tests
     test_ice_mux_core.cpp
     test_ice_mux_sockets.cpp
     test_ice_mux_ports.cpp
+    test_ice_mux_handles.cpp
     test_logger_rotation.cpp
     test_control_channel.cpp
     test_feed_ipc.cpp
@@ -155,6 +156,8 @@ add_executable(run_tests
     ${_src}/src/network/IceMux.cpp
     # Which ports the streams share, and which the router forwards.
     ${_src}/src/network/IceMuxPorts.cpp
+    # A worker above the server takes the shared sockets out of it.
+    ${_src}/src/streaming/IceMuxHandles.cpp
     # Which MoonlightWeb this is: the names, ports and version a DEV build
     # must answer to so it can sit beside a production install.
     ${_src}/src/common/Edition.cpp

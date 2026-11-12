@@ -33,9 +33,9 @@ them, and every worker's agent uses them.
   address, the shared socket it came in on, and the time it was read. It never
   answers a datagram itself, and while no agent is registered it reads nothing
   of what arrives.
-- **Stream worker** (`streaming/IceMuxClient`). Opens the shared sockets from
-  descriptions the server made for its process alone (they travel in the config
-  line). For each PeerConnection it makes a feed socket on 127.0.0.1,
+- **Stream worker** (`streaming/IceMuxClient`). Gets the shared sockets (see
+  « How a worker gets the sockets »). For each PeerConnection it makes a feed
+  socket on 127.0.0.1,
   connected to the server's hop socket so that it hears nobody else, draws the
   agent's ICE user fragment (12 characters) and password (24), and tells the
   server `{"event":"iceMux","op":"agent","ufrag":…,"feedPort":…}` on stdout
@@ -50,6 +50,41 @@ them, and every worker's agent uses them.
 
 Video, audio and input leave the worker directly through the shared ports. Only
 what comes in makes the extra hop through the server process.
+
+## How a worker gets the sockets
+
+It depends on whose process the worker is, which the way it is started says
+(`StreamWorkerHost::muxHandoverFor`):
+
+- **A plain child of the server**: the server's own account, at its own level.
+  The server hands the sockets over: it makes a description of each for that
+  process alone (`WSADuplicateSocket`), and the descriptions travel in the
+  config line.
+- **A worker the service puts in the console session as the user sitting
+  there** gets none, and binds a port of its own. That user may be another
+  account than the one the server runs for, and a socket in a process of
+  theirs is theirs to read and to send from, whatever the worker itself does
+  with it.
+- **A worker above the server** (started by the launcher service as SYSTEM, or
+  by the elevated task). The server may not open such a process, so it cannot
+  hand it anything, and it gains no right over it. It tells the worker, in the
+  config line, the numbers of its own handles and the port of each, and the
+  worker copies them out of the server itself (`streaming/IceMuxHandles`), the
+  way it takes the kept devices:
+  - the server is the process at the other end of the pipes the worker was
+    started on, the one whose image it checked then; its image is checked
+    again on the very process the copies come from;
+  - that process is opened to copy handles and to be asked what it is,
+    nothing more, and is let go as soon as the copies are made;
+  - for the time of the copy the worker could copy any handle of the server.
+    That is accepted because such a worker is at least as privileged as the
+    server, and it is checked: a process below the server does not copy;
+  - four handles at most, each copied as it is and left with the server.
+
+Either way the worker uses a socket only once it is known to be a UDP socket
+bound to the port the server said; anything else is closed, and the stream
+binds a port of its own. The server registers a worker's agents on the sockets
+it gave that worker, whatever the worker says.
 
 ## Which ports
 
@@ -136,6 +171,8 @@ mux:
 - no port of the stream block can be bound when the server starts;
 - a port that serves keeps failing to read (the reading thread leaves it alone,
   tries it again every second and says so once): streams that start meanwhile;
+- the worker runs in the console session as the user sitting there (started by
+  a server that is a service);
 - the sockets cannot be handed to the worker, or the worker cannot open them or
   make its feed;
 - a connection that also needs TCP (the TCP rungs keep their own socket, which
@@ -143,8 +180,7 @@ mux:
 
 ## Not there yet
 
-- Workers started through the launcher service or the elevated task, and Linux
-  and macOS: they bind their own port.
+- Linux and macOS: every stream binds its own port.
 - The public candidates: the holes are made, but under the mux no public
   address is announced yet, and a stream still asks for its slot's own hole
   whether or not it ends up on the shared ports.

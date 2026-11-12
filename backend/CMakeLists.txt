@@ -424,6 +424,7 @@ add_executable(mw-server
     src/streaming/HidParkedJson.cpp
     src/streaming/HidParkingTransfer.cpp
     src/streaming/IceMuxClient.cpp
+    src/streaming/IceMuxHandles.cpp
     src/streaming/FeedInfo.cpp
     src/streaming/FeedPublisher.cpp
     src/streaming/FeedSubscriber.cpp

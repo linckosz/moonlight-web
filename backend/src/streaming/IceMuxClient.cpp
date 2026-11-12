@@ -16,11 +16,14 @@
  */
 
 #include "IceMuxClient.h"
+#include "IceMuxHandles.h"
 
 #include <QByteArray>
 #include <QDebug>
 #include <QJsonArray>
+#include <QList>
 #include <QRandomGenerator>
+#include <QStringList>
 
 #include <chrono>
 #include <mutex>
@@ -133,8 +136,9 @@ void onFeedTimestamp(uint64_t stamp)
 
 #ifdef _WIN32
 /// One of the server's sockets, from the description it made for this process
-/// alone. Checked for what it must be before anything is sent through it.
-SOCKET openShared(const QByteArray& info)
+/// alone. Checked for what it must be before anything is sent through it: a
+/// UDP socket, bound to the port the server said.
+SOCKET openShared(const QByteArray& info, quint16 port)
 {
     if (info.size() != static_cast<qsizetype>(sizeof(WSAPROTOCOL_INFOW))) return INVALID_SOCKET;
     WSAPROTOCOL_INFOW description;
@@ -146,9 +150,17 @@ SOCKET openShared(const QByteArray& info)
     int typeLen = sizeof(type);
     sockaddr_storage bound{};
     int boundLen = sizeof(bound);
+    quint16 boundPort = 0;
+    if (getsockname(s, reinterpret_cast<sockaddr*>(&bound), &boundLen) == 0) {
+        if (bound.ss_family == AF_INET6)
+            boundPort = ntohs(reinterpret_cast<const sockaddr_in6*>(&bound)->sin6_port);
+        else if (bound.ss_family == AF_INET)
+            boundPort = ntohs(reinterpret_cast<const sockaddr_in*>(&bound)->sin_port);
+    }
     if (getsockopt(s, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &typeLen) != 0 ||
-        type != SOCK_DGRAM || getsockname(s, reinterpret_cast<sockaddr*>(&bound), &boundLen) != 0) {
+        type != SOCK_DGRAM || boundPort != port) {
         closesocket(s);
+        WSASetLastError(WSAENOTSOCK);
         return INVALID_SOCKET;
     }
     return s;
@@ -183,36 +195,78 @@ SOCKET openFeed(quint16 hopPort, quint16* port)
 
 } // namespace
 
-bool configure(const QJsonObject& mux, Emit tell)
+bool configure(const QJsonObject& mux, quint32 serverPid,
+               const std::function<bool(const QString& image)>& isServer, Emit tell)
 {
 #ifdef _WIN32
     State& s = state();
     const std::lock_guard<std::mutex> lock(s.lock);
     const int hop = mux.value(QStringLiteral("hop")).toInt();
     const QJsonArray sockets = mux.value(QStringLiteral("sockets")).toArray();
-    if (hop <= 0 || hop > 65535 || sockets.isEmpty() || sockets.size() > 4 || !tell) return false;
+    const QJsonArray handles = mux.value(QStringLiteral("handles")).toArray();
+    const QJsonArray ports = mux.value(QStringLiteral("ports")).toArray();
+    // Handed, or to take: one way, and a port for each.
+    const bool handed = !sockets.isEmpty();
+    const qsizetype count = handed ? sockets.size() : handles.size();
+    if (hop <= 0 || hop > 65535 || !tell || count < 1 ||
+        count > static_cast<qsizetype>(mw::icemuxhandles::kMax) || ports.size() != count ||
+        (handed && !handles.isEmpty()))
+        return false;
+    QList<quint16> named;
+    for (const QJsonValue& v : ports) {
+        const int port = v.toInt();
+        if (port <= 0 || port > 65535) return false;
+        named.append(static_cast<quint16>(port));
+    }
     // The first sockets of this process: nothing has started Winsock yet.
     WSADATA winsock;
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return false;
     std::vector<uintptr_t> opened;
-    for (const QJsonValue& v : sockets) {
-        const SOCKET one = openShared(QByteArray::fromBase64(v.toString().toLatin1()));
-        if (one == INVALID_SOCKET) {
-            qWarning() << "[IceMux] a shared socket cannot be opened, error" << WSAGetLastError()
-                       << "— this stream takes a socket of its own";
-            for (uintptr_t o : opened)
-                closesocket(static_cast<SOCKET>(o));
+    if (handed) {
+        for (qsizetype i = 0; i < count; ++i) {
+            const SOCKET one = openShared(
+                QByteArray::fromBase64(sockets.at(i).toString().toLatin1()), named.at(i));
+            if (one == INVALID_SOCKET) {
+                qWarning() << "[IceMux] the shared socket of port" << named.at(i)
+                           << "cannot be opened, error" << WSAGetLastError()
+                           << "— this stream takes a socket of its own";
+                for (uintptr_t o : opened)
+                    closesocket(static_cast<SOCKET>(o));
+                return false;
+            }
+            opened.push_back(static_cast<uintptr_t>(one));
+        }
+    } else {
+        // This worker runs above the server, which could not hand it
+        // anything: it takes the sockets out of the server it was started by.
+        std::vector<mw::icemuxhandles::Wanted> wanted;
+        for (qsizetype i = 0; i < count; ++i) {
+            bool number = false;
+            const quint64 handle = handles.at(i).toString().toULongLong(&number);
+            if (!number || handle == 0) return false;
+            wanted.push_back({handle, named.at(i)});
+        }
+        QString why;
+        opened = mw::icemuxhandles::adopt(serverPid, wanted, isServer, &why);
+        if (opened.empty()) {
+            qWarning().noquote() << "[IceMux] the shared sockets cannot be taken from the server:"
+                                 << why << "— this stream takes a socket of its own";
             return false;
         }
-        opened.push_back(static_cast<uintptr_t>(one));
     }
     s.shared = std::move(opened);
     s.hopPort = static_cast<quint16>(hop);
     s.tell = std::move(tell);
-    qInfo() << "[IceMux] worker on" << s.shared.size() << "shared UDP socket(s)";
+    QStringList list;
+    for (const quint16 port : named)
+        list << QString::number(port);
+    qInfo().noquote() << "[IceMux] worker on shared UDP port" << list.join(QStringLiteral(", "))
+                      << (handed ? "(handed by the server)" : "(taken from the server)");
     return true;
 #else
     Q_UNUSED(mux);
+    Q_UNUSED(serverPid);
+    Q_UNUSED(isServer);
     Q_UNUSED(tell);
     return false;
 #endif

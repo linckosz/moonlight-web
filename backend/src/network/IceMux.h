@@ -135,21 +135,30 @@ public:
     void confirm(uint32_t feed, const std::string& address, uint16_t port);
     void removeAgent(uint32_t feed);
 
-    /// What a stream worker is handed: the sockets that serve, the preferred
-    /// first.
+    /// What a stream worker gets: the sockets that serve, the preferred first.
     struct Share
     {
         /// Their numbers here, for addAgent()
         std::vector<uint8_t> sockets;
         std::vector<uint16_t> ports;
-        /// One WSAPROTOCOL_INFOW each, as the worker's process and no other
-        /// can open it
+        /// shareWith(): one WSAPROTOCOL_INFOW each, as the worker's process
+        /// and no other can open it
         std::vector<std::vector<uint8_t>> descriptions;
+        /// shareByHandle(): this process's own handle of each
+        std::vector<uint64_t> handles;
     };
 #ifdef _WIN32
-    /// Empty when nothing serves, or on failure.
+    /// For a worker this process hands the sockets to: its plain child, of
+    /// its own account. Empty when nothing serves, or on failure.
     Share shareWith(unsigned long pid, std::string* why);
 #endif
+    /// For a worker this process may not open (one started above it, by the
+    /// launcher service or the elevated task): that worker opens this process
+    /// and copies the sockets out itself, by these numbers
+    /// (streaming/IceMuxHandles). They are no secret and give nothing: only a
+    /// process that may already open this one can use them. Empty when
+    /// nothing serves.
+    Share shareByHandle() const;
 
     struct Counters
     {

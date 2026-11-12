@@ -36,10 +36,18 @@ namespace mw::icemuxclient {
 
 using Emit = std::function<void(const QJsonObject&)>;
 
-/// `mux` is the config line's "iceMux": {"hop": port, "sockets": [base64…]}.
+/// `mux` is the config line's "iceMux". A plain child of the server is handed
+/// the sockets: {"hop": port, "ports": […], "sockets": [base64…]}, one
+/// description each. A worker started above the server (the launcher
+/// service, the elevated task) gets {"hop", "ports", "handles": ["…"]} and
+/// copies them out of the server itself (IceMuxHandles): `serverPid` is the
+/// server this worker's pipes lead to, 0 for a worker that has no such pipes
+/// and so takes none, and `isServer` its check of that process's image.
+///
 /// False (and nothing kept) when it is absent or a socket cannot be opened:
 /// the stream then takes a socket of its own, as without the mux.
-bool configure(const QJsonObject& mux, Emit tell);
+bool configure(const QJsonObject& mux, quint32 serverPid,
+               const std::function<bool(const QString& image)>& isServer, Emit tell);
 bool available();
 
 /// A new ICE agent on the shared sockets: its feed and its credentials, and

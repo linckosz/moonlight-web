@@ -437,31 +437,36 @@ void IceMux::removeAgent(uint32_t feed)
     m_Feeds.erase(feed);
 }
 
+IceMux::Share IceMux::shareByHandle() const
+{
+    Share out;
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    for (const int id : m_Serving) {
+        if (id < 0) continue;
+        const Slot& slot = m_Slots[static_cast<size_t>(id)];
+        out.sockets.push_back(static_cast<uint8_t>(id));
+        out.ports.push_back(slot.port);
+        out.handles.push_back(static_cast<uint64_t>(slot.socket));
+    }
+    return out;
+}
+
 #ifdef _WIN32
 IceMux::Share IceMux::shareWith(unsigned long pid, std::string* why)
 {
-    Share out;
-    std::vector<SOCKET> sockets;
-    {
-        const std::lock_guard<std::mutex> lock(m_PortsLock);
-        for (const int id : m_Serving) {
-            if (id < 0) continue;
-            const Slot& slot = m_Slots[static_cast<size_t>(id)];
-            out.sockets.push_back(static_cast<uint8_t>(id));
-            out.ports.push_back(slot.port);
-            sockets.push_back(static_cast<SOCKET>(slot.socket));
-        }
-    }
+    Share out = shareByHandle();
     // Outside the lock: a socket that serves is closed by stop() alone
-    for (const SOCKET s : sockets) {
+    for (const uint64_t handle : out.handles) {
         WSAPROTOCOL_INFOW info{};
-        if (WSADuplicateSocketW(s, pid, &info) != 0) {
+        if (WSADuplicateSocketW(static_cast<SOCKET>(handle), pid, &info) != 0) {
             if (why) *why = "WSADuplicateSocket failed, error " + std::to_string(lastError());
             return {};
         }
         const auto* bytes = reinterpret_cast<const uint8_t*>(&info);
         out.descriptions.emplace_back(bytes, bytes + sizeof(info));
     }
+    // The worker is handed descriptions, not these
+    out.handles.clear();
     return out;
 }
 #endif
