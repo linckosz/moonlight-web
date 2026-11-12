@@ -149,7 +149,8 @@ public:
     };
 #ifdef _WIN32
     /// For a worker this process hands the sockets to: its plain child, of
-    /// its own account. Empty when nothing serves, or on failure.
+    /// its own account, or a worker it put in the console session on the
+    /// owner's account. Empty when nothing serves, or on failure.
     Share shareWith(unsigned long pid, std::string* why);
 #endif
     /// For a worker this process may not open (one started above it, by the

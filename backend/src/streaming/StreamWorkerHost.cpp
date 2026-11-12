@@ -130,9 +130,11 @@ bool StreamWorkerHost::startAs(const QJsonObject& config, Launch how)
 bool StreamWorkerHost::getsSharedPorts(const QJsonObject& config)
 {
     if (config[QStringLiteral("role")].toString() == QLatin1String("feed")) return false;
-    // The one launch start() and startAs() make as Launch::ConsoleAsUser.
+    // The one launch start() and startAs() make as Launch::ConsoleAsUser:
+    // shared only with the account this installation was made by.
     const bool native = config[QStringLiteral("backendType")].toString() == QLatin1String("native");
-    return !(native && ConsoleSession::launchesElsewhere());
+    if (native && ConsoleSession::launchesElsewhere()) return ConsoleSession::consoleUserIsOwner();
+    return true;
 }
 
 bool StreamWorkerHost::start(const QJsonObject& config)
@@ -232,7 +234,7 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
     // The UDP ports every stream shares, as this child alone can open them:
     // made for its pid, which exists only now. A child that gets none binds a
     // port of its own, as without the mux.
-    m_Proc->write(withSharedSockets(configLine, Launch::Plain, m_Proc->processId()));
+    m_Proc->write(withSharedSockets(configLine, Launch::Plain, false, m_Proc->processId()));
     m_Launch = Launch::Plain;
     qInfo() << "[StreamWorkerHost] Worker spawned, pid=" << m_Proc->processId();
     return true;
@@ -240,22 +242,30 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
 
 // Whose process a worker is decides what it may be given: see muxHandoverFor().
 // A socket in a process of another account is that account's to use.
-static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::ConsoleAsUser) ==
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::ConsoleAsUser, false) ==
                   StreamWorkerHost::MuxHandover::None,
-              "a worker running as the console user must not get the shared sockets");
-static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::Plain) ==
+              "a console worker that is not the owner's must not get the shared sockets");
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::ConsoleAsUser, true) ==
+                  StreamWorkerHost::MuxHandover::Handed,
+              "a console worker on the owner's account is handed the shared sockets");
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::Plain, false) ==
                   StreamWorkerHost::MuxHandover::Handed,
               "a plain child is handed the shared sockets");
 
-QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Launch how, qint64 pid)
+QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Launch how,
+                                               bool ownerAccount, qint64 pid)
 {
     m_MuxSockets.clear();
 #ifdef Q_OS_WIN
-    const MuxHandover handover = muxHandoverFor(how);
-    if (handover == MuxHandover::None) return configLine;
-    const bool workerTakes = handover == MuxHandover::Taken;
     IceMux* mux = IceMux::shared();
     if (!mux || !mux->running() || !mux->healthy()) return configLine;
+    const MuxHandover handover = muxHandoverFor(how, ownerAccount);
+    if (handover == MuxHandover::None) {
+        // Said for each such worker, and without naming anybody.
+        qInfo() << "[IceMux] shared ports: not this account — the worker binds a port of its own";
+        return configLine;
+    }
+    const bool workerTakes = handover == MuxHandover::Taken;
     QJsonObject config = QJsonDocument::fromJson(configLine).object();
     // The guests' shared feed is an engine and a pipe: no browser reaches it.
     if (config[QStringLiteral("role")].toString() == QLatin1String("feed")) return configLine;
@@ -297,6 +307,7 @@ QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Lau
     return QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
 #else
     Q_UNUSED(how);
+    Q_UNUSED(ownerAccount);
     Q_UNUSED(pid);
     return configLine;
 #endif
@@ -372,9 +383,10 @@ bool StreamWorkerHost::startInConsoleSession(const QStringList& args, const QByt
     }
     // The UDP ports every stream shares: a worker started by the service or
     // the task runs above this process, which may not open it, and is told
-    // which to take. One in the console session as the user gets none
+    // which to take. One in the console session is handed them when the
+    // token it was started with is the owner's, and gets none otherwise
     // (muxHandoverFor).
-    line = withSharedSockets(line, how, m_Console->processId());
+    line = withSharedSockets(line, how, m_Console->runsAsOwner(), m_Console->processId());
     m_Console->write(line);
     m_Launch = how;
     qInfo() << "[StreamWorkerHost] Worker spawned"

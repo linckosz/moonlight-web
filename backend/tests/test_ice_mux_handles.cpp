@@ -42,12 +42,19 @@ void whoGetsTheSockets()
     using Launch = StreamWorkerHost::Launch;
     using Handover = StreamWorkerHost::MuxHandover;
     // This process's own account, at its own level: handed
-    CHECK(StreamWorkerHost::muxHandoverFor(Launch::Plain) == Handover::Handed);
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::Plain, false) == Handover::Handed);
     // Above this process, which may not open it: it takes them itself
-    CHECK(StreamWorkerHost::muxHandoverFor(Launch::TaskElevated) == Handover::Taken);
-    CHECK(StreamWorkerHost::muxHandoverFor(Launch::ServiceAsSystem) == Handover::Taken);
-    // The user sitting at the console, who may be another account: none
-    CHECK(StreamWorkerHost::muxHandoverFor(Launch::ConsoleAsUser) == Handover::None);
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::TaskElevated, false) == Handover::Taken);
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::ServiceAsSystem, false) == Handover::Taken);
+    // The user sitting at the console: handed when that is the account the
+    // installation was made by, none for any other account
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::ConsoleAsUser, false) == Handover::None);
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::ConsoleAsUser, true) == Handover::Handed);
+    // The owner's verdict is the console launch's alone: the others are as
+    // they are whatever it says
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::Plain, true) == Handover::Handed);
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::TaskElevated, true) == Handover::Taken);
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::ServiceAsSystem, true) == Handover::Taken);
 }
 
 } // namespace

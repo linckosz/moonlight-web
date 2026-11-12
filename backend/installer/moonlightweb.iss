@@ -1158,6 +1158,27 @@ begin
        ewWaitUntilTerminated, rc);
 end;
 
+// --- The account this installation is made by ------------------------------
+//
+// A server that runs as a service starts its stream worker as whoever sits at
+// the console, and gives that worker what it gives a process of its own
+// account only when the account is the one that installed MoonlightWeb. That
+// account is recorded here, as a SID under VDisplaySetupKey: HKLM, where only
+// an administrator or SYSTEM writes. The exe records it itself, since it
+// knows the account it runs as, and this installer runs it elevated as that
+// account (common/OwnerAccount.cpp). Recorded again on every install a person
+// runs, so a repair sets it. A server that is a service updates itself by
+// running this installer as the system, which is nobody's account: the exe
+// then records nothing, and what was recorded stays. It goes with the key at
+// uninstall.
+procedure RecordOwnerAccount();
+var
+  rc: Integer;
+begin
+  Exec(ExpandConstant('{app}\{#MyAppExe}'), '--owner-record', '', SW_HIDE,
+       ewWaitUntilTerminated, rc);
+end;
+
 // Run the app's own elevated helper for one verb on "MoonlightWeb Virtual
 // Display": `install` creates the driver's device node from the files under
 // {app}\drivers\vdd, named, disabled, and creates none when one is there;
@@ -1558,6 +1579,9 @@ begin
   // And the launcher service above it, which the worker prefers when it is
   // there. Both are kept: the task is the fallback if the service is stopped.
   RegisterWorkerService();
+  // The account this installation is made by, for a server that runs as a
+  // service.
+  RecordOwnerAccount();
   // The policy under which that service may press Ctrl+Alt+Suppr.
   ClaimSasPolicy();
   // "MoonlightWeb Virtual Display" itself: on Accept, and again on every

@@ -39,8 +39,9 @@ namespace mw::icemuxclient {
 
 using Emit = std::function<void(const QJsonObject&)>;
 
-/// `mux` is the config line's "iceMux". A plain child of the server is handed
-/// the sockets: {"hop": port, "ports": […], "sockets": [base64…]}, one
+/// `mux` is the config line's "iceMux". A worker the server hands its sockets
+/// to (its plain child, or one in the console session on the owner's account)
+/// gets {"hop": port, "ports": […], "sockets": [base64…]}, one
 /// description each. A worker started above the server (the launcher
 /// service, the elevated task) gets {"hop", "ports", "handles": ["…"]} and
 /// copies them out of the server itself (IceMuxHandles): `serverPid` is the

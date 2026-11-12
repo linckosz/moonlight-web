@@ -19,6 +19,7 @@
 
 #include "WorkerService.h"
 #include "common/Edition.h"
+#include "common/OwnerAccount.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -71,6 +72,17 @@ QString sessionUserName(DWORD sessionId)
     }
     if (buffer) ::WTSFreeMemory(buffer);
     return name;
+}
+
+/// Whether this very process runs as the account the installation was made
+/// by: the "console user" of a launch forced from a desktop, for testing.
+bool thisProcessIsOwner()
+{
+    HANDLE token = nullptr;
+    if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    const bool owner = mw::owneraccount::isOwner(mw::owneraccount::machineStore(), token);
+    ::CloseHandle(token);
+    return owner;
 }
 
 /// The token a console launch runs under, or null with `info.reason` filled.
@@ -412,6 +424,22 @@ bool launchesElsewhere()
 #endif
 }
 
+bool consoleUserIsOwner()
+{
+#ifdef Q_OS_WIN
+    // Testing from a desktop: the "console user" is ourselves.
+    if (forcedForTesting() && ownSessionId() != 0) return thisProcessIsOwner();
+    Info info;
+    HANDLE token = acquireConsoleToken(info);
+    if (!token) return false;
+    const bool owner = mw::owneraccount::isOwner(mw::owneraccount::machineStore(), token);
+    ::CloseHandle(token);
+    return owner;
+#else
+    return false;
+#endif
+}
+
 Info query()
 {
     Info info;
@@ -599,6 +627,8 @@ struct ConsoleProcess::Impl
     std::atomic<bool> running{false};
     std::mutex writeMutex;
     QString user;
+    /// See runsAsOwner().
+    bool ownerAccount = false;
 };
 
 bool ConsoleSession::startAsConsoleUser(const QString& program, const QStringList& args,
@@ -690,9 +720,12 @@ bool ConsoleProcess::start(const QString& program, const QStringList& args, QStr
         // Testing from a desktop: no token, plain CreateProcess, everything
         // else — pipes, handle list, environment, desktop — exactly as below.
         d->user = QStringLiteral("(this session)");
+        d->ownerAccount = thisProcessIsOwner();
     } else {
         token = acquireConsoleToken(info);
         if (!token) return fail(info.reason);
+        // Whose process the child will be, from the token it is started with.
+        d->ownerAccount = mw::owneraccount::isOwner(mw::owneraccount::machineStore(), token);
         d->user = info.userName +
                   (info.elevated ? QStringLiteral(" (elevated)") : QStringLiteral(" (standard)"));
     }
@@ -1055,4 +1088,9 @@ qint64 ConsoleProcess::processId() const
 QString ConsoleProcess::userName() const
 {
     return d->user;
+}
+
+bool ConsoleProcess::runsAsOwner() const
+{
+    return d->ownerAccount;
 }

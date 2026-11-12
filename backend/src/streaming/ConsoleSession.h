@@ -97,6 +97,14 @@ bool launchesElsewhere();
 /// poll every few seconds.
 Info query();
 
+/// Whether whoever sits at the console right now is the account this
+/// installation was made by (common/OwnerAccount.h): the SID of the token a
+/// console launch would run under, against the one the installer recorded.
+/// False when nobody is there, the token cannot be had, nothing is recorded,
+/// or the two differ. A forecast only: a launch asks again, of its own token
+/// (ConsoleProcess::runsAsOwner).
+bool consoleUserIsOwner();
+
 /// The trigger-less, RunLevel=HighestAvailable scheduled task that starts this
 /// executable as a stream worker with the user's FULL token — the installer
 /// registers it, because only an elevated process may. Per edition and per
@@ -223,6 +231,12 @@ public:
     /// Who the child runs as, once started ("bruno", or "(this session)" when
     /// forced for testing).
     QString userName() const;
+
+    /// Whether the child start() launched runs as the account this installation
+    /// was made by (common/OwnerAccount.h): read off the very token it was
+    /// started with, not off a name. False before start(), and for the two
+    /// launches through a task or the service, which do not ask.
+    bool runsAsOwner() const;
 
 signals:
     void stdoutData(const QByteArray& data);

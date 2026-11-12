@@ -90,17 +90,20 @@ public:
     /// A plain child is this process's own account, at its own level: handed.
     /// A worker of the launcher service or of the elevated task is SYSTEM or
     /// this account elevated, above this process, which may not open it:
-    /// taken. A worker put in the console session as the user sitting there
-    /// gets none: that user may be another account than the one this server
-    /// runs for, and a socket in a process of theirs is theirs to read and to
-    /// send from, whatever the worker itself does with it.
-    static constexpr MuxHandover muxHandoverFor(Launch how)
+    /// taken. A worker put in the console session runs as the user sitting
+    /// there, who may be another account than the one this installation was
+    /// made by, and a socket in a process of theirs is theirs to read and to
+    /// send from, whatever the worker itself does with it. So that worker is
+    /// handed the sockets only when `ownerAccount` says the token it was
+    /// started with is the owner's (ConsoleProcess::runsAsOwner), and gets
+    /// none otherwise. The other launches do not depend on it.
+    static constexpr MuxHandover muxHandoverFor(Launch how, bool ownerAccount)
     {
         switch (how) {
         case Launch::Plain: return MuxHandover::Handed;
         case Launch::TaskElevated:
         case Launch::ServiceAsSystem: return MuxHandover::Taken;
-        case Launch::ConsoleAsUser: break;
+        case Launch::ConsoleAsUser: return ownerAccount ? MuxHandover::Handed : MuxHandover::None;
         }
         return MuxHandover::None;
     }
@@ -108,9 +111,10 @@ public:
     /// Whether a worker started for `config` is one that gets the server's
     /// shared ports when the server has some to give: every one but the
     /// guests' shared feed, which no browser reaches, and a native worker of
-    /// a server that is a service, which goes to the console session as the
-    /// user sitting there (muxHandoverFor). What the server asks itself
-    /// before it decides whether that stream needs a router hole of its own.
+    /// a server that is a service when whoever sits at the console is not
+    /// the account the installation was made by (muxHandoverFor). What the
+    /// server asks itself before it decides whether that stream needs a
+    /// router hole of its own; the launch asks again, of its own token.
     static bool getsSharedPorts(const QJsonObject& config);
 
     /// Spawn the worker and hand it the session config. Returns false when the
@@ -203,11 +207,12 @@ private:
     /// The configuration line with the UDP ports every stream shares added
     /// ("iceMux"), for a worker that streams to a browser while the server
     /// shares ports (network/IceMux), the way muxHandoverFor() says for the
-    /// worker started as `how`: described for its process `pid` alone, or
-    /// named for it to copy out of this process itself. The line as it was
-    /// when the worker gets none, or nothing can be shared: it binds a port
-    /// of its own.
-    QByteArray withSharedSockets(const QByteArray& configLine, Launch how, qint64 pid);
+    /// worker started as `how`, on the owner's account or not: described for
+    /// its process `pid` alone, or named for it to copy out of this process
+    /// itself. The line as it was when the worker gets none, or nothing can
+    /// be shared: it binds a port of its own.
+    QByteArray withSharedSockets(const QByteArray& configLine, Launch how, bool ownerAccount,
+                                 qint64 pid);
     void onStdoutData(const QByteArray& data);
     void onStderrData(const QByteArray& data);
     void onStdout();

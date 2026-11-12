@@ -134,6 +134,7 @@
 #include "server/HostAppImage.h"
 #include "server/HostAppLauncher.h"
 #include "server/LauncherDetect.h"
+#include "common/OwnerAccount.h"
 #include "network/AddressRace.h"
 #include "network/IceMux.h"
 #include "network/IceMuxPorts.h"
@@ -1881,7 +1882,7 @@ int main(int argc, char* argv[])
                 for (const char* flag :
                      {"--native-bench", "--status", "--new-pin", "--set-admin-password",
                       "--clear-admin-password", "--enable-internet", "--update-apply",
-                      "--open-on-desktop"}) {
+                      "--open-on-desktop", "--owner-record"}) {
                     const size_t n = qstrlen(flag);
                     if (qstrncmp(argv[i], flag, int(n)) == 0 &&
                         (argv[i][n] == '\0' || argv[i][n] == '='))
@@ -2039,6 +2040,10 @@ int main(int argc, char* argv[])
         "worker-service-remove", "Internal: remove the stream-worker launcher service");
     workerServiceRemoveOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(workerServiceRemoveOption);
+    QCommandLineOption ownerRecordOption(
+        "owner-record", "Internal: record the account this installation is made by");
+    ownerRecordOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(ownerRecordOption);
 
     // Headless operator commands: query / configure the RUNNING instance from a
     // terminal, then exit. No server is started and no lock is taken.
@@ -2284,6 +2289,14 @@ int main(int argc, char* argv[])
     if (parser.isSet(workerServiceOption)) return WorkerService::runService();
     if (parser.isSet(workerServiceInstallOption)) return WorkerService::installService();
     if (parser.isSet(workerServiceRemoveOption)) return WorkerService::removeService();
+    // The installer's as well, elevated, as the account that installs: the one
+    // a server run as a service treats as its own (common/OwnerAccount.h).
+    if (parser.isSet(ownerRecordOption)) {
+        QString why;
+        if (mw::owneraccount::record(mw::owneraccount::machineStore(), &why)) return 0;
+        std::fprintf(stderr, "The owner's account is not recorded: %s\n", qPrintable(why));
+        return 1;
+    }
 
     // ── Stream-worker child process ─────────────────────────────────────────
     // Branch BEFORE the single-instance lock (the worker is a deliberate second

@@ -154,6 +154,7 @@ bool stdoutIsPayload(int argc, char** argv)
                                          "--worker-service",
                                          "--worker-service-install",
                                          "--worker-service-remove",
+                                         "--owner-record",
                                          "--native-probe",
                                          "--vdisplay-apply",
                                          "--vdisplay-guard",

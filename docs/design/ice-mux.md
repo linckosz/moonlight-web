@@ -60,11 +60,26 @@ It depends on whose process the worker is, which the way it is started says
   The server hands the sockets over: it makes a description of each for that
   process alone (`WSADuplicateSocket`), and the descriptions travel in the
   config line.
-- **A worker the service puts in the console session as the user sitting
-  there** gets none, and binds a port of its own. That user may be another
-  account than the one the server runs for, and a socket in a process of
-  theirs is theirs to read and to send from, whatever the worker itself does
-  with it.
+- **A worker a server that is a service puts in the console session** runs as
+  the user sitting there. That user may be another account than the one the
+  installation was made by, and a socket in a process of theirs is theirs to
+  read and to send from, whatever the worker itself does with it. So such a
+  worker is handed the sockets, like a plain child, only when the token it is
+  started with is the owner's; any other account gets none, and binds a port
+  of its own. « The owner » is a SID, never a name: the installer, elevated,
+  has the executable record the account it runs as under
+  `HKLM\SOFTWARE\<product>\Setup` (`OwnerSid`), where only an administrator or
+  SYSTEM writes (`common/OwnerAccount`). The server compares it, at each
+  launch, with the account of the very token the worker gets. With nothing
+  recorded the answer is no: an installation made before this record shares
+  with no console worker until its owner runs the installer again (an install
+  over it, a repair). An installer the system itself runs records nothing and
+  keeps what is recorded: that is how a server that is a service updates
+  itself, and the system's own accounts are never the owner. No guess is made
+  from who logs on, and a SID is never given to a second account: once the
+  owner's account is deleted nobody matches, until an administrator installs
+  again or repairs. A stream that runs is not moved: a change of user at the
+  console matters for the next launch.
 - **A worker above the server** (started by the launcher service as SYSTEM, or
   by the elevated task). The server may not open such a process, so it cannot
   hand it anything, and it gains no right over it. It tells the worker, in the
@@ -202,8 +217,8 @@ mux:
 - no port of the stream block can be bound when the server starts;
 - a port that serves keeps failing to read (the reading thread leaves it alone,
   tries it again every second and says so once): streams that start meanwhile;
-- the worker runs in the console session as the user sitting there (started by
-  a server that is a service);
+- the worker runs in the console session (started by a server that is a
+  service) as another account than the one the installation was made by;
 - the sockets cannot be handed to the worker, or the worker cannot open them or
   make its feed;
 - a connection that also needs TCP (the TCP rungs keep their own socket, which
