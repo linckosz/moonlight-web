@@ -43,7 +43,12 @@ them, and every worker's agent uses them.
 - **libjuice** (`third_party/patches/libjuice-ice-mux.patch`). An agent in poll
   mode can be given such sockets (`juice_set_shared_sockets`): it sends on the
   shared ones, reads the feed, and treats each (peer address, shared socket) as
-  a pair of its own, the first socket preferred.
+  a pair of its own, the first socket preferred. A datagram's class (its
+  Differentiated Services byte) goes with the datagram, as ancillary data: a
+  shared socket is one socket for every worker, and its own class would be
+  whichever of them set it last, so it is never set. The class is the one the
+  worker's own tracks ask for, nothing a peer sent. Where the system refuses
+  a class for one datagram, what leaves by the shared ports leaves unmarked.
 - **libdatachannel** (`third_party/patches/libdatachannel-ice-mux.patch`).
   `rtc::Configuration::iceSharedSockets` carries the sockets and the
   credentials to the agent.
@@ -236,7 +241,6 @@ mux:
 - Without a hole, the public address of the block port: an agent asks the STUN
   server from its first shared port only.
 - TCP on the shared ports, and TCP 443.
-- Per-packet DSCP: the class is kept per shared socket.
 - A switch in the environment serves the latency bench and nothing else:
   `MW_ICEMUX_STATS=1` (every ten seconds the server logs its counters and its
   CPU time, and each worker the delay between the server's read of a datagram

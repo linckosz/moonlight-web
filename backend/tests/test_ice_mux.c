@@ -520,18 +520,18 @@ static void test_both_ports(bool announced) {
 	CHECK(atomic_load(&timestamps) > 0 && !atomic_load(&timestamp_zero));
 	juice_set_feed_timestamp_handler(NULL);
 
-#ifndef _WIN32
-	// A class asked for a datagram is set on the socket the session runs on, and on that one
-	// only (Windows takes it with another patch, which a test tree may not have)
+	// A datagram that has a class arrives, and its class is left on no shared socket: agents
+	// of other processes send there too (the class itself is read back further down, in
+	// test_class_per_datagram())
 	CHECK(juice_send_diffserv(host.agent, "ef", 2, 0xB8) == 0);
+	CHECK(got(&peer, 2, "ef", 2000));
 	int tos[PORTS];
 	for (int via = 0; via < PORTS; ++via) {
 		socklen_t tos_len = sizeof(tos[via]);
 		tos[via] = -1;
 		getsockopt(h.port_sock[via], IPPROTO_IP, IP_TOS, (char *)&tos[via], &tos_len);
 	}
-	CHECK(tos[0] == 0xB8 && tos[1] == 0);
-#endif
+	CHECK(tos[0] == 0 && tos[1] == 0);
 
 	// The agent never reads the shared sockets: every datagram that comes in on a port is the
 	// holder's to read, here 100 on each from a stranger
@@ -654,6 +654,230 @@ static void test_two_hosts(void) {
 	holder_stop(&h);
 }
 
+// ── The class of a datagram ─────────────────────────────────────────────────
+//
+// Agents of several processes send on one shared socket, each datagram with a
+// class of its own (conn_poll_send_shared()). The receivers here ask for the
+// class of what they get, so each one is read back: what the send returned is
+// not taken for it.
+
+#ifdef _WIN32
+#include <mswsock.h>
+#define E_INVAL WSAEINVAL
+#define E_NOPROTOOPT WSAENOPROTOOPT
+#define E_OPNOTSUPP WSAEOPNOTSUPP
+#define E_NOBUFS WSAENOBUFS
+#define E_UNREACH WSAEHOSTUNREACH
+#else
+#define E_INVAL EINVAL
+#define E_NOPROTOOPT ENOPROTOOPT
+#define E_OPNOTSUPP EOPNOTSUPP
+#define E_NOBUFS ENOBUFS
+#define E_UNREACH EHOSTUNREACH
+#endif
+
+enum { CLASS_NOTHING = -1, CLASS_UNSAID = -2 };
+
+// The class of the next datagram on `sock`: CLASS_NOTHING when none comes,
+// CLASS_UNSAID when it comes without one.
+static int read_class(socket_t sock, bool v6) {
+	fd_set readable;
+	FD_ZERO(&readable);
+	FD_SET(sock, &readable);
+	struct timeval wait = {2, 0};
+	if (select((int)sock + 1, &readable, NULL, NULL, &wait) <= 0)
+		return CLASS_NOTHING;
+	char data[64];
+	union {
+#ifdef _WIN32
+		WSACMSGHDR header;
+#else
+		struct cmsghdr header;
+#endif
+		char space[256];
+	} control;
+	memset(&control, 0, sizeof(control));
+#ifdef _WIN32
+	GUID id = WSAID_WSARECVMSG;
+	LPFN_WSARECVMSG recv_msg = NULL;
+	DWORD got = 0;
+	if (WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &id, sizeof(id), &recv_msg,
+	             sizeof(recv_msg), &got, NULL, NULL) != 0 ||
+	    !recv_msg)
+		return CLASS_NOTHING;
+	struct sockaddr_storage from;
+	WSABUF buf;
+	buf.buf = data;
+	buf.len = (ULONG)sizeof(data);
+	WSAMSG msg;
+	memset(&msg, 0, sizeof(msg));
+	msg.name = (LPSOCKADDR)&from;
+	msg.namelen = (INT)sizeof(from);
+	msg.lpBuffers = &buf;
+	msg.dwBufferCount = 1;
+	msg.Control.buf = control.space;
+	msg.Control.len = (ULONG)sizeof(control.space);
+	if (recv_msg(sock, &msg, &got, NULL, NULL) != 0)
+		return CLASS_NOTHING;
+	for (WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&msg); c; c = WSA_CMSG_NXTHDR(&msg, c)) {
+		bool mine = v6 ? c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_TCLASS
+		               : c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_TOS;
+		if (!mine)
+			continue;
+		int value = 0;
+		size_t len = c->cmsg_len - WSA_CMSG_LEN(0);
+		memcpy(&value, WSA_CMSG_DATA(c), len < sizeof(value) ? len : sizeof(value));
+		return value & 0xFF;
+	}
+#else
+	struct iovec iov = {data, sizeof(data)};
+	struct msghdr msg;
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = control.space;
+	msg.msg_controllen = sizeof(control.space);
+	if (recvmsg(sock, &msg, 0) < 0)
+		return CLASS_NOTHING;
+	for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c; c = CMSG_NXTHDR(&msg, c)) {
+		bool mine = v6 ? c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_TCLASS
+		               : c->cmsg_level == IPPROTO_IP &&
+		                     (c->cmsg_type == IP_TOS || c->cmsg_type == IP_RECVTOS);
+		if (!mine)
+			continue;
+		// One byte for IPv4 on Linux and macOS, an int for IPv6
+		int value = 0;
+		size_t len = c->cmsg_len - CMSG_LEN(0);
+		if (len >= sizeof(int))
+			memcpy(&value, CMSG_DATA(c), sizeof(int));
+		else
+			value = *(const unsigned char *)CMSG_DATA(c);
+		return value & 0xFF;
+	}
+#endif
+	return CLASS_UNSAID;
+}
+
+// A receiver on the loopback of one family that asks for the class of what
+// it gets, and how an agent names it. INVALID_SOCKET when the family is not
+// there.
+static socket_t class_receiver(bool v6, addr_record_t *dst) {
+	socket_t sock = socket(v6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sock == INVALID_SOCKET)
+		return INVALID_SOCKET;
+	memset(dst, 0, sizeof(*dst));
+	dst->socktype = SOCK_DGRAM;
+	int on = 1;
+	if (v6) {
+		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&dst->addr;
+		sin6->sin6_family = AF_INET6;
+		sin6->sin6_addr.s6_addr[15] = 1;
+		dst->len = sizeof(*sin6);
+		setsockopt(sock, IPPROTO_IPV6, IPV6_RECVTCLASS, (const char *)&on, sizeof(on));
+	} else {
+		struct sockaddr_in *sin = (struct sockaddr_in *)&dst->addr;
+		sin->sin_family = AF_INET;
+		sin->sin_addr.s_addr = htonl(0x7F000001);
+		dst->len = sizeof(*sin);
+		setsockopt(sock, IPPROTO_IP, IP_RECVTOS, (const char *)&on, sizeof(on));
+	}
+	if (bind(sock, (struct sockaddr *)&dst->addr, dst->len) != 0 ||
+	    getsockname(sock, (struct sockaddr *)&dst->addr, &dst->len) != 0) {
+		closesocket(sock);
+		return INVALID_SOCKET;
+	}
+	return sock;
+}
+
+static void test_class_per_datagram(void) {
+	printf("ice-mux: a datagram of a shared socket carries its own class\n");
+	// What turns the class off for a socket, and what does not
+	CHECK(conn_poll_class_refused(E_INVAL));
+	CHECK(conn_poll_class_refused(E_NOPROTOOPT));
+	CHECK(conn_poll_class_refused(E_OPNOTSUPP));
+	CHECK(!conn_poll_class_refused(SEWOULDBLOCK));
+	CHECK(!conn_poll_class_refused(SEAGAIN));
+	CHECK(!conn_poll_class_refused(SEMSGSIZE));
+	CHECK(!conn_poll_class_refused(E_NOBUFS));
+	CHECK(!conn_poll_class_refused(E_UNREACH));
+	CHECK(!conn_poll_class_refused(0));
+
+	// The shared socket, as the holder binds it: IPv6, IPv4 too
+	socket_t shared = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+	int off = 0;
+	setsockopt(shared, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&off, sizeof(off));
+	struct sockaddr_in6 any;
+	memset(&any, 0, sizeof(any));
+	any.sin6_family = AF_INET6;
+	CHECK(shared != INVALID_SOCKET &&
+	      bind(shared, (struct sockaddr *)&any, sizeof(any)) == 0);
+
+	static char big[70000]; // more than a datagram holds
+	for (int family = 4; family <= 6; family += 2) {
+		const bool v6 = family == 6;
+		addr_record_t dst;
+		socket_t receiver = class_receiver(v6, &dst);
+		if (receiver == INVALID_SOCKET) {
+			printf("  (no IPv%d loopback here: not tried)\n", family);
+			continue;
+		}
+		printf("  to an IPv%d peer\n", family);
+		// Two agents, each with its own memory of the socket
+		int mine = 0, theirs = 0;
+		CHECK(conn_poll_send_shared(shared, 0, &mine, "p", 1, &dst, 0) == 1);
+		CHECK(read_class(receiver, v6) == 0);
+		CHECK(conn_poll_send_shared(shared, 0, &mine, "e", 1, &dst, 0xB8) == 1);
+		const int first = read_class(receiver, v6);
+		// Never another class than the one asked: at worst none
+		CHECK(first == 0xB8 || first == 0);
+		if (mine < 0 || first != 0xB8) {
+			printf("  (this system %s a class for one datagram: the rest is not tried)\n",
+			       mine < 0 ? "refuses" : "ignores");
+			closesocket(receiver);
+			continue;
+		}
+		// The other agent's class is its own, and each keeps its own after
+		CHECK(conn_poll_send_shared(shared, 0, &theirs, "v", 1, &dst, 0x88) == 1);
+		CHECK(read_class(receiver, v6) == 0x88);
+		CHECK(conn_poll_send_shared(shared, 0, &mine, "e", 1, &dst, 0xB8) == 1);
+		CHECK(read_class(receiver, v6) == 0xB8);
+		// A datagram without a class has none, whatever went before it
+		CHECK(conn_poll_send_shared(shared, 0, &theirs, "p", 1, &dst, 0) == 1);
+		CHECK(read_class(receiver, v6) == 0);
+		CHECK(conn_poll_send_shared(shared, 0, &mine, "b", 1, &dst, 0x28) == 1);
+		CHECK(read_class(receiver, v6) == 0x28);
+		// The class is one byte
+		CHECK(conn_poll_send_shared(shared, 0, &mine, "e", 1, &dst, 0x1B8) == 1);
+		CHECK(read_class(receiver, v6) == 0xB8);
+		CHECK(conn_poll_send_shared(shared, 0, &mine, "p", 1, &dst, 0x100) == 1);
+		CHECK(read_class(receiver, v6) == 0);
+		// A datagram's own error is not the system's refusal: the class stays on
+		const int ret = conn_poll_send_shared(shared, 0, &mine, big, sizeof(big), &dst, 0xB8);
+		const int err = sockerrno;
+		CHECK(ret < 0);
+		CHECK(!conn_poll_class_refused(err));
+		CHECK(mine == 0 && theirs == 0);
+		CHECK(conn_poll_send_shared(shared, 0, &mine, "e", 1, &dst, 0xB8) == 1);
+		CHECK(read_class(receiver, v6) == 0xB8);
+		// Once the system has refused, no class is asked on that socket
+		int refused = -1;
+		CHECK(conn_poll_send_shared(shared, 0, &refused, "e", 1, &dst, 0xB8) == 1);
+		CHECK(read_class(receiver, v6) == 0);
+		CHECK(refused == -1);
+		closesocket(receiver);
+	}
+	// The socket's own class was never set: the next agent finds none
+	int value = -1;
+	socklen_t len = sizeof(value);
+	if (getsockopt(shared, IPPROTO_IPV6, IPV6_TCLASS, (char *)&value, &len) == 0)
+		CHECK(value == 0);
+	value = -1;
+	len = sizeof(value);
+	if (getsockopt(shared, IPPROTO_IP, IP_TOS, (char *)&value, &len) == 0)
+		CHECK(value == 0);
+	closesocket(shared);
+}
+
 int ice_mux_tests(void) {
 	test_header();
 	test_via_is_part_of_an_address();
@@ -665,5 +889,6 @@ int ice_mux_tests(void) {
 	test_one_port_blocked(1, true);
 	test_first_port_late();
 	test_two_hosts();
+	test_class_per_datagram();
 	return failures;
 }

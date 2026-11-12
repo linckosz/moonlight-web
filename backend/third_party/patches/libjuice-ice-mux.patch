@@ -241,7 +241,7 @@ index 1bd47b0..06de622 100644
  
  #endif
 diff --git a/src/conn_poll.c b/src/conn_poll.c
-index beeeee7..e85f556 100644
+index beeeee7..be3c0fe 100644
 --- a/src/conn_poll.c
 +++ b/src/conn_poll.c
 @@ -79,6 +79,12 @@ typedef struct conn_impl {
@@ -328,38 +328,141 @@ index beeeee7..e85f556 100644
  	tcp_passive_close(conn_impl);
  	if (conn_impl->tcp_passive && conn_impl->tcp_sock != INVALID_SOCKET) {
  		// Reset rather than leave our end of it in TIME_WAIT: the next session's listener binds
-@@ -750,15 +770,25 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
+@@ -716,6 +736,118 @@ int conn_poll_interrupt(juice_agent_t *agent) {
+ 	return 0;
+ }
+ 
++// MoonlightWeb patch: the class of one datagram (its Differentiated Services byte) on a shared
++// socket. Agents of several processes send on such a socket: its own class (udp_set_diffserv())
++// would be whichever of them set it last. So the socket's is never set, and a datagram that has a
++// class carries it itself, as ancillary data. Windows documents that for ECN only: where the
++// system refuses it, the datagrams of a shared socket leave unmarked.
++
++// Whether a send error says "no class for one datagram here", and nothing else. Any other is
++// the datagram's own, as for a plain send (the buffer is full, it is too large, no route).
++bool conn_poll_class_refused(int err) {
++#ifdef _WIN32
++	return err == WSAEINVAL || err == WSAENOPROTOOPT || err == WSAEOPNOTSUPP;
++#else
++	return err == EINVAL || err == ENOPROTOOPT || err == EOPNOTSUPP;
++#endif
++}
++
++static int sendto_with_class(socket_t sock, const char *data, size_t size, const addr_record_t *dst,
++                             int ds) {
++	// Which class it is, IPv4's or IPv6's, is said by the address the datagram really goes to:
++	// an IPv4 peer of an IPv6 socket is reached IPv4-mapped (as in udp_sendto()), and is IPv4.
++	addr_record_t tmp = *dst;
++	addr_record_t name;
++	name.len = sizeof(name.addr);
++	bool inet6_sock = getsockname(sock, (struct sockaddr *)&name.addr, &name.len) == 0 &&
++	                  name.addr.ss_family == AF_INET6;
++	bool tos = tmp.addr.ss_family == AF_INET;
++	if (tmp.addr.ss_family == AF_INET6)
++		tos = IN6_IS_ADDR_V4MAPPED(&((const struct sockaddr_in6 *)&tmp.addr)->sin6_addr);
++#ifndef __linux__
++	if (inet6_sock)
++		addr_map_inet6_v4mapped(&tmp.addr, &tmp.len);
++#endif
++#ifdef __APPLE__
++	// macOS refuses IP_TOS on a dual-stack socket: an IPv4-mapped peer takes the IPv6 class
++	if (inet6_sock)
++		tos = false;
++#endif
++	(void)inet6_sock;
++	int value = ds & 0xFF;
++
++#ifdef _WIN32
++	union {
++		WSACMSGHDR header; // for the alignment
++		char space[WSA_CMSG_SPACE(sizeof(int))];
++	} control;
++	memset(&control, 0, sizeof(control));
++	WSABUF buf;
++	buf.buf = (char *)data;
++	buf.len = (ULONG)size;
++	WSAMSG msg;
++	memset(&msg, 0, sizeof(msg));
++	msg.name = (LPSOCKADDR)&tmp.addr;
++	msg.namelen = (INT)tmp.len;
++	msg.lpBuffers = &buf;
++	msg.dwBufferCount = 1;
++	msg.Control.buf = control.space;
++	msg.Control.len = (ULONG)WSA_CMSG_SPACE(sizeof(int));
++	WSACMSGHDR *cmsg = WSA_CMSG_FIRSTHDR(&msg);
++	cmsg->cmsg_level = tos ? IPPROTO_IP : IPPROTO_IPV6;
++	cmsg->cmsg_type = tos ? IP_TOS : IPV6_TCLASS;
++	cmsg->cmsg_len = WSA_CMSG_LEN(sizeof(int));
++	memcpy(WSA_CMSG_DATA(cmsg), &value, sizeof(value));
++	DWORD sent = 0;
++	if (WSASendMsg(sock, &msg, 0, &sent, NULL, NULL) != 0)
++		return -1;
++	return (int)sent;
++#else
++	union {
++		struct cmsghdr header; // for the alignment
++		char space[CMSG_SPACE(sizeof(int))];
++	} control;
++	memset(&control, 0, sizeof(control));
++	struct iovec iov;
++	iov.iov_base = (void *)data;
++	iov.iov_len = size;
++	struct msghdr msg;
++	memset(&msg, 0, sizeof(msg));
++	msg.msg_name = (void *)&tmp.addr;
++	msg.msg_namelen = tmp.len;
++	msg.msg_iov = &iov;
++	msg.msg_iovlen = 1;
++	msg.msg_control = control.space;
++	msg.msg_controllen = CMSG_SPACE(sizeof(int));
++	struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
++	cmsg->cmsg_level = tos ? IPPROTO_IP : IPPROTO_IPV6;
++	cmsg->cmsg_type = tos ? IP_TOS : IPV6_TCLASS;
++	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
++	memcpy(CMSG_DATA(cmsg), &value, sizeof(value));
++	return (int)sendmsg(sock, &msg, 0);
++#endif
++}
++
++int conn_poll_send_shared(socket_t sock, int via, int *class_state, const char *data, size_t size,
++                          const addr_record_t *dst, int ds) {
++	// No class asked, or none to be had: a plain send. Nobody sets a class on a shared socket.
++	if ((ds & 0xFF) == 0 || *class_state < 0)
++		return udp_sendto(sock, data, size, dst);
++
++	int ret = sendto_with_class(sock, data, size, dst, ds);
++	if (ret >= 0)
++		return ret;
++	int err = sockerrno;
++	if (!conn_poll_class_refused(err))
++		return ret; // the datagram's own error, sockerrno still says which
++
++	*class_state = -1;
++	JLOG_INFO("No class for one datagram on shared socket %d, errno=%d: its datagrams leave "
++	          "unmarked",
++	          via, err);
++	return udp_sendto(sock, data, size, dst);
++}
++
+ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *data, size_t size,
+                    int ds) {
+ 	conn_impl_t *conn_impl = agent->conn_impl;
+@@ -749,6 +881,14 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
+ 			// MoonlightWeb patch: the queue is full, drop
  			ret = -SEAGAIN;
  		}
++	} else if (conn_impl->shared_count > 0) {
++		// MoonlightWeb patch: on shared sockets, the one the destination is reached through.
++		// The class goes with the datagram, never on the socket: conn_poll_send_shared()
++		int via = dst->via >= 0 && dst->via < conn_impl->shared_count ? dst->via : 0;
++		ret = conn_poll_send_shared(conn_impl->shared_send[via], via, conn_impl->shared_ds + via,
++		                            data, size, dst, ds);
++		if (ret < 0)
++			ret = -sockerrno;
  	} else {
--		if (conn_impl->send_ds >= 0 && conn_impl->send_ds != ds) {
-+		// MoonlightWeb patch: on shared sockets, the one the destination is reached through,
-+		// with a class of its own to remember
-+		socket_t sock = conn_impl->udp_sock;
-+		int *send_ds = &conn_impl->send_ds;
-+		if (conn_impl->shared_count > 0) {
-+			int via = dst->via >= 0 && dst->via < conn_impl->shared_count ? dst->via : 0;
-+			sock = conn_impl->shared_send[via];
-+			send_ds = conn_impl->shared_ds + via;
-+		}
-+
-+		if (*send_ds >= 0 && *send_ds != ds) {
+ 		if (conn_impl->send_ds >= 0 && conn_impl->send_ds != ds) {
  			JLOG_VERBOSE("Setting Differentiated Services field to 0x%X", ds);
--			if (udp_set_diffserv(conn_impl->udp_sock, ds) == 0)
--				conn_impl->send_ds = ds;
-+			if (udp_set_diffserv(sock, ds) == 0)
-+				*send_ds = ds;
- 			else
--				conn_impl->send_ds = -1; // disable for next time
-+				*send_ds = -1; // disable for next time
- 		}
- 
--		ret = udp_sendto(conn_impl->udp_sock, data, size, dst);
-+		ret = udp_sendto(sock, data, size, dst);
- 		if (ret < 0)
- 			ret = -sockerrno;
- 	}
-@@ -1159,5 +1189,169 @@ static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfd
+@@ -1159,5 +1299,169 @@ static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfd
  int conn_poll_get_addrs(juice_agent_t *agent, addr_record_t *records, size_t size) {
  	conn_impl_t *conn_impl = agent->conn_impl;
  
@@ -530,15 +633,22 @@ index beeeee7..e85f556 100644
 +	}
 +}
 diff --git a/src/conn_poll.h b/src/conn_poll.h
-index ae786e6..58e9406 100644
+index ae786e6..05427cb 100644
 --- a/src/conn_poll.h
 +++ b/src/conn_poll.h
-@@ -30,5 +30,7 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
+@@ -30,5 +30,14 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
  void conn_poll_tcp_connect(juice_agent_t *agent, const addr_record_t *dst);
  bool conn_poll_tcp_listening(juice_agent_t *agent);
  int conn_poll_get_addrs(juice_agent_t *agent, addr_record_t *records, size_t size);
 +int conn_poll_feed_read_header(const char *buffer, size_t size, int via_count, addr_record_t *src,
 +                               uint64_t *timestamp); // MoonlightWeb patch
++// MoonlightWeb patch: one datagram on a shared socket, its class (`ds`) as ancillary data rather
++// than as the socket's own. *class_state is the caller's memory for that socket: 0 at first,
++// below 0 once the system has refused a class for one datagram, after which none is asked.
++// Returns like udp_sendto(). Declared here for the tests.
++int conn_poll_send_shared(socket_t sock, int via, int *class_state, const char *data, size_t size,
++                          const addr_record_t *dst, int ds);
++bool conn_poll_class_refused(int err);
  
  #endif
 diff --git a/src/ice.c b/src/ice.c
