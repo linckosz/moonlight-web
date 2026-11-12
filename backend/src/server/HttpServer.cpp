@@ -24,6 +24,7 @@
 #include "StaticFileHandler.h"
 #include "server/AuthManager.h"
 #include "server/HomeScreenShell.h"
+#include "server/LocalChannel.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
@@ -1207,8 +1208,18 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         return;
     }
 
-    const bool peerLocal = !viaTunnel && isLocalRequest(req.clientAddress);
-    const QString sessionToken = sessionTokenFromRequest(req);
+    // The local channel: a program of this install asked, through a door of
+    // this machine. It reaches the routes named for it and no other — not a
+    // page, not a stream, not a session — and it carries no cookie: whatever
+    // such a request holds, none is read.
+    const bool viaLocal = (arrival == Arrival::Local);
+    if (viaLocal && !RequestGuard::localChannelRoute(req.method, req.path)) {
+        respond(HttpResponse::error(404, "Not Found"));
+        return;
+    }
+
+    const bool peerLocal = arrival == Arrival::Socket && isLocalRequest(req.clientAddress);
+    const QString sessionToken = viaLocal ? QString() : sessionTokenFromRequest(req);
 
     // The single exception, computed once so the two lines below cannot drift
     // apart: a host session that was itself created on this path, by redeeming
@@ -1232,6 +1243,7 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     ctx.adminKeyOk = (!viaTunnel || tunnelHost || ctx.adminSession) && adminKeyMatches(req);
     ctx.publicDomain = m_Certs.domain();
     ctx.adminLocked = m_AdminLocked;
+    ctx.localChannel = viaLocal;
 
     const RequestGuard::Decision decision =
         RequestGuard::evaluate(RequestGuard::describe(req), ctx);
@@ -1501,6 +1513,15 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         if (!out.headers.contains("Cache-Control")) out.headers["Cache-Control"] = "no-store";
         respond(out);
     });
+}
+
+void HttpServer::serveLocal(const mw::localchannel::Request& request,
+                            std::function<void(const mw::localchannel::Reply&)> respond)
+{
+    serveRequest(mw::localchannel::httpRequestFor(request), Arrival::Local,
+                 [respond = std::move(respond)](const HttpResponse& response) {
+                     respond(mw::localchannel::replyFor(response));
+                 });
 }
 
 void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData)

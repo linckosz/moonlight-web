@@ -120,6 +120,10 @@ struct Context
     bool adminKeyOk = false;   ///< request carries the current admin key
     bool adminLocked = false;  ///< launched with --noadmin: nobody administers
     QString publicDomain;      ///< the domain we answer to, "" when none
+    /// The request came over the local channel (HttpServer::Arrival::Local),
+    /// from a program of this install on this machine. Set by the code that
+    /// reads that channel and by nothing a request carries.
+    bool localChannel = false;
 };
 
 enum class Outcome
@@ -140,6 +144,13 @@ struct Decision
 };
 
 Decision evaluate(const Request& req, const Context& ctx);
+
+/// Whether a request that came over the local channel may be routed at all:
+/// what the tray icon, the command line and a second launch ask of the running
+/// server, each with its verb, and nothing else. An allow-list, so a route
+/// added later stays off this channel until it is named here. Streams, pairing
+/// and sessions have no business on it.
+bool localChannelRoute(const QString& method, const QString& path);
 
 /// The HTTP status a refused outcome must be answered with, 0 for Allow. Here
 /// rather than at the call site so the status is part of the tested contract.

@@ -615,6 +615,123 @@ void run_request_guard_tests()
     CHECK(lockedByNoAdmin("POST", "/api/update/start", true));
     CHECK(lockedByNoAdmin("POST", "/api/system/restart", true));
 
+    SECTION("RequestGuard — the local channel is the host machine by its door, not by a name");
+
+    {
+        // What the channel hands over: no Host, no cookie, no address that is
+        // this machine's, no admin key. It is the host machine and may
+        // administer, writes included.
+        Request r;
+        r.method = "POST";
+        r.path = "/api/admin/pin/generate";
+        r.headers = hdr({{"content-type", "application/json"}});
+        r.bodySize = 2;
+        Context c;
+        c.localChannel = true;
+        const Decision d = evaluate(r, c);
+        CHECK(d.outcome == Outcome::Allow);
+        CHECK(d.localPrivilege);
+        CHECK(d.hostMachine);
+        CHECK(d.adminPrivilege);
+        CHECK(!d.hostUntrusted);
+
+        // The witness: the same request without the channel is nobody's.
+        Context plain;
+        const Decision without = evaluate(r, plain);
+        CHECK(without.outcome == Outcome::Allow);
+        CHECK(!without.localPrivilege);
+        CHECK(!without.hostMachine);
+        CHECK(!without.adminPrivilege);
+
+        // Nothing a request carries moves it either way: a foreign Host, a
+        // forwarding header. Its privilege is the channel's alone.
+        r.headers = hdr({{"content-type", "application/json"},
+                         {"host", "evil.example"},
+                         {"x-forwarded-for", "203.0.113.7"}});
+        const Decision odd = evaluate(r, c);
+        CHECK(odd.hostMachine);
+        CHECK(odd.adminPrivilege);
+        CHECK(!odd.hostUntrusted);
+
+        // --noadmin: still the host machine, and nobody administers.
+        Context booth;
+        booth.localChannel = true;
+        booth.adminLocked = true;
+        const Decision locked = evaluate(r, booth);
+        CHECK(locked.hostMachine);
+        CHECK(!locked.adminPrivilege);
+        r.method = "GET";
+        CHECK(!evaluate(r, booth).adminPrivilege);
+
+        // The two checks every request goes through are kept as they are: a
+        // body is JSON and says so, and another site's page is refused.
+        Request untyped;
+        untyped.method = "POST";
+        untyped.path = "/api/admin/pin/generate";
+        untyped.bodySize = 2;
+        CHECK(evaluate(untyped, c).outcome == Outcome::BlockContentType);
+        Request crossSite;
+        crossSite.method = "GET";
+        crossSite.path = "/api/server/status";
+        crossSite.headers = hdr({{"sec-fetch-site", "cross-site"}});
+        const Decision refused = evaluate(crossSite, c);
+        CHECK(refused.outcome == Outcome::BlockCrossSite);
+        CHECK(!refused.hostMachine);
+        CHECK(!refused.adminPrivilege);
+    }
+
+    // What may be asked over the channel: the routes of the tray icon, the
+    // command line and a second launch, each with its verb.
+    CHECK(localChannelRoute("GET", "/api/health"));
+    CHECK(localChannelRoute("GET", "/api/server/status"));
+    CHECK(localChannelRoute("GET", "/api/server/remote-link"));
+    CHECK(localChannelRoute("GET", "/api/server/stream-activity"));
+    CHECK(localChannelRoute("GET", "/api/setup/status"));
+    CHECK(localChannelRoute("GET", "/api/auth/status"));
+    CHECK(localChannelRoute("GET", "/api/internet/status"));
+    CHECK(localChannelRoute("GET", "/api/internet/upnp-probe"));
+    CHECK(localChannelRoute("POST", "/api/internet/enable"));
+    CHECK(localChannelRoute("GET", "/api/settings/streaming"));
+    CHECK(localChannelRoute("POST", "/api/settings/streaming"));
+    CHECK(localChannelRoute("POST", "/api/admin/pin/generate"));
+    CHECK(localChannelRoute("POST", "/api/admin/password"));
+    CHECK(localChannelRoute("POST", "/api/system/restart"));
+    CHECK(localChannelRoute("POST", "/api/system/quit"));
+    CHECK(localChannelRoute("POST", "/api/local/focus"));
+
+    // And nothing else. The other verb of a listed route.
+    CHECK(!localChannelRoute("POST", "/api/health"));
+    CHECK(!localChannelRoute("GET", "/api/admin/pin/generate"));
+    CHECK(!localChannelRoute("DELETE", "/api/settings/streaming"));
+    CHECK(!localChannelRoute("get", "/api/health"));
+    // A stream, a host, a pairing, a session, a key: none of this channel's business.
+    CHECK(!localChannelRoute("POST", "/api/hosts/uuid-1/start"));
+    CHECK(!localChannelRoute("GET", "/api/hosts"));
+    CHECK(!localChannelRoute("POST", "/api/hosts/manual"));
+    CHECK(!localChannelRoute("POST", "/api/auth/validate"));
+    CHECK(!localChannelRoute("POST", "/api/auth/host-key"));
+    CHECK(!localChannelRoute("POST", "/api/auth/pairing-key"));
+    CHECK(!localChannelRoute("GET", "/api/admin/token"));
+    CHECK(!localChannelRoute("GET", "/api/admin/settings"));
+    CHECK(!localChannelRoute("POST", "/api/admin/settings"));
+    CHECK(!localChannelRoute("GET", "/api/auth/sessions"));
+    CHECK(!localChannelRoute("POST", "/api/share/slots/2/activate"));
+    CHECK(!localChannelRoute("POST", "/api/update/start"));
+    CHECK(!localChannelRoute("GET", "/api/logs/download"));
+    // Not a page, not a file, not a socket.
+    CHECK(!localChannelRoute("GET", "/"));
+    CHECK(!localChannelRoute("GET", "/admin"));
+    CHECK(!localChannelRoute("GET", "/index.html"));
+    CHECK(!localChannelRoute("GET", "/ws"));
+    CHECK(!localChannelRoute("GET", "/ws/control"));
+    // The exact path: nothing under it, beside it or written another way.
+    CHECK(!localChannelRoute("GET", "/api/health/"));
+    CHECK(!localChannelRoute("GET", "/api/health/x"));
+    CHECK(!localChannelRoute("GET", "/api/server/status/../../admin/token"));
+    CHECK(!localChannelRoute("GET", "/API/HEALTH"));
+    CHECK(!localChannelRoute("GET", "/api/healthz"));
+    CHECK(!localChannelRoute("GET", ""));
+
     SECTION("RequestGuard — a session on another browser's key");
 
     {

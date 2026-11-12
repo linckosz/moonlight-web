@@ -290,6 +290,19 @@ Decision evaluate(const Request& req, const Context& ctx)
     }
     d.outcome = Outcome::Allow;
 
+    // The local channel is this machine by construction: a program of this
+    // install asked, through a door no address and no name opens. Nothing is
+    // read from Host here, and nothing from the peer; there is no admin key to
+    // show either, for a caller that is not a browser another page could drive.
+    // --noadmin still leaves nobody administering.
+    if (ctx.localChannel) {
+        d.hostTrusted = true;
+        d.localPrivilege = true;
+        d.hostMachine = true;
+        d.adminPrivilege = !ctx.adminLocked;
+        return d;
+    }
+
     // The Host must be a name we own. This is the one check a rebinding attack
     // cannot dodge: it makes the attacker's page same-origin with us (so the
     // cross-site test above passes, and the attacker can READ our responses),
@@ -323,6 +336,38 @@ Decision evaluate(const Request& req, const Context& ctx)
         !ctx.adminLocked && (d.hostMachine || ctx.adminSession) && (!mutating || ctx.adminKeyOk);
 
     return d;
+}
+
+bool localChannelRoute(const QString& method, const QString& path)
+{
+    struct Route
+    {
+        const char* method;
+        const char* path;
+    };
+    // Exact paths, exact verbs: what main.cpp's command-line verbs, tray client
+    // and second launch call.
+    static const Route kRoutes[] = {
+        {"GET", "/api/health"},
+        {"GET", "/api/server/status"},
+        {"GET", "/api/server/remote-link"},
+        {"GET", "/api/server/stream-activity"},
+        {"GET", "/api/setup/status"},
+        {"GET", "/api/auth/status"},
+        {"GET", "/api/internet/status"},
+        {"GET", "/api/internet/upnp-probe"},
+        {"POST", "/api/internet/enable"},
+        {"GET", "/api/settings/streaming"},
+        {"POST", "/api/settings/streaming"},
+        {"POST", "/api/admin/pin/generate"},
+        {"POST", "/api/admin/password"},
+        {"POST", "/api/system/restart"},
+        {"POST", "/api/system/quit"},
+        {"POST", "/api/local/focus"},
+    };
+    for (const Route& route : kRoutes)
+        if (method == QLatin1String(route.method) && path == QLatin1String(route.path)) return true;
+    return false;
 }
 
 AdminTokenReply adminTokenReply(const Decision& decision, const Context& ctx, bool authenticated)

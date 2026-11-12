@@ -76,6 +76,7 @@
 #include "server/HttpServer.h"
 #include "server/ControlChannel.h"
 #include "server/ControlTunnel.h"
+#include "server/LocalChannel.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
 #include "server/NetClassify.h"
@@ -7223,6 +7224,30 @@ int main(int argc, char* argv[])
         }
         // Nothing is printed when Internet Access is off: the operator turned it
         // off, or never turned it on. --status is where that gets explained.
+    }
+
+    // The channel the other programs of this install reach this server by: the
+    // tray icon of a server that runs as a service, the command line, a second
+    // launch (server/LocalChannel.h). Opened last, once every route it may ask
+    // for exists. A server that cannot open it says so and runs without one: it
+    // never shares a name something else already holds.
+    mw::localchannel::Server localChannel;
+    {
+        const QString endpoint = mw::localchannel::endpointFor(
+            mw::localchannel::channelName(mw::edition::productName(), mw::edition::devFlag()),
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+        QString why;
+        const bool open = localChannel.listen(
+            endpoint,
+            [&server](const mw::localchannel::Request& request,
+                      mw::localchannel::Server::Respond respond) {
+                server.serveLocal(request, std::move(respond));
+            },
+            &why);
+        if (open)
+            Logger::info(QStringLiteral("[LocalChannel] open"));
+        else
+            Logger::error(QStringLiteral("[LocalChannel] not open: %1").arg(why));
     }
 
     const int exitCode = app.exec();

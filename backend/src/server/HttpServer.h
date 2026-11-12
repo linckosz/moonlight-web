@@ -35,6 +35,10 @@ class RestRouter;
 class StaticFileHandler;
 class AuthManager;
 class QTimer;
+namespace mw::localchannel {
+struct Request;
+struct Reply;
+} // namespace mw::localchannel
 
 class HttpServer : public QObject
 {
@@ -149,10 +153,17 @@ public:
     /// answers it with a rule rather than a heuristic: a request that came
     /// through the tunnel never obtains the local exemption, whatever address it
     /// appears to carry.
+    ///
+    /// The local channel is the third way in, and the opposite case: what
+    /// arrives there was asked by a program of this install on this machine
+    /// (server/LocalChannel.h), which is a fact about the door and not a guess
+    /// from an address. Only the code that reads that channel passes Local;
+    /// nothing in a request, on any path, can say so.
     enum class Arrival
     {
         Socket, ///< accepted on one of our listening sockets
         Tunnel, ///< carried in over a rendezvous control tunnel
+        Local,  ///< asked over the local channel, by a program of this install
     };
 
     /// Answer @p req and hand the response to @p respond, with no socket in
@@ -164,6 +175,13 @@ public:
     /// label, since the browser's real address is known to the rendezvous server
     /// and to nobody else.
     void serveRequest(HttpRequest req, Arrival arrival, ResponseCallback respond);
+
+    /// Answer a request asked over the local channel: the one caller of
+    /// serveRequest() that passes Arrival::Local. The request is rebuilt from
+    /// the channel's own shape, which has no header, and the answer goes back
+    /// as a status and a body.
+    void serveLocal(const mw::localchannel::Request& request,
+                    std::function<void(const mw::localchannel::Reply&)> respond);
 
     /// Decide whether a WebSocket a tunnel peer asked for may be opened, and to
     /// which local port. Returns 0 and fills @p outError otherwise.
