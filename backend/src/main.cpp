@@ -73,6 +73,7 @@
 #include "common/RunFlags.h"
 #include "server/CertManager.h"
 #include "server/Provisioning.h"
+#include "server/HostKeyVault.h"
 #include "server/HttpServer.h"
 #include "server/ControlChannel.h"
 #include "server/ControlTunnel.h"
@@ -1176,10 +1177,61 @@ static void waitMs(int ms)
     loop.exec();
 }
 
+// `moonlightweb --open-link` / `--print-link`: the link this machine's owner
+// opens its pages with, asked of the running instance — the admin page, or the
+// front door of a booth. It carries a key made for it at that moment, good once
+// and for ten minutes. Opened, it goes to the browser and nowhere else; printed,
+// it goes to the terminal that asked. It is never written to a log, and never
+// handed to another program than the browser.
+static int runOwnerLinkCommand(quint16 persistedHttpsPort, bool print)
+{
+    QTextStream out(stdout);
+    if (!serverRunning()) {
+        out << notRunningText(persistedHttpsPort);
+        out.flush();
+        return 1;
+    }
+    const bool booth = localRequest(QStringLiteral("/api/auth/status"), QByteArray(), 5000)
+                           .json.value("admin_locked")
+                           .toBool(false);
+    const QString target = QStringLiteral("/api/server/remote-link") +
+                           (booth ? QString() : QStringLiteral("?p=/admin"));
+
+    // The internet link takes a moment to come up after a start: while it is
+    // only "not yet", ask again rather than settle for this machine's address.
+    QString url;
+    for (int attempt = 0; attempt < 30 && url.isEmpty(); ++attempt) {
+        if (attempt > 0) waitMs(700);
+        const LocalReply reply = localRequest(target, QByteArray(), 5000);
+        if (!reply.ok) {
+            out << "Failed: "
+                << (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
+                                          : reply.error)
+                << "\n";
+            out.flush();
+            return 1;
+        }
+        url = reply.json.value("url").toString();
+        if (url.isEmpty() && !reply.json.value("pending").toBool(false)) break;
+    }
+    if (url.isEmpty()) {
+        out << "No link could be made.\n";
+        out.flush();
+        return 1;
+    }
+    if (print) {
+        out << url << "\n";
+        out.flush();
+        return 0;
+    }
+    openInBrowser(url);
+    return 0;
+}
+
 // Loopback URL for the tray entries. "localhost", not 127.0.0.1: the loopback
 // certificate carries localhost as a SAN, so the browser only has to accept a
-// self-signed certificate, not a name mismatch on top of it. No host key is
-// needed — loopback carries local privilege by itself.
+// self-signed certificate, not a name mismatch on top of it. It carries no key:
+// it is what is left when the server could not be asked for a link.
 static QUrl trayClientUrl(quint16 httpsPort, const QString& path)
 {
     return QUrl(httpsPort == 443
@@ -1902,6 +1954,18 @@ int main(int argc, char* argv[])
         "enable-internet", "Enable the Internet link (asks for consent), then exit");
     parser.addOption(enableInternetOption);
 
+    // The way into this machine's own pages for a terminal, and for whatever
+    // opens them for its owner (the installer's last page): the same link the
+    // tray icon opens, asked of the running instance at that moment.
+    QCommandLineOption openLinkOption(
+        "open-link", "Open the running server's page in the browser, signed in as this "
+                     "machine's owner, then exit");
+    parser.addOption(openLinkOption);
+    QCommandLineOption printLinkOption(
+        "print-link", "Print the link --open-link would open (it works once, for ten "
+                      "minutes), then exit");
+    parser.addOption(printLinkOption);
+
     // The administrator's ceilings, written into the running instance's
     // settings.json (AppSettings::streamLimits). Any of the three, together.
     QCommandLineOption maxFrameRateOption(
@@ -2172,6 +2236,9 @@ int main(int argc, char* argv[])
     if (parser.isSet(enableInternetOption))
         return runEnableInternetCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
                                         parser.isSet(yesOption));
+    if (parser.isSet(openLinkOption) || parser.isSet(printLinkOption))
+        return runOwnerLinkCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
+                                   parser.isSet(printLinkOption));
     if (parser.isSet(maxFrameRateOption) || parser.isSet(maxBitrateOption) ||
         parser.isSet(maxResolutionOption)) {
         // Not given: nothing to change; given empty: a bad value.
@@ -6789,6 +6856,13 @@ int main(int argc, char* argv[])
         if (online) probeEntry();
     });
 
+    // The keys this machine's own links open a page with: each made for one
+    // link, good once and for ten minutes, kept in memory and nowhere else
+    // (server/HostKeyVault.h). An earlier version kept one key in settings.json;
+    // what is left of it there opens nothing any more and is removed.
+    HostKeyVault hostKeys;
+    appSettings.forgetLocalKey();
+
     // The way into this machine's own pages under a certificate the browser
     // already trusts.
     //
@@ -6816,13 +6890,32 @@ int main(int argc, char* argv[])
         probeEntry();
         if (!entryAnswers) return {};
         const QString entry = rendezvous.entryUrl();
-        const QString key = appSettings.localKey();
-        if (entry.isEmpty() || key.isEmpty()) return {};
+        if (entry.isEmpty()) return {};
+        // Made here, for this link, once every other reason to hand out none
+        // has been ruled out: a key waits ten minutes for the click it was
+        // made for, and is in no file.
+        const QString key = hostKeys.mint();
         return entry + QStringLiteral("#k=") + QString::fromLatin1(QUrl::toPercentEncoding(key)) +
                (path.isEmpty() ? QString() : QStringLiteral("&p=") + path);
     };
     auto remoteAdminLink = [remoteLink]() -> QString {
         return remoteLink(QStringLiteral("/admin"));
+    };
+
+    // The same page under this machine's own address, with a key of its own:
+    // what an entry point opens when the internet link would not work. The key
+    // is what tells the page it was opened by this machine's owner, here.
+    auto localLink = [&hostKeys, entryUrl](const QString& path) -> QString {
+        return entryUrl(path) + QStringLiteral("#k=") +
+               QString::fromLatin1(QUrl::toPercentEncoding(hostKeys.mint()));
+    };
+    // The link an entry point opens: the internet one when there is one that
+    // works, this machine's own otherwise. Each carries a key made for it, so
+    // it is asked for at the click and never kept: not in a file, not in a
+    // shortcut, not in a log.
+    auto ownerLink = [remoteLink, localLink](const QString& path) -> QString {
+        const QString remote = remoteLink(path);
+        return remote.isEmpty() ? localLink(path) : remote;
     };
 
     // An empty link that is only "not yet": the internet way in is wanted, but
@@ -6838,30 +6931,42 @@ int main(int argc, char* argv[])
         return rendezvousShouldRun() && !entryVerdictReached && sinceLineWanted.elapsed() < 20000;
     };
 
-    // GET /api/server/remote-link — the same link, for the tray client. That
-    // tray runs in its own process decorating a server it cannot see, so it asks
-    // over loopback. Local callers only: this hands out a live credential, and
-    // everything else already has the machine itself.
+    // GET /api/server/remote-link — the link an entry point opens, for the ones
+    // that live in another process: the tray client, which decorates a server it
+    // cannot see, the command line (--open-link), the installer's last page. The
+    // internet link when there is one that works, this machine's own address
+    // otherwise, each with a key made for it.
+    //
+    // The host machine only: this hands out a live credential, the one that says
+    // "the host machine's own browser". Not a computer of the network that
+    // unlocked the admin page with the password: it administers, and is not the
+    // host.
     //
     // `?p=` names the page, absent means the front door. It is checked against
     // the shape the bootstrap will accept rather than passed through, so this
     // route can never be the thing that puts an arbitrary string into a link
     // this machine hands its owner.
     //
-    // `pending` is true while an empty url is only "not yet" (remoteLinkPending).
-    server.router()->get(
-        "/api/server/remote-link", [remoteLink, remoteLinkPending](const HttpRequest& req) {
-            if (!req.isLocal && !(req.adminLocked && req.isHostMachine))
-                return HttpResponse::error(403, "Only available from localhost");
-            const QString path = req.queryParams.value(QStringLiteral("p"));
-            static const QRegularExpression shape(QStringLiteral("^/[A-Za-z0-9_-]{1,32}$"));
-            if (!path.isEmpty() && !shape.match(path).hasMatch())
-                return HttpResponse::error(400, "Bad page");
-            const QString url = remoteLink(path);
-            return HttpResponse::json(
-                QJsonObject{{QStringLiteral("url"), url},
-                            {QStringLiteral("pending"), url.isEmpty() && remoteLinkPending()}});
-        });
+    // `pending` is true while the internet link is only "not yet"
+    // (remoteLinkPending): the url is then empty, for a caller that can wait to
+    // ask again rather than settle for this machine's own address.
+    server.router()->get("/api/server/remote-link", [remoteLink, remoteLinkPending,
+                                                     localLink](const HttpRequest& req) {
+        if (!req.isHostMachine)
+            return HttpResponse::error(403, "Only available to the host "
+                                            "machine");
+        const QString path = req.queryParams.value(QStringLiteral("p"));
+        static const QRegularExpression shape(QStringLiteral("^/[A-Za-z0-9_-]{1,32}$"));
+        if (!path.isEmpty() && !shape.match(path).hasMatch())
+            return HttpResponse::error(400, "Bad page");
+        const QString remote = remoteLink(path);
+        const bool pending = remote.isEmpty() && remoteLinkPending();
+        const QString url = !remote.isEmpty() ? remote : pending ? QString() : localLink(path);
+        HttpResponse resp = HttpResponse::json(
+            QJsonObject{{QStringLiteral("url"), url}, {QStringLiteral("pending"), pending}});
+        resp.headers["Cache-Control"] = "no-store";
+        return resp;
+    });
 
     // GET /api/server/stream-activity — who is streaming this screen, for the
     // tray client. Same snapshot the in-process tray reads straight from the
@@ -6916,30 +7021,33 @@ int main(int argc, char* argv[])
     controlChannel.start();
     server.setControlPort(controlChannel.port());
 
-    server.router()->post("/api/local/focus",
-                          [&controlChannel, adminUrl](const HttpRequest& req) -> HttpResponse {
-                              // Loopback only: this is the private IPC surface a second local
-                              // launch uses, never something a remote peer should trigger.
-                              if (!req.isLocal && !(req.adminLocked && req.isHostMachine))
-                                  return HttpResponse::error(403, "local only");
-                              QJsonObject obj;
-                              if (controlChannel.hasClients()) {
-                                  controlChannel.broadcastFocusAdmin();
-                                  obj["delivered"] = true;
-                              } else {
-                                  openInBrowser(adminUrl());
-                                  obj["delivered"] = false;
-                              }
-                              return HttpResponse::json(obj, 200);
-                          });
+    server.router()->post(
+        "/api/local/focus",
+        [&controlChannel, ownerLink, adminLocked](const HttpRequest& req) -> HttpResponse {
+            // Loopback only: this is the private IPC surface a second local
+            // launch uses, never something a remote peer should trigger.
+            if (!req.isLocal && !(req.adminLocked && req.isHostMachine))
+                return HttpResponse::error(403, "local only");
+            QJsonObject obj;
+            if (controlChannel.hasClients()) {
+                controlChannel.broadcastFocusAdmin();
+                obj["delivered"] = true;
+            } else {
+                // With a key: the page that opens is this
+                // machine's owner's.
+                openInBrowser(ownerLink(adminLocked ? QString() : QStringLiteral("/admin")));
+                obj["delivered"] = false;
+            }
+            return HttpResponse::json(obj, 200);
+        });
 
     // — Internet Access via PowerDNS —
 
-    // The host key is single-use: after each redemption the rotated key must be
-    // written back into the Desktop shortcut (tray/startup URLs read it live).
+    // The key of a link this machine handed its owner is spent where it was
+    // made (hostKeys, above).
     registerSystemRoutes(
         server, appSettings, authManager, internetAccess, computerManager,
-        [adminUrl]() { writeAdminShortcut(adminUrl()); },
+        [&hostKeys](const QString& key) { return hostKeys.spend(key); },
         [&rendezvous, rendezvousShouldRun, &entryVerdictReached, &sinceLineWanted](bool enabled) {
             if (enabled && rendezvousShouldRun()) {
                 // A line that is not up yet restarts the "not yet" window, so
@@ -7052,7 +7160,10 @@ int main(int argc, char* argv[])
     // The desktop session gets its tray from runTrayClient() instead.
     TrayManager trayManager(&server);
     trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
-    trayManager.setRemoteLinkProvider(remoteLink);
+    // A click opens the owner's link: the internet one, or this machine's own
+    // address with its key. The plain address above is what is written down
+    // (the log line at start-up), and what is left if no link could be made.
+    trayManager.setRemoteLinkProvider(ownerLink);
     trayManager.setActivityProvider(streamActivity);
     trayManager.setAdminLocked(adminLocked);
     if (hasGuiSession()) trayManager.init();
@@ -7122,7 +7233,7 @@ int main(int argc, char* argv[])
             if (link.isEmpty() && --(*attemptsLeft) > 0) return;
             opener->stop();
             opener->deleteLater();
-            const QString url = link.isEmpty() ? entryUrl(path) : link;
+            const QString url = link.isEmpty() ? localLink(path) : link;
             // Without its fragment: that is where the host key rides.
             QUrl logged(url);
             logged.setFragment(QString());

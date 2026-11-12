@@ -1061,21 +1061,16 @@ public:
     /// predates versioning (DNS-mechanism wording), 2+ otherwise.
     int internetConsentVersion() const;
 
-    // ── Host key (host-machine recognition over the public domain) ──────────
+    // ── Host key ────────────────────────────────────────────────────────────
     //
-    // Long random token embedded in the host machine's own entry-point URLs
-    // (Desktop shortcut, tray, startup open) as ?mwk=..., so a browser opened
-    // on the host via the public domain can prove it runs on the host and be
-    // granted a localhost-equivalent session. Single-use: each successful
-    // redemption rotates the key (and the entry points are rewritten), so a
-    // leaked URL cannot be replayed.
+    // The key a link of this machine carries is made per link and kept in
+    // memory (server/HostKeyVault.h). An earlier version kept one here, as
+    // `local_key`.
 
-    /// Persistent random key; generated on first call.
-    QString localKey();
-
-    /// Replace the host key with a fresh random one (after a redemption).
-    /// Returns the new key.
-    QString rotateLocalKey();
+    /// Removes the key an earlier version stored, if the file still holds one.
+    /// Nothing reads it any more. True when one was removed; the file is left
+    /// alone when it could not be read whole.
+    bool forgetLocalKey();
 
     /// When this installation first ran a version that binds a host session
     /// to its browser's key as the session is made (unix seconds). Written

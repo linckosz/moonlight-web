@@ -29,9 +29,9 @@ class ComputerManager;
 struct HttpRequest;
 
 /// Register Internet-access, first-run setup, admin-settings and streaming-settings routes.
-/// @param onHostKeyRotated Invoked after a host-key redemption rotated the key
-///        (single-use), so the entry points embedding it (Desktop shortcut)
-///        are rewritten with the fresh key.
+/// @param spendHostKey Spends the key a link of this machine carried, for
+///        POST /api/auth/host-key (HostKeyVault::spend): true once, for a key
+///        made here and still waiting.
 /// @param onInternetAccessToggled Invoked with the new state whenever the
 ///        Internet-access switch is thrown here. The rendezvous line follows the
 ///        same switch — it is an outbound connection that announces this machine
@@ -49,7 +49,7 @@ struct HttpRequest;
 ///        automatic bitrate takes the LAN rule (frontend/js/util/AutoBitrate.js).
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
-                          std::function<void()> onHostKeyRotated = {},
+                          std::function<bool(const QString& key)> spendHostKey = {},
                           std::function<void(bool)> onInternetAccessToggled = {},
                           std::function<QJsonObject()> rendezvousStatus = {},
                           std::function<bool(const HttpRequest&)> viewerOnLan = {});

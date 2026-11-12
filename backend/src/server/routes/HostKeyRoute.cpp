@@ -23,7 +23,6 @@
 #include "server/RequestGuard.h"
 #include "server/RestRouter.h"
 
-#include <QCryptographicHash>
 #include <QJsonDocument>
 
 #include <utility>
@@ -40,21 +39,19 @@ bool plausiblyHostAddress(const QString& address,
 void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyDeps deps)
 {
     // POST /api/auth/host-key — prove the browser runs on the host machine.
-    // The host's own entry points embed a persistent random key; the frontend
-    // redeems it here to obtain a localhost-equivalent session (admin access),
-    // since anywhere but loopback the peer address is not the machine's own.
-    // Redemption is refused for peers that cannot plausibly be the host machine
-    // itself.
+    // The host's own entry points open the browser on a link that carries a
+    // key made for that one visit (HostKeyVault); the frontend spends it here
+    // for a session that says "this browser is the host machine's". Redemption
+    // is refused for peers that cannot plausibly be the host machine itself.
     //
     // Two ways in, and the difference is recorded on the session because it
-    // decides what that session is worth afterwards:
+    // decides what that session is worth afterwards. Either way the key rides
+    // in the FRAGMENT of the link (#k=...), the one part of a URL a browser
+    // never sends to the server it fetched from:
     //
-    //   socket  the key rides in ?mwk= on a local URL. The query reaches only
-    //           this machine, so it is safe there and nowhere else.
-    //   tunnel  the key rides in the FRAGMENT of a rendezvous link (#k=...),
-    //           which is the one part of a URL a browser never sends to the
-    //           server it fetched from — so the introduction server never sees
-    //           it, and it reaches this handler inside the tunnel's own
+    //   socket  a link to this machine's own address.
+    //   tunnel  a rendezvous link. The introduction server never sees the key,
+    //           and it reaches this handler inside the tunnel's own
     //           encryption. This is what gives the owner an admin page under a
     //           certificate the browser already trusts.
     //
@@ -70,7 +67,8 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
     // the key is the line's own — the one its hello presented and proved, and
     // the one the page pinned this host under — so a page has nothing to send
     // and a line without one opens nothing. On a socket the page names its key
-    // in `public_key`; one that names none keeps the session it always had.
+    // in `public_key`; one that names none opens nothing either, and its link
+    // stays good for a browser that can.
     router.post("/api/auth/host-key", [&authManager,
                                        deps = std::move(deps)](const HttpRequest& req) {
         const QJsonObject body = QJsonDocument::fromJson(req.body).object();
@@ -82,23 +80,24 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
         const bool forwarded = !req.viaTunnel && RequestGuard::forwardedByProxy(req.headers);
         const bool plausiblyHost =
             !forwarded && plausiblyHostAddress(addr, deps.thisMachine, publicIp);
-        // Compare hashes: constant-time, no length leak.
-        const QByteArray given = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256);
-        const QByteArray expected = QCryptographicHash::hash(
-            (deps.key ? deps.key() : QString()).toUtf8(), QCryptographicHash::Sha256);
-        if (!plausiblyHost || key.isEmpty() || given != expected) {
-            // Say which gate closed: the address is the one ICE settled on for
-            // a tunnel peer, and whether it passed is the whole question when
-            // the owner's own link lands on the PIN page.
+        // Say which gate closed: the address is the one ICE settled on for a
+        // tunnel peer, and whether it passed is the whole question when the
+        // owner's own link lands on the PIN page. Never the key, nor anything
+        // made from it.
+        const auto refuse = [&](const QString& why) {
+            static int refusals = 0;
             Logger::warning(
-                QStringLiteral("[Auth] Host key redemption refused for %1 (%2; %3)")
+                QStringLiteral("[Auth] Host key redemption refused for %1 (%2; %3; %4 refused "
+                               "since this server started)")
                     .arg(addr,
                          req.viaTunnel ? QStringLiteral("via tunnel") : QStringLiteral("direct"),
-                         !plausiblyHost  ? QStringLiteral("address not plausibly this machine")
-                         : key.isEmpty() ? QStringLiteral("no key given")
-                                         : QStringLiteral("key does not match")));
+                         why)
+                    .arg(++refusals));
+            if (deps.refused) deps.refused(req.clientAddress);
             return HttpResponse::error(403, "Invalid host key");
-        }
+        };
+        if (!plausiblyHost) return refuse(QStringLiteral("address not plausibly this machine"));
+        if (key.isEmpty()) return refuse(QStringLiteral("no key given"));
         // The browser key is checked before the link's key is spent: a refusal
         // here leaves the owner's link good for a browser that can hold the
         // session.
@@ -108,15 +107,25 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
                                 .arg(addr));
             return HttpResponse::error(403, "Invalid host key");
         }
+        // On a socket the page names its key in `public_key`, and has to: a
+        // host session no offer can be signed for is one whose streams the
+        // browser itself refuses.
         const QString named = req.viaTunnel ? QString() : body.value("public_key").toString();
         const QByteArray browserKey =
             req.viaTunnel ? req.tunnelKey : QByteArray::fromBase64(named.toUtf8());
-        if (!named.isEmpty() && !PairingCrypto::isValidP256Spki(browserKey)) {
-            Logger::warning(QStringLiteral("[Auth] Host key redemption refused for %1 (direct; the "
-                                           "browser key it names does not parse)")
-                                .arg(addr));
+        if (!req.viaTunnel && !PairingCrypto::isValidP256Spki(browserKey)) {
+            Logger::warning(QStringLiteral("[Auth] Host key redemption refused for %1 (direct; %2)")
+                                .arg(addr, named.isEmpty()
+                                               ? QStringLiteral("the page names no browser key")
+                                               : QStringLiteral("the browser key it names does "
+                                                                "not parse")));
             return HttpResponse::error(400, "Invalid 'public_key' field");
         }
+
+        // The key, last of the refusals and in one step: it is spent by being
+        // recognised, so one that was good is used up whatever happens next,
+        // and a link read from a history or a log opens nothing a second time.
+        if (!deps.spend || !deps.spend(key)) return refuse(QStringLiteral("key does not match"));
 
         QString token =
             authManager.createSession(req.clientAddress,
@@ -125,29 +134,25 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
                                       true, false, req.viaTunnel);
         Logger::info(QStringLiteral("[Auth] Host session created for %1 (via host key)").arg(addr));
 
-        // Single-use: burn the redeemed key and rewrite the entry points that
-        // embed it, so a leaked/history URL cannot be replayed.
-        if (deps.spent) deps.spent();
-
         QJsonObject obj;
         obj["status"] = "ok";
         obj["is_localhost"] = true;
 
-        if (!browserKey.isEmpty()) {
-            if (authManager.bindSessionKey(token, browserKey)) {
-                obj["pairing_key"] = "bound";
-                const QJsonObject identity =
-                    deps.hostIdentity ? deps.hostIdentity() : QJsonObject();
-                for (auto it = identity.constBegin(); it != identity.constEnd(); ++it)
-                    obj[it.key()] = it.value();
-            } else {
-                obj["pairing_key"] = "rejected";
-            }
-        } else {
-            Logger::info(QStringLiteral("[Auth] Host session for %1 holds no browser key: the "
-                                        "page named none")
-                             .arg(addr));
+        // A host session that holds no browser key is what this route no longer
+        // makes. A session just made, given a key that parses, takes it; should
+        // it ever not, the session ends here and the answer is an error. The
+        // link's key stays spent.
+        if (!authManager.bindSessionKey(token, browserKey)) {
+            authManager.logoutSession(token);
+            Logger::warning(QStringLiteral("[Auth] Host session for %1 ended at once: it could "
+                                           "not take the browser's key")
+                                .arg(addr));
+            return HttpResponse::error(500, "The session could not take the browser's key");
         }
+        obj["pairing_key"] = "bound";
+        const QJsonObject identity = deps.hostIdentity ? deps.hostIdentity() : QJsonObject();
+        for (auto it = identity.constBegin(); it != identity.constEnd(); ++it)
+            obj[it.key()] = it.value();
 
         HttpResponse resp = HttpResponse::json(obj);
         resp.headers["Set-Cookie"] =

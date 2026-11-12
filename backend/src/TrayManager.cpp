@@ -363,7 +363,7 @@ void TrayManager::openAppPage(const QString& path)
         QUrl logged(link);
         logged.setFragment(QString());
         qInfo() << "[TrayManager] Opening" << (path.isEmpty() ? QStringLiteral("/") : path)
-                << "over the internet link" << logged.toString();
+                << "by the owner's link" << logged.toString();
         QDesktopServices::openUrl(QUrl(link));
         return;
     }

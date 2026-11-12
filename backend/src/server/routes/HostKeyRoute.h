@@ -31,11 +31,13 @@ class RestRouter;
 /// the tests stand in for the settings file, the network and the entry points.
 struct HostKeyDeps
 {
-    /// The key this machine's own entry link carries now (AppSettings::localKey),
-    /// empty when there is none to redeem.
-    std::function<QString()> key;
-    /// A key has just been redeemed: draw another and rewrite what carries it.
-    std::function<void()> spent;
+    /// Spends the key a link of this machine carried (HostKeyVault::spend): true
+    /// once, for a key made here and still waiting. Asking is spending.
+    std::function<bool(const QString& key)> spend;
+    /// A key that opened nothing was presented from @p address: counted against
+    /// it where an address can be counted against (HttpServer::reportAuthFailure,
+    /// which never locks this machine or its network out).
+    std::function<void(const QString& address)> refused;
     /// Whether @p address is one of this machine's own (HttpServer::isLocalRequest).
     std::function<bool(const QString& address)> thisMachine;
     /// This machine's public address, empty when it is not known.

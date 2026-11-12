@@ -907,9 +907,14 @@ void run_app_settings_tests()
         h.m_FilePath = tmp.path() + "/held/settings.json";
         QDir().mkpath(tmp.path() + "/held");
         h.setHttpPort(81);
-        const QString key = h.localKey();
+        // The key an earlier version kept in this file, as it left it there.
+        const QString key = QStringLiteral("a-key-of-an-earlier-version");
+        {
+            QJsonObject withKey = h.readAll();
+            withKey["local_key"] = key;
+            h.writeAll(withKey);
+        }
         const QByteArray signing = h.hostSigningKeyPem();
-        CHECK(!key.isEmpty());
         CHECK(!signing.isEmpty());
         bool complete = false;
         CHECK_EQ(h.readAll(&complete).value("http_port").toInt(), 81);
@@ -926,10 +931,9 @@ void run_app_settings_tests()
             FileHold hold(h.m_FilePath);
             held = hold.held();
             if (held) {
-                h.setHttpsPort(9443);          // not written
-                CHECK(h.localKey().isEmpty()); // none made in its place
+                h.setHttpsPort(9443); // not written
                 CHECK(h.hostSigningKeyPem().isEmpty());
-                CHECK(h.rotateLocalKey().isEmpty());
+                CHECK(!h.forgetLocalKey()); // nothing removed from a file not read whole
                 CHECK_EQ(h.hostSessionRepairBefore(), qint64(0)); // none made in its place
                 h.readAll(&complete);
                 CHECK(!complete);
@@ -947,7 +951,15 @@ void run_app_settings_tests()
 
         CHECK_EQ(h.httpPort(1), quint16(81));
         CHECK_EQ(h.httpsPort(1), quint16(1));
-        CHECK_EQ(h.localKey(), key);
+        CHECK_EQ(h.readAll().value("local_key").toString(), key);
+        CHECK(h.hostSigningKeyPem() == signing);
+        CHECK_EQ(h.hostSessionRepairBefore(), before);
+        // The earlier version's key leaves the file once it reads, and takes
+        // nothing else with it.
+        CHECK(h.forgetLocalKey());
+        CHECK(!h.readAll().contains("local_key"));
+        CHECK(!h.forgetLocalKey()); // nothing left to remove
+        CHECK_EQ(h.httpPort(1), quint16(81));
         CHECK(h.hostSigningKeyPem() == signing);
         CHECK_EQ(h.hostSessionRepairBefore(), before);
         h.setHttpsPort(9443); // and written again once it reads

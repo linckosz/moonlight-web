@@ -45,7 +45,11 @@
  *     /settings  → redirect to Hosts
  *     /streaming → redirect to Hosts
  */
-// First, before any module prints: the page's console for the client log in
+// First of all, before any other module runs: the key this page's link may
+// carry leaves the address (net/linkKey.js). Nothing that follows — a request,
+// a socket, a module that writes the address into a log — ever sees it there.
+import { takeDirectLinkKey } from './net/linkKey.js';
+// Then, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
 import { refreshClientLog } from './util/ClientLog.js';
 import { HostListView } from './ui/HostListView.js';
@@ -388,9 +392,9 @@ export const MoonlightApp = {
         // They will be revealed by _initNavButtons() if authenticated.
         this._hideNavButtonsConditionally();
 
-        // ── Host key (?mwk=...) — the host machine's own entry points embed it
-        // when they open the public domain: redeem it for a localhost-equivalent
-        // session BEFORE the auth check, then strip it from the address bar.
+        // ── Host key (#k=...) — the host machine's own entry points open the
+        // page with one: spend it for a host-machine session BEFORE the auth
+        // check.
         await this._redeemHostKey();
 
         // A page loaded on loopback STAYS on loopback. It used to move itself to
@@ -1380,34 +1384,34 @@ export const MoonlightApp = {
      *
      * It says "the browser asking is running on the host machine", and the
      * backend answers with a session flagged as the host's — admin access,
-     * without the peer address having to be loopback. Two places carry it, and
-     * the difference is not cosmetic:
+     * without the peer address having to be loopback. It rides in the fragment
+     * of the link (`#k=`), the one part of a URL a browser never sends to the
+     * server it fetched the page from, on two kinds of link:
      *
-     *   ?mwk=   a local address (the desktop shortcut, the tray, startup open).
-     *           A query is fine there because the only server that sees it is
-     *           this machine.
-     *   #k=     a rendezvous link. The fragment is the one part of a URL a
-     *           browser never sends to the server it fetched the page from, so
-     *           the introduction server sees which machine is wanted and not the
-     *           key to it. This is how the owner gets an admin page under a
-     *           certificate the browser already trusts, instead of accepting a
-     *           warning on loopback.
+     *   this machine's own address (the tray, a launch, the installer's last
+     *           page). The key left the address as the page loaded, before
+     *           anything else ran (net/linkKey.js), and is spent here.
+     *   a rendezvous link. The introduction server sees which machine is
+     *           wanted and not the key to it. This is how the owner gets an
+     *           admin page under a certificate the browser already trusts,
+     *           instead of accepting a warning on loopback.
      *
-     * Single-use at the far end: the host burns the key as it redeems it. So it
-     * comes out of the address bar once the host has answered — a spent key in
-     * the history is pointless, and a refused one is worse than pointless.
+     * Single-use at the far end: the host spends the key as it recognises it.
      *
-     * Once the host has ANSWERED, not before. It used to leave the address
-     * first, so that nothing below could leave it behind; but a page that goes
-     * back through the bootstrap while the request is in flight — the
-     * connection dropped, a busy machine — starts over from the address, and
-     * an address without the key is a PIN screen. The key stays until the host
-     * has said yes or no; a request that never got an answer leaves it in
-     * place for the next attempt to spend.
+     * On a rendezvous link it comes out of the address bar once the host has
+     * ANSWERED, not before. It used to leave the address first, so that nothing
+     * below could leave it behind; but a page that goes back through the
+     * bootstrap while the request is in flight — the connection dropped, a
+     * busy machine — starts over from the address, and an address without the
+     * key is a PIN screen. The key stays until the host has said yes or no; a
+     * request that never got an answer leaves it in place for the next attempt
+     * to spend. A page the host serves itself has no bootstrap to go back
+     * through: a request that never got an answer there costs a click on the
+     * icon again.
      */
     async _redeemHostKey() {
-        const params = new URLSearchParams(window.location.search);
-        const raw = params.get('mwk') || takeTunnelHostKey();
+        const direct = takeDirectLinkKey();
+        const raw = direct || takeTunnelHostKey();
         if (!raw) return;
 
         let answered = false;
@@ -1419,7 +1423,7 @@ export const MoonlightApp = {
             answered = await this._redeemHomeScreenKeys(handoff);
         } else {
             try {
-                await BackendClient.redeemHostKey(raw);
+                await BackendClient.redeemHostKey(raw, { direct: !!direct });
                 answered = true;
                 console.log('[MW] Host key redeemed — host-machine session granted');
             } catch (err) {
@@ -1429,18 +1433,17 @@ export const MoonlightApp = {
                 console.warn('[MW] Host key redemption failed:', err);
             }
         }
-        if (!answered) return;
+        // Already off the address on a page the host serves itself.
+        if (!answered || direct) return;
 
         // The fragment is rebuilt from the identifier alone, dropping the key
         // with it; the tunnel keeps the identifier in this tab either way.
-        params.delete('mwk');
-        const query = params.toString();
         const id = tunnelHostId();
         const hash = id ? `#${id}` : window.location.hash;
         history.replaceState(
             history.state,
             '',
-            window.location.pathname + (query ? '?' + query : '') + hash,
+            window.location.pathname + window.location.search + hash,
         );
     },
 

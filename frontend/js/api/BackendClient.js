@@ -815,11 +815,28 @@ export class BackendClient {
     static async logout() {
         return this.post('/api/auth/logout');
     }
-    /** Redeem the host key (?mwk=... from the host machine's own entry points)
-     *  for a localhost-equivalent session over the public domain. */
-    static async redeemHostKey(key) {
-        const resp = await this.post('/api/auth/host-key', { key });
+    /**
+     * Spend the host key (`#k=`, from the host machine's own entry points) for
+     * a host-machine session.
+     *
+     * On a page the host serves itself (`direct`), this is also where this
+     * browser's MW-BIND-v1 key is registered, as a PIN login registers it: the
+     * host binds the session to it, signs the offer of a stream for it, and
+     * answers with its own identity, kept here to check that signature
+     * against. Through the rendezvous the line's own key is the one, and the
+     * page pinned the host as it arrived: nothing to send, nothing to keep.
+     */
+    static async redeemHostKey(key, { direct = false } = {}) {
+        const body = { key };
+        if (direct) {
+            const identity = await loadOrCreateIdentity();
+            if (identity?.publicKeyBase64) body.public_key = identity.publicKeyBase64;
+        }
+        const resp = await this.post('/api/auth/host-key', body);
         this._hadSession = true;
+        if (direct && resp?.host_public_key) {
+            await rememberHostIdentity(resp.host_public_key, resp.host_id);
+        }
         return resp;
     }
     /**

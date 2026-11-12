@@ -2161,42 +2161,18 @@ int AppSettings::internetConsentVersion() const
     return consent.value("version").toInt(1);
 }
 
-// ── Host key (host-machine recognition over the public domain) ────────────────
+// ── Host key ──────────────────────────────────────────────────────────────────
 
-static QString generateLocalKey()
-{
-    QByteArray raw(32, '\0');
-    for (int i = 0; i < raw.size(); ++i)
-        raw[i] = static_cast<char>(QRandomGenerator::system()->bounded(256));
-    return QString::fromLatin1(
-        raw.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
-}
-
-QString AppSettings::localKey()
+bool AppSettings::forgetLocalKey()
 {
     bool complete = false;
     QJsonObject obj = readAll(&complete);
-    QString key = obj.value("local_key").toString();
-    if (!key.isEmpty()) return key;
-    // A key is only made for a file read whole: one that could not be read may
-    // well hold one already.
-    if (!complete) return {};
-
-    key = generateLocalKey();
-    obj["local_key"] = key;
+    // A file that could not be read whole is not written over: what it holds
+    // would be lost with the key.
+    if (!complete || !obj.contains("local_key")) return false;
+    obj.remove("local_key");
     writeAll(obj);
-    return key;
-}
-
-QString AppSettings::rotateLocalKey()
-{
-    bool complete = false;
-    QJsonObject obj = readAll(&complete);
-    if (!complete) return {}; // could not be saved: the stored key stays
-    const QString key = generateLocalKey();
-    obj["local_key"] = key;
-    writeAll(obj);
-    return key;
+    return true;
 }
 
 qint64 AppSettings::hostSessionRepairBefore()

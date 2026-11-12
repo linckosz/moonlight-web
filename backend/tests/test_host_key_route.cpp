@@ -54,8 +54,9 @@ struct Server
     AppSettings settings;
     std::unique_ptr<AuthManager> auth;
     RestRouter router;
-    QString key = kLinkKey;
-    int spent = 0; // how many keys were redeemed
+    QString key = kLinkKey;  // the one key a link of this machine carries now
+    int spent = 0;           // how many keys were redeemed
+    QStringList refusedFrom; // the addresses a key that opened nothing came from
 
     Server()
     {
@@ -63,7 +64,14 @@ struct Server
         auth = std::make_unique<AuthManager>(&settings);
         auth->destroyAllSessions();
         registerHostKeyRoute(router, *auth,
-                             {[this]() { return key; }, [this]() { spent++; },
+                             {// As the vault spends: once, by being recognised.
+                              [this](const QString& given) {
+                                  if (key.isEmpty() || given != key) return false;
+                                  key.clear();
+                                  spent++;
+                                  return true;
+                              },
+                              [this](const QString& address) { refusedFrom.append(address); },
                               [](const QString& address) {
                                   return address == QLatin1String("127.0.0.1") ||
                                          address == kThisMachine;
@@ -110,6 +118,12 @@ HttpRequest direct(const QString& address)
     return req;
 }
 
+/// What a page on a socket sends: the key of its link, and its browser's own.
+QJsonObject withBrowserKey(const QString& linkKey, const QByteArray& browserKey = newKey())
+{
+    return {{"key", linkKey}, {"public_key", QString::fromLatin1(browserKey.toBase64())}};
+}
+
 /// A browser on a rendezvous line whose hello presented @p lineKey, from the
 /// address ICE settled on.
 HttpRequest onLine(const QString& address, const QByteArray& lineKey)
@@ -127,7 +141,7 @@ void testWhoMaySpendTheKey()
     SECTION("host key: the right key, from an address that can be this machine");
     {
         Server s;
-        const HttpResponse reply = s.send(direct("127.0.0.1"), {{"key", kLinkKey}});
+        const HttpResponse reply = s.send(direct("127.0.0.1"), withBrowserKey(kLinkKey));
         CHECK_EQ(reply.statusCode, 200);
         const QString token = tokenOf(reply);
         CHECK(!token.isEmpty());
@@ -135,12 +149,20 @@ void testWhoMaySpendTheKey()
         CHECK(!s.auth->isTunnelHostSession(token));
         CHECK_EQ(jsonOf(reply).value("is_localhost").toBool(), true);
         CHECK_EQ(s.spent, 1); // single-use
+        CHECK(s.refusedFrom.isEmpty());
+
+        // The same link a second time, as read back from a history: nothing.
+        const HttpResponse again = s.send(direct("127.0.0.1"), withBrowserKey(kLinkKey));
+        CHECK_EQ(again.statusCode, 403);
+        CHECK(tokenOf(again).isEmpty());
+        CHECK_EQ(s.auth->activeSessionCount(), 1);
+        CHECK_EQ(s.spent, 1);
     }
     // This machine under its LAN address, another machine of the house, and
     // one behind the same public address.
     for (const QString& address : {kThisMachine, QStringLiteral("192.168.1.50"), kPublicIp}) {
         Server s;
-        const HttpResponse reply = s.send(direct(address), {{"key", kLinkKey}});
+        const HttpResponse reply = s.send(direct(address), withBrowserKey(kLinkKey));
         CHECK_EQ(reply.statusCode, 200);
         CHECK(s.auth->isHostSession(tokenOf(reply)));
     }
@@ -150,23 +172,29 @@ void testWhoMaySpendTheKey()
         Server s;
         // A wrong key, no key, and the right key from an address that is neither
         // private nor this machine's.
-        CHECK_EQ(s.send(direct("127.0.0.1"), {{"key", "not-the-key"}}).statusCode, 403);
+        CHECK_EQ(s.send(direct("127.0.0.1"), withBrowserKey("not-the-key")).statusCode, 403);
         CHECK_EQ(s.send(direct("127.0.0.1"), {}).statusCode, 403);
-        CHECK_EQ(s.send(direct("198.51.100.20"), {{"key", kLinkKey}}).statusCode, 403);
+        CHECK_EQ(s.send(direct("198.51.100.20"), withBrowserKey(kLinkKey)).statusCode, 403);
         CHECK_EQ(s.send(onLine("198.51.100.20", newKey()), {{"key", kLinkKey}}).statusCode, 403);
         // The right key through a proxy on this machine: the peer is the proxy,
         // and the browser is wherever the proxy was reached from.
         for (const char* header : {"x-forwarded-for", "x-real-ip", "forwarded", "via"}) {
             HttpRequest proxied = direct("127.0.0.1");
             proxied.headers.insert(QString::fromLatin1(header), QStringLiteral("203.0.113.9"));
-            CHECK_EQ(s.send(proxied, {{"key", kLinkKey}}).statusCode, 403);
+            CHECK_EQ(s.send(proxied, withBrowserKey(kLinkKey)).statusCode, 403);
         }
         CHECK_EQ(s.auth->activeSessionCount(), 0);
         CHECK_EQ(s.spent, 0);
-        // An install with no key to redeem refuses an empty one too.
-        s.key.clear();
-        CHECK_EQ(s.send(direct("127.0.0.1"), {{"key", ""}}).statusCode, 403);
-        CHECK_EQ(s.auth->activeSessionCount(), 0);
+        // Each of them was counted against the address it came from, as given.
+        CHECK_EQ(static_cast<int>(s.refusedFrom.size()), 8);
+        CHECK_EQ(static_cast<int>(s.refusedFrom.count(QStringLiteral("127.0.0.1"))), 6);
+        CHECK_EQ(static_cast<int>(s.refusedFrom.count(QStringLiteral("198.51.100.20"))), 2);
+        // And the link is still good for the browser it was made for.
+        CHECK_EQ(s.send(direct("127.0.0.1"), withBrowserKey(kLinkKey)).statusCode, 200);
+        CHECK_EQ(s.spent, 1);
+        // An install with no key waiting refuses an empty one too.
+        CHECK_EQ(s.send(direct("127.0.0.1"), withBrowserKey(QString())).statusCode, 403);
+        CHECK_EQ(s.auth->activeSessionCount(), 1);
     }
 }
 
@@ -229,16 +257,21 @@ void testSocketSessionTakesTheKeyItIsGiven()
         CHECK_EQ(obj.value("host_id").toString(), QStringLiteral("host-key-id"));
     }
 
-    SECTION("host key: a page that names no key keeps the session it always had");
+    SECTION("host key: a page that names no key opens nothing, and its link stays good");
     {
         Server s;
         const HttpResponse reply = s.send(direct("127.0.0.1"), {{"key", kLinkKey}});
-        CHECK_EQ(reply.statusCode, 200);
-        const QString token = tokenOf(reply);
-        CHECK(s.auth->isHostSession(token));
-        CHECK(s.auth->sessionPairingKey(token).isEmpty());
-        CHECK(!jsonOf(reply).contains("pairing_key"));
-        CHECK(!jsonOf(reply).contains("host_public_key"));
+        CHECK_EQ(reply.statusCode, 400);
+        CHECK(tokenOf(reply).isEmpty());
+        CHECK_EQ(s.auth->activeSessionCount(), 0);
+        CHECK_EQ(s.spent, 0);
+        // The same link, from a browser that names its key.
+        const QByteArray browserKey = newKey();
+        const HttpResponse again =
+            s.send(direct("127.0.0.1"), withBrowserKey(kLinkKey, browserKey));
+        CHECK_EQ(again.statusCode, 200);
+        CHECK(s.auth->sessionPairingKey(tokenOf(again)) == browserKey);
+        CHECK_EQ(s.spent, 1);
     }
 
     SECTION("host key: a key that does not parse is refused before the link is spent");

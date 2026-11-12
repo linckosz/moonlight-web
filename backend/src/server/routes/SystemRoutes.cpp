@@ -125,7 +125,7 @@ static QJsonArray nativeVideoPipelineOptions()
 
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
-                          std::function<void()> onHostKeyRotated,
+                          std::function<bool(const QString& key)> spendHostKey,
                           std::function<void(bool)> onInternetAccessToggled,
                           std::function<QJsonObject()> rendezvousStatus,
                           std::function<bool(const HttpRequest&)> viewerOnLan)
@@ -232,7 +232,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // API route: enable/configure Internet Access
     // onInternetAccessToggled captured BY VALUE: the parameter dies when this
     // registration function returns, but the route lambdas live on — the same
-    // reason onHostKeyRotated is captured that way below.
+    // reason spendHostKey is captured that way below.
     server.router()->post("/api/internet/enable", [&, onInternetAccessToggled](
                                                       const HttpRequest& req) {
         // Only localhost can modify internet access settings
@@ -299,17 +299,16 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     });
 
     // POST /api/auth/host-key — the browser on the host machine spends the key
-    // of its owner's link (HostKeyRoute). The key is single-use: once spent,
-    // another is drawn and the entry points that carry it are rewritten.
-    // onHostKeyRotated captured by value: the parameter dies when this
+    // of its owner's link (HostKeyRoute). The key was made for that one link
+    // and is spent by being recognised. A key that opens nothing is counted
+    // against the address it came from, where an address can be: never this
+    // machine's own nor its network's, which several browsers share, so that
+    // one of them cannot lock the others out.
+    // spendHostKey captured by value: the parameter dies when this
     // registration function returns, but the route lambda lives on.
     registerHostKeyRoute(
         *server.router(), authManager,
-        {[&appSettings]() { return appSettings.localKey(); },
-         [&appSettings, onHostKeyRotated]() {
-             appSettings.rotateLocalKey();
-             if (onHostKeyRotated) onHostKeyRotated();
-         },
+        {spendHostKey, [&server](const QString& address) { server.reportAuthFailure(address); },
          [](const QString& address) { return HttpServer::isLocalRequest(address); },
          [&internetAccess]() { return internetAccess.publicIp(); },
          [&appSettings]() {
@@ -1126,14 +1125,6 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["debug_mode_cli"] = mw::run::debugFromCli();
         obj["verbose_logs"] = mw::run::verbose();
         obj["verbose_logs_cli"] = mw::run::verboseFromCli();
-        // Host machine only: the current host key, so the
-        // admin page can carry its session over to the
-        // public-domain URL after Internet activation. Not
-        // isLocal — a LAN admin that unlocked with the password
-        // has the same rights but is NOT the host, and handing
-        // it the key would rotate the one the host's own
-        // shortcut still embeds.
-        if (req.isHostMachine) obj["local_key"] = appSettings.localKey();
         return HttpResponse::json(obj);
     });
 
