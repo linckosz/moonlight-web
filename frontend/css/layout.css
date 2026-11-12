@@ -388,19 +388,28 @@ html.remote-nav .app-header {
         display: none;
     }
 
-    /* Three icons, no names: Buy me a coffee, Admin, Settings. The coffee
-       drops its yellow box to look like its two neighbours; the cup keeps
-       its yellow coffee. Scoped to .header-actions to outweigh .btn-neutral,
-       which components.css loads after this file. */
+    /* Three icons, no names: Buy me a coffee (below), Admin, Settings. */
     .header-btn-label {
         display: none;
-    }
-    .header-btn-bmc .header-btn-bmc-logo {
-        display: inline-flex;
     }
     .btn-icon.has-label {
         width: 38px;
         padding: 0;
+    }
+}
+
+/* On a phone, Buy me a coffee is its cup alone: held upright, beside two
+   icons; held sideways, beside two names that still fit where its wordmark
+   no longer does (12/11/2026). It drops its yellow box to look like an icon
+   button; the cup keeps its yellow coffee, and the link its accessible name.
+   Scoped to .header-actions to outweigh .btn-neutral, which components.css
+   loads after this file. */
+@media (max-width: 600px), (max-height: 520px) and (orientation: landscape) {
+    .header-btn-bmc .header-btn-bmc-full {
+        display: none;
+    }
+    .header-btn-bmc .header-btn-bmc-logo {
+        display: inline-flex;
     }
     .header-actions .header-btn-bmc {
         width: 38px;
