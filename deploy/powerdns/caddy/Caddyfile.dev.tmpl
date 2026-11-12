@@ -16,6 +16,20 @@
 	# process must never try to order a certificate for a name it does not own.
 	auto_https off
 	order rate_limit before reverse_proxy
+	# No visitor's address in any log of this server either: the same filter as
+	# production's (Caddyfile.tmpl, global options). An error line carries its
+	# whole request (address, headers, URI) and the rate limiter names the address
+	# it refused; behind the trusted proxy that address is the visitor's own.
+	log default {
+		format filter {
+			wrap console
+			fields {
+				request delete
+				remote_ip delete
+				client_ip delete
+			}
+		}
+	}
 	servers {
 		# The production Caddy sits in front on the compose network and
 		# forwards the real client address in X-Forwarded-For. Without this,
