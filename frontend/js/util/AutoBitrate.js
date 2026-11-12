@@ -57,16 +57,19 @@ function roundUpMbps(mbps) {
 }
 
 /**
- * HDR's share on top, kept until an HDR game is measured: the HDR the bench
- * measured is a desktop shown in HDR mode, which needs no more than SDR.
+ * HDR's small margin on top. Measured on rendered 3D scenes with highlights up
+ * to 3× the SDR white, against the same renders in SDR: a scrolling scene
+ * needs ×0.96–1.07 of SDR's bitrate for VMAF NEG 93, a still one up to ×1.32
+ * where HDR's score has stopped rising (docs/wiki/16-Auto-Bitrate-Benchmarks.md).
+ * ×1.5 until v0.4.3.
  */
-const AUTO_HDR_RATIO = 1.5;
+const AUTO_HDR_RATIO = 1.2;
 
 /**
  * Recommended bitrate (Mbps):
  *   9.5 × P^0.75 over the Internet, 20 × P^0.8 on the host's own network,
  *   P = the stream's pixels over 1920×1080's
- *   × 1.5 for HDR
+ *   × 1.2 for HDR
  * rounded up (roundUpMbps), clamped to [1, 150] Mbps.
  * "Same as Host" (height 0) uses 1080p. Neither the frame rate, the device,
  * 4:4:4 nor H.264 is a factor: the bench measured no frame-rate term worth

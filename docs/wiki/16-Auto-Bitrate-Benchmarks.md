@@ -517,9 +517,35 @@ Reading:
 - **And 4:4:4 delivers its colour at that bitrate.** Scored against the same 4:4:4 reference, a 4:2:0 stream's chroma stops at PSNR-Cb 35.5 dB at a set 10 Mbit/s and 36.5 at 30 (CIEDE2000 37.1 and 39.6, a mean ΔE2000 of about 2.5 and 1.9), where 4:4:4 has 40.3 and 40.2 at 10: 4:4:4 at 8 Mbit/s already gives the colour 4:2:0 does not reach at 30. Below 3 Mbit/s the two are alike (4:2:0 slightly ahead at 1.5 and 2).
 - **The HDR desktop costs nothing more either**, but it is not an HDR game. Its curves bend where SDR's do, and the stills settle about 1.3 points of VMAF NEG lower (*Junk Shop* 92.9 against 94.3), flat from 8 to 30 Mbit/s while PSNR-Y is higher than in SDR (48.3 against 46.3 dB): an offset between the reference and what the host composes, not a coding loss, which is also why VMAF NEG 95 is never reached. ΔE ITP falls from 19.2 at 1.5 Mbit/s to 9.2 at 6, 7.8 at 10, 7.2 at 15 and 6.8 at 30, the same bend. What was measured is SDR content shown in HDR mode, which uses only the lower part of the PQ range; a game with real highlights was not measured.
 
+### HDR with highlights
+
+The desktop measured above uses only the lower part of the PQ range. On 12 November 2026 the same bench (HEVC 1080p60, NVENC, 11 bitrates) streamed scenes with real highlights, and the same renders in SDR 4:2:0 for comparison, picture for picture:
+
+- **Content:** the *Junk Shop* and *Gears* renders, drawn by the page into an extended-range WebGPU canvas (`rgba16float`), still (scenes 1 and 4) and scrolling as one tall picture (scene 2, and scene 3 with 30-frame pauses). Highlights by a fixed formula: where the luma Y is over 0.6, the light is multiplied by 1 + 2·((Y − 0.6)/0.4)², so the brightest parts reach 3× the SDR white level (720 nits at the host's 240).
+- **Calibration:** Chrome puts the extended canvas's 1.0 at 86 nits, so the page scales its light by 2.783 to put 1.0 on the desktop's SDR white. A calibration scene of known bands is read back from every HDR stream: all bands are carried to 5× (1200 nits) within ±1.5 %.
+- **Scoring:** the HDR streams against the same formula applied to the renders (BT.2020 PQ, 10 bits), the SDR streams against the renders; VMAF NEG, PSNR-Y, and ΔE ITP for HDR. The middle 512 columns are left out of both scores (a system dialog covered them on the host's screen during the HDR runs).
+
+The target (Mbit/s) at which a scene first reaches VMAF NEG 93, and the HDR / SDR ratio:
+
+| Scene | SDR | HDR | Ratio |
+|---|---:|---:|---:|
+| Scroll (2) | 5.6 | 6.0 | ×1.07 |
+| Scroll with pauses (3) | 5.0 | 4.8 | ×0.96 |
+| *Gears*, still (4) | 7.2 | 9.6 | ×1.32 |
+| *Junk Shop*, still (1) | 7.4 | > 30 (92.8 at 30) | — |
+
+VMAF NEG at a set 30 Mbit/s, where every curve is flat: SDR 94.9 / 95.0 / 94.5 / 94.0 (scenes 2, 3, 4, 1), HDR 93.9 / 94.0 / 93.6 / 92.8.
+
+Reading:
+
+- **On moving pictures, HDR with highlights needs what SDR needs** (×0.96 to ×1.07). The scrolling scenes are the ones that set the Auto rule.
+- **HDR stops about one point lower on every scene**, flat from 15 to 30 Mbit/s, as the HDR desktop did: an offset between the reference and what the host composes, not a lack of bitrate. Near that ceiling a small loss of score costs a lot of bitrate, which is where the still pictures' ×1.32 and *Junk Shop*'s miss come from. Measured against each format's own ceiling, HDR needs less: to come within one point of it, ×0.67 to ×0.93 of SDR's bitrate.
+- ΔE ITP of the scrolling scene falls from 8.9 at 1.5 Mbit/s to 4.7 at 6 and 4.3 at 30.
+- The HDR runs had more repeated and missing frames than the SDR ones (48–114 and 7–40 per point, against 0–11): if anything that made HDR's score harder.
+
 ### Not measured yet
 
-- **An HDR game**, with highlights over the SDR white level.
+- **A real HDR game**: the highlights above come from a fixed formula over SDR renders.
 - **4:4:4 and HDR on AMF and on Intel**: the figures above are NVENC's.
 
 ## 16.7 Hardware decode against the reference decoder
@@ -540,21 +566,21 @@ Two different hardware decoders disagree with ffmpeg on NVENC streams only, in s
 - The same target is spent differently by different encoders (NVENC about half, AMF all of it), so a target picked on one encoder is not a quality level on another.
 - On NVENC, the host's QP floor caps what a scrolling page uses at 1440p and above (§16.6, *The QP floor*): past that point, a higher target buys about one point of VMAF NEG at most.
 
-- H.264 and 4:4:4 need no more than HEVC 4:2:0; the HDR desktop needs no more either, but an HDR game was not measured.
+- H.264 and 4:4:4 need no more than HEVC 4:2:0; the HDR desktop needs no more either, and HDR with highlights needs what SDR needs on moving pictures, up to a third more on still ones.
 
-**The rule since v0.4.2** (`computeAutoBitrate()`): 9.5 Mbit/s × P^0.75, P being the stream's pixels over 1920×1080's — VMAF NEG 93 on the scrolling search page, +10 % — ×1.5 for HDR, rounded up to a whole Mbit/s (the slider's step), to 5 above 30, within 1–150. No frame-rate term, no device factor, nothing for 4:4:4 or H.264. The ×1.5 for HDR stays until an HDR game is measured. In v0.4.2 that Internet target was used everywhere: the page could not tell at launch whether the stream would cross the LAN or the Internet.
+**The rule since v0.4.2** (`computeAutoBitrate()`): 9.5 Mbit/s × P^0.75, P being the stream's pixels over 1920×1080's — VMAF NEG 93 on the scrolling search page, +10 % — ×1.2 for HDR, rounded up to a whole Mbit/s (the slider's step), to 5 above 30, within 1–150. No frame-rate term, no device factor, nothing for 4:4:4 or H.264. HDR took ×1.5 in v0.4.2 and v0.4.3, until HDR with highlights was measured (§16.6): ×1.2 since v0.4.4, a small margin for still pictures and for what a real game may add. In v0.4.2 that Internet target was used everywhere: the page could not tell at launch whether the stream would cross the LAN or the Internet.
 
-**On the host's own network, since v0.4.4**: 20 Mbit/s × P^0.8 — VMAF NEG 95 on the same page, +16 % at 1080p — with the same ×1.5 for HDR and the same rounding. The server tells the page whether it sees the browser on its own network (`viewer_lan` in `GET /api/settings/streaming`, read at every launch): a private address, or a public one that is the host network's own, as the server plans a stream's connection; a mesh VPN counts as the Internet. The value is chosen at launch, so a GameStream host, which takes its bitrate at launch and nowhere else, gets it too. On a cable the bitrate made no measurable difference to the latency (§16.4): the LAN's room goes to the picture.
+**On the host's own network, since v0.4.4**: 20 Mbit/s × P^0.8 — VMAF NEG 95 on the same page, +16 % at 1080p — with the same ×1.2 for HDR and the same rounding. The server tells the page whether it sees the browser on its own network (`viewer_lan` in `GET /api/settings/streaming`, read at every launch): a private address, or a public one that is the host network's own, as the server plans a stream's connection; a mesh VPN counts as the Internet. The value is chosen at launch, so a GameStream host, which takes its bitrate at launch and nowhere else, gets it too. On a cable the bitrate made no measurable difference to the latency (§16.4): the LAN's room goes to the picture.
 
-| Stream | Before v0.4.2 | Internet, since v0.4.2 | Internet HDR | LAN, since v0.4.4 | LAN HDR |
+| Stream | Before v0.4.2 | Internet, since v0.4.2 | Internet HDR, since v0.4.4 | LAN, since v0.4.4 | LAN HDR |
 |---|---:|---:|---:|---:|---:|
-| 720p60 | 9 | 6 | 8 | 11 | 16 |
-| 1080p60 | 20 | 10 | 15 | 20 | 30 |
-| 1080p120 | 40 | 10 | 15 | 20 | 30 |
-| 1440p60 | 36 | 15 | 22 | 35 | 50 |
-| 2160p60 | 80 | 27 | 45 | 65 | 95 |
-| 1080p60 4:4:4 | 30 | 10 | 15 | 20 | 30 |
-| 1080p60 on a phone | 10 | 10 | 15 | 20 | 30 |
+| 720p60 | 9 | 6 | 7 | 11 | 13 |
+| 1080p60 | 20 | 10 | 12 | 20 | 24 |
+| 1080p120 | 40 | 10 | 12 | 20 | 24 |
+| 1440p60 | 36 | 15 | 18 | 35 | 40 |
+| 2160p60 | 80 | 27 | 35 | 65 | 75 |
+| 1080p60 4:4:4 | 30 | 10 | 12 | 20 | 24 |
+| 1080p60 on a phone | 10 | 10 | 12 | 20 | 24 |
 
 
 

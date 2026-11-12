@@ -39,7 +39,7 @@ describe('Auto bitrate, LAN or Internet', () => {
         await MoonlightApp._readStreamLimits();
         expect(MoonlightApp._autoBitrateFor(sdr, 1080, '16:9')).toBe(20000);
         expect(MoonlightApp._autoBitrateFor(sdr, 1440, '16:9')).toBe(35000);
-        expect(MoonlightApp._autoBitrateFor(hdr, 1080, '16:9')).toBe(30000);
+        expect(MoonlightApp._autoBitrateFor(hdr, 1080, '16:9')).toBe(24000);
     });
 
     it('keeps the Internet rule otherwise, and when the server does not say', async () => {
@@ -53,7 +53,7 @@ describe('Auto bitrate, LAN or Internet', () => {
         expect(MoonlightApp._autoBitrateFor(sdr, 1080, '16:9')).toBe(10000);
         // Nothing read at all.
         MoonlightApp._viewerOnLan = undefined;
-        expect(MoonlightApp._autoBitrateFor(hdr, 1080, '16:9')).toBe(15000);
+        expect(MoonlightApp._autoBitrateFor(hdr, 1080, '16:9')).toBe(12000);
     });
 
     it('follows the browser from one read to the next', async () => {
