@@ -701,20 +701,34 @@ export function mwsrGazeWanted() {
  * address writes the key. Off by default until a test on Bruno's iPad says
  * whether Safari keeps reporting motion with the cursor against the edge.
  * Where storage is refused, the address alone decides, for that page.
+ * The address is read once, when this module loads: app.js rewrites it to
+ * '/' at start-up, long before a stream builds its StreamView (12/11/2026,
+ * the key given that way was lost).
  * @returns {boolean}
  */
 export function lockFreeLookWanted() {
-    let asked = null;
     try {
-        asked = new URLSearchParams(location.search).get('mw_lookfree');
-    } catch (e) {}
-    try {
-        if (asked === '1' || asked === '0') localStorage.setItem('mw_lookfree', asked);
         return localStorage.getItem('mw_lookfree') === '1';
     } catch (e) {
-        return asked === '1';
+        return lockFreeLookAsked === '1';
     }
 }
+
+/** ?mw_lookfree= as the page was opened ('1', '0' or null). */
+let lockFreeLookAsked = null;
+
+/** Takes ?mw_lookfree=1|0 from the address into the lab key (see above). */
+export function takeLockFreeLookFromAddress() {
+    try {
+        lockFreeLookAsked = new URLSearchParams(location.search).get('mw_lookfree');
+    } catch (e) {}
+    try {
+        if (lockFreeLookAsked === '1' || lockFreeLookAsked === '0') {
+            localStorage.setItem('mw_lookfree', lockFreeLookAsked);
+        }
+    } catch (e) {}
+}
+takeLockFreeLookFromAddress();
 
 /**
  * Lab key, no UI: localStorage.mw_mwsr_map = '1' asks the native host, at
