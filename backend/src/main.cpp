@@ -472,141 +472,127 @@ static void openInBrowser(const QString& url)
     QDesktopServices::openUrl(QUrl(url));
 }
 
-// Ask an already-running instance (reached over loopback HTTPS at @p base, e.g.
-// "https://localhost:443") to surface the admin page: it redirects an existing
-// browser tab to /admin via the control channel, or opens a fresh tab when no
-// tab is connected. Returns true when the running instance handled the request
-// (HTTP 200); false on any network/timeout error so the caller can fall back to
-// opening the browser itself. The localhost cert is self-signed, so peer
-// verification is disabled for this one loopback call.
-static bool requestFocusAdmin(const QString& base)
-{
-    QNetworkAccessManager nam;
-    QNetworkRequest req{QUrl(base + QStringLiteral("/api/local/focus"))};
-    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
-    ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
-    req.setSslConfiguration(ssl);
-
-    QNetworkReply* reply = nam.post(req, QByteArrayLiteral("{}"));
-    QObject::connect(reply, &QNetworkReply::sslErrors, reply,
-                     [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
-
-    QEventLoop loop;
-    QTimer timer;
-    timer.setSingleShot(true);
-    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    timer.start(3000);
-    loop.exec();
-
-    const bool ok = timer.isActive() && reply->error() == QNetworkReply::NoError &&
-                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
-    reply->deleteLater();
-    return ok;
-}
-
-// ── Headless operator CLI ───────────────────────────────────────────────────
+// ── The running server, asked from another process ─────────────────────────
 // A headless install has no admin page within reach: the operator is on SSH,
 // and the browser that will use the server lives on another machine. `--status`
-// and `--enable-internet` drive the *running* instance through the very same
-// loopback endpoints the admin page calls, and print the result as plain text.
+// and `--enable-internet` drive the *running* instance through the very routes
+// the admin page calls, and print the result as plain text. The tray icon of a
+// server that runs as a service, and a second launch, ask it the same way.
 //
 // They are queries against another process, so they run before the
-// single-instance lock is taken and never start a server of their own.
+// single-instance lock is taken and never start a server of their own. They
+// go over the local channel (server/LocalChannel.h): a door of this machine,
+// for this install's own programs, which is what says who is asking. No
+// address does, so none of them goes through a network socket.
 
-struct LoopbackReply
+struct LocalReply
 {
-    bool ok = false;    // transport-level success AND HTTP 2xx
-    int httpStatus = 0; // 0 when the request never completed
+    bool ok = false;    // answered, AND with a 2xx
+    int httpStatus = 0; // 0 when the request never got an answer
     QJsonObject json;   // parsed body (empty when not JSON)
-    QString error;      // human-readable transport error
+    QString error;      // why it never got an answer, for a person to read
 };
 
-// One loopback HTTPS call. The loopback certificate is the self-signed LAN one,
-// so peer verification is off — the peer is a socket on 127.0.0.1, which no
-// certificate could authenticate better than the kernel already does.
-static LoopbackReply loopbackRequest(const QString& base, const QString& path,
-                                     const QByteArray& postBody = QByteArray(),
-                                     int timeoutMs = 15000, const QString& adminKey = QString())
+static QString localChannelEndpoint()
 {
-    QNetworkAccessManager nam;
-    QNetworkRequest req{QUrl(base + path)};
-    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    if (!adminKey.isEmpty())
-        req.setRawHeader(QByteArrayLiteral("X-MW-Admin-Key"), adminKey.toUtf8());
-    QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
-    ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
-    req.setSslConfiguration(ssl);
+    return mw::localchannel::endpointFor(
+        mw::localchannel::channelName(mw::edition::productName(), mw::edition::devFlag()),
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+}
 
-    QNetworkReply* reply = postBody.isNull() ? nam.get(req) : nam.post(req, postBody);
-    QObject::connect(reply, &QNetworkReply::sslErrors, reply,
-                     [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
+// One request to the running server: a GET, or a POST when @p postBody is
+// given. @p target is a route, with its query if it has one.
+static LocalReply localRequest(const QString& target, const QByteArray& postBody = QByteArray(),
+                               int timeoutMs = 15000)
+{
+    mw::localchannel::Request request;
+    request.method = postBody.isNull() ? QStringLiteral("GET") : QStringLiteral("POST");
+    const qsizetype mark = target.indexOf(QLatin1Char('?'));
+    request.path = mark < 0 ? target : target.left(mark);
+    if (mark >= 0) request.query = target.mid(mark + 1);
+    request.body = postBody;
 
-    QEventLoop loop;
-    QTimer timer;
-    timer.setSingleShot(true);
-    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    timer.start(timeoutMs);
-    loop.exec();
-
-    LoopbackReply out;
-    if (!timer.isActive()) {
-        out.error = QStringLiteral("timed out after %1 s").arg(timeoutMs / 1000);
-    } else if (reply->error() != QNetworkReply::NoError) {
-        out.error = reply->errorString();
-    }
-    out.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    out.json = QJsonDocument::fromJson(reply->readAll()).object();
-    out.ok = out.error.isEmpty() && out.httpStatus >= 200 && out.httpStatus < 300;
-    reply->deleteLater();
+    LocalReply out;
+    const mw::localchannel::Reply reply =
+        mw::localchannel::request(localChannelEndpoint(), request, timeoutMs, &out.error);
+    out.httpStatus = reply.status;
+    out.json = QJsonDocument::fromJson(reply.body).object();
+    out.ok = reply.status >= 200 && reply.status < 300;
     return out;
 }
 
-// HTTPS port the running server answers on, or 0 when none does.
-//
-// The persisted port is the authority, but it is read from *this* user's
-// settings.json — run as a different user than the service (a plain `sudo`-less
-// `moonlightweb --status` against a root-owned systemd unit) that file is a
-// different one, or absent. So fall back to the default 443 before giving up.
-static quint16 findRunningHttpsPort(quint16 persistedPort)
+// Whether a server of this install answers on the channel.
+static bool serverRunning()
+{
+    return localRequest(QStringLiteral("/api/health"), QByteArray(), 3000).ok;
+}
+
+// HTTPS port the running server answers on, or 0 when none does. Asked of the
+// server itself: the port in this account's settings.json is the one it last
+// wrote, not always the one it holds now.
+static quint16 findRunningHttpsPort()
+{
+    // A route that answers under --noadmin too: a booth's tray needs the port.
+    const LocalReply status =
+        localRequest(QStringLiteral("/api/server/status"), QByteArray(), 3000);
+    if (!status.ok) return 0;
+    const int port = status.json.value(QStringLiteral("https_port")).toInt(0);
+    return port > 0 && port < 65536 ? static_cast<quint16>(port) : 0;
+}
+
+// Ask the running instance to surface the admin page: it redirects an existing
+// browser tab to /admin via the control channel, or opens a fresh tab when no
+// tab is connected. False when it could not be asked, so the caller can fall
+// back to opening the browser itself.
+static bool requestFocusAdmin()
+{
+    return localRequest(QStringLiteral("/api/local/focus"), QByteArrayLiteral("{}"), 3000).ok;
+}
+
+// Whether something answers this install's port on this machine, asked the way
+// any browser may ask (GET /api/health, which says nothing private). It grants
+// nothing and is used for one thing: telling a server that is not running from
+// one that runs under another account, whose channel this account cannot open.
+// The certificate there is the self-signed local one, so it is not verified.
+static bool answersOnThisMachine(quint16 persistedPort)
 {
     QList<quint16> candidates{persistedPort};
     if (!candidates.contains(443)) candidates.append(443);
-
     for (quint16 p : candidates) {
-        const QString base = p == 443 ? QStringLiteral("https://127.0.0.1")
-                                      : QStringLiteral("https://127.0.0.1:%1").arg(p);
-        if (loopbackRequest(base, QStringLiteral("/api/health"), QByteArray(), 3000).ok) return p;
+        QNetworkAccessManager nam;
+        QNetworkRequest req{QUrl(p == 443
+                                     ? QStringLiteral("https://127.0.0.1/api/health")
+                                     : QStringLiteral("https://127.0.0.1:%1/api/health").arg(p))};
+        QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
+        ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
+        req.setSslConfiguration(ssl);
+        QNetworkReply* reply = nam.get(req);
+        QObject::connect(reply, &QNetworkReply::sslErrors, reply,
+                         [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
+        QEventLoop loop;
+        QTimer timer;
+        timer.setSingleShot(true);
+        QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        timer.start(3000);
+        loop.exec();
+        const bool ok = timer.isActive() && reply->error() == QNetworkReply::NoError &&
+                        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
+        reply->deleteLater();
+        if (ok) return true;
     }
-    return 0;
+    return false;
 }
 
-// POST to an admin route from the terminal.
-//
-// Every mutating admin endpoint additionally requires the per-run admin key
-// (RequestGuard treats a write without it as something another page drove
-// through the user's browser). A terminal is not a browser, but the gate cannot
-// tell — so fetch the key exactly as the frontend does, over the same loopback
-// connection that already proves we are on this machine, and present it.
-static LoopbackReply loopbackAdminPost(const QString& base, const QString& path,
-                                       const QByteArray& body, int timeoutMs = 15000)
+// What a command says when the running server could not be asked.
+static QString notRunningText(quint16 persistedPort)
 {
-    const QString key =
-        loopbackRequest(base, QStringLiteral("/api/admin/token"), QByteArray(), 5000)
-            .json.value(QStringLiteral("token"))
-            .toString();
-    return loopbackRequest(base, path, body, timeoutMs, key);
-}
-
-// Loopback base URL of the running server, or empty when none answers.
-static QString findRunningInstance(quint16 persistedPort)
-{
-    const quint16 p = findRunningHttpsPort(persistedPort);
-    if (p == 0) return QString();
-    return p == 443 ? QStringLiteral("https://127.0.0.1")
-                    : QStringLiteral("https://127.0.0.1:%1").arg(p);
+    if (answersOnThisMachine(persistedPort))
+        return QStringLiteral(
+            "MoonlightWeb is running under another account: run this command as that account\n"
+            "(for the system service: with sudo).\n");
+    return QStringLiteral("MoonlightWeb is not running — start it first "
+                          "(sudo systemctl start moonlightweb).\n");
 }
 
 // The agreement the operator must accept before the machine is opened to the
@@ -642,20 +628,22 @@ static bool stdinIsInteractive()
 static int runStatusCommand(quint16 persistedHttpsPort)
 {
     QTextStream out(stdout);
-    const QString base = findRunningInstance(persistedHttpsPort);
-    if (base.isEmpty()) {
-        out << "MoonlightWeb is not running (nothing answers on the loopback interface).\n"
-            << "\n"
-            << "  systemd:  sudo systemctl status moonlightweb\n"
-            << "  logs:     ~/.local/share/MoonlightWeb/MoonlightWeb/logs/moonlightweb.log\n";
+    if (!serverRunning()) {
+        if (answersOnThisMachine(persistedHttpsPort))
+            out << notRunningText(persistedHttpsPort);
+        else
+            out << "MoonlightWeb is not running (nothing answers on this machine).\n"
+                << "\n"
+                << "  systemd:  sudo systemctl status moonlightweb\n"
+                << "  logs:     ~/.local/share/MoonlightWeb/MoonlightWeb/logs/moonlightweb.log\n";
         out.flush();
         return 1;
     }
 
-    const QJsonObject server = loopbackRequest(base, "/api/server/status").json;
-    const QJsonObject setup = loopbackRequest(base, "/api/setup/status").json;
-    const QJsonObject auth = loopbackRequest(base, "/api/auth/status").json;
-    const QJsonObject inet = loopbackRequest(base, "/api/internet/status").json;
+    const QJsonObject server = localRequest("/api/server/status").json;
+    const QJsonObject setup = localRequest("/api/setup/status").json;
+    const QJsonObject auth = localRequest("/api/auth/status").json;
+    const QJsonObject inet = localRequest("/api/internet/status").json;
 
     const int httpsPort = setup.value("https_port").toInt(443);
     const QString portSuffix = httpsPort == 443 ? QString() : QStringLiteral(":%1").arg(httpsPort);
@@ -706,8 +694,7 @@ static int runStatusCommand(quint16 persistedHttpsPort)
         // tells the operator up front whether enabling it will configure the
         // router by itself or need a port forward typed in by hand. Nothing on
         // the LAN depends on any of this.
-        const QJsonObject upnp =
-            loopbackRequest(base, "/api/internet/upnp-probe", QByteArray(), 10000).json;
+        const QJsonObject upnp = localRequest("/api/internet/upnp-probe", QByteArray(), 10000).json;
         if (upnp.value("available").toBool(false))
             out << "                 a UPnP router answered — the port will be mapped for you\n";
         else
@@ -767,16 +754,13 @@ static int runStatusCommand(quint16 persistedHttpsPort)
 static int runNewPinCommand(quint16 persistedHttpsPort)
 {
     QTextStream out(stdout);
-    const QString base = findRunningInstance(persistedHttpsPort);
-    if (base.isEmpty()) {
-        out << "MoonlightWeb is not running — start it first "
-               "(sudo systemctl start moonlightweb).\n";
+    if (!serverRunning()) {
+        out << notRunningText(persistedHttpsPort);
         out.flush();
         return 1;
     }
 
-    const LoopbackReply reply =
-        loopbackAdminPost(base, "/api/admin/pin/generate", QByteArrayLiteral("{}"));
+    const LocalReply reply = localRequest("/api/admin/pin/generate", QByteArrayLiteral("{}"));
     if (!reply.ok) {
         out << "Failed: "
             << (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
@@ -842,10 +826,8 @@ static QString readSecretFromStdin(const QString& prompt)
 static int runSetAdminPasswordCommand(quint16 persistedHttpsPort)
 {
     QTextStream out(stdout);
-    const QString base = findRunningInstance(persistedHttpsPort);
-    if (base.isEmpty()) {
-        out << "MoonlightWeb is not running — start it first "
-               "(sudo systemctl start moonlightweb).\n";
+    if (!serverRunning()) {
+        out << notRunningText(persistedHttpsPort);
         out.flush();
         return 1;
     }
@@ -871,8 +853,8 @@ static int runSetAdminPasswordCommand(quint16 persistedHttpsPort)
     // to allow the unlock, so make sure the toggle is not left off.
     body["enabled"] = true;
 
-    const LoopbackReply reply = loopbackAdminPost(
-        base, "/api/admin/password", QJsonDocument(body).toJson(QJsonDocument::Compact));
+    const LocalReply reply =
+        localRequest("/api/admin/password", QJsonDocument(body).toJson(QJsonDocument::Compact));
     if (!reply.ok) {
         const QString apiError = reply.json.value("error").toString();
         out << "Failed: "
@@ -900,10 +882,8 @@ static int runSetAdminPasswordCommand(quint16 persistedHttpsPort)
 static int runClearAdminPasswordCommand(quint16 persistedHttpsPort, bool assumeYes)
 {
     QTextStream out(stdout);
-    const QString base = findRunningInstance(persistedHttpsPort);
-    if (base.isEmpty()) {
-        out << "MoonlightWeb is not running — start it first "
-               "(sudo systemctl start moonlightweb).\n";
+    if (!serverRunning()) {
+        out << notRunningText(persistedHttpsPort);
         out.flush();
         return 1;
     }
@@ -922,8 +902,8 @@ static int runClearAdminPasswordCommand(quint16 persistedHttpsPort, bool assumeY
 
     QJsonObject body;
     body["clear"] = true;
-    const LoopbackReply reply = loopbackAdminPost(
-        base, "/api/admin/password", QJsonDocument(body).toJson(QJsonDocument::Compact));
+    const LocalReply reply =
+        localRequest("/api/admin/password", QJsonDocument(body).toJson(QJsonDocument::Compact));
     if (!reply.ok) {
         const QString apiError = reply.json.value("error").toString();
         out << "Failed: "
@@ -992,15 +972,13 @@ static int runStreamLimitsCommand(quint16 persistedHttpsPort, const std::optiona
         body["max_allowed_stream_resolution"] = AppSettings::streamResolutionText(w, h);
     }
 
-    const QString base = findRunningInstance(persistedHttpsPort);
-    if (base.isEmpty()) {
-        out << "MoonlightWeb is not running — start it first "
-               "(sudo systemctl start moonlightweb).\n";
+    if (!serverRunning()) {
+        out << notRunningText(persistedHttpsPort);
         out.flush();
         return 1;
     }
-    const LoopbackReply reply = loopbackAdminPost(
-        base, "/api/settings/streaming", QJsonDocument(body).toJson(QJsonDocument::Compact));
+    const LocalReply reply =
+        localRequest("/api/settings/streaming", QJsonDocument(body).toJson(QJsonDocument::Compact));
     if (!reply.ok) {
         const QString apiError = reply.json.value("error").toString();
         out << "Failed: "
@@ -1014,8 +992,7 @@ static int runStreamLimitsCommand(quint16 persistedHttpsPort, const std::optiona
     }
 
     // What the instance holds now, all three, read back.
-    const QJsonObject now =
-        loopbackRequest(base, "/api/settings/streaming", QByteArray(), 10000).json;
+    const QJsonObject now = localRequest("/api/settings/streaming", QByteArray(), 10000).json;
     const auto shown = [](int v, const char* unit) {
         return v > 0 ? QStringLiteral("%1 %2").arg(v).arg(QLatin1String(unit))
                      : QStringLiteral("no limit");
@@ -1050,10 +1027,8 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
         out.flush();
         return 1;
     }
-    const QString base = findRunningInstance(persistedHttpsPort);
-    if (base.isEmpty()) {
-        out << "MoonlightWeb is not running — start it first "
-               "(sudo systemctl start moonlightweb).\n";
+    if (!serverRunning()) {
+        out << notRunningText(persistedHttpsPort);
         out.flush();
         return 1;
     }
@@ -1077,7 +1052,7 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
 
     // Probe the router before enabling, so the closing advice is accurate even
     // if the enable itself half-fails.
-    const bool upnp = loopbackRequest(base, "/api/internet/upnp-probe", QByteArray(), 10000)
+    const bool upnp = localRequest("/api/internet/upnp-probe", QByteArray(), 10000)
                           .json.value("available")
                           .toBool(false);
 
@@ -1089,8 +1064,8 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
 
     // Generous: the handler runs STUN detection and asks the router, both
     // network round-trips with their own timeouts.
-    const LoopbackReply reply = loopbackAdminPost(
-        base, "/api/internet/enable", QJsonDocument(body).toJson(QJsonDocument::Compact), 180000);
+    const LocalReply reply = localRequest(
+        "/api/internet/enable", QJsonDocument(body).toJson(QJsonDocument::Compact), 180000);
     if (!reply.ok) {
         out << "Failed: "
             << (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
@@ -1212,7 +1187,7 @@ static QUrl trayClientUrl(quint16 httpsPort, const QString& path)
                     : QStringLiteral("https://localhost:%1%2").arg(httpsPort).arg(path));
 }
 
-static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool ownerHasNoDesktopHere)
+static int runTrayClient(QApplication& app, bool ownerHasNoDesktopHere)
 {
     QLockFile trayLock(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                        "/moonlightweb-tray.lock");
@@ -1223,16 +1198,18 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
     }
 
     // At logon the service and this process start within the same second, and
-    // the service's TLS listener is a few seconds behind. Give it time before
-    // concluding that nothing is there. A refused connection returns at once,
-    // so this costs nothing in the common case.
+    // the service's channel opens a few seconds later, once its routes are all
+    // in place. Give it time before concluding that nothing is there. A channel
+    // that is not there yet answers at once, so this costs nothing in the
+    // common case.
     quint16 port = 0;
     for (int attempt = 0; attempt < 10 && port == 0; ++attempt) {
         if (attempt > 0) waitMs(2000);
-        port = findRunningHttpsPort(persistedHttpsPort);
+        port = findRunningHttpsPort();
     }
     if (port == 0) {
-        Logger::info("No tray client: the instance holding the lock never answered on loopback");
+        Logger::info("No tray client: the instance holding the lock never answered on its "
+                     "local channel");
         return 0;
     }
 
@@ -1240,10 +1217,8 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
     // systemd --user unit started outside a graphical session): the running
     // instance says itself whether it has a desktop to draw on.
     if (!ownerHasNoDesktopHere) {
-        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
-                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
-        const LoopbackReply setup =
-            loopbackRequest(base, QStringLiteral("/api/setup/status"), QByteArray(), 5000);
+        const LocalReply setup =
+            localRequest(QStringLiteral("/api/setup/status"), QByteArray(), 5000);
         if (!setup.ok || !setup.json.value("headless").toBool(false)) {
             Logger::info("No tray client: the running instance has a desktop and its own tray");
             return 0;
@@ -1256,10 +1231,8 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
     tray.setClientMode(true);
     // A service started with --noadmin: its tray offers nothing that changes it.
     {
-        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
-                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
-        const LoopbackReply status =
-            loopbackRequest(base, QStringLiteral("/api/auth/status"), QByteArray(), 5000);
+        const LocalReply status =
+            localRequest(QStringLiteral("/api/auth/status"), QByteArray(), 5000);
         tray.setAdminLocked(status.ok && status.json.value("admin_locked").toBool(false));
     }
     tray.setUrlProvider([&port](const QString& path) { return trayClientUrl(port, path); });
@@ -1267,49 +1240,37 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
     // The internet link has to be asked for rather than computed: this process
     // has no rendezvous line and no settings of its own, it only decorates a
     // server it cannot see. Asked at the moment the entry is clicked, so a
-    // blocking loopback call is acceptable — and given a short budget so a
-    // wedged server cannot freeze the menu. Empty on any failure, which is the
-    // same answer as "no internet way in": the entry falls back to loopback.
-    tray.setRemoteLinkProvider([&port](const QString& path) -> QString {
-        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
-                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
+    // blocking call is acceptable — and given a short budget so a wedged server
+    // cannot freeze the menu. Empty on any failure, which is the same answer as
+    // "no internet way in": the entry falls back to this machine's own address.
+    tray.setRemoteLinkProvider([](const QString& path) -> QString {
         // Sent raw: the server accepts one plain path segment and nothing else,
         // so there is never anything here that needs escaping.
         const QString query = path.isEmpty() ? QString() : QStringLiteral("?p=") + path;
-        const LoopbackReply reply = loopbackRequest(
-            base, QStringLiteral("/api/server/remote-link") + query, QByteArray(), 2000);
+        const LocalReply reply =
+            localRequest(QStringLiteral("/api/server/remote-link") + query, QByteArray(), 2000);
         return reply.ok ? reply.json.value(QStringLiteral("url")).toString() : QString();
     });
 
     // Restart / Quit act on the server we decorate, not on this tray. We reach it
-    // the same way the CLI reaches an admin route: a loopback POST carrying the
-    // per-run admin key (loopbackAdminPost fetches it). The server then exits on
-    // its own — its supervisor respawns it for a restart, or lets it stay down
-    // for a quit — so no elevation and no SCM rights are needed here. 127.0.0.1,
-    // not "localhost", so the admin-key exchange rides the loopback the guard
-    // already trusts. `port` is followed live by the poll below.
-    tray.setRestartHandler([&port]() {
-        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
-                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
-        loopbackAdminPost(base, QStringLiteral("/api/system/restart"), QByteArrayLiteral("{}"));
-    });
-    tray.setQuitHandler([&port]() {
-        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
-                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
-        loopbackAdminPost(base, QStringLiteral("/api/system/quit"), QByteArrayLiteral("{}"));
-    });
+    // the same way the command line reaches an admin route: over the local
+    // channel. The server then exits on its own — its supervisor respawns it for
+    // a restart, or lets it stay down for a quit — so no elevation and no SCM
+    // rights are needed here.
+    tray.setRestartHandler(
+        []() { localRequest(QStringLiteral("/api/system/restart"), QByteArrayLiteral("{}")); });
+    tray.setQuitHandler(
+        []() { localRequest(QStringLiteral("/api/system/quit"), QByteArrayLiteral("{}")); });
 
     // Who is watching the screen this tray sits on. The server keeps that
     // answer — this process has no slot table, no sessions and no settings —
-    // so it is asked for over the same loopback as everything else, on a short
+    // so it is asked for over the same channel as everything else, on a short
     // budget: a wedged server must cost the icon nothing but a stale count, and
     // an unanswered poll simply reports nobody rather than inventing viewers.
     tray.setActivityProvider(
-        [&port]() -> StreamActivity {
-            const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
-                                             : QStringLiteral("https://127.0.0.1:%1").arg(port);
-            const LoopbackReply reply = loopbackRequest(
-                base, QStringLiteral("/api/server/stream-activity"), QByteArray(), 2000);
+        []() -> StreamActivity {
+            const LocalReply reply =
+                localRequest(QStringLiteral("/api/server/stream-activity"), QByteArray(), 2000);
             if (!reply.ok) {
                 StreamActivity unknown;
                 unknown.valid = false;
@@ -1334,7 +1295,7 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
     QTimer portPoll;
     portPoll.setInterval(60000);
     QObject::connect(&portPoll, &QTimer::timeout, &app, [&port, &silentPolls]() {
-        const quint16 p = findRunningHttpsPort(port);
+        const quint16 p = findRunningHttpsPort();
         if (p == 0) {
             if (++silentPolls < 5) return;
             Logger::info("Tray client: the server has been gone for 5 minutes — quitting");
@@ -2260,7 +2221,7 @@ int main(int argc, char* argv[])
             // Prefer redirecting an already-open tab (no duplicate). Only when the
             // running instance can't be reached do we open the admin page here.
             Logger::info("Asking the running instance to surface the admin page: " + base);
-            if (!requestFocusAdmin(base)) {
+            if (!requestFocusAdmin()) {
                 Logger::info("Running instance unreachable — opening the admin page directly");
                 openInBrowser(base + QStringLiteral("/admin"));
             }
@@ -2272,8 +2233,7 @@ int main(int argc, char* argv[])
 #else
         const bool ownerHidden = false;
 #endif
-        return runTrayClient(app, appSettings.httpsPort(mw::edition::defaultHttpsPort()),
-                             ownerHidden);
+        return runTrayClient(app, ownerHidden);
     }
 
     HttpServer server(httpPort);
