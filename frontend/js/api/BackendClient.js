@@ -409,10 +409,13 @@ export class BackendClient {
      * slot 1 derives a STABLE second ID (last byte XOR 0xFF) so the standby
      * session coexists with the primary in Sunshine's per-uniqueid keying and
      * survives reloads (a reload can /resume its own standby session).
+     * Every other slot — an app slot past the owner's two, where a second
+     * device or a second app lands — was launched with the regular ID, and its
+     * Stop must carry that one (two devices on one Wolf, 12/11/2026).
      */
     static clientUniqueIdForSlot(slot) {
         const id = this.clientUniqueId();
-        if (!slot) return id;
+        if (slot !== 1) return id;
         const last = parseInt(id.slice(14, 16), 16) ^ 0xff;
         return id.slice(0, 14) + last.toString(16).padStart(2, '0').toUpperCase();
     }

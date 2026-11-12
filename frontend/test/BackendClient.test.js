@@ -595,6 +595,16 @@ describe('BackendClient request shaping', () => {
         expect(BackendClient.clientUniqueIdForSlot(1)).toBe(standby);
     });
 
+    // An app slot (past the owner's two) is where a second device on one Wolf,
+    // or a second app, lands. Its launch carried the regular id, so its Stop
+    // must too, or the server finds no stream to end (UM790Pro, 12/11/2026).
+    it('clientUniqueIdForSlot keeps the regular id for an app slot', () => {
+        const base = BackendClient.clientUniqueId();
+        expect(BackendClient.clientUniqueIdForSlot(2)).toBe(base);
+        expect(BackendClient.clientUniqueIdForSlot(5)).toBe(base);
+        expect(BackendClient.clientUniqueIdForSlot(undefined)).toBe(base);
+    });
+
     it('redeemHostKey records that a session is now held', async () => {
         mockFetch(jsonResponse({ ok: true }));
         await BackendClient.redeemHostKey('K1');

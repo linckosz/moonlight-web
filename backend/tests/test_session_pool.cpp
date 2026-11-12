@@ -268,4 +268,58 @@ void run_session_pool_tests()
         pool.at(app).worker = nullptr;
         CHECK(pool.slotsOfSession(is("device-x")) == QVector<int>{0});
     }
+
+    SECTION("SessionPool: a Stop reaches the app slot of the device that sent it");
+    {
+        // UM790Pro, 12/11/2026: two devices on one Wolf. The first holds slot
+        // 0, the second lands in an app slot, launched with its base uniqueid,
+        // and its page stops with the id it derives for that slot — another
+        // one. The Stop must still find the slot, or the stream ends on its
+        // own and the Wolf lobby it leaves empty keeps running.
+        SessionPool pool(48001, 48024, 2, 6);
+        QObject wOwner, wSecond, wPlayer;
+        const QString host = QStringLiteral("wolf");
+        pool.at(0).worker = &wOwner;
+        pool.at(0).hostUuid = host;
+        pool.at(0).clientUniqueId = QStringLiteral("UID-A");
+        pool.at(0).sessionToken = QStringLiteral("device-a");
+        const int second = pool.acquire();
+        CHECK(second >= 2);
+        pool.at(second).worker = &wSecond;
+        pool.at(second).hostUuid = host;
+        pool.at(second).clientUniqueId = QStringLiteral("UID-B");
+        pool.at(second).sessionToken = QStringLiteral("device-b");
+        const int player = pool.acquire();
+        pool.at(player).worker = &wPlayer; // an invited player has no session token
+        pool.at(player).hostUuid = host;
+        pool.at(player).clientUniqueId = QStringLiteral("UID-P");
+        const QString b = QStringLiteral("device-b");
+        const QString derived = QStringLiteral("UID-B-DERIVED");
+
+        // The page names its slot, from its own session: found, whatever id it sends.
+        CHECK(pool.quitReachesAppSlot(second, host, derived, b, second));
+        CHECK(pool.quitReachesAppSlot(second, host, QString(), b, second));
+        // The id the launch carried is enough on its own, as it always was.
+        CHECK(pool.quitReachesAppSlot(second, host, QStringLiteral("UID-B"), b, -1));
+        CHECK(pool.quitReachesAppSlot(second, host, QStringLiteral("UID-B"), QString(), -1));
+        // A derived id with no slot named proves nothing.
+        CHECK(!pool.quitReachesAppSlot(second, host, derived, b, -1));
+        // Another session never stops it, even naming the slot and its id.
+        CHECK(!pool.quitReachesAppSlot(second, host, QStringLiteral("UID-B"),
+                                       QStringLiteral("device-a"), second));
+        CHECK(!pool.quitReachesAppSlot(second, host, derived, QStringLiteral("device-a"), second));
+        // No session at all (localhost) needs the id: naming the slot is not enough.
+        CHECK(!pool.quitReachesAppSlot(second, host, derived, QString(), second));
+        CHECK(!pool.quitReachesAppSlot(second, host, QString(), QString(), second));
+        // Another slot named, another host, a slot with no worker: not this one.
+        CHECK(!pool.quitReachesAppSlot(second, host, derived, b, 0));
+        CHECK(!pool.quitReachesAppSlot(second, QStringLiteral("sunshine"), derived, b, second));
+        CHECK(!pool.quitReachesAppSlot(-1, host, derived, b, -1));
+        CHECK(!pool.quitReachesAppSlot(pool.size(), host, derived, b, pool.size()));
+        // A player's slot has no token: only its own id reaches it, never a session.
+        CHECK(!pool.quitReachesAppSlot(player, host, derived, b, player));
+        CHECK(pool.quitReachesAppSlot(player, host, QStringLiteral("UID-P"), QString(), player));
+        pool.at(second).worker = nullptr;
+        CHECK(!pool.quitReachesAppSlot(second, host, derived, b, second));
+    }
 }

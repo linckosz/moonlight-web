@@ -165,6 +165,16 @@ public:
     bool hostHeldByAnother(const QString& hostUuid, const QString& sessionToken,
                            const QString& clientUniqueId, int ownerSlots) const;
 
+    // Whether a Stop from one device ends the live slot @p index, one past
+    // the owner slots: the stream of another app, or of a second device on a
+    // multi-user host. It must be on @p hostUuid, be the slot the page named
+    // (@p namedSlot; any when negative), and never another session's. Then it
+    // is this device's when the uniqueid matches, or when the page named this
+    // very slot from the session that started it: the page derives its quit
+    // id from the slot, so that id alone can miss the one the launch carried.
+    bool quitReachesAppSlot(int index, const QString& hostUuid, const QString& clientUniqueId,
+                            const QString& sessionToken, int namedSlot) const;
+
     // The live slots that stream for one session, the one @p isThatSession
     // recognises from a slot's token. A slot with no token (localhost, an
     // invited player) is no session's, and never in the list.

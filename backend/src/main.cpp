@@ -5383,18 +5383,19 @@ int main(int argc, char* argv[])
             }
             // A stream of this device on this host in a slot past the owner's
             // two — an app slot (the virtual display beside Display 1, a second
-            // MultiSeat device) — is this device's too. session_slot is taken as
-            // sent here: the owner bound above would turn slot 5 into 1.
+            // MultiSeat device, a second device on a Wolf) — is this device's
+            // too. session_slot is taken as sent here: the owner bound above
+            // would turn slot 5 into 1. The page sends the slot's derived id,
+            // not always the one its launch carried, so the slot it names from
+            // the session that started it is enough (12/11/2026: a second Wolf
+            // device's Stop found nothing and left its lobby running).
             const int rawSlot =
                 qbody.contains("session_slot") ? qbody["session_slot"].toInt(-1) : -1;
-            for (int i = kOwnerSlots; i < g_Pool.size() && !quitUniqueId.isEmpty(); ++i) {
+            for (int i = kOwnerSlots; i < g_Pool.size(); ++i) {
+                if (!g_Pool.quitReachesAppSlot(i, host->uuid, quitUniqueId, quitSessionToken,
+                                               rawSlot))
+                    continue;
                 SessionPool::Slot& sl = g_Pool.at(i);
-                if (!sl.worker || sl.hostUuid != host->uuid || sl.clientUniqueId != quitUniqueId)
-                    continue;
-                if (rawSlot >= 0 && rawSlot != i) continue;
-                if (!quitSessionToken.isEmpty() && !sl.sessionToken.isEmpty() &&
-                    quitSessionToken != sl.sessionToken)
-                    continue;
                 qInfo() << "[quit] Stopping stream worker slot" << i << "(app slot of this device)";
                 takeCoopSession(sl);
                 detachWorkerSlot(i, false);

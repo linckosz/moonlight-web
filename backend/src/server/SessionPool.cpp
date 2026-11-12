@@ -182,6 +182,22 @@ bool SessionPool::hostHeldByAnother(const QString& hostUuid, const QString& sess
     return false;
 }
 
+bool SessionPool::quitReachesAppSlot(int index, const QString& hostUuid,
+                                     const QString& clientUniqueId, const QString& sessionToken,
+                                     int namedSlot) const
+{
+    if (index < 0 || index >= m_Slots.size()) return false;
+    const Slot& s = m_Slots[index];
+    if (s.worker.isNull() || s.hostUuid != hostUuid) return false;
+    if (namedSlot >= 0 && namedSlot != index) return false;
+    if (!sessionToken.isEmpty() && !s.sessionToken.isEmpty() && sessionToken != s.sessionToken)
+        return false;
+    if (!clientUniqueId.isEmpty() && s.clientUniqueId == clientUniqueId) return true;
+    // The authenticated session is the stronger proof: a browser picks its
+    // own uniqueid. It needs the slot named, and a token on both sides.
+    return namedSlot == index && !sessionToken.isEmpty() && s.sessionToken == sessionToken;
+}
+
 QVector<int> SessionPool::slotsOfSession(
     const std::function<bool(const QString& sessionToken)>& isThatSession) const
 {
