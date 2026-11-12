@@ -38,6 +38,7 @@ void run_rendezvous_line_tests();
 void run_address_race_tests();
 void run_relay_start_tests();
 void run_wolf_seat_pairing_tests();
+void run_pairing_chain_tests();
 void run_nv_pairing_signature_tests();
 void run_backend_probe_tests();
 void run_close_when_done_nam_tests();
@@ -128,6 +129,7 @@ int main(int argc, char** argv)
     run_address_race_tests();
     run_relay_start_tests();
     run_wolf_seat_pairing_tests();
+    run_pairing_chain_tests();
     run_nv_pairing_signature_tests();
     run_backend_probe_tests();
     run_close_when_done_nam_tests();

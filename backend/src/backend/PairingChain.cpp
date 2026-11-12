@@ -25,20 +25,14 @@
 
 namespace PairingChain {
 
-namespace {
-// Long enough for stage 1 to reach a host on the far side of a LAN, short
-// enough that nobody waits on it — the host is going to sit on that request
-// for up to a minute anyway.
-constexpr int kPinAnnounceDelayMs = 3000;
-} // namespace
-
 QString generatePin()
 {
     int pin = QRandomGenerator::global()->bounded(10000);
     return QString::asprintf("%04d", pin);
 }
 
-void run(NvPairingManager* pm, const QString& pin, PinAnnouncer announcer, ResultCallback cb)
+void run(NvPairingManager* pm, const QString& pin, QObject* announcerOwner, PinAnnouncer announcer,
+         ResultCallback cb, int announceDelayMs)
 {
     if (!pm) {
         cb(Result{Outcome::Failed, {}});
@@ -103,8 +97,11 @@ void run(NvPairingManager* pm, const QString& pin, PinAnnouncer announcer, Resul
     // has not parked it yet has nothing to give the PIN to. Let the dispatch
     // finish first — harmless for Wolf, whose request blocks server-side, and
     // for a loopback Sunshine, which is simply ready sooner.
-    if (announcer && !*settledSynchronously) {
-        QTimer::singleShot(kPinAnnounceDelayMs,
+    //
+    // The timer is its owner's: an owner gone before it fires takes the
+    // announce with it.
+    if (announcer && announcerOwner && !*settledSynchronously) {
+        QTimer::singleShot(announceDelayMs, announcerOwner,
                            [announcer = std::move(announcer), pin]() { announcer(pin); });
     }
 }

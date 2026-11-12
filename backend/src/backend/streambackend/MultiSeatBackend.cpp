@@ -184,7 +184,7 @@ void MultiSeatBackend::pairSeat(const MultiSeatSeat& seat, const QString& addres
     const quint16 webUiPort = static_cast<quint16>(seat.portBase + 1);
 
     PairingChain::run(
-        m_Pairing.get(), pin,
+        m_Pairing.get(), pin, this,
         [this, address, webUiPort, accountName](const QString& announced) {
             // Stage 1 is parked on the host waiting for a PIN, and the seat
             // Apollo web UI is the only way to deliver it.

@@ -257,7 +257,7 @@ void WolfBackend::startPairing(const QString& seatId, const NvAddress& addr, Bac
         const QString pin = PairingChain::generatePin();
 
         PairingChain::run(
-            m_Pairing.get(), pin,
+            m_Pairing.get(), pin, this,
             [this, knownSecrets](const QString& announced) {
                 announcePin(announced, knownSecrets, kPendingPollAttempts);
             },

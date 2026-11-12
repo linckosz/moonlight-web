@@ -1562,7 +1562,8 @@ void ComputerManager::startPairingChain(const QString& uuid)
     // No announcer: on a Sunshine host a person is already reading the PIN off
     // our UI and typing it in.
     PairingChain::run(
-        pm, m_PairingPins.value(uuid), {}, [this, uuid](const PairingChain::Result& result) {
+        pm, m_PairingPins.value(uuid), nullptr, {},
+        [this, uuid](const PairingChain::Result& result) {
             // Re-resolve the session: while in flight nothing frees it, but the host
             // could still be gone if the whole ComputerManager path changed.
             auto it = m_ActivePairings.find(uuid);

@@ -19,6 +19,8 @@
 
 #include <QByteArray>
 #include <QString>
+
+class QObject;
 #include <functional>
 
 class NvPairingManager;
@@ -72,6 +74,11 @@ QString generatePin();
 /// unblock. Sunshine leaves this empty; a human is already reading the PIN.
 using PinAnnouncer = std::function<void(const QString& pin)>;
 
+/// How long after stage 1 left the PIN is announced: long enough for stage 1 to
+/// reach a host on the far side of a LAN, short enough that nobody waits on it
+/// — the host is going to sit on that request for up to a minute anyway.
+inline constexpr int kPinAnnounceDelayMs = 3000;
+
 /**
  * Run the handshake. `cb` fires exactly once, on a terminal or retryable
  * outcome.
@@ -79,7 +86,14 @@ using PinAnnouncer = std::function<void(const QString& pin)>;
  * `pm` is borrowed, never freed here, and must outlive the run — its own async
  * callbacks reference it. The caller keeps it alive for the whole chain, the
  * way ComputerManager holds the host uuid in m_SubmitInFlight.
+ *
+ * `announcerOwner` is whose the announcer is. The announce comes a moment
+ * after run() has returned (`announceDelayMs`), and by then that object may be
+ * gone — a backend replaced, a host removed: the announce is then dropped,
+ * never made on what is left of it. Null only when there is no announcer; an
+ * announcer given without its owner is not called.
  */
-void run(NvPairingManager* pm, const QString& pin, PinAnnouncer announcer, ResultCallback cb);
+void run(NvPairingManager* pm, const QString& pin, QObject* announcerOwner, PinAnnouncer announcer,
+         ResultCallback cb, int announceDelayMs = kPinAnnounceDelayMs);
 
 } // namespace PairingChain
