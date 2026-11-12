@@ -612,6 +612,18 @@ export class SettingsView {
         }
     }
 
+    /**
+     * Does the host give this browser admin access? Its own answer
+     * (/api/auth/status), asked once per visit to this page; no answer is a no.
+     */
+    async _adminAccessSaid() {
+        this._authStatusAsked ??= Promise.resolve()
+            .then(() => BackendClient.getAuthStatus())
+            .catch(() => null);
+        const status = await this._authStatusAsked;
+        return status?.is_localhost === true;
+    }
+
     async _loadState() {
         // 1. Try localStorage first (per-browser preferences)
         const stored = localStorage.getItem(STORAGE_KEY);
@@ -1046,7 +1058,8 @@ export class SettingsView {
     }
 
     /** Persist current internal state to localStorage (all clients)
-     *  and to the server (localhost only — updates defaults for all browsers). */
+     *  and to the server (the host's own page at localhost only — updates
+     *  defaults for all browsers). */
     async _saveToStorage() {
         const settings = {
             video_codec: this._videoCodec,
@@ -1105,10 +1118,13 @@ export class SettingsView {
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
-        // Persist to server when on localhost, so settings.json is updated
-        // and all other clients get these defaults on first visit.
+        // Persist to server from the host's own page at localhost, so
+        // settings.json is updated and all other clients get these defaults on
+        // first visit. Only where the host gives this browser admin access,
+        // which it gives nobody in booth mode: the address says nothing of it.
         const host = window.location.hostname;
-        if ((host === 'localhost' || host === '127.0.0.1') && !BackendClient.adminLocked) {
+        const onLoopback = host === 'localhost' || host === '127.0.0.1';
+        if (onLoopback && (await this._adminAccessSaid())) {
             // PyroWave is a device's own choice (the one on Ethernet), never
             // the codec every other browser starts with: the server's default
             // keeps what it had.

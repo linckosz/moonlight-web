@@ -217,16 +217,17 @@ describe('SettingsView: PyroWave in the codec menu', () => {
     });
 
     it('never becomes the default of every other browser', async () => {
+        // jsdom runs on localhost, and the host says this browser administers
+        // it: the server's defaults are written too.
+        BackendClient.getAuthStatus.mockResolvedValueOnce({ is_localhost: true });
         view._videoCodec = 'pyrowave';
         await view._saveToStorage();
         expect(JSON.parse(localStorage.getItem('mw-streaming-settings')).video_codec).toBe(
             'pyrowave',
         );
-        // jsdom runs on localhost, where the server's defaults are written too.
-        if (BackendClient.saveStreamingSettings.mock.calls.length) {
-            const sent = BackendClient.saveStreamingSettings.mock.calls[0][0];
-            expect('video_codec' in sent).toBe(false);
-        }
+        expect(BackendClient.saveStreamingSettings).toHaveBeenCalledTimes(1);
+        const sent = BackendClient.saveStreamingSettings.mock.calls[0][0];
+        expect('video_codec' in sent).toBe(false);
     });
 
     it('chosen where it cannot run, shows the fallback and keeps the choice', async () => {

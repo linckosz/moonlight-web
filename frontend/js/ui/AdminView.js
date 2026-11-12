@@ -690,14 +690,12 @@ export class AdminView {
     }
 
     _isLocalhost() {
-        // Backend-driven: also true when the page was opened on the host machine
-        // through the public domain (host-key session), and when a LAN machine
-        // unlocked admin access with the remote admin password — not just on
-        // loopback. Named for what it gates (admin), not for where we are.
-        if (this._hasAdminAccess) return true;
-        if (BackendClient.adminLocked) return false; // booth mode (--noadmin)
-        const hostname = window.location.hostname;
-        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+        // The host's word (/api/auth/status), never this page's address: true
+        // for the host machine's own browser, whichever address it came by, and
+        // for a LAN machine that unlocked admin access with the remote admin
+        // password; false for everyone in booth mode (--noadmin). Named for
+        // what it gates (admin), not for where we are.
+        return !!this._hasAdminAccess;
     }
 
     _buildLocalUrl(ip = this._getLocalIpForDisplay()) {

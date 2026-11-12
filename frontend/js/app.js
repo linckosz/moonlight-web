@@ -1638,27 +1638,23 @@ export const MoonlightApp = {
     },
 
     /**
-     * True when this browser has admin access: it runs on the host machine
-     * (loopback origin, or a host-key session over the public domain), or it is
-     * a LAN machine that unlocked with the remote admin password.
+     * True when this browser has admin access: it is the host machine's own
+     * browser, or a LAN machine that unlocked with the remote admin password.
+     * On the host's word alone (/api/auth/status, see _readAccess), never on
+     * this page's address. In booth mode (--noadmin) the host says no to all.
      */
     _isHostLocal() {
-        if (this._hasAdminAccess) return true;
-        // Booth mode (--noadmin): on localhost too, nobody administers.
-        if (BackendClient.adminLocked) return false;
-        const hostname = window.location.hostname;
-        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+        return !!this._hasAdminAccess;
     },
 
     /**
      * True only when this browser really runs on the host machine. Narrower
      * than _isHostLocal(): a password-unlocked LAN admin has the same rights
-     * but none of the local desktop the setup wizard needs.
+     * but none of the local desktop the setup wizard needs. On the host's word
+     * alone, as above.
      */
     _isHostMachine() {
-        if (this._isRealHostMachine) return true;
-        const hostname = window.location.hostname;
-        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+        return !!this._isRealHostMachine;
     },
 
     /**
@@ -2031,11 +2027,6 @@ export const MoonlightApp = {
         if (btnAdmin) btnAdmin.style.display = 'none';
         const btnSettings = document.getElementById('btn-settings');
         if (btnSettings) btnSettings.style.display = 'none';
-        return (
-            window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '[::1]'
-        );
     },
 
     _initNavButtons() {
