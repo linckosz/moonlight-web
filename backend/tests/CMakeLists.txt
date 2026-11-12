@@ -137,6 +137,7 @@ add_executable(run_tests
     test_pairing_chain.cpp
     test_local_channel.cpp
     test_host_key_vault.cpp
+    test_owner_link_wait.cpp
     # In-scope production units (+ their real deps)
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.

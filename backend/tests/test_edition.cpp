@@ -104,9 +104,10 @@ void run_edition_tests()
         CHECK(!payload({"--dev", "--autostart", "--log", "server.log"}));
         CHECK(!payload({"--noadmin", "--port", "8080"}));
         // The operator commands: a report, a PIN, a link, alone on standard output.
+        // The installer's wait too: it prints nothing, and the log is not its answer.
         for (const char* verb :
              {"--status", "--new-pin", "--enable-internet", "--set-admin-password",
-              "--clear-admin-password", "--open-link", "--print-link"}) {
+              "--clear-admin-password", "--open-link", "--print-link", "--wait-link"}) {
             CHECK(payload({verb}));
             CHECK(payload({"--dev", verb}));
         }

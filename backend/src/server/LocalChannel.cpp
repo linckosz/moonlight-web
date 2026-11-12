@@ -537,7 +537,7 @@ bool serverIsOurs(HANDLE pipe, QString* why)
         return false;
     }
     if (owner == PipeOwner::Other) {
-        *why = QStringLiteral("the channel belongs to another account");
+        *why = QLatin1String(kOtherAccount);
         return false;
     }
 
@@ -1174,7 +1174,7 @@ Reply request(const QString& endpoint, const Request& request, int timeoutMs, QS
     if (::lstat(endpoint.toLocal8Bit().constData(), &info) != 0)
         return fail(QStringLiteral("nothing listens"));
     if (!S_ISSOCK(info.st_mode) || !accountAllowed(static_cast<qint64>(info.st_uid)))
-        return fail(QStringLiteral("the channel belongs to another account"));
+        return fail(QLatin1String(kOtherAccount));
     struct stat folder = {};
     if (::lstat(QFileInfo(endpoint).absolutePath().toLocal8Bit().constData(), &folder) != 0 ||
         !S_ISDIR(folder.st_mode) || !accountAllowed(static_cast<qint64>(folder.st_uid)) ||
@@ -1188,7 +1188,7 @@ Reply request(const QString& endpoint, const Request& request, int timeoutMs, QS
     if (!socket.waitForConnected(timeoutMs)) return fail(QStringLiteral("nothing listens"));
     if (!accountAllowed(peerUid(socket.socketDescriptor()))) {
         socket.abort();
-        return fail(QStringLiteral("the channel belongs to another account"));
+        return fail(QLatin1String(kOtherAccount));
     }
 
     const QByteArray payload = encodeRequest(request);

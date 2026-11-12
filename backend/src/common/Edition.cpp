@@ -167,6 +167,7 @@ bool stdoutIsPayload(int argc, char** argv)
                                          "--clear-admin-password",
                                          "--open-link",
                                          "--print-link",
+                                         "--wait-link",
                                          "--help",
                                          "--help-all",
                                          "-h",

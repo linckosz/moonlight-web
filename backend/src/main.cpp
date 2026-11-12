@@ -78,6 +78,7 @@
 #include "server/ControlChannel.h"
 #include "server/ControlTunnel.h"
 #include "server/LocalChannel.h"
+#include "server/OwnerLinkWait.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
 #include "server/NetClassify.h"
@@ -349,14 +350,13 @@ static void writeAdminShortcut(const QString& url)
     // above (used by the installer's post-install "open admin page" action).
     Q_UNUSED(url);
 #else
-    // macOS: the app is launched from the Dock/Applications; keep a plain .url
-    // pointer on the Desktop as a convenience. Remove the legacy "MoonlightWeb
-    // Admin.url" name used before 2026-07.
+    // macOS: the app is opened from its menu bar icon, the Dock or Applications,
+    // and that is what opens the admin page signed in. Earlier versions also
+    // kept a plain .url pointer on the Desktop: a file can carry no key, so it
+    // is no longer written, and both names it has had are removed.
+    Q_UNUSED(url);
     QFile::remove(desktop + "/MoonlightWeb Admin.url");
-    QFile f(desktop + "/" + mw::edition::displayName() + ".url");
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    f.write(("[InternetShortcut]\r\nURL=" + url + "\r\n").toUtf8());
-    f.close();
+    QFile::remove(desktop + "/" + mw::edition::displayName() + ".url");
 #endif
 }
 
@@ -1228,6 +1228,38 @@ static int runOwnerLinkCommand(quint16 persistedHttpsPort, bool print)
     return 0;
 }
 
+// `moonlightweb --wait-link`: returns once the running server knows which link
+// --open-link would open, or once waiting longer would not help
+// (server/OwnerLinkWait.h). For the installer's last page, which restarts the
+// server seconds before it offers that link. It asks for no link and prints
+// none: 0 when the link is settled, 1 when the wait ended without that.
+static int runWaitLinkCommand()
+{
+    using namespace OwnerLinkWait;
+    QElapsedTimer clock;
+    clock.start();
+    bool everAnswered = false;
+    for (;;) {
+        const LocalReply reply =
+            localRequest(QStringLiteral("/api/server/remote-link?probe=1"), QByteArray(), 5000);
+        Answer answer = Answer::Silent;
+        if (reply.ok)
+            answer = reply.json.value("pending").toBool(false) ? Answer::Pending : Answer::Settled;
+        // Answered with something else, or a server of another account, which
+        // this one cannot ask: neither changes by asking again.
+        else if (reply.httpStatus != 0 ||
+                 reply.error == QLatin1String(mw::localchannel::kOtherAccount))
+            answer = Answer::Refused;
+        everAnswered = everAnswered || answer != Answer::Silent;
+        switch (OwnerLinkWait::next(answer, everAnswered, clock.elapsed())) {
+        case Next::Done: return 0;
+        case Next::GiveUp: return 1;
+        case Next::AskAgain: break;
+        }
+        waitMs(kPauseMs);
+    }
+}
+
 // Loopback URL for the tray entries. "localhost", not 127.0.0.1: the loopback
 // certificate carries localhost as a SAN, so the browser only has to accept a
 // self-signed certificate, not a name mismatch on top of it. It carries no key:
@@ -1938,6 +1970,13 @@ int main(int argc, char* argv[])
         "print-link", "Print the link --open-link would open (it works once, for ten "
                       "minutes), then exit");
     parser.addOption(printLinkOption);
+    // The installer's own: it waits here, on its last page, for the link above
+    // to be settled before it offers to open it.
+    QCommandLineOption waitLinkOption(
+        "wait-link", "Wait until the running server knows which link --open-link would open, "
+                     "then exit");
+    waitLinkOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(waitLinkOption);
 
     // The administrator's ceilings, written into the running instance's
     // settings.json (AppSettings::streamLimits). Any of the three, together.
@@ -2212,6 +2251,7 @@ int main(int argc, char* argv[])
     if (parser.isSet(openLinkOption) || parser.isSet(printLinkOption))
         return runOwnerLinkCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
                                    parser.isSet(printLinkOption));
+    if (parser.isSet(waitLinkOption)) return runWaitLinkCommand();
     if (parser.isSet(maxFrameRateOption) || parser.isSet(maxBitrateOption) ||
         parser.isSet(maxResolutionOption)) {
         // Not given: nothing to change; given empty: a bad value.
@@ -6836,6 +6876,15 @@ int main(int argc, char* argv[])
     HostKeyVault hostKeys;
     appSettings.forgetLocalKey();
 
+    // Whether the internet link would work right now. Asked on its own by a
+    // caller that only waits for it (--wait-link): no key is made for the answer.
+    auto remoteReady = [&]() -> bool {
+        if (!rendezvousShouldRun() || !rendezvous.isOnline()) return false;
+        // Refreshes the verdict for next time; this call reads the last one.
+        probeEntry();
+        return entryAnswers && !rendezvous.entryUrl().isEmpty();
+    };
+
     // The way into this machine's own pages under a certificate the browser
     // already trusts.
     //
@@ -6857,11 +6906,8 @@ int main(int argc, char* argv[])
     // Empty whenever any part is missing or the internet is not an option here,
     // because a link that cannot work is worse than no link: it is single-use
     // and the user would have spent it. Every caller falls back to loopback.
-    auto remoteLink = [&](const QString& path) -> QString {
-        if (!rendezvousShouldRun() || !rendezvous.isOnline()) return {};
-        // Refreshes the verdict for next time; this call reads the last one.
-        probeEntry();
-        if (!entryAnswers) return {};
+    auto remoteLink = [&, remoteReady](const QString& path) -> QString {
+        if (!remoteReady()) return {};
         const QString entry = rendezvous.entryUrl();
         if (entry.isEmpty()) return {};
         // Made here, for this link, once every other reason to hand out none
@@ -6923,11 +6969,21 @@ int main(int argc, char* argv[])
     // `pending` is true while the internet link is only "not yet"
     // (remoteLinkPending): the url is then empty, for a caller that can wait to
     // ask again rather than settle for this machine's own address.
-    server.router()->get("/api/server/remote-link", [remoteLink, remoteLinkPending,
+    //
+    // `?probe=1` asks that one thing and no link: the answer is `pending` alone,
+    // and no key is made, for a caller that is still waiting (--wait-link) and
+    // will ask for the link itself when it is opened.
+    server.router()->get("/api/server/remote-link", [remoteLink, remoteReady, remoteLinkPending,
                                                      localLink](const HttpRequest& req) {
         if (!req.isHostMachine)
             return HttpResponse::error(403, "Only available to the host "
                                             "machine");
+        if (req.queryParams.value(QStringLiteral("probe")) == QLatin1String("1")) {
+            HttpResponse resp = HttpResponse::json(
+                QJsonObject{{QStringLiteral("pending"), !remoteReady() && remoteLinkPending()}});
+            resp.headers["Cache-Control"] = "no-store";
+            return resp;
+        }
         const QString path = req.queryParams.value(QStringLiteral("p"));
         static const QRegularExpression shape(QStringLiteral("^/[A-Za-z0-9_-]{1,32}$"));
         if (!path.isEmpty() && !shape.match(path).hasMatch())

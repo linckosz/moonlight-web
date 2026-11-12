@@ -63,20 +63,12 @@
   #define MyAppName "MoonlightWebDev"
   #define MyAppId "{5B1E7A8C-8D0E-4F53-8D6F-E1373C70AFE6}"
   #define MyIconFile "..\..\frontend\assets\dev\favicon.ico"
-  ; The DEV edition listens on the DEV ports (Edition.h), clear of 443.
-  #define MyHttpsSuffix ":48443"
 #else
   #define MyAppName "MoonlightWeb"
   #define MyAppId "{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}"
   #define MyIconFile "..\..\frontend\assets\favicon.ico"
-  #define MyHttpsSuffix ""
 #endif
 #define MyAppExe MyAppName + ".exe"
-; Provisional admin URL written before first launch. The server rewrites this
-; Desktop shortcut on startup with the real HTTPS port / public domain.
-#ifndef AdminUrl
-  #define AdminUrl "https://localhost" + MyHttpsSuffix + "/admin"
-#endif
 
 [Setup]
 ; "{{" is Inno's escape for a literal brace.
@@ -260,10 +252,13 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 [Run]
 ; The tray server is already launched during the provisioning checklist (see
 ; RunProvisionChecklist in [Code]); only offer to open the admin page here.
-; GetAdminUrl hands out what ResolveAdminUrl settled while the server was coming
-; up: the rendezvous address when the internet link is on and answering, the
-; published loopback URL (real HTTPS port) otherwise.
-Filename: "{code:GetAdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
+; The program itself opens it, as the tray icon does: at the click it asks the
+; running server for its owner's link (the rendezvous address when the internet
+; link is on and answering, this machine's own otherwise) and hands it to the
+; browser. Asked at the click, not before: the link is good once, for ten
+; minutes, and this page can stay open longer than that. As the person who
+; started Setup (runasoriginaluser), whose browser it is.
+Filename: "{app}\{#MyAppExe}"; Parameters: "--open-link"; WorkingDir: "{app}"; Description: "{cm:RunAdmin}"; Flags: postinstall skipifsilent nowait runasoriginaluser
 
 [Code]
 const
@@ -335,10 +330,6 @@ var
   // The server runs as an NSSM service (session 0): stop/start it around the file
   // copy instead of killing and relaunching a tray process.
   ServiceInstalled: Boolean;
-  // Where the Finish page's "open the admin page" leads, settled by
-  // ResolveAdminUrl at the end of the post-install step and read back by
-  // GetAdminUrl when the [Run] entry fires.
-  ResolvedAdminUrl: String;
   // "Start MoonlightWeb at logon" on the Finished page, above the "open the
   // admin page" row. Ticked by default on a first install; on an update it
   // shows whether the logon task is there right now — the tray menu and the
@@ -1336,173 +1327,57 @@ begin
   Result := Copy(content, p, q - p);
 end;
 
-// The loopback admin URL: the one the server wrote into provisioning.status.json
-// at startup (it knows the real HTTPS port, which may be a fallback), falling
-// back to the provisional compile-time default if the server never started.
-function LoopbackAdminUrl(): String;
+// Wait, on the page that is already waiting, until the server just started
+// knows which link its owner's entry points open.
+//
+// The Finish page offers to open the admin page, and the program opens it the
+// way the tray icon does: the rendezvous address when the internet link is on
+// and answering, this machine's own otherwise (see [Run]). Through the
+// rendezvous the page arrives under a certificate the browser already trusts,
+// so there is no interstitial to accept first. But the line needs a few seconds
+// to come up after the server starts, and a click that comes before it has
+// would land on this machine's own address, which read as the installer not
+// believing the question it had just asked about the internet link.
+//
+// Waited for HERE rather than at the click on Finish: those are seconds this
+// page is already spending, and a wizard that freezes on its last button is
+// worse than one that waits where it is already waiting.
+//
+// The program does the waiting (--wait-link) and asks the running server the
+// way its other commands do. It asks for no link: that one is good once, for
+// ten minutes, so it is asked for at the click. How long is the program's own
+// rule: until the server has a verdict, not a fixed budget, up to a ceiling.
+// It used to be six seconds, and that is why an update landed on this machine's
+// own address: on an update nothing is provisioned, so this starts the instant
+// the server is relaunched, and a Snapdragon 7c needs about eleven seconds from
+// there to line up and check the entry page (13/09/2026).
+procedure WaitForOwnerLink();
 var
-  raw: AnsiString;
-  url: String;
+  rc: Integer;
 begin
-  Result := '{#AdminUrl}';
-  if LoadStringFromFile(
-       ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}\provisioning.status.json'), raw) then
-  begin
-    url := StatusValue(raw, 'admin_url');
-    if url <> '' then Result := url;
-  end;
-end;
-
-// Origin to talk to the local server on, derived from the URL it published:
-// same port, but 127.0.0.1 rather than the "localhost" that URL names. The
-// server only answers this route to a local caller, and 127.0.0.1 is the one
-// spelling of "local" that cannot come out as ::1 on the way.
-function LoopbackOrigin(const adminUrl: String): String;
-var
-  rest: String;
-  i: Integer;
-begin
-  Result := 'https://127.0.0.1';
-  rest := adminUrl;
-  i := Pos('://', rest);
-  if i > 0 then rest := Copy(rest, i + 3, Length(rest));
-  // Host[:port], without the path.
-  i := Pos('/', rest);
-  if i > 0 then rest := Copy(rest, 1, i - 1);
-  i := Pos(':', rest);
-  if i > 0 then Result := Result + Copy(rest, i, Length(rest));
-end;
-
-// Ask the running server for the internet way into its own admin page: the
-// rendezvous address, with a single-use host key in the fragment.
-//
-// Loopback, self-signed certificate, no proxy. Empty on anything unexpected, so
-// the caller falls back. `answered` says whether the server replied at all (it
-// may still be restarting), `pending` whether its empty url only means "not yet".
-//
-// The question can only be put to the server, because only the server knows
-// whether the line is up AND whether the introduction server answers when asked
-// — it probes that itself. An empty url without `pending` is its considered
-// answer, not a failure: it means loopback is the honest address here.
-function AskRemoteAdminLink(const origin: String; var answered, pending: Boolean): String;
-var
-  req: Variant;
-  body: String;
-begin
-  Result := '';
-  answered := False;
-  pending := False;
-  try
-    req := CreateOleObject('MSXML2.ServerXMLHTTP.6.0');
-  except
-    Exit;
-  end;
-  try
-    req.open('GET', origin + '/api/server/remote-link?p=/admin', False);
-    // Loopback: an answer takes milliseconds. The server may still be probing
-    // the entry page though, so allow the receive a little room.
-    req.setTimeouts(2000, 2000, 2000, 6000);
-    // The loopback listener serves MoonlightWeb's own self-signed certificate.
-    req.setOption(2, 13056);
-    // SXH_PROXY_SET_DIRECT — a configured proxy must never see loopback.
-    req.setProxy(1);
-    req.send('');
-    if req.status <> 200 then Exit;
-    body := req.responseText;
-  except
-    Exit;
-  end;
-  answered := True;
-  // Compact JSON: {"pending":false,"url":"https://.../xxxx#k=...&p=/admin"}.
-  // A server older than `pending` never sends it, and is read as settled.
-  pending := Pos('"pending":true', body) > 0;
-  Result := StatusValue(body, 'url');
-end;
-
-// Decide, once, where the Finish page's "open the admin page" leads.
-//
-// Loopback is always true from this machine, and it is what this handed out
-// unconditionally until now — including to the user who had just accepted the
-// internet link on the page before, which read as the installer not believing
-// its own question. Through the rendezvous the same page arrives under a
-// certificate the browser already trusts, so there is no interstitial to accept
-// first; loopback is served by the self-signed one. The server picks between
-// them, and answers with loopback whenever the internet way in is off, not up,
-// or not answering.
-//
-// Asked HERE rather than at the click on Finish, and this is the whole reason
-// the answer is cached in a variable: the line needs a few seconds to come up
-// after the server starts, and those are seconds this page is already spending.
-// A wizard that freezes on its last button is worse than one that waits where
-// it is already waiting.
-//
-// How long: until the server has a verdict, not a fixed budget. It used to be
-// six seconds, and that is why an update landed on loopback: on an update
-// nothing is provisioned, so this starts the instant the server is relaunched,
-// and a Snapdragon 7c needs about eleven seconds from there to line up and
-// check the entry page (13/09/2026). A plain empty url is a verdict and ends
-// the wait. While the server is still restarting (no answer) or says `pending`,
-// the wait goes on, up to a ceiling; the server itself stops saying `pending`
-// twenty seconds after its start. Then loopback, silently.
-procedure ResolveAdminUrl();
-var
-  origin, link: String;
-  answered, pending: Boolean;
-  // Cardinal, like GetTickCount itself: the difference then stays correct
-  // across the 49-day wrap instead of going through a signed overflow.
-  started, elapsed: Cardinal;
-begin
-  ResolvedAdminUrl := LoopbackAdminUrl();
   // Nothing to prefer, or nobody to show it to.
   if WizardSilent then Exit;
   if not (InternetAuthorized or SettingsBoolEnabled('internet_access_enabled')) then Exit;
 
-  origin := LoopbackOrigin(ResolvedAdminUrl);
   ProgressPage.SetText(ExpandConstant('{cm:ResolveLinkWait}'), '');
   // The bar is full from the checklist above, and this wait has no measurable
   // progress to show: it ends the moment the server has a verdict, or at the
   // ceiling. So the bar simply stays full. Neither a refilling bar
   // (100% dropping to a slowly refilling 50% read as the install going
   // backwards) nor a marquee (switching style recreates the control, which
-  // restarts empty with its block at the left edge: a flash of 0%). The
-  // SetProgress calls below keep it at 100% and pump the message queue.
+  // restarts empty with its block at the left edge: a flash of 0%).
   ProgressPage.Show;
   ProgressPage.SetProgress(100, 100);
   try
-    // Bounded on the CLOCK, not on a number of attempts: a server that has
-    // wedged answers each attempt with a timeout rather than a refusal, and
-    // fifteen of those would hold the wizard for a minute and a half.
-    started := GetTickCount;
-    repeat
-      link := AskRemoteAdminLink(origin, answered, pending);
-      if link <> '' then begin
-        ResolvedAdminUrl := link;
-        Break;
-      end;
-      elapsed := GetTickCount - started;
-      // SetProgress pumps the message queue, which is what keeps the page
-      // painted across the Sleep below.
-      ProgressPage.SetProgress(100, 100);
-      // The server just installed is the one answering, so it knows `pending`:
-      // an empty url without it is settled.
-      if answered and not pending then Break;
-      if elapsed >= 30000 then Break;
-      // Still refusing after fifteen seconds: it is not coming back up.
-      if not answered and (elapsed >= 15000) then Break;
-      Sleep(400);
-    until False;
+    // Whatever it answers, the Finish page comes next: a wait that failed only
+    // means the click may open this machine's own address. As the person who
+    // started Setup, like the click it waits for: it asks a question of that
+    // person's own server and needs none of Setup's rights.
+    ExecAsOriginalUser(ExpandConstant('{app}\{#MyAppExe}'), '--wait-link',
+                       ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, rc);
   finally
     ProgressPage.Hide;
   end;
-end;
-
-// Filename of the [Run] entry. ResolveAdminUrl has already settled this; the
-// fallback covers the paths that never call it (a silent install, an aborted
-// post-install), where loopback is the only answer anyway.
-function GetAdminUrl(Param: String): String;
-begin
-  if ResolvedAdminUrl <> '' then Result := ResolvedAdminUrl
-  else Result := LoopbackAdminUrl();
 end;
 
 // Launch the server (kicks off first-run provisioning) and poll its status file,
@@ -1758,9 +1633,9 @@ begin
   // first-run provisioning completes.
   RunProvisionChecklist();
 
-  // With the server up, settle the address the Finish page will offer: the
-  // internet way in when there is one, loopback otherwise.
-  ResolveAdminUrl();
+  // With the server up, let it settle which link its owner's entry points
+  // open, the internet way in when there is one: the Finish page offers it.
+  WaitForOwnerLink();
 end;
 
 // --- Uninstall: optional removal of the user's configuration ---------------

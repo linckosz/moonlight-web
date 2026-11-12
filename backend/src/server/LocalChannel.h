@@ -181,6 +181,10 @@ Reply replyFor(const HttpResponse& response);
 
 // ── A caller's end ──────────────────────────────────────────────────────────
 
+/// What request() says in @p error when a server listens and is another
+/// account's: the one failure that asking again does not change.
+inline constexpr char kOtherAccount[] = "the channel belongs to another account";
+
 /// One request, waited for at most @p timeoutMs. A reply with status 0 and
 /// @p error set when nothing listens, when what listens is not this install's
 /// server, or when no answer came in time.
