@@ -40,6 +40,7 @@
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
+import { sortApps } from '../models/App.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { Icons } from './icons.js';
 
@@ -186,7 +187,11 @@ export class ShareBoard {
             try {
                 const data = await BackendClient.getAppList(this.ctx.hostUuid);
                 this.apps = Array.isArray(data?.apps) ? data.apps : [];
+                // Preselected: the host's first app (its primary display), as
+                // before. Only the list's order follows the hosts page, so an
+                // invitation never changes target without the owner choosing.
                 if (this.appId < 0 && this.apps.length) this.appId = this.apps[0].id;
+                sortApps(this.apps);
             } catch (err) {
                 // No list is survivable: the owner cannot pick, so the board
                 // says why rather than offering an OPEN that would 404.

@@ -29,7 +29,7 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { shortGpuNames } from '../util/gpuName.js';
 import { Host } from '../models/Host.js';
-import { App } from '../models/App.js';
+import { App, sortApps } from '../models/App.js';
 import { PairDialog } from './PairDialog.js';
 import { BackendDialog } from './BackendDialog.js';
 import { ShareBoard } from './ShareBoard.js';
@@ -63,23 +63,6 @@ import { hostUpdate, canSelfUpdate } from './HostUpdate.js';
  * app started on its own.
  */
 const SUNSHINE_DOWNLOAD_URL = 'https://github.com/LizardByte/Sunshine/releases/latest';
-
-/**
- * The order a host card shows its apps in: "MoonlightWeb Virtual Display"
- * always first, then alphabetical.
- *
- * Not the host's order: that one moves under the user — the native host lists
- * the primary display first, and the display just streamed becomes primary —
- * so the card they clicked would jump to the front. A fixed order keeps every
- * app where the hand expects it.
- */
-function sortApps(apps) {
-    return apps.sort(
-        (a, b) =>
-            (b.isVirtualDisplay ? 1 : 0) - (a.isVirtualDisplay ? 1 : 0) ||
-            a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }),
-    );
-}
 
 export class HostListView {
     // First backoff before re-attempting an app-list fetch that failed

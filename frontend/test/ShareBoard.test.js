@@ -349,6 +349,43 @@ describe('ShareBoard', () => {
         });
     });
 
+    it('lists the apps in the hosts page order, the host’s first one still picked', async () => {
+        // The native host lists its primary display first; the hosts page
+        // puts the virtual display first, then the rest alphabetically.
+        BackendClient.getAppList.mockResolvedValueOnce({
+            apps: [
+                { id: 3, name: 'Main Screen' },
+                { id: 9, name: 'beamer' },
+                {
+                    id: 5,
+                    name: 'MoonlightWeb Virtual Display',
+                    device: { key: 'moonlightweb-virtual-display' },
+                },
+                { id: 4, name: 'Desk 10' },
+                { id: 6, name: 'Desk 2' },
+            ],
+        });
+        await openBoard([slot(2), slot(3), slot(4)], {
+            streaming: false,
+            hostUuid: 'host-A',
+            hostName: 'bench-mini',
+        });
+
+        const select = /** @type {HTMLSelectElement} */ (
+            document.getElementById('share-app-select')
+        );
+        expect([...select.options].map((o) => o.value)).toEqual(['5', '9', '6', '4', '3']);
+        expect(select.value).toBe('3');
+
+        rowFor(2).querySelector('.share-toggle-btn').click();
+        await vi.waitFor(() => expect(BackendClient.shareActivate).toHaveBeenCalled());
+        expect(BackendClient.shareActivate).toHaveBeenCalledWith(2, {
+            ttl_secs: 28800,
+            host_uuid: 'host-A',
+            app_id: 3,
+        });
+    });
+
     it('names its host but leaves the app to the stream that decides it', async () => {
         // The host tells the backend which of this device's streams the guest
         // joins, when the owner streams more than one machine.

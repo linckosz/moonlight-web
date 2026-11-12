@@ -3,7 +3,7 @@
  * GPLv3 — see repository LICENSE.
  */
 import { describe, it, expect } from 'vitest';
-import { App } from '../js/models/App.js';
+import { App, sortApps } from '../js/models/App.js';
 import { Host } from '../js/models/Host.js';
 import { t } from '../js/i18n/i18n.js';
 
@@ -59,6 +59,25 @@ describe('App model', () => {
         );
         const without = new App({ id: 2002, boxArt: false, device: { screen: 'virtual' } }, 'n');
         expect(without.boxArtUrl).toBeNull();
+    });
+});
+
+describe('sortApps', () => {
+    const virtual = { key: 'moonlightweb-virtual-display' };
+
+    it('puts the virtual display first, then the names, numbers counted as numbers', () => {
+        const apps = [
+            new App({ id: 1, name: 'Screen 10' }),
+            new App({ id: 2, name: 'screen 2' }),
+            new App({ id: 3, name: 'MoonlightWeb Virtual Display', device: virtual }),
+            new App({ id: 4, name: 'Desktop' }),
+        ];
+        expect(sortApps(apps).map((a) => a.id)).toEqual([3, 4, 2, 1]);
+    });
+
+    it("sorts the host's raw entries the same way, a nameless one included", () => {
+        const raw = [{ id: 1, name: 'Zed' }, { id: 2 }, { id: 3, name: 'Any', device: virtual }];
+        expect(sortApps(raw).map((a) => a.id)).toEqual([3, 2, 1]);
     });
 });
 

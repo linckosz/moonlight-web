@@ -17,6 +17,34 @@
 
 import { t } from '../i18n/i18n.js';
 
+/** The native host's key for "MoonlightWeb Virtual Display"; no other backend sends one. */
+const VIRTUAL_DISPLAY_KEY = 'moonlightweb-virtual-display';
+
+/**
+ * The order every list of a host's apps shows them in — its card on the hosts
+ * page and the sharing board's picker alike: "MoonlightWeb Virtual Display"
+ * always first, then alphabetical.
+ *
+ * Not the host's order: that one moves under the user — the native host lists
+ * the primary display first, and the display just streamed becomes primary —
+ * so the card they clicked would jump to the front. A fixed order keeps every
+ * app where the hand expects it.
+ *
+ * Sorts in place and returns the array. Takes App models or the host's raw
+ * entries alike: both carry `name` and `device`.
+ */
+export function sortApps(apps) {
+    const virtual = (a) => (a?.device?.key === VIRTUAL_DISPLAY_KEY ? 1 : 0);
+    return apps.sort(
+        (a, b) =>
+            virtual(b) - virtual(a) ||
+            String(a?.name ?? '').localeCompare(String(b?.name ?? ''), undefined, {
+                sensitivity: 'base',
+                numeric: true,
+            }),
+    );
+}
+
 /**
  * MoonlightWeb — Remote application data model
  */
@@ -79,7 +107,7 @@ export class App {
      * no other backend sends one.
      */
     get isVirtualDisplay() {
-        return this.device?.key === 'moonlightweb-virtual-display';
+        return this.device?.key === VIRTUAL_DISPLAY_KEY;
     }
 
     /**
