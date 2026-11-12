@@ -109,6 +109,7 @@ void run_output_match_tests();
 void run_display_rotation_tests();
 void run_mf_start_ladder_tests();
 void run_orientation_tests();
+void run_turn_watch_tests();
 void run_display_mode_hold_tests();
 void run_cursor_position_gate_tests();
 void run_pointer_presence_tests();
@@ -214,6 +215,7 @@ int main(int argc, char** argv)
     RUN(display_rotation);
     RUN(mf_start_ladder);
     RUN(orientation);
+    RUN(turn_watch);
     RUN(display_mode_hold);
     RUN(cursor_position_gate);
     RUN(pointer_presence);

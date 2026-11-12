@@ -16,6 +16,7 @@
  */
 
 #include "../../capture/linux/CompositorTransform.h"
+#include "../../capture/linux/TurnWatch.h"
 #include "../../capture/linux/KmsCapture.h"
 #include "../../capture/linux/X11Damage.h"
 #if defined(MW_NATIVE_LINUX_PORTAL)
@@ -74,6 +75,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -1059,6 +1061,7 @@ private:
 
     bool openCapture(std::string& error)
     {
+        m_TurnWatch.reset();
         m_Scanout = nullptr;
 #if defined(MW_NATIVE_LINUX_PORTAL)
         if (m_Target.gamescopeSteam || m_Target.gamescopeApp) return openGamescope(error);
@@ -1220,8 +1223,8 @@ private:
         // How the compositor turns the desktop onto this panel (issue #54):
         // the scanout is turned with it, and only the compositor says so. The
         // connector is identified once a capture: listing connectors probes
-        // them — the monitor's EDID read over the wire — and the loop asks
-        // the compositor again every few seconds (displayTurned).
+        // them — the monitor's EDID read over the wire — and the compositor
+        // is asked again on a thread of its own (TurnWatch.h).
         m_ScanoutIdentity = scanoutIdentity();
         m_PanelTransform = readPanelTransform();
         if (m_PanelTransform.known)
@@ -1229,6 +1232,21 @@ private:
         m_Capture = std::move(kms);
         if (!m_Capture->start(error)) return false;
         m_Scanout = &scanout;
+        // Not where the compositor never answered at the start: nothing there
+        // to ask. A thread the system will not give is no reason to fail the
+        // capture: it goes on without the watch, as before it had one.
+        if (m_PanelTransform.known) {
+            try {
+                m_TurnWatch = std::make_unique<capture::TurnWatch>(
+                    [identity = m_ScanoutIdentity, connector = m_ConnectorName] {
+                        return capture::readCompositorTransform(identity, connector);
+                    },
+                    scanout.panelTransform(), kTurnWatchMs);
+            } catch (const std::system_error& e) {
+                log::warning("[native] " + m_ConnectorName + ": no thread to watch for a turn (" +
+                             e.what() + ") — a turn during the stream will not be seen");
+            }
+        }
         watchInPlaceDrawing(scanout);
         return true;
     }
@@ -1267,16 +1285,20 @@ private:
         return t;
     }
 
-    /// Whether the scanout's display was turned since its capture started: a
-    /// fresh read of the compositor's transform against the one the capture
-    /// stood its pictures upright by. Said in the log when it was.
+    /// How often the compositor is asked whether the scanout's display was
+    /// turned (TurnWatch.h): a turned stream is put right within this.
+    static constexpr int kTurnWatchMs = 400;
+
+    /// Whether the scanout's display was turned since its capture started, as
+    /// its watch saw it: the compositor's transform against the one the
+    /// capture stood its pictures upright by. Never waits on the compositor.
+    /// Said in the log when it was.
     bool displayTurned()
     {
-        if (!m_Scanout) return false;
-        const capture::CompositorTransform now = readPanelTransform();
-        if (!now.known) return false;
+        if (!m_Scanout || !m_TurnWatch) return false;
+        capture::CompositorTransform now;
+        if (!m_TurnWatch->take(now)) return false;
         const capture::Orientation was = m_Scanout->panelTransform();
-        if (now.orientation == was) return false;
         log::info("[native] " + m_ConnectorName + " was turned: " + std::to_string(was.degrees()) +
                   "° -> " + std::to_string(now.orientation.degrees()) + "° against its panel (" +
                   now.source + ") — the capture starts over");
@@ -1545,6 +1567,7 @@ private:
     void releaseCapture(bool locked)
     {
         m_Pipeline.reset();
+        m_TurnWatch.reset();
         m_Scanout = nullptr;
 #if defined(MW_NATIVE_LINUX_PORTAL)
         m_PortalCapture = nullptr;
@@ -2386,15 +2409,6 @@ private:
         std::string portalModesSeen;
         int portalFramesSince = 0;
         bool reopenPortal = false;
-        // The compositor's transform of the scanout's display, asked at most
-        // this often: a display turned during the session keeps its mode and
-        // its buffer's shape, and only the compositor says it turned (issue
-        // #54). Asked when the desktop is still — an acquire that timed out —
-        // because the answer is a round trip to the compositor, and a frame
-        // waiting behind it would be late by as much.
-        constexpr int64_t kTurnCheckUs = 2000 * 1000;
-        int64_t nextTurnCheckUs = steadyNowUs() + kTurnCheckUs;
-        bool turnPending = false;
         // The shared monitor's record, read this often by a guest's stream;
         // GNOME's word on its monitors, asked this often, and the pointer
         // mapped again this long after it.
@@ -2707,12 +2721,11 @@ private:
                 reopenPortal = false;
                 portalModeChanged = true;
             }
-            // The scanout's display was turned against its panel, or back (the
-            // check is made on a still moment, below): a new configuration,
-            // taken up as a mode change is — the capture starts over and
-            // stands the new turn upright, the rest is rebuilt for its size.
-            const bool turned = turnPending;
-            turnPending = false;
+            // The scanout's display was turned against its panel, or back (its
+            // watch's word, a flag): a new configuration, taken up as a mode
+            // change is — the capture starts over and stands the new turn
+            // upright, the rest is rebuilt for its size.
+            const bool turned = displayTurned();
 
 #if defined(MW_NATIVE_LINUX_PORTAL)
             followPointerForDmabuf();
@@ -2745,17 +2758,6 @@ private:
                     if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
                     lastSentUs = steadyNowUs();
                     continue;
-                }
-                // A still moment with nothing to send: the one to ask the
-                // compositor whether the scanout's display was turned (see
-                // kTurnCheckUs). Not where it never answered at the start:
-                // nothing there to ask.
-                if (m_Scanout && m_PanelTransform.known && steadyNowUs() >= nextTurnCheckUs) {
-                    nextTurnCheckUs = steadyNowUs() + kTurnCheckUs;
-                    if (displayTurned()) {
-                        turnPending = true;
-                        continue;
-                    }
                 }
                 if (steadyNowUs() - lastSentUs < (refining ? refineIntervalUs : idleIntervalUs))
                     continue;
@@ -3247,10 +3249,11 @@ private:
     std::shared_ptr<capture::X11Damage> m_Damage;
     /// m_Capture when it is the scanout reader, and how the compositor turned
     /// the desktop onto its panel when it opened (CompositorTransform.h): what
-    /// the capture stood its pictures upright by. The loop compares a fresh
-    /// read with the capture's own (displayTurned).
+    /// the capture stood its pictures upright by. m_TurnWatch asks the
+    /// compositor again on its own thread, and the loop takes its word.
     capture::KmsCapture* m_Scanout = nullptr;
     capture::CompositorTransform m_PanelTransform;
+    std::unique_ptr<capture::TurnWatch> m_TurnWatch;
     /// The scanout's connector as KMS knew it when its capture opened.
     input::KmsIdentity m_ScanoutIdentity;
     /// X reflects the display too, which is said once (readPanelTransform).

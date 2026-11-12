@@ -18,10 +18,12 @@
 #include "X11Damage.h"
 
 #include "../../core/Log.h"
+#include "../../platform/linux/XlibLock.h"
 
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <mutex>
 #include <poll.h>
 
 namespace mw::native::capture {
@@ -138,6 +140,9 @@ bool X11Damage::watch(int left, int top, int right, int bottom, std::string& why
         return false;
     }
 
+    // Every Xlib call under the process's lock (XlibLock.h), here to the
+    // flush; the early returns let it go.
+    std::unique_lock<std::mutex> xlib(platform::xlibMutex());
     m_Display = m_XOpenDisplay(display);
     if (!m_Display) {
         why = std::string("the X server \"") + display + "\" refused the connection";
@@ -159,6 +164,7 @@ bool X11Damage::watch(int left, int top, int right, int bottom, std::string& why
     // picture at the start, which costs nothing worth a special case.
     m_XDamageCreate(m_Display, m_XDefaultRootWindow(m_Display), kReportRawRectangles);
     m_XFlush(m_Display);
+    xlib.unlock();
     m_Thread = std::thread([this] { run(); });
     log::info(std::string("[native] KMS: watching X damage on \"") + display +
               "\" — a picture the X server draws into the scanned-out buffer, without a new "
@@ -168,11 +174,16 @@ bool X11Damage::watch(int left, int top, int right, int bottom, std::string& why
 
 void X11Damage::run()
 {
-    const int fd = m_XConnectionNumber(m_Display);
+    int fd = -1;
+    {
+        std::lock_guard<std::mutex> xlib(platform::xlibMutex());
+        fd = m_XConnectionNumber(m_Display);
+    }
     long event[kEventLongs];
     while (!m_Stop.load() && !m_Dead.load()) {
         pollfd p = {fd, POLLIN, 0};
         ::poll(&p, 1, 100);
+        std::lock_guard<std::mutex> xlib(platform::xlibMutex());
         while (!m_Stop.load() && !m_Dead.load() && m_XPending(m_Display) > 0) {
             m_XNextEvent(m_Display, event);
             if (m_Dead.load()) break;
@@ -202,7 +213,10 @@ void X11Damage::stop()
     if (m_Thread.joinable()) m_Thread.join();
     // A dead connection is left alone: Xlib says nothing more may be done with
     // it, closing included. The process's memory is all it costs.
-    if (m_Display && !m_Dead.load() && m_XCloseDisplay) m_XCloseDisplay(m_Display);
+    if (m_Display && !m_Dead.load() && m_XCloseDisplay) {
+        std::lock_guard<std::mutex> xlib(platform::xlibMutex());
+        m_XCloseDisplay(m_Display);
+    }
     m_Display = nullptr;
     unload();
 }

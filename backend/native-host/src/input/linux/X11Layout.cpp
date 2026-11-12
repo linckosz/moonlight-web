@@ -17,9 +17,12 @@
 
 #include "X11Layout.h"
 
+#include "../../platform/linux/XlibLock.h"
+
 #include <atomic>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <mutex>
 
 namespace mw::native::input {
 namespace {
@@ -240,6 +243,11 @@ bool X11Layout::read(std::vector<X11Output>& outputs, int& rootWidth, int& rootH
         return false;
     }
     displayUsed = display;
+
+    // Under the process's Xlib lock, for the whole read (XlibLock.h): the
+    // error handler set below is the process's, and a session's capture loop
+    // and its turn watch (TurnWatch.h) both read, from two threads.
+    std::lock_guard<std::mutex> xlib(platform::xlibMutex());
 
     Lib lib;
     if (!lib.open(why)) return false;

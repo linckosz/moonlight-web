@@ -18,6 +18,7 @@
 #include "XFixesCursor.h"
 
 #include "../../core/Log.h"
+#include "../../platform/linux/XlibLock.h"
 
 #include <dlfcn.h>
 #include <poll.h>
@@ -141,6 +142,10 @@ bool XFixesCursor::start(const std::string& display,
         error = "libX11 1.7 or later and libXfixes are needed";
         return false;
     }
+    // Every Xlib call under the process's lock (XlibLock.h), to the end of the
+    // set-up. g_ioMutex is taken under it: onIoError takes it from inside a
+    // call into Xlib.
+    std::unique_lock<std::mutex> xlib(platform::xlibMutex());
     m_Display = api->openDisplay(display.c_str());
     if (!m_Display) {
         error = "cannot open the X display " + display;
@@ -172,6 +177,7 @@ bool XFixesCursor::start(const std::string& display,
     }
     m_Root = api->defaultRootWindow(m_Display);
     api->fixesSelectCursorInput(m_Display, m_Root, kXFixesDisplayCursorNotifyMask);
+    xlib.unlock();
     m_Changed = std::move(changed);
     m_State = CursorState{};
     m_Stopping.store(false);
@@ -187,7 +193,10 @@ void XFixesCursor::stop()
         // A broken connection is left as it is: closing it would talk to a
         // server that is gone. Still one of ours until then, should it break
         // while closing.
-        if (!m_Broken.load()) Api::get()->closeDisplay(m_Display);
+        if (!m_Broken.load()) {
+            std::lock_guard<std::mutex> xlib(platform::xlibMutex());
+            Api::get()->closeDisplay(m_Display);
+        }
         {
             std::lock_guard<std::mutex> lock(g_ioMutex);
             g_readers.erase(m_Display);
@@ -199,6 +208,7 @@ void XFixesCursor::stop()
 void XFixesCursor::run()
 {
     const Api* api = Api::get();
+    std::unique_lock<std::mutex> xlib(platform::xlibMutex());
     const int fd = api->connectionNumber(m_Display);
     bool shapeDue = true;
 
@@ -215,6 +225,7 @@ void XFixesCursor::run()
         unsigned int border = 0, depth = 0;
         api->getGeometry(m_Display, m_Root, &r, &rx, &ry, &rootW, &rootH, &border, &depth);
     }
+    xlib.unlock();
     XWindow scaledWindow = 0;
     int winX = 0, winY = 0;
     unsigned int winW = 0, winH = 0;
@@ -222,12 +233,15 @@ void XFixesCursor::run()
     while (!m_Stopping.load() && !m_Broken.load()) {
         pollfd p{fd, POLLIN, 0};
         ::poll(&p, 1, 8);
+        // Xlib under the process's lock from here to the pointer read; the
+        // owner's callback below is made without it.
+        xlib.lock();
         while (!m_Broken.load() && api->pending(m_Display) > 0) {
             XEventBuffer event{};
             api->nextEvent(m_Display, &event);
             if (event.type == m_EventBase + kXFixesCursorNotify) shapeDue = true;
         }
-        if (m_Broken.load()) break;
+        if (m_Broken.load()) break; // xlib lets the lock go as run() returns
         bool changed = false;
 
         if (shapeDue) {
@@ -296,6 +310,7 @@ void XFixesCursor::run()
                 changed = true;
             }
         }
+        xlib.unlock();
         // Shown when the app shows one: a game that hides the pointer gives X
         // an empty one, which has no ink. gamescope's own word on it
         // (GAMESCOPE_CURSOR_VISIBLE_FEEDBACK) is about the pointer on ITS

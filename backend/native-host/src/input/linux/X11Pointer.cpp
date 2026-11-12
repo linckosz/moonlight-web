@@ -18,9 +18,11 @@
 #include "X11Pointer.h"
 
 #include "../../core/Log.h"
+#include "../../platform/linux/XlibLock.h"
 
 #include <cstdlib>
 #include <dlfcn.h>
+#include <mutex>
 #include <string>
 
 namespace mw::native::input {
@@ -98,7 +100,11 @@ bool X11Pointer::open()
         return false;
     }
 
-    m_Display = m_XOpenDisplay(display);
+    {
+        std::lock_guard<std::mutex> xlib(platform::xlibMutex());
+        m_Display = m_XOpenDisplay(display);
+        if (m_Display) m_Root = m_XDefaultRootWindow(m_Display);
+    }
     if (!m_Display) {
         // A server that is there and will not have us: no XAUTHORITY, or a
         // different user's session. Worth a line, because unlike the cases
@@ -110,7 +116,6 @@ bool X11Pointer::open()
         return false;
     }
 
-    m_Root = m_XDefaultRootWindow(m_Display);
     log::info(std::string("[native] input: attached to X display \"") + display +
               "\" — a pointer left on another screen will be brought back");
     return true;
@@ -118,7 +123,10 @@ bool X11Pointer::open()
 
 void X11Pointer::close()
 {
-    if (m_Display && m_XCloseDisplay) m_XCloseDisplay(m_Display);
+    if (m_Display && m_XCloseDisplay) {
+        std::lock_guard<std::mutex> xlib(platform::xlibMutex());
+        m_XCloseDisplay(m_Display);
+    }
     m_Display = nullptr;
     m_Root = 0;
     // The library itself stays out of the process: dlclose on libX11 is safe
@@ -145,6 +153,7 @@ bool X11Pointer::position(int& x, int& y)
     int winX = 0;
     int winY = 0;
     unsigned int mask = 0;
+    std::lock_guard<std::mutex> xlib(platform::xlibMutex());
     // False means the pointer is not on the screen this root belongs to. On a
     // single-screen display — which is every modern desktop, multi-monitor
     // included, since they are one screen under RandR — that does not happen.
@@ -161,6 +170,7 @@ bool X11Pointer::warp(int x, int y)
     if (!m_Display) return false;
     // Source window None: move it from wherever it is, with no condition on
     // where that was. The zeroes are the source rectangle, unused in that case.
+    std::lock_guard<std::mutex> xlib(platform::xlibMutex());
     m_XWarpPointer(m_Display, 0, m_Root, 0, 0, 0, 0, x, y);
     m_XFlush(m_Display);
     return true;

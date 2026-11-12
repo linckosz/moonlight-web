@@ -643,6 +643,7 @@ if(MW_BUILD_TESTS)
         tests/test_display_rotation.cpp
         tests/test_mf_start_ladder.cpp
         tests/test_orientation.cpp
+        tests/test_turn_watch.cpp
         tests/test_display_mode_hold.cpp
         tests/test_cursor_position_gate.cpp
         tests/test_pointer_presence.cpp
