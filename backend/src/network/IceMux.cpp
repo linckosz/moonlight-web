@@ -263,6 +263,8 @@ void IceMux::stop()
             slot = Slot{};
         }
         m_Serving.fill(-1);
+        // What was shared is no more: a lease of before means nothing after
+        m_Leases.clear();
         ++m_PortsVersion;
     }
     closesocket(static_cast<SOCKET>(m_Hop));
@@ -292,11 +294,12 @@ IceMux::Held IceMux::hold(uint16_t port, std::string* why)
     }
     if (!room) {
         if (why) *why = "the mux holds every socket it may";
-        // Said once: from here on a port whose hole goes to another machine
-        // is not replaced, and nothing else would tell.
+        // Said once each time it comes to that: from here on a port whose
+        // hole goes to another machine is not replaced, and nothing else
+        // would tell.
         if (!m_FullSaid.exchange(true) && m_Report)
             m_Report("the mux holds every socket it may (" + std::to_string(kSocketsMax) +
-                     "): no other port is held until the server starts again");
+                     "): no other port is held until a stream on a replaced one ends");
         return Held::Failed;
     }
     const SOCKET s = openShared(port, why);
@@ -336,6 +339,18 @@ bool IceMux::serve(int role, uint16_t port)
     m_Serving[static_cast<size_t>(role)] = id;
     ++m_PortsVersion;
     return true;
+}
+
+void IceMux::beginAsking()
+{
+    ++m_Asking;
+}
+
+void IceMux::endAsking()
+{
+    --m_Asking;
+    // The reading thread looks again at what nobody has
+    ++m_PortsVersion;
 }
 
 uint16_t IceMux::port(int role) const
@@ -379,15 +394,16 @@ uint32_t IceMux::addAgent(const std::string& ufrag, const std::vector<uint8_t>& 
     if (sockets.empty() || sockets.size() > kAgentSocketsMax) return 0;
     Feed entry;
     entry.via.fill(kNotIts);
-    {
-        const std::lock_guard<std::mutex> lock(m_PortsLock);
-        for (size_t place = 0; place < sockets.size(); ++place) {
-            const uint8_t id = sockets[place];
-            if (id >= kSocketsMax || entry.via[id] != kNotIts) return 0;
-            const State state = m_Slots[id].state;
-            if (state != State::Serving && state != State::Retired) return 0;
-            entry.via[id] = static_cast<uint8_t>(place);
-        }
+    // Both locks, the sockets' first, from the look at the sockets to the
+    // agent's entry: a replaced socket is let go when no agent is registered
+    // on it, and the reading thread decides that under both.
+    const std::lock_guard<std::mutex> ports(m_PortsLock);
+    for (size_t place = 0; place < sockets.size(); ++place) {
+        const uint8_t id = sockets[place];
+        if (id >= kSocketsMax || entry.via[id] != kNotIts) return 0;
+        const State state = m_Slots[id].state;
+        if (state != State::Serving && state != State::Retired) return 0;
+        entry.via[id] = static_cast<uint8_t>(place);
     }
     const std::lock_guard<std::mutex> lock(m_Lock);
     const uint32_t feed = m_NextFeed;
@@ -433,34 +449,62 @@ void IceMux::confirm(uint32_t feed, const std::string& address, uint16_t port)
 
 void IceMux::removeAgent(uint32_t feed)
 {
-    const std::lock_guard<std::mutex> lock(m_Lock);
-    m_Router.removeAgent(feed);
-    m_Feeds.erase(feed);
+    {
+        const std::lock_guard<std::mutex> lock(m_Lock);
+        m_Router.removeAgent(feed);
+        m_Feeds.erase(feed);
+    }
+    // It may have been the last on a replaced port: the reading thread looks
+    ++m_PortsVersion;
 }
 
-IceMux::Share IceMux::shareByHandle() const
+IceMux::Share IceMux::shareByHandle()
 {
     Share out;
     const std::lock_guard<std::mutex> lock(m_PortsLock);
     for (const int id : m_Serving) {
         if (id < 0) continue;
-        const Slot& slot = m_Slots[static_cast<size_t>(id)];
+        Slot& slot = m_Slots[static_cast<size_t>(id)];
         out.sockets.push_back(static_cast<uint8_t>(id));
         out.ports.push_back(slot.port);
         out.handles.push_back(static_cast<uint64_t>(slot.socket));
+        ++slot.leases;
     }
+    if (out.sockets.empty()) return out;
+    while (m_NextLease == 0 || m_Leases.count(m_NextLease))
+        ++m_NextLease;
+    out.lease = m_NextLease++;
+    m_Leases.emplace(out.lease, out.sockets);
     return out;
+}
+
+void IceMux::release(uint32_t lease)
+{
+    if (lease == 0) return;
+    {
+        const std::lock_guard<std::mutex> lock(m_PortsLock);
+        const auto held = m_Leases.find(lease);
+        if (held == m_Leases.end()) return;
+        // A socket somebody holds a lease on is never closed: these are the
+        // sockets the share was made of
+        for (const uint8_t id : held->second)
+            if (m_Slots[id].leases > 0) --m_Slots[id].leases;
+        m_Leases.erase(held);
+    }
+    // It may have been the last on a replaced port: the reading thread looks
+    ++m_PortsVersion;
 }
 
 #ifdef _WIN32
 IceMux::Share IceMux::shareWith(unsigned long pid, std::string* why)
 {
     Share out = shareByHandle();
-    // Outside the lock: a socket that serves is closed by stop() alone
+    // Outside the lock: the lease keeps these sockets open
     for (const uint64_t handle : out.handles) {
         WSAPROTOCOL_INFOW info{};
         if (WSADuplicateSocketW(static_cast<SOCKET>(handle), pid, &info) != 0) {
             if (why) *why = "WSADuplicateSocket failed, error " + std::to_string(lastError());
+            release(out.lease);
             return {};
         }
         const auto* bytes = reinterpret_cast<const uint8_t*>(&info);
@@ -498,7 +542,8 @@ void IceMux::run()
         int said = 0;
     };
     // The sockets to read: the ones that serve or have served, as of the last
-    // change. Such a socket is closed by stop() alone, after this thread.
+    // change. Such a socket is closed here, between two reads, or by stop()
+    // after this thread.
     struct Reading
     {
         SOCKET socket = INVALID_SOCKET;
@@ -525,15 +570,49 @@ void IceMux::run()
 
     while (!m_Stop) {
         if (!known || version != m_PortsVersion.load()) {
-            const std::lock_guard<std::mutex> lock(m_PortsLock);
-            version = m_PortsVersion.load();
-            known = true;
-            for (size_t id = 0; id < kSocketsMax; ++id) {
-                const Slot& slot = m_Slots[id];
-                reading[id].socket = static_cast<SOCKET>(slot.socket);
-                reading[id].port = slot.port;
-                reading[id].on = slot.state == State::Serving || slot.state == State::Retired;
+            // Ports let go in this turn, said once the lock is given back
+            std::array<uint16_t, kSocketsMax> gone{};
+            size_t goneCount = 0;
+            {
+                const std::lock_guard<std::mutex> lock(m_PortsLock);
+                version = m_PortsVersion.load();
+                known = true;
+                // A port that was replaced goes once nobody has it: no worker
+                // it was shared with is left, no agent is registered on it,
+                // and no port is being asked for (the answer could be that
+                // this one serves again). It is closed here and nowhere else
+                // while the mux runs: this thread is the one that reads it,
+                // and is not reading it now.
+                for (size_t id = 0; id < kSocketsMax && m_Asking.load() == 0; ++id) {
+                    Slot& slot = m_Slots[id];
+                    if (slot.state != State::Retired || slot.leases != 0) continue;
+                    {
+                        const std::lock_guard<std::mutex> feeds(m_Lock);
+                        bool named = false;
+                        for (const auto& agent : m_Feeds)
+                            named = named || agent.second.via[id] != kNotIts;
+                        if (named) continue;
+                        // Its number may be another socket's from here on
+                        m_Router.forgetVia(static_cast<uint8_t>(id));
+                    }
+                    gone[goneCount++] = slot.port;
+                    closesocket(static_cast<SOCKET>(slot.socket));
+                    slot = Slot{};
+                    health[id] = Health{};
+                    m_Ailing.fetch_and(~(1u << id));
+                    // Room again: the next time it is full is said again
+                    m_FullSaid = false;
+                }
+                for (size_t id = 0; id < kSocketsMax; ++id) {
+                    const Slot& slot = m_Slots[id];
+                    reading[id].socket = static_cast<SOCKET>(slot.socket);
+                    reading[id].port = slot.port;
+                    reading[id].on = slot.state == State::Serving || slot.state == State::Retired;
+                }
             }
+            for (size_t i = 0; i < goneCount && m_Report; ++i)
+                m_Report("UDP port " + std::to_string(gone[i]) +
+                         " was replaced and no stream is on it any more: it is let go");
         }
 
         fd_set readable;

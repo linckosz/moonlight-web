@@ -28,6 +28,21 @@ const char* roleName(int which)
     return which == IceMux::kStandard ? "conferencing" : "stream block";
 }
 
+/// Ends, when it goes, an asking that IceMux::beginAsking() began.
+class Asked
+{
+public:
+    explicit Asked(IceMux& mux)
+        : m_Mux(mux)
+    {}
+    ~Asked() { m_Mux.endAsking(); }
+    Asked(const Asked&) = delete;
+    Asked& operator=(const Asked&) = delete;
+
+private:
+    IceMux& m_Mux;
+};
+
 } // namespace
 
 IceMuxPorts::IceMuxPorts(IceMux& mux, Router& router, Policy policy)
@@ -89,6 +104,9 @@ void IceMuxPorts::ensure(int which)
 void IceMuxPorts::claim(int which)
 {
     m_Claiming[static_cast<size_t>(which)] = true;
+    // Until claimed(): the answer may be a port the mux has replaced, which
+    // must not be let go between the router's look at it and its serving.
+    m_Mux.beginAsking();
     // These two run on the router's thread, and may run after this object is
     // gone: they know the mux and nothing else. The mux outlives that thread.
     IceMux* mux = &m_Mux;
@@ -109,6 +127,9 @@ void IceMuxPorts::claim(int which)
 void IceMuxPorts::claimed(int which, uint16_t port, const QString& why)
 {
     m_Claiming[static_cast<size_t>(which)] = false;
+    // The asking that claim() began ends when this returns, whatever it does
+    // with the answer (a port asked for again from here has its own).
+    const Asked asked(m_Mux);
     if (port == 0) {
         qInfo().noquote() << QStringLiteral("[IceMux] no router hole for the %1 port — %2")
                                  .arg(QLatin1String(roleName(which)), why);
@@ -157,6 +178,8 @@ void IceMuxPorts::claimed(int which, uint16_t port, const QString& why)
 
 void IceMuxPorts::bindHere(int which)
 {
+    m_Mux.beginAsking();
+    const Asked asked(m_Mux);
     std::string reason;
     const QList<uint16_t> ports =
         m_Policy.candidates ? m_Policy.candidates(which) : QList<uint16_t>();

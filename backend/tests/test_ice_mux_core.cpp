@@ -337,6 +337,50 @@ void runningStreams()
     CHECK(to(full, theirs, kDtls, 1'000'001) == second);
 }
 
+void closedSocket()
+{
+    SECTION("IceMuxCore: a shared socket that goes takes what was learned through it");
+    Router r;
+    CHECK(r.addAgent(1, "hostAAAA1234", 0));
+    CHECK(r.addAgent(2, "hostBBBB5678", 0));
+    const std::vector<uint32_t> first{1}, second{2}, nobody;
+    // One address on two sockets is two peers, each confirmed by the agent
+    const Peer onKept = peer(1, 5000, 0), onGone = peer(1, 5000, 1);
+    CHECK(to(r, onKept, request("hostAAAA1234:x"), 1000) == first);
+    r.confirm(1, onKept, 1000);
+    CHECK(to(r, onGone, request("hostAAAA1234:x"), 1000) == first);
+    r.confirm(1, onGone, 1000);
+    // Provisional peers on the socket that goes: one of the second agent,
+    // one of both; and one on the socket that stays
+    const Peer other = peer(2, 5001, 1), both = peer(3, 5002, 1), stays = peer(4, 5003, 0);
+    CHECK(to(r, other, request("hostBBBB5678:y"), 1000) == second);
+    CHECK(to(r, both, request("hostAAAA1234:x"), 1000) == first);
+    CHECK(to(r, both, request("hostBBBB5678:y"), 1000) == second);
+    CHECK(to(r, stays, request("hostBBBB5678:y"), 1000) == second);
+    CHECK(r.confirmedCount() == 2 && r.provisionalCount() == 3);
+    CHECK(r.provisionalCount(1) == 1 && r.provisionalCount(2) == 3);
+    CHECK(to(r, both, kDtls, 1001).size() == 2);
+
+    r.forgetVia(1);
+    // Nothing of that socket is left, in the table or in an agent's share
+    CHECK(r.confirmedCount() == 1 && r.provisionalCount() == 1);
+    CHECK(r.provisionalCount(1) == 0 && r.provisionalCount(2) == 1);
+    CHECK(to(r, onGone, kDtls, 1002) == nobody);
+    CHECK(to(r, other, kDtls, 1002) == nobody);
+    CHECK(to(r, both, kDtls, 1002) == nobody);
+    // What came through the other socket is as it was
+    CHECK(to(r, onKept, kDtls, 1002) == first);
+    CHECK(to(r, stays, kDtls, 1002) == second);
+    // The number may be another socket's from here on: a peer is learned
+    // there afresh, whoever it was before
+    CHECK(to(r, onGone, request("hostBBBB5678:y"), 1003) == second);
+    r.confirm(2, onGone, 1003);
+    CHECK(to(r, onGone, kDtls, 1004) == second);
+    // A socket nothing was learned through
+    r.forgetVia(7);
+    CHECK(r.confirmedCount() == 2 && r.provisionalCount() == 1);
+}
+
 /// The `i`th of as many distinct senders as a test wants.
 Peer nth(uint32_t i)
 {
@@ -500,6 +544,7 @@ void run_ice_mux_core_tests()
     following();
     flood();
     runningStreams();
+    closedSocket();
     shares();
     sharedResponses();
     unclaimed();

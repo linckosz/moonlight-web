@@ -46,7 +46,8 @@
 ///
 ///   a hole the router gave to another machine is asked for again, on the
 ///   next number. The port that lost it stays bound and read, for the streams
-///   that are on it, and stops being handed to new ones once another serves.
+///   that are on it, and stops being handed to new ones once another serves;
+///   the mux lets it go when the last of those streams' workers is gone.
 ///
 /// Everything here runs on the main thread, except the two functions given to
 /// the router with a claim, which only reach the mux. docs/design/ice-mux.md

@@ -59,6 +59,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
             if (feed != 1 && feed != 2) std::abort();
             if (who & 0x80) router->confirm(feed, from, now);
         }
+        // Now and then the socket it came in on goes: what was learned
+        // through it goes too, and the shares below still add up
+        if ((who & 0x7C) == 0x7C) router->forgetVia(from.via);
         if (router->provisionalCount(1) > Router::kProvisionalPerFeedMax ||
             router->provisionalCount(2) > Router::kProvisionalPerFeedMax ||
             router->provisionalCount(1) + router->provisionalCount(2) <

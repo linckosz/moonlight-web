@@ -139,6 +139,11 @@ public:
     /// not take a peer from a stream that is running.
     void confirm(uint32_t feed, const Peer& peer, uint64_t nowMs);
 
+    /// The shared socket `via` is no more: every peer known through it is
+    /// forgotten. Its number may be another socket's later, and what was
+    /// learned of the old one says nothing of the new.
+    void forgetVia(uint8_t via);
+
     Route route(const Peer& from, const uint8_t* data, size_t size, uint64_t nowMs);
 
     /// The addresses that are somebody's provisional peer

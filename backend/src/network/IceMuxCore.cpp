@@ -259,6 +259,31 @@ void Router::confirm(uint32_t feed, const Peer& peer, uint64_t nowMs)
     }
 }
 
+void Router::forgetVia(uint8_t via)
+{
+    for (auto it = m_Confirmed.begin(); it != m_Confirmed.end();) {
+        if (it->first.via != via) {
+            ++it;
+            continue;
+        }
+        const auto agent = m_Agents.find(it->second.feed);
+        if (agent != m_Agents.end() && agent->second.confirmed > 0) --agent->second.confirmed;
+        it = m_Confirmed.erase(it);
+    }
+    for (auto it = m_Provisional.begin(); it != m_Provisional.end();) {
+        if (it->first.via != via) {
+            ++it;
+            continue;
+        }
+        for (const Follower& f : it->second.followers) {
+            const auto follower = m_Agents.find(f.feed);
+            if (follower != m_Agents.end() && follower->second.provisional > 0)
+                --follower->second.provisional;
+        }
+        it = m_Provisional.erase(it);
+    }
+}
+
 Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t nowMs)
 {
     Route out;

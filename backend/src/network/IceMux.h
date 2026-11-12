@@ -42,8 +42,9 @@
 /// the order it prefers them. Which numbers they are is not decided here
 /// (IceMuxPorts, with the router): a port is first held, then, once it is
 /// known to be the one, made to serve. A port that stops serving because
-/// another took its role stays bound and read until the process ends: a
-/// stream that started on it is still there.
+/// another took its role stays bound and read for the streams that started on
+/// it: for as long as a worker it was shared with lives (shareWith(),
+/// release()) or an agent is registered on it. Then it is closed.
 class IceMux
 {
 public:
@@ -53,8 +54,9 @@ public:
     static constexpr int kStandard = 0;
     static constexpr int kBlock = 1;
     static constexpr int kRoles = 2;
-    /// Sockets bound at once: the two that serve and the ones they replaced.
-    /// Reached, no further port is held.
+    /// Sockets bound at once: the two that serve and the ones they replaced
+    /// that a stream is still on. Reached, no further port is held until one
+    /// of those is let go.
     static constexpr size_t kSocketsMax = 8;
     /// The most sockets one agent is given (libjuice's JUICE_SHARED_SOCKETS_MAX).
     static constexpr size_t kAgentSocketsMax = 4;
@@ -91,13 +93,21 @@ public:
     /// it. From any thread.
     Held hold(uint16_t port, std::string* why = nullptr);
     /// Lets go of a port hold() bound that never served. Nothing for any
-    /// other: a port that has served is kept. From any thread.
+    /// other: a port that has served goes when nobody has it (release()).
+    /// From any thread.
     void drop(uint16_t port);
     /// The held port `port` serves `role` from now on: it is read, and the
-    /// agents registered from now on are given it. The port that served the
-    /// role before stays bound and read, for the agents that have it. False
-    /// when the port is not held, or serves the other role.
+    /// workers started from now on are given it. The port that served the
+    /// role before stays bound and read for the workers that have it, and is
+    /// closed when the last of them is gone. False when the port is not held,
+    /// or serves the other role.
     bool serve(int role, uint16_t port);
+    /// A port is being asked for, from this call to endAsking(): hold(), then
+    /// the serve() or the drop() its answer brings. No replaced port is let
+    /// go meanwhile, since the answer may be that one of them serves again.
+    /// Whoever asks says so before its hold(). From any thread; they nest.
+    void beginAsking();
+    void endAsking();
 
     /// The port that serves `role`, 0 when none does.
     uint16_t port(int role) const;
@@ -110,9 +120,9 @@ public:
     /// stream that starts meanwhile is better off on a socket of its own.
     bool healthy() const;
     /// Where what is said of such a port goes: that it keeps failing, then
-    /// that it reads again; and, once, that the mux holds every socket it may.
-    /// Called from the reading thread, and from the thread that asked for one
-    /// port too many; set before start().
+    /// that it reads again; that a replaced port was let go; and, once, that
+    /// the mux holds every socket it may. Called from the reading thread, and
+    /// from the thread that asked for one port too many; set before start().
     void setReporter(std::function<void(const std::string&)> report)
     {
         m_Report = std::move(report);
@@ -138,6 +148,10 @@ public:
     /// What a stream worker gets: the sockets that serve, the preferred first.
     struct Share
     {
+        /// What the worker holds of the mux from now to release(): these
+        /// sockets stay bound and read for it, whatever replaces them. 0 when
+        /// nothing was shared.
+        uint32_t lease = 0;
         /// Their numbers here, for addAgent()
         std::vector<uint8_t> sockets;
         std::vector<uint16_t> ports;
@@ -159,7 +173,13 @@ public:
     /// (streaming/IceMuxHandles). They are no secret and give nothing: only a
     /// process that may already open this one can use them. Empty when
     /// nothing serves.
-    Share shareByHandle() const;
+    Share shareByHandle();
+    /// The worker a share went to is gone, or never got it: `lease` is that
+    /// share's. A replaced port no other worker has and no agent is
+    /// registered on is closed then, by the reading thread, and its number is
+    /// free for another port. Nothing for a lease that is not held (given
+    /// back already, or of before a stop()). From any thread.
+    void release(uint32_t lease);
 
     struct Counters
     {
@@ -179,13 +199,15 @@ private:
         Free,
         Pending, ///< bound, waiting to serve or to be dropped: not read
         Serving,
-        Retired, ///< served once: read, for the agents that have it
+        Retired, ///< served once: read, for the workers that have it
     };
     struct Slot
     {
         uintptr_t socket = ~uintptr_t(0);
         uint16_t port = 0;
         State state = State::Free;
+        /// The shares it is part of that were not given back
+        uint32_t leases = 0;
     };
     /// "Not one of this agent's sockets"
     static constexpr uint8_t kNotIts = 0xFF;
@@ -199,14 +221,21 @@ private:
     void run();
     void handle(uint8_t socket, const void* sender, uint8_t* packet, size_t size);
 
-    /// The sockets and which serve. Taken before m_Lock when both are, never
-    /// after it. A socket that serves or has served is closed by stop() alone,
-    /// which is what lets the reading thread use one outside the lock.
+    /// The sockets, which serve, and who was given them. Taken before m_Lock
+    /// when both are, never after it. While the mux runs, a socket that
+    /// serves or has served is closed by the reading thread alone, between
+    /// two reads, and only one nobody has: that is what lets that thread use
+    /// one outside the lock, and shareWith() one it holds a lease on.
     mutable std::mutex m_PortsLock;
     std::array<Slot, kSocketsMax> m_Slots;
     std::array<int, kRoles> m_Serving{{-1, -1}};
-    /// Moves when the set of sockets to read does
+    /// The shares not given back: the sockets of each
+    std::unordered_map<uint32_t, std::vector<uint8_t>> m_Leases;
+    uint32_t m_NextLease = 1;
+    /// Moves when the set of sockets to read does, or may
     std::atomic<uint32_t> m_PortsVersion{0};
+    /// Ports being asked for (beginAsking()): nothing is let go meanwhile
+    std::atomic<int> m_Asking{0};
     /// One bit per socket whose reads keep failing
     std::atomic<uint32_t> m_Ailing{0};
     /// That no socket is left to hold a port with has been said

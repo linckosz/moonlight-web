@@ -134,10 +134,16 @@ When each is bound:
   router has made its hole; refused, it is let go.
 
 A hole the router gives to another machine (found at renewal) is asked for
-again on the next number. The port that lost it stays bound and read until the
-server stops, for the streams that are on it, and is no longer given to new
-ones once another port serves in its place. The mux holds eight sockets at
-most; past that it holds no new port.
+again on the next number. The port that lost it is no longer given to new
+streams once another port serves in its place, and stays bound and read for
+the streams that are on it: a worker holds a lease on the sockets it was
+given, from its start to its end, and its agents register on those sockets
+whatever replaced them since. Once no worker holds such a port and no agent is
+registered on it, the reading thread closes it, between two reads, and its
+number is free for another port; what the mux had learned of peers through
+it is forgotten. Nothing is closed while the router is being asked for a
+port: the answer may be that a replaced one serves again. The mux holds eight
+sockets at most; past that it holds no new port until one is closed.
 
 Each agent is registered with the sockets its worker was handed, and hears each
 under its own number for it (0 for its first). A datagram that comes in on a

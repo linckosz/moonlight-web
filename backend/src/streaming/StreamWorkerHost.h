@@ -246,8 +246,15 @@ private:
     /// The mux's sockets this worker was handed, in the order it was given
     /// them: the ones its agents send on. Empty when it was handed none.
     QList<quint8> m_MuxSockets;
+    /// The mux's lease on those sockets (IceMux::Share), from the moment the
+    /// worker is given them until it is gone: the mux keeps them bound and
+    /// read meanwhile, whatever port replaces them. 0 when it was handed none.
+    uint32_t m_MuxLease = 0;
     void onMuxEvent(const QJsonObject& event);
     void dropMuxAgent();
+    /// The worker is gone, or is about to be started again: its agent goes,
+    /// and what the mux kept for it is given back.
+    void releaseMuxSockets();
     /// Mouse Keys the worker turned on and has not let go of yet, with what to
     /// put back if it dies holding them (a `mouseKeys` event; Windows only).
     bool m_MouseKeysHeld = false;

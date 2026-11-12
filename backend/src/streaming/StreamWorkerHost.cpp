@@ -51,6 +51,9 @@ StreamWorkerHost::~StreamWorkerHost()
     }
     // A console child is killed and joined by its own destructor (it is our
     // QObject child), so nothing more is needed here.
+    // The worker's copies of the shared sockets go with its process: the mux
+    // need not keep a replaced port for it any longer.
+    releaseMuxSockets();
     if (m_HidBatch) HidParkingTransfer::settle(m_HidBatch, false);
 }
 
@@ -255,7 +258,8 @@ static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::Plain, 
 QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Launch how,
                                                bool ownerAccount, qint64 pid)
 {
-    m_MuxSockets.clear();
+    // Whatever an earlier launch of this worker was given is given back
+    releaseMuxSockets();
 #ifdef Q_OS_WIN
     IceMux* mux = IceMux::shared();
     if (!mux || !mux->running() || !mux->healthy()) return configLine;
@@ -275,6 +279,7 @@ QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Lau
         workerTakes ? mux->shareByHandle() : mux->shareWith(static_cast<unsigned long>(pid), &why);
     if (share.sockets.empty() ||
         (workerTakes ? share.handles.empty() : share.descriptions.empty())) {
+        mux->release(share.lease);
         qWarning() << "[IceMux] the shared sockets cannot go to the worker:"
                    << QString::fromStdString(why) << "— it takes a socket of its own";
         return configLine;
@@ -301,9 +306,11 @@ QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Lau
         shared[QStringLiteral("sockets")] = sockets;
     }
     config[QStringLiteral("iceMux")] = shared;
-    // Which of the mux's sockets those are: what its agents register with
+    // Which of the mux's sockets those are: what its agents register with.
+    // The mux keeps them for this worker until it is gone (onFinished()).
     for (const uint8_t id : share.sockets)
         m_MuxSockets.append(id);
+    m_MuxLease = share.lease;
     return QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
 #else
     Q_UNUSED(how);
@@ -610,6 +617,16 @@ void StreamWorkerHost::dropMuxAgent()
     m_MuxFeed = 0;
 }
 
+void StreamWorkerHost::releaseMuxSockets()
+{
+    dropMuxAgent();
+    // No agent of this worker from here on, whatever it still says
+    m_MuxSockets.clear();
+    if (!m_MuxLease) return;
+    if (IceMux* mux = IceMux::shared()) mux->release(m_MuxLease);
+    m_MuxLease = 0;
+}
+
 void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
 {
     IceMux* mux = IceMux::shared();
@@ -644,7 +661,9 @@ void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
 void StreamWorkerHost::onFinished(int exitCode, QProcess::ExitStatus status)
 {
     qInfo() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode << "status=" << status;
-    dropMuxAgent();
+    // Its agent goes, and with its process its copies of the shared sockets:
+    // the mux need not keep a replaced port for it any longer.
+    releaseMuxSockets();
     if (m_ReportedAudioFocus) {
         audioFocusSlot().clear();
         m_ReportedAudioFocus = false;

@@ -14,9 +14,11 @@
 
 #include <QtGlobal>
 
+#include <chrono>
 #include <functional>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -145,6 +147,22 @@ std::vector<uint16_t> freePorts(size_t count)
 
 void quiet(QtMsgType, const QMessageLogContext&, const QString&) {}
 
+/// Lets the mux's reading thread take a turn: it looks at its sockets again
+/// every tenth of a second at the latest.
+void settle()
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+}
+
+/// Whether the mux lets go of `port` in good time: its reading thread does
+/// it, at its next look at its sockets.
+bool letsGo(const IceMux& mux, uint16_t port)
+{
+    for (int waited = 0; waited < 3000 && mux.holds(port); waited += 20)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    return !mux.holds(port);
+}
+
 } // namespace
 
 void run_ice_mux_ports_tests()
@@ -252,6 +270,9 @@ void run_ice_mux_ports_tests()
 
         SECTION(
             "IceMuxPorts: a hole the router gave to a neighbour is asked for on the next number");
+        // A stream runs: its worker was given the two ports
+        const IceMux::Share stream = r.mux.shareByHandle();
+        CHECK(stream.lease != 0 && stream.sockets.size() == 2);
         // (the allocator has dropped the hole when it says so)
         r.router.holes[kStandard] = 0;
         r.router.neighbours.insert(s1);
@@ -259,12 +280,17 @@ void run_ice_mux_ports_tests()
         CHECK(r.router.claims == 3 && r.router.asked.front().current == s1);
         r.router.answer();
         CHECK(r.router.holes[kStandard] == s2 && r.mux.port(kStandard) == s2);
-        // The port that lost its hole stays bound: a stream may be on it
+        // The port that lost its hole stays bound: that stream is on it
+        settle();
         CHECK(r.mux.holds(s1));
         // A port that is not one of the two is nobody's
         r.ports.holeLost(5, s1);
         r.ports.holeLost(-1, s1);
         CHECK(r.router.claims == 3);
+        // The stream over, its worker gone: the mux lets the port go
+        r.mux.release(stream.lease);
+        CHECK(letsGo(r.mux, s1));
+        CHECK(r.mux.port(kStandard) == s2 && r.mux.port(kBlock) == b1);
 
         SECTION("IceMuxPorts: switched off, the holes go and the ports stay");
         r.router.on = false;
@@ -335,8 +361,45 @@ void run_ice_mux_ports_tests()
         r.router.answer(); // the conferencing port
         r.router.answer(); // the block port
         CHECK(r.router.holes[kBlock] == b2 && r.mux.port(kBlock) == b2);
-        // The port bound at the start stays the mux's, for the streams on it
-        CHECK(r.mux.holds(b1));
+        // The port bound at the start had no stream on it: the mux lets it go
+        CHECK(letsGo(r.mux, b1));
+        CHECK(r.mux.port(kBlock) == b2 && r.mux.port(kStandard) == s1);
+    }
+
+    SECTION("IceMuxPorts: no replaced port is let go while the router is asked for one");
+    {
+        Rig r(standard, block);
+        r.router.state = Gateway::Ready;
+        CHECK(r.ports.start(&why));
+        r.router.answer();
+        r.router.answer();
+        CHECK(r.mux.port(kStandard) == s1 && r.mux.port(kBlock) == b1);
+        // A stream runs on the two ports, and the conferencing port moves to
+        // the next number: the first stays, for that stream
+        const IceMux::Share stream = r.mux.shareByHandle();
+        CHECK(stream.lease != 0);
+        r.router.holes[kStandard] = 0;
+        r.router.neighbours.insert(s1);
+        r.ports.holeLost(kStandard, s1);
+        r.router.answer();
+        CHECK(r.mux.port(kStandard) == s2 && r.mux.holds(s1));
+        // That hole is lost in its turn, and the first number is free on the
+        // router again: the router is asked, and has not answered
+        r.router.holes[kStandard] = 0;
+        r.router.neighbours.clear();
+        r.router.neighbours.insert(s2);
+        r.ports.holeLost(kStandard, s2);
+        CHECK(r.router.asked.size() == 1);
+        // The stream ends meanwhile: nothing goes while the router is asked
+        r.mux.release(stream.lease);
+        settle();
+        CHECK(r.mux.holds(s1));
+        // Its answer is the port the mux still had: that one serves again,
+        // and the one it replaces, with nobody on it, goes
+        r.router.answer();
+        CHECK(r.router.holes[kStandard] == s1 && r.mux.port(kStandard) == s1);
+        CHECK(letsGo(r.mux, s2));
+        CHECK(r.mux.holds(s1) && r.mux.holds(b1));
     }
 
     SECTION("IceMuxPorts: every conferencing port taken, and the streams keep to the block port");

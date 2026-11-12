@@ -135,6 +135,15 @@ void settle()
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 }
 
+/// Whether the mux lets go of `port` in good time: the reading thread does
+/// it, at its next look at its sockets.
+bool letsGo(const IceMux& mux, uint16_t port)
+{
+    for (int waited = 0; waited < 3000 && mux.holds(port); waited += 20)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    return !mux.holds(port);
+}
+
 } // namespace
 
 void run_ice_mux_socket_tests()
@@ -411,6 +420,113 @@ void run_ice_mux_socket_tests()
     closesocket(feedY);
     closesocket(feedZ);
 
+    SECTION("IceMux: a port that was replaced is let go once nobody has it");
+    {
+        IceMux r;
+        std::atomic<int> told{0};
+        r.setReporter([&told](const std::string& what) {
+            if (what.find("is let go") != std::string::npos) ++told;
+        });
+        CHECK(r.start(&why));
+        // Nothing serves: nothing to share, and no lease
+        CHECK(r.shareByHandle().lease == 0);
+        CHECK(r.hold(pa) == Held::NewlyBound && r.serve(IceMux::kBlock, pa));
+        // A worker is given the port, then the port is replaced: it stays
+        // bound and read, for that worker
+        const IceMux::Share worker = r.shareByHandle();
+        CHECK(worker.lease != 0 && worker.sockets.size() == 1 && worker.handles.size() == 1);
+        CHECK(worker.ports.size() == 1 && worker.ports[0] == pa);
+        CHECK(r.hold(pb) == Held::NewlyBound && r.serve(IceMux::kBlock, pb));
+        settle();
+        CHECK(r.holds(pa) && other.hold(pa) == Held::Failed && told == 0);
+        // The worker's next agent registers on it still, and hears it
+        uint16_t feedPortR = 0;
+        const SOCKET feedR = udpSocket(&feedPortR, r.hopPort());
+        const uint32_t agent = r.addAgent("hostRRRR1234", worker.sockets);
+        CHECK(agent != 0);
+        r.setFeedPort(agent, feedPortR);
+        const std::vector<uint8_t> forR = bindingRequest("hostRRRR1234:peer");
+        sendTo(peer, pa, forR.data(), forR.size());
+        n = readWithin(feedR, got, sizeof(got), 2000);
+        CHECK(n == static_cast<int>(mw::icemux::kFeedHeaderSize + forR.size()) && got[1] == 0);
+        // The lease given back while an agent is registered there: it stays
+        r.release(worker.lease);
+        settle();
+        CHECK(r.holds(pa) && told == 0);
+        // The agent gone too: nobody has the port, and it goes
+        r.removeAgent(agent);
+        CHECK(letsGo(r, pa));
+        CHECK(told == 1);
+        CHECK(r.port(IceMux::kBlock) == pb && r.holds(pb));
+        // It is anybody's again, and no agent is given it any more
+        CHECK(other.hold(pa) == Held::NewlyBound);
+        other.drop(pa);
+        CHECK(r.addAgent("hostSSSS1234", worker.sockets) == 0);
+        // A lease given back twice, and one that never was: nothing
+        r.release(worker.lease);
+        r.release(0);
+        r.release(0xFFFFFFF0u);
+        settle();
+        CHECK(r.holds(pb) && told == 1);
+
+        // A port replaced with nobody on it goes at once
+        CHECK(r.hold(pc) == Held::NewlyBound && r.serve(IceMux::kBlock, pc));
+        CHECK(letsGo(r, pb));
+        CHECK(told == 2);
+        // While a port is being asked for, none is let go: the answer may be
+        // that the replaced one serves again
+        const IceMux::Share held = r.shareByHandle();
+        CHECK(r.hold(pa) == Held::NewlyBound && r.serve(IceMux::kBlock, pa));
+        r.beginAsking();
+        r.release(held.lease);
+        settle();
+        CHECK(r.holds(pc) && told == 2);
+        CHECK(r.hold(pc) == Held::AlreadyHeld);
+        CHECK(r.serve(IceMux::kBlock, pc));
+        r.endAsking();
+        // The asking over, the port that serves stays and the other goes
+        CHECK(letsGo(r, pa));
+        CHECK(told == 3 && r.holds(pc) && r.port(IceMux::kBlock) == pc);
+        // Two workers on a port: it stays until both are gone
+        const IceMux::Share left = r.shareByHandle(), right = r.shareByHandle();
+        CHECK(left.lease != 0 && right.lease != 0 && left.lease != right.lease);
+        CHECK(r.hold(pb) == Held::NewlyBound && r.serve(IceMux::kBlock, pb));
+        r.release(left.lease);
+        settle();
+        CHECK(r.holds(pc) && told == 3);
+        r.release(right.lease);
+        CHECK(letsGo(r, pc));
+        CHECK(told == 4);
+        // The number a port left is another port's from then on, and that
+        // one is read like any other
+        const uint32_t late = r.addAgent("hostTTTT1234", r.serving());
+        CHECK(late != 0);
+        r.setFeedPort(late, feedPortR);
+        const std::vector<uint8_t> forT = bindingRequest("hostTTTT1234:peer");
+        sendTo(peer, pb, forT.data(), forT.size());
+        n = readWithin(feedR, got, sizeof(got), 2000);
+        CHECK(n == static_cast<int>(mw::icemux::kFeedHeaderSize + forT.size()) && got[1] == 0);
+        r.removeAgent(late);
+
+        // A lease of before a stop() means nothing after it
+        const IceMux::Share stale = r.shareByHandle();
+        CHECK(stale.lease != 0);
+        r.stop();
+        r.release(stale.lease);
+        CHECK(r.start(&why));
+        CHECK(r.hold(pa) == Held::NewlyBound && r.serve(IceMux::kBlock, pa));
+        const IceMux::Share fresh = r.shareByHandle();
+        CHECK(fresh.lease != 0 && fresh.lease != stale.lease);
+        CHECK(r.hold(pb) == Held::NewlyBound && r.serve(IceMux::kBlock, pb));
+        r.release(stale.lease);
+        settle();
+        CHECK(r.holds(pa));
+        r.release(fresh.lease);
+        CHECK(letsGo(r, pa));
+        r.stop();
+        closesocket(feedR);
+    }
+
     SECTION("IceMux: so many sockets, and no more");
     const std::vector<uint16_t> many = freeBlockPorts(IceMux::kSocketsMax + 1);
     if (many.size() != IceMux::kSocketsMax + 1) {
@@ -440,6 +556,30 @@ void run_ice_mux_socket_tests()
         CHECK(full.hold(many[IceMux::kSocketsMax]) == Held::NewlyBound);
         CHECK(said == 1);
         full.stop();
+
+        // The replaced ports that streams are still on count too, and one
+        // that is let go makes room for a port again
+        IceMux turn;
+        std::atomic<int> fullSaid{0};
+        turn.setReporter([&fullSaid](const std::string& what) {
+            if (what.find("every socket") != std::string::npos) ++fullSaid;
+        });
+        CHECK(turn.start(&why));
+        std::vector<uint32_t> streams;
+        for (size_t i = 0; i < IceMux::kSocketsMax; ++i) {
+            CHECK(turn.hold(many[i]) == Held::NewlyBound && turn.serve(IceMux::kBlock, many[i]));
+            streams.push_back(turn.shareByHandle().lease);
+        }
+        settle();
+        for (size_t i = 0; i < IceMux::kSocketsMax; ++i)
+            CHECK(turn.holds(many[i]));
+        CHECK(turn.hold(many[IceMux::kSocketsMax]) == Held::Failed && fullSaid == 1);
+        turn.release(streams[0]);
+        CHECK(letsGo(turn, many[0]));
+        CHECK(turn.hold(many[IceMux::kSocketsMax]) == Held::NewlyBound);
+        // Full once more, and said once more
+        CHECK(turn.hold(many[0]) == Held::Failed && fullSaid == 2);
+        turn.stop();
     }
     other.stop();
     closesocket(peer);
