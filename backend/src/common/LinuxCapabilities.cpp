@@ -21,7 +21,11 @@
 #include <linux/capability.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
+#include <sys/xattr.h>
 #include <unistd.h>
+
+#include <QCoreApplication>
+#include <QFile>
 
 #include <cstring>
 
@@ -86,7 +90,7 @@ QString confineCapabilities()
         any = true;
         wasEffective = wasEffective || (caps.data[i].effective & b);
         caps.data[i].effective &= ~b;
-        caps.data[i].inheritable |= b;
+        caps.data[i].inheritable &= ~b;
         if (!note.isEmpty()) note += QStringLiteral("; ");
         note += QString::fromLatin1(handed.note);
     }
@@ -102,7 +106,7 @@ QString confineCapabilities()
     }
 
     if (set && wasEffective) note += QStringLiteral("; dropped from the effective set");
-    if (lowered) note += QStringLiteral("; withheld from child processes except the native worker");
+    if (lowered) note += QStringLiteral("; withheld from every child process");
     if (!set) note += QStringLiteral("; capset failed, the effective set is unchanged");
     return note;
 }
@@ -113,21 +117,17 @@ bool hasCaptureCapability()
     return caps.get() && caps.permitted(CAP_SYS_ADMIN);
 }
 
-void raiseStreamCapabilitiesForChild()
+QString captureLauncher()
 {
-    Caps caps;
-    if (!caps.get()) return;
-    bool any = false;
-    for (const Handed& handed : kHanded) {
-        if (!caps.permitted(handed.cap)) continue;
-        caps.data[Caps::index(handed.cap)].inheritable |= Caps::bit(handed.cap);
-        any = true;
-    }
-    if (!any || !caps.set()) return;
-    for (const Handed& handed : kHanded) {
-        if (caps.permitted(handed.cap))
-            prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, handed.cap, 0, 0);
-    }
+    const QString path =
+        QCoreApplication::applicationDirPath() + QStringLiteral("/moonlightweb-launch");
+    const QByteArray file = QFile::encodeName(path);
+    if (::access(file.constData(), X_OK) != 0) return {};
+    unsigned char raw[64];
+    const ssize_t size = ::getxattr(file.constData(), "security.capability", raw, sizeof raw);
+    if (size <= 0) return {};
+    return fileCapabilityGrants(raw, static_cast<std::size_t>(size), CAP_SYS_ADMIN) ? path
+                                                                                    : QString();
 }
 
 } // namespace mw
@@ -146,7 +146,10 @@ bool hasCaptureCapability()
     return false;
 }
 
-void raiseStreamCapabilitiesForChild() {}
+QString captureLauncher()
+{
+    return {};
+}
 
 } // namespace mw
 

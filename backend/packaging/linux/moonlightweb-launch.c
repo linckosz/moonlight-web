@@ -41,13 +41,21 @@
  * held is not a secure exec, so MoonlightWeb starts normally, rpath and all,
  * with CAP_SYS_ADMIN in its permitted set. What it does from there is its
  * business (common/LinuxCapabilities.cpp: keep it permitted, run without it
- * effective, hand it to the native stream worker and to nothing else).
+ * effective).
+ *
+ * Only the two processes that capture are handed anything: the native stream
+ * worker and the native probe, which the app starts through this launcher with
+ * --stream-worker or --native-probe as the first argument. Those start from a
+ * known environment, in /, rather than the caller's (moonlightweb-launch-env.h).
+ * The app itself, however it is started, is handed nothing: it execs here with
+ * its environment as it came — less what glibc strips from any program that
+ * carries a file capability, as it always has — and holds no capability at all.
  *
  * Without the file capability — a tree run by hand, the AppImage (FUSE mounts
  * are nosuid, which also disables file capabilities) — the hand-over fails and
- * this simply execs the app, which then reports that the capture is
- * unavailable and why. Nothing is printed here: an unprivileged start is a
- * supported state, not an error.
+ * this simply execs what it was asked to, as it was asked, which then reports
+ * that the capture is unavailable and why. Nothing is printed here: an
+ * unprivileged start is a supported state, not an error.
  *
  * The second capability, CAP_SYS_NICE, rides the same road for the stream's
  * GPU work: amdgpu, i915 and xe create a context above normal priority only for
@@ -64,14 +72,19 @@
  */
 
 #define _GNU_SOURCE
+#include "moonlightweb-launch-env.h"
+
 #include <errno.h>
 #include <limits.h>
 #include <linux/capability.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+extern char** environ;
 
 /* Linux 4.3; older kernel headers may lack the names, the numbers are ABI. */
 #ifndef PR_CAP_AMBIENT
@@ -113,8 +126,6 @@ static int hand_over(int cap)
 
 int main(int argc, char** argv)
 {
-    (void)argc;
-
     /* The real binary is the one next to us, never one found on PATH: a
      * capability must not follow a name into a directory someone else writes. */
     char path[PATH_MAX];
@@ -132,11 +143,35 @@ int main(int argc, char** argv)
     memcpy(slash + 1, kTarget, sizeof kTarget);
 
     /* Each on its own: holding one and not the other is a supported state. */
-    (void)hand_over(CAP_SYS_ADMIN);
-    (void)hand_over(CAP_SYS_NICE);
+    int handed = 0;
+    if (mw_launch_mode(argc, argv) != MW_LAUNCH_APP) {
+        if (hand_over(CAP_SYS_ADMIN) == 0) handed = 1;
+        if (hand_over(CAP_SYS_NICE) == 0) handed = 1;
+    }
 
     argv[0] = path;
-    execv(path, argv);
+    if (!handed) {
+        execv(path, argv);
+        fprintf(stderr, "moonlightweb-launch: cannot exec %s: %s\n", path, strerror(errno));
+        return 127;
+    }
+
+    int count = 0;
+    while (environ && environ[count])
+        ++count;
+    const int cap = count + MW_LAUNCH_ENV_EXTRA;
+    const char** env = calloc((size_t)cap, sizeof *env);
+    char home[PATH_MAX + 32];
+    char xauth[PATH_MAX + 32];
+    if (!env || mw_launch_env(environ, env, cap, home, xauth, sizeof xauth) < 0) {
+        fprintf(stderr, "moonlightweb-launch: cannot build the environment of %s\n", argv[1]);
+        return 127;
+    }
+    if (chdir("/") != 0) {
+        perror("moonlightweb-launch: chdir /");
+        return 127;
+    }
+    execve(path, argv, (char* const*)env);
     fprintf(stderr, "moonlightweb-launch: cannot exec %s: %s\n", path, strerror(errno));
     return 127;
 }

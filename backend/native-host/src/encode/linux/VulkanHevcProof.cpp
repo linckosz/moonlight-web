@@ -162,6 +162,12 @@ std::string cacheKey(const vulkan::DeviceIdentity& id, const std::string& render
 
 std::string cachePath()
 {
+    // A process the package's launcher starts (the stream worker, the probe)
+    // runs with its home and cache folders fixed, and finds the user's home
+    // under MW_USER_HOME instead (moonlightweb-launch-env.h).
+    const char* user = std::getenv("MW_USER_HOME");
+    if (user && *user == '/')
+        return std::string(user) + "/.cache/MoonlightWeb/vulkan-video-proofs.txt";
     const char* xdg = std::getenv("XDG_CACHE_HOME");
     if (xdg && *xdg == '/') return std::string(xdg) + "/MoonlightWeb/vulkan-video-proofs.txt";
     const char* home = std::getenv("HOME");

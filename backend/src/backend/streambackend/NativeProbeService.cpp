@@ -18,12 +18,15 @@
 #include "NativeProbeService.h"
 
 #include "NativeCapabilitiesJson.h"
+#include "../../common/Edition.h"
+#include "../../common/LinuxCapabilities.h"
 #include "../../common/Logger.h"
 #include "../../server/AppSettings.h"
 #include "mw/native/NativeHost.h"
 
 #include <QCoreApplication>
 #include <QJsonDocument>
+#include <QProcess>
 
 #include <cstdio>
 
@@ -64,6 +67,13 @@ NativeProbeService& NativeProbeService::instance()
 NativeProbeService::NativeProbeService()
     : m_Remote(ConsoleSession::launchesElsewhere())
 {
+    // A Linux package: the capture launcher holds what the probe needs, and
+    // this process does not. The first snapshot() waits for its answer.
+    m_Launcher = mw::captureLauncher();
+    if (!m_Launcher.isEmpty()) {
+        Logger::info(QStringLiteral("[native] the engine is probed through %1").arg(m_Launcher));
+        return;
+    }
     if (!m_Remote) return;
 
     m_Caps = pending(QStringLiteral("waiting for the console session probe"));
@@ -83,6 +93,13 @@ NativeProbeService::NativeProbeService()
 
 mw::native::Capabilities NativeProbeService::snapshot()
 {
+    if (!m_Launcher.isEmpty()) {
+        if (!m_HaveResult)
+            probeThroughLauncher(/*wait=*/true);
+        else if (m_Age.elapsed() > kSnapshotTtlMs)
+            probeThroughLauncher(/*wait=*/false);
+        return m_Caps;
+    }
     if (!m_Remote) return mw::native::NativeHost::probe();
     if (!m_HaveResult || m_Age.elapsed() > kSnapshotTtlMs) refresh();
     return m_Caps;
@@ -90,12 +107,16 @@ mw::native::Capabilities NativeProbeService::snapshot()
 
 qint64 NativeProbeService::snapshotAgeMs() const
 {
-    if (!m_Remote) return 0;
+    if (!m_Remote && m_Launcher.isEmpty()) return 0;
     return m_HaveResult ? m_Age.elapsed() : -1;
 }
 
 void NativeProbeService::refresh()
 {
+    if (!m_Launcher.isEmpty()) {
+        probeThroughLauncher(/*wait=*/false);
+        return;
+    }
     if (!m_Remote) {
         // In-process: every snapshot() is a fresh probe already. What a caller
         // asks for here is the NEWS — a display added or removed under the
@@ -147,9 +168,57 @@ void NativeProbeService::probeFinished(int exitCode, bool crashed)
     ConsoleProcess* probe = m_Probe;
     m_Probe = nullptr;
     if (probe) probe->deleteLater();
+    applyProbeOutput(m_ProbeOut, m_ProbeErr, exitCode, crashed);
+}
 
+void NativeProbeService::probeThroughLauncher(bool wait)
+{
+    if (!m_LauncherProbe) {
+        auto* probe = new QProcess(this);
+        probe->setProgram(m_Launcher);
+        // --native-probe first: the launcher hands the capture capability on
+        // that word alone (common/LinuxCapabilities.h).
+        QStringList args{QStringLiteral("--native-probe")};
+        if (mw::edition::devFlag()) args << QStringLiteral("--dev");
+        probe->setArguments(args);
+        probe->setProcessChannelMode(QProcess::SeparateChannels);
+        connect(probe, &QProcess::finished, this,
+                [this, probe](int exitCode, QProcess::ExitStatus status) {
+                    if (m_LauncherProbe != probe) return;
+                    m_LauncherProbe = nullptr;
+                    probe->deleteLater();
+                    applyProbeOutput(probe->readAllStandardOutput(), probe->readAllStandardError(),
+                                     exitCode, status == QProcess::CrashExit);
+                });
+        m_LauncherProbe = probe;
+        probe->start();
+        if (!probe->waitForStarted(5000)) {
+            Logger::warning(QStringLiteral("[native] the probe could not start through %1: %2")
+                                .arg(m_Launcher, probe->errorString()));
+            mw::native::Capabilities caps = pending(probe->errorString());
+            caps.reason = mw::native::Unavailability::ProbeFailed;
+            m_LauncherProbe = nullptr;
+            probe->deleteLater();
+            apply(caps);
+            return;
+        }
+        // Killed past the budget; finished() then reports it as a failure.
+        QTimer::singleShot(kProbeTimeoutMs, probe, [probe] {
+            if (probe->state() != QProcess::NotRunning) probe->kill();
+        });
+    }
+    if (wait && m_LauncherProbe && !m_LauncherProbe->waitForFinished(kProbeTimeoutMs)) {
+        QProcess* late = m_LauncherProbe;
+        late->kill();
+        late->waitForFinished(1000);
+    }
+}
+
+void NativeProbeService::applyProbeOutput(const QByteArray& out, const QByteArray& err,
+                                          int exitCode, bool crashed)
+{
     mw::native::Capabilities caps;
-    const QJsonDocument doc = QJsonDocument::fromJson(m_ProbeOut);
+    const QJsonDocument doc = QJsonDocument::fromJson(out);
     const bool readable =
         !crashed && doc.isObject() && NativeCapabilitiesJson::fromJson(doc.object(), caps);
 
@@ -158,7 +227,7 @@ void NativeProbeService::probeFinished(int exitCode, bool crashed)
     // DEBUG. When the probe failed, or found the engine unavailable, it is the
     // only clue there is, and it is kept at INFO.
     const bool clue = !readable || !caps.available;
-    for (const QByteArray& line : m_ProbeErr.split('\n')) {
+    for (const QByteArray& line : err.split('\n')) {
         if (line.trimmed().isEmpty()) continue;
         const QString text = QStringLiteral("[native-probe] %1").arg(QString::fromUtf8(line));
         if (clue)
@@ -217,15 +286,18 @@ void NativeProbeService::apply(const mw::native::Capabilities& caps)
     m_Age.restart();
     if (!differs) return;
 
+    const QString which =
+        m_Launcher.isEmpty() ? QStringLiteral("console probe") : QStringLiteral("probe");
     if (caps.available) {
-        Logger::info(QStringLiteral("[native] console probe: available — %1 display(s), %2 GPU(s), "
-                                    "as %3")
+        Logger::info(QStringLiteral("[native] %1: available — %2 display(s), %3 GPU(s)%4")
+                         .arg(which)
                          .arg(caps.displays.size())
                          .arg(caps.gpus.size())
-                         .arg(m_Console.userName));
+                         .arg(m_Launcher.isEmpty() ? QStringLiteral(", as ") + m_Console.userName
+                                                   : QString()));
     } else {
-        Logger::info(QStringLiteral("[native] console probe: unavailable — %1")
-                         .arg(QString::fromStdString(caps.diagnostic)));
+        Logger::info(QStringLiteral("[native] %1: unavailable — %2")
+                         .arg(which, QString::fromStdString(caps.diagnostic)));
     }
     emit changed();
 }

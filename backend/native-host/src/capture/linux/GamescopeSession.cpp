@@ -52,8 +52,13 @@ std::string runtimeDir()
     return "/run/user/" + std::to_string(::getuid());
 }
 
+/// The user's home, where Steam and its library are. A process the package's
+/// launcher starts (the stream worker, the probe) runs with HOME fixed, and
+/// finds the user's under MW_USER_HOME instead (moonlightweb-launch-env.h).
 std::string homeDir()
 {
+    const char* user = std::getenv("MW_USER_HOME");
+    if (user && *user == '/') return user;
     const char* home = std::getenv("HOME");
     return home && *home ? std::string(home) : std::string();
 }

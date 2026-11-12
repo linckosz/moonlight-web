@@ -19,6 +19,8 @@
 
 #include <QString>
 
+#include <cstddef>
+
 /**
  * What this process does with the capabilities the Linux launcher hands it.
  *
@@ -31,22 +33,21 @@
  *    on a Radeon 780M, docs/bench-native-host.md §8o.1).
  *
  * The Linux packages deliver them through `moonlightweb-launch`
- * (backend/packaging/linux), which carries the file capabilities and execs this
- * binary with them in its AMBIENT set — see that file for why they cannot sit on
- * this binary itself. So at main() this process may hold each in all of
- * permitted, effective and ambient. That is more than it should keep:
+ * (backend/packaging/linux), which carries the file capabilities — see that file
+ * for why they cannot sit on this binary itself. It hands them to the two
+ * processes that capture, the native stream worker and the native probe, which
+ * this binary starts through it (captureLauncher()), and to nothing else: the
+ * app itself, however it is started, holds neither. A worker or a probe holds
+ * each in all of permitted, effective and ambient at main(). That is more than
+ * it should keep:
  *
- *  - EFFECTIVE is dropped. The HTTP server, the signalling, the relays run
- *    without either; the native engine raises one into the effective set of
- *    ITS thread around the one call that checks it, and lowers it again
+ *  - EFFECTIVE is dropped. The native engine raises one into the effective set
+ *    of ITS thread around the one call that checks it, and lowers it again
  *    (native-host/src/platform/linux/ScopedCapability.h). Sunshine's posture
  *    (`cap_sys_admin=p` on its binary, raised per call), reproduced.
- *  - AMBIENT is lowered. Everything this process spawns — xdg-open and the
- *    browser behind it, the gio helper, a package installer — would otherwise
- *    inherit both silently. Only the native stream worker gets them,
- *    explicitly, through raiseStreamCapabilitiesForChild().
- *  - PERMITTED and INHERITABLE keep them: that is what lets the two raises above
- *    happen at all.
+ *  - AMBIENT and INHERITABLE are cleared. What the worker spawns — gamescope and
+ *    the app it runs in it, systemd-inhibit — would otherwise inherit both.
+ *  - PERMITTED keeps them: that is what lets the raise above happen at all.
  *
  * Every function here is a no-op off Linux, and a no-op on a Linux process
  * that was not handed the capabilities (a tree run by hand, the AppImage, the
@@ -65,11 +66,46 @@ QString confineCapabilities();
 /// permitted set, whatever the effective set says right now.
 bool hasCaptureCapability();
 
-/// For QProcess::setChildProcessModifier on the NATIVE stream worker: runs in
-/// the forked child before exec, and puts back into the ambient set whichever
-/// of the two capabilities this process holds, so the worker starts with them.
-/// Raw syscalls only — the child is between fork and exec, where nothing may
-/// allocate or lock. Does nothing when the parent was handed neither.
-void raiseStreamCapabilitiesForChild();
+/// The package's moonlightweb-launch next to this binary, when it carries
+/// CAP_SYS_ADMIN as a file capability: what the native stream worker and the
+/// native probe are started through, `--stream-worker` / `--native-probe`
+/// first. Read from the file itself every time, never assumed. Empty off
+/// Linux and wherever no such launcher is (a tree run by hand, the AppImage):
+/// those two are then started as this binary, as before, and hold nothing.
+QString captureLauncher();
+
+/// Whether the raw `security.capability` attribute of a file (struct
+/// vfs_cap_data, revision 1, 2 or 3, little-endian) grants @p cap in its
+/// permitted set. Pure, so the parser behind captureLauncher() is tested on
+/// every platform.
+inline bool fileCapabilityGrants(const unsigned char* data, std::size_t size, int cap)
+{
+    if (!data || size < 4 || cap < 0) return false;
+    const auto le32 = [data](std::size_t at) {
+        return static_cast<unsigned>(data[at]) | (static_cast<unsigned>(data[at + 1]) << 8) |
+               (static_cast<unsigned>(data[at + 2]) << 16) |
+               (static_cast<unsigned>(data[at + 3]) << 24);
+    };
+    std::size_t words = 0;
+    std::size_t needed = 0;
+    switch (le32(0) & 0xFF000000u) {
+    case 0x01000000u:
+        words = 1;
+        needed = 12;
+        break;
+    case 0x02000000u:
+        words = 2;
+        needed = 20;
+        break;
+    case 0x03000000u:
+        words = 2;
+        needed = 24;
+        break;
+    default: return false;
+    }
+    const std::size_t word = static_cast<std::size_t>(cap) >> 5;
+    if (size < needed || word >= words) return false;
+    return ((le32(4 + word * 8) >> (static_cast<unsigned>(cap) & 31)) & 1u) != 0;
+}
 
 } // namespace mw
