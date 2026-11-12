@@ -91,11 +91,7 @@ bool RouterPortCore::muxPortAllowed(bool devInstance, int which, uint16_t port)
             if (p == port) return true;
         return false;
     }
-    if (which != kMuxBlock) return false;
-    const int first = kMediaBasePort;
-    const int last = kMediaBasePort + kMediaPortCount - 1;
-    if (devInstance) return port > last - kMuxBlockSpan && port <= last;
-    return port >= first && port < first + kMuxBlockSpan;
+    return which == kMuxBlock && inMuxBlockStretch(devInstance, port);
 }
 
 RouterPortCore::Request RouterPortCore::muxRequest(bool devInstance, int which,
@@ -127,6 +123,27 @@ RouterPortCore::Request RouterPortCore::muxRequest(bool devInstance, int which,
     const int last = kMediaBasePort + kMediaPortCount - 1;
     for (int i = 0; i < kMuxBlockSpan; ++i)
         request.preferred.append(static_cast<uint16_t>(devInstance ? last - i : first + i));
+    return request;
+}
+
+RouterPortCore::Request RouterPortCore::mediaRequest(bool muxInUse, bool devInstance, int slot,
+                                                     uint16_t internalPort, uint16_t remembered,
+                                                     bool muxHoldsPort)
+{
+    using namespace mw::routerports;
+    Request request;
+    request.purpose = Purpose::Media;
+    request.slot = slot;
+    request.internalPort = internalPort;
+    request.description = QStringLiteral("MoonlightWeb media slot %1").arg(slot);
+    if (muxHoldsPort) return request;
+    const auto free = [&](uint16_t port) {
+        return port != 0 && !(muxInUse && inMuxBlockStretch(devInstance, port));
+    };
+    if (free(remembered)) request.remembered.append(remembered);
+    if (free(internalPort)) request.preferred.append(internalPort);
+    request.poolBegin = kMediaPoolBegin;
+    request.poolEnd = kMediaPoolEnd;
     return request;
 }
 

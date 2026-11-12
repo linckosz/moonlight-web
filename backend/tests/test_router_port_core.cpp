@@ -1114,4 +1114,133 @@ void run_router_port_core_tests()
         CHECK_EQ(installed.claim(RouterPortCore::muxRequest(false, kStandard, {})).claim.external,
                  uint16_t(3478));
     }
+
+    // ── A stream slot's own port, beside the mux ──────────────────────────
+    {
+        using namespace mw::routerports;
+        const int kBlock = RouterPortCore::kMuxBlock;
+        const uint16_t top = uint16_t(kMediaBasePort + kMediaPortCount - 1);
+        // Without the mux, and for a DEV identity with it: the slot's number,
+        // as ever.
+        for (int slot = 0; slot < kMediaPortCount; ++slot) {
+            CHECK_EQ(slotMediaPort(slot, false, false), uint16_t(kMediaBasePort + slot));
+            CHECK_EQ(slotMediaPort(slot, false, true), uint16_t(kMediaBasePort + slot));
+            CHECK_EQ(slotMediaPort(slot, true, true), uint16_t(kMediaBasePort + slot));
+        }
+        // With it, the installed host's slots start where the mux's stretch ends.
+        CHECK_EQ(slotMediaPort(0, true, false), uint16_t(kMediaBasePort + kMuxBlockSpan));
+        for (const bool dev : {false, true}) {
+            QSet<uint16_t> seen;
+            for (int slot = 0; slot < kMediaPortCount; ++slot) {
+                const uint16_t port = slotMediaPort(slot, true, dev);
+                // A port of the block, each slot its own.
+                CHECK(port >= kMediaBasePort && port <= top);
+                CHECK(!seen.contains(port));
+                seen.insert(port);
+                // The first slots, the ones a host runs, never sit in the
+                // mux's stretch: whichever number the mux holds there, their
+                // hole cannot lead to it.
+                if (slot < kMediaPortCount - kMuxBlockSpan) CHECK(!inMuxBlockStretch(dev, port));
+                CHECK_EQ(inMuxBlockStretch(dev, port),
+                         RouterPortCore::muxPortAllowed(dev, kBlock, port));
+            }
+        }
+    }
+
+    // ── A slot's hole keeps out of the mux's numbers ──────────────────────
+    {
+        using namespace mw::routerports;
+        const int kBlock = RouterPortCore::kMuxBlock;
+        // Without the mux: what the slot had, its own number, the pool.
+        const uint16_t third = uint16_t(kMediaBasePort + 3);
+        const auto plain = RouterPortCore::mediaRequest(false, false, 3, third, 46120, false);
+        CHECK(plain.purpose == Purpose::Media);
+        CHECK_EQ(plain.slot, 3);
+        CHECK_EQ(plain.internalPort, third);
+        CHECK(plain.remembered == QList<uint16_t>{46120});
+        CHECK(plain.preferred == QList<uint16_t>{third});
+        CHECK_EQ(plain.poolBegin, kMediaPoolBegin);
+        CHECK_EQ(plain.poolEnd, kMediaPoolEnd);
+        CHECK(plain.tcp);
+        CHECK(plain.hasCandidate());
+        CHECK(plain.description == QStringLiteral("MoonlightWeb media slot 3"));
+        CHECK(RouterPortCore::mediaRequest(false, false, 3, third, 0, false).remembered.isEmpty());
+        // The same request the tests above make by hand.
+        const auto byHand = mediaRequest(3, 46120);
+        CHECK(byHand.remembered == plain.remembered && byHand.preferred == plain.preferred);
+        CHECK(byHand.poolBegin == plain.poolBegin && byHand.poolEnd == plain.poolEnd);
+
+        // With the mux, the installed host's first slot binds 48562. It had
+        // 48550 on the router before there was a mux: that number is the
+        // mux's now, and is not asked for again.
+        const uint16_t own = slotMediaPort(0, true, false);
+        const auto beside =
+            RouterPortCore::mediaRequest(true, false, 0, own, kMediaBasePort, false);
+        CHECK(beside.remembered.isEmpty());
+        CHECK(beside.preferred == QList<uint16_t>{own});
+        // Without the mux it would have been.
+        CHECK(RouterPortCore::mediaRequest(false, false, 0, kMediaBasePort, kMediaBasePort, false)
+                  .remembered == QList<uint16_t>{kMediaBasePort});
+        // A DEV identity's stretch is the top of the block.
+        const uint16_t top = uint16_t(kMediaBasePort + kMediaPortCount - 1);
+        const auto devSlot =
+            RouterPortCore::mediaRequest(true, true, 0, kMediaBasePort, top, false);
+        CHECK(devSlot.remembered.isEmpty());
+        CHECK(devSlot.preferred == QList<uint16_t>{kMediaBasePort});
+
+        // Whoever asks first, the mux finds its number free of this host's
+        // own slots.
+        {
+            FakeGateway gw;
+            RouterPortCore core(gw, kAlwaysFree);
+            const auto slot0 = core.claim(beside);
+            CHECK(slot0.ok);
+            CHECK_EQ(slot0.claim.external, own);
+            CHECK_EQ(slot0.claim.internal, own);
+            const auto block = core.claim(RouterPortCore::muxRequest(false, kBlock, {}));
+            CHECK(block.ok);
+            CHECK_EQ(block.claim.external, kMediaBasePort);
+        }
+
+        // A thirteenth slot comes round to the mux's stretch. Its router-side
+        // number is from the pool, never from the stretch…
+        const uint16_t late = slotMediaPort(kMediaPortCount - kMuxBlockSpan, true, false);
+        CHECK(inMuxBlockStretch(false, late));
+        const auto pooled = RouterPortCore::mediaRequest(true, false, 12, late, late, false);
+        CHECK(pooled.remembered.isEmpty() && pooled.preferred.isEmpty());
+        CHECK(pooled.hasCandidate());
+        {
+            FakeGateway gw;
+            RouterPortCore core(gw, kAlwaysFree);
+            const auto hole = core.claim(pooled);
+            CHECK(hole.ok);
+            CHECK_EQ(hole.claim.external, kMediaPoolBegin);
+            CHECK_EQ(hole.claim.internal, late);
+        }
+        // …and when the mux itself is bound to that port, it gets no hole at
+        // all: the router is not asked a thing.
+        const auto shared = RouterPortCore::mediaRequest(true, false, 12, late, 46120, true);
+        CHECK(!shared.hasCandidate());
+        CHECK(shared.remembered.isEmpty() && shared.preferred.isEmpty());
+        {
+            FakeGateway gw;
+            RouterPortCore core(gw, kAlwaysFree);
+            const auto none = core.claim(shared);
+            CHECK(!none.ok);
+            CHECK(none.skipped.isEmpty());
+            CHECK_EQ(gw.adds, 0);
+            CHECK(gw.table.isEmpty());
+        }
+        // A request that names a port has a candidate; an empty one has none.
+        RouterPortCore::Request empty;
+        CHECK(!empty.hasCandidate());
+        empty.poolBegin = 5;
+        empty.poolEnd = 4;
+        CHECK(!empty.hasCandidate());
+        empty.poolEnd = 5;
+        CHECK(empty.hasCandidate());
+        CHECK(RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {}).hasCandidate());
+        CHECK(
+            !RouterPortCore::muxRequest(true, RouterPortCore::kMuxStandard, {3478}).hasCandidate());
+    }
 }

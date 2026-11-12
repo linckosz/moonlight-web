@@ -163,6 +163,14 @@ public:
         /// for this claim is not wanted. Never called for a port the mux held
         /// before the claim.
         std::function<void(uint16_t)> drop;
+
+        /// Whether the request names a port at all. One that names none is
+        /// answered "none" by claim(), without a word to the router.
+        bool hasCandidate() const
+        {
+            return !remembered.isEmpty() || !preferred.isEmpty() ||
+                   (poolEnd != 0 && poolBegin <= poolEnd);
+        }
     };
 
     struct Result
@@ -209,6 +217,16 @@ public:
     /// For a --dev's conferencing port the request has no candidate, and
     /// claim() answers "none" without a word to the router.
     static Request muxRequest(bool devInstance, int which, const QList<uint16_t>& remembered);
+
+    /// The request for a stream slot's own port, `internalPort`: the number
+    /// the slot had on the router last time (`remembered`, 0 for none), then
+    /// the port's own number, then the media pool. With the mux in use, no
+    /// router-side number is taken from the mux's stretch of the block: those
+    /// are the mux's, whenever it comes to ask for them. And a port the mux
+    /// itself is bound to (`muxHoldsPort`) gets no hole at all: the hole
+    /// would lead to the mux. The request then has no candidate.
+    static Request mediaRequest(bool muxInUse, bool devInstance, int slot, uint16_t internalPort,
+                                uint16_t remembered, bool muxHoldsPort);
 
     /// The address this host had when its remembered ports were obtained.
     /// An entry the router still points there is ours to overwrite.

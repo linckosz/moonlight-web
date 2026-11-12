@@ -133,6 +133,32 @@ constexpr uint16_t kMediaPoolEnd = 46199;
 // table says.
 constexpr int kMuxBlockSpan = 12;
 
+/// Whether `port` is in the stretch of the stream block the mux's block port
+/// is drawn from: its foot for the installed host, its top for a DEV identity.
+constexpr bool inMuxBlockStretch(bool devInstance, int port)
+{
+    const int first = kMediaBasePort;
+    const int last = kMediaBasePort + kMediaPortCount - 1;
+    return devInstance ? port > last - kMuxBlockSpan && port <= last
+                       : port >= first && port < first + kMuxBlockSpan;
+}
+
+/// The port a stream slot binds when it has a socket of its own.
+///
+/// Without the mux, 48550 + slot. With it, a stream still binds one where it
+/// cannot share (a connection that also listens in TCP, a worker the shared
+/// sockets could not be handed to), and the router hole made for it leads to
+/// that port: it must never be one the mux holds, or the hole would lead to
+/// the mux. So the slots start at the other end of the block from the mux's
+/// stretch: 48562 for the installed host, 48550 as ever for a DEV identity.
+/// Only a thirteenth slot comes round to the stretch; what the mux really
+/// holds there is refused when the hole is asked for (RouterPortAllocator).
+constexpr uint16_t slotMediaPort(int slot, bool muxInUse, bool devInstance)
+{
+    const int start = muxInUse && !devInstance ? kMuxBlockSpan : 0;
+    return static_cast<uint16_t>(kMediaBasePort + (slot + start) % kMediaPortCount);
+}
+
 // ── Leases ──────────────────────────────────────────────────────────────────
 //
 // An hour, renewed at the half. Latched to permanent (0) when a router refuses

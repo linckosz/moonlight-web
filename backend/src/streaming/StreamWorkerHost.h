@@ -20,6 +20,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QJsonObject>
+#include <QList>
 
 /**
  * Parent-side handle for one `MoonlightWeb --stream-worker` child process.
@@ -189,6 +190,9 @@ private:
     /// The worker's ICE agent on the shared UDP ports (network/IceMux), by its
     /// feed number there; 0 when it has none.
     uint32_t m_MuxFeed = 0;
+    /// The mux's sockets this worker was handed, in the order it was given
+    /// them: the ones its agents send on. Empty when it was handed none.
+    QList<quint8> m_MuxSockets;
     void onMuxEvent(const QJsonObject& event);
     void dropMuxAgent();
     /// Mouse Keys the worker turned on and has not let go of yet, with what to

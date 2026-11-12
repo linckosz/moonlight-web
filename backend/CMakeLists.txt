@@ -363,6 +363,7 @@ add_executable(mw-server
     src/network/RouterPortCore.cpp
     src/network/IceMuxCore.cpp
     src/network/IceMux.cpp
+    src/network/IceMuxPorts.cpp
     src/network/RouterPortAllocator.cpp
     src/network/StunClient.cpp
     src/network/InternetAccessManager.cpp

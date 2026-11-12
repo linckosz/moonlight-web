@@ -657,6 +657,8 @@ void run_app_settings_tests()
     }
     CHECK(s.rememberedTunnelPorts().isEmpty());
     CHECK_EQ(s.rememberedMediaPort(0), quint16(0));
+    CHECK_EQ(s.rememberedMuxPort(0), quint16(0));
+    CHECK_EQ(s.rememberedMuxPort(1), quint16(0));
     CHECK_EQ(s.routerLanIp(), QString());
 
     // Tunnel ports keep the order they were obtained in, without duplicates.
@@ -681,7 +683,37 @@ void run_app_settings_tests()
     CHECK_EQ(s.rememberedMediaPort(0), quint16(0));
     CHECK_EQ(s.rememberedMediaPort(1), quint16(46100));
 
-    // The LAN address the ports were obtained under, and the three live in
+    // The streams' shared ports (ice_udp_mux): one number for each of the
+    // two, 0 the conferencing port and 1 the stream block's, and no other.
+    s.rememberMuxPort(0, 3480);
+    s.rememberMuxPort(1, 48550);
+    CHECK_EQ(s.rememberedMuxPort(0), quint16(3480));
+    CHECK_EQ(s.rememberedMuxPort(1), quint16(48550));
+    s.rememberMuxPort(0, 3481); // the latest one
+    CHECK_EQ(s.rememberedMuxPort(0), quint16(3481));
+    s.rememberMuxPort(0, 0); // never a port
+    CHECK_EQ(s.rememberedMuxPort(0), quint16(3481));
+    s.rememberMuxPort(2, 5000); // not one of the two
+    s.rememberMuxPort(-1, 5000);
+    CHECK_EQ(s.rememberedMuxPort(2), quint16(0));
+    CHECK_EQ(s.rememberedMuxPort(-1), quint16(0));
+    s.forgetMuxPort(2); // a no-op, not an error
+    s.forgetMuxPort(0);
+    CHECK_EQ(s.rememberedMuxPort(0), quint16(0));
+    CHECK_EQ(s.rememberedMuxPort(1), quint16(48550));
+    s.forgetMuxPort(0); // forgotten already
+    CHECK_EQ(s.rememberedMuxPort(1), quint16(48550));
+    {
+        const QJsonObject mux =
+            s.readAll().value("router_ports").toObject().value("mux").toObject();
+        CHECK_EQ(mux.size(), qsizetype(1));
+        CHECK_EQ(mux.value("block").toInt(), 48550);
+    }
+    // The others are as they were.
+    CHECK_EQ(s.rememberedMediaPort(1), quint16(46100));
+    CHECK_EQ(s.rememberedTunnelPorts(), (QList<quint16>{5349}));
+
+    // The LAN address the ports were obtained under, and all of them live in
     // one object so a reader of settings.json sees them together.
     s.setRouterLanIp("192.168.1.20");
     CHECK_EQ(s.routerLanIp(), QString("192.168.1.20"));
@@ -691,6 +723,7 @@ void run_app_settings_tests()
         CHECK(rp.contains("lan_ip"));
         CHECK(rp.contains("tunnel"));
         CHECK(rp.contains("media"));
+        CHECK(rp.contains("mux"));
     }
     // Not seeded: it is state, not a preference to discover in the file.
     {

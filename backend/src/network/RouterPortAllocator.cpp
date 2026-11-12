@@ -84,8 +84,15 @@ bool portIsFree(uint16_t port)
 
 QString purposeName(RouterPortCore::Purpose purpose, int slot)
 {
-    return purpose == RouterPortCore::Purpose::Tunnel ? QStringLiteral("tunnel")
-                                                      : QStringLiteral("media slot %1").arg(slot);
+    switch (purpose) {
+    case RouterPortCore::Purpose::Tunnel: return QStringLiteral("tunnel");
+    case RouterPortCore::Purpose::Mux:
+        return slot == RouterPortCore::kMuxStandard
+                   ? QStringLiteral("streams' shared port (conferencing)")
+                   : QStringLiteral("streams' shared port (stream block)");
+    case RouterPortCore::Purpose::Media: break;
+    }
+    return QStringLiteral("media slot %1").arg(slot);
 }
 
 QString skipLine(const RouterPortCore::Skipped& s)
@@ -393,32 +400,79 @@ void RouterPortAllocator::claimMediaPort(int slot, uint16_t internalPort, QObjec
         return;
     }
 
+    // A port the mux is bound to is the mux's: a hole made for this slot
+    // would lead to it.
+    const bool muxHoldsPort = m_MuxHolds && m_MuxHolds(internalPort);
+
     // Held from an earlier stream on this slot: no round trip, no wait. The
     // entry is written again behind the answer: the router may have lost it
     // meanwhile (rebooted, or a lease run out while this machine slept).
-    if (const auto held = heldMediaPort(slot)) {
+    const auto held = heldMediaPort(slot);
+    if (held && !muxHoldsPort && held->internal == internalPort) {
         answerLater(Purpose::Media, slot, context, std::move(callback), *held, {});
         recheck(held->external);
         return;
     }
+    // Held, but to a port the mux has come to since, or to another port than
+    // the one this stream binds: it leads nowhere this stream listens.
+    if (held) releaseMediaPort(slot);
 
-    RouterPortCore::Request request;
-    request.purpose = Purpose::Media;
-    request.slot = slot;
-    request.internalPort = internalPort;
     // Up to 0.3.0 the slot's own number was 48010 + slot, and that is what a
     // host upgraded from it remembers: asking for it again would keep the old
     // number on the router, pointed at the new block. Asked for from scratch.
-    const quint16 remembered = m_Settings->rememberedMediaPort(slot);
-    if (remembered >= 48010 && remembered <= 48033)
+    quint16 remembered = m_Settings->rememberedMediaPort(slot);
+    if (remembered >= 48010 && remembered <= 48033) {
         m_Settings->forgetMediaPort(slot);
-    else if (remembered)
-        request.remembered.append(remembered);
-    request.preferred.append(internalPort);
-    request.poolBegin = mw::routerports::kMediaPoolBegin;
-    request.poolEnd = mw::routerports::kMediaPoolEnd;
-    request.description = QStringLiteral("MoonlightWeb media slot %1").arg(slot);
+        remembered = 0;
+    }
+    RouterPortCore::Request request =
+        RouterPortCore::mediaRequest(static_cast<bool>(m_MuxHolds), mw::edition::isDev(), slot,
+                                     internalPort, remembered, muxHoldsPort);
+    if (!request.hasCandidate()) {
+        answerLater(Purpose::Media, slot, context, std::move(callback), {},
+                    QStringLiteral("its port is one every stream shares"));
+        return;
+    }
+    submit(std::move(request), context, std::move(callback));
+}
 
+void RouterPortAllocator::claimMuxPort(int which, uint16_t current,
+                                       std::function<RouterPortCore::Hold(uint16_t)> hold,
+                                       std::function<void(uint16_t)> drop, QObject* context,
+                                       Callback callback)
+{
+    // The switches first, as for a media port.
+    const QString why = refusal();
+    if (!why.isEmpty()) {
+        answerLater(Purpose::Mux, which, context, std::move(callback), {}, why);
+        return;
+    }
+    if (const auto held = heldMuxPort(which)) {
+        answerLater(Purpose::Mux, which, context, std::move(callback), *held, {});
+        recheck(held->external);
+        return;
+    }
+
+    // The port the mux serves now, then the one the router gave last time. A
+    // remembered port this kind of instance may not hold is forgotten: a
+    // --dev that was the installed host's settings once.
+    const bool dev = mw::edition::isDev();
+    QList<uint16_t> first;
+    if (current != 0) first.append(current);
+    if (const quint16 remembered = m_Settings->rememberedMuxPort(which)) {
+        if (!RouterPortCore::muxPortAllowed(dev, which, remembered))
+            m_Settings->forgetMuxPort(which);
+        else if (!first.contains(remembered))
+            first.append(remembered);
+    }
+    RouterPortCore::Request request = RouterPortCore::muxRequest(dev, which, first);
+    if (!request.hasCandidate()) {
+        answerLater(Purpose::Mux, which, context, std::move(callback), {},
+                    QStringLiteral("this kind of instance has no such port"));
+        return;
+    }
+    request.hold = std::move(hold);
+    request.drop = std::move(drop);
     submit(std::move(request), context, std::move(callback));
 }
 
@@ -470,10 +524,15 @@ void RouterPortAllocator::onClaimed(quint64 token, const RouterPortCore::Result&
     for (const RouterPortCore::Skipped& s : result.skipped) {
         skipped << skipLine(s);
         if (s.reason == RouterPortCore::SkipReason::LocalBusy) continue;
-        if (purpose == Purpose::Tunnel)
-            m_Settings->forgetTunnelPort(s.port);
-        else if (m_Settings->rememberedMediaPort(slot) == s.port)
-            m_Settings->forgetMediaPort(slot);
+        switch (purpose) {
+        case Purpose::Tunnel: m_Settings->forgetTunnelPort(s.port); break;
+        case Purpose::Media:
+            if (m_Settings->rememberedMediaPort(slot) == s.port) m_Settings->forgetMediaPort(slot);
+            break;
+        case Purpose::Mux:
+            if (m_Settings->rememberedMuxPort(slot) == s.port) m_Settings->forgetMuxPort(slot);
+            break;
+        }
     }
 
     if (!result.ok) {
@@ -486,10 +545,11 @@ void RouterPortAllocator::onClaimed(quint64 token, const RouterPortCore::Result&
 
     const Claim& claim = result.claim;
     m_Held.append(claim);
-    if (purpose == Purpose::Tunnel)
-        m_Settings->rememberTunnelPort(claim.external);
-    else
-        m_Settings->rememberMediaPort(slot, claim.external);
+    switch (purpose) {
+    case Purpose::Tunnel: m_Settings->rememberTunnelPort(claim.external); break;
+    case Purpose::Media: m_Settings->rememberMediaPort(slot, claim.external); break;
+    case Purpose::Mux: m_Settings->rememberMuxPort(slot, claim.external); break;
+    }
 
     QString line = QStringLiteral("[UPNP] %1: claimed %2").arg(name).arg(claim.external);
     if (claim.internal != claim.external) line += QStringLiteral(" -> %1").arg(claim.internal);
@@ -514,10 +574,14 @@ void RouterPortAllocator::onRenewed(const QList<RouterPortCore::Lost>& lost)
                             .arg(l.claim.external)
                             .arg(l.owner));
         m_Held.removeAll(l.claim);
-        if (l.claim.purpose == Purpose::Tunnel)
-            m_Settings->forgetTunnelPort(l.claim.external);
-        else
-            m_Settings->forgetMediaPort(l.claim.slot);
+        switch (l.claim.purpose) {
+        case Purpose::Tunnel: m_Settings->forgetTunnelPort(l.claim.external); break;
+        case Purpose::Media: m_Settings->forgetMediaPort(l.claim.slot); break;
+        case Purpose::Mux:
+            if (m_Settings->rememberedMuxPort(l.claim.slot) == l.claim.external)
+                m_Settings->forgetMuxPort(l.claim.slot);
+            break;
+        }
         emit portLost(static_cast<int>(l.claim.purpose), l.claim.slot, l.claim.external, l.owner);
     }
 }
@@ -537,9 +601,25 @@ void RouterPortAllocator::releaseTunnelPort(quint16 externalPort)
     }
 }
 
+void RouterPortAllocator::releaseMuxPort(int which)
+{
+    const auto held = heldMuxPort(which);
+    if (!held) return;
+    const Claim claim = *held;
+    m_Held.removeAll(claim);
+    QMetaObject::invokeMethod(
+        m_Worker, [w = m_Worker, claim]() { w->release(claim); }, Qt::QueuedConnection);
+    Logger::info(QStringLiteral("[UPNP] %1: released %2")
+                     .arg(purposeName(Purpose::Mux, which))
+                     .arg(claim.external));
+}
+
 void RouterPortAllocator::switchChanged()
 {
-    if (!enabled()) emit switchedOff();
+    if (enabled())
+        emit switchedOn();
+    else
+        emit switchedOff();
 }
 
 QList<RouterPortAllocator::Claim> RouterPortAllocator::heldTunnelPorts() const
@@ -554,6 +634,13 @@ std::optional<RouterPortAllocator::Claim> RouterPortAllocator::heldMediaPort(int
 {
     for (const Claim& c : m_Held)
         if (c.purpose == Purpose::Media && c.slot == slot) return c;
+    return std::nullopt;
+}
+
+std::optional<RouterPortAllocator::Claim> RouterPortAllocator::heldMuxPort(int which) const
+{
+    for (const Claim& c : m_Held)
+        if (c.purpose == Purpose::Mux && c.slot == which) return c;
     return std::nullopt;
 }
 

@@ -90,6 +90,7 @@ void run_kms_helper_protocol_tests();
 void run_remote_desktop_return_tests();
 void run_ice_mux_core_tests();
 void run_ice_mux_socket_tests();
+void run_ice_mux_ports_tests();
 void run_mdns_advertiser_tests();
 void run_router_port_core_tests();
 void run_logger_rotation_tests();
@@ -192,6 +193,7 @@ int main(int argc, char** argv)
     run_remote_desktop_return_tests();
     run_ice_mux_core_tests();
     run_ice_mux_socket_tests();
+    run_ice_mux_ports_tests();
     run_mdns_advertiser_tests();
     run_router_port_core_tests();
     run_control_channel_tests();

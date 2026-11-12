@@ -228,22 +228,27 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
 #ifdef Q_OS_WIN
     if (IceMux* mux = IceMux::shared(); mux && mux->running() && mux->healthy()) {
         std::string why;
-        const auto infos = mux->shareWith(static_cast<unsigned long>(m_Proc->processId()), &why);
-        if (infos.empty()) {
+        const IceMux::Share share =
+            mux->shareWith(static_cast<unsigned long>(m_Proc->processId()), &why);
+        if (share.descriptions.empty()) {
             qWarning() << "[IceMux] the shared sockets cannot go to the worker:"
                        << QString::fromStdString(why) << "— it takes a socket of its own";
         } else {
             QJsonArray sockets;
-            for (const auto& info : infos)
-                sockets.append(
-                    QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(info.data()),
-                                                   static_cast<qsizetype>(info.size()))
-                                            .toBase64()));
+            for (const auto& description : share.descriptions)
+                sockets.append(QString::fromLatin1(
+                    QByteArray(reinterpret_cast<const char*>(description.data()),
+                               static_cast<qsizetype>(description.size()))
+                        .toBase64()));
             QJsonObject config = QJsonDocument::fromJson(configLine).object();
             config[QStringLiteral("iceMux")] =
                 QJsonObject{{QStringLiteral("hop"), static_cast<int>(mux->hopPort())},
                             {QStringLiteral("sockets"), sockets}};
             line = QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
+            // Which of the mux's sockets those are: what its agents register with
+            m_MuxSockets.clear();
+            for (const uint8_t id : share.sockets)
+                m_MuxSockets.append(id);
         }
     }
 #endif
@@ -554,7 +559,10 @@ void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
         dropMuxAgent();
         const int feedPort = event["feedPort"].toInt();
         if (feedPort <= 0 || feedPort > 65535) return;
-        m_MuxFeed = mux->addAgent(event["ufrag"].toString().toStdString());
+        // On the sockets this worker was handed, and no other: a worker that
+        // was handed none has no agent here, whatever it says.
+        const std::vector<uint8_t> sockets(m_MuxSockets.cbegin(), m_MuxSockets.cend());
+        m_MuxFeed = mux->addAgent(event["ufrag"].toString().toStdString(), sockets);
         if (!m_MuxFeed) {
             qWarning() << "[IceMux] the worker's ICE agent is refused: no datagram will reach it";
             return;
@@ -565,11 +573,8 @@ void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
         if (!m_MuxFeed) return;
         const int port = event["port"].toInt();
         if (port <= 0 || port > 65535) return;
-        // The agent does not say which shared socket its pair runs on: the
-        // peer is confirmed on each, which gives it nothing it had not.
-        const std::string address = event["address"].toString().toStdString();
-        for (size_t via = 0; via < mux->ports().size(); ++via)
-            mux->confirm(m_MuxFeed, address, static_cast<uint16_t>(port), static_cast<int>(via));
+        mux->confirm(m_MuxFeed, event["address"].toString().toStdString(),
+                     static_cast<uint16_t>(port));
     } else if (op == QLatin1String("gone")) {
         dropMuxAgent();
     }

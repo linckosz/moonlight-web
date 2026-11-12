@@ -55,14 +55,18 @@ constexpr size_t kDatagramMax = 4096;
 constexpr int kBurst = 64;
 /// The most agents one datagram is copied to: all of them
 constexpr size_t kCopiesMax = Router::kAgentsMax;
-// Every stream slot has room for its agent on the shared port.
+// Every stream slot has room for its agent on the shared ports.
 static_assert(Router::kAgentsMax >= static_cast<size_t>(mw::routerports::kMediaPortCount),
               "the mux knows fewer agents than there are stream slots");
+// A socket's number travels in a byte, and its ailing in a bit of a word.
+static_assert(IceMux::kSocketsMax <= 32, "the mux's sockets do not fit its ailing word");
 /// Reads that fail in a row on one socket, for no datagram's fault, before
 /// the socket is left alone for a while
 constexpr int kFaultsBeforeRest = 8;
 /// How long it is left alone before it is tried again
 constexpr uint64_t kRestMs = 1000;
+/// Lines one socket may put in the log about its reads, in one run
+constexpr int kReportsMax = 8;
 /// The pause when select() has nothing to wait on, or fails itself
 constexpr auto kBlindPause = std::chrono::milliseconds(50);
 
@@ -111,7 +115,8 @@ void setExclusive(SOCKET s)
 }
 
 /// A shared port: the options libjuice gives its own UDP socket (udp.c), so
-/// that an agent sending through it finds what it expects.
+/// that an agent sending through it finds what it expects. The one way the
+/// mux binds a port.
 SOCKET openShared(uint16_t port, std::string* why)
 {
     const SOCKET s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
@@ -119,6 +124,14 @@ SOCKET openShared(uint16_t port, std::string* why)
         if (why) *why = "socket() failed, error " + std::to_string(lastError());
         return INVALID_SOCKET;
     }
+#ifndef _WIN32
+    // The reading thread waits with select(), which knows no higher number
+    if (s >= FD_SETSIZE) {
+        if (why) *why = "too many open files for one more shared port";
+        closesocket(s);
+        return INVALID_SOCKET;
+    }
+#endif
     setInt(s, IPPROTO_IPV6, IPV6_V6ONLY, 0);
     setExclusive(s);
 #if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DO)
@@ -178,10 +191,10 @@ SOCKET openHop(uint16_t* port, std::string* why)
 
 /// The sender as the agents know peers: an IPv4 address that arrived mapped
 /// into IPv6 is IPv4 (libjuice does the same to what it reads).
-Peer peerOf(const sockaddr_in6& from, int via)
+Peer peerOf(const sockaddr_in6& from, uint8_t via)
 {
     Peer p;
-    p.via = static_cast<uint8_t>(via);
+    p.via = via;
     p.port = ntohs(from.sin6_port);
     const uint8_t* a = from.sin6_addr.s6_addr;
     static const uint8_t mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF};
@@ -218,72 +231,177 @@ IceMux::~IceMux()
     stop();
 }
 
-bool IceMux::start(const std::vector<uint16_t>& ports, std::string* why)
+bool IceMux::start(std::string* why)
 {
-    if (running() || ports.empty()) return false;
-    std::vector<uintptr_t> sockets;
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    if (m_Running) return false;
     uint16_t hopPort = 0;
     const SOCKET hop = openHop(&hopPort, why);
-    bool ok = hop != INVALID_SOCKET;
-    for (size_t i = 0; ok && i < ports.size(); ++i) {
-        const SOCKET s = openShared(ports[i], why);
-        ok = s != INVALID_SOCKET;
-        if (ok) sockets.push_back(static_cast<uintptr_t>(s));
-    }
-    if (!ok) {
-        for (uintptr_t s : sockets)
-            closesocket(static_cast<SOCKET>(s));
-        if (hop != INVALID_SOCKET) closesocket(hop);
-        return false;
-    }
-    m_Ports = ports;
-    m_Sockets = std::move(sockets);
+    if (hop == INVALID_SOCKET) return false;
     m_Hop = static_cast<uintptr_t>(hop);
     m_HopPort = hopPort;
     m_Stop = false;
+    m_Running = true;
     m_Thread = std::thread([this] { run(); });
     return true;
 }
 
 void IceMux::stop()
 {
-    if (!running()) return;
+    {
+        // hold() binds nothing from here on
+        const std::lock_guard<std::mutex> lock(m_PortsLock);
+        if (!m_Running) return;
+        m_Running = false;
+    }
     m_Stop = true;
     m_Thread.join();
-    m_Ailing = 0;
-    for (uintptr_t s : m_Sockets)
-        closesocket(static_cast<SOCKET>(s));
+    {
+        const std::lock_guard<std::mutex> lock(m_PortsLock);
+        for (Slot& slot : m_Slots) {
+            if (slot.state != State::Free) closesocket(static_cast<SOCKET>(slot.socket));
+            slot = Slot{};
+        }
+        m_Serving.fill(-1);
+        ++m_PortsVersion;
+    }
     closesocket(static_cast<SOCKET>(m_Hop));
-    m_Sockets.clear();
-    m_Ports.clear();
     m_HopPort = 0;
+    m_Ailing = 0;
     const std::lock_guard<std::mutex> lock(m_Lock);
     m_Router = Router();
-    m_FeedPorts.clear();
+    m_Feeds.clear();
 }
 
-uint32_t IceMux::addAgent(const std::string& ufrag)
+IceMux::Held IceMux::hold(uint16_t port, std::string* why)
 {
+    if (port == 0) return Held::Failed;
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    if (!m_Running) {
+        if (why) *why = "the mux is not running";
+        return Held::Failed;
+    }
+    Slot* room = nullptr;
+    for (Slot& slot : m_Slots) {
+        if (slot.state == State::Free) {
+            if (!room) room = &slot;
+        } else if (slot.port == port) {
+            return Held::AlreadyHeld;
+        }
+    }
+    if (!room) {
+        if (why) *why = "the mux holds every socket it may";
+        return Held::Failed;
+    }
+    const SOCKET s = openShared(port, why);
+    if (s == INVALID_SOCKET) return Held::Failed;
+    room->socket = static_cast<uintptr_t>(s);
+    room->port = port;
+    room->state = State::Pending;
+    return Held::NewlyBound;
+}
+
+void IceMux::drop(uint16_t port)
+{
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    for (Slot& slot : m_Slots) {
+        if (slot.state != State::Pending || slot.port != port) continue;
+        // Never read and never given to an agent: nobody else has it
+        closesocket(static_cast<SOCKET>(slot.socket));
+        slot = Slot{};
+        return;
+    }
+}
+
+bool IceMux::serve(int role, uint16_t port)
+{
+    if (role < 0 || role >= kRoles || port == 0) return false;
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    int id = -1;
+    for (size_t i = 0; i < m_Slots.size(); ++i)
+        if (m_Slots[i].state != State::Free && m_Slots[i].port == port) id = static_cast<int>(i);
+    if (id < 0) return false;
+    for (int other = 0; other < kRoles; ++other)
+        if (other != role && m_Serving[static_cast<size_t>(other)] == id) return false;
+    const int before = m_Serving[static_cast<size_t>(role)];
+    if (before == id) return true;
+    if (before >= 0) m_Slots[static_cast<size_t>(before)].state = State::Retired;
+    m_Slots[static_cast<size_t>(id)].state = State::Serving;
+    m_Serving[static_cast<size_t>(role)] = id;
+    ++m_PortsVersion;
+    return true;
+}
+
+uint16_t IceMux::port(int role) const
+{
+    if (role < 0 || role >= kRoles) return 0;
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    const int id = m_Serving[static_cast<size_t>(role)];
+    return id < 0 ? uint16_t{0} : m_Slots[static_cast<size_t>(id)].port;
+}
+
+bool IceMux::holds(uint16_t port) const
+{
+    if (port == 0) return false;
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    for (const Slot& slot : m_Slots)
+        if (slot.state != State::Free && slot.port == port) return true;
+    return false;
+}
+
+std::vector<uint8_t> IceMux::serving() const
+{
+    std::vector<uint8_t> out;
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    for (const int id : m_Serving)
+        if (id >= 0) out.push_back(static_cast<uint8_t>(id));
+    return out;
+}
+
+bool IceMux::healthy() const
+{
+    const uint32_t ailing = m_Ailing.load();
+    if (ailing == 0) return true;
+    const std::lock_guard<std::mutex> lock(m_PortsLock);
+    for (const int id : m_Serving)
+        if (id >= 0 && ((ailing >> id) & 1u)) return false;
+    return true;
+}
+
+uint32_t IceMux::addAgent(const std::string& ufrag, const std::vector<uint8_t>& sockets)
+{
+    if (sockets.empty() || sockets.size() > kAgentSocketsMax) return 0;
+    Feed entry;
+    entry.via.fill(kNotIts);
+    {
+        const std::lock_guard<std::mutex> lock(m_PortsLock);
+        for (size_t place = 0; place < sockets.size(); ++place) {
+            const uint8_t id = sockets[place];
+            if (id >= kSocketsMax || entry.via[id] != kNotIts) return 0;
+            const State state = m_Slots[id].state;
+            if (state != State::Serving && state != State::Retired) return 0;
+            entry.via[id] = static_cast<uint8_t>(place);
+        }
+    }
     const std::lock_guard<std::mutex> lock(m_Lock);
     const uint32_t feed = m_NextFeed;
     if (!m_Router.addAgent(feed, ufrag, nowMs())) return 0;
     if (++m_NextFeed == 0) m_NextFeed = 1;
-    m_FeedPorts[feed] = 0;
+    m_Feeds[feed] = entry;
     return feed;
 }
 
 void IceMux::setFeedPort(uint32_t feed, uint16_t port)
 {
     const std::lock_guard<std::mutex> lock(m_Lock);
-    const auto it = m_FeedPorts.find(feed);
-    if (it != m_FeedPorts.end()) it->second = port;
+    const auto it = m_Feeds.find(feed);
+    if (it != m_Feeds.end()) it->second.port = port;
 }
 
-void IceMux::confirm(uint32_t feed, const std::string& address, uint16_t port, int via)
+void IceMux::confirm(uint32_t feed, const std::string& address, uint16_t port)
 {
-    if (via < 0 || static_cast<size_t>(via) >= m_Sockets.size() || port == 0) return;
+    if (port == 0) return;
     Peer p;
-    p.via = static_cast<uint8_t>(via);
     p.port = port;
     in_addr v4{};
     in6_addr v6{};
@@ -297,28 +415,46 @@ void IceMux::confirm(uint32_t feed, const std::string& address, uint16_t port, i
         return;
     }
     const std::lock_guard<std::mutex> lock(m_Lock);
-    m_Router.confirm(feed, p);
+    const auto it = m_Feeds.find(feed);
+    if (it == m_Feeds.end()) return;
+    for (size_t id = 0; id < kSocketsMax; ++id) {
+        if (it->second.via[id] == kNotIts) continue;
+        p.via = static_cast<uint8_t>(id);
+        m_Router.confirm(feed, p);
+    }
 }
 
 void IceMux::removeAgent(uint32_t feed)
 {
     const std::lock_guard<std::mutex> lock(m_Lock);
     m_Router.removeAgent(feed);
-    m_FeedPorts.erase(feed);
+    m_Feeds.erase(feed);
 }
 
 #ifdef _WIN32
-std::vector<std::vector<uint8_t>> IceMux::shareWith(unsigned long pid, std::string* why)
+IceMux::Share IceMux::shareWith(unsigned long pid, std::string* why)
 {
-    std::vector<std::vector<uint8_t>> out;
-    for (uintptr_t s : m_Sockets) {
+    Share out;
+    std::vector<SOCKET> sockets;
+    {
+        const std::lock_guard<std::mutex> lock(m_PortsLock);
+        for (const int id : m_Serving) {
+            if (id < 0) continue;
+            const Slot& slot = m_Slots[static_cast<size_t>(id)];
+            out.sockets.push_back(static_cast<uint8_t>(id));
+            out.ports.push_back(slot.port);
+            sockets.push_back(static_cast<SOCKET>(slot.socket));
+        }
+    }
+    // Outside the lock: a socket that serves is closed by stop() alone
+    for (const SOCKET s : sockets) {
         WSAPROTOCOL_INFOW info{};
-        if (WSADuplicateSocketW(static_cast<SOCKET>(s), pid, &info) != 0) {
+        if (WSADuplicateSocketW(s, pid, &info) != 0) {
             if (why) *why = "WSADuplicateSocket failed, error " + std::to_string(lastError());
             return {};
         }
         const auto* bytes = reinterpret_cast<const uint8_t*>(&info);
-        out.emplace_back(bytes, bytes + sizeof(info));
+        out.descriptions.emplace_back(bytes, bytes + sizeof(info));
     }
     return out;
 }
@@ -331,9 +467,6 @@ IceMux::Counters IceMux::counters() const
 
 void IceMux::run()
 {
-#ifdef _WIN32
-    if (m_RaisedPriority) SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-#endif
     // The header's room first, so that a datagram is read where it leaves from
     std::vector<uint8_t> buffer(kFeedHeaderSize + kDatagramMax + 1);
     uint8_t* const datagram = buffer.data() + kFeedHeaderSize;
@@ -342,49 +475,82 @@ void IceMux::run()
     // socket is no longer one) leaves its socket « readable » at every turn:
     // it must not make a busy loop of this one. A socket whose reads keep
     // failing rests, is said once, and is tried again later; one that reads
-    // again, or has nothing to read, is well.
+    // again, or has nothing to read, is well, and that is said too. A socket
+    // that keeps going from one to the other is said so many times, no more.
     struct Health
     {
         int faults = 0;
         uint64_t restUntilMs = 0;
         bool ailing = false;
         bool reported = false;
+        int said = 0;
     };
-    std::vector<Health> health(m_Sockets.size());
-    const auto well = [this](Health& h) {
+    // The sockets to read: the ones that serve or have served, as of the last
+    // change. Such a socket is closed by stop() alone, after this thread.
+    struct Reading
+    {
+        SOCKET socket = INVALID_SOCKET;
+        uint16_t port = 0;
+        bool on = false;
+    };
+    std::array<Reading, kSocketsMax> reading;
+    std::array<Health, kSocketsMax> health;
+    uint32_t version = 0;
+    bool known = false;
+    const auto say = [this](Health& h, const std::string& what) {
+        if (!m_Report || h.said >= kReportsMax) return;
+        ++h.said;
+        m_Report(what);
+    };
+    const auto well = [this, &reading, &say](Health& h, size_t id) {
         h.faults = 0;
-        if (h.ailing) {
-            h.ailing = false;
-            --m_Ailing;
-        }
+        if (!h.ailing) return;
+        h.ailing = false;
+        m_Ailing.fetch_and(~(1u << id));
+        if (h.reported) say(h, "UDP port " + std::to_string(reading[id].port) + " reads again");
+        h.reported = false;
     };
 
     while (!m_Stop) {
+        if (!known || version != m_PortsVersion.load()) {
+            const std::lock_guard<std::mutex> lock(m_PortsLock);
+            version = m_PortsVersion.load();
+            known = true;
+            for (size_t id = 0; id < kSocketsMax; ++id) {
+                const Slot& slot = m_Slots[id];
+                reading[id].socket = static_cast<SOCKET>(slot.socket);
+                reading[id].port = slot.port;
+                reading[id].on = slot.state == State::Serving || slot.state == State::Retired;
+            }
+        }
+
         fd_set readable;
         FD_ZERO(&readable);
         SOCKET highest = 0;
         size_t watched = 0;
         const uint64_t now = nowMs();
-        for (size_t i = 0; i < m_Sockets.size(); ++i) {
-            if (health[i].restUntilMs > now) continue;
-            FD_SET(static_cast<SOCKET>(m_Sockets[i]), &readable);
-            highest = (std::max)(highest, static_cast<SOCKET>(m_Sockets[i]));
+        for (size_t id = 0; id < kSocketsMax; ++id) {
+            if (!reading[id].on || health[id].restUntilMs > now) continue;
+            FD_SET(reading[id].socket, &readable);
+            highest = (std::max)(highest, reading[id].socket);
             ++watched;
         }
         if (watched == 0) {
             std::this_thread::sleep_for(kBlindPause);
             continue;
         }
-        timeval wait{0, 250 * 1000}; // how late stop() is noticed, nothing else
+        // How late stop() and a port that starts to serve are noticed
+        timeval wait{0, 100 * 1000};
         const int ready = select(static_cast<int>(highest) + 1, &readable, nullptr, nullptr, &wait);
         // select() itself refused (one of the sockets is no longer one): it
         // says nothing of the others, so each is asked, after a pause.
         const bool blind = ready < 0;
         if (blind) std::this_thread::sleep_for(kBlindPause);
 
-        for (size_t via = 0; via < m_Sockets.size(); ++via) {
-            const SOCKET s = static_cast<SOCKET>(m_Sockets[via]);
-            Health& h = health[via];
+        for (size_t id = 0; id < kSocketsMax; ++id) {
+            if (!reading[id].on) continue;
+            const SOCKET s = reading[id].socket;
+            Health& h = health[id];
             if (h.restUntilMs > now) continue;
             // An ailing socket is asked whatever select() said: when nothing
             // arrives, that is how it shows it reads again.
@@ -398,7 +564,7 @@ void IceMux::run()
                 if (got < 0) {
                     const int error = lastError();
                     if (wouldBlock(error)) {
-                        well(h);
+                        well(h, id);
                         break;
                     }
 #ifdef _WIN32
@@ -408,7 +574,7 @@ void IceMux::run()
                     if (error == WSAEMSGSIZE || error == WSAECONNRESET || error == WSAENETRESET) {
                         ++m_Read;
                         ++m_Dropped;
-                        well(h);
+                        well(h, id);
                         continue;
                     }
 #endif
@@ -417,45 +583,55 @@ void IceMux::run()
                     if (h.ailing || ++h.faults >= kFaultsBeforeRest) {
                         h.faults = 0;
                         h.restUntilMs = nowMs() + kRestMs;
-                        if (!h.reported && m_Report) {
-                            m_Report("UDP port " + std::to_string(m_Ports[via]) +
-                                     " keeps failing to read, error " + std::to_string(error) +
-                                     ": it is tried again every second, and a stream that "
-                                     "starts meanwhile binds a port of its own");
+                        if (!h.reported) {
+                            say(h, "UDP port " + std::to_string(reading[id].port) +
+                                       " keeps failing to read, error " + std::to_string(error) +
+                                       ": it is tried again every second, and a stream that "
+                                       "starts meanwhile binds a port of its own");
                         }
                         h.reported = true;
                         if (!h.ailing) {
                             h.ailing = true;
-                            ++m_Ailing;
+                            m_Ailing.fetch_or(1u << id);
                         }
                     }
                     break;
                 }
-                well(h);
+                well(h, id);
                 ++m_Read;
                 if (static_cast<size_t>(got) > kDatagramMax || got == 0 ||
                     from.sin6_family != AF_INET6) {
                     ++m_Dropped;
                     continue;
                 }
-                handle(static_cast<int>(via), &from, buffer.data(), static_cast<size_t>(got));
+                handle(static_cast<uint8_t>(id), &from, buffer.data(), static_cast<size_t>(got));
             }
         }
     }
 }
 
-void IceMux::handle(int via, const void* sender, uint8_t* packet, size_t size)
+void IceMux::handle(uint8_t socket, const void* sender, uint8_t* packet, size_t size)
 {
-    const Peer from = peerOf(*static_cast<const sockaddr_in6*>(sender), via);
-    uint16_t ports[kCopiesMax];
+    const Peer from = peerOf(*static_cast<const sockaddr_in6*>(sender), socket);
+    // Where each copy goes, and the number the agent there knows the socket by
+    struct Copy
+    {
+        uint16_t port;
+        uint8_t via;
+    };
+    Copy copies[kCopiesMax];
     size_t count = 0;
     {
         const std::lock_guard<std::mutex> lock(m_Lock);
         const Route route = m_Router.route(from, packet + kFeedHeaderSize, size, nowMs());
         for (uint32_t feed : route.feeds) {
-            const auto it = m_FeedPorts.find(feed);
-            if (it != m_FeedPorts.end() && it->second != 0 && count < std::size(ports))
-                ports[count++] = it->second;
+            const auto it = m_Feeds.find(feed);
+            if (it == m_Feeds.end() || it->second.port == 0 || count >= std::size(copies)) continue;
+            // An agent that was not given this socket cannot answer through
+            // it: what came in on it is not handed to that agent.
+            const uint8_t via = it->second.via[socket];
+            if (via == kNotIts) continue;
+            copies[count++] = Copy{it->second.port, via};
         }
     }
     if (count == 0) {
@@ -467,7 +643,8 @@ void IceMux::handle(int via, const void* sender, uint8_t* packet, size_t size)
     to.sin_family = AF_INET;
     to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     for (size_t i = 0; i < count; ++i) {
-        to.sin_port = htons(ports[i]);
+        packet[1] = copies[i].via; // the header's socket number, as this agent counts
+        to.sin_port = htons(copies[i].port);
         const int sent = static_cast<int>(
             sendto(static_cast<SOCKET>(m_Hop), reinterpret_cast<const char*>(packet),
                    static_cast<int>(kFeedHeaderSize + size), 0,

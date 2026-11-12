@@ -1331,6 +1331,53 @@ void AppSettings::forgetMediaPort(int slot)
     writeAll(obj);
 }
 
+/// The key of one of the streams' shared ports under router_ports.mux, empty
+/// for a number that is neither.
+static QString muxPortKey(int which)
+{
+    if (which == 0) return QStringLiteral("standard");
+    if (which == 1) return QStringLiteral("block");
+    return {};
+}
+
+quint16 AppSettings::rememberedMuxPort(int which) const
+{
+    const QString key = muxPortKey(which);
+    if (key.isEmpty()) return 0;
+    const QJsonObject mux = readAll().value(kRouterPortsKey).toObject().value("mux").toObject();
+    const int port = mux.value(key).toInt();
+    return (port > 0 && port <= 65535) ? static_cast<quint16>(port) : 0;
+}
+
+void AppSettings::rememberMuxPort(int which, quint16 port)
+{
+    const QString key = muxPortKey(which);
+    if (key.isEmpty() || port == 0) return;
+    if (rememberedMuxPort(which) == port) return;
+
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    QJsonObject mux = rp.value("mux").toObject();
+    mux[key] = static_cast<int>(port);
+    rp["mux"] = mux;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
+}
+
+void AppSettings::forgetMuxPort(int which)
+{
+    const QString key = muxPortKey(which);
+    if (key.isEmpty()) return;
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    QJsonObject mux = rp.value("mux").toObject();
+    if (!mux.contains(key)) return;
+    mux.remove(key);
+    rp["mux"] = mux;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
+}
+
 QString AppSettings::routerLanIp() const
 {
     return readAll().value(kRouterPortsKey).toObject().value("lan_ip").toString();
