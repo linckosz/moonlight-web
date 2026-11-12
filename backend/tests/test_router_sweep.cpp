@@ -573,7 +573,8 @@ void run_router_sweep_tests()
         CHECK(!record.has(3478, false));
     }
     // A hole another machine took, found at renewal: its line goes with it.
-    // The TCP entry is still this host's, and still in the record.
+    // Nothing renews its TCP entry any more: still this host's, it is taken
+    // off the router at once, and its line with it.
     {
         Bench b;
         const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
@@ -582,7 +583,102 @@ void run_router_sweep_tests()
         b.gw.table[udp(3478)].client = kNeighbour;
         CHECK_EQ(b.core.renew().size(), 1);
         CHECK(!b.record.has(3478, false));
+        CHECK(!b.gw.table.contains(tcp(3478)));
+        CHECK(!b.record.has(3478, true));
+        CHECK_EQ(b.gw.removes, 1);
+        // What the neighbour took is as it took it
+        CHECK(b.gw.table[udp(3478)].client == kNeighbour);
+    }
+    // The same for one hole looked at now, ahead of the half hour
+    {
+        Bench b;
+        CHECK(b.core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        b.gw.keepsForeign = true;
+        b.gw.table[udp(3478)].client = kNeighbour;
+        CHECK_EQ(b.core.renew(3478).size(), 1);
+        CHECK(!b.gw.table.contains(tcp(3478)));
+        CHECK(!b.record.has(3478, false) && !b.record.has(3478, true));
+    }
+    // The neighbour took the TCP number too: neither is this host's to touch.
+    // The TCP line stays until a start sees whose the entry is.
+    {
+        Bench b;
+        CHECK(b.core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        b.gw.keepsForeign = true;
+        b.gw.table[udp(3478)].client = kNeighbour;
+        b.gw.table[tcp(3478)].client = kNeighbour;
+        CHECK_EQ(b.core.renew().size(), 1);
+        CHECK_EQ(b.gw.removes, 0);
+        CHECK(b.gw.table[tcp(3478)].client == kNeighbour);
         CHECK(b.record.has(3478, true));
+        CHECK(b.core.sweep(tunnelLine(3478, true)).outcome == Swept::NotOurs);
+        CHECK(!b.record.has(3478, true));
+        CHECK(b.gw.table.contains(tcp(3478)));
+    }
+    // An entry at this host's address that is not the one it wrote, by its
+    // text or by its port: another installation's on this machine. Not asked
+    // to go, and its line kept for a start to judge.
+    {
+        // A router that takes a TCP write over what it has and changes nothing
+        struct Stubborn : TableGateway
+        {
+            bool stubborn = false;
+            bool add(uint16_t ext, uint16_t in, uint32_t leaseSec, const QString& description,
+                     const QString& proto) override
+            {
+                if (stubborn && proto == kTcp && table.contains(Key{ext, proto})) {
+                    ++adds;
+                    return true;
+                }
+                return TableGateway::add(ext, in, leaseSec, description, proto);
+            }
+        };
+        const auto lostWith = [](const std::function<void(TableGateway::Row&)>& theirs) {
+            Stubborn gw;
+            MemoryRecord record;
+            RouterPortCore core(gw, kAlwaysFree);
+            core.setRecord(&record);
+            CHECK(core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+            gw.keepsForeign = true;
+            gw.stubborn = true;
+            gw.table[udp(3478)].client = kNeighbour;
+            theirs(gw.table[tcp(3478)]);
+            const TableGateway::Row there = gw.table[tcp(3478)];
+            CHECK_EQ(core.renew().size(), 1);
+            CHECK_EQ(gw.removes, 0);
+            CHECK(gw.table.value(tcp(3478)) == there);
+            CHECK(record.has(3478, true));
+            // The start that looks at it finds it is not this installation's
+            CHECK(core.sweep(tunnelLine(3478, true)).outcome == Swept::NotOurs);
+            CHECK(gw.table.value(tcp(3478)) == there);
+        };
+        lostWith([](TableGateway::Row& row) {
+            row.description = mw::routerholes::describe(Kind::Tunnel, -1, QStringLiteral("0b77e2"));
+        });
+        lostWith([](TableGateway::Row& row) { row.internal = 22; });
+    }
+    // A removal the router does not acknowledge: the line stays for the next start
+    {
+        Bench b;
+        CHECK(b.core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        b.gw.keepsForeign = true;
+        b.gw.refusesRemoval = true;
+        b.gw.table[udp(3478)].client = kNeighbour;
+        CHECK_EQ(b.core.renew().size(), 1);
+        CHECK(b.gw.table.contains(tcp(3478)));
+        CHECK(b.record.has(3478, true));
+    }
+    // A shared port has no TCP entry: nothing is asked to go
+    {
+        Bench b;
+        const auto shared =
+            b.core.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxBlock, {}));
+        CHECK(shared.ok && !shared.claim.tcp);
+        b.gw.keepsForeign = true;
+        b.gw.table[udp(shared.claim.external)].client = kNeighbour;
+        CHECK_EQ(b.core.renew().size(), 1);
+        CHECK_EQ(b.gw.removes, 0);
+        CHECK(b.record.lines.isEmpty());
     }
     // Without a record: the product's words alone, and nothing noted
     {

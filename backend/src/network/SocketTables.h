@@ -39,6 +39,8 @@ enum class Listens
 
 /// In UDP, a socket of any process bound to `port`, on any address. In TCP,
 /// one that listens on it. Windows and Linux; Unknown on any other system.
+/// On Linux the tables are those of this process's network namespace: a
+/// program in another one (a container) is not seen.
 Listens listens(uint16_t port, bool tcp);
 
 /// The same from the text of one Linux table (/proc/net/udp, udp6, tcp or

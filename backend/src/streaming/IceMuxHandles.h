@@ -67,6 +67,10 @@ inline constexpr uintptr_t kNoSocket = ~uintptr_t(0);
 /// kept only when it is a UDP socket bound to `port`. kNoSocket otherwise,
 /// with the reason in `why` and nothing left open. Winsock must be started.
 /// The caller closes it (closesocket). Windows only.
+///
+/// Called before this process starts any other: the socket can be inherited
+/// for the instant between its making and its being kept from that. A path
+/// of the worker that starts a process must not run alongside this call.
 uintptr_t open(const std::vector<uint8_t>& description, uint16_t port, QString* why);
 
 /// Copies, in this process, of the sockets the process `serverPid` holds

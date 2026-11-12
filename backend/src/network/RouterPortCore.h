@@ -278,7 +278,8 @@ public:
 
     /// Re-add every held mapping, then read each back. Returns the ones the
     /// table now aims elsewhere — those are dropped from the held list, since
-    /// a hole that leads to another machine is worse than none. One still
+    /// a hole that leads to another machine is worse than none, and their
+    /// TCP entry is taken off when it is still this host's. One still
     /// running down its old lease after the write is removed and added
     /// afresh: some routers answer a re-add without renewing anything. Also
     /// drives the lease latch: two consecutive renewal failures switch to
@@ -393,6 +394,10 @@ private:
     bool addWithLatch(uint16_t external, uint16_t internal, const QString& description,
                       const QString& protocol);
     void strike(uint16_t external, bool tcp);
+    /// A held hole went to another machine. Nothing renews its TCP entry any
+    /// more: it is taken off at once, when the router shows it as the entry
+    /// this host wrote: at its address, to its port, under its description.
+    void dropTcpOf(const Claim& lost);
     /// Whether this core holds the entry of that port in that protocol.
     bool holdsLine(uint16_t external, bool tcp) const;
     /// One renewal of a held mapping: UDP and TCP written, UDP read back into

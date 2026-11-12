@@ -295,6 +295,21 @@ void RouterPortCore::strike(uint16_t external, bool tcp)
     if (m_Record) m_Record->strike(external, tcp);
 }
 
+void RouterPortCore::dropTcpOf(const Claim& lost)
+{
+    if (!lost.tcp) return;
+    // One the router does not show, or shows as a neighbour's, is not asked
+    // to go: its line stays for the next start, which goes by the record.
+    IUpnpGateway::Entry there;
+    if (!tcpWritable(lost.external, &there) || there.client.isEmpty()) return;
+    // Nor one at this host's address that is not the entry it wrote: the
+    // address may be the one it had before a renumbering, another machine's
+    // by now, and another edition on this machine may hold that number.
+    if (there.internalPort != lost.internal || there.description != textOf(lost.purpose, lost.slot))
+        return;
+    if (m_Gateway.remove(lost.external, kTcp)) strike(lost.external, true);
+}
+
 RouterPortCore::Result RouterPortCore::claim(const Request& request)
 {
     Result result;
@@ -491,6 +506,7 @@ QList<RouterPortCore::Lost> RouterPortCore::renew()
         m_Held.removeAll(l.claim);
         // Another machine's now: the record has nothing to say of it.
         strike(l.claim.external, false);
+        dropTcpOf(l.claim);
     }
 
     if (ok) {
@@ -522,6 +538,7 @@ QList<RouterPortCore::Lost> RouterPortCore::renew(uint16_t externalPort)
         if (owner.isEmpty() || owner == m_Gateway.lanAddress()) return {};
         m_Held.removeAll(c);
         strike(c.external, false);
+        dropTcpOf(c);
         return {{c, owner}};
     }
     return {};
