@@ -95,6 +95,7 @@ void run_phone_pairing_tests();
 void run_pair_request_routes_tests();
 void run_auth_status_route_tests();
 void run_host_key_route_tests();
+void run_local_channel_tests();
 
 int main(int argc, char** argv)
 {
@@ -185,6 +186,7 @@ int main(int argc, char** argv)
     run_pair_request_routes_tests();
     run_auth_status_route_tests();
     run_host_key_route_tests();
+    run_local_channel_tests();
     // Last: it repoints the Logger singleton at its own temp files.
     run_logger_rotation_tests();
 

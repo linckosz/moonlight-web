@@ -134,6 +134,7 @@ add_executable(run_tests
     test_auth_status_route.cpp
     test_host_key_route.cpp
     test_pairing_chain.cpp
+    test_local_channel.cpp
     # In-scope production units (+ their real deps)
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.
@@ -186,6 +187,9 @@ add_executable(run_tests
     ${_src}/src/server/SessionPool.cpp
     # The single-tab control channel: the port it lands on when its own is taken.
     ${_src}/src/server/ControlChannel.cpp
+    # The channel to the other programs of this install: its wire, and both of
+    # its ends against each other.
+    ${_src}/src/server/LocalChannel.cpp
     ${_src}/src/common/LoopbackKey.cpp
     ${_src}/src/common/RendezvousId.cpp
     # The host's line to the introduction server, against a local stand-in:

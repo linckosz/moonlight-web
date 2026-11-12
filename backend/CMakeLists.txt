@@ -302,6 +302,7 @@ add_executable(mw-server
     src/server/ConnectionGuard.cpp
     src/server/HttpServer.cpp
     src/server/ControlChannel.cpp
+    src/server/LocalChannel.cpp
     src/server/ControlTunnel.cpp
     src/server/HttpParser.cpp
     src/server/RequestGuard.cpp
