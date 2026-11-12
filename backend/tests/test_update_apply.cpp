@@ -232,4 +232,27 @@ void run_update_apply_tests()
         CHECK(!mw::inheritedenv::isElevatedHelper(2, la));
         CHECK(!mw::inheritedenv::isElevatedHelper(2, ws));
     }
+
+    SECTION("InheritedEnvironment — an elevated start is cleaned whatever it was asked to do");
+    {
+        using mw::inheritedenv::mustScrub;
+        // An elevated mode, by its name: cleaned even when the token says
+        // nothing (it could not be read).
+        CHECK(mustScrub(true, false));
+        // Any other start that runs elevated: a command the installer runs,
+        // the server started by hand as an administrator.
+        CHECK(mustScrub(false, true));
+        CHECK(mustScrub(true, true));
+        // An ordinary start keeps its environment as it is.
+        CHECK(!mustScrub(false, false));
+
+        // A command outside the list is cleaned through its token alone.
+        char exe[] = "MoonlightWeb.exe";
+        char wait[] = "--wait-link";
+        char* installerCommand[] = {exe, wait};
+        const bool byName = mw::inheritedenv::isElevatedHelper(2, installerCommand);
+        CHECK(!byName);
+        CHECK(mustScrub(byName, true));
+        CHECK(!mustScrub(byName, false));
+    }
 }

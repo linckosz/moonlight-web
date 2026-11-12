@@ -1603,8 +1603,11 @@ int main(int argc, char* argv[])
 {
     // Before anything reads the environment: a mode an installer task runs
     // elevated carries the user's own HKCU\Environment, and Qt and OpenSSL
-    // would load code from where it points (InheritedEnvironment.h).
-    if (mw::inheritedenv::isElevatedHelper(argc, argv)) mw::inheritedenv::scrub();
+    // would load code from where it points (InheritedEnvironment.h). An
+    // elevated start gets the same, whatever it was asked to do.
+    if (mw::inheritedenv::mustScrub(mw::inheritedenv::isElevatedHelper(argc, argv),
+                                    mw::inheritedenv::startedElevated()))
+        mw::inheritedenv::scrub();
 
     // First, while this is still the only thread: if the Linux launcher handed
     // us CAP_SYS_ADMIN (KMS capture) and CAP_SYS_NICE (GPU priority), keep them

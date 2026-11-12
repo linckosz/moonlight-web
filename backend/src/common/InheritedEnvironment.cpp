@@ -66,6 +66,22 @@ bool isElevatedHelper(int argc, char** argv)
     return false;
 }
 
+bool startedElevated()
+{
+#ifdef Q_OS_WIN
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD size = 0;
+    const bool read =
+        GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) != FALSE;
+    CloseHandle(token);
+    return read && elevation.TokenIsElevated != 0;
+#else
+    return false;
+#endif
+}
+
 void scrub()
 {
 #ifdef Q_OS_WIN

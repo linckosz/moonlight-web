@@ -45,6 +45,19 @@ bool isCodeLoading(const QString& name);
 /// --update-apply, --vdisplay-apply, --vhid-apply, --stream-worker.
 bool isElevatedHelper(int argc, char** argv);
 
+/// Whether this process runs elevated, asked of its own token. Windows only:
+/// false elsewhere, and false when the token cannot be read.
+bool startedElevated();
+
+/// Whether this start gets scrub(): one of the elevated modes, by its name, or
+/// any start that runs elevated, whatever it was asked to do. Both, because
+/// each covers what the other may miss: a mode not in the list yet, and a token
+/// that could not be read.
+inline bool mustScrub(bool elevatedMode, bool elevatedToken)
+{
+    return elevatedMode || elevatedToken;
+}
+
 /// Drop every isCodeLoading() variable from this process and take the current
 /// directory out of the DLL search order. Windows only (a no-op elsewhere:
 /// pkexec and launchd hand their helpers a clean environment). Call first in
