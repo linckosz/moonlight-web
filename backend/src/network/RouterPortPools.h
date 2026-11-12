@@ -109,6 +109,30 @@ constexpr int kMediaPortCount = 24;
 constexpr uint16_t kMediaPoolBegin = 46100;
 constexpr uint16_t kMediaPoolEnd = 46199;
 
+// ── The streams' shared ports (ice_udp_mux) ─────────────────────────────────
+//
+// With the mux on, the streams of one host no longer bind a port each: they
+// share two, held by the main process from start to stop. The router forwards
+// each to itself — external and internal are one number, as for the tunnel: a
+// router that has seen the host send from a port keeps translating to that
+// number, so a port is only worth advertising if the socket really binds it.
+//
+//   the first comes from the conferencing list at the top of this file, the
+//   ports a corporate network lets out. The tunnel draws from the same list;
+//   one allocator hands them out, so a port is never given twice.
+//
+//   the second is the head of the stream block: 48550, the port a manual
+//   forward on a router without UPnP has always pointed at, and one the
+//   packages' firewall rules already open. A neighbour on it, and the walk
+//   goes on up the block — never to the media pool, which is external only.
+//
+// A DEV identity holds one port, walked down from the top of the block
+// (48573), and never a conferencing port, for the reason its tunnel has a
+// block of its own. Each walk keeps to its own stretch of the block, so the
+// installed host and a --dev on one machine cannot meet, whatever the router's
+// table says.
+constexpr int kMuxBlockSpan = 12;
+
 // ── Leases ──────────────────────────────────────────────────────────────────
 //
 // An hour, renewed at the half. Latched to permanent (0) when a router refuses

@@ -16,6 +16,7 @@
  */
 
 #include "IceMux.h"
+#include "RouterPortPools.h"
 
 #include <algorithm>
 #include <chrono>
@@ -54,6 +55,9 @@ constexpr size_t kDatagramMax = 4096;
 constexpr int kBurst = 64;
 /// The most agents one datagram is copied to: all of them
 constexpr size_t kCopiesMax = Router::kAgentsMax;
+// Every stream slot has room for its agent on the shared port.
+static_assert(Router::kAgentsMax >= static_cast<size_t>(mw::routerports::kMediaPortCount),
+              "the mux knows fewer agents than there are stream slots");
 /// Reads that fail in a row on one socket, for no datagram's fault, before
 /// the socket is left alone for a while
 constexpr int kFaultsBeforeRest = 8;

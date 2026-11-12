@@ -62,18 +62,29 @@ public:
     enum class Purpose
     {
         Tunnel,
-        Media
+        Media,
+        /// A port every stream shares (ice_udp_mux). Added last: the numbers
+        /// of the two above travel in portLost().
+        Mux
     };
+
+    /// Which of the mux's ports a claim is, in Claim::slot and Request::slot.
+    /// The conferencing port, from the tunnel's preferred list.
+    static constexpr int kMuxStandard = 0;
+    /// The port at the head of the stream block (RouterPortPools.h).
+    static constexpr int kMuxBlock = 1;
 
     /// One hole in the router, as this host holds it.
     struct Claim
     {
         Purpose purpose = Purpose::Tunnel;
-        /// Stream slot for a media claim; -1 for the tunnel.
+        /// Stream slot for a media claim; -1 for the tunnel; kMuxStandard or
+        /// kMuxBlock for the mux.
         int slot = -1;
         /// What the router forwards, and what a browser is told.
         uint16_t external = 0;
-        /// What this machine listens on. Equal to `external` for the tunnel.
+        /// What this machine listens on. Equal to `external` for the tunnel
+        /// and the mux.
         uint16_t internal = 0;
         /// Whether the TCP mapping alongside the UDP one was accepted.
         bool tcp = false;
@@ -107,6 +118,19 @@ public:
         QString owner;
     };
 
+    /// What became of a port the mux was asked to hold (Request::hold).
+    enum class Hold
+    {
+        /// Not bound: another program on this machine has it.
+        Failed,
+        /// Bound for this claim. The one answer after which a claim that
+        /// fails hands the port back.
+        NewlyBound,
+        /// The mux had it before this claim — one made again after the router
+        /// lost the hole. Whatever the router says, it stays the mux's.
+        AlreadyHeld,
+    };
+
     struct Request
     {
         Purpose purpose = Purpose::Tunnel;
@@ -123,6 +147,22 @@ public:
         uint16_t poolEnd = 0;
         /// What the router's admin page shows for the entry.
         QString description;
+        /// Whether the TCP hole on the same number is asked for alongside the
+        /// UDP one. Only where this host listens in TCP on that port: a hole
+        /// to a port nobody listens on leads to whichever program binds the
+        /// number next. Off, the TCP entry is neither written, renewed nor
+        /// removed.
+        bool tcp = true;
+        /// Mux only. The mux keeps its sockets for as long as the process
+        /// runs, so "can this machine listen there" is answered by doing it:
+        /// `hold(port)` binds the port and keeps it. Asked only once the
+        /// router has nothing against the number, in place of the bind probe.
+        /// Unset, the probe answers as it does for the tunnel.
+        std::function<Hold(uint16_t)> hold;
+        /// The router would not give the hole after all: the port `hold` bound
+        /// for this claim is not wanted. Never called for a port the mux held
+        /// before the claim.
+        std::function<void(uint16_t)> drop;
     };
 
     struct Result
@@ -157,6 +197,18 @@ public:
     /// The tunnel's request. A remembered port the instance may not hold is
     /// left out — a --dev remembering 3479 from before it had a block.
     static Request tunnelRequest(bool devInstance, const QList<uint16_t>& remembered);
+
+    /// Whether `port` may be the mux's port `which` (kMuxStandard, kMuxBlock)
+    /// for this kind of instance: the conferencing list and the foot of the
+    /// stream block for the installed host, the top of the block alone for a
+    /// --dev, which has no conferencing port at all.
+    static bool muxPortAllowed(bool devInstance, int which, uint16_t port);
+
+    /// The request for one of the mux's ports, the caller's `hold` and `drop`
+    /// left to set. A remembered port the instance may not hold is left out.
+    /// For a --dev's conferencing port the request has no candidate, and
+    /// claim() answers "none" without a word to the router.
+    static Request muxRequest(bool devInstance, int which, const QList<uint16_t>& remembered);
 
     /// The address this host had when its remembered ports were obtained.
     /// An entry the router still points there is ours to overwrite.

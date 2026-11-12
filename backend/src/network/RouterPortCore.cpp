@@ -24,11 +24,16 @@ namespace {
 const QString kUdp = QStringLiteral("UDP");
 const QString kTcp = QStringLiteral("TCP");
 
+const QString kMuxDescription = QStringLiteral("MoonlightWeb streams");
+
 QString descriptionOf(const RouterPortCore::Claim& c)
 {
-    return c.purpose == RouterPortCore::Purpose::Tunnel
-               ? QStringLiteral("MoonlightWeb tunnel")
-               : QStringLiteral("MoonlightWeb media slot %1").arg(c.slot);
+    switch (c.purpose) {
+    case RouterPortCore::Purpose::Tunnel: return QStringLiteral("MoonlightWeb tunnel");
+    case RouterPortCore::Purpose::Mux: return kMuxDescription;
+    case RouterPortCore::Purpose::Media: break;
+    }
+    return QStringLiteral("MoonlightWeb media slot %1").arg(c.slot);
 }
 
 void logKeptLease(uint16_t external, int leaseLeft)
@@ -74,6 +79,54 @@ RouterPortCore::Request RouterPortCore::tunnelRequest(bool devInstance,
         request.preferred.append(p);
     request.poolBegin = kTunnelPoolBegin;
     request.poolEnd = kTunnelPoolEnd;
+    return request;
+}
+
+bool RouterPortCore::muxPortAllowed(bool devInstance, int which, uint16_t port)
+{
+    using namespace mw::routerports;
+    if (which == kMuxStandard) {
+        if (devInstance) return false;
+        for (const uint16_t p : kTunnelPreferred)
+            if (p == port) return true;
+        return false;
+    }
+    if (which != kMuxBlock) return false;
+    const int first = kMediaBasePort;
+    const int last = kMediaBasePort + kMediaPortCount - 1;
+    if (devInstance) return port > last - kMuxBlockSpan && port <= last;
+    return port >= first && port < first + kMuxBlockSpan;
+}
+
+RouterPortCore::Request RouterPortCore::muxRequest(bool devInstance, int which,
+                                                   const QList<uint16_t>& remembered)
+{
+    using namespace mw::routerports;
+    Request request;
+    request.purpose = Purpose::Mux;
+    request.slot = which;
+    request.description = kMuxDescription;
+    // The shared ports are read in UDP alone: no TCP hole to a port nothing
+    // listens on.
+    request.tcp = false;
+    for (const uint16_t p : remembered)
+        if (muxPortAllowed(devInstance, which, p)) request.remembered.append(p);
+
+    if (which == kMuxStandard) {
+        // No pool behind the eight: a host that finds them all taken streams
+        // on its block port alone, which is where every stream was before.
+        if (!devInstance)
+            for (const uint16_t p : kTunnelPreferred)
+                request.preferred.append(p);
+        return request;
+    }
+    if (which != kMuxBlock) return request;
+
+    // Listed rather than given as a pool: a --dev walks its stretch downwards.
+    const int first = kMediaBasePort;
+    const int last = kMediaBasePort + kMediaPortCount - 1;
+    for (int i = 0; i < kMuxBlockSpan; ++i)
+        request.preferred.append(static_cast<uint16_t>(devInstance ? last - i : first + i));
     return request;
 }
 
@@ -175,7 +228,9 @@ RouterPortCore::Result RouterPortCore::claim(const Request& request)
 bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& result)
 {
     const bool tunnel = request.purpose == Purpose::Tunnel;
-    const uint16_t internal = tunnel ? external : request.internalPort;
+    const bool mux = request.purpose == Purpose::Mux;
+    // The tunnel and the mux listen on the very port the router forwards.
+    const uint16_t internal = (tunnel || mux) ? external : request.internalPort;
 
     if (tunnel && m_BindProbe && !m_BindProbe(external)) {
         result.skipped.append({external, SkipReason::LocalBusy, {}});
@@ -203,8 +258,32 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
         }
     }
 
+    // The mux binds for good, so it binds late: only a number the router has
+    // nothing against is worth a socket. From here on, a port that does not
+    // become a hole is handed back — unless the mux had it before this claim:
+    // that socket may be serving streams, and is not this claim's to close.
+    bool boundForThis = false;
+    if (mux) {
+        bool free = true;
+        if (request.hold) {
+            const Hold held = request.hold(external);
+            free = held != Hold::Failed;
+            boundForThis = held == Hold::NewlyBound;
+        } else if (m_BindProbe) {
+            free = m_BindProbe(external);
+        }
+        if (!free) {
+            result.skipped.append({external, SkipReason::LocalBusy, {}});
+            return false;
+        }
+    }
+    const auto handBack = [&]() {
+        if (boundForThis && request.drop) request.drop(external);
+    };
+
     if (!addWithLatch(external, internal, request.description, kUdp)) {
         result.skipped.append({external, SkipReason::Refused, {}});
+        handBack();
         return false;
     }
 
@@ -216,6 +295,7 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
     const QString after = entryOf(external, leaseLeft);
     if (!after.isEmpty() && after != lan) {
         result.skipped.append({external, SkipReason::KeptElsewhere, after});
+        handBack();
         return false;
     }
 
@@ -229,6 +309,7 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
         logKeptLease(external, leaseLeft);
         if (!addAfresh(external, internal, request.description, kUdp)) {
             result.skipped.append({external, SkipReason::Refused, {}});
+            handBack();
             return false;
         }
     }
@@ -243,7 +324,7 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
     // outbound, so reaching this machine needs the inbound hole too. A
     // neighbour's TCP forward on the same number is left alone, like its UDP
     // one above: the router would repoint it, or remove it and add ours.
-    claim.tcp = tcpWritable(external) &&
+    claim.tcp = request.tcp && tcpWritable(external) &&
                 (kept ? addAfresh(external, internal, request.description, kTcp)
                       : addWithLatch(external, internal, request.description, kTcp));
     m_Held.append(claim);

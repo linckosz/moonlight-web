@@ -676,4 +676,442 @@ void run_router_port_core_tests()
         CHECK_EQ(installed.claim(RouterPortCore::tunnelRequest(false, {})).claim.external,
                  uint16_t(3479));
     }
+
+    // ── The streams' shared ports: the router forwards each to itself ─────
+    {
+        using namespace mw::routerports;
+        const int kStandard = RouterPortCore::kMuxStandard;
+        const int kBlock = RouterPortCore::kMuxBlock;
+        const auto udp = [](uint16_t p) { return qMakePair(p, QStringLiteral("UDP")); };
+        const auto tcp = [](uint16_t p) { return qMakePair(p, QStringLiteral("TCP")); };
+
+        // A lone host: the conferencing port and the head of the block.
+        FakeGateway gw;
+        RouterPortCore core(gw, kAlwaysFree);
+        const auto a = core.claim(RouterPortCore::muxRequest(false, kStandard, {}));
+        CHECK(a.ok);
+        CHECK(a.claim.purpose == Purpose::Mux);
+        CHECK_EQ(a.claim.slot, kStandard);
+        CHECK_EQ(a.claim.external, uint16_t(3478));
+        CHECK_EQ(a.claim.internal, uint16_t(3478));
+        CHECK_EQ(gw.table[udp(3478)].internal, uint16_t(3478));
+        CHECK(!gw.table.contains(tcp(3478)));
+        const auto b = core.claim(RouterPortCore::muxRequest(false, kBlock, {}));
+        CHECK(b.ok);
+        CHECK_EQ(b.claim.slot, kBlock);
+        CHECK_EQ(b.claim.external, kMediaBasePort);
+        CHECK_EQ(b.claim.internal, kMediaBasePort);
+        // One allocator for the tunnel and the mux: the tunnel walks past the
+        // port the streams hold, and is never handed it.
+        const auto t = core.claim(RouterPortCore::tunnelRequest(false, {3478}));
+        CHECK(t.ok);
+        CHECK_EQ(t.claim.external, uint16_t(3479));
+        CHECK(t.skipped.isEmpty());
+        CHECK_EQ(core.held().size(), 3);
+
+        // The other way round: the tunnel got there first, the streams walk on.
+        FakeGateway gw2;
+        RouterPortCore core2(gw2, kAlwaysFree);
+        CHECK_EQ(core2.claim(RouterPortCore::tunnelRequest(false, {})).claim.external,
+                 uint16_t(3478));
+        CHECK_EQ(core2.claim(RouterPortCore::muxRequest(false, kStandard, {})).claim.external,
+                 uint16_t(3479));
+
+        // A neighbour on the front of both walks: never its entries, and the
+        // block port moves up the block, not out to the media pool — the mux
+        // has no use for a hole whose number its socket does not bind.
+        FakeGateway busy;
+        busy.foreign(3478, QStringLiteral("192.168.1.34"));
+        busy.foreign(3479, QStringLiteral("192.168.1.34"));
+        busy.foreign(kMediaBasePort, QStringLiteral("192.168.1.34"));
+        RouterPortCore core3(busy, kAlwaysFree);
+        const auto s = core3.claim(RouterPortCore::muxRequest(false, kStandard, {}));
+        CHECK(s.ok);
+        CHECK_EQ(s.claim.external, uint16_t(3480));
+        CHECK_EQ(s.skipped.size(), 2);
+        CHECK(s.skipped.first().reason == Reason::Foreign);
+        const auto k = core3.claim(RouterPortCore::muxRequest(false, kBlock, {}));
+        CHECK(k.ok);
+        CHECK_EQ(k.claim.external, uint16_t(kMediaBasePort + 1));
+        CHECK_EQ(k.claim.internal, uint16_t(kMediaBasePort + 1));
+        CHECK_EQ(busy.table[udp(3478)].client, QString("192.168.1.34"));
+        CHECK_EQ(busy.table[udp(kMediaBasePort)].client, QString("192.168.1.34"));
+
+        // All eight conferencing ports taken: none for the streams, and no
+        // pool behind the list. The block port is still theirs.
+        FakeGateway full;
+        for (const uint16_t p : kTunnelPreferred)
+            full.foreign(p, QStringLiteral("192.168.1.34"));
+        RouterPortCore core4(full, kAlwaysFree);
+        const auto none = core4.claim(RouterPortCore::muxRequest(false, kStandard, {}));
+        CHECK(!none.ok);
+        CHECK_EQ(none.skipped.size(), 8);
+        CHECK(core4.held().isEmpty());
+        CHECK(core4.claim(RouterPortCore::muxRequest(false, kBlock, {})).ok);
+
+        // A remembered port comes first, as for the tunnel; one this host may
+        // not hold as that port of the mux is forgotten.
+        const auto req = RouterPortCore::muxRequest(false, kStandard, {5350, 46000, 48550});
+        CHECK_EQ(req.remembered, (QList<uint16_t>{5350}));
+        CHECK_EQ(req.preferred.size(), qsizetype(std::size(kTunnelPreferred)));
+        CHECK_EQ(RouterPortCore::muxRequest(false, kBlock, {3478, uint16_t(kMediaBasePort + 2)})
+                     .remembered,
+                 (QList<uint16_t>{uint16_t(kMediaBasePort + 2)}));
+        FakeGateway again;
+        RouterPortCore core5(again, kAlwaysFree);
+        CHECK_EQ(core5.claim(RouterPortCore::muxRequest(false, kStandard, {5350})).claim.external,
+                 uint16_t(5350));
+    }
+
+    // ── A shared port is read in UDP alone: no TCP hole is asked for it ────
+    {
+        using namespace mw::routerports;
+        const auto udp = [](uint16_t p) { return qMakePair(p, QStringLiteral("UDP")); };
+        const auto tcp = [](uint16_t p) { return qMakePair(p, QStringLiteral("TCP")); };
+
+        CHECK(!RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {}).tcp);
+        CHECK(!RouterPortCore::muxRequest(false, RouterPortCore::kMuxBlock, {}).tcp);
+        CHECK(!RouterPortCore::muxRequest(true, RouterPortCore::kMuxBlock, {}).tcp);
+        CHECK(RouterPortCore::tunnelRequest(false, {}).tcp);
+
+        FakeGateway gw;
+        RouterPortCore core(gw, kAlwaysFree);
+        const auto a =
+            core.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {}));
+        const auto b = core.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxBlock, {}));
+        CHECK(a.ok && b.ok);
+        CHECK(!a.claim.tcp);
+        CHECK(!b.claim.tcp);
+        CHECK_EQ(gw.adds, 2);
+        CHECK(gw.table.contains(udp(3478)));
+        CHECK(gw.table.contains(udp(kMediaBasePort)));
+        CHECK(!gw.table.contains(tcp(3478)));
+        CHECK(!gw.table.contains(tcp(kMediaBasePort)));
+
+        // A renewal writes UDP alone, the half-hourly one and the one made
+        // for a single port.
+        gw.elapse(1800);
+        CHECK(core.renew().isEmpty());
+        CHECK_EQ(gw.adds, 4);
+        CHECK(core.renew(3478).isEmpty());
+        CHECK_EQ(gw.adds, 5);
+        CHECK(!gw.table.contains(tcp(3478)));
+        CHECK(!gw.table.contains(tcp(kMediaBasePort)));
+
+        // The same on a router that ignores a renewal and gets the entry afresh.
+        FakeGateway deco;
+        deco.ignoresRenewal = true;
+        deco.table.insert(udp(3478), {deco.lan, 3478, 200});
+        RouterPortCore core2(deco, kAlwaysFree);
+        const auto c =
+            core2.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {}));
+        CHECK(c.ok);
+        CHECK(!c.claim.tcp);
+        CHECK_EQ(deco.table[udp(3478)].lease, kLeaseSec);
+        deco.elapse(1800);
+        CHECK(core2.renew().isEmpty());
+        CHECK_EQ(deco.table[udp(3478)].lease, kLeaseSec);
+        CHECK(!deco.table.contains(tcp(3478)));
+
+        // A TCP forward on the same number is somebody else's business, the
+        // neighbour's or another program's on this machine: not written over
+        // at the claim, not at the renewal, not removed at the release.
+        FakeGateway mixed;
+        mixed.foreignTcp(3478, QStringLiteral("192.168.1.34"));
+        mixed.foreignTcp(3479, mixed.lan);
+        RouterPortCore core3(mixed, kAlwaysFree);
+        const auto d =
+            core3.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {}));
+        CHECK(d.ok);
+        CHECK_EQ(d.claim.external, uint16_t(3478));
+        CHECK_EQ(mixed.table[tcp(3478)].client, QString("192.168.1.34"));
+        const auto e =
+            core3.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {}));
+        CHECK(e.ok);
+        CHECK_EQ(e.claim.external, uint16_t(3479));
+        core3.renew();
+        core3.releaseAll();
+        CHECK(core3.held().isEmpty());
+        CHECK(!mixed.table.contains(udp(3478)));
+        CHECK(!mixed.table.contains(udp(3479)));
+        CHECK_EQ(mixed.table[tcp(3478)].client, QString("192.168.1.34"));
+        CHECK(mixed.table.contains(tcp(3479)));
+        CHECK_EQ(mixed.table[tcp(3479)].lease, uint32_t(0));
+
+        // Where something does listen in TCP, the request says so and the
+        // hole comes alongside, as for the tunnel.
+        FakeGateway both;
+        RouterPortCore core4(both, kAlwaysFree);
+        auto listening = RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {});
+        listening.tcp = true;
+        const auto f = core4.claim(listening);
+        CHECK(f.ok);
+        CHECK(f.claim.tcp);
+        CHECK_EQ(both.table[tcp(3478)].internal, uint16_t(3478));
+    }
+
+    // ── The mux binds for real, late, and hands back what the router denies ─
+    {
+        using namespace mw::routerports;
+        using Hold = RouterPortCore::Hold;
+        const int kStandard = RouterPortCore::kMuxStandard;
+        QList<uint16_t> bound;
+        QList<uint16_t> handedBack;
+        QSet<uint16_t> taken;   // by another program on this machine
+        QSet<uint16_t> already; // bound by the mux before the claim
+        const auto request = [&]() {
+            auto r = RouterPortCore::muxRequest(false, kStandard, {});
+            r.hold = [&](uint16_t p) {
+                if (taken.contains(p)) return Hold::Failed;
+                if (already.contains(p)) return Hold::AlreadyHeld;
+                bound.append(p);
+                return Hold::NewlyBound;
+            };
+            r.drop = [&](uint16_t p) { handedBack.append(p); };
+            return r;
+        };
+        // The probe is the tunnel's: the mux never asks it once it has a hold.
+        const auto kNever = [](uint16_t) { return false; };
+
+        // A neighbour's port costs no socket; a port another program holds is
+        // passed over; the first that can be bound is kept.
+        FakeGateway gw;
+        gw.foreign(3478, QStringLiteral("192.168.1.34"));
+        taken.insert(3479);
+        RouterPortCore core(gw, kNever);
+        const auto r = core.claim(request());
+        CHECK(r.ok);
+        CHECK_EQ(r.claim.external, uint16_t(3480));
+        CHECK_EQ(bound, (QList<uint16_t>{3480}));
+        CHECK(handedBack.isEmpty());
+        CHECK_EQ(r.skipped.size(), 2);
+        CHECK(r.skipped.at(0).reason == Reason::Foreign);
+        CHECK(r.skipped.at(1).reason == Reason::LocalBusy);
+
+        // The router refuses the port once it is bound: handed back, next one.
+        bound.clear();
+        taken.clear();
+        FakeGateway picky;
+        picky.refuse.insert(3478);
+        RouterPortCore core2(picky, kNever);
+        const auto r2 = core2.claim(request());
+        CHECK(r2.ok);
+        CHECK_EQ(r2.claim.external, uint16_t(3479));
+        CHECK_EQ(bound, (QList<uint16_t>{3478, 3479}));
+        CHECK_EQ(handedBack, (QList<uint16_t>{3478}));
+
+        // "Added", yet the table still aims at the neighbour: handed back too.
+        bound.clear();
+        handedBack.clear();
+        struct LateLiar : FakeGateway
+        {
+            int looks = 0;
+            bool owner(uint16_t ext, const QString& proto, QString& client, int& leaseLeft) override
+            {
+                if (ext == 3478 && looks++ == 0) return false;
+                return FakeGateway::owner(ext, proto, client, leaseLeft);
+            }
+        } liar;
+        liar.keepsForeignEntries = true;
+        liar.foreign(3478, QStringLiteral("192.168.1.34"));
+        RouterPortCore core3(liar, kNever);
+        const auto r3 = core3.claim(request());
+        CHECK(r3.ok);
+        CHECK_EQ(r3.claim.external, uint16_t(3479));
+        CHECK_EQ(handedBack, (QList<uint16_t>{3478}));
+        CHECK(!core3.holds(3478));
+
+        // An entry this host left behind is made afresh — and the router will
+        // not have it the second time: handed back as well, and the walk goes on.
+        bound.clear();
+        handedBack.clear();
+        struct Fickle : FakeGateway
+        {
+            bool remove(uint16_t ext, const QString& proto) override
+            {
+                refuse.insert(ext);
+                return FakeGateway::remove(ext, proto);
+            }
+        } fickle;
+        fickle.ignoresRenewal = true;
+        const auto left = qMakePair(uint16_t(3478), QStringLiteral("UDP"));
+        fickle.table.insert(left, {fickle.lan, 3478, 200});
+        RouterPortCore core6(fickle, kNever);
+        const auto r6 = core6.claim(request());
+        CHECK(r6.ok);
+        CHECK_EQ(r6.claim.external, uint16_t(3479));
+        CHECK_EQ(bound, (QList<uint16_t>{3478, 3479}));
+        CHECK_EQ(handedBack, (QList<uint16_t>{3478}));
+        CHECK_EQ(r6.skipped.size(), 1);
+        CHECK(r6.skipped.first().reason == Reason::Refused);
+        CHECK(!fickle.table.contains(left));
+
+        // A port the mux held before the claim — the hole was lost, the socket
+        // kept — is claimed again without a new bind...
+        bound.clear();
+        handedBack.clear();
+        already.insert(3478);
+        FakeGateway back;
+        RouterPortCore core7(back, kNever);
+        const auto r7 = core7.claim(request());
+        CHECK(r7.ok);
+        CHECK_EQ(r7.claim.external, uint16_t(3478));
+        CHECK(bound.isEmpty());
+        CHECK(handedBack.isEmpty());
+        // ...and is never handed back, whatever the router answers: that
+        // socket may be serving streams. Refused, kept elsewhere, refused
+        // afresh — the walk goes on, the socket stays.
+        FakeGateway no;
+        no.refuse.insert(3478);
+        RouterPortCore core8(no, kNever);
+        const auto r8 = core8.claim(request());
+        CHECK(r8.ok);
+        CHECK_EQ(r8.claim.external, uint16_t(3479));
+        CHECK(r8.skipped.first().reason == Reason::Refused);
+        CHECK_EQ(bound, (QList<uint16_t>{3479}));
+        CHECK(handedBack.isEmpty());
+
+        bound.clear();
+        LateLiar liar2;
+        liar2.keepsForeignEntries = true;
+        liar2.foreign(3478, QStringLiteral("192.168.1.34"));
+        RouterPortCore core9(liar2, kNever);
+        const auto r9 = core9.claim(request());
+        CHECK(r9.ok);
+        CHECK_EQ(r9.claim.external, uint16_t(3479));
+        CHECK(r9.skipped.first().reason == Reason::KeptElsewhere);
+        CHECK(handedBack.isEmpty());
+
+        bound.clear();
+        Fickle fickle2;
+        fickle2.ignoresRenewal = true;
+        fickle2.table.insert(left, {fickle2.lan, 3478, 200});
+        RouterPortCore core10(fickle2, kNever);
+        const auto r10 = core10.claim(request());
+        CHECK(r10.ok);
+        CHECK_EQ(r10.claim.external, uint16_t(3479));
+        CHECK_EQ(bound, (QList<uint16_t>{3479}));
+        CHECK(handedBack.isEmpty());
+        already.clear();
+
+        // Nothing can be bound at all: no hole, and not one write to the router.
+        bound.clear();
+        handedBack.clear();
+        for (const uint16_t p : kTunnelPreferred)
+            taken.insert(p);
+        FakeGateway idle;
+        RouterPortCore core4(idle, kNever);
+        const auto r4 = core4.claim(request());
+        CHECK(!r4.ok);
+        CHECK_EQ(r4.skipped.size(), 8);
+        CHECK_EQ(idle.adds, 0);
+        CHECK(bound.isEmpty());
+        CHECK(handedBack.isEmpty());
+
+        // Without a hold the probe answers, as it does for the tunnel.
+        FakeGateway plain;
+        RouterPortCore core5(plain, [](uint16_t p) { return p != 3478; });
+        const auto r5 = core5.claim(RouterPortCore::muxRequest(false, kStandard, {}));
+        CHECK(r5.ok);
+        CHECK_EQ(r5.claim.external, uint16_t(3479));
+        CHECK(r5.skipped.first().reason == Reason::LocalBusy);
+    }
+
+    // ── A shared port the router now aims elsewhere is reported, like any ──
+    {
+        FakeGateway gw;
+        RouterPortCore core(gw, kAlwaysFree);
+        const auto a =
+            core.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {}));
+        const auto b = core.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxBlock, {}));
+        CHECK(a.ok && b.ok);
+
+        gw.keepsForeignEntries = true;
+        gw.foreign(a.claim.external, QStringLiteral("192.168.1.34"));
+        gw.elapse(1800);
+        const auto lost = core.renew();
+        CHECK_EQ(lost.size(), 1);
+        CHECK(lost.first().claim.purpose == Purpose::Mux);
+        CHECK_EQ(lost.first().claim.slot, RouterPortCore::kMuxStandard);
+        CHECK_EQ(lost.first().owner, QString("192.168.1.34"));
+        CHECK(!core.holds(a.claim.external));
+        CHECK(core.holds(b.claim.external));
+        // The next claim for that port of the mux walks past the neighbour.
+        const auto next =
+            core.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {3478}));
+        CHECK(next.ok);
+        CHECK_EQ(next.claim.external, uint16_t(3479));
+    }
+
+    // ── A --dev shares one port, from the top of the block, and never a
+    //    conferencing port; the installed host's walk and its own never meet ─
+    {
+        using namespace mw::routerports;
+        const int kStandard = RouterPortCore::kMuxStandard;
+        const int kBlock = RouterPortCore::kMuxBlock;
+        const uint16_t top = static_cast<uint16_t>(kMediaBasePort + kMediaPortCount - 1);
+
+        for (const uint16_t p : kTunnelPreferred) {
+            CHECK(RouterPortCore::muxPortAllowed(false, kStandard, p));
+            CHECK(!RouterPortCore::muxPortAllowed(true, kStandard, p));
+            CHECK(!RouterPortCore::muxPortAllowed(false, kBlock, p));
+        }
+        CHECK(!RouterPortCore::muxPortAllowed(false, kStandard, kTunnelPoolBegin));
+        CHECK(!RouterPortCore::muxPortAllowed(false, kStandard, kMediaBasePort));
+        CHECK(!RouterPortCore::muxPortAllowed(false, 2, kMediaBasePort));
+        // Every port of the block belongs to one walk at most, never to both.
+        int installedPorts = 0, devPorts = 0;
+        for (int p = kMediaBasePort; p <= top; ++p) {
+            const bool installed = RouterPortCore::muxPortAllowed(false, kBlock, uint16_t(p));
+            const bool dev = RouterPortCore::muxPortAllowed(true, kBlock, uint16_t(p));
+            CHECK(!(installed && dev));
+            installedPorts += installed;
+            devPorts += dev;
+        }
+        CHECK_EQ(installedPorts, kMuxBlockSpan);
+        CHECK_EQ(devPorts, kMuxBlockSpan);
+        CHECK(2 * kMuxBlockSpan <= kMediaPortCount);
+        CHECK(RouterPortCore::muxPortAllowed(false, kBlock, kMediaBasePort));
+        CHECK(RouterPortCore::muxPortAllowed(true, kBlock, top));
+        CHECK(!RouterPortCore::muxPortAllowed(true, kBlock, kMediaBasePort));
+        CHECK(!RouterPortCore::muxPortAllowed(false, kBlock, top));
+        CHECK(!RouterPortCore::muxPortAllowed(false, kBlock, uint16_t(kMediaBasePort - 1)));
+        CHECK(!RouterPortCore::muxPortAllowed(true, kBlock, uint16_t(top + 1)));
+
+        // No conferencing port for a --dev: no candidate, and the router is
+        // not asked a thing — whatever the --dev remembers.
+        FakeGateway gw;
+        RouterPortCore dev(gw, kAlwaysFree);
+        const auto none = dev.claim(RouterPortCore::muxRequest(true, kStandard, {3478}));
+        CHECK(!none.ok);
+        CHECK(none.skipped.isEmpty());
+        CHECK_EQ(gw.adds, 0);
+        CHECK(gw.table.isEmpty());
+
+        // Its one port: the top of the block, then down.
+        const auto req = RouterPortCore::muxRequest(true, kBlock, {kMediaBasePort, 3478});
+        CHECK(req.remembered.isEmpty());
+        CHECK_EQ(req.preferred.size(), qsizetype(kMuxBlockSpan));
+        CHECK_EQ(req.preferred.first(), top);
+        CHECK_EQ(req.preferred.last(), uint16_t(top - kMuxBlockSpan + 1));
+        const auto first = dev.claim(RouterPortCore::muxRequest(true, kBlock, {}));
+        CHECK(first.ok);
+        CHECK_EQ(first.claim.external, top);
+        CHECK_EQ(first.claim.internal, top);
+        FakeGateway gw2;
+        RouterPortCore dev2(gw2, [top](uint16_t p) { return p != top; });
+        CHECK_EQ(dev2.claim(RouterPortCore::muxRequest(true, kBlock, {})).claim.external,
+                 uint16_t(top - 1));
+
+        // Both on one machine, one LAN address, one router: each in its own
+        // stretch, whichever started first.
+        FakeGateway shared;
+        RouterPortCore scratch(shared, kAlwaysFree);
+        CHECK_EQ(scratch.claim(RouterPortCore::muxRequest(true, kBlock, {})).claim.external, top);
+        RouterPortCore installed(shared, kAlwaysFree);
+        CHECK_EQ(installed.claim(RouterPortCore::muxRequest(false, kBlock, {})).claim.external,
+                 kMediaBasePort);
+        CHECK_EQ(installed.claim(RouterPortCore::muxRequest(false, kStandard, {})).claim.external,
+                 uint16_t(3478));
+    }
 }
