@@ -145,4 +145,47 @@ QString lanOnlyRefusal()
                           "cannot be enabled. Open it at its LAN address instead.");
 }
 
+bool stdoutIsPayload(int argc, char** argv)
+{
+    // Internal modes (a protocol, a helper's answer), the operator commands,
+    // and the parser's own texts: two INFO lines ahead of the usage text is
+    // exactly the kind of noise that breaks `moonlightweb --help | less`.
+    static const char* const kModes[] = {"--stream-worker",
+                                         "--worker-service",
+                                         "--worker-service-install",
+                                         "--worker-service-remove",
+                                         "--native-probe",
+                                         "--vdisplay-apply",
+                                         "--vdisplay-guard",
+                                         "--vhid-apply",
+                                         "--update-apply",
+                                         "--open-on-desktop",
+                                         "--status",
+                                         "--new-pin",
+                                         "--enable-internet",
+                                         "--set-admin-password",
+                                         "--clear-admin-password",
+                                         "--open-link",
+                                         "--print-link",
+                                         "--help",
+                                         "--help-all",
+                                         "-h",
+                                         "-?",
+                                         "--version",
+                                         "-v"};
+    // The stream limits: operator commands too, given with a value.
+    static const char* const kWithValue[] = {"--max-allowed-frame-rate", "--max-allowed-bitrate",
+                                             "--max-allowed-stream-resolution"};
+    for (int i = 1; i < argc; ++i) {
+        for (const char* mode : kModes)
+            if (std::strcmp(argv[i], mode) == 0) return true;
+        for (const char* mode : kWithValue) {
+            const std::size_t n = std::strlen(mode);
+            if (std::strncmp(argv[i], mode, n) == 0 && (argv[i][n] == '\0' || argv[i][n] == '='))
+                return true;
+        }
+    }
+    return false;
+}
+
 } // namespace mw::edition

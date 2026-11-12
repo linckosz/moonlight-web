@@ -1679,40 +1679,10 @@ int main(int argc, char* argv[])
     // Route the console echo to stderr BEFORE anything logs (CrashHandler::install
     // below logs an INFO line), for every mode whose stdout is a payload rather
     // than a log: --stream-worker carries the JSON event protocol, and the
-    // operator commands print a report a human (or a script) reads. The real
-    // branches for all of them run after CLI parsing.
-    // --help/--version included: QCommandLineParser writes them to stdout and
-    // exits, and two INFO lines ahead of the usage text is exactly the kind of
-    // noise that breaks `moonlightweb --help | less`.
-    for (int i = 1; i < argc; ++i) {
-        static const char* const kQuietStdout[] = {"--stream-worker",
-                                                   "--worker-service",
-                                                   "--worker-service-install",
-                                                   "--worker-service-remove",
-                                                   "--native-probe",
-                                                   "--vdisplay-apply",
-                                                   "--vdisplay-guard",
-                                                   "--vhid-apply",
-                                                   "--update-apply",
-                                                   "--open-on-desktop",
-                                                   "--status",
-                                                   "--new-pin",
-                                                   "--enable-internet",
-                                                   "--set-admin-password",
-                                                   "--clear-admin-password",
-                                                   "--help",
-                                                   "--help-all",
-                                                   "-h",
-                                                   "-?",
-                                                   "--version",
-                                                   "-v"};
-        for (const char* flag : kQuietStdout) {
-            if (qstrcmp(argv[i], flag) == 0) {
-                Logger::instance()->setConsoleToStderr(true);
-                break;
-            }
-        }
-    }
+    // operator commands print what a human (or a script) reads — a report, a
+    // PIN, a link — which must come out alone. The real branches for all of
+    // them run after CLI parsing; the list is mw::edition::stdoutIsPayload.
+    if (mw::edition::stdoutIsPayload(argc, argv)) Logger::instance()->setConsoleToStderr(true);
     // Where this process logs is decided HERE, from raw argv, and not after
     // parser.process() — CrashHandler::install() just below writes its first
     // line, so anything decided later would have leaked that line into the

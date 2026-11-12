@@ -116,4 +116,15 @@ bool lanOnly();
 /// The error every refused Internet Access request answers with.
 QString lanOnlyRefusal();
 
+// ── Standard output ──────────────────────────────────────────────────────────
+
+/// Whether this run's standard output carries something other than the log:
+/// the stream worker's event protocol, a helper's answer, the parser's own
+/// texts, or what an operator command prints for a person or a script to
+/// read — a report, a PIN, a link. Read from the raw command line, before
+/// anything logs: the log's console echo then goes to standard error, and
+/// standard output holds the answer alone. The stream limits take a value and
+/// count in both spellings, "--limit value" and "--limit=value".
+bool stdoutIsPayload(int argc, char** argv);
+
 } // namespace mw::edition

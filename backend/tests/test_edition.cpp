@@ -4,6 +4,9 @@
 #include "test_framework.h"
 #include "common/Edition.h"
 
+#include <string>
+#include <vector>
+
 using namespace mw::edition;
 
 // The names a build answers to decide where its state lives and what the
@@ -86,4 +89,40 @@ void run_edition_tests()
     CHECK(!lanOnly());
     qunsetenv("MW_LAN_ONLY");
     CHECK(!lanOnly());
+
+    SECTION("Edition — a run whose standard output is its answer, not the log");
+    {
+        const auto payload = [](std::vector<std::string> args) {
+            std::string exe = "moonlightweb";
+            std::vector<char*> argv{exe.data()};
+            for (std::string& arg : args)
+                argv.push_back(arg.data());
+            return stdoutIsPayload(static_cast<int>(argv.size()), argv.data());
+        };
+        // A server run: the console shows the log.
+        CHECK(!payload({}));
+        CHECK(!payload({"--dev", "--autostart", "--log", "server.log"}));
+        CHECK(!payload({"--noadmin", "--port", "8080"}));
+        // The operator commands: a report, a PIN, a link, alone on standard output.
+        for (const char* verb :
+             {"--status", "--new-pin", "--enable-internet", "--set-admin-password",
+              "--clear-admin-password", "--open-link", "--print-link"}) {
+            CHECK(payload({verb}));
+            CHECK(payload({"--dev", verb}));
+        }
+        // The stream limits take a value, in either spelling.
+        CHECK(payload({"--max-allowed-bitrate", "20"}));
+        CHECK(payload({"--max-allowed-bitrate=20"}));
+        CHECK(payload({"--max-allowed-frame-rate=60"}));
+        CHECK(payload({"--dev", "--max-allowed-stream-resolution", "1080"}));
+        // The worker's protocol, a helper's answer, the parser's own texts.
+        for (const char* mode : {"--stream-worker", "--native-probe", "--vdisplay-apply", "--help",
+                                 "--version", "-h", "-v"})
+            CHECK(payload({mode}));
+        // A word that only starts like one of them, or is another option's value, is not one.
+        CHECK(!payload({"--statusx"}));
+        CHECK(!payload({"--print-links"}));
+        CHECK(!payload({"--max-allowed-bitrates"}));
+        CHECK(!payload({"--log", "status"}));
+    }
 }
