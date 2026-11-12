@@ -16,7 +16,9 @@
  */
 
 #include "RouterPortAllocator.h"
+#include "RouterHoles.h"
 #include "RouterPortPools.h"
+#include "SocketTables.h"
 #include "UPNPClient.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
@@ -24,6 +26,8 @@
 
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QStandardPaths>
+#include <QSysInfo>
 #include <QThread>
 #include <QTimer>
 #include <QUdpSocket>
@@ -49,20 +53,21 @@ public:
                                         description.toStdString(), protocol.toStdString());
     }
 
-    bool owner(uint16_t externalPort, const QString& protocol, QString& client,
-               int& leaseLeft) override
+    Lookup entry(uint16_t externalPort, const QString& protocol, Entry& out) override
     {
-        std::string who;
-        std::string internalPort;
-        std::string lease;
-        if (!m_Client->getExistingPortMapping(externalPort, protocol.toStdString(), who,
-                                              internalPort, &lease))
-            return false;
-        client = QString::fromStdString(who);
+        UPNPClient::MappingEntry found;
+        switch (m_Client->portMapping(externalPort, protocol.toStdString(), found)) {
+        case UPNPClient::Mapping::None: return Lookup::None;
+        case UPNPClient::Mapping::Unknown: return Lookup::Unknown;
+        case UPNPClient::Mapping::Found: break;
+        }
+        out.client = QString::fromStdString(found.internalClient);
+        out.internalPort = portOf(found.internalPort);
+        out.description = QString::fromStdString(found.description);
         bool number = false;
-        const int seconds = QString::fromStdString(lease).trimmed().toInt(&number);
-        leaseLeft = number && seconds >= 0 ? seconds : -1;
-        return true;
+        const int seconds = QString::fromStdString(found.leaseDuration).trimmed().toInt(&number);
+        out.leaseLeft = number && seconds >= 0 ? seconds : -1;
+        return Lookup::Found;
     }
 
     bool remove(uint16_t externalPort, const QString& protocol) override
@@ -71,8 +76,102 @@ public:
     }
 
 private:
+    /// A port as a router writes it: figures and nothing else. 0 for anything
+    /// that is not one.
+    static uint16_t portOf(const std::string& text)
+    {
+        if (text.empty() || text.size() > 5) return 0;
+        unsigned value = 0;
+        for (const char c : text) {
+            if (c < '0' || c > '9') return 0;
+            value = value * 10 + static_cast<unsigned>(c - '0');
+        }
+        return value <= 65535 ? static_cast<uint16_t>(value) : 0;
+    }
+
     UPNPClient* m_Client;
 };
+
+/// What the worker thread is started with, read on the main thread.
+struct Startup
+{
+    QString previousLan;
+    /// Where the record of this host's router entries is kept.
+    QString dataDir;
+    bool devInstance = false;
+    /// What a version that kept no such record remembers in the settings.
+    mw::routerholes::Earlier earlier;
+};
+
+Startup startupOf(const AppSettings& settings)
+{
+    Startup s;
+    s.previousLan = settings.routerLanIp();
+    s.dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    s.devInstance = mw::edition::isDev();
+    s.earlier.lan = s.previousLan;
+    s.earlier.tunnel = settings.rememberedTunnelPorts();
+    s.earlier.media = settings.rememberedMediaPorts();
+    return s;
+}
+
+/// A line of the record as the log names it: no address, and no tag.
+QString holeName(const mw::routerholes::Hole& hole)
+{
+    QString what;
+    switch (hole.kind) {
+    case mw::routerholes::Kind::Tunnel: what = QStringLiteral("tunnel"); break;
+    case mw::routerholes::Kind::Streams: what = QStringLiteral("streams' shared port"); break;
+    case mw::routerholes::Kind::Media: what = QStringLiteral("media slot %1").arg(hole.slot); break;
+    }
+    return QStringLiteral("%1 %2 (%3)")
+        .arg(hole.tcp ? QStringLiteral("TCP") : QStringLiteral("UDP"))
+        .arg(hole.external)
+        .arg(what);
+}
+
+/// What became of an entry an earlier run left on the router. Every removal
+/// is said; so is every entry that was looked at and left.
+void logSwept(const mw::routerholes::Hole& hole, const RouterPortCore::SweepResult& result)
+{
+    using Swept = RouterPortCore::Swept;
+    const QString name = holeName(hole);
+    switch (result.outcome) {
+    case Swept::Removed:
+        Logger::info(
+            QStringLiteral("[UPNP] Left by an earlier run: %1 removed from the router").arg(name));
+        break;
+    case Swept::NotOurs:
+        Logger::info(QStringLiteral("[UPNP] Left by an earlier run: %1 now has another %2 on the "
+                                    "router — left as it is")
+                         .arg(name, result.detail));
+        break;
+    case Swept::Unknown:
+        Logger::info(QStringLiteral("[UPNP] Left by an earlier run: the router does not say what "
+                                    "%1 is — left as it is, asked again at the next start")
+                         .arg(name));
+        break;
+    case Swept::Stayed:
+        Logger::warning(QStringLiteral("[UPNP] Left by an earlier run: %1 is still on the router "
+                                       "after its removal was asked — asked again at the next "
+                                       "start")
+                            .arg(name));
+        break;
+    case Swept::InUse:
+        Logger::info(result.detail == QLatin1String("listened")
+                         ? QStringLiteral("[UPNP] Left by an earlier version: %1 leads to a port "
+                                          "something on this machine listens on — left as it is")
+                               .arg(name)
+                         : QStringLiteral("[UPNP] Left by an earlier version: this system does "
+                                          "not say whether anything listens on the port %1 leads "
+                                          "to — left as it is")
+                               .arg(name));
+        break;
+    case Swept::Gone:
+    case Swept::OtherAddress:
+    case Swept::HeldAgain: break;
+    }
+}
 
 /// Whether this machine can actually listen there. See RouterPortCore's
 /// constructor for why it is asked before the mapping is made.
@@ -127,9 +226,11 @@ public:
         m_Core.reset();
         m_Gateway.reset();
         m_Upnp.reset();
+        // After the core, which goes by it. Its lock ends here.
+        m_Record.reset();
     }
 
-    void start(const QString& previousLan)
+    void start(const Startup& startup)
     {
         if (m_Upnp) return;
         auto upnp = std::make_unique<UPNPClient>();
@@ -145,7 +246,20 @@ public:
         m_Upnp = std::move(upnp);
         m_Gateway = std::make_unique<UpnpGatewayAdapter>(m_Upnp.get());
         m_Core = std::make_unique<RouterPortCore>(*m_Gateway, &portIsFree);
-        m_Core->setPreviousLanAddress(previousLan);
+        m_Core->setPreviousLanAddress(startup.previousLan);
+        // What this host writes on the router is noted, so that what a run
+        // that was killed left there can be taken back (RouterHoles.h). Opened
+        // once: its lock is this process's for as long as it lives.
+        if (!m_RecordTried) {
+            m_RecordTried = true;
+            QString said;
+            m_Record = mw::routerholes::File::open(startup.dataDir, startup.devInstance,
+                                                   QSysInfo::machineUniqueId(), startup.earlier,
+                                                   lan, &said);
+            if (!said.isEmpty()) Logger::info(QStringLiteral("[UPNP] Note: ") + said);
+        }
+        m_Core->setRecord(m_Record.get());
+        m_Core->setListens(&mw::sockettables::listens);
 
         m_Renew = new QTimer(this);
         connect(m_Renew, &QTimer::timeout, this, [this]() { renew(); });
@@ -157,6 +271,35 @@ public:
                 o->onDiscovered(true, publicIp, lan, gateway);
             },
             Qt::QueuedConnection);
+
+        // What an earlier run left on the router. Queued, so that the claims
+        // that waited for this discovery are served first, and one line at a
+        // time, so that those that come meanwhile do not wait for the sweep.
+        m_Sweep = m_Core->sweepList();
+        if (!m_Sweep.isEmpty())
+            QMetaObject::invokeMethod(this, [this]() { sweepFirst(); }, Qt::QueuedConnection);
+    }
+
+    void sweepFirst()
+    {
+        if (!m_Core || m_Sweep.isEmpty()) return;
+        if (!m_Core->sweepBelieved(m_Sweep)) {
+            Logger::info(QStringLiteral("[UPNP] Asked about a port no MoonlightWeb ever maps, the "
+                                        "router did not answer that it has no such entry: "
+                                        "nothing an earlier run left on it is removed"));
+            m_Sweep.clear();
+            return;
+        }
+        sweepNext();
+    }
+
+    void sweepNext()
+    {
+        if (!m_Core || m_Sweep.isEmpty()) return;
+        const mw::routerholes::Hole hole = m_Sweep.takeFirst();
+        logSwept(hole, m_Core->sweep(hole));
+        if (!m_Sweep.isEmpty())
+            QMetaObject::invokeMethod(this, [this]() { sweepNext(); }, Qt::QueuedConnection);
     }
 
     void claim(quint64 token, const RouterPortCore::Request& request)
@@ -203,7 +346,12 @@ private:
     RouterPortAllocator* m_Owner;
     std::unique_ptr<UPNPClient> m_Upnp;
     std::unique_ptr<UpnpGatewayAdapter> m_Gateway;
+    /// Null when another process has it: this run then notes nothing.
+    std::unique_ptr<mw::routerholes::File> m_Record;
+    bool m_RecordTried = false;
     std::unique_ptr<RouterPortCore> m_Core;
+    /// The lines of the record still to be looked at.
+    QList<mw::routerholes::Hole> m_Sweep;
     QTimer* m_Renew = nullptr;
 };
 
@@ -249,9 +397,9 @@ void RouterPortAllocator::discover()
     // Asked again: the worker keeps no client after a miss, so start() looks
     // for the router afresh.
     m_State = GatewayState::Discovering;
-    const QString previousLan = m_Settings->routerLanIp();
+    const Startup startup = startupOf(*m_Settings);
     QMetaObject::invokeMethod(
-        m_Worker, [w = m_Worker, previousLan]() { w->start(previousLan); }, Qt::QueuedConnection);
+        m_Worker, [w = m_Worker, startup]() { w->start(startup); }, Qt::QueuedConnection);
 }
 
 void RouterPortAllocator::startWorker()
@@ -264,9 +412,9 @@ void RouterPortAllocator::startWorker()
     connect(m_Thread, &QThread::finished, m_Worker, &QObject::deleteLater);
     m_Thread->start();
 
-    const QString previousLan = m_Settings->routerLanIp();
+    const Startup startup = startupOf(*m_Settings);
     QMetaObject::invokeMethod(
-        m_Worker, [w = m_Worker, previousLan]() { w->start(previousLan); }, Qt::QueuedConnection);
+        m_Worker, [w = m_Worker, startup]() { w->start(startup); }, Qt::QueuedConnection);
 }
 
 void RouterPortAllocator::onDiscovered(bool ok, const QString& publicIp, const QString& lanIp,

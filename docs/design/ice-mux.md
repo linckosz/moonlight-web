@@ -150,6 +150,15 @@ it is forgotten. Nothing is closed while the router is being asked for a
 port: the answer may be that a replaced one serves again. The mux holds eight
 sockets at most; past that it holds no new port until one is closed.
 
+A host that stops removes its holes; one that is killed leaves them, for one
+lease or for as long as a router that keeps no lease runs. So every hole of
+the host, the tunnel's and the slots' as well as these, is noted before it is
+made, and its description ends with a tag of the installation, six characters
+drawn once. The next start takes back what it finds of them, once the router
+has answered: only an entry that is this installation's by that record, by
+the address it forwards to, by its port and by its description, and none on a
+doubt (`network/RouterHoles.h`, `RouterPortCore::sweep`).
+
 Each agent is registered with the sockets its worker was handed, and hears each
 under its own number for it (0 for its first). A datagram that comes in on a
 socket an agent was not given is not handed to that agent: it could not answer

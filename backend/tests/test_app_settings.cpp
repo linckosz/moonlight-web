@@ -679,7 +679,11 @@ void run_app_settings_tests()
     CHECK_EQ(s.rememberedMediaPort(0), quint16(48010));
     CHECK_EQ(s.rememberedMediaPort(1), quint16(46100));
     CHECK_EQ(s.rememberedMediaPort(2), quint16(0));
+    // All of them at once, as (slot, port)
+    CHECK(s.rememberedMediaPorts() ==
+          (QList<QPair<int, quint16>>{{0, quint16(48010)}, {1, quint16(46100)}}));
     s.forgetMediaPort(0);
+    CHECK(s.rememberedMediaPorts() == (QList<QPair<int, quint16>>{{1, quint16(46100)}}));
     CHECK_EQ(s.rememberedMediaPort(0), quint16(0));
     CHECK_EQ(s.rememberedMediaPort(1), quint16(46100));
 

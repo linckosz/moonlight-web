@@ -362,6 +362,8 @@ add_executable(mw-server
     src/network/UPNPClient.cpp
     src/network/LinkAddresses.cpp
     src/network/RouterPortCore.cpp
+    src/network/RouterHoles.cpp
+    src/network/SocketTables.cpp
     src/network/IceMuxCore.cpp
     src/network/IceMux.cpp
     src/network/IceMuxPorts.cpp

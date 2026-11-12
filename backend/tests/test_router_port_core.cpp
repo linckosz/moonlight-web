@@ -23,7 +23,7 @@ using Reason = RouterPortCore::SkipReason;
 /// A router's table, with the knobs the bugs were found under.
 struct FakeGateway : IUpnpGateway
 {
-    struct Entry
+    struct Row
     {
         QString client;
         uint16_t internal = 0;
@@ -33,7 +33,7 @@ struct FakeGateway : IUpnpGateway
 
     QString lan = QStringLiteral("192.168.1.20");
     /// (external, protocol) → entry
-    QMap<QPair<uint16_t, QString>, Entry> table;
+    QMap<QPair<uint16_t, QString>, Row> table;
     /// A Livebox: AddPortMapping on an entry somebody else holds succeeds and
     /// the table keeps pointing at them.
     bool keepsForeignEntries = false;
@@ -93,14 +93,15 @@ struct FakeGateway : IUpnpGateway
         return true;
     }
 
-    bool owner(uint16_t ext, const QString& proto, QString& client, int& leaseLeft) override
+    Lookup entry(uint16_t ext, const QString& proto, Entry& out) override
     {
-        if (mute) return false;
+        if (mute) return Lookup::Unknown;
         const auto key = qMakePair(ext, proto);
-        if (!table.contains(key)) return false;
-        client = table[key].client;
-        leaseLeft = static_cast<int>(table[key].lease);
-        return true;
+        if (!table.contains(key)) return Lookup::None;
+        out.client = table[key].client;
+        out.internalPort = table[key].internal;
+        out.leaseLeft = static_cast<int>(table[key].lease);
+        return Lookup::Found;
     }
 
     bool remove(uint16_t ext, const QString& proto) override
@@ -119,7 +120,6 @@ RouterPortCore::Request tunnelRequest(const QList<uint16_t>& remembered = {})
         r.preferred.append(p);
     r.poolBegin = mw::routerports::kTunnelPoolBegin;
     r.poolEnd = mw::routerports::kTunnelPoolEnd;
-    r.description = QStringLiteral("MoonlightWeb tunnel");
     return r;
 }
 
@@ -133,7 +133,6 @@ RouterPortCore::Request mediaRequest(int slot, uint16_t remembered = 0)
     r.preferred.append(r.internalPort);
     r.poolBegin = mw::routerports::kMediaPoolBegin;
     r.poolEnd = mw::routerports::kMediaPoolEnd;
-    r.description = QStringLiteral("MoonlightWeb media slot %1").arg(slot);
     return r;
 }
 
@@ -227,11 +226,11 @@ void run_router_port_core_tests()
         struct LateLiar : FakeGateway
         {
             int looks = 0;
-            bool owner(uint16_t ext, const QString& proto, QString& client, int& leaseLeft) override
+            Lookup entry(uint16_t ext, const QString& proto, Entry& out) override
             {
                 // First look at 3478 says "nobody"; the read-back tells the truth.
-                if (ext == 3478 && looks++ == 0) return false;
-                return FakeGateway::owner(ext, proto, client, leaseLeft);
+                if (ext == 3478 && looks++ == 0) return Lookup::None;
+                return FakeGateway::entry(ext, proto, out);
             }
         } liar;
         liar.keepsForeignEntries = true;
@@ -906,10 +905,10 @@ void run_router_port_core_tests()
         struct LateLiar : FakeGateway
         {
             int looks = 0;
-            bool owner(uint16_t ext, const QString& proto, QString& client, int& leaseLeft) override
+            Lookup entry(uint16_t ext, const QString& proto, Entry& out) override
             {
-                if (ext == 3478 && looks++ == 0) return false;
-                return FakeGateway::owner(ext, proto, client, leaseLeft);
+                if (ext == 3478 && looks++ == 0) return Lookup::None;
+                return FakeGateway::entry(ext, proto, out);
             }
         } liar;
         liar.keepsForeignEntries = true;
@@ -1163,8 +1162,19 @@ void run_router_port_core_tests()
         CHECK_EQ(plain.poolEnd, kMediaPoolEnd);
         CHECK(plain.tcp);
         CHECK(plain.hasCandidate());
-        CHECK(plain.description == QStringLiteral("MoonlightWeb media slot 3"));
         CHECK(RouterPortCore::mediaRequest(false, false, 3, third, 0, false).remembered.isEmpty());
+        // A remembered number that is neither of the block nor of the pool is
+        // no number a slot's hole may have: it is not asked for again.
+        CHECK(
+            RouterPortCore::mediaRequest(false, false, 3, third, 3478, false).remembered.isEmpty());
+        CHECK(RouterPortCore::mediaRequest(false, false, 3, third, 48010, false)
+                  .remembered.isEmpty());
+        CHECK(RouterPortCore::mediaPortAllowed(kMediaBasePort));
+        CHECK(RouterPortCore::mediaPortAllowed(kMediaPoolBegin));
+        CHECK(RouterPortCore::mediaPortAllowed(kMediaPoolEnd));
+        CHECK(!RouterPortCore::mediaPortAllowed(uint16_t(kMediaPoolEnd + 1)));
+        CHECK(!RouterPortCore::mediaPortAllowed(uint16_t(kMediaBasePort + kMediaPortCount)));
+        CHECK(!RouterPortCore::mediaPortAllowed(0));
         // The same request the tests above make by hand.
         const auto byHand = mediaRequest(3, 46120);
         CHECK(byHand.remembered == plain.remembered && byHand.preferred == plain.preferred);

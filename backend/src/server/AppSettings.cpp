@@ -1305,6 +1305,20 @@ quint16 AppSettings::rememberedMediaPort(int slot) const
     return (port > 0 && port <= 65535) ? static_cast<quint16>(port) : 0;
 }
 
+QList<QPair<int, quint16>> AppSettings::rememberedMediaPorts() const
+{
+    QList<QPair<int, quint16>> out;
+    const QJsonObject media = readAll().value(kRouterPortsKey).toObject().value("media").toObject();
+    for (auto it = media.constBegin(); it != media.constEnd(); ++it) {
+        bool number = false;
+        const int slot = it.key().toInt(&number);
+        const int port = it.value().toInt();
+        if (number && slot >= 0 && port > 0 && port <= 65535)
+            out.append({slot, static_cast<quint16>(port)});
+    }
+    return out;
+}
+
 void AppSettings::rememberMediaPort(int slot, quint16 port)
 {
     if (port == 0 || slot < 0) return;

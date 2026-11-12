@@ -51,6 +51,13 @@ class QTimer;
  * hands the stream its external port before the worker is spawned — the
  * worker itself no longer touches the router at all.
  *
+ * The holes are removed when the host stops. A host that is killed leaves
+ * them, so each one is noted before it is made (RouterHoles.h), and the next
+ * start takes back what it finds of them, once the router has been found:
+ * only an entry that is this installation's by that record, by its address,
+ * by its port and by its description, and never on a doubt
+ * (RouterPortCore::sweep).
+ *
  * Threading: every call to the router is a SOAP round trip, and discovery is
  * two seconds. All of it runs on a thread of its own; the public methods here
  * are for the main thread, and results come back through callbacks on the

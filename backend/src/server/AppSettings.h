@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QList>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QJsonArray>
@@ -772,6 +773,8 @@ public:
 
     /// Router-side (external) media port remembered for a stream slot, 0 if none.
     quint16 rememberedMediaPort(int slot) const;
+    /// Every slot that has one, with it: (stream slot, router-side port).
+    QList<QPair<int, quint16>> rememberedMediaPorts() const;
     void rememberMediaPort(int slot, quint16 port);
     void forgetMediaPort(int slot);
 

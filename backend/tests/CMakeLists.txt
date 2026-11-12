@@ -128,6 +128,9 @@ add_executable(run_tests
     test_remote_desktop_return.cpp
     test_mdns_advertiser.cpp
     test_router_port_core.cpp
+    test_router_sweep.cpp
+    test_router_holes.cpp
+    test_socket_tables.cpp
     test_ice_mux_core.cpp
     test_ice_mux_sockets.cpp
     test_ice_mux_ports.cpp
@@ -152,6 +155,10 @@ add_executable(run_tests
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.
     ${_src}/src/network/RouterPortCore.cpp
+    # What this host wrote on the router, and what it may take back of it.
+    ${_src}/src/network/RouterHoles.cpp
+    # Whether something on this machine listens on a port, from the system's tables.
+    ${_src}/src/network/SocketTables.cpp
     # Which stream worker a datagram on a shared UDP port goes to.
     ${_src}/src/network/IceMuxCore.cpp
     ${_src}/src/network/IceMux.cpp
@@ -304,7 +311,7 @@ target_link_libraries(run_tests PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(run_tests PRIVATE ws2_32 winmm Bcrypt Crypt32)
+    target_link_libraries(run_tests PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi)
     # Emit PDB debug info even in release so OpenCppCoverage can map line coverage.
     target_compile_options(run_tests PRIVATE /Zi)
     target_link_options(run_tests PRIVATE /DEBUG)

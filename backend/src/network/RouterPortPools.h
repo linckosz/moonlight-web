@@ -109,6 +109,12 @@ constexpr int kMediaPortCount = 24;
 constexpr uint16_t kMediaPoolBegin = 46100;
 constexpr uint16_t kMediaPoolEnd = 46199;
 
+/// Whether `port` is one of the stream block's.
+constexpr bool inMediaBlock(int port)
+{
+    return port >= kMediaBasePort && port < kMediaBasePort + kMediaPortCount;
+}
+
 // ── The streams' shared ports (ice_udp_mux) ─────────────────────────────────
 //
 // With the mux on, the streams of one host no longer bind a port each: they
