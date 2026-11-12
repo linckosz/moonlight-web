@@ -204,10 +204,10 @@ QString requestRefusal(const Tracker& tracker, bool allowed);
 /// keeps its id and stays held back.
 constexpr int kSignInAppId = 1002;
 
-/// Streaming the sign-in screen is not offered in this version: no card, and
-/// a request is refused by the server and by the launcher alike. A gate of its
-/// own, beside kReturnOffered.
-constexpr bool kSignInOffered = false;
+/// Streaming the sign-in screen is offered in this version. Set to false, it
+/// is not: no card, and a request is refused by the server and by the launcher
+/// alike. A gate of its own, beside kReturnOffered.
+constexpr bool kSignInOffered = true;
 
 /// The display key the server hands the sign-in screen's worker: "the
 /// primary display of the session I run in", resolved by the worker itself.
