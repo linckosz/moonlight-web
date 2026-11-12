@@ -20,11 +20,13 @@
 
 #include <QByteArray>
 #include <QDebug>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QList>
 #include <QRandomGenerator>
 #include <QStringList>
 
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 #include <vector>
@@ -43,8 +45,10 @@ struct State
     std::mutex lock;
     Emit tell;
     std::vector<uintptr_t> shared; // the server's UDP sockets, the preferred one first
+    std::vector<uint16_t> ports;   // the port of each
     quint16 hopPort = 0;
     bool agentOpen = false;
+    Public announced; // what the router forwards of them, see setPublic()
 };
 
 State& state()
@@ -255,6 +259,7 @@ bool configure(const QJsonObject& mux, quint32 serverPid,
         }
     }
     s.shared = std::move(opened);
+    s.ports.assign(named.cbegin(), named.cend());
     s.hopPort = static_cast<quint16>(hop);
     s.tell = std::move(tell);
     QStringList list;
@@ -277,6 +282,39 @@ bool available()
     State& s = state();
     const std::lock_guard<std::mutex> lock(s.lock);
     return !s.shared.empty();
+}
+
+void setPublic(const QJsonObject& announced)
+{
+    State& s = state();
+    const std::lock_guard<std::mutex> lock(s.lock);
+    s.announced = Public{};
+    if (s.shared.empty()) return;
+    // An IPv4 address in figures, and nothing else: it goes into a candidate.
+    const QString ip = announced.value(QStringLiteral("ip")).toString();
+    QHostAddress address;
+    if (!address.setAddress(ip) || address.protocol() != QAbstractSocket::IPv4Protocol) return;
+    Public out;
+    for (const QJsonValue& v : announced.value(QStringLiteral("ports")).toArray()) {
+        const int port = v.toInt();
+        if (port <= 0 || port > 65535) continue;
+        // Only a port this worker sends from can be one of its candidates
+        const auto mine = static_cast<uint16_t>(port);
+        const bool has = std::find(s.ports.cbegin(), s.ports.cend(), mine) != s.ports.cend();
+        const bool twice =
+            std::find(out.ports.cbegin(), out.ports.cend(), mine) != out.ports.cend();
+        if (has && !twice) out.ports.push_back(mine);
+    }
+    if (out.ports.empty()) return;
+    out.ip = address.toString().toStdString();
+    s.announced = std::move(out);
+}
+
+Public publicPorts()
+{
+    State& s = state();
+    const std::lock_guard<std::mutex> lock(s.lock);
+    return s.announced;
 }
 
 std::optional<rtc::IceSharedSockets> openAgent()

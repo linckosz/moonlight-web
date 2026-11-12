@@ -127,6 +127,14 @@ bool StreamWorkerHost::startAs(const QJsonObject& config, Launch how)
     return startInProcess(args, configLine, native);
 }
 
+bool StreamWorkerHost::getsSharedPorts(const QJsonObject& config)
+{
+    if (config[QStringLiteral("role")].toString() == QLatin1String("feed")) return false;
+    // The one launch start() and startAs() make as Launch::ConsoleAsUser.
+    const bool native = config[QStringLiteral("backendType")].toString() == QLatin1String("native");
+    return !(native && ConsoleSession::launchesElsewhere());
+}
+
 bool StreamWorkerHost::start(const QJsonObject& config)
 {
     Q_ASSERT(!m_Proc && !m_Console);

@@ -40,7 +40,8 @@ struct ScriptedRouter : IceMuxPorts::Router
     bool on = true;
     Gateway state = Gateway::Looking;
     int looks = 0, claims = 0, releases = 0;
-    uint16_t hole[IceMux::kRoles] = {0, 0};
+    uint16_t holes[IceMux::kRoles] = {0, 0};
+    QString ip = QStringLiteral("203.0.113.7");
     std::set<uint16_t> neighbours;
     std::set<uint16_t> refused;
     QList<uint16_t> walk[IceMux::kRoles];
@@ -58,7 +59,8 @@ struct ScriptedRouter : IceMuxPorts::Router
     bool enabled() const override { return on; }
     void look() override { ++looks; }
     Gateway gateway() const override { return state; }
-    bool holds(int which) const override { return hole[which] != 0; }
+    uint16_t hole(int which) const override { return holes[which]; }
+    QString publicIp() const override { return ip; }
     void claim(int which, uint16_t current, std::function<Hold(uint16_t)> hold,
                std::function<void(uint16_t)> drop,
                std::function<void(uint16_t, const QString&)> done) override
@@ -69,7 +71,7 @@ struct ScriptedRouter : IceMuxPorts::Router
     void release(int which) override
     {
         ++releases;
-        hole[which] = 0;
+        holes[which] = 0;
     }
 
     Asked next()
@@ -94,7 +96,7 @@ struct ScriptedRouter : IceMuxPorts::Router
                 if (held == Hold::NewlyBound) a.drop(port);
                 continue;
             }
-            hole[a.which] = port;
+            holes[a.which] = port;
             a.done(port, {});
             return;
         }
@@ -218,7 +220,7 @@ void run_ice_mux_ports_tests()
         r.ports.routerChanged();
         CHECK(r.router.claims == 1 && r.router.asked.front().which == kBlock);
         r.router.answer();
-        CHECK(r.router.hole[kBlock] == b1 && r.mux.port(kStandard) == 0);
+        CHECK(r.router.holes[kBlock] == b1 && r.mux.port(kStandard) == 0);
     }
 
     SECTION("IceMuxPorts: the block port at once, the conferencing port when the router answers");
@@ -238,11 +240,11 @@ void run_ice_mux_ports_tests()
         // The conferencing port: bound for the claim, and it serves
         CHECK(r.router.asked.front().which == kStandard && r.router.asked.front().current == 0);
         r.router.answer();
-        CHECK(r.router.hole[kStandard] == s1 && r.mux.port(kStandard) == s1);
+        CHECK(r.router.holes[kStandard] == s1 && r.mux.port(kStandard) == s1);
         // The block port: the hole lands on the port the streams already have
         CHECK(r.router.asked.front().which == kBlock && r.router.asked.front().current == b1);
         r.router.answer();
-        CHECK(r.router.hole[kBlock] == b1 && r.mux.port(kBlock) == b1 && !r.mux.holds(b2));
+        CHECK(r.router.holes[kBlock] == b1 && r.mux.port(kBlock) == b1 && !r.mux.holds(b2));
         CHECK(r.mux.serving().size() == 2);
         // Held: nothing more is asked
         r.ports.routerChanged();
@@ -251,12 +253,12 @@ void run_ice_mux_ports_tests()
         SECTION(
             "IceMuxPorts: a hole the router gave to a neighbour is asked for on the next number");
         // (the allocator has dropped the hole when it says so)
-        r.router.hole[kStandard] = 0;
+        r.router.holes[kStandard] = 0;
         r.router.neighbours.insert(s1);
         r.ports.holeLost(kStandard, s1);
         CHECK(r.router.claims == 3 && r.router.asked.front().current == s1);
         r.router.answer();
-        CHECK(r.router.hole[kStandard] == s2 && r.mux.port(kStandard) == s2);
+        CHECK(r.router.holes[kStandard] == s2 && r.mux.port(kStandard) == s2);
         // The port that lost its hole stays bound: a stream may be on it
         CHECK(r.mux.holds(s1));
         // A port that is not one of the two is nobody's
@@ -267,8 +269,8 @@ void run_ice_mux_ports_tests()
         SECTION("IceMuxPorts: switched off, the holes go and the ports stay");
         r.router.on = false;
         r.ports.switchedOff();
-        CHECK(r.router.releases == 2 && r.router.hole[kStandard] == 0 &&
-              r.router.hole[kBlock] == 0);
+        CHECK(r.router.releases == 2 && r.router.holes[kStandard] == 0 &&
+              r.router.holes[kBlock] == 0);
         CHECK(r.mux.port(kStandard) == s2 && r.mux.port(kBlock) == b1);
         CHECK(r.router.claims == 3);
         // Switched on again, they are asked for where the streams are
@@ -277,7 +279,49 @@ void run_ice_mux_ports_tests()
         CHECK(r.router.claims == 5);
         r.router.answer();
         r.router.answer();
-        CHECK(r.router.hole[kStandard] == s2 && r.router.hole[kBlock] == b1);
+        CHECK(r.router.holes[kStandard] == s2 && r.router.holes[kBlock] == b1);
+        CHECK(r.mux.port(kStandard) == s2 && r.mux.port(kBlock) == b1);
+    }
+
+    SECTION("IceMuxPorts: only a port the router forwards is announced at the public address");
+    {
+        Rig r(standard, block);
+        // Not started: nothing
+        CHECK(r.ports.announced().ports.isEmpty());
+        r.router.state = Gateway::Ready;
+        CHECK(r.ports.start(&why));
+        // Bound, its hole asked for and not made yet: nothing to announce
+        CHECK(r.mux.port(kBlock) == b1 && r.ports.announced().ports.isEmpty());
+        r.router.answer();
+        // The conferencing port has its hole, the block port not yet
+        CHECK(r.ports.announced().ports == QList<uint16_t>{s1});
+        CHECK(r.ports.announced().publicIp == r.router.ip);
+        r.router.answer();
+        // Both, the conferencing port first
+        CHECK(r.ports.announced().ports == (QList<uint16_t>{s1, b1}));
+        // A router that does not say its public address: nothing to announce
+        r.router.ip.clear();
+        CHECK(r.ports.announced().ports.isEmpty());
+        r.router.ip = QStringLiteral("203.0.113.7");
+        // A hole the router gave to another machine: its port is announced no
+        // more, though it still serves this LAN
+        r.router.holes[kStandard] = 0;
+        r.router.neighbours.insert(s1);
+        r.ports.holeLost(kStandard, s1);
+        CHECK(r.mux.port(kStandard) == s1);
+        CHECK(r.ports.announced().ports == QList<uint16_t>{b1});
+        // The next number has the hole and serves: announced again
+        r.router.answer();
+        CHECK(r.ports.announced().ports == (QList<uint16_t>{s2, b1}));
+        // A hole on another number than the one that serves is not announced
+        r.router.holes[kBlock] = b2;
+        CHECK(r.ports.announced().ports == QList<uint16_t>{s2});
+        r.router.holes[kBlock] = b1;
+        // Switched off: the holes are gone and nothing is announced; the
+        // ports stay
+        r.router.on = false;
+        r.ports.switchedOff();
+        CHECK(r.ports.announced().ports.isEmpty());
         CHECK(r.mux.port(kStandard) == s2 && r.mux.port(kBlock) == b1);
     }
 
@@ -290,7 +334,7 @@ void run_ice_mux_ports_tests()
         CHECK(r.mux.port(kBlock) == b1 && r.router.claims == 2);
         r.router.answer(); // the conferencing port
         r.router.answer(); // the block port
-        CHECK(r.router.hole[kBlock] == b2 && r.mux.port(kBlock) == b2);
+        CHECK(r.router.holes[kBlock] == b2 && r.mux.port(kBlock) == b2);
         // The port bound at the start stays the mux's, for the streams on it
         CHECK(r.mux.holds(b1));
     }
@@ -306,7 +350,7 @@ void run_ice_mux_ports_tests()
         // Nothing bound is left behind: one was a neighbour's and never
         // bound, the other was bound, refused and let go
         CHECK(r.mux.port(kStandard) == 0 && !r.mux.holds(s1) && !r.mux.holds(s2));
-        CHECK(r.router.hole[kStandard] == 0);
+        CHECK(r.router.holes[kStandard] == 0);
         // And the router is not asked again until it changes
         CHECK(r.router.claims == 2);
         r.router.answer();
@@ -327,7 +371,7 @@ void run_ice_mux_ports_tests()
         CHECK(r.router.claims == 2 && r.router.asked.front().current == s1);
         r.router.answer();
         r.router.answer();
-        CHECK(r.router.hole[kStandard] == s1 && r.router.hole[kBlock] == b1);
+        CHECK(r.router.holes[kStandard] == s1 && r.router.holes[kBlock] == b1);
         CHECK(!r.mux.holds(s2) && !r.mux.holds(b2));
     }
     {
@@ -354,12 +398,12 @@ void run_ice_mux_ports_tests()
         // The conferencing port had none: the one bound for the claim
         // serves, without its hole
         r.router.answer();
-        CHECK(r.router.releases == 1 && r.router.hole[kStandard] == 0);
+        CHECK(r.router.releases == 1 && r.router.holes[kStandard] == 0);
         CHECK(r.mux.port(kStandard) == s1);
         // The block port had one: it keeps it, and the number bound for the
         // claim is let go
         r.router.answer();
-        CHECK(r.router.releases == 2 && r.router.hole[kBlock] == 0);
+        CHECK(r.router.releases == 2 && r.router.holes[kBlock] == 0);
         CHECK(r.mux.port(kBlock) == b1 && !r.mux.holds(b2));
     }
     {
@@ -373,7 +417,7 @@ void run_ice_mux_ports_tests()
         r.router.on = false;
         r.wantsStandard = false;
         r.router.answer();
-        CHECK(r.router.releases == 1 && r.router.hole[kStandard] == 0);
+        CHECK(r.router.releases == 1 && r.router.holes[kStandard] == 0);
         CHECK(r.mux.port(kStandard) == 0 && !r.mux.holds(s1));
         // The block port is wanted whatever the switches say
         r.router.answer();

@@ -51,7 +51,13 @@ public:
         return Gateway::Looking;
     }
 
-    bool holds(int which) const override { return m_Allocator->heldMuxPort(which).has_value(); }
+    uint16_t hole(int which) const override
+    {
+        const auto held = m_Allocator->heldMuxPort(which);
+        return held ? held->external : uint16_t{0};
+    }
+
+    QString publicIp() const override { return m_Allocator->publicIp(); }
 
     void claim(int which, uint16_t current, std::function<IceMuxPorts::Hold(uint16_t)> hold,
                std::function<void(uint16_t)> drop,

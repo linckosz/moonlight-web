@@ -22,8 +22,11 @@
 
 #include <rtc/rtc.hpp>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
+#include <vector>
 
 /// The stream worker's end of the ICE mux (network/IceMux in the server
 /// process): the UDP sockets that process holds, opened here from what the
@@ -49,6 +52,21 @@ using Emit = std::function<void(const QJsonObject&)>;
 bool configure(const QJsonObject& mux, quint32 serverPid,
                const std::function<bool(const QString& image)>& isServer, Emit tell);
 bool available();
+
+/// What the server says of its router, for the streams on the shared ports:
+/// the config line's "iceMuxPublic", {"ip": "…", "ports": […]}, its public
+/// address and the shared ports the router forwards there, each to itself.
+/// After configure(); kept only for the ports this worker has.
+void setPublic(const QJsonObject& announced);
+
+/// The public address and the shared ports of this worker the router forwards
+/// to. No port when it forwards none, or the server said nothing.
+struct Public
+{
+    std::string ip;
+    std::vector<uint16_t> ports;
+};
+Public publicPorts();
 
 /// A new ICE agent on the shared sockets: its feed and its credentials, and
 /// the server told about them. Nothing when the feed cannot be made.

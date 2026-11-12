@@ -1611,6 +1611,36 @@ static quint16 slotMediaPort(int slot)
 {
     return mw::routerports::slotMediaPort(slot, g_StreamMuxInUse, mw::edition::isDev());
 }
+// The shared ports and their holes in the router (IceMuxPorts), once started.
+// Set as the server starts, cleared before it goes.
+static IceMuxPorts* g_StreamMuxPorts = nullptr;
+
+// Whether the stream this config starts goes on the server's shared ports
+// rather than on a socket of its own: the mux is in use and reads well, the
+// worker is one that gets the shared sockets, and the connection is not one
+// that also listens in TCP (that rung's listener sits on a socket of its own).
+// Such a stream asks the router for no hole of its own: the shared ports have
+// theirs, and a hole to a port nothing binds would lead nowhere.
+static bool streamSharesPorts(const QJsonObject& cfg)
+{
+    const IceMux* mux = IceMux::shared();
+    return g_StreamMuxInUse && mux && mux->running() && mux->healthy() && !cfg["iceTcp"].toBool() &&
+           StreamWorkerHost::getsSharedPorts(cfg);
+}
+
+// That stream's config, with what it may announce at the public address: the
+// shared ports the router forwards here, as of now.
+static QJsonObject withSharedPortsAnnounced(QJsonObject cfg)
+{
+    if (!g_StreamMuxPorts) return cfg;
+    const IceMuxPorts::Announced announced = g_StreamMuxPorts->announced();
+    if (announced.ports.isEmpty()) return cfg;
+    QJsonArray ports;
+    for (const uint16_t port : announced.ports)
+        ports.append(static_cast<int>(port));
+    cfg["iceMuxPublic"] = QJsonObject{{"ip", announced.publicIp}, {"ports", ports}};
+    return cfg;
+}
 
 // Ceiling independent of the port plan: enough for the largest per-backend cap
 // on two hosts at once (see concurrentSessionCap) plus the reserved block. It
@@ -3036,6 +3066,11 @@ int main(int argc, char* argv[])
                                 return !mw::edition::isDev() && !mw::edition::lanOnly() &&
                                        appSettings.internetAccessEnabled();
                             }});
+    // Declared after it, gone before it: nothing asks an object that is no more.
+    struct MuxPortsForgotten
+    {
+        ~MuxPortsForgotten() { g_StreamMuxPorts = nullptr; }
+    } muxPortsForgotten;
     if (appSettings.iceUdpMux()) {
 #ifdef Q_OS_WIN
         g_IceMux.setReporter([](const std::string& what) {
@@ -3044,6 +3079,7 @@ int main(int argc, char* argv[])
         QString why;
         if (muxPorts.start(&why)) {
             g_StreamMuxInUse = true;
+            g_StreamMuxPorts = &muxPorts;
             IceMux::setShared(&g_IceMux);
             routerPorts.setStreamMux([&g_IceMux](uint16_t port) { return g_IceMux.holds(port); });
             muxRouter.attach(&muxPorts);
@@ -5182,6 +5218,12 @@ int main(int argc, char* argv[])
             const quint64 generation = ++g_SlotLaunchGeneration[reqSlot];
             auto claimThenStart = [&routerPorts, startWorker, cfg, reqSlot, generation, worker,
                                    respond, standby]() {
+                // On the server's shared ports the stream has no port of its
+                // own to be forwarded to: the shared ports have their holes.
+                if (streamSharesPorts(cfg)) {
+                    startWorker(withSharedPortsAnnounced(cfg));
+                    return;
+                }
                 routerPorts.claimMediaPort(
                     reqSlot, slotMediaPort(reqSlot), qApp,
                     [&routerPorts, startWorker, cfg, reqSlot, generation, worker, respond,
@@ -6843,6 +6885,11 @@ int main(int argc, char* argv[])
                                generation, worker, respond]() {
             joinFeed();
             keepGuestHole(slot);
+            // As the owner path: on the shared ports, no hole of its own.
+            if (streamSharesPorts(cfg)) {
+                startWorker(withSharedPortsAnnounced(cfg));
+                return;
+            }
             routerPorts.claimMediaPort(
                 slot, slotMediaPort(slot), qApp,
                 [&routerPorts, startWorker, cfg, slot, generation, worker,

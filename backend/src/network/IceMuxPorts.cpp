@@ -77,7 +77,7 @@ void IceMuxPorts::ensure(int which)
             // Its answer comes back here, found or not.
             return;
         case Router::Gateway::Ready:
-            if (!m_Router.holds(which)) claim(which);
+            if (m_Router.hole(which) == 0) claim(which);
             return;
         case Router::Gateway::Missing: break;
         }
@@ -191,7 +191,22 @@ void IceMuxPorts::switchedOff()
 {
     if (!m_InUse) return;
     for (int which = 0; which < IceMux::kRoles; ++which)
-        if (m_Router.holds(which)) m_Router.release(which);
+        if (m_Router.hole(which) != 0) m_Router.release(which);
     // A port the router was still being asked for is bound without it.
     routerChanged();
+}
+
+IceMuxPorts::Announced IceMuxPorts::announced() const
+{
+    Announced out;
+    if (!m_InUse) return out;
+    out.publicIp = m_Router.publicIp();
+    if (out.publicIp.isEmpty()) return out;
+    for (int which = 0; which < IceMux::kRoles; ++which) {
+        // The hole and the port that serves are one number, or the hole is
+        // not this port's: nothing is announced on a guess.
+        const uint16_t port = m_Router.hole(which);
+        if (port != 0 && port == m_Mux.port(which)) out.ports.append(port);
+    }
+    return out;
 }

@@ -135,6 +135,34 @@ the mux the slots' own ports start at the other half of the block (48562 for
 the installed host), a slot's hole takes no router-side number from the mux's
 half, and no hole is made at all to a port the mux is bound to.
 
+## What the browser is told
+
+When a stream starts, the server decides where it goes before it asks the
+router for anything (`main.cpp`, `streamSharesPorts`): on the shared ports when
+the mux is in use and reads well, the worker is one that gets the shared
+sockets, and the connection is not one that also listens in TCP. Such a stream
+asks for no hole of its own. Any other stream binds its slot's own port and
+asks for that port's hole, as without the mux.
+
+A stream on the shared ports is told, in its config line, the router's public
+address and which of the shared ports the router forwards right then
+(`IceMuxPorts::announced`): a port that serves and whose hole is held, on that
+very number. The agent has a host candidate for each shared port on each
+interface, and the relay does with each what it does with a stream's own port
+(`RelayBase::emitLocalCandidate`):
+
+- a candidate on a port the router forwards is also announced at the public
+  address, on the same number, with a reflexive candidate's priority, so that
+  a peer on the same LAN still prefers the direct pair. The conferencing port's
+  copy comes out ahead of the block port's, as their host candidates do;
+- a candidate on a shared port the router does not forward has no such copy.
+  Nothing at the public address leads to it: a hole never made, or one the
+  router gave to another machine;
+- the internal address itself goes only to a peer of our own network, as ever.
+
+When the router forwards none of the shared ports, the candidates go out as
+they are, as for a stream without a hole.
+
 ## Whose datagram it is
 
 `IceMuxCore::Router`, in this order:
@@ -181,9 +209,8 @@ mux:
 ## Not there yet
 
 - Linux and macOS: every stream binds its own port.
-- The public candidates: the holes are made, but under the mux no public
-  address is announced yet, and a stream still asks for its slot's own hole
-  whether or not it ends up on the shared ports.
+- Without a hole, the public address of the block port: an agent asks the STUN
+  server from its first shared port only.
 - TCP on the shared ports, and TCP 443.
 - Per-packet DSCP: the class is kept per shared socket.
 - A switch in the environment serves the latency bench and nothing else:

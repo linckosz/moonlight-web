@@ -76,8 +76,11 @@ public:
             Missing,
         };
         virtual Gateway gateway() const = 0;
-        /// Whether the hole of that port is held.
-        virtual bool holds(int which) const = 0;
+        /// The port whose hole is held for that role, 0 when none is.
+        virtual uint16_t hole(int which) const = 0;
+        /// This host's address as the router reports it; empty when it does
+        /// not, or before it was found.
+        virtual QString publicIp() const = 0;
         /// Ask for the hole (RouterPortAllocator::claimMuxPort). `done` gets
         /// the port the router forwards here, or 0 and why not, on the main
         /// thread and after this call returns.
@@ -114,6 +117,20 @@ public:
     void holeLost(int which, uint16_t port);
     /// UPnP or Internet Access was switched off.
     void switchedOff();
+
+    /// What a stream on the shared ports may announce at the public address.
+    struct Announced
+    {
+        QString publicIp;
+        /// The ports that serve AND that the router forwards here, the
+        /// preferred first. A port whose hole was never made, or went to
+        /// another machine, is not among them: nothing at the public address
+        /// leads to it.
+        QList<uint16_t> ports;
+    };
+    /// As of now: asked when a stream starts. No port when the router
+    /// forwards none, or its public address is not known.
+    Announced announced() const;
 
 private:
     bool wanted(int which) const;

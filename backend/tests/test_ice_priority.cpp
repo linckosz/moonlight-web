@@ -16,6 +16,7 @@
 #include "test_framework.h"
 
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -59,6 +60,28 @@ void testWithPriorityLeavesAMalformedLineAlone()
     CHECK_EQ(mw::ice::withPriority(notANumber, 1u), notANumber);
 }
 
+void testPublicPortOfAHostCandidate()
+{
+    using mw::ice::publicPortFor;
+    const std::vector<uint16_t> none, one{3478}, both{3478, 48550};
+
+    // A stream with a socket of its own: its one hole, whatever port the
+    // socket is on, and whatever the shared ports are.
+    CHECK_EQ(publicPortFor(48562, false, 46100, none), uint16_t(46100));
+    CHECK_EQ(publicPortFor(48573, false, 46100, both), uint16_t(46100));
+    CHECK_EQ(publicPortFor(48562, false, 0, both), uint16_t(0));
+
+    // On the shared ports: each port the router forwards, on its own number.
+    CHECK_EQ(publicPortFor(3478, true, 0, both), uint16_t(3478));
+    CHECK_EQ(publicPortFor(48550, true, 0, both), uint16_t(48550));
+    // A shared port the router does not forward has no copy at the public
+    // address, and a hole of the stream's own plays no part there.
+    CHECK_EQ(publicPortFor(48550, true, 46100, one), uint16_t(0));
+    CHECK_EQ(publicPortFor(48550, true, 46100, none), uint16_t(0));
+    // Nor has a candidate whose port is not known.
+    CHECK_EQ(publicPortFor(0, true, 46100, both), uint16_t(0));
+}
+
 } // namespace
 
 void run_ice_priority_tests()
@@ -66,4 +89,5 @@ void run_ice_priority_tests()
     testSrflxPriorityRanksBelowHost();
     testWithPriorityRewritesOnlyThePriority();
     testWithPriorityLeavesAMalformedLineAlone();
+    testPublicPortOfAHostCandidate();
 }

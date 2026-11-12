@@ -105,6 +105,14 @@ public:
         return MuxHandover::None;
     }
 
+    /// Whether a worker started for `config` is one that gets the server's
+    /// shared ports when the server has some to give: every one but the
+    /// guests' shared feed, which no browser reaches, and a native worker of
+    /// a server that is a service, which goes to the console session as the
+    /// user sitting there (muxHandoverFor). What the server asks itself
+    /// before it decides whether that stream needs a router hole of its own.
+    static bool getsSharedPorts(const QJsonObject& config);
+
     /// Spawn the worker and hand it the session config. Returns false when the
     /// process could not be started (caller falls back to in-process mode).
     bool start(const QJsonObject& config);

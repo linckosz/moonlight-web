@@ -419,6 +419,20 @@ void SignalingServer::onNewWsConnection()
         qWarning() << "[SignalingServer] DEBUG debug_ice_drop_udp is ON: every UDP candidate is"
                    << "dropped, ours and the browser's — only passive ICE-TCP can connect";
 
+    // On the shared ports, the holes are the server's: the relay announces
+    // each shared port the router forwards at the public address, on its own
+    // number, with the rules of a stream's own hole below (no internal
+    // address to a public peer, the LAN candidate to a peer of our network).
+    // None forwarded: the candidates go out as they are, as without a hole.
+    if (muxed) {
+        const mw::icemuxclient::Public forwarded = mw::icemuxclient::publicPorts();
+        const bool any = !forwarded.ip.empty() && !forwarded.ports.empty();
+        if (any) m_Relay->setSharedPublicPorts(forwarded.ip, forwarded.ports);
+        m_Relay->setForceHostCandidatePublic(any);
+        m_Relay->setSuppressIPv6Candidates(any);
+        m_Relay->setEmitLanHostCandidate(any && clientIsLocal);
+    }
+
     // With a router hole, tell the relay to rewrite host candidates with the
     // public IP and EXTERNAL port so the browser sees a "host" candidate at
     // PUBLIC_IP:<external> instead of 192.168.x.x:48010. The two ports differ
