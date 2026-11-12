@@ -423,10 +423,11 @@ void IceMux::confirm(uint32_t feed, const std::string& address, uint16_t port)
     const std::lock_guard<std::mutex> lock(m_Lock);
     const auto it = m_Feeds.find(feed);
     if (it == m_Feeds.end()) return;
+    const uint64_t now = nowMs();
     for (size_t id = 0; id < kSocketsMax; ++id) {
         if (it->second.via[id] == kNotIts) continue;
         p.via = static_cast<uint8_t>(id);
-        m_Router.confirm(feed, p);
+        m_Router.confirm(feed, p, now);
     }
 }
 

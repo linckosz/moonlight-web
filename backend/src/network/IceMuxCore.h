@@ -119,6 +119,12 @@ public:
     /// together; from one provisional peer, to the agents it has not named
     static constexpr uint32_t kUnclaimedPerSecond = 200;
     static constexpr uint32_t kSharedResponsesPerSecond = 50;
+    /// How long a confirmed peer must have sent its agent nothing before
+    /// another agent's word can make it that one's. Well above the longest
+    /// gap of a stream that runs: on a still picture with no sound, what a
+    /// peer sends can thin out to its consent checks, four to six seconds
+    /// apart, and some are lost.
+    static constexpr uint64_t kConfirmedQuietMs = 15'000;
 
     /// An agent, known by its ICE user fragment. False when the fragment is
     /// already another agent's, is not kUfragMin to kUfragMax long, or holds a
@@ -127,8 +133,11 @@ public:
     void removeAgent(uint32_t feed);
     bool hasAgents() const noexcept { return !m_Agents.empty(); }
 
-    /// The agent says: this peer passed my integrity check.
-    void confirm(uint32_t feed, const Peer& peer);
+    /// The agent says: this peer passed my integrity check. A peer that
+    /// another agent confirmed, and that still sends that agent something
+    /// (within kConfirmedQuietMs), stays that agent's: one agent's word does
+    /// not take a peer from a stream that is running.
+    void confirm(uint32_t feed, const Peer& peer, uint64_t nowMs);
 
     Route route(const Peer& from, const uint8_t* data, size_t size, uint64_t nowMs);
 
@@ -159,6 +168,12 @@ private:
         uint32_t sharedInWindow = 0;
     };
     using ProvisionalMap = std::unordered_map<Peer, Provisional, PeerHash>;
+    /// A confirmed peer's agent, and when it last handed that agent something
+    struct Confirmed
+    {
+        uint32_t feed = 0;
+        uint64_t heardMs = 0;
+    };
 
     void follow(const Peer& peer, uint32_t feed, uint64_t nowMs);
     bool leave(ProvisionalMap::iterator entry, size_t index);
@@ -167,7 +182,7 @@ private:
 
     std::unordered_map<uint32_t, Agent> m_Agents;
     std::unordered_map<std::string, uint32_t> m_ByUfrag;
-    std::unordered_map<Peer, uint32_t, PeerHash> m_Confirmed;
+    std::unordered_map<Peer, Confirmed, PeerHash> m_Confirmed;
     ProvisionalMap m_Provisional;
     uint64_t m_UnclaimedWindowMs = 0;
     uint32_t m_UnclaimedInWindow = 0;

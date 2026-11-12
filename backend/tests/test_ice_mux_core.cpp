@@ -179,7 +179,7 @@ void routing()
 
     // Confirmed by its agent, it stays, whatever the time
     CHECK(to(r, a, request("hostAAAA1234:x"), 40'000) == std::vector<uint32_t>{1});
-    r.confirm(1, a);
+    r.confirm(1, a, 40'000);
     CHECK(r.confirmedCount() == 1);
     CHECK(to(r, a, kDtls, 10'000'000) == std::vector<uint32_t>{1});
     // A request from that address for the other agent goes there, alone:
@@ -238,7 +238,7 @@ void following()
     CHECK(to(r, d, request("hostCCCC9012:x"), 300'000) == third);
     CHECK(to(r, d, request("hostDDDD3456:y"), 300'001) == fourth);
     CHECK(to(r, d, kDtls, 300'002) == thirdAndFourth);
-    r.confirm(4, d);
+    r.confirm(4, d, 300'002);
     CHECK(r.provisionalCount() == 0);
     CHECK(r.provisionalCount(3) == 0 && r.provisionalCount(4) == 0);
     CHECK(to(r, d, kDtls, 300'003) == fourth);
@@ -254,7 +254,7 @@ void flood()
     CHECK(r.addAgent(1, "hostAAAA1234", 0));
     const Peer real = peer(9, 9000);
     CHECK(to(r, real, request("hostAAAA1234:x"), 1) == std::vector<uint32_t>{1});
-    r.confirm(1, real);
+    r.confirm(1, real, 1);
 
     // Many more senders than an agent's share, all with the right fragment
     for (uint32_t i = 0; i < 800; ++i) {
@@ -268,10 +268,73 @@ void flood()
 
     // An agent cannot confirm without end either
     for (uint32_t i = 0; i < 2 * Router::kConfirmedPerFeedMax; ++i)
-        r.confirm(1, peer(static_cast<uint8_t>(i), 20000));
+        r.confirm(1, peer(static_cast<uint8_t>(i), 20000), 5000);
     CHECK(r.confirmedCount() == Router::kConfirmedPerFeedMax);
-    r.confirm(7, peer(1, 1)); // no such agent
+    r.confirm(7, peer(1, 1), 5000); // no such agent
     CHECK(r.confirmedCount() == Router::kConfirmedPerFeedMax);
+}
+
+void runningStreams()
+{
+    SECTION("IceMuxCore: one agent's word does not take a running stream's peer");
+    Router r;
+    CHECK(r.addAgent(1, "hostAAAA1234", 0));
+    CHECK(r.addAgent(2, "hostBBBB5678", 0));
+    const Peer a = peer(1, 5000);
+    const uint64_t quiet = Router::kConfirmedQuietMs;
+    const std::vector<uint32_t> first{1}, second{2};
+
+    CHECK(to(r, a, request("hostAAAA1234:x"), 1000) == first);
+    r.confirm(1, a, 1000);
+    CHECK(to(r, a, kDtls, 2000) == first);
+    // The other agent says the peer is its own while the first still hears
+    // it: nothing moves
+    r.confirm(2, a, 2500);
+    CHECK(r.confirmedCount() == 1);
+    CHECK(to(r, a, kDtls, 3000) == first);
+    // Nor a moment before the peer has been quiet long enough, counted from
+    // the last thing the first agent was handed
+    r.confirm(2, a, 3000 + quiet - 1);
+    uint64_t heard = 3000 + quiet - 1;
+    CHECK(to(r, a, kDtls, heard) == first);
+    // A request of the peer that names its own agent is heard as well
+    heard += 100;
+    CHECK(to(r, a, request("hostAAAA1234:x"), heard) == first);
+    r.confirm(2, a, heard + quiet - 1);
+    CHECK(r.confirmedCount() == 1);
+    heard += quiet - 1;
+    CHECK(to(r, a, kDtls, heard) == first);
+    // One that names the other agent goes there, and is nothing the first
+    // agent heard: the quiet time runs on
+    CHECK(to(r, a, request("hostBBBB5678:y"), heard + quiet) == second);
+    // Quiet that long for the first agent: the address has left that stream,
+    // and the other agent's word settles it
+    r.confirm(2, a, heard + quiet);
+    CHECK(r.confirmedCount() == 1);
+    CHECK(to(r, a, kDtls, heard + quiet + 1) == second);
+    // And it is the second agent's as firmly as it was the first's
+    r.confirm(1, a, heard + quiet + 2);
+    CHECK(to(r, a, kDtls, heard + quiet + 3) == second);
+    // An agent gone leaves its peer free at once
+    r.removeAgent(2);
+    CHECK(r.confirmedCount() == 0);
+    CHECK(to(r, a, request("hostAAAA1234:x"), heard + quiet + 10) == first);
+    r.confirm(1, a, heard + quiet + 10);
+    CHECK(to(r, a, kDtls, heard + quiet + 11) == first);
+
+    // An agent that keeps all the peers it may takes no other agent's,
+    // however quiet: the peer stays where it was
+    Router full;
+    CHECK(full.addAgent(1, "hostAAAA1234", 0));
+    CHECK(full.addAgent(2, "hostBBBB5678", 0));
+    const Peer theirs = peer(200, 6000);
+    full.confirm(2, theirs, 0);
+    for (uint32_t i = 0; i < Router::kConfirmedPerFeedMax; ++i)
+        full.confirm(1, peer(static_cast<uint8_t>(i), 20000), 0);
+    CHECK(full.confirmedCount() == Router::kConfirmedPerFeedMax + 1);
+    full.confirm(1, theirs, 1'000'000);
+    CHECK(full.confirmedCount() == Router::kConfirmedPerFeedMax + 1);
+    CHECK(to(full, theirs, kDtls, 1'000'001) == second);
 }
 
 /// The `i`th of as many distinct senders as a test wants.
@@ -340,9 +403,9 @@ void shares()
     CHECK(to(r, everybody, stun(0x0101), 7002).size() == Router::kAgentsMax);
 
     // The counts follow what leaves: confirmed, lapsed, or gone with its agent
-    r.confirm(1, a);
+    r.confirm(1, a, 7002);
     CHECK(r.provisionalCount(1) == 1); // `everybody`
-    r.confirm(2, everybody);
+    r.confirm(2, everybody, 7002);
     CHECK(r.provisionalCount(1) == 0 && r.provisionalCount(3) == share - 1);
     for (uint32_t feed = 3; feed <= Router::kAgentsMax; ++feed)
         r.removeAgent(feed);
@@ -391,7 +454,7 @@ void sharedResponses()
     CHECK(to(r, a, kDtls, 1950) == both);
 
     // The agent's own word ends it: a confirmed peer's responses are its own
-    r.confirm(1, a);
+    r.confirm(1, a, 2000);
     CHECK(to(r, a, response, 2100) == first);
     CHECK(to(r, a, kDtls, 2100) == first);
 
@@ -436,6 +499,7 @@ void run_ice_mux_core_tests()
     routing();
     following();
     flood();
+    runningStreams();
     shares();
     sharedResponses();
     unclaimed();

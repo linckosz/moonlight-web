@@ -143,7 +143,7 @@ void Router::removeAgent(uint32_t feed)
     m_ByUfrag.erase(agent->second.ufrag);
     m_Agents.erase(agent);
     for (auto it = m_Confirmed.begin(); it != m_Confirmed.end();)
-        it = it->second == feed ? m_Confirmed.erase(it) : std::next(it);
+        it = it->second.feed == feed ? m_Confirmed.erase(it) : std::next(it);
     for (auto it = m_Provisional.begin(); it != m_Provisional.end();) {
         std::vector<Follower>& followers = it->second.followers;
         followers.erase(std::remove_if(followers.begin(), followers.end(),
@@ -227,22 +227,27 @@ void Router::addNegotiating(Route& out, uint64_t nowMs) const
     }
 }
 
-void Router::confirm(uint32_t feed, const Peer& peer)
+void Router::confirm(uint32_t feed, const Peer& peer, uint64_t nowMs)
 {
     const auto agent = m_Agents.find(feed);
     if (agent == m_Agents.end()) return;
     const auto held = m_Confirmed.find(peer);
     if (held != m_Confirmed.end()) {
-        if (held->second == feed) return;
-        // The same address and socket, verified by another agent since: the
-        // earlier one is the stream that address left.
-        const auto earlier = m_Agents.find(held->second);
+        if (held->second.feed == feed) return;
+        // Another agent's, and it still hears the peer: that stream is
+        // running, and this agent's word alone does not take its peer.
+        if (nowMs < held->second.heardMs + kConfirmedQuietMs) return;
+    }
+    if (agent->second.confirmed >= kConfirmedPerFeedMax) return;
+    if (held != m_Confirmed.end()) {
+        // The same address and socket, verified by another agent since, and
+        // quiet for the earlier one: that is the stream the address left.
+        const auto earlier = m_Agents.find(held->second.feed);
         if (earlier != m_Agents.end() && earlier->second.confirmed > 0) --earlier->second.confirmed;
         m_Confirmed.erase(held);
     }
-    if (agent->second.confirmed >= kConfirmedPerFeedMax) return;
     ++agent->second.confirmed;
-    m_Confirmed.emplace(peer, feed);
+    m_Confirmed.emplace(peer, Confirmed{feed, nowMs});
     // It is this agent's alone now, whoever else it had named
     if (const auto known = m_Provisional.find(peer); known != m_Provisional.end()) {
         for (const Follower& f : known->second.followers) {
@@ -274,13 +279,18 @@ Route Router::route(const Peer& from, const uint8_t* data, size_t size, uint64_t
         const uint32_t feed = agent->second;
         // A confirmed peer keeps the rest of what it sends with the agent
         // that confirmed it; its request alone goes by the fragment.
-        if (m_Confirmed.find(from) == m_Confirmed.end()) follow(from, feed, nowMs);
+        const auto confirmed = m_Confirmed.find(from);
+        if (confirmed == m_Confirmed.end())
+            follow(from, feed, nowMs);
+        else if (confirmed->second.feed == feed)
+            confirmed->second.heardMs = nowMs;
         out.feeds.push_back(feed);
         return out;
     }
 
     if (const auto confirmed = m_Confirmed.find(from); confirmed != m_Confirmed.end()) {
-        out.feeds.push_back(confirmed->second);
+        confirmed->second.heardMs = nowMs;
+        out.feeds.push_back(confirmed->second.feed);
         return out;
     }
     if (const auto known = m_Provisional.find(from); known != m_Provisional.end()) {

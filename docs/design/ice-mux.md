@@ -177,7 +177,10 @@ they are, as for a stream without a hole.
    peer of each, and what it sends goes to all of them. It becomes a
    *confirmed* peer when an agent itself reports that it passed the ICE
    integrity check (`"op":"confirmed"`): it is that agent's alone from then
-   on, and nothing unverified displaces it.
+   on, and nothing unverified displaces it. Nor does another agent's word
+   while the peer still sends this one something: a second agent's
+   confirmation of the same address moves it only after fifteen seconds of
+   quiet, which a stream that runs never leaves.
 3. **A STUN response that is not a confirmed peer's** is the answer to a check
    an agent sent, perhaps before the address named it: besides the agents the
    sender is a provisional peer of, every agent registered for less than a
