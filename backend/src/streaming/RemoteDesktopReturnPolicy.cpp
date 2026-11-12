@@ -66,14 +66,24 @@ QString hideRefusal(const ConsoleReturnFacts& facts)
 
 bool Tracker::observe(const Observation& now)
 {
+    // The state could not be read: nothing learned and nothing changed (the
+    // stretch, the count and the answer stay as they were). The launcher reads
+    // the session's state itself before it does anything.
+    if (now.state < 0) return m_Left;
     if (now.state == Active) {
-        // Back on a screen, or on another Remote Desktop client: a fresh start.
-        m_LastActiveRemote = now.remote;
+        // Back on a screen, or on another Remote Desktop client: a fresh start
+        // that knows nothing yet ("not Remote Desktop" offers nothing). Inside
+        // the stretch, Remote Desktop once seen stays: only leaving Active
+        // clears it, never a failed or odd read.
+        if (!m_InActiveStretch) m_LastActiveRemote = false;
+        if (now.remoteRead && now.remote) m_LastActiveRemote = true;
+        m_InActiveStretch = true;
         m_DisconnectedTicks = 0;
         m_GaveUp = false;
         m_Left = false;
         return m_Left;
     }
+    m_InActiveStretch = false;
     if (now.state != Disconnected) {
         // Connected, ConnectQuery and the like: a client is on its way in.
         // Nothing to say, nothing to do, and the count starts over.
@@ -154,23 +164,40 @@ QString signInLaunchChecks(const SignInFacts& facts)
     return {};
 }
 
-bool signInOffered(bool leftByRemoteDesktop, bool allowed)
+bool consoleTaken(ConsoleUser console)
 {
-    return kSignInOffered && leftByRemoteDesktop && allowed;
+    return console != ConsoleUser::Nobody;
 }
 
-QString signInRequestRefusal(const Tracker& tracker, bool allowed, bool booth)
+bool signInOffered(bool leftByRemoteDesktop, bool allowed, ConsoleUser console)
+{
+    return kSignInOffered && leftByRemoteDesktop && allowed && !consoleTaken(console);
+}
+
+QString signInRequestRefusal(const Tracker& tracker, bool allowed, bool booth, ConsoleUser console)
 {
     if (!kSignInOffered) return QStringLiteral("this version does not offer it");
-    return signInRequestChecks(tracker, allowed, booth);
+    return signInRequestChecks(tracker, allowed, booth, console);
 }
 
-QString signInRequestChecks(const Tracker& tracker, bool allowed, bool booth)
+QString signInRequestChecks(const Tracker& tracker, bool allowed, bool booth, ConsoleUser console)
 {
     // The sign-in screen has the PC's power button and its other accounts'
     // tiles: what a person at the PC has, never a kiosk's.
     if (booth) return QStringLiteral("not from a kiosk");
-    return tracker.signInRefusal(allowed);
+    const QString tracked = tracker.signInRefusal(allowed);
+    if (!tracked.isEmpty()) return tracked;
+    // Somebody signed in on the PC: the launcher would refuse the worker; say
+    // so now, in words the page can show.
+    if (consoleTaken(console)) return QString::fromLatin1(kSomebodySignedIn);
+    return {};
+}
+
+QString signInTakeOverRefusal(bool live, const QString& liveOwner, const QString& requester)
+{
+    if (!live) return {};
+    if (!liveOwner.isEmpty() && liveOwner == requester) return {};
+    return QStringLiteral("the sign-in screen is already being streamed");
 }
 
 bool guestMayStream(bool nativeHost, int appId)

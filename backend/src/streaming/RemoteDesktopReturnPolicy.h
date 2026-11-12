@@ -112,6 +112,9 @@ struct Observation
     /// The session is a Remote Desktop one at this moment (WTSClientProtocolType
     /// is RDP). Read while Active; a disconnected session's answer is not used.
     bool remote = false;
+    /// The protocol could be read on this tick. A failed read says nothing:
+    /// the tracker keeps what it knew (remote is false then).
+    bool remoteRead = false;
 };
 
 /**
@@ -161,7 +164,14 @@ public:
 
 private:
     bool m_GaveUp = false;
+    /// The current Active stretch (or the last one) was seen through Remote
+    /// Desktop. Set by any successful read of RDP inside the stretch, cleared
+    /// only when a new stretch starts: a read that fails, or that says
+    /// "console" while the connection tears down, never clears it (12/11
+    /// bench: one such tick hid mstsc's departure).
     bool m_LastActiveRemote = false;
+    /// The previous tick was Active: the stretch goes on.
+    bool m_InActiveStretch = false;
     bool m_Left = false;
     int m_DisconnectedTicks = 0;
 };
@@ -234,20 +244,54 @@ QString signInLaunchRefusal(const SignInFacts& facts);
 /// sign-in screen worker runs (one at a time).
 QString signInLaunchChecks(const SignInFacts& facts);
 
+/// What the server could read of the console session's user (WTSUserName,
+/// which needs no privilege). The server's own reading, for the card and an
+/// early, clear refusal only: the launcher checks again with its own, and
+/// keeps the last word.
+enum class ConsoleUser
+{
+    Nobody,   ///< the console is an empty session at the sign-in screen
+    Somebody, ///< an account is signed in there, locked or not
+    Unread,   ///< no console session, or the read failed
+};
+
+/// The console reads as somebody's: signed in, or not known. A doubt offers
+/// nothing and refuses the request.
+bool consoleTaken(ConsoleUser console);
+
+/// The one text a client gets when somebody is signed in on the PC: never the
+/// account's name nor the session's id (those stay in the server's log).
+inline constexpr char kSomebodySignedIn[] = "Somebody is signed in on this PC";
+
+/// The error code /start answers with (409) in that case; the page says
+/// kSomebodySignedIn in its own language.
+inline constexpr char kSomebodySignedInCode[] = "somebody_signed_in";
+
 /// Whether the card offers "This PC's sign-in screen": the session was left by
 /// Remote Desktop, the native host and the launcher are there (@p allowed),
-/// and this version offers it (kSignInOffered). A kiosk never gets it: the
-/// server refuses its request (signInRequestRefusal), and its page shows the
-/// card's text only.
-bool signInOffered(bool leftByRemoteDesktop, bool allowed);
+/// nobody is signed in on the console (@p console), and this version offers it
+/// (kSignInOffered). A kiosk never gets it: the server refuses its request
+/// (signInRequestRefusal), and its page shows the card's text only.
+bool signInOffered(bool leftByRemoteDesktop, bool allowed, ConsoleUser console);
 
 /// Why a /start of kSignInAppId must NOT go out, in English; empty when it
 /// may. The gate first, then signInRequestChecks().
-QString signInRequestRefusal(const Tracker& tracker, bool allowed, bool booth);
+QString signInRequestRefusal(const Tracker& tracker, bool allowed, bool booth, ConsoleUser console);
 
 /// signInRequestRefusal's checks without the gate: never a kiosk (@p booth),
-/// then the tracker's reasons.
-QString signInRequestChecks(const Tracker& tracker, bool allowed, bool booth);
+/// then the tracker's reasons, then the console: kSomebodySignedIn when it
+/// reads as taken (consoleTaken).
+QString signInRequestChecks(const Tracker& tracker, bool allowed, bool booth, ConsoleUser console);
+
+/// Why a request for the sign-in screen must NOT take over the one streaming
+/// now, in English; empty when it may (or when none streams, @p live false).
+/// Only the device that opened it may: the same authenticated session (@p
+/// liveOwner, @p requester: the sessions' tokens, the server's own record,
+/// never anything the page sends), as a reload or a second tab of the same
+/// browser does. Any other device, or a caller with no session (empty token),
+/// is refused before the live stream is touched: nobody else cuts in while a
+/// password is being typed.
+QString signInTakeOverRefusal(bool live, const QString& liveOwner, const QString& requester);
 
 /// Whether an invited guest's stream may be of @p appId on a host (@p
 /// nativeHost: this PC's own). Never the sign-in screen: it is its owner's

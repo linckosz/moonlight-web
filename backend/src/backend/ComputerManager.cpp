@@ -442,6 +442,10 @@ QJsonObject ComputerManager::nativeDisplayJson()
     // screen, streamed, and signed in through. A kiosk's page shows the
     // card's text only, and the server refuses it the stream.
     obj["sign_in_screen"] = leftByRemoteDesktop && RemoteDesktopReturn::instance().offersSignIn();
+    // It would be, but somebody is signed in on the PC: the card says so in
+    // place of the app (never who: the account stays the PC's business).
+    obj["sign_in_held"] =
+        leftByRemoteDesktop && RemoteDesktopReturn::instance().signInHeldBySomebody();
     // macOS alone can withhold it (Accessibility): false means a stream would
     // show a picture and take none of the viewer's input — said on the card
     // and when the stream starts, since macOS itself says nothing.

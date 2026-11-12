@@ -100,6 +100,7 @@
     "hosts": {
         "nativeCapturePermission": "Ce Mac a perdu son autorisation d'enregistrement de l'écran : il ne peut plus diffuser son écran. Sur le Mac : Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran, activez MoonlightWeb, puis quittez et relancez MoonlightWeb.",
         "sessionLeftByRemoteDesktop": "Le Bureau à distance a quitté la session de ce PC, qui n'a plus d'écran. Connectez-vous sur le PC, ou voyez le README pour quitter le Bureau à distance sans perdre l'écran.",
+        "somebodySignedIn": "Quelqu'un est connecté sur ce PC.",
         "nativeInputPermission": "Ce Mac a perdu son autorisation d'Accessibilité : un stream affichera l'image, mais votre clavier et votre souris ne l'atteindront pas. Sur le Mac : Réglages Système → Confidentialité et sécurité → Accessibilité, activez MoonlightWeb.",
         "nativeInputPermissionStream": "Ce Mac a perdu son autorisation d'Accessibilité — votre clavier et votre souris ne l'atteindront pas. Activez MoonlightWeb dans Réglages Système → Confidentialité et sécurité → Accessibilité, sur le Mac.",
         "nativePermOpened": "Réglage ouvert sur le Mac.",

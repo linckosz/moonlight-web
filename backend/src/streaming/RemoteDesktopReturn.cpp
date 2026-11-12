@@ -121,7 +121,10 @@ RemoteDesktopReturnPolicy::Observation observe()
                                       WTSClientProtocolType, &buffer, &bytes) &&
         buffer) {
         // 0 the console, 2 Remote Desktop (1 is a retired ICA value).
-        if (bytes >= sizeof(USHORT)) now.remote = *reinterpret_cast<USHORT*>(buffer) == 2;
+        if (bytes >= sizeof(USHORT)) {
+            now.remote = *reinterpret_cast<USHORT*>(buffer) == 2;
+            now.remoteRead = true;
+        }
         ::WTSFreeMemory(buffer);
     }
     return now;
@@ -186,12 +189,39 @@ bool RemoteDesktopReturn::offersSignIn() const
 {
     // The settings file is read only when there is something to offer.
     if (!m_LeftByRemoteDesktop || !RemoteDesktopReturnPolicy::kSignInOffered) return false;
-    return RemoteDesktopReturnPolicy::signInOffered(true, signInAllowed());
+    return RemoteDesktopReturnPolicy::signInOffered(true, signInAllowed(), consoleUserNow());
+}
+
+bool RemoteDesktopReturn::signInHeldBySomebody() const
+{
+    if (!m_LeftByRemoteDesktop || !RemoteDesktopReturnPolicy::kSignInOffered) return false;
+    return signInAllowed() && RemoteDesktopReturnPolicy::consoleTaken(consoleUserNow());
 }
 
 QString RemoteDesktopReturn::signInRefusal(bool booth) const
 {
-    return RemoteDesktopReturnPolicy::signInRequestRefusal(m_Tracker, signInAllowed(), booth);
+    return RemoteDesktopReturnPolicy::signInRequestRefusal(m_Tracker, signInAllowed(), booth,
+                                                           consoleUserNow());
+}
+
+RemoteDesktopReturnPolicy::ConsoleUser RemoteDesktopReturn::consoleUserNow()
+{
+#ifdef Q_OS_WIN
+    using RemoteDesktopReturnPolicy::ConsoleUser;
+    const DWORD console = ::WTSGetActiveConsoleSessionId();
+    if (console == 0xFFFFFFFF) return ConsoleUser::Unread;
+    LPWSTR name = nullptr;
+    DWORD bytes = 0;
+    if (!::WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, console, WTSUserName, &name,
+                                       &bytes) ||
+        !name)
+        return ConsoleUser::Unread;
+    const bool someone = name[0] != 0;
+    ::WTSFreeMemory(name);
+    return someone ? ConsoleUser::Somebody : ConsoleUser::Nobody;
+#else
+    return RemoteDesktopReturnPolicy::ConsoleUser::Unread;
+#endif
 }
 
 bool RemoteDesktopReturn::backOnScreenNow()
@@ -260,6 +290,24 @@ void RemoteDesktopReturn::onTick()
     if (m_Asking.load()) return;
     const RemoteDesktopReturnPolicy::Observation now = observe();
     const bool left = m_Tracker.observe(now);
+
+    // How the protocol reads inside one Active stretch: a change there is
+    // said (12/11 bench: one odd read once hid mstsc's departure; the
+    // tracker keeps Remote Desktop until the session leaves Active).
+    const int remoteRead = !now.remoteRead ? -1 : now.remote ? 1 : 0;
+    if (now.state == RemoteDesktopReturnPolicy::Active &&
+        m_LastState == RemoteDesktopReturnPolicy::Active && remoteRead != m_LastRemoteRead) {
+        const auto said = [](int read) {
+            return read < 0   ? QStringLiteral("unreadable")
+                   : read > 0 ? QStringLiteral("Remote Desktop")
+                              : QStringLiteral("the console");
+        };
+        Logger::info(QStringLiteral("[rdp] this session's connection now reads as %1 (was %2); "
+                                    "Remote Desktop, once seen, is kept until it leaves "
+                                    "\"active\"")
+                         .arg(said(remoteRead), said(m_LastRemoteRead)));
+    }
+    m_LastRemoteRead = remoteRead;
 
     const bool stateMoved = now.state != m_LastState;
     const bool leftMoved = left != m_LeftByRemoteDesktop;

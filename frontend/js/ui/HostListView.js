@@ -1220,8 +1220,14 @@ export class HostListView {
             // at all, virtual ones included. Only its return to the PC's
             // screen brings one back: with the admin's setting on, the grid
             // below has "This PC's screen", which does that when opened.
+            // Somebody signed in on the PC holds the sign-in screen: said
+            // outside a kiosk, which never gets that app anyway.
+            const text =
+                host.signInHeldBySomebody && !BackendClient.adminLocked
+                    ? t('hosts.somebodySignedIn')
+                    : t('hosts.sessionLeftByRemoteDesktop');
             return `<div class="host-body-center host-empty-display">
-                        <p class="host-empty-display-text">${t('hosts.sessionLeftByRemoteDesktop')}</p>
+                        <p class="host-empty-display-text">${text}</p>
                     </div>`;
         }
         if (host.needsCapturePermission) {

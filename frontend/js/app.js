@@ -2800,7 +2800,9 @@ export const MoonlightApp = {
             const msg =
                 err && (err.aborted || err.message === 'server_timeout')
                     ? t('launch.timeout')
-                    : err.message || t('launch.failed');
+                    : err && err.statusCode === 409 && err.message === 'somebody_signed_in'
+                      ? t('hosts.somebodySignedIn')
+                      : err.message || t('launch.failed');
             Toast.error(msg);
             this.transition('app_list');
         }

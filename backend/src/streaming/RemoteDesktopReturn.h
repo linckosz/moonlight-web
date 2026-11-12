@@ -71,6 +71,15 @@ public:
     /// launcher installed (RemoteDesktopReturnPolicy::signInOffered).
     bool offersSignIn() const;
 
+    /// leftByRemoteDesktop(), the sign-in screen would be offered, but
+    /// somebody is signed in on the PC (or that cannot be read): the card says
+    /// "Somebody is signed in on this PC" in place of the app.
+    bool signInHeldBySomebody() const;
+
+    /// The console session's user, read now (WTSUserName, no privilege
+    /// needed). Unread on other platforms.
+    static RemoteDesktopReturnPolicy::ConsoleUser consoleUserNow();
+
     /// Why a stream of the sign-in screen must NOT start now, in English;
     /// empty when it may. @p booth: the request comes from a kiosk, which
     /// never gets it (RemoteDesktopReturnPolicy::signInRequestRefusal).
@@ -130,6 +139,8 @@ private:
     bool m_Watching = false;
     bool m_LeftByRemoteDesktop = false;
     int m_LastState = -1;
+    /// The last protocol read: 1 Remote Desktop, 0 the console, -1 unread.
+    int m_LastRemoteRead = -1;
     std::atomic<bool> m_Asking{false};
     /// The requests waiting for the return under way (bringBack).
     QList<std::function<void(bool, const QString&)>> m_Waiting;

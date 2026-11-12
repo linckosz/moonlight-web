@@ -28,8 +28,19 @@ Observation seen(int state, bool remote = false)
     Observation o;
     o.state = state;
     o.remote = remote;
+    o.remoteRead = true;
     return o;
 }
+
+/// A tick whose protocol read failed (the state was read).
+Observation unread(int state)
+{
+    Observation o;
+    o.state = state;
+    return o;
+}
+
+constexpr ConsoleUser kNobody = ConsoleUser::Nobody;
 
 /// What the launcher sees when the server of a session Remote Desktop left
 /// asks for the sign-in screen: its session 1 is Disconnected, the console is
@@ -123,16 +134,20 @@ void run_sign_in_screen_tests()
     if (!kSignInOffered) {
         CHECK_EQ(signInLaunchRefusal(signInAsked()),
                  QStringLiteral("this version does not offer it"));
-        CHECK(!signInOffered(true, true));
+        CHECK(!signInOffered(true, true, kNobody));
         const Tracker t = leftFor(5);
-        CHECK_EQ(signInRequestRefusal(t, true, false),
+        CHECK_EQ(signInRequestRefusal(t, true, false, kNobody),
                  QStringLiteral("this version does not offer it"));
     } else {
         CHECK(signInLaunchRefusal(signInAsked()).isEmpty());
-        CHECK(signInOffered(true, true));
+        CHECK(signInOffered(true, true, kNobody));
     }
-    CHECK(!signInOffered(false, true));
-    CHECK(!signInOffered(true, false));
+    CHECK(!signInOffered(false, true, kNobody));
+    CHECK(!signInOffered(true, false, kNobody));
+    // Somebody signed in on the PC, or a console that could not be read: no
+    // card, whatever the version.
+    CHECK(!signInOffered(true, true, ConsoleUser::Somebody));
+    CHECK(!signInOffered(true, true, ConsoleUser::Unread));
     CHECK(kSignInAppId != kReturnAppId);
 
     SECTION("Sign-in screen — the launcher's checks");
@@ -193,28 +208,72 @@ void run_sign_in_screen_tests()
         // Left by Remote Desktop and settled, the native host and the
         // launcher there: yes, from any paired browser but a kiosk.
         const Tracker left = leftFor(Tracker::kSettleTicks);
-        CHECK(signInRequestChecks(left, true, false).isEmpty());
-        CHECK_EQ(signInRequestChecks(left, true, true), QStringLiteral("not from a kiosk"));
-        CHECK(!signInRequestChecks(left, false, false).isEmpty());
+        CHECK(signInRequestChecks(left, true, false, kNobody).isEmpty());
+        CHECK_EQ(signInRequestChecks(left, true, true, kNobody),
+                 QStringLiteral("not from a kiosk"));
+        CHECK(!signInRequestChecks(left, false, false, kNobody).isEmpty());
         // Only just left: Remote Desktop may be moving it to another client.
-        CHECK(!signInRequestChecks(leftFor(1), true, false).isEmpty());
+        CHECK(!signInRequestChecks(leftFor(1), true, false, kNobody).isEmpty());
         // Switched away from on the PC (Switch user), or never seen in use:
         // not left by Remote Desktop, nothing offered.
         Tracker local;
         local.observe(seen(Active, false));
         for (int i = 0; i < 5; ++i)
             local.observe(seen(Disconnected));
-        CHECK(!signInRequestChecks(local, true, false).isEmpty());
-        CHECK(!signInRequestChecks(Tracker{}, true, false).isEmpty());
+        CHECK(!signInRequestChecks(local, true, false, kNobody).isEmpty());
+        CHECK(!signInRequestChecks(Tracker{}, true, false, kNobody).isEmpty());
         // A return given up on does not hold the sign-in screen back:
         // nothing is moved there.
         Tracker gaveUp = leftFor(Tracker::kSettleTicks);
         gaveUp.giveUp();
-        CHECK(signInRequestChecks(gaveUp, true, false).isEmpty());
+        CHECK(signInRequestChecks(gaveUp, true, false, kNobody).isEmpty());
         // Back on a screen: nothing to offer.
         Tracker back = leftFor(Tracker::kSettleTicks);
         back.observe(seen(Active, false));
-        CHECK(!signInRequestChecks(back, true, false).isEmpty());
+        CHECK(!signInRequestChecks(back, true, false, kNobody).isEmpty());
+    }
+
+    SECTION("Sign-in screen — somebody signed in on the PC (case 4b, 12/11)");
+    {
+        // The page gets the one text, never who nor which session; a console
+        // that could not be read counts as somebody's.
+        const Tracker left = leftFor(Tracker::kSettleTicks);
+        CHECK(signInRequestChecks(left, true, false, ConsoleUser::Nobody).isEmpty());
+        CHECK_EQ(signInRequestChecks(left, true, false, ConsoleUser::Somebody),
+                 QString::fromLatin1(kSomebodySignedIn));
+        CHECK_EQ(signInRequestChecks(left, true, false, ConsoleUser::Unread),
+                 QString::fromLatin1(kSomebodySignedIn));
+        CHECK(!consoleTaken(ConsoleUser::Nobody));
+        CHECK(consoleTaken(ConsoleUser::Somebody));
+        CHECK(consoleTaken(ConsoleUser::Unread));
+        // A kiosk hears "not from a kiosk" first, whatever is on the console.
+        CHECK_EQ(signInRequestChecks(left, true, true, ConsoleUser::Somebody),
+                 QStringLiteral("not from a kiosk"));
+        // Not left by Remote Desktop: the tracker's reason comes first.
+        CHECK(signInRequestChecks(Tracker{}, true, false, ConsoleUser::Somebody) !=
+              QString::fromLatin1(kSomebodySignedIn));
+        // The text names nobody and no session.
+        CHECK(!QString::fromLatin1(kSomebodySignedIn).contains(QLatin1Char('(')));
+    }
+
+    SECTION("Sign-in screen — a second request while it streams (case 6, 12/11)");
+    {
+        // None streams: nothing to take over.
+        CHECK(signInTakeOverRefusal(false, QString(), QStringLiteral("tokA")).isEmpty());
+        // The same authenticated session (a reload, a second tab): it may.
+        CHECK(
+            signInTakeOverRefusal(true, QStringLiteral("tokA"), QStringLiteral("tokA")).isEmpty());
+        // Another device: refused, before the live stream is touched.
+        CHECK_EQ(signInTakeOverRefusal(true, QStringLiteral("tokA"), QStringLiteral("tokB")),
+                 QStringLiteral("the sign-in screen is already being streamed"));
+        // No session on either side (localhost, unauthenticated): never "the
+        // same device".
+        CHECK(!signInTakeOverRefusal(true, QStringLiteral("tokA"), QString()).isEmpty());
+        CHECK(!signInTakeOverRefusal(true, QString(), QString()).isEmpty());
+        CHECK(!signInTakeOverRefusal(true, QString(), QStringLiteral("tokB")).isEmpty());
+        // A kiosk never gets that far: its request is refused first (403).
+        CHECK_EQ(signInRequestChecks(leftFor(Tracker::kSettleTicks), true, true, kNobody),
+                 QStringLiteral("not from a kiosk"));
     }
 
     SECTION("Sign-in screen — never a guest's");
@@ -473,6 +532,63 @@ void run_remote_desktop_return_tests()
         t.observe(seen(Disconnected));
         CHECK(!t.returnRefusal(true).isEmpty());
         t.observe(seen(Disconnected));
+        CHECK(t.returnRefusal(true).isEmpty());
+    }
+
+    // The 12/11 bench's miss: mstsc closed and nothing noted, because one tick
+    // inside the Remote Desktop stretch read as the console. Remote Desktop,
+    // once seen, stays until the session leaves Active.
+    {
+        Tracker t;
+        t.observe(seen(Active, true));
+        t.observe(seen(Active, false)); // an odd read while it tears down
+        CHECK(t.observe(seen(Disconnected)));
+    }
+    // A failed read inside the stretch keeps what was known.
+    {
+        Tracker t;
+        t.observe(seen(Active, true));
+        t.observe(unread(Active));
+        CHECK(t.observe(seen(Disconnected)));
+    }
+    // A stretch that starts unread knows nothing: nothing offered...
+    {
+        Tracker t;
+        t.observe(unread(Active));
+        CHECK(!t.observe(seen(Disconnected)));
+        // ...until a read says Remote Desktop, anywhere in the stretch.
+        Tracker u;
+        u.observe(unread(Active));
+        u.observe(seen(Active, false));
+        u.observe(seen(Active, true));
+        u.observe(unread(Active));
+        CHECK(u.observe(seen(Disconnected)));
+    }
+    // Leaving Active ends the stretch: back on the console afterwards, a
+    // Disconnected is the console's (Switch user), not Remote Desktop's.
+    {
+        Tracker t;
+        t.observe(seen(Active, true));
+        CHECK(t.observe(seen(Disconnected)));
+        CHECK(!t.observe(seen(Active, false)));
+        CHECK(!t.observe(seen(Disconnected)));
+        // Same through Connected (a client on its way in).
+        Tracker u;
+        u.observe(seen(Active, true));
+        u.observe(seen(Connected));
+        u.observe(unread(Active));
+        CHECK(!u.observe(seen(Disconnected)));
+    }
+    // A state that could not be read changes nothing: the stretch, the count
+    // and the answer stay.
+    {
+        Tracker t;
+        t.observe(seen(Active, true));
+        t.observe(seen(-1));
+        CHECK(t.observe(seen(Disconnected)));
+        CHECK(t.observe(seen(-1)));
+        CHECK(!t.returnRefusal(true).isEmpty()); // one Disconnected tick only
+        CHECK(t.observe(seen(Disconnected)));
         CHECK(t.returnRefusal(true).isEmpty());
     }
 

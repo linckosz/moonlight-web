@@ -160,6 +160,13 @@ export class Host {
         return this.leftByRemoteDesktop && this.nativeDisplay?.sign_in_screen === true;
     }
 
+    // leftByRemoteDesktop, and the sign-in screen would be offered, but
+    // somebody is signed in on the PC: the card says so in place of the app
+    // (never who), since the host would refuse the stream.
+    get signInHeldBySomebody() {
+        return this.leftByRemoteDesktop && this.nativeDisplay?.sign_in_held === true;
+    }
+
     // A Mac whose Screen Recording grant is gone: the card stays, and says
     // which switch to flip instead of painting a grid that cannot stream.
     get needsCapturePermission() {

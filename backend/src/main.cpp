@@ -3401,13 +3401,45 @@ int main(int argc, char* argv[])
             QString refusal = RemoteDesktopReturn::instance().signInRefusal(req.adminLocked);
             if (refusal.isEmpty() && !appSettings.streamWorkerEnabled())
                 refusal = QStringLiteral("streams run in this process (stream_worker_enabled)");
+            // One stream of it at a time, and only its own device takes it
+            // over (a reload, a second tab): asked here, before anything of
+            // the live one is touched. The device is the authenticated
+            // session the server holds, never the page's word.
+            bool signInTakeOver = false;
+            if (refusal.isEmpty()) {
+                const QString requester = HttpServer::sessionTokenFromRequest(req);
+                for (int i = 0; i < g_Pool.size() && refusal.isEmpty(); ++i) {
+                    const SessionPool::Slot& sl = g_Pool.at(i);
+                    if (!g_Pool.live(i) || sl.hostUuid != host->uuid ||
+                        sl.appId != NativeHostBackend::signInScreenAppId())
+                        continue;
+                    refusal = RemoteDesktopReturnPolicy::signInTakeOverRefusal(
+                        true, sl.sessionToken, requester);
+                    signInTakeOver = refusal.isEmpty();
+                }
+            }
             if (!refusal.isEmpty()) {
                 qInfo().noquote() << "[signin] a stream of this PC's sign-in screen refused:"
                                   << refusal;
+                // Somebody signed in on the PC: the page says it in its own
+                // words, and nothing more (who, or which session, stays here).
+                if (refusal == QLatin1String(RemoteDesktopReturnPolicy::kSomebodySignedIn) &&
+                    !req.adminLocked) {
+                    respond(HttpResponse::error(
+                        409,
+                        QString::fromLatin1(RemoteDesktopReturnPolicy::kSomebodySignedInCode)));
+                    return;
+                }
                 respond(HttpResponse::error(
                     req.adminLocked ? 403 : 409,
                     QStringLiteral("This PC's sign-in screen cannot be streamed: ") + refusal));
                 return;
+            }
+            if (signInTakeOver) {
+                // The id is the short one the audit lines already carry.
+                qInfo().noquote()
+                    << "[signin] taken over by the same device (device"
+                    << sanitizeClientUniqueId(body["client_uniqueid"].toString()).left(8) + ")";
             }
             if (body["standby"].toBool(false)) {
                 respond(HttpResponse::json(
@@ -4996,6 +5028,15 @@ int main(int argc, char* argv[])
                         r["status"] = QStringLiteral("dual_unavailable");
                         r["reason"] = QStringLiteral("worker spawn failed");
                         respond(HttpResponse::json(r, 200));
+                    } else if (cfg["signInScreen"].toBool(false) &&
+                               RemoteDesktopReturnPolicy::consoleTaken(
+                                   RemoteDesktopReturn::consoleUserNow())) {
+                        // Somebody signed in on the PC since the gate asked:
+                        // the launcher refused the worker (its log says
+                        // why), and the page says it as the gate would.
+                        respond(HttpResponse::error(
+                            409,
+                            QString::fromLatin1(RemoteDesktopReturnPolicy::kSomebodySignedInCode)));
                     } else {
                         respond(HttpResponse::error(500, "Failed to spawn stream worker"));
                     }
