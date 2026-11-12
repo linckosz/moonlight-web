@@ -824,9 +824,9 @@ static void test_class_per_datagram(void) {
 		printf("  to an IPv%d peer\n", family);
 		// Two agents, each with its own memory of the socket
 		int mine = 0, theirs = 0;
-		CHECK(conn_poll_send_shared(shared, 0, &mine, "p", 1, &dst, 0) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &mine, "p", 1, &dst, 0) == 1);
 		CHECK(read_class(receiver, v6) == 0);
-		CHECK(conn_poll_send_shared(shared, 0, &mine, "e", 1, &dst, 0xB8) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &mine, "e", 1, &dst, 0xB8) == 1);
 		const int first = read_class(receiver, v6);
 		// Never another class than the one asked: at worst none
 		CHECK(first == 0xB8 || first == 0);
@@ -837,34 +837,76 @@ static void test_class_per_datagram(void) {
 			continue;
 		}
 		// The other agent's class is its own, and each keeps its own after
-		CHECK(conn_poll_send_shared(shared, 0, &theirs, "v", 1, &dst, 0x88) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &theirs, "v", 1, &dst, 0x88) == 1);
 		CHECK(read_class(receiver, v6) == 0x88);
-		CHECK(conn_poll_send_shared(shared, 0, &mine, "e", 1, &dst, 0xB8) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &mine, "e", 1, &dst, 0xB8) == 1);
 		CHECK(read_class(receiver, v6) == 0xB8);
 		// A datagram without a class has none, whatever went before it
-		CHECK(conn_poll_send_shared(shared, 0, &theirs, "p", 1, &dst, 0) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &theirs, "p", 1, &dst, 0) == 1);
 		CHECK(read_class(receiver, v6) == 0);
-		CHECK(conn_poll_send_shared(shared, 0, &mine, "b", 1, &dst, 0x28) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &mine, "b", 1, &dst, 0x28) == 1);
 		CHECK(read_class(receiver, v6) == 0x28);
 		// The class is one byte
-		CHECK(conn_poll_send_shared(shared, 0, &mine, "e", 1, &dst, 0x1B8) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &mine, "e", 1, &dst, 0x1B8) == 1);
 		CHECK(read_class(receiver, v6) == 0xB8);
-		CHECK(conn_poll_send_shared(shared, 0, &mine, "p", 1, &dst, 0x100) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &mine, "p", 1, &dst, 0x100) == 1);
 		CHECK(read_class(receiver, v6) == 0);
 		// A datagram's own error is not the system's refusal: the class stays on
-		const int ret = conn_poll_send_shared(shared, 0, &mine, big, sizeof(big), &dst, 0xB8);
+		const int ret = conn_poll_send_shared(shared, 0, AF_INET6, &mine, big, sizeof(big), &dst, 0xB8);
 		const int err = sockerrno;
 		CHECK(ret < 0);
 		CHECK(!conn_poll_class_refused(err));
 		CHECK(mine == 0 && theirs == 0);
-		CHECK(conn_poll_send_shared(shared, 0, &mine, "e", 1, &dst, 0xB8) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &mine, "e", 1, &dst, 0xB8) == 1);
 		CHECK(read_class(receiver, v6) == 0xB8);
 		// Once the system has refused, no class is asked on that socket
 		int refused = -1;
-		CHECK(conn_poll_send_shared(shared, 0, &refused, "e", 1, &dst, 0xB8) == 1);
+		CHECK(conn_poll_send_shared(shared, 0, AF_INET6, &refused, "e", 1, &dst, 0xB8) == 1);
 		CHECK(read_class(receiver, v6) == 0);
 		CHECK(refused == -1);
 		closesocket(receiver);
+	}
+	// The family is the holder's to say, once. When it said none the socket is asked for each
+	// datagram, and the datagram goes the same way.
+	{
+		addr_record_t dst;
+		socket_t receiver = class_receiver(false, &dst);
+		if (receiver != INVALID_SOCKET) {
+			int unsaid = 0;
+			CHECK(conn_poll_send_shared(shared, 0, 0, &unsaid, "e", 1, &dst, 0xB8) == 1);
+			const int got = read_class(receiver, false);
+			CHECK(got == 0xB8 || got == 0);
+			CHECK(conn_poll_send_shared(shared, 0, 0, &unsaid, "p", 1, &dst, 0) == 1);
+			CHECK(read_class(receiver, false) == 0);
+			closesocket(receiver);
+		}
+	}
+	// A shared socket of IPv4 alone: the class is IPv4's, and nothing is mapped
+	{
+		socket_t four = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		struct sockaddr_in any4;
+		memset(&any4, 0, sizeof(any4));
+		any4.sin_family = AF_INET;
+		addr_record_t dst;
+		socket_t receiver = class_receiver(false, &dst);
+		if (four != INVALID_SOCKET && receiver != INVALID_SOCKET &&
+		    bind(four, (struct sockaddr *)&any4, sizeof(any4)) == 0) {
+			int state = 0;
+			CHECK(conn_poll_send_shared(four, 0, AF_INET, &state, "e", 1, &dst, 0xB8) == 1);
+			const int got = read_class(receiver, false);
+			CHECK(got == 0xB8 || got == 0);
+			CHECK(conn_poll_send_shared(four, 0, AF_INET, &state, "p", 1, &dst, 0) == 1);
+			CHECK(read_class(receiver, false) == 0);
+			// Not said: read from the socket, the same
+			state = 0;
+			CHECK(conn_poll_send_shared(four, 0, 0, &state, "v", 1, &dst, 0x88) == 1);
+			const int again = read_class(receiver, false);
+			CHECK(again == 0x88 || again == 0);
+		}
+		if (four != INVALID_SOCKET)
+			closesocket(four);
+		if (receiver != INVALID_SOCKET)
+			closesocket(receiver);
 	}
 	// The socket's own class was never set: the next agent finds none
 	int value = -1;

@@ -241,10 +241,10 @@ index 1bd47b0..06de622 100644
  
  #endif
 diff --git a/src/conn_poll.c b/src/conn_poll.c
-index beeeee7..be3c0fe 100644
+index beeeee7..55fa2d9 100644
 --- a/src/conn_poll.c
 +++ b/src/conn_poll.c
-@@ -79,6 +79,12 @@ typedef struct conn_impl {
+@@ -79,6 +79,13 @@ typedef struct conn_impl {
  	int polled_pending;
  	int pending_count;
  	tcp_passive_pending_t pending[TCP_PASSIVE_PENDING_MAX];
@@ -254,10 +254,11 @@ index beeeee7..be3c0fe 100644
 +	int shared_count;
 +	socket_t shared_send[JUICE_SHARED_SOCKETS_MAX];
 +	int shared_ds[JUICE_SHARED_SOCKETS_MAX];
++	int shared_family[JUICE_SHARED_SOCKETS_MAX]; // read once: see socket_family()
  } conn_impl_t;
  
  typedef struct pfds_record {
-@@ -104,6 +110,11 @@ static void tcp_passive_drop(conn_impl_t *conn_impl, int k);
+@@ -104,6 +111,11 @@ static void tcp_passive_drop(conn_impl_t *conn_impl, int k);
  static bool tcp_passive_same_source(const addr_record_t *a, const addr_record_t *b);
  static int tcp_passive_oldest(const conn_impl_t *conn_impl, const addr_record_t *src);
  static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfds_t i);
@@ -269,7 +270,7 @@ index beeeee7..be3c0fe 100644
  
  static thread_return_t THREAD_CALL conn_thread_entry(void *arg) {
  	thread_set_name_self("juice poll");
-@@ -317,17 +328,21 @@ void conn_poll_process_udp(juice_agent_t *agent, struct pollfd *pfd) {
+@@ -317,17 +329,21 @@ void conn_poll_process_udp(juice_agent_t *agent, struct pollfd *pfd) {
  	}
  
  	if (pfd->revents & POLLIN) {
@@ -296,7 +297,7 @@ index beeeee7..be3c0fe 100644
  				JLOG_WARN("Agent receive failed");
  				conn_impl->state = CONN_STATE_FINISHED;
  				break;
-@@ -633,7 +648,10 @@ int conn_poll_init(juice_agent_t *agent, conn_registry_t *registry, udp_socket_c
+@@ -633,7 +649,10 @@ int conn_poll_init(juice_agent_t *agent, conn_registry_t *registry, udp_socket_c
  		return -1;
  	}
  
@@ -308,7 +309,7 @@ index beeeee7..be3c0fe 100644
  	if (conn_impl->udp_sock == INVALID_SOCKET) {
  		JLOG_ERROR("UDP socket creation failed");
  		free(conn_impl);
-@@ -648,7 +666,8 @@ int conn_poll_init(juice_agent_t *agent, conn_registry_t *registry, udp_socket_c
+@@ -648,7 +667,8 @@ int conn_poll_init(juice_agent_t *agent, conn_registry_t *registry, udp_socket_c
  	memset(&conn_impl->tcp_ice_read_context, 0, sizeof(tcp_ice_read_context_t));
  
  	conn_impl->listen_sock = INVALID_SOCKET;
@@ -318,7 +319,7 @@ index beeeee7..be3c0fe 100644
  		conn_impl->listen_sock = tcp_passive_listen(conn_impl->udp_sock);
  
  	agent->conn_impl = conn_impl;
-@@ -661,7 +680,8 @@ void conn_poll_cleanup(juice_agent_t *agent) {
+@@ -661,7 +681,8 @@ void conn_poll_cleanup(juice_agent_t *agent) {
  	conn_poll_interrupt(agent);
  
  	mutex_destroy(&conn_impl->send_mutex);
@@ -328,7 +329,7 @@ index beeeee7..be3c0fe 100644
  	tcp_passive_close(conn_impl);
  	if (conn_impl->tcp_passive && conn_impl->tcp_sock != INVALID_SOCKET) {
  		// Reset rather than leave our end of it in TIME_WAIT: the next session's listener binds
-@@ -716,6 +736,118 @@ int conn_poll_interrupt(juice_agent_t *agent) {
+@@ -716,6 +737,128 @@ int conn_poll_interrupt(juice_agent_t *agent) {
  	return 0;
  }
  
@@ -337,6 +338,17 @@ index beeeee7..be3c0fe 100644
 +// would be whichever of them set it last. So the socket's is never set, and a datagram that has a
 +// class carries it itself, as ancillary data. Windows documents that for ECN only: where the
 +// system refuses it, the datagrams of a shared socket leave unmarked.
++
++// The family a socket was made with, 0 when the system will not say. A shared socket's is
++// read once, when the sockets are set: a bound socket keeps it, and a datagram that carries
++// its class goes by it.
++static int socket_family(socket_t sock) {
++	addr_record_t name;
++	name.len = sizeof(name.addr);
++	if (getsockname(sock, (struct sockaddr *)&name.addr, &name.len) != 0)
++		return 0;
++	return name.addr.ss_family;
++}
 +
 +// Whether a send error says "no class for one datagram here", and nothing else. Any other is
 +// the datagram's own, as for a plain send (the buffer is full, it is too large, no route).
@@ -348,15 +360,14 @@ index beeeee7..be3c0fe 100644
 +#endif
 +}
 +
-+static int sendto_with_class(socket_t sock, const char *data, size_t size, const addr_record_t *dst,
-+                             int ds) {
++static int sendto_with_class(socket_t sock, int family, const char *data, size_t size,
++                             const addr_record_t *dst, int ds) {
 +	// Which class it is, IPv4's or IPv6's, is said by the address the datagram really goes to:
 +	// an IPv4 peer of an IPv6 socket is reached IPv4-mapped (as in udp_sendto()), and is IPv4.
 +	addr_record_t tmp = *dst;
-+	addr_record_t name;
-+	name.len = sizeof(name.addr);
-+	bool inet6_sock = getsockname(sock, (struct sockaddr *)&name.addr, &name.len) == 0 &&
-+	                  name.addr.ss_family == AF_INET6;
++	if (family == 0)
++		family = socket_family(sock);
++	bool inet6_sock = family == AF_INET6;
 +	bool tos = tmp.addr.ss_family == AF_INET;
 +	if (tmp.addr.ss_family == AF_INET6)
 +		tos = IN6_IS_ADDR_V4MAPPED(&((const struct sockaddr_in6 *)&tmp.addr)->sin6_addr);
@@ -424,13 +435,13 @@ index beeeee7..be3c0fe 100644
 +#endif
 +}
 +
-+int conn_poll_send_shared(socket_t sock, int via, int *class_state, const char *data, size_t size,
-+                          const addr_record_t *dst, int ds) {
++int conn_poll_send_shared(socket_t sock, int via, int family, int *class_state, const char *data,
++                          size_t size, const addr_record_t *dst, int ds) {
 +	// No class asked, or none to be had: a plain send. Nobody sets a class on a shared socket.
 +	if ((ds & 0xFF) == 0 || *class_state < 0)
 +		return udp_sendto(sock, data, size, dst);
 +
-+	int ret = sendto_with_class(sock, data, size, dst, ds);
++	int ret = sendto_with_class(sock, family, data, size, dst, ds);
 +	if (ret >= 0)
 +		return ret;
 +	int err = sockerrno;
@@ -447,7 +458,7 @@ index beeeee7..be3c0fe 100644
  int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *data, size_t size,
                     int ds) {
  	conn_impl_t *conn_impl = agent->conn_impl;
-@@ -749,6 +881,14 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
+@@ -749,6 +892,15 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
  			// MoonlightWeb patch: the queue is full, drop
  			ret = -SEAGAIN;
  		}
@@ -455,14 +466,15 @@ index beeeee7..be3c0fe 100644
 +		// MoonlightWeb patch: on shared sockets, the one the destination is reached through.
 +		// The class goes with the datagram, never on the socket: conn_poll_send_shared()
 +		int via = dst->via >= 0 && dst->via < conn_impl->shared_count ? dst->via : 0;
-+		ret = conn_poll_send_shared(conn_impl->shared_send[via], via, conn_impl->shared_ds + via,
++		ret = conn_poll_send_shared(conn_impl->shared_send[via], via,
++		                            conn_impl->shared_family[via], conn_impl->shared_ds + via,
 +		                            data, size, dst, ds);
 +		if (ret < 0)
 +			ret = -sockerrno;
  	} else {
  		if (conn_impl->send_ds >= 0 && conn_impl->send_ds != ds) {
  			JLOG_VERBOSE("Setting Differentiated Services field to 0x%X", ds);
-@@ -1159,5 +1299,169 @@ static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfd
+@@ -1159,5 +1311,171 @@ static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfd
  int conn_poll_get_addrs(juice_agent_t *agent, addr_record_t *records, size_t size) {
  	conn_impl_t *conn_impl = agent->conn_impl;
  
@@ -517,8 +529,10 @@ index beeeee7..be3c0fe 100644
 +		return INVALID_SOCKET;
 +	}
 +
-+	for (int via = 0; via < shared->send_count; ++via)
++	for (int via = 0; via < shared->send_count; ++via) {
 +		conn_impl->shared_send[via] = (socket_t)shared->send[via];
++		conn_impl->shared_family[via] = socket_family(conn_impl->shared_send[via]);
++	}
 +	conn_impl->shared_count = shared->send_count;
 +	JLOG_INFO("Using %d shared socket(s), the first on UDP port %hu", conn_impl->shared_count,
 +	          udp_get_port(conn_impl->shared_send[0]));
@@ -633,10 +647,10 @@ index beeeee7..be3c0fe 100644
 +	}
 +}
 diff --git a/src/conn_poll.h b/src/conn_poll.h
-index ae786e6..05427cb 100644
+index ae786e6..f2ec236 100644
 --- a/src/conn_poll.h
 +++ b/src/conn_poll.h
-@@ -30,5 +30,14 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
+@@ -30,5 +30,16 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
  void conn_poll_tcp_connect(juice_agent_t *agent, const addr_record_t *dst);
  bool conn_poll_tcp_listening(juice_agent_t *agent);
  int conn_poll_get_addrs(juice_agent_t *agent, addr_record_t *records, size_t size);
@@ -645,9 +659,11 @@ index ae786e6..05427cb 100644
 +// MoonlightWeb patch: one datagram on a shared socket, its class (`ds`) as ancillary data rather
 +// than as the socket's own. *class_state is the caller's memory for that socket: 0 at first,
 +// below 0 once the system has refused a class for one datagram, after which none is asked.
++// `family` is the socket's (AF_INET6, AF_INET), as the caller read it once; 0 when it did not,
++// and the socket is then asked for each datagram that has a class.
 +// Returns like udp_sendto(). Declared here for the tests.
-+int conn_poll_send_shared(socket_t sock, int via, int *class_state, const char *data, size_t size,
-+                          const addr_record_t *dst, int ds);
++int conn_poll_send_shared(socket_t sock, int via, int family, int *class_state, const char *data,
++                          size_t size, const addr_record_t *dst, int ds);
 +bool conn_poll_class_refused(int err);
  
  #endif
