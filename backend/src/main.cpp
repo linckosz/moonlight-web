@@ -7336,6 +7336,11 @@ int main(int argc, char* argv[])
         const QString endpoint = mw::localchannel::endpointFor(
             mw::localchannel::channelName(mw::edition::productName(), mw::edition::devFlag()),
             QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+        // Its own account alone, unless it runs as a service: nobody signs in
+        // with a service's account, and the tray icon that stands for it runs
+        // in the session of whoever is at the PC.
+        const mw::localchannel::Audience audience = mw::localchannel::audienceFor(
+            !qEnvironmentVariableIsEmpty("MW_SERVICE"), mw::localchannel::runsInSessionZero());
         QString why;
         const bool open = localChannel.listen(
             endpoint,
@@ -7343,7 +7348,7 @@ int main(int argc, char* argv[])
                       mw::localchannel::Server::Respond respond) {
                 server.serveLocal(request, std::move(respond));
             },
-            &why);
+            &why, audience);
         if (open)
             Logger::info(QStringLiteral("[LocalChannel] open"));
         else

@@ -310,11 +310,45 @@ void run_local_channel_tests()
 #endif
     }
 
-    SECTION("Local channel — the Windows pipe opens to the server's account and to who is signed "
-            "in at the PC, and to nobody else");
+    SECTION("Local channel — who is signed in at the PC is let in only by a service, where "
+            "services run");
+    {
+        // Started as a service, and in the session kept for services: the tray
+        // icon of whoever is at the PC stands for it.
+        CHECK(audienceFor(true, true) == Audience::SignedIn);
+        // The variable alone, in a desktop session, widens nothing.
+        CHECK(audienceFor(true, false) == Audience::OwnAccount);
+        // Nor does that session alone: something else started there.
+        CHECK(audienceFor(false, true) == Audience::OwnAccount);
+        CHECK(audienceFor(false, false) == Audience::OwnAccount);
+#ifndef Q_OS_WIN
+        // Elsewhere there is no such session.
+        CHECK(!runsInSessionZero());
+#endif
+    }
+
+    SECTION("Local channel — the Windows pipe opens to the server's account alone");
     {
         const QString sid = QStringLiteral("S-1-5-21-1111-2222-3333-1001");
-        const QString list = pipeAccessList(sid);
+        const QString list = pipeAccessList(sid, Audience::OwnAccount);
+        // Owned by the server's account, protected, and one entry: that
+        // account, in full. Nobody signed in at the PC under another account,
+        // and nobody else.
+        CHECK(list == QStringLiteral("O:") + sid + QStringLiteral("D:P(A;;GA;;;") + sid +
+                          QStringLiteral(")"));
+        CHECK_EQ(list.count(QLatin1Char('(')), 1);
+        for (const char* other : {"IU", "WD", "AU", "AN", "NU", "BU", "BG", "LG"})
+            CHECK(!list.contains(QStringLiteral(";%1)").arg(QLatin1String(other))));
+        CHECK(!list.contains(QStringLiteral("(D;")));
+    }
+
+    SECTION("Local channel — a service's pipe opens to who is signed in at the PC too, and to "
+            "nobody else");
+    {
+        const QString sid = QStringLiteral("S-1-5-21-1111-2222-3333-1001");
+        const QString list = pipeAccessList(sid, Audience::SignedIn);
+        // What the server's own account has is the same either way.
+        CHECK(list.startsWith(pipeAccessList(sid, Audience::OwnAccount)));
         // The server's account owns it, and the list is protected: nothing is
         // inherited from above.
         CHECK(list.startsWith(QStringLiteral("O:") + sid + QStringLiteral("D:P(")));

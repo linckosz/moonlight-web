@@ -267,11 +267,23 @@ QString endpointFor(const QString& channelName, const QString& dataDir)
 #endif
 }
 
-QString pipeAccessList(const QString& ownerSid)
+bool runsInSessionZero()
 {
+#ifdef Q_OS_WIN
+    DWORD session = 0;
+    return ::ProcessIdToSessionId(::GetCurrentProcessId(), &session) != FALSE && session == 0;
+#else
+    return false;
+#endif
+}
+
+QString pipeAccessList(const QString& ownerSid, Audience audience)
+{
+    const QString own = QStringLiteral("O:%1D:P(A;;GA;;;%1)").arg(ownerSid);
+    if (audience == Audience::OwnAccount) return own;
     // 0x12008b: FILE_GENERIC_READ | FILE_WRITE_DATA. FILE_GENERIC_WRITE would
     // add FILE_APPEND_DATA, which on a pipe is the right to create an instance.
-    return QStringLiteral("O:%1D:P(A;;GA;;;%1)(A;;0x12008b;;;IU)").arg(ownerSid);
+    return own + QStringLiteral("(A;;0x12008b;;;IU)");
 }
 
 // ── Into the server ─────────────────────────────────────────────────────────
@@ -808,7 +820,7 @@ Server::~Server()
     close();
 }
 
-bool Server::listen(const QString& endpoint, Handler handler, QString* error)
+bool Server::listen(const QString& endpoint, Handler handler, QString* error, Audience audience)
 {
     auto fail = [error](const QString& why) {
         if (error) *error = why;
@@ -828,7 +840,8 @@ bool Server::listen(const QString& endpoint, Handler handler, QString* error)
     // Who may open it: pipeAccessList().
     const std::wstring self = ownSid();
     if (self.empty()) return fail(QStringLiteral("this account cannot be read"));
-    const std::wstring sddl = pipeAccessList(QString::fromStdWString(self)).toStdWString();
+    const std::wstring sddl =
+        pipeAccessList(QString::fromStdWString(self), audience).toStdWString();
     if (!::ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1,
                                                                 &m_Impl->sd, nullptr))
         return fail(QStringLiteral("the channel's access list cannot be built (%1)")
@@ -1041,8 +1054,10 @@ Server::~Server()
     close();
 }
 
-bool Server::listen(const QString& endpoint, Handler handler, QString* error)
+bool Server::listen(const QString& endpoint, Handler handler, QString* error, Audience audience)
 {
+    // The socket is this account's alone whoever the audience: see the header.
+    Q_UNUSED(audience);
     auto fail = [error](const QString& why) {
         if (error) *error = why;
         return false;

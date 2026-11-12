@@ -33,10 +33,11 @@
  * service, the command line, a second launch.
  *
  * It is not a network socket. On Windows it is a named pipe that refuses
- * remote clients, open to the server's own account and to the people signed in
- * at this PC; elsewhere a Unix socket under the server's data folder, open to
- * the server's account. Whoever reaches it is on this machine by construction,
- * which no address on a TCP connection can say.
+ * remote clients, open to the server's own account, and to the people signed
+ * in at this PC when the server runs as a service (Audience); elsewhere a Unix
+ * socket under the server's data folder, open to the server's account. Whoever
+ * reaches it is on this machine by construction, which no address on a TCP
+ * connection can say.
  *
  * Nor does it speak HTTP: a line of its own, then one length-prefixed request
  * and one length-prefixed answer per connection, so nothing that forwards HTTP
@@ -126,14 +127,40 @@ QString channelName(const QString& productName, bool devFlag);
 /// @p dataDir (the server's data folder, never a temporary one).
 QString endpointFor(const QString& channelName, const QString& dataDir);
 
+/// Who, besides the server's own account, may open the channel.
+enum class Audience
+{
+    /// Nobody: the server runs in its owner's session, and so do the programs
+    /// that ask it (the command line, a second launch).
+    OwnAccount,
+    /// The people signed in at this PC too: the server runs as a service,
+    /// under an account nobody signs in with, and the tray icon that stands
+    /// for it runs in theirs.
+    SignedIn,
+};
+
+/// The audience of a server: the people signed in at the PC only when it was
+/// started as a service (@p serviceVar: MW_SERVICE is set) and runs where
+/// services run, apart from every desktop (@p sessionZero). Both: the variable
+/// alone, left set in a desktop session, widens nothing.
+inline Audience audienceFor(bool serviceVar, bool sessionZero)
+{
+    return serviceVar && sessionZero ? Audience::SignedIn : Audience::OwnAccount;
+}
+
+/// Whether this process runs in the session Windows keeps for services, where
+/// nobody signs in. False elsewhere than on Windows, and when it cannot be read.
+bool runsInSessionZero();
+
 /// Who may open the Windows pipe, as the text its access list is built from,
 /// for a server whose account is @p ownerSid. Protected, so nothing is
-/// inherited. That account, in full. The people signed in at this PC, to read
-/// and to write data, which is asking and being answered: not to make an
-/// instance of the pipe, so the name stays the server's. Nobody else has an
-/// entry — not everyone, not every signed-in account of the network, not the
-/// anonymous — and the pipe refuses remote clients on top of it.
-QString pipeAccessList(const QString& ownerSid);
+/// inherited. That account, in full. For Audience::SignedIn, the people signed
+/// in at this PC as well, to read and to write data, which is asking and being
+/// answered: not to make an instance of the pipe, so the name stays the
+/// server's. Nobody else has an entry — not everyone, not every signed-in
+/// account of the network, not the anonymous — and the pipe refuses remote
+/// clients on top of it.
+QString pipeAccessList(const QString& ownerSid, Audience audience);
 
 // ── The server's end ────────────────────────────────────────────────────────
 
@@ -150,8 +177,11 @@ public:
 
     /// Opens the channel. False, with @p error, when the name is already held
     /// by something else or cannot be made: the server then has no channel, and
-    /// says so, rather than one it shares.
-    bool listen(const QString& endpoint, Handler handler, QString* error = nullptr);
+    /// says so, rather than one it shares. @p audience widens the Windows pipe
+    /// (pipeAccessList); elsewhere the socket is the server's account's alone
+    /// either way.
+    bool listen(const QString& endpoint, Handler handler, QString* error = nullptr,
+                Audience audience = Audience::OwnAccount);
     void close();
     bool isListening() const;
     QString endpoint() const;
