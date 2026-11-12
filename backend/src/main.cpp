@@ -1697,8 +1697,8 @@ int main(int argc, char* argv[])
         mw::inheritedenv::scrub();
 
     // First, while this is still the only thread: if the Linux launcher handed
-    // us CAP_SYS_ADMIN (KMS capture) and CAP_SYS_NICE (GPU priority) — it does
-    // for the native stream worker and the native probe only — keep them
+    // us CAP_SYS_NICE (GPU priority) — it does for the native stream worker
+    // only — or this process holds CAP_SYS_ADMIN (KMS capture) anyway, keep them
     // permitted, run without them effective, and hand them to nothing we spawn.
     // See common/LinuxCapabilities.h. Logged below, once the log exists.
     const QString capabilityNote = mw::confineCapabilities();

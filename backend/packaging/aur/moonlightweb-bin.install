@@ -62,10 +62,17 @@ _mw_reserve() { # add | remove
 }
 
 post_install() {
-    if ! setcap cap_sys_admin,cap_sys_nice+p /opt/moonlightweb/bin/moonlightweb-launch 2>/dev/null; then
-        echo "warning: could not set cap_sys_admin,cap_sys_nice on moonlightweb-launch — the host"
+    # CAP_SYS_ADMIN on moonlightweb-kms alone, CAP_SYS_NICE on the launcher
+    # alone — the launcher's replaced as a whole (see make-packages.sh).
+    setcap -r /opt/moonlightweb/bin/moonlightweb-launch >/dev/null 2>&1 || true
+    if ! setcap cap_sys_admin+p /opt/moonlightweb/bin/moonlightweb-kms 2>/dev/null; then
+        echo "warning: could not set cap_sys_admin on moonlightweb-kms — the host"
         echo "         cannot capture its screen until you run:"
-        echo "         sudo setcap cap_sys_admin,cap_sys_nice+p /opt/moonlightweb/bin/moonlightweb-launch"
+        echo "         sudo setcap cap_sys_admin+p /opt/moonlightweb/bin/moonlightweb-kms"
+    fi
+    if ! setcap cap_sys_nice+p /opt/moonlightweb/bin/moonlightweb-launch 2>/dev/null; then
+        echo "warning: could not set cap_sys_nice on moonlightweb-launch — the stream's"
+        echo "         GPU work will run at normal priority"
     fi
     _mw_firewall add
     _mw_reserve add

@@ -16,14 +16,16 @@
  */
 
 /*
- * moonlightweb-launch — hands CAP_SYS_ADMIN and CAP_SYS_NICE to MoonlightWeb,
- * then becomes it.
+ * moonlightweb-launch — hands CAP_SYS_NICE to MoonlightWeb's native stream
+ * worker, then becomes it.
  *
- * Why a launcher exists at all. Capturing the screen through KMS needs
- * CAP_SYS_ADMIN (the kernel hands framebuffer handles to nobody else — see
- * native-host/src/capture/linux/KmsCapture.h), and the obvious way to grant it
- * is a file capability on the binary, as Sunshine's package does. That does not
- * work on OUR binary: it lives under /opt/moonlightweb with the bundled Qt
+ * Why a launcher exists at all. The stream's GPU work — the colour conversion
+ * today — runs above normal priority only in a process that holds
+ * CAP_SYS_NICE: amdgpu, i915 and xe create a context above normal priority for
+ * nobody else, and under a game that saturates the GPU that halves the
+ * conversion's wait (docs/bench-native-host.md §8o.1). The obvious way to grant
+ * it is a file capability on the binary, as Sunshine's package does. That does
+ * not work on OUR binary: it lives under /opt/moonlightweb with the bundled Qt
  * reached through a $ORIGIN rpath, and glibc runs any binary that gains a
  * capability at exec in "secure mode", where $ORIGIN is refused outside the
  * system library directories. Measured on Ubuntu 22.04 (05/09/2026):
@@ -39,13 +41,12 @@
  * secure mode. It moves the capability into its AMBIENT set and execs the real
  * binary next to it. An exec that gains nothing beyond what the parent already
  * held is not a secure exec, so MoonlightWeb starts normally, rpath and all,
- * with CAP_SYS_ADMIN in its permitted set. What it does from there is its
+ * with CAP_SYS_NICE in its permitted set. What it does from there is its
  * business (common/LinuxCapabilities.cpp: keep it permitted, run without it
- * effective).
+ * effective, raise it on one thread for the one call that creates the context).
  *
- * Only the two processes that capture are handed anything: the native stream
- * worker and the native probe, which the app starts through this launcher with
- * --stream-worker or --native-probe as the first argument. Those start from a
+ * Only the native stream worker is handed it, which the app starts through
+ * this launcher with --stream-worker as the first argument. It starts from a
  * known environment, in /, rather than the caller's (moonlightweb-launch-env.h).
  * The app itself, however it is started, is handed nothing: it execs here with
  * its environment as it came — less what glibc strips from any program that
@@ -53,22 +54,18 @@
  *
  * Without the file capability — a tree run by hand, the AppImage (FUSE mounts
  * are nosuid, which also disables file capabilities) — the hand-over fails and
- * this simply execs what it was asked to, as it was asked, which then reports
- * that the capture is unavailable and why. Nothing is printed here: an
+ * this simply execs what it was asked to, as it was asked; the conversion then
+ * runs at normal priority and says so. Nothing is printed here: an
  * unprivileged start is a supported state, not an error.
  *
- * The second capability, CAP_SYS_NICE, rides the same road for the stream's
- * GPU work: amdgpu, i915 and xe create a context above normal priority only for
- * a process that holds it, and under a game that saturates the GPU that halves
- * the colour conversion's wait (docs/bench-native-host.md §8o.1). The app keeps
- * it as it keeps the other — permitted only, raised on one thread for the one
- * call that creates the context. A package set up before it was added hands
- * over CAP_SYS_ADMIN alone, and the conversion simply runs at normal priority.
+ * Capturing the screen through KMS needs CAP_SYS_ADMIN, and that one is handed
+ * to no MoonlightWeb process: moonlightweb-kms, next to this program, carries
+ * it and hands the capture each framebuffer it asks for
+ * (native-host/src/capture/linux/KmsHelperClient.h).
  *
- * The package sets `cap_sys_admin,cap_sys_nice+p` (permitted only, like
- * Sunshine): the ambient raise needs a capability permitted and inheritable,
- * not effective, and a launcher that never holds them effective has nothing to
- * misuse.
+ * The package sets `cap_sys_nice+p` (permitted only, like Sunshine): the
+ * ambient raise needs a capability permitted and inheritable, not effective,
+ * and a launcher that never holds it effective has nothing to misuse.
  */
 
 #define _GNU_SOURCE
@@ -142,12 +139,8 @@ int main(int argc, char** argv)
     }
     memcpy(slash + 1, kTarget, sizeof kTarget);
 
-    /* Each on its own: holding one and not the other is a supported state. */
-    int handed = 0;
-    if (mw_launch_mode(argc, argv) != MW_LAUNCH_APP) {
-        if (hand_over(CAP_SYS_ADMIN) == 0) handed = 1;
-        if (hand_over(CAP_SYS_NICE) == 0) handed = 1;
-    }
+    const int handed =
+        mw_launch_mode(argc, argv) == MW_LAUNCH_WORKER && hand_over(CAP_SYS_NICE) == 0;
 
     argv[0] = path;
     if (!handed) {

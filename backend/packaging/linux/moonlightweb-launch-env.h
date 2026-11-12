@@ -19,12 +19,12 @@
  * What moonlightweb-launch starts, and with which environment — pure C, no
  * system call, so the backend's tests run it on every platform.
  *
- * Only two internal modes are handed the capabilities: the stream worker and
- * the native probe, named by the FIRST argument exactly, as the app spawns
- * them. Every other start — the app itself, from the menu, the autostart entry
- * or the systemd unit — is handed none.
+ * Only one internal mode is handed the capability: the stream worker, named by
+ * the FIRST argument exactly, as the app spawns it. Every other start — the app
+ * itself, from the menu, the autostart entry or the systemd unit, and its
+ * native probe — is handed none.
  *
- * A mode that is handed one starts from a known environment rather than the
+ * The worker starts from a known environment rather than the
  * caller's: the names it uses (the session it draws on, the locale, the
  * service manager's, the app's own MW_* switches) and nothing else, with the
  * home and search directories fixed. What a worker needs from the user's home
@@ -41,16 +41,14 @@
 
 enum
 {
-    MW_LAUNCH_APP = 0,    /* anything else: handed nothing */
-    MW_LAUNCH_WORKER = 1, /* --stream-worker */
-    MW_LAUNCH_PROBE = 2   /* --native-probe */
+    MW_LAUNCH_APP = 0,   /* anything else: handed nothing */
+    MW_LAUNCH_WORKER = 1 /* --stream-worker */
 };
 
 static inline int mw_launch_mode(int argc, char* const* argv)
 {
     if (argc < 2 || !argv[1]) return MW_LAUNCH_APP;
     if (strcmp(argv[1], "--stream-worker") == 0) return MW_LAUNCH_WORKER;
-    if (strcmp(argv[1], "--native-probe") == 0) return MW_LAUNCH_PROBE;
     return MW_LAUNCH_APP;
 }
 

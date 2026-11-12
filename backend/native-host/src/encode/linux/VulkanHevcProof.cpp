@@ -162,7 +162,7 @@ std::string cacheKey(const vulkan::DeviceIdentity& id, const std::string& render
 
 std::string cachePath()
 {
-    // A process the package's launcher starts (the stream worker, the probe)
+    // A process the package's launcher starts (the stream worker)
     // runs with its home and cache folders fixed, and finds the user's home
     // under MW_USER_HOME instead (moonlightweb-launch-env.h).
     const char* user = std::getenv("MW_USER_HOME");

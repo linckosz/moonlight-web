@@ -69,18 +69,19 @@ bool hasName(const std::vector<std::string>& env, const std::string& name)
 
 } // namespace
 
-// moonlightweb-launch hands the capabilities to the stream worker and the
-// native probe only, and starts those from a known environment.
+// moonlightweb-launch hands CAP_SYS_NICE to the stream worker only, and starts
+// it from a known environment.
 void run_launch_env_tests()
 {
-    SECTION("Launcher: which start is handed the capabilities");
+    SECTION("Launcher: which start is handed the capability");
 
     CHECK_EQ(modeOf({"moonlightweb-launch"}), static_cast<int>(MW_LAUNCH_APP));
     CHECK_EQ(modeOf({"moonlightweb-launch", "--stream-worker"}),
              static_cast<int>(MW_LAUNCH_WORKER));
     CHECK_EQ(modeOf({"moonlightweb-launch", "--stream-worker", "--dev"}),
              static_cast<int>(MW_LAUNCH_WORKER));
-    CHECK_EQ(modeOf({"moonlightweb-launch", "--native-probe"}), static_cast<int>(MW_LAUNCH_PROBE));
+    // The probe runs in the app, which holds nothing; through here it is the app.
+    CHECK_EQ(modeOf({"moonlightweb-launch", "--native-probe"}), static_cast<int>(MW_LAUNCH_APP));
     // The first argument, exactly: anything else is the app.
     CHECK_EQ(modeOf({"moonlightweb-launch", "--autostart"}), static_cast<int>(MW_LAUNCH_APP));
     CHECK_EQ(modeOf({"moonlightweb-launch", "--dev", "--stream-worker"}),
@@ -244,23 +245,24 @@ void run_launch_env_tests()
 
     SECTION("Launcher: its file capability, read back");
 
-    // What `setcap cap_sys_admin,cap_sys_nice+p` writes (revision 2): the
+    // What `setcap cap_sys_nice+p` writes on the launcher (revision 2): the
     // magic, then permitted and inheritable for capabilities 0-31 and 32-63.
-    const unsigned char package[20] = {0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0xA0, 0x00, 0, 0,
+    const unsigned char package[20] = {0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x80, 0x00, 0, 0,
                                        0,    0,    0,    0,    0,    0,    0,    0,    0, 0};
     constexpr int kSysAdmin = 21, kSysNice = 23, kNetAdmin = 12;
-    CHECK(mw::fileCapabilityGrants(package, sizeof package, kSysAdmin));
     CHECK(mw::fileCapabilityGrants(package, sizeof package, kSysNice));
+    CHECK(!mw::fileCapabilityGrants(package, sizeof package, kSysAdmin));
     CHECK(!mw::fileCapabilityGrants(package, sizeof package, kNetAdmin));
-    // A package set up before CAP_SYS_NICE: capture still offered.
+    // `cap_sys_admin+p`, moonlightweb-kms's: no priority to hand a worker.
     const unsigned char adminOnly[20] = {0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x20, 0x00, 0, 0,
                                          0,    0,    0,    0,    0,    0,    0,    0,    0, 0};
     CHECK(mw::fileCapabilityGrants(adminOnly, sizeof adminOnly, kSysAdmin));
     CHECK(!mw::fileCapabilityGrants(adminOnly, sizeof adminOnly, kSysNice));
-    // CAP_SYS_NICE alone (the launcher once capture moves elsewhere): no capture.
-    const unsigned char niceOnly[20] = {0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x80, 0x00, 0, 0,
-                                        0,    0,    0,    0,    0,    0,    0,    0,    0, 0};
-    CHECK(!mw::fileCapabilityGrants(niceOnly, sizeof niceOnly, kSysAdmin));
+    // Both, one word: each read on its own bit.
+    const unsigned char both[20] = {0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0xA0, 0x00, 0, 0,
+                                    0,    0,    0,    0,    0,    0,    0,    0,    0, 0};
+    CHECK(mw::fileCapabilityGrants(both, sizeof both, kSysAdmin));
+    CHECK(mw::fileCapabilityGrants(both, sizeof both, kSysNice));
     // Inheritable is not permitted.
     const unsigned char inheritable[20] = {0x00, 0x00, 0x00, 0x02, 0, 0, 0, 0, 0x00, 0x00,
                                            0xA0, 0x00, 0,    0,    0, 0, 0, 0, 0,    0};
@@ -278,12 +280,12 @@ void run_launch_env_tests()
     CHECK(mw::fileCapabilityGrants(upper, sizeof upper, 40));
     CHECK(!mw::fileCapabilityGrants(upper, sizeof upper, kSysAdmin));
     // Truncated, unknown, empty: nothing granted.
-    CHECK(!mw::fileCapabilityGrants(package, 16, kSysAdmin));
+    CHECK(!mw::fileCapabilityGrants(package, 16, kSysNice));
     CHECK(!mw::fileCapabilityGrants(rev3, 20, kSysAdmin));
     const unsigned char unknown[20] = {0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x20, 0x00, 0, 0,
                                        0,    0,    0,    0,    0,    0,    0,    0,    0, 0};
     CHECK(!mw::fileCapabilityGrants(unknown, sizeof unknown, kSysAdmin));
     CHECK(!mw::fileCapabilityGrants(nullptr, 20, kSysAdmin));
-    CHECK(!mw::fileCapabilityGrants(package, 3, kSysAdmin));
+    CHECK(!mw::fileCapabilityGrants(package, 3, kSysNice));
     CHECK(!mw::fileCapabilityGrants(package, sizeof package, -1));
 }

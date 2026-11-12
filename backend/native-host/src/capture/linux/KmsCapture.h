@@ -20,9 +20,11 @@
 #include "../CaptureTypes.h"
 #include "../ScanoutWindow.h"
 #include "IScreenCapture.h"
+#include "KmsHelperClient.h"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -171,6 +173,10 @@ private:
     bool resolveTopology(std::string& error);
     /// Export the primary plane's current buffer into @p frame.
     bool exportFramebuffer(uint32_t fbId, KmsFrame& frame, std::string& error);
+    /// The buffers of @p fbId, on @p planeId of this capture's CRTC: read here
+    /// when this process holds CAP_SYS_ADMIN, else by moonlightweb-kms
+    /// (KmsHelperClient.h), which a package gives the capability to instead.
+    bool readFramebuffer(uint32_t planeId, uint32_t fbId, KmsBuffer& out, std::string& error);
     /// Which window of a buffer of that size the primary plane scans out for
     /// this display — the whole of it, or its part of an X11 root window.
     ScanoutWindow primaryWindow(int bufferWidth, int bufferHeight);
@@ -184,6 +190,10 @@ private:
     uint32_t m_ConnectorId = 0;
 
     int m_Card = -1;
+    /// moonlightweb-kms, when framebuffers are read through it, and the index
+    /// of m_CardPath it is asked about.
+    std::unique_ptr<KmsHelperClient> m_Helper;
+    int m_CardIndex = -1;
     uint32_t m_CrtcId = 0;
     int m_CrtcIndex = -1;
     uint32_t m_PrimaryPlane = 0;

@@ -49,13 +49,6 @@ class ConsoleProcess;
  * Before the first answer arrives the snapshot says "unavailable, waiting for
  * the console probe": a host that appears a second after the service starts is
  * fine; a host that is offered and fails is not.
- *
- * A Linux package is the third case. The probe needs the capture capability,
- * which this process does not hold: only the processes the package's launcher
- * starts do (common/LinuxCapabilities.h). So it runs as `moonlightweb-launch
- * --native-probe`, kept as a snapshot the same way — except that the first
- * answer is waited for, as the in-process probe always was, so the host list
- * never starts on a guess.
  */
 class NativeProbeService : public QObject
 {
@@ -97,16 +90,8 @@ private:
     void apply(const mw::native::Capabilities& caps);
     void probeFinished(int exitCode, bool crashed);
     void probeTimedOut();
-    /// One probe process's answer (stdout) and log (stderr), applied.
-    void applyProbeOutput(const QByteArray& out, const QByteArray& err, int exitCode, bool crashed);
-    /// The Linux package's probe, through the capture launcher. @p wait: block
-    /// until it answered (the first snapshot), else in the background.
-    void probeThroughLauncher(bool wait);
 
     bool m_Remote = false;
-    /// The capture launcher (Linux package), or empty: the probe runs here.
-    QString m_Launcher;
-    class QProcess* m_LauncherProbe = nullptr;
     bool m_HaveResult = false;
     mw::native::Capabilities m_Caps;
     QElapsedTimer m_Age;

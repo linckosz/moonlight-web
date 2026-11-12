@@ -587,7 +587,7 @@ jobs:
         run: |
           cmake --install build --prefix stage --component app
           mkdir -p AppDir/usr/bin
-          cp "build/$APP" build/moonlightweb-launch AppDir/usr/bin/
+          cp "build/$APP" build/moonlightweb-launch build/moonlightweb-kms AppDir/usr/bin/
           cp -r stage/frontend AppDir/usr/bin/frontend
           # The DEV edition wears the blue icon (scripts/make-dev-icons.py).
           icon=frontend/assets/icon-512.png

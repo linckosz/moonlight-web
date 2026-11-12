@@ -67,11 +67,11 @@ void StreamWorkerHost::prepare(const QJsonObject& config, QStringList& args,
     if (!AppSettings::fileOverride().isEmpty())
         withSettings[QStringLiteral("settingsFile")] = AppSettings::fileOverride();
 #if defined(Q_OS_LINUX)
-    // A native worker the capture launcher starts has its home fixed
+    // A native worker the package's launcher starts has its home fixed
     // (startInProcess()), where it would find a settings file of nobody's: it
     // is told which one this process reads.
     else if (config[QStringLiteral("backendType")].toString() == QLatin1String("native") &&
-             !mw::captureLauncher().isEmpty())
+             !mw::workerLauncher().isEmpty())
         withSettings[QStringLiteral("settingsFile")] = AppSettings().filePath();
 #endif
     // Same road for verbose logs: this process's DEBUG threshold is the one
@@ -184,13 +184,13 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
     m_Proc->setProgram(QCoreApplication::applicationFilePath());
     m_Proc->setArguments(args);
 #if defined(Q_OS_LINUX)
-    // KMS capture needs CAP_SYS_ADMIN, a GPU context above normal priority
-    // CAP_SYS_NICE, and this process holds neither: the package's launcher
-    // hands them to the native worker it starts, with --stream-worker first
-    // (common/LinuxCapabilities.h). That worker starts with its home fixed, so
-    // it is told where this process keeps its logs; its settings file comes in
-    // the config line (prepare()).
-    if (const QString launcher = native ? mw::captureLauncher() : QString(); !launcher.isEmpty()) {
+    // A GPU context above normal priority needs CAP_SYS_NICE, and this process
+    // does not hold it: the package's launcher hands it to the native worker it
+    // starts, with --stream-worker first (common/LinuxCapabilities.h); KMS
+    // capture asks moonlightweb-kms instead. That worker starts with its home
+    // fixed, so it is told where this process keeps its logs; its settings file
+    // comes in the config line (prepare()).
+    if (const QString launcher = native ? mw::workerLauncher() : QString(); !launcher.isEmpty()) {
         m_Proc->setProgram(launcher);
         m_Proc->setArguments(QStringList(args)
                              << QStringLiteral("--worker-data-dir")

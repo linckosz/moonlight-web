@@ -173,21 +173,30 @@ cat > "$ROOT/postinst.sh" <<'EOF'
 update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
 
-# The capabilities the native engine needs, on the launcher (never on the
-# binary — see make-packages.sh): CAP_SYS_ADMIN for the screen capture,
-# CAP_SYS_NICE for a GPU context above normal priority. Neither dpkg nor rpm
-# restores file capabilities from the payload, so they are set here, first, on
-# every install and upgrade. Permitted only (+p), Sunshine's posture: the app
-# raises one into the effective set of one thread around the one call that
-# checks it. setcap lives in /usr/sbin (or /sbin on an unmerged system), which a
-# package manager's PATH does not always include. Loud on failure: the symptom
-# otherwise is a host card that never appears, with the reason buried in a log.
+# The capabilities the native engine needs, each on the one small program that
+# uses it (never on the binary — see make-packages.sh): CAP_SYS_ADMIN, for the
+# screen capture, on moonlightweb-kms, which hands the stream worker the
+# buffers of its user's screen; CAP_SYS_NICE, for a GPU context above normal
+# priority, on the launcher, which hands it to the stream worker alone. Neither
+# dpkg nor rpm restores file capabilities from the payload, so they are set
+# here, first, on every install and upgrade — the launcher's replaced as a
+# whole, so an upgrade from a version that gave it CAP_SYS_ADMIN as well loses
+# it. Permitted only (+p), Sunshine's posture: each is raised into the
+# effective set around the one call that checks it. setcap lives in /usr/sbin
+# (or /sbin on an unmerged system), which a package manager's PATH does not
+# always include. Loud on failure: the symptom otherwise is a host card that
+# never appears, with the reason buried in a log.
 PATH="$PATH:/usr/sbin:/sbin"
-if ! setcap cap_sys_admin,cap_sys_nice+p /opt/moonlightweb/bin/moonlightweb-launch 2>/dev/null; then
-    echo "warning: could not set cap_sys_admin,cap_sys_nice on /opt/moonlightweb/bin/moonlightweb-launch" >&2
+setcap -r /opt/moonlightweb/bin/moonlightweb-launch >/dev/null 2>&1 || true
+if ! setcap cap_sys_admin+p /opt/moonlightweb/bin/moonlightweb-kms 2>/dev/null; then
+    echo "warning: could not set cap_sys_admin on /opt/moonlightweb/bin/moonlightweb-kms" >&2
     echo "         (is setcap installed? libcap2-bin on Debian/Ubuntu, libcap on Fedora," >&2
     echo "         libcap-progs on openSUSE). Until it is set, this machine cannot host" >&2
-    echo "         its own screen:  sudo setcap cap_sys_admin,cap_sys_nice+p /opt/moonlightweb/bin/moonlightweb-launch" >&2
+    echo "         its own screen:  sudo setcap cap_sys_admin+p /opt/moonlightweb/bin/moonlightweb-kms" >&2
+fi
+if ! setcap cap_sys_nice+p /opt/moonlightweb/bin/moonlightweb-launch 2>/dev/null; then
+    echo "warning: could not set cap_sys_nice on /opt/moonlightweb/bin/moonlightweb-launch:" >&2
+    echo "         the stream's GPU work will run at normal priority" >&2
 fi
 
 # Apply the uinput rule now rather than at the next boot, and load the module so

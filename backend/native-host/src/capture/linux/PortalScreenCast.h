@@ -70,9 +70,9 @@
 //
 // xdg-desktop-portal learns who is calling by opening /proc/<pid>/root of the
 // caller (1.18, Ubuntu 24.04), and the kernel lets it only if its own
-// capabilities cover the caller's: the package's worker holds CAP_SYS_ADMIN
-// and CAP_SYS_NICE (moonlightweb-launch), the portal holds none, so every call
-// came back "Portal operation not allowed: Unable to open /proc/<pid>/root"
+// capabilities cover the caller's: the package's worker holds CAP_SYS_NICE
+// (moonlightweb-launch; CAP_SYS_ADMIN too, then), the portal holds none, so
+// every call came back "Portal operation not allowed: Unable to open /proc/<pid>/root"
 // (the .deb on the UM790Pro, 30/09/2026). A process that holds capabilities
 // therefore asks through a helper of its own making — the same binary, exec'd
 // with every capability dropped and none to regain — which holds the portal

@@ -698,11 +698,19 @@ endif()
 # execs MoonlightWeb next to it; the packages point /usr/bin/moonlightweb, the
 # .desktop entry and the systemd unit at it, and their postinst runs setcap on
 # it. Links libc only, on purpose.
+#
+# moonlightweb-kms holds CAP_SYS_ADMIN instead of anything else: the kernel
+# hands a framebuffer's buffers only to a process with it, and the stream
+# worker asks this one for them (native-host/src/capture/linux/
+# KmsHelperProtocol.h). Links libc only and talks to the kernel by its own
+# ioctls; the packages' postinst sets its capability.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     enable_language(C)
     add_executable(moonlightweb-launch packaging/linux/moonlightweb-launch.c)
     target_compile_options(moonlightweb-launch PRIVATE -Wall -Wextra)
     target_compile_definitions(moonlightweb-launch PRIVATE MW_LAUNCH_TARGET="${MW_APP_NAME}")
+    add_executable(moonlightweb-kms packaging/linux/moonlightweb-kms.c)
+    target_compile_options(moonlightweb-kms PRIVATE -Wall -Wextra)
 endif()
 
 # ── Debug symbols in Release (for crash minidump symbolization) ─────────────

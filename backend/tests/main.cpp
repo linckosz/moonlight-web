@@ -85,6 +85,7 @@ void run_native_capabilities_json_tests();
 void run_edition_tests();
 void run_autostart_entry_tests();
 void run_launch_env_tests();
+void run_kms_helper_protocol_tests();
 void run_remote_desktop_return_tests();
 void run_mdns_advertiser_tests();
 void run_router_port_core_tests();
@@ -183,6 +184,7 @@ int main(int argc, char** argv)
     run_edition_tests();
     run_autostart_entry_tests();
     run_launch_env_tests();
+    run_kms_helper_protocol_tests();
     run_remote_desktop_return_tests();
     run_mdns_advertiser_tests();
     run_router_port_core_tests();

@@ -63,9 +63,9 @@ private:
 };
 
 const char* const kNeedsCapability =
-    "the kernel withholds framebuffer handles: this process needs CAP_SYS_ADMIN "
-    "(the package's launcher, moonlightweb-launch, hands it over; a build run by hand "
-    "or the AppImage does not have it)";
+    "the kernel withholds framebuffer handles: this process needs CAP_SYS_ADMIN, or the "
+    "package's moonlightweb-kms next to it, which holds it (a build run by hand or the "
+    "AppImage has neither)";
 
 int64_t steadyNowUs()
 {
@@ -77,6 +77,66 @@ int64_t steadyNowUs()
 std::string errnoText()
 {
     return std::strerror(errno);
+}
+
+/// GETFB2, and one export per DISTINCT buffer object, by this process: what it
+/// does when it holds CAP_SYS_ADMIN itself (a build given it directly, a package
+/// set up before moonlightweb-kms). A DCC buffer's three planes share one GEM
+/// object and differ by offset; exporting it three times would be three
+/// descriptors to close for one buffer.
+bool readOwnFramebuffer(int card, uint32_t fbId, KmsBuffer& out, std::string& error)
+{
+    out = KmsBuffer{};
+    ScopedSysAdmin privilege;
+    drmModeFB2* fb = drmModeGetFB2(card, fbId);
+    if (!fb) {
+        error = "GETFB2 failed (" + errnoText() + ")";
+        return false;
+    }
+    if (!fb->handles[0]) {
+        error = kNeedsCapability;
+        drmModeFreeFB2(fb);
+        return false;
+    }
+    out.width = fb->width;
+    out.height = fb->height;
+    out.fourcc = fb->pixel_format;
+    out.modifier = (fb->flags & DRM_MODE_FB_MODIFIERS) ? fb->modifier : 0;
+    bool ok = true;
+    for (int i = 0; i < 4 && fb->handles[i]; ++i) {
+        int index = -1;
+        for (int j = 0; j < i; ++j)
+            if (fb->handles[j] == fb->handles[i]) index = out.fdIndex[j];
+        if (index < 0) {
+            int fd = -1;
+            if (drmPrimeHandleToFD(card, fb->handles[i], DRM_CLOEXEC | DRM_RDWR, &fd) != 0) {
+                error = "PrimeHandleToFD failed (" + errnoText() + ")";
+                ok = false;
+                break;
+            }
+            index = out.fdCount;
+            out.fds[out.fdCount++] = fd;
+        }
+        out.fdIndex[i] = index;
+        out.pitches[i] = fb->pitches[i];
+        out.offsets[i] = fb->offsets[i];
+        out.planeCount = i + 1;
+    }
+    // GETFB2 hands back GEM handles the caller now owns a reference to; they
+    // are per-process and must be closed or they accumulate, one per frame.
+    for (int i = 0; i < 4 && fb->handles[i]; ++i) {
+        bool dup = false;
+        for (int j = 0; j < i; ++j)
+            if (fb->handles[j] == fb->handles[i]) dup = true;
+        if (!dup) {
+            struct drm_gem_close close = {};
+            close.handle = fb->handles[i];
+            drmIoctl(card, DRM_IOCTL_GEM_CLOSE, &close);
+        }
+    }
+    drmModeFreeFB2(fb);
+    if (!ok) out.close();
+    return ok;
 }
 
 const char* connectorTypeName(uint32_t type)
@@ -312,16 +372,26 @@ bool KmsCapture::canReadFramebuffers(const std::string& cardPath, std::string& w
     drmModePlaneRes* planes = drmModeGetPlaneResources(card);
     bool sawBuffer = false;
     bool readable = false;
+    // A package's moonlightweb-kms, when this process does not hold the
+    // capability itself: asked exactly what a capture would ask it.
+    const int index = KmsHelperClient::cardIndex(cardPath);
+    const bool helper = index >= 0 && KmsHelperClient::wanted();
+    KmsHelperClient client;
+    std::string helperWhy;
     ScopedSysAdmin privilege;
     for (uint32_t i = 0; planes && i < planes->count_planes && !readable; ++i) {
         drmModePlane* p = drmModeGetPlane(card, planes->planes[i]);
         if (!p) continue;
         if (p->fb_id) {
             sawBuffer = true;
-            drmModeFB2* fb = drmModeGetFB2(card, p->fb_id);
-            // The metadata is public; the HANDLE is what the kernel withholds
-            // from an unprivileged process. That is the whole test.
-            if (fb) {
+            if (helper) {
+                KmsBuffer buffer;
+                readable = client.read(static_cast<uint32_t>(index), p->crtc_id, p->plane_id,
+                                       p->fb_id, buffer, helperWhy);
+                buffer.close();
+            } else if (drmModeFB2* fb = drmModeGetFB2(card, p->fb_id)) {
+                // The metadata is public; the HANDLE is what the kernel
+                // withholds from an unprivileged process. That is the test.
                 readable = fb->handles[0] != 0;
                 drmModeFreeFB2(fb);
             }
@@ -337,7 +407,7 @@ bool KmsCapture::canReadFramebuffers(const std::string& cardPath, std::string& w
         return false;
     }
     if (!readable) {
-        why = kNeedsCapability;
+        why = helper && !helperWhy.empty() ? helperWhy : std::string(kNeedsCapability);
         return false;
     }
     return true;
@@ -476,6 +546,12 @@ bool KmsCapture::start(std::string& error)
         error = "cannot open " + m_CardPath + " (" + errnoText() + ")";
         return false;
     }
+    // A package gives the capability GETFB2 needs to moonlightweb-kms and to
+    // nothing else; this process then asks it for each buffer.
+    if (KmsHelperClient::wanted()) {
+        m_CardIndex = KmsHelperClient::cardIndex(m_CardPath);
+        if (m_CardIndex >= 0) m_Helper = std::make_unique<KmsHelperClient>();
+    }
     // Universal planes is what exposes the primary and cursor planes as
     // objects; without it only overlays are listed and the CRTC's buffer has
     // to be read through the legacy CRTC ioctl, which cannot see the cursor.
@@ -525,23 +601,14 @@ bool KmsCapture::start(std::string& error)
         return false;
     }
     if (p->fb_id) {
-        ScopedSysAdmin privilege;
-        drmModeFB2* fb = drmModeGetFB2(m_Card, p->fb_id);
-        if (!fb) {
-            error = "GETFB2 refused (" + errnoText() + ") — a kernel older than 5.4?";
+        KmsBuffer buffer;
+        if (!readFramebuffer(m_PrimaryPlane, p->fb_id, buffer, error)) {
             drmModeFreePlane(p);
             stop();
             return false;
         }
-        if (!fb->handles[0]) {
-            error = kNeedsCapability;
-            drmModeFreeFB2(fb);
-            drmModeFreePlane(p);
-            stop();
-            return false;
-        }
-        m_Fourcc = fb->pixel_format;
-        drmModeFreeFB2(fb);
+        m_Fourcc = buffer.fourcc;
+        buffer.close();
     }
     drmModeFreePlane(p);
 
@@ -563,66 +630,35 @@ bool KmsCapture::start(std::string& error)
     return true;
 }
 
+bool KmsCapture::readFramebuffer(uint32_t planeId, uint32_t fbId, KmsBuffer& out,
+                                 std::string& error)
+{
+    if (m_Helper)
+        return m_Helper->read(static_cast<uint32_t>(m_CardIndex), m_CrtcId, planeId, fbId, out,
+                              error);
+    return readOwnFramebuffer(m_Card, fbId, out, error);
+}
+
 bool KmsCapture::exportFramebuffer(uint32_t fbId, KmsFrame& frame, std::string& error)
 {
-    ScopedSysAdmin privilege;
-    drmModeFB2* fb = drmModeGetFB2(m_Card, fbId);
-    if (!fb) {
-        error = "GETFB2 failed (" + errnoText() + ")";
-        return false;
-    }
-    if (!fb->handles[0]) {
-        error = "framebuffer handles withheld (CAP_SYS_ADMIN lost?)";
-        drmModeFreeFB2(fb);
-        return false;
-    }
+    KmsBuffer buffer;
+    if (!readFramebuffer(m_PrimaryPlane, fbId, buffer, error)) return false;
 
     frame = KmsFrame{};
-    frame.width = static_cast<int>(fb->width);
-    frame.height = static_cast<int>(fb->height);
-    frame.fourcc = fb->pixel_format;
-    frame.modifier = (fb->flags & DRM_MODE_FB_MODIFIERS) ? fb->modifier : 0;
-
-    // One fd per DISTINCT handle: a DCC buffer's three planes share one GEM
-    // object and differ by offset, and exporting it three times would be three
-    // fds to close for one buffer.
-    uint32_t handles[4] = {};
-    int fds[4] = {-1, -1, -1, -1};
+    frame.width = static_cast<int>(buffer.width);
+    frame.height = static_cast<int>(buffer.height);
+    frame.fourcc = buffer.fourcc;
+    frame.modifier = buffer.modifier;
+    // Held until the frame is released (closeFrameFds): one per buffer object.
     m_HeldCount = 0;
-    for (int i = 0; i < 4 && fb->handles[i]; ++i) {
-        int fd = -1;
-        for (int j = 0; j < i; ++j)
-            if (handles[j] == fb->handles[i]) fd = fds[j];
-        if (fd < 0) {
-            if (drmPrimeHandleToFD(m_Card, fb->handles[i], DRM_CLOEXEC | DRM_RDWR, &fd) != 0) {
-                error = "PrimeHandleToFD failed (" + errnoText() + ")";
-                closeFrameFds();
-                drmModeFreeFB2(fb);
-                return false;
-            }
-            m_HeldFds[m_HeldCount++] = fd;
-        }
-        handles[i] = fb->handles[i];
-        fds[i] = fd;
-        frame.fds[i] = fd;
-        frame.offsets[i] = fb->offsets[i];
-        frame.pitches[i] = fb->pitches[i];
-        frame.planeCount = i + 1;
+    for (int i = 0; i < buffer.fdCount; ++i)
+        m_HeldFds[m_HeldCount++] = buffer.fds[i];
+    for (int i = 0; i < buffer.planeCount; ++i) {
+        frame.fds[i] = buffer.fdOf(i);
+        frame.offsets[i] = buffer.offsets[i];
+        frame.pitches[i] = buffer.pitches[i];
     }
-    drmModeFreeFB2(fb);
-
-    // GETFB2 hands back GEM handles the caller now owns a reference to; they
-    // are per-process and must be closed or they accumulate, one per frame.
-    for (int i = 0; i < 4 && handles[i]; ++i) {
-        bool dup = false;
-        for (int j = 0; j < i; ++j)
-            if (handles[j] == handles[i]) dup = true;
-        if (!dup) {
-            struct drm_gem_close close = {};
-            close.handle = handles[i];
-            drmIoctl(m_Card, DRM_IOCTL_GEM_CLOSE, &close);
-        }
-    }
+    frame.planeCount = buffer.planeCount;
     return true;
 }
 
@@ -682,49 +718,43 @@ bool KmsCapture::updateCursor()
         // once per shape through a CPU mapping — rare (a shape lasts thousands
         // of frames), and a GPU path for 256 KB would be a lot of machinery for
         // no latency anyone could measure.
-        ScopedSysAdmin privilege;
-        drmModeFB2* fb = drmModeGetFB2(m_Card, static_cast<uint32_t>(fbId));
-        if (fb && fb->handles[0]) {
-            int fd = -1;
-            if (drmPrimeHandleToFD(m_Card, fb->handles[0], DRM_CLOEXEC | DRM_RDWR, &fd) == 0) {
-                const size_t size =
-                    static_cast<size_t>(fb->pitches[0]) * fb->height + fb->offsets[0];
-                void* map = ::mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0);
-                if (map != MAP_FAILED) {
-                    const int w = static_cast<int>(fb->width);
-                    const int h = static_cast<int>(fb->height);
-                    m_Cursor.width = w;
-                    m_Cursor.height = h;
-                    m_Cursor.pixels.assign(static_cast<size_t>(w) * h * 4, 0);
-                    m_Cursor.invert.assign(static_cast<size_t>(w) * h, 0);
-                    int inkW = 0, inkH = 0;
-                    const auto* base = static_cast<const uint8_t*>(map) + fb->offsets[0];
-                    for (int row = 0; row < h; ++row) {
-                        const uint8_t* src = base + static_cast<size_t>(row) * fb->pitches[0];
-                        uint8_t* dst = &m_Cursor.pixels[static_cast<size_t>(row) * w * 4];
-                        // ARGB8888 little-endian is B,G,R,A in memory: BGRA, as
-                        // CursorState wants it. Straight copy.
-                        std::memcpy(dst, src, static_cast<size_t>(w) * 4);
-                        for (int col = 0; col < w; ++col) {
-                            if (dst[col * 4 + 3] != 0) {
-                                if (col + 1 > inkW) inkW = col + 1;
-                                if (row + 1 > inkH) inkH = row + 1;
-                            }
+        KmsBuffer buffer;
+        std::string why;
+        if (readFramebuffer(m_CursorPlane, static_cast<uint32_t>(fbId), buffer, why) &&
+            buffer.planeCount > 0) {
+            const size_t size =
+                static_cast<size_t>(buffer.pitches[0]) * buffer.height + buffer.offsets[0];
+            void* map = ::mmap(nullptr, size, PROT_READ, MAP_SHARED, buffer.fdOf(0), 0);
+            if (map != MAP_FAILED) {
+                const int w = static_cast<int>(buffer.width);
+                const int h = static_cast<int>(buffer.height);
+                m_Cursor.width = w;
+                m_Cursor.height = h;
+                m_Cursor.pixels.assign(static_cast<size_t>(w) * h * 4, 0);
+                m_Cursor.invert.assign(static_cast<size_t>(w) * h, 0);
+                int inkW = 0, inkH = 0;
+                const auto* base = static_cast<const uint8_t*>(map) + buffer.offsets[0];
+                for (int row = 0; row < h; ++row) {
+                    const uint8_t* src = base + static_cast<size_t>(row) * buffer.pitches[0];
+                    uint8_t* dst = &m_Cursor.pixels[static_cast<size_t>(row) * w * 4];
+                    // ARGB8888 little-endian is B,G,R,A in memory: BGRA, as
+                    // CursorState wants it. Straight copy.
+                    std::memcpy(dst, src, static_cast<size_t>(w) * 4);
+                    for (int col = 0; col < w; ++col) {
+                        if (dst[col * 4 + 3] != 0) {
+                            if (col + 1 > inkW) inkW = col + 1;
+                            if (row + 1 > inkH) inkH = row + 1;
                         }
                     }
-                    m_Cursor.inkWidth = inkW;
-                    m_Cursor.inkHeight = inkH;
-                    ++m_Cursor.shapeVersion;
-                    changed = true;
-                    ::munmap(map, size);
                 }
-                ::close(fd);
+                m_Cursor.inkWidth = inkW;
+                m_Cursor.inkHeight = inkH;
+                ++m_Cursor.shapeVersion;
+                changed = true;
+                ::munmap(map, size);
             }
-            struct drm_gem_close close = {};
-            close.handle = fb->handles[0];
-            drmIoctl(m_Card, DRM_IOCTL_GEM_CLOSE, &close);
         }
-        if (fb) drmModeFreeFB2(fb);
+        buffer.close();
         m_CursorFbId = static_cast<uint32_t>(fbId);
     } else if (!visible) {
         m_CursorFbId = 0;
@@ -963,6 +993,8 @@ void KmsCapture::release()
 void KmsCapture::stop()
 {
     closeFrameFds();
+    m_Helper.reset();
+    m_CardIndex = -1;
     if (m_Card >= 0) ::close(m_Card);
     m_Card = -1;
     m_CrtcId = 0;

@@ -22,24 +22,27 @@
 #include <cstddef>
 
 /**
- * What this process does with the capabilities the Linux launcher hands it.
+ * What this process does with the capabilities it may hold on Linux.
  *
  * Two, both for the native engine:
- *  - CAP_SYS_ADMIN: the screen is captured through KMS, and the kernel hands
- *    framebuffer handles only to a process holding it;
  *  - CAP_SYS_NICE: the stream's GPU work — the colour conversion today — runs
  *    above normal priority, which amdgpu, i915 and xe grant to nobody else. Under
  *    a game that saturates the GPU, that halves the conversion's wait (46 → 23 ms
- *    on a Radeon 780M, docs/bench-native-host.md §8o.1).
+ *    on a Radeon 780M, docs/bench-native-host.md §8o.1). The Linux packages
+ *    deliver it through `moonlightweb-launch` (backend/packaging/linux), which
+ *    carries it as a file capability — see that file for why it cannot sit on
+ *    this binary itself — and hands it to the native stream worker, which this
+ *    binary starts through it (workerLauncher()), and to nothing else: the app
+ *    itself, however it is started, and its native probe hold none.
+ *  - CAP_SYS_ADMIN: the screen is captured through KMS, and the kernel hands
+ *    framebuffer handles only to a process holding it. No package hands it to
+ *    this binary: moonlightweb-kms holds it and hands the capture each
+ *    framebuffer (native-host/src/capture/linux/KmsHelperClient.h). A process
+ *    that holds it anyway — run as root, or granted it by a unit of its own —
+ *    reads the framebuffers itself.
  *
- * The Linux packages deliver them through `moonlightweb-launch`
- * (backend/packaging/linux), which carries the file capabilities — see that file
- * for why they cannot sit on this binary itself. It hands them to the two
- * processes that capture, the native stream worker and the native probe, which
- * this binary starts through it (captureLauncher()), and to nothing else: the
- * app itself, however it is started, holds neither. A worker or a probe holds
- * each in all of permitted, effective and ambient at main(). That is more than
- * it should keep:
+ * A process handed one holds it in all of permitted, effective and ambient at
+ * main(). That is more than it should keep:
  *
  *  - EFFECTIVE is dropped. The native engine raises one into the effective set
  *    of ITS thread around the one call that checks it, and lowers it again
@@ -50,9 +53,8 @@
  *  - PERMITTED keeps them: that is what lets the raise above happen at all.
  *
  * Every function here is a no-op off Linux, and a no-op on a Linux process
- * that was not handed the capabilities (a tree run by hand, the AppImage, the
- * Docker image): the probe then reports the capture as unavailable and says
- * why, and the conversion runs at normal priority and says that too.
+ * that holds neither (the app itself, a tree run by hand, the AppImage, the
+ * Docker image): the conversion then runs at normal priority and says so.
  */
 namespace mw {
 
@@ -62,21 +64,17 @@ namespace mw {
 /// string when the process holds neither capability and nothing changed.
 QString confineCapabilities();
 
-/// True when this process may capture through KMS — CAP_SYS_ADMIN in its
-/// permitted set, whatever the effective set says right now.
-bool hasCaptureCapability();
-
 /// The package's moonlightweb-launch next to this binary, when it carries
-/// CAP_SYS_ADMIN as a file capability: what the native stream worker and the
-/// native probe are started through, `--stream-worker` / `--native-probe`
-/// first. Read from the file itself every time, never assumed. Empty off
-/// Linux and wherever no such launcher is (a tree run by hand, the AppImage):
-/// those two are then started as this binary, as before, and hold nothing.
-QString captureLauncher();
+/// CAP_SYS_NICE as a file capability: what the native stream worker is
+/// started through, `--stream-worker` first. Read from the file itself every
+/// time, never assumed. Empty off Linux and wherever no such launcher is (a
+/// tree run by hand, the AppImage): the worker is then started as this
+/// binary, as before, and holds nothing.
+QString workerLauncher();
 
 /// Whether the raw `security.capability` attribute of a file (struct
 /// vfs_cap_data, revision 1, 2 or 3, little-endian) grants @p cap in its
-/// permitted set. Pure, so the parser behind captureLauncher() is tested on
+/// permitted set. Pure, so the parser behind workerLauncher() is tested on
 /// every platform.
 inline bool fileCapabilityGrants(const unsigned char* data, std::size_t size, int cap)
 {

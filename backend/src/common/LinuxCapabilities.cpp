@@ -111,13 +111,7 @@ QString confineCapabilities()
     return note;
 }
 
-bool hasCaptureCapability()
-{
-    Caps caps;
-    return caps.get() && caps.permitted(CAP_SYS_ADMIN);
-}
-
-QString captureLauncher()
+QString workerLauncher()
 {
     const QString path =
         QCoreApplication::applicationDirPath() + QStringLiteral("/moonlightweb-launch");
@@ -126,8 +120,8 @@ QString captureLauncher()
     unsigned char raw[64];
     const ssize_t size = ::getxattr(file.constData(), "security.capability", raw, sizeof raw);
     if (size <= 0) return {};
-    return fileCapabilityGrants(raw, static_cast<std::size_t>(size), CAP_SYS_ADMIN) ? path
-                                                                                    : QString();
+    return fileCapabilityGrants(raw, static_cast<std::size_t>(size), CAP_SYS_NICE) ? path
+                                                                                   : QString();
 }
 
 } // namespace mw
@@ -141,12 +135,7 @@ QString confineCapabilities()
     return {};
 }
 
-bool hasCaptureCapability()
-{
-    return false;
-}
-
-QString captureLauncher()
+QString workerLauncher()
 {
     return {};
 }

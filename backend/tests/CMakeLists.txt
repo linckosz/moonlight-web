@@ -123,6 +123,7 @@ add_executable(run_tests
     test_edition.cpp
     test_autostart_entry.cpp
     test_launch_env.cpp
+    test_kms_helper_protocol.cpp
     test_remote_desktop_return.cpp
     test_mdns_advertiser.cpp
     test_router_port_core.cpp
