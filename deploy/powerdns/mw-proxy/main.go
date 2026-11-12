@@ -90,6 +90,9 @@ type config struct {
 
 	// The MWSR page's measure log served on /v1/mwsr — see mwsrlog.go.
 	mwsr mwsrConfig
+
+	// The instances' error reports served on /v1/errors — see errorlog.go.
+	errors errConfig
 }
 
 func mustEnv(name string) string {
@@ -145,6 +148,13 @@ func loadConfig() config {
 			dir:          envOr("MW_MWSR_LOG_DIR", "/data/mwsr-measures"),
 			maxPerDay:    2000,
 			maxBytes:     2 << 30,
+		},
+		errors: errConfig{
+			dir:        envOr("MW_ERROR_LOG_DIR", "/data/error-reports"),
+			maxPerDay:  3000,
+			maxDayByte: 150 << 20,
+			maxBytes:   1 << 30,
+			maxAge:     90 * 24 * time.Hour,
 		},
 	}
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv("MW_SUBDOMAIN_REGISTRATION"))); v != "" {
@@ -768,6 +778,10 @@ func main() {
 	mux.Handle("/v1/mwsr", mwsr)
 	log.Printf("[mw-proxy] MWSR measure log on /v1/mwsr: %s", mwsr.describe())
 	mux.Handle("/v1/session", newSessionSink(cfg.session, cfg.proxyKey))
+	// Error reports (metrics.{domain} too): kept on disk, never counted in Umami.
+	errs := newErrSink(cfg.errors, cfg.proxyKey)
+	mux.Handle("/v1/errors", errs)
+	log.Printf("[mw-proxy] error reports on /v1/errors: %s", errs.describe())
 	if cfg.session.umamiWebsite == "" || cfg.session.umamiURL == "" {
 		log.Printf("[mw-proxy] session census on /v1/session — DISABLED " +
 			"(MW_UMAMI_SESSIONS_WEBSITE_ID is empty)")
