@@ -882,6 +882,7 @@
         "hostLostTitle": "Host lost",
         "hostLostBody": "The host stopped streaming — its streaming server or encoder may have crashed. Check the host.",
         "statResolution": "Resolution:",
+        "statResolutionHostLimit": "{{size}} (host limit)",
         "statAuto": "Auto:",
         "statAutoLearned": "{{size}}, learned",
         "statAutoTrial": "{{size}}, on trial",

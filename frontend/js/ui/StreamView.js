@@ -39,6 +39,7 @@ import {
     onRefreshRateChange,
 } from '../util/RefreshRate.js';
 import { devicePixelSize } from '../util/StreamResolution.js';
+import { hostScreenCaps } from '../util/HostLimit.js';
 import { PeriodicStallDetector } from '../stream/PeriodicStallDetector.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
 import { PadNumberNotice } from '../stream/HostPadNumber.js';
@@ -1290,6 +1291,14 @@ export class StreamView {
         this._frameSize =
             opts.frameSize && opts.frameSize.width > 0 && opts.frameSize.height > 0
                 ? { width: opts.frameSize.width, height: opts.frameSize.height }
+                : null;
+        // The native host's own screen and what this launch asked of it, the
+        // screen then following each `displayformat`: the stats card says
+        // "host limit" beside the resolution when that screen is what held
+        // the stream down (util/HostLimit.js). Null for every other host.
+        this._hostScreen =
+            opts.hostScreen && opts.hostScreen.display && opts.hostScreen.asked
+                ? { display: { ...opts.hostScreen.display }, asked: opts.hostScreen.asked }
                 : null;
         // "NVENC" / "AMF" / "oneVPL" — which silicon block encodes this stream.
         // Empty for every other host. Shown in the latency detail, not in the
@@ -6989,7 +6998,7 @@ export class StreamView {
             t('stream.statResolution') +
             '</span>' +
             '<span class="stats-value">' +
-            (this._resolution || '?') +
+            this._resolutionStat() +
             '</span>' +
             '</div>';
         html += this._autoCeilingRow();
@@ -7869,6 +7878,18 @@ export class StreamView {
         });
     }
 
+    /** The stats card's resolution: the decoded frame's size, "host limit"
+     *  beside it when the native host's own screen is what capped it. */
+    _resolutionStat() {
+        const size = this._resolution || '?';
+        const m = /^(\d+)[×x](\d+)/.exec(this._resolution || '');
+        const frame = m ? { width: +m[1], height: +m[2] } : null;
+        const hs = this._hostScreen;
+        return hs && hostScreenCaps(hs.asked, hs.display, frame)
+            ? t('stream.statResolutionHostLimit', { size })
+            : size;
+    }
+
     /** The stats card's line on what Auto learned from this host; '' when it
      *  has nothing to say. */
     _autoCeilingRow() {
@@ -8155,6 +8176,8 @@ export class StreamView {
                         frameSize: this._frameSize,
                     });
             }
+            if (this._hostScreen && msg.displayWidth > 0 && msg.displayHeight > 0)
+                this._hostScreen.display = { width: msg.displayWidth, height: msg.displayHeight };
             if (this.onHostDisplayFormat) this.onHostDisplayFormat(msg);
             return;
         }

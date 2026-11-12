@@ -136,6 +136,7 @@ import {
 import { startAspectProbe } from './stream/AspectProbe.js';
 import { AutoCeilingSession } from './stream/AutoCeilingSession.js';
 import { autoCeilingMemory } from './util/AutoCeiling.js';
+import { hostScreenOf } from './util/HostLimit.js';
 import {
     recordCrashRelaunch,
     settledStreamState,
@@ -3989,6 +3990,11 @@ export const MoonlightApp = {
                 result.native === true && result.stream_width > 0 && result.stream_height > 0
                     ? { width: result.stream_width, height: result.stream_height }
                     : null,
+            // The native host's screen and what this launch asked of it: the
+            // stats card says "host limit" when that screen capped the stream
+            // (util/HostLimit.js). Never a guest's, who asked for no size.
+            hostScreen:
+                viewOpts.playerMode !== true ? hostScreenOf(result, streamingSettings) : null,
             // Frames per intra-refresh wave (0 when the stream does not
             // refresh that way): sizes the ride-out watchdog in frames.
             intraRefreshFrames: Number(result.intra_refresh_frames) || 0,
