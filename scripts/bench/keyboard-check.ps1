@@ -114,7 +114,9 @@ try {
     # -- A stream, at the reference point: the keys need somewhere to land ----
     if (-not $NoLaunch) {
         if (-not $Tile) {
-            $status = Invoke-RestMethod -Uri "$ApiUrl/api/native/status" -Method Get -TimeoutSec 10
+            # Through the host's local channel when its exe has the command.
+            . "$PSScriptRoot\mw-local.ps1"
+            $status = Get-MwLocalApi $ApiUrl '/api/native/status'
             $d = @($status.displays)[0]
             $Tile = Get-Prop $d 'label' ''
             if (-not $Tile) { throw 'cannot name a tile -- pass -Tile' }

@@ -200,26 +200,28 @@ def chapter1(mid, package_path, also_prod=False, log=print):
 
     log("  [%s] uninstall…" % mid)
     rc, out, err = uninstall(mid, also_prod=also_prod)
-    step["steps"]["uninstall"] = {"rc": rc, "out": (out or "").strip()[-1500:],
-                                  "err": (err or "").strip()[-600:]}
+    step["steps"]["uninstall"] = {"rc": rc, "out": fleet.redacted(out).strip()[-1500:],
+                                  "err": fleet.redacted(err).strip()[-600:]}
 
     log("  [%s] install…" % mid)
     rc, out, err = install(mid, package_path, "install")
-    step["steps"]["install"] = {"rc": rc, "out": (out or "").strip()[-1500:],
-                                "err": (err or "").strip()[-600:]}
+    step["steps"]["install"] = {"rc": rc, "out": fleet.redacted(out).strip()[-1500:],
+                                "err": fleet.redacted(err).strip()[-600:]}
     time.sleep(5)
     step["afterInstall"] = fleet.wait_up(mid, timeout=180)
 
     log("  [%s] update (same artifact again)…" % mid)
     rc, out, err = install(mid, package_path, "update")
-    step["steps"]["update"] = {"rc": rc, "out": (out or "").strip()[-1500:],
-                               "err": (err or "").strip()[-600:]}
+    step["steps"]["update"] = {"rc": rc, "out": fleet.redacted(out).strip()[-1500:],
+                               "err": fleet.redacted(err).strip()[-600:]}
     time.sleep(5)
     step["afterUpdate"] = fleet.wait_up(mid, timeout=180)
 
     probe = step["afterUpdate"]
-    step["rendezvousUrl"] = fleet.rendezvous_url(probe)
-    step["pin"] = (probe.get("pin") or {}).get("pin", "")
+    # Whether the machine has a rendezvous address, and on which server: never the
+    # address itself, nor a PIN (fleet.mint_pin, made when a client pairs).
+    step["rendezvousKnown"] = bool((probe.get("internet") or {}).get("rendezvousKnown"))
+    step["rendezvousHost"] = fleet.rendezvous_host(probe)
     step["lanUrl"] = fleet.lan_url(mid, probe)
     step["ports"] = {"http": probe.get("httpPort"), "https": probe.get("httpsPort"),
                      "listening": probe.get("listening")}

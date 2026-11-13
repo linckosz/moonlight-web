@@ -37,7 +37,8 @@ def main():
     _gn, guest_luid, guest_rect = ol.gpu(a.guest_gpu)
     probe = fleet.probe("local")
     access = dict(run.access_map().get("local") or {})
-    pin = (probe.get("pin") or {}).get("pin") or access.get("pin", "")
+    # In memory only (fleet.mint_pin).
+    pin = fleet.mint_pin("local", probe) or access.get("pin", "")
     base = fleet.lan_url("local", probe) or access.get("lan")
     mark = os.path.getsize(a.server_log)
 

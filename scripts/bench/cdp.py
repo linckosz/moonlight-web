@@ -368,6 +368,22 @@ def main():
             print(c.eval(f.read()))
     elif cmd == "nav":
         print(c.call("Page.navigate", url=args[0]))
+    elif cmd == "eval-stdin":
+        # The script read from standard input, for one that carries a value no
+        # command line may (a share's PIN). Prints its answer, as eval does: the
+        # script is to answer nothing of what it was given.
+        print(c.eval(sys.stdin.read()))
+    elif cmd == "nav-stdin":
+        # The address read from standard input, for one that must not be on a
+        # command line (a share link names its token): only whether it went.
+        url = sys.stdin.readline().strip()
+        try:
+            r = c.call("Page.navigate", url=url) if url else {"errorText": "no address"}
+        except Exception:
+            # The browser's own error may repeat the address: none of it is shown.
+            r = {"errorText": "failed"}
+        url = None
+        print("navigated" if not r.get("errorText") else "not navigated")
     elif cmd == "call":
         params = json.loads(args[1]) if len(args) > 1 else {}
         print(c.call(args[0], **params))

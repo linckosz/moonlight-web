@@ -366,7 +366,10 @@ def run_pass(d, chapter, machine, spec, base, seconds, settle, access):
     shown = False
     host_before = None
     try:
-        want_url = access["rendezvous"] if rec["via"] == "rendezvous" else access["lan"]
+        if rec["via"] == "rendezvous" and not access.get("rendezvous"):
+            # Asked of the machine when a pass needs it, and kept in memory.
+            access["rendezvous"] = fleet.rendezvous_url(access.get("_probe"))
+        want_url = access.get("rendezvous") if rec["via"] == "rendezvous" else access["lan"]
         if not want_url:
             raise drive.PassFailed("no %s URL for this machine" % rec["via"])
 
@@ -583,18 +586,22 @@ def run_chapter(key, matrix, access_by_machine, only=None, one_pass=None, resume
         # minted an hour and several restarts ago, and a client that cannot
         # unlock just shows an empty page — which the pass then reports as "no
         # host card", blaming the host for a stale credential.
+        # The PIN and the rendezvous address stay in this process's memory, in
+        # `access`: never printed, never in a record (fleet.mint_pin).
         try:
             probe = fleet.probe(machine)
-            pin = (probe.get("pin") or {}).get("pin")
+            access["_probe"] = probe
+            pin = fleet.mint_pin(machine, probe)
             if pin:
                 access["pin"] = pin
+            pin = None
             lan = fleet.lan_url(machine, probe)
             if lan:
                 access["lan"] = lan
             # The loopback port the host's own API answers on: hostSettings
             # passes write through it (fleet.host_settings).
             access["httpPort"] = probe.get("httpPort")
-            print("  fresh pin=%s lan=%s" % (bool(pin), access.get("lan")), flush=True)
+            print("  fresh pin=%s lan=%s" % (bool(access.get("pin")), access.get("lan")), flush=True)
         except Exception as e:
             print("  could not re-probe (%s) — using chapter 1's access" % e, flush=True)
         if not access.get("lan"):
@@ -670,9 +677,9 @@ def run_chapter1(package_dir, only=None):
         rec["status"] = "ok" if native.get("available") else "failed"
         rec["reason"] = "" if native.get("available") else (
             native.get("reason") or native.get("error") or "the native host did not come up")
-        print("  autostart=%s running=%s native=%s pin=%s" % (
+        print("  autostart=%s running=%s native=%s rendezvous=%s" % (
             probe.get("autostart"), probe.get("running"),
-            native.get("available"), bool(rec.get("pin"))))
+            native.get("available"), bool(rec.get("rendezvousKnown"))))
         append("chapter1.jsonl", rec)
         out.append(rec)
     return out
@@ -697,8 +704,10 @@ def shots_chapter1(access, only=None):
         rec = {"machine": mid, "url": url}
         try:
             d.navigate(url)
-            rec["unlocked"] = d.wait_library(acc.get("name", "bench"), acc.get("pin", ""),
-                                             tries=15)
+            # A PIN minted for this unlock alone, kept in memory (fleet.mint_pin).
+            pin = acc.get("pin") or fleet.mint_pin(mid, fleet.probe(mid))
+            rec["unlocked"] = d.wait_library(acc.get("name", "bench"), pin, tries=15)
+            pin = None
             rec["header"] = d.eval(
                 "JSON.stringify((document.querySelector('.app-version, .version-badge')"
                 " || {}).textContent || '')").strip('"')
@@ -719,10 +728,12 @@ def shots_chapter1(access, only=None):
 
 
 def access_map():
-    """Where the client goes for each machine, and with what PIN.
+    """Where the client goes for each machine.
 
-    Built from chapter 1's results when they exist — that is where the PIN was
-    minted — and from the machine table otherwise.
+    Built from chapter 1's results when they exist, and from the machine table
+    otherwise. No PIN and no rendezvous address: neither is in a record. The
+    run asks the machine for them when it uses them (fleet.mint_pin,
+    fleet.rendezvous_url), and keeps them in memory.
     """
     access = {}
     path = os.path.join(RESULTS, "chapter1.jsonl")
@@ -739,8 +750,8 @@ def access_map():
         rec = by_machine.get(mid, {})
         access[mid] = {
             "lan": rec.get("lanUrl") or fleet.lan_url(mid, {}),
-            "rendezvous": rec.get("rendezvousUrl", ""),
-            "pin": rec.get("pin", ""),
+            "rendezvous": "",
+            "pin": "",
             "name": "bench",
         }
     return access

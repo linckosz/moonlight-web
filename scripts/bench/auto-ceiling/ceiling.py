@@ -312,9 +312,11 @@ class Bench:
             self.run.DEBUG_PORT = int(os.environ["MW_BENCH_DEBUG_PORT"])
         self.access = dict(self.run.access_map().get("local") or {})
         probe = self.fleet.probe("local")
-        pin = (probe.get("pin") or {}).get("pin")
+        # In memory only (fleet.mint_pin, fleet.rendezvous_url).
+        pin = self.fleet.mint_pin("local", probe)
         if pin:
             self.access["pin"] = pin
+        pin = None
         self.access["lan"] = a.client_url or self.fleet.lan_url("local", probe) or self.access.get("lan")
         self.identifier = ""
         self.witness = None

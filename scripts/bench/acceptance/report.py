@@ -169,9 +169,7 @@ def problems(chapter1, passes):
                           "install is unaffected: there USERDOMAIN is the machine")
             add("autostart", rec.get("machine", "?"),
                 "autostart reads %r after the update%s" % (probe["autostart"], detail))
-        if not rec.get("pin"):
-            add("access", rec.get("machine", "?"), "no PIN could be minted")
-        if not rec.get("rendezvousUrl"):
+        if not rec.get("rendezvousKnown"):
             add("access", rec.get("machine", "?"),
                 "no rendezvous URL — this host has no line to stream.dev")
 
@@ -377,10 +375,11 @@ def render(chapter1, passes, out_dir, meta):
     # produced this page, and they are read from the same probe as the version
     # below — so a row that says "reachable" here is a row that answered.
     h.append("<h2>What is running where</h2>")
-    h.append("<p class='sub'>The rendezvous address and the pairing PIN of each machine "
-             "were given separately, in the session. They are not printed here.</p>")
+    h.append("<p class='sub'>Neither the rendezvous address nor a pairing PIN is kept by the "
+             "bench: the run asks each machine for them when it uses them. A PIN is made on "
+             "the host when one is needed.</p>")
     h.append("<table><thead><tr><th>Machine</th><th>Rendezvous</th><th>On the LAN</th>"
-             "<th>PIN</th><th>Version in service</th></tr></thead><tbody>")
+             "<th>Local channel</th><th>Version in service</th></tr></thead><tbody>")
     for rec in chapter1:
         probe = rec.get("afterUpdate") or {}
         yes = "<span class='pill green'>reachable</span>"
@@ -388,9 +387,10 @@ def render(chapter1, passes, out_dir, meta):
         h.append("<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td><td>%s</td>"
                  "<td class='mono'>%s</td></tr>"
                  % (esc(rec.get("machine")),
-                    yes if rec.get("rendezvousUrl") else no,
+                    yes if rec.get("rendezvousKnown") else no,
                     yes if rec.get("lanUrl") else no,
-                    "<span class='pill green'>minted</span>" if rec.get("pin") else no,
+                    "<span class='pill green'>yes</span>" if probe.get("localChannel") else
+                    "<span class='pill'>an older build</span>",
                     esc((probe.get("versionLine") or "")[:70] or probe.get("exeSha") or "—")))
     h.append("</tbody></table>")
 

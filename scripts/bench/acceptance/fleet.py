@@ -219,6 +219,13 @@ def _win_run_cmd(script_path, log_path, shell):
     return "cmd --% /c " + inner
 
 
+def _win_run_direct(script_path, shell):
+    """The same one-liner with its output on the channel: nothing written on the
+    machine but the script itself (run_script's `direct`)."""
+    inner = 'powershell -NoProfile -ExecutionPolicy Bypass -File "%s" < NUL' % script_path
+    return inner if shell == "cmd" else "cmd --% /c " + inner
+
+
 def _win_cat(path, shell):
     return ('type "%s"' % path) if shell == "cmd" else ('Get-Content -Raw "%s"' % path)
 
@@ -229,11 +236,17 @@ def _win_del(paths, shell):
     return "Remove-Item -Force -ErrorAction SilentlyContinue " + ", ".join('"%s"' % p for p in paths)
 
 
-def run_script(mid, script, timeout=600, shell=None):
+def run_script(mid, script, timeout=600, shell=None, direct=False):
     """Run a script on a machine. Always by file — never interpolated into ssh.
 
     `shell` defaults to what the machine's OS uses: powershell on Windows,
     /bin/sh elsewhere. Returns (rc, stdout, stderr).
+
+    `direct`: on Windows, the output comes back through the ssh channel itself
+    instead of a file written on the machine and fetched after. For a script
+    whose output must never sit in a file (a PIN, the rendezvous address), and
+    which starts nothing that outlives it: what the file is there for is an
+    installer's inherited handles.
     """
     m = MACHINES[mid]
     shell = shell or ("powershell" if m["os"] == "windows" else "sh")
@@ -273,6 +286,12 @@ def run_script(mid, script, timeout=600, shell=None):
                                  m["user"], m["address"], shlex.quote(cmd))],
                             timeout=tmo)
 
+            if windows and direct:
+                win = remote.replace("/", "\\")
+                sh = _windows_shell(mid, _sshpass)
+                p = _sshpass(_win_run_direct(win, sh), timeout)
+                _sshpass(_win_del([win], sh), 60)
+                return p.returncode, p.stdout, p.stderr
             if windows:
                 # Same inherited-handle trap as the plain-ssh Windows path: run
                 # to a file, then fetch the file in a second session.
@@ -299,6 +318,12 @@ def run_script(mid, script, timeout=600, shell=None):
         if sent.returncode != 0:
             raise RemoteError("scp to %s failed: %s" % (mid, sent.stderr.strip()))
 
+        if m["os"] == "windows" and direct:
+            win = remote.replace("/", "\\")
+            sh = _windows_shell(mid, lambda c, t: _run(ssh_argv(m) + [c], timeout=t))
+            p = _run(ssh_argv(m) + [_win_run_direct(win, sh)], timeout=timeout)
+            _run(ssh_argv(m) + [_win_del([win], sh)], timeout=60)
+            return p.returncode, p.stdout, p.stderr
         if m["os"] == "windows":
             # ssh waits for every inherited handle to close, not just for the
             # command to exit. An installer that launches the app hands those
@@ -359,10 +384,12 @@ def reachable(mid):
     return rc == 0 and "MW_OK" in out
 
 
-# ── what the host says about itself, from its own loopback ──────────────────
+# ── what the host says about itself, from its own shell ─────────────────────
 # /api/native/status and /api/internet/status redact everything interesting for
 # any caller that is not local, and /api/admin/pin/generate refuses outright.
-# That is why these go through the machine's own shell rather than over the LAN.
+# That is why these go through the machine's own shell rather than over the LAN,
+# and there through the instance's local channel (`--local-request`) when its
+# exe has it: from a build that has it on, an address alone opens none of them.
 #
 # The port is DISCOVERED, never assumed. 48080/48443 are only the defaults: a
 # settings.json decides, a silent uninstall keeps that settings.json, and a
@@ -438,25 +465,6 @@ def answers(port, scheme="http"):
         return None
 
 
-def http(method, port, path, admin=""):
-    """One API call. /api/admin/* needs the per-run key, so it is echoed here.
-
-    The key is a CSRF barrier, not a credential: the server mints a fresh one
-    every start and hands it to any caller the request guard already trusts.
-    Without the header the PIN route answers 403 even on loopback.
-    """
-    url = "http://127.0.0.1:%d%s" % (port, path)
-    req = urllib.request.Request(url, method=method,
-                                 data=b"" if method == "POST" else None)
-    if admin:
-        req.add_header("X-MW-Admin-Key", admin)
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            return r.read().decode("utf-8", "replace")
-    except Exception as e:
-        return json.dumps({"error": str(e)[:200]})
-
-
 out = {"appName": APP}
 candidates = listening_ports(APP)
 # The defaults come last: a discovered port is a fact, a default is a guess.
@@ -477,30 +485,287 @@ out["httpPort"] = http_port
 out["httpsPort"] = https_port
 
 if http_port:
-    admin = ""
-    try:
-        admin = json.loads(http("GET", http_port, "/api/admin/token")).get("token", "")
-    except Exception:
-        pass
-    out["adminToken"] = bool(admin)
-    out["native"] = http("GET", http_port, "/api/native/status")
-    out["internet"] = http("GET", http_port, "/api/internet/status")
-    out["vdisplay"] = http("GET", http_port, "/api/native/virtual-display")
-    out["pin"] = http("POST", http_port, "/api/admin/pin/generate", admin)
+    out["localChannel"] = channel_of(http_port)
+    out["native"] = json.dumps(read("/api/native/status", http_port))
+    out["internet"] = json.dumps(reduced_internet(read("/api/internet/status", http_port)))
+    out["vdisplay"] = json.dumps(reduced_vdisplay(read("/api/native/virtual-display", http_port)))
 else:
     out["native"] = json.dumps({"error": "nothing answered on any listening port"})
 
 print("MWPROBE " + json.dumps(out))
 '''
 
+# What the probes of a Unix machine read with: this folder's mw_local.py itself,
+# sent along, and the reads built on it. The local channel when the instance's exe
+# has the command (read from its bytes: an exe that does not know an option is
+# never handed it); the loopback address otherwise, which an older build answers.
+# What leaves the machine is cut down to what a record may hold (reduced_*): the
+# rendezvous address and the PIN never do, they have their own calls (secret()).
+_BENCH = os.path.dirname(HERE)
+
+
+def _mw_local_py():
+    with open(os.path.join(_BENCH, "mw_local.py"), encoding="utf-8") as f:
+        return f.read()
+
+
+def _mw_local_ps():
+    with open(os.path.join(_BENCH, "mw-local.ps1"), encoding="utf-8") as f:
+        return f.read()
+
+
+_READS_PY = r'''
+import json as _json, urllib.request as _urlreq
+
+
+def channel_of(port):
+    found = instance(port)
+    return bool(found and knows_local_request(found[0]))
+
+
+def read(path, port):
+    """One GET of this machine's instance on @p port, as a JSON object."""
+    found = instance(port)
+    if found and knows_local_request(found[0]):
+        try:
+            st, doc = local_json("GET " + path, exe=found[0], dev=found[1])
+        except LocalRequestError:
+            return {"error": "the local channel did not answer"}
+        return doc if st == 200 and isinstance(doc, dict) else {"error": "local channel: HTTP %d" % st}
+    try:
+        with _urlreq.urlopen("http://127.0.0.1:%d%s" % (port, path), timeout=20) as r:
+            return _json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        return {"error": type(e).__name__}
+
+
+def rendezvous_of(internet):
+    """The address an owner reconnects on, out of /api/internet/status: kept in
+    memory, never in what a record holds."""
+    rdv = (internet or {}).get("rendezvous") or {}
+    for key in ("url", "link", "owner_url"):
+        if rdv.get(key):
+            return rdv[key]
+    ident = rdv.get("id") or rdv.get("instance_id") or rdv.get("instanceId")
+    host = rdv.get("host") or rdv.get("server") or "stream.dev.moonlightweb.top"
+    if ident:
+        host = host.replace("https://", "").replace("http://", "").rstrip("/")
+        return "https://%s/%s" % (host, ident)
+    return ""
+
+
+def reduced_internet(internet):
+    """What a record may hold of the internet link: whether it is up, whether a
+    rendezvous address is known, and the server's host name. Never the address,
+    the instance's id, the public IP or the permanent id."""
+    if not isinstance(internet, dict) or internet.get("error"):
+        return {"error": (internet or {}).get("error", "no answer")}
+    url = rendezvous_of(internet)
+    host = url.split("://", 1)[-1].split("/", 1)[0] if url else ""
+    return {"active": internet.get("active"), "rendezvousKnown": bool(url), "rendezvousHost": host}
+
+
+def reduced_vdisplay(vd):
+    """The virtual display's booleans and its job's state. Never the job's error
+    (a helper's or Windows' text, which may hold a local path) nor its display."""
+    if not isinstance(vd, dict) or vd.get("error"):
+        return {"error": (vd or {}).get("error", "no answer")}
+    job = vd.get("job") if isinstance(vd.get("job"), dict) else {}
+    out = {k: vd.get(k) for k in ("supported", "installed", "enabled", "active")}
+    out["job"] = {"state": job.get("state")}
+    return out
+'''
+
+
+_READS_PS = r"""
+# The reads of a Windows machine: mw-local.ps1 above, then these. Same rules as the
+# Unix ones (_READS_PY): the local channel when the exe has the command, the
+# loopback address otherwise; records hold the reduced forms only.
+function Read-MwObject($path, $port) {
+    try { return Get-MwLocalApi "http://127.0.0.1:$port" $path 20 }
+    catch { return [pscustomobject]@{ error = 'no answer' } }
+}
+function Read-MwJson($path, $port) { (Read-MwObject $path $port) | ConvertTo-Json -Compress -Depth 8 }
+function Get-MwRendezvous($internet) {
+    $rdv = $internet.rendezvous
+    if (-not $rdv) { return '' }
+    foreach ($k in @('url', 'link', 'owner_url')) { if ($rdv.$k) { return [string]$rdv.$k } }
+    $id = $rdv.id; if (-not $id) { $id = $rdv.instance_id }; if (-not $id) { $id = $rdv.instanceId }
+    $h = $rdv.host; if (-not $h) { $h = $rdv.server }; if (-not $h) { $h = 'stream.dev.moonlightweb.top' }
+    if ($id) { return 'https://' + (($h -replace '^https?://', '').TrimEnd('/')) + '/' + $id }
+    ''
+}
+function Get-MwReducedInternet($internet) {
+    if (-not $internet -or $internet.error) { return [pscustomobject]@{ error = 'no answer' } }
+    $url = Get-MwRendezvous $internet
+    $h = if ($url) { ($url -replace '^[a-z]+://', '') -replace '/.*$', '' } else { '' }
+    [pscustomobject]@{ active = $internet.active; rendezvousKnown = [bool]$url; rendezvousHost = $h }
+}
+function Get-MwReducedVdisplay($vd) {
+    if (-not $vd -or $vd.error) { return [pscustomobject]@{ error = 'no answer' } }
+    $state = $null; if ($vd.job) { $state = $vd.job.state }
+    [pscustomobject]@{ supported = $vd.supported; installed = $vd.installed; enabled = $vd.enabled
+                       active = $vd.active; job = [pscustomobject]@{ state = $state } }
+}
+"""
+
+
+def _reads_ps():
+    return _mw_local_ps() + "\n" + _READS_PS
+
+
+# ── the two values no record holds: a PIN, the rendezvous address ───────────
+# Each has its own call, made when a pass is about to use it (a PIN only when a
+# client is about to pair: one live PIN at a time). The machine prints it on one
+# line, MWPIN or MWRDV, that comes back through the ssh channel itself (direct:
+# no file on the machine) into this process's memory, and nowhere else: never
+# printed, logged, written to a record, or put in an exception's text.
+_SECRET_PY = r'''
+import sys as _sys
+_port, _what = int(_sys.argv[1]), _sys.argv[2]
+if _what == "pin":
+    _pin = ""
+    _found = instance(_port)
+    if _found and knows_local_request(_found[0]):
+        try:
+            _st, _doc = local_json("POST /api/admin/pin/generate", exe=_found[0], dev=_found[1])
+            _pin = (_doc or {}).get("pin", "") if _st == 200 else ""
+        except LocalRequestError:
+            _pin = ""
+    else:
+        # An older build: its loopback still mints one, with the run's admin key,
+        # which stays in this variable.
+        try:
+            with _urlreq.urlopen("http://127.0.0.1:%d/api/admin/token" % _port, timeout=20) as _r:
+                _tok = _json.loads(_r.read().decode("utf-8")).get("token", "")
+            _q = _urlreq.Request("http://127.0.0.1:%d/api/admin/pin/generate" % _port, data=b"{}", method="POST",
+                                 headers={"X-MW-Admin-Key": _tok, "Content-Type": "application/json"})
+            with _urlreq.urlopen(_q, timeout=20) as _r:
+                _pin = _json.loads(_r.read().decode("utf-8")).get("pin", "")
+        except Exception:
+            _pin = ""
+    print("MWPIN " + _pin)
+elif _what == "rdv":
+    print("MWRDV " + rendezvous_of(read("/api/internet/status", _port)))
+'''
+
+_SECRET_PS = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$port = __PORT__
+$what = '__WHAT__'
+__READS_PS__
+if ($what -eq 'pin') {
+    $pin = ''
+    $found = Get-MwInstance $port
+    if ($found -and (Test-MwLocalRequest $found.Exe)) {
+        try {
+            $r = Invoke-MwLocalRequest 'POST /api/admin/pin/generate' -Exe $found.Exe -Dev:$found.Dev
+            if ($r.Status -eq 200 -and $r.Json) { $pin = [string]$r.Json.pin }
+        } catch { $pin = '' }
+    } else {
+        # An older build: its loopback still mints one, with the run's admin key,
+        # which stays in this variable.
+        try {
+            $tok = (Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/admin/token" -TimeoutSec 20).token
+            $pin = [string](Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/admin/pin/generate" -Method Post `
+                    -ContentType 'application/json' -Body '{}' -Headers @{ 'X-MW-Admin-Key' = $tok } -TimeoutSec 20).pin
+        } catch { $pin = '' }
+        $tok = $null
+    }
+    'MWPIN ' + $pin
+} elseif ($what -eq 'rdv') {
+    'MWRDV ' + (Get-MwRendezvous (Read-MwObject '/api/internet/status' $port))
+}
+"""
+
+_READ_ONE_PS = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+__READS_PS__
+'MWREAD ' + (Read-MwJson '__PATH__' __PORT__)
+"""
+
+_READ_ONE_PY = r'''
+import json as _j, sys as _s
+print("MWREAD " + _j.dumps(read(_s.argv[2], int(_s.argv[1]))))
+'''
+
+# What a remote read may ask: the reads whose whole answer a record may hold.
+_PLAIN_READS = ("/api/native/status",)
+
+
+def remote_read(mid, path, port):
+    """One GET of @p mid's instance on @p port, through its local channel when its
+    exe has the command (the loopback address otherwise), as a JSON object."""
+    if path not in _PLAIN_READS:
+        raise ValueError("not a read a record may hold: %s" % path)
+    if MACHINES[mid]["os"] == "windows":
+        script = (_READ_ONE_PS.replace("__PATH__", path).replace("__PORT__", str(int(port)))
+                  .replace("__READS_PS__", _reads_ps()))
+    else:
+        body = _mw_local_py() + "\n" + _READS_PY + "\n" + _READ_ONE_PY
+        script = "python3 - %d %s <<'MWPY'\n%s\nMWPY\n" % (int(port), path, body)
+    _rc, out, _err = run_script(mid, script, timeout=120)
+    for line in (out or "").splitlines():
+        if line.strip().startswith("MWREAD "):
+            return json.loads(line.strip()[len("MWREAD "):])
+    return {"error": "no answer"}
+
+
+_SECRETS = {}
+
+
+def redacted(text):
+    """@p text without its MWPIN, MWRDV and MWPROBE lines: what a remote output may
+    show of itself, in a diagnosis, a record or an exception."""
+    return "\n".join(line for line in (text or "").splitlines()
+                     if not line.strip().startswith(("MWPIN", "MWRDV", "MWPROBE")))
+
+
+def _secret(mid, what, port):
+    """The value of one MWPIN or MWRDV line of @p mid, or "". Nothing of the run's
+    output is ever shown: a failure says only that no value came."""
+    if not port:
+        return ""
+    m = MACHINES[mid]
+    if m["os"] == "windows":
+        script = (_SECRET_PS.replace("__PORT__", str(int(port))).replace("__WHAT__", what)
+                  .replace("__READS_PS__", _reads_ps()))
+    else:
+        body = _mw_local_py() + "\n" + _READS_PY + "\n" + _SECRET_PY
+        script = "python3 - %d %s <<'MWPY'\n%s\nMWPY\n" % (int(port), what, body)
+    try:
+        _rc, out, _err = run_script(mid, script, timeout=120, direct=True)
+    except Exception:
+        return ""
+    tag = "MWPIN " if what == "pin" else "MWRDV "
+    value = ""
+    for line in (out or "").splitlines():
+        if line.strip().startswith(tag):
+            value = line.strip()[len(tag):].strip()
+    out = _err = None
+    return value
+
+
+def mint_pin(mid, probe_result):
+    """A fresh PIN of @p mid's instance, for a client about to pair: in memory only.
+    "" when none came (the caller says so, without the value)."""
+    pin = _secret(mid, "pin", (probe_result or {}).get("httpPort"))
+    return pin if pin.isdigit() and 4 <= len(pin) <= 8 else ""
+
+
+def _probe_body_py():
+    """The Unix probe: mw_local.py, the reads, then the probe itself."""
+    return _mw_local_py() + "\n" + _READS_PY + "\n" + _PROBE_PY
+
 
 def _probe_py_for(mid):
     """The same probe everywhere; only the OS-specific extras differ."""
-    return _PROBE_PY
+    return _probe_body_py()
 
 
 def probe(mid):
-    """Version in service, autostart state, native status, rendezvous URL, fresh PIN."""
+    """Version in service, autostart state, native status, whether a rendezvous address
+    is known. Never a PIN (mint_pin) nor the rendezvous address (rendezvous_url)."""
     m = MACHINES[mid]
     pyfile = "mwprobe-%s.py" % uuid.uuid4().hex[:8]
 
@@ -565,25 +830,16 @@ foreach ($p in $ports) {
 }
 $out.httpPort = $httpPort; $out.httpsPort = $httpsPort
 
-function Get-Api($method, $path, $admin) {
-    if ($httpPort -eq 0) { return '{"error":"no port answered"}' }
-    # /api/admin/* needs the per-run key the server mints at start: it is a CSRF
-    # barrier, and without the header the PIN route answers 403 even on loopback.
-    $headers = @{}
-    if ($admin) { $headers['X-MW-Admin-Key'] = $admin }
-    try {
-        $r = Invoke-WebRequest -UseBasicParsing -Method $method -TimeoutSec 20 `
-             -Headers $headers -Uri "http://127.0.0.1:$httpPort$path"
-        return $r.Content
-    } catch { return '{"error":"' + ($_.Exception.Message -replace '"', '') + '"}' }
+__READS_PS__
+if ($httpPort -ne 0) {
+    $found = Get-MwInstance $httpPort
+    $out.localChannel = [bool]($found -and (Test-MwLocalRequest $found.Exe))
+    $out.native   = Read-MwJson '/api/native/status' $httpPort
+    $out.internet = (Get-MwReducedInternet (Read-MwObject '/api/internet/status' $httpPort)) | ConvertTo-Json -Compress -Depth 6
+    $out.vdisplay = (Get-MwReducedVdisplay (Read-MwObject '/api/native/virtual-display' $httpPort)) | ConvertTo-Json -Compress -Depth 6
+} else {
+    $out.native = '{"error":"no port answered"}'
 }
-$adminKey = ''
-try { $adminKey = (Get-Api GET '/api/admin/token' $null | ConvertFrom-Json).token } catch { }
-$out.adminToken = [bool]$adminKey
-$out.native   = Get-Api GET  '/api/native/status' $null
-$out.internet = Get-Api GET  '/api/internet/status' $null
-$out.vdisplay = Get-Api GET  '/api/native/virtual-display' $null
-$out.pin      = Get-Api POST '/api/admin/pin/generate' $adminKey
 
 $task = Get-ScheduledTask -TaskName $app -ErrorAction SilentlyContinue
 $out.autostart = if ($task) { $task.State.ToString() } else { 'absent' }
@@ -606,6 +862,7 @@ if (Test-Path $exe) {
 
 'MWPROBE ' + ($out | ConvertTo-Json -Compress -Depth 4)
 """
+        script = script.replace("__READS_PS__", _reads_ps())
         rc, out, err = run_script(mid, _for_edition(script, m["os"]), timeout=300)
 
     else:
@@ -685,13 +942,13 @@ out["versionLine"] = line
 out["logPath"] = found
 print("MWPROBE " + json.dumps(out))
 """
-        body = _PROBE_PY.replace('print("MWPROBE " + json.dumps(out))', extra + tail)
+        body = _probe_body_py().replace('print("MWPROBE " + json.dumps(out))', extra + tail)
         # caffeinate first: this Mac falls asleep in the middle of an ssh session.
         prefix = "caffeinate -d -i -t 300 >/dev/null 2>&1 </dev/null &\n" if m["os"] == "macos" else ""
         script = prefix + "python3 - MoonlightWebDev <<'MWPY'\n" + body + "\nMWPY\n"
         rc, out, err = run_script(mid, _for_edition(script, m["os"]), timeout=300)
 
-    parsed = {"_rc": rc, "_stderr": (err or "").strip()[:400]}
+    parsed = {"_rc": rc, "_stderr": redacted(err).strip()[:400], "_mid": mid}
     for chunk in (out or "").splitlines():
         chunk = chunk.strip()
         if chunk.startswith("MWPROBE "):
@@ -699,7 +956,7 @@ print("MWPROBE " + json.dumps(out))
                 parsed.update(json.loads(chunk[len("MWPROBE "):]))
             except ValueError:
                 parsed["_raw"] = chunk[:400]
-    for key in ("native", "internet", "vdisplay", "pin"):
+    for key in ("native", "internet", "vdisplay"):
         val = parsed.get(key)
         if isinstance(val, str):
             try:
@@ -729,11 +986,22 @@ function Call($method, $path, $admin, $data) {
         return $r.Content
     } catch { return '{"error":"' + ($_.Exception.Message -replace '"', '') + '"}' }
 }
-$admin = ''
-try { $admin = (Call GET '/api/admin/token' $null $null | ConvertFrom-Json).token } catch { }
-$before = Call GET '/api/settings/streaming' $admin $null
-$after = Call POST '/api/settings/streaming' $admin $body
-'MWSETTINGS ' + (@{ before = $before; after = $after; admin = [bool]$admin } | ConvertTo-Json -Compress -Depth 4)
+__READS_PS__
+$found = Get-MwInstance $port
+if ($found -and (Test-MwLocalRequest $found.Exe)) {
+    # Through the instance's local channel: the address alone writes nothing.
+    $b = Invoke-MwLocalRequest 'GET /api/settings/streaming' -Exe $found.Exe -Dev:$found.Dev
+    $a = Invoke-MwLocalRequest 'POST /api/settings/streaming' -Exe $found.Exe -Dev:$found.Dev -Body $body
+    $before = if ($b.Status -eq 200) { $b.Text } else { '{"error":"HTTP ' + $b.Status + '"}' }
+    $after = if ($a.Status -eq 200) { $a.Text } else { '{"error":"HTTP ' + $a.Status + '"}' }
+    'MWSETTINGS ' + (@{ before = $before; after = $after; admin = $true } | ConvertTo-Json -Compress -Depth 4)
+} else {
+    $admin = ''
+    try { $admin = (Call GET '/api/admin/token' $null $null | ConvertFrom-Json).token } catch { }
+    $before = Call GET '/api/settings/streaming' $admin $null
+    $after = Call POST '/api/settings/streaming' $admin $body
+    'MWSETTINGS ' + (@{ before = $before; after = $after; admin = [bool]$admin } | ConvertTo-Json -Compress -Depth 4)
+}
 """
 
 _SETTINGS_PY = r'''
@@ -755,14 +1023,28 @@ def call(method, path, admin="", data=None):
         return json.dumps({"error": str(e)[:200]})
 
 
-admin = ""
-try:
-    admin = json.loads(call("GET", "/api/admin/token")).get("token", "")
-except Exception:
-    pass
-before = call("GET", "/api/settings/streaming", admin)
-after = call("POST", "/api/settings/streaming", admin, body)
-print("MWSETTINGS " + json.dumps({"before": before, "after": after, "admin": bool(admin)}))
+found = instance(port)
+if found and knows_local_request(found[0]):
+    # Through the instance's local channel: the address alone writes nothing.
+    try:
+        st_b, raw_b = local_request("GET /api/settings/streaming", exe=found[0], dev=found[1])
+        st_a, raw_a = local_request("POST /api/settings/streaming", exe=found[0], dev=found[1],
+                                    body=body.encode("utf-8"))
+    except LocalRequestError:
+        st_b = st_a = 0
+        raw_b = raw_a = b""
+    before = raw_b.decode("utf-8", "replace") if st_b == 200 else json.dumps({"error": "HTTP %d" % st_b})
+    after = raw_a.decode("utf-8", "replace") if st_a == 200 else json.dumps({"error": "HTTP %d" % st_a})
+    print("MWSETTINGS " + json.dumps({"before": before, "after": after, "admin": True}))
+else:
+    admin = ""
+    try:
+        admin = json.loads(call("GET", "/api/admin/token")).get("token", "")
+    except Exception:
+        pass
+    before = call("GET", "/api/settings/streaming", admin)
+    after = call("POST", "/api/settings/streaming", admin, body)
+    print("MWSETTINGS " + json.dumps({"before": before, "after": after, "admin": bool(admin)}))
 '''
 
 
@@ -788,10 +1070,10 @@ def host_settings(mid, http_port, settings):
     m = MACHINES[mid]
     if m["os"] == "windows":
         script = _SETTINGS_PS.replace("__PORT__", str(int(http_port))).replace(
-            "__BODY__", body)
+            "__BODY__", body).replace("__READS_PS__", _reads_ps())
     else:
         script = "python3 - %d %s <<'MWPY'\n%s\nMWPY\n" % (
-            int(http_port), shlex.quote(body), _SETTINGS_PY)
+            int(http_port), shlex.quote(body), _mw_local_py() + "\n" + _SETTINGS_PY)
     rc, out, err = run_script(mid, script, timeout=120)
     result = None
     for line in (out or "").splitlines():
@@ -864,17 +1146,22 @@ def lan_url(mid, probe_result):
 
 
 def rendezvous_url(probe_result):
-    """The address an owner reconnects on, out of /api/internet/status."""
-    rdv = (probe_result.get("internet") or {}).get("rendezvous") or {}
-    for key in ("url", "link", "owner_url"):
-        if rdv.get(key):
-            return rdv[key]
-    ident = rdv.get("id") or rdv.get("instance_id") or rdv.get("instanceId")
-    host = rdv.get("host") or rdv.get("server") or "stream.dev.moonlightweb.top"
-    if ident:
-        host = host.replace("https://", "").replace("http://", "").rstrip("/")
-        return "https://%s/%s" % (host, ident)
-    return ""
+    """The address an owner reconnects on, asked of the machine the probe came from
+    (_secret): in this process's memory only, never in a record. "" when the probe
+    saw no rendezvous address."""
+    probe_result = probe_result or {}
+    mid = probe_result.get("_mid")
+    if not mid or not (probe_result.get("internet") or {}).get("rendezvousKnown"):
+        return ""
+    key = (mid, probe_result.get("httpPort"))
+    if not _SECRETS.get(key):
+        _SECRETS[key] = _secret(mid, "rdv", probe_result.get("httpPort"))
+    return _SECRETS[key]
+
+
+def rendezvous_host(probe_result):
+    """The rendezvous server's host name, which a record may hold."""
+    return ((probe_result or {}).get("internet") or {}).get("rendezvousHost") or ""
 
 
 def wait_up(mid, timeout=180):

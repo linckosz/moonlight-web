@@ -38,14 +38,29 @@ def _tool():
     return tool
 
 
+def native_status(port):
+    """This machine's /api/native/status on @p port: through the instance's local
+    channel when its exe has the command, by the loopback address otherwise."""
+    import sys
+    sys.path.insert(0, os.path.dirname(HERE))
+    import mw_local
+    found = mw_local.instance(port)
+    if found and mw_local.knows_local_request(found[0]):
+        status, doc = mw_local.local_json("GET /api/native/status", exe=found[0], dev=found[1])
+        if status != 200 or not isinstance(doc, dict):
+            raise Unavailable("the native host did not answer on its local channel (HTTP %d)" % status)
+        return doc
+    with urllib.request.urlopen("http://127.0.0.1:%d/api/native/status" % port, timeout=5) as r:
+        return json.load(r)
+
+
 def encoder_gpu(target, port=48080):
     """The GPU that encodes `target` on this machine, as MoonlightWeb names it."""
     if target != "display":
         # The virtual display exists only once a stream has turned it on, and
         # the load has to be running before that stream starts.
         raise Unavailable("the load needs a physical display target, not %r" % target)
-    with urllib.request.urlopen("http://127.0.0.1:%d/api/native/status" % port, timeout=5) as r:
-        status = json.load(r)
+    status = native_status(port)
     displays = status.get("displays") or []
     if not displays or not displays[0].get("gpu"):
         raise Unavailable("the native host names no GPU for its first display")
@@ -61,8 +76,7 @@ def display_on_gpu(name, port=None):
     the order of their tiles (app ids 1, 2, 3...): pick_tile's `index`.
     """
     port = port or int((os.environ.get("MW_BENCH_LOCAL_PORTS") or "48080").split(",")[0])
-    with urllib.request.urlopen("http://127.0.0.1:%d/api/native/status" % port, timeout=5) as r:
-        status = json.load(r)
+    status = native_status(port)
     for i, disp in enumerate(status.get("displays") or []):
         if name.lower() in (disp.get("gpu") or "").lower():
             return i, disp
@@ -180,12 +194,9 @@ Write-Output ('DEPLOYED ' + (Test-Path "$d\mw-gpu-load.exe"))
 def remote_encoder_gpu(mid, target, port=48080):
     if target != "display":
         raise Unavailable("the load needs a physical display target, not %r" % target)
-    rc, out, err = _fleet().run_script(
-        mid, "(& curl.exe -s -m 5 http://127.0.0.1:%d/api/native/status) -join ''" % port, timeout=60)
     try:
-        status = json.loads((out or "").strip().splitlines()[-1])
-        return status["displays"][0]["gpu"]
-    except (ValueError, KeyError, IndexError):
+        return _fleet().remote_read(mid, "/api/native/status", port)["displays"][0]["gpu"]
+    except (ValueError, KeyError, IndexError, TypeError):
         raise Unavailable("%s names no GPU for its first display" % mid)
 
 
@@ -341,11 +352,9 @@ otool -L "%(tool)s" 2>/dev/null | grep -q QtMultimedia && echo MUSIC
 def remote_encoder_gpu_macos(mid, target, port=48080):
     if target != "display":
         raise Unavailable("the load needs a physical display target, not %r" % target)
-    rc, out, err = _fleet().run_script(
-        mid, "curl -s -m 5 http://127.0.0.1:%d/api/native/status" % port, timeout=60)
     try:
-        return json.loads((out or "").strip().splitlines()[-1])["displays"][0]["gpu"]
-    except (ValueError, KeyError, IndexError):
+        return _fleet().remote_read(mid, "/api/native/status", port)["displays"][0]["gpu"]
+    except (ValueError, KeyError, IndexError, TypeError):
         raise Unavailable("%s names no GPU for its first display" % mid)
 
 

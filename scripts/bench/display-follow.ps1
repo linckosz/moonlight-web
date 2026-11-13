@@ -230,7 +230,8 @@ function Set-ScreenMode([string] $Gdi, [int] $W, [int] $H, [int] $Hz = 0) {
 }
 
 # -- Which screen is captured, and which one the client sits on ---------------
-$status = Invoke-RestMethod -Uri "$ApiUrl/api/native/status" -Method Get -TimeoutSec 10
+. (Join-Path $PSScriptRoot 'mw-local.ps1')
+$status = Get-MwLocalApi $ApiUrl '/api/native/status'
 if (-not (Get-Prop $status 'available' $false)) {
     throw "no native host behind $ApiUrl - this instrument is about the native host only"
 }
@@ -256,7 +257,7 @@ $script:before = @()
 $cap = $null
 if ($script:vdMode) {
     $vd = $null
-    try { $vd = Invoke-RestMethod -Uri "$ApiUrl/api/native/virtual-display" -Method Get -TimeoutSec 10 } catch { }
+    try { $vd = Get-MwLocalApi $ApiUrl '/api/native/virtual-display' } catch { }
     if (-not $vd -or -not (Get-Prop $vd 'installed' $false)) {
         throw ("no MoonlightWeb Virtual Display on this host to change modes on. This script switches the " +
                "captured screen's mode and HDR; it will not guess a physical monitor for that. Pass " +
@@ -541,10 +542,25 @@ function Get-GuestState($Mark) {
     return Get-HostState (Get-HostLines $Mark $script:GuestLog)
 }
 
+# Asked by the owner's own page, with the session it holds: a guest slot is the
+# owner's to open, and this machine's address alone does not make anyone the
+# owner. The admin key is the page's, read and sent inside it; nothing of it
+# comes out. Single quotes only in the script: PowerShell 5.1 eats the double
+# ones of an argument, so the body travels in base64.
 function Invoke-ShareApi([string] $Path, [string] $Body = '{}') {
-    $key = (Invoke-RestMethod -Uri "$ApiUrl/api/admin/token" -TimeoutSec 10).token
-    Invoke-RestMethod -Uri "$ApiUrl$Path" -Method Post -ContentType 'application/json' `
-        -Headers @{ 'X-MW-Admin-Key' = $key } -Body $Body -TimeoutSec 15
+    if ($Path -notmatch '^/api/share/[a-z0-9/_-]+$') { throw "not a share route: $Path" }
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Body))
+    $js = "(async () => { const k = await fetch('/api/admin/token', {credentials: 'same-origin'});" +
+          " const t = k.ok ? (await k.json()).token : '';" +
+          " const r = await fetch('$Path', {method: 'POST', credentials: 'same-origin'," +
+          " headers: {'Content-Type': 'application/json', 'X-MW-Admin-Key': t}, body: atob('$b64')});" +
+          " return JSON.stringify({status: r.status, body: r.ok ? await r.json().catch(() => null) : null}); })()"
+    $out = (Cdp eval $js).Trim()
+    $r = $null
+    try { $r = $out | ConvertFrom-Json } catch { }
+    if (-not $r) { throw "the owner's page did not answer $Path" }
+    if ($r.status -lt 200 -or $r.status -ge 300) { throw "$Path answered $($r.status) to the owner's page" }
+    $r.body
 }
 
 # Open a share on the running stream and have the guest kiosk join it the way a
@@ -558,17 +574,26 @@ function Join-Guest {
     $link = Get-Prop $act 'url' ''
     if (-not $token -and $link -match '/p/([^/?#]+)') { $token = $Matches[1] }
     if (-not $token -and $link -match '#t=([^&]+)') { $token = $Matches[1] }
-    if (-not $token) { throw "the share opened without a link: $($act | ConvertTo-Json -Compress)" }
+    if (-not $token) { throw "the share opened without a link (fields: $(@($act.PSObject.Properties.Name) -join ', '))" }
+    # The link names the share's token and the PIN is the share's: neither goes on
+    # a command line. The guest kiosk opens on a blank page, and both reach it by
+    # cdp.py's standard input.
     $guestUrl = $AppUrl.TrimEnd('/') + '/p/' + $token
-    $guestArgs = @('-Url', $guestUrl, '-X', $script:guestRect[0], '-Y', $script:guestRect[1],
+    $guestArgs = @('-Url', 'about:blank', '-X', $script:guestRect[0], '-Y', $script:guestRect[1],
                    '-W', $script:guestRect[2], '-H', $script:guestRect[3], '-DebugPort', $GuestDebugPort,
                    '-ChromeProfile', '.chrome-guest', '-Windowed')
     if ($ClientAdapterLuid) { $guestArgs += @('-AdapterLuid', $ClientAdapterLuid) }
     & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" @guestArgs | Out-Host
+    $went = ($guestUrl | & python "$PSScriptRoot\cdp.py" --port $GuestDebugPort nav-stdin 2>$null | Out-String).Trim()
+    $guestUrl = $null; $token = $null; $link = $null
+    if ($went -ne 'navigated') { throw "the guest kiosk did not open the share's link" }
     $ready = Wait-For { (CdpAt $GuestDebugPort eval "!!document.querySelector('.player-pin-input')") -match 'true' } 40
-    if ($ready -lt 0) { throw "the guest page never asked for the PIN at $guestUrl" }
-    CdpAt $GuestDebugPort eval ("(() => { const i = document.querySelector('.player-pin-input'); i.value = '" + $act.pin +
-        "'; i.form.requestSubmit(); return 'sent'; })()") | Out-Null
+    if ($ready -lt 0) { throw "the guest page never asked for the PIN" }
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]$act.pin))
+    ("(() => { const i = document.querySelector('.player-pin-input'); i.value = atob('" + $b64 +
+        "'); i.form.requestSubmit(); return 'sent'; })()") |
+        & python "$PSScriptRoot\cdp.py" --port $GuestDebugPort eval-stdin 2>$null | Out-Null
+    $b64 = $null
     $ready = Wait-For { (CdpAt $GuestDebugPort eval "!!document.querySelector('.player-join-btn')") -match 'true' } 20
     if ($ready -lt 0) { throw 'the guest page never offered to join after the PIN' }
     CdpAt $GuestDebugPort clicksel '.player-join-btn' | Out-Null
@@ -914,6 +939,18 @@ finally {
     } }
     if ($kiosksUp -and -not $KeepKiosks) {
         & powershell -NoProfile -File "$PSScriptRoot\kiosk-close.ps1" | Out-Host
+        # The guest's profile holds the share's link in its history: nothing of it
+        # is kept. Only once no Chrome runs on it, and only this one folder.
+        $guestProfile = Join-Path $PSScriptRoot '.chrome-guest'
+        if ($Share -and (Test-Path -LiteralPath $guestProfile)) {
+            Start-Sleep -Seconds 2
+            $inUse = @(Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" |
+                       Where-Object { $_.CommandLine -like '*\.chrome-guest*' }).Count
+            if ($inUse -eq 0) {
+                Remove-Item -LiteralPath $guestProfile -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "guest profile removed: $(-not (Test-Path -LiteralPath $guestProfile))"
+            } else { Write-Warning 'the guest profile is still in use: not removed' }
+        }
     }
 }
 

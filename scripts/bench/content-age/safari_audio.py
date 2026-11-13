@@ -211,10 +211,12 @@ def main():
         LM.kill_dev()
         LM.launch_dev(0, "client", log)
         link = rendezvous_link(log)
-        pin = ((fleet.probe("local").get("pin") or {}).get("pin"))
+        # The link and the PIN stay in memory: whether there is one, never what it is.
+        probe = fleet.probe("local")
+        pin = fleet.mint_pin("local", probe)
         index, disp = gpu_load.display_on_gpu(a.gpu, port=8080)
-        print("dev up:", link, "| PIN", "yes" if pin else "none", "| screen", index,
-              disp.get("gpu"), flush=True)
+        print("dev up: rendezvous link", "yes" if link else "none", "| PIN", "yes" if pin else "none",
+              "| screen", index, disp.get("gpu"), flush=True)
         run.content_start("scroll.html?band=time&px=600", probe=True)
         caps = {"browserName": "Safari", "platformName": a.platform}
         wd = WebDriver(WD_PORT, caps)
@@ -228,7 +230,7 @@ def main():
             tag = "%s-%s-r%d" % (a.prefix, target, k)
             print("==", tag, time.strftime("%H:%M:%S"), flush=True)
             # A PIN is single-use: a fresh one for each run that meets the PIN page.
-            pin = ((fleet.probe("local").get("pin") or {}).get("pin")) or pin
+            pin = fleet.mint_pin("local", fleet.probe("local")) or pin
             one_run(wd, link, pin, index, target, a.secs, tag)
     finally:
         if wd:

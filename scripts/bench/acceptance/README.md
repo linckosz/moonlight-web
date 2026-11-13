@@ -70,10 +70,21 @@ desk answers on 18080/18443. `fleet.probe()` asks the process which ports it
 holds and then asks each of them; `lan_url()` re-checks the HTTPS one from the
 measuring station, because that is the machine that has to reach it.
 
-**`/api/admin/*` needs the per-run key.** The server mints one at start and
-hands it out on `GET /api/admin/token`; without the `X-MW-Admin-Key` header the
-PIN route answers 403 even on loopback. That key is a CSRF barrier, not a
-credential, and it dies with the process.
+**A host is asked through its local channel.** The machine's own shell runs
+the instance's exe with `--local-request "<METHOD> <path>"` (`../mw_local.py`,
+`../mw-local.ps1`), which reaches that instance alone, by its exact routes:
+from the build that has it, this machine's address alone opens neither the
+statuses nor the PIN. Whether an exe has the command is read from its bytes,
+never by starting it: an exe that does not know an option says so in a dialog,
+in front of whoever sits at the machine. An older build is asked the old way,
+by its loopback address and the per-run admin key, which stays in a variable.
+
+**No record holds a PIN or the rendezvous address.** `fleet.probe()` keeps
+whether a rendezvous address is known and the server's host name. A PIN is made
+by `fleet.mint_pin()` when a client is about to pair, and the rendezvous address
+is asked by `fleet.rendezvous_url()` when a pass goes through it. Both come back
+through the ssh channel itself (no file on the machine) into the memory of the
+run, and are never printed, logged or written to `results/`.
 
 **The Sunshine target is anchored on `isLocalHost`.** A bench client paired with
 the whole fleet sees seventeen host cards. Picking "the Sunshine" by position

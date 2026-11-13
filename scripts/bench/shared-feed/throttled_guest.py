@@ -142,10 +142,11 @@ def main():
     _en, _el, enc_rect = ol.gpu(a.display_gpu)
     probe = fleet.probe("local")
     access = dict(run.access_map().get("local") or {})
-    pin = (probe.get("pin") or {}).get("pin") or access.get("pin", "")
+    # In memory only (fleet.mint_pin); the status through the local channel.
+    pin = fleet.mint_pin("local", probe) or access.get("pin", "")
     base = fleet.lan_url("local", probe) or access.get("lan")
-    status = json.loads(subprocess.run(["curl", "-s", "http://127.0.0.1:18080/api/native/status"],
-                                       capture_output=True, text=True).stdout or "{}")
+    import gpu_load
+    status = gpu_load.native_status(18080)
     displays = sorted(status.get("displays") or [], key=lambda x: x["id"])
     index = next(i for i, x in enumerate(displays) if a.display_gpu.lower() in x.get("gpu", "").lower())
     os.environ["MW_BENCH_CONTENT_RECT"] = "%d,%d,%d,%d" % enc_rect

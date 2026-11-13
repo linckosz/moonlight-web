@@ -123,7 +123,7 @@ class Rig(unittest.TestCase):
             content_start=content_start, content_stop=lambda: self.closed.append("content"))
         self.line = "https://stream.dev.example/abc123"
         fleet = types.SimpleNamespace(probe=lambda m: {}, lan_url=lambda m, p: "https://10.0.0.2/",
-                                      rendezvous_url=lambda p: self.line)
+                                      rendezvous_url=lambda p: self.line, mint_pin=lambda m, p: "")
         self.driver = None
         drive = types.SimpleNamespace(Driver=lambda port: self.driver)
         cadence = types.SimpleNamespace(monitors=monitors)

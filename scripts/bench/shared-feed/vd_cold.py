@@ -156,7 +156,8 @@ def main():
     amd = next(g for g in run.list_gpus() if "AMD" in g[0])
     luid = amd[1]
     probe = fleet.probe("local")
-    pin = (probe.get("pin") or {}).get("pin")
+    # In memory only (fleet.mint_pin).
+    pin = fleet.mint_pin("local", probe)
     access = dict(run.access_map().get("local") or {})
     base = fleet.lan_url("local", probe) or access.get("lan")
     log("base", base, "guest decodes on", amd[0], luid)

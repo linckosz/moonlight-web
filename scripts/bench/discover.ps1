@@ -191,15 +191,33 @@ function Get-ListeningPorts {
     } catch { return @() }
 }
 
+. (Join-Path $PSScriptRoot 'mw-local.ps1')
+
+# The two reads of this machine's own instance. Through its local channel when its
+# exe has the command (mw-local.ps1): the address alone no longer opens them. An
+# older build is asked the old way, by its loopback address, which still answers
+# there; its admin key stays in a variable.
+function Get-LocalReads([int] $Port) {
+    $found = Get-MwInstance $Port
+    if ($found -and (Test-MwLocalRequest $found.Exe)) {
+        $status = Invoke-MwLocalRequest 'GET /api/native/status' -Exe $found.Exe -Dev:$found.Dev
+        $settings = Invoke-MwLocalRequest 'GET /api/settings/streaming' -Exe $found.Exe -Dev:$found.Dev
+        if ($status.Status -ne 200 -or $settings.Status -ne 200) { throw "no answer on port $Port" }
+        return @($status.Json, $settings.Json)
+    }
+    $token = (Invoke-JsonUtf8 -Uri "http://127.0.0.1:$Port/api/admin/token" -TimeoutSec 3).token
+    $status = Invoke-JsonUtf8 -Uri "http://127.0.0.1:$Port/api/native/status" `
+                -Headers @{ 'X-MW-Admin-Key' = $token }
+    $settings = Invoke-JsonUtf8 -Uri "http://127.0.0.1:$Port/api/settings/streaming" `
+                -Headers @{ 'X-MW-Admin-Key' = $token }
+    return @($status, $settings)
+}
+
 function Get-LocalNativeStatus {
     $candidates = @(Get-ListeningPorts) + @(8080, 48080, 49080, 18080, 80)
     foreach ($port in ($candidates | Select-Object -Unique)) {
         try {
-            $token = (Invoke-JsonUtf8 -Uri "http://127.0.0.1:$port/api/admin/token" -TimeoutSec 3).token
-            $status = Invoke-JsonUtf8 -Uri "http://127.0.0.1:$port/api/native/status" `
-                        -Headers @{ 'X-MW-Admin-Key' = $token }
-            $settings = Invoke-JsonUtf8 -Uri "http://127.0.0.1:$port/api/settings/streaming" `
-                        -Headers @{ 'X-MW-Admin-Key' = $token }
+            $status, $settings = Get-LocalReads $port
             return [pscustomobject]@{
                 port                = $port
                 available           = $status.available

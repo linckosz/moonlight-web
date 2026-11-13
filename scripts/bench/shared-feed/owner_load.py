@@ -372,7 +372,8 @@ def main():
     if remote:
         mid = a.fleet_id or "mw-intel"
         probe = fleet.probe(mid)
-        pin = (probe.get("pin") or {}).get("pin")
+        # In memory only (fleet.mint_pin).
+        pin = fleet.mint_pin(mid, probe)
         base = a.host_url
         access = {"name": "bench", "pin": pin}
         display_index = int(a.display_index)
@@ -380,7 +381,7 @@ def main():
     else:
         access = dict(run.access_map().get("local") or {})
         probe = fleet.probe("local")
-        pin = (probe.get("pin") or {}).get("pin")
+        pin = fleet.mint_pin("local", probe)
         if pin:
             access["pin"] = pin
         base = fleet.lan_url("local", probe) or access.get("lan")
@@ -389,9 +390,8 @@ def main():
             raise SystemExit("the encoder's GPU (%s) would also decode: move a client" % enc_name)
         encoder = {"gpu": enc_name, "luid": enc_luid}
         http_port = os.environ.get("MW_BENCH_LOCAL_PORTS", "18080,18443").split(",")[0]
-        status = json.loads(subprocess.run(
-            ["curl", "-s", "http://127.0.0.1:%s/api/native/status" % http_port],
-            capture_output=True, text=True).stdout or "{}")
+        import gpu_load
+        status = gpu_load.native_status(int(http_port))
         displays = sorted(status.get("displays") or [], key=lambda x: x["id"])
         display_index = next((i for i, x in enumerate(displays)
                               if a.display_gpu.lower() in x.get("gpu", "").lower()), None)

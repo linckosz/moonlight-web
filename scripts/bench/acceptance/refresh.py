@@ -1,9 +1,11 @@
 """Re-probe the fleet and rewrite chapter 1's access rows.
 
-Run this last, just before the report. The PIN and the rendezvous address in
-the report are what the reader will actually use, so they have to be read at
-the end — after every pass, every restart and every reinstall — not at the
-moment an install happened to finish.
+Run this last, just before the report. What the report says of each machine's
+access (its LAN address, whether a rendezvous address is known and on which
+server) has to be read at the end — after every pass, every restart and every
+reinstall — not at the moment an install happened to finish. The rendezvous
+address itself and a PIN are never written here: they live in the memory of the
+run that uses them (fleet.rendezvous_url, fleet.mint_pin).
 
 It keeps each machine's install/update steps as they were; only what the
 machine says about itself right now is replaced.
@@ -43,8 +45,11 @@ def main():
             continue
         native = probe.get("native") or {}
         rec["afterUpdate"] = probe
-        rec["rendezvousUrl"] = fleet.rendezvous_url(probe)
-        rec["pin"] = (probe.get("pin") or {}).get("pin", "") or rec.get("pin", "")
+        # Rows written before these rules held carried both: not kept.
+        rec.pop("rendezvousUrl", None)
+        rec.pop("pin", None)
+        rec["rendezvousKnown"] = bool((probe.get("internet") or {}).get("rendezvousKnown"))
+        rec["rendezvousHost"] = fleet.rendezvous_host(probe)
         rec["lanUrl"] = fleet.lan_url(mid, probe)
         rec["ports"] = {"http": probe.get("httpPort"), "https": probe.get("httpsPort"),
                         "listening": probe.get("listening")}
@@ -57,9 +62,9 @@ def main():
         version = ""
         for part in (probe.get("versionLine") or "").split("Version:")[1:]:
             version = part.strip()
-        print("    %-10s native=%s autostart=%s pin=%s v=%s"
+        print("    %-10s native=%s autostart=%s rendezvous=%s v=%s"
               % (mid, native.get("available"), probe.get("autostart"),
-                 bool(rec["pin"]), version[:22]))
+                 rec["rendezvousKnown"], version[:22]))
 
     with open(PATH, "a", encoding="utf-8") as f:
         for rec in latest.values():

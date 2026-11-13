@@ -88,6 +88,8 @@ $display = [int]$displayInfo.id
 # The screen the hdr-on pass switches to HDR and back (run-campaign -Hdr
 # physical); empty, nothing is switched.
 . "$PSScriptRoot\hdr-switch.ps1"
+# The host's reads go through its local channel when its exe has the command.
+. "$PSScriptRoot\mw-local.ps1"
 $hdrDevice = Get-Prop $matrix 'hdrDevice' ''
 
 # The host's own word that its display is in HDR: the stream is HDR only then.
@@ -95,7 +97,7 @@ function Wait-HostHdr([int] $Seconds = 15) {
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline) {
         try {
-            $s = Invoke-RestMethod -Uri "$ApiUrl/api/native/status" -Method Get -TimeoutSec 5
+            $s = Get-MwLocalApi $ApiUrl '/api/native/status' 5
             $d = @($s.displays) | Where-Object { [int]$_.id -eq $display } | Select-Object -First 1
             if ($d -and (Get-Prop $d 'hdr_active' $false)) { return $true }
         } catch { }
@@ -185,7 +187,7 @@ foreach ($line in @(Get-Prop (Get-Content (Join-Path $ResultsDir 'inventory.json
 # HOST's environment, keeps it off; the report is told when it was not.
 $flagOnClient = $false
 try {
-    $flagCfg = Invoke-RestMethod -Uri "$ApiUrl/api/settings/streaming" -Method Get -TimeoutSec 10
+    $flagCfg = Get-MwLocalApi $ApiUrl '/api/settings/streaming'
     $skipList = @((Get-Prop $flagCfg 'latency_flag_skip' '') -split '[;,\s]+' | Where-Object { $_ })
     if ((Get-Prop $flagCfg 'latency_flag_active' $false) -and $clientDevice -and
         -not ($skipList | Where-Object { $_ -ieq $clientDevice })) {
@@ -211,7 +213,7 @@ Write-Host "pointer park : $parkX,$parkY (inert target $targetSize px)"
 # ── The tile: the native host names its apps after the display ──────────────
 if (-not $Tile) {
     try {
-        $status = Invoke-RestMethod -Uri "$ApiUrl/api/native/status" -Method Get -TimeoutSec 10
+        $status = Get-MwLocalApi $ApiUrl '/api/native/status'
         $d = $status.displays | Where-Object { $_.id -eq $display } | Select-Object -First 1
         $Tile = Get-Prop $d 'label' ''
     } catch { }
