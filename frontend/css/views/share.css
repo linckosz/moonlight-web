@@ -1355,3 +1355,10 @@ body.player-mode {
     font-size: 12px;
     color: var(--text-2);
 }
+
+/* A TV on plain HTTP asking to join (issue #42): its one line of its own. */
+.tv-pair-plain-http {
+    margin: 0;
+    font-size: 13px;
+    color: var(--c-warning);
+}

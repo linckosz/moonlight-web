@@ -47,12 +47,13 @@ frontend/
 │   │   ├── AdminView.js / SettingsView.js / SetupView.js / LoginView.js
 │   │   ├── GamepadRemapDialog.js / GamepadArt.js / DeviceArt.js  # Test & Remap: wizard, drawn pad, radio, flight stick, wheel
 │   │   ├── PairDialog.js / Toast.js / icons.js
+│   │   ├── TvSignInView.js / TvPairApproveDialog.js / qrSvg.js  # a TV on plain HTTP signs in by QR code (#42)
 │   ├── models/                 # Host.js, App.js
 │   ├── util/                   # Mp4Muxer (NAL/avcC/hvcC/codec strings), Av1Utils (OBU parse),
 │   │                           # SdpUtils (forceOpusStereo), AutoBitrate (recommended kbps),
 │   │                           # BrowserDetect, VersionGuard, escapeHtml
 │   ├── i18n/i18n.js            # homemade runtime i18n (en/fr/tr/zh, Tolgee-compatible JSON)
-│   └── vendor/opus-decoder.min.js
+│   └── vendor/                 # opus-decoder.min.js; qrcodegen-v1.8.0-es5.js (Nayuki, MIT, unmodified)
 ├── locales/{en,fr,zh}.json     # ~1,000 keys, nested namespaces
 ├── test/                       # Vitest suites (jsdom) for the pure-logic modules
 └── package.json                # dev tooling only (prettier, eslint, vitest, typescript)

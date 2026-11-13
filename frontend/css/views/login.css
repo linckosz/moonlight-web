@@ -353,3 +353,54 @@
     color: var(--c-danger-text);
     font-weight: 600;
 }
+
+/* ── A TV on plain HTTP signs in with a phone (issue #42) ─────────────────
+ * Read across a room: a wide box, a QR code on its own white ground (a
+ * reader needs the quiet zone), and the code in large letters. */
+.tv-sign-in .login-box {
+    max-width: 560px;
+}
+
+.tv-sign-in-lead {
+    margin: var(--space-3) 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+}
+
+.tv-sign-in-qr {
+    display: inline-block;
+    margin: var(--space-2) auto;
+    padding: var(--space-3);
+    background: #fff;
+    line-height: 0;
+}
+
+.tv-sign-in-qr svg {
+    width: 280px;
+    max-width: 60vw;
+    height: auto;
+}
+
+.tv-sign-in-address {
+    margin: var(--space-2) 0;
+    font-family: var(--font-mono, monospace);
+    font-size: var(--fs-sm);
+    color: var(--text-1);
+    word-break: break-all;
+}
+
+.tv-sign-in-code {
+    margin: var(--space-4) 0 var(--space-2);
+    font-family: var(--font-mono, monospace);
+    font-size: 2.6rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: var(--text-1);
+}
+
+.tv-sign-in-waiting,
+.tv-sign-in-message {
+    margin: var(--space-2) 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+}

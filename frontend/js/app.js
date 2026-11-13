@@ -65,6 +65,10 @@ import {
     rememberGuestTouchPadMode,
 } from './ui/PlayerJoinView.js';
 import { openPairApprove, pairRequestFromPath } from './ui/PairApproveDialog.js';
+import { openTvPairApprove, tvPairRequestFromPath } from './ui/TvPairApproveDialog.js';
+import { TvSignInView } from './ui/TvSignInView.js';
+import { qrDrawer } from './ui/qrSvg.js';
+import { lanHttpStatus } from './api/LanHttpApi.js';
 import { touchPadSettings } from './stream/TouchPadState.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
@@ -309,6 +313,9 @@ export const MoonlightApp = {
     // none is running (see _noteSupportSession).
     _streamStartedAt: 0,
 
+    // A TV on plain HTTP (issue #42): set once at startup, by _initPlainHttpTv.
+    _plainHttpTv: false,
+
     // ── Navigation state (never destroyed by overlays) ──────────────────────
     _nav: {
         /** Always 'hosts' — the single main view */
@@ -423,6 +430,13 @@ export const MoonlightApp = {
         // ── Hide admin/settings buttons upfront for non-localhost ─────────
         // They will be revealed by _initNavButtons() if authenticated.
         this._hideNavButtonsConditionally();
+
+        // ── A TV on plain HTTP (issue #42) ──────────────────────────────────
+        // Listed in lan_http_clients, it reaches a short list of routes and
+        // holds no HTTPS session: its own sign-in screen, then the hosts and
+        // its stream. Any other browser on http:// gets the gate that reopens
+        // the page on HTTPS, as before.
+        if (window.location.protocol === 'http:' && (await this._initPlainHttpTv())) return;
 
         // ── Host key (#k=...) — the host machine's own entry points open the
         // page with one: spend it for a host-machine session BEFORE the auth
@@ -551,6 +565,40 @@ export const MoonlightApp = {
         // must not be disrupted) — nothing to navigate.
         if (this._nav.overlay === 'admin') return;
         this._openOverlay('admin');
+    },
+
+    // =========================================================================
+    // A TV on plain HTTP (issue #42)
+    // =========================================================================
+
+    /**
+     * A TV listed for plain HTTP: false for any other browser, which goes on
+     * to the usual checks. Signed out, it shows its QR code and code until
+     * someone lets it in, then starts again. Signed in, it gets the hosts and
+     * nothing of the administration, the settings or the support link.
+     * @returns {Promise<boolean>}
+     */
+    async _initPlainHttpTv() {
+        const status = await lanHttpStatus();
+        if (!status) return false;
+        this._plainHttpTv = true;
+        this._hasAdminAccess = false;
+        document.body.classList.add('plain-http-tv');
+        for (const id of ['btn-admin', 'btn-settings', 'btn-bmc']) {
+            const btn = document.getElementById(id);
+            if (btn) btn.style.display = 'none';
+        }
+        if (!status.signed_in) {
+            const main = document.getElementById('main-content');
+            if (!main) return true;
+            this.transition('login');
+            // Its QR code once the encoder has come; its address as text otherwise.
+            const qr = await qrDrawer();
+            new TvSignInView(main, { onSignedIn: () => window.location.reload(), qr }).start();
+            return true;
+        }
+        this._initRouter();
+        return true;
     },
 
     // =========================================================================
@@ -856,6 +904,9 @@ export const MoonlightApp = {
         // in (a PIN typed on the way included), then put to the administrator
         // over the hosts view. Anyone else is told it is the administrator's.
         const pairRequest = pairRequestFromPath(path);
+        // A TV's QR code (issue #42): /tv-pair-<request>, over HTTPS, for the
+        // administrator to let a TV on plain HTTP in.
+        const tvPairRequest = tvPairRequestFromPath(path);
 
         if ((path === '/admin' || path === '/sessions') && this._canReachAdmin()) {
             // Admin survives refresh — shown as overlay on hosts. Admins only:
@@ -881,6 +932,7 @@ export const MoonlightApp = {
             this._openOverlay(initialOverlay, overlayOptions);
         }
         if (pairRequest) openPairApprove(pairRequest);
+        if (tvPairRequest) openTvPairApprove(tvPairRequest);
     },
 
     // =========================================================================
@@ -948,7 +1000,7 @@ export const MoonlightApp = {
         // loopback entry points open over http:// to dodge the cert warning /
         // Firefox blank page, so when we're on http:// show a gate that switches
         // to HTTPS instead of an unusable host list.
-        if (window.location.protocol === 'http:') {
+        if (window.location.protocol === 'http:' && !this._plainHttpTv) {
             this._renderInsecureGate(main);
             return;
         }
@@ -957,8 +1009,12 @@ export const MoonlightApp = {
         this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
         this.hostListView.memoryKey = currentInstanceRef(tunnelHostId()).id;
         this.hostListView.canAdminister = !!this._hasAdminAccess;
+        this.hostListView.plainHttp = this._plainHttpTv === true;
         bootMark('host-page');
         this.hostListView.start();
+        // A TV on plain HTTP: none of the banners below are its to read, and
+        // their routes are not open to it.
+        if (this._plainHttpTv) return;
 
         // Tell the user how OTHER PCs reach this server (host machine), and —
         // on every machine — what is missing or better than the address they
@@ -3975,6 +4031,7 @@ export const MoonlightApp = {
         const gamepadProfile = streamingSettings.gamepad_profile || 'auto';
         const opts = {
             ...viewOpts,
+            plainHttp: this._plainHttpTv === true,
             intraRefresh: result.intra_refresh === true,
             gamepadProfile,
             // Multiplier on relative mouse motion (pointer lock). The host never
@@ -4880,7 +4937,10 @@ export const MoonlightApp = {
             console.log('[MW] Quality transition skipped: a share is active');
             return;
         }
+        // A TV on plain HTTP has one stream, never a standby beside it (the
+        // host refuses one): it changes quality by starting again.
         const canSeamless =
+            !this._plainHttpTv &&
             this._dualSupported !== false &&
             this.streamView &&
             this.streamView._firstFrameRendered &&

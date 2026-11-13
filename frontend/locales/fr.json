@@ -435,6 +435,26 @@
         "decided": "Cette demande a déjà reçu une réponse.",
         "failed": "La demande n'a pas pu recevoir de réponse : {{message}}"
     },
+    "tvSignIn": {
+        "title": "Connexion avec votre téléphone",
+        "scan": "Scannez ce code avec un téléphone ou un ordinateur déjà connecté à MoonlightWeb, puis tapez-y le code ci-dessous.",
+        "qrLabel": "QR code de la page d'accord",
+        "openAddress": "Sur un téléphone ou un ordinateur déjà connecté à MoonlightWeb, ouvrez cette adresse, puis tapez-y le code ci-dessous :",
+        "waiting": "En attente de l'accord… (expire dans {{time}})",
+        "refused": "Cette demande a été refusée.",
+        "askAgain": "Demander à nouveau",
+        "busy": "D'autres appareils demandent l'accès en ce moment. Nouvel essai dans un instant…",
+        "unreachable": "Le serveur n'a pas répondu. Nouvel essai…"
+    },
+    "tvPairing": {
+        "browserAt": "Navigateur en {{address}}",
+        "plainHttp": "Il utilise le HTTP simple sur votre réseau local : il peut streamer, jamais administrer.",
+        "hint": "Sa session peut être révoquée dans Sessions actives.",
+        "approved": "Accordé. L'appareil se connecte de lui-même.",
+        "wrongCode": "Ce n'est pas le code affiché par cet appareil.",
+        "gone": "Cette demande a expiré ou a déjà reçu une réponse. L'appareil affiche de lui-même un nouveau code : scannez-le à nouveau.",
+        "notAllowed": "Seul l'administrateur peut laisser entrer cet appareil."
+    },
     "settings": {
         "title": "Paramètres de streaming",
         "video": "Vidéo",

@@ -69,6 +69,12 @@ Third-party components bundled unmodified (never linked)
     Catalog signed by SignPath Foundation; that certificate is trusted only
     for the install. License: backend/installer/drivers/vdd/LICENSE.
 
+  QR Code generator library (Project Nayuki) ................. MIT
+    Draws the QR code a TV on plain HTTP shows to sign in. Release v1.8.0,
+    the file qrcodegen-v1.8.0-es5.js as published, committed under
+    frontend/js/vendor (SHA-256 348b0d876f9893f6f2bafae6c9d4ddb76b69651e214f
+    2211034922a8207da3bf). Its MIT notice heads the file.
+
 Each component retains its own license; see the corresponding LICENSE files in
 backend/third_party/. This project as a whole is distributed under GPL-3.0 to
 remain compatible with its GPL-licensed dependencies (notably moonlight-common-c).

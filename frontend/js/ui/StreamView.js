@@ -612,6 +612,11 @@ export class StreamView {
         // there is no Share menu and no seamless quality switch — changing
         // resolution means leaving and rejoining.
         this._playerMode = opts.playerMode === true;
+        // ── A TV on plain HTTP (issue #42) ──────────────────────────────────
+        // Signed in by the code it showed, never paired with a PIN: no browser
+        // key, so no MW-BIND (the host sends it an unsigned offer). It shares
+        // nothing, and it never shows the support button.
+        this._plainHttp = opts.plainHttp === true;
         this._shareToken = opts.shareToken || null;
         // The host codes PyroWave, this browser's codec for a wired LAN
         // (/start's ultra_codec): this page decodes it on its own thread
@@ -1124,8 +1129,9 @@ export class StreamView {
         // MoonlightApp can relaunch with the next transport (no in-session WS
         // reroute). WebRtcMedia ignores this flag (no in-session WS fallback).
         this.webrtc._chainFallback = true;
-        // A share-link guest was never paired with this host: no MW-BIND.
-        this.webrtc._unpairedGuest = this._playerMode;
+        // A share-link guest was never paired with this host, nor was a TV on
+        // plain HTTP: no MW-BIND.
+        this.webrtc._unpairedGuest = this._playerMode || this._plainHttp;
 
         // The viewer's microphone, when the host took it (/start's `mic`): it
         // answers the stream's audio section, or rides the WSS socket. A
@@ -4641,7 +4647,13 @@ export class StreamView {
      * Idempotent.
      */
     _mountSupportButton() {
-        if (this._supportBtn || this._playerMode || BackendClient.adminLocked || !this._rootEl)
+        if (
+            this._supportBtn ||
+            this._playerMode ||
+            this._plainHttp ||
+            BackendClient.adminLocked ||
+            !this._rootEl
+        )
             return;
         const brand = this._rootEl.querySelector('.stream-header .stream-brand');
         if (!brand || !showSupportButton()) return;
@@ -4831,7 +4843,7 @@ export class StreamView {
      * appears.
      */
     _mountShareMenu() {
-        if (this._playerMode || this._shareMenu || !this._rootEl) return;
+        if (this._playerMode || this._plainHttp || this._shareMenu || !this._rootEl) return;
         const header = /** @type {HTMLElement} */ (this._rootEl.querySelector('.stream-header'));
         const quitBtn = /** @type {HTMLElement} */ (this._rootEl.querySelector('#btn-stream-quit'));
         if (!header || !quitBtn) return;

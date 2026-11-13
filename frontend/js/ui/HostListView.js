@@ -108,6 +108,10 @@ export class HostListView {
         // /api/auth/status reading): the virtual display's GPU is chosen on its
         // card, and a host's backend from its menu, by the administrator only.
         this.canAdminister = false;
+        // A TV on plain HTTP (issue #42): the hosts and their apps, as in booth
+        // mode, and not even the card menu: its one entry there, Stop session,
+        // is on a route the TV does not reach.
+        this.plainHttp = false;
         // The cards on screen came from that memory and the machine has not
         // answered yet: its first answer replaces them, and drops any host it
         // no longer has.
@@ -595,11 +599,16 @@ export class HostListView {
         return canSelfUpdate(this._updateInfo, this.hosts);
     }
 
+    /** Booth mode's view of the hosts: --noadmin, or a TV on plain HTTP. */
+    _booth() {
+        return BackendClient.adminLocked || this.plainHttp;
+    }
+
     _renderUpdateBanner() {
         // An update in flight owns the banner (progress bar); never repaint over it.
         if (hostUpdate.busy) return;
         // A booth's visitors can do nothing about an update: the banner stays hidden.
-        if (BackendClient.adminLocked) return;
+        if (this._booth()) return;
         // Wait for the host list: painting "update the host PC by hand" and then
         // flipping it to a one-click button a second later reads as a glitch.
         if (!this._hostsLoaded) return;
@@ -693,7 +702,7 @@ export class HostListView {
 
     async _autoScan() {
         // A booth offers the hosts it was given; discovery would add others.
-        if (!this._active || BackendClient.adminLocked) return;
+        if (!this._active || this._booth()) return;
         try {
             await BackendClient.scanHosts();
         } catch (err) {
@@ -922,7 +931,7 @@ export class HostListView {
                     <h2>${t('hosts.title')}</h2>
                     <div class="hosts-actions">
                         ${
-                            BackendClient.adminLocked
+                            this._booth()
                                 ? ''
                                 : `<button class="btn btn-neutral" id="btn-manual">${t('hosts.addManually')}</button>`
                         }
@@ -1084,16 +1093,14 @@ export class HostListView {
      * rather than the text alone.
      */
     _remoteDesktopHasApp(host) {
-        return (
-            host.returnsFromRemoteDesktop || (host.opensSignInScreen && !BackendClient.adminLocked)
-        );
+        return host.returnsFromRemoteDesktop || (host.opensSignInScreen && !this._booth());
     }
 
     renderCard(host) {
         const cls = host.statusClass;
         // Booth mode leaves the menu one entry, Stop session, and hides it
         // while there is no app to stop.
-        const booth = BackendClient.adminLocked;
+        const booth = this._booth();
         return `
             <div class="host-card ${cls}" data-uuid="${host.uuid}">
                 <div class="host-card-head">
@@ -1110,7 +1117,9 @@ export class HostListView {
                     </div>
                     <span class="status-badge ${cls}">${host.statusLabel}</span>
                     <div class="host-card-menu"${
-                        booth && !(host.currentGameId > 0) ? ' style="display: none"' : ''
+                        this.plainHttp || (booth && !(host.currentGameId > 0))
+                            ? ' style="display: none"'
+                            : ''
                     }>
                         <button class="btn-icon btn-host-menu" data-uuid="${host.uuid}"
                                 aria-haspopup="true" aria-expanded="false"
@@ -1223,7 +1232,7 @@ export class HostListView {
             // Somebody signed in on the PC holds the sign-in screen: said
             // outside a kiosk, which never gets that app anyway.
             const text =
-                host.signInHeldBySomebody && !BackendClient.adminLocked
+                host.signInHeldBySomebody && !this._booth()
                     ? t('hosts.somebodySignedIn')
                     : t('hosts.sessionLeftByRemoteDesktop');
             return `<div class="host-body-center host-empty-display">
@@ -1237,7 +1246,7 @@ export class HostListView {
             return `<div class="host-body-center host-empty-display">
                         <p class="host-empty-display-text">${t('hosts.nativeCapturePermission')}</p>
                         ${
-                            BackendClient.adminLocked
+                            this._booth()
                                 ? ''
                                 : `<button class="btn btn-secondary btn-mac-perm" data-pane="screen">${t('setup.openScreenRecording')}</button>`
                         }
@@ -1254,15 +1263,16 @@ export class HostListView {
             // the grid, since macOS says nothing.
             const inputWarn = host.lacksInputPermission
                 ? `<div class="host-perm-warn"><p>${t('hosts.nativeInputPermission')}</p>${
-                      BackendClient.adminLocked
+                      this._booth()
                           ? ''
                           : `<button class="btn btn-secondary btn-mac-perm" data-pane="accessibility">${t('setup.openAccessibility')}</button>`
                   }</div>`
                 : '';
             return inputWarn + `<div class="host-apps" data-uuid="${host.uuid}"></div>`;
         }
-        // A booth pairs nothing: an unpaired host just shows its badge.
-        if (host.isLocked && BackendClient.adminLocked) return '';
+        // A booth pairs nothing, nor does a TV on plain HTTP: an unpaired host
+        // just shows its badge.
+        if (host.isLocked && this._booth()) return '';
         if (host.isLocked) {
             return `<div class="host-body-center">
                         <button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">${t('common.pair')}</button>

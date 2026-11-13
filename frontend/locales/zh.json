@@ -435,6 +435,26 @@
         "decided": "此请求已被处理。",
         "failed": "无法处理此请求：{{message}}"
     },
+    "tvSignIn": {
+        "title": "用手机登录",
+        "scan": "用已登录 MoonlightWeb 的手机或电脑扫描此二维码，然后在其上输入下面的代码。",
+        "qrLabel": "批准页面的二维码",
+        "openAddress": "在已登录 MoonlightWeb 的手机或电脑上打开此地址，然后在其上输入下面的代码：",
+        "waiting": "等待批准…（{{time}} 后过期）",
+        "refused": "此请求已被拒绝。",
+        "askAgain": "重新请求",
+        "busy": "目前有其他设备正在请求访问。稍后重试…",
+        "unreachable": "服务器没有响应。正在重试…"
+    },
+    "tvPairing": {
+        "browserAt": "位于 {{address}} 的浏览器",
+        "plainHttp": "它在本地网络上使用纯 HTTP：可以串流，但永远不能管理。",
+        "hint": "可以在“活动会话”中撤销其会话。",
+        "approved": "已批准。该设备会自行登录。",
+        "wrongCode": "这不是该设备显示的代码。",
+        "gone": "此请求已过期或已被处理。该设备会自动显示新代码：请重新扫描。",
+        "notAllowed": "只有管理员才能让此设备加入。"
+    },
     "settings": {
         "title": "串流设置",
         "video": "视频",

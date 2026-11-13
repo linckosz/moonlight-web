@@ -435,6 +435,26 @@
         "decided": "This request was already answered.",
         "failed": "The request could not be answered: {{message}}"
     },
+    "tvSignIn": {
+        "title": "Sign in with your phone",
+        "scan": "Scan this code with a phone or computer already signed in to MoonlightWeb, then type the code below on it.",
+        "qrLabel": "QR code of the approval page",
+        "openAddress": "On a phone or computer already signed in to MoonlightWeb, open this address, then type the code below on it:",
+        "waiting": "Waiting for approval… (expires in {{time}})",
+        "refused": "This request was refused.",
+        "askAgain": "Ask again",
+        "busy": "Other devices are asking to join right now. Trying again in a moment…",
+        "unreachable": "The server did not answer. Trying again…"
+    },
+    "tvPairing": {
+        "browserAt": "Browser at {{address}}",
+        "plainHttp": "It uses plain HTTP on your local network: it can stream, never administer.",
+        "hint": "Its session can be revoked in Active Sessions.",
+        "approved": "Approved. The device signs in by itself.",
+        "wrongCode": "This is not the code this device shows.",
+        "gone": "This request has expired or was already answered. The device shows a new code by itself: scan it again.",
+        "notAllowed": "Only the administrator can let this device in."
+    },
     "settings": {
         "title": "Streaming Settings",
         "video": "Video",
