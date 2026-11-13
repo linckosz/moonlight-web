@@ -54,6 +54,8 @@ void whoGetsTheSockets()
     // Above this process, which may not open it: it takes them itself
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::TaskElevated, false) == Handover::Taken);
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::ServiceAsSystem, false) == Handover::Taken);
+    // The sign-in screen's worker is that service's too
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::SignInScreen, false) == Handover::Taken);
     // The user sitting at the console: handed when that is the account the
     // installation was made by, none for any other account
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::ConsoleAsUser, false) == Handover::None);
@@ -63,6 +65,27 @@ void whoGetsTheSockets()
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::Plain, true) == Handover::Handed);
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::TaskElevated, true) == Handover::Taken);
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::ServiceAsSystem, true) == Handover::Taken);
+    CHECK(StreamWorkerHost::muxHandoverFor(Launch::SignInScreen, true) == Handover::Taken);
+
+    SECTION("IceMux: which stream is counted on the shared ports before it starts");
+    // What the server asks before it decides whether a stream needs a router
+    // hole of its own. The guests' shared feed never; the sign-in screen's
+    // worker always, whoever sits at the console
+    const auto shares = [](bool feed, bool signInScreen, bool consoleAsUser, bool ownerAtConsole) {
+        return StreamWorkerHost::sharesPortsFor(feed, signInScreen, consoleAsUser, ownerAtConsole);
+    };
+    for (const bool owner : {false, true}) {
+        CHECK(!shares(true, false, false, owner));
+        CHECK(!shares(true, true, false, owner));
+        CHECK(!shares(true, false, true, owner));
+        CHECK(shares(false, true, false, owner));
+        CHECK(shares(false, true, true, owner));
+        // A plain child, or one the service or the task raises
+        CHECK(shares(false, false, false, owner));
+    }
+    // A service's worker in the console session: the owner's account alone
+    CHECK(!shares(false, false, true, false));
+    CHECK(shares(false, false, true, true));
 }
 
 #ifdef _WIN32

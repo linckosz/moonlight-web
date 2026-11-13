@@ -90,7 +90,10 @@ public:
     /// A plain child is this process's own account, at its own level: handed.
     /// A worker of the launcher service or of the elevated task is SYSTEM or
     /// this account elevated, above this process, which may not open it:
-    /// taken. A worker put in the console session runs as the user sitting
+    /// taken. The sign-in screen's worker is the launcher service's too, the
+    /// same SYSTEM process in another mode, which narrows what it shows and
+    /// types and nothing of how it is reached: taken as well.
+    /// A worker put in the console session runs as the user sitting
     /// there, who may be another account than the one this installation was
     /// made by, and a socket in a process of theirs is theirs to read and to
     /// send from, whatever the worker itself does with it. So that worker is
@@ -102,7 +105,8 @@ public:
         switch (how) {
         case Launch::Plain: return MuxHandover::Handed;
         case Launch::TaskElevated:
-        case Launch::ServiceAsSystem: return MuxHandover::Taken;
+        case Launch::ServiceAsSystem:
+        case Launch::SignInScreen: return MuxHandover::Taken;
         case Launch::ConsoleAsUser: return ownerAccount ? MuxHandover::Handed : MuxHandover::None;
         }
         return MuxHandover::None;
@@ -112,10 +116,26 @@ public:
     /// shared ports when the server has some to give: every one but the
     /// guests' shared feed, which no browser reaches, and a native worker of
     /// a server that is a service when whoever sits at the console is not
-    /// the account the installation was made by (muxHandoverFor). What the
+    /// the account the installation was made by (muxHandoverFor). The
+    /// sign-in screen's worker is the launcher service's whoever sits
+    /// there, and gets them. What the
     /// server asks itself before it decides whether that stream needs a
     /// router hole of its own; the launch asks again, of its own token.
     static bool getsSharedPorts(const QJsonObject& config);
+
+    /// The rule of getsSharedPorts(), by what it reads: the launch start()
+    /// makes for such a config, and what muxHandoverFor() gives that launch.
+    /// `consoleAsUser`: a native worker of a server that is a service;
+    /// `ownerAtConsole`: whoever sits there is the installation's account.
+    static constexpr bool sharesPortsFor(bool feed, bool signInScreen, bool consoleAsUser,
+                                         bool ownerAtConsole)
+    {
+        if (feed) return false;
+        const Launch how = signInScreen    ? Launch::SignInScreen
+                           : consoleAsUser ? Launch::ConsoleAsUser
+                                           : Launch::Plain;
+        return muxHandoverFor(how, ownerAtConsole) != MuxHandover::None;
+    }
 
     /// Spawn the worker and hand it the session config. Returns false when the
     /// process could not be started (caller falls back to in-process mode).

@@ -133,11 +133,15 @@ bool StreamWorkerHost::startAs(const QJsonObject& config, Launch how)
 bool StreamWorkerHost::getsSharedPorts(const QJsonObject& config)
 {
     if (config[QStringLiteral("role")].toString() == QLatin1String("feed")) return false;
+    // In start()'s order. The sign-in screen's worker comes through the
+    // launcher service or not at all, whatever this process is.
+    const bool signInScreen = config[QStringLiteral("signInScreen")].toBool(false);
     // The one launch start() and startAs() make as Launch::ConsoleAsUser:
     // shared only with the account this installation was made by.
     const bool native = config[QStringLiteral("backendType")].toString() == QLatin1String("native");
-    if (native && ConsoleSession::launchesElsewhere()) return ConsoleSession::consoleUserIsOwner();
-    return true;
+    const bool consoleAsUser = !signInScreen && native && ConsoleSession::launchesElsewhere();
+    return sharesPortsFor(false, signInScreen, consoleAsUser,
+                          consoleAsUser && ConsoleSession::consoleUserIsOwner());
 }
 
 bool StreamWorkerHost::start(const QJsonObject& config)
@@ -254,6 +258,9 @@ static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::Console
 static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::Plain, false) ==
                   StreamWorkerHost::MuxHandover::Handed,
               "a plain child is handed the shared sockets");
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::SignInScreen, false) ==
+                  StreamWorkerHost::MuxHandover::Taken,
+              "the sign-in screen's worker takes the shared sockets, as the service's other one");
 
 QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Launch how,
                                                bool ownerAccount, qint64 pid)
@@ -388,9 +395,10 @@ bool StreamWorkerHost::startInConsoleSession(const QStringList& args, const QByt
             }
         }
     }
-    // The UDP ports every stream shares: a worker started by the service or
-    // the task runs above this process, which may not open it, and is told
-    // which to take. One in the console session is handed them when the
+    // The UDP ports every stream shares: a worker started by the service (on
+    // the desktop or on the sign-in screen) or by the task runs above this
+    // process, which may not open it, and is told which to take. One in the
+    // console session is handed them when the
     // token it was started with is the owner's, and gets none otherwise
     // (muxHandoverFor).
     line = withSharedSockets(line, how, m_Console->runsAsOwner(), m_Console->processId());
