@@ -396,6 +396,48 @@ def reachable(mid):
 # fresh install therefore inherits whatever was there. The dev instance on this
 # very desk answers on 18080/18443. Asking the process which ports it listens
 # on, and then asking each of them, is the only reading that cannot be wrong.
+#
+# Except for a build under test (MoonlightWeb.exe --dev) beside an installed
+# edition: MW_BENCH_LOCAL_PORTS="18080,18443" names its ports, and then ONLY
+# they are asked. A guessed port may be another instance's (the installed
+# edition, the prod), and a target that does not answer must leave the port at
+# 0, never hand over that other instance's.
+
+_PORTS_PS = r"""
+if ($env:MW_BENCH_LOCAL_PORTS) {
+    $ports = @($env:MW_BENCH_LOCAL_PORTS -split ',' | Where-Object { $_.Trim() } |
+               ForEach-Object { [int]$_.Trim() })
+} else {
+    $ports = @()
+    if ($ids.Count -gt 0) {
+        $ports = @(Get-NetTCPConnection -State Listen |
+                   Where-Object { $ids -contains $_.OwningProcess } |
+                   ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
+    }
+    foreach ($g in @(48080, 48443, 18080, 18443, 80, 443)) { if ($ports -notcontains $g) { $ports += $g } }
+}
+"""
+
+_PORTS_PY = r'''
+def probe_ports(app):
+    """The ports to ask, in order (see _PORTS_PS)."""
+    import os as _os
+    fixed = [int(x) for x in _os.environ.get("MW_BENCH_LOCAL_PORTS", "").split(",") if x.strip()]
+    if fixed:
+        return fixed
+    candidates = listening_ports(app)
+    # The defaults come last: a discovered port is a fact, a default is a guess.
+    for guess in (48080, 48443, 18080, 18443, 80, 443):
+        if guess not in candidates:
+            candidates.append(guess)
+    return candidates
+'''
+
+
+def bench_local_ports():
+    """MW_BENCH_LOCAL_PORTS of this process, as ints ([] when unset)."""
+    return [int(x) for x in os.environ.get("MW_BENCH_LOCAL_PORTS", "").split(",") if x.strip()]
+
 
 _PROBE_PY = r'''
 import hashlib, json, os, socket, subprocess, sys, urllib.request
@@ -466,11 +508,8 @@ def answers(port, scheme="http"):
 
 
 out = {"appName": APP}
-candidates = listening_ports(APP)
-# The defaults come last: a discovered port is a fact, a default is a guess.
-for guess in (48080, 48443, 18080, 18443, 80, 443):
-    if guess not in candidates:
-        candidates.append(guess)
+__PORTS_PY__
+candidates = probe_ports(APP)
 
 http_port = https_port = 0
 for port in candidates:
@@ -755,7 +794,7 @@ def mint_pin(mid, probe_result):
 
 def _probe_body_py():
     """The Unix probe: mw_local.py, the reads, then the probe itself."""
-    return _mw_local_py() + "\n" + _READS_PY + "\n" + _PROBE_PY
+    return _mw_local_py() + "\n" + _READS_PY + "\n" + _PROBE_PY.replace("__PORTS_PY__", _PORTS_PY)
 
 
 def _probe_py_for(mid):
@@ -786,18 +825,7 @@ $out = @{ appName = $app }
 
 $procs = Get-CimInstance Win32_Process -Filter "Name='$app.exe'"
 $ids = @($procs | ForEach-Object { $_.ProcessId })
-$ports = @()
-if ($ids.Count -gt 0) {
-    $ports = @(Get-NetTCPConnection -State Listen |
-               Where-Object { $ids -contains $_.OwningProcess } |
-               ForEach-Object { $_.LocalPort } | Sort-Object -Unique)
-}
-foreach ($g in @(48080, 48443, 18080, 18443, 80, 443)) { if ($ports -notcontains $g) { $ports += $g } }
-# A build under test (MoonlightWeb.exe --dev) beside the installed edition:
-# MW_BENCH_LOCAL_PORTS="18080,18443" puts its ports ahead of the edition's.
-if ($env:MW_BENCH_LOCAL_PORTS) {
-    $ports = @($env:MW_BENCH_LOCAL_PORTS -split ',' | ForEach-Object { [int]$_ }) + $ports
-}
+__PORTS_PS__
 $out.listening = $ports | Select-Object -First 12
 
 # Invoke-WebRequest's -TimeoutSec does not bound the TCP connect phase: against
@@ -862,7 +890,7 @@ if (Test-Path $exe) {
 
 'MWPROBE ' + ($out | ConvertTo-Json -Compress -Depth 4)
 """
-        script = script.replace("__READS_PS__", _reads_ps())
+        script = script.replace("__PORTS_PS__", _PORTS_PS).replace("__READS_PS__", _reads_ps())
         rc, out, err = run_script(mid, _for_edition(script, m["os"]), timeout=300)
 
     else:
@@ -1138,10 +1166,17 @@ def lan_url(mid, probe_result):
     probe_result = probe_result or {}
     address = MACHINES[mid]["address"]
     candidates = [p for p in (probe_result.get("listening") or []) if p != probe_result.get("httpPort")]
-    for guess in (DEV_HTTPS, 18443, 443):
-        if guess not in candidates:
-            candidates.append(guess)
-    port = probe_result.get("httpsPort") or https_port_from_here(address, candidates) or DEV_HTTPS
+    fixed = bench_local_ports() if MACHINES[mid]["kind"] == "local" else []
+    if fixed:
+        # This machine's build under test: its own ports only, as in the probe.
+        candidates = [p for p in fixed if p != probe_result.get("httpPort")]
+        fallback = candidates[-1] if candidates else fixed[-1]
+    else:
+        for guess in (DEV_HTTPS, 18443, 443):
+            if guess not in candidates:
+                candidates.append(guess)
+        fallback = DEV_HTTPS
+    port = probe_result.get("httpsPort") or https_port_from_here(address, candidates) or fallback
     return "https://%s:%d/" % (address, port)
 
 
