@@ -3981,6 +3981,8 @@ export const MoonlightApp = {
             // learns the viewer's mouse resolution, so a low-DPI mouse makes a
             // game slow to aim with, and this is the one place to answer it.
             mouseSensitivity: streamingSettings.mouse_sensitivity,
+            // Turns the notched wheel around, not the trackpad, on this device.
+            invertWheel: streamingSettings.invert_wheel === true,
             // A guest has no settings page: only what they chose in their dialog.
             touchPad: viewOpts.touchPad || touchPadSettings(streamingSettings),
             // Click-to-photon probe: the host says whether it raises its flag

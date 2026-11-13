@@ -43,6 +43,7 @@ import { devicePixelSize } from '../util/StreamResolution.js';
 import { hostScreenCaps } from '../util/HostLimit.js';
 import { PeriodicStallDetector } from '../stream/PeriodicStallDetector.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
+import { WHEEL_GESTURE_GAP_MS, WheelInverter, wheelSourceSupport } from '../stream/WheelSource.js';
 import { PadNumberNotice } from '../stream/HostPadNumber.js';
 import { HidPassthrough } from '../hid/HidPassthrough.js';
 import { GamepadRemapDialog } from './GamepadRemapDialog.js';
@@ -1880,6 +1881,12 @@ export class StreamView {
         // browser delta rarely lands on a whole one. See handleWheel().
         this._wheelAccum = 0;
         this._wheelAccumX = 0;
+        // Invert the notched wheel (Settings, per device), and leave the
+        // trackpad as it scrolls here: only where a page can tell one from the
+        // other, see stream/WheelSource.js.
+        const wheelSource = opts.invertWheel === true ? wheelSourceSupport() : null;
+        this._wheelInverter = wheelSource ? new WheelInverter(wheelSource) : null;
+        this._wheelFlushTimer = 0;
         this._scrollMomentumRaf = null; // rAF id for the inertial glide loop
         // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
         this._touchSensitivity =
@@ -10398,6 +10405,7 @@ export class StreamView {
         document.removeEventListener('pointerlockerror', this._onPointerLockError);
         this._disarmPointerCapture();
         clearTimeout(this._lockWatch);
+        clearTimeout(this._wheelFlushTimer);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
         window.removeEventListener('pagehide', this._onPageHide);
         window.removeEventListener('blur', this._onWindowBlur);
@@ -12762,15 +12770,32 @@ export class StreamView {
 
     handleWheel(e) {
         e.preventDefault();
+        const inverter = this._wheelInverter;
+        if (!inverter) {
+            this._sendWheelTravel(e);
+            return;
+        }
+        clearTimeout(this._wheelFlushTimer);
+        for (const d of inverter.push(e, e.timeStamp)) this._sendWheelTravel(d);
+        // A Safari gesture may hold its opening step until it knows the
+        // device; should no event follow, the step goes as a notch.
+        if (inverter.holding)
+            this._wheelFlushTimer = setTimeout(() => {
+                for (const d of inverter.flush()) this._sendWheelTravel(d);
+            }, WHEEL_GESTURE_GAP_MS);
+    }
+
+    /** @param {{deltaX: number, deltaY: number, deltaMode: number}} d */
+    _sendWheelTravel(d) {
         // Browser deltaY is positive scrolling down; LiSendHighResScrollEvent
         // expects positive = up. Negate so standard wheels scroll the right way
         // (macOS "natural scrolling" already flips the sign at the OS level).
-        if (e.deltaY)
-            this._sendWheel('mousewheel', StreamView._wheelNotches(-e.deltaY, e.deltaMode), 'y');
+        if (d.deltaY)
+            this._sendWheel('mousewheel', StreamView._wheelNotches(-d.deltaY, d.deltaMode), 'y');
         // Horizontal wheel (trackpad swipe, tilt wheel): browser deltaX is
         // positive scrolling right, same sign as the host's hscroll event.
-        if (e.deltaX)
-            this._sendWheel('mousehwheel', StreamView._wheelNotches(e.deltaX, e.deltaMode), 'x');
+        if (d.deltaX)
+            this._sendWheel('mousehwheel', StreamView._wheelNotches(d.deltaX, d.deltaMode), 'x');
     }
 
     // =========================================================================

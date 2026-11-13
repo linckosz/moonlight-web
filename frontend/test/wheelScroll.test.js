@@ -2,8 +2,9 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { StreamView } from '../js/ui/StreamView.js';
+import { WHEEL_GESTURE_GAP_MS, WheelInverter } from '../js/stream/WheelSource.js';
 
 /**
  * The GameStream scroll packet counts WHEEL_DELTA units (120 = one notch), not
@@ -73,5 +74,91 @@ describe('wheel scroll normalization', () => {
         expect(v.sent[0].delta).toBe(32767);
         v._sendWheel('mousehwheel', -10000, 'x');
         expect(v.sent[1].delta).toBe(-32768);
+    });
+});
+
+/** A stand-in for the view's wheel path, with the setting's inverter or none. */
+function wheelView(support = null) {
+    const v = wheelSink();
+    v._wheelInverter = support ? new WheelInverter(support) : null;
+    v._wheelFlushTimer = 0;
+    v.handleWheel = StreamView.prototype.handleWheel;
+    v._sendWheelTravel = StreamView.prototype._sendWheelTravel;
+    return v;
+}
+
+/** A wheel event as the view receives it. */
+function wheelEvent(deltaX, deltaY, wheelDeltaX, wheelDeltaY, timeStamp) {
+    return {
+        deltaX,
+        deltaY,
+        deltaMode: 0,
+        wheelDeltaX,
+        wheelDeltaY,
+        timeStamp,
+        preventDefault() {},
+    };
+}
+
+describe('inverting the notched wheel in the stream', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('sends every event as before when the setting is off', () => {
+        const v = wheelView();
+        v.handleWheel(wheelEvent(0, 100, 0, -120, 0));
+        v.handleWheel(wheelEvent(50, 0, -150, 0, 16));
+        expect(v.sent).toEqual([
+            { type: 'mousewheel', delta: -120 },
+            { type: 'mousehwheel', delta: 60 },
+        ]);
+    });
+
+    it('turns a Chrome notch around and leaves the trackpad after it', () => {
+        const v = wheelView('chromium-mac');
+        // A notch: 100 px, wheelDelta a notch away from -3 × 100.
+        v.handleWheel(wheelEvent(0, 100, 0, -120, 0));
+        // The trackpad, after a pause: wheelDelta = -3 × delta.
+        v.handleWheel(wheelEvent(0, 100, 0, -300, WHEEL_GESTURE_GAP_MS + 1));
+        expect(v.sent).toEqual([
+            { type: 'mousewheel', delta: 120 },
+            { type: 'mousewheel', delta: -120 },
+        ]);
+    });
+
+    it('turns both axes of a notched gesture around', () => {
+        const v = wheelView('chromium-mac');
+        v.handleWheel(wheelEvent(50, 100, -120, -120, 0));
+        expect(v.sent).toEqual([
+            { type: 'mousewheel', delta: 120 },
+            { type: 'mousehwheel', delta: -60 },
+        ]);
+    });
+
+    it('sends a Safari step held alone as a notch once the gesture ends', () => {
+        vi.useFakeTimers();
+        const v = wheelView('safari-mac');
+        v.handleWheel(wheelEvent(0, -100, 0, 300, 0));
+        expect(v.sent).toEqual([{ type: 'mousewheel', delta: 120 }]);
+        // A wheel's opening step: held until its gesture tells what it is.
+        v.handleWheel(wheelEvent(0, 4, 0, -12, WHEEL_GESTURE_GAP_MS + 1));
+        expect(v.sent).toHaveLength(1);
+        vi.advanceTimersByTime(WHEEL_GESTURE_GAP_MS);
+        expect(v.sent).toEqual([
+            { type: 'mousewheel', delta: 120 },
+            { type: 'mousewheel', delta: 4 },
+        ]);
+    });
+
+    it('sends a held Safari step with the event that tells, and arms no flush after', () => {
+        vi.useFakeTimers();
+        const v = wheelView('safari-mac');
+        v.handleWheel(wheelEvent(0, 4, 0, -12, 0));
+        v.handleWheel(wheelEvent(0, 96.5, 0, -289.5, 40));
+        expect(v.sent).toEqual([
+            { type: 'mousewheel', delta: 4 },
+            { type: 'mousewheel', delta: 116 },
+        ]);
+        vi.advanceTimersByTime(WHEEL_GESTURE_GAP_MS * 2);
+        expect(v.sent).toHaveLength(2);
     });
 });

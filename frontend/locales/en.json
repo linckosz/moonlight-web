@@ -535,6 +535,8 @@
         "pointerSensitivityDesc": "Trackpad/touch cursor speed (higher = faster pointer movement).",
         "mouseSensitivity": "Mouse sensitivity:",
         "mouseSensitivityDesc": "How far the host pointer moves per count of your mouse when the stream captures it (games). Raise it if aiming feels slow with this mouse; 1 = unchanged.",
+        "invertWheel": "Invert mouse wheel scrolling",
+        "invertWheelDesc": "Reverses the scrolling direction of a notched mouse wheel in the stream. The trackpad, a Magic Mouse and a wheel smoothed by a utility keep their direction. Available only in Chrome, Edge and Safari on a Mac. Elsewhere, Windows and Linux included, the browser cannot tell a mouse wheel from a touchpad.",
         "resetDefaults": "Reset Default Parameters",
         "resetDefaultsDesc": "Restore all streaming settings to their default values.",
         "shortcutsDesc": "What the controls do during a stream. The same list flashes over the picture when a stream starts, then hides itself.",

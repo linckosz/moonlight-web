@@ -69,6 +69,7 @@ import {
     supportsGamingMode,
 } from '../util/BrowserDetect.js';
 import { touchPadSettings } from '../stream/TouchPadState.js';
+import { wheelSourceSupport } from '../stream/WheelSource.js';
 import * as RemoteNav from './RemoteNav.js';
 import {
     HID_KINDS,
@@ -219,6 +220,9 @@ export class SettingsView {
         this._fullscreenOnStart = false;
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
+        // Invert the notched wheel (off by default). Per device, where a page
+        // can tell the wheel from a trackpad: see stream/WheelSource.js.
+        this._invertWheel = false;
         this._touchPad = touchPadSettings();
         // Mobile only: direct touch-screen input (absolute) instead of the
         // relative trackpad model. Off by default.
@@ -718,6 +722,7 @@ export class SettingsView {
             typeof data.mouse_sensitivity === 'number' && data.mouse_sensitivity > 0
                 ? data.mouse_sensitivity
                 : 1;
+        this._invertWheel = data.invert_wheel === true;
         this._touchScreen = data.touch_screen === true;
         this._touchPad = touchPadSettings(data);
         // Allow tearing (default on): resolveTearing() owns the default, the
@@ -1099,6 +1104,7 @@ export class SettingsView {
             video_enhancement: this._videoEnhancement,
             video_enhancement_algo: this._videoEnhancementAlgo,
             // Per-device only (server ignores these unknown fields).
+            invert_wheel: this._invertWheel,
             touch_pad_mode: this._touchPad.mode,
             touch_pad_scale: this._touchPad.scale,
             touch_pad_opacity: this._touchPad.opacity,
@@ -1668,6 +1674,9 @@ export class SettingsView {
                 this.container.querySelector('#settings-mouse-sensitivity')?.value,
             );
             const mouseSensitivity = isNaN(mouseSensRaw) ? this._mouseSensitivity : mouseSensRaw;
+            const invertWheel =
+                this.container.querySelector('#settings-invert-wheel')?.checked ??
+                this._invertWheel;
             const touchScreen =
                 this.container.querySelector('#settings-touch-screen')?.checked ??
                 this._touchScreen;
@@ -1707,6 +1716,7 @@ export class SettingsView {
             this._chroma444 = chroma444;
             this._touchSensitivity = sensitivity;
             this._mouseSensitivity = mouseSensitivity;
+            this._invertWheel = invertWheel;
             this._touchScreen = touchScreen;
             this._tearing = tearing;
             this._videoWorker = videoWorker;
@@ -1751,6 +1761,7 @@ export class SettingsView {
         this._fullscreenOnStart = false;
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
+        this._invertWheel = false;
         this._touchScreen = false;
         this._touchPad = touchPadSettings();
         this._tearing = SUPPORTS_CANVAS_TEARING;
@@ -1911,6 +1922,14 @@ export class SettingsView {
         const tearingDisabled = tearingUnavailable || this._powerSave ? ' disabled' : '';
         const tearingLocked = tearingUnavailable ? ' settings-field-locked' : psLocked;
         const tearingChecked = this._tearing && !tearingUnavailable ? 'checked' : '';
+
+        // Invert the mouse wheel: only where a page can tell a notched wheel
+        // from a trackpad (Chrome, Edge and Safari on a Mac); elsewhere dimmed
+        // + locked, unchecked, with the "(unavailable)" suffix.
+        const wheelUnavailable = !wheelSourceSupport();
+        const wheelDisabled = wheelUnavailable ? ' disabled' : '';
+        const wheelLocked = wheelUnavailable ? ' settings-field-locked' : '';
+        const wheelChecked = this._invertWheel && !wheelUnavailable ? 'checked' : '';
 
         // Codec options (explicit, no "Auto"). PyroWave last, for a device on
         // Ethernet: greyed out like an AV1 this browser cannot decode when no
@@ -2408,6 +2427,17 @@ export class SettingsView {
                             <span>0.25×</span>
                             <span>4×</span>
                         </div>
+                    </div>
+
+                    <div class="settings-field${wheelLocked}">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-invert-wheel"
+                                ${wheelChecked}${wheelDisabled} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.invertWheel')}${wheelUnavailable ? t('settings.unavailableSuffix') : ''}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.invertWheelDesc')}</span>
                     </div>`
                     }
 
@@ -2950,6 +2980,9 @@ export class SettingsView {
 
         const tearingCheck = this.container.querySelector('#settings-tearing');
         if (tearingCheck) tearingCheck.addEventListener('change', () => this._autoSave());
+
+        const invertWheelCheck = this.container.querySelector('#settings-invert-wheel');
+        if (invertWheelCheck) invertWheelCheck.addEventListener('change', () => this._autoSave());
 
         const workerCheck = this.container.querySelector('#settings-video-worker');
         if (workerCheck) workerCheck.addEventListener('change', () => this._autoSave());
