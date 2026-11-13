@@ -616,7 +616,7 @@
         "touchPadEditorSize": "Boyut",
         "touchPadEditorReset": "Sıfırla",
         "touchPadEditorCancel": "İptal",
-        "touchPadEditorDone": "Bitti"
+        "touchPadEditorDone": "Bitti",
         "hideFsHandle": "Tam ekran tutamacını gizle",
         "hideFsHandleDesc": "Yan tutulan bir telefon veya tablette tam ekrandayken, denetimleri geri getiren üstteki küçük saydam sekmeyi gizler. 3 parmakla dokunmak denetimleri yine de getirir."
     },
