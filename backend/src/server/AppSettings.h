@@ -183,6 +183,27 @@ public:
 
     bool shareInBoothMode() const;
 
+    // ── How long a remembered device stays signed in (issue #60) ─────────────
+    //
+    // Days of inactivity after which a session opened with "Remember me" ends
+    // (sliding: every visit starts the count again). Sessions opened without it
+    // keep their 8 hours whatever this says (AuthManager).
+    //
+    // File-only setting (no UI, no write route): stored as JSON integer
+    // "remember_me_days", DEFAULT 90, not seeded, so the default stays the
+    // code's. Anything but a whole number from 1 to kRememberMeDaysMax reads as
+    // the default, with a log line. Read once, at startup, by AuthManager.
+    //
+    // Above the default the admin page warns the owner until they acknowledge
+    // that very value: "remember_me_days_acknowledged", written by the page
+    // (POST /api/admin/settings), an integer, 0 when never acknowledged.
+
+    static constexpr int kRememberMeDaysDefault = 90;
+    static constexpr int kRememberMeDaysMax = 3650;
+    int rememberMeDays() const;
+    int rememberMeDaysAcknowledged() const;
+    void setRememberMeDaysAcknowledged(int days);
+
     // ── Keyboard layout fidelity ──────────────────────────────────────────────
     //
     // When the host types the character the CLIENT's keyboard layout produced,

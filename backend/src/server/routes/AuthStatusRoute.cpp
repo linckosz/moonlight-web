@@ -120,11 +120,13 @@ void registerAuthStatusRoute(RestRouter& router, AuthManager& authManager, AuthS
 
         HttpResponse resp = HttpResponse::json(obj);
         // Slide the cookie browser-side too, so an active client keeps a fresh
-        // 90-day window without ever re-entering the PIN. A session the visitor
-        // asked not to remember stays session-scoped — see sessionCookie().
+        // window (its session's lifetime, remember_me_days by default) without
+        // ever re-entering the PIN. A session the visitor asked not to remember
+        // stays session-scoped — see sessionCookie().
         if (!authedToken.isEmpty()) {
             resp.headers["Set-Cookie"] =
-                sessionCookie(authedToken, !authManager.isEphemeralSession(authedToken));
+                sessionCookie(authedToken, !authManager.isEphemeralSession(authedToken),
+                              authManager.cookieMaxAgeFor(authedToken));
         }
         return resp;
     });

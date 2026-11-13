@@ -25,18 +25,23 @@
  * session (routes/AuthRoutes.cpp, routes/PairRequestRoutes.cpp,
  * routes/PinProofRoutes.cpp).
  *
- * Remembered sessions carry a 90-day Max-Age, matching the server-side sliding
- * TTL. A session the visitor asked not to remember deliberately carries none:
- * a cookie without Max-Age/Expires is session-scoped and dies with the browser
- * process, which is what someone on a public machine expects. Never add one
- * later either — the periodic refresh in /api/auth/status would otherwise
- * promote a temporary login to 90 days behind the user's back.
+ * Remembered sessions carry a Max-Age matching the server-side sliding TTL,
+ * @p maxAgeSecs: AuthManager::cookieMaxAgeFor(), remember_me_days by default
+ * (issue #60). A session the visitor asked not to remember deliberately carries
+ * none: a cookie without Max-Age/Expires is session-scoped and dies with the
+ * browser process, which is what someone on a public machine expects. Never add
+ * one later either — the periodic refresh in /api/auth/status would otherwise
+ * promote a temporary login to a remembered one behind the user's back.
+ *
+ * Browsers cap a cookie at 400 days (RFC 6265bis, Chrome): a longer Max-Age is
+ * kept, and the browser shortens it. The refresh on each visit makes that bite
+ * only a browser that stays away longer.
  */
-inline QString sessionCookie(const QString& token, bool remember)
+inline QString sessionCookie(const QString& token, bool remember, qint64 maxAgeSecs)
 {
     QString cookie =
         QStringLiteral("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict").arg(token);
-    if (remember) cookie += QStringLiteral("; Max-Age=7776000");
+    if (remember) cookie += QStringLiteral("; Max-Age=%1").arg(maxAgeSecs);
     return cookie;
 }
 
@@ -46,7 +51,7 @@ inline QString clearedSessionCookie()
     return QStringLiteral("mw_session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0");
 }
 
-/// "remember me" is opt-out: a body without the field keeps the old 90-day
+/// "remember me" is opt-out: a body without the field keeps the old remembered
 /// behaviour, so older clients and the share flow are unaffected.
 inline bool wantsRemember(const QJsonObject& body)
 {

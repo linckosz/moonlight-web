@@ -9,7 +9,9 @@
 #include "network/GeoIpService.h"
 #include "server/AuthManager.h"
 #include "server/AppSettings.h"
+#include "server/RememberMeWrite.h"
 #include "server/RestRouter.h"
+#include "server/SessionCookie.h"
 #include "server/routes/PinProofRoutes.h"
 
 #include <QCryptographicHash>
@@ -19,6 +21,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QList>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include <openssl/bn.h>
@@ -569,6 +572,183 @@ void pinProofRouteTests()
         CHECK_EQ(
             dispatch(full, requestFrom(late, served), post, start, next.startBody()).statusCode,
             200);
+    }
+}
+
+// ── How long a remembered device stays signed in (issue #60) ────────────────
+
+/// settings.json holding @p obj and nothing else.
+void writeSettings(AppSettings& settings, const QJsonObject& obj)
+{
+    QFile file(settings.m_FilePath);
+    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+/// Every session in sessions.json last seen @p daysAgo days ago, or only the
+/// one whose machine name is @p only.
+void ageSessions(qint64 daysAgo, const QString& only = QString())
+{
+    const QString path =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/sessions.json";
+    QFile in(path);
+    CHECK(in.open(QIODevice::ReadOnly));
+    QJsonObject root = QJsonDocument::fromJson(in.readAll()).object();
+    in.close();
+    const qint64 then = QDateTime::currentSecsSinceEpoch() - daysAgo * 24 * 3600;
+    QJsonArray aged;
+    for (const QJsonValue& v : root.value("sessions").toArray()) {
+        QJsonObject s = v.toObject();
+        if (only.isEmpty() || s.value("machine_name").toString() == only) {
+            s["last_seen"] = static_cast<double>(then);
+            s["created_at"] = static_cast<double>(then);
+        }
+        aged.append(s);
+    }
+    root["sessions"] = aged;
+    QFile out(path);
+    CHECK(out.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    out.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+
+void rememberMeDaysTests()
+{
+    SECTION("remember_me_days — how long a remembered device stays signed in");
+
+    QTemporaryDir tmp;
+    AppSettings settings;
+    settings.m_FilePath = tmp.path() + "/settings.json";
+
+    // Read from the file: a whole number from 1 to 3650, anything else is 90.
+    CHECK_EQ(settings.rememberMeDays(), 90); // no file at all
+    const QList<std::pair<QJsonValue, int>> cases = {
+        {QJsonValue(365), 365},
+        {QJsonValue(3650), 3650},
+        {QJsonValue(1), 1},
+        {QJsonValue(365.0), 365}, // JSON has no integer type
+        {QJsonValue(3651), 90},
+        {QJsonValue(0), 90},
+        {QJsonValue(-30), 90},
+        {QJsonValue(365.5), 90},
+        {QJsonValue(QStringLiteral("365")), 90},
+        {QJsonValue(true), 90},
+        {QJsonValue(QJsonValue::Null), 90},
+        {QJsonValue(QJsonArray{365}), 90},
+        {QJsonValue(1e300), 90},
+    };
+    for (const auto& [value, expected] : cases) {
+        writeSettings(settings, {{"remember_me_days", value}});
+        CHECK_EQ(settings.rememberMeDays(), expected);
+    }
+
+    // The acknowledged value: a whole number in range, or 0.
+    writeSettings(settings, {});
+    CHECK_EQ(settings.rememberMeDaysAcknowledged(), 0);
+    writeSettings(settings, {{"remember_me_days_acknowledged", QStringLiteral("365")}});
+    CHECK_EQ(settings.rememberMeDaysAcknowledged(), 0);
+    writeSettings(settings, {{"remember_me_days", 365}, {"other_key", QStringLiteral("kept")}});
+    settings.setRememberMeDaysAcknowledged(365);
+    CHECK_EQ(settings.rememberMeDaysAcknowledged(), 365);
+    CHECK_EQ(settings.rememberMeDays(), 365);
+    CHECK_EQ(settings.readAll().value("other_key").toString(), QStringLiteral("kept"));
+
+    // POST /api/admin/settings: the lifetime itself is never written by a page,
+    // and a refused body writes nothing, the acknowledgment included.
+    {
+        writeSettings(settings, {{"remember_me_days", 365}});
+        QJsonObject reply;
+        QString error;
+        CHECK(writeRememberMe({{"remember_me_days", 3650}}, 365, settings, reply, &error) ==
+              RememberMeWrite::Refused);
+        CHECK(!error.isEmpty());
+        CHECK(writeRememberMe({{"remember_me_days", 3650}, {"remember_me_days_acknowledged", 365}},
+                              365, settings, reply, &error) == RememberMeWrite::Refused);
+        CHECK_EQ(settings.rememberMeDays(), 365);
+        CHECK_EQ(settings.rememberMeDaysAcknowledged(), 0);
+        CHECK(!settings.readAll().contains("remember_me_days_acknowledged"));
+
+        // Only the value in force is acknowledged.
+        const QList<QJsonValue> stale = {QJsonValue(730), QJsonValue(QStringLiteral("365")),
+                                         QJsonValue(365.5), QJsonValue(QJsonValue::Null)};
+        for (const QJsonValue& value : stale) {
+            CHECK(writeRememberMe({{"remember_me_days_acknowledged", value}}, 365, settings, reply,
+                                  &error) == RememberMeWrite::Refused);
+        }
+        CHECK_EQ(settings.rememberMeDaysAcknowledged(), 0);
+        CHECK(reply.isEmpty());
+
+        CHECK(writeRememberMe({{"pair_request_internet", true}}, 365, settings, reply, &error) ==
+              RememberMeWrite::None);
+        CHECK(writeRememberMe({{"remember_me_days_acknowledged", 365}}, 365, settings, reply,
+                              &error) == RememberMeWrite::Written);
+        CHECK_EQ(settings.rememberMeDaysAcknowledged(), 365);
+        CHECK_EQ(reply.value("remember_me_days_acknowledged").toInt(), 365);
+        CHECK_EQ(settings.rememberMeDays(), 365); // the lifetime is untouched
+    }
+
+    // The cookie: a Max-Age only when remembered, of the session's own length.
+    CHECK(!sessionCookie("t", false, 31536000).contains("Max-Age"));
+    CHECK(sessionCookie("t", true, 31536000).endsWith("; Max-Age=31536000"));
+    CHECK(sessionCookie("t", true, 315360000).endsWith("; Max-Age=315360000"));
+
+    // The lifetimes AuthManager applies, read at startup.
+    const qint64 day = 24 * 3600;
+    writeSettings(settings, {{"remember_me_days", 365}});
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        CHECK_EQ(auth.rememberMeDays(), 365);
+
+        const QString phone = auth.createSession("192.168.1.30", "Phone");
+        const QString kiosk = auth.createSession("198.51.100.30", "Kiosk", false, true);
+        const QString hostHere = auth.createSession("127.0.0.1", "Host here", true);
+        const QString hostLine =
+            auth.createSession("192.168.1.31", "Host line", true, false, /*viaTunnel=*/true);
+        CHECK_EQ(auth.cookieMaxAgeFor(phone), 365 * day);
+        CHECK_EQ(auth.cookieMaxAgeFor(kiosk), 8 * 3600);     // "Remember me" declined
+        CHECK_EQ(auth.cookieMaxAgeFor(hostHere), 365 * day); // a host session on a socket
+        CHECK_EQ(auth.cookieMaxAgeFor(hostLine), 90 * day);  // through the tunnel: never more
+        CHECK_EQ(auth.cookieMaxAgeFor("bogus-token"), 365 * day);
+
+        // Unlocked with the remote admin password: never more than 90 days
+        // either, from the moment it administers. The password is set so the
+        // flag survives the reload below, as it does on a real server.
+        CHECK(auth.setAdminPassword("correct-horse"));
+        const QString admin = auth.createSession("192.168.1.34", "Admin PC");
+        CHECK_EQ(auth.cookieMaxAgeFor(admin), 365 * day);
+        CHECK(auth.promoteSessionToAdmin(admin));
+        CHECK_EQ(auth.cookieMaxAgeFor(admin), 90 * day);
+
+        // Sliding, on disk: 200 days without a visit is within 365 for the
+        // phone, beyond 90 for the sessions that administer from elsewhere.
+        auth.saveSessions();
+        ageSessions(200);
+        auth.loadSessions();
+        CHECK(auth.validateSession(phone));
+        CHECK(auth.validateSession(hostHere));
+        CHECK(!auth.validateSession(hostLine));
+        CHECK(!auth.validateSession(admin));
+        CHECK(!auth.validateSession(kiosk)); // never on disk
+        auth.saveSessions();
+    }
+
+    // Shortened again: the next start drops what the new value no longer
+    // covers, and keeps the rest.
+    writeSettings(settings, {});
+    {
+        AuthManager auth(&settings);
+        CHECK_EQ(auth.rememberMeDays(), 90);
+        CHECK_EQ(auth.activeSessionCount(), 0); // the 200-day-old ones are gone
+        const QString recent = auth.createSession("192.168.1.32", "Recent");
+        const QString old = auth.createSession("192.168.1.33", "Old");
+        auth.saveSessions();
+        ageSessions(91, QStringLiteral("Old"));
+        auth.loadSessions();
+        CHECK(auth.validateSession(recent));
+        CHECK(!auth.validateSession(old));
+        CHECK_EQ(auth.cookieMaxAgeFor(recent), 90 * day);
+        auth.destroyAllSessions();
+        auth.saveSessions();
     }
 }
 
@@ -1256,4 +1436,5 @@ void run_auth_manager_tests()
         CHECK(AuthManager::mayKnowMachineName(line, true));
     }
     pinProofRouteTests();
+    rememberMeDaysTests();
 }

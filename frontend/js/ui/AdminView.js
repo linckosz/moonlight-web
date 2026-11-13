@@ -30,7 +30,7 @@
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
-import { t } from '../i18n/i18n.js';
+import { t, getLanguage } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { refreshClientLog } from '../util/ClientLog.js';
 import { GamepadDriverNotice } from './GamepadDriverNotice.js';
@@ -288,6 +288,13 @@ export class AdminView {
             this._debugModeCli = admin.debug_mode_cli === true;
             this._verboseLogs = admin.verbose_logs === true;
             this._verboseLogsCli = admin.verbose_logs_cli === true;
+            // How long a remembered device stays signed in (issue #60), and the
+            // value the owner acknowledged. Whole numbers only: anything else
+            // reads as the default, so an older server shows no warning.
+            const whole = (v, fallback) => (Number.isInteger(v) ? v : fallback);
+            this._rememberMeDaysDefault = whole(admin.remember_me_days_default, 90);
+            this._rememberMeDays = whole(admin.remember_me_days, this._rememberMeDaysDefault);
+            this._rememberMeDaysAck = whole(admin.remember_me_days_acknowledged, 0);
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
@@ -698,6 +705,62 @@ export class AdminView {
         return !!this._hasAdminAccess;
     }
 
+    /**
+     * The warning above everything else when remembered devices stay signed in
+     * longer than the default (remember_me_days in settings.json, issue #60):
+     * a device lost or stolen keeps its access that long. Only the button
+     * closes it, and only for the value it was shown with: change the value,
+     * and it is back. Built from whole numbers and translations alone.
+     */
+    _rememberMeRiskHtml() {
+        const days = this._rememberMeDays;
+        const fallback = this._rememberMeDaysDefault;
+        if (!this._isLocalhost() || !Number.isInteger(days) || !Number.isInteger(fallback))
+            return '';
+        if (days <= fallback || this._rememberMeDaysAck === days) return '';
+        const lang = getLanguage();
+        const shown = days.toLocaleString(lang);
+        const years = days % 365 === 0 ? days / 365 : 0;
+        const titleKey =
+            years === 1
+                ? 'admin.rememberMeRiskTitleYear'
+                : years > 1
+                  ? 'admin.rememberMeRiskTitleYears'
+                  : 'admin.rememberMeRiskTitle';
+        return `
+                <div class="remember-me-risk" id="admin-remember-me-risk" role="alert">
+                    <span class="remember-me-risk-label">${t('admin.rememberMeRiskLabel')}</span>
+                    <h3 class="remember-me-risk-title">${t(titleKey, { days: shown, years })}</h3>
+                    <p>${t('admin.rememberMeRiskBody', { days: shown })}</p>
+                    <p>${t('admin.rememberMeRiskSource', { default: fallback.toLocaleString(lang) })}</p>
+                    <div class="remember-me-risk-actions">
+                        <button class="btn remember-me-risk-ack" id="btn-remember-me-ack">
+                            ${t('admin.rememberMeRiskAck')}
+                        </button>
+                        <span class="remember-me-risk-note">${t('admin.rememberMeRiskNote')}</span>
+                    </div>
+                </div>`;
+    }
+
+    /** "I acknowledge the risk": for the value in force, and only that one. */
+    _bindRememberMeRisk() {
+        const ackBtn = this.container.querySelector('#btn-remember-me-ack');
+        if (!ackBtn) return;
+        ackBtn.addEventListener('click', async () => {
+            ackBtn.disabled = true;
+            const days = this._rememberMeDays;
+            try {
+                await BackendClient.saveAdminSettings({ remember_me_days_acknowledged: days });
+                this._rememberMeDaysAck = days;
+                this.container.querySelector('#admin-remember-me-risk')?.remove();
+            } catch (err) {
+                console.warn('[Admin] Failed to acknowledge remember_me_days:', err);
+                Toast.error(t('admin.rememberMeRiskAckFailed'));
+                ackBtn.disabled = false;
+            }
+        });
+    }
+
     _buildLocalUrl(ip = this._getLocalIpForDisplay()) {
         if (!ip) return '';
         const port = this._httpsPort !== 443 ? ':' + this._httpsPort : '';
@@ -807,6 +870,8 @@ export class AdminView {
                     <button class="view-close-btn" id="btn-admin-close"
                             title="${this.esc(t('admin.closeDiscard'))}">&times;</button>
                 </div>
+
+                ${this._rememberMeRiskHtml()}
 
                 <!-- PIN (localhost only) -->
                 ${
@@ -1720,6 +1785,8 @@ export class AdminView {
                 }
             });
         }
+
+        this._bindRememberMeRisk();
 
         // Generate PIN button (does NOT revoke existing sessions)
         const regenBtn = this.container.querySelector('#btn-regenerate-pin');

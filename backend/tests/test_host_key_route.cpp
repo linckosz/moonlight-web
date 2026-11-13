@@ -23,6 +23,7 @@
 #include "server/routes/HostKeyRoute.h"
 
 #include <QDateTime>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -58,9 +59,17 @@ struct Server
     int spent = 0;           // how many keys were redeemed
     QStringList refusedFrom; // the addresses a key that opened nothing came from
 
-    Server()
+    /// @p rememberMeDays, when given, is written to settings.json first, as the
+    /// owner would before starting the server.
+    explicit Server(int rememberMeDays = 0)
     {
         settings.m_FilePath = tmp.path() + "/settings.json";
+        if (rememberMeDays > 0) {
+            QFile file(settings.m_FilePath);
+            if (file.open(QIODevice::WriteOnly))
+                file.write(QJsonDocument(QJsonObject{{"remember_me_days", rememberMeDays}})
+                               .toJson(QJsonDocument::Compact));
+        }
         auth = std::make_unique<AuthManager>(&settings);
         auth->destroyAllSessions();
         registerHostKeyRoute(router, *auth,
@@ -457,6 +466,49 @@ void testOlderLineSessionTakesTheKeyOfItsLine()
     }
 }
 
+void testTunnelHostSessionKeepsTheDefaultLifetime()
+{
+    // A host session opened through the tunnel can unlock the admin from the
+    // internet: it keeps 90 days whatever remember_me_days says (issue #60),
+    // in its cookie as in the server's own count. One on a socket follows the
+    // owner's value, like every other remembered device.
+    SECTION("host key: through the tunnel, 90 days whatever remember_me_days says");
+    {
+        Server s(3650);
+        CHECK_EQ(s.auth->rememberMeDays(), 3650);
+        const HttpResponse reply = s.send(onLine(kThisMachine, newKey()), {{"key", kLinkKey}});
+        CHECK_EQ(reply.statusCode, 200);
+        const QString cookie = reply.headers.value(QStringLiteral("Set-Cookie"));
+        CHECK(cookie.contains(QStringLiteral("; Max-Age=7776000")));
+        CHECK_EQ(s.auth->cookieMaxAgeFor(tokenOf(reply)), 90LL * 24 * 3600);
+    }
+    SECTION("host key: on a socket, the session follows remember_me_days");
+    {
+        Server s(3650);
+        const HttpResponse reply = s.send(direct("127.0.0.1"), withBrowserKey(kLinkKey));
+        CHECK_EQ(reply.statusCode, 200);
+        const QString cookie = reply.headers.value(QStringLiteral("Set-Cookie"));
+        CHECK(cookie.contains(QStringLiteral("; Max-Age=315360000")));
+        CHECK(!cookie.contains(QStringLiteral("7776000")));
+    }
+    SECTION("host key: a session unlocked with the admin password, 90 days as well");
+    {
+        Server s(3650);
+        const QString admin = s.auth->createSession(QStringLiteral("192.168.1.35"), "Admin PC");
+        CHECK_EQ(s.auth->cookieMaxAgeFor(admin), 3650LL * 24 * 3600);
+        CHECK(s.auth->promoteSessionToAdmin(admin));
+        CHECK_EQ(s.auth->cookieMaxAgeFor(admin), 7776000LL);
+    }
+    SECTION("host key: a shorter remember_me_days shortens the tunnel's session too");
+    {
+        Server s(30);
+        const HttpResponse reply = s.send(onLine(kThisMachine, newKey()), {{"key", kLinkKey}});
+        CHECK_EQ(reply.statusCode, 200);
+        CHECK(reply.headers.value(QStringLiteral("Set-Cookie"))
+                  .contains(QStringLiteral("; Max-Age=2592000")));
+    }
+}
+
 } // namespace
 
 void run_host_key_route_tests()
@@ -466,4 +518,5 @@ void run_host_key_route_tests()
     testSocketSessionTakesTheKeyItIsGiven();
     testAddressThatCanBeThisMachine();
     testOlderLineSessionTakesTheKeyOfItsLine();
+    testTunnelHostSessionKeepsTheDefaultLifetime();
 }

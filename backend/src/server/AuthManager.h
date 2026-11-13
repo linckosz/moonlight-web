@@ -21,6 +21,7 @@
 #include <QHash>
 #include <QMap>
 #include <QSet>
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <QDateTime>
@@ -66,7 +67,7 @@ struct SessionInfo
     bool ephemeral = false; // the visitor unchecked "remember me" at login: this
                             // session is never written to sessions.json and dies
                             // after EPHEMERAL_SESSION_TTL_SECS of inactivity
-                            // instead of the usual 90 days
+                            // instead of remember_me_days (90 by default)
 
     // MW-BIND-v1: the SPKI (DER) public key this browser signs its half of the
     // WebRTC handshake with, so a relaying introduction server cannot swap the
@@ -213,8 +214,19 @@ public:
     bool validateSession(const QString& token) const;
     /** True when the raw cookie token belongs to a valid session created without
      *  "remember me". The caller must then keep the cookie session-scoped: a
-     *  Max-Age on the refresh would silently promote it back to 90 days. */
+     *  Max-Age on the refresh would silently promote it back to a remembered
+     *  session's lifetime. */
     bool isEphemeralSession(const QString& token) const;
+
+    /// Days a remembered session lasts without a visit: remember_me_days as read
+    /// at startup (AppSettings::rememberMeDays), 90 without settings.
+    int rememberMeDays() const { return m_rememberMeDays; }
+    /// The Max-Age, in seconds, for the cookie of the session a raw token
+    /// belongs to: its own lifetime (ttlFor), so a host session opened through
+    /// the tunnel gets its shorter one. A remembered session's lifetime when the
+    /// token matches none. Only for a remembered cookie: sessionCookie() leaves
+    /// an ephemeral one without Max-Age whatever this says.
+    qint64 cookieMaxAgeFor(const QString& token) const;
     /** Destroy the session a raw cookie token belongs to — the visitor logging
      *  themselves out. Unlike destroySession() this takes the raw token, so a
      *  browser can only ever end its own session. The sessions it let in stay,
@@ -299,7 +311,7 @@ public:
      *  NOT the raw cookie token. No-op for unknown ids. Returns true on success. */
     bool renameSession(const QString& token, const QString& machineName);
     void destroyAllSessions();
-    /** Drop sessions inactive beyond SESSION_TTL_SECS. Called periodically. */
+    /** Drop sessions inactive beyond their lifetime (ttlFor). Called periodically. */
     void purgeExpiredSessions();
     /// A session whose approver is gone by expiry, not by revocation, keeps
     /// going without one, the administrator's to revoke (logoutSession does the
@@ -609,7 +621,17 @@ private:
     // Sliding session lifetime: a session inactive for this long is purged and the
     // user must re-enter a PIN. Activity (any authenticated request that touches
     // the session) resets the clock, so active users are never prompted again.
+    // The owner sets it in days (remember_me_days, issue #60); this is the
+    // default, and the ceiling of a privileged session (below).
     static constexpr qint64 SESSION_TTL_SECS = 90LL * 24 * 3600; // 90 days
+
+    // A session that administers this machine never outlives the default,
+    // however long the owner lets the other devices stay: one unlocked with the
+    // remote admin password (isAdmin, which can come from the internet through
+    // the tunnel, canUnlockAdmin), and a host session opened through the tunnel.
+    // Lifting that is a decision of its own, not a side effect of
+    // remember_me_days. The whole session ends then, not only its admin flag.
+    static constexpr qint64 PRIVILEGED_SESSION_TTL_SECS = SESSION_TTL_SECS;
 
     // Same sliding rule, much shorter, for a session the visitor asked not to be
     // remembered — typically a browser they do not own. The cookie is already
@@ -617,9 +639,18 @@ private:
     // rarely closed: this is what actually ends an abandoned session there.
     static constexpr qint64 EPHEMERAL_SESSION_TTL_SECS = 8LL * 3600; // 8 hours
 
-    /// Inactivity budget of a session, which depends on whether it is remembered.
-    static constexpr qint64 ttlFor(const SessionInfo& s)
+    /// remember_me_days as read at startup, and the same in seconds, in qint64
+    /// like every timestamp it is compared with.
+    int m_rememberMeDays = 90;
+    qint64 m_rememberTtlSecs = SESSION_TTL_SECS;
+
+    /// Inactivity budget of a session, which depends on whether it is remembered,
+    /// and on whether it administers this machine from elsewhere.
+    qint64 ttlFor(const SessionInfo& s) const
     {
-        return s.ephemeral ? EPHEMERAL_SESSION_TTL_SECS : SESSION_TTL_SECS;
+        if (s.ephemeral) return EPHEMERAL_SESSION_TTL_SECS;
+        if (s.isAdmin || (s.isHost && s.viaTunnel))
+            return std::min(m_rememberTtlSecs, PRIVILEGED_SESSION_TTL_SECS);
+        return m_rememberTtlSecs;
     }
 };

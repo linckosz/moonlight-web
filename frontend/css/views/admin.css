@@ -104,6 +104,63 @@
     color: #f0a6a9;
 }
 
+/* ── Remembered devices stay signed in longer than the default (#60) ───── */
+.remember-me-risk {
+    display: grid;
+    gap: var(--space-2);
+    margin: var(--space-4) var(--space-5) var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: var(--c-warning-soft);
+    border: 1px solid rgba(255, 182, 39, 0.45);
+    border-radius: var(--radius-md);
+}
+.remember-me-risk-label {
+    color: var(--c-warning);
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+.remember-me-risk-title {
+    margin: 0;
+    font-size: var(--fs-lg);
+    font-weight: 700;
+    color: var(--text-1);
+    text-wrap: balance;
+}
+.remember-me-risk p {
+    margin: 0;
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+}
+.remember-me-risk code {
+    font-family: var(--font-mono);
+    background: var(--surface-1);
+    color: var(--c-warning-text);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.remember-me-risk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    margin-top: var(--space-1);
+}
+.remember-me-risk-ack {
+    background: var(--c-warning);
+    color: var(--surface-0);
+    font-weight: 600;
+}
+.remember-me-risk-ack:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+.remember-me-risk-note {
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+}
+
 /* ── DNS propagation indicator ─────────────────────────────────────────── */
 .dns-propagating {
     display: flex;

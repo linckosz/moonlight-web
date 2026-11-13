@@ -60,6 +60,17 @@ AuthManager::AuthManager(AppSettings* settings, QObject* parent)
     }
     Logger::info("[AuthManager] HMAC key initialized, no PIN set");
 
+    // How long a remembered device stays signed in (remember_me_days, issue #60),
+    // read before the sessions on disk, which are kept or dropped by it.
+    if (settings) {
+        m_rememberMeDays = settings->rememberMeDays();
+        m_rememberTtlSecs = static_cast<qint64>(m_rememberMeDays) * 24 * 3600;
+        if (m_rememberMeDays != AppSettings::kRememberMeDaysDefault)
+            Logger::info(QString("[AuthManager] Remembered devices stay signed in for %1 days "
+                                 "without a visit (remember_me_days)")
+                             .arg(m_rememberMeDays));
+    }
+
     // Reload sessions from disk if AppSettings is available
     loadSessions();
 
@@ -194,9 +205,10 @@ void AuthManager::loadSessions()
             if (PairingCrypto::isValidP256Spki(spki)) info.pairingKey = spki;
         }
 
-        // Drop sessions that are already expired by inactivity.
+        // Drop sessions that are already expired by inactivity, by the lifetime
+        // in force now: shortening remember_me_days ends the older ones here.
         const qint64 last = info.lastSeen > 0 ? info.lastSeen : info.createdAt;
-        if (now - last > SESSION_TTL_SECS) {
+        if (now - last > ttlFor(info)) {
             skipped++;
             continue;
         }
@@ -779,6 +791,15 @@ bool AuthManager::isEphemeralSession(const QString& token) const
     if (!validateSession(token)) return false;
     auto it = m_sessions.find(hashToken(token));
     return it != m_sessions.end() && it->ephemeral;
+}
+
+qint64 AuthManager::cookieMaxAgeFor(const QString& token) const
+{
+    if (!token.isEmpty()) {
+        auto it = m_sessions.find(hashToken(token));
+        if (it != m_sessions.end()) return ttlFor(*it);
+    }
+    return m_rememberTtlSecs;
 }
 
 bool AuthManager::logoutSession(const QString& token)

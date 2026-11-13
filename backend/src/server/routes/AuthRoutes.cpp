@@ -101,7 +101,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                 obj["remembered"] = remember;
                 bindKeyFromLoginBody(authManager, token, body, obj, settings);
                 HttpResponse resp = HttpResponse::json(obj);
-                resp.headers["Set-Cookie"] = sessionCookie(token, remember);
+                resp.headers["Set-Cookie"] =
+                    sessionCookie(token, remember, authManager.cookieMaxAgeFor(token));
                 return resp;
             } else {
                 // Certificate invalid
@@ -140,7 +141,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             obj["remembered"] = remember;
             bindKeyFromLoginBody(authManager, token, body, obj, settings);
             HttpResponse resp = HttpResponse::json(obj);
-            resp.headers["Set-Cookie"] = sessionCookie(token, remember);
+            resp.headers["Set-Cookie"] =
+                sessionCookie(token, remember, authManager.cookieMaxAgeFor(token));
             return resp;
         }
         case AuthManager::InvalidPin:
@@ -203,7 +205,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         obj["instances"] = handoff->instances;
         bindKeyFromLoginBody(authManager, token, body, obj, settings);
         HttpResponse resp = HttpResponse::json(obj);
-        resp.headers["Set-Cookie"] = sessionCookie(token, true);
+        resp.headers["Set-Cookie"] = sessionCookie(token, true, authManager.cookieMaxAgeFor(token));
         return resp;
     });
 

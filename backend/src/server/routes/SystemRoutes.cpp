@@ -25,6 +25,7 @@
 #include "common/DetachedProcess.h"
 #include "server/AuthManager.h"
 #include "server/Provisioning.h"
+#include "server/RememberMeWrite.h"
 #include "network/InternetAccessManager.h"
 #include "network/RouterPortAllocator.h"
 #include "backend/ComputerManager.h"
@@ -1125,6 +1126,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["debug_mode_cli"] = mw::run::debugFromCli();
         obj["verbose_logs"] = mw::run::verbose();
         obj["verbose_logs_cli"] = mw::run::verboseFromCli();
+        // How long a remembered device stays signed in (issue #60): the value in
+        // force, set in settings.json only, and the one the owner acknowledged.
+        // The page warns above the default until both are the same.
+        obj["remember_me_days"] = authManager.rememberMeDays();
+        obj["remember_me_days_default"] = AppSettings::kRememberMeDaysDefault;
+        obj["remember_me_days_acknowledged"] = appSettings.rememberMeDaysAcknowledged();
         return HttpResponse::json(obj);
     });
 
@@ -1138,6 +1145,17 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         QJsonObject body = doc.object();
         bool hadChange = false;
         QJsonObject obj;
+
+        // ── How long a remembered device stays signed in (issue #60) ─────
+        // First, so a refused body changes nothing (RememberMeWrite.h).
+        {
+            QString error;
+            switch (writeRememberMe(body, authManager.rememberMeDays(), appSettings, obj, &error)) {
+            case RememberMeWrite::Refused: return HttpResponse::error(400, error);
+            case RememberMeWrite::Written: hadChange = true; break;
+            case RememberMeWrite::None: break;
+            }
+        }
 
         // ── Certificate authentication toggle ────────────────────────────
         if (body.contains("cert_auth_enabled")) {

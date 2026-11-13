@@ -293,7 +293,8 @@ void registerPinProofRoutes(RestRouter& router, AuthManager& authManager,
             obj["pairing_key"] = "rejected";
         }
         HttpResponse resp = HttpResponse::json(obj);
-        resp.headers["Set-Cookie"] = sessionCookie(token, remember);
+        resp.headers["Set-Cookie"] =
+            sessionCookie(token, remember, authManager.cookieMaxAgeFor(token));
         return resp;
     });
 }

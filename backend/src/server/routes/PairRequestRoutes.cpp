@@ -403,7 +403,7 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
         obj["host_public_key"] = QString::fromLatin1(hostKey.toBase64());
         obj["host_id"] = hostId;
         HttpResponse resp = HttpResponse::json(obj);
-        resp.headers["Set-Cookie"] = sessionCookie(token, true);
+        resp.headers["Set-Cookie"] = sessionCookie(token, true, c->auth.cookieMaxAgeFor(token));
         return resp;
     });
 

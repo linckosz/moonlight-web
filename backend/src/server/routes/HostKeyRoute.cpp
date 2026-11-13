@@ -22,6 +22,7 @@
 #include "server/AuthManager.h"
 #include "server/RequestGuard.h"
 #include "server/RestRouter.h"
+#include "server/SessionCookie.h"
 
 #include <QJsonDocument>
 
@@ -169,10 +170,10 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
         for (auto it = identity.constBegin(); it != identity.constEnd(); ++it)
             obj[it.key()] = it.value();
 
+        // The session's own lifetime: one opened through the tunnel keeps the
+        // default whatever remember_me_days says (AuthManager::ttlFor).
         HttpResponse resp = HttpResponse::json(obj);
-        resp.headers["Set-Cookie"] =
-            QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
-                .arg(token);
+        resp.headers["Set-Cookie"] = sessionCookie(token, true, authManager.cookieMaxAgeFor(token));
         return resp;
     });
 }

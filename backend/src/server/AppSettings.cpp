@@ -40,6 +40,8 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -1011,6 +1013,64 @@ bool AppSettings::shareInBoothMode() const
 {
     // Only a real true, as above: letting guests into a booth is a decision.
     return readAll().value("share_in_booth_mode").toBool(false);
+}
+
+namespace {
+
+/// A whole number from 1 to max, or nothing. 365.0 is a whole number (JSON
+/// has no integer type); "365" (a string), 365.5, 0 and negatives are not.
+std::optional<int> wholeDays(const QJsonValue& v, int max)
+{
+    if (!v.isDouble()) return std::nullopt;
+    const double d = v.toDouble();
+    if (!(d >= 1.0 && d <= max) || d != std::floor(d)) return std::nullopt;
+    return static_cast<int>(d);
+}
+
+/// What the file held, for a log line: at most 32 characters, on one line.
+QString shownForLog(const QJsonValue& v)
+{
+    QString text =
+        v.isString()
+            ? v.toString()
+            : QString::fromUtf8(QJsonDocument(QJsonArray{v}).toJson(QJsonDocument::Compact))
+                  .mid(1)
+                  .chopped(1);
+    text = text.left(32);
+    for (QChar& c : text)
+        if (c.unicode() < 0x20 || c.unicode() == 0x7F) c = QLatin1Char('?');
+    return text;
+}
+
+} // namespace
+
+int AppSettings::rememberMeDays() const
+{
+    const QJsonObject obj = readAll();
+    const auto it = obj.find("remember_me_days");
+    if (it == obj.end()) return kRememberMeDaysDefault;
+    if (const auto days = wholeDays(*it, kRememberMeDaysMax)) return *days;
+    Logger::warning(QString("[AppSettings] remember_me_days is not a whole number from 1 to %1 "
+                            "(read: %2): %3 days apply")
+                        .arg(kRememberMeDaysMax)
+                        .arg(shownForLog(*it))
+                        .arg(kRememberMeDaysDefault));
+    return kRememberMeDaysDefault;
+}
+
+int AppSettings::rememberMeDaysAcknowledged() const
+{
+    // Only ever compared with the value in force, which is a whole number in
+    // range: anything else is "not acknowledged", the safe answer.
+    return wholeDays(readAll().value("remember_me_days_acknowledged"), kRememberMeDaysMax)
+        .value_or(0);
+}
+
+void AppSettings::setRememberMeDaysAcknowledged(int days)
+{
+    QJsonObject obj = readAll();
+    obj["remember_me_days_acknowledged"] = days;
+    writeAll(obj);
 }
 
 QString AppSettings::keyboardLayoutFidelity() const
