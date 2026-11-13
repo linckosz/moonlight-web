@@ -169,6 +169,13 @@ import {
 import { SecuringOverlay } from './ui/SecuringOverlay.js';
 import { ourStunHost } from './api/IceServers.js';
 import { probeUdp } from './api/UdpProbe.js';
+import {
+    forgetUdpFailed,
+    iceLostBeforeChannels,
+    pathFailure,
+    rememberUdpFailed,
+    skipUdpFor,
+} from './util/UdpMemory.js';
 import { InstanceMenu } from './ui/InstanceMenu.js';
 import { currentInstanceRef, importInstances, rememberInstance } from './util/instances.js';
 import { bootMark } from './util/bootTiming.js';
@@ -2279,6 +2286,11 @@ export const MoonlightApp = {
             // rest of the launch is prepared, read just before /start: a
             // relaunch in this session keeps the same answer.
             this._udpProbe = this._probeUdpCached();
+            // Whether UDP failed toward this host before (util/UdpMemory.js):
+            // decided once per launch, just before /start, when the host has
+            // said whether this browser is on its network.
+            this._udpSkipped = undefined;
+            this._udpFailedHere = false;
         }
 
         // Store host/app for HEVC fallback re-launch
@@ -2533,8 +2545,21 @@ export const MoonlightApp = {
         }
 
         // No STUN answer: the backend skips the UDP rungs for an internet
-        // browser instead of letting each one run to its ICE deadline.
-        if ((await this._udpProbe) === false) streamingSettings.udp_blocked = true;
+        // browser instead of letting each one run to its ICE deadline. So it
+        // does where UDP failed toward this host on this kind of network and
+        // another rung carried the stream (issue #48), until UDP is tried
+        // again (util/UdpMemory.js). Never on the host's own network.
+        if (this._udpSkipped === undefined) {
+            this._udpSkipped = this._viewerOnLan === true ? null : skipUdpFor(host && host.uuid);
+            if (this._udpSkipped)
+                console.log(
+                    `[MW] UDP failed toward this host on this network before — UDP rungs` +
+                        ` skipped (${this._udpSkipped.skip}/${this._udpSkipped.of}, tried` +
+                        ' again after that or a day)',
+                );
+        }
+        if ((await this._udpProbe) === false || this._udpSkipped)
+            streamingSettings.udp_blocked = true;
 
         // Aspect ratio → the backend derives the even width from this "W:H"
         // string. The goal is a frame the HOST fills edge to edge, since anything
@@ -3884,6 +3909,8 @@ export const MoonlightApp = {
         };
         sv.onHostDisplayFormat = (msg) => this._onHostDisplayFormat(msg);
         sv.onClientScreenChanged = (device) => this._onClientScreenChanged(device);
+        // onLive: the first picture on screen — the rung it came by works.
+        sv.onLive = () => this._noteRungCarried();
         sv.autoCeilingIdle = () => !!(this._standbyView || this._relaunching);
         const ceiling = this._autoCeiling;
         sv.autoCeilingMeter = ceiling ? ceiling.meter(performance.now()) : null;
@@ -4117,6 +4144,28 @@ export const MoonlightApp = {
                 console.log('[MW] UDP probe: no STUN answer in 1.5 s — UDP looks blocked here');
             return verdict;
         });
+    },
+
+    /**
+     * The stream is on screen: the rung it came by works (util/UdpMemory.js).
+     * A UDP rung clears what was held against UDP toward this host; another
+     * rung, after a UDP rung of this launch failed on its path, is what the
+     * next launches start on. Not on the host's own network.
+     */
+    _noteRungCarried() {
+        const host = this._lastStreamHost;
+        if (!host || !host.uuid || this._viewerOnLan === true) return;
+        const rung = (this._transportChain || [])[this._transportIndex || 0] || '';
+        if (rung.endsWith('-udp')) {
+            forgetUdpFailed(host.uuid);
+        } else if (rung && this._udpFailedHere) {
+            this._udpFailedHere = false;
+            rememberUdpFailed(host.uuid);
+            console.log(
+                `[MW] UDP failed toward this host, ${rung} carried the stream — the next` +
+                    ' launches start past UDP',
+            );
+        }
     },
 
     /** Human-readable label for a transport mode (warning toasts / logs). */
@@ -4366,7 +4415,14 @@ export const MoonlightApp = {
         // a UDP-blocked network wait twice as long for the rung that works.
         // The flag still records that a transport failed: the launch_failed
         // branch above walks on rather than giving up once it is set.
-        const iceTimedOut = /ice timeout/i.test(String(reason));
+        //
+        // Nor when ICE connected and went before a channel opened: a path
+        // that answers the checks and carries nothing does so again (issue
+        // #48, a car on LTE, seven seconds lost each time).
+        const iceTimedOut = /ice timeout/i.test(String(reason)) || iceLostBeforeChannels(reason);
+        // A UDP rung that its path failed: remembered for this host once a
+        // later rung shows the stream (_noteRungCarried).
+        if (/-udp$/.test(chain[cur] || '') && pathFailure(reason)) this._udpFailedHere = true;
         if (cur === 0 && iceTimedOut) this._firstTransportRetried = true;
         if (cur === 0 && !this._firstTransportRetried && !decoderFail && !iceTimedOut) {
             this._firstTransportRetried = true;

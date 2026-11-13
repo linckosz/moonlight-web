@@ -32,6 +32,7 @@ import {
     isBindRefusedClose,
 } from '../util/pairingCrypto.js';
 import { defaultIceServers } from './IceServers.js';
+import { ICE_LOST_BEFORE_CHANNELS } from '../util/UdpMemory.js';
 import {
     CHUNK_FLAG_KEYFRAME,
     CHUNK_FLAG_SIDE_BLOCK,
@@ -1019,7 +1020,17 @@ export class WebRtcDataChannel {
                         // If we were waiting for DCs after WS close, the ICE
                         // disconnect is definitive — stop waiting and error.
                         this._clearWsCloseTimer();
-                        this._onError('ICE ' + state);
+                        // Connected, then lost before a single channel opened:
+                        // a path that answers the checks and carries nothing
+                        // (issue #48, a car on LTE: « connected », then gone
+                        // seven seconds later, every time). Said apart from a
+                        // link that went in the middle of a stream, so the
+                        // chain does not try the same path twice.
+                        this._onError(
+                            this.connected
+                                ? 'ICE ' + state
+                                : 'ICE ' + state + ICE_LOST_BEFORE_CHANNELS,
+                        );
                     }
                 }
             }

@@ -1054,6 +1054,10 @@ export class StreamView {
          *  while it still counts as up (_checkLinkStall): MoonlightApp asks
          *  the host whether the worker crashed, rather than wait for ICE. */
         this.onLinkStall = null;
+        /** Callback invoked once, at the first picture shown by the live view
+         *  (not a standby's): MoonlightApp notes that the transport it came
+         *  by works (_noteRungCarried). */
+        this.onLive = null;
         // When anything last came over the link, and when the host was last
         // asked about a stall (_checkLinkStall).
         this._lastRxAt = 0;
@@ -4464,6 +4468,13 @@ export class StreamView {
                 this.onFirstFrame();
             } catch (e) {
                 console.warn('[StreamView] onFirstFrame callback failed:', e);
+            }
+        }
+        if (first && !this._standby && typeof this.onLive === 'function') {
+            try {
+                this.onLive();
+            } catch (e) {
+                console.warn('[StreamView] onLive callback failed:', e);
             }
         }
     }
