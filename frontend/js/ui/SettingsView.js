@@ -59,6 +59,7 @@ import {
     SUPPORTS_CANVAS_TEARING,
     IS_HANDHELD,
     IS_LOW_MEMORY,
+    IS_MOBILE_OR_TABLET,
     IS_TOUCH_DEVICE,
     IS_TV,
     resolveTearing,
@@ -218,6 +219,7 @@ export class SettingsView {
         // Enter fullscreen at launch (off by default): asked on the launch
         // click, the only moment a browser lets a page go fullscreen.
         this._fullscreenOnStart = false;
+        this._hideFsHandle = false;
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
         // Invert the notched wheel (off by default). Per device, where a page
@@ -714,6 +716,7 @@ export class SettingsView {
         this._quitAppOnStop = data.quit_app_on_stop === true;
         this._othersOff = typeof data.others_off === 'boolean' ? data.others_off : null;
         this._fullscreenOnStart = data.fullscreen_on_start === true;
+        this._hideFsHandle = data.hide_fs_handle === true;
         this._touchSensitivity =
             typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
                 ? data.touch_sensitivity
@@ -1105,6 +1108,7 @@ export class SettingsView {
             video_enhancement_algo: this._videoEnhancementAlgo,
             // Per-device only (server ignores these unknown fields).
             invert_wheel: this._invertWheel,
+            hide_fs_handle: this._hideFsHandle,
             touch_pad_mode: this._touchPad.mode,
             touch_pad_scale: this._touchPad.scale,
             touch_pad_opacity: this._touchPad.opacity,
@@ -1759,6 +1763,7 @@ export class SettingsView {
         // display: true/false once chosen here, null before (util/OthersOff.js).
         this._othersOff = null;
         this._fullscreenOnStart = false;
+        this._hideFsHandle = false;
         this._touchSensitivity = 2.2;
         this._mouseSensitivity = 1;
         this._invertWheel = false;
@@ -2370,6 +2375,22 @@ export class SettingsView {
                         </label>
                         <span class="setting-desc">${t('settings.fullscreenOnStartDesc')}</span>
                     </div>
+                    ${
+                        // Phones and tablets only: the handle lives in the CSS
+                        // fullscreen that only they get (#62).
+                        IS_MOBILE_OR_TABLET
+                            ? `<div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-hide-fs-handle"
+                                ${this._hideFsHandle ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.hideFsHandle')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.hideFsHandleDesc')}</span>
+                    </div>`
+                            : ''
+                    }
 
                     <!-- Allow tearing: disables VSync pacing + desynchronized
                          canvas. Dimmed + locked "(unavailable)" outside Chromium
@@ -2886,6 +2907,13 @@ export class SettingsView {
         if (fullscreenCheck)
             fullscreenCheck.addEventListener('change', () => {
                 this._fullscreenOnStart = fullscreenCheck.checked;
+                this._autoSave();
+            });
+
+        const fsHandleCheck = this.container.querySelector('#settings-hide-fs-handle');
+        if (fsHandleCheck)
+            fsHandleCheck.addEventListener('change', () => {
+                this._hideFsHandle = fsHandleCheck.checked;
                 this._autoSave();
             });
 

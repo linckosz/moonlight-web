@@ -593,6 +593,9 @@ export class StreamView {
         this._quitAppOnStop = opts.quitAppOnStop === true;
         // "Start streams in fullscreen" (settings) — see _applyFullscreenOnStart.
         this._fullscreenOnStart = opts.fullscreenOnStart === true;
+        // "Hide the full-screen handle" (settings, phones and tablets) — see
+        // _mountFsHandle. A three-finger tap still brings the header down.
+        this._hideFsHandle = opts.hideFsHandle === true;
         // Backend stream slot this view runs on (0 = /ws ports, 1 = /ws1) and
         // the uniqueid it launched with — quit() scopes its /quit with them so
         // retiring one leg of a dual stream never cancels the other.
@@ -1932,6 +1935,13 @@ export class StreamView {
 
         // CSS fallback fullscreen (when Fullscreen API fails, e.g. iOS canvas)
         this._cssFullscreen = false;
+        // Its way back to the header (#62): the handle at the top, the header
+        // brought down over the picture, and the timer that puts it away.
+        /** @type {HTMLButtonElement | null} */
+        this._fsHandleEl = null;
+        /** @type {ReturnType<typeof setTimeout> | null} */
+        this._fsBarTimer = null;
+        this._fsBarWired = false;
 
         // Keyboard Lock (Chrome/Edge): while in native fullscreen, lock the
         // Escape key so it is delivered to our handler (and forwarded to the

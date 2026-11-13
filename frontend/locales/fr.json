@@ -602,7 +602,9 @@
         "othersOff": "Éteindre les autres écrans de l'hôte",
         "othersOffDesc": "Pendant votre stream sur son écran virtuel, les autres écrans du PC s'éteignent ; ils se rallument quand vous partez. L'admin de l'hôte l'autorise. S'ils restent noirs : Windows+P, Étendre.",
         "fullscreenOnStart": "Démarrer les streams en plein écran",
-        "fullscreenOnStartDesc": "Le stream s'ouvre en plein écran dès son lancement. Sur iPhone, Safari garde ses barres : le stream remplit alors la page (ajoute MoonlightWeb à l'écran d'accueil pour un vrai plein écran)."
+        "fullscreenOnStartDesc": "Le stream s'ouvre en plein écran dès son lancement. Sur iPhone, Safari garde ses barres : le stream remplit alors la page (ajoute MoonlightWeb à l'écran d'accueil pour un vrai plein écran).",
+        "hideFsHandle": "Masquer la poignée du plein écran",
+        "hideFsHandleDesc": "En plein écran, sur un téléphone ou une tablette en paysage, masque la petite languette transparente en haut de l'image qui affiche les commandes. Un tap à trois doigts les affiche toujours."
     },
     "admin": {
         "title": "Paramètres serveur",
@@ -957,6 +959,8 @@
         "enhancerOff": "Désactivé",
         "enhancerPassthrough": "Désactivé (1:1)",
         "iosFullscreenHint": "Pour un vrai plein écran : Partager → Sur l'écran d'accueil, puis lancez Moonlight depuis l'icône.",
+        "fsHandle": "Afficher les commandes",
+        "fsThreeFingerHint": "Touchez avec trois doigts pour afficher les commandes.",
         "exitFullscreenHint": "Appuyez sur {{combo}} pour quitter le plein écran",
         "volume": "Volume",
         "micMute": "Couper mon micro",
@@ -1006,7 +1010,9 @@
         "tcDesktop": "Bureau de l’hôte",
         "tcDesktopVal": "Glisser à 3 doigts horizontalement",
         "tcKeyboard": "Clavier",
-        "tcKeyboardVal": "Tap à 3 doigts",
+        "tcKeyboardVal": "Tap à 3 doigts (deux fois en plein écran)",
+        "tcControls": "Commandes du stream",
+        "tcControlsVal": "Tap à 3 doigts (plein écran)",
         "tcTouchPad": "Manette à l'écran",
         "tcTouchPadVal": "Tap à 4 doigts",
         "touchScreenTitle": "Écran tactile",

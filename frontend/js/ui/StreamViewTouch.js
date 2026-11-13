@@ -652,7 +652,11 @@ export class StreamViewTouch {
             if (this._touchMaxFingers >= 4 && this._touchPadAvailable()) {
                 this._toggleTouchPad(); // 4-finger tap → on-screen controller
             } else if (this._touchMaxFingers >= 3) {
-                this._toggleVirtualKeyboard(); // 3-finger tap → keyboard
+                // 3-finger tap → keyboard. In CSS fullscreen, where the header is
+                // gone, the first one brings the header down and the next one,
+                // while it is still there, opens the keyboard (#62).
+                if (this._cssFullscreen && !this._fsBarShown()) this._showFsBar();
+                else this._toggleVirtualKeyboard();
             } else if (this._touchMaxFingers === 2) {
                 this._sendMouseButton(3, true);
                 this._sendMouseButton(3, false); // 2-finger tap → right click

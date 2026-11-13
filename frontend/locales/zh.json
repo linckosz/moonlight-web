@@ -602,7 +602,9 @@
         "othersOff": "关闭主机的其他屏幕",
         "othersOffDesc": "您串流其虚拟显示器时，该电脑的其他屏幕会关闭；您离开后重新点亮。由主机管理员允许。如果屏幕仍然是黑的：按 Windows+P，选择“扩展”。",
         "fullscreenOnStart": "以全屏启动串流",
-        "fullscreenOnStartDesc": "启动串流时立即进入全屏。在 iPhone 上，Safari 会保留其工具栏，串流将铺满页面（将 MoonlightWeb 添加到主屏幕即可获得真正的全屏）。"
+        "fullscreenOnStartDesc": "启动串流时立即进入全屏。在 iPhone 上，Safari 会保留其工具栏，串流将铺满页面（将 MoonlightWeb 添加到主屏幕即可获得真正的全屏）。",
+        "hideFsHandle": "隐藏全屏手柄",
+        "hideFsHandleDesc": "在手机或平板横屏全屏时，隐藏图像顶部用于调出控制栏的半透明小标签。三指轻点仍可调出控制栏。"
     },
     "admin": {
         "title": "服务器设置",
@@ -957,6 +959,8 @@
         "enhancerOff": "关闭",
         "enhancerPassthrough": "关闭 (1:1)",
         "iosFullscreenHint": "要获得真正的全屏：分享 → 添加到主屏幕，然后从图标启动 Moonlight。",
+        "fsHandle": "显示控制栏",
+        "fsThreeFingerHint": "用三根手指轻点即可显示控制栏。",
         "exitFullscreenHint": "按 {{combo}} 退出全屏",
         "volume": "音量",
         "micMute": "静音我的麦克风",
@@ -1006,7 +1010,9 @@
         "tcDesktop": "主机桌面",
         "tcDesktopVal": "三指水平滑动",
         "tcKeyboard": "键盘",
-        "tcKeyboardVal": "三指轻点",
+        "tcKeyboardVal": "三指轻点（全屏时点两次）",
+        "tcControls": "串流控制栏",
+        "tcControlsVal": "三指轻点（全屏时）",
         "tcTouchPad": "屏幕手柄",
         "tcTouchPadVal": "四指轻点",
         "touchScreenTitle": "触摸屏",
