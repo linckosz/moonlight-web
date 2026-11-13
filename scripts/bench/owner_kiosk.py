@@ -121,10 +121,21 @@ def open_owner(api_port, cdp_port, origin="", lan_only=False, cdp=CDP, _instance
     return out.decode("ascii", "replace").strip() == "navigated"
 
 
-def key_gone(cdp_port, cdp=CDP):
+def key_gone(cdp_port, cdp=CDP, wait=15.0):
     """True when the page's address no longer names a key: the page drops it once
-    used. Only the boolean comes back."""
-    return _cdp(cdp_port, "eval", "!/[#&?]k=/.test(location.href)", cdp=cdp) == "True"
+    used. Only the boolean comes back.
+
+    Asked again for up to @p wait seconds: navigating returns once the page is
+    committed, and the page takes the key off its address only when its script
+    has loaded (linkKey.js), or the page in between answers nothing at all."""
+    import time
+    deadline = time.monotonic() + wait
+    while True:
+        if _cdp(cdp_port, "eval", "!/[#&?]k=/.test(location.href)", cdp=cdp) == "True":
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
 
 
 LOGOUT = ("(async () => { try { const m = await import('/js/api/BackendClient.js'); "

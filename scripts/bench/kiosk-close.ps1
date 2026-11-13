@@ -25,8 +25,9 @@ param(
 # content-age band is calibrated through it): .chrome-content-cdp.
 $tags = @()
 if ($Content) { $tags += '.chrome-bench', '.chrome-content-cdp' }
-if ($Client) { $tags += '.chrome-client' }
-if (-not $tags) { $tags = @('.chrome-bench', '.chrome-content-cdp', '.chrome-client', '.chrome-guest') }
+# The client kiosk opened by the owner's link has its own profile: .chrome-owner.
+if ($Client) { $tags += '.chrome-client', '.chrome-owner' }
+if (-not $tags) { $tags = @('.chrome-bench', '.chrome-content-cdp', '.chrome-client', '.chrome-owner', '.chrome-guest') }
 
 $killed = 0
 Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | ForEach-Object {

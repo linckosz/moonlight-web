@@ -88,6 +88,19 @@ class Pipe(unittest.TestCase):
         self.assertEqual(self.argvs, [])
 
 
+class KeyGone(unittest.TestCase):
+    def test_asked_again_until_the_page_has_dropped_it(self):
+        answers = iter(["", "False", "True"])
+        with mock.patch.object(owner_kiosk, "_cdp", side_effect=lambda *a, **k: next(answers)):
+            with mock.patch("time.sleep"):
+                self.assertTrue(owner_kiosk.key_gone(9333, wait=60))
+
+    def test_still_there_at_the_end_is_no(self):
+        with mock.patch.object(owner_kiosk, "_cdp", return_value="False"):
+            with mock.patch("time.sleep"):
+                self.assertFalse(owner_kiosk.key_gone(9333, wait=0))
+
+
 class Production(unittest.TestCase):
     def test_its_ports_and_its_folder(self):
         prog = os.environ.get("ProgramFiles", r"C:\Program Files")

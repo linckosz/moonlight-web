@@ -54,6 +54,16 @@ param(
     # desktop instead, and came back only with a power cycle.
     [switch] $ClientHdr,
     [switch] $NoProbe,
+    # The client kiosk gets the host's session as its owner does, by the link
+    # --print-link makes (owner_kiosk.py): from the build where this machine's
+    # own address is no reason for privilege, https://127.0.0.1 holds no session
+    # of its own. A bench instance only (--dev or the DEV edition), never the
+    # production one. The kiosk has its own profile (.chrome-owner), and the
+    # session ends with the run: the page logs out, the kiosks close, the
+    # profile goes, whatever happened. While it runs, the kiosk's DevTools port
+    # (127.0.0.1) hands any process of this machine a page that holds the host's
+    # session: never left running unattended on a shared machine.
+    [switch] $OwnerLink,
     # The kiosks are borderless, TOPMOST and have no close button: whoever is at
     # the machine cannot get rid of them by hand. So this script owns their
     # lifetime and takes them down on the way out, however it leaves — the end
@@ -65,6 +75,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ($OwnerLink -and $KeepKiosks) {
+    throw "-OwnerLink with -KeepKiosks: a kiosk that holds the owner's session is never left open"
+}
 if (-not $ResultsDir) { $ResultsDir = Join-Path $PSScriptRoot 'results' }
 Set-Location $PSScriptRoot
 
@@ -249,8 +262,11 @@ Write-Host "content      : $contentName"
 # to the child as *no argument at all*, and the child then dies with "Missing an
 # argument for parameter 'AdapterLuid'" — so leaving the pin unset, which the
 # parameter's own default allows, used to abort the whole browser half.
-$clientArgs = @('-NoProfile', '-File', "$PSScriptRoot\kiosk.ps1", '-Url', $AppUrl,
+# -OwnerLink: the kiosk starts on a blank page, and goes to the app once the
+# owner's link has opened its session (below, inside the try).
+$clientArgs = @('-NoProfile', '-File', "$PSScriptRoot\kiosk.ps1", '-Url', $(if ($OwnerLink) { 'about:blank' } else { $AppUrl }),
                 '-X', $cx, '-Y', $cy, '-W', $cw, '-H', $ch, '-DebugPort', $DebugPort)
+if ($OwnerLink) { $clientArgs += @('-ChromeProfile', '.chrome-owner') }
 if ($ClientAdapterLuid) { $clientArgs += @('-AdapterLuid', $ClientAdapterLuid) }
 & powershell @clientArgs | Out-Host
 
@@ -294,12 +310,9 @@ function Wait-Tile {
     }
     return $false
 }
-if (-not (Wait-Tile)) {
-    throw "the app at $AppUrl never showed a tile named '$Tile' - is the host paired in THIS instance? (cdp.py --port $DebugPort tiles says what is on the page)"
-}
-Write-Host "app ready    : tile '$Tile' is on the page"
 
 $out = @()
+$ownerWarnings = @()
 $first = $true
 $jsonl = Join-Path $ResultsDir 'browser.jsonl'
 if (Test-Path $jsonl) { Remove-Item $jsonl }
@@ -308,6 +321,21 @@ if (Test-Path $jsonl) { Remove-Item $jsonl }
 # happens in between. Before this try existed, an interrupted campaign left
 # a borderless TOPMOST video on the machine with no way to close it.
 try {
+    if ($OwnerLink) {
+        # The link goes from the instance's exe to the kiosk through a pipe, and
+        # nowhere else; this prints yes/no only (owner_kiosk.py).
+        $api = [uri]$ApiUrl
+        $app = [uri]$AppUrl
+        & python "$PSScriptRoot\owner_kiosk.py" open --api-port $api.Port --cdp-port $DebugPort `
+            --origin "$($app.Scheme)://$($app.Authority)" --lan-only | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "the owner's link did not open the client kiosk's session (owner_kiosk.py open)" }
+        Cdp nav $AppUrl | Out-Null
+    }
+    if (-not (Wait-Tile)) {
+        throw "the app at $AppUrl never showed a tile named '$Tile' - is the host paired in THIS instance? (cdp.py --port $DebugPort tiles says what is on the page)"
+    }
+    Write-Host "app ready    : tile '$Tile' is on the page"
+
     foreach ($pass in $passes) {
         $skip = Get-Prop $pass 'skip' ''
         if ($skip) {
@@ -437,7 +465,37 @@ try {
     Stop-Stream
 }
 finally {
-    if ($KeepKiosks) {
+    if ($OwnerLink) {
+        # In this order: the page ends its session (the host revokes it), then
+        # the kiosks close, then the profile goes once no Chrome runs on it.
+        & python "$PSScriptRoot\owner_kiosk.py" logout --cdp-port $DebugPort | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            # The kiosk was closed first (by hand, the hotkey) or the page did
+            # not answer: the host still lists the session, whose cookie dies
+            # with the profile below.
+            $ownerWarnings += 'the owner session could not be ended by the page: revoke it in Active Sessions'
+        }
+        & powershell -NoProfile -File "$PSScriptRoot\kiosk-close.ps1" | Out-Host
+        for ($i = 0; $i -lt 5; $i++) {
+            $cleaned = & python "$PSScriptRoot\owner_kiosk.py" clean
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 1
+        }
+        $cleaned | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            $ownerWarnings += ".chrome-owner still holds the owner's session cookie: remove it once Chrome is closed"
+        }
+        foreach ($w in $ownerWarnings) { Write-Warning $w }
+        # The proof the run wrote no key: how many times "#k=", "&k=" or "?k="
+        # appear in what it left in the results. The count only.
+        $kHits = 0
+        Get-ChildItem -LiteralPath $ResultsDir -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -lt 64MB } | ForEach-Object {
+                $text = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::GetEncoding(28591))
+                $kHits += [regex]::Matches($text, '[#&?]k=').Count
+            }
+        Write-Host "owner link: k= in the results: $kHits"
+    } elseif ($KeepKiosks) {
         Write-Host ''
         Write-Host 'kiosks left open (-KeepKiosks): Ctrl+Alt+Shift+M to minimise, Ctrl+Alt+Shift+Q to close.'
     } else {
@@ -447,3 +505,5 @@ finally {
 Write-Host ""
 Write-Host "browser half written to $jsonl"
 Write-Host "then: python report.py  ->  bench-out\report.html"
+# Said again last, where it cannot be lost in the passes' output.
+foreach ($w in $ownerWarnings) { Write-Warning $w }
