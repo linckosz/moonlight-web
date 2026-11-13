@@ -1,8 +1,8 @@
 # ============================================================================
 # The THIRD instrument: what the host made of the key.
 #
-#   .\keyboard-check.ps1 [-Profiles fr-azerty,us-qwerty] [-WriteSettings]
-#   .\keyboard-check.ps1 -OwnerLink -ClientRect x,y,w,h [-AppUrl ...]
+#   .\keyboard-check.ps1 -KioskDisplay \\.\DISPLAYn [-Profiles fr-azerty,us-qwerty] [-WriteSettings]
+#   .\keyboard-check.ps1 -KioskDisplay \\.\DISPLAYn -OwnerLink -ClientRect x,y,w,h [-AppUrl ...]
 #
 # The other two instruments measure how fast a picture comes back. This one
 # measures whether the right thing happened at all, and it exists because a
@@ -63,16 +63,106 @@ param(
     [switch]   $OwnerLink,
     [string]   $AppUrl = 'https://127.0.0.1:8443/',
     # x,y,w,h of the client kiosk, as run-browser.ps1 -ClientRect.
-    [string]   $ClientRect = ''
+    [string]   $ClientRect = '',
+    # The screen the client kiosk is on, by its device name (\\.\DISPLAY5).
+    # On a self-stream the host types every key of the table into whatever
+    # window has the foreground, and on a machine someone uses that may be
+    # theirs. So before each table and after it, the foreground must be the
+    # kiosk's own window (the browser process of its profile, on this debug
+    # port), on this screen; otherwise the run stops there.
+    [string]   $KioskDisplay = '',
+    # The kiosk's screen may be this machine's primary one (a bench with one
+    # screen). Without it, a primary -KioskDisplay is refused.
+    [switch]   $KioskOnPrimary
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$scriptStart = Get-Date
 if ($OwnerLink -and $NoLaunch) {
     throw '-OwnerLink with -NoLaunch: the kiosk this script opens has no stream of its own to type into'
 }
 if ($OwnerLink -and @($ClientRect -split ',').Count -ne 4) {
     throw '-OwnerLink needs -ClientRect x,y,w,h: where the client kiosk goes'
+}
+Add-Type -AssemblyName System.Windows.Forms
+$kioskScreen = @([System.Windows.Forms.Screen]::AllScreens | Where-Object { $KioskDisplay -and $_.DeviceName -eq $KioskDisplay })
+if ($kioskScreen.Count -ne 1) {
+    throw '-KioskDisplay names no screen of this machine: pass the device name of the kiosk''s screen (\\.\DISPLAYn)'
+}
+if ($kioskScreen[0].Primary -and -not $KioskOnPrimary) {
+    throw "-KioskDisplay $KioskDisplay is this machine's primary screen: refused without -KioskOnPrimary"
+}
+
+# What has the foreground: its process, its window class, its screen. Never
+# its title: a window of whoever uses the machine may show anything.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class KbForeground {
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)]
+    static extern int GetClassName(IntPtr hwnd, StringBuilder name, int size);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct MonitorInfoEx {
+        public int cbSize;
+        public int ml, mt, mr, mb, wl, wt, wr, wb;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+    }
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)]
+    static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfoEx info);
+    // { pid, class, screen device } of the foreground window; { 0, "", "" } when there is none.
+    public static string[] Now() {
+        IntPtr hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return new string[] { "0", "", "" };
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
+        StringBuilder cls = new StringBuilder(256);
+        GetClassName(hwnd, cls, cls.Capacity);
+        MonitorInfoEx info = new MonitorInfoEx();
+        info.cbSize = Marshal.SizeOf(typeof(MonitorInfoEx));
+        IntPtr monitor = MonitorFromWindow(hwnd, 2 /* MONITOR_DEFAULTTONEAREST */);
+        string device = (monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info)) ? info.szDevice : "";
+        return new string[] { pid.ToString(), cls.ToString(), device };
+    }
+}
+'@
+
+# The kiosk's browser process: the one Chrome process without --type= whose
+# profile is the kiosk's and which listens on -DebugPort. Exactly one, or none
+# is trusted. With -OwnerLink it is the one this run started.
+function Get-KioskPid {
+    $tags = if ($OwnerLink) { @('.chrome-owner') } else { @('.chrome-client', '.chrome-owner') }
+    $found = @(Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object {
+        $cmd = $_.CommandLine
+        $cmd -and $cmd -notmatch '--type=' -and $cmd -match "--remote-debugging-port=$DebugPort(\s|`"|$)" -and
+            @($tags | Where-Object {
+                # The profile folder is the END of the path: not .chrome-owner2.
+                $t = [regex]::Escape($_)
+                $cmd -match ('--user-data-dir=("[^"]*\\' + $t + '"|[^"\s]*\\' + $t + '(\s|"|$))')
+            }).Count -gt 0
+    })
+    if ($found.Count -ne 1) { throw "the kiosk's browser process is not one ($($found.Count)): no key is typed" }
+    if ($OwnerLink -and $found[0].CreationDate -lt $scriptStart) {
+        throw "the kiosk's browser process predates this run: no key is typed"
+    }
+    return [uint32]$found[0].ProcessId
+}
+
+# '' when the foreground is the kiosk on its screen; otherwise which rule
+# failed, with the class and the process id of the window that has it.
+function Test-KioskForeground([uint32] $KioskPid) {
+    $fg = [KbForeground]::Now()
+    $why = if ([uint32]$fg[0] -ne $KioskPid) { 'another process' }
+           elseif ($fg[1] -ne 'Chrome_WidgetWin_1') { 'not a browser window' }
+           elseif ($fg[2] -ne $KioskDisplay) { 'another screen' }
+           else { '' }
+    if (-not $why) { return '' }
+    return "the foreground is $why (class $($fg[1]), pid $($fg[0]))"
 }
 if (-not $ResultsDir) { $ResultsDir = Join-Path $PSScriptRoot 'results' }
 if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsDir | Out-Null }
@@ -193,6 +283,8 @@ try {
 
     $jsonl = Join-Path $ResultsDir 'keyboard.jsonl'
     if (Test-Path $jsonl) { Remove-Item $jsonl }
+    $kioskPid = Get-KioskPid
+    Write-Host "kiosk        : browser process $kioskPid, screen $KioskDisplay"
 
     foreach ($profileName in $Profiles) {
         $tablePath = Join-Path $PSScriptRoot "keyboard\$profileName.json"
@@ -202,9 +294,27 @@ try {
         Write-Host ""
         Write-Host "=== $profileName ($($table.layout)) ==="
 
+        # Before each table: the keys go nowhere unless the kiosk has the
+        # foreground. No second try: the run stops, and the finally does the rest.
+        $bad = Test-KioskForeground $kioskPid
+        if ($bad) {
+            ([pscustomobject]@{ profile = $profileName; fidelity = $fidelity; aborted = $true
+                                error = "not typed: $bad" } |
+                ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            throw "ABORT before the $profileName keys: $bad"
+        }
         $mark = (Get-Item $workerLog.FullName).Length
         Cdp keys $tablePath | Out-Null
         Start-Sleep -Seconds 2
+        # And after it: a foreground that changed while the host typed makes the
+        # whole table unjudgeable (some keys went elsewhere), and stops the run.
+        $bad = Test-KioskForeground $kioskPid
+        if ($bad) {
+            ([pscustomobject]@{ profile = $profileName; fidelity = $fidelity; invalid = $true
+                                error = "typed, not judged: $bad" } |
+                ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            throw "ABORT after the $profileName keys, which are not judged: $bad"
+        }
 
         # Read from the mark: everything the worker logged while we typed.
         $fs = [System.IO.File]::Open($workerLog.FullName, 'Open', 'Read', 'ReadWrite')

@@ -279,6 +279,11 @@ MITIGATIONS = {
         "most on a self-stream (a key CDP pressed was never down for the OS, so its first echo "
         "looks like a fresh press). A player on such a stream types a character forty times a "
         "second until the stream ends.",
+    "keyboard-foreground":
+        "On a self-stream the host types each key into the window that has the foreground, so "
+        "keyboard-check.ps1 types only while the kiosk's own browser window has it, on "
+        "-KioskDisplay, and stops at the first table where it does not. Give the kiosk the "
+        "foreground (a click on it) and keep the machine's other windows still for the run.",
     "keyboard-not-armed":
         "Not one [KBD] line while keys were being typed. The instrument is read by the process "
         "that HANDLES the keys, and in worker mode — the default — that is the stream "
@@ -763,6 +768,12 @@ def analyse(results_dir):
     # alarm. Which is which comes from the table's own `role`, because only the
     # person who wrote the table knows what the key is for.
     for run in keyboard:
+        if run.get("aborted") or run.get("invalid"):
+            # keyboard-check.ps1 stopped: the kiosk did not have the foreground.
+            flag_anomaly("keyboard-foreground",
+                         f"{run.get('profile')}: the keys left the kiosk, the run stopped",
+                         str(run.get("error")), owner="Opus")
+            continue
         if run.get("error"):
             flag_anomaly("keyboard-not-armed",
                          f"{run.get('profile')}: no keyboard diagnostic came back",
