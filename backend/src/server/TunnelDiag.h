@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <QHostAddress>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QString>
@@ -41,6 +42,9 @@
  * The line is built from this file's own words only: a state is one of a closed
  * list or "other", a candidate kind is one of the 24 this file knows, and every
  * number is clamped. A key or a value outside those lists is dropped.
+ *
+ * A tunnel that does open writes one line too (openedLine): the path ICE
+ * settled on and the class of the browser's address, never the address.
  *
  * Kept apart from ControlTunnel, which needs libdatachannel, so it can be tested
  * on its own.
@@ -127,6 +131,55 @@ inline QString describe(const QJsonObject& msg)
         line += QStringLiteral("; no check counters");
     }
     return line;
+}
+
+/**
+ * What kind of address the browser's end of a tunnel is, never the address:
+ * "private v4", "cgnat v4", "link-local v4", "public v4", "ula v6",
+ * "link-local v6", "public v6", "loopback", or "unresolved" (an mDNS name, an
+ * empty or unreadable one).
+ */
+inline QString addressClass(const QString& address)
+{
+    QHostAddress a;
+    if (address.isEmpty() || !a.setAddress(address)) return QStringLiteral("unresolved");
+    if (a.isLoopback()) return QStringLiteral("loopback");
+    bool v4 = false;
+    const quint32 ip = a.toIPv4Address(&v4); // also "::ffff:a.b.c.d"
+    if (v4) {
+        const QHostAddress four(ip);
+        const auto in = [&four](const char* subnet) {
+            return four.isInSubnet(QHostAddress::parseSubnet(QLatin1String(subnet)));
+        };
+        if (in("10.0.0.0/8") || in("172.16.0.0/12") || in("192.168.0.0/16"))
+            return QStringLiteral("private v4");
+        if (in("100.64.0.0/10")) return QStringLiteral("cgnat v4");
+        if (in("169.254.0.0/16")) return QStringLiteral("link-local v4");
+        return QStringLiteral("public v4");
+    }
+    if (a.isInSubnet(QHostAddress::parseSubnet(QStringLiteral("fe80::/10"))))
+        return QStringLiteral("link-local v6");
+    if (a.isInSubnet(QHostAddress::parseSubnet(QStringLiteral("fc00::/7"))))
+        return QStringLiteral("ula v6");
+    return QStringLiteral("public v6");
+}
+
+/**
+ * The line for a tunnel whose channel has just opened, without the session's
+ * name: the path ICE settled on at both ends, and the class of the browser's
+ * address. Issue #48 had a car that only ever got through over TCP, and the
+ * log said so for the streams but never for the tunnel.
+ *
+ * The types and transports come from ControlTunnel's own words for
+ * libdatachannel's enums (host, srflx, prflx, relay; udp, tcp-active,
+ * tcp-passive, tcp-so, tcp), the class from addressClass.
+ */
+inline QString openedLine(const QString& localType, const QString& localTransport,
+                          const QString& remoteType, const QString& remoteTransport,
+                          const QString& remoteAddress)
+{
+    return QStringLiteral("open — route %1/%2 here, %3/%4 at the browser, a %5 address")
+        .arg(localType, localTransport, remoteType, remoteTransport, addressClass(remoteAddress));
 }
 
 /**

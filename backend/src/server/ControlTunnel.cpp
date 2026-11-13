@@ -100,6 +100,33 @@ bool isForbiddenHeader(const QString& name)
 constexpr int kMaxSocketsPerPeer = 8;
 constexpr int kMaxInFlightRequests = 24;
 
+// This file's words for a candidate's type and transport, for the line a tunnel
+// writes when its channel opens (TunnelDiag::openedLine).
+QString candidateType(const rtc::Candidate& c)
+{
+    switch (c.type()) {
+    case rtc::Candidate::Type::Host: return QStringLiteral("host");
+    case rtc::Candidate::Type::ServerReflexive: return QStringLiteral("srflx");
+    case rtc::Candidate::Type::PeerReflexive: return QStringLiteral("prflx");
+    case rtc::Candidate::Type::Relayed: return QStringLiteral("relay");
+    case rtc::Candidate::Type::Unknown: break;
+    }
+    return QStringLiteral("unknown");
+}
+
+QString candidateTransport(const rtc::Candidate& c)
+{
+    switch (c.transportType()) {
+    case rtc::Candidate::TransportType::Udp: return QStringLiteral("udp");
+    case rtc::Candidate::TransportType::TcpActive: return QStringLiteral("tcp-active");
+    case rtc::Candidate::TransportType::TcpPassive: return QStringLiteral("tcp-passive");
+    case rtc::Candidate::TransportType::TcpSo: return QStringLiteral("tcp-so");
+    case rtc::Candidate::TransportType::TcpUnknown: return QStringLiteral("tcp");
+    case rtc::Candidate::TransportType::Unknown: break;
+    }
+    return QStringLiteral("unknown");
+}
+
 } // namespace
 
 ControlTunnel::ControlTunnel(HttpServer* http, AuthManager* auth, AppSettings* settings,
@@ -663,6 +690,34 @@ void ControlTunnel::buildPeerConnection(Peer& p)
             Qt::QueuedConnection);
     });
 
+    // Which path the tunnel took, once, without an address: a car that only
+    // got through over TCP showed it in its streams' logs and never in the
+    // tunnel's (issue #48).
+    p.dc->onOpen([this, id, attempt]() {
+        QMetaObject::invokeMethod(
+            this,
+            [this, id, attempt]() {
+                const Peer* pp = peer(id);
+                if (!pp || pp->attempt != attempt || !pp->pc) return;
+                QString line = QStringLiteral("open — route not reported");
+                try {
+                    rtc::Candidate local;
+                    rtc::Candidate remote;
+                    if (pp->pc->getSelectedCandidatePair(&local, &remote)) {
+                        const auto addr = remote.address();
+                        line = TunnelDiag::openedLine(
+                            candidateType(local), candidateTransport(local), candidateType(remote),
+                            candidateTransport(remote),
+                            addr.has_value() ? QString::fromStdString(*addr) : QString());
+                    }
+                } catch (const std::exception&) {
+                    // No pair that can be described: the line says so.
+                }
+                Logger::info(QStringLiteral("[Tunnel] Session %1 %2").arg(id.left(8), line));
+            },
+            Qt::QueuedConnection);
+    });
+
     p.dc->onBufferedAmountLow([this, id]() {
         QMetaObject::invokeMethod(
             this,
@@ -762,6 +817,7 @@ void ControlTunnel::dropPeer(const QString& sessionId, const QString& why)
         owned->dc->onMessage(nullptr, nullptr);
         owned->dc->onBufferedAmountLow(nullptr);
         owned->dc->onClosed(nullptr);
+        owned->dc->onOpen(nullptr);
         owned->dc->close();
     }
     if (owned->pc) {

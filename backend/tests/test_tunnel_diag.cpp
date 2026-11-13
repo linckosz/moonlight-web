@@ -8,7 +8,8 @@
  * issue #48). What matters: the log line is made of this file's words and
  * clamped numbers only, nothing the browser wrote reaches it as written, and
  * the lines an hour are bounded across all sessions, the rest counted and said
- * once.
+ * once. And for a tunnel that did open, the line names its path and the class
+ * of the browser's address, never the address.
  */
 
 #include "../src/server/TunnelDiag.h"
@@ -130,5 +131,38 @@ void run_tunnel_diag_tests()
         Limiter lim;
         CHECK(lim.admit(0));
         CHECK_EQ(lim.closeWindow(kWindowMs * 2), 0);
+    }
+
+    SECTION("TunnelDiag — the browser's address by its class, never by itself");
+    {
+        CHECK_EQ(addressClass(QStringLiteral("192.168.1.42")), QStringLiteral("private v4"));
+        CHECK_EQ(addressClass(QStringLiteral("10.20.30.40")), QStringLiteral("private v4"));
+        CHECK_EQ(addressClass(QStringLiteral("172.31.255.1")), QStringLiteral("private v4"));
+        CHECK_EQ(addressClass(QStringLiteral("172.32.0.1")), QStringLiteral("public v4"));
+        CHECK_EQ(addressClass(QStringLiteral("100.64.0.1")), QStringLiteral("cgnat v4"));
+        CHECK_EQ(addressClass(QStringLiteral("100.127.255.254")), QStringLiteral("cgnat v4"));
+        CHECK_EQ(addressClass(QStringLiteral("100.128.0.1")), QStringLiteral("public v4"));
+        CHECK_EQ(addressClass(QStringLiteral("169.254.7.7")), QStringLiteral("link-local v4"));
+        CHECK_EQ(addressClass(QStringLiteral("203.0.113.9")), QStringLiteral("public v4"));
+        CHECK_EQ(addressClass(QStringLiteral("::ffff:192.168.1.5")), QStringLiteral("private v4"));
+        CHECK_EQ(addressClass(QStringLiteral("fe80::1")), QStringLiteral("link-local v6"));
+        CHECK_EQ(addressClass(QStringLiteral("fd7a:115c:a1e0::1")), QStringLiteral("ula v6"));
+        CHECK_EQ(addressClass(QStringLiteral("2001:db8::5")), QStringLiteral("public v6"));
+        CHECK_EQ(addressClass(QStringLiteral("127.0.0.1")), QStringLiteral("loopback"));
+        CHECK_EQ(addressClass(QStringLiteral("::1")), QStringLiteral("loopback"));
+        CHECK_EQ(addressClass(QString()), QStringLiteral("unresolved"));
+        CHECK_EQ(addressClass(QStringLiteral("4f1c-car.local")), QStringLiteral("unresolved"));
+    }
+
+    SECTION("TunnelDiag — an opened tunnel says its path and no address");
+    {
+        // The car of issue #48 on its LTE: our passive TCP side, the browser
+        // dialling from behind its carrier's NAT.
+        const QString line = openedLine(QStringLiteral("host"), QStringLiteral("tcp-passive"),
+                                        QStringLiteral("prflx"), QStringLiteral("tcp-active"),
+                                        QStringLiteral("198.51.100.23"));
+        CHECK_EQ(line, QStringLiteral("open — route host/tcp-passive here, prflx/tcp-active at the "
+                                      "browser, a public v4 address"));
+        CHECK(!line.contains(QStringLiteral("198.51")));
     }
 }
