@@ -37,8 +37,10 @@ class QThread;
  * Only the latest non-empty file of each kind — the server's log, the last
  * stream worker's, the browsers', the probe's, a bench's last traces... — never
  * the whole directory: a busy host keeps a week of them (a bench machine, 1.5 GB
- * in 6,000 files), and what explains a problem is what was written last. An
- * about.txt says which build and which system wrote them.
+ * in 6,000 files), and what explains a problem is what was written last. A log
+ * that rotates (the server's, the browsers') comes with its previous
+ * generations, kGenerationsKept in all. An about.txt says which build and which
+ * system wrote them.
  * Every file, about.txt included, goes through one LogScrubber first: the
  * archive is made to be posted, and what is secret or personal in a log is
  * taken out before it goes in.
@@ -79,7 +81,12 @@ public:
     /// its own kind, and the files one run names after itself are one kind:
     /// every `…-worker-<pid>.log`, every `click-trace-<pid>-<ms>.csv`.
     static QString kindOf(const QString& fileName);
-    /// The newest non-empty file of each kind among @p files, oldest first.
+    /// How many generations of a rotating log go in: the live file and the
+    /// archives before it. Each is at most Logger::kMaxFileBytes.
+    static constexpr int kGenerationsKept = 3;
+
+    /// The newest non-empty file of each kind among @p files, and for a log
+    /// that rotates its newest kGenerationsKept generations; oldest first.
     /// Each file's size and date are asked again by its path: a directory
     /// listing's are stale for a file still open for writing (Windows).
     static QList<QFileInfo> latestPerKind(const QList<QFileInfo>& files);

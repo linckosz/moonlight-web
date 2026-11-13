@@ -192,11 +192,42 @@ void run_log_archive_tests()
         QStringList names;
         for (const QFileInfo& f : picked)
             names << f.fileName();
-        CHECK_EQ(names, QStringList({"moonlightweb-probe.log", "moonlightweb-worker-200.log",
-                                     "moonlightweb.log"}));
+        CHECK_EQ(names, QStringList({"moonlightweb-probe.log", "moonlightweb.log.20260929-080000",
+                                     "moonlightweb-worker-200.log", "moonlightweb.log"}));
     }
 
-    // The whole job, on its thread: about.txt plus those three, nothing else.
+    // A log that rotates: its last kGenerationsKept generations, the live one
+    // first among them, an empty one skipped. A kind named after each run is
+    // other runs, not generations: still only the last (issue #48, a morning's
+    // attempts rotated out of the archive by a host with Debug on).
+    {
+        QTemporaryDir rot;
+        CHECK(rot.isValid());
+        const QString d = rot.path();
+        touch(d + "/moonlightweb.log", "live\n", now);
+        touch(d + "/moonlightweb.log.20261109-081300", "gen 1\n", now.addSecs(-60));
+        touch(d + "/moonlightweb.log.20261109-080500", "", now.addSecs(-90)); // empty
+        touch(d + "/moonlightweb.log.20261109-075500", "gen 2\n", now.addSecs(-120));
+        touch(d + "/moonlightweb.log.20261109-074000", "gen 3, too old\n", now.addSecs(-180));
+        touch(d + "/moonlightweb-client.log", "client live\n", now.addSecs(-5));
+        touch(d + "/moonlightweb-client.log.20261109-080000", "client gen 1\n", now.addSecs(-70));
+        touch(d + "/moonlightweb-worker-100.log", "stream 1\n", now.addSecs(-300));
+        touch(d + "/moonlightweb-worker-200.log", "stream 2\n", now.addSecs(-200));
+        touch(d + "/moonlightweb-worker-300.log", "stream 3\n", now.addSecs(-100));
+        const QList<QFileInfo> picked =
+            LogArchive::latestPerKind(QDir(d).entryInfoList(QDir::Files));
+        QStringList names;
+        for (const QFileInfo& f : picked)
+            names << f.fileName();
+        CHECK_EQ(LogArchive::kGenerationsKept, 3);
+        CHECK_EQ(names,
+                 QStringList({"moonlightweb.log.20261109-075500", "moonlightweb-worker-300.log",
+                              "moonlightweb-client.log.20261109-080000",
+                              "moonlightweb.log.20261109-081300", "moonlightweb-client.log",
+                              "moonlightweb.log"}));
+    }
+
+    // The whole job, on its thread: about.txt plus those four, nothing else.
     {
         LogArchive archive;
         CHECK_EQ(archive.status().state, QString("idle"));
@@ -207,12 +238,14 @@ void run_log_archive_tests()
             QThread::msleep(10);
         const LogArchive::Status s = archive.status();
         CHECK_EQ(s.state, QString("done"));
-        CHECK_EQ(s.files, 3);
+        CHECK_EQ(s.files, 4);
         CHECK_EQ(s.doneBytes, s.totalBytes);
         CHECK_EQ(s.fileName, QString("logs.zip"));
         const QMap<QString, Entry> entries = readZip(archive.result());
-        CHECK_EQ(entries.keys(), QStringList({"about.txt", "moonlightweb-probe.log",
-                                              "moonlightweb-worker-200.log", "moonlightweb.log"}));
+        CHECK_EQ(entries.keys(),
+                 QStringList({"about.txt", "moonlightweb-probe.log", "moonlightweb-worker-200.log",
+                              "moonlightweb.log", "moonlightweb.log.20260929-080000"}));
+        CHECK(holds(entries.value("moonlightweb.log.20260929-080000"), "yesterday\n"));
         CHECK(holds(entries.value("moonlightweb-worker-200.log"), "last stream\n"));
         CHECK(holds(entries.value("about.txt"), "about\n"));
 

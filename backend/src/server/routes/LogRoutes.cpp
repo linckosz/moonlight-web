@@ -81,7 +81,9 @@ QByteArray aboutText()
     if (!AppSettings::fileOverride().isEmpty())
         s += QStringLiteral("Settings file: %1 (--config)\n")
                  .arg(QDir::toNativeSeparators(AppSettings::fileOverride()));
-    s += QStringLiteral("\nEach log is the latest non-empty one of its kind.\n\n");
+    s += QStringLiteral("\nEach log is the latest non-empty one of its kind; a log that rotates "
+                        "comes with its previous files, %1 in all.\n\n")
+             .arg(LogArchive::kGenerationsKept);
     s += LogScrubber::notice();
     return s.toUtf8();
 }

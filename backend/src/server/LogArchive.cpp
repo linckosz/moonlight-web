@@ -53,7 +53,7 @@ QString LogArchive::kindOf(const QString& fileName)
 
 QList<QFileInfo> LogArchive::latestPerKind(const QList<QFileInfo>& files)
 {
-    QHash<QString, QFileInfo> latest;
+    QHash<QString, QList<QFileInfo>> byKind;
     for (const QFileInfo& listed : files) {
         // Asked again by its path, not taken from the directory listing. On
         // Windows the listing says what the file was when its writer last
@@ -63,11 +63,24 @@ QList<QFileInfo> LogArchive::latestPerKind(const QList<QFileInfo>& files)
         // in this run (a first install, a rotation) is the same.
         const QFileInfo f(listed.absoluteFilePath());
         if (!f.isFile() || f.size() == 0) continue;
-        const QString kind = kindOf(f.fileName());
-        auto it = latest.find(kind);
-        if (it == latest.end() || f.lastModified() > it->lastModified()) latest[kind] = f;
+        byKind[kindOf(f.fileName())].append(f);
     }
-    QList<QFileInfo> out = latest.values();
+    QList<QFileInfo> out;
+    for (auto it = byKind.begin(); it != byKind.end(); ++it) {
+        QList<QFileInfo>& kind = it.value();
+        std::sort(kind.begin(), kind.end(), [](const QFileInfo& a, const QFileInfo& b) {
+            return a.lastModified() > b.lastModified();
+        });
+        // A log that rotates is one file in several generations: the live one,
+        // named as its kind, and its `<kind>.<stamp>` archives. One generation
+        // can be a few minutes of a busy host with Debug on, which left a
+        // morning's attempts out of the archive (issue #48, 09/11/2026), so the
+        // last few go in. The files of a kind named after each run (`-*`) are
+        // other runs, not earlier parts of this one: only the last.
+        const QString& name = kind.first().fileName();
+        const bool generations = name == it.key() || name.startsWith(it.key() + QLatin1Char('.'));
+        out.append(kind.mid(0, generations ? kGenerationsKept : 1));
+    }
     std::sort(out.begin(), out.end(), [](const QFileInfo& a, const QFileInfo& b) {
         return a.lastModified() < b.lastModified();
     });
