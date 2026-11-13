@@ -26,10 +26,17 @@
  *  - continuous: whole-pixel deltas, and wheel ticks of delta / 40, so the
  *    legacy wheelDelta reads -3 × delta, give or take the 1 lost when
  *    120 × delta / 40 is rounded (131 for a delta of -44);
- *  - notched: the accelerated Cocoa delta × 40, nearly always fractional, and
- *    the raw notch count, so wheelDelta moves in steps of 120.
- * Chrome 126 on a MacBook Air M3 sorted 167 events of 167 this way, an M590
- * wheel and the trackpad (test/fixtures/wheel-chrome-mac.json, 12/11/2026).
+ *  - notched: the accelerated Cocoa delta × 40 and the raw notch count, so
+ *    wheelDelta moves by notches whatever the delta.
+ * A page zoom divides the deltas and wheelDelta alike: at 110 %, a notch reads
+ * 109 and a trackpad step of 1 px reads 0.909, wheelDelta -2. The identity
+ * holds at any zoom; whole pixels and steps of 120 do not.
+ *
+ * Measured in Chrome 126 on a MacBook Air M3, an M590 wheel and the trackpad,
+ * at 100 % and 110 % (test/fixtures/wheel-chrome-mac.json): all 1,459 trackpad
+ * events sit on the identity. Of 201 wheel events, 6 land on it by chance in
+ * the middle of a burst, never the first of a gesture, which sits about 100
+ * away: hence a decision per gesture (WheelSourceTracker).
  *
  * Continuous is not "trackpad". A Magic Mouse is continuous too, and so is a
  * wheel that a utility smooths (Logi Options+, Mos): Chromium "cannot
@@ -38,9 +45,10 @@
  * Elsewhere the mark is missing, so the kind is unknown there:
  *  - Safari: WebKit gives both kinds a wheelDelta of 3 × delta
  *    (Source/WebKit/Shared/mac/WebEventFactory.mm);
- *  - Windows and Linux: wheelDelta is the system's raw value, 120 a notch, and
- *    a high-resolution or free-spinning wheel sends less, like a touchpad.
- *    Still to be measured before anything is read there.
+ *  - Windows and Linux: wheelDelta is the system's raw value, 120 a notch
+ *    (Chrome 157 on Windows: deltaY 100, wheelDelta -120), and a
+ *    high-resolution or free-spinning wheel sends less, like a touchpad. No
+ *    touchpad has been measured there yet.
  * Pages are not given a gesture's phase or inertia. A decision taken from the
  * tail of a gesture would come after its first notches were already sent.
  */
@@ -54,6 +62,12 @@ export const WHEEL_CONTINUOUS = 'continuous';
  * 16 ms until it stops.
  */
 export const WHEEL_GESTURE_GAP_MS = 250;
+
+/**
+ * How far wheelDelta may sit from -3 × delta on a continuous event: Chromium
+ * rounds 120 × delta / 40 toward zero, after the zoom.
+ */
+const IDENTITY_SLACK = 1.01;
 
 /**
  * Where the kind of a wheel event can be read: 'chromium-mac' (Chrome, Edge,
@@ -74,20 +88,10 @@ export function wheelSourceSupport(
     return 'chromium-mac';
 }
 
-/** True when v is a whole number of 120-unit notches, 0 included. */
-function inNotches(v) {
-    return v % 120 === 0;
-}
-
 /**
  * The kind of one wheel event, read the way Chromium on macOS builds it.
- * Only meaningful where wheelSourceSupport() says so.
- *
- * A notched event needs both readings: wheelDelta in whole notches on both
- * axes, and not the continuous identity. An event they disagree on stays
- * continuous, the side that is never inverted. Blink divides both the deltas
- * and wheelDelta by devicePixelRatio, so a page zoom other than 100 % may move
- * either reading: it is still to be measured.
+ * Only meaningful where wheelSourceSupport() says so. Continuous when both
+ * axes sit on the identity wheelDelta = -3 × delta, notched otherwise.
  *
  * @param {{deltaX: number, deltaY: number, deltaMode: number,
  *   wheelDeltaX?: number, wheelDeltaY?: number}} e
@@ -97,20 +101,21 @@ export function wheelEventKind(e) {
     const { deltaX: dx, deltaY: dy, deltaMode, wheelDeltaX: wdx, wheelDeltaY: wdy } = e;
     if (deltaMode !== 0 || typeof wdx !== 'number' || typeof wdy !== 'number') return null;
     if (!dx && !dy) return null;
-    if (!inNotches(wdx) || !inNotches(wdy) || (wdx === 0 && wdy === 0)) return WHEEL_CONTINUOUS;
-    const whole = Number.isInteger(dx) && Number.isInteger(dy);
-    if (whole && Math.abs(wdx + 3 * dx) <= 1 && Math.abs(wdy + 3 * dy) <= 1) {
-        return WHEEL_CONTINUOUS;
-    }
-    return WHEEL_NOTCHED;
+    const onIdentity =
+        Math.abs(wdx + 3 * dx) <= IDENTITY_SLACK && Math.abs(wdy + 3 * dy) <= IDENTITY_SLACK;
+    return onIdentity ? WHEEL_CONTINUOUS : WHEEL_NOTCHED;
 }
 
 /**
  * The kind of a whole gesture, so that one never changes kind halfway: the
  * gesture's first readable event decides, and the decision holds until the
  * wheel pauses. A notched burst opens on a small accelerated delta (4 px on the
- * M590), far from the continuous identity, where a later event could land on
- * it by chance (exactly 40 px for one notch).
+ * M590), far from the continuous identity, where a later event can land on it
+ * by chance (39.976 px for one notch).
+ *
+ * It gives a kind, never a direction. A notch that bounces back during a fast
+ * turn (seen on a Logitech M331) keeps its own sign and its gesture's kind, so
+ * whatever is done to the gesture is done to it too.
  */
 export class WheelSourceTracker {
     /** @param {number} [gapMs] */

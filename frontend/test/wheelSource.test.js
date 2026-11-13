@@ -16,19 +16,35 @@ import {
     wheelSourceSupport,
 } from '../js/stream/WheelSource.js';
 
-// Real events from Chrome 126 on a MacBook Air M3: a Logitech M590 notched
-// wheel and the built-in trackpad, natural scrolling on.
-const RECORDED = JSON.parse(
-    readFileSync(
-        join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'wheel-chrome-mac.json'),
-        'utf8',
-    ),
-);
+function fixture(name) {
+    return JSON.parse(
+        readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', name), 'utf8'),
+    );
+}
+
+// Real events from Chrome 126 on a MacBook Air M3, an M590 notched wheel and
+// the trackpad, at page zoom 100 % and 110 %; and from Chrome 157 on Windows,
+// a Logitech M331 wheel.
+const MAC = fixture('wheel-chrome-mac.json').recordings;
+const WINDOWS = fixture('wheel-chrome-windows.json').events;
 
 /** A wheel event as the page sees it, from one recorded row. */
 function ev([deltaX, deltaY, deltaMode, wheelDeltaX, wheelDeltaY, ms]) {
     return { deltaX, deltaY, deltaMode, wheelDeltaX, wheelDeltaY, timeStamp: ms };
 }
+
+/** The kind of every event of a recording, through one tracker. */
+function trackAll(rows) {
+    const t = new WheelSourceTracker();
+    return rows.map((r) => t.kindOf(ev(r), r[5]));
+}
+
+/** The rows that open a gesture: the first, and each one after a pause. */
+function gestureStarts(rows) {
+    return rows.filter((r, i) => i === 0 || r[5] - rows[i - 1][5] > WHEEL_GESTURE_GAP_MS);
+}
+
+const KIND = { wheel: WHEEL_NOTCHED, trackpad: WHEEL_CONTINUOUS };
 
 const UA = {
     chromeMac:
@@ -40,7 +56,7 @@ const UA = {
     firefoxMac:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0',
     chromeWindows:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36',
     chromeLinux:
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 };
@@ -63,23 +79,41 @@ describe('where the kind of a wheel event can be read', () => {
     });
 });
 
-describe('the kind of one recorded event (Chrome 126, macOS)', () => {
-    for (const [name, rows] of Object.entries(RECORDED.gestures)) {
-        const want = name.startsWith('wheel_') ? WHEEL_NOTCHED : WHEEL_CONTINUOUS;
-        it(`reads every event of ${name} as ${want}`, () => {
-            const kinds = rows.map((r) => wheelEventKind(ev(r)));
+describe('the recorded gestures, Chrome 126 on macOS', () => {
+    for (const rec of MAC) {
+        const want = KIND[rec.device];
+
+        it(`reads every event of "${rec.name}" (zoom ${rec.zoom}) as ${want}`, () => {
+            const kinds = trackAll(rec.events);
             expect(kinds.filter((k) => k !== want)).toEqual([]);
             expect(kinds.length).toBeGreaterThan(20);
         });
+
+        it(`reads the first event of each gesture of "${rec.name}" on its own as ${want}`, () => {
+            const starts = gestureStarts(rec.events);
+            expect(starts.map((r) => wheelEventKind(ev(r)))).toEqual(starts.map(() => want));
+        });
     }
 
-    it('takes a trackpad event that lost 1 to rounding for a continuous one', () => {
-        // -3 × -44 = 132; Chromium's 120 × -44 / 40 came out as 131.
-        expect(wheelEventKind(ev([9, -44, 0, -27, 131, 0]))).toBe(WHEEL_CONTINUOUS);
+    it('reads every trackpad event on its own as continuous, at 100 % and 110 %', () => {
+        const rows = MAC.filter((r) => r.device === 'trackpad').flatMap((r) => r.events);
+        expect(rows.length).toBeGreaterThan(1400);
+        expect(rows.filter((r) => wheelEventKind(ev(r)) !== WHEEL_CONTINUOUS)).toEqual([]);
+    });
+
+    it('covers a page zoom of 110 %, where a notch reads 109 and deltas are fractional', () => {
+        const zoomed = MAC.filter((r) => r.zoom === 1.1);
+        expect(zoomed.map((r) => r.device).sort()).toEqual(['trackpad', 'wheel']);
+        expect(zoomed.find((r) => r.device === 'wheel').events[0][4]).toBe(-109);
     });
 });
 
 describe('the kind of one event, at the edges', () => {
+    it('takes a trackpad event that lost 1 to rounding for a continuous one', () => {
+        // -3 × -44 = 132; Chromium's 120 × -44 / 40 came out as 131.
+        expect(wheelEventKind(ev([9, -44, 0, -27, 131, 0]))).toBe(WHEEL_CONTINUOUS);
+    });
+
     it('cannot tell without wheelDelta, nor in lines or pages', () => {
         expect(wheelEventKind({ deltaX: 0, deltaY: 4, deltaMode: 0 })).toBeNull();
         expect(
@@ -107,27 +141,21 @@ describe('the kind of one event, at the edges', () => {
     });
 
     it('reads a tilt wheel, notched on the horizontal axis only', () => {
-        expect(wheelEventKind(ev([39.5, 0, 0, -120, 0, 0]))).toBe(WHEEL_NOTCHED);
+        expect(wheelEventKind(ev([4, 0, 0, -120, 0, 0]))).toBe(WHEEL_NOTCHED);
     });
 
-    it('leaves continuous an event whose wheelDelta is not in whole notches', () => {
-        // Fractional deltas, as a page zoom might give a trackpad: never inverted.
-        expect(wheelEventKind(ev([0, -11.818, 0, 0, 39, 0]))).toBe(WHEEL_CONTINUOUS);
-    });
-
-    it('reads as continuous a notch that lands exactly on the identity', () => {
-        // One notch of exactly 40 px with wheelDelta 120 looks continuous on its own.
-        expect(wheelEventKind(ev([0, -40, 0, 0, 120, 0]))).toBe(WHEEL_CONTINUOUS);
+    it('reads a notch that lands on the identity as continuous, on its own', () => {
+        // Recorded: one notch of 39.976 px, wheelDelta -120, inside a burst.
+        expect(wheelEventKind(ev([0, 39.976, 0, 0, -120, 0]))).toBe(WHEEL_CONTINUOUS);
     });
 });
 
 describe('the kind of a gesture', () => {
     it('is decided by its first event and held, so a gesture never changes kind', () => {
         const t = new WheelSourceTracker();
-        // A notched burst opens on 4 px; its 40 px event alone would read continuous.
-        expect(t.kindOf(ev([0, -4, 0, 0, 120, 0]), 0)).toBe(WHEEL_NOTCHED);
-        expect(t.kindOf(ev([0, -40, 0, 0, 120, 0]), 30)).toBe(WHEEL_NOTCHED);
-        expect(t.kindOf(ev([0, -146.2, 0, 0, 360, 0]), 60)).toBe(WHEEL_NOTCHED);
+        expect(t.kindOf(ev([0, 4, 0, 0, -120, 0]), 0)).toBe(WHEEL_NOTCHED);
+        expect(t.kindOf(ev([0, 39.976, 0, 0, -120, 0]), 27)).toBe(WHEEL_NOTCHED);
+        expect(t.kindOf(ev([0, 146.213, 0, 0, -360, 0]), 60)).toBe(WHEEL_NOTCHED);
     });
 
     it('starts again after a pause, so the trackpad after the wheel reads continuous', () => {
@@ -138,26 +166,27 @@ describe('the kind of a gesture', () => {
         expect(t.kindOf(ev([2, -12, 0, -6, 36, 0]), later + 16)).toBe(WHEEL_CONTINUOUS);
     });
 
-    it('holds through a trackpad inertia tail, events 16 ms apart', () => {
-        const t = new WheelSourceTracker();
-        const kinds = RECORDED.gestures.trackpad_down.map((r) => t.kindOf(ev(r), r[5]));
-        expect(new Set(kinds)).toEqual(new Set([WHEEL_CONTINUOUS]));
-    });
-
-    it('reads every recorded gesture right, one tracker for the whole session', () => {
-        const t = new WheelSourceTracker();
-        // The gestures were recorded one after the other, seconds apart.
-        let offset = 0;
-        for (const [name, rows] of Object.entries(RECORDED.gestures)) {
-            const want = name.startsWith('wheel_') ? WHEEL_NOTCHED : WHEEL_CONTINUOUS;
-            for (const r of rows) expect(t.kindOf(ev(r), offset + r[5])).toBe(want);
-            offset += rows[rows.length - 1][5] + 10_000;
-        }
-    });
-
     it('waits for a readable event before deciding', () => {
         const t = new WheelSourceTracker();
         expect(t.kindOf({ deltaX: 0, deltaY: -4, deltaMode: 0 }, 0)).toBeNull();
         expect(t.kindOf(ev([0, -4, 0, 0, 120, 0]), 20)).toBe(WHEEL_NOTCHED);
+    });
+
+    it('gives a notch that bounces back its gesture kind, never a kind of its own', () => {
+        // Chrome 157 on Windows, a Logitech M331 turned fast: some notches go
+        // the other way in the middle of a turn (9275, 14213, 14229, 15080 ms).
+        const bounces = WINDOWS.filter((r, i) => {
+            const prev = WINDOWS[i - 1];
+            return (
+                prev &&
+                r[5] - prev[5] <= WHEEL_GESTURE_GAP_MS &&
+                Math.sign(r[1]) !== Math.sign(prev[1])
+            );
+        });
+        expect(bounces.map((r) => r[5])).toEqual(
+            expect.arrayContaining([9275, 14213, 14229, 15080]),
+        );
+        const kinds = trackAll(WINDOWS);
+        expect(new Set(kinds)).toEqual(new Set([WHEEL_NOTCHED]));
     });
 });
