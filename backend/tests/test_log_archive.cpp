@@ -102,11 +102,11 @@ bool holds(const Entry& e, const QByteArray& expected)
 void touch(const QString& path, const QByteArray& data, const QDateTime& when)
 {
     QFile f(path);
-    f.open(QIODevice::WriteOnly);
+    CHECK(f.open(QIODevice::WriteOnly));
     f.write(data);
     f.close();
     QFile g(path);
-    g.open(QIODevice::ReadWrite);
+    CHECK(g.open(QIODevice::ReadWrite));
     g.setFileTime(when, QFileDevice::FileModificationTime);
     g.close();
 }
@@ -331,7 +331,7 @@ void run_log_archive_tests()
         log->setMinLevel(Logger::Debug);
         log->log(Logger::Debug, "verbose line");
         QFile f(dir + "/threshold.log");
-        f.open(QIODevice::ReadOnly);
+        CHECK(f.open(QIODevice::ReadOnly));
         const QByteArray text = f.readAll();
         CHECK(!text.contains("hidden line"));
         CHECK(text.contains("shown line"));

@@ -344,8 +344,12 @@ void run_rendezvous_line_tests()
         CHECK_EQ(client.keepAliveMs(), 20 * 1000);
         CHECK_EQ(client.pongTimeoutMs(), 15 * 1000);
 
-        // Sped up: pings every 50 ms, each answered on loopback at once.
+        // Sped up: pings every 50 ms, each answered on loopback at once. The
+        // pong wait, 120 ms, is shorter than the ten pings below: every pong
+        // must stop the watchdog, or the next ping would leave it running and
+        // it would cut a line that answers.
         client.setKeepAliveMs(50);
+        client.setPongTimeoutMs(120);
         client.start();
         CHECK(waitFor([&]() { return client.isOnline() && lines == 1; }, 3000));
         CHECK(waitFor([&]() { return client.pingsSent() >= 10; }, 3000));

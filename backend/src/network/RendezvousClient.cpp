@@ -707,7 +707,10 @@ void RendezvousClient::onKeepAlive()
     // something to wait for.
     m_Socket.ping();
     ++m_PingsSent;
-    m_Watchdog.start();
+    // A ping still unanswered keeps its own deadline: restarting the watchdog
+    // here would push it back at every keep-alive, and with a pong wait as long
+    // as the keep-alive (the tests' 100/100 ms) it would never fire at all.
+    if (!m_Watchdog.isActive()) m_Watchdog.start();
 }
 
 void RendezvousClient::onPong(quint64 elapsed, const QByteArray& payload)

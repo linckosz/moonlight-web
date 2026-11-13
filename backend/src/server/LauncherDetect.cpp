@@ -36,9 +36,18 @@ Launcher steamBigPicture(const QString& iconPath)
                     kSteamClose, iconPath};
 }
 
+/// A Windows path, written with backslashes whatever the OS this runs on: the
+/// lookups describe a Windows machine, and Linux and macOS test them too, where
+/// QDir::toNativeSeparators would leave Steam's forward slashes as they are.
+/// A share's leading "\\" is kept: cleanPath keeps it only on Windows.
 QString windowsPath(const QString& path)
 {
-    return QDir::toNativeSeparators(QDir::cleanPath(path.trimmed()));
+    QString p = path.trimmed();
+    p.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    const bool share = p.startsWith(QLatin1String("//"));
+    p = QDir::cleanPath(p);
+    if (share && !p.startsWith(QLatin1String("//"))) p.prepend(QLatin1Char('/'));
+    return p.replace(QLatin1Char('/'), QLatin1Char('\\'));
 }
 
 /// Joins @p dir and @p file with a backslash, the way Windows writes it.

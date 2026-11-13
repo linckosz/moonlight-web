@@ -28,7 +28,7 @@ void writeFile(const QString& path, const QByteArray& content)
 {
     QDir().mkpath(QFileInfo(path).absolutePath());
     QFile f(path);
-    f.open(QIODevice::WriteOnly);
+    CHECK(f.open(QIODevice::WriteOnly));
     f.write(content);
 }
 

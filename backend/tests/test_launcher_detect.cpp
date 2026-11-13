@@ -66,6 +66,22 @@ void run_launcher_detect_tests()
         CHECK(steam.has_value());
         CHECK_EQ(steam->iconPath, QString("D:\\Steam\\steam.exe"));
     }
+    // On a share: the leading "\\" survives, on every OS the suite runs on.
+    {
+        FakeMachine m;
+        m.registry["HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam|InstallPath"] =
+            "\\\\nas\\games\\Steam\\";
+        m.files << "\\\\nas\\games\\Steam\\steam.exe";
+        const auto steam = LauncherDetect::steamWindows(m.lookup());
+        CHECK(steam.has_value());
+        CHECK_EQ(steam ? steam->iconPath : QString(), QString("\\\\nas\\games\\Steam\\steam.exe"));
+    }
+    {
+        FakeMachine m;
+        m.registry["HKCU\\Software\\Valve\\Steam|SteamExe"] = "//nas/games/steam/steam.exe";
+        m.files << "\\\\nas\\games\\steam\\steam.exe";
+        CHECK(LauncherDetect::steamWindows(m.lookup()).has_value());
+    }
     // A registry left behind by an uninstalled Steam is no Steam.
     {
         FakeMachine m;
