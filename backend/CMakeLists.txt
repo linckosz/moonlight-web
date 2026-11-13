@@ -364,6 +364,7 @@ add_executable(mw-server
     src/network/RouterPortCore.cpp
     src/network/RouterHoles.cpp
     src/network/SocketTables.cpp
+    src/network/PortIdentity.cpp
     src/network/IceMuxCore.cpp
     src/network/IceMux.cpp
     src/network/IceMuxPorts.cpp

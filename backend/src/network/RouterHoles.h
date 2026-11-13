@@ -140,7 +140,14 @@ struct Content
     /// Whose record it is: fingerprint().
     QString owner;
     QString tag;
+    /// The lines this kind of instance may have written: what a run acts on.
     QList<Hole> holes;
+    /// The lines the other kind may have written. A DEV identity walks the
+    /// installed host's ports for a run under its bench key (PortIdentity.h)
+    /// and its own again after it, on one record: what a run of one kind
+    /// left on the router is kept here, as it was noted, for the next run
+    /// of that kind to take back. This run never acts on them.
+    QList<Hole> others;
 };
 
 /// The most a record file may weigh, and the most lines it may hold: every
@@ -151,8 +158,10 @@ constexpr qsizetype kHolesMax = 512;
 QByteArray serialize(const Content& content);
 
 /// Strict: false for anything that is not a record as serialize() writes it.
-/// A line that is malformed, or that this kind of instance may not have
-/// written, is left out and the rest is kept.
+/// A line that is malformed is left out and the rest is kept. A line this
+/// kind of instance may not have written is never among `holes`: it is among
+/// `others` when the other kind may have written it, and left out when
+/// neither may. One line a number and protocol, this kind's own first.
 bool parse(const QByteArray& json, bool devInstance, Content& out);
 
 /// Which installation a record belongs to: this machine and this data
@@ -182,6 +191,7 @@ public:
     ~File() override;
 
     QString tag() const override { return m_Content.tag; }
+    /// The lines this run may act on: never one of Content::others.
     QList<Hole> holes() const override { return m_Content.holes; }
     bool find(uint16_t external, bool tcp, Hole& out) const override;
     void note(const Hole& hole) override;

@@ -17,6 +17,7 @@
 
 #include "RouterPortAllocator.h"
 #include "RouterHoles.h"
+#include "PortIdentity.h"
 #include "RouterPortPools.h"
 #include "SocketTables.h"
 #include "UPNPClient.h"
@@ -108,7 +109,7 @@ Startup startupOf(const AppSettings& settings)
     Startup s;
     s.previousLan = settings.routerLanIp();
     s.dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    s.devInstance = mw::edition::isDev();
+    s.devInstance = mw::portidentity::devPorts();
     s.earlier.lan = s.previousLan;
     s.earlier.tunnel = settings.rememberedTunnelPorts();
     s.earlier.media = settings.rememberedMediaPorts();
@@ -518,7 +519,7 @@ void RouterPortAllocator::claimTunnelPort(QObject* context, Callback callback)
 {
     // A DEV identity walks its own block only (RouterPortPools.h), and forgets
     // what it remembers from before it had one.
-    const bool dev = mw::edition::isDev();
+    const bool dev = mw::portidentity::devPorts();
     QList<uint16_t> remembered;
     for (const quint16 p : m_Settings->rememberedTunnelPorts()) {
         if (RouterPortCore::tunnelPortAllowed(dev, p))
@@ -574,8 +575,8 @@ void RouterPortAllocator::claimMediaPort(int slot, uint16_t internalPort, QObjec
         remembered = 0;
     }
     RouterPortCore::Request request =
-        RouterPortCore::mediaRequest(static_cast<bool>(m_MuxHolds), mw::edition::isDev(), slot,
-                                     internalPort, remembered, muxHoldsPort);
+        RouterPortCore::mediaRequest(static_cast<bool>(m_MuxHolds), mw::portidentity::devPorts(),
+                                     slot, internalPort, remembered, muxHoldsPort);
     if (!request.hasCandidate()) {
         answerLater(Purpose::Media, slot, context, std::move(callback), {},
                     QStringLiteral("its port is one every stream shares"));
@@ -604,7 +605,7 @@ void RouterPortAllocator::claimMuxPort(int which, uint16_t current,
     // The port the mux serves now, then the one the router gave last time. A
     // remembered port this kind of instance may not hold is forgotten: a
     // --dev that was the installed host's settings once.
-    const bool dev = mw::edition::isDev();
+    const bool dev = mw::portidentity::devPorts();
     QList<uint16_t> first;
     if (current != 0) first.append(current);
     if (const quint16 remembered = m_Settings->rememberedMuxPort(which)) {

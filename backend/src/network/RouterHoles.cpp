@@ -271,16 +271,20 @@ QList<Hole> earlierHoles(bool devInstance, const Earlier& earlier, const QString
 
 QByteArray serialize(const Content& content)
 {
+    // One list in the file: which kind may have written a line is read from
+    // its numbers, each time, and never taken from the file's word.
     QJsonArray holes;
-    for (const Hole& line : content.holes) {
-        QJsonObject o{{QStringLiteral("port"), static_cast<int>(line.external)},
-                      {QStringLiteral("proto"), line.tcp ? kTcp : kUdp},
-                      {QStringLiteral("to"), static_cast<int>(line.internal)},
-                      {QStringLiteral("what"), kindName(line.kind)},
-                      {QStringLiteral("lan"), line.lan}};
-        if (line.kind == Kind::Media) o[QStringLiteral("slot")] = line.slot;
-        if (line.old) o[QStringLiteral("old")] = true;
-        holes.append(o);
+    for (const QList<Hole>* lines : {&content.holes, &content.others}) {
+        for (const Hole& line : *lines) {
+            QJsonObject o{{QStringLiteral("port"), static_cast<int>(line.external)},
+                          {QStringLiteral("proto"), line.tcp ? kTcp : kUdp},
+                          {QStringLiteral("to"), static_cast<int>(line.internal)},
+                          {QStringLiteral("what"), kindName(line.kind)},
+                          {QStringLiteral("lan"), line.lan}};
+            if (line.kind == Kind::Media) o[QStringLiteral("slot")] = line.slot;
+            if (line.old) o[QStringLiteral("old")] = true;
+            holes.append(o);
+        }
     }
     const QJsonObject root{{QStringLiteral("version"), 1},
                            {QStringLiteral("owner"), content.owner},
@@ -311,11 +315,22 @@ bool parse(const QByteArray& json, bool devInstance, Content& out)
     Content content;
     content.owner = owner.toString();
     content.tag = tag.toString();
+    QList<Hole> elsewhere;
     for (const QJsonValue& value : lines) {
         Hole line;
-        if (!lineOf(value, line) || !allowed(devInstance, line)) continue;
-        if (has(content.holes, line.external, line.tcp)) continue;
-        content.holes.append(line);
+        if (!lineOf(value, line)) continue;
+        if (allowed(devInstance, line)) {
+            if (!has(content.holes, line.external, line.tcp)) content.holes.append(line);
+        } else if (allowed(!devInstance, line)) {
+            elsewhere.append(line);
+        }
+    }
+    // After this kind's own, whatever their order in the file
+    for (const Hole& line : elsewhere) {
+        if (has(content.holes, line.external, line.tcp) ||
+            has(content.others, line.external, line.tcp))
+            continue;
+        content.others.append(line);
     }
     out = content;
     return true;
@@ -399,17 +414,31 @@ bool File::find(uint16_t external, bool tcp, Hole& out) const
 
 void File::note(const Hole& hole)
 {
+    // A router has one entry a number and protocol, and it is this line's
+    // from now on: what the other kind noted of it is no more.
+    bool changed = false;
+    for (qsizetype i = 0; i < m_Content.others.size(); ++i) {
+        const Hole& line = m_Content.others.at(i);
+        if (line.external != hole.external || line.tcp != hole.tcp) continue;
+        m_Content.others.removeAt(i);
+        changed = true;
+        break;
+    }
     for (Hole& line : m_Content.holes) {
         if (line.external != hole.external || line.tcp != hole.tcp) continue;
-        if (line == hole) return;
-        line = hole;
-        save();
+        if (!(line == hole)) {
+            line = hole;
+            changed = true;
+        }
+        if (changed) save();
         return;
     }
     // Never reached by a host's own numbers: they are fewer than that
-    if (m_Content.holes.size() >= kHolesMax) return;
-    m_Content.holes.append(hole);
-    save();
+    if (m_Content.holes.size() + m_Content.others.size() < kHolesMax) {
+        m_Content.holes.append(hole);
+        changed = true;
+    }
+    if (changed) save();
 }
 
 void File::strike(uint16_t external, bool tcp)

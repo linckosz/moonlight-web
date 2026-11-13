@@ -1006,6 +1006,12 @@ QString AppSettings::debugTunnelPublicAddress() const
     return obj.value("debug_tunnel_public_address").toString();
 }
 
+bool AppSettings::debugDevStandardPorts() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("debug_dev_standard_ports").toBool(false);
+}
+
 bool AppSettings::sharedFeedEnabled() const
 {
     QJsonObject obj = readAll();

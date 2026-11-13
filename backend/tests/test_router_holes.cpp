@@ -269,6 +269,10 @@ void run_router_holes_tests()
             Content parsed;
             CHECK(parse(bytesOf(wholeRecord()), true, parsed));
             CHECK(parsed.holes == rest);
+            // …and is kept as it was noted, for a run that may
+            CHECK(parsed.others == QList<Hole>{tunnel(3478)});
+            CHECK(parse(bytesOf(wholeRecord()), false, parsed));
+            CHECK(parsed.others.isEmpty());
         }
     }
 
@@ -461,5 +465,90 @@ void run_router_holes_tests()
         CHECK(file != nullptr);
         if (!file) return;
         CHECK(file->holes().isEmpty());
+    }
+
+    SECTION("RouterHoles: the other kind's lines are kept and never this run's");
+    {
+        const uint16_t devTunnel = mw::routerports::kDevTunnelPoolBegin;
+        Content content;
+        content.owner = fingerprint(kMachine, QStringLiteral("/somewhere"));
+        content.tag = QStringLiteral("a3f9c1");
+        // The installed host's lists, a DEV identity's, and a stream slot's (both)
+        const QList<Hole> installed{tunnel(3478), tunnel(3478, true), streams(3479),
+                                    streams(48550)};
+        const QList<Hole> dev{tunnel(devTunnel), streams(48573)};
+        const QList<Hole> either{media(1, 46100)};
+        content.holes = installed + either;
+        content.others = dev;
+        const QByteArray bytes = serialize(content);
+        Content asInstalled;
+        CHECK(parse(bytes, false, asInstalled));
+        CHECK(asInstalled.holes == installed + either);
+        CHECK(asInstalled.others == dev);
+        Content asDev;
+        CHECK(parse(bytes, true, asDev));
+        CHECK(asDev.holes == either + dev);
+        CHECK(asDev.others == installed);
+        // Written again by either, nothing is lost
+        Content again;
+        CHECK(parse(serialize(asDev), false, again));
+        CHECK(again.holes == either + installed && again.others == dev);
+
+        // A line neither kind may have written is in neither list
+        content.others = dev + QList<Hole>{tunnel(1234)};
+        Content strict;
+        CHECK(parse(serialize(content), false, strict));
+        CHECK(strict.holes == installed + either && strict.others == dev);
+        CHECK(parse(serialize(content), true, strict));
+        CHECK(strict.holes == either + dev && strict.others == installed);
+
+        // One line a number and protocol: this kind's own, wherever it stands
+        Content twice;
+        twice.owner = content.owner;
+        twice.tag = content.tag;
+        twice.holes = {streams(48573)};
+        twice.others = {media(23, 48573)};
+        Content one;
+        CHECK(parse(serialize(twice), false, one));
+        CHECK(one.holes == QList<Hole>{media(23, 48573)} && one.others.isEmpty());
+        twice.holes = {streams(48573)};
+        twice.others = {streams(48573)};
+        CHECK(parse(serialize(twice), false, one));
+        CHECK(one.holes.isEmpty() && one.others == QList<Hole>{streams(48573)});
+    }
+    // On disk: found by no question, lost by no write, and given up to a
+    // line of this run's on the same number
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const QString path = QDir(dir.path()).filePath(QStringLiteral("router_holes.json"));
+        const Earlier none;
+        QString said;
+        auto file = File::open(dir.path(), true, kMachine, none, kLan, &said);
+        CHECK(file != nullptr);
+        if (!file) return;
+        file->note(streams(48573));
+        file->note(media(2, 46101));
+        file.reset();
+
+        file = File::open(dir.path(), false, kMachine, none, kLan, &said);
+        CHECK(file != nullptr);
+        if (!file) return;
+        CHECK(file->holes() == QList<Hole>{media(2, 46101)});
+        Hole found;
+        CHECK(!file->find(48573, false, found));
+        // Striking it is not this run's either
+        file->strike(48573, false);
+        file->note(tunnel(3478));
+        file->strike(46101, false);
+        Content onDisk;
+        CHECK(parse(readFile(path), false, onDisk));
+        CHECK(onDisk.holes == QList<Hole>{tunnel(3478)});
+        CHECK(onDisk.others == QList<Hole>{streams(48573)});
+        // This run comes to write that number itself: one line, its own
+        file->note(media(23, 48573));
+        CHECK(parse(readFile(path), false, onDisk));
+        CHECK(onDisk.holes == (QList<Hole>{tunnel(3478), media(23, 48573)}));
+        CHECK(onDisk.others.isEmpty());
     }
 }

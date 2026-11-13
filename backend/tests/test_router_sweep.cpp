@@ -15,6 +15,7 @@
 #include <QMap>
 #include <QSet>
 #include <QStringList>
+#include <QTemporaryDir>
 
 #include <functional>
 #include <optional>
@@ -816,5 +817,89 @@ void run_router_sweep_tests()
         Hole now;
         CHECK(b.record.find(3478, false, now) && !now.old);
         CHECK(b.gw.table[udp(3478)] == rowOf(tunnelLine(3478), kTag));
+    }
+
+    SECTION("RouterSweep: a run takes back what a run of its own kind left, and no other");
+    // A DEV identity under its bench key walks the installed host's ports
+    // (PortIdentity.h), on the record it keeps without the key. Killed as
+    // one kind and started as the other, it leaves the first kind's entries
+    // where they are, and keeps the note of them for the run that may act.
+    for (const bool killedUnderKey : {true, false}) {
+        using mw::routerholes::File;
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const QByteArray machine = QByteArrayLiteral("machine-one");
+        const mw::routerholes::Earlier none;
+        QString said;
+        // What the instance walks: the DEV lists unless under the key
+        const bool killedAsDev = !killedUnderKey;
+        const uint16_t devTunnel = mw::routerports::kDevTunnelPoolBegin;
+        Hole streamsLine = tunnelLine(killedAsDev ? 48573 : 3479);
+        streamsLine.kind = Kind::Streams;
+        const QList<Hole> left{tunnelLine(killedAsDev ? devTunnel : 3478),
+                               tunnelLine(killedAsDev ? devTunnel : 3478, true), streamsLine};
+        TableGateway gw;
+        QString tag;
+        // The run that is killed: its lines noted, its entries on the router
+        {
+            auto record = File::open(dir.path(), killedAsDev, machine, none, kLan, &said);
+            CHECK(record != nullptr);
+            if (!record) continue;
+            tag = record->tag();
+            for (const Hole& line : left) {
+                record->note(line);
+                gw.table[keyOf(line)] = rowOf(line, tag);
+            }
+        }
+        const auto before = gw.table;
+
+        // Started as the other kind: nothing of it to sweep, nothing removed,
+        // and a line of its own written beside what is kept
+        const Hole own = tunnelLine(killedAsDev ? 5349 : static_cast<uint16_t>(devTunnel + 1));
+        {
+            auto record = File::open(dir.path(), !killedAsDev, machine, none, kLan, &said);
+            CHECK(record != nullptr);
+            if (!record) continue;
+            CHECK(record->tag() == tag);
+            RouterPortCore core(gw, kAlwaysFree);
+            core.setRecord(record.get());
+            CHECK(core.sweepList().isEmpty());
+            CHECK(record->holes().isEmpty());
+            for (const Hole& line : left)
+                CHECK(core.sweep(line).outcome == Swept::Gone);
+            CHECK_EQ(gw.removes, 0);
+            CHECK(gw.table == before);
+            record->note(own);
+            gw.table[keyOf(own)] = rowOf(own, tag);
+        }
+
+        // Started as the kind that was killed: its entries, each of them,
+        // and not the one the other kind left meanwhile
+        {
+            auto record = File::open(dir.path(), killedAsDev, machine, none, kLan, &said);
+            CHECK(record != nullptr);
+            if (!record) continue;
+            RouterPortCore core(gw, kAlwaysFree);
+            core.setRecord(record.get());
+            const QList<Hole> list = core.sweepList();
+            CHECK(list == left);
+            CHECK(core.sweepBelieved(list));
+            for (const Hole& line : list)
+                CHECK(core.sweep(line).outcome == Swept::Removed);
+            CHECK_EQ(gw.removes, static_cast<int>(left.size()));
+            CHECK(gw.table.size() == 1 && gw.table.value(keyOf(own)) == rowOf(own, tag));
+            CHECK(record->holes().isEmpty());
+        }
+        // …which the other kind takes back in its turn
+        {
+            auto record = File::open(dir.path(), !killedAsDev, machine, none, kLan, &said);
+            CHECK(record != nullptr);
+            if (!record) continue;
+            RouterPortCore core(gw, kAlwaysFree);
+            core.setRecord(record.get());
+            CHECK(core.sweepList() == QList<Hole>{own});
+            CHECK(core.sweep(own).outcome == Swept::Removed);
+            CHECK(gw.table.isEmpty());
+        }
     }
 }

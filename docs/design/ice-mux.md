@@ -127,6 +127,13 @@ Two, in the order an agent prefers them (`network/IceMuxPorts`,
    downwards) when the number is taken. The two halves never meet, so the
    installed host and a `--dev` on one machine cannot take each other's port.
 
+A bench key, `debug_dev_standard_ports`, lets a DEV identity walk the installed
+host's ports for one run, so that the conferencing port can be tried without a
+release build. It is granted only where nothing on the machine holds one of the
+eight, read from the system's socket tables as the server starts; refused, the
+instance says so and keeps its own ports (`network/PortIdentity.h`). Never for
+a user: nothing writes it and no API reads it.
+
 The router forwards each port to itself: a router that has seen the host send
 from a port keeps translating to that number, so a port is only worth
 announcing if the socket really binds it. The holes are asked of

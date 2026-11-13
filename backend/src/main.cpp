@@ -142,6 +142,7 @@
 #include "network/IceMuxRouter.h"
 #include "network/InternetAccessManager.h"
 #include "network/MdnsAdvertiser.h"
+#include "network/PortIdentity.h"
 #include "network/RendezvousClient.h"
 #include "network/RouterPortAllocator.h"
 #include "network/RouterPortPools.h"
@@ -1611,7 +1612,7 @@ static bool g_StreamMuxInUse = false;
 // (RouterPortPools.h).
 static quint16 slotMediaPort(int slot)
 {
-    return mw::routerports::slotMediaPort(slot, g_StreamMuxInUse, mw::edition::isDev());
+    return mw::routerports::slotMediaPort(slot, g_StreamMuxInUse, mw::portidentity::devPorts());
 }
 // The shared ports and their holes in the router (IceMuxPorts), once started.
 // Set as the server starts, cleared before it goes.
@@ -3053,6 +3054,13 @@ int main(int argc, char* argv[])
     };
     QObject::connect(&authManager, &AuthManager::streamingSessionRevoked, qApp, endStreamsOf);
 
+    // Whose ports this run walks (network/PortIdentity.h): settled here, before
+    // anything asks for one, and never again.
+    if (const QString said =
+            mw::portidentity::said(mw::portidentity::settle(appSettings.debugDevStandardPorts()));
+        !said.isEmpty())
+        qWarning().noquote() << "[Ports]" << said;
+
     InternetAccessManager internetAccess(&appSettings);
     // Every hole in the router, from one place: the tunnel's and each stream
     // slot's. Inert until a rendezvous line-up or a stream start asks for one,
@@ -3075,13 +3083,13 @@ int main(int argc, char* argv[])
                                 if (const quint16 port = appSettings.rememberedMuxPort(which))
                                     remembered.append(port);
                                 const RouterPortCore::Request request = RouterPortCore::muxRequest(
-                                    mw::edition::isDev(), which, remembered);
+                                    mw::portidentity::devPorts(), which, remembered);
                                 return request.remembered + request.preferred;
                             },
                             // A conferencing port is for browsers on the Internet, and never a
                             // DEV identity's (RouterPortPools.h).
                             [&appSettings]() {
-                                return !mw::edition::isDev() && !mw::edition::lanOnly() &&
+                                return !mw::portidentity::devPorts() && !mw::edition::lanOnly() &&
                                        appSettings.internetAccessEnabled();
                             }});
     // Declared after it, gone before it: nothing asks an object that is no more.

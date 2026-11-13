@@ -131,6 +131,7 @@ add_executable(run_tests
     test_router_sweep.cpp
     test_router_holes.cpp
     test_socket_tables.cpp
+    test_port_identity.cpp
     test_ice_mux_core.cpp
     test_ice_mux_sockets.cpp
     test_ice_mux_ports.cpp
@@ -159,6 +160,8 @@ add_executable(run_tests
     ${_src}/src/network/RouterHoles.cpp
     # Whether something on this machine listens on a port, from the system's tables.
     ${_src}/src/network/SocketTables.cpp
+    # Whose ports an instance walks, and what the bench key for a DEV one comes to.
+    ${_src}/src/network/PortIdentity.cpp
     # Which stream worker a datagram on a shared UDP port goes to.
     ${_src}/src/network/IceMuxCore.cpp
     ${_src}/src/network/IceMux.cpp

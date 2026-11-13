@@ -103,6 +103,7 @@ void run_router_port_core_tests();
 void run_router_sweep_tests();
 void run_router_holes_tests();
 void run_socket_tables_tests();
+void run_port_identity_tests();
 void run_logger_rotation_tests();
 void run_control_channel_tests();
 void run_feed_ipc_tests();
@@ -232,6 +233,7 @@ int main(int argc, char** argv)
     run_router_sweep_tests();
     run_router_holes_tests();
     run_socket_tables_tests();
+    run_port_identity_tests();
     run_control_channel_tests();
     run_feed_ipc_tests();
     run_cert_manager_tests();

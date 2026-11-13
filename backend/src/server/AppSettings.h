@@ -144,6 +144,19 @@ public:
     // browser at a time. Malformed is off (TunnelPeerPolicy::parsePublicAddress).
     // Read when each connection is built.
     QString debugTunnelPublicAddress() const;
+    // A DEBUG switch for a bench, never for a user: JSON bool
+    // "debug_dev_standard_ports", DEFAULT false, typed into the file by hand
+    // like the two above, and read by no API. A DEV identity (the DEV build,
+    // or --dev) keeps to ports of its own; with this key, and only where
+    // nothing on the machine holds one of the eight conferencing ports, it
+    // walks the installed host's ports for the run: the tunnel's, the ports
+    // the streams share, and the stream block from its foot
+    // (network/PortIdentity.h). Refused, it says so in the log and keeps its
+    // own. The record of router entries follows the ports: what a run under
+    // the key left on the router is taken back by the next run under the
+    // key, and what a run without it left by the next one without it; each
+    // keeps the other's lines as they are. Read once, when the server starts.
+    bool debugDevStandardPorts() const;
 
     // ── The guests' shared feed ───────────────────────────────────────────────
     //
