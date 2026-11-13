@@ -14,8 +14,12 @@
     stop                  click "Stop streaming"
     stats                 one snapshot of the overlay's numbers, as JSON
     perf <seconds>        collect the once-a-second "[perf] ..." console lines
-    keys <path>           type the keystrokes of a JSON file, as a chosen
-                          client layout — see keyboard-check.ps1
+    --kiosk-pid N --kiosk-display \\\\.\\DISPLAYn keys <path>
+                          type the keystrokes of a JSON file, as a chosen
+                          client layout — see keyboard-check.ps1. Before
+                          each key, the foreground window must be the kiosk's
+                          (process N, a browser window, on that screen);
+                          at the first that is not, it stops, exit code 3
     eval "<js>"           evaluate and print
     evalfile <path>       evaluate JS read from a file
     call <Method> [json]  raw CDP call
@@ -199,9 +203,61 @@ STATS_JS = """(() => {
 })()"""
 
 
+def foreground_problem(kiosk_pid, kiosk_display):
+    """'' when the window that has the foreground belongs to the process
+    @p kiosk_pid, is a browser window and lies on the screen @p kiosk_display;
+    otherwise which rule failed, with that window's class and process id.
+    Never its title: a window of whoever uses the machine may show anything.
+
+    On a self-stream the host types each key into whatever window has the
+    foreground, so this is asked again before EVERY key: a table takes seconds,
+    and a notification or a click in between would send the rest of it, Enter
+    included, into somebody's terminal."""
+    import ctypes
+    from ctypes import wintypes
+
+    class MonitorInfoEx(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD),
+                    ("szDevice", wintypes.WCHAR * 32)]
+
+    user32 = ctypes.WinDLL("user32")
+    # Handles are pointers: without these, a 64-bit HWND or HMONITOR is cut to an int.
+    user32.GetForegroundWindow.restype = ctypes.c_void_p
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetClassNameW.argtypes = [ctypes.c_void_p, wintypes.LPWSTR, ctypes.c_int]
+    user32.MonitorFromWindow.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    user32.MonitorFromWindow.restype = ctypes.c_void_p
+    user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MonitorInfoEx)]
+
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return "the foreground is no window (class -, pid 0)"
+    pid = wintypes.DWORD(0)
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    cls = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, cls, 256)
+    info = MonitorInfoEx()
+    info.cbSize = ctypes.sizeof(MonitorInfoEx)
+    monitor = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+    device = info.szDevice if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)) else ""
+    if pid.value != kiosk_pid:
+        why = "another process"
+    elif cls.value != "Chrome_WidgetWin_1":
+        why = "not a browser window"
+    elif device.lower() != kiosk_display.lower():
+        why = "another screen"
+    else:
+        return ""
+    return f"the foreground is {why} (class {cls.value}, pid {pid.value})"
+
+
 def main():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--port", type=int, default=9333)
+    # keys: the kiosk's browser process and screen (keyboard-check.ps1).
+    parser.add_argument("--kiosk-pid", type=int, default=0)
+    parser.add_argument("--kiosk-display", default="")
     # An evaluation that is SUPPOSED to take long - a probe series of N clicks
     # N x spacing apart - says so, rather than every call waiting longer: 20
     # clicks 1.5 s apart are 30 s, exactly the default, and a series with a few
@@ -294,15 +350,29 @@ def main():
         # focus: a keystroke dispatched at a hidden tab is delivered, but the
         # host is then being typed at by a page nobody is looking at, and a
         # local <input> would swallow it before StreamView ever sees it
-        # (isLocalKeyboardTarget). Both are asserted rather than assumed.
+        # (isLocalKeyboardTarget). Both are asserted rather than assumed, and
+        # neither is TAKEN: no Page.bringToFront, which asks Chrome to activate
+        # its window over whatever the person at the machine is using. A kiosk
+        # without the foreground is stopped by the check below, as it should be.
+        # And no key without the kiosk it must land in: its process and screen.
+        if ns.kiosk_pid <= 0 or not ns.kiosk_display:
+            raise SystemExit("keys needs --kiosk-pid and --kiosk-display: no key is typed without them")
         with open(args[0], encoding="utf-8") as f:
             plan = json.load(f)
-        c.call("Page.bringToFront")
         focus = c.eval("document.activeElement && document.activeElement.tagName")
         if focus in ("INPUT", "TEXTAREA"):
             raise SystemExit(f"a local {focus} has the focus — the stream would never see a key")
         gap = float(plan.get("gapMs", 120)) / 1000.0
         for k in plan["keys"]:
+            # A batch of one key, with no tolerance: the first foreground that
+            # is not the kiosk's stops the table before that key is sent. On
+            # stdout and by the exit code, never stderr (which PowerShell 5.1
+            # turns into a throw that would lose the line).
+            problem = foreground_problem(ns.kiosk_pid, ns.kiosk_display)
+            if problem:
+                print(json.dumps({"aborted": problem, "before": k["code"]}))
+                sys.stdout.flush()
+                sys.exit(3)
             c.type_key(k["code"], k["key"], int(k.get("vk", 0)), bool(k.get("shift")))
             print(json.dumps({"code": k["code"], "key": k["key"],
                               "shift": bool(k.get("shift")), "us": k.get("us", "")}))

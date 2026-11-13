@@ -304,7 +304,26 @@ try {
             throw "ABORT before the $profileName keys: $bad"
         }
         $mark = (Get-Item $workerLog.FullName).Length
-        Cdp keys $tablePath | Out-Null
+        # cdp.py asks again before every key and stops at the first that would
+        # leave the kiosk (exit code 3, the reason on stdout). Quoted: an
+        # unquoted --kiosk-pid would be read as a parameter of Cdp itself.
+        $keysOut = Cdp '--kiosk-pid' "$kioskPid" '--kiosk-display' $KioskDisplay keys $tablePath
+        if ($LASTEXITCODE -eq 3) {
+            $stopped = @($keysOut -split "`r?`n" | Where-Object { $_ -match '^\{"aborted"' } | Select-Object -First 1)
+            $why = if ($stopped.Count) { ($stopped[0] | ConvertFrom-Json).aborted } else { 'cdp.py stopped the keys' }
+            ([pscustomobject]@{ profile = $profileName; fidelity = $fidelity; invalid = $true
+                                error = "stopped within the table, not judged: $why" } |
+                ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            throw "ABORT within the $profileName keys, which are not judged: $why"
+        } elseif ($LASTEXITCODE -ne 0) {
+            # Any other way out of cdp.py (a crash, an exit with no word) is no
+            # table to judge either.
+            $code = $LASTEXITCODE
+            ([pscustomobject]@{ profile = $profileName; fidelity = $fidelity; invalid = $true
+                                error = "cdp.py keys ended with code $code, not judged" } |
+                ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            throw "ABORT: cdp.py keys ended with code $code; the $profileName keys are not judged"
+        }
         Start-Sleep -Seconds 2
         # And after it: a foreground that changed while the host typed makes the
         # whole table unjudgeable (some keys went elsewhere), and stops the run.
