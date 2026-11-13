@@ -3,7 +3,7 @@
  * GPLv3 — see repository LICENSE.
  */
 import { describe, it, expect } from 'vitest';
-import { FramePacer } from '../js/stream/FramePacer.js';
+import { FramePacer, pacerTunables, pacingCapOf } from '../js/stream/FramePacer.js';
 
 const FRAME_MS = 1000 / 60;
 
@@ -168,5 +168,28 @@ describe('FramePacer', () => {
         expect(p.targetMs).toBe(0);
         expect(p.stats.held).toBe(0);
         expect(run(p, 60).every((h) => h === 0)).toBe(true);
+    });
+});
+
+describe('the reserve cap of the T48jitter bench (mw_pacing_max)', () => {
+    it('reads whole milliseconds from 1 to 250, nothing else', () => {
+        expect(pacingCapOf('50')).toBe(50);
+        expect(pacingCapOf('250')).toBe(250);
+        for (const raw of [null, '', '0', '251', '30.5', '-5', 'x', '1e2', ' 50'])
+            expect(pacingCapOf(raw)).toBe(null);
+        expect(pacerTunables(null)).toEqual({});
+        expect(pacerTunables(80)).toEqual({ MAX: 80 });
+    });
+
+    it('lets the reserve grow past the default cap, to the one set', () => {
+        // Four stalls a second, 60 ms late each: the default cap stops at 25.
+        const stalls = (i) => (i % 15 < 3 ? 60 : 0);
+        const capped = new FramePacer();
+        run(capped, 600, stalls);
+        expect(capped.targetMs).toBeLessThanOrEqual(25);
+        const wide = new FramePacer(pacerTunables(80));
+        run(wide, 600, stalls);
+        expect(wide.targetMs).toBeGreaterThan(25);
+        expect(wide.targetMs).toBeLessThanOrEqual(80);
     });
 });

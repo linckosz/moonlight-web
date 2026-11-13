@@ -62,7 +62,7 @@ import { queueBrake } from './DecodeBrake.js';
 import { DecoderErrorTrail } from './DecoderErrorTrail.js';
 import { EnhancerGovernor, ladderRung, rendererAlgo } from './EnhancerGovernor.js';
 import { drawCapFor } from './RenderPacing.js';
-import { FramePacer } from './FramePacer.js';
+import { FramePacer, pacerTunables } from './FramePacer.js';
 import { cropToAnnounced } from './FrameCrop.js';
 
 // ── Worker-local pipeline state (mirrors the StreamView fields) ──────────────
@@ -1157,7 +1157,7 @@ self.onmessage = (e) => {
             S.frameSize = m.frameSize || null;
             // Adaptive presentation reserve (mw_pacing, resolved on main — the
             // worker has no localStorage). Null keeps present-on-decode.
-            S.pacer = m.pacing ? new FramePacer() : null;
+            S.pacer = m.pacing ? new FramePacer(pacerTunables(m.pacingMax)) : null;
             // Always use a low-latency (desynchronized) context in the worker: it
             // lets the canvas bypass the document compositor and present sooner,
             // clawing back the ~1-frame latency that an OffscreenCanvas presented

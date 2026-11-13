@@ -33,7 +33,7 @@ import { AudioPipeline } from '../audio/AudioPipeline.js';
 import * as streamVolume from '../audio/streamVolume.js';
 import { MicUplink, loadMicDevice, micSupported } from '../audio/MicUplink.js';
 import { JitterController } from '../stream/JitterController.js';
-import { FramePacer } from '../stream/FramePacer.js';
+import { FramePacer, pacerTunables, pacingCapOf } from '../stream/FramePacer.js';
 import {
     currentRefreshMilliHz,
     measureRefreshRate,
@@ -1684,11 +1684,18 @@ export class StreamView {
         // more than the added frame of latency. Read once per stream start, so
         // a flag change needs a stream relaunch to take.
         this._pacingEnabled = false;
+        // The reserve's cap, a lab key (`mw_pacing_max`, ms): the T48jitter
+        // bench (issue #48) weighs 30, 50 and 80 ms against a link that stalls
+        // four times a second. Unset, the pacer's own cap.
+        this._pacingMax = null;
         try {
             if (localStorage.getItem('mw_pacing') === '1')
                 this._pacingEnabled = this._transport !== 'webrtc-media';
+            this._pacingMax = pacingCapOf(localStorage.getItem('mw_pacing_max'));
         } catch (e) {}
-        this._framePacer = this._pacingEnabled ? new FramePacer() : null;
+        this._framePacer = this._pacingEnabled
+            ? new FramePacer(pacerTunables(this._pacingMax))
+            : null;
         this._pacerStats = null; // last snapshot (worker mode posts it with the counters)
         this._pacingTimer = null;
         this._pacingDue = 0;
@@ -2835,6 +2842,7 @@ export class StreamView {
                     yuv444: this._yuv444,
                     hdr: this._hdrEnabled,
                     pacing: this._pacingEnabled,
+                    pacingMax: this._pacingMax,
                     frameSize: this._frameSize,
                     // mwsr's gaze zone (a lab key, phones and tablets only).
                     gazeZone: mwsrGazeWanted(),
@@ -7671,6 +7679,24 @@ export class StreamView {
             const m = this._e2eMeasuredStats;
             diagLine +=
                 ' · e2e measured ' + m.avg.toFixed(1) + '/' + m.percentile(0.99).toFixed(1) + 'ms';
+        }
+        // The presentation reserve (mw_pacing), from the pacer that paces in
+        // this mode — the worker's, or the main thread's — as the card does.
+        if (this._pacingEnabled) {
+            const pacer = this._useWorker
+                ? this._pacerStats
+                : this._framePacer
+                  ? this._framePacer.stats
+                  : this._pacerStats;
+            if (pacer)
+                diagLine +=
+                    ' · reserve ' +
+                    pacer.targetMs.toFixed(1) +
+                    'ms (cap ' +
+                    (this._pacingMax || 'default') +
+                    ', underruns ' +
+                    pacer.underruns +
+                    ')';
         }
         return diagLine;
     }

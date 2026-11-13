@@ -70,6 +70,21 @@ const DEFAULTS = {
     SLACK_MS: 2, // present now rather than arm a timer for less than this
 };
 
+/**
+ * The reserve's cap from the `mw_pacing_max` lab key: whole milliseconds,
+ * 1 to 250, or null (the default cap) for anything else.
+ */
+export function pacingCapOf(raw) {
+    if (typeof raw !== 'string' || !/^\d{1,3}$/.test(raw)) return null;
+    const ms = Number(raw);
+    return ms >= 1 && ms <= 250 ? ms : null;
+}
+
+/** The tunables a pacer is built with for a cap of @p maxMs (null: none). */
+export function pacerTunables(maxMs) {
+    return Number.isInteger(maxMs) && maxMs > 0 ? { MAX: maxMs } : {};
+}
+
 export class FramePacer {
     constructor(tunables = {}) {
         this.cfg = { ...DEFAULTS, ...tunables };
