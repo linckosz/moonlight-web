@@ -30,6 +30,13 @@
  * gone `minMs` without a picture while at least `minChunks` went in. Both: a
  * still host sends a couple of frames a second, and a short hiccup is not a
  * decoder gone. Any picture starts the count again.
+ *
+ * The time counts only while chunks go in. A stretch in which none came is
+ * the link holding the frames, not the decoder keeping them: counted, it made
+ * a silence of every stall that ended in a burst. On a MacBook Air M3 (Chrome,
+ * HEVC, 13/11/2026), 1.5 s held and 91 frames let go at once, the tick 9 ms
+ * later read "91 chunks in, no picture for 1507 ms", and the page threw away
+ * a decoder that was about to answer — once in 65 such stalls.
  */
 export class SilentDecoderWatch {
     /** @param {{minChunks?: number, minMs?: number}} [opts] */
@@ -45,6 +52,8 @@ export class SilentDecoderWatch {
         this._decoded = -1;
         this._faults = 0;
         this._since = 0;
+        this._seen = -1;
+        this._waitMs = 0;
     }
 
     /**
@@ -54,8 +63,9 @@ export class SilentDecoderWatch {
      * @param {number} [faults] the decoder's failures so far (recoveries): a
      *   silence with one in it is a decoder failing, which the answer says
      * @returns {{chunks: number, ms: number, faults: number} | null} the
-     *   silence, when it is one — once per stretch: the next answer needs as
-     *   much again
+     *   silence, when it is one — chunks taken, and how long they went in
+     *   without a picture — once per stretch: the next answer needs as much
+     *   again
      */
     observe(received, decoded, now, faults = 0) {
         // A picture came out, or the counters started over (a new decoder).
@@ -64,15 +74,21 @@ export class SilentDecoderWatch {
             this._decoded = decoded;
             this._faults = faults;
             this._since = now;
+            this._seen = received;
+            this._waitMs = 0;
             return null;
         }
+        // Since the last look: chunks went in, or the link held them all.
+        if (received > this._seen) this._waitMs += now - this._since;
+        this._seen = received;
+        this._since = now;
         const chunks = received - this._received;
-        const ms = now - this._since;
+        const ms = this._waitMs;
         if (chunks < this.minChunks || ms < this.minMs) return null;
         const failed = Math.max(0, faults - this._faults);
         this._received = received;
         this._faults = faults;
-        this._since = now;
+        this._waitMs = 0;
         return { chunks, ms, faults: failed };
     }
 }

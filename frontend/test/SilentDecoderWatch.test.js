@@ -65,6 +65,59 @@ describe('SilentDecoderWatch', () => {
         expect(w.observe(250, 9, 4800, 5)).toEqual({ chunks: 80, ms: 1600, faults: 0 });
     });
 
+    describe('a stall of the link is not a silence of the decoder', () => {
+        // The overlay's 500 ms tick; the last picture is read at t = 0. The
+        // link then holds the frames for 1502 ms and lets 91 go at once at
+        // 1491, and the tick at 1500 reads them (MacBook Air M3, Chrome, HEVC,
+        // 13/11/2026 08:05:10: "91 chunks in, no picture for 1507 ms").
+        const RX = 5000;
+        const DEC = 4990;
+
+        it('keeps quiet when the burst after a 1.5 s stall is read before its first picture', () => {
+            const w = new SilentDecoderWatch();
+            expect(w.observe(RX, DEC, 0)).toBe(null);
+            expect(w.observe(RX, DEC, 500)).toBe(null);
+            expect(w.observe(RX, DEC, 1000)).toBe(null);
+            expect(w.observe(RX + 91, DEC, 1500)).toBe(null);
+            // The decoder answers the burst: the count starts over.
+            expect(w.observe(RX + 121, DEC + 95, 2000)).toBe(null);
+        });
+
+        it('keeps quiet too when the decoder still held a couple of frames as the link stalled', () => {
+            const w = new SilentDecoderWatch();
+            expect(w.observe(RX, DEC, 0)).toBe(null);
+            // Two frames went in just after the last picture and wait for more.
+            expect(w.observe(RX + 2, DEC, 500)).toBe(null);
+            expect(w.observe(RX + 2, DEC, 1000)).toBe(null);
+            expect(w.observe(RX + 93, DEC, 1500)).toBe(null);
+        });
+
+        it('still answers a decoder that gives nothing back once the frames flow again', () => {
+            const w = new SilentDecoderWatch();
+            w.observe(RX, DEC, 0);
+            w.observe(RX, DEC, 500);
+            w.observe(RX, DEC, 1000);
+            expect(w.observe(RX + 91, DEC, 1500)).toBe(null);
+            expect(w.observe(RX + 121, DEC, 2000)).toBe(null);
+            // 60 frames a second go in, and nothing comes out of them.
+            expect(w.observe(RX + 151, DEC, 2500)).toEqual({ chunks: 151, ms: 1500, faults: 0 });
+        });
+
+        it('pauses the count for a stall in a silence, without starting it over', () => {
+            const w = new SilentDecoderWatch();
+            w.observe(RX, DEC, 0);
+            // 1 s of frames taken without a picture...
+            expect(w.observe(RX + 30, DEC, 500)).toBe(null);
+            expect(w.observe(RX + 60, DEC, 1000)).toBe(null);
+            // ...then the link holds them for 1.5 s...
+            expect(w.observe(RX + 60, DEC, 1500)).toBe(null);
+            expect(w.observe(RX + 60, DEC, 2000)).toBe(null);
+            expect(w.observe(RX + 60, DEC, 2500)).toBe(null);
+            // ...and the first look with frames in again makes 1.5 s of them.
+            expect(w.observe(RX + 150, DEC, 3000)).toEqual({ chunks: 150, ms: 1500, faults: 0 });
+        });
+    });
+
     it('starts over when the counters do (a new decoder), or when told to', () => {
         const w = new SilentDecoderWatch();
         w.observe(500, 200, 0);
