@@ -9,7 +9,9 @@
 # The sequence is the protocol, not decoration:
 #   1. nobody has used this machine's mouse or keyboard for -IdleSecs, or
 #      nothing is touched: the pointer is about to move (the first series of
-#      a run; the next ones, -AlreadyParked, find it on its spot or stop);
+#      a run; the next ones, -AlreadyParked, find it on its spot or stop).
+#      Under -IdleSecs, it waits for the rest, and starts over twice at most
+#      when an input comes meanwhile; then it stops;
 #   2. park the host pointer on the inert click target — an injected click that
 #      activates another window freezes the page and hangs the probe forever;
 #   3. the page is visible AND fullscreen, or the series stops — a hidden tab
@@ -161,10 +163,20 @@ if ($AlreadyParked) {
     $bad = Test-Spot
     if ($bad) { Write-Stopped "the parked pointer: $bad"; return }
 } else {
-    $idle = [PrGuard]::IdleMs()
-    if ($idle -lt $IdleSecs * 1000) {
-        Write-Stopped ("this machine was used {0:N0} s ago (under {1} s): the pointer is not moved" -f ($idle / 1000), $IdleSecs)
-        return
+    # The host itself moves the pointer once as a self-stream starts (it puts it
+    # in the middle of the captured screen), and that counts as input: the
+    # series waits until -IdleSecs have passed with none, the threshold
+    # unchanged. An input during the wait starts it again, twice at most; then
+    # the series stops, someone may be there.
+    $restarts = 0
+    while (($idle = [PrGuard]::IdleMs()) -lt $IdleSecs * 1000) {
+        if ($restarts -gt 2) {
+            Write-Stopped ("this machine was used {0:N0} s ago (under {1} s), again after two waits: the pointer is not moved" -f ($idle / 1000), $IdleSecs)
+            return
+        }
+        "idle: input {0:N0} s ago, waiting {1:N0} s for {2} s without any" -f ($idle / 1000), ($IdleSecs - $idle / 1000), $IdleSecs
+        Start-Sleep -Milliseconds ($IdleSecs * 1000 - $idle + 250)
+        $restarts++
     }
     [PrGuard]::SetCursorPos($ParkX, $ParkY) | Out-Null
     Start-Sleep -Milliseconds 300
