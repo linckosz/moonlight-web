@@ -170,6 +170,7 @@ import { GuestPresence } from './SharePresence.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
 import { fitStreamBrand } from './streamBrandFit.js';
+import { placeGamepadButton, placeKeyboardButton } from './streamBarButtons.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewTouchPad } from './StreamViewTouchPad.js';
@@ -2788,7 +2789,9 @@ export class StreamView {
                 e.stopPropagation();
                 this._toggleVirtualKeyboard();
             });
-            if (header) header.insertBefore(this._kbdBtn, header.firstChild);
+            // Right of the gamepad button, before Share and Stop: on its own on
+            // the left it pushed the mark on the bar right.
+            if (header) placeKeyboardButton(header, this._kbdBtn);
 
             // Special-keys bar shown above the soft keyboard (Win/Esc/Tab/
             // modifiers/Del + arrows). Latching modifiers carry into the next key.
@@ -4681,8 +4684,9 @@ export class StreamView {
      */
     _mountGamepadButton() {
         if (!this._playerMode || !this._gamepadAllowed || this._padBtn || !this._rootEl) return;
-        const header = this._rootEl.querySelector('.stream-header');
-        const quitBtn = this._rootEl.querySelector('#btn-stream-quit');
+        const header = /** @type {HTMLElement | null} */ (
+            this._rootEl.querySelector('.stream-header')
+        );
         if (!header) return;
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -4697,7 +4701,7 @@ export class StreamView {
             const gm = this._gamepadManager;
             this._openGamepadDialog((!gm?.hasVirtual() && gm?.forwardedKey()) || this._padKey);
         });
-        header.insertBefore(btn, quitBtn || null);
+        placeGamepadButton(header, btn);
         this._padBtn = btn;
     }
 

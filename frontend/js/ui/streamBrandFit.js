@@ -21,8 +21,7 @@
  *
  * The mark stops at 40 % of the bar, which is short of the Fullscreen button
  * on its own. It is not short of the group around it: the microphone and the
- * volume dock on that button's left, and on a phone held sideways the keyboard
- * button pushes the mark right as well. The version then ran under the
+ * volume dock on that button's left. The version then ran under the
  * microphone. So the mark gives up what it has to, least useful first:
  *   1. the version — the application's own header and menu still show it;
  *   2. the title — the user knows which application this is, not always
