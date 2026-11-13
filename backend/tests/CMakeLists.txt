@@ -382,7 +382,15 @@ foreach(_juice_patch libjuice-ice-tcp-passive.patch libjuice-udp-long-datagram.p
                                 "${_juice_patches}/${_juice_patch}"
                         RESULT_VARIABLE _juice_failed ERROR_VARIABLE _juice_why)
         if(NOT _juice_failed EQUAL 0)
-            message(FATAL_ERROR "${_juice_patch} does not apply: ${_juice_why}")
+            message(FATAL_ERROR "${_juice_patch} does not apply: ${_juice_why}"
+                                "Either the submodule moved (refresh the patch), or this tree "
+                                "holds an earlier version of one of our patches. For the "
+                                "second, put the submodule's files back and configure again. "
+                                "This drops every change made in that folder; a file one of "
+                                "our patches added stays there as untracked and must be "
+                                "deleted too:\n"
+                                "  git -C \"${_juice}\" checkout -- .\n"
+                                "  git -C \"${_juice}\" status --short")
         endif()
     endif()
 endforeach()

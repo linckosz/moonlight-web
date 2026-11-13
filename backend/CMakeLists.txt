@@ -186,7 +186,13 @@ function(mw_apply_patch dir patch)
                     RESULT_VARIABLE failed ERROR_VARIABLE why)
     if(NOT failed EQUAL 0)
         message(FATAL_ERROR "${patch} does not apply to ${dir}: ${why}"
-                            "(the submodule moved: refresh the patch)")
+                            "Either the submodule moved (refresh the patch), or this tree "
+                            "holds an earlier version of one of our patches. For the second, "
+                            "put the submodule's files back and configure again. This drops "
+                            "every change made in that folder; a file one of our patches added "
+                            "stays there as untracked and must be deleted too:\n"
+                            "  git -C \"${dir}\" checkout -- .\n"
+                            "  git -C \"${dir}\" status --short")
     endif()
     message(STATUS "applied ${patch}")
 endfunction()
