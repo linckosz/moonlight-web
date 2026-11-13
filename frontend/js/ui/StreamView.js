@@ -6971,17 +6971,22 @@ export class StreamView {
         // 2 s at once instead of a rate across the time it was closed.
         this._byteRate.sample(performance.now(), this._totalBytes);
 
-        if (!this._overlayEl) return;
+        if (!this._overlayEl) {
+            this._tracePerfWhileHidden();
+            return;
+        }
 
         // Dismissed by the user via its × button — stays hidden for the session.
         if (this._statsClosed) {
             this._overlayEl.style.display = 'none';
+            this._tracePerfWhileHidden();
             return;
         }
 
         // Hide entire overlay when performance stats are disabled in settings
         if (!this._showPerfStats) {
             this._overlayEl.style.display = 'none';
+            this._tracePerfWhileHidden();
             return;
         }
 
@@ -7573,32 +7578,7 @@ export class StreamView {
         // Not applicable to webrtc-media: no WebCodecs pipeline to observe.
         if (!isMedia) {
             if (this._perfDiag) {
-                let diagLine = formatDiag(diagSnap, {
-                    decodedFps: fps,
-                    presentedFps: this._presentedFps,
-                    dropsPerSec: this._dropsPerSec,
-                });
-                // The tails, so a session's log says which stage had the frame
-                // that was felt — the averages above cannot.
-                const tails = this._formatStageTails(now);
-                if (tails) diagLine += ' · ' + tails;
-                // What the enhancer ladder read from the GPU fences this window.
-                if (this._gpuBehind !== null && this._gpuBehind !== undefined) {
-                    diagLine += ' · gpu behind ' + Math.round(this._gpuBehind * 100) + '%';
-                }
-                if (this._mainThreadProbe) {
-                    diagLine += ' · ' + formatMainThread(this._mainThreadProbe.snapshot());
-                }
-                // The way measured whole, host's stamp → end of the draw.
-                if (this._e2eMeasuredStats.count > 0) {
-                    const m = this._e2eMeasuredStats;
-                    diagLine +=
-                        ' · e2e measured ' +
-                        m.avg.toFixed(1) +
-                        '/' +
-                        m.percentile(0.99).toFixed(1) +
-                        'ms';
-                }
+                const diagLine = this._perfDiagLine(diagSnap, fps, now);
                 if (showDetail) {
                     html += '<div class="stats-diag">' + escapeHtml(diagLine) + '</div>';
                 }
@@ -7645,6 +7625,62 @@ export class StreamView {
                 (this._linkFreezes ? this._linkFreezes.n : 0),
         });
         this._drawStatsGraph(showDetail);
+    }
+
+    /**
+     * The pipeline line ([perf]): what the decoder and the presenter did this
+     * window, the stages' tails, the GPU and main-thread readings, and the way
+     * measured whole. Shown under the latency breakdown, and traced to the
+     * console once a second while verbose logs are on.
+     *
+     * @param {any} diagSnap the pipeline snapshot of this tick
+     * @param {number} fps decoded frames per second
+     * @param {number} now performance.now() of this tick
+     * @returns {string}
+     */
+    _perfDiagLine(diagSnap, fps, now) {
+        let diagLine = formatDiag(diagSnap, {
+            decodedFps: fps,
+            presentedFps: this._presentedFps,
+            dropsPerSec: this._dropsPerSec,
+        });
+        // The tails, so a session's log says which stage had the frame
+        // that was felt — the averages above cannot.
+        const tails = this._formatStageTails(now);
+        if (tails) diagLine += ' · ' + tails;
+        // What the enhancer ladder read from the GPU fences this window.
+        if (this._gpuBehind !== null && this._gpuBehind !== undefined) {
+            diagLine += ' · gpu behind ' + Math.round(this._gpuBehind * 100) + '%';
+        }
+        if (this._mainThreadProbe) {
+            diagLine += ' · ' + formatMainThread(this._mainThreadProbe.snapshot());
+        }
+        // The way measured whole, host's stamp → end of the draw.
+        if (this._e2eMeasuredStats.count > 0) {
+            const m = this._e2eMeasuredStats;
+            diagLine +=
+                ' · e2e measured ' + m.avg.toFixed(1) + '/' + m.percentile(0.99).toFixed(1) + 'ms';
+        }
+        return diagLine;
+    }
+
+    /**
+     * The [perf] trace while the stats card is hidden, once a second. The
+     * card's tick writes it when the card is shown; hidden, that tick returned
+     * before reaching it, and a session with verbose logs on left no pipeline
+     * line at all — a car's archive that could not tell its link from its
+     * decoder (issue #48).
+     */
+    _tracePerfWhileHidden() {
+        if (!this._perfDiag || !this._firstFrameRendered) return;
+        if (this._transport === 'webrtc-media') return; // no WebCodecs pipeline
+        const now = performance.now();
+        if (now - this._lastDiagLogMs <= 1000) return;
+        const fps = this._decodedFps(now);
+        this._sampleDiagRates(now);
+        const diagSnap = this._workerDiag || this._diag.snapshot();
+        this._lastDiagLogMs = now;
+        console.log('[perf] ' + this._perfDiagLine(diagSnap, fps, now));
     }
 
     /**
