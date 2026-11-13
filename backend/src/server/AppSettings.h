@@ -474,9 +474,10 @@ public:
 
     // ── Diagnostic modes (admin page → Advanced) ────────────────────────────
     //
-    // "debug_mode" and "verbose_logs", JSON bools, default false. What they do
-    // is described in common/RunFlags.h; --debug and --verbose switch the same
-    // modes on for one run without writing here.
+    // "debug_mode" and "verbose_logs", JSON bools, default false — true in the
+    // DEV edition (mw::edition::isDevBuild()), whose testers send us logs. What
+    // they do is described in common/RunFlags.h; --debug and --verbose switch
+    // the same modes on for one run without writing here.
 
     bool debugMode() const;
     void setDebugMode(bool enabled);
