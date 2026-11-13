@@ -161,6 +161,15 @@ bool letsGo(const IceMux& mux, uint16_t port)
     return !mux.holds(port);
 }
 
+/// The line that says a port was let go is written a moment after the port
+/// is seen gone: waited for, then counted.
+bool toldBy(const std::atomic<int>& told, int count)
+{
+    for (int waited = 0; waited < 2000 && told.load() < count; waited += 5)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    return told.load() == count;
+}
+
 /// The mux's TCP side, as far as the mux decides it: whose fragment and whose
 /// ports an agent is expected on. The sockets are test_ice_mux_tcp.cpp's.
 void tcpForItsAgents()
@@ -520,7 +529,7 @@ void run_ice_mux_socket_tests()
         // The agent gone too: nobody has the port, and it goes
         r.removeAgent(agent);
         CHECK(letsGo(r, pa));
-        CHECK(told == 1);
+        CHECK(toldBy(told, 1));
         CHECK(r.port(IceMux::kBlock) == pb && r.holds(pb));
         // It is anybody's again, and no agent is given it any more
         CHECK(other.hold(pa) == Held::NewlyBound);
@@ -536,7 +545,7 @@ void run_ice_mux_socket_tests()
         // A port replaced with nobody on it goes at once
         CHECK(r.hold(pc) == Held::NewlyBound && r.serve(IceMux::kBlock, pc));
         CHECK(letsGo(r, pb));
-        CHECK(told == 2);
+        CHECK(toldBy(told, 2));
         // While a port is being asked for, none is let go: the answer may be
         // that the replaced one serves again
         const IceMux::Share held = r.shareByHandle();
@@ -550,7 +559,7 @@ void run_ice_mux_socket_tests()
         r.endAsking();
         // The asking over, the port that serves stays and the other goes
         CHECK(letsGo(r, pa));
-        CHECK(told == 3 && r.holds(pc) && r.port(IceMux::kBlock) == pc);
+        CHECK(toldBy(told, 3) && r.holds(pc) && r.port(IceMux::kBlock) == pc);
         // Two workers on a port: it stays until both are gone
         const IceMux::Share left = r.shareByHandle(), right = r.shareByHandle();
         CHECK(left.lease != 0 && right.lease != 0 && left.lease != right.lease);
@@ -560,7 +569,7 @@ void run_ice_mux_socket_tests()
         CHECK(r.holds(pc) && told == 3);
         r.release(right.lease);
         CHECK(letsGo(r, pc));
-        CHECK(told == 4);
+        CHECK(toldBy(told, 4));
         // The number a port left is another port's from then on, and that
         // one is read like any other
         const uint32_t late = r.addAgent("hostTTTT1234", r.serving());
