@@ -93,21 +93,27 @@ def knows_local_request(exe):
     or in UTF-16, from the build that brought the command on. An exe not named
     as the server's (is_server_exe) has it never.
     """
+    return knows(exe, _VERB)
+
+
+def knows(exe, option):
+    """Whether @p exe (named as the server's) holds the option name @p option
+    (bytes), in ASCII or UTF-16: read from its bytes, never by starting it."""
     if not is_server_exe(exe):
         return False
     try:
         st = os.stat(exe)
     except OSError:
         return False
-    key = (exe, st.st_size, st.st_mtime_ns)
+    key = (exe, st.st_size, st.st_mtime_ns, option)
     if key not in _KNOWN:
-        wide = _VERB.decode("ascii").encode("utf-16-le")
+        wide = option.decode("ascii").encode("utf-16-le")
         found, tail = False, b""
         try:
             with open(exe, "rb") as f:
                 for chunk in iter(lambda: f.read(1 << 20), b""):
                     block = tail + chunk
-                    if _VERB in block or wide in block:
+                    if option in block or wide in block:
                         found = True
                         break
                     tail = block[-(len(wide) - 1):]

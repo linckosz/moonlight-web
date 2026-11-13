@@ -374,9 +374,18 @@ def main():
         # script is to answer nothing of what it was given.
         print(c.eval(sys.stdin.read()))
     elif cmd == "nav-stdin":
-        # The address read from standard input, for one that must not be on a
-        # command line (a share link names its token): only whether it went.
-        url = sys.stdin.readline().strip()
+        # The address read from standard input (its last line that is not
+        # empty), for one that must not be on a command line: a share link names
+        # its token, the owner's link its key (owner_kiosk.py). An origin given
+        # as the argument (https://127.0.0.1:8443) takes the place of the link's
+        # own, the rest kept. Prints only whether it went.
+        lines = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
+        url = lines[-1] if lines else ""
+        lines = None
+        if url and args:
+            import urllib.parse
+            p, o = urllib.parse.urlsplit(url), urllib.parse.urlsplit(args[0])
+            url = urllib.parse.urlunsplit((o.scheme, o.netloc, p.path, p.query, p.fragment)) if o.scheme and o.netloc else ""
         try:
             r = c.call("Page.navigate", url=url) if url else {"errorText": "no address"}
         except Exception:
