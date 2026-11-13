@@ -197,10 +197,20 @@ bool StreamWorkerHost::start(const QJsonObject& config)
         qInfo() << "[StreamWorkerHost] capture=wgc: the worker runs on the user's token"
                    " (Windows.Graphics.Capture has none for SYSTEM), the secure desktop out of"
                    " its reach";
-    if (native && !userToken && WorkerService::available() &&
+    // A TV on plain HTTP (issue #42): a plain child, on the user's token, and
+    // never one of the two detours — the launcher service reaches the secure
+    // desktop, the elevated task every administrator window. The worker also
+    // keeps such a stream off the secure desktop by itself (plainHttp); this
+    // keeps the reach out of its hands in the first place. In service mode the
+    // console launch above, as the user, already applies.
+    const bool plainHttp = config[QStringLiteral("plainHttp")].toBool(false);
+    if (plainHttp)
+        qInfo() << "[StreamWorkerHost] plain HTTP: the worker runs as a plain child, on the"
+                   " user's token";
+    if (native && !userToken && !plainHttp && WorkerService::available() &&
         startInConsoleSession(args, configLine, Launch::ServiceAsSystem))
         return true;
-    if (native && ConsoleSession::elevatedWorkerAvailable() &&
+    if (native && !plainHttp && ConsoleSession::elevatedWorkerAvailable() &&
         startInConsoleSession(args, configLine, Launch::TaskElevated))
         return true;
     return startInProcess(args, configLine, native);

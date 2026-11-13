@@ -120,6 +120,19 @@ On a **Windows** MoonlightWeb host, the windows that run as administrator are cl
 - Qt's TLS backend is forced to **OpenSSL** (Windows Schannel cannot import PEM keys — a user-supplied certificate would silently be dropped in favour of the self-signed one).
 - `CertManager` guards the ordering traps that produced silent downgrades in the past: `loadCertFiles` precedence, a self-signed key colliding with a supplied one, and hot reload without dropping live connections.
 
+## 6.5b Plain HTTP for listed TVs
+
+Off by default. Some TV browsers refuse a self-signed certificate and cannot open the HTTPS page. For those, `lan_http_clients` in `settings.json` ([Settings Reference](07-Settings-Reference.md)) lists the IPv4 addresses that may use the HTTP port without being redirected. Every other device is redirected to HTTPS, as before.
+
+- **Who**: a listed private IPv4 address that is not one of this machine's own, asking for this machine by one of its IPv4 addresses or its `.local` name, on the HTTP port, without a proxy in between. IPv6 is not served this way.
+- **Signing in**: the TV shows a QR code and a 6-character code. An administrator (an admin session, or the host machine) opens the approval page and types the code read on the TV. The PIN is never typed on the TV. The TV then holds an `mw_lan_http` cookie: valid on plain HTTP only, from its own address only, for 30 days without a visit, and approved again after `remember_me_days` (§6.3) however often it comes back. It is never an HTTPS session.
+- **What it can do**: list the hosts, start, follow and stop its own stream, with a gamepad, a keyboard and a mouse. It never administers this machine, reads the logs, shares a session, pairs a host, approves another device, takes over another device's stream, or streams the sign-in screen. It has no clipboard, no microphone and no HID device, and on Windows no administrator window. Its input travels on its stream's data channel only, limited to named gamepad, keyboard, mouse and stream messages, and its stream runs on the user's own account. On Windows, while the secure desktop is up (UAC, the lock screen, Ctrl+Alt+Del), nothing it sends reaches this machine and it receives no picture: it keeps the last one.
+- **What stays in clear**: the page, the API answers and the signalling travel unencrypted on the local network. The picture, the sound and the input stay encrypted (DTLS-SRTP). **Adding an address hands this desktop's keyboard and mouse to whoever can pose as that device on your network**: use it on a home network you trust.
+- **Two limits**:
+  - the TV's page has no browser key, so the binding of the stream's encryption keys to the session ([§6.6](#66-the-entry-identifier-and-mw-bind-v1)) does not apply to it: someone able to change the unencrypted signalling on the local network could place themselves between the TV and this machine, input included;
+  - the locks on the secure desktop and on administrator windows are Windows'. On a Linux or macOS host, the TV's keyboard and mouse reach everything the signed-in user can reach, an open terminal included.
+- **Revoking**: the TV is listed in **Active Sessions**; revoking it ends its stream at once. Removing its address from `lan_http_clients` closes plain HTTP to it within seconds.
+
 ## 6.6 The entry identifier and MW-BIND-v1
 
 Being reachable and being trusted are two different things here, and the split is the point.

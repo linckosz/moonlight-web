@@ -569,6 +569,7 @@ public:
                 if (m_Config.onPadNumber) m_Config.onPadNumber(controllerNumber, hostNumber);
             });
         sink->setAllowElevated(m_Config.allowElevatedInput);
+        sink->setDefaultDesktopOnly(m_Config.defaultDesktopOnly);
         if (m_Config.tuning.clickTrace) sink->setClickTrace(&m_ClickTrace);
         // On a host with no pointing device, a mouse of its own: the pointer,
         // and a device for games (SystemMouse.h). Mouse Keys when it cannot.
@@ -3390,7 +3391,8 @@ private:
                 noteFirstKeyframe(encoded);
                 d.bytes = encoded.size;
                 d.qp = encoded.avgQp;
-                if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo && signInMaySend()) {
+                if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo && signInMaySend() &&
+                    userDesktopMaySend()) {
                     d.frame = encodedFrame(encoded, frameNumber++, stamps, encoderKbps);
                     m_Callbacks.onVideo(d.frame);
                     d.frame.data = nullptr;
@@ -3563,7 +3565,8 @@ private:
         m_LastEmitQp = encoded.avgQp;
         m_Link.sent(steadyNowUs(), encoded.size, m_LinkKbps);
 
-        if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo && signInMaySend()) {
+        if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo && signInMaySend() &&
+            userDesktopMaySend()) {
             EncodedFrame out = encodedFrame(encoded, frameNumber++, stamps, m_EncoderKbps);
             attachMwsrZones(out);
             // Before the send, which is not the picture's own cost.
@@ -4661,6 +4664,27 @@ private:
         return true;
     }
 
+    /// A TV on plain HTTP (SessionConfig::defaultDesktopOnly), where an encoded
+    /// picture is handed out: only while the input desktop is the user's own.
+    /// The secure desktop's pictures (UAC, the lock screen) are held back and
+    /// the viewer keeps the last one; the first picture after the switch back
+    /// asks for a key frame. Each switch is said once.
+    bool userDesktopMaySend()
+    {
+        if (!m_Config.defaultDesktopOnly) return true;
+        const bool onUser = platform::isUserDesktop(platform::inputDesktopName());
+        const int now = onUser ? 1 : 0;
+        const int before = m_PicturesOnUserDesktop.exchange(now);
+        // Back on the user's desktop: the pictures held back were references
+        // the viewer never got, so the next one is a key frame.
+        if (before == 0 && onUser) m_ForceKeyframe.store(true);
+        if (before != now && !(before == -1 && onUser))
+            log::info(onUser ? "[native] plain HTTP: the user's desktop is back, pictures resume"
+                             : "[native] plain HTTP: the input desktop is not the user's own, "
+                               "pictures are held back");
+        return onUser;
+    }
+
     void finish(const std::string& reason) noexcept
     {
         m_Running.store(false);
@@ -4671,6 +4695,10 @@ private:
             // Nothing left to report it to.
         }
     }
+
+    /// userDesktopMaySend's last look: -1 none yet, 0 another desktop, 1 the
+    /// user's own.
+    std::atomic<int> m_PicturesOnUserDesktop{-1};
 
     /// Sign-in screen mode's figures (signInStillShown, signInMaySend).
     std::atomic<uint64_t> m_SignInSent{0};

@@ -218,6 +218,13 @@ struct SessionConfig
     /// own regardless (see InputGate); this flag only ever narrows further.
     bool allowElevatedInput = true;
 
+    /// Act on the user's own desktop only: a TV on plain HTTP (issue #42).
+    /// No input is injected, and no picture is sent, while the input desktop
+    /// is any other — the secure desktop of UAC, the lock screen and
+    /// Ctrl+Alt+Del above all. Input is dropped, never queued; the viewer keeps
+    /// the last picture. Each switch is said once in the log.
+    bool defaultDesktopOnly = false;
+
     /// Silence the host's own speakers for the length of the session, the way
     /// GameStream's `localAudioPlayMode=0` does: the viewer hears the game, the
     /// room does not. Best effort — whether the machine has a way to mute its

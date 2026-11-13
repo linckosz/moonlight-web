@@ -106,6 +106,10 @@ public:
     /// auto fallback chain can try the next transport.
     /// In explicit mode (allow=true, default): iceTimedOut → startWsFallback().
     void setAllowWsFallback(bool allow) { m_AllowWsFallback = allow; }
+    /// A TV on plain HTTP (issue #42): its input travels on its stream's data
+    /// channel only. No WebSocket fallback is started, and none of its input
+    /// is taken from this socket, whatever else is set.
+    void setPlainHttp(bool on) { m_PlainHttp = on; }
 
 signals:
     void clientConnected();
@@ -166,6 +170,7 @@ private:
 
     bool m_WsFallbackActive = false;
     bool m_AllowWsFallback = true; ///< Default: WS fallback allowed. Auto mode sets false.
+    bool m_PlainHttp = false;      ///< See setPlainHttp.
     bool m_ShimConnected = false;  ///< media engine signals connected for fallback
 
     /// ── Members ─────────────────────────────────────────────────────────────

@@ -267,6 +267,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
         VirtualDisplay::refreshForStream(params.fps, qEnvironmentVariableIntValue("MW_VDD_REFRESH"),
                                          VirtualDisplay::kFasterThanStream);
     config.allowElevatedInput = params.viewerAdmin;
+    config.defaultDesktopOnly = params.defaultDesktopOnly;
     config.muteHostAudio = params.muteHostAudio;
     config.audioSource = mw::native::parseAudioSource(params.audioSource);
     config.onAudioAppChanged = params.onAudioAppChanged;
@@ -532,6 +533,7 @@ void NativeMediaEngine::startSubscriber(const StartParams& params)
     config.externalRight = feed.desktopRight;
     config.externalBottom = feed.desktopBottom;
     config.allowElevatedInput = params.viewerAdmin;
+    config.defaultDesktopOnly = params.defaultDesktopOnly;
     config.muteHostAudio = params.muteHostAudio;
     config.audioSource = mw::native::parseAudioSource(params.audioSource);
     config.onAudioAppChanged = params.onAudioAppChanged;

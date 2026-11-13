@@ -25,6 +25,9 @@
 #include <QNetworkInterface>
 #include <QHash>
 #include <QList>
+#include <QPointer>
+#include <QSet>
+#include <QStringList>
 #include <functional>
 #include <limits>
 #include "common/Types.h"
@@ -83,6 +86,28 @@ public:
     void setPlayerSlotAuthorizer(std::function<bool(const HttpRequest&, int slot)> fn)
     {
         m_PlayerSlotAuth = std::move(fn);
+    }
+
+    /// Plain HTTP for the TVs the owner listed (issue #42, server/LanHttp.h):
+    /// lan_http_clients as written (AppSettings::lanHttpClients), asked again
+    /// at most every two seconds. Null: plain HTTP is for nobody.
+    /// The key a stream is told apart by: a TV's mw_lan_http on its plain HTTP
+    /// path (HttpRequest::lanHttp), the mw_session cookie everywhere else.
+    /// Empty on that path means no key at all, never "this machine": a caller
+    /// on it compares a non-empty value or nothing.
+    static QString streamTokenFromRequest(const HttpRequest& req);
+
+    void setLanHttpClientsProvider(std::function<QStringList()> fn)
+    {
+        m_LanHttpClients = std::move(fn);
+    }
+
+    /// Whether the TV holding the mw_lan_http token @p token may open the
+    /// stream socket of @p slot: that slot streams for its session. Null:
+    /// closed.
+    void setLanHttpSlotAuthorizer(std::function<bool(const QString& token, int slot)> fn)
+    {
+        m_LanHttpSlotAuth = std::move(fn);
     }
 
     /// Slots at or above this index belong to players, not to the owner.
@@ -164,6 +189,9 @@ public:
         Socket, ///< accepted on one of our listening sockets
         Tunnel, ///< carried in over a rendezvous control tunnel
         Local,  ///< asked over the local channel, by a program of this install
+        /// on the plain HTTP port, from a device in lan_http_clients, under this
+        /// machine's own name (server/LanHttp.h): a TV, and nothing more
+        LanHttp,
     };
 
     /// Answer @p req and hand the response to @p respond, with no socket in
@@ -293,12 +321,33 @@ private:
     /// used to scope the CSP's connect-src to the origin the page was served
     /// from; leave it empty for responses that are never a document (errors,
     /// early refusals).
+    /// @p lanHttpHost, for an answer to a TV on plain HTTP: the name it asked
+    /// under, validated; its policy then allows ws:// to that name, and no HSTS
+    /// goes with it.
     void sendResponse(QTcpSocket* socket, const HttpResponse& response,
-                      const QString& hostHeader = QString(), bool keepAlive = false);
+                      const QString& hostHeader = QString(), bool keepAlive = false,
+                      const QString& lanHttpHost = QString());
     /// Close @p socket once it has sat KEEPALIVE_IDLE_MS between two requests.
     void armIdleClose(QTcpSocket* socket);
     void stopIdleClose(QTcpSocket* socket);
     void handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData);
+    /// The rest of a WebSocket upgrade once it is allowed: the bridge to the
+    /// local server on @p targetPort, connected after @p delayMs.
+    void proxyWebSocket(QTcpSocket* clientSocket, const QByteArray& requestData, quint16 targetPort,
+                        int delayMs = 0);
+    /// A static file's answer, the same for every way in that serves them.
+    HttpResponse staticFileAnswer(const HttpRequest& req, bool viaTunnel) const;
+    /// Plain HTTP for a listed TV (issue #42): the validated Host when @p req
+    /// arrives as one, empty otherwise.
+    QString lanHttpArrival(const HttpRequest& req);
+    /// This machine's addresses and name, and the list, read again when two
+    /// seconds have passed.
+    void refreshLanHttpView();
+    /// Answer a TV on plain HTTP: its routes, its key, nothing else.
+    void serveLanHttp(HttpRequest req, ResponseCallback respond);
+    /// A TV's stream socket: its own slot's signalling, nothing else.
+    void upgradeLanHttp(QTcpSocket* clientSocket, const QByteArray& requestData,
+                        const HttpRequest& up, const QString& peer, const QString& lanHttpHost);
     bool isLanHost(const QString& host) const;
 
     /// Push CertManager's public config onto the live SslServer as its public
@@ -346,6 +395,17 @@ private:
 
     /// Player-slot gate (see setPlayerSlotAuthorizer). Null = closed.
     std::function<bool(const HttpRequest&, int slot)> m_PlayerSlotAuth;
+    /// Plain HTTP for the listed TVs (see setLanHttpClientsProvider).
+    std::function<QStringList()> m_LanHttpClients;
+    std::function<bool(const QString& token, int slot)> m_LanHttpSlotAuth;
+    QSet<QString> m_LanHttpUsable;
+    QSet<QString> m_OwnAddresses;
+    QSet<QString> m_OwnIpv4;
+    QString m_LocalName;
+    qint64 m_LanHttpReadAt = 0;
+    QSet<QString> m_LanHttpDroppedSaid;
+    /// The stream socket each TV holds, by session id: a new one closes it.
+    QHash<QString, QPointer<QTcpSocket>> m_LanHttpSockets;
     int m_FirstPlayerSlot = 2;
     /// Upper bound of the player-slot range (exclusive). Slots at or above this
     /// index are owner "extra" sessions, not players. INT_MAX = no extra range.

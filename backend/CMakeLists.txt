@@ -327,6 +327,8 @@ add_executable(mw-server
     src/server/ControlTunnel.cpp
     src/server/HttpParser.cpp
     src/server/RequestGuard.cpp
+    src/server/LanHttp.cpp
+    src/server/LanHttpPairing.cpp
     src/server/CertManager.cpp
     src/server/StaticFileHandler.cpp
     src/server/HomeScreenShell.cpp
@@ -349,6 +351,7 @@ add_executable(mw-server
     src/server/routes/ErrorRoutes.cpp
     src/server/ErrorReports.cpp
     src/server/routes/PairRequestRoutes.cpp
+    src/server/routes/LanHttpRoutes.cpp
     src/server/PhonePairing.cpp
     src/server/LogArchive.cpp
     src/server/LogScrubber.cpp
@@ -795,6 +798,8 @@ if(MW_BUILD_TESTS)
         tests/security_main.cpp
         tests/test_connection_guard.cpp
         tests/test_request_guard.cpp
+        # Plain HTTP for the listed TVs (#42): who, under which name, which routes.
+        tests/test_lan_http.cpp
         tests/test_api_csrf.cpp
         tests/test_share_manager.cpp
         # The guard on the ViGEmBus install notice: header-only pure logic, so
@@ -820,6 +825,7 @@ if(MW_BUILD_TESTS)
         src/server/ConnectionGuard.cpp
         src/server/HttpParser.cpp
         src/server/RequestGuard.cpp
+        src/server/LanHttp.cpp
         # Session sharing: the link/PIN state machine is pure Qt Core logic on
         # purpose, so the credentials guarding a shareable link are verified on
         # every platform like the rest of the security units.

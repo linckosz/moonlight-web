@@ -730,6 +730,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         nativeParams.fallbackHeight = m_FallbackHeight;
         // Who is on the other end, for the administrator-window gate.
         nativeParams.viewerAdmin = m_ViewerAdmin;
+        nativeParams.defaultDesktopOnly = m_PlainHttp;
         // The "mute host audio" stream setting, honoured here as the GameStream
         // path honours it through localAudioPlayMode.
         nativeParams.muteHostAudio = m_Config.muteHostAudio;
@@ -916,7 +917,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setIceTcpPassive(m_IceTcpPassive);
         signaling->setDebugIceDropUdp(m_DebugIceDropUdp);
-        signaling->setAllowWsFallback(!m_AutoMode);
+        signaling->setAllowWsFallback(!m_AutoMode && !m_PlainHttp);
+        signaling->setPlainHttp(m_PlainHttp);
         signaling->setClientKind(m_ClientKind);
         signaling->setClientSameNetwork(m_ClientSameNetwork);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
@@ -1026,7 +1028,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setIceTcpPassive(m_IceTcpPassive);
         signaling->setDebugIceDropUdp(m_DebugIceDropUdp);
-        signaling->setAllowWsFallback(!m_AutoMode);
+        signaling->setAllowWsFallback(!m_AutoMode && !m_PlainHttp);
+        signaling->setPlainHttp(m_PlainHttp);
         signaling->setClientKind(m_ClientKind);
         signaling->setClientSameNetwork(m_ClientSameNetwork);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);

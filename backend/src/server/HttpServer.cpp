@@ -24,6 +24,7 @@
 #include "StaticFileHandler.h"
 #include "server/AuthManager.h"
 #include "server/HomeScreenShell.h"
+#include "server/LanHttp.h"
 #include "server/LocalChannel.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
@@ -31,6 +32,7 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QJsonArray>
 #include <QDir>
 #include <QDirIterator>
@@ -45,6 +47,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QStandardPaths>
+#include <QSysInfo>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -858,6 +861,12 @@ QString HttpServer::sessionTokenFromRequest(const HttpRequest& req)
     return cookieFromRequest(req, QStringLiteral("mw_session"));
 }
 
+QString HttpServer::streamTokenFromRequest(const HttpRequest& req)
+{
+    if (req.lanHttp) return LanHttp::tokenFromCookieHeader(req.headers.value("cookie"));
+    return sessionTokenFromRequest(req);
+}
+
 void HttpServer::reportAuthFailure(const QString& ip)
 {
     m_ConnGuard.reportAuthFailure(ip);
@@ -1093,7 +1102,15 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // It lives here rather than in serveRequest() because it is a property of
     // the socket the request arrived on, not of the request: a tunnel carries no
     // scheme of its own, and there is nowhere for it to redirect to.
-    if (!qobject_cast<QSslSocket*>(socket) && m_ActiveHttpsPort > 0) {
+    //
+    // A TV the owner listed is the one caller that stays on plain HTTP (issue
+    // #42, server/LanHttp.h): its address is in lan_http_clients and it asked
+    // under this machine's own name. What it may then do is decided in
+    // serveLanHttp(), and is little.
+    const bool plainSocket = !qobject_cast<QSslSocket*>(socket);
+    const QString lanHttpHost = plainSocket ? lanHttpArrival(req) : QString();
+    req.lanHttpHost = lanHttpHost;
+    if (plainSocket && lanHttpHost.isEmpty() && m_ActiveHttpsPort > 0) {
         QString host = req.headers.value("host");
         int portSep = host.lastIndexOf(':');
         QString hostname = (portSep >= 0) ? host.left(portSep) : host;
@@ -1143,28 +1160,28 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         }
     });
 
-    serveRequest(std::move(req), Arrival::Socket,
-                 [this, socket, hostHeader, requestId, keepAlive](const HttpResponse& resp) {
-                     if (m_PendingAsyncSockets.contains(socket) &&
-                         m_RequestIds.value(socket) == requestId) {
-                         m_PendingAsyncSockets.remove(socket);
-                         sendResponse(socket, resp, hostHeader, keepAlive);
-                     } else {
-                         // This request was answered by the timeout (which closes),
-                         // or the socket disconnected mid-request: onDisconnected() did
-                         // socket->deleteLater(), so by the time this async response
-                         // arrives the QTcpSocket is a FREED QObject. Stream its
-                         // ADDRESS as a plain void* — never the QObject* itself,
-                         // because QDebug::operator<<(const QObject*) dereferences it
-                         // (className/objectName) and would crash on the dangling
-                         // object (the UAF that took the whole server down on
-                         // browser-close double /quit).
-                         qWarning() << "[HttpServer] Respond called but socket no longer pending "
-                                       "— response discarded"
-                                    << "socket=" << static_cast<const void*>(socket)
-                                    << "status=" << resp.statusCode;
-                     }
-                 });
+    serveRequest(
+        std::move(req), lanHttpHost.isEmpty() ? Arrival::Socket : Arrival::LanHttp,
+        [this, socket, hostHeader, requestId, keepAlive, lanHttpHost](const HttpResponse& resp) {
+            if (m_PendingAsyncSockets.contains(socket) && m_RequestIds.value(socket) == requestId) {
+                m_PendingAsyncSockets.remove(socket);
+                sendResponse(socket, resp, hostHeader, keepAlive, lanHttpHost);
+            } else {
+                // This request was answered by the timeout (which closes),
+                // or the socket disconnected mid-request: onDisconnected() did
+                // socket->deleteLater(), so by the time this async response
+                // arrives the QTcpSocket is a FREED QObject. Stream its
+                // ADDRESS as a plain void* — never the QObject* itself,
+                // because QDebug::operator<<(const QObject*) dereferences it
+                // (className/objectName) and would crash on the dangling
+                // object (the UAF that took the whole server down on
+                // browser-close double /quit).
+                qWarning() << "[HttpServer] Respond called but socket no longer pending "
+                              "— response discarded"
+                           << "socket=" << static_cast<const void*>(socket)
+                           << "status=" << resp.statusCode;
+            }
+        });
 }
 
 void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback respond)
@@ -1207,6 +1224,15 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     const bool viaTunnel = (arrival == Arrival::Tunnel);
     req.viaTunnel = viaTunnel;
 
+    // A listed TV on plain HTTP: said by the socket path alone, once it has
+    // checked, and never by anything a request carries.
+    req.lanHttp = arrival == Arrival::LanHttp && !req.lanHttpHost.isEmpty();
+    if (!req.lanHttp) req.lanHttpHost.clear();
+    if (arrival == Arrival::LanHttp && !req.lanHttp) {
+        respond(HttpResponse::error(404, "Not Found"));
+        return;
+    }
+
     // A target carrying control characters is refused before anything reads it,
     // and so is a method that is not a word of capitals or a header that holds
     // one. The socket path already catches this at parse time; the tunnel builds
@@ -1217,6 +1243,13 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
                             .arg(req.clientAddress));
         m_ConnGuard.reportAuthFailure(req.clientAddress);
         respond(HttpResponse::error(400, "Bad Request"));
+        return;
+    }
+
+    // A TV on plain HTTP takes a path of its own from here: none of what
+    // follows reads its requests, and none of its privileges are a TV's.
+    if (req.lanHttp) {
+        serveLanHttp(std::move(req), std::move(respond));
         return;
     }
 
@@ -1455,57 +1488,7 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     }
 
     if (!req.path.startsWith("/api/")) {
-        // Static assets answer reads and nothing else. Every write verb on them
-        // was already a no-op that returned the app shell with 200; saying 405
-        // states the contract instead of implying the request did something.
-        if (req.method != QLatin1String("GET") && req.method != QLatin1String("HEAD")) {
-            HttpResponse notAllowed = HttpResponse::error(405, "Method Not Allowed");
-            notAllowed.headers["Allow"] = "GET, HEAD";
-            respond(notAllowed);
-            return;
-        }
-
-        // /version.json is synthesised from the running app version (single
-        // source of truth: MW_VERSION, baked in at build from the git tag) so
-        // it never needs hand-bumping. The frontend's VersionGuard polls it and
-        // reloads when it changes, pulling a fresh app after every update.
-        if (req.path == "/version.json") {
-            HttpResponse resp;
-            resp.statusCode = 200;
-            resp.contentType = "application/json";
-            resp.body =
-                "{\"version\":\"" + QCoreApplication::applicationVersion().toUtf8() + "\"}\n";
-            resp.headers["Cache-Control"] = "no-cache, must-revalidate";
-            respond(resp);
-            return;
-        }
-
-        const QString lastSegment = req.path.section(QLatin1Char('/'), -1);
-        const bool looksLikeFile = lastSegment.contains(QLatin1Char('.'));
-
-        // What a home-screen shortcut is made of, rewritten for a page reached
-        // through the introduction server (HomeScreenShell.h has the why). The
-        // file's own ETag no longer describes those bytes, so the conditional
-        // request is answered after the rewrite rather than by the file.
-        const bool homeScreen = viaTunnel && m_HomeScreenIdentity &&
-                                (!looksLikeFile || req.path == QLatin1String("/index.html") ||
-                                 req.path == QLatin1String("/manifest.webmanifest"));
-        const QString ifNoneMatch = req.headers.value("if-none-match");
-        const QString fileIfNoneMatch = homeScreen ? QString() : ifNoneMatch;
-
-        HttpResponse resp = m_StaticFiles->serveFile(req.path, fileIfNoneMatch);
-        // SPA fallback: a path with no file extension is a frontend route
-        // (/admin, /settings) and gets index.html so the History API can pick it
-        // up on reload. A path that names a file is a genuine miss and must say
-        // so — answering 200 with the app shell for /settings.json or /.git/config
-        // makes every probe look like a hit, both to a scanner and to a reader
-        // trying to tell a real leak from the fallback.
-        if (resp.statusCode == 404 && !looksLikeFile)
-            resp = m_StaticFiles->serveFile("/", fileIfNoneMatch);
-        if (homeScreen && resp.statusCode == 200) personaliseForHomeScreen(req, resp, ifNoneMatch);
-        // HEAD is the same response without the representation.
-        if (req.method == QLatin1String("HEAD")) resp.body.clear();
-        respond(resp);
+        respond(staticFileAnswer(req, viaTunnel));
         return;
     }
 
@@ -1566,6 +1549,18 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
         m_ConnGuard.reportAuthFailure(peerAddr);
         sendResponse(clientSocket, HttpResponse::error(400, "Bad Request"));
         return;
+    }
+
+    // A listed TV on plain HTTP: a gate of its own (upgradeLanHttp), never the
+    // exemptions below.
+    if (!qobject_cast<QSslSocket*>(clientSocket)) {
+        HttpRequest probe = up;
+        probe.clientAddress = peerAddr;
+        const QString lanHttpHost = lanHttpArrival(probe);
+        if (!lanHttpHost.isEmpty()) {
+            upgradeLanHttp(clientSocket, requestData, up, peerAddr, lanHttpHost);
+            return;
+        }
     }
 
     // ── Origin check ──────────────────────────────────────────────────────────
@@ -1660,7 +1655,12 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
     qInfo() << "[HttpServer] WebSocket upgrade detected, path=" << path
             << "targetPort=" << targetPort;
+    proxyWebSocket(clientSocket, requestData, targetPort);
+}
 
+void HttpServer::proxyWebSocket(QTcpSocket* clientSocket, const QByteArray& requestData,
+                                quint16 targetPort, int delayMs)
+{
     // Copy the upgrade request BEFORE removing from m_Buffers.  requestData is a
     // const reference to the QByteArray inside m_Buffers — remove() destroys it.
     // NOLINTNEXTLINE(performance-unnecessary-copy-initialization) — copy is required.
@@ -1737,11 +1737,19 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
                          cleanup();
                      });
 
+    // Later when the socket it replaces has to be let go of first: the server
+    // behind takes one client at a time.
+    if (delayMs > 0) {
+        QTimer::singleShot(delayMs, target, [target, targetPort]() {
+            target->connectToHost(QHostAddress::LocalHost, targetPort);
+        });
+        return;
+    }
     target->connectToHost(QHostAddress::LocalHost, targetPort);
 }
 
 void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response,
-                              const QString& hostHeader, bool keepAlive)
+                              const QString& hostHeader, bool keepAlive, const QString& lanHttpHost)
 {
     // Only log failures — per-request logging floods the console with the
     // periodic /api/hosts polling.
@@ -1778,6 +1786,13 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response,
     // Defaults first, then the handler's own headers on top: a handler that sets
     // Cache-Control or a stricter policy wins, and neither can be emitted twice.
     QMap<QString, QString> headers = securityHeaders(hostHeader);
+    // A TV on plain HTTP: its page may open ws:// to the name it was served
+    // under, built from the validated value and not from the header, and HSTS
+    // has no business on an answer that is not HTTPS.
+    if (!lanHttpHost.isEmpty()) {
+        headers["Content-Security-Policy"] = LanHttp::securityPolicy(lanHttpHost);
+        headers.remove("Strict-Transport-Security");
+    }
     keepAlive = keepAlive && socket->state() == QAbstractSocket::ConnectedState;
     if (keepAlive) {
         headers["Connection"] = "keep-alive";
@@ -1847,4 +1862,256 @@ void HttpServer::stopIdleClose(QTcpSocket* socket)
     if (auto* idle = socket->findChild<QTimer*>(QStringLiteral("mw-keepalive-idle"),
                                                 Qt::FindDirectChildrenOnly))
         idle->stop();
+}
+
+HttpResponse HttpServer::staticFileAnswer(const HttpRequest& req, bool viaTunnel) const
+{
+    // Static assets answer reads and nothing else. Every write verb on them
+    // was already a no-op that returned the app shell with 200; saying 405
+    // states the contract instead of implying the request did something.
+    if (req.method != QLatin1String("GET") && req.method != QLatin1String("HEAD")) {
+        HttpResponse notAllowed = HttpResponse::error(405, "Method Not Allowed");
+        notAllowed.headers["Allow"] = "GET, HEAD";
+        return notAllowed;
+    }
+
+    // /version.json is synthesised from the running app version (single
+    // source of truth: MW_VERSION, baked in at build from the git tag) so
+    // it never needs hand-bumping. The frontend's VersionGuard polls it and
+    // reloads when it changes, pulling a fresh app after every update.
+    if (req.path == "/version.json") {
+        HttpResponse resp;
+        resp.statusCode = 200;
+        resp.contentType = "application/json";
+        resp.body = "{\"version\":\"" + QCoreApplication::applicationVersion().toUtf8() + "\"}\n";
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate";
+        return resp;
+    }
+
+    const QString lastSegment = req.path.section(QLatin1Char('/'), -1);
+    const bool looksLikeFile = lastSegment.contains(QLatin1Char('.'));
+
+    // What a home-screen shortcut is made of, rewritten for a page reached
+    // through the introduction server (HomeScreenShell.h has the why). The
+    // file's own ETag no longer describes those bytes, so the conditional
+    // request is answered after the rewrite rather than by the file.
+    const bool homeScreen = viaTunnel && m_HomeScreenIdentity &&
+                            (!looksLikeFile || req.path == QLatin1String("/index.html") ||
+                             req.path == QLatin1String("/manifest.webmanifest"));
+    const QString ifNoneMatch = req.headers.value("if-none-match");
+    const QString fileIfNoneMatch = homeScreen ? QString() : ifNoneMatch;
+
+    HttpResponse resp = m_StaticFiles->serveFile(req.path, fileIfNoneMatch);
+    // SPA fallback: a path with no file extension is a frontend route
+    // (/admin, /settings) and gets index.html so the History API can pick it
+    // up on reload. A path that names a file is a genuine miss and must say
+    // so — answering 200 with the app shell for /settings.json or /.git/config
+    // makes every probe look like a hit, both to a scanner and to a reader
+    // trying to tell a real leak from the fallback.
+    if (resp.statusCode == 404 && !looksLikeFile)
+        resp = m_StaticFiles->serveFile("/", fileIfNoneMatch);
+    if (homeScreen && resp.statusCode == 200) personaliseForHomeScreen(req, resp, ifNoneMatch);
+    // HEAD is the same response without the representation.
+    if (req.method == QLatin1String("HEAD")) resp.body.clear();
+    return resp;
+}
+
+// --- Plain HTTP for the listed TVs (issue #42) -------------------------------
+
+namespace {
+
+/// A value of the file or of a header, as a log line may show it: short, and
+/// with nothing that could start a line of its own.
+QString shownForLog(const QString& value)
+{
+    QString text = value.left(64);
+    for (QChar& c : text)
+        if (c.unicode() < 0x20 || c.unicode() == 0x7F) c = QLatin1Char('?');
+    return text;
+}
+
+} // namespace
+
+void HttpServer::refreshLanHttpView()
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (m_LanHttpReadAt != 0 && now - m_LanHttpReadAt < 2000) return;
+    m_LanHttpReadAt = now;
+
+    // This machine's own addresses: never "a TV", and the only names a TV may
+    // ask under.
+    m_OwnAddresses.clear();
+    m_OwnIpv4.clear();
+    for (const QHostAddress& a : QNetworkInterface::allAddresses()) {
+        m_OwnAddresses.insert(a.toString());
+        if (a.protocol() == QAbstractSocket::IPv4Protocol && !a.isLoopback())
+            m_OwnIpv4.insert(a.toString());
+    }
+    const QString machine = QSysInfo::machineHostName().section(QLatin1Char('.'), 0, 0).toLower();
+    m_LocalName = machine.isEmpty() ? QString() : machine + QStringLiteral(".local");
+
+    QStringList dropped;
+    m_LanHttpUsable = LanHttp::usableClients(m_LanHttpClients ? m_LanHttpClients() : QStringList(),
+                                             m_OwnAddresses, &dropped);
+    for (const QString& entry : std::as_const(dropped)) {
+        if (m_LanHttpDroppedSaid.contains(entry)) continue;
+        m_LanHttpDroppedSaid.insert(entry);
+        Logger::warning(
+            QString("[LanHttp] lan_http_clients: '%1' is not the private IPv4 address of "
+                    "another device: ignored")
+                .arg(shownForLog(entry)));
+    }
+}
+
+QString HttpServer::lanHttpArrival(const HttpRequest& req)
+{
+    // Nothing to compare with and nobody to sign in: plain HTTP is for nobody.
+    if (!m_LanHttpClients || !m_AuthManager) return {};
+    // A request passed along by a proxy is not the TV's own: whatever it says
+    // about where it comes from, the socket's address is the proxy's.
+    if (RequestGuard::forwardedByProxy(req.headers)) return {};
+    refreshLanHttpView();
+    if (m_LanHttpUsable.isEmpty()) return {};
+    if (!LanHttp::admits(req.clientAddress, m_LanHttpUsable, m_OwnAddresses)) return {};
+    return LanHttp::validatedHost(req.headers.value("host"), m_OwnIpv4, m_LocalName, m_HttpPort);
+}
+
+namespace {
+
+/// What a TV's key is worth, asked from @p peer (LanHttp::Key).
+LanHttp::Key keyOf(const AuthManager* auth, const QString& token, const QString& peer)
+{
+    if (token.isEmpty() || !auth) return LanHttp::Key::None;
+    if (auth->validateLanHttpSession(token, peer)) return LanHttp::Key::Valid;
+    const QString bound = auth->lanHttpBoundIp(token);
+    if (!bound.isEmpty() && bound != LanHttp::normalizePeer(peer))
+        return LanHttp::Key::OtherAddress;
+    return LanHttp::Key::Expired;
+}
+
+} // namespace
+
+void HttpServer::serveLanHttp(HttpRequest req, ResponseCallback respond)
+{
+    // A page of another site, and a body that is not JSON, are refused as on
+    // HTTPS, with none of its privileges in the context.
+    RequestGuard::Context ctx;
+    ctx.publicDomain = m_Certs.domain();
+    ctx.adminLocked = m_AdminLocked;
+    const RequestGuard::Decision decision =
+        RequestGuard::evaluate(RequestGuard::describe(req), ctx);
+
+    // The rest is LanHttp::gate's to decide, without a socket, and tested as it
+    // is: the routes named one by one, an Origin on every write, the key.
+    const QString token = LanHttp::tokenFromCookieHeader(req.headers.value("cookie"));
+    const LanHttp::Gate gate = LanHttp::gate(req.method, req.path, req.headers, req.lanHttpHost,
+                                             keyOf(m_AuthManager, token, req.clientAddress),
+                                             decision.outcome != RequestGuard::Outcome::Allow);
+    if (gate.counted) m_ConnGuard.reportAuthFailure(req.clientAddress);
+    if (gate.verdict != LanHttp::Verdict::Serve) {
+        if (gate.verdict != LanHttp::Verdict::NotFound)
+            Logger::warning(QString("[LanHttp] Refused %1 %2 from %3 (%4)")
+                                .arg(req.method, LanHttp::pathForLog(req.path), req.clientAddress,
+                                     gate.verdict == LanHttp::Verdict::Forbidden
+                                         ? QStringLiteral("another page")
+                                         : QStringLiteral("not signed in")));
+        HttpResponse refused;
+        switch (gate.verdict) {
+        case LanHttp::Verdict::Forbidden:
+            refused = HttpResponse::json(
+                QJsonObject{{"error", decision.outcome != RequestGuard::Outcome::Allow
+                                          ? RequestGuard::blockError(decision.outcome)
+                                          : QStringLiteral("cross_site_request_blocked")}},
+                decision.outcome != RequestGuard::Outcome::Allow
+                    ? RequestGuard::blockStatus(decision.outcome)
+                    : 403);
+            break;
+        case LanHttp::Verdict::Unauthorized:
+            refused = HttpResponse::json(QJsonObject{{"error", "authentication_required"}}, 401);
+            break;
+        default: refused = HttpResponse::error(404, "Not Found"); break;
+        }
+        respond(refused);
+        return;
+    }
+
+    // Its one key, and nothing of the HTTPS side: the request goes on carrying
+    // the mw_lan_http cookie alone, so that no route down the line can read a
+    // mw_session or a mw_player a client sent in clear. And it is never this
+    // machine, never its owner's browser, never an administrator.
+    req.headers.remove("cookie");
+    if (!gate.cookieHeader.isEmpty()) req.headers["cookie"] = gate.cookieHeader;
+    req.isLocal = false;
+    req.isHostMachine = false;
+    req.hostTrusted = false;
+    req.viaTunnel = false;
+    req.tunnelKey.clear();
+    req.adminLocked = m_AdminLocked;
+    req.boothShare = false;
+
+    if (m_AdminLocked && RequestGuard::lockedByNoAdmin(req.method, req.path, false)) {
+        QJsonObject obj;
+        obj["error"] = "admin_locked";
+        respond(HttpResponse::json(obj, 403));
+        return;
+    }
+
+    if (!req.path.startsWith(QLatin1String("/api/"))) {
+        respond(staticFileAnswer(req, false));
+        return;
+    }
+
+    m_Router->dispatchAsync(req, [respond](const HttpResponse& resp) {
+        HttpResponse out = resp;
+        if (!out.headers.contains("Cache-Control")) out.headers["Cache-Control"] = "no-store";
+        respond(out);
+    });
+}
+
+void HttpServer::upgradeLanHttp(QTcpSocket* clientSocket, const QByteArray& requestData,
+                                const HttpRequest& up, const QString& peer,
+                                const QString& lanHttpHost)
+{
+    // LanHttp::webSocketGate's to decide: the Origin, required and exact; a
+    // slot's signalling socket, never the legacy video relay nor the control
+    // channel; the key; and the slot, this TV's own stream's.
+    const QString firstLine = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n")));
+    const QString path = firstLine.section(QLatin1Char(' '), 1, 1);
+    const QString token = LanHttp::tokenFromCookieHeader(up.headers.value("cookie"));
+    const LanHttp::WsGate gate = LanHttp::webSocketGate(
+        up.headers.value("origin"), lanHttpHost, path, keyOf(m_AuthManager, token, peer),
+        [this, &token](int slot) { return m_LanHttpSlotAuth && m_LanHttpSlotAuth(token, slot); });
+    const quint16 targetPort = gate.status != 0 ? quint16(0)
+                               : gate.slot == 0 ? m_SignalingPort
+                                                : m_SlotPorts.value(gate.slot).signaling;
+    if (gate.status != 0 || targetPort == 0) {
+        if (gate.counted) m_ConnGuard.reportAuthFailure(peer);
+        const int status = gate.status != 0 ? gate.status : 404;
+        if (status != 404)
+            Logger::warning(QString("[LanHttp] WebSocket refused from %1 (%2): %3")
+                                .arg(peer, LanHttp::pathForLog(path))
+                                .arg(status));
+        sendResponse(
+            clientSocket,
+            HttpResponse::json(QJsonObject{{"error", status == 401   ? "authentication_required"
+                                                     : status == 403 ? "forbidden"
+                                                                     : "not_found"}},
+                               status),
+            QString(), false, lanHttpHost);
+        return;
+    }
+
+    // One socket per TV: a new one closes the old, so that a page reloaded is
+    // not turned away by the signalling server, which takes one client.
+    const QString sessionId = m_AuthManager->lanHttpSessionId(token, peer);
+    int delayMs = 0;
+    const QPointer<QTcpSocket> old = m_LanHttpSockets.value(sessionId);
+    if (old && old != clientSocket && old->state() == QAbstractSocket::ConnectedState) {
+        old->disconnectFromHost();
+        delayMs = 300;
+        Logger::info(QString("[LanHttp] %1 opened a new connection; the previous one was closed")
+                         .arg(LanHttp::normalizePeer(peer)));
+    }
+    m_LanHttpSockets.insert(sessionId, clientSocket);
+    proxyWebSocket(clientSocket, requestData, targetPort, delayMs);
 }

@@ -86,12 +86,24 @@ struct SessionInfo
     // for every other way in, and when the host machine itself approved.
     QString approvedBy;
 
+    // A TV on plain HTTP (issue #42, server/LanHttp.h), signed in by the QR code
+    // it showed. Its token is good on that path only, from boundIp only, and
+    // never as an HTTPS session: validateSession() refuses it, so whoever reads
+    // it off the network gets a TV's reach and nothing more. It is never the
+    // host's, never an administrator's, and never approves another device.
+    bool lanHttp = false;
+    QString boundIp;
+
     QJsonObject toJson() const
     {
         QJsonObject obj;
         obj["token"] = token;
         if (!pairingKey.isEmpty()) obj["pairing_key"] = QString::fromLatin1(pairingKey.toBase64());
         if (!approvedBy.isEmpty()) obj["approved_by"] = approvedBy;
+        if (lanHttp) {
+            obj["lan_http"] = true;
+            obj["bound_ip"] = boundIp;
+        }
         obj["ip"] = ip;
         obj["machine_name"] = machineName;
         obj["city"] = city;
@@ -248,6 +260,33 @@ public:
     /// empty when there is none or the session is not valid. For an audit
     /// line; never a credential.
     QString sessionMachineName(const QString& token) const;
+
+    // ── TVs on plain HTTP (issue #42) ──────────────────────────────────────
+    /// A TV's session, once an administrator approved the code it showed
+    /// (server/LanHttpPairing.h). Bound to @p peer, which must be a usable
+    /// address (LanHttp::normalizePeer); empty when it is not. @p approverId is
+    /// the approving session's opaque id, empty when the host machine itself
+    /// approved: revoking that session revokes the TV too. The raw token is
+    /// returned for the mw_lan_http cookie and never logged.
+    QString createLanHttpSession(const QString& peer, const QString& machineName,
+                                 const QString& approverId);
+    /// Whether a raw mw_lan_http token is a TV's live session, asked from the
+    /// address it is bound to: within its 30 days without a visit, and within
+    /// remember_me_days of its approval however often it came back (LH3).
+    bool validateLanHttpSession(const QString& token, const QString& peer) const;
+    /// Bump a TV's lastSeen, when validateLanHttpSession() holds.
+    void touchLanHttpSession(const QString& token, const QString& peer);
+    /// The Max-Age of a TV's cookie: what is left of its sliding 30 days or of
+    /// its time since approval, whichever ends first.
+    qint64 lanHttpCookieMaxAge(const QString& token) const;
+    /// The opaque id of a TV's live session, empty when the token is not one.
+    QString lanHttpSessionId(const QString& token, const QString& peer) const;
+    /// The address a TV's session is bound to, live or not; empty when the
+    /// token is no TV's. Tells "another address" from "ran out" (LanHttp::Key).
+    QString lanHttpBoundIp(const QString& token) const;
+
+    /// Days without a visit after which a TV on plain HTTP is signed out (D3).
+    static constexpr qint64 LAN_HTTP_SESSION_TTL_SECS = 30LL * 24 * 3600;
     /** Grant admin access to an existing session (after the password checked
      *  out). Takes the raw cookie token. Returns false for unknown sessions. */
     bool promoteSessionToAdmin(const QString& token);
@@ -648,9 +687,24 @@ private:
     /// and on whether it administers this machine from elsewhere.
     qint64 ttlFor(const SessionInfo& s) const
     {
+        if (s.lanHttp) return LAN_HTTP_SESSION_TTL_SECS;
         if (s.ephemeral) return EPHEMERAL_SESSION_TTL_SECS;
         if (s.isAdmin || (s.isHost && s.viaTunnel))
             return std::min(m_rememberTtlSecs, PRIVILEGED_SESSION_TTL_SECS);
         return m_rememberTtlSecs;
     }
+
+    /// Whether a session has ended by time: its inactivity budget (ttlFor) is
+    /// spent, or, for a TV on plain HTTP, remember_me_days have passed since it
+    /// was approved, however often it came back (LH3: a TV is approved again).
+    bool expired(const SessionInfo& s, qint64 now) const
+    {
+        const qint64 last = s.lastSeen > 0 ? s.lastSeen : s.createdAt;
+        if (now - last > ttlFor(s)) return true;
+        return s.lanHttp && now - s.createdAt > m_rememberTtlSecs;
+    }
+
+    /// A fresh raw token for a session about to be stored; its opaque id is
+    /// hashToken() of it.
+    QString newToken(const QString& cleanIp);
 };

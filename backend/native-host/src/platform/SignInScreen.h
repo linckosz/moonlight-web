@@ -62,6 +62,27 @@ inline bool isSignInDesktop(std::string_view name)
     return true;
 }
 
+/// The user's own desktop, where every window of the session lives.
+inline constexpr std::string_view kUserDesktop = "Default";
+
+/// Whether @p name is the user's own desktop, without case as Windows compares
+/// them. A stream that must never reach the secure desktop (a TV on plain
+/// HTTP, SessionConfig::defaultDesktopOnly) acts only while this holds; an
+/// empty name, which is how a process without SYSTEM rights reads the secure
+/// desktop, never does.
+inline bool isUserDesktop(std::string_view name)
+{
+    if (name.size() != kUserDesktop.size()) return false;
+    for (size_t i = 0; i < name.size(); ++i) {
+        char a = name[i];
+        char b = kUserDesktop[i];
+        if (a >= 'A' && a <= 'Z') a = static_cast<char>(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = static_cast<char>(b - 'A' + 'a');
+        if (a != b) return false;
+    }
+    return true;
+}
+
 /// What one check saw.
 struct SignInLook
 {

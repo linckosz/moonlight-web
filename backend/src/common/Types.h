@@ -73,6 +73,14 @@ struct HttpRequest
                                 // the method is not a word of capitals, or when a
                                 // header's name or value holds one (a tab apart in
                                 // a value). Answered with 400 and never routed.
+    bool lanHttp = false;       // Arrived on plain HTTP from a device listed in
+                                // lan_http_clients (issue #42, server/LanHttp.h),
+                                // set by HttpServer alone. Its only key is the
+                                // mw_lan_http cookie, read where this is true and
+                                // nowhere else; isLocal, isHostMachine and
+                                // hostTrusted are false whatever else holds.
+    QString lanHttpHost;        // With lanHttp: the Host it asked under, validated
+                                // (LanHttp::validatedHost), "192.168.1.10:8080".
 };
 
 struct HttpResponse

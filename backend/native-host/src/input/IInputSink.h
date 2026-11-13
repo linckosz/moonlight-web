@@ -119,6 +119,10 @@ public:
     /// such distinction ignores it. Set before start(), never changed after.
     virtual void setAllowElevated(bool allow) { (void)allow; }
 
+    /// SessionConfig::defaultDesktopOnly. A sink on an OS with no secure
+    /// desktop ignores it. Set before start(), never changed after.
+    virtual void setDefaultDesktopOnly(bool on) { (void)on; }
+
     /// Where to report the gate opening or closing — see InputGate. Called
     /// from inject(), on its thread, on change only. A sink that never gates
     /// never calls it.

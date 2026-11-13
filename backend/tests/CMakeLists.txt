@@ -156,6 +156,10 @@ add_executable(run_tests
     test_host_key_vault.cpp
     test_owner_link_wait.cpp
     test_local_request.cpp
+    test_lan_http.cpp
+    test_lan_http_pairing.cpp
+    test_lan_http_routes.cpp
+    test_input_policy.cpp
     # In-scope production units (+ their real deps)
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.
@@ -232,6 +236,9 @@ add_executable(run_tests
     ${_src}/src/server/HomeScreenShell.cpp
     ${_src}/src/server/HttpParser.cpp
     ${_src}/src/server/RequestGuard.cpp
+    ${_src}/src/server/LanHttp.cpp
+    ${_src}/src/server/LanHttpPairing.cpp
+    ${_src}/src/server/routes/LanHttpRoutes.cpp
     ${_src}/src/server/SessionPool.cpp
     # The single-tab control channel: the port it lands on when its own is taken.
     ${_src}/src/server/ControlChannel.cpp

@@ -45,6 +45,7 @@
 #include "../../common/Types.h"
 #include "../../common/RunFlags.h"
 
+#include <atomic>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -66,6 +67,10 @@
 #endif
 
 namespace {
+
+/// A TV on plain HTTP (issue #42): set from the config, read by the stdin
+/// pump, which refuses a policy change for such a stream.
+std::atomic<bool> g_PlainHttp{false};
 
 /// Write one protocol event line on stdout (the only stdout writer in worker
 /// mode — all logging goes to the log file / stderr).
@@ -569,6 +574,31 @@ int runStreamWorker(QCoreApplication& app)
         return 1;
     }
 
+    // A TV on plain HTTP (issue #42): one webrtc-media stream of its own, a
+    // <video> picture and its input on that stream's data channel. Anything
+    // else in its config is refused here rather than half followed.
+    if (cfg[QStringLiteral("plainHttp")].toBool(false)) {
+        bool mediaOnly =
+            cfg[QStringLiteral("role")].toString() != QLatin1String("feed") &&
+            cfg[QStringLiteral("feedPipe")].toString().isEmpty() &&
+            cfg[QStringLiteral("internalTransport")].toString() == QLatin1String("webrtc-media") &&
+            cfg[QStringLiteral("transportMode")].toString().startsWith(
+                QLatin1String("webrtc-media"));
+        for (const QJsonValue& v : cfg[QStringLiteral("transportChain")].toArray())
+            if (!v.toString().startsWith(QLatin1String("webrtc-media"))) mediaOnly = false;
+        if (!mediaOnly) {
+            qWarning() << "[StreamWorker] plain HTTP: refused a config that is not one "
+                          "webrtc-media stream of its own";
+            emitEvent(
+                {{QStringLiteral("event"), QStringLiteral("response")},
+                 {QStringLiteral("code"), 403},
+                 {QStringLiteral("body"),
+                  QJsonObject{{QStringLiteral("error"),
+                               QStringLiteral("plain HTTP streams over webrtc-media only")}}}});
+            return 1;
+        }
+    }
+
     // The guests' shared feed: an engine and a pipe, nothing a browser meets.
     if (cfg[QStringLiteral("role")].toString() == QLatin1String("feed")) return runFeedWorker(cfg);
 
@@ -799,6 +829,28 @@ int runStreamWorker(QCoreApplication& app)
         qInfo() << "[StreamWorker] sign-in screen: keyboardMouse=" << policy.keyboardMouse
                 << ", no gamepad, no HID, no clipboard, no microphone, no audio";
     }
+    // A TV on plain HTTP (issue #42): what its page could send that acts on this
+    // machine is named one by one (InputMsg::allowedPlainHttp), with no HID
+    // device and no microphone, and no clipboard either: such a session is
+    // never unrestricted. Its input travels on its stream's data channel only
+    // and acts on the user's own desktop only (Session::setPlainHttp). Fixed
+    // here, at the start: no later setPolicy lifts it.
+    if (cfg[QStringLiteral("plainHttp")].toBool(false)) {
+        const QJsonObject pol = cfg["inputPolicy"].toObject();
+        InputMsg::Policy policy;
+        policy.gamepad = pol["gamepad"].toBool(false);
+        policy.keyboardMouse = pol["keyboardMouse"].toBool(false);
+        policy.hid = false;
+        policy.plainHttp = true;
+        session->setInputPolicy(policy);
+        session->setMicRequested(false);
+        session->setPlainHttp(true);
+        g_PlainHttp.store(true);
+        qInfo() << "[StreamWorker] plain HTTP: gamepad=" << policy.gamepad
+                << "keyboardMouse=" << policy.keyboardMouse
+                << ", named messages only, its data channel only, the user's desktop only;"
+                   " no HID, no clipboard, no microphone";
+    }
     // What the media path revealed about the host's OS. Only the parent keeps a
     // host list, so this is the only way the observation outlives the stream —
     // and outliving it is the point: without it every session would spend its
@@ -896,6 +948,9 @@ int runStreamWorker(QCoreApplication& app)
                 // A TCP connection the server took for this stream on a
                 // shared port: to the agent it is for, here and now
                 mw::icemuxclient::takeConnection(msg);
+            } else if (cmd == QLatin1String("setPolicy") && g_PlainHttp.load()) {
+                // A TV on plain HTTP: its policy is fixed at the start.
+                qWarning() << "[StreamWorker] plain HTTP: a policy change refused";
             } else if (cmd == QLatin1String("setPolicy") &&
                        mw::native::NativeHost::signInScreenOnly()) {
                 // The sign-in screen's policy is fixed at the start, and can

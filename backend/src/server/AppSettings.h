@@ -235,6 +235,20 @@ public:
     int rememberMeDaysAcknowledged() const;
     void setRememberMeDaysAcknowledged(int days);
 
+    // ── Plain HTTP for the listed TVs (issue #42) ─────────────────────────────
+    //
+    // The addresses of the devices that may use this server over plain HTTP on
+    // the local network: a TV browser that refuses a self-signed certificate.
+    // Every other device on the HTTP port is redirected to HTTPS, as always.
+    //
+    // File-only setting (no UI, no write route): stored as a JSON array of
+    // strings "lan_http_clients", DEFAULT empty (off), not seeded. Returned as
+    // written; which entries are honoured (private IPv4 only, never this
+    // machine's own address) is LanHttp::usableClients' to say. Anything that
+    // is not an array of strings reads as empty. Read at each request on the
+    // HTTP port, so a change applies without a restart.
+    QStringList lanHttpClients() const;
+
     // ── Keyboard layout fidelity ──────────────────────────────────────────────
     //
     // When the host types the character the CLIENT's keyboard layout produced,

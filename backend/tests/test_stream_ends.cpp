@@ -154,4 +154,27 @@ void run_stream_ends_tests()
         CHECK_EQ(StreamEnds::nameFor(ends.find("stop", 80), true), QStringLiteral("stopped"));
         CHECK_EQ(StreamEnds::nameFor(StreamEnds::Entry{}, true), QStringLiteral("unknown"));
     }
+
+    SECTION("StreamEnds — only the page that started a stream is told how it ended");
+    {
+        StreamEnds ends;
+        ends.begin("phone", "native", 0, "dev", "phone-token", 1);
+        ends.begin("local", "native", 0, "dev", QString(), 1); // a page on this machine
+        ends.begin("tv", "native", 0, "dev", "tv-token", 1);
+        const auto phone = ends.find("phone", 2);
+        const auto local = ends.find("local", 2);
+        const auto tv = ends.find("tv", 2);
+        // Over HTTPS: the same host and the same session, or nothing.
+        CHECK(StreamEnds::askedByItsPage(phone, "native", false, "phone-token", false));
+        CHECK(!StreamEnds::askedByItsPage(phone, "native", false, "tv-token", false));
+        CHECK(!StreamEnds::askedByItsPage(phone, "other-host", false, "phone-token", false));
+        CHECK(!StreamEnds::askedByItsPage(phone, "native", true, "phone-token", false));
+        CHECK(StreamEnds::askedByItsPage(local, "native", false, QString(), false));
+        // A TV on plain HTTP (issue #42): its own stream, by its own key.
+        CHECK(StreamEnds::askedByItsPage(tv, "native", false, "tv-token", true));
+        CHECK(!StreamEnds::askedByItsPage(phone, "native", false, "tv-token", true));
+        // Without a key it is nobody's page: never the stream of this machine's.
+        CHECK(!StreamEnds::askedByItsPage(local, "native", false, QString(), true));
+        CHECK(!StreamEnds::askedByItsPage(tv, "native", false, QString(), true));
+    }
 }

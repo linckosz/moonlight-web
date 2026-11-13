@@ -120,6 +120,17 @@ public:
         return name(e.state);
     }
 
+    /// Whether the page asking about @p e is the one that started it: the same
+    /// host, not an invited player's slot (@p playerSlot), the same key. On a
+    /// TV's plain HTTP path (@p keyRequired) a key at all, too: an empty one
+    /// is a page of this machine's, never the TV's (issue #42).
+    static bool askedByItsPage(const Entry& e, const QString& hostUuid, bool playerSlot,
+                               const QString& token, bool keyRequired)
+    {
+        if (keyRequired && token.isEmpty()) return false;
+        return e.hostUuid == hostUuid && !playerSlot && e.sessionToken == token;
+    }
+
     /// The stream @p id started streaming, on @p slot of @p hostUuid.
     /// @p signInScreen: of the console's sign-in screen (nameFor).
     void begin(const QString& id, const QString& hostUuid, int slot, const QString& clientUniqueId,

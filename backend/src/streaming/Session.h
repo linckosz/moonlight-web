@@ -198,6 +198,11 @@ public:
     /// at /start. Only the native engine acts on it: anyone else is kept out
     /// of the host's windows that run as administrator (InputGate).
     void setViewerAdmin(bool admin) { m_ViewerAdmin = admin; }
+    /// A TV on plain HTTP (issue #42): a webrtc-media stream only, its input
+    /// on that stream's data channel only (no WebSocket fallback), and on the
+    /// user's own desktop only (SessionConfig::defaultDesktopOnly). Its policy
+    /// carries the rest (InputMsg::Policy::plainHttp). Before start().
+    void setPlainHttp(bool on) { m_PlainHttp = on; }
 
     /// keyboard_layout_fidelity as the server read it ("auto", "always",
     /// "never"), handed over in the worker's config: a SYSTEM worker would read
@@ -609,6 +614,8 @@ private:
     /// caller sets it; a worker whose parent predates the field is the owner
     /// path, which is the host's own administrator anyway.
     bool m_ViewerAdmin = true;
+    /// See setPlainHttp.
+    bool m_PlainHttp = false;
     QString m_KeyboardLayoutFidelity;
     std::optional<bool> m_KeyboardHostLayout;
 

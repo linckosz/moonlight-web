@@ -17,6 +17,7 @@
 
 #include "Win32Input.h"
 
+#include "../../platform/SignInScreen.h"
 #include "../../platform/windows/InputDesktop.h"
 
 #include "../../core/Log.h"
@@ -1172,6 +1173,24 @@ void Win32Input::runFollower()
 /// refused", which is the first question every time.
 void Win32Input::injectNow(const InputEvent& event)
 {
+    // A TV on plain HTTP (SessionConfig::defaultDesktopOnly), before anything
+    // else: every event, a pad's included, acts on the user's own desktop
+    // only. On any other — the secure desktop of UAC, the lock screen and
+    // Ctrl+Alt+Del — it is dropped, never queued. A key held across the switch
+    // is let go by the held-key heartbeat once the desktop is back.
+    if (m_DefaultDesktopOnly) {
+        const bool onUser = platform::isUserDesktop(platform::inputDesktopName());
+        const int now = onUser ? 1 : 0;
+        const int before = m_OnUserDesktop.exchange(now, std::memory_order_relaxed);
+        if (before != now && !(before == -1 && onUser))
+            log::info(onUser ? "[native] plain HTTP: the user's desktop is back, input resumes"
+                             : "[native] plain HTTP: the input desktop is not the user's own, "
+                               "input is dropped");
+        if (!onUser) {
+            m_Gated.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
     // Sign-in screen mode (platform/SignInScreen.h), before anything else:
     // keyboard and mouse only, each event only while the sign-in screen shows
     // and nobody is signed in on this session. The first time not, nothing is
@@ -1677,6 +1696,11 @@ void Win32Input::injectMouseMove(int deltaX, int deltaY)
     input.mi.dy = deltaY;
     input.mi.dwFlags = MOUSEEVENTF_MOVE;
     sendOne(input);
+}
+
+void Win32Input::setDefaultDesktopOnly(bool on)
+{
+    m_DefaultDesktopOnly = on;
 }
 
 void Win32Input::setAllowElevated(bool allow)

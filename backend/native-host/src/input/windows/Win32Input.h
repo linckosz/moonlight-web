@@ -84,6 +84,7 @@ public:
     void inject(const InputEvent& event) override;
     void setDisplayRect(int left, int top, int right, int bottom) override;
     void setAllowElevated(bool allow) override;
+    void setDefaultDesktopOnly(bool on) override;
     void setGateCallback(InputGateCallback callback) override;
     bool releaseBlock() override;
 
@@ -337,6 +338,10 @@ private:
     StandingCache m_Focused;     ///< the foreground window — keyboard's target
     StandingCache m_UnderCursor; ///< the window under the pointer — a click's
     bool m_AllowElevated = true;
+    /// SessionConfig::defaultDesktopOnly, and what the last event saw: -1
+    /// nothing yet, 0 another desktop, 1 the user's own.
+    bool m_DefaultDesktopOnly = false;
+    std::atomic<int> m_OnUserDesktop{-1};
     InputGateCallback m_OnGate;
     /// The gate's last reported state, and the window it named. Guarded because
     /// the unblock thread reports too — see reportGate.

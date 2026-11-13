@@ -41,9 +41,37 @@ struct Policy
     /// of its own. The owner has it; an invited player only when the sharing
     /// board's box says so (absent reads as false in the worker).
     bool hid = true;
+    /// A TV on plain HTTP (issue #42, server/LanHttp.h): whatever the switches
+    /// above say, only the messages allowedPlainHttp() names act on the host,
+    /// and the session is never unrestricted (no clipboard, no microphone).
+    /// Set by the worker from its config, never by a later setPolicy.
+    bool plainHttp = false;
 
-    bool unrestricted() const { return gamepad && keyboardMouse; }
+    bool unrestricted() const { return gamepad && keyboardMouse && !plainHttp; }
 };
+
+/// The messages a TV on plain HTTP may send: a gamepad, a keyboard, a mouse,
+/// and what keeps its own stream running. A list rather than a rule, so that a
+/// type added later is refused on this path until it is named here. Left out
+/// on purpose: secureattention (Ctrl+Alt+Del), unblockinput (minimises every
+/// window), clipboardpaste, the HID passthrough, and the bench's probes.
+inline bool allowedPlainHttp(const QString& type)
+{
+    static const char* const kTypes[] = {
+        // gamepad
+        "gamepad", "gamepadconnect", "gamepaddisconnect",
+        // keyboard
+        "keydown", "keyup", "inputstate", "locksync", "textinput",
+        // mouse
+        "mousemove", "mousedown", "mouseup", "mousewheel", "mousehwheel", "cursormode",
+        // its own stream
+        "ping", "requestidr", "request_idr", "invalidateref", "framefloor", "clientrefresh",
+        "clientbitrate", "clientfpscap", "clientstats", "linkstats", "decodequeue", "vsyncgrid",
+        "fpsstep", "aroadnack", "aroadack"};
+    for (const char* t : kTypes)
+        if (type == QLatin1String(t)) return true;
+    return false;
+}
 
 /// Whether a message of this type may act on the host under @p p.
 ///
@@ -57,6 +85,7 @@ struct Policy
 /// filtered field by field (see InputMessageCodec.h's filterHeldState).
 inline bool allowed(const QString& type, const Policy& p)
 {
+    if (p.plainHttp && !allowedPlainHttp(type)) return false;
     if (type.startsWith(QLatin1String("gamepad"))) return p.gamepad;
     if (type.startsWith(QLatin1String("hid"))) return p.hid;
     if (type == QLatin1String("ping") || type == QLatin1String("requestidr") ||

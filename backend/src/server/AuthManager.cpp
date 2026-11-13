@@ -17,6 +17,7 @@
 
 #include "AuthManager.h"
 #include "AppSettings.h"
+#include "LanHttp.h"
 #include "RequestGuard.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
@@ -195,6 +196,19 @@ void AuthManager::loadSessions()
         info.viaTunnel = obj["via_tunnel"].toBool(false);
         info.isAdmin = keepAdminFlags && obj["is_admin"].toBool(false);
         info.approvedBy = obj["approved_by"].toString();
+        // A TV on plain HTTP: bound to an address it must still be able to
+        // claim, and never anything more than a TV whatever the file says.
+        info.lanHttp = obj["lan_http"].toBool(false);
+        if (info.lanHttp) {
+            info.boundIp = LanHttp::normalizePeer(obj["bound_ip"].toString());
+            info.isHost = false;
+            info.isAdmin = false;
+            info.viaTunnel = false;
+            if (info.boundIp.isEmpty() || !LanHttp::isPrivateIpv4(info.boundIp)) {
+                skipped++;
+                continue;
+            }
+        }
 
         // MW-BIND-v1 pairing key. A stored key that no longer parses is dropped
         // rather than kept: the session survives, and the browser simply
@@ -207,8 +221,7 @@ void AuthManager::loadSessions()
 
         // Drop sessions that are already expired by inactivity, by the lifetime
         // in force now: shortening remember_me_days ends the older ones here.
-        const qint64 last = info.lastSeen > 0 ? info.lastSeen : info.createdAt;
-        if (now - last > ttlFor(info)) {
+        if (expired(info, now)) {
             skipped++;
             continue;
         }
@@ -740,14 +753,7 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
 {
     // Clean IPv4-mapped IPv6 addresses before storing
     QString cleanIp = cleanClientAddress(ip);
-
-    // Generate unique token: HMAC(ip | counter | timestamp | UUID)
-    qint64 now = QDateTime::currentMSecsSinceEpoch();
-    quint64 counter = static_cast<quint64>(QRandomGenerator::securelySeeded().bounded(1000000ULL));
-    QString uuid = QUuid::createUuid().toString(QUuid::Id128);
-    QString data = QString("%1|%2|%3|%4").arg(cleanIp).arg(counter).arg(now).arg(uuid);
-    QByteArray hmac = generateHmac(data);
-    QString token = QString::fromLatin1(hmac.toBase64(QByteArray::OmitTrailingEquals));
+    const QString token = newToken(cleanIp);
 
     // Persist only the hash of the token (opaque id). The raw token lives solely
     // in the client cookie, so a leaked sessions.json cannot be replayed.
@@ -774,16 +780,108 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     return token; // raw token for the cookie
 }
 
+QString AuthManager::newToken(const QString& cleanIp)
+{
+    // Generate unique token: HMAC(ip | counter | timestamp | UUID)
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    quint64 counter = static_cast<quint64>(QRandomGenerator::securelySeeded().bounded(1000000ULL));
+    QString uuid = QUuid::createUuid().toString(QUuid::Id128);
+    QString data = QString("%1|%2|%3|%4").arg(cleanIp).arg(counter).arg(now).arg(uuid);
+    QByteArray hmac = generateHmac(data);
+    return QString::fromLatin1(hmac.toBase64(QByteArray::OmitTrailingEquals));
+}
+
 bool AuthManager::validateSession(const QString& token) const
 {
     if (token.isEmpty()) return false;
     auto it = m_sessions.find(hashToken(token));
     if (it == m_sessions.end()) return false;
+    // A TV's token is never an HTTPS session: whoever read it off the network
+    // must not be able to send it as mw_session and be the owner.
+    if (it->lanHttp) return false;
     // Sliding expiration: reject (but do not mutate, this is const) sessions
     // inactive past the TTL — the periodic purge removes them.
+    return !expired(*it, QDateTime::currentSecsSinceEpoch());
+}
+
+QString AuthManager::createLanHttpSession(const QString& peer, const QString& machineName,
+                                          const QString& approverId)
+{
+    const QString bound = LanHttp::normalizePeer(peer);
+    if (bound.isEmpty() || !LanHttp::isPrivateIpv4(bound)) return {};
+    const QString token = newToken(bound);
+    const QString id = hashToken(token);
+
+    SessionInfo info;
+    info.token = id;
+    info.ip = bound;
+    info.boundIp = bound;
+    info.lanHttp = true;
+    info.machineName = machineName.isEmpty() ? QStringLiteral("Unknown") : machineName;
+    info.createdAt = QDateTime::currentSecsSinceEpoch();
+    info.lastSeen = info.createdAt;
+    info.approvedBy = approverId;
+
+    m_sessions[id] = info;
+    saveSessions();
+    emit sessionCreated(bound, info.machineName);
+    emit sessionsChanged();
+    // The address and the dates; never the name (the tray says who) nor the
+    // token.
+    const QString due = QDateTime::fromSecsSinceEpoch(info.createdAt + m_rememberTtlSecs)
+                            .toString(QStringLiteral("yyyy-MM-dd"));
+    Logger::info(QString("[LanHttp] %1 approved for plain HTTP: %2 days sliding, re-approval due "
+                         "by %3")
+                     .arg(bound)
+                     .arg(LAN_HTTP_SESSION_TTL_SECS / (24 * 3600))
+                     .arg(due));
+    return token;
+}
+
+bool AuthManager::validateLanHttpSession(const QString& token, const QString& peer) const
+{
+    return !lanHttpSessionId(token, peer).isEmpty();
+}
+
+QString AuthManager::lanHttpSessionId(const QString& token, const QString& peer) const
+{
+    if (token.isEmpty()) return {};
+    const QString bound = LanHttp::normalizePeer(peer);
+    if (bound.isEmpty()) return {};
+    const QString id = hashToken(token);
+    auto it = m_sessions.constFind(id);
+    if (it == m_sessions.cend() || !it->lanHttp || it->boundIp != bound) return {};
+    if (expired(*it, QDateTime::currentSecsSinceEpoch())) return {};
+    return id;
+}
+
+QString AuthManager::lanHttpBoundIp(const QString& token) const
+{
+    if (token.isEmpty()) return {};
+    auto it = m_sessions.constFind(hashToken(token));
+    if (it == m_sessions.cend() || !it->lanHttp) return {};
+    return it->boundIp;
+}
+
+void AuthManager::touchLanHttpSession(const QString& token, const QString& peer)
+{
+    const QString id = lanHttpSessionId(token, peer);
+    if (id.isEmpty()) return;
+    auto it = m_sessions.find(id);
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    const qint64 last = it->lastSeen > 0 ? it->lastSeen : it->createdAt;
-    return now - last <= ttlFor(*it);
+    const qint64 prev = it->lastSeen;
+    it->lastSeen = now;
+    if (now - prev >= 3600) saveSessions();
+}
+
+qint64 AuthManager::lanHttpCookieMaxAge(const QString& token) const
+{
+    if (token.isEmpty()) return 0;
+    auto it = m_sessions.constFind(hashToken(token));
+    if (it == m_sessions.cend() || !it->lanHttp) return 0;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const qint64 untilApprovalEnds = it->createdAt + m_rememberTtlSecs - now;
+    return std::max<qint64>(0, std::min(LAN_HTTP_SESSION_TTL_SECS, untilApprovalEnds));
 }
 
 bool AuthManager::isEphemeralSession(const QString& token) const
@@ -886,7 +984,7 @@ void AuthManager::touchSession(const QString& token)
 {
     if (token.isEmpty()) return;
     auto it = m_sessions.find(hashToken(token));
-    if (it == m_sessions.end()) return;
+    if (it == m_sessions.end() || it->lanHttp) return;
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     const qint64 prev = it->lastSeen;
     it->lastSeen = now;
@@ -909,7 +1007,8 @@ bool AuthManager::bindKey(const QString& token, const QByteArray& spkiDer, const
     }
 
     auto it = m_sessions.find(hashToken(token));
-    if (it == m_sessions.end()) return false;
+    // A TV on plain HTTP holds no key: it has no crypto.subtle to make one.
+    if (it == m_sessions.end() || it->lanHttp) return false;
 
     if (!it->pairingKey.isEmpty()) {
         // Same key again: a browser re-registering after a reconnect. Fine.
@@ -983,7 +1082,8 @@ void AuthManager::setSessionGeo(const QString& token, const QString& city, const
 bool AuthManager::updateSessionAddress(const QString& token, const QString& ip)
 {
     auto it = m_sessions.find(hashToken(token));
-    if (it == m_sessions.end()) return false;
+    // A TV's address is what it is bound to: it does not move with the token.
+    if (it == m_sessions.end() || it->lanHttp) return false;
 
     // Any authenticated reconnection counts as activity (sliding expiration).
     it->lastSeen = QDateTime::currentSecsSinceEpoch();
@@ -1076,9 +1176,8 @@ std::optional<AuthManager::HomeScreenHandoff> AuthManager::redeemHomeScreenKey(c
     if (now - found.issuedAt > HOME_SCREEN_KEY_TTL_SECS) return std::nullopt;
 
     auto session = m_sessions.constFind(sessionId);
-    if (session == m_sessions.cend()) return std::nullopt;
-    const qint64 last = session->lastSeen > 0 ? session->lastSeen : session->createdAt;
-    if (QDateTime::currentSecsSinceEpoch() - last > ttlFor(*session)) return std::nullopt;
+    if (session == m_sessions.cend() || session->lanHttp) return std::nullopt;
+    if (expired(*session, QDateTime::currentSecsSinceEpoch())) return std::nullopt;
 
     return HomeScreenHandoff{session->machineName, m_homeScreenInstances.value(sessionId)};
 }
@@ -1098,6 +1197,11 @@ void AuthManager::destroySession(const QString& token)
                          .arg(m_sessions.size()));
         if (info.streaming)
             Logger::info("[Auth] Revoked session was streaming — requesting stream teardown");
+        if (info.lanHttp)
+            Logger::info(QString("[LanHttp] Session for %1 revoked%2")
+                             .arg(info.boundIp, info.streaming
+                                                    ? QStringLiteral("; its stream was cut")
+                                                    : QString()));
         // Whatever the flag says: it follows one stream only, and this
         // session's other streams end too.
         emit streamingSessionRevoked(token);
@@ -1152,8 +1256,7 @@ void AuthManager::purgeExpiredSessions()
     QMutableHashIterator<QString, SessionInfo> it(m_sessions);
     while (it.hasNext()) {
         it.next();
-        const qint64 last = it.value().lastSeen > 0 ? it.value().lastSeen : it.value().createdAt;
-        if (now - last > ttlFor(it.value())) {
+        if (expired(it.value(), now)) {
             it.remove();
             removed++;
         }
@@ -1214,8 +1317,7 @@ bool AuthManager::hasLiveSession(const QString& id) const
 {
     auto it = m_sessions.constFind(id);
     if (it == m_sessions.constEnd()) return false;
-    const qint64 last = it->lastSeen > 0 ? it->lastSeen : it->createdAt;
-    return QDateTime::currentSecsSinceEpoch() - last <= ttlFor(*it);
+    return !expired(*it, QDateTime::currentSecsSinceEpoch());
 }
 
 int AuthManager::remainingAttempts(const QString& ip) const

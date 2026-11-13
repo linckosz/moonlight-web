@@ -97,6 +97,9 @@
 #include "server/routes/ShareRoutes.h"
 #include "server/routes/SystemRoutes.h"
 #include "server/routes/PairRequestRoutes.h"
+#include "server/routes/LanHttpRoutes.h"
+#include "server/LanHttp.h"
+#include "server/LanHttpPairing.h"
 #include "common/Logger.h"
 #include "common/LinuxCapabilities.h"
 #include "common/PairingCrypto.h"
@@ -1539,6 +1542,28 @@ static QStringList filterTransportsByCodec(const QStringList& transports, VideoC
 // can only move a browser to "public", never grant anything, so a forged
 // header costs its sender nothing but the LAN shortcut. A bare-hostname LAN
 // browser sends neither and keeps its LAN plan.
+// A TV on plain HTTP whose stream ends (issue #42): one line, with its address
+// and how long it streamed, never its name. Asked before the stream's end is
+// recorded, while its entry still says when it began; said once.
+static void noteLanHttpStreamEnd(const AuthManager& auth, const StreamEnds& ends,
+                                 const QString& streamId, const QString& token, qint64 nowMs)
+{
+    if (token.isEmpty()) return;
+    const SessionInfo tv = auth.sessionForToken(token);
+    if (!tv.lanHttp) return;
+    const StreamEnds::Entry e = ends.find(streamId, nowMs);
+    if (e.state != StreamEnds::State::Live) return;
+    const qint64 secs = qMax<qint64>(0, (nowMs - e.atMs) / 1000);
+    QString lasted;
+    if (secs >= 3600)
+        lasted = QString("%1 h %2 min").arg(secs / 3600).arg((secs % 3600) / 60);
+    else if (secs >= 60)
+        lasted = QString("%1 min").arg(secs / 60);
+    else
+        lasted = QString("%1 s").arg(secs);
+    Logger::info(QString("[LanHttp] Stream ended for %1 after %2").arg(tv.boundIp, lasted));
+}
+
 static NetClassify::Kind streamClientKind(const HttpRequest& req)
 {
     const NetClassify::Kind kind = NetClassify::classify(req.clientAddress);
@@ -2828,8 +2853,9 @@ int main(int argc, char* argv[])
         if (onVirtualDisplay) VirtualDisplayJob::instance().releaseSoon();
         if (!old) return static_cast<StreamWorkerHost*>(nullptr);
         // Whatever its worker does next, this stream was stopped here.
-        g_StreamEnds.end(old->streamId(), StreamEnds::State::Stopped,
-                         QDateTime::currentMSecsSinceEpoch());
+        const qint64 stoppedAt = QDateTime::currentMSecsSinceEpoch();
+        noteLanHttpStreamEnd(authManager, g_StreamEnds, old->streamId(), token, stoppedAt);
+        g_StreamEnds.end(old->streamId(), StreamEnds::State::Stopped, stoppedAt);
         QObject::disconnect(old, &StreamWorkerHost::ended, nullptr, nullptr);
         QObject::connect(old, &StreamWorkerHost::ended, qApp, [token, &authManager]() {
             authManager.setSessionStreaming(token, false);
@@ -3537,9 +3563,11 @@ int main(int argc, char* argv[])
     server.router()->get("/api/hosts/:id/stream-state", [&g_StreamEnds](const HttpRequest& req) {
         const StreamEnds::Entry e =
             g_StreamEnds.find(req.queryParams.value("stream"), QDateTime::currentMSecsSinceEpoch());
-        const bool asker = e.hostUuid == req.pathParams.value("id") &&
-                           !ShareManager::isPlayerSlot(e.slot) &&
-                           e.sessionToken == HttpServer::sessionTokenFromRequest(req);
+        // A TV on plain HTTP is told apart by its own key, and an empty one is
+        // nobody's there: never the stream of a page on this machine.
+        const bool asker = StreamEnds::askedByItsPage(
+            e, req.pathParams.value("id"), ShareManager::isPlayerSlot(e.slot),
+            HttpServer::streamTokenFromRequest(req), req.lanHttp);
         // The sign-in screen's: whether its user signed in through it is read
         // now (StreamEnds::nameFor).
         return HttpResponse::json(QJsonObject{
@@ -3574,6 +3602,56 @@ int main(int argc, char* argv[])
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 
+        // A TV on plain HTTP (issue #42, server/LanHttp.h). Its token is its
+        // slot's session from here on: what a revocation cuts and what its
+        // stream socket is opened with. It streams once, never the sign-in
+        // screen, never as a second leg, and never in place of another
+        // device: a key that travels in clear must not end someone else's
+        // stream (Q1). The owner's own devices still take over a TV's.
+        const QString lanHttpToken =
+            req.lanHttp ? HttpServer::streamTokenFromRequest(req) : QString();
+        if (req.lanHttp) {
+            QString refusal;
+            int status = 403;
+            if (lanHttpToken.isEmpty()) {
+                refusal = QStringLiteral("authentication_required");
+                status = 401;
+            } else if (host->backendType == NativeHostBackend::typeName() &&
+                       body["appId"].toInt(0) == NativeHostBackend::signInScreenAppId()) {
+                refusal = QStringLiteral("sign_in_screen_not_over_plain_http");
+            } else if (body["standby"].toBool(false)) {
+                refusal = QStringLiteral("standby_not_over_plain_http");
+            } else if (!appSettings.streamWorkerEnabled()) {
+                // Its limits are the worker's to keep (plainHttp): no stream
+                // of it runs in this process.
+                refusal = QStringLiteral("needs_stream_worker");
+            } else {
+                for (int i = 0; i < g_Pool.size() && refusal.isEmpty(); ++i) {
+                    if (!g_Pool.live(i)) continue;
+                    const SessionPool::Slot& sl = g_Pool.at(i);
+                    const bool mine = sl.sessionToken == lanHttpToken;
+                    // Its stream of another host: one stream per TV.
+                    if (mine && sl.hostUuid != host->uuid) {
+                        refusal = QStringLiteral("one_stream_per_device");
+                        status = 409;
+                    }
+                    // Another device of the owner on this host (an invited
+                    // player's slot is never taken over by a launch).
+                    const bool ownerSlot = i < kOwnerSlots || i >= kTotalSlots;
+                    if (!mine && ownerSlot && sl.hostUuid == host->uuid) {
+                        refusal = QStringLiteral("in_use_elsewhere");
+                        status = 409;
+                    }
+                }
+            }
+            if (!refusal.isEmpty()) {
+                Logger::info(QString("[LanHttp] Stream refused for %1: %2")
+                                 .arg(LanHttp::normalizePeer(req.clientAddress), refusal));
+                respond(HttpResponse::json(QJsonObject{{"error", refusal}}, status));
+                return;
+            }
+        }
+
         // The console's sign-in screen (RemoteDesktopReturnPolicy), asked here
         // again since this is where its stream starts: offered by this
         // version, never from a kiosk, and only while Remote Desktop has left
@@ -3593,7 +3671,7 @@ int main(int argc, char* argv[])
             // the live one is touched. The device is the authenticated
             // session the server holds, never the page's word.
             bool signInTakeOver = false;
-            const QString requester = HttpServer::sessionTokenFromRequest(req);
+            const QString requester = HttpServer::streamTokenFromRequest(req);
             if (refusal.isEmpty()) {
                 for (int i = 0; i < g_Pool.size() && refusal.isEmpty(); ++i) {
                     const SessionPool::Slot& sl = g_Pool.at(i);
@@ -3808,8 +3886,9 @@ int main(int argc, char* argv[])
             if (lost.state != StreamEnds::State::Crashed)
                 refused = QStringLiteral("that stream did not crash (%1)")
                               .arg(StreamEnds::name(lost.state));
-            else if (lost.hostUuid != uuid || ShareManager::isPlayerSlot(lost.slot) ||
-                     lost.sessionToken != HttpServer::sessionTokenFromRequest(req))
+            else if (!StreamEnds::askedByItsPage(lost, uuid, ShareManager::isPlayerSlot(lost.slot),
+                                                 HttpServer::streamTokenFromRequest(req),
+                                                 req.lanHttp))
                 refused = QStringLiteral("that stream was not this page's");
             for (int i = 0; refused.isEmpty() && i < kOwnerSlots; ++i) {
                 if (!g_Pool.live(i) || g_Pool.at(i).hostUuid != uuid) continue;
@@ -3936,18 +4015,9 @@ int main(int argc, char* argv[])
 
         // Identify the authenticated session behind this stream. Remote clients
         // send the mw_session cookie; empty for localhost (no session row to flag).
-        QString sessionToken;
-        {
-            const QString cookie = req.headers.value("cookie");
-            const auto cookies = cookie.split(';');
-            for (const QString& c : cookies) {
-                const QString t = c.trimmed();
-                if (t.startsWith("mw_session=", Qt::CaseInsensitive)) {
-                    sessionToken = t.mid(QStringLiteral("mw_session=").length());
-                    break;
-                }
-            }
-        }
+        // A TV on plain HTTP: its own key, never a mw_session (HttpServer kept
+        // nothing else on its request).
+        const QString sessionToken = HttpServer::streamTokenFromRequest(req);
 
         // ── Per-request streaming settings ─────────────────────────────────────
         // The browser sends its per-browser preferences (from localStorage)
@@ -4301,6 +4371,14 @@ int main(int argc, char* argv[])
             }
         }
         dropUdpRungsWhenBlocked(transportChain, body, clientKind, req.viaTunnel);
+        // A TV on plain HTTP (issue #42): its page has no WebCodecs, so the
+        // picture goes to a <video> element, and its input travels on that
+        // stream's data channel. Never the WebSocket relay, which would carry
+        // input on another socket, and never a DataChannel video it cannot
+        // decode.
+        if (req.lanHttp)
+            transportChain.removeIf(
+                [](const QString& m) { return !m.startsWith(QLatin1String("webrtc-media-")); });
 
         qInfo() << "[Session] Transport chain:" << transportChain
                 << "requested index=" << reqTransportIndex;
@@ -4746,7 +4824,17 @@ int main(int argc, char* argv[])
             // is trusted wherever they sign in from — an iPhone on 4G included,
             // which the old test (admin privilege: loopback, host key or LAN
             // admin password) left staring at the "minimize" warning.
-            cfg["viewerAdmin"] = true;
+            cfg["viewerAdmin"] = !req.lanHttp;
+            // A TV on plain HTTP (issue #42): gamepad, keyboard and mouse
+            // (decision 40 = B), no HID device, no administrator window, and
+            // plainHttp, by which the worker keeps it to a whitelist of
+            // messages, to its data channel and to the user's own desktop,
+            // whatever the policy says.
+            if (req.lanHttp) {
+                cfg["inputPolicy"] =
+                    QJsonObject{{"gamepad", true}, {"keyboardMouse", true}, {"hid", false}};
+                cfg["plainHttp"] = true;
+            }
             // The consent the desktop portal already gave this installation.
             // Empty on every machine that reads its own scanout — which is all
             // of them but a Linux host with no capability (an AppImage).
@@ -4976,6 +5064,11 @@ int main(int argc, char* argv[])
                         g_StreamEnds.begin(streamId, hostUuidCopy, reqSlot, uid, sessionToken,
                                            QDateTime::currentMSecsSinceEpoch(), signInStream);
                         authManager.setSessionStreaming(sessionToken, true);
+                        // A TV on plain HTTP: its address, once its picture runs.
+                        if (const SessionInfo tv = authManager.sessionForToken(sessionToken);
+                            tv.lanHttp)
+                            Logger::info(QString("[LanHttp] Stream started for %1 over plain HTTP")
+                                             .arg(tv.boundIp));
                         g_LiveSunshineUids.insert(uid);
                         // A successful standby launch IS the capability probe.
                         if (standby) g_DualSupport[hostUuidCopy] = true;
@@ -5038,6 +5131,8 @@ int main(int argc, char* argv[])
                     const bool comesBack =
                         worker->crashed() &&
                         g_StreamEnds.find(streamId, endedAt).state == StreamEnds::State::Live;
+                    noteLanHttpStreamEnd(authManager, g_StreamEnds, streamId, sessionToken,
+                                         endedAt);
                     g_StreamEnds.end(streamId,
                                      worker->crashed() ? StreamEnds::State::Crashed
                                                        : StreamEnds::State::Ended,
@@ -5710,23 +5805,15 @@ int main(int argc, char* argv[])
             // resume, and every guest keeps playing. quit_app — the viewer's
             // "Quit the app when the stream stops" setting — asks for the old
             // Stop, which ends the app for everyone.
-            const bool quitApp = qbody["quit_app"].toBool(false);
+            // A TV on plain HTTP stops its own stream and nothing else: never
+            // the app under another device or a guest (issue #42).
+            const bool quitApp = !req.lanHttp && qbody["quit_app"].toBool(false);
             const bool keepHostSession = qbody["keep_host_session"].toBool(false) ||
                                          (appOutlivesStream(host->uuid) && !quitApp);
 
             // The authenticated device asking to quit, read the same way /start
             // records it. Empty for localhost.
-            QString quitSessionToken;
-            {
-                const QString cookie = req.headers.value("cookie");
-                for (const QString& c : cookie.split(';')) {
-                    const QString t = c.trimmed();
-                    if (t.startsWith("mw_session=", Qt::CaseInsensitive)) {
-                        quitSessionToken = t.mid(QStringLiteral("mw_session=").length());
-                        break;
-                    }
-                }
-            }
+            const QString quitSessionToken = HttpServer::streamTokenFromRequest(req);
 
             // Anything that is not a retire ends with a Sunshine /cancel, which
             // kills the app for everyone — so the players invited to this host
@@ -5748,8 +5835,8 @@ int main(int argc, char* argv[])
             if (hostHeldByAnother)
                 qInfo() << "[quit] Host" << host->name
                         << "streams for another device — its guests stay";
-            const bool guestsEnd =
-                !keepHostSession && !hostHeldByAnother && (host->takesHostCancel() || quitApp);
+            const bool guestsEnd = !req.lanHttp && !keepHostSession && !hostHeldByAnother &&
+                                   (host->takesHostCancel() || quitApp);
             if (guestsEnd) endPlayerSessions(host->uuid, ShareManager::EndReason::OwnerStop);
 
             bool workerStopped = false;
@@ -5782,6 +5869,12 @@ int main(int argc, char* argv[])
                 if (!quitSessionToken.isEmpty() && !sl.sessionToken.isEmpty() &&
                     quitSessionToken != sl.sessionToken) {
                     qInfo() << "[quit] Slot" << i << "belongs to another device session — skipping";
+                    continue;
+                }
+                // A TV: its own slot only, its token on both sides.
+                if (req.lanHttp &&
+                    (quitSessionToken.isEmpty() || sl.sessionToken != quitSessionToken)) {
+                    qInfo() << "[quit] Slot" << i << "is not this TV's — skipping";
                     continue;
                 }
                 qInfo() << "[quit] Stopping stream worker slot" << i
@@ -5818,6 +5911,9 @@ int main(int argc, char* argv[])
             for (int i = kOwnerSlots; i < g_Pool.size(); ++i) {
                 if (!g_Pool.quitReachesAppSlot(i, host->uuid, quitUniqueId, quitSessionToken,
                                                rawSlot))
+                    continue;
+                if (req.lanHttp &&
+                    (quitSessionToken.isEmpty() || g_Pool.at(i).sessionToken != quitSessionToken))
                     continue;
                 SessionPool::Slot& sl = g_Pool.at(i);
                 qInfo() << "[quit] Stopping stream worker slot" << i << "(app slot of this device)";
@@ -7526,6 +7622,28 @@ int main(int argc, char* argv[])
              return subnets;
          },
          &HttpServer::isLocalRequest});
+
+    // A TV on plain HTTP (issue #42, server/LanHttp.h): one of the devices the
+    // owner listed in lan_http_clients, let in by the code it shows. Its book
+    // is its own, apart from the one above; its approval page is under the
+    // same public link while the line is up, and on this LAN otherwise.
+    LanHttpPairing lanHttpBook;
+    registerLanHttpRoutes(
+        *server.router(), authManager, lanHttpBook,
+        {[]() { return QDateTime::currentSecsSinceEpoch(); },
+         [&server](const QString& address) { server.reportAuthFailure(address); },
+         &HttpServer::sessionTokenFromRequest,
+         [&rendezvous]() { return rendezvous.isOnline() ? rendezvous.entryUrl() : QString(); },
+         [&server]() { return server.activeHttpsPort(); }});
+    server.setLanHttpClientsProvider([&appSettings]() { return appSettings.lanHttpClients(); });
+    // A TV opens the signalling socket of its own stream's slot, and no other.
+    server.setLanHttpSlotAuthorizer([&authManager, &g_Pool](const QString& token, int slot) {
+        const QString id = authManager.sessionIdForToken(token);
+        if (id.isEmpty()) return false;
+        return g_Pool
+            .slotsOfSession([&id](const QString& t) { return AuthManager::isTokenOf(t, id); })
+            .contains(slot);
+    });
 
     // ── The application, carried to a browser that cannot reach us ───────────
     //

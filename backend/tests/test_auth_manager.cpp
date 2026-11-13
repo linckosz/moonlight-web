@@ -28,6 +28,7 @@
 #include <openssl/ec.h>
 #include <openssl/obj_mac.h>
 
+#include <functional>
 #include <optional>
 #include <utility>
 
@@ -752,6 +753,219 @@ void rememberMeDaysTests()
     }
 }
 
+// ── A TV on plain HTTP (issue #42) ──────────────────────────────────────────
+
+/// Applies @p edit to the session in sessions.json whose machine name is
+/// @p machine.
+void editStoredSession(const QString& machine, const std::function<void(QJsonObject&)>& edit)
+{
+    const QString path =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/sessions.json";
+    QFile in(path);
+    CHECK(in.open(QIODevice::ReadOnly));
+    QJsonObject root = QJsonDocument::fromJson(in.readAll()).object();
+    in.close();
+    QJsonArray out;
+    for (const QJsonValue& v : root.value("sessions").toArray()) {
+        QJsonObject s = v.toObject();
+        if (s.value("machine_name").toString() == machine) edit(s);
+        out.append(s);
+    }
+    root["sessions"] = out;
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+
+/// The session @p machine approved @p createdDaysAgo days ago and last seen
+/// @p seenDaysAgo days ago, on disk.
+void setStoredTimes(const QString& machine, qint64 createdDaysAgo, qint64 seenDaysAgo)
+{
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    editStoredSession(machine, [&](QJsonObject& s) {
+        s["created_at"] = static_cast<double>(now - createdDaysAgo * 24 * 3600);
+        s["last_seen"] = static_cast<double>(now - seenDaysAgo * 24 * 3600);
+    });
+}
+
+void lanHttpSessionTests()
+{
+    SECTION("lan_http_clients — a TV's session, good on plain HTTP only");
+
+    QTemporaryDir tmp;
+    AppSettings settings;
+    settings.m_FilePath = tmp.path() + "/settings.json";
+
+    // The list as written: strings only, anything else reads as none.
+    writeSettings(settings, {});
+    CHECK(settings.lanHttpClients().isEmpty());
+    writeSettings(settings, {{"lan_http_clients", QJsonArray{"192.168.1.50", 3232235826.0, true,
+                                                             QJsonValue(), "192.168.1.51"}}});
+    CHECK_EQ(settings.lanHttpClients(), QStringList({"192.168.1.50", "192.168.1.51"}));
+    writeSettings(settings, {{"lan_http_clients", QStringLiteral("192.168.1.50")}});
+    CHECK(settings.lanHttpClients().isEmpty());
+
+    const qint64 day = 24 * 3600;
+    const QString tvName = QStringLiteral("Browser at 192.168.1.50");
+    writeSettings(settings, {}); // remember_me_days: 90
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        const QString phone = auth.createSession("192.168.1.30", "Phone");
+        const QString approver = auth.sessionIdForToken(phone);
+        const QString tv = auth.createLanHttpSession("::ffff:192.168.1.50", tvName, approver);
+        CHECK(!tv.isEmpty());
+        // Only for a private IPv4.
+        CHECK(auth.createLanHttpSession("fe80::1", "x", {}).isEmpty());
+        CHECK(auth.createLanHttpSession("8.8.8.8", "x", {}).isEmpty());
+        CHECK(auth.createLanHttpSession("tv.local", "x", {}).isEmpty());
+
+        // Good on plain HTTP, from the address it is bound to only.
+        CHECK(auth.validateLanHttpSession(tv, "192.168.1.50"));
+        CHECK(auth.validateLanHttpSession(tv, "::ffff:192.168.1.50"));
+        CHECK(!auth.validateLanHttpSession(tv, "192.168.1.51"));
+        CHECK(!auth.validateLanHttpSession(tv, ""));
+        CHECK(!auth.validateLanHttpSession("bogus-token", "192.168.1.50"));
+        CHECK(!auth.validateLanHttpSession(QString(), "192.168.1.50"));
+        // An HTTPS session is not a TV's, even from its own address.
+        CHECK(!auth.validateLanHttpSession(phone, "192.168.1.30"));
+        CHECK(auth.lanHttpSessionId(phone, "192.168.1.30").isEmpty());
+        CHECK_EQ(auth.lanHttpSessionId(tv, "192.168.1.50"), auth.sessionIdForToken(tv));
+
+        // Never an HTTPS session, never more than a TV: read off the network
+        // and sent as mw_session, it opens nothing.
+        CHECK(!auth.validateSession(tv));
+        CHECK(!auth.isHostSession(tv));
+        CHECK(!auth.isTunnelHostSession(tv));
+        CHECK(!auth.isAdminSession(tv));
+        CHECK(!auth.isEphemeralSession(tv));
+        CHECK(auth.sessionMachineName(tv).isEmpty());
+        CHECK(!auth.promoteSessionToAdmin(tv));
+        CHECK(!auth.bindSessionKey(tv, newKey()));
+        CHECK(!auth.updateSessionAddress(tv, "192.168.1.99"));
+        CHECK(auth.validateLanHttpSession(tv, "192.168.1.50")); // it has not moved
+        CHECK(auth.sessionPairingKey(tv).isEmpty());
+
+        // The address it is bound to, asked from anywhere: what tells "another
+        // address" from "ran out" (LanHttp::Key).
+        CHECK_EQ(auth.lanHttpBoundIp(tv), QStringLiteral("192.168.1.50"));
+        CHECK(auth.lanHttpBoundIp(phone).isEmpty());
+        CHECK(auth.lanHttpBoundIp("bogus-token").isEmpty());
+
+        // Its cookie lasts 30 days; an HTTPS token has no such cookie.
+        CHECK_EQ(auth.lanHttpCookieMaxAge(tv), 30 * day);
+        CHECK_EQ(auth.lanHttpCookieMaxAge(phone), qint64(0));
+        CHECK_EQ(auth.lanHttpCookieMaxAge("bogus-token"), qint64(0));
+
+        // Listed among the devices, as a TV.
+        int listed = 0;
+        for (const SessionInfo& s : auth.sessions()) {
+            if (!s.lanHttp) continue;
+            listed++;
+            CHECK_EQ(s.boundIp, QStringLiteral("192.168.1.50"));
+            CHECK_EQ(s.ip, QStringLiteral("192.168.1.50"));
+            CHECK_EQ(s.machineName, tvName);
+            CHECK_EQ(s.approvedBy, approver);
+            CHECK(!s.isHost && !s.isAdmin && !s.viaTunnel && !s.ephemeral);
+            CHECK(s.toJson().value("lan_http").toBool());
+            CHECK_EQ(s.toJson().value("bound_ip").toString(), QStringLiteral("192.168.1.50"));
+        }
+        CHECK_EQ(listed, 1);
+
+        // Sliding 30 days, on disk.
+        auth.saveSessions();
+        setStoredTimes(tvName, 29, 29);
+        auth.loadSessions();
+        CHECK(auth.validateLanHttpSession(tv, "192.168.1.50"));
+        setStoredTimes(tvName, 31, 31);
+        auth.loadSessions();
+        CHECK(!auth.validateLanHttpSession(tv, "192.168.1.50"));
+        auth.destroyAllSessions();
+    }
+
+    // Approved again after remember_me_days, however often it came back (LH3).
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        const QString tv = auth.createLanHttpSession("192.168.1.50", tvName, {});
+        auth.saveSessions();
+        setStoredTimes(tvName, 89, 1);
+        auth.loadSessions();
+        CHECK(auth.validateLanHttpSession(tv, "192.168.1.50"));
+        // What is left of the 90 days, not 30.
+        const qint64 left = auth.lanHttpCookieMaxAge(tv);
+        CHECK(left <= day && left > day - 120);
+        setStoredTimes(tvName, 91, 1);
+        auth.loadSessions();
+        CHECK(!auth.validateLanHttpSession(tv, "192.168.1.50"));
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+    writeSettings(settings, {{"remember_me_days", 365}});
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        const QString tv = auth.createLanHttpSession("192.168.1.50", tvName, {});
+        auth.saveSessions();
+        setStoredTimes(tvName, 200, 1);
+        auth.loadSessions();
+        CHECK(auth.validateLanHttpSession(tv, "192.168.1.50"));
+        CHECK_EQ(auth.lanHttpCookieMaxAge(tv), 30 * day); // sliding, the shorter one
+        setStoredTimes(tvName, 366, 1);
+        auth.loadSessions();
+        CHECK(!auth.validateLanHttpSession(tv, "192.168.1.50"));
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+
+    // A hand-edited file never makes a TV more than a TV.
+    writeSettings(settings, {});
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        const QString tv = auth.createLanHttpSession("192.168.1.50", tvName, {});
+        const QString other = auth.createLanHttpSession("192.168.1.51", "Other TV", {});
+        auth.saveSessions();
+        editStoredSession(tvName, [](QJsonObject& s) {
+            s["is_host"] = true;
+            s["is_admin"] = true;
+            s["via_tunnel"] = true;
+        });
+        editStoredSession("Other TV", [](QJsonObject& s) { s["bound_ip"] = "8.8.8.8"; });
+        auth.loadSessions();
+        CHECK(auth.validateLanHttpSession(tv, "192.168.1.50"));
+        CHECK(!auth.validateSession(tv));
+        CHECK(!auth.isHostSession(tv));
+        CHECK(!auth.isAdminSession(tv));
+        for (const SessionInfo& s : auth.sessions())
+            CHECK(!s.lanHttp || (!s.isHost && !s.isAdmin && !s.viaTunnel));
+        // Bound to an address that is not private: dropped.
+        CHECK(!auth.validateLanHttpSession(other, "192.168.1.51"));
+        CHECK(!auth.validateLanHttpSession(other, "8.8.8.8"));
+        CHECK_EQ(auth.activeSessionCount(), 1);
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+
+    // Revoked with the session that approved it, and on its own.
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        const QString phone = auth.createSession("192.168.1.30", "Phone");
+        const QString tv =
+            auth.createLanHttpSession("192.168.1.50", tvName, auth.sessionIdForToken(phone));
+        auth.destroySession(auth.sessionIdForToken(phone));
+        CHECK(!auth.validateLanHttpSession(tv, "192.168.1.50"));
+
+        const QString again = auth.createLanHttpSession("192.168.1.50", tvName, {});
+        CHECK(auth.validateLanHttpSession(again, "192.168.1.50"));
+        auth.destroySession(auth.sessionIdForToken(again));
+        CHECK(!auth.validateLanHttpSession(again, "192.168.1.50"));
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+}
+
 } // namespace
 
 void run_auth_manager_tests()
@@ -1437,4 +1651,5 @@ void run_auth_manager_tests()
     }
     pinProofRouteTests();
     rememberMeDaysTests();
+    lanHttpSessionTests();
 }

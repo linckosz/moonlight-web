@@ -721,6 +721,11 @@ void SignalingServer::onRelayIceTimedOut()
 
 void SignalingServer::startWsFallback()
 {
+    if (m_PlainHttp) {
+        qWarning() << "[SignalingServer] plain HTTP: no WebSocket fallback, the session ends";
+        emit sessionEnded();
+        return;
+    }
     if (!m_WsClient || !m_WsClient->isValid() || !m_Shim) {
         qWarning() << "[SignalingServer] Cannot start WS fallback:"
                    << "WS client valid=" << (m_WsClient && m_WsClient->isValid())
@@ -966,7 +971,9 @@ void SignalingServer::forwardAudioViaWs(const QByteArray& data)
 
 void SignalingServer::handleWsFallbackInput(const QString& message)
 {
-    if (m_Stopping.load() || !m_Shim) return;
+    // A TV on plain HTTP sends input on its stream's data channel and nowhere
+    // else (setPlainHttp).
+    if (m_Stopping.load() || !m_Shim || m_PlainHttp) return;
 
     QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8());
     if (!doc.isObject()) {

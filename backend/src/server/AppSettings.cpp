@@ -1096,6 +1096,18 @@ void AppSettings::setRememberMeDaysAcknowledged(int days)
     writeAll(obj);
 }
 
+QStringList AppSettings::lanHttpClients() const
+{
+    // An entry that is not a string is left out rather than turned into one: a
+    // number here is a typo, and 3232235826 must not become an address.
+    QStringList out;
+    const QJsonValue v = readAll().value("lan_http_clients");
+    if (!v.isArray()) return out;
+    for (const QJsonValue& entry : v.toArray())
+        if (entry.isString()) out.append(entry.toString());
+    return out;
+}
+
 QString AppSettings::keyboardLayoutFidelity() const
 {
     const QJsonValue value = readAll().value("keyboard_layout_fidelity");
