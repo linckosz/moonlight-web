@@ -8,8 +8,8 @@ import { MIN_NAME_TEXT_PX, fitStreamBrand, planStreamBrand } from '../js/ui/stre
 
 /**
  * The stream bar's mark (title, machine, version) gives up room to the
- * controls centred in the bar: the version first, then the end of the name,
- * then the name once too little of it is left to read.
+ * controls centred in the bar: the version first, then the title, then the
+ * end of the name, and the name only once too little of it is left to read.
  */
 
 // An iPhone 13 held sideways, as measured on the bench (05/11): the title
@@ -34,22 +34,35 @@ describe('what the mark keeps', () => {
         });
     });
 
-    it('cuts the name while enough of it is left to read', () => {
-        const room = PHONE.title + PHONE.gap + PHONE.namePad + MIN_NAME_TEXT_PX;
-        expect(planStreamBrand({ ...PHONE, room }).name).toBe('cut');
-    });
-
-    it('drops the name rather than show "D…"', () => {
-        const room = PHONE.title + PHONE.gap + PHONE.namePad + MIN_NAME_TEXT_PX - 1;
-        expect(planStreamBrand({ ...PHONE, room })).toEqual({
-            name: 'none',
+    it('gives up the title before any of the name', () => {
+        expect(planStreamBrand({ ...PHONE, room: 228 })).toEqual({
+            name: 'full',
             version: false,
-            title: true,
+            title: false,
+        });
+        expect(planStreamBrand({ ...PHONE, room: PHONE.name })).toEqual({
+            name: 'full',
+            version: false,
+            title: false,
         });
     });
 
-    it('hides the title last, when even it does not fit', () => {
-        expect(planStreamBrand({ ...PHONE, room: 140 }).title).toBe(false);
+    it('cuts the name while enough of it is left to read', () => {
+        const room = PHONE.namePad + MIN_NAME_TEXT_PX;
+        expect(planStreamBrand({ ...PHONE, room })).toEqual({
+            name: 'cut',
+            version: false,
+            title: false,
+        });
+    });
+
+    it('shows nothing rather than "D…"', () => {
+        const room = PHONE.namePad + MIN_NAME_TEXT_PX - 1;
+        expect(planStreamBrand({ ...PHONE, room })).toEqual({
+            name: 'none',
+            version: false,
+            title: false,
+        });
     });
 
     it('keeps the version when there is no name to show', () => {
@@ -57,6 +70,14 @@ describe('what the mark keeps', () => {
             name: 'none',
             version: true,
             title: true,
+        });
+    });
+
+    it('hides the title, without a name, once it does not fit', () => {
+        expect(planStreamBrand({ ...PHONE, name: 0, namePad: 0, room: 140 })).toEqual({
+            name: 'none',
+            version: false,
+            title: false,
         });
     });
 });
@@ -98,6 +119,7 @@ function bar() {
     at(/** @type {HTMLElement} */ (header.querySelector('.version')), 0, 60);
     return {
         brand,
+        title: /** @type {HTMLElement} */ (header.querySelector('.stream-brand-title')),
         box: /** @type {HTMLElement} */ (header.querySelector('.instance-menu')),
         version: /** @type {HTMLElement} */ (header.querySelector('.version')),
     };
@@ -110,35 +132,51 @@ describe('the mark on the bar', () => {
 
     it('stops short of the microphone docked left of Fullscreen', () => {
         const b = bar();
-        // The microphone starts at 343: the mark must end by 331.
-        fitStreamBrand(b.brand, 331);
+        // The microphone starts at 345: the mark must end by 333.
+        fitStreamBrand(b.brand, 333);
         expect(b.version.style.display).toBe('none');
+        expect(b.title.style.display).toBe('');
         expect(b.box.style.display).toBe('');
         expect(b.brand.style.visibility).toBe('');
     });
 
-    it('drops the name where only a letter of it would show', () => {
+    it('keeps the name, not the title, when both no longer fit', () => {
         const b = bar();
-        fitStreamBrand(b.brand, 104 + 141 + 12 + 16 + 20);
-        expect(b.box.style.display).toBe('none');
+        fitStreamBrand(b.brand, 331);
+        expect(b.title.style.display).toBe('none');
+        expect(b.box.style.display).toBe('');
         expect(b.version.style.display).toBe('none');
+        expect(b.brand.style.maxWidth).toBe('');
+        expect(b.brand.style.visibility).toBe('');
     });
 
     it('cuts the name to the room it has', () => {
         const b = bar();
-        fitStreamBrand(b.brand, 104 + 141 + 12 + 16 + 50);
+        fitStreamBrand(b.brand, 104 + 16 + 50);
+        expect(b.title.style.display).toBe('none');
         expect(b.box.style.display).toBe('');
-        expect(b.brand.style.maxWidth).toBe(`${141 + 12 + 16 + 50}px`);
+        expect(b.brand.style.maxWidth).toBe(`${16 + 50}px`);
+    });
+
+    it('shows nothing where only a letter of the name would show', () => {
+        const b = bar();
+        fitStreamBrand(b.brand, 104 + 16 + 20);
+        expect(b.box.style.display).toBe('none');
+        expect(b.brand.style.visibility).toBe('hidden');
     });
 
     it('shows the whole mark again once there is room', () => {
         const b = bar();
-        fitStreamBrand(b.brand, 200);
+        fitStreamBrand(b.brand, 104 + 16 + 20);
         expect(b.brand.style.visibility).toBe('hidden');
+        fitStreamBrand(b.brand, 200);
+        expect(b.brand.style.visibility).toBe('');
+        expect(b.title.style.display).toBe('none');
         // Within the CSS's 40 % too: 300 px of a 750 px bar.
         at(b.version, 0, 40);
         fitStreamBrand(b.brand, 700);
         expect(b.brand.style.visibility).toBe('');
+        expect(b.title.style.display).toBe('');
         expect(b.box.style.display).toBe('');
         expect(b.version.style.display).toBe('');
         expect(b.brand.style.maxWidth).toBe('');

@@ -110,10 +110,13 @@ body.streaming-active::after {
    just be read out again; and pointer-events:none, because every pixel of this
    overlay that is not a control is a trackpad, and a caption is not a control.
 
-   Hidden below a tablet's width. It is optional by nature, and where the bar is
-   tight the buttons — which ARE the interface — take the room. margin-right
-   rather than a change of justify-content: with the mark gone, the buttons must
-   stay exactly where they were. */
+   Hidden below a tablet's width, except on a phone held sideways: Safari on an
+   iPhone in landscape leaves the page about 730 px, under the tablet's 768,
+   with room to spare left of the controls. It is optional by nature, and where
+   the bar is tight the buttons — which ARE the interface — take the room
+   (streamBrandFit.js gives up its parts one by one). margin-right rather than a
+   change of justify-content: with the mark gone, the buttons must stay exactly
+   where they were. */
 .stream-brand {
     display: none;
     /* Same metrics as .app-header, and the three items inside carry the shell's
@@ -133,7 +136,7 @@ body.streaming-active::after {
     margin-right: auto;
     pointer-events: none;
 }
-@media (min-width: 768px) {
+@media (min-width: 768px), (orientation: landscape) and (min-width: 560px) {
     .stream-brand {
         display: flex;
     }

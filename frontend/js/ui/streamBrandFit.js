@@ -25,9 +25,12 @@
  * button pushes the mark right as well. The version then ran under the
  * microphone. So the mark gives up what it has to, least useful first:
  *   1. the version — the application's own header and menu still show it;
- *   2. the end of the machine's name, cut with an ellipsis;
- *   3. the whole name, once too little of it is left to be read;
- *   4. the title, last; the mark keeps its place so the buttons do not move.
+ *   2. the title — the user knows which application this is, not always
+ *      which of their machines;
+ *   3. the end of the machine's name, cut with an ellipsis;
+ *   4. the whole name, last, once too little of it is left to be read; the
+ *      mark keeps its place so the buttons do not move.
+ * Without a name, the title goes once it does not fit.
  */
 
 /**
@@ -51,10 +54,10 @@ export function planStreamBrand(m) {
         return { name: name > 0 ? 'full' : 'none', version: version > 0, title: true };
     }
     if (withName <= room) return { name: name > 0 ? 'full' : 'none', version: false, title: true };
-    if (name > 0 && room - title - gap - namePad >= MIN_NAME_TEXT_PX) {
-        return { name: 'cut', version: false, title: true };
-    }
-    return { name: 'none', version: false, title: title <= room };
+    if (!(name > 0)) return { name: 'none', version: false, title: title <= room };
+    if (name <= room) return { name: 'full', version: false, title: false };
+    if (room - namePad >= MIN_NAME_TEXT_PX) return { name: 'cut', version: false, title: false };
+    return { name: 'none', version: false, title: false };
 }
 
 /**
@@ -73,6 +76,7 @@ export function fitStreamBrand(brand, limit) {
     const versionEl = /** @type {HTMLElement | null} */ (brand.querySelector('.version'));
     brand.style.maxWidth = '';
     brand.style.visibility = '';
+    if (titleEl) titleEl.style.display = '';
     if (nameBox) nameBox.style.display = '';
     if (versionEl) versionEl.style.display = '';
     const bar = brand.parentElement;
@@ -105,6 +109,8 @@ export function fitStreamBrand(brand, limit) {
     if (versionEl && !plan.version) versionEl.style.display = 'none';
     if (nameBox && plan.name === 'none') nameBox.style.display = 'none';
     if (plan.name === 'cut') brand.style.maxWidth = `${Math.max(0, Math.floor(room))}px`;
-    // Not display: the mark's margin is what keeps the buttons on the right.
-    if (!plan.title) brand.style.visibility = 'hidden';
+    if (!plan.title && plan.name !== 'none') titleEl.style.display = 'none';
+    // Nothing left to show. Not display: the mark's margin is what keeps the
+    // buttons on the right.
+    if (!plan.title && plan.name === 'none') brand.style.visibility = 'hidden';
 }
