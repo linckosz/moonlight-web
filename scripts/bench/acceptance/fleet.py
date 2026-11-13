@@ -439,6 +439,46 @@ def bench_local_ports():
     return [int(x) for x in os.environ.get("MW_BENCH_LOCAL_PORTS", "").split(",") if x.strip()]
 
 
+# The Windows probe's HTTPS check: a bare GET of the instance on this machine
+# (127.0.0.1), with nothing of a session. Its certificate names the machine, not
+# 127.0.0.1, so a name that differs is the one error accepted, for that request
+# only; any other (a chain that does not hold, no certificate) refuses the port,
+# and the probe says which, by the error's name. The callback is compiled C#: a
+# PowerShell script block handed to the TLS layer runs on a thread with no
+# runspace, and every HTTPS request of the probe failed before it was sent
+# (httpsPort 0, 13/11/2026).
+_TLS_PS = r"""
+if (-not ('MwProbeTls' -as [type])) {
+Add-Type -TypeDefinition @'
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public static class MwProbeTls {
+    public static string Refused = "";
+    public static bool NameOnly(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors) {
+        if (errors == SslPolicyErrors.None || errors == SslPolicyErrors.RemoteCertificateNameMismatch) return true;
+        Refused = errors.ToString();
+        return false;
+    }
+    public static readonly RemoteCertificateValidationCallback Check = NameOnly;
+}
+'@
+}
+function Get-MwHttpsStatus($port) {
+    try {
+        $req = [System.Net.HttpWebRequest]::Create("https://127.0.0.1:$port/api/native/status")
+        $req.Method = 'GET'; $req.Timeout = 6000; $req.ReadWriteTimeout = 6000
+        $req.AllowAutoRedirect = $false
+        $req.ServerCertificateValidationCallback = [MwProbeTls]::Check
+        $resp = $req.GetResponse()
+        try { $text = (New-Object System.IO.StreamReader($resp.GetResponseStream())).ReadToEnd() }
+        finally { $resp.Close() }
+        if ($text -match '^\s*\{') { return $text }
+    } catch { }
+    return $null
+}
+"""
+
+
 _PROBE_PY = r'''
 import hashlib, json, os, socket, subprocess, sys, urllib.request
 
@@ -817,11 +857,8 @@ $ErrorActionPreference = 'SilentlyContinue'
 $app = 'MoonlightWebDev'
 $out = @{ appName = $app }
 
-# The HTTPS listener presents the machine's own certificate, which nothing here
-# has a reason to trust. Probing whether a port answers is not a security
-# decision, so the check is turned off for this script only.
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+__TLS_PS__
 
 $procs = Get-CimInstance Win32_Process -Filter "Name='$app.exe'"
 $ids = @($procs | ForEach-Object { $_.ProcessId })
@@ -843,6 +880,7 @@ function Test-Open($port) {
 }
 function Try-Port($port, $scheme) {
     if (-not (Test-Open $port)) { return $null }
+    if ($scheme -eq 'https') { return Get-MwHttpsStatus $port }
     try {
         $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 6 `
              -Uri "${scheme}://127.0.0.1:$port/api/native/status"
@@ -857,6 +895,8 @@ foreach ($p in $ports) {
     if ($httpPort -ne 0 -and $httpsPort -ne 0) { break }
 }
 $out.httpPort = $httpPort; $out.httpsPort = $httpsPort
+# No HTTPS port, though one was open: the certificate error that refused it, by name only.
+if ($httpsPort -eq 0 -and [MwProbeTls]::Refused) { $out.httpsRefused = [MwProbeTls]::Refused }
 
 __READS_PS__
 if ($httpPort -ne 0) {
@@ -890,7 +930,8 @@ if (Test-Path $exe) {
 
 'MWPROBE ' + ($out | ConvertTo-Json -Compress -Depth 4)
 """
-        script = script.replace("__PORTS_PS__", _PORTS_PS).replace("__READS_PS__", _reads_ps())
+        script = (script.replace("__PORTS_PS__", _PORTS_PS).replace("__TLS_PS__", _TLS_PS)
+                  .replace("__READS_PS__", _reads_ps()))
         rc, out, err = run_script(mid, _for_edition(script, m["os"]), timeout=300)
 
     else:
