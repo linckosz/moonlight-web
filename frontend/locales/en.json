@@ -616,7 +616,7 @@
         "touchPadEditorSize": "Size",
         "touchPadEditorReset": "Reset",
         "touchPadEditorCancel": "Cancel",
-        "touchPadEditorDone": "Done"
+        "touchPadEditorDone": "Done",
         "hideFsHandle": "Hide the full-screen handle",
         "hideFsHandleDesc": "In full screen on a phone or tablet held sideways, hides the small see-through tab at the top that brings back the controls. A three-finger tap still brings them back."
     },
