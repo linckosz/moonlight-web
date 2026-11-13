@@ -28,6 +28,7 @@ import { t } from '../i18n/i18n.js';
 import { touchEnabled, watchTouchEnabled, detectTv } from '../util/BrowserDetect.js';
 import { TouchPadState } from '../stream/TouchPadState.js';
 import { Icons } from './icons.js';
+import { placeGamepadButton } from './streamBarButtons.js';
 import { TouchPadView } from './TouchPadView.js';
 
 /** @typedef {import('./StreamView.js').StreamView} StreamViewInstance */
@@ -141,7 +142,7 @@ export class StreamViewTouchPad {
         btn.title = t('stream.gamepadButton');
         btn.setAttribute('aria-label', t('stream.gamepadButton'));
         this._wireTouchPadToggle(btn);
-        header.insertBefore(btn, this._rootEl.querySelector('#btn-stream-quit'));
+        placeGamepadButton(header, btn);
         this._touchPadBtn = btn;
     }
 

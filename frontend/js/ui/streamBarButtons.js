@@ -23,6 +23,9 @@
  * The keyboard button is made with the view and the gamepad button only once
  * the stream shows, so whichever comes second finds its place from the other.
  * Share is put before Stop later still, and so lands after both.
+ *
+ * The gamepad button is the pads dialog's (#btn-stream-pad) or, on a touch
+ * screen, the on-screen controller's (#btn-stream-touchpad).
  */
 
 /**
@@ -32,7 +35,8 @@
  * @param {HTMLElement} kbd
  */
 export function placeKeyboardButton(header, kbd) {
-    const pad = header.querySelector(':scope > #btn-stream-pad');
+    const pads = header.querySelectorAll(':scope > #btn-stream-pad, :scope > #btn-stream-touchpad');
+    const pad = pads[pads.length - 1];
     if (pad) {
         pad.after(kbd);
         return;

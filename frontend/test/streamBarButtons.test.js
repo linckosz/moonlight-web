@@ -73,6 +73,23 @@ describe('the touch buttons on the stream bar', () => {
         ]);
     });
 
+    it('puts the keyboard right of the on-screen controller button too', () => {
+        for (const keyboardFirst of [true, false]) {
+            const el = header();
+            if (keyboardFirst) placeKeyboardButton(el, button('btn-stream-keyboard'));
+            placeGamepadButton(el, button('btn-stream-touchpad'));
+            if (!keyboardFirst) placeKeyboardButton(el, button('btn-stream-keyboard'));
+            share(el);
+            expect(order(el).slice(2)).toEqual([
+                'btn-stream-touchpad',
+                'btn-stream-keyboard',
+                'btn-stream-share',
+                'btn-stream-quit',
+            ]);
+            el.remove();
+        }
+    });
+
     it('never puts the keyboard before the mark', () => {
         const el = header();
         placeKeyboardButton(el, button('btn-stream-keyboard'));
