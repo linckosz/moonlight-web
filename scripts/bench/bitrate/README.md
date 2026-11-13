@@ -22,7 +22,8 @@ wiki, chapter 16 (`docs/wiki/16-Auto-Bitrate-Benchmarks.md`).
 | `fmtref.py` | References past SDR 4:2:0: full chroma (4:4:4) and BT.2020 PQ (HDR), with the highlights of the `hdrpeak` scenes |
 | `hdrcal.py` | Reads back the calibration bands of an HDR run: how much light the stream really carried, and the white level the scoring applies (`cal.json`) |
 | `factors.py`, `hfactor.py` | H.264, 4:4:4 and HDR against HEVC 4:2:0; HDR with highlights against the same renders in SDR |
-| `test_hdrpeak.py`, `test_fmt_hdr.py`, `test_dimguard.py` | Offline checks: the HDR scoring and calibration on x265 encodes, the dimmed-screen guard on synthetic and recorded frames |
+| `score_c.py`, `cfactor.py` | 4:4:4 against 4:2:0 on the same content, both scored against the full-chroma reference: the bitrate factor at equal quality (Bjøntegaard), per scene and metric |
+| `test_hdrpeak.py`, `test_fmt_hdr.py`, `test_fmt_444.py`, `test_dimguard.py` | Offline checks: the HDR and 4:4:4 scoring on x265 encodes, the HDR calibration, the dimmed-screen guard on synthetic and recorded frames |
 
 ## Guards
 
@@ -85,4 +86,21 @@ python hdrcal.py runs/H/1920x1080p60-hevc-hdr-30000
 python driver.py ... --kbps 1500,2000,3000,4000,6000,8000,10000,12000,15000,20000 --out runs/H ...
 python driver.py ... --kbps 1500,...,30000 --out runs/HS --arm HS --scenes rendersdr
 python score_all.py runs/H runs/HS && python hfactor.py
+```
+
+### 4:4:4 against 4:2:0
+
+The same content in both formats, the 4:2:0 stream scored against the
+full-chroma reference too (`score.py --as 444`), so its colour loss shows.
+`color444`: the renders and coloured code (`prep.py --code-only` builds
+`code.png`), where the QP floor stops the encoder well short of the target.
+`fast444`: content that fills the target (`fast.png`, the renders stacked
+over `cp4k.png`): a fast pan, coloured code at the same speed, and a picture
+that jumps 234 px a frame, past the motion search.
+
+```bash
+python driver.py --geo 1920x1080 --fps 60 --codec hevc --kbps 2000,...,50000 --fmt 444 \
+  --out runs/E --arm C --scenes fast444 ...
+python driver.py ... --kbps 2000,...,50000 --out runs/E --arm C --scenes fast444 ...
+python score_c.py --runs E && python cfactor.py --runs E
 ```

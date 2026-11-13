@@ -499,6 +499,26 @@ def plan(name, geo, fps, h, peak=3.0, gain=1.0):
                   {"id": 2, "mode": "scroll", "src": src("jsgears"), "step": step, "pause": 0},
                   {"id": 3, "mode": "scroll", "src": src("jsgears"), "step": step, "pause": fps // 2}]
         seq = [(1, still), (4, still), (2, 5.0), (3, 6.0)]
+    elif name == "color444":
+        # 4:4:4 against 4:2:0 (--fmt 444 / 420, both scored against the full-chroma reference):
+        # rendersdr's renders, and coloured code scrolling over a dark then a light editor theme
+        # (prep.py code_page), where 4:2:0 smears thin coloured strokes.
+        scenes = [{"id": 1, "mode": "still", "src": src("junkshop")},
+                  {"id": 4, "mode": "still", "src": src("gears")},
+                  {"id": 2, "mode": "scroll", "src": src("jsgears"), "step": step, "pause": 0},
+                  {"id": 3, "mode": "scroll", "src": src("jsgears"), "step": step, "pause": fps // 2},
+                  {"id": 5, "mode": "scroll", "src": src("code"), "step": step, "pause": 0}]
+        seq = [(1, still), (4, still), (2, 5.0), (3, 6.0), (5, 5.0)]
+    elif name == "fast444":
+        # Content that fills the bitrate, 4:4:4 against 4:2:0. fast.png = jsgears stacked over
+        # cp4k (the two pictures prep.py makes; 1920x3240 at 1080p). Scene 2: a fast pan (48 px a
+        # frame, 2880 px/s at 60); scene 3: 234 px a frame, past what a low-latency motion search follows, so most of
+        # each frame is new, like a violent camera move; scene 5: coloured code at 48 px a frame.
+        # Even steps: 4:2:0's chroma lands on whole samples, as before.
+        scenes = [{"id": 2, "mode": "scroll", "src": src("fast"), "step": 48, "pause": 0},
+                  {"id": 3, "mode": "scroll", "src": src("fast"), "step": 234, "pause": 0},
+                  {"id": 5, "mode": "scroll", "src": src("code"), "step": 48, "pause": 0}]
+        seq = [(2, 6.0), (3, 6.0), (5, 5.0)]
     else:
         raise SystemExit("unknown plan " + name)
     return scenes, seq
