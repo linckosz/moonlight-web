@@ -28,6 +28,9 @@
  * different tablet. Portrait and landscape are two separate saves, chosen by
  * the shape of the stage.
  *
+ * The pad style only renames the buttons (TouchPadView's labels): the host is
+ * told of an Xbox pad whatever it is, and the places stay an Xbox pad's.
+ *
  * The stage fills the screen. Everything else is in one bar that floats over
  * the controller: it opens unfolded, folds to a pill, and moves by its grip,
  * so no control is ever out of reach under it. Its three backgrounds are a
@@ -35,8 +38,8 @@
  * and are not kept.
  */
 import { t } from '../i18n/i18n.js';
-import { TouchPadState, layoutOrientation } from '../stream/TouchPadState.js';
-import { TouchPadView } from './TouchPadView.js';
+import { TOUCH_PAD_STYLES, TouchPadState, layoutOrientation } from '../stream/TouchPadState.js';
+import { TouchPadView, touchPadLabel } from './TouchPadView.js';
 
 /** How small or large a control may be made, as `layoutTouchPad` reads it. */
 const SIZE_MIN = 0.8;
@@ -55,6 +58,13 @@ const PRESETS = [
     ['compact', 'settings.touchPadLayoutCompact'],
 ];
 
+/** The pads the buttons can be named after, in TOUCH_PAD_STYLES' order. */
+const STYLE_KEYS = {
+    xbox: 'settings.touchPadStyleXbox',
+    ps: 'settings.touchPadStylePs',
+    switch: 'settings.touchPadStyleSwitch',
+};
+
 /**
  * The pictures the controller can be tried over: the grid, a game at night, a
  * game by day (assets/touchpad). A preview, never kept.
@@ -67,7 +77,8 @@ const BACKGROUNDS = [
 
 /**
  * What each drawn control is called, in the bar and in a screen reader: the
- * letters as printed on the pad, the rest in the viewer's language.
+ * letters as printed on the pad of the chosen style, the rest in the viewer's
+ * language.
  */
 const NAME_KEYS = {
     view: 'settings.touchPadControlView',
@@ -76,7 +87,8 @@ const NAME_KEYS = {
     'stick-left': 'settings.touchPadControlStickLeft',
     'stick-right': 'settings.touchPadControlStickRight',
 };
-const nameOf = (id) => (NAME_KEYS[id] ? t(NAME_KEYS[id]) : id.toUpperCase());
+const nameOf = (id, style) =>
+    NAME_KEYS[id] ? t(NAME_KEYS[id]) : touchPadLabel(style, id) || id.toUpperCase();
 
 const GRIP = `<svg width="12" height="18" viewBox="0 0 12 18" fill="currentColor" aria-hidden="true">
     <circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/>
@@ -94,14 +106,15 @@ export class TouchPadLayoutEditor {
     /**
      * @param {HTMLElement} container the element the overlay is added to.
      * @param {{ layout: ReturnType<import('../stream/TouchPadState.js').touchPadLayouts>,
-     *           scale?: number, opacity?: number,
-     *           onChange?: (layout: any, look: {scale: number, opacity: number}) => void,
+     *           scale?: number, opacity?: number, style?: string,
+     *           onChange?: (layout: any,
+     *                       look: {scale: number, opacity: number, style: string}) => void,
      *           onClosed?: () => void }} options
-     *   `layout`, `scale` and `opacity` are what the viewer had (scale and
-     *   opacity as fractions, 1 = 100%); `onChange` is told of all three once
+     *   `layout`, `scale`, `opacity` and `style` are what the viewer had (scale
+     *   and opacity as fractions, 1 = 100%); `onChange` is told of all four once
      *   they press Done; `onClosed` when the overlay is gone.
      */
-    constructor(container, { layout, scale, opacity, onChange, onClosed } = {}) {
+    constructor(container, { layout, scale, opacity, style, onChange, onClosed } = {}) {
         this._container = container;
         this._onChange = onChange || null;
         this._onClosed = onClosed || null;
@@ -109,6 +122,7 @@ export class TouchPadLayoutEditor {
         this._draft = clone(layout);
         this._scale = percent(scale === undefined ? 1 : scale, SCALE_MIN, SCALE_MAX);
         this._opacity = percent(opacity === undefined ? 1 : opacity, OPACITY_MIN, OPACITY_MAX);
+        this._style = TOUCH_PAD_STYLES.includes(style) ? style : 'xbox';
         this._background = 'default';
         this._folded = false;
         this._barAt = null;
@@ -175,6 +189,10 @@ export class TouchPadLayoutEditor {
                 `<button type="button" class="tp-bar-bg tp-bg-${id}" data-bg="${id}"
                          aria-label="${t(key)}" title="${t(key)}"></button>`,
         ).join('');
+        const styles = TOUCH_PAD_STYLES.map(
+            (id) =>
+                `<option value="${id}" ${id === this._style ? 'selected' : ''}>${t(STYLE_KEYS[id])}</option>`,
+        ).join('');
         const range = (cls, label, min, max, step) => `
                     <label class="${cls}">
                         <span>${t(label)} <strong></strong>%</span>
@@ -199,6 +217,10 @@ export class TouchPadLayoutEditor {
                     </button>
                 </div>
                 <div class="tp-bar-body">
+                    <label class="tp-layout-editor-style">
+                        <span>${t('settings.touchPadEditorStyle')}</span>
+                        <select>${styles}</select>
+                    </label>
                     <div class="tp-bar-presets" role="group"
                          aria-label="${t('settings.touchPadEditorPreset')}">${presets}</div>
                     <div class="tp-bar-look">
@@ -236,6 +258,7 @@ export class TouchPadLayoutEditor {
             layout: this._draft,
             scale: this._scale / 100,
             opacity: this._opacity / 100,
+            style: this._style,
         });
         this._view.mount();
         const layer = this._stage.querySelector('.touch-pad');
@@ -261,6 +284,7 @@ export class TouchPadLayoutEditor {
                 this._onChange(clone(this._draft), {
                     scale: this._scale / 100,
                     opacity: this._opacity / 100,
+                    style: this._style,
                 });
             }
             this.close();
@@ -295,6 +319,16 @@ export class TouchPadLayoutEditor {
             this._showLook();
             this._view.setLook({ scale: this._scale / 100 });
             this._refresh();
+        });
+        this._el.querySelector('.tp-layout-editor-style select').addEventListener('change', (e) => {
+            const style = e.target.value;
+            if (!TOUCH_PAD_STYLES.includes(style)) return;
+            this._style = style;
+            this._view.setLook({ style });
+            for (const h of this._handles) {
+                h.setAttribute('aria-label', nameOf(h.dataset.control, style));
+            }
+            this._syncSize();
         });
         this._el.querySelector('.tp-layout-editor-opacity input').addEventListener('input', (e) => {
             this._opacity = clamp(Number(e.target.value), OPACITY_MIN, OPACITY_MAX);
@@ -472,7 +506,7 @@ export class TouchPadLayoutEditor {
         handle.className = 'tp-layout-editor-handle' + (stick ? ' is-stick' : '');
         handle.dataset.control = id;
         handle.setAttribute('role', 'button');
-        handle.setAttribute('aria-label', nameOf(id));
+        handle.setAttribute('aria-label', nameOf(id, this._style));
         handle.addEventListener('pointerdown', (e) => this._grab(e, handle, id));
         this._stage.appendChild(handle);
         return handle;
@@ -572,7 +606,7 @@ export class TouchPadLayoutEditor {
         input.value = String(size);
         text.textContent = this._selected
             ? t('settings.touchPadEditorControlSize', {
-                  name: nameOf(this._selected),
+                  name: nameOf(this._selected, this._style),
                   size: Math.round(size * 100),
               })
             : t('settings.touchPadEditorHint');

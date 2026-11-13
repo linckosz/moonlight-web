@@ -40,20 +40,60 @@ import {
 /** Fingers down, at most this long, that are a tap of the whole hand. */
 const FOUR_FINGER_TAP_MS = 600;
 
+/**
+ * What each button wears, per pad (TOUCH_PAD_STYLES). The places are an Xbox
+ * pad's whatever the style: the bottom face button is A, Cross or B.
+ */
 const LABELS = {
-    lt: 'LT',
-    lb: 'LB',
-    rt: 'RT',
-    rb: 'RB',
-    a: 'A',
-    b: 'B',
-    x: 'X',
-    y: 'Y',
-    l3: 'L3',
-    r3: 'R3',
-    view: '⧉',
-    menu: '≡',
+    xbox: {
+        lt: 'LT',
+        lb: 'LB',
+        rt: 'RT',
+        rb: 'RB',
+        a: 'A',
+        b: 'B',
+        x: 'X',
+        y: 'Y',
+        l3: 'L3',
+        r3: 'R3',
+        view: '⧉',
+        menu: '≡',
+    },
+    ps: {
+        lt: 'L2',
+        lb: 'L1',
+        rt: 'R2',
+        rb: 'R1',
+        a: '✕',
+        b: '○',
+        x: '□',
+        y: '△',
+        view: '▭',
+        menu: '☰',
+    },
+    switch: {
+        lt: 'ZL',
+        lb: 'L',
+        rt: 'ZR',
+        rb: 'R',
+        a: 'B',
+        b: 'A',
+        x: 'Y',
+        y: 'X',
+        view: '−',
+        menu: '+',
+    },
 };
+
+/**
+ * The label of a button for a pad style, an Xbox pad's where the style keeps it.
+ * @param {string} style one of TOUCH_PAD_STYLES
+ * @param {string} id a control's id
+ */
+export function touchPadLabel(style, id) {
+    const own = LABELS[style] || LABELS.xbox;
+    return own[id] || LABELS.xbox[id] || '';
+}
 
 /** The cross's keys: the button each draws, its place and its arrow. */
 const DPAD_ARMS = [
@@ -76,6 +116,7 @@ export class TouchPadView {
      * @param {import('../stream/TouchPadState.js').TouchPadState} state
      * @param {{ scale?: number, opacity?: number, ignoreOutside?: boolean,
      *           layout?: {preset: string, landscape: object, portrait: object}|null,
+     *           style?: string,
      *           onChanged?: () => void, onTouch?: () => void,
      *           onFourFingerTap?: () => void, onLaidOut?: () => void }} [options]
      *   `onChanged` is told when a touch event changed what is held, once that
@@ -86,12 +127,14 @@ export class TouchPadView {
      *   `onLaidOut`: the controls have just moved, and with them toggleRect.
      *   `layout`: this viewer's own arrangement (setLayout); the orientation the
      *   layer has when it is laid out picks which of the two saves applies.
+     *   `style`: the pad whose names the buttons wear (TOUCH_PAD_STYLES).
      */
     constructor(parent, state, options = {}) {
         this._parent = parent;
         this._state = state;
         this._scale = options.scale || 1;
         this._opacity = options.opacity === undefined ? 1 : options.opacity;
+        this._style = options.style || 'xbox';
         this._ignoreOutside = options.ignoreOutside === true;
         this._layout = options.layout || null;
         this._onChanged = options.onChanged || null;
@@ -191,11 +234,20 @@ export class TouchPadView {
     }
 
     /**
-     * The size and the opacity the viewer is trying, in the layout editor:
-     * fractions as in the options, 1 = 100%. Either may be left out.
-     * @param {{ scale?: number, opacity?: number }} look
+     * The size, the opacity and the pad style the viewer is trying, in the
+     * layout editor: fractions as in the options, 1 = 100%. Any may be left out.
+     * @param {{ scale?: number, opacity?: number, style?: string }} look
      */
-    setLook({ scale, opacity } = {}) {
+    setLook({ scale, opacity, style } = {}) {
+        if (style !== undefined && style !== this._style) {
+            this._style = style;
+            // Only the names change: nothing moves, no finger is let go.
+            if (this._el) {
+                for (const el of this._el.querySelectorAll('.touch-pad-btn')) {
+                    el.textContent = touchPadLabel(style, el.dataset.control);
+                }
+            }
+        }
         if (opacity !== undefined) {
             this._opacity = opacity;
             if (this._el) this._el.style.setProperty('--touch-pad-opacity', String(opacity));
@@ -296,7 +348,7 @@ export class TouchPadView {
         const el = document.createElement('div');
         el.className = 'touch-pad-btn' + (c.r ? ' is-round' : '') + (c.pill ? ' is-pill' : '');
         el.dataset.control = c.id;
-        el.textContent = LABELS[c.id];
+        el.textContent = touchPadLabel(this._style, c.id);
         place(el, c.x, c.y, c.w, c.h);
         this._el.appendChild(el);
         for (const b of c.buttons) this._buttonEls.set(b, el);

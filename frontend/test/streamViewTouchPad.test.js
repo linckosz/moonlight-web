@@ -320,6 +320,24 @@ describe('the on-screen controller in the stream', () => {
             delete navigator.vibrate;
         });
 
+        it('names the buttons after the pad chosen, and still declares an Xbox pad', async () => {
+            const view = makeView({ _touchPadPrefs: { style: 'ps' } });
+            view._mountTouchPad();
+            await flush();
+            // jsdom measures nothing: the layer is given a phone's size.
+            padEl(view).getBoundingClientRect = () => ({
+                left: 0,
+                top: 0,
+                width: 844,
+                height: 390,
+            });
+            view._touchPadView.setVisible(true);
+            view._touchPadView.relayout();
+            expect(padEl(view).querySelector('[data-control="a"]').textContent).toBe('✕');
+            // LI_CTYPE_XBOX: the host's pad is an Xbox one whatever the labels.
+            expect(sent(send, 'gamepadconnect')[0].ctype).toBe(1);
+        });
+
         it('presents motors where the phone has one and the viewer wants them', async () => {
             navigator.vibrate = vi.fn();
             const view = makeView();

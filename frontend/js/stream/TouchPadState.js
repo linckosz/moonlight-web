@@ -357,6 +357,13 @@ export const TOUCH_PAD_CONTROLS = [
 /** What a layout may start from; a viewer's own places are kept on top. */
 export const TOUCH_PAD_PRESETS = ['default', 'left', 'compact'];
 
+/**
+ * The pads whose names the buttons can wear. Only the labels change: the host
+ * is still told of an Xbox pad, and each button stays where an Xbox pad has it,
+ * as the protocol sends buttons by place, not by name.
+ */
+export const TOUCH_PAD_STYLES = ['xbox', 'ps', 'switch'];
+
 /** How small or large a moved control may get, on top of the size setting. */
 const OVERRIDE_MIN = 0.8;
 const OVERRIDE_MAX = 1.3;
@@ -420,6 +427,7 @@ export function touchPadSettings(data = {}) {
         vibrate: data.touch_pad_vibrate !== false,
         outside: data.touch_pad_outside === 'ignore' ? 'ignore' : 'mouse',
         layout: touchPadLayouts(data.touch_pad_layout),
+        style: TOUCH_PAD_STYLES.includes(data.touch_pad_style) ? data.touch_pad_style : 'xbox',
     };
 }
 

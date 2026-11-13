@@ -309,7 +309,32 @@ describe('TouchPadLayoutEditor', () => {
             const layer = container.querySelector('.touch-pad');
             expect(layer.style.getPropertyValue('--touch-pad-opacity')).toBe('0.4');
             container.querySelector('[data-act="done"]').click();
-            expect(onChange.mock.calls[0][1]).toEqual({ scale: 1.2, opacity: 0.4 });
+            expect(onChange.mock.calls[0][1]).toEqual({ scale: 1.2, opacity: 0.4, style: 'xbox' });
+        });
+
+        it('renames the buttons after the pad picked, and hands the style back on Done', () => {
+            build(touchPadLayouts(), 1180, 820, { style: 'ps' });
+            const select = container.querySelector('.tp-layout-editor-style select');
+            expect([...select.options].map((o) => o.value)).toEqual(['xbox', 'ps', 'switch']);
+            expect(select.value).toBe('ps');
+            const drawn = () =>
+                container.querySelector('.touch-pad [data-control="a"]').textContent;
+            expect(drawn()).toBe('✕');
+            expect(handle('a').getAttribute('aria-label')).toBe('✕');
+            select.value = 'switch';
+            select.dispatchEvent(new Event('change'));
+            expect(drawn()).toBe('B');
+            expect(handle('lt').getAttribute('aria-label')).toBe('ZL');
+            // Only the names: no control moved.
+            expect(editor._draft.landscape).toEqual({});
+            container.querySelector('[data-act="done"]').click();
+            expect(onChange.mock.calls[0][1].style).toBe('switch');
+        });
+
+        it('falls back to the Xbox names for a style it does not know', () => {
+            build(touchPadLayouts(), 1180, 820, { style: 'gamecube' });
+            expect(container.querySelector('.tp-layout-editor-style select').value).toBe('xbox');
+            expect(handle('a').getAttribute('aria-label')).toBe('A');
         });
 
         it('shows three backgrounds, a preview that is never handed over', () => {
@@ -322,7 +347,11 @@ describe('TouchPadLayoutEditor', () => {
             expect(stageEl.classList.contains('tp-bg-day')).toBe(true);
             expect(stageEl.classList.contains('tp-bg-default')).toBe(false);
             container.querySelector('[data-act="done"]').click();
-            expect(Object.keys(onChange.mock.calls[0][1]).sort()).toEqual(['opacity', 'scale']);
+            expect(Object.keys(onChange.mock.calls[0][1]).sort()).toEqual([
+                'opacity',
+                'scale',
+                'style',
+            ]);
             expect(onChange.mock.calls[0][0]).not.toHaveProperty('background');
         });
 

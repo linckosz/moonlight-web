@@ -357,6 +357,7 @@ describe('touchPadSettings', () => {
             vibrate: true,
             outside: 'mouse',
             layout: defaultLayout,
+            style: 'xbox',
         });
     });
 
@@ -368,6 +369,7 @@ describe('touchPadSettings', () => {
                 touch_pad_opacity: 0.2,
                 touch_pad_vibrate: false,
                 touch_pad_outside: 'ignore',
+                touch_pad_style: 'switch',
             }),
         ).toEqual({
             mode: 'never',
@@ -376,6 +378,7 @@ describe('touchPadSettings', () => {
             vibrate: false,
             outside: 'ignore',
             layout: defaultLayout,
+            style: 'switch',
         });
     });
 
@@ -385,6 +388,7 @@ describe('touchPadSettings', () => {
             touch_pad_scale: 3,
             touch_pad_opacity: 0,
             touch_pad_outside: 'elsewhere',
+            touch_pad_style: 'gamecube',
         });
         expect(odd).toEqual(touchPadSettings());
         expect(touchPadSettings({ touch_pad_opacity: '0.5' }).opacity).toBe(1);

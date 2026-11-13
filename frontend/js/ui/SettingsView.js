@@ -1117,6 +1117,8 @@ export class SettingsView {
             touch_pad_outside: this._touchPad.outside,
             // Where the viewer put the controls, per orientation.
             touch_pad_layout: this._touchPad.layout,
+            // The pad the buttons are named after (labels only).
+            touch_pad_style: this._touchPad.style,
             mic_enabled: this._micEnabled,
             mic_chosen: this._micChosen,
             mic_quality: this._micQuality,
@@ -2724,7 +2726,7 @@ export class SettingsView {
     _readTouchPadSection() {
         const field = (name) => this.container.querySelector('#settings-touch-pad-' + name);
         if (!field('mode')) return this._touchPad;
-        // Size, opacity and layout are the editor's: what it last handed back.
+        // Size, opacity, layout and style are the editor's: what it last handed back.
         return touchPadSettings({
             touch_pad_mode: field('mode').value,
             touch_pad_scale: this._touchPad.scale,
@@ -2732,10 +2734,14 @@ export class SettingsView {
             touch_pad_vibrate: field('vibrate').checked,
             touch_pad_outside: field('outside').value,
             touch_pad_layout: this._touchPad.layout,
+            touch_pad_style: this._touchPad.style,
         });
     }
 
-    /** One line for what the editor holds: preset, size, opacity, moved controls. */
+    /**
+     * One line for what the editor holds: the pad style when it is not the
+     * Xbox one, preset, size, opacity, moved controls.
+     */
     _touchPadSummary() {
         const pad = this._touchPad;
         const preset =
@@ -2746,7 +2752,12 @@ export class SettingsView {
         const moved = ['landscape', 'portrait'].some(
             (o) => Object.keys((pad.layout && pad.layout[o]) || {}).length > 0,
         );
+        const style = {
+            ps: 'settings.touchPadStylePs',
+            switch: 'settings.touchPadStyleSwitch',
+        }[pad.style];
         return [
+            ...(style ? [t(style)] : []),
             t(preset),
             t('settings.touchPadSummarySize', { size: Math.round(pad.scale * 100) }),
             t('settings.touchPadSummaryOpacity', { opacity: Math.round(pad.opacity * 100) }),
@@ -2778,6 +2789,7 @@ export class SettingsView {
             layout: this._touchPad.layout,
             scale: this._touchPad.scale,
             opacity: this._touchPad.opacity,
+            style: this._touchPad.style,
             onChange: (layout, look) => {
                 this._touchPad = { ...this._touchPad, ...look, layout };
                 const summary = this.container.querySelector('#settings-touch-pad-summary');

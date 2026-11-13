@@ -63,7 +63,14 @@ export class StreamViewTouchPad {
      */
     _touchPadPref(name) {
         const prefs = this._touchPadPrefs || {};
-        const defaults = { mode: 'auto', scale: 1, opacity: 1, vibrate: true, outside: 'mouse' };
+        const defaults = {
+            mode: 'auto',
+            scale: 1,
+            opacity: 1,
+            vibrate: true,
+            outside: 'mouse',
+            style: 'xbox',
+        };
         return prefs[name] === undefined ? defaults[name] : prefs[name];
     }
 
@@ -210,6 +217,8 @@ export class StreamViewTouchPad {
         this._touchPadView = new TouchPadView(area, this._touchPadState, {
             scale: this._touchPadPref('scale'),
             opacity: this._touchPadPref('opacity'),
+            // The names on the buttons; the host is still told of an Xbox pad.
+            style: this._touchPadPref('style'),
             ignoreOutside: this._touchPadPref('outside') === 'ignore',
             // The viewer's own arrangement, which orientation picks from.
             layout: this._touchPadLayout(),

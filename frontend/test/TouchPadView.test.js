@@ -3,7 +3,7 @@
  * GPLv3 — see repository LICENSE.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { TouchPadView } from '../js/ui/TouchPadView.js';
+import { TouchPadView, touchPadLabel } from '../js/ui/TouchPadView.js';
 import { PAD, TouchPadState, layoutTouchPad } from '../js/stream/TouchPadState.js';
 
 const W = 844;
@@ -131,6 +131,43 @@ describe('TouchPadView', () => {
 
     it('is at full opacity unless told otherwise', () => {
         expect(el.style.getPropertyValue('--touch-pad-opacity')).toBe('1');
+    });
+
+    it("names the buttons after the chosen pad, at an Xbox pad's places", () => {
+        const label = (id) => el.querySelector(`[data-control="${id}"]`).textContent;
+        const face = () => ['a', 'b', 'x', 'y', 'lb', 'rb', 'lt', 'rt'].map(label);
+        expect(face()).toEqual(['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT']);
+        view.destroy();
+        build({ style: 'ps' });
+        expect(face()).toEqual(['✕', '○', '□', '△', 'L1', 'R1', 'L2', 'R2']);
+        expect(label('l3')).toBe('L3');
+        view.destroy();
+        build({ style: 'switch' });
+        expect(face()).toEqual(['B', 'A', 'Y', 'X', 'L', 'R', 'ZL', 'ZR']);
+        expect([label('view'), label('menu')]).toEqual(['−', '+']);
+        // What is pressed stays the Xbox button at that place.
+        const [x, y] = centre('a');
+        start(1, x, y);
+        expect(state.buttons[PAD.A].pressed).toBe(true);
+    });
+
+    it('renames the buttons in place, with a finger left down', () => {
+        const [x, y] = centre('a');
+        start(1, x, y);
+        const a = el.querySelector('[data-control="a"]');
+        view.setLook({ style: 'ps' });
+        expect(el.querySelector('[data-control="a"]')).toBe(a);
+        expect(a.textContent).toBe('✕');
+        expect(state.buttons[PAD.A].pressed).toBe(true);
+        view.setLook({ style: 'unknown' });
+        expect(a.textContent).toBe('A');
+    });
+
+    it('labels each control as touchPadLabel does', () => {
+        expect(touchPadLabel('switch', 'a')).toBe('B');
+        expect(touchPadLabel('ps', 'l3')).toBe('L3');
+        expect(touchPadLabel('nope', 'menu')).toBe('≡');
+        expect(touchPadLabel('xbox', 'dpad')).toBe('');
     });
 
     it("takes a viewer's arrangement, and lays out again when it changes", () => {

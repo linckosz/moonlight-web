@@ -1641,6 +1641,31 @@ body.streaming-active::after {
     flex-direction: column;
     gap: 9px;
 }
+.tp-layout-editor-style {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+}
+.tp-layout-editor-style span {
+    white-space: nowrap;
+}
+.tp-layout-editor-style select {
+    flex: 1;
+    min-width: 0;
+    min-height: 36px;
+    padding: 0 8px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    border: 1px solid rgba(44, 133, 146, 0.6);
+    border-radius: 6px;
+    font: inherit;
+    font-weight: 600;
+}
+.tp-layout-editor-style option {
+    background: #0d1a1e;
+    color: #fff;
+}
 .tp-bar-presets {
     display: flex;
     gap: 4px;

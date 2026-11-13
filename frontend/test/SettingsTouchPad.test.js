@@ -117,6 +117,16 @@ describe('SettingsView on-screen controller section', () => {
             touch_pad_layout: { portrait: { a: { x: 0.5, y: 0.5, s: 1 } } },
         });
         expect(view._touchPadSummary()).toContain('text:settings.touchPadSummaryMoved');
+        // The pad style leads the line, unless it is the Xbox one.
+        expect(view._touchPadSummary()).not.toContain('text:settings.touchPadStyle');
+        view._touchPad = touchPadSettings({ touch_pad_style: 'switch' });
+        expect(view._touchPadSummary().split(' · ')[0]).toBe('text:settings.touchPadStyleSwitch');
+    });
+
+    it('keeps an Xbox pad unless a known style was saved', () => {
+        expect(touchPadSettings({}).style).toBe('xbox');
+        expect(touchPadSettings({ touch_pad_style: 'ps' }).style).toBe('ps');
+        expect(touchPadSettings({ touch_pad_style: 'gamecube' }).style).toBe('xbox');
     });
 
     it('reads back what the viewer set, and what the editor last gave', () => {
@@ -133,6 +143,7 @@ describe('SettingsView on-screen controller section', () => {
             vibrate: false,
             outside: 'ignore',
             layout: { preset: 'default', landscape: {}, portrait: {} },
+            style: 'xbox',
         });
     });
 
@@ -178,17 +189,20 @@ describe('SettingsView on-screen controller section', () => {
         expect(editor.options.layout).toEqual(view._touchPad.layout);
         expect(editor.options.scale).toBe(0.9);
         expect(editor.options.opacity).toBe(0.6);
+        expect(editor.options.style).toBe('xbox');
 
         const layout = { preset: 'left', landscape: { a: { x: 0.2, y: 0.8, s: 1 } }, portrait: {} };
-        editor.options.onChange(layout, { scale: 1.3, opacity: 0.4 });
+        editor.options.onChange(layout, { scale: 1.3, opacity: 0.4, style: 'ps' });
         expect(view._touchPad.layout).toEqual(layout);
         expect(view._autoSave).toHaveBeenCalled();
         const read = view._readTouchPadSection();
         expect(read.layout).toEqual(layout);
         expect(read.scale).toBe(1.3);
         expect(read.opacity).toBe(0.4);
+        expect(read.style).toBe('ps');
         // The line under the button follows at once.
         expect(field('summary').textContent).toContain('text:settings.touchPadLayoutLeft');
+        expect(field('summary').textContent).toContain('text:settings.touchPadStylePs');
         expect(field('summary').textContent).toContain('text:settings.touchPadSummaryMoved');
 
         editor.options.onClosed();
