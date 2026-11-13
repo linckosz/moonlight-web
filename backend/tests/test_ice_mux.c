@@ -31,6 +31,7 @@
 #include <windows.h>
 static void sleep_ms(int ms) { Sleep(ms); }
 #else
+#include <fcntl.h>
 #include <unistd.h>
 static void sleep_ms(int ms) { usleep(ms * 1000); }
 #endif
@@ -234,11 +235,14 @@ typedef struct end {
 	mutex_t lock;     // over what the connections thread writes below
 	int received;
 	char data[64];
+	bool passive_only; // of its candidates, the peer is told the passive TCP ones alone
 } end_t;
 
 static void on_candidate(juice_agent_t *agent, const char *sdp, void *user_ptr) {
 	(void)agent;
 	end_t *end = user_ptr;
+	if (end->passive_only && !strstr(sdp, "tcptype passive"))
+		return;
 	if (end->peer)
 		juice_add_remote_candidate(end->peer->agent, sdp);
 }
@@ -920,6 +924,358 @@ static void test_class_per_datagram(void) {
 	closesocket(shared);
 }
 
+// ── TCP on the shared ports ─────────────────────────────────────────────────
+
+// What stands for the server here: it listens in TCP on the first shared port, reads the first
+// frame of each connection and not a byte more, and offers the connection to the agent.
+typedef struct front {
+	socket_t listener;
+	juice_agent_t *agent;
+	atomic(int) spoil;   // the frame is offered with one byte changed
+	atomic(int) taken;   // offers the agent took: the socket is its own
+	atomic(int) refused; // offers it did not take: the socket stayed ours
+	atomic(int) held;    // nothing is accepted for now: what is dialled waits at the listener
+	atomic(int) patient; // an offer the agent has no room for is made again, for a while
+	atomic(int) stop;
+	thread_t thread;
+} front_t;
+
+static bool read_all(socket_t sock, char *buffer, int size) {
+	for (int have = 0; have < size;) {
+		fd_set set;
+		FD_ZERO(&set);
+		FD_SET(sock, &set);
+		struct timeval tv = {2, 0};
+		if (select((int)sock + 1, &set, NULL, NULL, &tv) <= 0)
+			return false;
+		int len = recv(sock, buffer + have, size - have, 0);
+		if (len <= 0)
+			return false;
+		have += len;
+	}
+	return true;
+}
+
+static thread_return_t THREAD_CALL front_run(void *arg) {
+	front_t *f = arg;
+	while (!atomic_load(&f->stop)) {
+		fd_set set;
+		FD_ZERO(&set);
+		FD_SET(f->listener, &set);
+		struct timeval tv = {0, 20000};
+		if (select((int)f->listener + 1, &set, NULL, NULL, &tv) <= 0)
+			continue;
+		if (atomic_load(&f->held)) {
+			sleep_ms(5);
+			continue;
+		}
+		socket_t sock = accept(f->listener, NULL, NULL);
+		if (sock == INVALID_SOCKET)
+			continue;
+
+		char frame[1024];
+		uint16_t header = 0;
+		if (!read_all(sock, (char *)&header, 2) || ntohs(header) < 20 ||
+		    ntohs(header) > sizeof(frame) || !read_all(sock, frame, ntohs(header))) {
+			closesocket(sock);
+			continue;
+		}
+		if (atomic_load(&f->spoil))
+			frame[10] ^= 0x55; // in the transaction: the check's own signature no longer fits
+		int result = JUICE_ERR_FAILED;
+		for (int attempt = 0; attempt < (atomic_load(&f->patient) ? 400 : 1); ++attempt) {
+			result = juice_tcp_passive_offer(f->agent, (uintptr_t)sock, frame, ntohs(header));
+			if (result != JUICE_ERR_FAILED || atomic_load(&f->stop))
+				break;
+			sleep_ms(5);
+		}
+		if (result == JUICE_ERR_SUCCESS) {
+			atomic_store(&f->taken, atomic_load(&f->taken) + 1);
+		} else {
+			atomic_store(&f->refused, atomic_load(&f->refused) + 1);
+			closesocket(sock);
+		}
+	}
+	return (thread_return_t)0;
+}
+
+static socket_t tcp_loopback_listener(uint16_t port) {
+	socket_t sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	struct sockaddr_in sin;
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = htonl(0x7F000001);
+	sin.sin_port = htons(port);
+	if (bind(sock, (struct sockaddr *)&sin, sizeof(sin)) != 0 || listen(sock, 8) != 0) {
+		closesocket(sock);
+		return INVALID_SOCKET;
+	}
+	return sock;
+}
+
+static socket_t tcp_loopback_dial(socket_t listener) {
+	struct sockaddr_in sin;
+	socklen_t len = sizeof(sin);
+	socket_t sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (getsockname(listener, (struct sockaddr *)&sin, &len) != 0 ||
+	    connect(sock, (struct sockaddr *)&sin, sizeof(sin)) != 0) {
+		closesocket(sock);
+		return INVALID_SOCKET;
+	}
+	return sock;
+}
+
+// The holder with nothing getting in by UDP, and the front on its first port. A port the system
+// gave in UDP may be refused in TCP (Windows keeps whole blocks for one protocol): another is
+// drawn then.
+static bool tcp_only_start(holder_t *h, front_t *f) {
+	memset(f, 0, sizeof(*f));
+	for (int attempt = 0; attempt < 20; ++attempt) {
+		if (!holder_start(h, "hostAAAA", NULL))
+			return false;
+		for (int via = 0; via < PORTS; ++via)
+			atomic_store(&h->blocked[via], 1);
+		f->listener = tcp_loopback_listener(h->port[0]);
+		if (f->listener != INVALID_SOCKET)
+			return true;
+		holder_stop(h);
+	}
+	return false;
+}
+
+static void tcp_only_stop(holder_t *h, front_t *f) {
+	atomic_store(&f->stop, 1);
+	thread_join(f->thread, NULL);
+	closesocket(f->listener);
+	holder_stop(h);
+}
+
+// The host on the holder's ports, told TCP is accepted for it; the peer hears of its passive TCP
+// candidates alone and dials them.
+static void connect_tcp_pair(holder_t *h, front_t *f, end_t *host, end_t *peer, bool told) {
+	memset(host, 0, sizeof(*host));
+	memset(peer, 0, sizeof(*peer));
+	make_agent(host, NULL);
+	make_agent(peer, "127.0.0.1");
+	host->peer = peer;
+	host->passive_only = true;
+	juice_set_ice_tcp_mode(host->agent, JUICE_ICE_TCP_MODE_ACTIVE_PASSIVE);
+	juice_set_ice_tcp_mode(peer->agent, JUICE_ICE_TCP_MODE_ACTIVE);
+
+	juice_set_local_ice_attributes(host->agent, h->ufrag[0], PASSWORD);
+	juice_shared_sockets_t shared = shared_of(h, 0);
+	shared.tcp = told;
+	CHECK(juice_set_shared_sockets(host->agent, &shared) == JUICE_ERR_SUCCESS);
+	f->agent = host->agent;
+	CHECK(thread_init(&f->thread, front_run, f) == 0);
+
+	char sdp[JUICE_MAX_SDP_STRING_LEN];
+	juice_get_local_description(host->agent, sdp, sizeof(sdp));
+	juice_set_remote_description(peer->agent, sdp);
+	juice_get_local_description(peer->agent, sdp, sizeof(sdp));
+	juice_set_remote_description(host->agent, sdp);
+
+	CHECK(juice_gather_candidates(host->agent) == 0);
+	juice_gather_candidates(peer->agent);
+}
+
+static bool reached(atomic(int) *counter, int count, int ms) {
+	for (int t = 0; t < ms; t += 20) {
+		if (atomic_load(counter) >= count)
+			return true;
+		sleep_ms(20);
+	}
+	return atomic_load(counter) >= count;
+}
+
+static void test_tcp_offered(void) {
+	printf("TCP on a shared port: accepted by who holds the port, admitted by the agent's gate\n");
+	holder_t h;
+	front_t front;
+	CHECK(tcp_only_start(&h, &front));
+	end_t host, peer;
+	connect_tcp_pair(&h, &front, &host, &peer, true);
+	CHECK(wait_state(host.agent, JUICE_STATE_COMPLETED, 10000));
+	CHECK(wait_state(peer.agent, JUICE_STATE_COMPLETED, 5000));
+	CHECK(atomic_load(&front.taken) >= 1);
+	CHECK(atomic_load(&front.refused) == 0);
+
+	// The session runs on the connection that was offered, on the shared port's number
+	char local[JUICE_MAX_CANDIDATE_SDP_STRING_LEN], remote[JUICE_MAX_CANDIDATE_SDP_STRING_LEN];
+	CHECK(juice_get_selected_candidates(host.agent, local, sizeof(local), remote,
+	                                    sizeof(remote)) == 0);
+	CHECK(strstr(local, "tcptype passive") != NULL);
+	CHECK(strstr(remote, "TCP") != NULL || strstr(remote, "tcp") != NULL);
+	CHECK(selected_local_port(host.agent) == h.port[0]);
+	exchange(&host, &peer, "to the host, over tcp", "to the peer, over tcp");
+
+	// The checks are over: what is offered now is not taken, and stays the caller's to close
+	const int before = atomic_load(&front.refused);
+	socket_t late = tcp_loopback_dial(front.listener);
+	CHECK(late != INVALID_SOCKET);
+	char junk[2 + 20];
+	memset(junk, 0, sizeof(junk));
+	junk[1] = 20;
+	CHECK(send(late, junk, sizeof(junk), 0) == (int)sizeof(junk));
+	CHECK(reached(&front.refused, before + 1, 3000));
+	closesocket(late);
+	// ...and the session is none the worse for it
+	CHECK(juice_send(peer.agent, "still there", 11) == 0);
+	CHECK(got(&host, 2, "still there", 2000));
+
+	destroy_agent(&host);
+	destroy_agent(&peer);
+	tcp_only_stop(&h, &front);
+}
+
+static void test_tcp_offer_gate(void) {
+	printf("TCP on a shared port: a frame that is not the peer's own check opens nothing\n");
+	holder_t h;
+	front_t front;
+	CHECK(tcp_only_start(&h, &front));
+	atomic_store(&front.spoil, 1);
+	end_t host, peer;
+	connect_tcp_pair(&h, &front, &host, &peer, true);
+	// Offered, taken into the list, and closed at the gate: the agent goes on checking
+	CHECK(reached(&front.taken, 1, 5000));
+	sleep_ms(1500);
+	CHECK(juice_get_state(host.agent) == JUICE_STATE_CONNECTING);
+	CHECK(juice_get_state(peer.agent) != JUICE_STATE_COMPLETED);
+	destroy_agent(&host);
+	destroy_agent(&peer);
+	tcp_only_stop(&h, &front);
+}
+
+static void test_tcp_offer_refusals(void) {
+	printf("TCP on a shared port: what is no connection, or comes with no window, is refused\n");
+	holder_t h;
+	front_t front;
+	CHECK(tcp_only_start(&h, &front));
+	// Not told that TCP is accepted for it: the agent offers no passive candidate, and takes
+	// nothing. The front is not started dialled: the peer has nothing to dial.
+	end_t host, peer;
+	connect_tcp_pair(&h, &front, &host, &peer, false);
+
+	socket_t dialled = tcp_loopback_dial(front.listener);
+	CHECK(dialled != INVALID_SOCKET);
+	char frame[64];
+	memset(frame, 0, sizeof(frame));
+	// No window for it
+	CHECK(juice_tcp_passive_offer(host.agent, (uintptr_t)dialled, frame, 20) == JUICE_ERR_FAILED);
+	// A frame no first frame can be
+	CHECK(juice_tcp_passive_offer(host.agent, (uintptr_t)dialled, frame, 19) == JUICE_ERR_INVALID);
+	CHECK(juice_tcp_passive_offer(host.agent, (uintptr_t)dialled, frame, 1025) ==
+	      JUICE_ERR_INVALID);
+	CHECK(juice_tcp_passive_offer(host.agent, (uintptr_t)dialled, NULL, 20) == JUICE_ERR_INVALID);
+	CHECK(juice_tcp_passive_offer(NULL, (uintptr_t)dialled, frame, 20) == JUICE_ERR_INVALID);
+	// A listener, a datagram socket, no socket at all
+	CHECK(juice_tcp_passive_offer(host.agent, (uintptr_t)front.listener, frame, 20) ==
+	      JUICE_ERR_INVALID);
+	CHECK(juice_tcp_passive_offer(host.agent, (uintptr_t)h.port_sock[0], frame, 20) ==
+	      JUICE_ERR_INVALID);
+	CHECK(juice_tcp_passive_offer(host.agent, (uintptr_t)INVALID_SOCKET, frame, 20) ==
+	      JUICE_ERR_INVALID);
+	// Refused, each of them, the socket is still the caller's and still works
+	CHECK(send(dialled, frame, 4, 0) == 4);
+	closesocket(dialled);
+
+	CHECK(atomic_load(&front.taken) == 0);
+	destroy_agent(&host);
+	destroy_agent(&peer);
+	tcp_only_stop(&h, &front);
+}
+
+// A thread that offers the agent connections nobody dialled for it, one after the other, as a
+// server gone wrong would: from another thread than the agent's own, which is the one that
+// places, admits and closes.
+typedef struct crowd {
+	juice_agent_t *agent;
+	atomic(int) taken;
+	atomic(int) refused;
+	atomic(int) stop;
+	thread_t thread;
+} crowd_t;
+
+static thread_return_t THREAD_CALL crowd_run(void *arg) {
+	crowd_t *c = arg;
+	socket_t listener = tcp_loopback_listener(0);
+	char frame[64];
+	memset(frame, 0x5A, sizeof(frame));
+	while (listener != INVALID_SOCKET && !atomic_load(&c->stop)) {
+		socket_t dialled = tcp_loopback_dial(listener);
+		socket_t accepted =
+		    dialled != INVALID_SOCKET ? accept(listener, NULL, NULL) : INVALID_SOCKET;
+		if (accepted != INVALID_SOCKET) {
+			if (juice_tcp_passive_offer(c->agent, (uintptr_t)accepted, frame, sizeof(frame)) ==
+			    JUICE_ERR_SUCCESS) {
+				atomic_store(&c->taken, atomic_load(&c->taken) + 1);
+			} else {
+				atomic_store(&c->refused, atomic_load(&c->refused) + 1);
+				closesocket(accepted);
+			}
+		}
+		if (dialled != INVALID_SOCKET)
+			closesocket(dialled);
+		sleep_ms(1);
+	}
+	if (listener != INVALID_SOCKET)
+		closesocket(listener);
+	return (thread_return_t)0;
+}
+
+#ifndef _WIN32
+// How many descriptors this process holds: what all this must leave as it found it
+static int open_descriptors(void) {
+	int count = 0;
+	for (int fd = 0; fd < 1024; ++fd)
+		if (fcntl(fd, F_GETFD) != -1)
+			++count;
+	return count;
+}
+#endif
+
+static void test_tcp_offers_from_another_thread(void) {
+	printf("TCP on a shared port: offered from two threads at once, and the peer still gets in\n");
+#ifndef _WIN32
+	const int before = open_descriptors();
+#endif
+	holder_t h;
+	front_t front;
+	CHECK(tcp_only_start(&h, &front));
+	atomic_store(&front.patient, 1);
+	atomic_store(&front.held, 1); // the peer's own connection waits until the crowd is at it
+	end_t host, peer;
+	connect_tcp_pair(&h, &front, &host, &peer, true);
+
+	crowd_t crowd;
+	memset(&crowd, 0, sizeof(crowd));
+	crowd.agent = host.agent;
+	CHECK(thread_init(&crowd.thread, crowd_run, &crowd) == 0);
+	CHECK(reached(&crowd.taken, 20, 5000));
+	atomic_store(&front.held, 0);
+
+	CHECK(wait_state(host.agent, JUICE_STATE_COMPLETED, 15000));
+	CHECK(wait_state(peer.agent, JUICE_STATE_COMPLETED, 5000));
+	CHECK(atomic_load(&front.taken) >= 1);
+	exchange(&host, &peer, "through the crowd, in", "through the crowd, out");
+
+	// The crowd goes on after the checks: each of its offers is refused now, and stays its own
+	const int refused = atomic_load(&crowd.refused);
+	CHECK(reached(&crowd.refused, refused + 20, 5000));
+	atomic_store(&crowd.stop, 1);
+	thread_join(crowd.thread, NULL);
+	CHECK(juice_send(peer.agent, "still there", 11) == 0);
+	CHECK(got(&host, 2, "still there", 2000));
+
+	destroy_agent(&host);
+	destroy_agent(&peer);
+	tcp_only_stop(&h, &front);
+#ifndef _WIN32
+	// Taken and closed at the gate, or refused and closed by who offered: none is left
+	CHECK(open_descriptors() == before);
+#endif
+}
+
 int ice_mux_tests(void) {
 	test_header();
 	test_via_is_part_of_an_address();
@@ -932,5 +1288,9 @@ int ice_mux_tests(void) {
 	test_first_port_late();
 	test_two_hosts();
 	test_class_per_datagram();
+	test_tcp_offered();
+	test_tcp_offer_gate();
+	test_tcp_offer_refusals();
+	test_tcp_offers_from_another_thread();
 	return failures;
 }

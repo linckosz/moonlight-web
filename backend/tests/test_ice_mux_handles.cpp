@@ -21,6 +21,7 @@
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -167,6 +168,16 @@ int firstByteWithin(NativeSocket s, int ms, uint16_t* fromPort = nullptr)
     return got[0];
 }
 
+/// Whether `s` has something to read within `ms`.
+bool firstReadable(NativeSocket s, int ms)
+{
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(s, &readable);
+    timeval wait{ms / 1000, (ms % 1000) * 1000};
+    return select(static_cast<int>(s) + 1, &readable, nullptr, nullptr, &wait) > 0;
+}
+
 /// A worker's feed: its own port, its server's hop socket and nobody else,
 /// and nothing the worker starts.
 void theFeed()
@@ -202,6 +213,268 @@ void theFeed()
     }
     closeNative(hop);
     closeNative(stranger);
+}
+
+/// A TCP connection on the loopback: the listener it came in by, the end
+/// that listener accepted (what a server hands a worker) and the end that
+/// dialled.
+struct Connection
+{
+    NativeSocket listener = static_cast<NativeSocket>(-1);
+    NativeSocket accepted = static_cast<NativeSocket>(-1);
+    NativeSocket dialled = static_cast<NativeSocket>(-1);
+    uint16_t port = 0;
+
+    bool make()
+    {
+        listener = socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        NativeLength length = sizeof(a);
+        if (bind(listener, reinterpret_cast<const sockaddr*>(&a), sizeof(a)) != 0 ||
+            listen(listener, 4) != 0 ||
+            getsockname(listener, reinterpret_cast<sockaddr*>(&a), &length) != 0)
+            return false;
+        port = ntohs(a.sin_port);
+        dialled = socket(AF_INET, SOCK_STREAM, 0);
+        if (connect(dialled, reinterpret_cast<const sockaddr*>(&a), sizeof(a)) != 0) return false;
+        accepted = accept(listener, nullptr, nullptr);
+        return accepted != static_cast<NativeSocket>(-1);
+    }
+
+    void closeAll()
+    {
+        for (NativeSocket* s : {&listener, &accepted, &dialled}) {
+            if (*s != static_cast<NativeSocket>(-1)) closeNative(*s);
+            *s = static_cast<NativeSocket>(-1);
+        }
+    }
+};
+
+#ifndef _WIN32
+/// A message as no server sends it: `size` bytes and `count` descriptors.
+bool rawMessage(int channel, const char* bytes, size_t size, const int* fds, size_t count)
+{
+    iovec part;
+    part.iov_base = const_cast<char*>(bytes);
+    part.iov_len = size;
+    alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int) * 4)] = {};
+    msghdr message{};
+    message.msg_iov = &part;
+    message.msg_iovlen = 1;
+    if (count > 0 && count <= 4) {
+        message.msg_control = control;
+        message.msg_controllen = CMSG_SPACE(sizeof(int) * count);
+        cmsghdr* carried = CMSG_FIRSTHDR(&message);
+        carried->cmsg_level = SOL_SOCKET;
+        carried->cmsg_type = SCM_RIGHTS;
+        carried->cmsg_len = CMSG_LEN(sizeof(int) * count);
+        std::memcpy(CMSG_DATA(carried), fds, sizeof(int) * count);
+    }
+    return sendmsg(channel, &message, 0) == static_cast<ssize_t>(size);
+}
+
+/// How many descriptors this process holds: what a refused message must not change.
+int openDescriptors()
+{
+    int open = 0;
+    for (int fd = 0; fd < 1024; ++fd)
+        if (fcntl(fd, F_GETFD) != -1) ++open;
+    return open;
+}
+#endif
+
+/// A connection the server accepted reaches a worker by a description, a
+/// copy or a message; whichever it was, it is checked the same way.
+void theConnections()
+{
+    using mw::icemuxhandles::connectionChecked;
+    using mw::icemuxhandles::kNoSocket;
+    SECTION("IceMuxHandles: a connection handed to a worker is checked before it is used");
+    QString why;
+    Connection c;
+    CHECK(c.make());
+    const auto handed = static_cast<uintptr_t>(c.accepted);
+    // On one of the ports this worker shares
+    CHECK(connectionChecked(handed, {static_cast<uint16_t>(c.port + 1), c.port}, &why));
+    // Kept from what this process starts, and never a call that waits
+#ifdef _WIN32
+    DWORD flags = HANDLE_FLAG_INHERIT;
+    CHECK(GetHandleInformation(reinterpret_cast<HANDLE>(handed), &flags) != 0);
+    CHECK((flags & HANDLE_FLAG_INHERIT) == 0);
+#else
+    CHECK((fcntl(c.accepted, F_GETFD) & FD_CLOEXEC) != 0);
+    CHECK((fcntl(c.accepted, F_GETFL) & O_NONBLOCK) != 0);
+#endif
+    char none[4];
+    CHECK(recv(c.accepted, none, sizeof(none), 0) < 0);
+    // Still the connection it was
+    CHECK(send(c.dialled, "ping", 4, 0) == 4);
+    CHECK(firstByteWithin(c.accepted, 2000) == 'p');
+
+    // On a port the worker does not share, or sharing none
+    why.clear();
+    CHECK(!connectionChecked(handed, {static_cast<uint16_t>(c.port + 1)}, &why));
+    CHECK(!why.isEmpty());
+    // The reason names a port, never an address
+    CHECK(!why.contains(QStringLiteral("127.0.0.1")));
+    CHECK(!connectionChecked(handed, {}, &why));
+    // A listener, though it is a stream socket on the very port
+    why.clear();
+    CHECK(!connectionChecked(static_cast<uintptr_t>(c.listener), {c.port}, &why));
+    CHECK(why.contains(QStringLiteral("listens")));
+    // A datagram socket; a stream socket connected to nothing; no socket
+    uint16_t udpPort = 0;
+    const NativeSocket udp = plainUdp(&udpPort);
+    CHECK(!connectionChecked(static_cast<uintptr_t>(udp), {udpPort}, &why));
+    closeNative(udp);
+    const NativeSocket idle = socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(!connectionChecked(static_cast<uintptr_t>(idle), {c.port}, &why));
+    closeNative(idle);
+    CHECK(!connectionChecked(kNoSocket, {c.port}, &why));
+    c.closeAll();
+
+#ifndef _WIN32
+    using mw::icemuxhandles::kFrameMax;
+    using mw::icemuxhandles::kFrameMin;
+    using mw::icemuxhandles::makeChannel;
+    using mw::icemuxhandles::Receipt;
+    using mw::icemuxhandles::receiveConnection;
+    using mw::icemuxhandles::Received;
+    using mw::icemuxhandles::sendConnection;
+
+    SECTION("IceMuxHandles: a connection crosses to the worker as one message");
+    char frame[kFrameMax];
+    for (size_t i = 0; i < sizeof(frame); ++i)
+        frame[i] = static_cast<char>(i);
+    {
+        int serverEnd = -1, workerEnd = -1;
+        CHECK(makeChannel(&serverEnd, &workerEnd));
+        CHECK((fcntl(serverEnd, F_GETFD) & FD_CLOEXEC) != 0);
+        CHECK((fcntl(workerEnd, F_GETFD) & FD_CLOEXEC) != 0);
+        Received got;
+        CHECK(receiveConnection(workerEnd, {1}, &got, &why) == Receipt::Nothing);
+
+        Connection one;
+        CHECK(one.make());
+        CHECK(sendConnection(serverEnd, one.accepted, 7, frame, kFrameMin));
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Connection);
+        CHECK(got.feed == 7 && got.frame.size() == kFrameMin);
+        CHECK(std::memcmp(got.frame.data(), frame, kFrameMin) == 0);
+        const int mine = static_cast<int>(got.socket);
+        CHECK(mine != one.accepted && (fcntl(mine, F_GETFD) & FD_CLOEXEC) != 0);
+        // The same connection, both ways
+        CHECK(send(one.dialled, "ping", 4, 0) == 4);
+        CHECK(firstByteWithin(mine, 2000) == 'p');
+        CHECK(send(mine, "pong", 4, 0) == 4);
+        CHECK(firstByteWithin(one.dialled, 2000) == 'p');
+        close(mine);
+        // The longest frame, and any feed number
+        CHECK(sendConnection(serverEnd, one.accepted, 0xFFFFFFFFu, frame, kFrameMax));
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Connection);
+        CHECK(got.feed == 0xFFFFFFFFu && got.frame.size() == kFrameMax);
+        CHECK(std::memcmp(got.frame.data(), frame, kFrameMax) == 0);
+        close(static_cast<int>(got.socket));
+        // What the server's side does not send
+        CHECK(!sendConnection(serverEnd, one.accepted, 1, frame, kFrameMin - 1));
+        CHECK(!sendConnection(serverEnd, one.accepted, 1, frame, kFrameMax + 1));
+        CHECK(!sendConnection(serverEnd, one.accepted, 1, nullptr, kFrameMin));
+        CHECK(!sendConnection(serverEnd, -1, 1, frame, kFrameMin));
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Nothing);
+
+        SECTION("IceMuxHandles: a message that is not one connection is refused whole");
+        uint16_t otherPort = 0;
+        const int other = plainUdp(&otherPort);
+        const int before = openDescriptors();
+        // A connection on a port this worker does not share
+        CHECK(sendConnection(serverEnd, one.accepted, 1, frame, kFrameMin));
+        CHECK(receiveConnection(workerEnd, {static_cast<uint16_t>(one.port + 1)}, &got, &why) ==
+              Receipt::Refused);
+        // A descriptor that is no connection
+        CHECK(sendConnection(serverEnd, other, 1, frame, kFrameMin));
+        CHECK(receiveConnection(workerEnd, {otherPort}, &got, &why) == Receipt::Refused);
+        // No descriptor; two of them
+        char message[6 + kFrameMax + 8] = {1, 0, 0, 0, static_cast<char>(kFrameMin), 0};
+        CHECK(rawMessage(serverEnd, message, 6 + kFrameMin, nullptr, 0));
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Refused);
+        const int two[2] = {one.accepted, one.accepted};
+        CHECK(rawMessage(serverEnd, message, 6 + kFrameMin, two, 2));
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Refused);
+        // A length that is not the frame's, a message too short, one too long
+        const int single[1] = {one.accepted};
+        CHECK(rawMessage(serverEnd, message, 6 + kFrameMin + 3, single, 1));
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Refused);
+        CHECK(rawMessage(serverEnd, message, 3, single, 1));
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Refused);
+        message[4] = 0;
+        message[5] = 4; // 1024
+        CHECK(rawMessage(serverEnd, message, 6 + kFrameMax + 2, single, 1));
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Refused);
+        // Nothing of any of them is left open here
+        CHECK_EQ(openDescriptors(), before);
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Nothing);
+        close(other);
+
+        close(serverEnd);
+#ifdef __linux__
+        CHECK(receiveConnection(workerEnd, {one.port}, &got, &why) == Receipt::Closed);
+#endif
+        close(workerEnd);
+        one.closeAll();
+    }
+
+    SECTION("IceMuxHandles: a worker that is gone costs a failed send, and nothing else");
+    {
+        int serverEnd = -1, workerEnd = -1;
+        CHECK(makeChannel(&serverEnd, &workerEnd));
+        Connection one;
+        CHECK(one.make());
+        close(workerEnd);
+        // No signal ends this process: it is still here to say so
+        CHECK(!sendConnection(serverEnd, one.accepted, 1, frame, kFrameMin));
+        CHECK(!sendConnection(serverEnd, one.accepted, 1, frame, kFrameMin));
+        // The connection is still the server's own
+        CHECK(send(one.dialled, "ping", 4, 0) == 4);
+        CHECK(firstByteWithin(one.accepted, 2000) == 'p');
+        close(serverEnd);
+        one.closeAll();
+    }
+
+    SECTION("IceMuxHandles: the connection lives on in the process it was handed to");
+    {
+        int serverEnd = -1, workerEnd = -1;
+        CHECK(makeChannel(&serverEnd, &workerEnd));
+        Connection one;
+        CHECK(one.make());
+        const pid_t child = fork();
+        if (child == 0) {
+            // The worker: it takes the connection, hears "ping", answers
+            close(serverEnd);
+            Received got;
+            QString reason;
+            if (firstReadable(workerEnd, 5000) &&
+                receiveConnection(workerEnd, {one.port}, &got, &reason) == Receipt::Connection &&
+                got.feed == 3 && firstByteWithin(static_cast<int>(got.socket), 5000) == 'p' &&
+                send(static_cast<int>(got.socket), "pong", 4, 0) == 4)
+                _exit(0);
+            _exit(2);
+        }
+        CHECK(child > 0);
+        close(workerEnd);
+        CHECK(sendConnection(serverEnd, one.accepted, 3, frame, kFrameMin));
+        // The server lets go of its own: the connection is the worker's alone
+        closeNative(one.accepted);
+        one.accepted = -1;
+        CHECK(send(one.dialled, "ping", 4, 0) == 4);
+        CHECK(firstByteWithin(one.dialled, 5000) == 'p');
+        int status = 0;
+        CHECK(waitpid(child, &status, 0) == child);
+        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        close(serverEnd);
+        one.closeAll();
+    }
+#endif
 }
 
 } // namespace
@@ -271,6 +544,92 @@ bool inherited(uintptr_t socket)
     DWORD flags = 0;
     if (!GetHandleInformation(reinterpret_cast<HANDLE>(socket), &flags)) return true;
     return (flags & HANDLE_FLAG_INHERIT) != 0;
+}
+
+/// The two ways a connection reaches a worker on Windows: its description,
+/// made for this process, or a copy the worker makes out of the server.
+void theConnectionsTaken()
+{
+    using mw::icemuxhandles::kCopiesPerWindow;
+    using mw::icemuxhandles::openConnection;
+    using mw::icemuxhandles::Server;
+    SECTION("IceMuxHandles: a connection handed by its description");
+    QString why;
+    Connection c;
+    CHECK(c.make());
+    const auto describe = [&c]() {
+        WSAPROTOCOL_INFOW info{};
+        std::vector<uint8_t> description;
+        if (WSADuplicateSocketW(c.accepted, GetCurrentProcessId(), &info) == 0) {
+            description.resize(sizeof(info));
+            std::memcpy(description.data(), &info, sizeof(info));
+        }
+        return description;
+    };
+    const uintptr_t opened = openConnection(describe(), {c.port}, &why);
+    CHECK(opened != kNoSocket);
+    if (opened != kNoSocket) {
+        CHECK(!inherited(opened));
+        char got[8];
+        CHECK(send(c.dialled, "ping", 4, 0) == 4);
+        CHECK(readWithin(static_cast<SOCKET>(opened), got, sizeof(got), 2000) == 4);
+        closesocket(static_cast<SOCKET>(opened));
+    }
+    // Not on a port this worker shares, or no description at all: nothing is kept
+    CHECK(openConnection(describe(), {static_cast<uint16_t>(c.port + 1)}, &why) == kNoSocket);
+    CHECK(!why.isEmpty());
+    CHECK(openConnection({1, 2, 3}, {c.port}, &why) == kNoSocket);
+    CHECK(openConnection({}, {c.port}, &why) == kNoSocket);
+
+    SECTION("IceMuxHandles: a connection copied out of the server, which is held for the stream");
+    CHECK(
+        Server::open(GetCurrentProcessId(), [](const QString&) { return false; }, &why) == nullptr);
+    CHECK(Server::open(0, isThisTest, &why) == nullptr);
+    CHECK(Server::open(GetCurrentProcessId(), {}, &why) == nullptr);
+    const auto server = Server::open(GetCurrentProcessId(), isThisTest, &why);
+    CHECK(server != nullptr);
+    if (server) {
+        const auto number = static_cast<uint64_t>(c.accepted);
+        const uintptr_t copy = server->copyConnection(number, {c.port}, &why);
+        CHECK(copy != kNoSocket && copy != static_cast<uintptr_t>(c.accepted));
+        if (copy != kNoSocket) {
+            CHECK(!inherited(copy));
+            // The server's own handle is left as it is
+            CHECK(handleOpen(reinterpret_cast<HANDLE>(c.accepted)));
+            char got[8];
+            CHECK(send(c.dialled, "pong", 4, 0) == 4);
+            CHECK(readWithin(static_cast<SOCKET>(copy), got, sizeof(got), 2000) == 4);
+            closesocket(static_cast<SOCKET>(copy));
+        }
+        // What the server names can be anything: each is closed and none kept
+        const HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        CHECK(server->copyConnection(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(event)),
+                                     {c.port}, &why) == kNoSocket);
+        CHECK(handleOpen(event));
+        CloseHandle(event);
+        CHECK(server->copyConnection(static_cast<uint64_t>(c.listener), {c.port}, &why) ==
+              kNoSocket);
+        CHECK(server->copyConnection(number, {static_cast<uint16_t>(c.port + 1)}, &why) ==
+              kNoSocket);
+        CHECK(server->copyConnection(0, {c.port}, &why) == kNoSocket);
+        CHECK(handleOpen(reinterpret_cast<HANDLE>(c.accepted)));
+
+        // No more than the bound since a window opened, kept or not
+        server->windowOpened();
+        int taken = 0;
+        for (int i = 0; i < kCopiesPerWindow + 3; ++i) {
+            const uintptr_t one = server->copyConnection(number, {c.port}, &why);
+            if (one == kNoSocket) continue;
+            ++taken;
+            closesocket(static_cast<SOCKET>(one));
+        }
+        CHECK_EQ(taken, kCopiesPerWindow);
+        server->windowOpened();
+        const uintptr_t again = server->copyConnection(number, {c.port}, &why);
+        CHECK(again != kNoSocket);
+        if (again != kNoSocket) closesocket(static_cast<SOCKET>(again));
+    }
+    c.closeAll();
 }
 
 /// This test started again as `arguments`, with or without every handle of
@@ -358,6 +717,8 @@ void run_ice_mux_handles_tests()
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
     theFeed();
+    theConnections();
+    theConnectionsTaken();
     const uint32_t self = GetCurrentProcessId();
     QString why;
     // Descriptors left open across a start are another system's way
@@ -725,6 +1086,7 @@ void run_ice_mux_handles_tests()
     using mw::icemuxhandles::Wanted;
     whoGetsTheSockets();
     theFeed();
+    theConnections();
     SECTION("IceMuxHandles: nothing is taken out of a server, or opened from a description");
     QString why;
     CHECK(mw::icemuxhandles::adopt(1, {{1, 1}}, [](const QString&) { return true; }, &why).empty());

@@ -1,8 +1,8 @@
 diff --git a/include/rtc/configuration.hpp b/include/rtc/configuration.hpp
-index dc003fb8..c76062be 100644
+index dc003fb8..5672d1b8 100644
 --- a/include/rtc/configuration.hpp
 +++ b/include/rtc/configuration.hpp
-@@ -63,6 +63,20 @@ enum class CertificateType {
+@@ -63,6 +63,24 @@ enum class CertificateType {
  
  enum class TransportPolicy { All = RTC_TRANSPORT_POLICY_ALL, Relay = RTC_TRANSPORT_POLICY_RELAY };
  
@@ -18,12 +18,16 @@ index dc003fb8..c76062be 100644
 +	// For a bench: called with the timestamp the feed gives each datagram
 +	// (juice_set_feed_timestamp_handler, one handler for the whole process)
 +	void (*feedTimestamp)(uint64_t timestamp) = nullptr;
++	// TCP connections to these ports are accepted elsewhere in this process and given with
++	// PeerConnection::offerIceTcp(): with enableIceTcp and enableIceTcpPassive, the agent then
++	// offers passive TCP candidates while it checks, though it listens nowhere itself
++	bool tcp = false;
 +};
 +
  struct RTC_CPP_EXPORT Configuration {
  	// ICE settings
  	std::vector<IceServer> iceServers;
-@@ -76,6 +90,8 @@ struct RTC_CPP_EXPORT Configuration {
+@@ -76,6 +94,8 @@ struct RTC_CPP_EXPORT Configuration {
  	// MoonlightWeb patch, libjuice only: with enableIceTcp, also listen on the TCP port of the ICE
  	// socket while the checks run, for a peer that only dials (a browser on a network without UDP)
  	bool enableIceTcpPassive = false;
@@ -32,11 +36,26 @@ index dc003fb8..c76062be 100644
  	bool enableIceUdpMux = false; // libjuice only
  	bool disableAutoNegotiation = false;
  	bool disableAutoGathering = false;
+diff --git a/include/rtc/peerconnection.hpp b/include/rtc/peerconnection.hpp
+index f7a76a16..1943ddad 100644
+--- a/include/rtc/peerconnection.hpp
++++ b/include/rtc/peerconnection.hpp
+@@ -95,6 +95,10 @@ public:
+ 	optional<string> remoteAddress() const;
+ 	uint16_t maxDataChannelId() const;
+ 	bool getSelectedCandidatePair(Candidate *local, Candidate *remote);
++	// MoonlightWeb patch, libjuice only: a TCP connection accepted on a shared port
++	// (IceSharedSockets::tcp), with the first RFC 4571 frame read from it. True when the ICE
++	// agent took the socket, which is then its own to close; false leaves it the caller's.
++	bool offerIceTcp(uintptr_t socket, const char *frame, size_t size);
+ 
+ 	void setLocalDescription(Description::Type type = Description::Type::Unspec, LocalDescriptionInit init = {});
+ 	void gatherLocalCandidates(std::vector<IceServer> additionalIceServers = {});
 diff --git a/src/impl/icetransport.cpp b/src/impl/icetransport.cpp
-index e5e8c117..91d150de 100644
+index e5e8c117..73047c30 100644
 --- a/src/impl/icetransport.cpp
 +++ b/src/impl/icetransport.cpp
-@@ -130,6 +130,25 @@ IceTransport::IceTransport(const Configuration &config, candidate_callback candi
+@@ -130,6 +130,26 @@ IceTransport::IceTransport(const Configuration &config, candidate_callback candi
  	if (!mAgent)
  		throw std::runtime_error("Failed to create the ICE agent");
  
@@ -50,6 +69,7 @@ index e5e8c117..91d150de 100644
 +		shared.send_count = int(given.send.size());
 +		for (size_t i = 0; i < given.send.size(); ++i)
 +			shared.send[i] = given.send[i];
++		shared.tcp = given.tcp;
 +		if (juice_set_shared_sockets(mAgent.get(), &shared) < 0)
 +			throw std::runtime_error("Failed to give the ICE agent its shared sockets");
 +		if (!given.ufrag.empty() &&
@@ -62,3 +82,53 @@ index e5e8c117..91d150de 100644
  	// ICE-TCP
  	juice_set_ice_tcp_mode(mAgent.get(), !config.enableIceTcp      ? JUICE_ICE_TCP_MODE_NONE
  	                                     : config.enableIceTcpPassive ? JUICE_ICE_TCP_MODE_ACTIVE_PASSIVE
+@@ -266,6 +286,10 @@ optional<string> IceTransport::getRemoteAddress() const {
+ 	return nullopt;
+ }
+ 
++bool IceTransport::offerTcp(uintptr_t socket, const char *frame, size_t size) {
++	return juice_tcp_passive_offer(mAgent.get(), socket, frame, size) == JUICE_ERR_SUCCESS;
++}
++
+ bool IceTransport::getSelectedCandidatePair(Candidate *local, Candidate *remote) {
+ 	char sdpLocal[JUICE_MAX_CANDIDATE_SDP_STRING_LEN];
+ 	char sdpRemote[JUICE_MAX_CANDIDATE_SDP_STRING_LEN];
+@@ -930,6 +954,10 @@ void IceTransport::LogCallback(const gchar * /*logDomain*/, GLogLevelFlags logLe
+ 	PLOG(severity) << "nice: " << message;
+ }
+ 
++bool IceTransport::offerTcp(uintptr_t, const char *, size_t) {
++	return false; // libjuice only
++}
++
+ bool IceTransport::getSelectedCandidatePair(Candidate *local, Candidate *remote) {
+ 	NiceCandidate *niceLocal, *niceRemote;
+ 	if (!nice_agent_get_selected_pair(mNiceAgent.get(), mStreamId, 1, &niceLocal, &niceRemote))
+diff --git a/src/impl/icetransport.hpp b/src/impl/icetransport.hpp
+index 5d74aaba..608fcb3c 100644
+--- a/src/impl/icetransport.hpp
++++ b/src/impl/icetransport.hpp
+@@ -59,6 +59,7 @@ public:
+ 	bool send(message_ptr message) override; // false if dropped
+ 
+ 	bool getSelectedCandidatePair(Candidate *local, Candidate *remote);
++	bool offerTcp(uintptr_t socket, const char *frame, size_t size); // MoonlightWeb patch
+ 
+ private:
+ 	bool outgoing(message_ptr message) override;
+diff --git a/src/peerconnection.cpp b/src/peerconnection.cpp
+index e7660ea8..25d13781 100644
+--- a/src/peerconnection.cpp
++++ b/src/peerconnection.cpp
+@@ -383,6 +383,11 @@ void PeerConnection::onSignalingStateChange(std::function<void(SignalingState st
+ 
+ void PeerConnection::resetCallbacks() { impl()->resetCallbacks(); }
+ 
++bool PeerConnection::offerIceTcp(uintptr_t socket, const char *frame, size_t size) {
++	auto iceTransport = impl()->getIceTransport();
++	return iceTransport ? iceTransport->offerTcp(socket, frame, size) : false;
++}
++
+ bool PeerConnection::getSelectedCandidatePair(Candidate *local, Candidate *remote) {
+ 	auto iceTransport = impl()->getIceTransport();
+ 	return iceTransport ? iceTransport->getSelectedCandidatePair(local, remote) : false;

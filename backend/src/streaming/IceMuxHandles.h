@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <vector>
 
 /// The shared UDP sockets of the server process (network/IceMux), taken by a
@@ -133,5 +134,122 @@ uintptr_t openFeed(uint16_t hopPort, uint16_t* port);
 std::vector<uintptr_t> adopt(uint32_t serverPid, const std::vector<Wanted>& wanted,
                              const std::function<bool(const QString& image)>& isServer,
                              QString* why);
+
+// ── TCP connections, handed over while the stream runs ──────────────────────
+//
+// With TCP on the shared ports the server accepts a connection, reads its
+// first frame and hands the connection to the worker whose agent the frame
+// names. Unlike the UDP sockets these arrive during the stream, one at a
+// time. However one came — a description, a copy, a descriptor in a message —
+// it is used only once it is known to be what it must be: connectionChecked().
+// The agent then runs its own gate on the frame (juice_tcp_passive_offer):
+// nothing here admits anything.
+
+/// The bounds of the first frame (RFC 4571) a connection is handed with.
+inline constexpr size_t kFrameMin = 20;
+inline constexpr size_t kFrameMax = 1024;
+
+/// The most copies a worker makes of the server's handles between two windows
+/// (the server keeps the same bound on what it names).
+inline constexpr int kCopiesPerWindow = 32;
+
+/// Whether `socket` is a connection a worker was rightly handed: a stream
+/// socket, connected, that listens for nothing, whose local port is one of
+/// `ports` (the shared ports this worker holds) and whose two ends are of one
+/// family. It is then kept from whatever this process starts, and made
+/// non-blocking. False, with the reason in `why` (no address in it): the
+/// caller closes the socket. Where the connection comes from is read from the
+/// socket by whoever uses it, never told.
+bool connectionChecked(uintptr_t socket, const std::vector<uint16_t>& ports, QString* why);
+
+/// A connection opened in this process from the description the server made
+/// of it for this process alone, and checked. kNoSocket otherwise, with the
+/// reason in `why` and nothing left open. Winsock must be started. The caller
+/// closes it (closesocket). Windows only.
+uintptr_t openConnection(const std::vector<uint8_t>& description,
+                         const std::vector<uint16_t>& ports, QString* why);
+
+/// The server process, held by a worker that runs above it, for as long as
+/// its stream: such a worker copies each connection out of the server, as it
+/// copied the UDP sockets when it started (adopt()), and under the same
+/// conditions, checked once when this is opened. The right it holds is to
+/// copy handles and to ask what the process is; a worker of that kind is at
+/// least as privileged as the server, and the server gains nothing over it.
+/// Windows only: open() gives null elsewhere.
+class Server
+{
+public:
+    static std::unique_ptr<Server> open(uint32_t serverPid,
+                                        const std::function<bool(const QString& image)>& isServer,
+                                        QString* why);
+    ~Server();
+    Server(const Server&) = delete;
+    Server& operator=(const Server&) = delete;
+
+    /// A window opens for one of the worker's agents: copies are counted anew.
+    void windowOpened() { m_Copies = 0; }
+
+    /// A copy of the connection the server holds under `handle`, checked.
+    /// With the server's own rights on it and no more, and the server's handle
+    /// left as it is. kNoSocket, with the reason in `why` and nothing left
+    /// open, when it cannot be copied, is not such a connection, or more than
+    /// kCopiesPerWindow were asked for since the last window opened.
+    uintptr_t copyConnection(uint64_t handle, const std::vector<uint16_t>& ports, QString* why);
+
+private:
+    Server() = default;
+    void* m_Process = nullptr;
+    int m_Copies = 0;
+};
+
+// Outside Windows a worker is the server's own child, and the server makes a
+// channel for it before it starts it: a pair of local sockets, one end of
+// which crosses that one start as the shared sockets do (leaveOpenAcrossExec).
+// Each connection is one message on it: the descriptor, with the number of the
+// agent's feed and the first frame.
+
+/// A connection as it came out of the channel.
+struct Received
+{
+    uintptr_t socket = kNoSocket;
+    uint32_t feed = 0;
+    std::vector<char> frame;
+};
+
+enum class Receipt
+{
+    /// `out` holds a connection, checked: the caller's to use and to close.
+    Connection,
+    /// Nothing to read now.
+    Nothing,
+    /// A message that is not one connection as a server sends it: whatever
+    /// descriptor it carried is closed, and the reason is in `why`.
+    Refused,
+    /// The server's end is gone.
+    Closed,
+};
+
+/// The two ends, each kept from whatever its process starts, non-blocking.
+/// On Linux they are so from the instant they exist. Elsewhere they are made
+/// so right after, and a process started by another thread in between would
+/// get them: there the server makes the channel under the lock of the very
+/// launch it is for, so that no other start falls in that instant. False on
+/// Windows.
+bool makeChannel(int* serverEnd, int* workerEnd);
+
+/// The server's side: one connection, for the agent of `feed`, with its
+/// first frame. False when it did not go whole; the connection stays the
+/// caller's either way. False on Windows.
+bool sendConnection(int channel, int connection, uint32_t feed, const char* frame, size_t size);
+
+/// The worker's side: at most one message is read. A message that carries no
+/// descriptor, more than one, or more than a channel's message holds is
+/// refused whole. On Linux the descriptor is closed on exec from the instant
+/// it exists; elsewhere it is made so right after it is read, and for that
+/// instant a process this worker started from another thread would get it: a
+/// worker there starts no process while it streams. Receipt::Closed on
+/// Windows.
+Receipt receiveConnection(int channel, const std::vector<uint16_t>& ports, Received* out,
+                          QString* why);
 
 } // namespace mw::icemuxhandles
